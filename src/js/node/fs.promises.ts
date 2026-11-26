@@ -212,6 +212,18 @@ async function opendir(dir: string, options?) {
 // ERR_INVALID_STATE (DEP0137 end-of-life) when collected without close().
 // Mirror that with a FinalizationRegistry so dropped handles don't leak fds.
 let fileHandleRegistry: FinalizationRegistry<{ fd: number; path: string | undefined }> | undefined;
+let weakReferences: typeof import("internal/weak_references").default;
+function armFileHandle(handle: object, fd: number, path: string | undefined) {
+  if (fileHandleRegistry === undefined) {
+    weakReferences = require("internal/weak_references");
+    fileHandleRegistry = new FinalizationRegistry(onFileHandleCollected);
+  }
+  weakReferences.FinalizationRegistryPrototypeRegister(fileHandleRegistry, handle, { fd, path }, handle);
+}
+function disarmFileHandle(handle: object) {
+  if (fileHandleRegistry !== undefined)
+    weakReferences.FinalizationRegistryPrototypeUnregister(fileHandleRegistry, handle);
+}
 function onFileHandleCollected(held: { fd: number; path: string | undefined }) {
   try {
     fs.closeSync(held.fd);
@@ -362,7 +374,16 @@ const exports = {
     // Buffer/URL toString cannot leak the fd, and the registry never retains
     // the caller's object.
     const pathForDiag = typeof path === "string" ? path : path == null ? undefined : String(path);
-    return new private_symbols.FileHandle(await fs.open(path, flags, mode), flags, pathForDiag);
+    const fd = await fs.open(path, flags, mode);
+    try {
+      return new private_symbols.FileHandle(fd, flags, pathForDiag);
+    } catch (error) {
+      // No FileHandle owns the fd. The constructor runs node:events, which script can replace.
+      try {
+        fs.closeSync(fd);
+      } catch {}
+      throw error;
+    }
   },
   read: asyncWrap(fs.read, "read"),
   write: asyncWrap(fs.write, "write"),
@@ -493,7 +514,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
       this[kClosePromise] = null;
       this[kFlag] = flag;
       if (this[kFd] !== -1) {
-        (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(this, { fd, path }, this);
+        armFileHandle(this, fd, path);
       }
     }
 
@@ -788,7 +809,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
         return this[kClosePromise];
       }
 
-      fileHandleRegistry?.unregister(this);
+      disarmFileHandle(this);
 
       if (--this[kRefs] === 0) {
         this[kFd] = -1;
@@ -1573,7 +1594,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
       }
       const fd = this[kFd];
       this[kFd] = -1;
-      fileHandleRegistry?.unregister(this);
+      disarmFileHandle(this);
       require("node:fs").closeSync(fd);
       this.emit("close");
     }
@@ -1586,7 +1607,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
       const fd = this[kFd];
       const flag = this[kFlag];
       this[kFd] = -1;
-      fileHandleRegistry?.unregister(this);
+      disarmFileHandle(this);
       return {
         data: { fd, flag },
         deserializeInfo: "internal/fs/promises:FileHandle",
@@ -1601,11 +1622,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
       this[kFd] = fd;
       this[kFlag] = flag;
       if (fd !== -1) {
-        (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(
-          this,
-          { fd, path: undefined },
-          this,
-        );
+        armFileHandle(this, fd, undefined);
       }
     }
 

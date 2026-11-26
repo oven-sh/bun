@@ -707,7 +707,8 @@ test.concurrent("built-in modules do not load node:diagnostics_channel", async (
     stderr: "inherit",
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toBe("1\n");
+  // The module itself, and internal/weak_references, which only it has asked for so far.
+  expect(stdout).toBe("2\n");
   expect(exitCode).toBe(0);
 });
 

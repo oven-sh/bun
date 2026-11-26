@@ -100,7 +100,10 @@ replacements.push({
   to: "extends __no_intrinsic__%1",
 });
 
-// Classes and objects in ZigGlobalObject.lut.txt. `Blob` becomes `@natives.Blob` (NativeGlobals, ZigGlobalObject.cpp).
+// Constructors of JSC that are not in ZigGlobalObject.lut.txt. NativeGlobals::getOwnPropertySlot names each one.
+const engineGlobals = ["FinalizationRegistry", "WeakRef"];
+
+// Classes and objects in ZigGlobalObject.lut.txt, and engineGlobals. `Blob` becomes `@natives.Blob` (NativeGlobals, ZigGlobalObject.cpp).
 // Its functions are left out, except nativeFunctions: the one in `@natives` is not the one on globalThis.
 export const nativeGlobals = Array.from(
   readFileSync(join(import.meta.dir, "../jsc/bindings/ZigGlobalObject.lut.txt"), "utf8").matchAll(
@@ -112,7 +115,8 @@ export const nativeGlobals = Array.from(
       /\b(CellProperty|ClassStructure)\b/.test(kind) || /ConstructorCallback$|::get\w+Constructor$/.test(value),
   )
   .map(({ 1: name }) => name)
-  .filter(name => !globalsToPrefix.includes(name) && name !== "Bun" && name !== "process");
+  .filter(name => !globalsToPrefix.includes(name) && name !== "Bun" && name !== "process")
+  .concat(engineGlobals);
 
 // What fake timers replace. As in Node, they don't stop the timers of builtin modules.
 // Only the bare name is `@natives.setTimeout`. `globalThis.setTimeout` is what script sees, for node:timers.
@@ -131,6 +135,16 @@ export function assertNoDestructuredGlobalThis(source: string, file: string) {
   if (/}\s*=\s*globalThis\b/.test(source)) {
     throw new Error(
       `${file}: do not destructure globalThis, script may have replaced its properties. Write the bare name (\`Blob\`): the bundler turns it into a read that script cannot reach, see nativeGlobals in src/codegen/replacements.ts`,
+    );
+  }
+}
+
+/** The define for nativeGlobals gives the constructor that script cannot reach. The methods are still read from its prototype, where script can replace them. */
+export function assertNoWeakReferenceMethods(source: string, file: string) {
+  const found = /\.(?:unregister|deref)\(|\b(?:FinalizationRegistry|WeakRef)\.prototype\b/.exec(source);
+  if (found) {
+    throw new Error(
+      `${file}: \`${found[0]}\` reads a method of FinalizationRegistry or WeakRef from its prototype, script may have replaced it. Call the function of require("internal/weak_references"): \`FinalizationRegistryPrototypeRegister(registry, target, heldValue, unregisterToken)\`, \`FinalizationRegistryPrototypeUnregister(registry, unregisterToken)\`, \`WeakRefPrototypeDeref(weakRef)\``,
     );
   }
 }

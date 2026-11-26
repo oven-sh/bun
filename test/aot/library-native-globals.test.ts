@@ -83,3 +83,42 @@ test("replaces", async () => {
 });`,
   });
 });
+
+// A sandbox replaces these while a script runs: https://github.com/oven-sh/bun/issues/49616.
+test("nor are FinalizationRegistry and WeakRef, nor the methods of their prototypes", async () => {
+  await expectCompiledToRunAsPlain({
+    "weak-references.test.js": `
+import { expect, test } from "bun:test";
+import { open } from "node:fs/promises";
+import { aborted } from "node:util";
+import { createContext } from "node:vm";
+${recording}
+test("replaces", async () => {
+  const registry = FinalizationRegistry.prototype, weakRef = WeakRef.prototype;
+  const kept = [FinalizationRegistry, WeakRef, registry.register, registry.unregister, weakRef.deref];
+  globalThis.FinalizationRegistry = record("FinalizationRegistry", FinalizationRegistry);
+  globalThis.WeakRef = record("WeakRef", WeakRef);
+  registry.register = record("register", registry.register);
+  registry.unregister = record("unregister", registry.unregister);
+  weakRef.deref = record("deref", weakRef.deref);
+  try {
+    await (await open(import.meta.path)).close();
+    const controller = new AbortController();
+    const settled = aborted(controller.signal, {});
+    controller.abort();
+    await settled;
+    for (let i = 0; i < 70; i++) createContext({});
+    const target = {};
+    process.finalization.register(target, () => {});
+    process.finalization.unregister(target);
+    const library = [...touched].sort().join(" ") || "none";
+    console.log("the library:", library);
+    new WeakRef({}).deref();
+    console.log("with the test's own calls:", [...touched].sort().join(" "));
+    expect(library).toBe("none");
+  } finally {
+    [globalThis.FinalizationRegistry, globalThis.WeakRef, registry.register, registry.unregister, weakRef.deref] = kept;
+  }
+});`,
+  });
+});

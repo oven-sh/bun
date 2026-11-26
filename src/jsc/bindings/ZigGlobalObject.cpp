@@ -5501,15 +5501,19 @@ bool NativeGlobals::getOwnPropertySlot(JSC::JSObject* object, JSC::JSGlobalObjec
     if (Base::getOwnPropertySlot(object, lexicalGlobalObject, propertyName, slot))
         return true;
 
-    const JSC::HashTableValue* entry = bunGlobalObjectTable.entry(propertyName);
-    if (!entry)
-        return false;
-
     auto& vm = JSC::getVM(lexicalGlobalObject);
     JSC::JSGlobalObject* globalObject = object->globalObject();
     char* fields = std::bit_cast<char*>(globalObject);
     JSValue value;
-    if (entry->attributes() & PropertyAttribute::CellProperty)
+    const JSC::HashTableValue* entry = bunGlobalObjectTable.entry(propertyName);
+    if (!entry) {
+        // The constructors of JSC that builtins ask for: engineGlobals in src/codegen/replacements.ts.
+        auto* name = propertyName.publicName();
+        if (WTF::equal(name, "FinalizationRegistry"_s))
+            value = globalObject->finalizationRegistryConstructor();
+        else if (WTF::equal(name, "WeakRef"_s))
+            value = globalObject->weakObjectRefConstructor();
+    } else if (entry->attributes() & PropertyAttribute::CellProperty)
         value = std::bit_cast<JSC::LazyCellProperty*>(fields + entry->lazyCellPropertyOffset())->get(globalObject);
     else if (entry->attributes() & PropertyAttribute::ClassStructure)
         value = std::bit_cast<JSC::LazyClassStructure*>(fields + entry->lazyClassStructureOffset())->constructor(globalObject);

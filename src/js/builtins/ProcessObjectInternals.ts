@@ -781,6 +781,7 @@ export function loadEnvFile(path) {
 export function createProcessFinalization(process) {
   let entries: Array<{ ref: WeakRef<object>; fn: Function; evt: string }> = [];
   let installed = false;
+  let weakReferences: typeof import("internal/weak_references").default;
 
   // Node uses validateObject(obj, "obj", kValidateObjectAllowFunction): the
   // ref may be a function (any WeakRef-compatible target), and the argument
@@ -802,7 +803,7 @@ export function createProcessFinalization(process) {
       return false;
     });
     for (const entry of toRun) {
-      const obj = entry.ref.deref();
+      const obj = weakReferences.WeakRefPrototypeDeref(entry.ref);
       if (obj !== undefined) entry.fn(obj, event);
     }
   }
@@ -810,6 +811,7 @@ export function createProcessFinalization(process) {
   function ensureInstalled() {
     if (installed) return;
     installed = true;
+    weakReferences = require("internal/weak_references");
     // process.on (append), not prependListener: Node's install() uses
     // process.on so a user exit listener added before the first
     // finalization.register() fires before the finalization callback.
@@ -837,7 +839,7 @@ export function createProcessFinalization(process) {
       // Node also drops entries whose target was already collected, so a dead
       // registration stops pinning its callback.
       entries = entries.filter(entry => {
-        const target = entry.ref.deref();
+        const target = weakReferences.WeakRefPrototypeDeref(entry.ref);
         return target !== undefined && target !== ref;
       });
     },

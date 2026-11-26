@@ -1573,6 +1573,7 @@ interface $BunModules {
   "internal/util/mime": $ModuleValue<typeof import("./internal/util/mime")>;
   "internal/validate_function": $ModuleValue<typeof import("./internal/validate_function")>;
   "internal/validators": $ModuleValue<typeof import("./internal/validators")>;
+  "internal/weak_references": $ModuleValue<typeof import("./internal/weak_references")>;
   "internal/webstreams_adapters": $ModuleValue<typeof import("./internal/webstreams_adapters")>;
   "internal/worker/messaging": $ModuleValue<typeof import("./internal/worker/messaging")>;
   "internal/worker/stdio": $ModuleValue<typeof import("./internal/worker/stdio")>;

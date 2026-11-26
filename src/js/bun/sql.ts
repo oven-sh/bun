@@ -385,7 +385,7 @@ function leave(scope: Scope, prepared = false) {
   }
   scope.pool.detachConnectionCloseHandler(connection, scope.onConnectionClosed!);
   if (scope.kind === Kind.reservation) {
-    reservations!.unregister(scope);
+    weakReferences.FinalizationRegistryPrototypeUnregister(reservations!, scope);
   }
   scope.pool.release(connection, prepared);
 }
@@ -431,7 +431,7 @@ function onConnectionClosed(this: Scope, err: Error) {
   }
   abandon(this, err);
   if (this.kind === Kind.reservation) {
-    reservations!.unregister(this);
+    weakReferences.FinalizationRegistryPrototypeUnregister(reservations!, this);
   }
   this.pool.release(connection);
 }
@@ -761,6 +761,7 @@ async function closeTransaction(this: Scope, options?: CloseOptions) {
 }
 
 let reservations: FinalizationRegistry<Scope> | undefined;
+let weakReferences: typeof import("internal/weak_references").default;
 
 function releaseDropped(scope: Scope) {
   release.$call(scope);
@@ -819,7 +820,11 @@ function onReserveConnected(this: PendingReservation, err: Error | null, pooledC
   const scope = new Scope(this.client, Kind.reservation, null, pooledConnection);
   ownConnection(scope);
   const handle = makeHandle(scope);
-  (reservations ??= new FinalizationRegistry(releaseDropped)).register(handle, scope, scope);
+  if (reservations === undefined) {
+    weakReferences = require("internal/weak_references");
+    reservations = new FinalizationRegistry(releaseDropped);
+  }
+  weakReferences.FinalizationRegistryPrototypeRegister(reservations, handle, scope, scope);
   this.resolve(handle);
 }
 

@@ -264,6 +264,12 @@ export default b.declarations(
   ),
   extendAll(["Sqlite"], "bun:sqlite"),
 
+  // require("internal/weak_references"): JSFinalizationRegistry and JSWeakObjectRef without their prototypes.
+  extendAll(
+    ["WeakReferences"],
+    ...nativeBindings("Cpp", "WeakReferenceFunctions.cpp", "Bun::createWeakReferenceFunctions"),
+  ),
+
   extendAll(
     ["Sql", "X509", ...tlsSocketFeatures, "Int32Array", "Float32Array"],
     ...nativeBindings("Bindgen", "postgres.bind.ts", "binding"),

@@ -495,10 +495,10 @@ class WeakReference {
   get() {
     // Serving from the pinned ref (when held) is equivalent to deref() and
     // keeps the keepalive member read, not write-only.
-    return this.#strong ?? this.#ref.deref();
+    return this.#strong ?? require("internal/weak_references").WeakRefPrototypeDeref(this.#ref);
   }
   incRef() {
-    if (++this.#refCount === 1) this.#strong = this.#ref.deref();
+    if (++this.#refCount === 1) this.#strong = require("internal/weak_references").WeakRefPrototypeDeref(this.#ref);
   }
   decRef() {
     if (--this.#refCount === 0) this.#strong = null;

@@ -1802,31 +1802,6 @@ fn located(
     )
 }
 
-/// Absolute UTF-16 offset for a byte offset, plus the 0-based line and line-relative UTF-16
-/// character. One scan from the line start yields both the column and the absolute offset.
-fn utf16_position(
-    text: &[u8],
-    starts: &[u32],
-    offset: u32,
-    counted: &Counted,
-) -> (u32, u32, u32) {
-    let offset = offset.min(text.len() as u32);
-    let line = starts.partition_point(|&s| s <= offset) - 1;
-    let mut counted_offsets = counted.counted_offsets.get();
-    let nearest = (0..counted_offsets.len())
-        .filter(|&i| (starts[line]..=offset).contains(&counted_offsets[i].0))
-        .max_by_key(|&i| counted_offsets[i].0);
-    let (from, units) = nearest.map_or((starts[line], 0), |i| counted_offsets[i]);
-    let character = units + strings::wtf8_len_utf16(&text[from as usize..offset as usize]);
-    let updated_index = nearest.unwrap_or_else(|| counted.older.get());
-    counted_offsets[updated_index] = (offset, character);
-    counted.counted_offsets.set(counted_offsets);
-    counted.older.set(1 - updated_index);
-    // Absolute offset: scan from the file start so non-BMP characters on earlier lines count.
-    let absolute = strings::wtf8_len_utf16(&text[..offset as usize]);
-    (line as u32, character, absolute)
-}
-
 /// `counted`: see `line_and_character`.
 fn located_after(
     counted: &Counted,
@@ -1837,11 +1812,11 @@ fn located_after(
     end: u32,
     reported: Diagnostic,
 ) -> Diagnostic {
-    let (line, character, utf16_start) = utf16_position(text, starts, start, counted);
-    let (end_line, end_character, utf16_end) =
-        utf16_position(text, starts, end.max(start), counted);
-    // Empty ranges at the line start still share the same absolute offset.
-    let utf16_end = if end < start { utf16_start } else { utf16_end };
+    let end_offset = end.max(start);
+    let (line, character) = line_and_character(text, starts, start, counted);
+    let (end_line, end_character) = line_and_character(text, starts, end_offset, counted);
+    let utf16_start = counted.line_start_utf16(text, starts, line) + character;
+    let utf16_end = counted.line_start_utf16(text, starts, end_line) + end_character;
     let source_line = line.saturating_sub(LINES_BEFORE);
     let last_line = (end_line + LINES_AFTER).min(starts.len() as u32 - 1);
     Diagnostic {
@@ -1874,7 +1849,7 @@ fn line_and_character(text: &[u8], starts: &[u32], offset: u32, counted: &Counte
         .filter(|&i| (starts[line]..=offset).contains(&counted_offsets[i].0))
         .max_by_key(|&i| counted_offsets[i].0);
     let (from, units) = nearest.map_or((starts[line], 0), |i| counted_offsets[i]);
-    let character = units + strings::wtf8_len_utf16(&text[from as usize..offset as usize]);
+    let character = units + strings::utf8_lossy_len_utf16(&text[from as usize..offset as usize]);
     let updated_index = nearest.unwrap_or_else(|| counted.older.get());
     counted_offsets[updated_index] = (offset, character);
     counted.counted_offsets.set(counted_offsets);
@@ -1890,6 +1865,26 @@ struct Counted {
     counted_offsets: std::cell::Cell<[(u32, u32); 2]>,
     /// The index of the one that was written first.
     older: std::cell::Cell<usize>,
+    /// The UTF-16 offset of the start of each line up to the last one asked for. Extended on demand.
+    line_utf16: std::cell::RefCell<Vec<u32>>,
+}
+
+impl Counted {
+    /// The UTF-16 offset of the start of 0-based `line`. Each line of `text` is counted at most once.
+    fn line_start_utf16(&self, text: &[u8], starts: &[u32], line: u32) -> u32 {
+        let mut known = self.line_utf16.borrow_mut();
+        if known.is_empty() {
+            known.push(0);
+        }
+        while known.len() <= line as usize {
+            let previous = known.len() - 1;
+            let (from, to) = (starts[previous] as usize, starts[previous + 1] as usize);
+            let units = strings::utf8_lossy_len_utf16(&text[from..to]);
+            let next = known[previous] + units;
+            known.push(next);
+        }
+        known[line as usize]
+    }
 }
 
 fn line_text(text: &[u8], starts: &[u32], line: u32) -> Vec<u8> {
@@ -6727,7 +6722,7 @@ mod utf16_tests {
     }
 
     fn expected_utf16(text: &[u8], byte: u32) -> u32 {
-        // Independent oracle: decode WTF-8 to UTF-16 like JavaScript does.
+        // Independent oracle for valid UTF-8.
         let mut units = 0u32;
         let mut at = 0usize;
         while at < byte as usize {
@@ -6803,16 +6798,31 @@ mod utf16_tests {
     }
 
     #[test]
+    fn non_bmp_on_earlier_line_and_before_span() {
+        let text = "const a = \"😀\";\nconst b = \"😀\"; const x: string = 42;\n".as_bytes();
+        let at = strings::index_of(text, b"42").unwrap() as u32;
+        let d = located_report(b"a.ts", text, at, at + 2);
+        let line_start = strings::index_of(text, b"const b").unwrap() as u32;
+        assert_eq!(d.line, 2);
+        assert_eq!(d.utf16_start, Some(expected_utf16(text, at)));
+        assert_eq!(d.utf16_end, Some(expected_utf16(text, at + 2)));
+        assert_eq!(d.column, expected_utf16(text, at) - expected_utf16(text, line_start) + 1);
+        assert_eq!(d.utf16_start.unwrap() - (d.column - 1), expected_utf16(text, line_start));
+        let units = utf16_of(std::str::from_utf8(text).unwrap());
+        let (start, end) = (d.utf16_start.unwrap() as usize, d.utf16_end.unwrap() as usize);
+        assert_eq!(&units[start..end], &utf16_of("42"));
+    }
+
+    #[test]
     fn lone_surrogate() {
-        // WTF-8 for U+D800: ED A0 80. JavaScript counts it as 1 unit.
+        // ED A0 80 is no UTF-8, and decodes to three U+FFFD, as `bun check` always counted it.
         let mut text = b"const s = \"".to_vec();
         text.extend_from_slice(&[0xED, 0xA0, 0x80]);
         text.extend_from_slice(b"\";\nconst x: string = 42;\n");
         let at = strings::index_of(&text, b"42").unwrap() as u32;
         let d = located_report(b"a.ts", &text, at, at + 2);
-        assert_eq!(d.utf16_start, Some(expected_utf16(&text, at)));
-        // 3 bytes for 1 unit, so the shift is 2.
-        assert_eq!(at - d.utf16_start.unwrap(), 2);
+        assert_eq!(at - d.utf16_start.unwrap(), 0);
+        assert_eq!((d.line, d.column), (2, 19));
     }
 
     #[test]

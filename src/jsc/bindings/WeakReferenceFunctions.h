@@ -1,11 +1,14 @@
 #pragma once
 
 #include "root.h"
-#include "ZigGlobalObject.h"
 
 namespace Bun {
 
-// `require("internal/weak_references")` in src/js.
-JSC::JSValue createWeakReferenceFunctions(Zig::GlobalObject*);
+// The rows of engineNativesTable in ZigGlobalObject.lut.txt.
+JSC::JSValue finalizationRegistryConstructorCallback(JSC::VM&, JSC::JSObject* globalObject);
+JSC::JSValue finalizationRegistryPrototypeRegisterCallback(JSC::VM&, JSC::JSObject* globalObject);
+JSC::JSValue finalizationRegistryPrototypeUnregisterCallback(JSC::VM&, JSC::JSObject* globalObject);
+JSC::JSValue weakRefConstructorCallback(JSC::VM&, JSC::JSObject* globalObject);
+JSC::JSValue weakRefPrototypeDerefCallback(JSC::VM&, JSC::JSObject* globalObject);
 
 } // namespace Bun

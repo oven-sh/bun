@@ -286,7 +286,6 @@ const nativeFiles = [
   "TestEnvironment.cpp",
   "Undici.cpp",
   "UtilInspect.cpp",
-  "WeakReferenceFunctions.cpp",
   "ZigSourceProvider.cpp",
   "bindgen_test.bind.ts",
   "declared_results_testing.bind.ts",

@@ -144,14 +144,13 @@ const {
 // alive; dead entries are pruned on each measurement and, amortized, on
 // creation (so a process that never measures doesn't accumulate dead refs).
 const trackedContexts: WeakRef<object>[] = [];
-let weakReferences: typeof import("internal/weak_references").default;
 let trackedContextsPruneAt = 64;
 
 function pruneTrackedContexts() {
   let alive = 0;
   for (let i = 0; i < trackedContexts.length; i++) {
     const ref = trackedContexts[i];
-    if (weakReferences.WeakRefPrototypeDeref(ref) !== undefined) {
+    if ($WeakRefPrototypeDeref.$call(ref) !== undefined) {
       trackedContexts[alive++] = ref;
     }
   }
@@ -170,7 +169,6 @@ function createContext(contextObject?: object | symbol, options?: ContextOptions
       const alive = pruneTrackedContexts();
       trackedContextsPruneAt = alive * 2 < 64 ? 64 : alive * 2;
     }
-    weakReferences ??= require("internal/weak_references");
     trackedContexts.push(new WeakRef(context));
   }
   return context;
@@ -267,7 +265,7 @@ function measureMemory(options: { mode?: string; execution?: string } = kEmptyOb
     let aliveCount = 0;
     for (let i = 0; i < trackedContexts.length; i++) {
       const ref = trackedContexts[i];
-      if (weakReferences.WeakRefPrototypeDeref(ref) !== undefined) {
+      if ($WeakRefPrototypeDeref.$call(ref) !== undefined) {
         trackedContexts[aliveCount++] = ref;
         other.push(measurement());
       }

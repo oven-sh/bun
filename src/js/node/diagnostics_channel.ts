@@ -3,7 +3,6 @@
 
 const { validateFunction } = require("internal/validators");
 const { builtinChannels, reportUncaughtException } = require("internal/shared");
-const { FinalizationRegistryPrototypeRegister, WeakRefPrototypeDeref } = require("internal/weak_references");
 
 /** Reacts to a promise and leaves it as handled or unhandled as it was. False if `value` is none, or its class overrides `then`. */
 const observePromise: (value: unknown, then: Traced, onFulfilled: Reaction, onRejected: Reaction) => boolean =
@@ -22,13 +21,16 @@ const ArrayPrototypeSlice = Array.prototype.slice;
 const ArrayPrototypeSplice = Array.prototype.splice;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const ErrorCaptureStackTrace = Error.captureStackTrace;
+const FinalizationRegistryPrototypeRegister = $FinalizationRegistryPrototypeRegister;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectIs = Object.is;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const SafeError = Error;
+const SafeWeakRef = WeakRef;
 const SymbolDispose: typeof Symbol.dispose = Symbol.dispose;
 const SymbolHasInstance = Symbol.hasInstance;
+const WeakRefPrototypeDeref = $WeakRefPrototypeDeref;
 
 type ChannelName = string | symbol;
 type Subscription = (message: unknown, name: ChannelName) => void;
@@ -55,7 +57,7 @@ const finalizers = new FinalizationRegistry<ChannelName>(name => {
 
 function findChannel(name: ChannelName): AnyChannel | undefined {
   const reference = channels.$get(name);
-  return reference === undefined ? undefined : WeakRefPrototypeDeref(reference);
+  return reference === undefined ? undefined : WeakRefPrototypeDeref.$call(reference);
 }
 
 function findActiveChannel(name: ChannelName) {
@@ -245,8 +247,8 @@ class Channel {
     this.name = name;
     this._index = undefined;
 
-    FinalizationRegistryPrototypeRegister(finalizers, this, name);
-    channels.$set(name, new WeakRef(this));
+    FinalizationRegistryPrototypeRegister.$call(finalizers, this, name);
+    channels.$set(name, new SafeWeakRef(this));
   }
 
   static [SymbolHasInstance](instance: unknown) {

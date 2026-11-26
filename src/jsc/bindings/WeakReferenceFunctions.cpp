@@ -2,14 +2,14 @@
 
 #include <JavaScriptCore/JSFinalizationRegistry.h>
 #include <JavaScriptCore/JSWeakObjectRef.h>
-#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/WeakMapImplInlines.h>
 
 namespace Bun {
 
 using namespace JSC;
 
-// The checks and the messages are those of FinalizationRegistryPrototype.cpp and WeakObjectRefPrototype.cpp.
+// JavaScriptCore keeps the native code of `register`, `unregister` and `deref` to FinalizationRegistryPrototype.cpp and
+// WeakObjectRefPrototype.cpp. The three functions here do the same, with the same checks and messages.
 
 static JSFinalizationRegistry* toFinalizationRegistry(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value)
 {
@@ -19,23 +19,27 @@ static JSFinalizationRegistry* toFinalizationRegistry(JSGlobalObject* globalObje
     return nullptr;
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionFinalizationRegistryRegister, (JSGlobalObject * globalObject, CallFrame* callFrame))
+static JSC_DECLARE_HOST_FUNCTION(jsFinalizationRegistryPrototypeRegister);
+static JSC_DECLARE_HOST_FUNCTION(jsFinalizationRegistryPrototypeUnregister);
+static JSC_DECLARE_HOST_FUNCTION(jsWeakRefPrototypeDeref);
+
+JSC_DEFINE_HOST_FUNCTION(jsFinalizationRegistryPrototypeRegister, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* registry = toFinalizationRegistry(globalObject, scope, callFrame->argument(0));
+    auto* registry = toFinalizationRegistry(globalObject, scope, callFrame->thisValue());
     RETURN_IF_EXCEPTION(scope, {});
 
-    JSValue target = callFrame->argument(1);
+    JSValue target = callFrame->argument(0);
     if (!canBeHeldWeakly(target)) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "register requires an object or a non-registered symbol as the target"_s);
 
-    JSValue heldValue = callFrame->argument(2);
+    JSValue heldValue = callFrame->argument(1);
     if (target == heldValue) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "register expects the target object and the holdings parameter are not the same. Otherwise, the target can never be collected"_s);
 
-    JSValue unregisterToken = callFrame->argument(3);
+    JSValue unregisterToken = callFrame->argument(2);
     if (!unregisterToken.isUndefined() && !canBeHeldWeakly(unregisterToken)) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "register requires an object or a non-registered symbol as the unregistration token"_s);
 
@@ -43,27 +47,27 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFinalizationRegistryRegister, (JSGlobalObject
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionFinalizationRegistryUnregister, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsFinalizationRegistryPrototypeUnregister, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* registry = toFinalizationRegistry(globalObject, scope, callFrame->argument(0));
+    auto* registry = toFinalizationRegistry(globalObject, scope, callFrame->thisValue());
     RETURN_IF_EXCEPTION(scope, {});
 
-    JSValue unregisterToken = callFrame->argument(1);
+    JSValue unregisterToken = callFrame->argument(0);
     if (!canBeHeldWeakly(unregisterToken)) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "unregister requires an object or a non-registered symbol as the unregistration token"_s);
 
     return JSValue::encode(jsBoolean(registry->unregister(vm, unregisterToken.asCell())));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionWeakRefDeref, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsWeakRefPrototypeDeref, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue value = callFrame->argument(0);
+    JSValue value = callFrame->thisValue();
     auto* weakRef = dynamicDowncast<JSWeakObjectRef>(value);
     if (!weakRef) [[unlikely]]
         return throwVMTypeError(globalObject, scope, value.isObject() ? "Called WeakRef function on a non-WeakRef object"_s : "Called WeakRef function on non-object"_s);
@@ -72,16 +76,35 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionWeakRefDeref, (JSGlobalObject * globalObject,
     return JSValue::encode(target ? JSValue(target) : jsUndefined());
 }
 
-JSValue createWeakReferenceFunctions(Zig::GlobalObject* globalObject)
+template<auto hostFunction>
+static JSValue createFunction(VM& vm, JSObject* globalObject, unsigned length, ASCIILiteral name)
 {
-    auto& vm = JSC::getVM(globalObject);
-    auto* functions = constructEmptyObject(globalObject);
+    return JSFunction::create(vm, globalObject->globalObject(), length, name, JSC::removableFunction<Bun::Feature::WeakReferences, JSC::RemovedFeatureStub::Throw, hostFunction>(), ImplementationVisibility::Public);
+}
 
-    functions->putDirect(vm, Identifier::fromString(vm, "FinalizationRegistryPrototypeRegister"_s), JSFunction::create(vm, globalObject, 4, "register"_s, jsFunctionFinalizationRegistryRegister, ImplementationVisibility::Public), 0);
-    functions->putDirect(vm, Identifier::fromString(vm, "FinalizationRegistryPrototypeUnregister"_s), JSFunction::create(vm, globalObject, 2, "unregister"_s, jsFunctionFinalizationRegistryUnregister, ImplementationVisibility::Public), 0);
-    functions->putDirect(vm, Identifier::fromString(vm, "WeakRefPrototypeDeref"_s), JSFunction::create(vm, globalObject, 1, "deref"_s, jsFunctionWeakRefDeref, ImplementationVisibility::Public), 0);
+JSValue finalizationRegistryConstructorCallback(VM&, JSObject* globalObject)
+{
+    return globalObject->globalObject()->finalizationRegistryConstructor();
+}
 
-    return functions;
+JSValue finalizationRegistryPrototypeRegisterCallback(VM& vm, JSObject* globalObject)
+{
+    return createFunction<jsFinalizationRegistryPrototypeRegister>(vm, globalObject, 2, "register"_s);
+}
+
+JSValue finalizationRegistryPrototypeUnregisterCallback(VM& vm, JSObject* globalObject)
+{
+    return createFunction<jsFinalizationRegistryPrototypeUnregister>(vm, globalObject, 1, "unregister"_s);
+}
+
+JSValue weakRefConstructorCallback(VM&, JSObject* globalObject)
+{
+    return globalObject->globalObject()->weakObjectRefConstructor();
+}
+
+JSValue weakRefPrototypeDerefCallback(VM& vm, JSObject* globalObject)
+{
+    return createFunction<jsWeakRefPrototypeDeref>(vm, globalObject, 0, "deref"_s);
 }
 
 } // namespace Bun

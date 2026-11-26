@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 f7f6c7bc24c53a85fec2115d2e3ecc0e744ba0f45f12af7cd8226cedd6641f06.
+// Written against that file with the SHA-256 77d3643e737be3164c59e225265fc6a4dcc8ce75e213d2d7abad19d48e899d5c.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -814,7 +814,6 @@ export function createProcessFinalization(process: NodeJS.Process) {
   type FinalizationCallback = (obj: object, event: FinalizationEvent) => void;
   let entries: Array<{ ref: WeakRef<object>; fn: FinalizationCallback; evt: FinalizationEvent }> = [];
   let installed = false;
-  let weakReferences: typeof import("internal/weak_references").default;
 
   // Node uses validateObject(obj, "obj", kValidateObjectAllowFunction): the
   // ref may be a function (any WeakRef-compatible target), and the argument
@@ -836,7 +835,7 @@ export function createProcessFinalization(process: NodeJS.Process) {
       return false;
     });
     for (const entry of toRun) {
-      const obj = weakReferences.WeakRefPrototypeDeref(entry.ref);
+      const obj = $WeakRefPrototypeDeref.$call(entry.ref);
       if (obj !== undefined) entry.fn(obj, event);
     }
   }
@@ -844,7 +843,6 @@ export function createProcessFinalization(process: NodeJS.Process) {
   function ensureInstalled() {
     if (installed) return;
     installed = true;
-    weakReferences = require("internal/weak_references");
     // process.on (append), not prependListener: Node's install() uses
     // process.on so a user exit listener added before the first
     // finalization.register() fires before the finalization callback.
@@ -872,7 +870,7 @@ export function createProcessFinalization(process: NodeJS.Process) {
       // Node also drops entries whose target was already collected, so a dead
       // registration stops pinning its callback.
       entries = entries.filter(entry => {
-        const target = weakReferences.WeakRefPrototypeDeref(entry.ref);
+        const target = $WeakRefPrototypeDeref.$call(entry.ref);
         return target !== undefined && target !== ref;
       });
     },

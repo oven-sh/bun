@@ -693,9 +693,8 @@ let lazyAbortedRegistry: FinalizationRegistry<{
   ref: WeakRef<AbortSignal>;
   listener: (...args: any[]) => void;
 }>;
-let weakReferences: typeof import("internal/weak_references").default;
 function onAbortedCallback(promise: Promise<void>) {
-  weakReferences.FinalizationRegistryPrototypeUnregister(lazyAbortedRegistry, promise);
+  $FinalizationRegistryPrototypeUnregister.$call(lazyAbortedRegistry, promise);
 
   $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
 }
@@ -724,9 +723,8 @@ function aborted(signal: AbortSignal, resource: object) {
   signal.addEventListener("abort", listener, resistStopPropagation({ __proto__: null, once: true }));
 
   if (!lazyAbortedRegistry) {
-    weakReferences = require("internal/weak_references");
     lazyAbortedRegistry = new FinalizationRegistry(({ ref, listener }) => {
-      const signal = weakReferences.WeakRefPrototypeDeref(ref);
+      const signal = $WeakRefPrototypeDeref.$call(ref);
       if (signal) signal.removeEventListener("abort", listener);
     });
   }
@@ -734,7 +732,7 @@ function aborted(signal: AbortSignal, resource: object) {
   // When the resource is garbage collected, clear the listener from the
   // AbortSignal so we do not cause the AbortSignal itself to leak (AbortSignal
   // keeps alive until it is signaled).
-  weakReferences.FinalizationRegistryPrototypeRegister(
+  $FinalizationRegistryPrototypeRegister.$call(
     lazyAbortedRegistry,
     resource,
     {

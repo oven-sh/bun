@@ -119,7 +119,6 @@ const kGCProfilerStartTime = Symbol("kGCProfilerStartTime");
 // leave its native session open for the life of the VM; the registry releases
 // it when the wrapper is collected, matching node's BaseObject finalizer.
 let gcProfilerRegistry: FinalizationRegistry<number> | undefined;
-let weakReferences: typeof import("internal/weak_references").default;
 
 class GCProfiler {
   constructor() {
@@ -132,18 +131,19 @@ class GCProfiler {
     this[kGCProfilerStartTime] = DateNow();
     const id = startGCProfiler();
     this[kGCProfilerSession] = id;
-    if (gcProfilerRegistry === undefined) {
-      weakReferences = require("internal/weak_references");
-      gcProfilerRegistry = new FinalizationRegistry(discardGCProfiler);
-    }
-    weakReferences.FinalizationRegistryPrototypeRegister(gcProfilerRegistry, this, id, this);
+    $FinalizationRegistryPrototypeRegister.$call(
+      (gcProfilerRegistry ??= new FinalizationRegistry(discardGCProfiler)),
+      this,
+      id,
+      this,
+    );
   }
 
   stop() {
     const session = this[kGCProfilerSession];
     if (session === null) return undefined;
     this[kGCProfilerSession] = null;
-    weakReferences.FinalizationRegistryPrototypeUnregister(gcProfilerRegistry!, this);
+    $FinalizationRegistryPrototypeUnregister.$call(gcProfilerRegistry!, this);
 
     const events = stopGCProfiler(session);
     const statistics = [];

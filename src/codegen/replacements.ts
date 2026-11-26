@@ -100,23 +100,24 @@ replacements.push({
   to: "extends __no_intrinsic__%1",
 });
 
-// Constructors of JSC that are not in ZigGlobalObject.lut.txt. NativeGlobals::getOwnPropertySlot names each one.
-const engineGlobals = ["FinalizationRegistry", "WeakRef"];
+const globalObjectTable = readFileSync(join(import.meta.dir, "../jsc/bindings/ZigGlobalObject.lut.txt"), "utf8");
 
-// Classes and objects in ZigGlobalObject.lut.txt, and engineGlobals. `Blob` becomes `@natives.Blob` (NativeGlobals, ZigGlobalObject.cpp).
+// Classes and objects in ZigGlobalObject.lut.txt. `Blob` becomes `@natives.Blob` (NativeGlobals, ZigGlobalObject.cpp).
 // Its functions are left out, except nativeFunctions: the one in `@natives` is not the one on globalThis.
-export const nativeGlobals = Array.from(
-  readFileSync(join(import.meta.dir, "../jsc/bindings/ZigGlobalObject.lut.txt"), "utf8").matchAll(
-    /^ +(\w+) +(\S+) +(\S+)$/gm,
-  ),
-)
+export const nativeGlobals = Array.from(globalObjectTable.matchAll(/^ +(\w+) +(\S+) +(\S+)$/gm))
   .filter(
     ({ 2: value, 3: kind }) =>
       /\b(CellProperty|ClassStructure)\b/.test(kind) || /ConstructorCallback$|::get\w+Constructor$/.test(value),
   )
   .map(({ 1: name }) => name)
-  .filter(name => !globalsToPrefix.includes(name) && name !== "Bun" && name !== "process")
-  .concat(engineGlobals);
+  .filter(name => !globalsToPrefix.includes(name) && name !== "Bun" && name !== "process");
+
+// The rows of engineNativesTable that are no constructor. `$WeakRefPrototypeDeref` becomes `@natives.WeakRefPrototypeDeref`:
+// what the engine's `deref` does, whatever script has stored on `WeakRef.prototype`.
+const engineFunctions = Array.from(
+  /@begin engineNativesTable\n(.*?)@end/s.exec(globalObjectTable)![1].matchAll(/^ +(\w+) /gm),
+  ({ 1: name }) => name,
+).filter(name => !nativeGlobals.includes(name));
 
 // What fake timers replace. As in Node, they don't stop the timers of builtin modules.
 // Only the bare name is `@natives.setTimeout`. `globalThis.setTimeout` is what script sees, for node:timers.
@@ -139,12 +140,15 @@ export function assertNoDestructuredGlobalThis(source: string, file: string) {
   }
 }
 
-/** The define for nativeGlobals gives the constructor that script cannot reach. The methods are still read from its prototype, where script can replace them. */
-export function assertNoWeakReferenceMethods(source: string, file: string) {
-  const found = /\.(?:unregister|deref)\(|\b(?:FinalizationRegistry|WeakRef)\.prototype\b/.exec(source);
+/** The define for nativeGlobals gives the constructor that script cannot reach. A method of its instances is still read from the prototype, where script can replace it. `code` has no comments. */
+export function assertNoWeakReferenceMethods(code: string, file: string) {
+  const found =
+    /\.(?:unregister|deref)\(|\b(?:FinalizationRegistry|WeakRef)\.prototype\b/.exec(code) ??
+    // Other objects have a `register` too: only a text that names the class can have a registry.
+    (/\bFinalizationRegistry\b/.test(code) ? /\.register\(/.exec(code) : null);
   if (found) {
     throw new Error(
-      `${file}: \`${found[0]}\` reads a method of FinalizationRegistry or WeakRef from its prototype, script may have replaced it. Call the function of require("internal/weak_references"): \`FinalizationRegistryPrototypeRegister(registry, target, heldValue, unregisterToken)\`, \`FinalizationRegistryPrototypeUnregister(registry, unregisterToken)\`, \`WeakRefPrototypeDeref(weakRef)\``,
+      `${file}: \`${found[0]}\` reads a method of FinalizationRegistry or WeakRef from its prototype, script may have replaced it. Call the engine's own: \`$FinalizationRegistryPrototypeRegister.$call(registry, target, heldValue, unregisterToken)\`, \`$FinalizationRegistryPrototypeUnregister.$call(registry, unregisterToken)\`, \`$WeakRefPrototypeDeref.$call(weakRef)\`, see engineFunctions in src/codegen/replacements.ts`,
     );
   }
 }
@@ -246,6 +250,10 @@ for (const name of nativeGlobals) {
 
 for (const name of nativeFunctions) {
   define[name] = "__intrinsic__natives." + name;
+}
+
+for (const name of engineFunctions) {
+  define["$" + name] = "__intrinsic__natives." + name;
 }
 
 for (const key in define) {

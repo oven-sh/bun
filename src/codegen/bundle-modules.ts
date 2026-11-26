@@ -318,6 +318,13 @@ for (const [i, entrypoint] of bundledEntryPoints.entries()) {
   outputs.set(file_path.replace(".js", ""), captured);
 }
 
+// What the compiler reads in place of a module or of a file of functions is not bundled.
+const withoutComments = new Bun.Transpiler({ loader: "ts" });
+for (const file of new Bun.Glob("**/*.{js,ts}").scanSync(path.join(BASE, "ahead-of-time"))) {
+  const text = fs.readFileSync(path.join(BASE, "ahead-of-time", file), "utf8");
+  assertNoWeakReferenceMethods(withoutComments.transformSync(text), `ahead-of-time/${file}`);
+}
+
 mark("Postprocesss modules");
 
 /**

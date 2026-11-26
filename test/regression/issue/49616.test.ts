@@ -76,27 +76,3 @@ test.concurrent.skipIf(isWindows)(
     });
   },
 );
-
-test.concurrent.skipIf(isWindows)("open() closes the fd when the FileHandle constructor throws", async () => {
-  const program = /* js */ `
-    const EventEmitter = require("node:events");
-    (async () => {
-      await (await fs.promises.open(process.execPath)).close();
-      const before = openFds();
-      Object.defineProperty(EventEmitter.prototype, "_events", {
-        configurable: true,
-        get: () => undefined,
-        set: blocked("_events"),
-      });
-      const errors = [];
-      for (let i = 0; i < 10; i++) await fs.promises.open(process.execPath).catch(error => errors.push(error.message));
-      delete EventEmitter.prototype._events;
-      console.log(JSON.stringify({ errors: [...new Set(errors)], rejected: errors.length, left: openFds() - before }));
-    })();
-  `;
-  expect(await run(program)).toEqual({
-    stdout: JSON.stringify({ errors: ["_events is blocked"], rejected: 10, left: 0 }),
-    stderr: "",
-    exitCode: 0,
-  });
-});

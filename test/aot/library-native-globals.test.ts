@@ -92,6 +92,8 @@ import { expect, test } from "bun:test";
 import { open } from "node:fs/promises";
 import { aborted } from "node:util";
 import { createContext } from "node:vm";
+import { Worker } from "node:worker_threads";
+import { channel } from "node:diagnostics_channel";
 ${recording}
 test("replaces", async () => {
   const registry = FinalizationRegistry.prototype, weakRef = WeakRef.prototype;
@@ -111,6 +113,10 @@ test("replaces", async () => {
     const target = {};
     process.finalization.register(target, () => {});
     process.finalization.unregister(target);
+    const worker = new Worker("require('node:worker_threads').parentPort.postMessage(1)", { eval: true });
+    await new Promise(resolve => worker.once("message", resolve));
+    await worker.terminate();
+    expect(channel("weak-references")).toBe(channel("weak-references"));
     const library = [...touched].sort().join(" ") || "none";
     console.log("the library:", library);
     new WeakRef({}).deref();

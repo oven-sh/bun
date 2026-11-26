@@ -1000,11 +1000,7 @@ class Worker extends EventEmitter {
           URL.revokeObjectURL(url);
         });
       }
-      require("internal/weak_references").FinalizationRegistryPrototypeRegister(
-        urlRevokeRegistry,
-        this.#worker,
-        this.#urlToRevoke,
-      );
+      $FinalizationRegistryPrototypeRegister.$call(urlRevokeRegistry, this.#worker, this.#urlToRevoke);
     }
 
     if (workerThreadsChannel.hasSubscribers) {

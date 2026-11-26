@@ -1,7 +1,8 @@
 // The modules of src/js make their FinalizationRegistry and WeakRef objects with the constructors that the engine
-// began with, and call `register`, `unregister` and `deref` through require("internal/weak_references"). So a program
-// that replaces the globals or the methods of the prototypes, as a sandbox does while a script runs, changes nothing
-// in them. fs.promises.open() is in test/regression/issue/49616.test.ts, Bun.sql in test/js/sql/sql-handles.test.ts.
+// began with, and call the engine's own `register`, `unregister` and `deref` (`$WeakRefPrototypeDeref` and its like).
+// So a program that replaces the globals or the methods of the prototypes, as a sandbox does while a script runs,
+// changes nothing in them. fs.promises.open() is in test/regression/issue/49616.test.ts, Bun.sql in
+// test/js/sql/sql-handles.test.ts.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 

@@ -877,17 +877,20 @@ describe.concurrent("Bun.TypeChecker: incomplete and read failures", () => {
     expect(diagnostics[0].category).toBe("error");
   });
 
-  test.skipIf(isWindows || isRoot)("a check that cannot read a source file rejects and the queue keeps going", async () => {
-    using dir = project({ "a.ts": `export const answer: number = 42;\n`, "locked.ts": `export {};\n` });
-    chmodSync(join(String(dir), "locked.ts"), 0);
-    await using checker = makeChecker(String(dir));
+  test.skipIf(isWindows || isRoot)(
+    "a check that cannot read a source file rejects and the queue keeps going",
+    async () => {
+      using dir = project({ "a.ts": `export const answer: number = 42;\n`, "locked.ts": `export {};\n` });
+      chmodSync(join(String(dir), "locked.ts"), 0);
+      await using checker = makeChecker(String(dir));
 
-    await expectUpdateRejected(checker, { openProjects: ["tsconfig.json"] }, READ_FAILED);
+      await expectUpdateRejected(checker, { openProjects: ["tsconfig.json"] }, READ_FAILED);
 
-    // The failed job released its slot: later updates run and settle.
-    using snapshot = await checker.updateSnapshot({ closeProjects: ["tsconfig.json"] });
-    expect(snapshot.getProjects()).toEqual([]);
-  });
+      // The failed job released its slot: later updates run and settle.
+      using snapshot = await checker.updateSnapshot({ closeProjects: ["tsconfig.json"] });
+      expect(snapshot.getProjects()).toEqual([]);
+    },
+  );
 
   test("filtering by an unreadable-looking path returns [] rather than a false clean project error", async () => {
     using dir = project({ "a.ts": `export const answer: number = 42;\n` });
@@ -1148,6 +1151,24 @@ describe("Bun.TypeChecker: GC and ownership", () => {
     await expect(program.getDiagnostics()).rejects.toMatchObject({ code: DISPOSED });
   });
 
+  test("close() releases the data of every snapshot that is not yet disposed", async () => {
+    using dir = project({ "a.ts": `export const answer: string = 42;\n` });
+    await using checker = makeChecker(String(dir));
+    const first = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+    const second = await checker.updateSnapshot({});
+    const disposed = await checker.updateSnapshot({});
+    disposed.dispose();
+
+    // No await between the reads: other tests' snapshots cannot change the count.
+    const before = live();
+    const closing = checker.close();
+    const released = before - live();
+    await closing;
+    expect(released).toBe(2);
+    expect(() => first.getProjects()).toThrowWithCode(Error, DISPOSED);
+    expect(() => second.getProjects()).toThrowWithCode(Error, DISPOSED);
+  });
+
   test("a live snapshot survives GC and queued checks do not disturb it", async () => {
     using dir = project({ "a.ts": `export const answer: string = 42;\n` });
     await using checker = makeChecker(String(dir));
@@ -1242,9 +1263,7 @@ describe.concurrent("Bun.TypeChecker: agreement with bun check", () => {
   // The diagnostics of the API must be the diagnostics that `bun check`
   // prints for the same project: same file, position, category, code and
   // first line of the message.
-  const cases = Object.entries(
-    differentialCases as Record<string, { files: Record<string, string>; build?: boolean }>,
-  )
+  const cases = Object.entries(differentialCases as Record<string, { files: Record<string, string>; build?: boolean }>)
     .filter(([, it]) => !it.build && Object.keys(it.files).length <= 3 && it.files["a.ts"]?.includes("sentinel"))
     .slice(0, 3);
 
@@ -1270,7 +1289,9 @@ describe.concurrent("Bun.TypeChecker: agreement with bun check", () => {
         .split("\n")
         .map(line => header.exec(line))
         .filter(match => match !== null)
-        .map(([, file, line, column, category, code, text]) => `${file}:${line}:${column} ${category} TS${code} ${text}`)
+        .map(
+          ([, file, line, column, category, code, text]) => `${file}:${line}:${column} ${category} TS${code} ${text}`,
+        )
         .sort();
 
       await using checker = makeChecker(cwd);

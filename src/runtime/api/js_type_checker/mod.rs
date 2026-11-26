@@ -9,7 +9,7 @@ pub(crate) mod task;
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::cell::Cell;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
 use bun_jsc::{DOMURL, ErrorCode, JSGlobalObject, JSPromiseStrong, JSValue, Job, JsCell, JsThread};
@@ -94,8 +94,9 @@ pub(crate) struct TypeChecker {
     pub(crate) cwd: Box<[u8]>,
     desired: JsCell<DesiredState>,
     root: JsCell<RootState>,
-    /// Set by `close()`; snapshots hold a clone so they stop answering.
-    closed: Rc<Cell<bool>>,
+    closed: Cell<bool>,
+    /// The data of each delivered snapshot that is not yet disposed, which `close()` releases.
+    snapshots: JsCell<Vec<Weak<DataSlot>>>,
 }
 
 impl TypeChecker {
@@ -137,7 +138,8 @@ impl TypeChecker {
             cwd,
             desired: JsCell::new(DesiredState::default()),
             root: JsCell::new(RootState::default()),
-            closed: Rc::new(Cell::new(false)),
+            closed: Cell::new(false),
+            snapshots: JsCell::new(Vec::new()),
         };
         Ok(RefPtr::new(checker))
     }
@@ -146,8 +148,13 @@ impl TypeChecker {
         self.closed.get()
     }
 
-    pub(crate) fn closed_flag(&self) -> Rc<Cell<bool>> {
-        self.closed.clone()
+    pub(crate) fn hold_snapshot_data(&self, data: bun_type_checker::SnapshotData) -> Rc<DataSlot> {
+        let slot = Rc::new(JsCell::new(Some(Rc::new(HeldData::new(data)))));
+        self.snapshots.with_mut(|snapshots| {
+            snapshots.retain(|held| held.upgrade().is_some_and(|slot| slot.get().is_some()));
+            snapshots.push(Rc::downgrade(&slot));
+        });
+        slot
     }
 
     /// Parse and validate one `updateSnapshot` argument. Runs user JS
@@ -348,6 +355,10 @@ impl TypeChecker {
         }
         self.closed.set(true);
         self.desired.set(DesiredState::default());
+        let snapshots = self.snapshots.with_mut(std::mem::take);
+        for slot in snapshots.iter().filter_map(Weak::upgrade) {
+            slot.set(None);
+        }
         let pending = self.root.with_mut(|root| std::mem::take(&mut root.pending));
         let promise = JSPromiseStrong::init(cx.global());
         let value = promise.value();
@@ -408,9 +419,8 @@ struct ValidatedUpdate {
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct TypeCheckerSnapshot {
     ref_count: bun_ptr::RefCount<TypeCheckerSnapshot>,
-    /// `None` once disposed (or once the root was closed and this was read).
-    data: JsCell<Option<Rc<HeldData>>>,
-    root_closed: Rc<Cell<bool>>,
+    /// `None` once disposed or the root closed.
+    data: Rc<DataSlot>,
     cwd: Box<[u8]>,
 }
 
@@ -420,9 +430,6 @@ impl TypeCheckerSnapshot {
         &self,
         heap: &JsHeap<'a>,
     ) -> Result<Rc<HeldData>, bun_jsc::bindgen::Error<'a>> {
-        if self.root_closed.get() {
-            self.data.set(None);
-        }
         match self.data.get() {
             Some(data) => Ok(data.clone()),
             None => Err(disposed_error(heap)),
@@ -470,6 +477,8 @@ static LIVE_SNAPSHOT_DATA: AtomicUsize = AtomicUsize::new(0);
 /// The data of one delivered snapshot, counted while it is alive.
 pub(crate) struct HeldData(bun_type_checker::SnapshotData);
 
+type DataSlot = JsCell<Option<Rc<HeldData>>>;
+
 impl HeldData {
     fn new(data: bun_type_checker::SnapshotData) -> Self {
         LIVE_SNAPSHOT_DATA.fetch_add(1, Ordering::Relaxed);
@@ -497,14 +506,12 @@ pub(crate) fn snapshot_data_live_count() -> usize {
 
 pub(crate) fn make_snapshot_js(
     global: &JSGlobalObject,
-    data: bun_type_checker::SnapshotData,
+    data: Rc<DataSlot>,
     cwd: Box<[u8]>,
-    root_closed: Rc<Cell<bool>>,
 ) -> bun_jsc::JsResult<JSValue> {
     let snapshot = TypeCheckerSnapshot {
         ref_count: bun_ptr::RefCount::init(),
-        data: JsCell::new(Some(Rc::new(HeldData::new(data)))),
-        root_closed,
+        data,
         cwd,
     };
     Ok(js_snapshot::to_js(RefPtr::new(snapshot), global))

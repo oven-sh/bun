@@ -65,12 +65,9 @@ impl CheckTask {
             promise.reject_as_handled(global, super::closed_error_value(global))
         } else {
             match self.job.result {
-                Some(Ok(data)) => super::make_snapshot_js(
-                    global,
-                    data,
-                    root.cwd.clone(),
-                    root.closed_flag(),
-                )
+                Some(Ok(data)) => {
+                    super::make_snapshot_js(global, root.hold_snapshot_data(data), root.cwd.clone())
+                }
                 .and_then(|snapshot| promise.resolve(global, snapshot)),
                 Some(Err(e)) => promise.reject(global, Ok(super::convert::adapter_error_value(&e, global))),
                 None => {

@@ -214,4 +214,41 @@ describe.concurrent("run-cjs", () => {
       expect(result.exitCode).toBe(1);
     });
   });
+
+  describe.each([
+    ["commonjs", { cjs: "sloppy", cts: "sloppy", mjs: "strict", mts: "strict", other: "sloppy" }],
+    ["module", { cjs: "sloppy", cts: "sloppy", mjs: "strict", mts: "strict", other: "strict" }],
+  ])('a file that says nothing of its kind, in a package of "type": %j', (type, { other, ...byExtension }) => {
+    const modes = { ...byExtension, js: other, jsx: other, ts: other, tsx: other };
+    const mode = `console.log((function () { return this ? "sloppy" : "strict"; })());`;
+    const loads = {
+      "an import statement": (file: string) => `import "./${file}";`,
+      "import()": (file: string) => `await import("./${file}");`,
+      "require()": (file: string) => `require("./${file}");`,
+    };
+    test.each(Object.entries(loads))("is what its name or its package says to %s", async (_, load) => {
+      const files = Object.keys(modes).flatMap(extension => [
+        [`plain.${extension}`, mode],
+        [`requires.${extension}`, `require("node:fs"); ${mode}`],
+      ]);
+      using dir = tempDir("run-cjs-kind", {
+        ...Object.fromEntries(files),
+        "package.json": JSON.stringify({ type }),
+        "main.mjs": files.map(([file]) => load(file)).join("\n") + "\nexport {};",
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.mjs"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ modes: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+        modes: Object.values(modes).flatMap(mode => [mode, mode]),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
 });

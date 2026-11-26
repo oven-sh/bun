@@ -656,14 +656,10 @@ pub(crate) fn run_task(
         }
         task_tag::RuntimeTranspilerStore => in_features!(
             [RuntimeTranspiler],
-            (
-                el: &EventLoop = el,
-                global: &JSGlobalObject = global,
-                vm: &VirtualMachine = vm,
-            ) {
-                vm.transpiler_store.run_from_js_thread(el, global, vm.into());
+            (el: &EventLoop = el, vm: &VirtualMachine = vm) -> JsResult<()> {
+                vm.transpiler_store.run_from_js_thread(el)
             }
-        ),
+        )?,
 
         // ── hot-reload (early-returns from the drain loop) ───────────────
         task_tag::HotReloadTask => {

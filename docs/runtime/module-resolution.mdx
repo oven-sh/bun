@@ -163,7 +163,7 @@ const myStuff = require("./my-commonjs.cjs");
 
 ### Top level await
 
-The only exception to this rule is top-level await. You can't `require()` a file that uses top-level await, since the `require()` function is inherently synchronous.
+The only exception to this rule is top-level await. You can't `require()` a file that uses top-level await, since the `require()` function is inherently synchronous. It throws an error with the code `ERR_REQUIRE_ASYNC_MODULE`.
 
 Fortunately, very few libraries use top-level await, so this is rarely a problem. But if you're using top-level await in your application code, make sure that file isn't `require()`'d from elsewhere in your application. Use `import` or [dynamic `import()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/import) instead.
 
@@ -343,7 +343,7 @@ Bun also supports [Node.js-style subpath imports](https://nodejs.org/api/package
 
 <Accordion title="Low-level details of CommonJS interop in Bun">
 
-Bun's JavaScript runtime has native support for CommonJS. When Bun's JavaScript transpiler detects usages of `module.exports`, it treats the file as CommonJS. The module loader then wraps the transpiled module in a function shaped like this:
+Bun's JavaScript runtime has native support for CommonJS. When Bun's JavaScript transpiler detects usages of `module.exports`, it treats the file as CommonJS. A file that has neither those nor ES module syntax is what its extension says (`.cjs`, `.cts`, `.mjs`, `.mts`), or else the `"type"` in its `package.json`. The module loader then wraps the transpiled module in a function shaped like this:
 
 ```js
 (function (module, exports, require) {
@@ -354,6 +354,13 @@ Bun's JavaScript runtime has native support for CommonJS. When Bun's JavaScript 
 `module`, `exports`, and `require` are very much like the `module`, `exports`, and `require` in Node.js. Bun assigns these through a [`with scope`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/with) in C++. An internal `Map` stores the `exports` object to handle cyclical `require` calls before the module is fully loaded.
 
 Once the CommonJS module is successfully evaluated, Bun creates a Synthetic Module Record with the `default` ES Module [export set to `module.exports`](https://github.com/oven-sh/bun/blob/9b6913e1a674ceb7f670f917fc355bb8758c6c72/src/bun.js/bindings/CommonJSModuleRecord.cpp#L212-L213). If `module.exports` is an object, Bun also re-exports its keys as named exports.
+
+To know those keys, Bun runs an imported CommonJS module before it links the module that imports it. Modules still run in the order of the `import` statements, as in Node.js: the ES modules that are imported ahead of a CommonJS module run ahead of it. This has two visible effects:
+
+- If a later import is missing, or doesn't export a name, the modules ahead of it may have run by the time the error is thrown.
+- An ES module that imports one of its own importers can't run until that importer is linked, so it runs after the importer's CommonJS modules.
+
+In a cycle of `require()` and `import`, a CommonJS module can be imported before it has finished. The importer sees what the module has exported so far, and the rest once it finishes.
 
 Bun's bundler works differently: it wraps the CommonJS module in a `require_${moduleName}` function which returns the `module.exports` object.
 

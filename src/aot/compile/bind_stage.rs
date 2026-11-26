@@ -25,7 +25,6 @@ use crate::load::sources::{
     JSON_PARSE_ERROR_FOR_BLANK_TEXT, Sources, may_replace_evaluators, parsed_source,
 };
 use crate::load::{PerProject, ProjectId};
-use crate::module_keys::type_attribute_of;
 use crate::modules::{
     self, BindInput, BoundModules, DeferredExports, ImportBinding, LinkedProject, ModuleGraph,
     ModuleKind, ModuleRef, ModuleRequest, Shape, SiteAnswer,
@@ -1316,7 +1315,7 @@ fn keep_where_parsers_refused_data(
             &b"\""[..],
             paths.display_path,
             b"\" could not be parsed as ",
-            type_attribute_of(*loader).as_bytes(),
+            loader.type_attribute().as_bytes(),
         ]
         .concat();
         provider.keep_where_text_is_refused(&RefusedText {
@@ -1634,7 +1633,7 @@ impl Build<'_> {
         {
             self.started_workers.names_plugin = true;
             if self.options.load.runs_tests {
-                graph.set_lists_names_of_statements();
+                graph.list_names_of_statements(view.files());
             }
         }
         if project == ProjectId::Application && contents.stores_loader_functions {
@@ -1916,21 +1915,6 @@ impl Build<'_> {
         };
         graph.finish_plan(&in_parallel);
         steps.end_with(|| format!("{project_name}: finish the plan"));
-        if let Some((root, owner)) = graph.find_check_of_copy_that_nothing_stores() {
-            let path_of = |file: bun_sema::program::FileId| {
-                bstr::BStr::new(view.sources.module_paths(file).display_path)
-            };
-            let owner = match owner {
-                crate::modules::ModuleRef::File(file) | crate::modules::ModuleRef::Facade(file) => {
-                    path_of(file)
-                }
-                _ => bstr::BStr::new("a module that is no file"),
-            };
-            panic!(
-                "{} would look for a name of {owner} before anything has run that file",
-                path_of(root),
-            );
-        }
         BoundGraph {
             graph,
             left_out,

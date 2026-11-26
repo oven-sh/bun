@@ -209,7 +209,6 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     const auto& builtinNames = WebCore::clientData(vm)->builtinNames();
     const Identifier& specifierIdentifier = builtinNames.specifierPublicName();
     const Identifier& attributesIdentifier = builtinNames.attributesPublicName();
-    const Identifier& hostDefinedImportTypeIdentifier = builtinNames.hostDefinedImportTypePublicName();
 
     // JSC dedupes requests by specifier and type and keeps the first declaration's, so a declaration's position isn't its request's index.
     ModuleMap<ImportAttributesListNode*> attributesLists;
@@ -236,7 +235,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         JSObject* requestObject = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
         requestObject->putDirect(vm, specifierIdentifier, specifierValue);
 
-        WTF::String attributesTypeString = "unknown"_str;
+        WTF::String attributesTypeString;
 
         WTF::HashMap<WTF::String, WTF::String> attributeMap;
         JSObject* attributesObject = constructEmptyObject(globalObject);
@@ -263,17 +262,13 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
                 attributesType = JSC::jsString(vm, attributesTypeString);
                 break;
             default:
-                attributesType = JSC::jsNumber(static_cast<uint8_t>(request.m_attributes->type()));
+                attributesTypeString = request.m_attributes->hostDefinedImportType();
+                attributesType = JSC::jsString(vm, attributesTypeString);
                 break;
             }
 
             attributeMap.set("type"_s, WTF::move(attributesTypeString));
             Bun::putDirectNamed(vm, attributesObject, "type"_s, attributesType);
-
-            if (const String& hostDefinedImportType = request.m_attributes->hostDefinedImportType(); !hostDefinedImportType.isEmpty()) {
-                attributesObject->putDirect(vm, hostDefinedImportTypeIdentifier, JSC::jsString(vm, hostDefinedImportType));
-                attributeMap.set("hostDefinedImportType"_s, hostDefinedImportType);
-            }
         }
 
         if (ImportAttributesListNode* attributesList = attributesLists.get(ModuleMapKey { request.m_specifier.impl(), request.m_attributes ? request.m_attributes->type() : ScriptFetchParameters::Type::JavaScript })) {
@@ -368,19 +363,17 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
             // specifiers/moduleNatives were built from requestedModules() in
             // [kLink], so the indices line up — pass the original ModuleRequest
             // (specifier + attributes) so a `with { type: "json" }` /
-            // HostDefined import ends up in the right (specifier, type) bucket
+            // host-defined import ends up in the right (specifier, type) bucket
             // for innerModuleLinking's typed lookup.
-            if (i < requested.size()) [[likely]]
-                record->setImportedModule(globalObject, requested[i], resolvedRecord);
-            else
-                record->setImportedModule(globalObject, JSC::AbstractModuleRecord::ModuleRequest { Identifier::fromString(vm, specifier), nullptr }, resolvedRecord);
+            auto request = i < requested.size() ? requested[i] : JSC::AbstractModuleRecord::ModuleRequest { Identifier::fromString(vm, specifier), nullptr };
+            record->setImportedModule(globalObject, request, resolvedRecord);
             RETURN_IF_EXCEPTION(scope, {});
             {
                 // NodeVMModule::visitChildrenImpl iterates m_resolveCache.values()
                 // on the GC thread under cellLock(); take the same lock here so a
                 // set()-triggered rehash can't free the bucket array mid-iteration.
                 WTF::Locker locker { cellLock() };
-                m_resolveCache.set(WTF::move(specifier), WriteBarrier<JSObject> { vm, this, moduleNative });
+                m_resolveCache.set(JSC::AbstractModuleRecord::StarExportEntry { request.m_specifier.impl(), request.type() }, WriteBarrier<JSObject> { vm, this, moduleNative });
             }
             RETURN_IF_EXCEPTION(scope, {});
         }

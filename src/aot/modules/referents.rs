@@ -388,7 +388,12 @@ impl<'s> ReferentContext<'s> for LinkedProject<'_, 's> {
             (RequireResult::ModuleExports, ModuleRef::File(loaded)) => {
                 Some(LoadedValue::ModuleExports(loaded))
             }
-            (RequireResult::NamespaceIfImported, _) => None,
+            (
+                RequireResult::NamespaceIfImported
+                | RequireResult::HeldDefaultExport
+                | RequireResult::HeldNamespace,
+                _,
+            ) => None,
             (
                 RequireResult::DefaultExport,
                 ModuleRef::Inner { .. }

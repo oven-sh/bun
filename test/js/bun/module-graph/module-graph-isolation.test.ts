@@ -4151,6 +4151,7 @@ test("ModuleGraph isolation: every node: builtin module is classified", () => {
     diagnostics_channel: "host",
     inspector: "host",
     "inspector/promises": "host",
+    "node:test": "host",
     process: "host",
     readline: "host", // process.stdin
     "readline/promises": "host",

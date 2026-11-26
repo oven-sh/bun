@@ -34,6 +34,7 @@ const privateGlobalFunctions = [
   "requireCommonJS",
   "requireESM",
   "requireNativeModule",
+  "requireOtherFormOfFile",
   "resolveSync",
   "toClass",
   "webStreamClosedPromise",

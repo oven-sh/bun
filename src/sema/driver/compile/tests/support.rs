@@ -700,6 +700,10 @@ impl CodeHost for SlowToQueueAgain<'_> {
         }
         false
     }
+
+    fn may_any_file_become_main_module(&self) -> bool {
+        self.times_queued("sets-main.ts") != 0
+    }
 }
 
 #[derive(Default)]

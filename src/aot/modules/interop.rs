@@ -5,6 +5,7 @@ pub use crate::ir::generated::{ImportPhase, ModuleKind, RequireResult, Synthetic
 
 use crate::builtins::table;
 use crate::load::{SourceKind, Sources};
+use bun_ast::Loader;
 use bun_sema::atom::known;
 use bun_sema::bind::Bound;
 use bun_sema::module_format::ModuleFormat;
@@ -17,6 +18,7 @@ pub struct Interop {
     pub export_rule: SyntheticExportRule,
     pub require_result: RequireResult,
     pub loader_returns_namespace: bool,
+    pub type_of_other_form_of_file: Option<Loader>,
 }
 
 impl Interop {
@@ -62,6 +64,7 @@ impl Interop {
             export_rule,
             require_result,
             loader_returns_namespace: false,
+            type_of_other_form_of_file: None,
         }
     }
 

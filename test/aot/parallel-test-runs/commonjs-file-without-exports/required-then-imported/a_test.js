@@ -1,11 +1,11 @@
 const { expect, test } = require("bun:test");
 
-test("a require() and an import() run their own modules", async () => {
-  expect(Object.keys(require("./plain.cjs"))).toEqual([]);
-  expect(globalThis.modes).toEqual(["sloppy"]);
+test("a require() and an import() share one run of the file", async () => {
+  const required = require("./plain.cjs");
+  expect(Object.keys(required)).toEqual([]);
   const imported = await import("./plain.cjs");
-  expect(globalThis.modes).toEqual(["sloppy", "strict"]);
+  expect(imported.default).toBe(required);
   expect(await import("./plain.cjs")).toBe(imported);
-  require("./plain.cjs");
-  expect(globalThis.modes).toEqual(["sloppy", "strict"]);
+  expect(require("./plain.cjs")).toBe(required);
+  expect(globalThis.modes).toEqual(["sloppy"]);
 });

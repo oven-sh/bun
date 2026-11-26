@@ -3,8 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-// `require("./x.json")` answers the parsed object, unless the loader of ES modules holds the file by then: then it answers the namespace object, with "default".
-// A test run has an entry point for each test file, and a realm begins with one of them: what another test file imports the loader of this realm does not hold.
+// `require("./x.json")` answers the parsed object, whether or not the loader of ES modules holds the file by then.
 const files: Record<string, string> = {
   "package.json": `{ "type": "module" }`,
   "tsconfig.json": "{}",
@@ -85,8 +84,6 @@ test("require() of a JSON file answers as under plain bun test", async () => {
   expect(plain.stdout).toContain(
     "s3: nothing of this realm imports it: [object Object] name,list | again: [object Object] name,list",
   );
-  expect(plain.stdout).toContain(
-    "s2: a module that runs ahead of the importer: [object Module] default,list,name | s2",
-  );
+  expect(plain.stdout).toContain("s2: a module that runs ahead of the importer: [object Object] name,list | s2");
   expect(await runTests(String(dir), "--aot")).toEqual(plain);
 }, 120_000);

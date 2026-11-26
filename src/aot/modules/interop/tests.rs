@@ -269,7 +269,7 @@ fn json_file_exports_every_key_where_a_package_is_left_out() {
         let every_key = [&b"a"[..], b"b-c", b"default", b"x"];
         assert_eq!(export_names(graph, input, "data.json"), every_key);
         let data = graph.interop(ModuleRef::File(file_named(input, "data.json")));
-        assert_eq!(data.require_result, RequireResult::NamespaceIfImported);
+        assert_eq!(data.require_result, RequireResult::HeldDefaultExport);
     });
 }
 

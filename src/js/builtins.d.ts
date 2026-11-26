@@ -392,7 +392,11 @@ declare function $extname(): TODO;
 declare function $fatal(): TODO;
 declare function $format(): TODO;
 // `requirer`: a CommonJS module; the registry is its Bun.ModuleGraph's loader's. Omitted: the global object's.
-declare function $esmNamespaceForCjs(key: string, requirer?: JSCommonJSModule): any | undefined;
+declare function $esmNamespaceForCjs(
+  key: string,
+  requirer?: JSCommonJSModule,
+  ofOtherFormOfFile?: boolean,
+): any | undefined;
 declare function $esmRegistryDelete(key: string, requirer?: JSCommonJSModule): boolean;
 declare function $esmRegistryEvaluatedKeys(requirer?: JSCommonJSModule): string[];
 declare function $esmRegistryHasEvaluated(key: string, requirer?: JSCommonJSModule): boolean;
@@ -434,12 +438,18 @@ declare function $requireCommonJS(
   id: string,
   mod: JSCommonJSModule,
   parentFilename: unknown,
-  userArgumentCount: number,
-  userOptions: unknown,
+  type: unknown,
+  request: string,
 ): JSCommonJSModule | -1;
+/** Undefined unless `type` makes something else of the file than its name does. That is another module. */
+declare function $requireOtherFormOfFile(id: string, type: unknown, requirer: unknown): any;
 declare function $requireESM(path: string, requirer?: JSCommonJSModule): any;
+/** Undefined if no builtin module has that name. */
 declare function $requireNativeModule(id: string): any;
 declare const $requireMap: Map<string, JSCommonJSModule> & {
+  /** The module that ran as the main one, and the path it ran under. */
+  $main: JSCommonJSModule | undefined;
+  $filename: string | null | undefined;
   $traceRequire: ((parent: JSCommonJSModule, id: string, options: unknown) => unknown) | undefined;
 };
 declare const $internalModuleRegistry: InternalFieldObject<any[]>;
@@ -452,6 +462,7 @@ declare function $resolveSync(
   paths?: string[],
   parentModule?: JSCommonJSModule,
   resolveFilenameOptions?: unknown,
+  requireMap?: RequireMap,
 ): string;
 declare function $self(): TODO;
 declare function $size(): TODO;
@@ -570,7 +581,6 @@ declare interface Function {
 
 interface String {
   $charCodeAt: String["charCodeAt"];
-  $substr: String["substr"];
   // add others as needed
 }
 

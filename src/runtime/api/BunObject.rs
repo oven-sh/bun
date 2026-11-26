@@ -966,6 +966,12 @@ pub(crate) fn bun_resolve_sync_with_source_if_exists(
         return JSValue::ZERO;
     };
     jsc::to_js_host_call(global, || {
+        // A mock of "os" stands under `node:os`, where it is found before a plugin is asked.
+        if let Some(key) = jsc::module_loader::key_of_builtin_in_namespace(&specifier_str.to_utf8())
+            && !specifier_str.eql_utf8(key)
+        {
+            return BunString::static_(key).into_js(global);
+        }
         match resolve_with_args::<true>(
             global,
             &specifier_str,

@@ -1,3 +1,4 @@
+// Differs from `bun run` by design: docs/compiler/compatibility.mdx, "A CommonJS file that has thrown runs again".
 // a function of the entry point loads by a name that is known only at run time, and the name is the entry point's
 globalThis.runs = (globalThis.runs ?? 0) + 1;
 let total = 0;
@@ -13,3 +14,7 @@ if (globalThis.runs === 1) {
   throw new Error("first run");
 }
 exports.value = globalThis.runs;
+/* Output:
+caught: first run
+again threw: first run true 1 1
+*/

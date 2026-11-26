@@ -201,6 +201,14 @@ class ResolvedSourceBytecode {
 
 public:
     ResolvedSourceBytecode() = default;
+    ResolvedSourceBytecode(ResolvedSourceBytecode&& other)
+        : m_bytes(std::exchange(other.m_bytes, nullptr))
+        , m_size(other.m_size)
+        , m_owned(other.m_owned)
+        , m_persistent(other.m_persistent)
+        , m_entryOffset(other.m_entryOffset)
+    {
+    }
     ~ResolvedSourceBytecode()
     {
         if (m_owned && m_bytes)

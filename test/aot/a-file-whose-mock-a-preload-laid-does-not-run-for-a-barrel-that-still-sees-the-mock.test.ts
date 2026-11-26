@@ -21,25 +21,22 @@ async function linesOf(project: Record<string, string>, ...flags: string[]) {
   return stdout.split("\n").filter(line => line.startsWith("SAID"));
 }
 
-test.failing(
-  "a CommonJS file, and the test file imports the barrel by a statement: it prints what bun test prints: a wrong answer today: under `bun test --aot` the file has run once, where `bun test` never runs it",
-  async () => {
-    const project = projectOf(
-      "gauge.cjs",
-      `import { vi } from "bun:test";
+test("a CommonJS file, and the test file imports the barrel by a statement", async () => {
+  const project = projectOf(
+    "gauge.cjs",
+    `import { vi } from "bun:test";
 vi.doMock("./gauge.cjs", () => ({ lent: 1 }));
 await import("./porch.js");
 vi.doUnmock("./gauge.cjs");
 `,
-      `import { test } from "bun:test";
+    `import { test } from "bun:test";
 import * as early from "./porch.js";
 test("the barrel still shows the mock", () => {
   console.log("SAID", globalThis.runs ?? 0, Object.keys(early).sort().join());
 });
 `,
-    );
-    const plain = await linesOf(project);
-    expect(plain).toEqual(["SAID 0 lent"]);
-    expect(await linesOf(project, "--aot")).toEqual(plain);
-  },
-);
+  );
+  const plain = await linesOf(project);
+  expect(plain).toEqual(["SAID 0 lent"]);
+  expect(await linesOf(project, "--aot")).toEqual(plain);
+});

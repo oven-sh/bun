@@ -66,8 +66,6 @@ pub struct ModuleGraph {
     pub(super) reexport_paths: super::reexport_paths::GuardedReexportPaths,
     pub(super) data_linked_by_names_alone: Box<[FileId]>,
     pub(super) forms_require_checks_first: Vec<(FileId, FileId)>,
-    /// The ES modules of the files that are compiled as CommonJS files too.
-    pub(super) module_forms: Box<[FileId]>,
     pub(super) folders_of_databases: Vec<FileId>,
     pub(super) star_names_left_out: StarNamesLeftOut,
     pub(super) names_laid_on_object_prototype: Vec<Box<[u8]>>,
@@ -786,28 +784,6 @@ impl ModuleGraph {
         &forms[start..start + count]
     }
 
-    pub fn is_module_form(&self, file: FileId) -> bool {
-        self.module_forms.binary_search(&file).is_ok()
-    }
-
-    /// Whether import() of the code may answer with what require() has loaded under a type.
-    pub fn may_typed_form_answer_import(&self, module: ModuleRef) -> bool {
-        let ModuleRef::File(imported) = module else {
-            return false;
-        };
-        let is_data = |file: FileId| {
-            self.find_row(file)
-                .is_some_and(|row| row.interop.kind == ModuleKind::Data)
-        };
-        let all = &self.forms_require_checks_first;
-        let file = match self.is_module_form(imported) {
-            true => (all.iter().find(|it| it.1 == imported)).map_or(imported, |it| it.0),
-            false => imported,
-        };
-        let forms = self.forms_require_checks_first(ModuleRef::File(file));
-        !is_data(file) && forms.iter().any(|it| is_data(it.1))
-    }
-
     pub fn is_every_export_asked_for(&self, module: ModuleRef) -> bool {
         let is_left_to_loader =
             |file: FileId| self.find_row(file).is_some_and(|row| row.is_left_to_loader);
@@ -971,24 +947,8 @@ impl ModuleGraph {
         debug_assert!(external_kinds.is_sorted_by(|a, b| external_key(a.0) < external_key(b.0)));
         self.mocked_library_modules.sort_unstable();
         self.mocked_library_modules.dedup();
-        self.module_forms = self.list_module_forms();
         self.settle_holders();
         self
-    }
-
-    fn list_module_forms(&self) -> Box<[FileId]> {
-        let is_kind = |file: FileId, kind: ModuleKind| {
-            self.find_row(file)
-                .is_some_and(|row| row.interop.kind == kind)
-        };
-        let forms = self.forms_require_checks_first.iter();
-        let forms = forms.filter(|&&(file, form)| {
-            is_kind(file, ModuleKind::CommonJs) && is_kind(form, ModuleKind::SourceText)
-        });
-        let mut forms: Vec<FileId> = forms.map(|it| it.1).collect();
-        forms.sort_unstable();
-        forms.dedup();
-        forms.into_boxed_slice()
     }
 
     pub fn names_left_to_loader(

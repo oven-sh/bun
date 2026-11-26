@@ -514,7 +514,7 @@ fn module_type_follows_extension_and_package() {
         };
         assert_eq!(module_type("/p/a.js"), (Esm, true));
         assert_eq!(module_type("/p/b.cjs"), (CommonJs, true));
-        assert_eq!(module_type("/p/c.tsx"), (Unknown, true));
+        assert_eq!(module_type("/p/c.tsx"), (Esm, true));
         assert_eq!(module_type("/q/a.js"), (Unknown, false));
         assert_eq!(module_type("/q/b.mts"), (Esm, false));
     });

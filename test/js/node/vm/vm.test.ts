@@ -1094,10 +1094,28 @@ test("SourceTextModule.link passes each request's import attributes when a speci
   expect(seen).toEqual([
     ["a", {}],
     ["j", { type: "json" }],
-    ["c", { type: "css", hostDefinedImportType: "css" }],
+    ["c", { type: "css" }],
     ["i", { "0": "zero" }],
   ]);
   expect((m.namespace as any).r).toBe("1,1");
+});
+
+test("SourceTextModule links and evaluates a module for each type of one specifier", async () => {
+  const seen: Record<string, string>[] = [];
+  const m = new SourceTextModule(
+    `import plain from 'a'; import toml from 'a' with { type: 'toml' }; import yaml from 'a' with { type: 'yaml' };
+     export { default as text } from 'a' with { type: 'text' }; export * from 'a' with { type: 'json' };
+     export const r = [plain, toml, yaml];`,
+    { identifier: "root" },
+  );
+  await m.link((_specifier: string, _referrer: any, { attributes }: any) => {
+    seen.push({ ...attributes });
+    const type = JSON.stringify(attributes.type ?? "none");
+    return new SourceTextModule(`export default ${type}; export const named = ${type};`);
+  });
+  await m.evaluate();
+  expect(seen).toEqual([{}, { type: "toml" }, { type: "yaml" }, { type: "text" }, { type: "json" }]);
+  expect({ ...m.namespace }).toEqual({ r: ["none", "toml", "yaml"], text: "text", named: "json" });
 });
 
 // Several SourceTextModules with one identifier and one source text are several records of the same module. Each reads

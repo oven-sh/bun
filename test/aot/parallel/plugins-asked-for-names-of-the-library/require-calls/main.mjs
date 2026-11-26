@@ -1,3 +1,4 @@
+// Reference: bun build --compile
 Bun.plugin({
   name: "swap",
   setup(build) {

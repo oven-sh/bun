@@ -30,13 +30,13 @@ const files = {
     import typed from "./typed.json" with { type: "json" };
     import depth from "./depth.json" with { type: "yaml" };
     console.log("no type:", below.plain === plain, "json:", below.typed === typed);
-    console.log("yaml nearer than text:", below.depth === depth, typeof below.depth, typeof depth);
+    console.log("yaml beside text:", below.depth === depth, typeof below.depth, typeof depth);
     typed.a = 2;
     console.log("stored by the test file, read by the other:", below.readTyped());`),
 };
 const printed = [
   "no type: true json: true",
-  "yaml nearer than text: true object object",
+  "yaml beside text: false string object",
   "stored by the test file, read by the other: 2",
 ];
 
@@ -60,10 +60,9 @@ for (const [form, flags, words] of [
     240_000,
   );
 
-// Over layers the test file is a program of its own, and below.mjs lies in the program below it. No plugin is needed for that. typed.json: the program below holds it under its
-// type. depth.json: which of its two types comes first shows when the test file runs, so neither program holds it: the loader does, as under `bun test`.
+// No plugin is needed for that.
 test.concurrent(
-  "over two layers, without a plugin",
+  "without a plugin",
   async () => {
     const { "a.test.ts": _, ...withoutPlugin } = files;
     using dir = tempDir("one-object-of-a-typed-data-file-layers", withoutPlugin);
@@ -74,7 +73,7 @@ test.concurrent(
   240_000,
 );
 
-// Each test file has a realm of its own under --isolate, so each decides anew what below.mjs gets: the build cannot bind the statement of below.mjs to one form of the file.
+// Each type of a file is a module of its own, so what a test file asks for does not change what below.mjs gets.
 const twoTypes = {
   "package.json": `{}`,
   "depth.json": `a = 1\n`,
@@ -91,14 +90,13 @@ const twoTypes = {
     import { held } from "./below.mjs";
     console.log("text alone:", typeof held);`),
 };
-// So the loader of the run time links every statement that asks for such a file: parallel-test-runs/types-of-one-file-that-test-files-ask-for.
-for (const [form, words] of [["over two layers", "TestRunLayers:0"]] as const)
+for (const [form, words] of [["as one program", "TestRunLayers:0"]] as const)
   test.concurrent(
     `two test files ask for two types of one file, ${form}`,
     async () => {
       using dir = tempDir("two-test-files-two-types", twoTypes);
       const expected = {
-        printed: ["yaml first: string string true", "toml first: object object true", "text alone: string"],
+        printed: ["yaml first: string string false", "toml first: object string false", "text alone: string"],
         exitCode: 0,
       };
       expect(await runTests(String(dir), ["--isolate"])).toEqual(expected);
@@ -107,9 +105,7 @@ for (const [form, words] of [["over two layers", "TestRunLayers:0"]] as const)
     240_000,
   );
 
-// `export { default as near } from "./depth.toml" with { type: "yaml" }` hands the loader its type as an import statement does, so it too decides what a file loaded later gets,
-// however the run is cut into layers. Plain drops the type of an export statement: what is expected is what it prints for `import near from ".."; export { near }`.
-// below.mjs is loaded by a call: of two files that load side by side, plain lets the one that is read first decide.
+// `export { default as near } from "./depth.toml" with { type: "yaml" }` hands the loader its type as an import statement does.
 const passedOn = (statements: string) => ({
   "package.json": `{}`,
   "depth.toml": `a = 1\n`,
@@ -145,13 +141,14 @@ for (const [form, words] of [["as one program", "TestRunLayers:0"]] as const)
       using withExports = tempDir("typed-export-from", exported);
       const expected = {
         printed: [
-          'yaml before text: "a = 1" true',
-          'text before toml: "a = 1\\n" true',
-          'toml before text: {"a":1} true',
+          'yaml before text: "a = 1" false',
+          'text before toml: "a = 1\\n" false',
+          'toml before text: {"a":1} false',
         ],
         exitCode: 0,
       };
       expect(await runTests(String(withImports), ["--isolate"])).toEqual(expected);
+      expect(await runTests(String(withExports), ["--isolate"])).toEqual(expected);
       expect(await runTests(String(withExports), ["--aot", "--isolate"], words)).toEqual(expected);
     },
     240_000,

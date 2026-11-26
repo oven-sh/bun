@@ -96,7 +96,7 @@ if (globalThis.never) await import("./other.js?0");
 );
 
 test.each(ways)(
-  "the first CommonJS file that the loader comes to in a later test file has no parent: $way",
+  "the first CommonJS file that the loader comes to in a later test file is no main module: $way",
   async ({ words }) => {
     using dir = tempDir("aot-test-file-binds-late", {
       "package.json": `{ "type": "module" }`,
@@ -110,7 +110,7 @@ test("may take it out", () => { delete require.cache[require.resolve("./c.cjs")]
     });
     const flags = ["./a.test.js", "./b.test.js"];
     const plain = await printed(String(dir), flags, {});
-    expect(plain).toEqual({ lines: ["first object true true"], counts: [" 3 pass", " 0 fail"], exitCode: 0 });
+    expect(plain).toEqual({ lines: ["first undefined false false"], counts: [" 3 pass", " 0 fail"], exitCode: 0 });
     expect(await printed(String(dir), ["--aot", ...flags], { BUN_DEBUG_TEST_AOT_WORDS: words })).toEqual(plain);
   },
 );

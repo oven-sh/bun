@@ -110,17 +110,6 @@ impl ImportEdges {
         cut_off
     }
 
-    fn mark_files_linked_from(&self, root: FileId) -> Vec<bool> {
-        let mut is_linked = vec![false; self.by_importer.len()];
-        let mut pending = vec![root];
-        while let Some(file) = pending.pop() {
-            if !replace(&mut is_linked[file.idx()], true) {
-                pending.extend(self.kept_targets(file));
-            }
-        }
-        is_linked
-    }
-
     fn find_dropped_edges_to(&self, importer: FileId, answer: &[FileId]) -> Vec<(FileId, FileId)> {
         let mut direct = self.by_importer[importer.idx()].iter();
         if let Some(edge) = direct.find(|edge| answer.contains(&edge.target)) {
@@ -263,16 +252,10 @@ impl ModuleGraph {
         is_alive: &dyn Fn(FileId) -> bool,
         needed: &mut FxHashSet<(FileId, FileId)>,
     ) {
-        let roots = self.list_roots_left_to_loader();
-        let roots: Vec<FileId> = roots
-            .filter(|&root| is_alive(root) && !self.commonjs().checked_copies(root).is_empty())
-            .collect();
-        if roots.is_empty() {
-            return;
-        }
+        let alive = (self.record_files().iter().copied()).filter(|&file| is_alive(file));
         let mut facades: FxHashMap<SyntheticExportId, Vec<FileId>> = FxHashMap::default();
-        for &file in self.record_files() {
-            if is_alive(file) && self.kind(file) == ModuleKind::CommonJs {
+        for file in alive.clone() {
+            if self.kind(file) == ModuleKind::CommonJs {
                 for &copy in self.commonjs().copies(file) {
                     facades.entry(copy).or_default().push(file);
                 }
@@ -281,15 +264,9 @@ impl ModuleGraph {
         let mut index_by_facades: FxHashMap<&[FileId], u32> = FxHashMap::default();
         let mut answers: Vec<&[FileId]> = Vec::new();
         let mut lookups = Vec::new();
-        let mut is_listed = vec![false; self.failures().len()];
-        for &root in &roots {
-            for &(copy, failure) in self.commonjs().checked_copies(root) {
-                if replace(&mut is_listed[failure.0 as usize], true) {
-                    continue;
-                }
-                let importer = self.failure(failure).importer;
-                if let Some(facades) = facades.get(&copy)
-                    && is_alive(importer)
+        for importer in alive {
+            for (copy, _) in self.commonjs().checked_copies(importer) {
+                if let Some(facades) = facades.get(copy)
                     && edges.may_become_unreachable(importer, facades)
                 {
                     let answer = *index_by_facades.entry(facades).or_insert_with(|| {
@@ -300,29 +277,8 @@ impl ModuleGraph {
                 }
             }
         }
-        let cut_off = edges.find_cut_off(lookups, &answers).into_iter();
-        let cut_off: FxHashSet<(FileId, &[FileId])> = cut_off
-            .map(|lookup| (lookup.importer, answers[lookup.answer as usize]))
-            .collect();
-        if cut_off.is_empty() {
-            return;
-        }
-        for root in roots {
-            let checks = self.commonjs().checked_copies(root).iter();
-            let checks = checks.filter_map(|&(copy, failure)| {
-                let check = (self.failure(failure).importer, &facades.get(&copy)?[..]);
-                cut_off.contains(&check).then_some(check)
-            });
-            let checks: FxHashSet<(FileId, &[FileId])> = checks.collect();
-            if checks.is_empty() {
-                continue;
-            }
-            let is_linked = edges.mark_files_linked_from(root);
-            for (importer, facades) in checks {
-                if is_linked[importer.idx()] && !facades.iter().any(|it| is_linked[it.idx()]) {
-                    needed.extend(edges.find_dropped_edges_to(importer, facades));
-                }
-            }
+        for Lookup { importer, answer } in edges.find_cut_off(lookups, &answers) {
+            needed.extend(edges.find_dropped_edges_to(importer, answers[answer as usize]));
         }
     }
 }

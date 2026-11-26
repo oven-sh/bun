@@ -1,12 +1,11 @@
 // The test file imports first.cjs, which requires back.mjs, which imports the test file and second.cjs. second.cjs requires the test file.
-// second.cjs lies beside the test file, not below it: the load for that require settles nothing that the load of back.mjs waits for, so neither ends inside it,
-// and `bun test` throws "require() async module". Both modules run when second.cjs has returned.
+// The imports of back.mjs run in their order, so the test file has run when second.cjs asks for it.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-test("a compiled test run throws where bun test throws", async () => {
+test("a compiled test run keeps the order of bun test", async () => {
   using dir = tempDir("aot-a-file-beside-the-test-file-requires-it", {
     "package.json": `{ "name": "p" }`,
     "ring.test.mjs": `import "./first.cjs";
@@ -34,7 +33,7 @@ globalThis.lines.push("second ends");
 `,
   });
   const order =
-    "first begins, second begins, second caught TypeError, second ends, the test file runs, back runs, first got back, first ends";
+    "first begins, the test file runs, second begins, second got 42, second ends, back runs, first got back, first ends";
   for (const flags of [[], ["--aot"]]) {
     const { stdout, exitCode } = await run([bunExe(), "test", ...flags, "./ring.test.mjs"], String(dir), bunEnv);
     expect({ flags, lines: stdout.split("\n").filter(line => line.startsWith("the order")), exitCode }).toEqual({

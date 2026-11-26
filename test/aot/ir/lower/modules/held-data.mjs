@@ -1,9 +1,9 @@
-// require() answers the namespace object of a file of data once an import has loaded the file, and its value until then. Where both name the file, the run time says which,
-// and the namespace object has every key. A file that only one of them names has one answer. A file that stands for a string answers `{ default }`, held or not.
+// require() answers the value of a file of data: the one that an import holds, if one has loaded the file. Where both name the file, the run time says which.
+// A file that only one of them names has one answer. A file that stands for a string answers `{ default }`, held or not.
 // RUN(BOTH): link
-// BOTH: module {{*}}both.json" kind=Data requireResult=NamespaceIfImported {{*}}exports=[{name="a" variable=[[a]]}, {name="default"
+// BOTH: module {{*}}both.json" kind=Data requireResult=HeldDefaultExport {{*}}exports=[{name="a" variable=[[a]]}, {name="default"
 // RUN(CALL): link
-// CALL: module {{*}}later.toml" kind=Data requireResult=NamespaceIfImported
+// CALL: module {{*}}later.toml" kind=Data requireResult=HeldDefaultExport
 // RUN(TEXT): link
 // TEXT: module {{*}}note.txt" kind=Data body=
 // RUN(IMPORTED): link

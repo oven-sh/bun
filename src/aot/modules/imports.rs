@@ -14,7 +14,7 @@ use super::names_of_mocks::{MockReader, NamesOfMocks};
 use super::namespace_members::StandsFor;
 use super::order::{EvaluationOrder, PlannedSites};
 use super::plan::Member;
-use super::requests::{FileScan, ScannedSite, Scans, import_call_type_kind, import_phase};
+use super::requests::{FileScan, ScannedSite, Scans, import_phase, may_have_unread_type};
 use super::synthetic_exports::{KnownMembers, SyntheticExports};
 use super::test_replacements::SpiesOnUnknownObjects;
 use super::unloadable::find_files_that_sites_name;
@@ -720,14 +720,16 @@ impl<'a, 's> FileBinder<'a, 's> {
             let ImportSiteKind::ImportCall(call) = site.kind else {
                 continue;
             };
+            if !may_have_unread_type(hir, site, call) {
+                continue;
+            }
             let targets: Vec<ModuleRef> = match answer {
                 &ScannedSite::Module(module) => vec![module],
                 ScannedSite::Candidates(range) => scan.modules_spelled_in(range).collect(),
                 ScannedSite::AllModules | ScannedSite::Unresolved | ScannedSite::Erased => continue,
             };
-            let kind = import_call_type_kind(context.files, hir, site, call);
             for target in targets {
-                for sibling in context.modules.sibling_forms_of_kind(target, kind) {
+                for sibling in context.modules.sibling_forms_of(target) {
                     self.look_at(StandsFor::ImportedNamespace(sibling));
                 }
             }

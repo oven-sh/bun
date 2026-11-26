@@ -170,10 +170,6 @@ impl EvaluationOrder {
         self.has(&self.is_half_at_link, module)
     }
 
-    pub(super) fn is_prefix_root(&self, file: FileId) -> bool {
-        self.parts.prefix_roots.binary_search(&file).is_ok()
-    }
-
     pub(super) fn is_code_of_program(&self, module: ModuleRef) -> bool {
         self.has(&self.parts.is_code_of_program, module)
     }
@@ -207,9 +203,7 @@ pub(super) struct OrderParts {
     pub may_fail_in_require: Vec<bool>,
     pub is_importable_during_evaluation: Vec<bool>,
     pub makes_values_at_load: Vec<bool>,
-    pub is_imported_as_es_module: Vec<bool>,
     pub prefix_roots: Vec<FileId>,
-    pub required_prefix_roots: Vec<FileId>,
     pub texts_that_spell_files: Option<Vec<TextThatSpellsFile>>,
 }
 
@@ -227,9 +221,7 @@ impl OrderParts {
             may_fail_in_require: vec![false; file_count],
             is_importable_during_evaluation: vec![false; file_count],
             makes_values_at_load: vec![false; file_count],
-            is_imported_as_es_module: vec![false; file_count],
             prefix_roots: Vec::new(),
-            required_prefix_roots: Vec::new(),
             texts_that_spell_files: None,
         }
     }
@@ -857,6 +849,49 @@ fn list_what_file_may_require<'a>(
         .chain(found)
 }
 
+/// The imports that a CommonJS file may follow while their importer waits for it.
+fn find_es_modules_that_may_run_ahead_of_link(
+    scans: &Scans,
+    modules: &ModuleSet,
+    kind_of: &dyn Fn(ModuleRef) -> Option<(FileId, ModuleKind)>,
+) -> Vec<u32> {
+    let files = modules.compiled_files.iter();
+    let count = files.map(|file| file.idx() + 1).max().unwrap_or(0);
+    let mut imports = vec![Vec::new(); count];
+    let mut importers = vec![Vec::new(); count];
+    let mut commonjs_files = Vec::new();
+    for &file in &modules.compiled_files {
+        match kind_of(ModuleRef::File(file)) {
+            Some((_, ModuleKind::SourceText)) => {}
+            Some((_, ModuleKind::CommonJs)) => {
+                commonjs_files.push(file.0);
+                continue;
+            }
+            _ => continue,
+        }
+        for request in &scans.of(file).requests {
+            if let Some((target, ModuleKind::SourceText | ModuleKind::CommonJs)) =
+                kind_of(request.target)
+            {
+                imports[file.idx()].push(target.0);
+                importers[target.idx()].push(file.0);
+            }
+        }
+    }
+    let leads_to_commonjs = find_reached(&importers, commonjs_files);
+    let is_on_cycle = find_modules_on_cycles(&imports).0;
+    let mut found = Vec::new();
+    for (importer, imported) in imports.iter().enumerate() {
+        let last = (imported.iter()).rposition(|&target| leads_to_commonjs[target as usize]);
+        match last {
+            Some(_) if is_on_cycle[importer] => found.extend_from_slice(imported),
+            Some(last) => found.extend_from_slice(&imported[..last]),
+            None => {}
+        }
+    }
+    found
+}
+
 fn find_loads_seen_by_program(
     scans: &Scans,
     modules: &ModuleSet,
@@ -909,7 +944,11 @@ fn find_loads_seen_by_program(
         edges.to_mut()[asker.idx()].push(found.0);
     }
     let edges = &edges[..];
-    let imported = imports.iter().map(|(_, file)| file.0).collect();
+    let imported: Vec<u32> = imports.iter().map(|(_, file)| file.0).collect();
+    let mut run_ahead_of_link =
+        find_es_modules_that_may_run_ahead_of_link(scans, modules, &kind_of);
+    run_ahead_of_link.extend_from_slice(&imported);
+    let runs_ahead_of_link = find_reached(edges, run_ahead_of_link);
     let runs_during_load = find_reached(edges, imported);
     let caught: Vec<u32> = (planned.iter())
         .flat_map(|(_, file_sites)| {
@@ -969,16 +1008,14 @@ fn find_loads_seen_by_program(
             let Some(referrer) = numbers.number_of(referrer) else {
                 continue;
             };
-            if !runs_during_load[referrer] {
-                continue;
-            }
-            seen.is_required_during_load[target.idx()] = true;
-            if scans.of(*file).interop.kind != ModuleKind::CommonJs {
+            if !runs_ahead_of_link[referrer] {
                 continue;
             }
             let component_of =
                 component_of.get_or_insert_with(|| strongly_connected_components(edges).0);
-            if component_of[referrer] == component_of[target.idx()] {
+            let leads_back = component_of[referrer] == component_of[target.idx()];
+            seen.is_required_during_load[target.idx()] |= leads_back || runs_during_load[referrer];
+            if leads_back {
                 components_that_lead_back.push(component_of[referrer]);
             }
         }
@@ -1270,34 +1307,10 @@ pub(super) fn compute_order(
         }
     }
     let mut makes_values_at_load = vec![false; file_count];
-    let mut is_imported_as_es_module = vec![false; file_count];
     for &file in &modules.compiled_files {
         makes_values_at_load[file.idx()] = scans.of(file).interop.kind == ModuleKind::Data
             && crate::module_keys::makes_values_at_load(input.sources.loader(file));
-        is_imported_as_es_module[file.idx()] = files.is_imported_as_es_module(file);
     }
-    let required = planned.iter().flat_map(|(_, file_sites)| {
-        let named = file_sites.sites.iter().map(|site| site.target);
-        named.chain(file_sites.required_candidates.iter().map(|load| load.1))
-    });
-    let mut is_found_by_load = vec![false; file_count];
-    let written_and_found = files.entry_points().iter();
-    for &file in written_and_found.skip(input.written_entry_point_count) {
-        is_found_by_load[file.idx()] = true;
-    }
-    let found_by_name = (input.sources.entry_points().iter())
-        .filter(|entry| !matches!(entry.kind, EntryPointKind::Main | EntryPointKind::Library))
-        .filter(|entry| !input.runner_starts_entry_points || is_found_by_load[entry.file.idx()])
-        .map(|entry| ModuleRef::File(entry.file));
-    let mut is_required = vec![false; file_count];
-    for target in required.chain(found_by_name) {
-        if let ModuleRef::File(target) = target {
-            is_required[target.idx()] = true;
-        }
-    }
-    let required_prefix_roots: Vec<FileId> = (prefix_roots.iter().copied())
-        .filter(|root| is_required[root.idx()])
-        .collect();
     let parts = OrderParts {
         numbers,
         is_code_of_program,
@@ -1309,9 +1322,7 @@ pub(super) fn compute_order(
         may_fail_in_require: loads.may_fail_in_require,
         is_importable_during_evaluation: loads.is_importable_during_evaluation,
         makes_values_at_load,
-        is_imported_as_es_module,
         prefix_roots,
-        required_prefix_roots,
         texts_that_spell_files,
     };
     let order = EvaluationOrder {

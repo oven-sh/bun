@@ -1,7 +1,7 @@
 use super::*;
 use crate::file_analysis::FileAnalysis;
 use crate::import_sites::JsxMode;
-use crate::module_format::{DeclaredModuleType, ModuleFormat};
+use crate::module_format::DeclaredModuleType;
 use crate::resolve::{
     CodeFailure, ComputedUnknown, DeclaredSideEffects, EnclosingPackage, ExternalKind, HostPayload,
     JsxSettings, TranspileSettings,
@@ -72,8 +72,6 @@ pub struct CompiledModule<'s> {
     pub jsx: &'s JsxSettings,
     pub jsx_mode: JsxMode,
     pub declared_module_type: DeclaredModuleType,
-    pub type_where_imported: DeclaredModuleType,
-    pub runs_inside_require: bool,
     pub is_package_type_module: bool,
     pub package: Option<EnclosingPackage<'s>>,
     pub side_effects: DeclaredSideEffects<'s>,
@@ -228,16 +226,6 @@ impl<'s> Files<'s> {
             Some(compiled) => compiled.code_answers,
             None => &[],
         }
-    }
-
-    pub fn is_imported_as_es_module(&self, file: FileId) -> bool {
-        self.compiled(file).is_some_and(|compiled| {
-            let analysis = &compiled.analysis;
-            analysis.module_format == ModuleFormat::CommonJs
-                && compiled.host_module.is_none()
-                && !compiled.runs_inside_require
-                && analysis.module_formats.get(compiled.type_where_imported) == ModuleFormat::Esm
-        })
     }
 
     #[inline]

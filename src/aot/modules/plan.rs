@@ -6,12 +6,13 @@ use super::bindings::{
     SyntheticExportId, list_in_order_of_stars,
 };
 use super::commonjs_exports::AliasTarget;
+use super::evaluation_ahead_of_link::EvaluationAheadOfLink;
 use super::failures::ModuleFailureId;
 use super::graph::{ModuleGraph, find};
 use super::imports::{MockedModules, NamedMember};
-use super::interop::ModuleKind;
+use super::interop::{ImportPhase, ModuleKind};
 use super::order::{OrderParts, SiteKey};
-use super::requests::Spelling;
+use super::requests::{Spelling, list_names_of_statements};
 use super::spelled_files::TextThatSpellsFile;
 use super::test_run_evictions::{NamedByCopies, is_marked};
 use super::wrapped::InnerModuleKind;
@@ -26,7 +27,6 @@ use crate::statistics::{Stage, StepClock};
 use bun_ast::Loader;
 use bun_sema::atom::Atom;
 use bun_sema::bind::SymbolId;
-use bun_sema::components::strongly_connected_components;
 use bun_sema::hir::{ExprId, FnId, ImportEqualsId, StmtId};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, Files, Sym};
@@ -36,6 +36,7 @@ use bun_sort_by_number::SortByNumber;
 use core::ops::Range;
 use smallvec::SmallVec;
 use std::borrow::Cow;
+use std::collections::VecDeque;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ModuleRef {
@@ -103,189 +104,66 @@ pub(super) struct StoredSite {
 }
 
 struct LinkedFiles {
-    by_importer: Vec<Vec<FileId>>,
-    es_modules_by_importer: Vec<Vec<FileId>>,
+    by_importer: Vec<Vec<(ModuleRef, ImportPhase)>>,
     is_target: Vec<bool>,
-    is_on_ring: Vec<bool>,
+    leads_to_target: Vec<bool>,
+    is_gone_through: Vec<bool>,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum LoadState {
-    Unrequested,
-    Requested,
-    Fetched,
-    Made,
-    Recorded,
-    Quiet,
-    Settled,
-}
-
-#[derive(Copy, Clone)]
-enum LoadJob {
-    SettleFetch,
-    MakeRecord,
-    StoreRecord,
-    LoadRequests,
-}
-
-#[derive(Copy, Clone)]
-struct StepsOfFile {
-    root_of_state: u32,
-    state: LoadState,
-    last_walk: u32,
+struct Importer {
+    file: FileId,
+    next: u32,
+    modules_ahead: usize,
+    was_below_deferred_import: bool,
 }
 
 #[derive(Default)]
-struct LoadSteps {
+struct WalkOfImports {
     root_number: u32,
-    walk: u32,
-    of_files: Vec<StepsOfFile>,
-    jobs: Vec<(LoadJob, FileId)>,
-    to_walk: Vec<FileId>,
-    walked: Vec<FileId>,
+    last_root_that_came_to: Vec<u32>,
+    path: Vec<Importer>,
+    evaluation: EvaluationAheadOfLink,
 }
 
-impl LoadSteps {
-    fn begin(&mut self, file_count: usize) {
+impl WalkOfImports {
+    fn begin(&mut self, root: FileId, file_count: usize) {
         self.root_number += 1;
-        let untouched = StepsOfFile {
-            root_of_state: 0,
-            state: LoadState::Unrequested,
-            last_walk: 0,
-        };
-        self.of_files.resize(file_count, untouched);
-        self.jobs.clear();
+        self.last_root_that_came_to.resize(file_count, 0);
+        self.evaluation.begin(file_count);
+        self.take_if_unseen(root);
+        self.enter(root, ImportPhase::Evaluation);
     }
 
-    fn state(&self, file: FileId) -> LoadState {
-        let of_file = &self.of_files[file.idx()];
-        if of_file.root_of_state == self.root_number {
-            of_file.state
-        } else {
-            LoadState::Unrequested
+    fn enter(&mut self, file: FileId, phase: ImportPhase) {
+        let evaluation = &mut self.evaluation;
+        self.path.push(Importer {
+            file,
+            next: 0,
+            modules_ahead: evaluation.count_modules_ahead(),
+            was_below_deferred_import: evaluation.is_below_deferred_import,
+        });
+        evaluation.is_below_deferred_import |= phase == ImportPhase::Defer;
+        evaluation.enter(file);
+    }
+
+    fn leave(&mut self) {
+        let left = self.path.pop().expect("a file was entered");
+        self.evaluation.leave();
+        self.evaluation.pass_import(left.file, left.modules_ahead);
+        self.evaluation.is_below_deferred_import = left.was_below_deferred_import;
+    }
+
+    fn pass_without_entering(&mut self, file: FileId, phase: ImportPhase) {
+        self.evaluation.come_back_to(file);
+        if phase != ImportPhase::Defer {
+            let modules_ahead = self.evaluation.count_modules_ahead();
+            self.evaluation.pass_import(file, modules_ahead);
         }
-    }
-
-    fn set_state(&mut self, file: FileId, state: LoadState) {
-        let of_file = &mut self.of_files[file.idx()];
-        of_file.root_of_state = self.root_number;
-        of_file.state = state;
     }
 
     fn take_if_unseen(&mut self, file: FileId) -> bool {
-        let is_unseen = self.state(file) == LoadState::Unrequested;
-        self.set_state(file, LoadState::Requested);
-        is_unseen
-    }
-}
-
-impl LinkedFiles {
-    fn leads_to_target(&self, es_module: FileId) -> bool {
-        !self.by_importer[es_module.idx()].is_empty()
-    }
-
-    fn list_targets_as_require_makes_them(
-        &self,
-        root: FileId,
-        target_count: usize,
-        steps: &mut LoadSteps,
-    ) -> Vec<FileId> {
-        steps.begin(self.by_importer.len());
-        let mut made = Vec::new();
-        steps.jobs.push((LoadJob::LoadRequests, root));
-        steps.set_state(root, LoadState::Recorded);
-        let mut next = 0;
-        while let Some(&(job, file)) = steps.jobs.get(next)
-            && made.len() < target_count
-        {
-            next += 1;
-            match (job, steps.state(file)) {
-                (LoadJob::SettleFetch, LoadState::Requested) => {
-                    steps.set_state(file, LoadState::Fetched);
-                    steps.jobs.push((LoadJob::MakeRecord, file));
-                }
-                (LoadJob::MakeRecord, LoadState::Fetched) => {
-                    steps.set_state(file, LoadState::Made);
-                    if self.is_target[file.idx()] {
-                        made.push(file);
-                    }
-                    steps.jobs.push((LoadJob::StoreRecord, file));
-                }
-                (LoadJob::StoreRecord, LoadState::Made) => {
-                    steps.set_state(file, LoadState::Recorded);
-                    if !self.is_target[file.idx()] {
-                        steps.jobs.push((LoadJob::LoadRequests, file));
-                    }
-                }
-                (LoadJob::LoadRequests, LoadState::Recorded | LoadState::Quiet) => {
-                    self.walk_stored_modules(file, steps, &mut made);
-                }
-                _ => {}
-            }
-        }
-        made
-    }
-
-    fn walk_stored_modules(&self, start: FileId, steps: &mut LoadSteps, made: &mut Vec<FileId>) {
-        steps.walk += 1;
-        let walk = steps.walk;
-        let mut is_all_recorded = true;
-        steps.to_walk.push(start);
-        while let Some(importer) = steps.to_walk.pop() {
-            let of_importer = &mut steps.of_files[importer.idx()];
-            if core::mem::replace(&mut of_importer.last_walk, walk) == walk {
-                continue;
-            }
-            steps.walked.push(importer);
-            if of_importer.state == LoadState::Quiet {
-                for &target in &self.es_modules_by_importer[importer.idx()] {
-                    let of_target = &steps.of_files[target.idx()];
-                    if of_target.last_walk != walk && of_target.state != LoadState::Settled {
-                        steps.to_walk.push(target);
-                    }
-                }
-                continue;
-            }
-            let mut is_quiet = true;
-            for &target in &self.by_importer[importer.idx()] {
-                let state = steps.state(target);
-                match state {
-                    LoadState::Unrequested => {
-                        steps.set_state(target, LoadState::Requested);
-                        steps.jobs.push((LoadJob::SettleFetch, target));
-                        is_quiet = false;
-                    }
-                    LoadState::Requested => {
-                        steps.set_state(target, LoadState::Fetched);
-                        steps.jobs.push((LoadJob::MakeRecord, target));
-                        is_quiet = false;
-                    }
-                    LoadState::Fetched | LoadState::Made => {
-                        steps.set_state(target, LoadState::Recorded);
-                        if !self.is_target[target.idx()] {
-                            steps.jobs.push((LoadJob::LoadRequests, target));
-                            steps.to_walk.push(target);
-                        } else if state == LoadState::Fetched {
-                            made.push(target);
-                        }
-                    }
-                    LoadState::Recorded | LoadState::Quiet if !self.is_target[target.idx()] => {
-                        steps.to_walk.push(target);
-                    }
-                    LoadState::Recorded | LoadState::Quiet | LoadState::Settled => {}
-                }
-            }
-            if is_quiet {
-                steps.set_state(importer, LoadState::Quiet);
-            }
-            is_all_recorded &= is_quiet;
-        }
-        for at in 0..steps.walked.len() {
-            if is_all_recorded {
-                steps.set_state(steps.walked[at], LoadState::Settled);
-            }
-        }
-        steps.walked.clear();
+        let last = &mut self.last_root_that_came_to[file.idx()];
+        core::mem::replace(last, self.root_number) != self.root_number
     }
 }
 
@@ -366,7 +244,7 @@ pub(super) struct Plan {
     is_closed_world: bool,
     computed_names_ask_loader_functions: bool,
     answers_for_names_itself: bool,
-    lists_names_of_statements: bool,
+    names_of_statements: FxHashMap<FileId, Vec<Atom>>,
     may_be_reevaluated: Vec<bool>,
     has_es_module_that_runs_again: Vec<bool>,
     replaced_variables: Vec<Sym>,
@@ -427,7 +305,7 @@ impl Plan {
             is_closed_world: false,
             computed_names_ask_loader_functions: false,
             answers_for_names_itself: false,
-            lists_names_of_statements: false,
+            names_of_statements: FxHashMap::default(),
             may_be_reevaluated: vec![false; order.numbers.len()],
             has_es_module_that_runs_again: vec![false; order.numbers.len()],
             replaced_variables: Vec::new(),
@@ -1041,13 +919,6 @@ impl ModuleGraph {
                 .has(&self.plan.order.is_importable_during_evaluation, module)
     }
 
-    pub fn is_imported_as_es_module(&self, module: ModuleRef) -> bool {
-        matches!(module, ModuleRef::File(_))
-            && self
-                .plan
-                .has(&self.plan.order.is_imported_as_es_module, module)
-    }
-
     pub fn is_imported_as_namespace(&self, module: ModuleRef) -> bool {
         self.plan.has(&self.plan.is_imported_as_namespace, module)
             || self.plan.externals_imported_as_namespace.contains(&module)
@@ -1387,12 +1258,17 @@ impl ModuleGraph {
         self.plan.asks_loader_functions
     }
 
-    pub fn lists_names_of_statements(&self) -> bool {
-        self.plan.lists_names_of_statements
+    pub fn names_of_statements(&self, file: FileId) -> &[Atom] {
+        let listed = self.plan.names_of_statements.get(&file);
+        listed.map_or(&[], |names| names)
     }
 
-    pub fn set_lists_names_of_statements(&mut self) {
-        self.plan.lists_names_of_statements = true;
+    pub fn list_names_of_statements(&mut self, files: &Files<'_>) {
+        let es_modules = self.record_files().iter().copied();
+        let es_modules = es_modules.filter(|&file| self.kind(file) == ModuleKind::SourceText);
+        self.plan.names_of_statements = es_modules
+            .map(|file| (file, list_names_of_statements(files, file)))
+            .collect();
     }
 
     pub fn set_asks_loader_functions(&mut self) {
@@ -1466,7 +1342,7 @@ impl ModuleGraph {
         steps.end("plan: linked files");
         let prefixes = self.collect_prefixes(&linked_files, in_parallel);
         steps.end("plan: prefixes");
-        self.plan.final_checks = self.settle_checks(&linked_files, &prefixes, in_parallel);
+        self.plan.final_checks = self.settle_checks(&linked_files, in_parallel);
         steps.end("plan: checks");
         (self.plan.final_requests, self.plan.final_ranges) =
             self.settle_requests(prefixes, &data_files, in_parallel);
@@ -1493,135 +1369,106 @@ impl ModuleGraph {
         self.plan.are_holders_settled = true;
     }
 
+    /// Keeps the checks of the names that a file below the importer stores.
     fn settle_checks(
         &self,
         linked: &LinkedFiles,
-        prefixes: &[(FileId, Vec<ModuleRef>)],
         in_parallel: InParallel<'_>,
     ) -> FxHashMap<FileId, Vec<(SyntheticExportId, ModuleFailureId)>> {
         type Checks = Vec<(SyntheticExportId, ModuleFailureId)>;
-        let has_checks = |root: FileId| !self.commonjs().checked_copies(root).is_empty();
-        let mut roots: Vec<(FileId, &[ModuleRef], Checks)> = prefixes
-            .iter()
-            .filter(|(root, _)| has_checks(*root))
-            .map(|(root, prefix)| (*root, &prefix[..], Vec::new()))
+        let importers = self.record_files().iter().copied();
+        let mut importers: Vec<(FileId, Checks)> = importers
+            .filter(|&file| !self.is_left_out(ModuleRef::File(file)))
+            .map(|file| (file, self.commonjs().checked_copies(file).to_vec()))
+            .filter(|(_, checks)| !checks.is_empty())
             .collect();
-        for_each_mut(&mut roots, in_parallel, &|(root, prefix, checks)| {
-            let root = *root;
-            let written = self.commonjs().checked_copies(root);
-            let mut is_linked = vec![false; linked.by_importer.len()];
-            is_linked[root.idx()] = true;
-            let mut importers = vec![root];
-            while let Some(file) = importers.pop() {
-                for &target in &linked.by_importer[file.idx()] {
-                    if !core::mem::replace(&mut is_linked[target.idx()], true) {
-                        importers.push(target);
+        for_each_mut(&mut importers, in_parallel, &|(importer, checks)| {
+            checks.retain(|&(copy, failure)| {
+                let owner = Some(self.synthetic_export(copy).module);
+                let mut files = [self.failure(failure).exporter(), owner].into_iter();
+                !files.any(|module| module.is_some_and(|module| self.is_left_out(module)))
+            });
+            let mut not_found: FxHashSet<SyntheticExportId> =
+                checks.iter().map(|check| check.0).collect();
+            let mut seen = FxHashSet::from_iter([*importer]);
+            let mut pending = VecDeque::from([*importer]);
+            while !not_found.is_empty()
+                && let Some(file) = pending.pop_front()
+            {
+                for &(imported, _) in &linked.by_importer[file.idx()] {
+                    let ModuleRef::File(imported) = imported else {
+                        continue;
+                    };
+                    if !linked.leads_to_target[imported.idx()] || !seen.insert(imported) {
+                        continue;
                     }
+                    for copy in self.commonjs().copies(imported) {
+                        not_found.remove(copy);
+                    }
+                    pending.push_back(imported);
                 }
             }
-            let mut left = written.to_vec();
-            left.retain(|&(_, failure)| is_linked[self.failure(failure).importer.idx()]);
-            if !self.is_loaded_by_loader(ModuleRef::File(root)) {
-                let stored = self.find_copies_stored_by(prefix.iter().copied());
-                left.retain(|(copy, _)| stored.contains(copy));
-            }
-            *checks = left;
+            let mut checked = FxHashSet::default();
+            let mocks_may_answer = self.reaches_mock(*importer);
+            checks.retain(|&(copy, failure)| {
+                !not_found.contains(&copy)
+                    && checked.insert((copy, mocks_may_answer.then_some(failure)))
+            });
         });
-        let roots = roots.into_iter();
-        roots
-            .filter(|(_, _, checks)| !checks.is_empty())
-            .map(|(root, _, checks)| (root, checks))
-            .collect()
+        let importers = importers.into_iter();
+        importers.filter(|(_, checks)| !checks.is_empty()).collect()
     }
 
-    fn find_copies_stored_by(
-        &self,
-        modules: impl Iterator<Item = ModuleRef>,
-    ) -> FxHashSet<SyntheticExportId> {
-        let mut stored = FxHashSet::default();
-        for module in modules {
-            if let ModuleRef::Facade(facade) = module {
-                stored.extend(self.commonjs().copies(facade));
-            }
-        }
-        stored
+    pub fn checks_of(&self, importer: FileId) -> &[(SyntheticExportId, ModuleFailureId)] {
+        let checks = self.plan.final_checks.get(&importer);
+        checks.map_or(&[], |it| &it[..])
     }
 
-    pub fn checks_of(&self, root: FileId) -> &[(SyntheticExportId, ModuleFailureId)] {
-        self.plan.final_checks.get(&root).map_or(&[], |it| &it[..])
-    }
-
-    #[cfg(test)]
-    pub fn check_every_written_importer(&mut self) {
-        for root in self.plan.order.prefix_roots.clone() {
-            let written = self.commonjs().checked_copies(root).to_vec();
-            if !written.is_empty() {
-                self.plan.final_checks.insert(root, written);
-            }
-        }
-    }
-
-    pub fn find_check_of_copy_that_nothing_stores(&self) -> Option<(FileId, ModuleRef)> {
-        let mut roots: Vec<FileId> = self.plan.final_checks.keys().copied().collect();
-        roots.sort_unstable();
-        roots.retain(|&root| !self.is_loaded_by_loader(ModuleRef::File(root)));
-        roots.into_iter().find_map(|root| {
-            let requests = self.requests_of(ModuleRef::File(root)).iter();
-            let in_front = requests.take_while(|it| it.target != ModuleRef::Check(root));
-            let stored = self.find_copies_stored_by(in_front.map(|it| it.target));
-            let is_read = |&&(export, failure): &&(SyntheticExportId, ModuleFailureId)| {
-                let written = self.failure(failure);
-                let importer = Some(ModuleRef::File(written.importer));
-                let owner = Some(self.synthetic_export(export).module);
-                let mut linked = [importer, written.exporter(), owner].into_iter().flatten();
-                !linked.any(|module| self.is_left_out(module))
-            };
-            let mut checks = self.checks_of(root).iter();
-            let missing = checks.find(|check| !stored.contains(&check.0) && is_read(check))?;
-            Some((root, self.synthetic_export(missing.0).module))
-        })
-    }
-
+    /// The targets below the root, depth first in the order of the imports, with the modules of the runtime that stand in front of one
+    /// and the ES modules that run in front of one.
     fn collect_prefix(
         &self,
         root: FileId,
         linked: &LinkedFiles,
-        steps: &mut LoadSteps,
+        walk: &mut WalkOfImports,
     ) -> Vec<ModuleRef> {
-        if !linked.leads_to_target(root) {
+        if !linked.leads_to_target[root.idx()] {
             return Vec::new();
         }
         let mut prefix = Vec::new();
-        let order = &self.plan.order;
-        let is_read_by_require = order.required_prefix_roots.binary_search(&root).is_ok();
-        let runs_in_its_turn =
-            |file: FileId| !is_read_by_require && order.is_imported_as_es_module[file.idx()];
-        steps.begin(linked.by_importer.len());
-        steps.take_if_unseen(root);
-        let mut meets_ring = linked.is_on_ring[root.idx()];
-        let mut importers = vec![root];
-        let mut next = 0;
-        while let Some(&file) = importers.get(next) {
-            next += 1;
-            for &target in &linked.by_importer[file.idx()] {
-                if !steps.take_if_unseen(target) {
-                    continue;
+        let mut length_at_last_target = 0;
+        let mut modules_of_runtime = FxHashSet::default();
+        walk.begin(root, linked.by_importer.len());
+        while let Some(importer) = walk.path.last_mut() {
+            let imports = &linked.by_importer[importer.file.idx()];
+            let Some(&(imported, phase)) = imports.get(importer.next as usize) else {
+                walk.leave();
+                continue;
+            };
+            importer.next += 1;
+            let ModuleRef::File(file) = imported else {
+                if modules_of_runtime.insert(imported) {
+                    prefix.push(imported);
                 }
-                if !linked.is_target[target.idx()] {
-                    meets_ring |= linked.is_on_ring[target.idx()];
-                    importers.push(target);
-                } else if !runs_in_its_turn(target) {
-                    prefix.push(target);
+                continue;
+            };
+            let is_unseen = walk.take_if_unseen(file);
+            if !linked.is_target[file.idx()] {
+                match is_unseen && linked.is_gone_through[file.idx()] {
+                    true => walk.enter(file, phase),
+                    false => walk.pass_without_entering(file, phase),
                 }
+            } else if is_unseen {
+                if self.kind(file) == ModuleKind::CommonJs {
+                    let ahead = walk.evaluation.take_modules_ahead().iter();
+                    prefix.extend(ahead.copied().map(ModuleRef::File));
+                }
+                prefix.push(self.facade(imported).unwrap_or(imported));
+                length_at_last_target = prefix.len();
             }
         }
-        if prefix.len() > 1 && is_read_by_require && !meets_ring {
-            prefix = linked.list_targets_as_require_makes_them(root, prefix.len(), steps);
-        }
-        let facades = prefix.into_iter().map(ModuleRef::File);
-        facades
-            .map(|file| self.facade(file).unwrap_or(file))
-            .collect()
+        prefix.truncate(length_at_last_target);
+        prefix
     }
 
     fn find_linked_file(&self, request: &ModuleRequest) -> Option<FileId> {
@@ -1639,21 +1486,28 @@ impl ModuleGraph {
         let mut successors = Vec::new();
         successors.resize_with(self.row_by_file.len(), Vec::new);
         let (mut targets, mut imports) = (Vec::new(), Vec::new());
+        let mut importers_of_runtime = Vec::new();
         for &file in self.record_files() {
-            if !self.is_code_of_program(ModuleRef::File(file))
-                || self.kind(file) != ModuleKind::SourceText
-            {
+            if !self.is_es_module_of_program(file) {
                 continue;
             }
-            let requests = self.requests(file).iter();
-            let linked = requests.filter_map(|request| self.find_linked_file(request));
-            for target in linked {
+            for request in self.requests(file) {
+                if let ModuleRef::Runtime(_) = request.target
+                    && request.kind == ModuleRequestKind::Import
+                    && kind_of_targets == ModuleKind::CommonJs
+                {
+                    successors[file.idx()].push((request.target, request.phase));
+                    importers_of_runtime.push(file);
+                }
+                let Some(target) = self.find_linked_file(request) else {
+                    continue;
+                };
                 match self.kind(target) {
                     ModuleKind::SourceText => {}
                     kind if kind == kind_of_targets => targets.push(target),
                     _ => continue,
                 }
-                successors[file.idx()].push(target);
+                successors[file.idx()].push((request.target, request.phase));
                 imports.push((target, file));
             }
         }
@@ -1662,24 +1516,23 @@ impl ModuleGraph {
             is_target[target.idx()] = true;
         }
         let leads_to_target = find_files_that_lead_to(targets, &imports, successors.len());
-        for imported in &mut successors {
-            imported.retain(|&file| leads_to_target[file.idx()]);
+        let mut is_gone_through =
+            find_files_that_lead_to(importers_of_runtime, &imports, successors.len());
+        for (is_gone_through, leads_to_target) in is_gone_through.iter_mut().zip(&leads_to_target) {
+            *is_gone_through |= leads_to_target;
         }
-        let only_es_modules = |imported: &Vec<FileId>| {
-            let imported = imported.iter().copied();
-            imported.filter(|file| !is_target[file.idx()]).collect()
-        };
-        let es_modules_by_importer: Vec<Vec<FileId>> =
-            successors.iter().map(only_es_modules).collect();
-        let numbers = |imported: &Vec<FileId>| imported.iter().map(|file| file.0).collect();
-        let edges: Vec<Vec<u32>> = es_modules_by_importer.iter().map(numbers).collect();
-        let (ring_of, rings) = strongly_connected_components(&edges);
-        let sizes = ring_of.iter().map(|&ring| rings[ring as usize].len());
+        if kind_of_targets != ModuleKind::CommonJs {
+            for imported in &mut successors {
+                imported.retain(|&(module, _)| {
+                    matches!(module, ModuleRef::File(file) if leads_to_target[file.idx()])
+                });
+            }
+        }
         LinkedFiles {
-            is_on_ring: sizes.map(|size| size > 1).collect(),
-            es_modules_by_importer,
             by_importer: successors,
             is_target,
+            leads_to_target,
+            is_gone_through,
         }
     }
 
@@ -1694,8 +1547,11 @@ impl ModuleGraph {
             is_entered[root.idx()] = true;
         }
         for (importer, imported) in linked.by_importer.iter().enumerate() {
-            for &target in imported {
-                is_entered[target.idx()] |= component_of[importer] != component_of[target.idx()];
+            for &(target, _) in imported {
+                if let ModuleRef::File(target) = target {
+                    is_entered[target.idx()] |=
+                        component_of[importer] != component_of[target.idx()];
+                }
             }
         }
         let files = self.record_files().iter().copied();
@@ -1706,16 +1562,6 @@ impl ModuleGraph {
                     && !linked.by_importer[file.idx()].is_empty()
             })
             .collect()
-    }
-
-    pub(super) fn list_roots_left_to_loader(&self) -> impl Iterator<Item = FileId> + '_ {
-        let roots = self.plan.order.prefix_roots.iter().copied();
-        roots.filter(|&root| self.is_loaded_by_loader(ModuleRef::File(root)))
-    }
-
-    #[cfg(test)]
-    pub fn prefix_roots(&self) -> &[FileId] {
-        &self.plan.order.prefix_roots
     }
 
     pub fn facade_dependencies(&self, file: FileId) -> Vec<FileId> {
@@ -1752,10 +1598,10 @@ impl ModuleGraph {
             .collect();
         let mut parts: Vec<&mut [(FileId, Vec<ModuleRef>)]> = prefixes.chunks_mut(16).collect();
         for_each_mut(&mut parts, in_parallel, &|part| {
-            let mut steps = LoadSteps::default();
+            let mut walk = WalkOfImports::default();
             for (root, prefix) in part.iter_mut() {
                 if !self.is_loaded_by_loader(ModuleRef::File(*root)) {
-                    *prefix = self.collect_prefix(*root, linked_files, &mut steps);
+                    *prefix = self.collect_prefix(*root, linked_files, &mut walk);
                 }
             }
         });
@@ -1779,7 +1625,7 @@ impl ModuleGraph {
             .map(|entry| (entry, Vec::new()))
             .collect();
         for_each_mut(&mut data_prefixes, in_parallel, &|(entry, prefix)| {
-            *prefix = self.collect_prefix(*entry, data_files, &mut LoadSteps::default());
+            *prefix = self.collect_prefix(*entry, data_files, &mut WalkOfImports::default());
         });
         let mut data_prefixes = data_prefixes.into_iter().peekable();
         for &file in self.record_files() {
@@ -1788,13 +1634,13 @@ impl ModuleGraph {
                 continue;
             }
             let start = requests.len();
+            if !self.checks_of(file).is_empty() {
+                requests.push(ModuleRequest::hoisted_import(ModuleRef::Check(file)));
+            }
             if is_prefix_root(file) {
                 let (root, prefix) = prefixes.next().expect("a prefix for each root");
                 debug_assert_eq!(root, file);
                 requests.extend(prefix.into_iter().map(ModuleRequest::hoisted_import));
-                if !self.checks_of(file).is_empty() {
-                    requests.push(ModuleRequest::hoisted_import(ModuleRef::Check(file)));
-                }
             }
             if let Some((_, prefix)) = data_prefixes.next_if(|(entry, _)| *entry == file) {
                 requests.extend(prefix.into_iter().map(ModuleRequest::hoisted_import));

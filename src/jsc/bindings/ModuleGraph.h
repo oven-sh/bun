@@ -126,7 +126,7 @@ public:
 void initJSModuleGraphClassStructure(JSC::LazyClassStructure::Initializer&);
 JSC::Structure* createModuleGraphFrameStructure(JSC::VM&, JSC::JSGlobalObject*);
 // A frame of the async context on top of `previous`. `storage` is not an AsyncLocalStorage, so no getStore() finds it.
-JSC::JSObject* createAsyncContextFrame(Zig::GlobalObject*, JSC::JSObject* storage, JSC::JSValue previous);
+JSC::JSObject* createAsyncContextFrame(Zig::GlobalObject*, JSC::JSCell* storage, JSC::JSValue previous);
 
 // ── Which graph ──────────────────────────────────────────────────────────────────────
 // The graph `loader` is the loader of; null for the global object's own.
@@ -208,6 +208,8 @@ bool shouldDropCallbackOfStoppedModuleGraph(Zig::GlobalObject*, JSC::JSValue asy
 // AsyncLocalStorage stores. Use it for long-lived objects (e.g. an open WebSocket) that save an async context but
 // must not keep the graph alive. Their callbacks restore this context, then use a ModuleGraphContextScope.
 JSC::JSValue asyncContextWithoutModuleGraphs(Zig::GlobalObject*, JSC::JSValue asyncContext);
+JSC::JSValue asyncContextWithoutFramesOf(Zig::GlobalObject*, JSC::JSValue asyncContext, bool (*isStorageToLeaveOut)(Zig::GlobalObject*, JSC::JSValue));
+bool isStorageOfModuleGraphFrame(Zig::GlobalObject*, JSC::JSValue storage);
 
 // Call after native code sets or restores the current async context. With no script on the stack, `asyncContext`
 // becomes what moduleGraphAsyncContextAtEventLoop() returns. No-op while script is on the stack.

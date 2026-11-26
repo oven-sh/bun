@@ -1,7 +1,6 @@
 // While require() loads an ES module, a CommonJS file of the graph calls import() of a module above it in that graph, and then throws.
-// The call is no part of the graph that the require() loads, so what the file throws reaches the require(). `bun run` takes the steps of the call inside it, leaves an empty record for the running file and loses the error.
-// The files of a graph run while the graph is loaded, each of them, whatever another has thrown, as in `bun run`: docs/compiler/compatibility.mdx, "Loader hooks and the module cache". So in "sibling" and "module" the file runs ahead of the ES module beside it, and in "before" the second file runs though the first has thrown. `bun build --compile` and Node.js run each at its place.
-// A file that threw under an import keeps its error, as in `bun run`: "again". `bun build --compile` hands out what the file had exported, Node.js runs it once more.
+// The call is no part of the graph that the require() loads, so what the file throws reaches the require().
+// Calls of import() that are in flight at once end in the order in which `bun <file>` has read their files. The order of the executable stands here.
 globalThis.say = (...words) => console.log(...words);
 globalThis.text = error => error.message.split(" in module")[0];
 try {
@@ -100,10 +99,10 @@ inner: threw the inner file throws
 helper: the file runs
 helper: the helper runs
 helper: threw the file with a helper throws
+sibling: the other module runs
 sibling: the file runs
 sibling: threw the file beside throws
 before: the first file runs
-before: the file runs
 before: threw the first file throws
 outside: the file runs
 outside: threw the file below throws
@@ -122,19 +121,19 @@ barrel: the file runs
 barrel: threw the file behind the barrel throws
 again: the file runs
 again: threw the file asked for again throws
+again: the file runs
 again: the file once more threw the file asked for again throws
-sibling: the other module runs
 again: the file rejected the file asked for again throws
 bare: module.mjs rejected the bare file throws
 named: module.mjs rejected the named file throws
 inner: between.mjs rejected the inner file throws
 helper: module.mjs rejected the file with a helper throws
-before: module.mjs rejected the first file throws
 whole: module.mjs rejected the whole file throws
 stores: module.mjs rejected the file that only stores throws
 handed: module.mjs rejected the file of handed throws
 exported: module.mjs rejected the file of exported throws
 barrel: module.mjs rejected the file behind the barrel throws
+again: module.mjs rejected the file asked for again throws
 again: module.mjs rejected the file asked for again throws
 sibling: other.mjs loaded
 module: module.mjs rejected the ES module throws

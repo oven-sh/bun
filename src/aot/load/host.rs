@@ -178,13 +178,12 @@ pub(crate) struct LoadHost<'a> {
     outfile: Option<Vec<u8>>,
     other_products: Vec<Vec<u8>>,
     files_left_out_by_patterns: Guarded<FxHashSet<FileLeftOutByPattern>>,
-    guesses_left_out: Guarded<Option<Option<Vec<u8>>>>,
+    are_guesses_left_out: AtomicBool,
     resolves_whose_folders_bring_nothing: Guarded<FxHashSet<ResolveWhoseFoldersBringNothing>>,
     found_entry_point_paths: Guarded<Vec<Vec<u8>>>,
     has_found_entry_points: AtomicBool,
     files_of_packages_that_worker_may_start: Guarded<Vec<Vec<u8>>>,
     may_store_path_of_main_module: AtomicBool,
-    may_load_files_again: AtomicBool,
     may_start_workers: AtomicBool,
     has_file_that_asks_for_what_unseen_code_finds: AtomicBool,
     levels_above_root: AtomicUsize,
@@ -421,13 +420,12 @@ impl<'a> LoadHost<'a> {
                 .map(|path| from_native(path))
                 .collect(),
             files_left_out_by_patterns: Guarded::new(FxHashSet::default()),
-            guesses_left_out: Guarded::new(None),
+            are_guesses_left_out: AtomicBool::new(false),
             resolves_whose_folders_bring_nothing: Guarded::new(FxHashSet::default()),
             found_entry_point_paths: Guarded::new(Vec::new()),
             has_found_entry_points: AtomicBool::new(false),
             files_of_packages_that_worker_may_start: Guarded::new(Vec::new()),
             may_store_path_of_main_module: AtomicBool::new(false),
-            may_load_files_again: AtomicBool::new(false),
             may_start_workers: AtomicBool::new(options.aot.loads_code_from_disk),
             levels_above_root: AtomicUsize::new(0),
             levels_of_texts: Guarded::new(FxHashMap::default()),
@@ -452,8 +450,8 @@ impl<'a> LoadHost<'a> {
         }
     }
 
-    pub(crate) fn guesses_left_out(&self) -> Option<Option<Vec<u8>>> {
-        self.guesses_left_out.lock().clone()
+    pub(crate) fn are_guesses_left_out(&self) -> bool {
+        self.are_guesses_left_out.load(Ordering::Relaxed)
     }
 
     pub(crate) fn note_resolve_whose_folders_bring_nothing(
@@ -1340,14 +1338,8 @@ impl CodeHost for LoadHost<'_> {
                 .is_some_and(|written| is_taken_by_written_type(loader, written))
     }
 
-    fn stands_for_text_that_cannot_be_read(&self, payload: &HostPayload) -> bool {
-        let source = payload.downcast_ref::<ParsedSource>();
-        source.is_some_and(|it| it.parse_failure.is_some())
-    }
-
-    fn note_guesses_left_out(&self, file_whose_loader_decides_its_kind: Option<&[u8]>) {
-        let file = file_whose_loader_decides_its_kind.map(<[u8]>::to_vec);
-        self.guesses_left_out.lock().get_or_insert(file);
+    fn note_guesses_left_out(&self) {
+        self.are_guesses_left_out.store(true, Ordering::Relaxed);
     }
 
     fn note_file_left_out(
@@ -1528,7 +1520,13 @@ impl CodeHost for LoadHost<'_> {
                 None => return without_attribute(),
             },
         };
-        to_host_loader_of_attribute(chosen)
+        let is_implied = matches!(self.served_by(path), ServedBy::Disk)
+            && loader_named_by_path(&self.input.options.load.loaders, path)
+                .is_some_and(|named| chosen.is_implied_by(named, path));
+        match is_implied {
+            true => without_attribute(),
+            false => to_host_loader_of_attribute(chosen),
+        }
     }
 
     fn loads_as_code(&self, path: &[u8], loader: HostLoader) -> bool {
@@ -1627,20 +1625,6 @@ impl CodeHost for LoadHost<'_> {
         (loader != BY_NAME).then_some(loader)
     }
 
-    fn may_load_files_again(&self) -> bool {
-        self.may_load_files_again.load(Ordering::Relaxed)
-    }
-
-    fn loader_of_module_form(&self, path: &[u8]) -> Option<HostLoader> {
-        // There the realms share what the first load has made of the text.
-        if self.input.options.aot.runs_in_several_realms {
-            return None;
-        }
-        let loader = self.default_loader(path);
-        script_kind_of(loader)?;
-        Some(to_host_loader_of_attribute(loader))
-    }
-
     fn parse_code<'s>(
         &self,
         arena: &'s Arena,
@@ -1693,12 +1677,19 @@ impl CodeHost for LoadHost<'_> {
             if !is_refused_under_type && (!is_named_as_code || parsed.failure.is_none()) {
                 said_of_text.hand_on_to(self.input.messages);
             }
+            let is_other_form_of_file =
+                requested_loader.makes_other_data_than(self.default_loader(path), file);
             ParsedCode {
                 hir: parsed.hir,
                 host_values: parsed.host_values,
                 payload: Some(Box::new(ParsedSource {
                     plugin_module,
                     file_with_query: self.file_with_query(path),
+                    is_other_form_of_file,
+                    is_path_of_file_that_names_no_loader: loader == Loader::File
+                        && !is_from_plugin
+                        && !is_other_form_of_file
+                        && loader_named_by_path(&load.loaders, path).is_none(),
                     web_assembly: parsed.web_assembly,
                     said_where_type_is_written: (is_refused_under_type && !is_named_as_code)
                         .then_some(said_of_text),
@@ -1982,14 +1973,6 @@ impl CodeHost for LoadHost<'_> {
         if builtin_uses::asks_for_what_unseen_code_finds(request, source) {
             self.has_file_that_asks_for_what_unseen_code_finds
                 .store(true, Ordering::Relaxed);
-        }
-        let builtins = &source.builtins;
-        if load.runs_tests
-            && (builtins.reaches_module_cache()
-                || builtins.loses_sight_of_module_cache()
-                || builtins.resets_modules())
-        {
-            self.may_load_files_again.store(true, Ordering::Relaxed);
         }
         if source.builtins.may_store_path_of_main_module() {
             self.may_store_path_of_main_module

@@ -82,14 +82,14 @@ test("require.main is the test file that runs: plain Bun", () => {
   );
   expect(plain.stdout).toContain("c.test.mjs in a test true undefined undefined false undefined undefined false");
   expect(plain.stdout).toContain("evicted.test.cjs before object evicted.test.cjs");
-  expect(plain.stdout).toContain("evicted.test.cjs after undefined undefined");
+  expect(plain.stdout).toContain("evicted.test.cjs after object evicted.test.cjs");
 });
 
 test("require.main is the test file that runs: compiled", async () => {
   expect(await runTests(String(dir), {}, "--aot")).toEqual(plain);
 });
 
-// `require.main` is what the cache holds under the path in `Bun.main`, and `import.meta.main` compares with it, at every read.
+// `require.main` follows the path in `Bun.main`, and `import.meta.main` compares with it, at every read.
 test.each([{ way: "as one program", words: "TestRunLayers:0" }])(
   "a test that stores into Bun.main is followed: $way",
   async ({ words }) => {

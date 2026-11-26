@@ -1,7 +1,7 @@
 // This file is the old linker, used by Bun.Transpiler.
 
 use bun_ast::Log;
-use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};
+use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
 use bun_paths::{self, SEP, fs as PFs};
 // two `fs` shapes are in play here. `bun_resolver::fs` (`Fs`) holds
 // the singleton `FileSystem` / `DirnameStore`; `bun_paths::fs` (`PFs`) defines
@@ -56,39 +56,6 @@ static RELATIVE_PATHS_LIST: std::sync::LazyLock<ImportPathsListPtr> =
 #[inline]
 fn relative_paths_list_ptr() -> *mut ImportPathsList {
     RELATIVE_PATHS_LIST.0.as_ptr()
-}
-
-// ── HardcodedModule alias lookup ────────────────────────────────────────
-// Thin adapter over `bun_resolve_builtins::Alias::get` so the call site keeps
-// `&'static [u8]` for `import_record.path.text` (the table stores `&'static
-// ZStr`). `BundleTarget` and `bun_resolve_builtins::Target` are the same
-// `bun_ast::Target`; ditto `ImportRecordTag` /
-// `import_record::Tag`, so no bridge is needed.
-mod hardcoded_module {
-    use super::*;
-    #[derive(Default, Clone, Copy)]
-    pub(super) struct AliasOptions {
-        pub rewrite_jest_for_tests: bool,
-    }
-    pub(super) struct Alias {
-        pub path: &'static [u8],
-        pub tag: ImportRecordTag,
-        pub node_builtin: bool,
-    }
-    pub(super) fn get(name: &[u8], target: BundleTarget, opts: AliasOptions) -> Option<Alias> {
-        bun_resolve_builtins::Alias::get(
-            name,
-            target,
-            bun_resolve_builtins::Cfg {
-                rewrite_jest_for_tests: opts.rewrite_jest_for_tests,
-            },
-        )
-        .map(|a| Alias {
-            path: a.path.as_bytes(),
-            tag: a.tag,
-            node_builtin: a.node_builtin,
-        })
-    }
 }
 
 /// Intern a byte buffer into the process-lifetime `relative_paths_list`
@@ -235,24 +202,17 @@ impl Linker {
                     }
 
                     if IS_BUN {
-                        if let Some(replacement) = hardcoded_module::get(
+                        if let Some(replacement) = bun_resolve_builtins::Alias::get(
                             import_record.path.text,
                             target,
-                            hardcoded_module::AliasOptions {
+                            bun_resolve_builtins::Cfg {
                                 rewrite_jest_for_tests,
                             },
                         ) {
-                            if replacement.tag == ImportRecordTag::Builtin
-                                && import_record.kind.is_common_js()
-                            {
+                            if replacement.stays_as_written(import_record.kind) {
                                 continue;
                             }
-                            // The `module.import` tracing channel publishes it as it is written.
-                            if replacement.node_builtin && import_record.kind == ImportKind::Dynamic
-                            {
-                                continue;
-                            }
-                            import_record.path.text = replacement.path;
+                            import_record.path.text = replacement.path.as_bytes();
                             import_record.tag = replacement.tag;
                             import_record
                                 .flags

@@ -152,6 +152,7 @@ pub struct LoweringInputs<'a> {
     pub page_manifests: &'a [(FileId, &'a DataValue<'a>)],
     pub reads_source_paths: bool,
     pub may_have_plugins: bool,
+    pub mentions_plugin: bool,
     pub may_replace_evaluators: bool,
     pub replaced_builtins: &'a [u32],
     pub fixed_builtins: &'a FixedBuiltins,

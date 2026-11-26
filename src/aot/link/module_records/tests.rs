@@ -646,7 +646,7 @@ fn targets_of(program: &Program, path_suffix: &str, kind: ModuleRequestKind) -> 
 }
 
 #[test]
-fn a_load_that_leads_to_a_module_that_throws_follows_the_way_there_alone() {
+fn a_load_that_leads_to_a_module_that_throws_follows_the_imports_up_to_it() {
     let mut files = vec![("graph.test.js", "import './above.js';\n")];
     files.extend_from_slice(&GRAPH_WITH_A_MISTAKE);
     let program = link_test_run(&files);
@@ -655,12 +655,15 @@ fn a_load_that_leads_to_a_module_that_throws_follows_the_way_there_alone() {
     let flags = record_named(&program, "broken.js").flags;
     assert!(flags.contains(ModuleFlags::THROWS_AT_LOAD));
     assert!(imports_of("broken.js").is_empty());
-    assert_eq!(imports_of("above.js"), [named("broken.js")]);
+    assert_eq!(
+        imports_of("above.js"),
+        [named("sibling.js"), named("broken.js")]
+    );
     assert_eq!(imports_of("graph.test.js"), [named("above.js")]);
     assert!(record_named(&program, "above.js").required_names.is_empty());
     let only_named = |path_suffix| targets_of(&program, path_suffix, ModuleRequestKind::Require);
     assert_eq!(only_named("broken.js"), [named("below.js")]);
-    assert_eq!(only_named("above.js"), [named("sibling.js")]);
+    assert!(only_named("above.js").is_empty());
 }
 
 #[test]

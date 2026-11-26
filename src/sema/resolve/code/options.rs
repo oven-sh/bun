@@ -26,7 +26,6 @@ pub struct CodeOptions {
     pub mocks_any_file: bool,
     pub follows_paths_to_functions_of_other_files: bool,
     pub builds_executable: bool,
-    pub entry_points_that_run_first: Vec<Vec<u8>>,
     pub ignores_declared_side_effects: bool,
     pub looks_for_type_errors: bool,
     /// `bun check --aot`: also reports type errors in the TypeScript sources of dependencies.
@@ -71,7 +70,6 @@ impl CodeOptions {
             mocks_any_file: false,
             follows_paths_to_functions_of_other_files: false,
             builds_executable: false,
-            entry_points_that_run_first: Vec::new(),
             ignores_declared_side_effects: false,
             looks_for_type_errors: false,
             checks_dependency_sources: false,

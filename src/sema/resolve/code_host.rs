@@ -56,7 +56,7 @@ pub trait CodeHost: Host {
         false
     }
 
-    fn note_guesses_left_out(&self, _file_whose_loader_decides_its_kind: Option<&[u8]>) {}
+    fn note_guesses_left_out(&self) {}
 
     /// True if the file, which has no known extension, parses as code.
     fn is_code(&self, _path: &[u8]) -> bool {
@@ -78,10 +78,6 @@ pub trait CodeHost: Host {
         _path: &[u8],
         _needs_extension: bool,
     ) {
-    }
-
-    fn stands_for_text_that_cannot_be_read(&self, _payload: &HostPayload) -> bool {
-        false
     }
 
     fn kind_of_file_missing_at_build(&self) -> Option<ExternalKind> {
@@ -196,16 +192,6 @@ pub trait CodeHost: Host {
     }
 
     fn loader_of_code_in_place_of_typed_file(&self, _path: &[u8]) -> Option<HostLoader> {
-        None
-    }
-
-    /// A file that has run may be read from disk and run again. The host knows once every file is finished.
-    fn may_load_files_again(&self) -> bool {
-        false
-    }
-
-    /// The loader under which the file is an ES module beside the CommonJS file at its path.
-    fn loader_of_module_form(&self, _path: &[u8]) -> Option<HostLoader> {
         None
     }
 

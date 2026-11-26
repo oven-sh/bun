@@ -1,5 +1,4 @@
 use super::{CommonJsExports, CommonJsImport, CommonJsInput, Target};
-use crate::ir::for_each_mut;
 use crate::modules::bindings::{ExportBinding, ImportBinding, ModuleExport, SyntheticExportId};
 use crate::modules::exports::ExportTables;
 use crate::modules::failures::{FailureOrder, ModuleFailureId, NumberedFailures};
@@ -26,12 +25,6 @@ struct Facade {
 }
 
 type CheckedCopies = Vec<(SyntheticExportId, ModuleFailureId)>;
-
-#[derive(Copy, Clone)]
-struct AbsentName {
-    imported: CommonJsImport,
-    order: FailureOrder,
-}
 
 #[derive(Copy, Clone)]
 struct UnnumberedCheck {
@@ -66,8 +59,7 @@ struct DecisionInputs {
     written_imports: Vec<CommonJsImport>,
     names_read: Vec<RequestedName>,
     imported_files: Vec<FileId>,
-    absent_names: Vec<AbsentName>,
-    linked_importers: Vec<(FileId, Vec<FileId>)>,
+    absent_names: Vec<(CommonJsImport, FailureOrder)>,
     dropped_names: Vec<CommonJsImport>,
 }
 
@@ -80,7 +72,7 @@ pub(super) struct Facades {
     copies_that_stay_empty: Vec<SyntheticExportId>,
     facade_indices: Vec<u32>,
     facades: Vec<Facade>,
-    unnumbered_checks: Vec<(FileId, Vec<UnnumberedCheck>)>,
+    unnumbered_checks: Vec<UnnumberedCheck>,
     checks: Vec<(FileId, CheckedCopies)>,
 }
 
@@ -167,137 +159,6 @@ fn collect_names_read(
     names
 }
 
-fn collect_imports_between_es_modules(scans: &Scans, modules: &ModuleSet) -> Vec<(FileId, FileId)> {
-    let mut imports = Vec::new();
-    for &importer in &modules.compiled_files {
-        let Some(scan) = find_es_module(scans, importer) else {
-            continue;
-        };
-        let imported = scan
-            .requests
-            .iter()
-            .filter_map(|request| match request.target {
-                ModuleRef::File(target) if find_es_module(scans, target).is_some() => Some(target),
-                _ => None,
-            });
-        imports.extend(imported.map(|imported| (importer, imported)));
-    }
-    debug_assert!(imports.is_sorted_by_key(|import| import.0));
-    imports
-}
-
-fn find_modules_that_lead_to(
-    targets: Vec<FileId>,
-    imports: &[(FileId, FileId)],
-    file_count: usize,
-) -> Vec<bool> {
-    let mut ends = find_first_places(imports.iter().map(|import| import.1), file_count);
-    let mut importers = vec![FileId(0); imports.len()];
-    for &(importer, imported) in imports {
-        let place = &mut ends[imported.idx()];
-        importers[*place as usize] = importer;
-        *place += 1;
-    }
-    let mut leads_there = vec![false; file_count];
-    let mut pending = targets;
-    while let Some(file) = pending.pop() {
-        if core::mem::replace(&mut leads_there[file.idx()], true) {
-            continue;
-        }
-        let first = match file.idx() {
-            0 => 0,
-            index => ends[index - 1],
-        };
-        pending.extend_from_slice(&importers[first as usize..ends[file.idx()] as usize]);
-    }
-    leads_there
-}
-
-fn sum_counts(mut counts: Vec<u32>) -> Vec<u32> {
-    for file in 1..counts.len() {
-        counts[file] += counts[file - 1];
-    }
-    counts
-}
-
-fn find_first_places(files: impl Iterator<Item = FileId>, file_count: usize) -> Vec<u32> {
-    let mut counts = vec![0u32; file_count + 1];
-    for file in files {
-        counts[file.idx() + 1] += 1;
-    }
-    sum_counts(counts)
-}
-
-fn list_importers_in_link_order(
-    root: FileId,
-    imports: &[(FileId, FileId)],
-    first_imports: &[u32],
-    is_importer: &[bool],
-) -> Vec<FileId> {
-    let first_import_of = |file: FileId| first_imports[file.idx()] as usize;
-    let mut order = Vec::new();
-    let mut is_visited = vec![false; is_importer.len()];
-    is_visited[root.idx()] = true;
-    let mut path = Vec::new();
-    let (mut file, mut next) = (root, first_import_of(root));
-    loop {
-        match imports.get(next) {
-            Some(&(importer, imported)) if importer == file => {
-                next += 1;
-                if !core::mem::replace(&mut is_visited[imported.idx()], true) {
-                    path.push((file, next));
-                    (file, next) = (imported, first_import_of(imported));
-                }
-            }
-            _ => {
-                if is_importer[file.idx()] {
-                    order.push(file);
-                }
-                let Some(outer) = path.pop() else {
-                    break;
-                };
-                (file, next) = outer;
-            }
-        }
-    }
-    order
-}
-
-impl DecisionInputs {
-    fn find_names_to_check(&mut self, input: &CommonJsInput<'_, '_, '_>, tables: &ExportTables) {
-        if tables.absent_commonjs_names.is_empty() {
-            return;
-        }
-        let (scans, modules) = (input.scans, input.modules);
-        let file_count = input.bind.files.modules.len();
-        let absent_names = tables.absent_commonjs_names.iter();
-        self.absent_names = absent_names
-            .map(|&(imported, order)| AbsentName { imported, order })
-            .collect();
-        let importers = self.absent_names.iter();
-        let importers: Vec<FileId> = importers.map(|absent| absent.imported.importer).collect();
-        let mut is_importer = vec![false; file_count];
-        for importer in &importers {
-            is_importer[importer.idx()] = true;
-        }
-        let mut links = collect_imports_between_es_modules(scans, modules);
-        let leads_to_importer = find_modules_that_lead_to(importers, &links, file_count);
-        links.retain(|link| leads_to_importer[link.1.idx()]);
-        let first_links = find_first_places(links.iter().map(|link| link.0), file_count);
-        let roots = modules.compiled_files.iter().copied();
-        let roots = roots.filter(|&root| leads_to_importer[root.idx()]);
-        let roots = roots.filter(|&root| (input.is_prefix_root)(root));
-        self.linked_importers = roots.map(|root| (root, Vec::new())).collect();
-        let in_parallel = input.bind.in_parallel;
-        for_each_mut(&mut self.linked_importers, in_parallel, &|(
-            root,
-            linked,
-        )| {
-            *linked = list_importers_in_link_order(*root, &links, &first_links, &is_importer);
-        });
-    }
-}
-
 fn is_known_only_at_run_time(exports: &CommonJsExports, owner: ModuleRef, name: Atom) -> bool {
     let Some(text) = exports.text_of(owner) else {
         return false;
@@ -330,14 +191,13 @@ impl Facades {
             }
             SeenNamespace { file, names }
         });
-        let mut inputs = DecisionInputs {
+        let inputs = DecisionInputs {
             written_imports: tables.commonjs_imports.clone(),
             names_read: collect_names_read(input, tables, imports),
             imported_files: collect_imported_files(scans, modules),
+            absent_names: tables.absent_commonjs_names.clone(),
             dropped_names: tables.dropped_commonjs_names.clone(),
-            ..DecisionInputs::default()
         };
-        inputs.find_names_to_check(input, tables);
         Facades {
             inputs,
             seen_namespaces: seen_namespaces.collect(),
@@ -504,34 +364,22 @@ impl Facades {
     fn decide_checks(
         &mut self,
         exports: &CommonJsExports,
-        absent_names: &[AbsentName],
-        linked_importers: Vec<(FileId, Vec<FileId>)>,
+        absent_names: Vec<(CommonJsImport, FailureOrder)>,
         dropped_names: Vec<CommonJsImport>,
     ) {
         let copy_of = |imported: CommonJsImport| {
             let owner = exports.owner_of(ModuleRef::File(imported.exporter), imported.name)?;
             exports.ids.get(&owner).copied()
         };
-        for (root, importers) in linked_importers {
-            let mut checks = Vec::new();
-            for importer in importers {
-                let first = absent_names.partition_point(|it| it.imported.importer < importer);
-                let rest = absent_names[first..].iter();
-                for absent in rest.take_while(|it| it.imported.importer == importer) {
-                    if let Some(copy) = copy_of(absent.imported) {
-                        checks.push(UnnumberedCheck {
-                            copy,
-                            importer,
-                            order: absent.order,
-                        });
-                    }
-                }
-            }
-            if !checks.is_empty() {
-                self.unnumbered_checks.push((root, checks));
-            }
-        }
-        debug_assert!(self.unnumbered_checks.is_sorted_by(|a, b| a.0 < b.0));
+        let checks = absent_names.into_iter().filter_map(|(imported, order)| {
+            Some(UnnumberedCheck {
+                copy: copy_of(imported)?,
+                importer: imported.importer,
+                order,
+            })
+        });
+        self.unnumbered_checks = checks.collect();
+        debug_assert!(self.unnumbered_checks.is_sorted_by_key(|it| it.importer));
         self.copies_that_stay_empty = dropped_names.into_iter().filter_map(copy_of).collect();
         self.copies_that_stay_empty.sort_unstable();
         self.copies_that_stay_empty.dedup();
@@ -549,12 +397,7 @@ impl Facades {
         for file in inputs.imported_files {
             self.add_imported_file(exports, file);
         }
-        self.decide_checks(
-            exports,
-            &inputs.absent_names,
-            inputs.linked_importers,
-            inputs.dropped_names,
-        );
+        self.decide_checks(exports, inputs.absent_names, inputs.dropped_names);
     }
 
     pub(super) fn see_namespace(&mut self, exports: &CommonJsExports, file: FileId) {
@@ -590,11 +433,6 @@ impl CommonJsExports {
         }
     }
 
-    #[cfg(test)]
-    pub fn check(&self, root: FileId) -> Option<ModuleRef> {
-        (!self.checked_copies(root).is_empty()).then_some(ModuleRef::Check(root))
-    }
-
     pub fn copies(&self, facade: FileId) -> &[SyntheticExportId] {
         let facade = self.facades.find(facade);
         facade.map_or(&[], |facade| &facade.copies[..])
@@ -618,20 +456,21 @@ impl CommonJsExports {
 
     pub(in crate::modules) fn number_checks(&mut self, failures: &NumberedFailures) {
         let number =
-            |check: UnnumberedCheck| (check.copy, failures.id_of(check.importer, check.order));
-        let unnumbered = core::mem::take(&mut self.facades.unnumbered_checks).into_iter();
+            |check: &UnnumberedCheck| (check.copy, failures.id_of(check.importer, check.order));
+        let unnumbered = core::mem::take(&mut self.facades.unnumbered_checks);
+        let by_importer = unnumbered.chunk_by(|a, b| a.importer == b.importer);
         let numbered =
-            unnumbered.map(|(root, checks)| (root, checks.into_iter().map(number).collect()));
+            by_importer.map(|checks| (checks[0].importer, checks.iter().map(number).collect()));
         self.facades.checks = numbered.collect();
     }
 
-    pub fn checked_copies(&self, check: FileId) -> &[(SyntheticExportId, ModuleFailureId)] {
+    pub fn checked_copies(&self, importer: FileId) -> &[(SyntheticExportId, ModuleFailureId)] {
         debug_assert!(
             self.facades.unnumbered_checks.is_empty(),
             "the checks have no numbers yet"
         );
         let checks = &self.facades.checks;
-        let found = checks.binary_search_by_key(&check, |entry| entry.0);
+        let found = checks.binary_search_by_key(&importer, |entry| entry.0);
         found.map_or(&[], |place| &checks[place].1[..])
     }
 
@@ -645,47 +484,6 @@ impl CommonJsExports {
 mod tests {
     use super::*;
     use crate::modules::testing::{file_named, with_test_run_graph};
-
-    fn link_order(root: u32, pairs: &[(u32, u32)], importers: &[u32]) -> Vec<u32> {
-        const FILE_COUNT: usize = 8;
-        let pairs = pairs.iter();
-        let mut imports: Vec<(FileId, FileId)> = pairs
-            .map(|&(importer, imported)| (FileId(importer), FileId(imported)))
-            .collect();
-        let importers: Vec<FileId> = importers.iter().map(|&file| FileId(file)).collect();
-        let mut is_importer = vec![false; FILE_COUNT];
-        for importer in &importers {
-            is_importer[importer.idx()] = true;
-        }
-        let leads_there = find_modules_that_lead_to(importers, &imports, FILE_COUNT);
-        imports.retain(|import| leads_there[import.1.idx()]);
-        let first_imports = find_first_places(imports.iter().map(|import| import.0), FILE_COUNT);
-        let root = FileId(root);
-        let order = list_importers_in_link_order(root, &imports, &first_imports, &is_importer);
-        order.into_iter().map(|file| file.0).collect()
-    }
-
-    #[test]
-    fn a_module_is_linked_after_what_it_imports() {
-        let pairs = [(0, 1), (0, 2), (1, 3), (2, 3)];
-        assert_eq!(link_order(0, &pairs, &[0, 2, 3]), [3, 2, 0]);
-        assert_eq!(link_order(2, &pairs, &[0, 2, 3]), [3, 2]);
-        assert_eq!(link_order(0, &[(0, 2), (0, 1)], &[1, 2]), [2, 1]);
-    }
-
-    #[test]
-    fn a_cycle_of_imports_is_walked_once() {
-        let pairs = [(0, 1), (1, 2), (2, 0), (2, 3)];
-        assert_eq!(link_order(0, &pairs, &[1, 3]), [3, 1]);
-        assert_eq!(link_order(2, &pairs, &[1, 3]), [1, 3]);
-    }
-
-    #[test]
-    fn imports_that_lead_to_no_importer_change_nothing() {
-        let pairs = [(0, 1), (0, 2), (1, 4), (2, 3), (5, 4)];
-        assert_eq!(link_order(0, &pairs, &[3]), [3]);
-        assert!(link_order(5, &pairs, &[3]).is_empty());
-    }
 
     #[test]
     fn copies_are_ordered_by_rank_in_any_insertion_order() {
@@ -714,8 +512,8 @@ mod tests {
             ("lib.cjs", "exports.a = 1;"),
         ];
         with_test_run_graph(&files, |graph, input| {
-            let [root, lib] = ["main.test.mjs", "lib.cjs"].map(|name| file_named(input, name));
-            let checked = graph.commonjs().checked_copies(root);
+            let [above, lib] = ["above.mjs", "lib.cjs"].map(|name| file_named(input, name));
+            let checked = graph.commonjs().checked_copies(above);
             let [(_, failure)] = checked else {
                 panic!("{checked:?}");
             };

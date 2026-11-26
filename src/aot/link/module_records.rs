@@ -24,7 +24,6 @@ use crate::ir::{
 use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProgramFile, ProjectId, SourceKind};
 use crate::lower::{KeptBetweenWays, find_file_that_asks_mock};
-use crate::module_keys::type_attribute_of;
 use crate::modules::{
     self, ExportBinding, ExportLookup, ImportBinding, Interop, ModuleFailureKind, ModuleGraph,
     ModuleKind, ModuleRef, Shape, Spelling, SyntheticExportRule, compare_code_units,
@@ -32,7 +31,6 @@ use crate::modules::{
 use bun_ast::Loader;
 use bun_resolve_builtins::HardcodedModule::BUN_ALIASES;
 use bun_sema::atom::{Atom, Interner, known};
-use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{FileId, Sym};
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::SharedSort;
@@ -406,70 +404,59 @@ pub(super) fn build_module_records(
     }
 }
 
-fn find_commonjs_records(input: &RecordInput<'_, '_>, count: usize) -> Vec<bool> {
-    let mut is_commonjs = vec![false; count];
+fn find_es_module_records(input: &RecordInput<'_, '_>, count: usize) -> Vec<bool> {
+    let mut is_es_module = vec![false; count];
     for (index, module) in input.modules.modules.iter().enumerate() {
-        let Some(id) = input.numbering.modules[index] else {
-            continue;
-        };
-        is_commonjs[id.index()] = match *module {
-            ProgramModule::Facade(_) => true,
-            ProgramModule::File(file) => {
-                let graph = input.projects.get(file.project).graph;
-                graph.interop(ModuleRef::File(file.file)).kind == ModuleKind::CommonJs
-            }
-            _ => false,
-        };
+        if let (Some(id), &ProgramModule::File(file)) = (input.numbering.modules[index], module) {
+            let graph = input.projects.get(file.project).graph;
+            let kind = graph.interop(ModuleRef::File(file.file)).kind;
+            is_es_module[id.index()] = kind == ModuleKind::SourceText;
+        }
     }
-    is_commonjs
+    is_es_module
 }
 
-/// Of the imports in front of the way, only CommonJS files run before the load fails. In a test run it calls the factories of mocks that deferred imports name.
-fn follow_only(
-    module: &mut generated::Module,
-    way: Option<ModuleId>,
-    runs_before: &[bool],
+fn is_statement(request: &generated::ModuleRequest) -> bool {
+    request.kind == ModuleRequestKind::Import && !request.is_hoisted
+}
+
+/// Keeps the imports that the load comes to. It evaluates no ES module beside the way to the module that throws, and in a test run it calls the factories of mocks that deferred imports name.
+fn end_load_at_throw(
+    modules: &mut [generated::Module],
+    importer: usize,
+    next_on_the_way: Option<ModuleId>,
+    is_es_module: &[bool],
     runs_tests: bool,
 ) {
-    let mut written = core::mem::take(&mut module.requests);
-    let is_way = |request: &generated::ModuleRequest| {
-        request.kind == ModuleRequestKind::Import && Some(request.target) == way
-    };
-    if let Some(place) = written.iter().position(is_way) {
-        let runs = |it: &generated::ModuleRequest| {
-            it.kind == ModuleRequestKind::Import && !it.is_hoisted && runs_before[it.target.index()]
-        };
-        let (first, others): (Vec<_>, Vec<_>) = written.drain(..place).partition(runs);
-        module.requests = first;
-        written.splice(0..0, others);
-    }
-    let is_deferred = |it: &generated::ModuleRequest| {
-        runs_tests
-            && it.kind == ModuleRequestKind::Import
-            && it.phase == ImportPhase::Defer
-            && !is_way(it)
-    };
-    let (deferred, written): (Vec<_>, Vec<_>) = written.into_iter().partition(is_deferred);
-    module.requests.extend(deferred);
-    let followed = way.map(|target| generated::ModuleRequest {
-        target,
-        phase: ImportPhase::Evaluation,
-        is_dynamic_star_export: false,
-        kind: ModuleRequestKind::Import,
-        completes: true,
-        is_hoisted: false,
-        star_place: None,
+    let written = core::mem::take(&mut modules[importer].requests);
+    let mut has_ended = next_on_the_way.is_none();
+    let (mut kept, others): (Vec<_>, Vec<_>) = written.into_iter().partition(|request| {
+        let names_factory = runs_tests && request.phase == ImportPhase::Defer;
+        let is_kept = is_statement(request) && (!has_ended || names_factory);
+        let flags = modules[request.target.index()].flags;
+        has_ended |= is_kept
+            && flags.contains(ModuleFlags::THROWS_AT_LOAD)
+            && !flags.contains(ModuleFlags::MAY_BE_MOCKED);
+        is_kept
     });
-    module.requests.extend(followed);
-    for request in written {
+    for request in &mut kept {
+        if Some(request.target) == next_on_the_way {
+            request.phase = ImportPhase::Evaluation;
+        } else if is_es_module[request.target.index()] {
+            request.phase = ImportPhase::Defer;
+        }
+        request.is_dynamic_star_export = false;
+        request.star_place = None;
+    }
+    for request in others {
         let is_import = request.kind == ModuleRequestKind::Import;
-        let mut listed = module.requests.iter();
-        if (is_import && Some(request.target) == way)
-            || listed.any(|it| it.kind == ModuleRequestKind::Require && it.target == request.target)
-        {
+        let is_listed = |it: &generated::ModuleRequest| {
+            it.target == request.target && (is_import || it.kind == ModuleRequestKind::Require)
+        };
+        if kept.iter().any(is_listed) {
             continue;
         }
-        module.requests.push(generated::ModuleRequest {
+        kept.push(generated::ModuleRequest {
             phase: ImportPhase::Evaluation,
             is_dynamic_star_export: false,
             kind: ModuleRequestKind::Require,
@@ -479,56 +466,46 @@ fn follow_only(
             ..request
         });
     }
-    module.required_names.clear();
+    modules[importer].requests = kept;
+    modules[importer].required_names.clear();
 }
 
 fn end_loads_at_modules_that_throw(modules: &mut [generated::Module], input: &RecordInput<'_, '_>) {
     let throws = |module: &generated::Module| module.flags.contains(ModuleFlags::THROWS_AT_LOAD);
-    let mut on_the_way: Vec<usize> = (0..modules.len())
+    let mut on_the_way: Vec<(usize, Option<ModuleId>)> = (0..modules.len())
         .filter(|&index| throws(&modules[index]))
+        .map(|index| (index, None))
         .collect();
     if on_the_way.is_empty() {
         return;
     }
     let mut importers: Vec<Vec<usize>> = vec![Vec::new(); modules.len()];
     for (importer, module) in modules.iter().enumerate() {
-        for request in &module.requests {
-            if request.kind == ModuleRequestKind::Import {
-                importers[request.target.index()].push(importer);
-            }
+        for request in module.requests.iter().filter(|it| is_statement(it)) {
+            importers[request.target.index()].push(importer);
         }
     }
-    let runs_tests = input
-        .projects
-        .get(ProjectId::Application)
-        .graph
-        .runs_tests();
-    let runs_before = match runs_tests {
-        true => vec![false; modules.len()],
-        false => find_commonjs_records(input, modules.len()),
-    };
-    let mut is_found = vec![false; modules.len()];
-    for &module in &on_the_way {
-        is_found[module] = true;
-        follow_only(&mut modules[module], None, &runs_before, runs_tests);
+    let mut is_on_the_way = vec![false; modules.len()];
+    for &(module, _) in &on_the_way {
+        is_on_the_way[module] = true;
     }
     let mut next = 0;
-    while let Some(&target) = on_the_way.get(next) {
+    while let Some(&(target, _)) = on_the_way.get(next) {
         next += 1;
         if modules[target].flags.contains(ModuleFlags::MAY_BE_MOCKED) {
             continue;
         }
         for &importer in &importers[target] {
-            if !core::mem::replace(&mut is_found[importer], true) {
-                follow_only(
-                    &mut modules[importer],
-                    Some(ModuleId::new(target)),
-                    &runs_before,
-                    runs_tests,
-                );
-                on_the_way.push(importer);
+            if !core::mem::replace(&mut is_on_the_way[importer], true) {
+                on_the_way.push((importer, Some(ModuleId::new(target))));
             }
         }
+    }
+    let is_es_module = find_es_module_records(input, modules.len());
+    let application = input.projects.get(ProjectId::Application);
+    let runs_tests = application.graph.runs_tests();
+    for (module, next) in on_the_way {
+        end_load_at_throw(modules, module, next, &is_es_module, runs_tests);
     }
 }
 
@@ -1174,7 +1151,7 @@ impl RecordBuilder<'_, '_, '_> {
                     record.flags |= ModuleFlags::IS_IMPORTED_AS_NAMESPACE;
                 }
                 record.type_attribute =
-                    type_attribute.map(|it| self.strings.intern(type_attribute_of(it).as_bytes()));
+                    type_attribute.map(|it| self.strings.intern(it.type_attribute().as_bytes()));
             }
             ExternalKind::HostValue => {
                 record.external_kind = generated::ExternalKind::HostValue;
@@ -1257,6 +1234,8 @@ impl RecordBuilder<'_, '_, '_> {
                 if interop.loader_returns_namespace {
                     record.flags |= ModuleFlags::LOADER_RETURNS_NAMESPACE;
                 }
+                record.type_attribute = (interop.type_of_other_form_of_file)
+                    .map(|it| self.strings.intern(it.type_attribute().as_bytes()));
                 record.data = find_program_id(fragment.data, &ids.data);
                 self.fill_export_table_record(file, &mut record);
             }
@@ -1319,7 +1298,8 @@ impl RecordBuilder<'_, '_, '_> {
             ProgramModule::Facade(_) => {
                 record.exports = self.build_exports(project, None, graph.exports_of(own));
             }
-            ProgramModule::Inner { .. } | ProgramModule::Check(_) => {}
+            ProgramModule::Check(_) => record.flags |= ModuleFlags::IS_CHECK_OF_NAMES,
+            ProgramModule::Inner { .. } => {}
             ProgramModule::File(_) | ProgramModule::Runtime(_) | ProgramModule::External { .. } => {
                 unreachable!("the record belongs to a file")
             }
@@ -1373,9 +1353,6 @@ impl RecordBuilder<'_, '_, '_> {
         }
         if graph.is_importable_during_evaluation(module) {
             flags |= ModuleFlags::IS_IMPORTABLE_DURING_EVALUATION;
-        }
-        if graph.is_imported_as_es_module(module) {
-            flags |= ModuleFlags::IS_IMPORTED_AS_ES_MODULE;
         }
         if graph.is_imported_as_namespace(module) {
             flags |= ModuleFlags::IS_IMPORTED_AS_NAMESPACE;
@@ -1501,27 +1478,8 @@ impl RecordBuilder<'_, '_, '_> {
             record.flags |= ModuleFlags::HAS_TOP_LEVEL_AWAIT;
         }
         record.requests = self.build_requests(project, ModuleRef::File(file));
-        if graph.lists_names_of_statements() {
-            let files = input.projects.get(project).loaded.files();
-            let sites = files.analysis(file).import_sites.iter();
-            let written = sites.filter_map(|site| match (site.kind, site.specifier) {
-                (
-                    ImportSiteKind::JsxRuntime
-                    | ImportSiteKind::JsxPackage
-                    | ImportSiteKind::Import(_)
-                    | ImportSiteKind::ExportFrom(_)
-                    | ImportSiteKind::ExportStar(_),
-                    ImportSpecifier::Constant(name),
-                ) => Some((name, graph.find_site_answer(file, site.kind))),
-                _ => None,
-            });
-            let mut names = FxHashSet::default();
-            let written = written.filter(|&(name, linked)| match linked {
-                Some(modules::SiteAnswer::Module(module)) => names.insert((name, Some(module))),
-                _ => names.insert((name, None)),
-            });
-            record.names_of_statements = written.map(|(name, _)| self.intern_atom(name)).collect();
-        }
+        let written = graph.names_of_statements(file).iter();
+        record.names_of_statements = written.map(|&name| self.intern_atom(name)).collect();
         let left_to_run = self.names_left_to_run;
         let as_run_finds_it = |&export: &modules::ModuleExport| {
             let Some(&asked) = left_to_run.get(&(ProgramFile { project, file }, export.name))

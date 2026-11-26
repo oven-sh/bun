@@ -9,7 +9,7 @@
 // CHECK: module [[otherFacade]] path="#{{*}}requests=[{target=[[other]] kind=Require completes=true}]
 // CHECK: module [[stars]] path="{{*}}stars.mjs" {{*}}requests=[{target=[[innerFacade]] isDynamicStarExport=true completes=true}, {target=[[otherFacade]] isDynamicStarExport=true completes=true}]
 // CHECK: module [[index]] path="{{*}}index.mjs" {{*}}requests=[{target=[[middle]] completes=true}, {target=[[stars]] completes=true}] requiredNames=
-// CHECK: module {{*}}barrel.mjs" {{*}}requests=[{target=[[innerFacade]] completes=true isHoisted=true}, {target=[[otherFacade]] completes=true isHoisted=true}, {target=[[index]] completes=true}] exports=
+// CHECK: module {{*}}barrel.mjs" {{*}}requests=[{target=[[innerFacade]] completes=true isHoisted=true}, {target=[[middle]] completes=true isHoisted=true}, {target=[[otherFacade]] completes=true isHoisted=true}, {target=[[index]] completes=true}] exports=
 
 // FILE: main.cjs
 const required = require("./barrel.mjs");

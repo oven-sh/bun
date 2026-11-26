@@ -413,6 +413,7 @@ public:
     /* The user-assigned Module._resolveFilename value; require() throws if it is not callable. */           \
     V(public, WriteBarrier<JSC::Unknown>, m_moduleResolveFilenameOverride)                                   \
     V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleRunMainFunction)                                   \
+    V(public, WriteBarrier<JSC::JSObject>, m_moduleGivenToRunMain)                                           \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_modulePrototypeUnderscoreCompileFunction)            \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_commonJSRequireESMFromHijackedExtensionFunction)     \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_nodeModuleConstructor)                                 \
@@ -686,8 +687,8 @@ public:
     bool hasOverriddenModuleResolveFilenameFunction = false;
     // De-optimization once `require("module").wrapper` or `require("module").wrap` is written to
     bool hasOverriddenModuleWrapper = false;
-    // De-optimization once `require("module").runMain` is written to
-    bool hasOverriddenModuleRunMain = false;
+    // What `require("module").runMain` has left to the loader.
+    WTF::HashSet<WTF::String> keysImportedByRunMain;
 
     // node:crypto deprecation warnings are emitted at most once per realm, like Node, whose
     // flags live in per-realm module state (lib/internal/crypto/keys.js). They must not be

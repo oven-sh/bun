@@ -1026,3 +1026,109 @@ describe.concurrent("suffixes of an import path", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+describe.concurrent("one file under several types", () => {
+  async function run(files: Record<string, string>) {
+    using dir = tempDir("one-file-under-several-types", {
+      "data.json": `{ "a": 1 }`,
+      "data.toml": `a = 1`,
+      "data.txt": `a: 1`,
+      ...files,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { said: stdout && JSON.parse(stdout), stderr, exitCode };
+  }
+  const passes = (said: unknown) => ({ said, stderr: "", exitCode: 0 });
+
+  test.each([
+    ["text", "toml", ["a = 1", { a: 1 }]],
+    ["toml", "text", [{ a: 1 }, "a = 1"]],
+    ["yaml", "text", ["a = 1", "a = 1"]],
+  ])("is a module for each: %s, then %s", async (first, second, values) => {
+    expect(
+      await run({
+        "main.mjs": `
+          import * as first from "./data.toml" with { type: "${first}" };
+          import * as second from "./data.toml" with { type: "${second}" };
+          import { fromOther } from "./other.mjs";
+          const called = type => import("./data.toml", { with: { type } });
+          console.log(JSON.stringify([
+            [first.default, second.default],
+            first === second,
+            fromOther === second.default,
+            (await called("${first}")) === first,
+            (await called("${second}")) === second,
+          ]));
+        `,
+        "other.mjs": `export { default as fromOther } from "./data.toml" with { type: "${second}" };`,
+      }),
+    ).toEqual(passes([values, false, true, true, true]));
+  });
+
+  test("keeps the failure of one type from another", async () => {
+    expect(
+      await run({
+        "main.mjs": `
+          const called = type => import("./data.txt", { with: { type } }).then(it => it.default, error => error.name);
+          console.log(JSON.stringify([await called("toml"), await called("yaml"), await called("toml"), await called("text")]));
+        `,
+      }),
+    ).toEqual(passes(["BuildMessage", { a: 1 }, "BuildMessage", "a: 1"]));
+  });
+
+  test.each([
+    ["data.json", "json"],
+    ["data.toml", "toml"],
+    ["data.txt", "text"],
+  ])("is one module with and without the type that its name says: %s", async (file, type) => {
+    expect(
+      await run({
+        "main.mjs": `
+          import * as typed from "./${file}" with { type: "${type}" };
+          import * as untyped from "./${file}";
+          console.log(JSON.stringify([
+            typed === untyped,
+            (await import("./${file}", { with: { type: "${type}" } })) === untyped,
+            (await import("./${file}")) === typed,
+          ]));
+        `,
+      }),
+    ).toEqual(passes([true, true, true]));
+  });
+
+  test.each([
+    ["export { default } from", `export { default } from "./data.txt" with { type: "yaml" };`, "it.default"],
+    ["export { name } from", `export { a } from "./data.txt" with { type: "yaml" };`, "{ a: it.a }"],
+    ["export * from", `export * from "./data.txt" with { type: "yaml" };`, "{ a: it.a }"],
+    ["export * as name from", `export * as all from "./data.txt" with { type: "yaml" };`, "it.all.default"],
+  ])("goes by the type that `%s` writes", async (_, statement, read) => {
+    expect(
+      await run({
+        "main.mjs": `import * as it from "./passes-on.mjs"; console.log(JSON.stringify(${read}));`,
+        "passes-on.mjs": statement,
+      }),
+    ).toEqual(passes({ a: 1 }));
+  });
+
+  test.each([
+    ["require() first", `const required = require("./FILE"), imported = await import("./FILE");`],
+    ["import() first", `const imported = await import("./FILE"), required = require("./FILE");`],
+  ])("is one value to require() and to import(): %s", async (_, loads) => {
+    const each = ["data.json", "data.toml"].map(
+      file => `{ ${loads.replaceAll("FILE", file)} said.push([required, required === imported.default]); }`,
+    );
+    expect(await run({ "main.mjs": `const said = []; ${each.join("\n")} console.log(JSON.stringify(said));` })).toEqual(
+      passes([
+        [{ a: 1 }, true],
+        [{ a: 1 }, true],
+      ]),
+    );
+  });
+});

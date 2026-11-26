@@ -10,7 +10,6 @@ use crate::resolve::{
     CodeHost, CodeImportKind, CodeOptions, CodeResolution, DeclaredSideEffects, EnclosingPackage,
     HostPayload, JsxSettings, ProjectResolvers, SiteResolution, TranspileSettings,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct CompileInputs<'a, 's> {
     pub entry_points: &'a [Vec<u8>],
@@ -58,9 +57,6 @@ pub(super) struct CodeLoadContext<'a, 's: 'r, 'r> {
     entry_points_left_out: Guarded<FxHashSet<(Vec<u8>, HostLoader)>>,
     guesses_held_back: Guarded<(Vec<Vec<u8>>, FxHashSet<Vec<u8>>)>,
     are_guesses_out: Guarded<bool>,
-    entry_points_that_run_first: FxHashSet<Vec<u8>>,
-    files_with_module_form: Guarded<FxHashSet<Vec<u8>>>,
-    has_module_forms: AtomicBool,
     pub(super) is_case_sensitive: bool,
 }
 
@@ -86,11 +82,6 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         let keys_of_entry_points = (entry_points.iter())
             .map(|it| (to_path(it.key.path, is_case_sensitive), it.key.loader))
             .collect();
-        let code = compile.inputs.code;
-        let entry_points_that_run_first = (code.entry_points_that_run_first)
-            .iter()
-            .map(|path| to_path(path, is_case_sensitive).into_owned())
-            .collect();
         CodeLoadContext {
             session,
             host: compile.host,
@@ -108,9 +99,6 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             entry_points_left_out: Guarded::new(FxHashSet::default()),
             guesses_held_back: Guarded::new((Vec::new(), FxHashSet::default())),
             are_guesses_out: Guarded::new(false),
-            entry_points_that_run_first,
-            files_with_module_form: Guarded::new(FxHashSet::default()),
-            has_module_forms: AtomicBool::new(false),
             is_case_sensitive,
         }
     }
@@ -169,9 +157,9 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         }
     }
 
-    pub(super) fn let_no_guess_in(&self, file_whose_loader_decides_its_kind: Option<&[u8]>) {
+    pub(super) fn let_no_guess_in(&self) {
         *self.are_guesses_out.lock() = true;
-        (self.host).note_guesses_left_out(file_whose_loader_decides_its_kind);
+        self.host.note_guesses_left_out();
         for loads in self.loads_that_name_entry_points.lock().values_mut() {
             loads.retain(|load| !load.is_some_and(|load| load.may_be_left_out));
         }
@@ -270,30 +258,6 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         let loads = named_by.get(&(path.into_owned(), key.loader))?;
         loads.iter().copied().collect()
     }
-
-    /// Returns the loader under which an import without a type loads the file, if that is not the loader of require().
-    pub(super) fn loader_of_module_form(&self, path: &[u8]) -> Option<HostLoader> {
-        if !self.has_module_forms.load(Ordering::Relaxed) {
-            return None;
-        }
-        let path = to_path(path, self.is_case_sensitive);
-        let has_form = self.files_with_module_form.lock().contains(&*path);
-        has_form
-            .then(|| self.host.loader_of_module_form(&path))
-            .flatten()
-    }
-
-    /// Returns false if the file has the form already.
-    pub(super) fn add_module_form(&self, path: &[u8]) -> bool {
-        let path = to_path(path, self.is_case_sensitive).into_owned();
-        self.has_module_forms.store(true, Ordering::Relaxed);
-        self.files_with_module_form.lock().insert(path)
-    }
-
-    pub(super) fn runs_first(&self, key: LoadKey<'_>) -> bool {
-        let path = to_path(key.path, self.is_case_sensitive);
-        self.entry_points_that_run_first.contains(&*path)
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -308,12 +272,6 @@ pub(super) struct CodeTarget<'r> {
     pub(super) host_module: Option<HostModuleId>,
     pub(super) increases_depth: bool,
     pub(super) has_loader_attribute: bool,
-    pub(super) is_linked_by_bundler: bool,
-    pub(super) is_loaded_with_importer: bool,
-    pub(super) has_shared_type: bool,
-    pub(super) has_type_of_shared_kind: bool,
-    /// The load does not spell the name. The build has followed it through values.
-    pub(super) is_name_followed: bool,
 }
 
 impl<'r> CodeTarget<'r> {
@@ -323,11 +281,6 @@ impl<'r> CodeTarget<'r> {
             host_module: None,
             increases_depth: false,
             has_loader_attribute: false,
-            is_linked_by_bundler: false,
-            is_loaded_with_importer: false,
-            has_shared_type: false,
-            has_type_of_shared_kind: false,
-            is_name_followed: false,
         }
     }
 }
@@ -339,8 +292,6 @@ pub(super) struct Analyzed<'s, 'r> {
     pub(super) jsx: Option<JsxSettings>,
     pub(super) jsx_mode: JsxMode,
     pub(super) declared_module_type: DeclaredModuleType,
-    pub(super) type_where_imported: DeclaredModuleType,
-    pub(super) runs_inside_require: bool,
     pub(super) is_package_type_module: bool,
     pub(super) package: Option<EnclosingPackage<'r>>,
     pub(super) side_effects: DeclaredSideEffects<'r>,

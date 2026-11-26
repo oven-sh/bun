@@ -1,7 +1,7 @@
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import http2 from "http2";
 
 describe("AsyncLocalStorage", () => {
@@ -1768,6 +1768,93 @@ test("node:http: socket events of a server and of a client request run in the as
     stderr: "",
     exitCode: 0,
   });
+});
+
+describe.concurrent("the store of an import() call is the store of what it evaluates", () => {
+  test.each([
+    ["an ES module", "es.mjs", ["es A"]],
+    ["a CommonJS file", "common.cjs", ["common A"]],
+    ["what a module imports", "above.mjs", ["es A", "common A", "above A"]],
+    ["a module that awaits, and its importer", "above-waits.mjs", ["waits A", "waited A", "above A"]],
+    ["what a CommonJS file requires", "requires.cjs", ["es A", "requires A"]],
+    ["a call inside", "nests.mjs", ["nests A", "es A", "common B", "nests A"]],
+  ])("%s", async (_, file, lines) => {
+    using dir = tempDir("als-import", {
+      "main.mjs": `
+        import { AsyncLocalStorage } from "node:async_hooks";
+        globalThis.als = new AsyncLocalStorage();
+        globalThis.say = name => console.log(name, als.getStore());
+        await als.run("A", () => import("./${file}"));
+        say("main");
+      `,
+      "es.mjs": `say("es");`,
+      "common.cjs": `say("common");`,
+      "above.mjs": `import "./es.mjs"; import "./common.cjs"; say("above");`,
+      "waits.mjs": `say("waits"); await 0; say("waited");`,
+      "above-waits.mjs": `import "./waits.mjs"; say("above");`,
+      "requires.cjs": `require("./es.mjs"); say("requires");`,
+      "nests.mjs": `say("nests"); await import("./es.mjs"); await als.run("B", () => import("./common.cjs")); say("nests");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ lines: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      lines: [...lines, "main undefined"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+test("an import() call that has settled does not keep its store alive", async () => {
+  using dir = tempDir("als-import-gc", {
+    "main.mjs": `
+      import { AsyncLocalStorage } from "node:async_hooks";
+      const als = new AsyncLocalStorage();
+      const stores = new Map();
+      async function load(file) {
+        const store = {};
+        stores.set(file, new WeakRef(store));
+        await als.run(store, () => import(file).catch(() => {}));
+      }
+      for (const file of process.argv.slice(2)) await load(file);
+      await new Promise(setImmediate);
+      Bun.gc(true);
+      console.log(JSON.stringify([...stores.keys()].filter(file => stores.get(file).deref())));
+    `,
+    "es.mjs": `export {};`,
+    "common.cjs": `exports.x = 1;`,
+    "waits.mjs": `await 0;`,
+    "throws.mjs": `throw new Error("threw"); export {};`,
+    "does-not-link.mjs": `import { absent } from "./es.mjs"; absent;`,
+    "does-not-load.mjs": `import "./absent.mjs";`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "main.mjs",
+      ...[
+        "es.mjs",
+        "common.cjs",
+        "waits.mjs",
+        "throws.mjs",
+        "does-not-link.mjs",
+        "does-not-load.mjs",
+        "absent.mjs",
+      ].map(file => "./" + file),
+    ],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[]\n", stderr: "", exitCode: 0 });
 });
 
 test("AsyncLocalStorage.bind() names the argument when it is not a function", () => {

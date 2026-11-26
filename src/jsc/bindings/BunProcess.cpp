@@ -5738,7 +5738,7 @@ static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
         return JSC::jsUndefined();
     }
     auto* requireMap = globalObject->requireMap();
-    JSValue mainModule = requireMap->get(globalObject, mainValue);
+    JSValue mainModule = Bun::mainModule(globalObject, requireMap, mainValue);
     if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
@@ -5754,11 +5754,13 @@ JSC_DEFINE_CUSTOM_GETTER(processMainModuleOfTestFile, (JSGlobalObject * lexicalG
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (JSObject* module = globalObject->m_moduleGivenToRunMain.get())
+        return JSValue::encode(module);
     if (Bun::hasCompiledModules())
         RELEASE_AND_RETURN(scope, JSValue::encode(Bun::mainModuleOfExecutable(globalObject)));
     JSValue main = globalObject->bunObject()->get(globalObject, Bun::builtinNames(vm).mainPublicName());
     RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::testFileRequireMap(globalObject)->get(globalObject, main)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::mainModule(globalObject, Bun::testFileRequireMap(globalObject), main)));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(setProcessMainModuleOfTestFile, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName propertyName))

@@ -39,35 +39,23 @@ async function linesOf(project: Record<string, string>, ...flags: string[]) {
   return stdout.split("\n").filter(line => line.startsWith("SAID"));
 }
 
-test.failing(
-  "it prints what bun test prints: a wrong order today: under `bun test --aot` the factory that takes its original begins first",
-  async () => {
-    const project = projectOf("");
-    const plain = await linesOf(project);
-    expect(plain).toEqual([
-      "SAID late begins",
-      "SAID late ends",
-      "SAID shelf begins",
-      "SAID shelf ends",
-      "SAID 1 mock",
-    ]);
-    expect(await linesOf(project, "--aot")).toEqual(plain);
-  },
-);
+test("the factory that takes its original begins last", async () => {
+  const project = projectOf("");
+  const plain = await linesOf(project);
+  expect(plain).toEqual(["SAID late begins", "SAID late ends", "SAID shelf begins", "SAID shelf ends", "SAID 1 mock"]);
+  expect(await linesOf(project, "--aot")).toEqual(plain);
+});
 
-test.failing(
-  "the file below the original is mocked too: it prints what bun test prints: a wrong order today: under `bun test --aot` its factory is called fourth, where `bun test` calls it first",
-  async () => {
-    const project = projectOf(`  vi.doMock("./gauge.cjs", () => (console.log("SAID gauge"), { held: 10 }));\n`);
-    const plain = await linesOf(project);
-    expect(plain).toEqual([
-      "SAID gauge",
-      "SAID late begins",
-      "SAID late ends",
-      "SAID shelf begins",
-      "SAID shelf ends",
-      "SAID 10 mock",
-    ]);
-    expect(await linesOf(project, "--aot")).toEqual(plain);
-  },
-);
+test("the file below the original is mocked too, and its factory is called first", async () => {
+  const project = projectOf(`  vi.doMock("./gauge.cjs", () => (console.log("SAID gauge"), { held: 10 }));\n`);
+  const plain = await linesOf(project);
+  expect(plain).toEqual([
+    "SAID gauge",
+    "SAID late begins",
+    "SAID late ends",
+    "SAID shelf begins",
+    "SAID shelf ends",
+    "SAID 10 mock",
+  ]);
+  expect(await linesOf(project, "--aot")).toEqual(plain);
+});

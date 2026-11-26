@@ -101,7 +101,7 @@ extern "C" JSModuleRecord* JSC_JSModuleRecord__create(JSGlobalObject* globalObje
     return result;
 }
 
-extern "C" void JSC_JSModuleRecord__addIndirectExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t exportName, uint32_t importName, uint32_t moduleName, uint8_t moduleRequestType)
+extern "C" void JSC_JSModuleRecord__addIndirectExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t exportName, uint32_t importName, uint32_t moduleName, uint32_t moduleRequestType)
 {
     moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createIndirect(getFromIdentifierArray(moduleRecord->vm(), identifierArray, exportName), getFromIdentifierArray(moduleRecord->vm(), identifierArray, importName), getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), static_cast<JSC::ScriptFetchParameters::Type>(moduleRequestType)));
 }
@@ -109,11 +109,11 @@ extern "C" void JSC_JSModuleRecord__addLocalExport(JSModuleRecord* moduleRecord,
 {
     moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createLocal(getFromIdentifierArray(moduleRecord->vm(), identifierArray, exportName), getFromIdentifierArray(moduleRecord->vm(), identifierArray, localName)));
 }
-extern "C" void JSC_JSModuleRecord__addNamespaceExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t exportName, uint32_t moduleName, uint8_t moduleRequestType)
+extern "C" void JSC_JSModuleRecord__addNamespaceExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t exportName, uint32_t moduleName, uint32_t moduleRequestType)
 {
     moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createNamespace(getFromIdentifierArray(moduleRecord->vm(), identifierArray, exportName), getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), static_cast<JSC::ScriptFetchParameters::Type>(moduleRequestType)));
 }
-extern "C" void JSC_JSModuleRecord__addStarExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName, uint8_t moduleRequestType)
+extern "C" void JSC_JSModuleRecord__addStarExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName, uint32_t moduleRequestType)
 {
     moduleRecord->addStarExportEntry(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), static_cast<JSC::ScriptFetchParameters::Type>(moduleRequestType));
 }
@@ -142,19 +142,21 @@ extern "C" void JSC_JSModuleRecord__addRequestedModuleJSON(JSModuleRecord* modul
     Ref<ScriptFetchParameters> attributes = ScriptFetchParameters::create(ScriptFetchParameters::Type::JSON);
     moduleRecord->appendRequestedModule(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), std::move(attributes), toModulePhase(phaseDefer));
 }
+extern "C" uint32_t JSC__ScriptFetchParameters__hostDefinedType(Identifier* identifierArray, uint32_t name)
+{
+    return ScriptFetchParameters::hostDefinedType(identifierArray[name].string());
+}
 extern "C" void JSC_JSModuleRecord__addRequestedModuleHostDefined(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName, uint32_t hostDefinedImportType, bool phaseDefer)
 {
-    Ref<ScriptFetchParameters> attributes = ScriptFetchParameters::create(getFromIdentifierArray(moduleRecord->vm(), identifierArray, hostDefinedImportType).string());
+    Ref<ScriptFetchParameters> attributes = ScriptFetchParameters::create(static_cast<ScriptFetchParameters::Type>(hostDefinedImportType));
     moduleRecord->appendRequestedModule(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), std::move(attributes), toModulePhase(phaseDefer));
 }
 
-static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::JavaScript) == 1, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
-static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::WebAssembly) == 2, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
-static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::JSON) == 3, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
-static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::Text) == 4, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
-static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::HostDefined) == 5, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
+static_assert(static_cast<uint32_t>(JSC::ScriptFetchParameters::Type::JavaScript) == 1, "ScriptFetchParameters::Type tag drift vs request_type() in analyze_jsc.rs");
+static_assert(static_cast<uint32_t>(JSC::ScriptFetchParameters::Type::WebAssembly) == 2, "ScriptFetchParameters::Type tag drift vs request_type() in analyze_jsc.rs");
+static_assert(static_cast<uint32_t>(JSC::ScriptFetchParameters::Type::JSON) == 3, "ScriptFetchParameters::Type tag drift vs request_type() in analyze_jsc.rs");
 
-extern "C" void JSC_JSModuleRecord__addImportEntrySingle(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName, uint8_t moduleRequestType)
+extern "C" void JSC_JSModuleRecord__addImportEntrySingle(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName, uint32_t moduleRequestType)
 {
     moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
         .type = JSModuleRecord::ImportEntryType::Single,
@@ -164,7 +166,7 @@ extern "C" void JSC_JSModuleRecord__addImportEntrySingle(JSModuleRecord* moduleR
         .localName = getFromIdentifierArray(moduleRecord->vm(), identifierArray, localName),
     });
 }
-extern "C" void JSC_JSModuleRecord__addImportEntrySingleTypeScript(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName, uint8_t moduleRequestType)
+extern "C" void JSC_JSModuleRecord__addImportEntrySingleTypeScript(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName, uint32_t moduleRequestType)
 {
     moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
         .type = JSModuleRecord::ImportEntryType::SingleTypeScript,
@@ -174,7 +176,7 @@ extern "C" void JSC_JSModuleRecord__addImportEntrySingleTypeScript(JSModuleRecor
         .localName = getFromIdentifierArray(moduleRecord->vm(), identifierArray, localName),
     });
 }
-extern "C" void JSC_JSModuleRecord__addImportEntryNamespace(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName, uint8_t moduleRequestType)
+extern "C" void JSC_JSModuleRecord__addImportEntryNamespace(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName, uint32_t moduleRequestType)
 {
     moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
         .type = JSModuleRecord::ImportEntryType::Namespace,
@@ -184,7 +186,7 @@ extern "C" void JSC_JSModuleRecord__addImportEntryNamespace(JSModuleRecord* modu
         .localName = getFromIdentifierArray(moduleRecord->vm(), identifierArray, localName),
     });
 }
-extern "C" void JSC_JSModuleRecord__addImportEntryNamespaceDefer(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName, uint8_t moduleRequestType)
+extern "C" void JSC_JSModuleRecord__addImportEntryNamespaceDefer(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName, uint32_t moduleRequestType)
 {
     moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
         .type = JSModuleRecord::ImportEntryType::Namespace,
@@ -308,7 +310,7 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
             if (request.m_attributes == nullptr)
                 line.print("      module(", request.m_specifier, ")");
             else
-                line.print("      module(", request.m_specifier, "),attributes(", (uint8_t)request.m_attributes->type(), ", ", request.m_attributes->hostDefinedImportType(), ")");
+                line.print("      module(", request.m_specifier, "),attributes(", (uint32_t)request.m_attributes->type(), ", ", request.m_attributes->hostDefinedImportType(), ")");
             if (request.m_phase == AbstractModuleRecord::ModulePhase::Defer)
                 line.print(",phase(defer)");
             line.print("\n");

@@ -1,5 +1,5 @@
 // Where some code of the program may take a file out of require.cache, or stores into require.extensions, the loader of the run time links the import statements
-// of a test file. A CommonJS file that an ES module imports further down still runs while the graph is loaded, ahead of every ES body, as in `bun test`.
+// of a test file. A CommonJS file that an ES module imports further down still runs in its turn among the modules, as in `bun test`.
 // What such code does to a build holds for the whole program, so each project is built by itself.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -37,7 +37,7 @@ import { two } from "./two.mjs";
 test("t", () => console.log("OUT t", e, typeof two));`,
     });
     const plain = await run(String(folder), []);
-    expect(plain).toEqual({ lines: ["OUT c", "OUT e", "OUT one", "OUT two", "OUT t 1 object"], exitCode: 0 });
+    expect(plain).toEqual({ lines: ["OUT e", "OUT c", "OUT one", "OUT two", "OUT t 1 object"], exitCode: 0 });
     expect(await run(String(folder), ["--aot"])).toEqual(plain);
   },
   240_000,

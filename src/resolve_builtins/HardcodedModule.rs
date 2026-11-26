@@ -720,6 +720,7 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     entry!("bun:sqlite"),
     entry!("bun:wrap"),
     entry!("bun:internal-for-testing"),
+    entry!("internal:cluster/RoundRobinHandle"),
     (
         b"internal/cluster/round_robin_handle",
         Alias {
@@ -961,6 +962,12 @@ impl Alias {
         None
     }
 
+    /// `require.cache`, a replaced `require` and the `module.*` tracing channels go by the name in the call.
+    pub fn stays_as_written(&self, kind: bun_ast::ImportKind) -> bool {
+        self.tag == import_record::Tag::Builtin
+            && (kind.is_common_js() || kind == bun_ast::ImportKind::Dynamic)
+    }
+
     /// Programs import `bun:fs` (#16883), so `bun:` + a bare Node builtin name means that builtin.
     #[inline]
     pub fn bun_prefixed_builtin(specifier: &[u8]) -> Option<&[u8]> {
@@ -975,5 +982,20 @@ impl Alias {
             && !is_stream_iter_alias(name)
             && lookup(&NODE_ALIAS_MAP, name).is_some())
         .then_some(name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The transpiler prints the path in an `import` statement, and the loader resolves what is printed.
+    #[test]
+    fn the_path_of_an_alias_resolves_to_itself() {
+        for (name, alias) in BUN_TEST_ALIASES.iter().copied().flatten() {
+            let path = alias.path.as_bytes();
+            let again = lookup(&BUN_ALIAS_MAP, path).map(|alias| alias.path.as_bytes());
+            assert_eq!(again, Some(path), "{name:?}");
+        }
     }
 }

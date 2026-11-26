@@ -197,17 +197,6 @@ impl<'h> Resolver<'h> {
         *by_directory.insert_ref(self.keep(directory), declared)
     }
 
-    pub(crate) fn module_type_where_imported(&self, path: &[u8]) -> DeclaredModuleType {
-        let of_package = self.package_module_type(path);
-        let is_contradicted = self.code_options().builds_executable
-            && of_package == DeclaredModuleType::CommonJs
-            && self.declared_module_type(path) == DeclaredModuleType::Esm;
-        match is_contradicted {
-            true => DeclaredModuleType::Unknown,
-            false => of_package,
-        }
-    }
-
     pub(super) fn find_node_modules(&self, directory: &[u8]) -> Option<Vec<u8>> {
         if basename(directory) == b"node_modules" {
             return None;
@@ -358,7 +347,7 @@ fn module_type_from_extension(
     match &name[dot..] {
         b".mjs" | b".mts" => DeclaredModuleType::Esm,
         b".cjs" | b".cts" => DeclaredModuleType::CommonJs,
-        b".js" | b".ts" => package_module_type,
+        b".js" | b".jsx" | b".ts" | b".tsx" => package_module_type,
         _ => DeclaredModuleType::Unknown,
     }
 }

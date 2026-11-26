@@ -6,17 +6,17 @@ import { runtimeEnvironment } from "./harness/flags";
 import { run } from "./harness/run";
 import { test } from "./measures";
 
-// first.cjs queues a job while it is loaded, so the rest of the graph is handed to the loader, which gives each module a state of its own.
-// Behind the file lies one cycle of ES modules. Where each state walked through every record of the cycle, the records walked grew with the square of its size.
+// The last file of a long row imports a file that is missing, so the graph is handed to the loader, which gives each module a state of its own.
+// Beside the row lies one cycle of ES modules. Where each state walked through every record of the cycle, the records walked grew with the square of its size.
 const sizes = [100, 400];
 
 function project(modules: number) {
   const files: Record<string, string> = {
     "package.json": `{ "type": "module" }`,
-    "first.cjs": `queueMicrotask(() => {});\nexports.x = 1;\n`,
-    "reads.mjs": `import "./first.cjs";\nimport { v0 } from "./m0.mjs";\nexport const seen = () => v0;\n`,
-    "main.mjs": `console.log("answers", (await import("./reads.mjs")).seen());\n`,
+    "reads.mjs": `import { v0 } from "./m0.mjs";\nimport "./row0.mjs";\nexport const seen = () => v0;\n`,
+    "main.mjs": `console.log("answers", await import("./reads.mjs").catch(error => error.code));\n`,
   };
+  for (let k = 0; k < 40; k++) files[`row${k}.mjs`] = `import "./${k < 39 ? `row${k + 1}` : "missing"}.mjs";\n`;
   for (let k = 0; k < modules; k++) {
     const [a, b] = [(k * 7 + 1) % modules, (k * 13 + 5) % modules];
     files[`m${k}.mjs`] =
@@ -29,7 +29,7 @@ function project(modules: number) {
 test.concurrent("what plain Bun answers", async () => {
   using dir = tempDir("aot-cycle-handed-to-the-loader", project(sizes[0]));
   const { stdout, exitCode } = await run([bunExe(), "./main.mjs"], String(dir), bunEnv);
-  expect({ stdout, exitCode }).toEqual({ stdout: "answers 0\n", exitCode: 0 });
+  expect({ stdout, exitCode }).toEqual({ stdout: "answers ERR_MODULE_NOT_FOUND\n", exitCode: 0 });
 });
 
 const walked = new Map<number, number>();
@@ -47,7 +47,7 @@ test.concurrent.each(sizes)("a cycle of %d modules", async modules => {
     ...bunEnv,
     [runtimeEnvironment.countsPath]: join(cwd, "counts-%p"),
   });
-  expect({ stdout, exitCode }).toEqual({ stdout: "answers 0\n", exitCode: 0 });
+  expect({ stdout, exitCode }).toEqual({ stdout: "answers ERR_MODULE_NOT_FOUND\n", exitCode: 0 });
   const lines = readdirSync(cwd)
     .filter(name => name.startsWith("counts-"))
     .flatMap(name => readFileSync(join(cwd, name), "utf8").split("\n"))

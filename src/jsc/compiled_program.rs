@@ -136,6 +136,13 @@ pub extern "C" fn Bun__AOT__resolveWithPlugins(
     const DECLINED: u8 = 0;
     const ANSWERED: u8 = 1;
     const THROWN: u8 = 2;
+    // As the transpiler prints the statement.
+    let written = name.to_utf8();
+    let printed = match crate::module_loader::bun_aliases_get(&written) {
+        Some(alias) => alias.path.as_bytes(),
+        None => bun_resolve_builtins::Alias::bun_prefixed_builtin(&written).unwrap_or(&written),
+    };
+    let name = &*bun_core::StringView::borrow_utf8(printed);
     let mut query_of_answer = bun_core::String::EMPTY;
     let answer = VirtualMachine::resolve_with_on_resolve::<true>(
         global,

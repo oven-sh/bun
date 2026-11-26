@@ -17,6 +17,8 @@ import my_toml from "./my_file" with { type: "toml" };
 const { default: my_toml } = await import("./my_file", { with: { type: "toml" } });
 ```
 
+A file is a separate module for each `type` you import it with. The `type` that its extension implies is the same module as no `type`.
+
 <Note>
   With TypeScript 7.1 or newer, `@types/bun` types these imports from the `type` attribute: a `type: "text"` import is a
   `string`, a `type: "sqlite"` import is a `Database`. Older TypeScript versions type the import from the file extension

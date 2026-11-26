@@ -35,11 +35,9 @@ test.failing(
   },
 );
 
-test.failing(
-  "another file makes the written import: it prints what bun test prints: a wrong answer today: under `bun test --aot` it gets the module that is loaded, patched, where `bun test` waits for the factory and gives the mock",
-  async () => {
-    const project = projectOf(
-      `import { ask } from "./asker.mjs";
+test("another file makes the written import", async () => {
+  const project = projectOf(
+    `import { ask } from "./asker.mjs";
 test("one", async () => {
   const required = require("./ledger.cjs");
   mock.module("./ledger.cjs", async () => { await 0; return { kind: "mocked" }; });
@@ -47,13 +45,12 @@ test("one", async () => {
   console.log("SAID meanwhile", asked.kind, asked.default === required, globalThis.turns);
 });
 `,
-      { "asker.mjs": `export const ask = () => import("./ledger.cjs");\n` },
-    );
-    const plain = await linesOf(project);
-    expect(plain).toEqual(["SAID meanwhile mocked false 1"]);
-    expect(await linesOf(project, "--aot")).toEqual(plain);
-  },
-);
+    { "asker.mjs": `export const ask = () => import("./ledger.cjs");\n` },
+  );
+  const plain = await linesOf(project);
+  expect(plain).toEqual(["SAID meanwhile mocked false 1"]);
+  expect(await linesOf(project, "--aot")).toEqual(plain);
+});
 
 test.failing(
   "the factory is a plain arrow that returns a promise: it prints what bun test prints: a wrong answer today: under `bun test --aot` it gets the module that is loaded, patched: the build takes only an async factory for one that may stay pending",

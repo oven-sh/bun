@@ -209,7 +209,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
 }
 
 // require() hands a native addon to process.dlopen without asking the module loader, and it answers a module that has run from its cache.
-static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC::JSValue resolvedPath, JSC::JSValue written, JSC::JSValue from)
+void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC::JSValue resolvedPath, JSC::JSValue written, JSC::JSValue from)
 {
     if (!Bun::hasCompiledModules()) [[likely]]
         return;
@@ -245,6 +245,50 @@ static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC:
         JSC::throwException(globalObject, scope, error);
 }
 
+static WTF::String keyBesidePluginsAndMocks(Zig::GlobalObject* globalObject, const WTF::String& key, const WTF::String& requirer)
+{
+    if (globalObject->onResolvePlugins.isAskedAboutBuiltins()) [[unlikely]]
+        globalObject->onResolvePlugins.didResolve(globalObject, requirer, key);
+    WTF::String given = globalObject->onLoadPlugins.hasVirtualModules() ? Bun::packageImportKey(globalObject, key, requirer, false) : key;
+    return globalObject->onLoadPlugins.runningModuleMocks.isEmpty() ? given : Bun::keyOfImportWhileModuleMocksRun(globalObject, given, requirer, false);
+}
+
+// The key that require() loads. `filename` is what Module._resolveFilename() answers, which for a module of Node.js is a name of it.
+static JSC::EncodedJSValue keyToRequire(Zig::GlobalObject* globalObject, JSC::JSMap* requireMap, JSC::JSString* request, JSC::JSString* filename, JSC::JSString* resolved, JSC::JSValue from)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool isOfNode = resolved->tryGetValue().data.startsWith("node:"_s);
+    if (!isOfNode) {
+        throwIfResolvedFileIsRefused(globalObject, resolved, request, from);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    JSC::JSString* given = resolved;
+    if (globalObject->onLoadPlugins.hasVirtualModules() || !globalObject->onLoadPlugins.runningModuleMocks.isEmpty() || globalObject->onResolvePlugins.isAskedAboutBuiltins()) [[unlikely]] {
+        auto requirer = from.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        WTF::String key = resolved->tryGetValue().data;
+        if (auto other = keyBesidePluginsAndMocks(globalObject, key, requirer); other != key)
+            given = jsString(vm, other);
+    }
+
+    if (isOfNode) {
+        // Node.js never stores its modules in require.cache, but what a program stores under a name without the prefix comes first.
+        JSValue stored = requireMap->get(globalObject, filename);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (stored.toBoolean(globalObject)) [[unlikely]] {
+            WTF::String name = filename->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!name.startsWith("node:"_s) && Bun::keyOfNodeBuiltin(name) == resolved->tryGetValue().data && !Bun::isStoredBelowModuleMock(globalObject, name, given->tryGetValue().data))
+                return JSValue::encode(filename);
+        }
+        throwIfResolvedFileIsRefused(globalObject, resolved, request, from);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return JSValue::encode(given);
+}
+
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -258,12 +302,18 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     JSValue userPathList = callFrame->argument(4);
     JSValue parentModule = callFrame->argument(5);
     JSValue resolveFilenameOptions = callFrame->argument(6);
+    // Null for require.resolve().
+    auto* requireMap = dynamicDowncast<JSC::JSMap>(callFrame->argument(7));
 
     // require() / require.resolve() from a disposed Bun.ModuleGraph's module throws.
     if (auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(parentModule)) {
         Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, requirer->moduleGraph());
         RETURN_IF_EXCEPTION(scope, {});
     }
+
+    if (!moduleName.isString()) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, isRequireDotResolve ? "request"_s : "id"_s, "string"_s, moduleName);
+    JSString* request = asString(moduleName);
 
     if (!isRequireDotResolve) {
         Bun::willRequire(lexicalGlobalObject, moduleName);
@@ -279,26 +329,25 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     });
 
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
-        if (moduleName.isString()) {
-            auto moduleString = moduleName.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto fromString = from.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, fromString)) {
-                if (!isRequireDotResolve)
-                    resolvedString = Bun::packageImportKey(globalObject, resolvedString.value(), fromString, false);
-                if (!isRequireDotResolve && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[unlikely]]
-                    return JSC::JSValue::encode(jsString(vm, Bun::keyOfImportWhileModuleMocksRun(globalObject, resolvedString.value(), fromString, false)));
-                if (moduleString == resolvedString.value())
-                    return JSC::JSValue::encode(moduleName);
-                return JSC::JSValue::encode(jsString(vm, resolvedString.value()));
-            }
+        auto moduleString = moduleName.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto fromString = from.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, fromString)) {
+            if (!isRequireDotResolve)
+                resolvedString = keyBesidePluginsAndMocks(globalObject, resolvedString.value(), fromString);
+            if (moduleString == resolvedString.value())
+                return JSC::JSValue::encode(moduleName);
+            return JSC::JSValue::encode(jsString(vm, resolvedString.value()));
         }
     }
 
     if (!isESM) {
-        if (globalObject) [[likely]] {
-            if (globalObject->hasOverriddenModuleResolveFilenameFunction) [[unlikely]] {
+        if (globalObject->hasOverriddenModuleResolveFilenameFunction) [[unlikely]] {
+            WTF::String requestString = request->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            // As in Node.js, require() answers for these itself.
+            if (isRequireDotResolve || !(requestString.isEmpty() || requestString.startsWith("node:"_s))) {
                 JSValue overrideHandler = globalObject->m_moduleResolveFilenameOverride.get();
                 JSC::CallData overrideCallData = JSC::getCallData(overrideHandler);
                 if (overrideCallData.type == JSC::CallData::Type::None) [[unlikely]] {
@@ -308,7 +357,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 MarkedArgumentBuffer args;
                 args.append(moduleName);
                 args.append(parentModule);
-                args.append(jsBoolean(false));
+                args.append(jsBoolean(parentModule.isNull()));
                 args.append(resolveFilenameOptions);
 
                 JSValue thisValue = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
@@ -324,24 +373,14 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                         Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "path"_s, string, "must be a string, Uint8Array, or URL without null bytes"_s);
                         return {};
                     }
-                    if (WTF::String builtin = Bun::keyOfNodeBuiltin(str); !builtin.isNull()) {
-                        string = jsString(vm, builtin);
-                        throwIfResolvedFileIsRefused(lexicalGlobalObject, string, moduleName, from);
-                        RETURN_IF_EXCEPTION(scope, {});
-                        if (globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[likely]]
-                            return JSValue::encode(string);
-                        auto fromString = from.toWTFString(globalObject);
-                        RETURN_IF_EXCEPTION(scope, {});
-                        return JSValue::encode(jsString(vm, Bun::keyOfImportWhileModuleMocksRun(globalObject, builtin, fromString, false)));
-                    }
+                    if (WTF::String builtin = Bun::keyOfNodeBuiltin(str); !builtin.isNull())
+                        RELEASE_AND_RETURN(scope, keyToRequire(globalObject, requireMap, request, string, jsString(vm, builtin), from));
                     // In an ahead-of-time executable Module._resolveFilename() answers, as require.resolve() does, with where the file lay when the program was built.
                     if (Bun::hasCompiledModules()) [[unlikely]] {
                         if (WTF::String known = Bun::pathInExecutable(str.data); !known.isNull() && Bun::compiledModuleForPath(known))
                             string = jsString(vm, known);
                     }
-                    throwIfResolvedFileIsRefused(lexicalGlobalObject, string, moduleName, from);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    return JSC::JSValue::encode(string);
+                    RELEASE_AND_RETURN(scope, keyToRequire(globalObject, requireMap, request, string, string, from));
                 }
                 return JSC::JSValue::encode(result);
             }
@@ -350,7 +389,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         // node resolves builtin ids before validating `paths`, so `require.resolve("node:fs",
         // { paths: [0] })` must not throw. Only real builtins bypass; "node:nope" still validates.
         // https://github.com/nodejs/node/blob/main/lib/internal/modules/cjs/loader.js
-        if (!userPathList.isUndefinedOrNull() && moduleName.isString()) {
+        if (!userPathList.isUndefinedOrNull()) {
             auto builtinCheckStr = moduleName.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             if (Bun::isBuiltinModule(builtinCheckStr))
@@ -359,12 +398,6 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
 
         if (!userPathList.isUndefinedOrNull()) {
             if (JSArray* userPathListArray = dynamicDowncast<JSArray>(userPathList)) {
-                if (!moduleName.isString()) {
-                    Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "request"_s, "string"_s, moduleName);
-                    scope.release();
-                    return {};
-                }
-
                 WTF::Vector<Bun::OwnedString> paths;
                 for (size_t i = 0; i < userPathListArray->length(); ++i) {
                     JSValue path = userPathListArray->getIndex(globalObject, i);
@@ -387,24 +420,15 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     return {};
                 }
 
-                if (!isRequireDotResolve) {
-                    throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result), moduleName, from);
-                    RETURN_IF_EXCEPTION(scope, {});
-                }
-
-                return result;
+                if (isRequireDotResolve)
+                    return result;
+                RELEASE_AND_RETURN(scope, keyToRequire(globalObject, requireMap, request, request, asString(JSC::JSValue::decode(result)), from));
             } else {
                 Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "options.paths"_s, userPathList);
                 scope.release();
                 return {};
             }
         }
-    }
-
-    if (!moduleName.isString()) {
-        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, isRequireDotResolve ? "request"_s : "id"_s, "string"_s, moduleName);
-        scope.release();
-        return {};
     }
 
     auto result = Bun__resolveSync(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve);
@@ -415,31 +439,9 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         return {};
     }
 
-    if (!isESM && !isRequireDotResolve) {
-        throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result), moduleName, from);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    if (!isRequireDotResolve && globalObject->onLoadPlugins.hasVirtualModules()) [[unlikely]] {
-        String key = asString(JSC::JSValue::decode(result))->value(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        auto fromString = from.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        String given = Bun::packageImportKey(globalObject, key, fromString, false);
-        if (!globalObject->onLoadPlugins.runningModuleMocks.isEmpty())
-            given = Bun::keyOfImportWhileModuleMocksRun(globalObject, given, fromString, false);
-        if (given != key)
-            return JSC::JSValue::encode(jsString(vm, given));
-    } else if (!isRequireDotResolve && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[unlikely]] {
-        auto key = asString(JSC::JSValue::decode(result))->value(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        auto fromString = from.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        return JSC::JSValue::encode(jsString(vm, Bun::keyOfImportWhileModuleMocksRun(globalObject, key, fromString, false)));
-    }
-
-    scope.release();
-    return result;
+    if (isRequireDotResolve)
+        return result;
+    RELEASE_AND_RETURN(scope, keyToRequire(globalObject, requireMap, request, request, asString(JSC::JSValue::decode(result)), from));
 }
 
 extern "C" bool Bun__resolveWithOnResolve(ErrorableString* result, JSC::JSGlobalObject* global, const BunString* specifier, const BunString* from, Bun::OwnedString* query);
@@ -672,6 +674,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
         return JSValue::encode(jsBoolean(url.protocolIsFile() && mainKey.data == makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark())));
     }
 
+    if (!globalObject->keysImportedByRunMain.isEmpty()) [[unlikely]] {
+        WTF::URL url(thisObject->url);
+        if (url.protocolIsFile() && globalObject->keysImportedByRunMain.contains(makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark())))
+            return JSValue::encode(jsBoolean(true));
+    }
+
     // In an executable, `require.main === module` in a CommonJS file reads this property, and the file that a Worker starts with is the main module of its thread.
     if (!globalObject->scriptExecutionContext()->isMainThread() && !(Bun::hasCompiledModules() && JSC::AOT::entryPointIsCommonJS(globalObject)))
         return JSValue::encode(jsBoolean(false));
@@ -689,6 +697,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
         if (String known = isMain ? String() : Bun::pathInExecutable(name.data); !known.isNull())
             isMain = URL::fileURLWithFileSystemPath(known).string() == thisObject->url;
     }
+    if (isMain && Bun::hasCompiledModules()) [[unlikely]]
+        isMain = !Bun::didCompiledFileFailAsMain(globalObject, WTF::URL(thisObject->url).fileSystemPath());
 
     return JSValue::encode(jsBoolean(isMain));
 }

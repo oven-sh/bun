@@ -44,6 +44,9 @@ export function createRequireCacheOverCompiledProgram(requireMap: RequireMap, ow
           requireMap.$set(key, mod);
           return mod;
         }
+        // What an import attribute has made of the file is here to be deleted. require() does not answer with it.
+        const otherForm = $esmNamespaceForCjs(key, owner, true);
+        if (otherForm !== undefined) return $createCommonJSModule(key, otherForm, true, owner);
       }
 
       return inner[key];

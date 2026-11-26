@@ -1071,66 +1071,39 @@ const NAME_OF_A_CLASS_BEHIND_A_REMOVED_IMPORT: [(&str, &str); 7] = [
     ("p/c.cjs", "exports.K1 = class {};"),
 ];
 
-fn describe_checks(
-    files: &[(&str, &str)],
-    checks_what_is_written: bool,
-) -> (Vec<String>, Option<(String, String)>) {
+fn importers_that_check_names(files: &[(&str, &str)]) -> Vec<String> {
     with_loaded_build(files, &default_settings(), |build, loaded| {
-        let Ok(mut bound) = build.bind_modules(loaded) else {
+        let Ok(bound) = build.bind_modules(loaded) else {
             panic!("the modules were not bound");
         };
-        let graph = &mut bound.projects.application.graph;
-        if checks_what_is_written {
-            graph.check_every_written_importer();
-        }
+        let graph = &bound.projects.application.graph;
         let files = loaded.project(ProjectId::Application).loaded.files();
-        let name_of = |file: FileId| {
+        let name_of = |&file: &FileId| {
             let name = files.module(file).file_name();
             name.strip_prefix(b"/project/")
                 .unwrap_or(name)
                 .as_bstr()
                 .to_string()
         };
-        let roots = graph.prefix_roots().iter();
-        let roots = roots.filter(|&&root| !graph.checks_of(root).is_empty());
-        let found = graph.find_check_of_copy_that_nothing_stores();
-        let found = found.map(|(root, owner)| match owner {
-            ModuleRef::File(owner) => (name_of(root), name_of(owner)),
-            _ => panic!("a file has the name"),
-        });
-        (roots.map(|&root| name_of(root)).collect(), found)
+        let importers = files.compiled_files().iter();
+        let importers = importers.filter(|&&importer| !graph.checks_of(importer).is_empty());
+        importers.map(name_of).collect()
     })
 }
 
 #[test]
-fn root_does_not_check_an_importer_behind_an_import_that_is_removed() {
+fn importer_behind_an_import_that_is_removed_checks_its_own_names() {
     let files = &NAME_OF_A_CLASS_BEHIND_A_REMOVED_IMPORT;
-    assert_eq!(
-        describe_checks(files, false),
-        (vec!["p/b.mjs".to_string()], None)
-    );
+    assert_eq!(importers_that_check_names(files), ["p/b.mjs"]);
 }
 
 #[test]
-fn root_does_not_check_a_name_that_it_takes_through_a_file_that_is_left_out() {
+fn name_taken_through_a_file_that_is_left_out_is_checked_by_the_file_that_takes_it() {
     let mut files = NAME_OF_A_CLASS_BEHIND_A_REMOVED_IMPORT.to_vec();
     files[1].1 = "import { C, K1 } from './p/index.mjs'; console.log(C); const m = await import('./p/b.mjs'); console.log(m);";
     files[3].1 = "export { C } from './c2.mjs'; export { K1 } from './a2.mjs';";
     files.push(("p/a2.mjs", "export { K1 } from './b.mjs';"));
-    assert_eq!(
-        describe_checks(&files, false),
-        (vec!["p/b.mjs".to_string()], None)
-    );
-    let names = ("main.mjs".to_string(), "p/c.cjs".to_string());
-    assert_eq!(describe_checks(&files, true).1, Some(names));
-}
-
-#[test]
-fn check_of_a_copy_that_nothing_stores_is_found() {
-    let (roots, found) = describe_checks(&NAME_OF_A_CLASS_BEHIND_A_REMOVED_IMPORT, true);
-    assert_eq!(roots, ["main.mjs", "p/b.mjs"]);
-    let names = ("main.mjs".to_string(), "p/c.cjs".to_string());
-    assert_eq!(found, Some(names));
+    assert_eq!(importers_that_check_names(&files), ["p/b.mjs", "page.mjs"]);
 }
 
 fn describe_imports(files: &[(&str, &str)]) -> Vec<String> {
@@ -1229,13 +1202,13 @@ const UNREAD_NAME_OF_A_FILE_ON_A_CYCLE: [(&str, &str); 5] = [
 ];
 
 #[test]
-fn unread_import_stays_where_a_root_checks_its_name() {
+fn unread_import_stays_where_its_importer_checks_its_name() {
     let files = UNREAD_NAME_OF_A_FILE_ON_A_CYCLE;
     assert_eq!(
         describe_imports(&files),
         ["main.mjs: shelf.mjs", "shelf.mjs: crate.cjs box.cjs"]
     );
-    assert_eq!(describe_checks(&files, false).0, ["main.mjs", "shelf.mjs"]);
+    assert_eq!(importers_that_check_names(&files), ["shelf.mjs"]);
 }
 
 #[test]

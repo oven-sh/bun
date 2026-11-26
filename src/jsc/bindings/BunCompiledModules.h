@@ -42,10 +42,11 @@ std::optional<bool> isHiddenFromRequireCache(const WTF::String& key);
 // The attributes select the form of the file, if the executable has it. Null: the import has no attributes.
 JSC::JSPromise* importCompiledModule(Zig::GlobalObject*, const WTF::String& key, const JSC::ScriptFetchParameters* attributes, int64_t referrerAsyncOrder);
 // These three return null or false for a request with import attributes.
-JSC::JSPromise* compiledModuleSource(Zig::GlobalObject*, const WTF::String& key, const JSC::ScriptFetchParameters* attributes, const WTF::String& importer);
+JSC::JSPromise* compiledModuleSource(Zig::GlobalObject*, const WTF::String& key, const JSC::ScriptFetchParameters* attributes, const WTF::String& importer, bool& isPostponed);
 bool requireCompiledModule(Zig::GlobalObject*, JSCommonJSModule* target, const WTF::String& path, bool hasImportAttributes);
 // The host function that require() calls for an ES module, if the path names a compiled one.
 JSC::JSObject* loaderOfCompiledESModule(Zig::GlobalObject*, const WTF::String& path, bool hasImportAttributes);
+JSC::JSValue requireCompiledFormOfFile(Zig::GlobalObject*, const WTF::String& path, const JSC::ScriptFetchParameters&);
 
 JSC::JSValue loadCompiledModuleNamespace(Zig::GlobalObject*, const WTF::String& path);
 // The requester that the engine sees for a require() that loads into `target`, see JSC::AOT::ModuleRequesterScope. The program can overwrite `written`.
@@ -84,6 +85,8 @@ bool letsTestRunLoadAddon(JSC::JSGlobalObject*, const WTF::String& path);
 bool isFileInExecutable(const WTF::String& path);
 // The same for a file that loads as a database or an HTML page under a computed name.
 JSC::JSValue errorIfHostObjectOutsideImageIsRefused(JSC::JSGlobalObject*, ErrorCode, const WTF::String& path);
+bool didCompiledFileRunAsMain(JSC::JSGlobalObject*, const WTF::String& path);
+bool didCompiledFileFailAsMain(JSC::JSGlobalObject*, const WTF::String& path);
 // process.mainModule and require.main in an executable: the module object of the file at `Bun.main`.
 JSC::JSValue mainModuleOfExecutable(Zig::GlobalObject*);
 // The path inside the executable for `path` on the build machine, as in `__filename` and require.resolve(). Null if there is none.
@@ -94,6 +97,8 @@ void willSetMainModulePath(Zig::GlobalObject*, JSC::JSValue path);
 bool appendNewChildrenOfCompiledModule(JSC::JSGlobalObject*, JSCommonJSModule* parent);
 // A store to `children` drops what was required and not yet listed.
 void dropNewChildrenOfCompiledModule(JSCommonJSModule* parent);
+// False: it is for the caller to list `child`, behind those that `parent` has so far.
+bool listAmongChildrenOfCompiledModule(JSC::JSGlobalObject*, JSCommonJSModule* parent, JSCommonJSModule* child);
 // The module object of the first requirer, or null.
 JSC::JSObject* parentOfCompiledModule(JSCommonJSModule*);
 // `module.parent` in a file with the path `id` that `parent` required.
@@ -109,6 +114,10 @@ JSC::JSValue errorIfUnseenCodeIsRefused(JSC::JSGlobalObject*, ASCIILiteral built
 JSC::JSValue errorIfBuildSawNoPlugin(JSC::JSGlobalObject*);
 std::optional<JSC::EncodedJSValue> takeSavedResolution(JSC::JSGlobalObject*, const BunString* space, const BunString* name, const BunString* importer, bool& engineAsks);
 void saveResolution(JSC::JSGlobalObject*, const BunString* space, const BunString* name, const BunString* importer, JSC::JSValue resultOrThrownValue, bool isThrown);
+// For a copy from disk that has taken the place of a compiled module in the middle of its load.
+bool takeNameAnsweredBeforeChangeOfPlugins(JSC::JSGlobalObject*, const String& name, const String& importer);
+bool isGivenByPlugin(Zig::GlobalObject*, const String& name);
+void setResolvePluginsSilent(bool);
 bool hasSavedResolutions();
 void clearSavedResolutions(JSC::JSGlobalObject*);
 // False in an executable built without --compile-inspector: a debugger can reach what the compiler treated as unreachable.
@@ -138,6 +147,8 @@ JSC::JSValue compiledRequireCacheEntry(Zig::GlobalObject*, const WTF::String& ke
 bool isRecordOfCompiledModule(JSC::AbstractModuleRecord*);
 // For a file of the program or its stand-in in the loader. forEachEvaluatedCompiledFile() follows the order of an uncompiled run.
 bool isRecordOfCompiledFile(JSC::AbstractModuleRecord*);
+// The record of a compiled CommonJS file that require() loads from disk.
+bool isRecordOfEvictedFile(JSC::JSGlobalObject*, JSC::AbstractModuleRecord*);
 void forEachEvaluatedCompiledFile(Zig::GlobalObject*, const WTF::Function<void(const WTF::String&)>&);
 
 // These two are called before the change and may throw, because compiled code calls the module that each name had at build time.

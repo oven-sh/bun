@@ -100,6 +100,25 @@ fn find_path_inner(
     .ok())
 }
 
+/// `resolveMainPath()` of Node.js, which only looks at files. `undefined` if there is none.
+#[unsafe(no_mangle)]
+extern "C" fn NodeModuleModule__findMainPath(global: &JSGlobalObject, path: &BunString) -> JSValue {
+    jsc::host_fn::to_js_host_call(global, || {
+        let mut query = BunString::EMPTY;
+        match VirtualMachine::resolve_without_on_resolve::<true>(
+            global,
+            path,
+            &BunString::EMPTY,
+            Some(&mut query),
+            crate::virtual_machine::ResolveMode::RequireResolve,
+            bun_resolver::GlobalCache::disable,
+        )? {
+            Ok(found) => BunString::create_format(format_args!("{found}{query}")).into_js(global),
+            Err(_) => Ok(JSValue::UNDEFINED),
+        }
+    })
+}
+
 pub(crate) fn stat(path: &[u8]) -> i32 {
     // Node passes the path to `uv_fs_stat` as a C string, which ends at the first NUL.
     let path = bun_core::slice_to_nul(path);

@@ -90,6 +90,7 @@ class VersionSqlite3;
 namespace Bun {
 class StrongRootBlock;
 struct IsolatedInternalModule;
+struct RunningCommonJSModule;
 
 // JSC measures the live size of the heap at the end of each collection, but only
 // publishes it per scope: an eden collection updates
@@ -262,6 +263,8 @@ public:
 
     // `bun test --isolate` loads DOM packages into this global, which outlives the test files. gcProtect'ed for the VM's life.
     JSC::JSGlobalObject* testEnvironmentRealm { nullptr };
+
+    Bun::RunningCommonJSModule* innermostRunningCommonJSModule { nullptr };
 
     // Idle full collections GarbageCollectionController requested that have not finished (see
     // Bun__JSC_onBeforeWait). Counted up on the JS thread, down at the end of each one's end phase, on either thread.

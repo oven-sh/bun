@@ -9,7 +9,7 @@ const said = async load => {
 const spinEventLoop = async () => {
   for (let turn = 0; turn < 20; turn++) await new Promise(done => setImmediate(done));
 };
-test("the required file runs behind the import", async () => {
+test("the required file does not run behind the import", async () => {
   vi.doMock("./dep.mjs", async () => {
     await 0;
     return { flag: "first" };

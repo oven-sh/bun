@@ -15,6 +15,7 @@ class GlobalObject;
 }
 
 namespace JSC {
+class AbstractModuleRecord;
 class JSPromise;
 }
 
@@ -114,6 +115,10 @@ JSC::JSObject* appendInternalModuleExports(Zig::GlobalObject*, JSC::JSObject* ob
 JSC::JSObject* appendNativeModuleExports(Zig::GlobalObject*, uint32_t registryID, WTF::Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues);
 
 JSC::JSObject* createAsyncModuleRequiredError(JSC::JSGlobalObject*, const WTF::String& specifier);
+bool isAsyncModuleRequiredError(JSC::VM&, JSC::JSValue thrown, const WTF::String& specifier);
+
+// For a record that isValue().
+JSValue valueOfDataModule(JSC::JSGlobalObject*, JSC::AbstractModuleRecord*);
 
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,

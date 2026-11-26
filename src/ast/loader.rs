@@ -212,6 +212,29 @@ impl Loader {
         self.is_javascript_like()
     }
 
+    /// The `type` that an import is printed with.
+    pub fn type_attribute(self) -> &'static str {
+        match self {
+            Loader::Bunsh => "sh",
+            Loader::SqliteEmbedded => "sqlite",
+            _ => self.into(),
+        }
+    }
+
+    /// Whether an import attribute that names this loader asks for the module that the loader of the file's name makes.
+    pub fn is_implied_by(self, named: Loader, path: &[u8]) -> bool {
+        match (self, named) {
+            (Loader::Js, Loader::Jsx) => true,
+            (Loader::Json, Loader::Jsonc) => path.ends_with(b".json"),
+            _ => self == named,
+        }
+    }
+
+    /// Whether an import attribute that names this loader reads a file as other data than the loader of its name does.
+    pub fn makes_other_data_than(self, named: Loader, path: &[u8]) -> bool {
+        !self.is_implied_by(named, path) && !self.is_javascript_like()
+    }
+
     pub fn is_javascript_like_or_json(self) -> bool {
         matches!(
             self,

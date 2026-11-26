@@ -300,6 +300,7 @@ export default b.declarations(
     }),
     // What a module of the library exports.
     requireNativeModule: changesNothing(b.any),
+    requireOtherFormOfFile: changesNothing(b.any),
     resolveSync: resolvesName,
     webStreamClosedPromise: {
       args: { stream: b.any.optional },

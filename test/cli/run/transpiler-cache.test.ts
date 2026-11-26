@@ -533,6 +533,19 @@ describe("transpiler cache", () => {
   // Serving the entry point from the cache must not change how the modules it
   // loads are resolved. Both of these are gated on the `has_loaded` flag, which
   // used to be set only on the path that runs the printer.
+  test("the entry of a CommonJS file does not serve an ES module of the same text", async () => {
+    const text = dummyFile(50 * 1024, "kind", { code: `(function () { return this ? "sloppy" : "strict"; })()` });
+    for (const type of ["commonjs", "module"]) {
+      mkdirSync(join(temp_dir, type));
+      writeFileSync(join(temp_dir, type, "package.json"), JSON.stringify({ type }));
+      writeFileSync(join(temp_dir, type, "a.js"), text);
+    }
+    expect(await bunRun(join(temp_dir, "commonjs", "a.js"), env)).toSpawn("sloppy");
+    expect(newCacheCount()).toBe(1);
+    expect(await bunRun(join(temp_dir, "module", "a.js"), env)).toSpawn("strict");
+    expect(await bunRun(join(temp_dir, "commonjs", "a.js"), env)).toSpawn("sloppy");
+  });
+
   describe("a cached entry point does not change how later modules load", () => {
     // Padding so the entry point clears MINIMUM_CACHE_SIZE (4 KiB) and is
     // eligible for the cache at all.

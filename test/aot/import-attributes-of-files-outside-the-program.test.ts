@@ -1,6 +1,6 @@
 // `import data from "./data.txt" with { type: "toml" }` of a file that the program does not hold: the loader of the run time makes the
 // module, and it has to hear the type that the statement writes. Without it the loader goes by the extension and answers the text.
-// The program runs bundled and compiled, and both must print alike, but for the type that an export statement writes.
+// The program runs bundled and compiled, and both must print alike.
 import { expect } from "bun:test";
 import { bunExe, tempDir } from "harness";
 import { join } from "node:path";
@@ -49,9 +49,6 @@ test("a file that --external keeps out of an executable", async () => {
   };
   const plain = await build("plain");
   expect(plain.printed).toContain("the default, with the type: object outside");
-  expect(plain.printed).toContain(`export from: string ${JSON.stringify('title = "out')}`);
-  const byTheLanguage = plain.printed.map(line =>
-    line.startsWith("export from:") ? "export from: object outside" : line,
-  );
-  expect(await build("compiled", "--aot")).toEqual({ printed: byTheLanguage, exitCode: 0 });
+  expect(plain.printed).toContain("export from: object outside");
+  expect(await build("compiled", "--aot")).toEqual(plain);
 });

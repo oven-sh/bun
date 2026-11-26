@@ -1,6 +1,7 @@
 mod bindings;
 mod commonjs_exports;
 mod deferred_exports;
+mod evaluation_ahead_of_link;
 mod evicted;
 mod exports;
 mod failures;
@@ -248,18 +249,25 @@ fn scan_modules(input: &BindInput<'_, '_>, left: StatementsLeft) -> ScannedModul
         test_files_that_ask_loader =
             test_run_evictions::find_test_files_that_ask_loader(input, &scans, &mut run_again);
     }
+    let requirers_of_any_file =
+        test_run_evictions::find_requirers_of_any_file(input, &scans, &evicted);
     let mut is_reloadable = test_run_evictions::find_reloadable_files(
         input,
         &scans,
         &absent_modules,
         &test_files_that_ask_loader,
+        &requirers_of_any_file,
     );
     // What the loader finds by itself has the loader's module records.
     for &(_, file) in &modules.left_to_loader {
         is_reloadable[file.idx()] = false;
     }
-    modules.reloadable_commonjs_files =
-        test_run_evictions::find_reloadable_commonjs_files(input, &scans, &is_reloadable);
+    modules.reloadable_commonjs_files = test_run_evictions::find_reloadable_commonjs_files(
+        input,
+        &scans,
+        &is_reloadable,
+        &requirers_of_any_file,
+    );
     let commonjs_files = modules.reloadable_commonjs_files.iter();
     run_again.extend(commonjs_files.map(|&file| ModuleRef::File(file)));
     let compiled_files = input.files.compiled_files().iter();
@@ -320,7 +328,6 @@ fn bind_scanned_modules(
                 modules: &modules,
                 half: &|module: ModuleRef| order.half(module),
                 half_at_link: &|module: ModuleRef| order.half_at_link(module),
-                is_prefix_root: &|file: FileId| order.is_prefix_root(file),
             });
             (order, sites, texts)
         },
@@ -340,7 +347,6 @@ fn bind_scanned_modules(
         modules: &modules,
         half: &|module: ModuleRef| order.half(module),
         half_at_link: &|module: ModuleRef| order.half_at_link(module),
-        is_prefix_root: &|file: FileId| order.is_prefix_root(file),
     };
     let stored_markers: FxHashSet<ModuleRef> =
         texts.markers_stored_from_outside().into_iter().collect();
@@ -532,19 +538,6 @@ fn bind_scanned_modules(
             }
             None => {
                 mocked_modules.insert(module);
-            }
-        }
-    }
-    if modules.has_sibling_forms() {
-        for &file in &modules.compiled_files {
-            let has_siblings = || {
-                let siblings = modules.sibling_forms_of_kind(ModuleRef::File(file), None);
-                siblings.count() != 0
-            };
-            if scans.of(file).interop.kind == ModuleKind::Data && has_siblings() {
-                for &(_, resolved) in tables.names(file) {
-                    replace(resolved.resolution);
-                }
             }
         }
     }
@@ -1006,7 +999,6 @@ fn bind_scanned_modules(
         reexport_paths: Default::default(),
         data_linked_by_names_alone: Box::default(),
         forms_require_checks_first: modules.forms_require_checks_first,
-        module_forms: Box::default(),
         folders_of_databases: modules.folders_of_databases,
         star_names_left_out,
         names_laid_on_object_prototype,

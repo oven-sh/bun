@@ -3240,6 +3240,70 @@ fn normalize_specifier_for_loader<'a>(
     (slice, specifier, query)
 }
 
+fn loader_named_by_specifier(jsc_vm: &VirtualMachine, specifier: &[u8]) -> Option<Loader> {
+    let (path, _, query) = normalize_specifier_for_loader(&jsc_vm.origin, specifier);
+    let loader = loader_for_path(
+        &Fs::Path::init(path),
+        &jsc_vm.transpiler.get().options.loaders,
+    );
+    options::ImportSuffix::find(query, loader)
+        .map(options::ImportSuffix::loader)
+        .or(loader)
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__specifierNamesLoader(
+    global: &JSGlobalObject,
+    specifier: &bun_core::String,
+) -> bool {
+    loader_named_by_specifier(global.bun_vm(), specifier.to_utf8().slice()).is_some()
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__typeMakesOtherFormOfFile(
+    global: &JSGlobalObject,
+    specifier: &bun_core::String,
+    type_attribute: &bun_core::String,
+) -> bool {
+    let Some(asked) = type_attribute.as_utf8().and_then(Loader::from_string) else {
+        return false;
+    };
+    let (jsc_vm, specifier) = (global.bun_vm(), specifier.to_utf8());
+    let named = loader_named_by_specifier(jsc_vm, specifier.slice()).unwrap_or_else(|| {
+        match Fs::PathName::init(specifier.slice()).ext.is_empty() {
+            true => Loader::Tsx,
+            false => Loader::File,
+        }
+    });
+    let (path, ..) = normalize_specifier_for_loader(&jsc_vm.origin, specifier.slice());
+    asked.makes_other_data_than(named, path)
+}
+
+/// The name that stands for the loader that `type_attribute` names. Empty: an import without it gets the same module.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__typeThatTellsModuleApart(
+    global: &JSGlobalObject,
+    specifier: &bun_core::String,
+    type_attribute: &bun_core::String,
+) -> bun_core::String {
+    let Some(asked) = type_attribute.as_utf8().and_then(Loader::from_string) else {
+        return bun_core::String::EMPTY;
+    };
+    let (jsc_vm, specifier) = (global.bun_vm(), specifier.to_utf8());
+    let (path, _, query) = normalize_specifier_for_loader(&jsc_vm.origin, specifier.slice());
+    let named = loader_for_path(
+        &Fs::Path::init(path),
+        &jsc_vm.transpiler.get().options.loaders,
+    );
+    let is_implied = bun_paths::is_absolute(path)
+        && named.is_some_and(|named| asked.is_implied_by(named, path))
+        && options::ImportSuffix::find(query, named).is_none();
+    match is_implied {
+        true => bun_core::String::EMPTY,
+        false => bun_core::String::static_(asked.type_attribute()),
+    }
+}
+
 /// Result of [`get_loader_and_virtual_source`] — mirrors
 /// `options.LoaderResult`.
 struct LoaderResult<'a> {
@@ -3420,33 +3484,16 @@ pub(crate) fn module_type_of(
         return ModuleType::Unknown;
     }
     let ext = path.name().ext;
-    // regex /\.[cm][jt]s$/
-    if ext.len() == b".cjs".len() {
-        if ext == b".cjs" {
-            return ModuleType::Cjs;
-        }
-        if ext == b".mjs" {
-            return ModuleType::Esm;
-        }
-        if ext == b".cts" {
-            return ModuleType::Cjs;
-        }
-        if ext == b".mts" {
-            return ModuleType::Esm;
-        }
+    if let Some(module_type) = bun_resolver::resolver::module_type_from_ext(ext) {
+        return module_type;
     }
-    // regex /\.[jt]s$/
-    if ext.len() == b".ts".len() && (ext == b".js" || ext == b".ts") {
-        // Use the package.json module type if it exists.
-        return package_json
-            .map(|pkg| pkg.module_type)
-            .unwrap_or(ModuleType::Unknown);
+    match (ext, package_json) {
+        (b".js" | b".jsx" | b".ts" | b".tsx", Some(package_json)) => package_json.module_type,
+        _ => ModuleType::Unknown,
     }
-    // For JSX/TSX and other extensions, let the file contents decide.
-    ModuleType::Unknown
 }
 
-/// C++ entry point: whether the extension, or else `"type"` in package.json, makes the file an ES module.
+/// C++ entry point: whether the extension, or else `"type"` in package.json, makes the file an ES module to Node.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__isESModuleByExtensionOrPackageType(
     global: &JSGlobalObject,
@@ -3454,6 +3501,9 @@ pub(crate) extern "C" fn Bun__isESModuleByExtensionOrPackageType(
 ) -> bool {
     let path = path.to_utf8();
     let path = Fs::Path::init(path.slice());
+    if matches!(path.name().ext, b".jsx" | b".tsx") {
+        return false;
+    }
     let package_json = package_json_of(global.bun_vm(), &path);
     module_type_of(&path, package_json) == ModuleType::Esm
 }
@@ -3624,9 +3674,6 @@ fn refusal_of_what_loading_gives<const DATA_ONLY: bool>(
     refusal
 }
 
-/// Modules that must always transpile on-thread (see [`Bun__transpileFile`]).
-const ALWAYS_SYNC_MODULES: &[&[u8]] = &[b"reflect-metadata"];
-
 /// Concurrent-transpiler entry. Returns the in-flight `JSInternalPromise*`
 /// when `allow_promise && async`, else null (result is in `*ret`).
 ///
@@ -3789,9 +3836,6 @@ fn transpile_file<const DATA_ONLY: bool>(
     }
 
     let module_type = module_type_of(&lr.path, lr.package_json);
-    let pkg_name: Option<&[u8]> = lr
-        .package_json
-        .and_then(|pkg| (!pkg.name.is_empty()).then_some(&*pkg.name));
 
     // ── Concurrent-transpiler dispatch (`transpile_async:` block) ───────────
     // We only run the transpiler concurrently when we can — today that's import statements and
@@ -3847,17 +3891,6 @@ fn transpile_file<const DATA_ONLY: bool>(
             // fetch hook sees every module.
             && !bun_jsc::node_compile_cache::is_enabled()
         {
-            // Disgusting workaround: polyfills like
-            // `reflect-metadata` are CJS-with-side-effects that other ESM
-            // depends on synchronously, so they must transpile on-thread.
-            if let Some(pkg_name_) = pkg_name {
-                for always_sync in ALWAYS_SYNC_MODULES {
-                    if pkg_name_ == *always_sync {
-                        break 'transpile_async;
-                    }
-                }
-            }
-
             let aot_package_config = (jsc_vm.transpiler)
                 .with_mut(|t| t.find_aot_package_config(lr.path.text, concurrent_loader));
             return jsc_vm.transpiler_store.transpile(
@@ -3867,6 +3900,7 @@ fn transpile_file<const DATA_ONLY: bool>(
                 &lr.path,
                 referrer.clone(),
                 concurrent_loader,
+                module_type,
                 lr.package_json,
                 aot_package_config,
                 module_loader,

@@ -100,7 +100,6 @@ using namespace JSC;
     macro(heldChunk) \
     macro(highWaterMark) \
     macro(host) \
-    macro(hostDefinedImportType) \
     macro(hostname) \
     macro(httpOnly) \
     macro(ignoreBOM) \
@@ -186,6 +185,8 @@ using namespace JSC;
     macro(requireESM) \
     macro(requireMap) \
     macro(requireNativeModule) \
+    macro(requireOtherFormOfFile) \
+    macro(requiredAsyncModule) \
     macro(resolveSync) \
     macro(resumeUnlessFlowing) \
     macro(runTail) \

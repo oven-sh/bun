@@ -3,6 +3,7 @@ mod tests;
 #[cfg(test)]
 mod tests_of_test_runs;
 
+use super::evaluation_ahead_of_link::EvaluationAheadOfLink;
 use super::interop::ModuleKind;
 use super::module_set::ModuleSet;
 use super::order::FileText;
@@ -177,7 +178,7 @@ pub(super) fn find_files_that_run_again(
         if !is_started {
             possible_loads.push(PossibleLoad {
                 earliest_time: 0,
-                target: LoadTarget::File(entry_point.file),
+                target: LoadTarget::File(entry_point.file, AfterThrowUnderLoader::GetsError),
                 may_be_caught: input.entry_points_run_again || loads_out_of_sight,
             });
         }
@@ -185,19 +186,26 @@ pub(super) fn find_files_that_run_again(
             started.push(entry_point.file);
         }
     }
-    let (start_times, settled_times) =
-        walk_startup(&loads, &started, &is_commonjs, &mut possible_loads);
+    let component_of = find_components_of_loads(&loads, &modules.compiled_files);
+    let times = walk_startup(
+        &loads,
+        &started,
+        &is_commonjs,
+        &component_of,
+        &mut possible_loads,
+    );
     add_cyclic_import_loads(
         &loads,
         &modules.compiled_files,
-        &start_times,
+        &times.started,
         &is_commonjs,
+        &component_of,
         &mut possible_loads,
     );
     let may_be_loaded_behind_throw = find_files_that_may_be_loaded_behind_throw(
         &loads,
         &modules.compiled_files,
-        &settled_times,
+        &times,
         possible_loads,
     );
     let may_be_handed_to_loader_of_package = |file: FileId| {
@@ -235,17 +243,22 @@ enum LoadTiming {
     Deferred,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum AfterThrowUnderLoader {
+    GetsError,
+    RunsFileAgain,
+}
+
 #[derive(Copy, Clone)]
 enum LoadTarget {
-    File(FileId),
+    File(FileId, AfterThrowUnderLoader),
     FileFoundByName,
     AnyFile,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum RequestedBy {
-    StatementOrRequire,
-    AwaitedImportCall,
+    Body,
     Job,
 }
 
@@ -254,6 +267,7 @@ enum Request {
     File {
         file: FileId,
         requested_by: RequestedBy,
+        after_throw: AfterThrowUnderLoader,
     },
     FileFoundByName,
     AnyFile,
@@ -262,7 +276,9 @@ enum Request {
 impl Request {
     fn target(self) -> LoadTarget {
         match self {
-            Request::File { file, .. } => LoadTarget::File(file),
+            Request::File {
+                file, after_throw, ..
+            } => LoadTarget::File(file, after_throw),
             Request::FileFoundByName => LoadTarget::FileFoundByName,
             Request::AnyFile => LoadTarget::AnyFile,
         }
@@ -297,12 +313,13 @@ struct Loads {
     some_body_awaits: bool,
     texts_that_spell_files: Option<Vec<TextThatSpellsFile>>,
     files_found_by_name: Vec<FileId>,
+    by_dynamic_path: AfterThrowUnderLoader,
 }
 
 impl Loads {
     fn files_behind<'a>(&'a self, target: &'a LoadTarget, all_files: &'a [FileId]) -> &'a [FileId] {
         match target {
-            LoadTarget::File(file) => core::slice::from_ref(file),
+            LoadTarget::File(file, _) => core::slice::from_ref(file),
             LoadTarget::FileFoundByName => &self.files_found_by_name,
             LoadTarget::AnyFile => all_files,
         }
@@ -344,12 +361,18 @@ fn collect_loads(
     closed_bundles: &[FileId],
 ) -> Loads {
     let files = input.files;
+    // What the walk starts throws past every caller. That ends the start of an executable, where a test runner goes on.
+    let by_dynamic_path = match input.runs_tests {
+        true => AfterThrowUnderLoader::RunsFileAgain,
+        false => AfterThrowUnderLoader::GetsError,
+    };
     let mut loads = Loads {
         all: Vec::new(),
         by_file: vec![FileLoads::default(); files.modules.len()],
         some_body_awaits: false,
         texts_that_spell_files: None,
         files_found_by_name: Vec::new(),
+        by_dynamic_path,
     };
     let listed = list_texts_that_spell_files(input);
     let texts_that_spell_files = listed.as_deref().unwrap_or_default();
@@ -399,7 +422,7 @@ fn collect_loads(
                 }
                 calls.push(call);
             }
-            let mut requested_by = RequestedBy::StatementOrRequire;
+            let mut requested_by = RequestedBy::Body;
             let (mut timing, is_hoisted, position) = match site.kind {
                 ImportSiteKind::Require(call)
                 | ImportSiteKind::ImportMetaRequire(call)
@@ -410,9 +433,7 @@ fn collect_loads(
                 ),
                 ImportSiteKind::ImportCall(call) | ImportSiteKind::ImportByTestRunner(call) => {
                     let mut timing = text.find_timing_of_call(call);
-                    if text.is_awaited_at_once(call) {
-                        requested_by = RequestedBy::AwaitedImportCall;
-                    } else {
+                    if !text.is_awaited_at_once(call) {
                         requested_by = RequestedBy::Job;
                         timing = timing.max(LoadTiming::Guarded);
                     }
@@ -448,26 +469,33 @@ fn collect_loads(
             let is_linked_with_importer = is_hoisted && scan.interop.kind != ModuleKind::CommonJs;
             let load_of = |request: Request| Load {
                 request,
-                timing: match request.file() {
-                    Some(target)
-                        if is_linked_with_importer && files.is_imported_as_es_module(target) =>
-                    {
-                        timing.max(LoadTiming::Conditional)
-                    }
-                    _ => timing,
-                },
+                timing,
                 is_hoisted,
                 position,
             };
-            let load_of_file = |file: FileId| load_of(Request::File { file, requested_by });
+            let is_import = is_linked_with_importer
+                || matches!(
+                    site.kind,
+                    ImportSiteKind::ImportCall(_) | ImportSiteKind::ImportByTestRunner(_)
+                );
+            let load_of_file = |file: FileId, of_require: AfterThrowUnderLoader| {
+                load_of(Request::File {
+                    file,
+                    requested_by,
+                    after_throw: match is_import {
+                        true => AfterThrowUnderLoader::GetsError,
+                        false => of_require,
+                    },
+                })
+            };
             match answer {
                 &ScannedSite::Module(ModuleRef::File(target)) => {
-                    of_file.push(load_of_file(target));
+                    of_file.push(load_of_file(target, AfterThrowUnderLoader::RunsFileAgain));
                 }
                 ScannedSite::Candidates(range) => {
                     for module in scan.modules_spelled_in(range) {
                         if let ModuleRef::File(target) = module {
-                            of_file.push(load_of_file(target));
+                            of_file.push(load_of_file(target, by_dynamic_path));
                         }
                     }
                 }
@@ -487,6 +515,7 @@ fn collect_loads(
             request: Request::File {
                 file: spelling.spelled,
                 requested_by: RequestedBy::Job,
+                after_throw: by_dynamic_path,
             },
             timing: (text.find_timing_of_call(spelling.text)).max(LoadTiming::Guarded),
             is_hoisted: false,
@@ -808,16 +837,39 @@ struct PossibleLoad {
 
 struct StartingFile {
     file: FileId,
+    is_ahead_of_link: bool,
     files_run_at_link: Range<u32>,
     next_load: usize,
     has_started_body: bool,
     functions_callable_from: u32,
-    is_synchronous_window: bool,
 }
 
-struct SynchronousWindow {
-    opening_time: u32,
-    start_time_of_last_file: u32,
+struct StartupTimes {
+    started: Vec<u32>,
+    started_by_loader: Vec<u32>,
+    settled: Vec<u32>,
+}
+
+impl StartupTimes {
+    fn may_run(&self, file: FileId, after_throw: AfterThrowUnderLoader, time: u32) -> bool {
+        self.settled[file.idx()] > time
+            && (after_throw == AfterThrowUnderLoader::RunsFileAgain
+                || self.started_by_loader[file.idx()] > time)
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum StartedBy {
+    Host,
+    Statement,
+    Call,
+}
+
+struct Importer {
+    file: FileId,
+    next: usize,
+    modules_ahead: usize,
+    was_below_deferred_import: bool,
 }
 
 struct StartupWalk<'a> {
@@ -825,15 +877,14 @@ struct StartupWalk<'a> {
     is_commonjs: &'a dyn Fn(FileId) -> bool,
     possible_loads: &'a mut Vec<PossibleLoad>,
     time: u32,
-    start_times: Vec<u32>,
-    settled_times: Vec<u32>,
+    times: StartupTimes,
     depth_of_starting_file: Vec<u32>,
     stack: Vec<StartingFile>,
     files_run_at_link: Vec<FileId>,
     files_yet_to_run_at_link: u32,
-    windows: Vec<SynchronousWindow>,
-    files_started_in_windows: Vec<FileId>,
-    importers: Vec<FileId>,
+    importers: Vec<Importer>,
+    evaluation: EvaluationAheadOfLink,
+    component_of: &'a [u32],
     last_graph_of_file: Vec<u32>,
     graph_count: u32,
 }
@@ -842,47 +893,57 @@ fn walk_startup(
     loads: &Loads,
     started: &[FileId],
     is_commonjs: &dyn Fn(FileId) -> bool,
+    component_of: &[u32],
     possible_loads: &mut Vec<PossibleLoad>,
-) -> (Vec<u32>, Vec<u32>) {
+) -> StartupTimes {
     let file_count = loads.by_file.len();
     let mut walk = StartupWalk {
         loads,
         is_commonjs,
         possible_loads,
         time: 0,
-        start_times: vec![NEVER; file_count],
-        settled_times: vec![NEVER; file_count],
+        times: StartupTimes {
+            started: vec![NEVER; file_count],
+            started_by_loader: vec![NEVER; file_count],
+            settled: vec![NEVER; file_count],
+        },
         depth_of_starting_file: vec![NEVER; file_count],
         stack: Vec::new(),
         files_run_at_link: Vec::new(),
         files_yet_to_run_at_link: 0,
-        windows: Vec::new(),
-        files_started_in_windows: Vec::new(),
         importers: Vec::new(),
+        evaluation: EvaluationAheadOfLink::default(),
+        component_of,
         last_graph_of_file: vec![0; file_count],
         graph_count: 0,
     };
     for &entry_point in started {
         walk.start_entry_point(entry_point);
     }
-    (walk.start_times, walk.settled_times)
+    walk.times
 }
 
-/// An import cycle swallows the error of a CommonJS file that an ES module on the cycle imports. What the file loads may be loaded again after the throw.
+fn find_components_of_loads(loads: &Loads, all_files: &[FileId]) -> Vec<u32> {
+    let mut edges = vec![Vec::new(); loads.by_file.len()];
+    for &file in all_files {
+        let targets = loads.of(file).iter();
+        edges[file.idx()].extend(targets.filter_map(|load| {
+            let is_during_load = load.timing != LoadTiming::Deferred || load.is_hoisted;
+            Some(load.request.file().filter(|_| is_during_load)?.0)
+        }));
+    }
+    strongly_connected_components(&edges).0
+}
+
+/// A load that a CommonJS file on an import cycle starts evaluates the importers of the file while it runs. Their bodies may catch the error of what the file loads later.
 fn add_cyclic_import_loads(
     loads: &Loads,
     all_files: &[FileId],
     start_times: &[u32],
     is_commonjs: &dyn Fn(FileId) -> bool,
+    component_of: &[u32],
     possible_loads: &mut Vec<PossibleLoad>,
 ) {
-    let mut edges = vec![Vec::new(); loads.by_file.len()];
-    for &file in all_files {
-        let of_file = loads.of(file).iter();
-        let during_load = of_file.filter(|load| load.timing != LoadTiming::Deferred);
-        edges[file.idx()].extend(during_load.filter_map(|load| Some(load.request.file()?.0)));
-    }
-    let component_of = strongly_connected_components(&edges).0;
     let mut is_added = vec![false; loads.by_file.len()];
     for &importer in all_files {
         if is_commonjs(importer) {
@@ -910,68 +971,31 @@ fn add_cyclic_import_loads(
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum StartedBy {
-    LoaderAsRootOfGraph,
-    LoaderAsRootOfSynchronousGraph,
-    Loader,
-    Require,
-}
-
 impl StartupWalk<'_> {
     fn start(&mut self, file: FileId, depth: u32, started_by: StartedBy) {
         self.time += 1;
-        self.start_times[file.idx()] = self.time;
-        if !self.windows.is_empty() && (self.is_commonjs)(file) {
-            self.files_started_in_windows.push(file);
-        } else if started_by != StartedBy::Require {
-            self.settled_times[file.idx()] = self.time;
+        self.times.started[file.idx()] = self.time;
+        if started_by != StartedBy::Call {
+            self.times.started_by_loader[file.idx()] = self.time;
+        }
+        let is_commonjs = (self.is_commonjs)(file);
+        if !is_commonjs {
+            self.times.settled[file.idx()] = self.time;
         }
         self.depth_of_starting_file[file.idx()] = depth;
-        let files_run_at_link = match started_by {
-            StartedBy::LoaderAsRootOfGraph | StartedBy::LoaderAsRootOfSynchronousGraph => {
-                self.collect_files_run_at_link(file)
-            }
-            StartedBy::Loader | StartedBy::Require => 0..0,
+        let files_run_at_link = match is_commonjs || started_by == StartedBy::Statement {
+            true => 0..0,
+            false => self.collect_files_run_at_link(file),
         };
         self.files_yet_to_run_at_link += files_run_at_link.len() as u32;
-        let is_synchronous_window =
-            started_by == StartedBy::LoaderAsRootOfSynchronousGraph && files_run_at_link.len() > 1;
-        if is_synchronous_window {
-            self.windows.push(SynchronousWindow {
-                opening_time: self.time,
-                start_time_of_last_file: self.time,
-            });
-        }
         self.stack.push(StartingFile {
             file,
+            is_ahead_of_link: false,
             files_run_at_link,
             next_load: 0,
             has_started_body: false,
             functions_callable_from: NEVER,
-            is_synchronous_window,
         });
-    }
-
-    fn close_window(&mut self) {
-        self.windows.pop();
-        if !self.windows.is_empty() {
-            return;
-        }
-        self.time += 1;
-        for file in self.files_started_in_windows.drain(..) {
-            self.settled_times[file.idx()] = self.time;
-        }
-    }
-
-    fn may_have_thrown_in_window(&self, file: FileId) -> bool {
-        let time = self.start_times[file.idx()];
-        time != NEVER
-            && (self.is_commonjs)(file)
-            && self
-                .windows
-                .iter()
-                .any(|window| window.opening_time < time && time < window.start_time_of_last_file)
     }
 
     fn add_possible_load(&mut self, target: LoadTarget, may_be_caught: bool) {
@@ -989,75 +1013,93 @@ impl StartupWalk<'_> {
         self.graph_count += 1;
         let graph = self.graph_count;
         self.last_graph_of_file[root.idx()] = graph;
-        self.importers.clear();
-        self.importers.push(root);
-        let mut next = 0;
-        while let Some(&importer) = self.importers.get(next) {
-            next += 1;
-            let hoisted = loads.of(importer).iter().take_while(|load| load.is_hoisted);
-            for load in hoisted {
-                let Some(target) = load.request.file() else {
-                    continue;
-                };
-                match load.timing {
-                    LoadTiming::Unconditional => {}
-                    LoadTiming::Conditional => {
-                        let may_be_caught = self.may_have_thrown_in_window(target);
-                        self.add_possible_load(LoadTarget::File(target), may_be_caught);
-                        continue;
-                    }
-                    LoadTiming::Guarded | LoadTiming::Deferred => continue,
-                }
-                if core::mem::replace(&mut self.last_graph_of_file[target.idx()], graph) == graph {
+        self.evaluation.begin(loads.by_file.len());
+        self.enter_importer(root, false);
+        while let Some(importer) = self.importers.last_mut() {
+            let load = loads.of(importer.file).get(importer.next);
+            let Some(load) = load.filter(|load| load.is_hoisted) else {
+                self.leave_importer();
+                continue;
+            };
+            importer.next += 1;
+            let Some(target) = load.request.file() else {
+                continue;
+            };
+            match load.timing {
+                LoadTiming::Unconditional | LoadTiming::Deferred => {}
+                LoadTiming::Conditional => {
+                    self.add_possible_load(load.request.target(), false);
                     continue;
                 }
-                let has_started = self.start_times[target.idx()] != NEVER;
-                let is_starting = self.depth_of_starting_file[target.idx()] != NEVER;
-                if (self.is_commonjs)(target) {
-                    if !has_started {
-                        self.files_run_at_link.push(target);
-                    } else if self.may_have_thrown_in_window(target) {
-                        self.add_possible_load(LoadTarget::File(target), true);
-                    }
-                } else if !has_started || is_starting || is_outer_graph_being_loaded {
-                    self.importers.push(target);
+                LoadTiming::Guarded => continue,
+            }
+            let is_deferred = load.timing == LoadTiming::Deferred;
+            let last_graph = &mut self.last_graph_of_file[target.idx()];
+            let is_unseen = core::mem::replace(last_graph, graph) != graph;
+            let has_started = self.times.started[target.idx()] != NEVER;
+            let is_starting = self.depth_of_starting_file[target.idx()] != NEVER;
+            if (self.is_commonjs)(target) {
+                if is_unseen && !has_started {
+                    let ahead = self.evaluation.take_modules_ahead();
+                    self.files_run_at_link.extend_from_slice(ahead);
+                    self.files_run_at_link.push(target);
                 }
+            } else if !is_unseen {
+                self.evaluation.come_back_to(target);
+                if !is_deferred {
+                    let modules_ahead = self.evaluation.count_modules_ahead();
+                    self.evaluation.pass_import(target, modules_ahead);
+                }
+            } else if !has_started || is_starting || is_outer_graph_being_loaded {
+                self.enter_importer(target, is_deferred);
             }
         }
         first..self.files_run_at_link.len() as u32
     }
 
+    fn enter_importer(&mut self, file: FileId, is_deferred: bool) {
+        self.importers.push(Importer {
+            file,
+            next: 0,
+            modules_ahead: self.evaluation.count_modules_ahead(),
+            was_below_deferred_import: self.evaluation.is_below_deferred_import,
+        });
+        self.evaluation.is_below_deferred_import |= is_deferred;
+        self.evaluation.enter(file);
+    }
+
+    fn leave_importer(&mut self) {
+        let left = self.importers.pop().expect("a file was entered");
+        self.evaluation.leave();
+        self.evaluation.pass_import(left.file, left.modules_ahead);
+        self.evaluation.is_below_deferred_import = left.was_below_deferred_import;
+    }
+
+    /// If so, the importer is linked and its body waits.
+    fn may_lead_to_importer_that_waits(&self, target: FileId) -> bool {
+        let component_of = |file: FileId| self.component_of[file.idx()];
+        let mut starting = self.stack.iter();
+        starting.any(|it| it.is_ahead_of_link && component_of(it.file) == component_of(target))
+    }
+
     fn start_entry_point(&mut self, entry_point: FileId) {
-        if self.start_times[entry_point.idx()] != NEVER {
+        if self.times.started[entry_point.idx()] != NEVER {
             return;
         }
         let loads = self.loads;
         let (mut cycle_depth, mut cycle_time) = (NEVER, NEVER);
-        let started_by = match (self.is_commonjs)(entry_point) {
-            true => StartedBy::Loader,
-            false => StartedBy::LoaderAsRootOfGraph,
-        };
-        self.start(entry_point, 0, started_by);
+        self.start(entry_point, 0, StartedBy::Host);
         while let Some(top) = self.stack.last_mut() {
             let file = top.file;
             let depth = self.depth_of_starting_file[file.idx()];
             if let Some(index) = top.files_run_at_link.next() {
                 self.files_yet_to_run_at_link -= 1;
                 let imported = self.files_run_at_link[index as usize];
-                if top.is_synchronous_window
-                    && let Some(window) = self.windows.last_mut()
-                {
-                    window.start_time_of_last_file = self.time + 1;
+                if self.times.started[imported.idx()] == NEVER {
+                    self.start(imported, depth + 1, StartedBy::Statement);
+                    let started = self.stack.last_mut().expect("a file was started");
+                    started.is_ahead_of_link = !(self.is_commonjs)(imported);
                 }
-                if self.start_times[imported.idx()] == NEVER {
-                    self.start(imported, depth + 1, StartedBy::Loader);
-                } else if self.may_have_thrown_in_window(imported) {
-                    self.add_possible_load(LoadTarget::File(imported), true);
-                }
-                continue;
-            }
-            if core::mem::take(&mut top.is_synchronous_window) {
-                self.close_window();
                 continue;
             }
             let load = loads.of(file).get(top.next_load).copied();
@@ -1077,7 +1119,7 @@ impl StartupWalk<'_> {
             let Some(load) = load else {
                 let is_callable_ahead_of_body = depth >= cycle_depth && !is_importer_commonjs;
                 let earliest_time = match is_callable_ahead_of_body {
-                    true => self.start_times[file.idx()].min(cycle_time),
+                    true => self.times.started[file.idx()].min(cycle_time),
                     false => top.functions_callable_from,
                 };
                 if depth <= cycle_depth {
@@ -1096,9 +1138,8 @@ impl StartupWalk<'_> {
                     }));
                 self.depth_of_starting_file[file.idx()] = NEVER;
                 self.time += 1;
-                let is_in_window = !self.windows.is_empty() && is_importer_commonjs;
-                if self.settled_times[file.idx()] == NEVER && !is_in_window {
-                    self.settled_times[file.idx()] = self.time;
+                if self.times.settled[file.idx()] == NEVER {
+                    self.times.settled[file.idx()] = self.time;
                 }
                 self.stack.pop();
                 continue;
@@ -1115,52 +1156,29 @@ impl StartupWalk<'_> {
                 Request::File {
                     file: target,
                     requested_by,
+                    ..
                 } if self.depth_of_starting_file[target.idx()] != NEVER => {
                     cycle_depth = cycle_depth.min(self.depth_of_starting_file[target.idx()]);
                     cycle_time = cycle_time.min(self.time);
                     if requested_by == RequestedBy::Job {
-                        self.add_possible_load(LoadTarget::File(target), true);
+                        self.add_possible_load(load.request.target(), true);
                     }
                 }
-                Request::File {
-                    file: target,
-                    requested_by,
-                } if is_in_order => {
-                    if self.start_times[target.idx()] == NEVER {
-                        let is_linked_with_importer = load.is_hoisted && !is_importer_commonjs;
-                        let is_commonjs = (self.is_commonjs)(target);
-                        let is_import_call = requested_by == RequestedBy::AwaitedImportCall;
-                        let started_by = match (is_linked_with_importer, is_commonjs) {
-                            (true, _) => StartedBy::Loader,
-                            (false, false) if is_import_call => StartedBy::LoaderAsRootOfGraph,
-                            (false, false) => StartedBy::LoaderAsRootOfSynchronousGraph,
-                            (false, true) => StartedBy::Require,
-                        };
-                        self.start(target, depth + 1, started_by);
-                    } else if self.may_have_thrown_in_window(target) {
-                        self.add_possible_load(LoadTarget::File(target), true);
+                Request::File { file: target, .. } if is_in_order => {
+                    if self.times.started[target.idx()] != NEVER {
+                        continue;
+                    }
+                    if load.is_hoisted && !is_importer_commonjs {
+                        self.start(target, depth + 1, StartedBy::Statement);
+                    } else if self.may_lead_to_importer_that_waits(target) {
+                        self.add_possible_load(load.request.target(), false);
+                    } else {
+                        self.start(target, depth + 1, StartedBy::Call);
                     }
                 }
-                Request::File { file: target, .. } => {
-                    let may_be_caught = load.timing == LoadTiming::Guarded
-                        || self.may_have_thrown_in_window(target);
-                    self.add_possible_load(LoadTarget::File(target), may_be_caught);
-                }
-                Request::FileFoundByName | Request::AnyFile => {
+                request => {
                     let may_be_caught = load.timing == LoadTiming::Guarded;
-                    self.add_possible_load(load.request.target(), may_be_caught);
-                    let threw = self.files_started_in_windows.iter().copied();
-                    let threw = threw.filter(|&file| self.may_have_thrown_in_window(file));
-                    let is_found_by_name = matches!(load.request, Request::FileFoundByName);
-                    let threw: Vec<FileId> = threw
-                        .filter(|file| {
-                            !is_found_by_name
-                                || loads.files_found_by_name.binary_search(file).is_ok()
-                        })
-                        .collect();
-                    for file in threw {
-                        self.add_possible_load(LoadTarget::File(file), true);
-                    }
+                    self.add_possible_load(request.target(), may_be_caught);
                 }
             }
         }
@@ -1210,11 +1228,11 @@ fn find_files_that_several_started_files_reach(
 fn find_files_that_may_be_loaded_behind_throw(
     loads: &Loads,
     all_files: &[FileId],
-    settled_times: &[u32],
+    times: &StartupTimes,
     mut possible_loads: Vec<PossibleLoad>,
 ) -> Vec<bool> {
     possible_loads.sort_by_key(|load| load.earliest_time);
-    let mut is_followed = vec![[false; 2]; settled_times.len()];
+    let mut is_followed = vec![[false; 2]; times.settled.len()];
     let mut is_any_file_followed = [false; 2];
     let mut is_file_found_by_name_followed = [false; 2];
     let mut to_follow: Vec<(LoadTarget, bool)> = Vec::new();
@@ -1222,12 +1240,12 @@ fn find_files_that_may_be_loaded_behind_throw(
         to_follow.push((possible.target, possible.may_be_caught));
         while let Some((target, may_be_caught)) = to_follow.pop() {
             let seen = match target {
-                LoadTarget::File(target)
-                    if settled_times[target.idx()] <= possible.earliest_time =>
+                LoadTarget::File(target, after_throw)
+                    if !times.may_run(target, after_throw, possible.earliest_time) =>
                 {
                     continue;
                 }
-                LoadTarget::File(target) => &mut is_followed[target.idx()],
+                LoadTarget::File(target, _) => &mut is_followed[target.idx()],
                 LoadTarget::FileFoundByName => &mut is_file_found_by_name_followed,
                 LoadTarget::AnyFile => &mut is_any_file_followed,
             };
@@ -1235,13 +1253,17 @@ fn find_files_that_may_be_loaded_behind_throw(
                 continue;
             }
             match target {
-                LoadTarget::File(target) => to_follow.extend(loads.of(target).iter().map(|load| {
-                    let catches = matches!(load.timing, LoadTiming::Guarded | LoadTiming::Deferred);
-                    (load.request.target(), may_be_caught || catches)
-                })),
+                LoadTarget::File(target, _) => {
+                    to_follow.extend(loads.of(target).iter().map(|load| {
+                        let catches =
+                            matches!(load.timing, LoadTiming::Guarded | LoadTiming::Deferred);
+                        (load.request.target(), may_be_caught || catches)
+                    }));
+                }
                 LoadTarget::FileFoundByName | LoadTarget::AnyFile => {
                     let files = loads.files_behind(&target, all_files).iter();
-                    to_follow.extend(files.map(|&file| (LoadTarget::File(file), may_be_caught)));
+                    let files = files.map(|&file| LoadTarget::File(file, loads.by_dynamic_path));
+                    to_follow.extend(files.map(|file| (file, may_be_caught)));
                 }
             }
         }

@@ -230,6 +230,10 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
         INHERIT_HOOK_METHOD(codeForEval),
         INHERIT_HOOK_METHOD(canCompileStrings),
         INHERIT_HOOK_METHOD(trustedScriptStructure),
+        nullptr, // requireBuiltinModule
+        nullptr, // nativeBinding
+        INHERIT_HOOK_METHOD(moduleTypeInRegistry),
+        INHERIT_HOOK_METHOD(asyncContextOfImport),
     };
 #undef INHERIT_HOOK_METHOD
     return table;

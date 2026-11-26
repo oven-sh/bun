@@ -366,7 +366,7 @@ Structure* createModuleGraphFrameStructure(VM& vm, JSGlobalObject* globalObject)
     return structure;
 }
 
-JSObject* createAsyncContextFrame(Zig::GlobalObject* globalObject, JSObject* storage, JSValue previous)
+JSObject* createAsyncContextFrame(Zig::GlobalObject* globalObject, JSCell* storage, JSValue previous)
 {
     VM& vm = globalObject->vm();
     JSObject* frame = constructEmptyObject(vm, globalObject->moduleGraphFrameStructure());
@@ -392,20 +392,29 @@ JSValue asyncContextWithoutModuleGraphs(Zig::GlobalObject* globalObject, JSValue
 {
     if (!globalObject->hasModuleGraphs())
         return asyncContext;
+    return asyncContextWithoutFramesOf(globalObject, asyncContext, isStorageOfModuleGraphFrame);
+}
 
+bool isStorageOfModuleGraphFrame(Zig::GlobalObject* globalObject, JSValue storage)
+{
+    return storage == globalObject || dynamicDowncast<JSModuleGraph>(storage);
+}
+
+JSValue asyncContextWithoutFramesOf(Zig::GlobalObject* globalObject, JSValue asyncContext, bool (*isStorageToLeaveOut)(Zig::GlobalObject*, JSValue))
+{
     VM& vm = globalObject->vm();
     auto& names = WebCore::builtinNames(vm);
-    auto isModuleGraphFrame = [&](JSObject* frame) {
+    auto isLeftOut = [&](JSObject* frame) {
         JSValue storage = frame->getDirect(vm, names.storagePublicName());
-        return storage && (storage == globalObject || dynamicDowncast<JSModuleGraph>(storage));
+        return storage && isStorageToLeaveOut(globalObject, storage);
     };
 
-    // `asyncContext` keeps every frame alive. Frames older than the oldest graph frame are reused as-is. Newer ones are copied.
+    // `asyncContext` keeps every frame alive. Frames older than the oldest one left out are reused as-is. Newer ones are copied.
     Vector<JSObject*, 16> frames;
     size_t framesToRebuild = 0;
     for (JSObject* frame = asyncContext.getObject(); frame;) {
         frames.append(frame);
-        if (isModuleGraphFrame(frame))
+        if (isLeftOut(frame))
             framesToRebuild = frames.size();
         JSValue previous = frame->getDirect(vm, names.prevPublicName());
         frame = previous ? previous.getObject() : nullptr;
@@ -420,7 +429,7 @@ JSValue asyncContextWithoutModuleGraphs(Zig::GlobalObject* globalObject, JSValue
     JSValue result = getField(frames[framesToRebuild - 1], names.prevPublicName());
     for (size_t i = framesToRebuild - 1; i--;) {
         JSObject* frame = frames[i];
-        if (isModuleGraphFrame(frame))
+        if (isLeftOut(frame))
             continue;
         JSObject* copy = constructEmptyObject(vm, globalObject->moduleGraphFrameStructure());
         copy->putDirectOffset(vm, FrameStorage, getField(frame, names.storagePublicName()));

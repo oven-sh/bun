@@ -170,6 +170,8 @@ For an import string with a prefix, such as `"virtual:thing"`, Bun first runs th
 
 Callbacks without a `namespace` don't run for built-in modules such as `"fs"` and `"node:fs"`. They also don't run for packages, prefixed strings and extensionless paths that an `onResolve()` callback loads while it's running.
 
+To replace a built-in module, register the callback with `namespace: "node"` or `namespace: "bun"`. It runs for `"fs"` and for `"node:fs"`, with the path `"fs"`. The replacement still gets the built-in module when it loads it, and so do the `onLoad()` callback that makes it and the `require()` and `import()` calls in the files it loads. Anywhere else, use `process.getBuiltinModule()`. If the replacement is asynchronous, `require("fs")` returns the built-in module until an `import` has loaded the replacement. In an executable, the code that was built into it gets the built-in module, unless it makes a name with the prefix at runtime.
+
 A _new path_ without a `namespace` is resolved from the importing module like any other import, without running `onResolve()` callbacks on it: it can be relative, leave out its extension, or name a package. If nothing is found there, the _new path_ is used as it is when an [`onLoad()`](#onload) callback matches it, so it does not have to exist on disk.
 
 A bare name such as `"my-virtual.js"` could also be a package in the registry, so `onResolve()` callbacks run on it once more. If one of them returns a path, the name is the plugin's own and is never [auto-installed](/runtime/auto-install).

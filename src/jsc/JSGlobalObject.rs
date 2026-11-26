@@ -717,10 +717,24 @@ impl JSGlobalObject {
         Bun__hasPlugins(self)
     }
 
-    /// Returns (an `onResolve` is registered in the `file` namespace, one is registered in another namespace).
-    pub(crate) fn has_on_resolve(&self) -> (bool, bool) {
+    pub(crate) fn on_resolve_namespaces(&self) -> OnResolveNamespaces {
         let namespaces = Bun__onResolveNamespaces(self);
-        (namespaces & 1 != 0, namespaces & 2 != 0)
+        OnResolveNamespaces {
+            file: namespaces & 1 != 0,
+            another: namespaces & 2 != 0,
+            of_builtins: namespaces & 4 != 0,
+        }
+    }
+
+    /// An `onResolve` answers `key` for a builtin. Whether `importer` gets the builtin all the same.
+    pub(crate) fn gives_way_to_builtin(
+        &self,
+        key: &BunString,
+        importer: &BunString,
+        is_asked_by_alias: bool,
+        mode: crate::virtual_machine::ResolveMode,
+    ) -> bool {
+        Bun__givesWayToBuiltin(self, key, importer, is_asked_by_alias, mode as u8)
     }
 
     /// The key of the `build.module()` or `mock.module()` module that `specifier` names.
@@ -1289,6 +1303,14 @@ impl From<ScriptExecutionContextIdentifier> for u32 {
     }
 }
 
+/// Where an `onResolve` is registered.
+pub(crate) struct OnResolveNamespaces {
+    pub file: bool,
+    pub another: bool,
+    /// `node` or `bun`.
+    pub of_builtins: bool,
+}
+
 use bun_core::fmt::VecWriter as WriteVec;
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1437,6 +1459,13 @@ unsafe extern "C" {
     safe fn Bun__hasPlugins(global: &JSGlobalObject) -> bool;
     safe fn Bun__isKeyOfLoadedModule(global: &JSGlobalObject, key: &BunString) -> bool;
     safe fn Bun__onResolveNamespaces(global: &JSGlobalObject) -> u8;
+    safe fn Bun__givesWayToBuiltin(
+        global: &JSGlobalObject,
+        key: &BunString,
+        importer: &BunString,
+        is_asked_by_alias: bool,
+        mode: u8,
+    ) -> bool;
     safe fn Bun__resolveVirtualModule(
         global: &JSGlobalObject,
         specifier: &BunString,

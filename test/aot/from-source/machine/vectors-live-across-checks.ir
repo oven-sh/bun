@@ -12,7 +12,7 @@
 # RIGHT: 0,4.5,9,13.5,18,22.5,27,31.5,36,40.5,45,49.5,54,58.5,63,67.5
 # RIGHT: exited with 0
 
-module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError, IsImportedAsESModule] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
 entry module=m0
 layout L0 module=m0 place=0
 layout L1 module=m0 place=0

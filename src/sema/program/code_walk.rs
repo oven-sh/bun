@@ -1,12 +1,8 @@
+mod guesses;
 mod imported_constants;
-mod only_imported;
 
+use self::guesses::{find_files_of_program, let_all_guesses_go, program_rules_out_guesses};
 use self::imported_constants::{NamesLookedUp, fold_files_that_import_constants_again};
-use self::only_imported::{
-    LoadedBy, add_both_module_forms, find_file_of_kind_that_loader_decides, find_files_of_program,
-    forget_files_that_another_loader_reads, leave_out_guesses_that_decide_formats,
-    let_all_guesses_go, program_rules_out_guesses,
-};
 use super::code_barrels::{
     BarrelRequests, NOT_LOADED, erase_imports_not_followed, erase_waiting_sites,
 };
@@ -61,7 +57,6 @@ struct WalkedFile<'s, 'r> {
     parsed: Option<Box<ParsedCodeFile<'s, 'r>>>,
     targets: Vec<u32>,
     stored_by_mocks: StoredByMocks<'s>,
-    loaded_by: LoadedBy,
     imported_requires: Vec<ImportedRequire>,
     imported_constants: Vec<ImportedConstant>,
     texts_of_data_files: Vec<TextOfDataFile>,
@@ -82,7 +77,6 @@ struct FileToRevisit<'s, 'r> {
 
 struct CopiedLoadInputs<'s> {
     stored_by_mocks: StoredByMocks<'s>,
-    is_only_imported: bool,
     imported_requires: Vec<ImportedRequire>,
     imported_constants: Vec<ImportedConstant>,
     texts_of_data_files: Vec<TextOfDataFile>,
@@ -95,7 +89,6 @@ impl<'s> CopiedLoadInputs<'s> {
     fn as_load_inputs(&self) -> LoadInputs<'_, 's> {
         LoadInputs {
             stored_by_mocks: self.stored_by_mocks,
-            is_only_imported: self.is_only_imported,
             imported_requires: &self.imported_requires,
             imported_constants: &self.imported_constants,
             texts_of_data_files: &self.texts_of_data_files,
@@ -117,7 +110,6 @@ impl<'s, 'r> WalkedFile<'s, 'r> {
     fn copy_load_inputs(&self) -> CopiedLoadInputs<'s> {
         CopiedLoadInputs {
             stored_by_mocks: self.stored_by_mocks,
-            is_only_imported: self.loaded_by.is_import_alone(),
             imported_requires: self.imported_requires.clone(),
             imported_constants: self.imported_constants.clone(),
             texts_of_data_files: self.texts_of_data_files.clone(),
@@ -442,7 +434,6 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 true => StoredByMocks::EveryExport,
                 false => StoredByMocks::Nothing,
             },
-            loaded_by: LoadedBy::Require,
             imported_requires: Vec::new(),
             imported_constants: Vec::new(),
             texts_of_data_files: Vec::new(),
@@ -618,12 +609,8 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         if !context.holds_back_guesses() {
             return false;
         }
-        if let Some(file) = find_file_of_kind_that_loader_decides(context, state) {
-            context.let_no_guess_in(Some(&file));
-            return false;
-        }
         if program_rules_out_guesses(context, state) {
-            context.let_no_guess_in(None);
+            context.let_no_guess_in();
             return false;
         }
         let held_back = context.take_guesses_held_back();
@@ -641,7 +628,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         entry_points.iter().any(|it| context.is_mere_guess(it.key))
             && (program_rules_out_guesses(context, state)
                 || find(&WalkedCode::new(context, state, true)).is_more_named)
-            && let_all_guesses_go(context, state, None)
+            && let_all_guesses_go(context, state)
     }
 
     fn begin_at(&self, state: &mut WalkState<'s, 'r>, added: Vec<CodeTarget<'r>>) -> bool {
@@ -798,10 +785,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 || scan_importers_of_file_changers_again(context, &mut state)
                 || scan_askers_of_other_files_again(context, &mut state)
                 || scan_files_whose_exports_others_touch_again(&context.atoms, &mut state)
-                || leave_out_guesses_that_decide_formats(context, &mut state)
-                || forget_files_that_another_loader_reads(context, &mut state)
                 || finish_files(&mut state)
-                || add_both_module_forms(context, &mut state)
                 || self.follow_chosen_imports(&mut state)
                 || self.begin_at_found_entry_points(&mut state)
                 || forget_files_folded_with_main_module(context, &mut state)
@@ -2120,7 +2104,6 @@ fn import_what_is_required<'r>(
                     *loaded = required;
                     *target = CodeTarget {
                         increases_depth: target.increases_depth,
-                        is_name_followed: target.is_name_followed,
                         ..required_target
                     };
                 }
@@ -2134,90 +2117,6 @@ struct OrderedFiles<'s, 'r> {
     entry_points: Vec<u32>,
     parsed: Vec<ParsedSlot<'s, 'r>>,
     steps: Vec<Vec<bool>>,
-}
-
-fn share_modules_among_types<'r>(
-    host: &dyn CodeHost,
-    files: &mut [WalkedFile<'_, 'r>],
-    entry_points: VecDeque<u32>,
-    builds_executable: bool,
-) {
-    let is_call_with_written_type = |target: &CodeTarget<'_>| {
-        builds_executable
-            && !target.has_shared_type
-            && target.has_type_of_shared_kind
-            && target.has_loader_attribute
-            && target.is_linked_by_bundler
-    };
-    let is_shared =
-        |target: &CodeTarget<'_>| target.has_shared_type || is_call_with_written_type(target);
-    let has_shared_type = |file: &WalkedFile<'_, '_>| file.code_targets().iter().any(is_shared);
-    if !files.iter().any(has_shared_type) {
-        return;
-    }
-    let mut seen = vec![false; files.len()];
-    // Another entry point of an executable is the file of a Worker, which has modules of its own.
-    let graphs: Vec<VecDeque<u32>> = match builds_executable {
-        true => entry_points
-            .into_iter()
-            .map(|it| VecDeque::from([it]))
-            .collect(),
-        false => vec![entry_points],
-    };
-    for mut later in graphs {
-        let mut first_forms: FxHashMap<&'r [u8], u32> = FxHashMap::default();
-        // What one load reaches by statements runs before the calls in it do.
-        while let Some(root) = later.pop_front() {
-            let mut level = VecDeque::from([root]);
-            let mut loaded_together = Vec::new();
-            while let Some(index) = level.pop_front() {
-                if std::mem::replace(&mut seen[index as usize], true) {
-                    continue;
-                }
-                loaded_together.push(index);
-                for next in 0..files[index as usize].code_targets().len() {
-                    let target = files[index as usize].code_targets()[next];
-                    if target.has_shared_type {
-                        share_form(host, files, &mut first_forms, index, next);
-                    }
-                    let reached = files[index as usize].targets[next];
-                    match target.is_loaded_with_importer {
-                        true => level.push_back(reached),
-                        false => later.push_back(reached),
-                    }
-                }
-            }
-            for index in loaded_together {
-                for next in 0..files[index as usize].code_targets().len() {
-                    if is_call_with_written_type(&files[index as usize].code_targets()[next]) {
-                        share_form(host, files, &mut first_forms, index, next);
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn share_form<'r>(
-    host: &dyn CodeHost,
-    files: &mut [WalkedFile<'_, 'r>],
-    first_forms: &mut FxHashMap<&'r [u8], u32>,
-    index: u32,
-    next: usize,
-) {
-    let file = &files[index as usize];
-    let path = file.code_targets()[next].key.path;
-    let asked_for = file.targets[next];
-    let cannot_be_read = || {
-        let parsed = files[asked_for as usize].parsed.as_ref();
-        let payload = parsed.and_then(|it| it.payload.as_ref());
-        payload.is_some_and(|it| host.stands_for_text_that_cannot_be_read(it))
-    };
-    if !first_forms.contains_key(path) && cannot_be_read() {
-        return;
-    }
-    let reached = *first_forms.entry(path).or_insert(asked_for);
-    retarget_load(files, index, next, reached);
 }
 
 fn retarget_load(files: &mut [WalkedFile<'_, '_>], importer: u32, next: usize, reached: u32) {
@@ -2237,9 +2136,7 @@ fn share_commonjs_modules<'r>(
         let LoadKey { path, loader } = file.target.key;
         file.parsed.as_ref().is_some_and(|parsed| {
             let analysis = &parsed.code.analyzed.analysis;
-            let where_imported = context.resolver.module_type_where_imported(path);
             analysis.module_format == ModuleFormat::CommonJs
-                && analysis.module_formats.get(where_imported) == ModuleFormat::CommonJs
                 && context.host.loads_as_code(path, loader)
         })
     };
@@ -2277,12 +2174,6 @@ fn order_files<'s, 'r>(
 ) -> OrderedFiles<'s, 'r> {
     let (files, index_of) = (&mut state.files, &state.index_of);
     let entry_points = context.entry_points();
-    let (first, others): (Vec<_>, Vec<_>) =
-        (entry_points.iter().copied()).partition(|it| context.runs_first(it.key));
-    let indexes = first.into_iter().chain(others);
-    let indexes = indexes.map(|it| index_of[&context.canonical_key(it.key)]);
-    let builds_executable = context.inputs.code.builds_executable;
-    share_modules_among_types(context.host, files, indexes.collect(), builds_executable);
     let mut roots: Vec<u32> = Vec::with_capacity(entry_points.len());
     let mut order: Vec<u32> = Vec::with_capacity(files.len());
     let mut seen = vec![false; files.len()];

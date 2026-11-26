@@ -50,6 +50,11 @@ const cases: Record<string, Case> = {
       `const whole = await import(${JSON.stringify(join(sources, "data.sqlite"))}, ${sqlite});\nconst chosen = await import(${choose("./data.sqlite")}, ${sqlite});\nconsole.log(whole.default.${place}, chosen.default.${place});\n`,
     prints: place => `source ${place}\n`,
   },
+  "a written whole path behind a choice": {
+    main: sources =>
+      `const chosen = await import(${choose("./data.sqlite")}, ${sqlite});\nconst whole = await import(${JSON.stringify(join(sources, "data.sqlite"))}, ${sqlite});\nconsole.log(whole.default.${place}, chosen.default.${place});\n`,
+    prints: place => `source ${place}\n`,
+  },
 };
 
 test.concurrent.each(Object.keys(cases))("%s", async name => {

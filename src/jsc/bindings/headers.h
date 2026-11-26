@@ -269,6 +269,7 @@ CPP_DECL bool JSC__VM__isEntered(JSC::VM* arg0);
 CPP_DECL void JSC__VM__notifyNeedDebuggerBreak(JSC::VM* arg0);
 CPP_DECL void JSC__VM__notifyNeedShellTimeoutCheck(JSC::VM* arg0);
 CPP_DECL void JSC__VM__notifyNeedTermination(JSC::VM* arg0);
+CPP_DECL void JSC__VM__setModuleFetchesOnHold(JSC::VM* arg0, bool arg1);
 CPP_DECL void JSC__VM__releaseWeakRefs(JSC::VM* arg0);
 CPP_DECL size_t JSC__VM__runGC(JSC::VM* arg0, bool arg1);
 CPP_DECL void JSC__VM__enableControlFlowProfiler(JSC::VM* arg0);

@@ -15,11 +15,14 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JSCommonJSExtensions.h"
 
+#include "BunProcess.h"
+#include "ImportMetaObject.h"
 #include "PathInlines.h"
 #include "ZigGlobalObject.h"
 #include "headers.h"
@@ -96,6 +99,7 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "module"_s,
     "net"_s,
     "node:sqlite"_s,
+    "node:test"_s,
     "os"_s,
     "path"_s,
     "path/posix"_s,
@@ -641,6 +645,8 @@ static JSValue getPathCacheObject(VM& vm, JSObject* moduleObject)
         vm, globalObject->nullPrototypeObjectStructure());
 }
 
+extern "C" bool Bun__streamIterEnabled();
+
 static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
 {
     // reifyAllStaticProperties calls PropertyCallback builders without checking for exceptions, so check here.
@@ -650,6 +656,10 @@ static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
 
     for (unsigned i = 0; i < countof(builtinModuleNames); ++i) {
         args.append(JSC::jsOwnedString(vm, String(builtinModuleNames[i])));
+    }
+    if (Bun__streamIterEnabled()) {
+        args.append(jsNontrivialString(vm, "stream/iter"_s));
+        args.append(jsNontrivialString(vm, "zlib/iter"_s));
     }
 
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
@@ -801,21 +811,87 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::Ca
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise);
-JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+extern "C" bool Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise);
+extern "C" bool Bun__VirtualMachine__isEntryPointLeftToRunMain(void* bunVM, const BunString* key);
+extern "C" void Bun__reportFailureOfEntryPoint(JSGlobalObject*, EncodedJSValue);
+extern "C" EncodedJSValue NodeModuleModule__findMainPath(JSGlobalObject*, const BunString*);
+extern "C" bool Bun__isESModuleByExtensionOrPackageType(JSGlobalObject*, const BunString* path);
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionDidFailToRunMain, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    Bun__reportFailureOfEntryPoint(globalObject, JSValue::encode(callFrame->argument(0)));
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+static JSString* resolveMainModule(Zig::GlobalObject* globalObject, JSValue main)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto name = callFrame->argument(0).toWTFString(globalObject);
+    if (main.isUndefined()) {
+        JSValue argv = globalObject->processObject()->getArgv(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        main = argv.get(globalObject, 1u);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    JSString* name = main.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    String text = name->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    bool isWrittenAsPath = isAbsolutePath(text) || text.startsWith("./"_s) || text.startsWith("../"_s);
+    String path = isWrittenAsPath ? text : makeString("./"_s, text);
+    BunString pathArgument = Bun::toString(path);
+    JSValue file = JSValue::decode(NodeModuleModule__findMainPath(globalObject, &pathArgument));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (file.isString()) {
+        String found = asString(file)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        BunString foundArgument = Bun::toString(found);
+        if (Bun__isESModuleByExtensionOrPackageType(globalObject, &foundArgument)) {
+            auto key = globalObject->moduleLoader()->resolve(globalObject, Identifier::fromString(vm, isWrittenAsPath ? text : found), {}, nullptr, /* useImportMap */ true);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            return jsString(vm, key.string());
+        }
+    }
+
+    JSValue resolve = globalObject->get(globalObject, builtinNames(vm).resolveSyncPrivateName());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    MarkedArgumentBuffer arguments;
+    for (JSValue argument : { JSValue(name), JSValue(jsEmptyString(vm)), jsBoolean(false), jsBoolean(false), jsUndefined(), jsNull(), jsUndefined(), JSValue(globalObject->requireMap()) })
+        arguments.append(argument);
+    JSValue key = JSC::call(globalObject, resolve, JSC::getCallData(resolve), jsUndefined(), arguments);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return asString(key);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* keyString = resolveMainModule(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
+    String key = keyString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // JSC::loadAndEvaluateModule() takes a key.
-    auto key = globalObject->moduleLoader()->resolve(globalObject, JSC::Identifier::fromString(vm, name), {}, nullptr, /* useImportMap */ true);
+    bool hasRun = runMainModuleUnlessImported(globalObject, keyString);
     RETURN_IF_EXCEPTION(scope, {});
+    auto* loader = globalObject->moduleLoader();
+    if (!hasRun) {
+        loader->ensureRegistered(globalObject, Identifier::fromString(vm, key), JSC::ScriptFetchParameters::Type::JavaScript)->setIsEntryPoint();
+        globalObject->keysImportedByRunMain.add(key);
+    }
+    // bun:main serves what the entry point exports.
+    BunString keyArgument = Bun::toString(key);
+    if (Bun__VirtualMachine__isEntryPointLeftToRunMain(globalObject->bunVM(), &keyArgument) && !loader->registryEntry(Identifier::fromString(vm, "bun:main"_s)))
+        key = "bun:main"_s;
+    else if (hasRun)
+        return JSC::JSValue::encode(JSC::jsUndefined());
 
-    auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
+    auto* promise = JSC::loadAndEvaluateModule(globalObject, key, nullptr, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
-    Bun__VirtualMachine__setOverrideModuleRunMainPromise(defaultGlobalObject(globalObject)->bunVM(), promise);
+    if (!Bun__VirtualMachine__setOverrideModuleRunMainPromise(globalObject->bunVM(), promise))
+        promise->performPromiseThen(vm, globalObject, jsUndefined(), JSFunction::create(vm, globalObject, 1, String(), jsFunctionDidFailToRunMain, ImplementationVisibility::Private), JSPromise::create(vm, globalObject->promiseStructure()));
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -1208,8 +1284,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled,
         jsBoolean(defaultGlobalObject(globalObject)
                 ->hasOverriddenModuleResolveFilenameFunction));
 }
-
-extern "C" bool Bun__streamIterEnabled();
 
 // $cpp("NodeModuleModule.cpp", "createStreamIterEnabledFlag"): the write-once
 // `--experimental-stream-iter` CLI bit, so builtins don't have to consult the

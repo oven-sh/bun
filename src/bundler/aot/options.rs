@@ -225,9 +225,6 @@ fn code_options(input: &OptionsInput<'_, '_, '_>) -> CodeOptions {
     // As `bun run` and `bun test` transpile the same files.
     code.transpiles_by_working_directory = input.aot.runs_in_place;
     code.allows_es_module_mark = input.aot.checks_only || input.aot.runs_tests;
-    code.entry_points_that_run_first = (paths_of_preloads(input).iter())
-        .map(|path| from_argument(&code.working_directory, path))
-        .collect();
     let tsconfig_override = options.tsconfig_override.as_ref();
     code.tsconfig_override = tsconfig_override
         .or(input.aot.missing_tsconfig_override.as_ref())

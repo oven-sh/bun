@@ -88,6 +88,11 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
     }
 }
 
+// HOST_EXPORT(Bun__reportFailureOfEntryPoint, c)
+pub fn report_failure_of_entry_point(global: &JSGlobalObject, value: JSValue) {
+    let _ = global.bun_vm().uncaught_exception(global, value, true);
+}
+
 /// `ScriptExecutionContext::postTask` — the context addresses the thread's VM
 /// directly because it outlives the `Zig::GlobalObject` it was created with.
 // HOST_EXPORT(Bun__VM__queueTask, c)

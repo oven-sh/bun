@@ -14,7 +14,7 @@ use bun_bundler::options::ModuleType;
 use bun_bundler::transpiler::{self as transpiler, AlreadyBundled, ParseOptions, Transpiler};
 use bun_collections::HiveArrayFallback;
 use bun_core::{MutableString, String, strings};
-use bun_event_loop::{TaskTag, Taskable, task_tag};
+use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 use bun_io::JsKeepAlive;
 use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter};
 use bun_paths;
@@ -175,6 +175,8 @@ pub struct RuntimeTranspilerStore {
     /// JS thread only.
     pub jobs_scheduled: Cell<u64>,
     pub jobs_completed: Cell<u64>,
+    /// A job is out of reach until the push ahead of it has linked its own.
+    tasks_without_job: Cell<u32>,
 }
 
 pub type Queue = UnboundedQueue<TranspilerJob>;
@@ -188,13 +190,14 @@ impl Default for RuntimeTranspilerStore {
             queue: Queue::new(),
             jobs_scheduled: Cell::new(0),
             jobs_completed: Cell::new(0),
+            tasks_without_job: Cell::new(0),
         }
     }
 }
 
 impl Taskable for RuntimeTranspilerStore {
     const TAG: TaskTag = task_tag::RuntimeTranspilerStore;
-    /// The "drain my finished jobs" ping owns nothing (`this` is the VM's
+    /// The "a job has finished" ping owns nothing (`this` is the VM's
     /// store); the jobs themselves are released by `release_queued_jobs_for_teardown`.
     unsafe fn release_unrun(_: *mut Self) {}
     /// A ping to the VM's own store.
@@ -228,58 +231,20 @@ impl RuntimeTranspilerStore {
         }
     }
 
-    /// Fulfil every completed job's module promise. This drain is a dispatcher:
-    /// each fulfilment is a JS entry of its own, so what one leaves pending is
-    /// folded here and the drain goes on; the VM's termination ends it, with
-    /// the rest of the batch back on the queue (each still has its own posted
-    /// task, or the teardown release, to pick it up).
-    pub fn run_from_js_thread(
-        &self,
-        event_loop: &EventLoop,
-        global: &JSGlobalObject,
-        vm: NonNull<VirtualMachine>,
-    ) {
-        let batch = self.queue.pop_batch();
-        // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
-        let jsc_vm = unsafe { (*vm.as_ptr()).jsc_vm() };
-        let mut iter = batch.iterator();
-        let mut job = iter.next();
-        let mut first = true;
-        while !job.is_null() {
-            if !first {
-                // if there are more, we need to drain the microtasks from the previous run
-                let drained = event_loop.drain_microtasks_with_global(global, jsc_vm);
-                if drained.is_err() {
-                    self.requeue(job, &mut iter);
-                    return;
-                }
-            }
-            first = false;
-            // SAFETY: `job` is a live job popped from the intrusive queue.
-            let fulfilled = unsafe { (*job).run_from_js_thread() };
-            self.jobs_completed.update(|n| n + 1);
-            job = iter.next();
-            if let Err(err) = fulfilled {
-                if crate::task::report_error_or_terminate(global, err).is_err() {
-                    self.requeue(job, &mut iter);
-                    return;
-                }
-            }
+    /// Fulfil one completed job's module promise. The others stay on the queue, each with a posted
+    /// task of its own: what this one runs may turn the event loop until one of them is fulfilled.
+    pub fn run_from_js_thread(&self, event_loop: &EventLoop) -> JsResult<()> {
+        let Some(mut job) = NonNull::new(self.queue.pop()) else {
+            self.tasks_without_job.update(|n| n + 1);
+            return Ok(());
+        };
+        for _ in 0..self.tasks_without_job.take() {
+            event_loop.enqueue_task(Task::init(ptr::from_ref(self).cast_mut()));
         }
-        // immediately after this is called, the microtasks will be drained again.
-    }
-
-    /// Put `job` and the rest of a popped batch back: each still has its posted
-    /// task (or the teardown release) to pick it up.
-    fn requeue(
-        &self,
-        mut job: *mut TranspilerJob,
-        iter: &mut unbounded_queue::BatchIterator<TranspilerJob>,
-    ) {
-        while let Some(unrun) = NonNull::new(job) {
-            job = iter.next();
-            self.queue.push(unrun);
-        }
+        // SAFETY: `job` is a live job popped from the intrusive queue.
+        let fulfilled = unsafe { job.as_mut().run_from_js_thread() };
+        self.jobs_completed.update(|n| n + 1);
+        fulfilled
     }
 
     pub fn transpile(
@@ -290,6 +255,7 @@ impl RuntimeTranspilerStore {
         path: &Fs::Path<'_>,
         referrer: String,
         loader: Loader,
+        module_type: ModuleType,
         package_json: Option<&PackageJSON>,
         // `Transpiler::find_aot_package_config` of `path`.
         aot_package_config: Option<std::sync::Arc<bun_resolver::tsconfig_json::TSConfigJSON>>,
@@ -329,6 +295,7 @@ impl RuntimeTranspilerStore {
                 ticket: None,
                 log: bun_ast::Log::init(),
                 loader,
+                module_type,
                 aot_package_config,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
                 module_loader: if module_loader.is_empty() {
@@ -379,6 +346,7 @@ pub struct TranspilerJob {
     pub(crate) non_threadsafe_input_specifier: bun_core::String,
     pub(crate) non_threadsafe_referrer: bun_core::String,
     pub(crate) loader: Loader,
+    module_type: ModuleType,
     /// `Transpiler::find_aot_package_config`, asked on the JS thread.
     pub(crate) aot_package_config:
         Option<std::sync::Arc<bun_resolver::tsconfig_json::TSConfigJSON>>,
@@ -704,12 +672,6 @@ impl TranspilerJob {
         let is_main = vm_main
             .is_some_and(|vm_main| vm_main_hash == hash && strings::eql_long(vm_main, path.text));
 
-        let module_type: ModuleType = match this_tag {
-            ResolvedSourceTag::PackageJsonTypeCommonjs => ModuleType::Cjs,
-            ResolvedSourceTag::PackageJsonTypeModule => ModuleType::Esm,
-            _ => ModuleType::Unknown,
-        };
-
         let mut parse_options = ParseOptions {
             arena: &arena,
             path,
@@ -742,7 +704,7 @@ impl TranspilerJob {
             // SAFETY: leaf-field read on `*vm.module_loader`; see `vm` note above.
             remove_cjs_module_wrapper: is_main
                 && unsafe { (*vm).module_loader.eval_source.get().is_some() },
-            module_type,
+            module_type: this.module_type,
             keep_json_and_toml_as_one_statement: false,
             allow_bytecode_cache: true,
         };
@@ -847,11 +809,7 @@ impl TranspilerJob {
                     rewrite_jest_for_tests: transpiler.options.rewrite_jest_for_tests,
                 },
             ) {
-                // `require.cache`, a replaced `require` and the `module.*` tracing channels go by the name as it is written.
-                if replacement.node_builtin
-                    && (import_record.kind.is_common_js()
-                        || import_record.kind == bun_ast::ImportKind::Dynamic)
-                {
+                if replacement.stays_as_written(import_record.kind) {
                     continue;
                 }
                 import_record.path.text = replacement.path.as_bytes();

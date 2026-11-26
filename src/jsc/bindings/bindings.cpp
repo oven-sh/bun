@@ -5689,6 +5689,11 @@ void JSC__VM__shrinkFootprint(JSC::VM* arg0)
     arg0->shrinkFootprintWhenIdle();
 }
 
+void JSC__VM__setModuleFetchesOnHold(JSC::VM* vm, bool areOnHold)
+{
+    vm->m_areFetchesOfHostOnHold = areOnHold;
+}
+
 void JSC__VM__holdAPILock(JSC::VM* arg0, void* ctx, void (*callback)(void* arg0))
 {
     JSC::JSLockHolder locker(arg0);

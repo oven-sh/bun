@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { canTrim, model } from "../bundler/compile-trim-features";
@@ -95,6 +95,8 @@ function codeOfStart(path: string) {
   return { size: file.readUInt32LE(image + 76), executableSize: Number(file.readBigUInt64LE(image + 64)) };
 }
 
+// With a sanitizer a number above 270_000 stands as it is written, and the runner gives a file that runs beside two others more than that (harness/default-timeout.ts).
+const limitOfManyBuilds = isASAN ? 240_000 : 300_000;
 const isSupported = isLinux && !isHardened;
 const recorder = model.features.find(({ name }) => name === "OrderRecorder")!.index;
 
@@ -274,7 +276,7 @@ test.skipIf(!isSupported)(
     expect(sizes[0]).toBeGreaterThan(0);
     expect(sizes).toEqual(sizes.map(() => sizes[0]));
   },
-  240_000,
+  limitOfManyBuilds,
 );
 
 test.skipIf(!isSupported)(
@@ -340,7 +342,7 @@ console.log(sum);
     const found = Object.keys(places).map(name => [name, [...names].filter(each => each.slice(0, -1) === name).length]);
     expect({ found, before }).toEqual({ found: Object.keys(places).map(name => [name, 8]), before: after });
   },
-  240_000,
+  limitOfManyBuilds,
 );
 
 test.skipIf(!isSupported)(
@@ -398,7 +400,7 @@ test.skipIf(!isSupported)(
     const alone = bytesOf((await build(String(dir), "program", "a.order")).executable);
     expect(bytesOf((await build(String(dir), "program", "a.order,a.order")).executable)).toBe(alone);
   },
-  240_000,
+  limitOfManyBuilds,
 );
 
 test.skipIf(!isSupported)(
@@ -419,7 +421,7 @@ test.skipIf(!isSupported)(
         .filter(line => line.startsWith("F "));
     expect(linesOf("first").length).toBe(linesOf("second").length);
   },
-  240_000,
+  limitOfManyBuilds,
 );
 
 test.skipIf(!isSupported)(
@@ -433,7 +435,7 @@ test.skipIf(!isSupported)(
     expect(await run([plain.executable])).toEqual(expected);
     expect(codeOfStart(plain.executable).size).toBeGreaterThan(0);
   },
-  240_000,
+  limitOfManyBuilds,
 );
 
 test.skipIf(!isSupported)(
@@ -454,7 +456,7 @@ if (!success) process.exit(1);
     expect((await run([outfile], { BUN_AOT_ORDER_OUT: order })).exitCode).toBe(0);
     expect(readFileSync(order, "utf8")).toStartWith("aot-order v1\n");
   },
-  240_000,
+  limitOfManyBuilds,
 );
 
 test.skipIf(!isSupported)(
@@ -490,5 +492,5 @@ test.skipIf(!isSupported || !canTrim)(
     expect(readRemovedFeatures(plain.executable)).toContain(recorder);
     expect(readRemovedFeatures(recording.executable)).not.toContain(recorder);
   },
-  240_000,
+  limitOfManyBuilds,
 );

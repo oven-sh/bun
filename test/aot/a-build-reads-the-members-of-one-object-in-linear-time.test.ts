@@ -39,7 +39,7 @@ const shapes: Record<string, (count: number) => string[]> = {
   ],
   "stores and reads in turns": count => [
     "const o = {};",
-    ...upTo(count, i => `o.k${i} = "./none${i}"; ${read(`o.k${i}`)}`),
+    ...upTo(2 * count, i => `o.k${i} = "./none${i}"; ${read(`o.k${i}`)}`),
   ],
   "one name in many objects": count => [
     ...upTo(count, i => `function f${i}(a) { a.path = "./none${i}"; ${read("a.path")} }`),
@@ -88,8 +88,9 @@ describe("a build of eight times as many reads of one object", () => {
       using dir = tempDir("aot-members-of-one-object", {});
       const few = await build(String(dir), shapes[name](1000), 1000);
       const many = await build(String(dir), shapes[name](8000), 8000);
-      reads(name, many / few, 2, "times the processor seconds");
-      if (!isASAN && !isDebug) expect(many / few).toBeLessThan(2);
+      const bound = isASAN || isDebug ? 3 : 2;
+      reads(name, many / few, bound, "times the processor seconds");
+      expect(many / few).toBeLessThan(bound);
     },
     240_000,
   );

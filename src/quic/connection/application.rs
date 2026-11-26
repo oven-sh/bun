@@ -64,7 +64,7 @@ impl Connection {
             has_early_data: stream.flags.contains(Flags::HAS_EARLY_DATA),
             has_received: stream.has_received(),
             is_empty: stream.is_empty(),
-            is_short_of_credit: self.streams.state.is_peer_short_of_credit(stream),
+            is_short_of_credit: stream.is_peer_short_of_credit(),
         })
     }
 
@@ -76,7 +76,7 @@ impl Connection {
             return None;
         }
         state.on_offered(id, stream, data.len() as u64);
-        let (capacity, is_ahead) = state.capacity(id, stream, data.len());
+        let (capacity, is_ahead) = state.capacity(id, stream, data.len() as u64);
         let overhead = match &stream.role {
             Role::Message(message) if !message.has_sent_headers => return None,
             Role::Message(_) => data_frame_header(capacity.min(data.len() as u64)).1,
@@ -84,17 +84,23 @@ impl Connection {
         };
         let len = (capacity.saturating_sub(overhead as u64)).min(data.len() as u64);
         let taken = data.get(..len as usize).unwrap_or_default();
+        let unwritten = (data.len() - taken.len()) as u64;
+        if state.sends_in_order {
+            stream.set_unwritten(unwritten, len);
+        }
         if !taken.is_empty() {
             let (header, header_len) = data_frame_header(len);
             let header = header.get(..header_len.min(overhead)).unwrap_or_default();
             state.write(id, stream, &[header, taken]);
             if is_ahead {
-                state.on_written_ahead((header.len() + taken.len()) as u64);
+                state.on_written_ahead(id, stream, (header.len() + taken.len()) as u64);
             }
             state.made_progress = true;
+        } else {
+            state.on_turned_down(id, stream);
         }
-        stream.set_unwritten((data.len() - taken.len()) as u64);
-        if taken.len() < data.len() {
+        stream.set_unwritten(unwritten, 0);
+        if unwritten > 0 {
             state.want_write(id, stream);
         }
         Some(taken.len())

@@ -609,7 +609,7 @@ impl Connection {
         let Streams { table, state, .. } = core::mem::replace(&mut self.streams, new);
         (self.streams.state.events, self.streams.state.removed) = (state.events, state.removed);
         self.streams.table.is_going_away = table.is_going_away;
-        self.update_unsent_target();
+        self.update_unsent_target(now);
         (self.http3, self.can_open_streams) = (None, false);
         self.set_loss_timer(now);
     }

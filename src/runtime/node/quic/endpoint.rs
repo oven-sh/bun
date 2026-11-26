@@ -88,6 +88,8 @@ const DEFAULT_STATELESS_RESET_BURST: f64 = 200.0;
 const VERNEG_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 /// After which the rest of the loop gets its turn.
 const MAX_ROUNDS: usize = 16;
+const MAX_REFILLS: usize = 8;
+const MAX_REFILL_TIME: Duration = Duration::from_millis(2);
 
 const IDX_STATS_CREATED_AT: usize = 0;
 const IDX_STATS_DESTROYED_AT: usize = 1;
@@ -440,7 +442,6 @@ fn config_from_js(
         .filter(|v| v.is_object())
     {
         apply_transport_params(global, tp, parameters, side)?;
-        config.limits_unread_data = read_u64_option(global, tp, "initialMaxData")?.is_some();
     }
     if let Some(ms) = read_u64_option(global, options, "handshakeTimeout")? {
         config.handshake_timeout = Duration::from_millis(ms);
@@ -876,10 +877,31 @@ impl QuicEndpoint {
         sessions.filter(|it| it.flush_pending_graceful()).count() > 0
     }
 
+    /// A writer only hands over so much at a time, which may be less than there is room for.
     fn process(&self) {
         if self.closed.get() || self.processing.get() {
             return;
         }
+        // Every callback runs user JS that can synchronously destroy
+        // sessions and (via close()) drop the endpoint's wrapper Strong;
+        // hold one for the duration so `self` survives GC.
+        let _keep_alive = bun_jsc::Strong::create(self.this_value.get().get(), self.global());
+        let (deadline, defers_closes) = (now() + MAX_REFILL_TIME, self.defer_closes.get());
+        for _ in 0..=MAX_REFILLS {
+            self.process_once();
+            if self.closed.get()
+                || !self.marked_sessions().any(QuicSession::owes_drain)
+                || self.outbox.borrow().is_pass_over()
+                || now() > deadline
+            {
+                break;
+            }
+            self.defer_closes.set(true);
+        }
+        self.defer_closes.set(defers_closes);
+    }
+
+    fn process_once(&self) {
         // A depth-0 pass runs after the previous flight left the socket: safe
         // point for graceful closes stashed during a dispatch.
         if !self.scope_held() {
@@ -891,11 +913,6 @@ impl QuicEndpoint {
         self.drive_once();
 
         let global = self.global();
-        // Every callback below runs user JS that can synchronously destroy
-        // sessions and (via close()) drop the endpoint's wrapper Strong;
-        // hold one for the duration so `self` survives GC.
-        let _keep_alive = bun_jsc::Strong::create(self.this_value.get().get(), global);
-
         while let Some(session) = self.pending_new_sessions.with_mut(VecDeque::pop_front) {
             let Some(session) = self.live_session(session) else {
                 continue;

@@ -85,14 +85,23 @@ pub(super) enum Asked {
     Anew,
 }
 
+/// Why a stream is told to write.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Invitation {
+    InTurn,
+    /// Of an older one.
+    Ahead,
+    /// See [`State::waited`].
+    Passing,
+}
+
 /// What the streams share.
 #[derive(Default)]
 pub(crate) struct State {
-    sends_in_order: bool,
-    limits_unread_data: bool,
+    pub(super) sends_in_order: bool,
     closes_when_sent: bool,
-    /// What it takes to write a byte.
-    min_credit: u64,
+    /// See [`Self::min_credit`].
+    has_frame_headers: bool,
     pub(crate) events: VecDeque<Event>,
     /// The streams for which there is [`StreamEvent::Closed`] in `events`.
     pub(super) removed: VecDeque<(StreamId, Context)>,
@@ -139,31 +148,47 @@ pub(crate) struct State {
     /// False if no stream in `writable` can pass those that have none.
     has_passing: bool,
     /// How many times the peer has shown that it reads that.
-    trust: u32,
+    trust: u8,
     blocked_at: Option<u64>,
     pub(super) has_reported_blocked: bool,
     /// How many bytes that have not been sent are worth having.
     pub(super) unsent_target: u64,
-    write_round: u64,
+    /// The same for asking for them if streams are sent in order, as it is too late to change that order afterwards.
+    imminent: u32,
+    /// By how much what is unsent has to be below that.
+    write_chunk: u16,
+    /// How much of what is unsent waits for credit.
+    stuck: u64,
+    write_round: u32,
     is_write_round_over: bool,
     has_written_in_round: bool,
+    /// For how many streams the application has gone for more.
+    awaited: u32,
 
     sendable: Line,
     turns: u64,
     /// How many bytes have passed the serial streams since one of them had its turn.
-    passed: u64,
+    passed: u16,
+    /// How many have been sent while other streams were waiting, less what these have got for it.
+    waited: u16,
+    /// How many since a long one has passed.
+    since_passing: u16,
+    /// In this round, for a stream that may pass.
+    has_looked_behind: bool,
+    /// No short stream in `writable` passes before [`Self::waited`] is 256 times that.
+    least_wait: u8,
     lost: VecDeque<StreamId>,
     /// They wait for MAX_DATA.
     stalled: Vec<StreamId>,
     owing: VecDeque<StreamId>,
     readable: VecDeque<StreamId>,
     writable: Line,
-    /// The last one that was told to write, and whether that is ahead of an older one.
-    invited: Option<(StreamId, bool)>,
+    /// The last one that was told to write.
+    invited: Option<(StreamId, Invitation)>,
     allowance: Allowance,
     crumbs: Crumbs,
     /// What it leaves to those that it has overtaken.
-    spare_credit: u64,
+    spare_credit: u32,
     /// The last of them that was the oldest.
     leader: Option<(u64, StreamId)>,
     closing: VecDeque<StreamId>,
@@ -212,9 +237,8 @@ impl Streams {
             },
             state: State {
                 sends_in_order: config.sends_in_order,
-                limits_unread_data: config.limits_unread_data,
                 closes_when_sent: config.closes_when_sent,
-                min_credit: if is_http3 { MIN_DATA_FRAME_LEN } else { 1 },
+                has_frame_headers: is_http3,
                 write_round: 1,
                 receive_limit: local.initial_max_data,
                 receive_window: local.initial_max_data,
@@ -307,6 +331,9 @@ impl Streams {
             state.writable.retain(|it| it.1 != id);
             state.stalled.retain(|&it| it != id);
         }
+        if flags.contains(Flags::IN_SENDABLE) {
+            state.sendable.retain(|it| it.1 != id);
+        }
         if id.initiator() != table.side {
             let counts = table.counts_mut(id.direction());
             counts.remote_released += u64::from(!flags.contains(Flags::IN_CLOSING));
@@ -368,9 +395,6 @@ impl Streams {
             && let Some(stream) = self.table.get_mut(id)
         {
             stream.flags.insert(Flags::RELEASED);
-            if core::mem::take(&mut stream.held) > 0 {
-                self.state.credit(id, stream);
-            }
             let (context, is_known) = (stream.context, stream.flags.contains(Flags::ANNOUNCED));
             self.table.unreleased -= 1;
             if id.initiator() != self.table.side {

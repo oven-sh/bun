@@ -54,6 +54,10 @@ impl Stream {
         self.received == 0
     }
 
+    pub(crate) fn is_peer_short_of_credit(&self) -> bool {
+        self.receive_limit - self.received < self.receive_window / 8
+    }
+
     #[inline]
     pub(crate) fn read_offset(&self) -> u64 {
         self.read
@@ -167,7 +171,6 @@ impl State {
         if stream.mark(Flags::RESET_BY_PEER) && !stream.flags.contains(Flags::STOPPED) {
             self.notify(id, stream, StreamEvent::Reset(code));
         }
-        stream.held = 0;
         self.finish_reading(id, stream);
         Ok(())
     }
@@ -179,7 +182,6 @@ impl State {
             self.owe(id, stream, Flags::OWES_STOP_SENDING);
         }
         stream.flags.insert(Flags::STOPPED);
-        stream.held = 0;
         self.finish_reading(id, stream);
     }
 
@@ -202,9 +204,9 @@ impl State {
             false => stream.read,
         };
         let consumed = in_order - stream.ready.len() as u64 - stream.held;
-        let counted = match self.limits_unread_data {
-            true => consumed,
-            false if stream.flags.contains(Flags::PAUSED) => in_order,
+        // So that the streams that are not being read do not hold up the others (RFC 9308 §4.4).
+        let counted = match stream.flags.contains(Flags::PAUSED) {
+            true => in_order,
             // The application is going to take it as soon as it finds the time.
             false => (in_order - stream.ready.len() as u64).max(stream.counted),
         };
@@ -217,16 +219,11 @@ impl State {
             self.owe(id, stream, Flags::OWES_MAX_STREAM_DATA);
         }
         let (limit, window) = (self.receive_limit, self.receive_window);
-        // The streams that are not being read can hold most of the window.
+        // What cannot be read yet can hold most of the window.
         let is_short = self.consumed + window > limit + (limit - self.received).max(window / 64);
         if is_worth_raising(limit, self.consumed, window) || is_short && limit < MAX_VARINT {
             self.owed |= Control::MAX_DATA;
         }
-    }
-
-    pub(crate) fn is_peer_short_of_credit(&self, stream: &Stream) -> bool {
-        self.receive_limit - self.received < self.receive_window / 8
-            || stream.receive_limit - stream.received < stream.receive_window / 8
     }
 
     /// The peer can do with less than is usually worth a frame.

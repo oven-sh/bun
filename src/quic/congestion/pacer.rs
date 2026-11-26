@@ -142,6 +142,27 @@ impl Pacer {
         self.quantum
     }
 
+    /// What the rate comes to in [`GRANULARITY`].
+    #[inline]
+    pub(super) fn steady(&self) -> u64 {
+        self.steady
+    }
+
+    /// About how many bytes it lets go out at this time.
+    #[inline]
+    pub(super) fn allowance(&self, now: Instant, is_idle: bool, datagram_len: u64) -> u64 {
+        if !is_idle && self.rest == 0 && self.next > now + self.lead() {
+            return 0;
+        }
+        let lag = match now <= self.catch_up_until {
+            true => now - self.next,
+            false => Duration::ZERO,
+        };
+        let paced = (self.steady).saturating_mul((lag + GRANULARITY).as_micros());
+        let burst = if is_idle { BURST } else { self.burst_tokens };
+        paced / GRANULARITY.as_micros() + self.quantum + u64::from(burst + 1) * datagram_len
+    }
+
     /// How early a quantum may go out.
     #[inline]
     fn lead(&self) -> Duration {
@@ -202,8 +223,10 @@ impl Pacer {
             || self.is_shared
     }
 
-    pub(super) fn on_application_limited(&mut self) {
-        self.on_limited_otherwise();
+    pub(super) fn on_application_limited(&mut self, awaits_more: bool) {
+        if !awaits_more {
+            self.on_limited_otherwise();
+        }
         self.has_run_dry = true;
     }
 

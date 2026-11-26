@@ -17,6 +17,7 @@ pub(crate) struct Stream {
     pub(crate) is_read_to_end: bool,
     pub(crate) is_closed: bool,
     pub(crate) unsent: VecDeque<u8>,
+    pub(crate) written: usize,
     /// Of the current piece.
     rest: usize,
     finishes: bool,
@@ -42,6 +43,7 @@ pub(crate) struct Peer {
     pub(crate) resets: bool,
     /// How many bytes it offers at a time.
     pub(crate) piece_len: Option<usize>,
+    pub(crate) waits_to_be_asked: bool,
     turns: u32,
     /// In datagrams.
     pub(crate) longest_run: usize,
@@ -66,6 +68,7 @@ impl Peer {
             refuses: false,
             resets: false,
             piece_len: None,
+            waits_to_be_asked: false,
             turns: 0,
             longest_run: 0,
         }
@@ -95,7 +98,10 @@ impl Peer {
         let stream = self.streams.entry(id).or_default();
         stream.unsent.extend(data);
         stream.finishes = finishes;
-        self.write(self.handle.unwrap(), id);
+        match self.waits_to_be_asked {
+            true => self.connection().want_write(StreamId(id)),
+            false => self.write(self.handle.unwrap(), id),
+        }
     }
 
     fn write(&mut self, handle: Handle, id: u64) {
@@ -109,6 +115,7 @@ impl Peer {
             let len = connection.write(StreamId(id), &unsent[..stream.rest]);
             stream.unsent.drain(..len.unwrap_or(0));
             stream.rest -= len.unwrap_or(0);
+            stream.written += len.unwrap_or(0);
             if stream.rest > 0 || stream.unsent.is_empty() {
                 break;
             }

@@ -317,7 +317,7 @@ impl Connection {
             (this.timers).set(Timer::Handshake, now + this.config.handshake_timeout);
         }
         this.restart_idle_timer(now);
-        this.update_unsent_target();
+        this.update_unsent_target(now);
         this
     }
 
@@ -449,6 +449,10 @@ impl Connection {
                 if let Err(error) = self.send_qpack_instructions() {
                     self.fail(now, error);
                 }
+            }
+            Timer::Pacing if self.streams.state.sends_in_order => {
+                self.update_unsent_target(now);
+                self.streams.state.start_write_round(now);
             }
             Timer::Pacing => {}
             Timer::KeepAlive => {

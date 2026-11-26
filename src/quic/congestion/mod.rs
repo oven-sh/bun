@@ -188,6 +188,14 @@ impl Controller {
         self.window().saturating_sub(self.in_flight)
     }
 
+    /// About how many bytes the pacer lets go out at this time, and how many can go out in each [`GRANULARITY`].
+    #[inline]
+    pub(crate) fn pace(&self, now: Instant, datagram_len: u64, rtt: &Rtt) -> (u64, u64) {
+        let clocked = self.window() * GRANULARITY.as_micros() / rtt.smoothed.as_micros().max(1);
+        let allowance = (self.pacer).allowance(now, self.in_flight == 0, datagram_len);
+        (allowance, self.pacer.steady().min(clocked))
+    }
+
     /// For one more packet, which may be what fills the window over the brim. After that, it may wait until more of
     /// what is `unsent` can be sent together.
     #[inline]
@@ -313,8 +321,14 @@ impl Controller {
 
     /// There is nothing more to send, or no credit for it.
     pub(crate) fn on_application_limited(&mut self) {
-        self.pacer.on_application_limited();
+        self.on_run_dry(false);
+    }
+
+    /// Likewise, but the application may have gone for more.
+    pub(crate) fn on_run_dry(&mut self, awaits_more: bool) {
+        self.pacer.on_application_limited(awaits_more);
         if let Model::Bbr(bbr) = &mut self.model
+            && !awaits_more
             && self.in_flight < bbr.window()
         {
             bbr.on_application_limited(self.last_sent);

@@ -35,8 +35,6 @@ pub struct Config {
     pub sends_in_order: bool,
     /// Whether what the application has got counts as unread until [`consume`](crate::Connection::consume).
     pub awaits_consumption: bool,
-    /// Whether what is unread counts for the limit of the connection, so that it can hold up other streams.
-    pub limits_unread_data: bool,
     /// Whether a stream is only closed when its end has been sent.
     pub closes_when_sent: bool,
     pub http3: Option<Http3Config>,
@@ -102,7 +100,6 @@ impl Config {
             has_priorities: false,
             sends_in_order: false,
             awaits_consumption: false,
-            limits_unread_data: false,
             closes_when_sent: false,
             http3: None,
         }

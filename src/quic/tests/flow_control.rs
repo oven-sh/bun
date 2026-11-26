@@ -72,13 +72,10 @@ fn gives_credit_for_what_has_been_read() {
 }
 
 #[test]
-fn gives_credit_sooner_if_streams_that_are_not_read_hold_the_window() {
-    let raw = Raw::client().config(|it| it.limits_unread_data = true);
-    let mut raw = with_windows(raw, 6400, [0, 6400, 0]);
-    raw.send("stream 0 0 -");
-    raw.connection().set_paused(StreamId(0), true);
-    raw.write(0, &filler(0, 5000), false);
+fn gives_credit_sooner_if_what_cannot_be_read_holds_the_window() {
+    let mut raw = with_windows(Raw::client(), 6400, [0, 6400, 0]);
     for (frame, expected) in [
+        ("stream 0 4999 *1", ""),
         ("stream 4 0 *700", ""),
         ("stream 4 700 *1", "max_data 7101"),
         ("stream 0 5000 *1299", ""),
@@ -103,31 +100,17 @@ fn gives_credit_for_what_is_discarded() {
     raw.forget();
     raw.send("stream 8 0 *90");
     assert_eq!(raw.frames(), "max_data 320");
-
-    let raw = Raw::client().config(|it| it.limits_unread_data = true);
-    let mut raw = with_windows(raw, 100, [0, 100, 0]);
-    raw.send("stream 0 0 -");
-    raw.connection().set_paused(StreamId(0), true);
-    raw.send("stream 0 0 *100");
-    raw.connection().stop(StreamId(0), 0);
-    assert_eq!(raw.frames(), "max_data 200, stop_sending 0 0x0");
 }
 
 #[test]
-fn gives_no_credit_while_paused() {
-    for (limits_unread_data, paused, resumed) in [
-        (true, "", "max_data 200, max_stream_data 0 200"),
-        (false, "max_data 200", "max_stream_data 0 200"),
-    ] {
-        let raw = Raw::client().config(|it| it.limits_unread_data |= limits_unread_data);
-        let mut raw = with_windows(raw, 100, [0, 100, 0]);
-        raw.send("stream 0 0 -");
-        raw.connection().set_paused(StreamId(0), true);
-        raw.send("stream 0 0 *100");
-        assert_eq!(raw.frames(), paused);
-        raw.connection().set_paused(StreamId(0), false);
-        assert_eq!(raw.frames(), resumed);
-    }
+fn gives_no_credit_for_a_stream_that_is_paused() {
+    let mut raw = with_windows(Raw::client(), 100, [0, 100, 0]);
+    raw.send("stream 0 0 -");
+    raw.connection().set_paused(StreamId(0), true);
+    raw.send("stream 0 0 *100");
+    assert_eq!(raw.frames(), "max_data 200");
+    raw.connection().set_paused(StreamId(0), false);
+    assert_eq!(raw.frames(), "max_stream_data 0 200");
 }
 
 #[test]
@@ -142,23 +125,20 @@ fn gives_credit_when_the_application_gets_around_to_it() {
 
 #[test]
 fn tells_whether_the_peer_is_short_of_credit() {
-    for (connection, stream) in [(80, 800), (800, 80)] {
-        let raw = Raw::client().config(|it| it.limits_unread_data = true);
-        let mut raw = with_windows(raw, connection, [0, stream, 0]);
-        raw.send("stream 0 0 -");
-        raw.connection().set_paused(StreamId(0), true);
-        for (frame, has_received, is_short) in [
-            ("ping", false, false),
-            ("stream 0 0 *70", true, false),
-            ("stream 0 70 *1", true, true),
-        ] {
-            raw.send(frame);
-            let info = raw.connection().stream_info(StreamId(0)).unwrap();
-            assert_eq!(
-                (info.has_received, info.is_short_of_credit),
-                (has_received, is_short)
-            );
-        }
+    let mut raw = with_windows(Raw::client(), 800, [0, 80, 0]);
+    raw.send("stream 0 0 -");
+    raw.connection().set_paused(StreamId(0), true);
+    for (frame, has_received, is_short) in [
+        ("ping", false, false),
+        ("stream 0 0 *70", true, false),
+        ("stream 0 70 *1", true, true),
+    ] {
+        raw.send(frame);
+        let info = raw.connection().stream_info(StreamId(0)).unwrap();
+        assert_eq!(
+            (info.has_received, info.is_short_of_credit),
+            (has_received, is_short)
+        );
     }
 }
 
@@ -202,33 +182,18 @@ fn gives_what_credit_there_is_to_a_peer_that_is_blocked() {
 
 #[test]
 fn gives_credit_for_what_has_been_consumed() {
-    let raw =
-        Raw::client().config(|it| (it.awaits_consumption, it.limits_unread_data) = (true, true));
+    let raw = Raw::client().config(|it| it.awaits_consumption = true);
     let mut raw = with_windows(raw, 100, [0, 100, 100]);
     raw.send("stream 0 0 *100");
+    assert_eq!(raw.frames(), "max_data 200");
+    raw.connection().consume(StreamId(0), 25);
     assert_eq!(raw.frames(), "");
-    raw.connection().consume(StreamId(0), 10);
-    assert_eq!(raw.frames(), "max_data 110");
-    raw.connection().consume(StreamId(0), 60);
-    assert_eq!(raw.frames(), "max_data 170, max_stream_data 0 170");
-    raw.send("fin 0 100 *70");
-    assert_eq!(raw.frames(), "");
-    raw.connection().consume(StreamId(0), 1000);
+    raw.connection().consume(StreamId(0), 45);
+    assert_eq!(raw.frames(), "max_stream_data 0 170");
+    raw.send("stream 0 100 *70");
     assert_eq!(raw.frames(), "max_data 270");
-
-    for (id, limit) in [(4, 370), (8, 470), (12, 570)] {
-        raw.send(&format!("ack, stream {id} 0 *100"));
-        assert_eq!(raw.frames(), "");
-        match id {
-            4 => raw.connection().stop(StreamId(id), 0),
-            8 => raw.send("reset_stream 8 0 100"),
-            _ => {
-                raw.send("fin 12 100 -");
-                raw.connection().finish(StreamId(id));
-            }
-        }
-        assert!(raw.frames().starts_with(&format!("max_data {limit}")));
-    }
+    raw.connection().consume(StreamId(0), 1000);
+    assert_eq!(raw.frames(), "max_stream_data 0 270");
 }
 
 #[test]

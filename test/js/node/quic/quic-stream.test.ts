@@ -780,7 +780,7 @@ test("a stream that reuses a destroyed stream's allocation doesn't get its queue
 }, 30_000);
 
 test.each(["is never read", "is read in part"])("a request that %s can be sent to the end", async how => {
-  const options = { alpn: "quic-test", transportParams: { initialMaxData: 64 * 1024 } };
+  const options = { alpn: "quic-test", transportParams: { initialMaxStreamDataBidiRemote: 64 * 1024 } };
   await using server = await listen(
     session => {
       session.onstream = async stream => {

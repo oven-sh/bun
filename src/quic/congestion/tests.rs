@@ -421,7 +421,7 @@ fn pacer_lets_small_writes_gather_for_no_longer_than_the_granularity() {
         let mut pacer = pacer_at(1000, per);
         pacer.on_sent(START, 0);
         for _ in 0..10 {
-            pacer.on_application_limited();
+            pacer.on_application_limited(false);
             pacer.on_sent(START, 100);
         }
         assert_eq!(pacer.delay(START), Some(START + micros(expected) * 10));
@@ -631,6 +631,26 @@ fn pacer_allows_a_burst_after_a_pause() {
 }
 
 #[test]
+fn pacer_knows_how_much_it_lets_go_out() {
+    let mut pacer = pacer_at(1000, millis(5));
+    assert_eq!(pacer.allowance(START, true, 1000), 11_400);
+    pacer.on_idle_restart(START, false);
+    pacer.on_sent(START, 1000);
+    assert_eq!(pacer.allowance(START, false, 1000), 10_400);
+    let delay = pace(&mut pacer, START).1;
+    for (late, expected) in [(0, 1400), (10, 3400), (50, 11_400), (51, 1400)] {
+        let now = START + delay + millis(late);
+        assert_eq!(pacer.allowance(now, false, 1000), expected);
+    }
+    let early = START + delay - millis(1);
+    assert_eq!(pacer.allowance(early, false, 1000), 1400);
+    assert_eq!(pacer.allowance(early - micros(1), false, 1000), 0);
+    assert_eq!(pacer.allowance(early - micros(1), true, 1000), 11_400);
+    assert!(pacer.delay(early).is_none());
+    assert_eq!(pacer.allowance(early - micros(1), false, 1000), 1400);
+}
+
+#[test]
 fn pacer_is_early_by_single_packets_while_the_burst_is_unheard_of() {
     for (len, has_run_dry, is_recovering, is_heard_of, early, on_time) in [
         (9500, true, false, false, 1, 10),
@@ -641,7 +661,7 @@ fn pacer_is_early_by_single_packets_while_the_burst_is_unheard_of() {
         (200_000, true, false, true, 66, 264),
     ] {
         let mut pacer = pacer_at(len, millis(1));
-        pacer.on_application_limited();
+        pacer.on_application_limited(false);
         if !has_run_dry {
             pacer.on_sent(START - millis(9), 1);
         }
@@ -2864,6 +2884,20 @@ fn waiting_for_a_loss_to_be_found_is_not_part_of_a_trickle() {
         sender.wait(millis(500)).feedback(10, acked as usize);
         sender.wait(micros(pause)).feedback(0, 12);
         assert_eq!(gain(sender.rounds_of(1, 20, millis(10))), expected);
+    }
+}
+
+#[test]
+fn bbr_is_not_limited_by_an_application_that_has_gone_for_more() {
+    for awaits_more in [false, true] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.send(1).wait(millis(10)).feedback(0, 1).send(1);
+        sender.controller.on_run_dry(awaits_more);
+        let flight = sender.send(1).flights.back();
+        assert_eq!(
+            flight.map(|it| it.is_application_limited),
+            Some(!awaits_more)
+        );
     }
 }
 

@@ -170,13 +170,19 @@ impl Connection {
         if !self.candidates.is_empty() || self.timers.is_set(Timer::Path) {
             self.set_path_timer();
         }
-        self.update_unsent_target();
+        self.update_unsent_target(now);
     }
 
     #[inline]
-    pub(super) fn update_unsent_target(&mut self) {
-        self.streams.state.unsent_target = self.congestion.room() + 2 * WRITE_CHUNK;
-        self.streams.state.max_retained = MIN_RETAINED.max(3 * self.congestion.window());
+    pub(super) fn update_unsent_target(&mut self, now: Instant) {
+        let (state, room) = (&mut self.streams.state, self.congestion.room());
+        state.unsent_target = room + 2 * WRITE_CHUNK;
+        state.max_retained = MIN_RETAINED.max(3 * self.congestion.window());
+        if state.sends_in_order {
+            let datagram_len = u64::from(self.path.mtu.current);
+            let pace = self.congestion.pace(now, datagram_len, &self.rtt);
+            state.set_pace(room, pace, datagram_len);
+        }
     }
 
     /// Returns false if there is nothing to send.
@@ -201,8 +207,8 @@ impl Connection {
             if self.congestion.spreads_out() {
                 self.runs.suspend(next_number);
             } else if self.pto_count == 0 {
-                let (unsent, room) = (self.streams.state.unsent(), self.congestion.room());
-                max_run = (self.runs).max_len(next_number, unsent, room, self.path.mtu.current);
+                let (to_send, room) = (|| self.streams.to_send(), self.congestion.room());
+                max_run = (self.runs).max_len(next_number, to_send, room, self.path.mtu.current);
             }
         }
         let len = out.len() - start;
@@ -455,7 +461,7 @@ impl Connection {
         let is_probe = self.spaces.data.probes > 0;
         let has_frames = is_probe || self.has_frames();
         if !has_frames && !self.streams.state.awaits_writes() {
-            self.congestion.on_application_limited();
+            (self.congestion).on_run_dry(self.streams.state.awaits_data());
         }
         let may_elicit =
             has_frames && (is_probe || self.may_send(now) && !self.waits_for_more(now));

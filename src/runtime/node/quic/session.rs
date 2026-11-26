@@ -549,6 +549,9 @@ impl QuicSession {
     pub(super) fn has_events(&self) -> bool {
         !self.events.get().is_empty()
     }
+    pub(super) fn owes_drain(&self) -> bool {
+        (self.events.get().iter()).any(|it| matches!(it, SessionEvent::StreamDrain { .. }))
+    }
     fn mark(&self) {
         if let Some(ep) = self.endpoint_ref() {
             ep.mark(self);

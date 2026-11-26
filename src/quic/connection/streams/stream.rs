@@ -53,6 +53,8 @@ bitflags::bitflags! {
         const TURNED_AWAY = 1 << 32;
         const DEFERS_RESET = 1 << 33;
         const LACKS_CONTEXT = 1 << 34;
+        /// See [`State::stuck`](super::State::stuck).
+        const IS_STUCK = 1 << 35;
     }
 }
 
@@ -92,7 +94,7 @@ pub(crate) struct Stream {
     pub(super) busy_from: u64,
     /// Up to where it is this stream's turn to send.
     pub(super) turn_end: u64,
-    pub(crate) write_round: u64,
+    pub(crate) write_round: u32,
     pub(super) reset_code: u64,
     /// For when everything has been sent, and some of it gets lost.
     pub(super) deferred_reset_code: u64,

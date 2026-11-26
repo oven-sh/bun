@@ -246,10 +246,15 @@ fn runs_get_longer_as_they_arrive() {
 #[test]
 fn runs_start_early_if_there_is_more_than_fits_the_window() {
     for (len, first_run) in [(52_000, 1), (54_000, 2)] {
-        let mut raw = Raw::server().connected();
-        let id = raw.peer.open(Unidirectional);
-        raw.peer.send(id, &vec![0; len], false);
-        assert_eq!(raw.run_lens()[0], first_run);
+        for is_asked in [false, true] {
+            let raw = Raw::server().config(|it| it.sends_in_order = is_asked);
+            let mut raw = raw.connected();
+            raw.peer.waits_to_be_asked = is_asked;
+            let id = raw.peer.open(Unidirectional);
+            raw.peer.send(id, &vec![0; len], false);
+            raw.peer.poll(raw.now);
+            assert_eq!(raw.run_lens()[0], first_run);
+        }
     }
 }
 

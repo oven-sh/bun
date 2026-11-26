@@ -164,7 +164,7 @@ impl State {
         let max = match self.is_invited(id) {
             _ if self.writable.is_empty() => u64::MAX,
             true if own < self.allowance.free_below => u64::MAX,
-            true if allowed >= self.min_credit => allowed,
+            true if allowed >= self.min_credit() => allowed,
             _ if !self.has_to_wait(id, own) => u64::MAX,
             _ if stream.unwritten > 0 && stream.flags.contains(Flags::IN_WRITABLE) => 0,
             _ if len > MIN_UNSENT => LITTLE.saturating_sub(unsent),
@@ -264,7 +264,7 @@ impl State {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Role, Streams};
+    use super::super::{Invitation, Role, Streams};
     use super::*;
     use crate::connection::sent::Frames;
     use crate::{Config, Direction, Side};
@@ -275,7 +275,7 @@ mod tests {
         let mut stream = Stream::new(Role::Raw, Flags::empty(), u64::MAX, 0);
         stream.send.write(&vec![0; (sent + unsent) as usize]);
         stream.send.send(0..sent, &mut Vec::new());
-        stream.set_unwritten(unwritten);
+        stream.set_unwritten(unwritten, 0);
         stream
     }
 
@@ -293,7 +293,7 @@ mod tests {
         crate::with(opened, |(id, stream)| {
             stream.send_limit = u64::MAX;
             state.write(id, stream, &[&vec![0; written as usize]]);
-            stream.set_unwritten(unwritten);
+            stream.set_unwritten(unwritten, 0);
             match unwritten {
                 0 => state.finish(id, stream),
                 _ => state.want_write(id, stream),
@@ -413,10 +413,10 @@ mod tests {
 
     #[test]
     fn allowance_holds_while_it_is_good_for_a_write() {
-        for (end, wanted) in [(9, 9), (8, LITTLE)] {
+        for (end, wanted) in [(3, 3), (2, LITTLE)] {
             let mut state = State {
-                min_credit: 9,
-                invited: Some((StreamId(1), false)),
+                has_frame_headers: true,
+                invited: Some((StreamId(1), Invitation::InTurn)),
                 writable: [(0, StreamId(5))].into(),
                 ..State::default()
             };

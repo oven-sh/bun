@@ -142,7 +142,7 @@ impl Connection {
                     if self.pto_count > 1 {
                         self.on_sign_of_life();
                     }
-                    self.update_unsent_target();
+                    self.update_unsent_target(now);
                     self.streams.state.start_write_round(now);
                 }
                 self.set_loss_timer(now);

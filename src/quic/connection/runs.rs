@@ -73,21 +73,21 @@ impl Default for Runs {
 }
 
 impl Runs {
-    /// `room` is what the congestion window has left.
+    /// `room` is what the congestion window has left, and `to_send` tells how many bytes are to follow.
     #[inline]
     pub(super) fn max_len(
         &self,
         next_number: u64,
-        unsent: u64,
+        to_send: impl FnOnce() -> u64,
         room: u64,
         datagram_len: u16,
     ) -> usize {
-        let is_affordable = match next_number < EARLY {
+        let is_affordable = || match next_number < EARLY {
             // What gets lost can go with the next flight.
-            true => unsent >= room + FOLLOWING + 8 * u64::from(self.max_len),
-            false => unsent >= FOLLOWING || !self.has_failed,
+            true => to_send() >= room + FOLLOWING + 8 * u64::from(self.max_len),
+            false => !self.has_failed || to_send() >= FOLLOWING,
         };
-        match next_number >= self.longer_from && is_affordable {
+        match next_number >= self.longer_from && is_affordable() {
             true => {
                 let part = u16::from(self.has_failed) * (self.max_len % datagram_len);
                 2 * usize::from((self.max_len - part).max(datagram_len))
@@ -273,7 +273,7 @@ mod tests {
                     _ => self.runs.on_acked(&packet, self.sent),
                 }
             }
-            (self.runs.max_len(self.sent, u64::MAX, 0, LEN) / usize::from(LEN)).clamp(1, 48)
+            (self.runs.max_len(self.sent, || u64::MAX, 0, LEN) / usize::from(LEN)).clamp(1, 48)
         }
 
         /// The packet that so many have followed.
@@ -458,7 +458,7 @@ mod tests {
             }
             sender.runs.suspend(sender.sent + pause);
             sender.send(&". ".repeat(count));
-            let max_len = sender.runs.max_len(sender.sent, 0, 0, LEN);
+            let max_len = sender.runs.max_len(sender.sent, || 0, 0, LEN);
             assert_eq!(max_len > 2400, is_forgotten);
             assert_eq!(sender.runs.patience < WARY, is_forgotten);
         }
@@ -479,7 +479,7 @@ mod tests {
         for (runs, max_len) in [(".", 4800), ("xxx", 2944)] {
             let mut sender = Sender::starting_with(2);
             sender.send(runs);
-            assert_eq!(sender.runs.max_len(3000, u64::MAX, 0, 1472), max_len);
+            assert_eq!(sender.runs.max_len(3000, || u64::MAX, 0, 1472), max_len);
         }
     }
 
@@ -500,7 +500,7 @@ mod tests {
         ] {
             let mut sender = Sender::starting_with(4);
             sender.send(runs);
-            let is_short = |&it: &u64| sender.runs.max_len(next_number, it, 1000, LEN) == 4800;
+            let is_short = |&it: &u64| sender.runs.max_len(next_number, || it, 1000, LEN) == 4800;
             assert_eq!((0..).take_while(is_short).count(), following);
         }
     }

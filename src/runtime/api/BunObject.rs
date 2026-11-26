@@ -63,7 +63,7 @@ use bun_jsc::{
     JSObject, JSPromise, JSString, JSValue, JsResult,
 };
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
-use crate::cli::open::Editor;
+use crate::cli::open::{Editor, configured_editor};
 use bun_core::{EncodedSlice, String as BunString, StringView, strings};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
@@ -669,6 +669,9 @@ pub(crate) fn open_in_editor<'a>(
                     )));
                 }
             }
+        } else if !edit.name.is_empty() && !configured_editor().is_empty() {
+            // The cached editor is one that an earlier call named. `[debug] editor` is the default, not that one.
+            *edit = Default::default();
         }
 
         let editor = match editor_choice.or_else(|| edit.found()) {

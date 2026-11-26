@@ -343,6 +343,14 @@ fn auto_close(argv: Vec<Box<[u8]>>) {
 
 // ──────────────────────────────────────────────────────────────────────────
 
+/// `[debug] editor` of bunfig.toml. Empty when it is not set.
+pub(crate) fn configured_editor() -> &'static [u8] {
+    match bun_options_types::context::try_get() {
+        Some(ctx) => &ctx.debug.editor,
+        None => b"",
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct EditorContext {
     pub(crate) editor: Option<Editor>,
@@ -375,14 +383,15 @@ impl EditorContext {
 
         let cwd = Fs::FileSystem::get().top_level_dir();
 
-        // "vscode"
-        if !self.name.is_empty()
-            && let Some(editor_) = Editor::by_name(bun_paths::basename(&self.name))
-            && let Some(path) = Editor::find(env, editor_, cwd)
-        {
-            self.editor = Some(editor_);
-            self.path = path.to_vec();
-            return;
+        // "vscode", then `[debug] editor = "code"` in bunfig.toml
+        for name in [&self.name[..], configured_editor()] {
+            if let Some(editor_) = Editor::by_name(bun_paths::basename(name))
+                && let Some(path) = Editor::find(env, editor_, cwd)
+            {
+                self.editor = Some(editor_);
+                self.path = path.to_vec();
+                return;
+            }
         }
 
         // EDITOR=code

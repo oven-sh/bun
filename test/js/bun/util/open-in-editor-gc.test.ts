@@ -1,6 +1,6 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
-import { chmodSync, existsSync, symlinkSync } from "node:fs";
+import { chmodSync, existsSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // Both ways of naming an editor (EDITOR in the environment, the `editor`
@@ -275,4 +275,157 @@ test.skipIf(!isLinux)("signal handlers installed before a burst of Bun.openInEdi
   expect(stdout.trim()).toBe("ok");
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
+});
+
+// The three sources name three editors: bunfig.toml names `atom`, EDITOR names `subl`, and `code` is
+// first on the built-in list. Each fake editor appends its name and arguments to a file, which the
+// child waits on. Linux-only so PATH is the only place an editor can come from.
+describe.skipIf(!isLinux)("Bun.openInEditor reads [debug] editor from bunfig.toml", () => {
+  const fakeEditor = `#!/bin/sh\necho "\${0##*/} $*" >> "$EDITOR_LOG"\n`;
+  const files = {
+    "bin/code": fakeEditor,
+    "bin/subl": fakeEditor,
+    "bin/atom": fakeEditor,
+    "decoy/atom": `#!/bin/sh\necho "decoy $*" >> "$EDITOR_LOG"\n`,
+    "run.js": `
+      const { readFileSync } = require("node:fs");
+      const lines = () => { try { return readFileSync(process.env.EDITOR_LOG, "utf8").split("\\n").filter(Boolean); } catch { return []; } };
+      const results = [];
+      for (const options of JSON.parse(process.env.CALLS)) {
+        const before = lines().length;
+        try {
+          if (options) Bun.openInEditor("a.ts", options);
+          else Bun.openInEditor("a.ts");
+          for (const deadline = Date.now() + 10_000; lines().length === before && Date.now() < deadline; ) await Bun.sleep(1);
+          results.push(lines()[before] ?? "<nothing was spawned>");
+        } catch (e) {
+          results.push(e.name + ": " + e.message);
+        }
+      }
+      if (Bun.isMainThread) console.log(JSON.stringify(results));
+      else postMessage(JSON.stringify(results));
+    `,
+    "in-worker.js": `
+      const worker = new Worker(new URL("run.js", import.meta.url).href);
+      worker.onmessage = event => console.log(event.data);
+      worker.onerror = event => { console.error(event.message); process.exit(1); };
+    `,
+  };
+
+  type Row = {
+    name: string;
+    /** The value of `[debug] editor`. Without it there is no bunfig.toml. */
+    editor?: string | ((dir: string) => string);
+    /** The file that holds the setting. Any other name than bunfig.toml is passed with --config. */
+    config?: string;
+    entry?: string;
+    EDITOR?: string;
+    /** One call of Bun.openInEditor each: its options, or null for none. */
+    calls: ({ editor: string } | null)[];
+    expected: string[];
+  };
+  const rows: Row[] = [
+    {
+      name: "it comes before $EDITOR and the built-in list",
+      editor: "atom",
+      EDITOR: "subl",
+      calls: [null, null],
+      expected: ["atom a.ts", "atom a.ts"],
+    },
+    {
+      name: "a call without the option does not reuse the editor that an earlier call named",
+      editor: "atom",
+      calls: [{ editor: "subl" }, null, { editor: "subl" }, null],
+      expected: ["subl a.ts", "atom a.ts", "subl a.ts", "atom a.ts"],
+    },
+    {
+      name: "it comes before $EDITOR when the option names an editor that Bun does not know",
+      editor: "atom",
+      EDITOR: "subl",
+      calls: [{ editor: "notepad++" }],
+      expected: ["atom a.ts"],
+    },
+    {
+      name: "only the last component of a path is used, and the file it names is not run",
+      editor: dir => join(dir, "decoy", "atom"),
+      EDITOR: "subl",
+      calls: [null],
+      expected: ["atom a.ts"],
+    },
+    {
+      name: "a Worker reads it",
+      editor: "atom",
+      entry: "in-worker.js",
+      EDITOR: "subl",
+      calls: [null],
+      expected: ["atom a.ts"],
+    },
+    {
+      name: "it is read from the file that --config names",
+      editor: "atom",
+      config: "other.toml",
+      EDITOR: "subl",
+      calls: [null],
+      expected: ["atom a.ts"],
+    },
+    {
+      name: "with an editor that is not found, a call without the option runs detection again",
+      editor: "webstorm",
+      EDITOR: "subl",
+      calls: [{ editor: "atom" }, null],
+      expected: ["atom a.ts", "subl a.ts"],
+    },
+    // The rows below pass without the fix too. They pin what the setting does not change.
+    {
+      name: "an editor that is not installed falls back to $EDITOR",
+      editor: "webstorm",
+      EDITOR: "subl",
+      calls: [null],
+      expected: ["subl a.ts"],
+    },
+    {
+      name: "a name that Bun does not know falls back to $EDITOR",
+      editor: "zed",
+      EDITOR: "subl",
+      calls: [null],
+      expected: ["subl a.ts"],
+    },
+    {
+      name: "without it, a call without the option reuses the editor that an earlier call named",
+      calls: [null, { editor: "subl" }, null],
+      expected: ["code a.ts", "subl a.ts", "subl a.ts"],
+    },
+  ];
+
+  test.concurrent.each(rows)(
+    "$name",
+    async ({ editor, config = "bunfig.toml", entry = "run.js", EDITOR, calls, expected }) => {
+      using dir = tempDir("open-in-editor-bunfig", files);
+      for (const bin of ["bin/code", "bin/subl", "bin/atom", "decoy/atom"]) chmodSync(join(String(dir), bin), 0o755);
+      if (editor !== undefined) {
+        const value = typeof editor === "function" ? editor(String(dir)) : editor;
+        writeFileSync(join(String(dir), config), `[debug]\neditor = ${JSON.stringify(value)}\n`);
+      }
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...(config === "bunfig.toml" ? [] : [`--config=${config}`]), entry],
+        env: {
+          ...bunEnv,
+          PATH: join(String(dir), "bin"),
+          EDITOR,
+          VISUAL: undefined,
+          EDITOR_LOG: join(String(dir), "log"),
+          CALLS: JSON.stringify(calls),
+        },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(expected);
+      expect(exitCode).toBe(0);
+    },
+  );
 });

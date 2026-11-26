@@ -22,7 +22,7 @@ pub(crate) mod shell_completions;
 #[path = "open.rs"]
 mod open_full;
 pub(crate) mod open {
-    pub(crate) use super::open_full::{Editor, EditorContext};
+    pub(crate) use super::open_full::{Editor, EditorContext, configured_editor};
     use bun_core::Output;
 
     #[cfg(target_os = "macos")]

@@ -6403,7 +6403,10 @@ declare module "bun" {
   function shrink(): void;
 
   /**
-   * Open a file in your local editor. The editor is detected from `$VISUAL` or `$EDITOR`
+   * Open a file in your local editor.
+   *
+   * Without `options.editor`, Bun uses the editor that `[debug] editor` in `bunfig.toml` names.
+   * If that is not set or Bun does not find that editor, the editor is detected from `$VISUAL` or `$EDITOR`.
    *
    * @param path Path of the file to open
    * @param options Editor, line, and column overrides

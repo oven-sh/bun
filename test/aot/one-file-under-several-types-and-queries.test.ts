@@ -11,6 +11,7 @@ const says = `const says = async (label, load) => console.log(label, await load(
 const files = {
   "part.mjs": `export const k = "m";\nexport default "mjs";\n`,
   "notes.md": "# title\ntext\n",
+  "given.zz": "on the disk",
   "tsconfig.json": `{ "compilerOptions": { "module": "preserve", "moduleResolution": "bundler", "allowJs": true, "noEmit": true, "types": [] }, "files": [] }`,
   "build.mjs": `const [outfile, withPlugin] = process.argv.slice(2);
 import { dirname, join } from "node:path";
@@ -19,6 +20,7 @@ const plugin = {
   setup(build) {
     build.onResolve({ filter: /\\?(text|raw)$/ }, args => ({ path: join(args.resolveDir || dirname(args.importer), args.path), namespace: "file" }));
     build.onLoad({ filter: /\\?(text|raw)$/ }, () => ({ contents: "made by the plugin", loader: "text" }));
+    build.onLoad({ filter: /\\.zz$/ }, () => ({ contents: "export const k = 'p'; export default 'made';", loader: "ts" }));
   },
 };
 const built = await Bun.build({ entrypoints: ["./main.mjs"], plugins: withPlugin === "plugin" ? [plugin] : [], throw: false, compile: { outfile, aot: true } });
@@ -79,6 +81,27 @@ await says("ts", () => import("./notes.md", { with: { type: "ts" } }));
 const name = ["./part.mjs", String(globalThis.nothing ?? "raw")].join("?");
 console.log(made, (await import(name)).default === made);`,
     prints: `text ${text}\nts ${text}\nmade by the plugin true\n`,
+  },
+  "code that a plugin gives, under a type of text in a statement and under another type in a call": {
+    plugin: true,
+    main: `import words from "./given.zz" with { type: "text" };
+${says}await says("jsonc", () => import("./given.zz", { with: { type: "jsonc" } }));
+await says("none", () => import("./given.zz"));
+console.log(words);`,
+    prints: `jsonc "made"\nnone "made"\nmade\n`,
+  },
+  "code that a plugin gives, under css in a statement and under text in a call": {
+    plugin: true,
+    main: `import sheet from "./given.zz" with { type: "css" };
+${says}await says("text", () => import("./given.zz", { with: { type: "text" } }));
+console.log(sheet);`,
+    prints: `text "made"\nmade\n`,
+  },
+  "code that a plugin gives, under two types of data in calls": {
+    plugin: true,
+    main: `${says}await says("toml", () => import("./given.zz", { with: { type: "toml" } }));
+await says("json5", () => import("./given.zz", { with: { type: "json5" } }));`,
+    prints: `toml "made"\njson5 "made"\n`,
   },
 };
 

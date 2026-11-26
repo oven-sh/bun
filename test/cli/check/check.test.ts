@@ -25729,14 +25729,28 @@ export const related: S extends T ? 1 : 2 = 0;
     });
   });
 
-  test("unicode columns count UTF-16 units, not bytes, for non-BMP text", async () => {
-    // 😀 is 4 bytes but 2 UTF-16 units. The column of `42` must count units.
+  test("unicode columns count UTF-16 units, not bytes, for non-BMP text before the error", async () => {
+    // 😀 is 4 bytes but 2 UTF-16 units, and it comes before `x` on the same line.
     using dir = project({
-      "index.ts": `const s = "😀";\nconst x: string = 42;\n`,
+      "index.ts": `const s = "😀", x: string = 42;\n`,
     });
     const { stdout, exitCode } = await check(dir);
+    // `const s = "` is 11 units, the emoji 2, then `", ` is 3: `x` is column 17 (column 19 if bytes were counted).
+    expect(stdout).toContain("index.ts(1,17)");
     expect(exitCode).toBe(1);
-    // Column 7 on line 2 (`const ` is 6 units; the error points at `x`).
-    expect(stdout).toContain("index.ts(2,7)");
+  });
+
+  test("columns after invalid UTF-8 count each byte as a replacement character", async () => {
+    // ED A0 80 is a surrogate encoded as UTF-8. It decodes to three U+FFFD, not to one unit.
+    using dir = project({
+      "index.ts": Buffer.concat([
+        Buffer.from(`const s = "`),
+        Buffer.from([0xed, 0xa0, 0x80]),
+        Buffer.from(`", x: string = 42;\n`),
+      ]) as unknown as string,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout).toContain("index.ts(1,18)");
+    expect(exitCode).toBe(1);
   });
 });

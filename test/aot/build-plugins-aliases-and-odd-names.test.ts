@@ -182,6 +182,16 @@ build.onLoad({ filter: /\\?(json|a&b=1)$/ }, (args: any) => ({ contents: JSON.st
       stdout: "./one.txt?json true true\n./notes.js?a&b=1 true true\ntrue\ntrue\n",
     },
   },
+  "a file is imported under a type and under a query that spells the type": {
+    files: {
+      "main.ts": `// @ts-nocheck
+import text from "./part.mjs" with { type: "text" };
+const made = "./part.mjs?" + ["te", "xt"].join("");
+console.log(typeof text, (await import(made)).value);`,
+      "part.mjs": `export const value = 1;`,
+    },
+    refused: "two modules have the path",
+  },
   "a query string that a plugin takes": {
     files: {
       "main.ts": `// @ts-nocheck\nimport raw from "./code.ts?raw"; import { value } from "./code.ts"; import again from "./code.ts?raw"; console.log(JSON.stringify(raw), value, raw === again);`,

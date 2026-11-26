@@ -9,9 +9,9 @@ pub(crate) mod visit_stmt;
 use crate::lexer as js_lexer;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
-    ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
-    Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts,
-    VisitDeclOpts, is_eval_or_arguments,
+    FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts, Ref,
+    RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, UsedAs,
+    VisitArgsOpts, VisitDeclOpts, is_eval_or_arguments,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
@@ -23,8 +23,8 @@ use bun_ast::s::Kind as LocalKind;
 use bun_ast::scope::{Kind as ScopeKind, Member as ScopeMember};
 use bun_ast::symbol::Kind as SymbolKind;
 use bun_ast::{
-    AssignTarget, B, Binding, BindingNodeIndex, E, Expr, ExprData, ExprNodeList, G, LocRef, S,
-    Stmt, StmtData, Symbol,
+    B, Binding, BindingNodeIndex, E, Expr, ExprData, ExprNodeList, G, LocRef, S, Stmt, StmtData,
+    Symbol,
 };
 use bun_collections::VecExt;
 // `parser::SideEffects` is a stub enum without the assoc fns; the real
@@ -299,7 +299,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let orig_dead = self.is_control_flow_dead;
                 let orig_in_deleted = self.in_deleted_export;
                 // `replacement` is a `BackRef` so the
-                // borrow of `self.options` does not survive across `visit_expr_in_out(&mut self)`.
+                // borrow of `self.options` does not survive across `visit_expr_as(&mut self)`.
                 // `BackRef` invariant: `self.options.features.replace_exports` is never mutated
                 // during the visit pass, so the entry strictly outlives this loop body.
                 let mut replacement: Option<
@@ -352,13 +352,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.react_compiler_candidate_name = Some(id.r#ref);
                     self.react_compiler_in_react_hoc = in_hoc;
                 }
-                self.visit_expr_in_out(
+                self.visit_expr_as(
                     &mut val,
-                    ExprIn {
-                        is_immediately_assigned_to_decl: true,
-                        // `const { a } = x` reads `x.a` and drops `x`.
-                        is_property_access_target: matches!(decl.binding.data, BData::BObject(_)),
-                        ..Default::default()
+                    if matches!(decl.binding.data, BData::BObject(_)) {
+                        UsedAs::DestructuredInitializer
+                    } else {
+                        UsedAs::Initializer
                     },
                 );
                 self.react_compiler_candidate_name = None;
@@ -756,19 +755,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn visit_for_loop_init(&mut self, stmt: Stmt, is_in_or_of: bool) -> Stmt {
         match stmt.data {
             StmtData::SExpr(mut st) => {
-                let assign_target = if is_in_or_of {
-                    AssignTarget::Replace
+                let used_as = if is_in_or_of {
+                    UsedAs::AssignTarget
                 } else {
-                    AssignTarget::None
+                    UsedAs::Value
                 };
                 self.stmt_expr_value = st.value.data;
-                self.visit_expr_in_out(
-                    &mut st.value,
-                    ExprIn {
-                        assign_target,
-                        ..Default::default()
-                    },
-                );
+                self.visit_expr_as(&mut st.value, used_as);
             }
             StmtData::SLocal(mut st) => {
                 for dec in st.decls.slice_mut() {

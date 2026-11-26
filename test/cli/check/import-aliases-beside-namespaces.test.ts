@@ -238,10 +238,11 @@ test.concurrent.each(forms)("%s", async (_, lines, errors) => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const reported = Array.from(
     (stdout + stderr).matchAll(/a\.ts\((\d+,\d+)\): error TS(\d+)/g),
     it => `${it[1]}:${it[2]}`,
   );
   expect(reported.sort()).toEqual(errors.split(" ").filter(Boolean).sort());
+  expect(exitCode).toBe(errors ? 1 : 0);
 });

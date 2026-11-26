@@ -22,11 +22,13 @@ const check = async (name: string, program: string) => {
     "tsconfig.json": JSON.stringify({ compilerOptions }),
     [name]: program,
   });
-  const { stdout } = await run([bunExe(), "check", "--no-pretty", "-p", "."], String(dir), {
+  const { stdout, exitCode } = await run([bunExe(), "check", "--no-pretty", "-p", "."], String(dir), {
     ...bunEnv,
     NO_COLOR: "1",
   });
-  return [...stdout.matchAll(/^a\.[jt]s\((\d+,\d+)\): error (TS\d+)/gm)].map(([, at, code]) => `${at} ${code}`);
+  const errors = [...stdout.matchAll(/^a\.[jt]s\((\d+,\d+)\): error (TS\d+)/gm)].map(([, at, code]) => `${at} ${code}`);
+  expect(exitCode).toBe(errors.length ? 1 : 0);
+  return errors;
 };
 
 const inFunction = (...lines: string[]) =>

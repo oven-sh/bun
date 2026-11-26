@@ -22,11 +22,13 @@ const check = async (importer: string, module: string) => {
     "a.ts": exporter,
     "c.ts": importer,
   });
-  const { stdout } = await run([bunExe(), "check", "--no-pretty", "-p", "."], String(dir), {
+  const { stdout, exitCode } = await run([bunExe(), "check", "--no-pretty", "-p", "."], String(dir), {
     ...bunEnv,
     NO_COLOR: "1",
   });
-  return [...stdout.matchAll(/^c\.ts\((\d+,\d+)\): error (TS\d+)/gm)].map(([, at, code]) => `${at} ${code}`);
+  const errors = [...stdout.matchAll(/^c\.ts\((\d+,\d+)\): error (TS\d+)/gm)].map(([, at, code]) => `${at} ${code}`);
+  expect(exitCode).toBe(errors.length ? 1 : 0);
+  return errors;
 };
 
 // In parentheses it's a value.

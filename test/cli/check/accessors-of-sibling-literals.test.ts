@@ -85,9 +85,10 @@ test.concurrent.each(Object.keys(programs))("%s", async name => {
     "tsconfig.json": JSON.stringify({ compilerOptions, files: ["a.ts"] }),
     "a.ts": source,
   });
-  const { stdout } = await run([bunExe(), "check", "--no-pretty", "-p", "."], String(dir), {
+  const { stdout, exitCode } = await run([bunExe(), "check", "--no-pretty", "-p", "."], String(dir), {
     ...bunEnv,
     NO_COLOR: "1",
   });
   expect(stdout.split("\n").filter(line => line.includes("error TS"))).toEqual(errors.map(it => `a.ts${it}`));
+  expect(exitCode).toBe(errors.length ? 1 : 0);
 });

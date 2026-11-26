@@ -4,6 +4,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::collections::VecDeque;
 
 use bun_alloc::Arena;
 use bun_ast::ASTMemoryAllocator;
@@ -18,7 +19,7 @@ use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_io::JsKeepAlive;
 use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter};
 use bun_paths;
-use bun_ptr::BackRef;
+use bun_ptr::{BackRef, JsCell};
 use bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
@@ -171,13 +172,60 @@ pub struct RuntimeTranspilerStore {
     /// Boxed: 22 KB that `VirtualMachine::init` would otherwise copy.
     pub(crate) store: Box<TranspilerJobStore>,
     pub enabled: Cell<bool>,
+    /// Finished jobs, pushed by pool threads in the order they finish.
     pub(crate) queue: Queue,
+    /// JS thread only.
+    order: JsCell<FulfillOrder>,
     /// JS thread only.
     pub jobs_scheduled: Cell<u64>,
     pub jobs_completed: Cell<u64>,
 }
 
 pub type Queue = UnboundedQueue<TranspilerJob>;
+
+/// Hands finished jobs back to the module loader in the order `transpile()`
+/// took them, which is the order the loader asked in. The pool finishes them
+/// in any order, and the loader runs a CommonJS file when it gets its source.
+#[derive(Default)]
+struct FulfillOrder {
+    /// `seq` of the job that slot 0 of `parked` is for.
+    next: u64,
+    /// Slot `i` is for the job with `seq == next + i`: `None` until the pool hands it back.
+    parked: VecDeque<Option<NonNull<TranspilerJob>>>,
+}
+
+impl FulfillOrder {
+    fn park(&mut self, job: NonNull<TranspilerJob>) {
+        // SAFETY: the pool thread is done with the slot, and `seq` was written before it got it.
+        let seq = unsafe { (*job.as_ptr()).seq };
+        let slot = (seq - self.next) as usize;
+        if self.parked.len() <= slot {
+            self.parked.resize(slot + 1, None);
+        }
+        debug_assert!(self.parked[slot].is_none());
+        self.parked[slot] = Some(job);
+    }
+
+    fn next_is_ready(&self) -> bool {
+        matches!(self.parked.front(), Some(Some(_)))
+    }
+
+    fn take_next(&mut self) -> Option<NonNull<TranspilerJob>> {
+        if !self.next_is_ready() {
+            return None;
+        }
+        self.next += 1;
+        let job = self.parked.pop_front().flatten();
+        if self.parked.is_empty() && self.parked.capacity() > 1024 {
+            self.parked = VecDeque::new();
+        }
+        job
+    }
+
+    fn take_all(&mut self) -> VecDeque<Option<NonNull<TranspilerJob>>> {
+        core::mem::take(&mut self.parked)
+    }
+}
 
 impl Default for RuntimeTranspilerStore {
     fn default() -> Self {
@@ -186,6 +234,7 @@ impl Default for RuntimeTranspilerStore {
             store: TranspilerJobStore::new_boxed(),
             enabled: Cell::new(true),
             queue: Queue::new(),
+            order: JsCell::new(FulfillOrder::default()),
             jobs_scheduled: Cell::new(0),
             jobs_completed: Cell::new(0),
         }
@@ -214,7 +263,7 @@ impl RuntimeTranspilerStore {
     /// turn of the wait): jobs already handed back whose completion will not
     /// run release their source, log and module promise here instead. Queued ⇒
     /// the pool thread's last touch of the slot was the push (its ticket was
-    /// moved out first), so the slot is this thread's again.
+    /// moved out first), so the slot is this thread's again. So is a parked one.
     pub fn release_queued_jobs_for_teardown(&self) {
         let batch = self.queue.pop_batch();
         let mut iter = batch.iterator();
@@ -226,13 +275,22 @@ impl RuntimeTranspilerStore {
             // SAFETY: a live job popped from the intrusive queue; see fn doc.
             unsafe { self.store.put(job) };
         }
+        for job in self
+            .order
+            .with_mut(FulfillOrder::take_all)
+            .into_iter()
+            .flatten()
+        {
+            // SAFETY: a live job that an earlier drain popped from the queue; see fn doc.
+            unsafe { self.store.put(job.as_ptr()) };
+        }
     }
 
-    /// Fulfil every completed job's module promise. This drain is a dispatcher:
-    /// each fulfilment is a JS entry of its own, so what one leaves pending is
-    /// folded here and the drain goes on; the VM's termination ends it, with
-    /// the rest of the batch back on the queue (each still has its own posted
-    /// task, or the teardown release, to pick it up).
+    /// Fulfil the module promise of every finished job that no earlier request
+    /// is still ahead of. This drain is a dispatcher: each fulfilment is a JS
+    /// entry of its own, so what one leaves pending is folded here and the
+    /// drain goes on; the VM's termination ends it, and what it leaves parked
+    /// goes to a task of its own, or to the teardown release.
     pub fn run_from_js_thread(
         &self,
         event_loop: &EventLoop,
@@ -240,45 +298,45 @@ impl RuntimeTranspilerStore {
         vm: NonNull<VirtualMachine>,
     ) {
         let batch = self.queue.pop_batch();
+        let mut iter = batch.iterator();
+        self.order.with_mut(|order| {
+            while let Some(job) = NonNull::new(iter.next()) {
+                order.park(job);
+            }
+        });
         // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
         let jsc_vm = unsafe { (*vm.as_ptr()).jsc_vm() };
-        let mut iter = batch.iterator();
-        let mut job = iter.next();
         let mut first = true;
-        while !job.is_null() {
+        while self.order.get().next_is_ready() {
             if !first {
                 // if there are more, we need to drain the microtasks from the previous run
                 let drained = event_loop.drain_microtasks_with_global(global, jsc_vm);
                 if drained.is_err() {
-                    self.requeue(job, &mut iter);
-                    return;
+                    return self.drain_again_later(event_loop);
                 }
             }
             first = false;
+            // Out of `parked` before it runs: the module it hands over can run and tick the loop into this function.
+            let Some(job) = self.order.with_mut(FulfillOrder::take_next) else {
+                break;
+            };
             // SAFETY: `job` is a live job popped from the intrusive queue.
-            let fulfilled = unsafe { (*job).run_from_js_thread() };
+            let fulfilled = unsafe { (*job.as_ptr()).run_from_js_thread() };
             self.jobs_completed.update(|n| n + 1);
-            job = iter.next();
             if let Err(err) = fulfilled {
                 if crate::task::report_error_or_terminate(global, err).is_err() {
-                    self.requeue(job, &mut iter);
-                    return;
+                    return self.drain_again_later(event_loop);
                 }
             }
         }
         // immediately after this is called, the microtasks will be drained again.
     }
 
-    /// Put `job` and the rest of a popped batch back: each still has its posted
-    /// task (or the teardown release) to pick it up.
-    fn requeue(
-        &self,
-        mut job: *mut TranspilerJob,
-        iter: &mut unbounded_queue::BatchIterator<TranspilerJob>,
-    ) {
-        while let Some(unrun) = NonNull::new(job) {
-            job = iter.next();
-            self.queue.push(unrun);
+    /// The posted task of a parked job has run already, so a drain that stops
+    /// with a job due posts one for it.
+    fn drain_again_later(&self, event_loop: &EventLoop) {
+        if self.order.get().next_is_ready() {
+            event_loop.enqueue_task(bun_event_loop::Task::init(ptr::from_ref(self).cast_mut()));
         }
     }
 
@@ -340,6 +398,7 @@ impl RuntimeTranspilerStore {
                 resolved_source,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
                 has_plugins: global_object.has_plugins(),
+                seq: self.jobs_scheduled.get(),
                 parse_error: None,
                 work_task: WorkPoolTask {
                     node: Default::default(),
@@ -399,6 +458,8 @@ pub struct TranspilerJob {
     pub(crate) generation_number: u32,
     /// Macros load through `Bun.plugin()` callbacks, which the pool thread's VM lacks, so the JS thread must run them.
     has_plugins: bool,
+    /// How many jobs `transpile()` took before this one; see [`FulfillOrder`].
+    seq: u64,
     pub(crate) log: bun_ast::Log,
     pub(crate) parse_error: Option<crate::CrateError>,
     /// Moved out by `run_from_js_thread`; dropped with the slot otherwise.

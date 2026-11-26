@@ -519,6 +519,91 @@ describe("When CJS and ESM are mixed", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/49614
+describe("files that are transpiled on other threads reach the module loader in the order it asked for them", () => {
+  // Long enough that the thread with this file is still at work when the file behind it is done.
+  const padding = Array.from({ length: 60000 }, (_, i) => `// ${i} ${Buffer.alloc(80, "x")}`).join("\n");
+  const log = (name: string) => `globalThis.order = (globalThis.order ?? []).concat(${JSON.stringify(name)});\n`;
+  const print = `console.log(globalThis.order.join(" then "));\n`;
+  const pkg = (name: string, body: string) => ({
+    [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "1.0.0", main: "index.js" }),
+    [`node_modules/${name}/index.js`]: body,
+  });
+  const files = {
+    ...pkg("big", `${log("big")}require("shared");\n${padding}\n`),
+    ...pkg("small", `${log("small")}require("shared");\n`),
+    ...pkg("shared", log("shared")),
+    "siblings.mjs": `import "big";\nimport "small";\n${print}`,
+    "reexports.mjs": `export * from "big";\nexport * from "small";\n${print}`,
+    "calls.mjs": `await Promise.all([import("big"), import("small")]);\n${print}`,
+    "worker.mjs": `new Worker(new URL("./siblings.mjs", import.meta.url));\n`,
+    "empty.mjs": ``,
+    // Two CommonJS files that different ES modules import.
+    "cousins.mjs": `import "./parent-1.mjs";\nimport "./parent-2.mjs";\n${print}`,
+    "parent-1.mjs": `import "./child-1.cjs";\n${padding}\n`,
+    "parent-2.mjs": `import "./child-2.cjs";\n`,
+    "child-1.cjs": `${log("child-1")}module.exports = 1;\n`,
+    "child-2.cjs": `${log("child-2")}module.exports = 2;\n`,
+    // Two ES modules that do not parse.
+    "errors.mjs": `import "./bad-1.mjs";\nimport "./bad-2.mjs";\n`,
+    "bad-1.mjs": `${padding}\nexport const = 1;\n`,
+    "bad-2.mjs": `export const = 2;\n`,
+  };
+
+  async function run(dir: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent.each([
+    ["two CommonJS packages that one module imports", ["siblings.mjs"], "big then shared then small"],
+    ["two CommonJS packages that one module exports from", ["reexports.mjs"], "big then shared then small"],
+    ["two import() calls in one turn", ["calls.mjs"], "big then shared then small"],
+    ["in a Worker", ["worker.mjs"], "big then shared then small"],
+    ["in a preload", ["--preload", "./siblings.mjs", "empty.mjs"], "big then shared then small"],
+    ["two CommonJS files below two modules", ["cousins.mjs"], "child-1 then child-2"],
+  ])("%s", async (_, args, order) => {
+    using dir = tempDir("import-order", files);
+    expect(await run(String(dir), ...args)).toEqual({ stdout: order + "\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("the error of the first of two modules that do not parse is the one reported", async () => {
+    using dir = tempDir("import-order", files);
+    const { stdout, stderr, exitCode } = await run(String(dir), "errors.mjs");
+    expect(stdout).toBe("");
+    expect(stderr).toContain("bad-1.mjs");
+    expect(stderr).not.toContain("bad-2.mjs");
+    expect(exitCode).toBe(1);
+  });
+
+  // The file behind the long one is done and waits for it when the Worker, or the process, ends.
+  test.concurrent.each([
+    [
+      "a Worker that is terminated while it loads",
+      `const worker = new Worker(new URL("./siblings.mjs", import.meta.url));
+       worker.addEventListener("close", () => console.log("closed"));
+       setImmediate(() => worker.terminate());`,
+      "closed\n",
+    ],
+    [
+      "a process that exits while it loads",
+      `import("./siblings.mjs");
+       setImmediate(() => { console.log("exits"); process.exit(0); });`,
+      "exits\n",
+    ],
+  ])("%s", async (_, source, printed) => {
+    using dir = tempDir("import-order", { ...files, "ends.mjs": source });
+    expect(await run(String(dir), "ends.mjs")).toEqual({ stdout: printed, stderr: "", exitCode: 0 });
+  });
+});
+
 // The "browser" map resolver copied the normalized input path into a 512-byte
 // threadlocal buffer without a bounds check. Paths inside deep directory trees
 // can easily exceed 512 bytes while still being well under MAX_PATH_BYTES.

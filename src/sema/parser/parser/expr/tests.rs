@@ -3,8 +3,7 @@ use bun_sema::hir::*;
 use bun_sema::resolve::Dialect;
 use bun_sema_standalone as _;
 
-/// The options of the three parsers: the one without recovery, the same with the nodes around each comment, and the
-/// one that recovers.
+/// The options of the three parsers: without recovery, the same with the nodes around comments, and with recovery.
 fn parsers() -> [Options; 3] {
     let with_comments = Options {
         attach_comments: true,

@@ -824,11 +824,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         ) && !self.f.parens.iter().rev().take(2).any(|it| it.0 == e)
     }
 
-    /// `parseType` at the `const` of `e as const` or `<const>e`. Returns `None` if that word is the whole type, which
-    /// makes a const assertion (`IsConstTypeReference`) and no type node. In a JavaScript file it also reports the
-    /// type. Out of line because of the mark, which would grow the frame of a caller that recurses.
+    /// `parseType` at the `const` after `as` or `<`. `None`: it's the whole type, a const assertion with no type node.
     #[inline(never)]
     fn const_assertion_type(&mut self) -> Option<TypeNodeId> {
+        // Inlined, the mark would grow the frame of a caller that recurses.
         let at_const = self.lx.mark();
         // The error about an escape in the keyword stays, so nothing is made of what follows.
         let is_escaped = GENERAL && self.lx.has_escape;
@@ -845,8 +844,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.type_from_const(at_const, is_whole_type)
     }
 
-    /// [`Parser::const_assertion_type`] at the token after the `const` at `at_const`, where the type may continue:
-    /// goes back and parses the type to find out. `is_whole_type`: it's known that it doesn't.
+    /// The same after the `const` at `at_const`: goes back and parses the type, unless `is_whole_type` says it ends.
     #[cold]
     #[inline(never)]
     fn type_from_const(&mut self, at_const: Mark, mut is_whole_type: bool) -> Option<TypeNodeId> {

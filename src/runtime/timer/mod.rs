@@ -329,17 +329,18 @@ impl All {
     }
 
     #[inline]
-    fn assert_js_thread(&self) {
+    fn assert_js_thread(&self, timer: &EventLoopTimer) {
         debug_assert!(
-            self.thread_id == std::thread::current().id(),
+            timer.tag == EventLoopTimerTag::UvTimer
+                || self.thread_id == std::thread::current().id(),
             "timer::All: non-WTF timers may only be touched on the owning JS thread",
         );
     }
 
     pub(crate) fn insert(&self, timer: *const EventLoopTimer) {
-        self.assert_js_thread();
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
         let node = unsafe { &*timer };
+        self.assert_js_thread(node);
         debug_assert!(node.tag != EventLoopTimerTag::WTFTimer, "use wtf_arm");
 
         self.epoch.update(|epoch| epoch.wrapping_add(1));
@@ -362,7 +363,7 @@ impl All {
     }
 
     pub(crate) fn remove(&self, timer: &EventLoopTimer) {
-        self.assert_js_thread();
+        self.assert_js_thread(timer);
         if timer.state.get() != EventLoopTimerState::ACTIVE {
             return;
         }
@@ -379,7 +380,6 @@ impl All {
     ///
     /// SAFETY: `timer` is live, with the provenance of the owner that its tag names.
     pub(crate) fn update(&self, timer: *const EventLoopTimer, time: &Timespec) {
-        self.assert_js_thread();
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
         let node = unsafe { &*timer };
         self.remove(node);

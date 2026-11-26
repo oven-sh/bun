@@ -36,17 +36,21 @@ pub fn is_idle(handle: HANDLE) -> bool {
 
 static HAS_CONCURRENT_READER: AtomicBool = AtomicBool::new(false);
 
-/// Records that another process may read from a pipe end that this process reads.
+/// Records that another process or thread may read from a pipe end that a stream reads.
 pub fn mark_concurrent_reader() {
     HAS_CONCURRENT_READER.store(true, Ordering::Relaxed);
 }
 
+pub fn has_concurrent_reader() -> bool {
+    HAS_CONCURRENT_READER.load(Ordering::Relaxed)
+}
+
 /// Best-effort check that a call will not block behind a concurrent reader. The caller has no request in progress on `handle`.
 pub fn is_sole_reader(handle: HANDLE) -> bool {
-    if !HAS_CONCURRENT_READER.load(Ordering::Relaxed) && !is_idle(handle) {
+    if !has_concurrent_reader() && !is_idle(handle) {
         mark_concurrent_reader();
     }
-    !HAS_CONCURRENT_READER.load(Ordering::Relaxed)
+    !has_concurrent_reader()
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]

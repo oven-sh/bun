@@ -822,6 +822,7 @@ fn leak_pool(has_warmup: bool) -> &'static FifoPool {
         stack_size: 256 * 1024,
         on_thread_start: || {},
         has_warmup,
+        keeps_idle_threads: false,
     })))
 }
 
@@ -1108,6 +1109,7 @@ fn event_wake_without_warming_thread_requires_short_run() {
         stack_size: 256 * 1024,
         on_thread_start: || {},
         has_warmup: true,
+        keeps_idle_threads: false,
     });
     // The count of warming threads is process-wide, so rerun in a separate process.
     if std::env::var_os(ISOLATED_ENV).is_none() {
@@ -1620,6 +1622,7 @@ fn queued_task_runs_after_thread_spawn_failure() {
         stack_size: 256 * 1024,
         on_thread_start: || {},
         has_warmup: false,
+        keeps_idle_threads: false,
     });
     let (started_tx, started_rx) = mpsc::channel();
     let (proceed_tx, proceed_rx) = mpsc::channel();
@@ -1654,6 +1657,7 @@ fn pool_keeps_last_idle_thread() {
         stack_size: 256 * 1024,
         on_thread_start: || {},
         has_warmup: false,
+        keeps_idle_threads: false,
     });
     static BARRIER: Barrier = Barrier::new(2);
     let (is_timed_tx, is_timed_rx) = mpsc::channel();
@@ -1672,6 +1676,30 @@ fn pool_keeps_last_idle_thread() {
     let (done_tx, done_rx) = mpsc::channel();
     POOL.go(move || done_tx.send(()).unwrap());
     assert_eq!(done_rx.recv(), Ok(()));
+}
+
+#[test]
+fn pool_can_keep_all_idle_threads() {
+    static POOL: FifoPool = FifoPool::new(Config {
+        name: "Test",
+        max_threads: 2,
+        stack_size: 256 * 1024,
+        on_thread_start: || {},
+        has_warmup: false,
+        keeps_idle_threads: true,
+    });
+    static BARRIER: Barrier = Barrier::new(2);
+    let (is_timed_tx, is_timed_rx) = mpsc::channel();
+    for is_timed_tx in [is_timed_tx.clone(), is_timed_tx] {
+        POOL.go(move || {
+            expire_timed_waits(is_timed_tx);
+            BARRIER.wait();
+        });
+    }
+    assert_eq!(
+        [is_timed_rx.recv(), is_timed_rx.recv()],
+        [Ok(false), Ok(false)]
+    );
 }
 
 #[test]
@@ -1965,6 +1993,26 @@ fn blocking_waits_do_not_trigger_coalescing_delay() {
         run_iteration(&port, Duration::from_secs(10));
         assert!((CLOCK_OFFSET.get() - start).as_micros() < 5);
     }
+}
+
+#[test]
+fn last_pending_close_wakes_the_port() {
+    let port = Port::new().unwrap();
+    let closes = [port.add_pending_close(), port.add_pending_close()];
+    assert!(port.has_closing_files());
+    blocking::spawn(move || drop(closes));
+    run_until(&port, || !port.has_closing_files());
+
+    let close = port.add_pending_close();
+    let is_closed = Arc::new(AtomicBool::new(false));
+    let worker_is_closed = Arc::clone(&is_closed);
+    blocking::spawn(move || {
+        std::thread::sleep(Duration::from_millis(20));
+        worker_is_closed.store(true, Ordering::SeqCst);
+        drop(close);
+    });
+    port.shutdown();
+    assert!(is_closed.load(Ordering::SeqCst));
 }
 
 #[test]

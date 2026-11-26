@@ -7,11 +7,12 @@ mod pipe;
 mod pipe_server;
 mod state;
 
+use core::sync::atomic::{AtomicBool, Ordering};
 use std::rc::Rc;
 
 use bun_iocp::Port;
 use bun_sys::windows::{self as w, HandleKind};
-use bun_sys::{self as sys, E, MaybeOwnedFile, Tag};
+use bun_sys::{self as sys, E, Fd, MaybeOwnedFile, Tag};
 
 use crate::Owner;
 use crate::pipe_reader::ReadEvent;
@@ -57,7 +58,11 @@ enum Source {
 }
 
 impl Source {
-    fn open(port: &Rc<Port>, file: MaybeOwnedFile) -> sys::Result<Source> {
+    fn open(
+        port: &Rc<Port>,
+        file: MaybeOwnedFile,
+        classify: fn(Fd) -> HandleKind,
+    ) -> sys::Result<Source> {
         if w::is_invalid_handle(file.fd().native()) {
             return Err(sys::Error::from_code(E::EBADF, Tag::open));
         }
@@ -66,7 +71,7 @@ impl Source {
             // Worker threads use the handle, so a borrowed or stdio fd is duplicated to stay open for them.
             original => (sys::File::from_fd(sys::dup(original.fd())?), false),
         };
-        Ok(match w::guess_handle(file.fd()) {
+        Ok(match classify(file.fd()) {
             HandleKind::Pipe => match Pipe::open(port, file) {
                 Ok(pipe) => Source::Pipe(pipe),
                 Err(file) => Source::File(File::new(port, file, is_only_handle)),
@@ -106,11 +111,22 @@ impl ReadSource {
         file: MaybeOwnedFile,
         offset: Option<u64>,
     ) -> sys::Result<ReadSource> {
-        let source = Source::open(port, file)?;
-        if let (Source::File(file), Some(offset)) = (&source, offset) {
-            file.set_offset(offset);
+        static HAS_OPENED_PIPE: AtomicBool = AtomicBool::new(false);
+        let source = Source::open(port, file, w::guess_handle)?;
+        match (&source, offset) {
+            (Source::File(file), Some(offset)) => file.set_offset(offset),
+            (Source::Pipe(_), _) if HAS_OPENED_PIPE.swap(true, Ordering::Relaxed) => {
+                w::named_pipe::mark_concurrent_reader();
+            }
+            _ => {}
         }
         Ok(ReadSource(source))
+    }
+
+    /// Reads with plain blocking calls, like a child process would.
+    pub(crate) fn open_as_file(port: &Rc<Port>, file: MaybeOwnedFile) -> sys::Result<ReadSource> {
+        w::named_pipe::mark_concurrent_reader();
+        Source::open(port, file, |_| HandleKind::File).map(ReadSource)
     }
 
     /// SAFETY: `owner` stays valid for `__bun_run_io` until it is replaced or `self` is dropped.
@@ -181,7 +197,7 @@ impl From<Pipe> for WriteSource {
 
 impl WriteSource {
     pub(crate) fn open(port: &Rc<Port>, file: MaybeOwnedFile) -> sys::Result<WriteSource> {
-        let source = Source::open(port, file)?;
+        let source = Source::open(port, file, w::guess_handle)?;
         if let Source::Console(console) = &source {
             console.enable_escape_sequences();
         }

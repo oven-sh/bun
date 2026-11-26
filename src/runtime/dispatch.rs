@@ -565,17 +565,9 @@ pub(crate) fn run_task(
             });
         }
         task_tag::UvHandleClose => {
-            use crate::napi::uv::UvHandle;
-            in_features!(
-                [NativeAddons],
-                (
-                    uv_handle: *mut UvHandle = cast_ptr!(UvHandle),
-                    global: &JSGlobalObject = global,
-                ) -> JsResult<()> {
-                    // SAFETY: `uv_close` posted this handle.
-                    unsafe { UvHandle::run_close(uv_handle, global) }
-                }
-            )?;
+            in_features!([NativeAddons], (global: &JSGlobalObject = global) -> JsResult<()> {
+                crate::napi::uv::UvHandle::run_close(global)
+            })?;
         }
         task_tag::UvWorkDone => {
             use crate::napi::uv::UvWork;

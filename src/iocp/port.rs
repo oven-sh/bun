@@ -3,7 +3,7 @@ use core::cell::{Cell, RefCell};
 use core::cmp::Reverse;
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::collections::{BinaryHeap, VecDeque};
 use std::os::windows::io::OwnedHandle;
 use std::rc::Rc;
@@ -56,6 +56,7 @@ pub(crate) struct Shared {
     completer_results: Guarded<Vec<(Token, Box<dyn Any + Send>)>>,
     pending_write_count: Guarded<usize>,
     writes_drained: Condition,
+    pending_close_count: AtomicUsize,
 }
 
 impl Shared {
@@ -120,6 +121,18 @@ impl Drop for PendingWrite {
         *count -= 1;
         if *count == 0 {
             self.0.writes_drained.notify_one();
+        }
+    }
+}
+
+/// Counts a file that another thread closes as open until it is dropped.
+pub struct PendingClose(Waker);
+
+impl Drop for PendingClose {
+    fn drop(&mut self) {
+        let count = &self.0.shared.pending_close_count;
+        if count.fetch_sub(1, Ordering::SeqCst) == 1 {
+            self.0.wake();
         }
     }
 }
@@ -225,6 +238,7 @@ impl Port {
                 is_short_run: AtomicBool::new(false),
                 completer_results: Guarded::default(),
                 pending_write_count: Guarded::default(),
+                pending_close_count: AtomicUsize::new(0),
                 writes_drained: Condition::new(),
             }),
             sockets: Sockets::new(),
@@ -278,6 +292,12 @@ impl Port {
     pub fn add_pending_write(&self) -> PendingWrite {
         *self.shared.pending_write_count.lock() += 1;
         PendingWrite(Arc::clone(&self.shared))
+    }
+
+    pub fn add_pending_close(&self) -> PendingClose {
+        let count = &self.shared.pending_close_count;
+        count.fetch_add(1, Ordering::SeqCst);
+        PendingClose(self.waker())
     }
 
     /// For a thread that is about to exit.
@@ -367,8 +387,13 @@ impl Port {
     }
 
     /// Whether a dropped request is still in flight. The kernel keeps its file open until the packet is dequeued.
-    pub fn has_abandoned_requests(&self) -> bool {
+    pub(crate) fn has_abandoned_requests(&self) -> bool {
         self.requests.has_abandoned()
+    }
+
+    /// Whether a file that was dropped is still open.
+    pub fn has_closing_files(&self) -> bool {
+        self.has_abandoned_requests() || self.shared.pending_close_count.load(Ordering::SeqCst) > 0
     }
 
     /// Does not count [`ReadinessHandler::UserData`](crate::ReadinessHandler::UserData).
@@ -390,6 +415,15 @@ impl Port {
         } else {
             self.enqueue(&self.next_iteration, packet);
         }
+    }
+
+    pub(crate) fn has_deferred_batch(&self) -> bool {
+        self.deferred.borrow().len() >= BATCH_SIZE
+    }
+
+    /// Whether a socket event can be dispatched ahead of the packets on the port.
+    pub(crate) fn can_skip_queue(&self) -> bool {
+        !self.is_batch_full.get() && self.next_iteration.borrow().len() < BATCH_SIZE
     }
 
     fn enqueue(&self, queue: &RefCell<VecDeque<Packet>>, packet: Packet) {
@@ -656,7 +690,9 @@ impl Port {
     pub fn dispatch(&self, on_event: impl Fn(Event)) {
         /// Bounds the time until timers run again.
         const MAX_BATCHES: usize = 48;
+        const MAX_DURATION_NS: u64 = 2_000_000;
 
+        let deadline_ns = self.is_batch_full.get().then(|| now_ns() + MAX_DURATION_NS);
         self.deferred
             .borrow_mut()
             .append(&mut self.next_iteration.borrow_mut());
@@ -664,7 +700,7 @@ impl Port {
         self.dispatch_deferred(&on_event);
         self.dispatch_batch(&on_event);
         for _ in 1..MAX_BATCHES {
-            if !self.is_batch_full.get() {
+            if !self.is_batch_full.get() || deadline_ns.is_none_or(|ns| now_ns() > ns) {
                 break;
             }
             self.prepare();
@@ -852,7 +888,7 @@ impl Port {
 
     /// Valid only during `shutdown`.
     fn has_io_in_flight(&self) -> bool {
-        self.sockets.has_polls_in_flight() || self.has_abandoned_requests()
+        self.sockets.has_polls_in_flight() || self.has_closing_files()
     }
 }
 

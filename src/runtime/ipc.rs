@@ -876,6 +876,8 @@ struct WindowsState {
     reader: BufferedReader,
     writer: StreamingWriter,
     frame_decoder: Cell<ipc_frame::Decoder>,
+    /// `Some` while a read is being decoded: what was read under a listener that runs the event loop.
+    held_input: Cell<Option<Vec<u8>>>,
     /// Message bytes in the in-flight write, excluding the frame header.
     inflight_write_len: Cell<Option<usize>>,
     /// An ACK or NACK that arrived before the write of its handle reported completion.
@@ -1085,6 +1087,7 @@ impl SendQueue {
                 reader: BufferedReader::init(),
                 writer: StreamingWriter::default(),
                 frame_decoder: Cell::default(),
+                held_input: Cell::new(None),
                 inflight_write_len: Cell::new(None),
                 try_close_after_write: Cell::new(false),
                 deferred_ack_nack: Cell::new(None),
@@ -1206,10 +1209,15 @@ impl SendQueue {
                 socket.read_now();
             }
             #[cfg(windows)]
-            if self.read_before_close.get()
-                && let Some(event) = self.windows.reader.try_read()
-            {
-                self.on_io(event);
+            if self.read_before_close.get() {
+                let reader = &self.windows.reader;
+                // No read is requested while a listener runs.
+                reader.pause();
+                let _ = reader.unpause();
+                // What was read ahead, then what is in the pipe.
+                for event in core::iter::from_fn(|| reader.try_read()).take(2) {
+                    self.on_io(event);
+                }
             }
             self.pending_close.set(false);
             self.close_socket(CloseReason::Normal, CloseFrom::User);
@@ -1256,7 +1264,7 @@ impl SendQueue {
 
     /// The peer's process has exited. Its last messages can still be in the socket.
     pub(crate) fn close_after_exit(&self) {
-        if !self.pending_close.get() {
+        if self.is_connected() || self.close_after_flush.get() {
             self.read_before_close.set(true);
         }
         self.close_socket_next_tick(true);
@@ -1730,6 +1738,10 @@ impl SendQueue {
             }
         }
         self.windows.burst_message_count.update(|count| count + 1);
+        if self.windows.burst_message_count.get() == MAX_UNCOALESCED_MESSAGES + 1 {
+            // A microtask checkpoint does not follow every call into script, but it follows every wait.
+            vm.wakeup();
+        }
         let queue = self.queue.get();
         self.windows.burst_message_count.get() > MAX_UNCOALESCED_MESSAGES
             && queue.len() == 1
@@ -1843,32 +1855,51 @@ impl SendQueue {
         }
         let reader = &self.windows.reader;
         let result = reader.read_chunks(vm.loop_ctx(), Some(event), |chunk, _| {
-            let mut rest = &*chunk;
-            while !reader.has_flag(ReaderFlags::IS_PAUSED) {
-                match self
-                    .windows
-                    .frame_decoder
-                    .with_taken(|decoder| decoder.decode(&mut rest))
-                {
-                    Ok(Some(ipc_frame::Item::Data(data))) => {
-                        let _scope = vm.enter_event_loop_scope();
-                        on_data2(self, data);
-                    }
-                    Ok(Some(ipc_frame::Item::Socket(info))) => {
-                        self.incoming_fd.set(None);
-                        self.incoming_fd.set(import_socket(&info));
-                    }
-                    Ok(None) => break,
-                    Err(ipc_frame::InvalidFrame) => {
-                        reader.pause();
-                        self.close_socket_next_tick(true);
-                    }
-                }
+            let held_input = &self.windows.held_input;
+            if let Some(mut held) = held_input.replace(Some(Vec::new())) {
+                held.extend_from_slice(&chunk);
+                held_input.set(Some(held));
+                return true;
+            }
+            self.decode_frames(&chunk);
+            while let Some(held) = held_input.take().filter(|held| !held.is_empty()) {
+                held_input.set(Some(Vec::new()));
+                self.decode_frames(&held);
             }
             true
         });
         if !matches!(result, ReadResult::Pending) {
-            self.close_socket_next_tick(true);
+            self.close_after_exit();
+        }
+    }
+
+    #[cfg(windows)]
+    fn decode_frames(&self, mut rest: &[u8]) {
+        let reader = &self.windows.reader;
+        while !reader.has_flag(ReaderFlags::IS_PAUSED) || self.read_before_close.get() {
+            match self
+                .windows
+                .frame_decoder
+                .with_taken(|decoder| decoder.decode(&mut rest))
+            {
+                // After `disconnect()`.
+                Ok(Some(ipc_frame::Item::Data(_)))
+                    if self.pending_close.get() && !self.read_before_close.get() => {}
+                Ok(Some(ipc_frame::Item::Data(data))) => {
+                    let _scope = VirtualMachine::get().enter_event_loop_scope();
+                    on_data2(self, data);
+                }
+                Ok(Some(ipc_frame::Item::Socket(info))) => {
+                    self.incoming_fd.set(None);
+                    self.incoming_fd.set(import_socket(&info));
+                }
+                Ok(None) => break,
+                Err(ipc_frame::InvalidFrame) => {
+                    reader.pause();
+                    self.read_before_close.set(false);
+                    self.close_socket_next_tick(true);
+                }
+            }
         }
     }
 
@@ -2136,6 +2167,7 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
     if let DecodeStep::Fail(_) = step {
         // A read that is being delivered further up the stack has nothing left to report.
         (send_queue.incoming).set(IncomingBuffer::init(send_queue.mode));
+        send_queue.read_before_close.set(false);
     }
     match step {
         DecodeStep::Message(_) => unreachable!("caller dispatches Message"),

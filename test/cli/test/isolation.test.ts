@@ -854,6 +854,12 @@ describe.concurrent("bun test --isolate", () => {
             }
             fs.writeFileSync("writer-fds.json", JSON.stringify(writerFds));
             Bun.dns.lookup("127.0.0.1", { backend: "libc" }).then(() => console.log("a: resolved"));
+            Object.defineProperty(Array.prototype, "then", {
+              configurable: true,
+              get() {
+                if (this[0]?.address) fs.writeSync(1, "a: then\\n");
+              },
+            });
           });
         `,
         "b.test.ts": `

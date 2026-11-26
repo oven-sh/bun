@@ -3744,8 +3744,7 @@ mod windows_impl {
     pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
         w::fd_table::with_position_locked(fd, |handle| {
             let mut new: i64 = 0;
-            // SAFETY: `new` is a valid out-param.
-            match unsafe { w::SetFilePointerEx(handle, offset, &raw mut new, whence as u32) } {
+            match w::SetFilePointerEx(handle, offset, &mut new, whence as u32) {
                 0 => Err(w::Win32Error::get()),
                 _ => Ok(new),
             }

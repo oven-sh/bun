@@ -61,21 +61,19 @@ pub(crate) struct IncomingFrames {
 
 impl IncomingFrames {
     pub(crate) fn next_frame(&mut self) -> Option<(frame::Kind, frame::Reader<'_>)> {
-        loop {
-            let (&[ref len @ .., kind], rest) =
-                self.bytes[self.head..].split_first_chunk::<{ frame::HEADER_LEN }>()?;
-            let len = u32::from_le_bytes(*len);
-            // `Ready` carries no payload.
-            if len > frame::MAX_PAYLOAD || (kind == frame::Kind::Ready as u8 && len != 0) {
-                self.is_corrupt = true;
-                return None;
-            }
-            let p = rest.get(..len as usize)?;
-            self.head += frame::HEADER_LEN + p.len();
-            if let Ok(kind) = frame::Kind::try_from(kind) {
-                return Some((kind, frame::Reader { p }));
-            }
-        }
+        let (&[ref len @ .., kind], rest) =
+            self.bytes[self.head..].split_first_chunk::<{ frame::HEADER_LEN }>()?;
+        let len = u32::from_le_bytes(*len);
+        // `Ready` carries no payload.
+        let Some(kind) = (frame::Kind::try_from(kind).ok())
+            .filter(|&kind| len <= frame::MAX_PAYLOAD && (kind != frame::Kind::Ready || len == 0))
+        else {
+            self.is_corrupt = true;
+            return None;
+        };
+        let p = rest.get(..len as usize)?;
+        self.head += frame::HEADER_LEN + p.len();
+        Some((kind, frame::Reader { p }))
     }
 }
 
@@ -152,6 +150,7 @@ impl Channel {
                 return false;
             };
             pipe.enable_read_ahead();
+            pipe.update_ref(false);
             vm.rare_data().has_test_coordinator_pipe.set(true);
             // `pipe` closes it.
             end.into_raw();
@@ -189,7 +188,6 @@ impl Channel {
             self.backend.reader.set_owner(owner);
             self.backend.writer.set_owner(owner);
         }
-        pipe.update_ref(false);
         self.backend.writer.set_pipe(pipe.clone());
         self.backend.reader.start_with_pipe(pipe).is_ok()
     }

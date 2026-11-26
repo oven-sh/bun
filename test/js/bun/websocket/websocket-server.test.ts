@@ -4124,3 +4124,39 @@ it("an open socket has the limits of the last reload()", async () => {
   client.text("abc");
   expect(await client.next()).toBe('close 1009 "Received too big message"');
 });
+
+it.skipIf(!isWindows)("the process stays until a closed socket has sent its messages", async () => {
+  const script = `
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: (req, server) => void server.upgrade(req),
+      websocket: {
+        open(ws) {
+          for (let i = 0; i < 10; i++) ws.send(Buffer.alloc(400_000));
+          ws.close();
+          server.stop();
+          setImmediate(() => console.log("closed"));
+        },
+        message() {},
+      },
+    });
+    console.log(server.port);`;
+  await using proc = spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "inherit" });
+  const stdout = proc.stdout.getReader();
+  const port = Number(Buffer.from((await stdout.read()).value!));
+  const client = net.connect(port, "127.0.0.1").pause();
+  const closed = new Promise(resolve => client.on("error", () => {}).on("close", resolve));
+  client.write(
+    "GET / HTTP/1.1\r\nHost: a\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+  );
+  await stdout.read();
+  // The process must not exit, so there is no event to wait for.
+  await Promise.race([proc.exited, Bun.sleep(300)]);
+  let received = 0;
+  client.on("data", chunk => (received += chunk.length)).resume();
+  await closed;
+  expect(received).toBeGreaterThan(4_000_000);
+  expect(await proc.exited).toBe(0);
+});

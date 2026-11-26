@@ -273,7 +273,9 @@ fn read_impl(fd: Fd, vecs: &[IoVecMut<'_>], position: IoPosition) -> Maybe<usize
         match position.run_request(fd, |handle, offset| sync_io::readv(handle, vecs, offset)) {
             Err(Win32Error::HANDLE_EOF | Win32Error::BROKEN_PIPE) => break Ok(0),
             Err(Win32Error::OPERATION_ABORTED)
-                if fd.kind() == FdKind::System && !sync_io::is_interruptible() => {}
+                if fd.kind() == FdKind::System
+                    && !sync_io::is_interruptible()
+                    && matches!(guess_handle(fd), HandleKind::Pipe | HandleKind::Tty) => {}
             result => break result,
         }
     };
@@ -623,7 +625,7 @@ pub fn fstat(fd: Fd) -> Maybe<Stat> {
     })
 }
 
-/// `CopyFileW` that removes `dest` and fails with `OPERATION_ABORTED` if `source` is not `expected`.
+/// `CopyFileW` that leaves `dest` without content and fails with `OPERATION_ABORTED` if `source` is not `expected`.
 pub fn copy_expected_file(source: &WStr, dest: &WStr, expected: &Stat) -> Result<(), Win32Error> {
     unsafe extern "system" fn check_source(
         _total_size: i64,
@@ -633,16 +635,20 @@ pub fn copy_expected_file(source: &WStr, dest: &WStr, expected: &Stat) -> Result
         _stream_number: u32,
         _reason: u32,
         source: HANDLE,
-        _dest: HANDLE,
+        dest: HANDLE,
         expected: *const c_void,
     ) -> u32 {
-        const PROGRESS_CANCEL: u32 = 1;
+        const PROGRESS_STOP: u32 = 2;
         const PROGRESS_QUIET: u32 = 3;
         // SAFETY: the pointer passed to `CopyFileExW` below, which has not returned.
         let expected = unsafe { &*expected.cast::<Stat>() };
         match stat_handle(source, FollowSymlinks::Yes) {
             Ok(stat) if stat.is_same_file(expected) => PROGRESS_QUIET,
-            _ => PROGRESS_CANCEL,
+            _ => {
+                // `dest` already has the attributes of `source`.
+                _ = nt::set_file_info(dest, new_basic_info(0));
+                PROGRESS_STOP
+            }
         }
     }
     // SAFETY: both paths are NUL-terminated, and `expected` outlives the call.
@@ -937,6 +943,13 @@ pub fn realpath<'a>(path: &ZStr, buf: &'a mut PathBuffer) -> Maybe<&'a [u8]> {
         nul_terminate(decoded_len, &mut buf[..])
     });
     map_path_error(result, Tag::realpath, path).map(|len| &buf[..len])
+}
+
+/// The path of `file` below `\Device`, which does not depend on where its volume is mounted.
+pub fn device_path(file: HANDLE) -> Option<Vec<u8>> {
+    let mut buf = w_path_buffer_pool::get();
+    let len = super::GetFinalPathNameByHandleW(file, &mut buf[..], w::VOLUME_NAME_NT).ok()?;
+    Some(bun_core::strings::wtf16_to_wtf8(&buf[..len]))
 }
 
 // ── attributes ──────────────────────────────────────────────────────────────

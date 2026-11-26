@@ -218,7 +218,7 @@ impl IOReader {
             return self.reader.start_with_current_source();
         }
         let file = sys::MaybeOwnedFile::Borrowed(self.fd());
-        self.reader.start(self.io_evtloop(), file, true).map(drop)
+        self.reader.start_as_file(self.io_evtloop(), file)
     }
 
     /// A listener has written the chunks it got. Reads on if the reader was paused for that.
@@ -253,6 +253,11 @@ impl IOReader {
 
     /// A listener may drop every other `Rc`.
     pub(crate) fn on_io(self: &std::rc::Rc<Self>, event: IoEvent) {
+        // Not the end of the input: the script stops here, and `Interpreter::drop` frees its commands.
+        #[cfg(windows)]
+        if let IoEvent::Read(bun_io::pipe_reader::ReadEvent::VmTeardown) = event {
+            return self.reader.deinit();
+        }
         let result = self
             .reader
             .read_chunks(self.io_evtloop(), Some(event), |chunk, state| {

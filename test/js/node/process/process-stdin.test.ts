@@ -1002,7 +1002,6 @@ describe.concurrent.each(pipeKinds)("stdin pipe from %s", kind => {
     ["fs.createReadStream", `fs.createReadStream(null, { fd: 0 }).on("data", onData).on("end", onEnd)`],
   ])("%s receives every byte once, in order", (_, readScript) => expectAllBytesInOrder(readScript));
 
-  // On POSIX about 1 in 100 processes exits before 'end'.
   test.skipIf(!isWindows)("process.stdin paused after every chunk receives every byte once, in order", () =>
     expectAllBytesInOrder(
       `process.stdin.on("data", chunk => { onData(chunk); process.stdin.pause(); setImmediate(() => process.stdin.resume()); }).on("end", onEnd)`,
@@ -1195,4 +1194,65 @@ test("file stdin is read to EOF when paused after every chunk", async () => {
   });
   expect(await proc.stdout.text()).toBe(`${1 << 20}\n`);
   expect(await proc.exited).toBe(0);
+});
+
+test.skipIf(!isWindows)("timers run after a data listener has started another read of stdin", async () => {
+  const script = `
+    const fs = require("fs");
+    let count = 0;
+    process.stdin.on("data", () => {
+      if (++count < 5) return console.log("more");
+      setTimeout(() => console.log("timer"), 1);
+      fs.read(0, Buffer.alloc(1), 0, 1, null, () => {});
+    });
+    fs.read(fs.openSync("\\\\\\\\.\\\\NUL"), Buffer.alloc(1), 0, 1, null, () => console.log("more"));
+  `;
+  async function waitForTimer() {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdin: "pipe" });
+    for await (const chunk of proc.stdout) {
+      if (Buffer.from(chunk).includes("timer")) return;
+      proc.stdin.write("x");
+      proc.stdin.flush();
+    }
+    throw new Error("exited before the timer");
+  }
+  await Promise.all(
+    [0, 1].map(async () => {
+      for (let i = 0; i < 20; i++) await waitForTimer();
+    }),
+  );
+});
+
+test.skipIf(!isWindows).each([
+  ["Bun.spawn", `Bun.spawn(reader, { stdio: ["inherit", "inherit", "inherit"] }).exited`],
+  ["Bun.$", "Bun.$`${reader}`"],
+])("a %s subprocess that waits in a read gets the input, though stdin was not paused", async (_, start) => {
+  using dir = tempDir("stdin-unpaused", {
+    "reader.js": `
+      const buffer = Buffer.alloc(8);
+      require("fs").read(0, buffer, 0, 8, null, (error, length) => console.log("got " + buffer.subarray(0, length)));
+      // Nothing reports that the other thread has entered its read.
+      setTimeout(() => console.log("ready"), 50).unref();
+    `,
+    "main.js": `
+      const reader = [process.execPath, "reader.js"];
+      process.stdin.once("data", () => ${start}.then(() => process.exit()));
+    `,
+  });
+  let receivedCount = 0;
+  for (let i = 0; i < 8; i++) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "main.js"], env: bunEnv, cwd: String(dir), stdin: "pipe" });
+    proc.stdin.write("one");
+    proc.stdin.flush();
+    let stdout = "";
+    for await (const chunk of proc.stdout) {
+      stdout += Buffer.from(chunk);
+      if (stdout !== "ready\n") continue;
+      proc.stdin.write("two");
+      proc.stdin.end();
+    }
+    if (stdout === "ready\ngot two\n") receivedCount++;
+  }
+  // As in Node.js, the order is likely but not certain.
+  expect(receivedCount).toBeGreaterThanOrEqual(3);
 });

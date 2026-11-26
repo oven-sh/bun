@@ -963,7 +963,6 @@ impl Listener {
                 UnixOrHost::Fd(fd) if fd.kind() == bun_core::FdKind::System => false,
                 UnixOrHost::Fd(fd) => {
                     use bun_sys::windows as w;
-                    // `Subprocess.stdio` exposes HANDLE values instead of CRT descriptors.
                     if fd.native() == w::INVALID_HANDLE_VALUE {
                         let handle = core::ptr::without_provenance_mut(fd.crt() as usize);
                         if w::GetFileType(handle) == w::FILE_TYPE_PIPE {

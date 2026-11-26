@@ -1605,6 +1605,21 @@ test.skipIf(!isWindows)("retrying a failed fs.watch does not crash (windows)", a
   expect(exitCode).toBe(0); // unpatched: exitCode is 3 (Windows segfault)
 });
 
+test.skipIf(!isWindows)("a recursive watcher reports a burst of changes as one null filename, like node", async () => {
+  using dir = tempDir("fswatch-overflow-recursive", {});
+  const { promise, resolve } = Promise.withResolvers<string | null>();
+  const watcher = fs.watch(String(dir), { recursive: true }, (_, filename) => {
+    if (filename === null || filename === "last") resolve(filename);
+  });
+  try {
+    for (let i = 0; i < 100; i++) fs.writeFileSync(path.join(String(dir), String(i).padStart(90, "x")), "");
+    fs.writeFileSync(path.join(String(dir), "last"), "");
+    expect(await promise).toBe(null);
+  } finally {
+    watcher.close();
+  }
+});
+
 // node surfaces a ReadDirectoryChangesW buffer overflow (events were lost) as a
 // 'change' event with a null filename, for every encoding, so callers can rescan.
 test.skipIf(!isWindows)(

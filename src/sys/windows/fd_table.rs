@@ -214,10 +214,9 @@ pub(crate) fn with_position_preserved<T>(
     fd: Fd,
     request: impl FnOnce(HANDLE) -> Result<T, Win32Error>,
 ) -> Result<T, Win32Error> {
-    let crt_fd = find_crt_fd(fd);
-    let guard = lock_position(fd, crt_fd)?;
+    let guard = lock_position(fd, find_crt_fd(fd))?;
     let handle = check_handle(fd.native())?;
-    if guard.is_none() && (crt_fd.is_some() || !query_is_disk_file(fd)) {
+    if guard.is_none() && !query_is_disk_file(fd) {
         return request(handle);
     }
     let position = nt::query_file_info::<FILE_POSITION_INFORMATION>(handle);

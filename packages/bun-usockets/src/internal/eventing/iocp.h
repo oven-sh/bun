@@ -24,6 +24,9 @@
 
 #define LIBUS_SOCKET_READABLE 1
 #define LIBUS_SOCKET_WRITABLE 2
+/* The peer has shut down its send side: a read goes on until recv() has no more */
+#define LIBUS_SOCKET_READ_TO_END 4
+#define LIBUS_MAX_REPEAT_RECV_COUNT 1
 
 struct us_loop_t {
     alignas(LIBUS_EXT_ALIGNMENT) struct us_internal_loop_data_t data;

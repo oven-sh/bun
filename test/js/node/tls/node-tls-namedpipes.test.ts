@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { expectMaxObjectTypeCount, isWindows, tls } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isWindows, tls } from "harness";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
@@ -527,4 +527,15 @@ describe("a fatal post-handshake SSL error over a named pipe", () => {
       server: { event: "error", code: "ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC", library: "SSL routines" },
     });
   });
+});
+
+it.if(isWindows)("unref() does not let the process exit before the connect has a result", async () => {
+  const script = `require("tls").connect({ path: process.argv[1] }).on("error", error => console.log(error.code)).unref();`;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script, `\\\\.\\pipe\\${randomUUID()}`],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  expect(await proc.stdout.text()).toBe("ENOENT\n");
+  expect(await proc.exited).toBe(0);
 });

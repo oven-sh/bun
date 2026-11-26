@@ -1873,3 +1873,67 @@ console.log(await Bun.file("out.txt").text());
     exitCode: 0,
   });
 });
+
+it("Bun.file(fd).writer() holds nothing open after end() and closeSync()", async () => {
+  using dir = tempDir("filesink-fd-end", {});
+  for (let i = 0; i < 20; i++) {
+    const folder = join(String(dir), String(i));
+    fs.mkdirSync(folder);
+    const fd = fs.openSync(join(folder, "file"), "w");
+    const writer = Bun.file(fd).writer();
+    writer.write("data");
+    await writer.end();
+    fs.closeSync(fd);
+    fs.renameSync(folder, folder + "-moved");
+  }
+  expect(fs.readdirSync(String(dir)).filter(name => !name.endsWith("-moved"))).toEqual([]);
+});
+
+it.skipIf(!isWindows).each([
+  ["writer().end()", `const writer = Bun.file("a/file").writer(); writer.write("x"); await writer.end();`],
+  ["stream()", `for await (const chunk of Bun.file("a/file").stream());`],
+  [
+    "a response",
+    `const server = Bun.serve({ port: 0, fetch: () => new Response(Bun.file("a/file")) });
+     await (await fetch(server.url)).text();
+     server.stop(true);`,
+  ],
+])("the file is closed before exit listeners run after %s", async (_, use) => {
+  using dir = tempDir("filesink-closed-at-exit", { "a/file": "data" });
+  // On one CPU the thread that closes the file runs only if the main thread waits for it.
+  const script = `
+    require("bun:ffi")
+      .dlopen("kernel32.dll", { SetProcessAffinityMask: { args: ["i64", "u64"], returns: "i32" } })
+      .symbols.SetProcessAffinityMask(-1n, 1n);
+    process.on("exit", () => require("fs").renameSync("a", "b"));
+    ${use}`;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+  expect(await proc.stderr.text()).toBe("");
+  expect(await proc.exited).toBe(0);
+});
+
+it.skipIf(!isWindows)("start() works on a writer that was closed with queued data", async () => {
+  using dir = tempDir("filesink-restart", {
+    "writer.mjs": `export const writer = Bun.file("first").writer();`,
+    "main.mjs": `
+      const graph = new Bun.ModuleGraph({});
+      const { writer } = await graph.import(process.cwd() + "/writer.mjs");
+      writer.write("0");
+      await writer.write("1");
+      await writer.flush();
+      writer.write("a");
+      await writer.write("b");
+      writer.write("c");
+      Promise.allSettled([writer.write("d")]);
+      graph.dispose();
+      await new Promise(setImmediate);
+      writer.start({ path: "second" });
+      await writer.write("e");
+      await writer.end();
+      console.log((await Bun.file("second").text()).endsWith("e"));
+    `,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "main.mjs"], env: bunEnv, cwd: String(dir), stderr: "inherit" });
+  expect(await proc.stdout.text()).toBe("true\n");
+  expect(await proc.exited).toBe(0);
+});

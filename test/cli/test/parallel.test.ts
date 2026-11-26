@@ -1350,6 +1350,26 @@ describe.skipIf(!isLinux)("--parallel: a worker that has exited gets no file", (
   });
 });
 
+test.skipIf(!isWindows)("--parallel is idle while another process holds the channel of an exited worker", async () => {
+  const holdMs = isDebug ? 3000 : 1000;
+  using dir = tempDir("parallel-held-channel", {
+    "a.test.js": `import {test} from "bun:test"; import {spawn} from "child_process";
+      test("a", () => {
+        spawn(process.execPath, ["-e", "Bun.sleepSync(${holdMs})"], { stdio: ["ignore", "ignore", "ignore", 3], detached: true });
+        process.exit(0);
+      });`,
+    "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdio: ["ignore", "ignore", "ignore"],
+  });
+  expect(await proc.exited).toBe(1);
+  expect(Number(proc.resourceUsage()!.cpuTime.total)).toBeLessThan(holdMs * 500);
+});
+
 async function runOnOneWorker(dir: string, ...flags: string[]) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=1000000", ...flags],
@@ -1397,6 +1417,23 @@ describe("--parallel: a frame that a test writes to fd 3", () => {
     expect(await runOnOneWorker(String(dir))).toEqual({
       results: ["(pass) a", "(pass) b", " 2 pass", " 0 fail"],
       exitCode: 0,
+    });
+  });
+
+  test.concurrent("an unknown kind gets the worker killed", async () => {
+    using dir = tempDir("parallel-unknown-frame", {
+      "a.test.js": `import {test} from "bun:test"; import {writeSync} from "fs";
+        test("a", () => { writeSync(3, "hello", null, "utf16le"); });`,
+      "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
+    });
+    expect(await runOnOneWorker(String(dir))).toEqual({
+      results: [
+        "✗ a.test.js (worker killed: corrupt IPC frame, something wrote to fd 3)",
+        "(pass) b",
+        " 1 pass",
+        " 1 fail",
+      ],
+      exitCode: 1,
     });
   });
 

@@ -322,6 +322,8 @@ fn auto_close(argv: Vec<Box<[u8]>>) {
         stderr: sync::SyncStdio::Inherit,
         stdout: sync::SyncStdio::Inherit,
         stdin: sync::SyncStdio::Inherit,
+        #[cfg(windows)]
+        inherits_all_handles: false,
         ..Default::default()
     });
 }

@@ -196,7 +196,7 @@ impl Loop {
 
     pub fn is_active(&self) -> bool {
         #[cfg(windows)]
-        if self.port().has_loop_refs() || self.port().has_abandoned_requests() {
+        if self.port().has_loop_refs() || self.port().has_closing_files() {
             return true;
         }
         self.active.get() > 0

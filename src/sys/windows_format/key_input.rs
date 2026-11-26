@@ -5,6 +5,7 @@
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
 pub struct InputRecord {
     pub event_type: u16,
+    pub padding: u16,
     pub is_key_down: i32,
     pub repeat_count: u16,
     pub virtual_key: u16,
@@ -14,6 +15,7 @@ pub struct InputRecord {
 }
 
 const _: () = assert!(size_of::<InputRecord>() == 20);
+bun_core::impl_pod!(InputRecord);
 
 pub const KEY_EVENT: u16 = 1;
 pub const WINDOW_BUFFER_SIZE_EVENT: u16 = 4;
@@ -95,14 +97,6 @@ fn find_escape_sequences(virtual_key: u16) -> Option<[&'static str; 4]> {
     })
 }
 
-/// Space, digit, letter and punctuation keys, or 0xFF (no key in the keyboard layout).
-fn is_character_key(virtual_key: u16) -> bool {
-    matches!(
-        virtual_key,
-        0x20 | 0x30..=0x39 | 0x41..=0x5A | 0xBA..=0xC2 | 0xDB..=0xDF | 0xE2 | 0xFF
-    )
-}
-
 /// Incremental UTF-16 to UTF-8 decoder.
 #[derive(Default)]
 pub struct Utf16Decoder {
@@ -153,9 +147,6 @@ pub fn translate(record: &InputRecord, decoder: &mut Utf16Decoder, out: &mut Vec
         out.push(ESCAPE);
         let sequence = sequences[usize::from(has_shift) + 2 * usize::from(has_ctrl)];
         out.extend_from_slice(sequence.as_bytes());
-    } else if has_ctrl && record.scan_code == 0 && is_character_key(record.virtual_key) {
-        // The console reports Ctrl+Space as a key event without a character or scan code.
-        out.push(0);
     }
     let end = out.len();
     for _ in 1..record.repeat_count {
@@ -170,6 +161,7 @@ mod tests {
     fn key_down(virtual_key: u16, character: u16, control_key_state: u32) -> InputRecord {
         InputRecord {
             event_type: KEY_EVENT,
+            padding: 0,
             is_key_down: 1,
             repeat_count: 1,
             virtual_key,
@@ -253,22 +245,6 @@ mod tests {
         assert_eq!(translate_key(0x23, 0, LEFT_ALT_PRESSED), b"");
         let end = key_down(0x23, 0, LEFT_ALT_PRESSED | ENHANCED_KEY);
         assert_eq!(translate_all(&[end]), b"\x1b\x1b[4~");
-    }
-
-    #[test]
-    fn ctrl_space_produces_nul() {
-        let record = InputRecord {
-            scan_code: 0,
-            ..key_down(0x32, 0, LEFT_CTRL_PRESSED | SHIFT_PRESSED)
-        };
-        assert_eq!(translate_all(&[record]), b"\0");
-        for virtual_key in [0x11, 0x14, 0x5B, 0x7C, 0xA2, 0xAF, 0xE5] {
-            let non_character_key = InputRecord {
-                virtual_key,
-                ..record
-            };
-            assert_eq!(translate_all(&[non_character_key]), b"");
-        }
     }
 
     #[test]

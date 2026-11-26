@@ -8670,21 +8670,31 @@ describe.skipIf(!isWindows)("Node.js compatibility on Windows", () => {
       using dir = tempDir("fs-open-flags", {});
       expect(await probeFlags(join(String(dir), "new"), O_RDWR | O_CREAT | UV_FS_O[name])).toBe("1 1 X");
     });
+  });
 
-    // Both flags are dropped when numeric open flags are converted.
-    it.todo("UV_FS_O_TEMPORARY deletes the file on close", async () => {
-      using dir = tempDir("fs-open-flags", {});
-      await (await open(join(String(dir), "new"), O_RDWR | O_CREAT | UV_FS_O.TEMPORARY))[Symbol.asyncDispose]();
-      expect(fs.readdirSync(String(dir))).toEqual([]);
-    });
-    it.todo("UV_FS_O_EXLOCK fails other opens with EBUSY until close", async () => {
-      using dir = tempDir("fs-open-flags", { f: "abc" });
-      {
-        await using _ = await open(join(String(dir), "f"), O_RDWR | UV_FS_O.EXLOCK);
-        expect(await probeFlags(join(String(dir), "f"), "r")).toBe("EBUSY");
-      }
-      expect(await probeFlags(join(String(dir), "f"), "r")).toBe("EBADF 3 abc");
-    });
+  it("async calls resolve a rooted path against the drive that is current at the call", async () => {
+    using dir = tempDir("fs-rooted-path", { "file": "", "other/empty": "" });
+    const subst = (...args: string[]) => spawnSync({ cmd: ["subst", ...args] }).exitCode === 0;
+    const drive = [..."PONMLKJI"]
+      .map(letter => `${letter}:`)
+      .find(drive => !fs.existsSync(`${drive}\\`) && subst(drive, join(String(dir), "other")));
+    expect(drive).toBeDefined();
+    try {
+      const script = `
+        const cwd = process.cwd(), rooted = cwd.slice(2) + "\\\\file";
+        for (let i = 0; i < 20; i++) {
+          process.chdir(cwd);
+          const calls = [fs.promises.open(rooted).then(handle => handle.close()), fs.promises.statfs(rooted)];
+          process.chdir("${drive}\\\\");
+          await Promise.all(calls);
+        }
+        console.log("ok");`;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, cwd: String(dir), stderr: "inherit" });
+      expect(await proc.stdout.text()).toBe("ok\n");
+      expect(await proc.exited).toBe(0);
+    } finally {
+      subst(drive!, "/D");
+    }
   });
 
   describe("open", () => {

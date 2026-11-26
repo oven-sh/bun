@@ -274,6 +274,12 @@ impl WriteHandler for FileSink {
                     .with_mut(|p| p.result = streams::Writable::Owned(consumed));
             }
 
+            // The caller may close its descriptor as soon as `end()` settles.
+            #[cfg(windows)]
+            if self.done.get() && !has_pending_data && !self.writer.owns_fd() {
+                self.end_writer();
+            }
+
             self.run_pending();
         }
 

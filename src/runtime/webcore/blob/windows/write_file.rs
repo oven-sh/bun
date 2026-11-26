@@ -104,7 +104,7 @@ impl WriteFile {
         io_order::OrderGuard::enqueue_job(cx, key, true, |order_guard| {
             write.order_guard = Some(order_guard);
             let js = (promise, BackRef::new(cx.global()));
-            let cancel_tokens = write.blocking_io.cancel_tokens();
+            let cancel_tokens = write.blocking_io.cancel_tokens(cx);
             Job::<Self>::create(cx, write, js, cancel_tokens).use_device_pool(can_block)
         });
         value

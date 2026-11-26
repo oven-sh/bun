@@ -409,7 +409,6 @@ describe.concurrent("pending writes to a child's stdin", () => {
     expect(order).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
   });
 
-  // On Windows the write callback fires immediately with null.
   it.todoIf(isWindows).each([
     ["is killed", child => child.kill("SIGKILL")],
     ["exits", child => child.send("exit")],

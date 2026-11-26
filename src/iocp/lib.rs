@@ -18,6 +18,6 @@ mod timer;
 mod wake_event;
 
 pub use afd::{Readiness, ReadinessHandler, SocketRegistration};
-pub use port::{Event, LoopRef, PendingWrite, Port, Waker, WriteProgress};
+pub use port::{Event, LoopRef, PendingClose, PendingWrite, Port, Waker, WriteProgress};
 pub use read_to_end::read_to_end;
 pub use request::{Completer, Completion, Handle, OverlappedFile, Request};

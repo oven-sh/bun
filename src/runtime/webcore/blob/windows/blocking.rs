@@ -2,6 +2,7 @@
 
 use bun_core::vec::BorrowedCursor;
 use bun_iocp::blocking::CancelToken;
+use bun_jsc::JsThread;
 use bun_jsc::job::{CancelTokens, OwnedJob, Running};
 use bun_sys::windows::named_pipe;
 use bun_sys::{self as sys, E, Fd, Tag};
@@ -35,10 +36,11 @@ pub(super) struct BlockingIo {
 }
 
 impl BlockingIo {
-    pub(super) fn cancel_tokens(&self) -> CancelTokens {
+    /// A Worker waits for its writes, as for those of `node:fs`.
+    pub(super) fn cancel_tokens(&self, cx: &JsThread<'_>) -> CancelTokens {
         CancelTokens {
             on_stop: Some(self.read_cancel_token.clone()),
-            on_teardown: Some(self.write_cancel_token.clone()),
+            on_teardown: (cx.vm().is_main_thread.get()).then(|| self.write_cancel_token.clone()),
         }
     }
 

@@ -15,6 +15,7 @@ use crate::{LIBUS_SOCKET_DESCRIPTOR, Loop};
 
 const LIBUS_SOCKET_READABLE: c_int = 1;
 const LIBUS_SOCKET_WRITABLE: c_int = 2;
+const LIBUS_SOCKET_READ_TO_END: c_int = 4;
 
 const POLL_TYPE_SOCKET: u8 = 0;
 const POLL_TYPE_SOCKET_SHUT_DOWN: u8 = 1;
@@ -118,7 +119,7 @@ extern "C" fn us_internal_monotonic_ns() -> u64 {
 
 #[unsafe(no_mangle)]
 extern "C" fn us_internal_loop_has_polls(loop_: &Loop) -> c_int {
-    (loop_.poll_count() != 0 || loop_.port().has_abandoned_requests()).into()
+    (loop_.poll_count() != 0 || loop_.port().has_closing_files()).into()
 }
 
 #[unsafe(no_mangle)]
@@ -246,7 +247,7 @@ impl Poll {
         if self.events() & LIBUS_SOCKET_WRITABLE != 0 {
             interest |= Readiness::SEND | Readiness::CONNECT_FAIL;
         }
-        if self.events() != 0 || self.is_connected_stream() {
+        if self.events() != 0 || self.kind() == POLL_TYPE_SOCKET {
             interest |= Readiness::ABORT;
         }
         if self.kind() == POLL_TYPE_SOCKET_SHUT_DOWN && !self.is_eof_reported.get() {
@@ -279,7 +280,11 @@ impl Poll {
         if ready.intersects(Readiness::SEND | Readiness::CONNECT_FAIL) {
             events |= LIBUS_SOCKET_WRITABLE;
         }
-        (has_error.into(), is_eof.into(), events & self.events())
+        events &= self.events();
+        if ready.contains(Readiness::DISCONNECT) && self.is_connected_stream() {
+            events |= LIBUS_SOCKET_READ_TO_END;
+        }
+        (has_error.into(), is_eof.into(), events)
     }
 }
 

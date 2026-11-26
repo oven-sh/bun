@@ -1235,6 +1235,235 @@ static napi_value test_queue_work_from_thread(napi_env env,
   return make_int32_array(env, &result, 1);
 }
 
+// --- handles on a thread other than the loop's -------------------------------
+
+static uv_async_t foreign_async;
+static uv_timer_t foreign_timer;
+static atomic_bool foreign_async_ran;
+
+static void print_line(const char *line) {
+  printf("%s\n", line);
+  fflush(stdout);
+}
+
+static void foreign_close_cb(uv_handle_t *handle) { print_line("close"); }
+
+static void foreign_async_cb(uv_async_t *handle) {
+  print_line("async");
+  atomic_store(&foreign_async_ran, true);
+}
+
+static void foreign_closing_async_cb(uv_async_t *handle) {
+  print_line("async");
+  uv_close((uv_handle_t *)handle, NULL);
+}
+
+static void foreign_timer_cb(uv_timer_t *handle) {
+  print_line("timer");
+  uv_close((uv_handle_t *)handle, NULL);
+}
+
+static void *foreign_init_async(void *loop) {
+  uv_async_init(loop, &foreign_async, foreign_closing_async_cb);
+  uv_async_send(&foreign_async);
+  return NULL;
+}
+
+static void *foreign_unref(void *loop) {
+  uv_unref((uv_handle_t *)&foreign_async);
+  uv_unref((uv_handle_t *)&foreign_timer);
+  return NULL;
+}
+
+static void *foreign_close(void *loop) {
+  uv_close((uv_handle_t *)&foreign_async, foreign_close_cb);
+  uv_close((uv_handle_t *)&foreign_timer, foreign_close_cb);
+  return NULL;
+}
+
+static void *foreign_start_timer(void *loop) {
+  uv_timer_init(loop, &foreign_timer);
+  uv_timer_start(&foreign_timer, foreign_timer_cb, 1, 0);
+  return NULL;
+}
+
+// testFromWaitedThread(index): the JS thread waits while the other one makes
+// its calls.
+static napi_value test_from_waited_thread(napi_env env,
+                                          napi_callback_info info) {
+  static void *(*const entries[])(void *) = {
+      foreign_init_async, foreign_start_timer, foreign_unref, foreign_close};
+  napi_value arg;
+  uint32_t index;
+  pthread_t thread;
+  get_args(env, info, &arg, 1);
+  napi_get_value_uint32(env, arg, &index);
+  uv_loop_t *loop = get_loop(env, false);
+  if (index >= 2) {
+    uv_async_init(loop, &foreign_async, foreign_async_cb);
+    uv_timer_init(loop, &foreign_timer);
+    uv_timer_start(&foreign_timer, foreign_timer_cb, 1000000, 0);
+  }
+  pthread_create(&thread, NULL, entries[index], loop);
+  pthread_join(thread, NULL);
+  return NULL;
+}
+
+static void ref_around_send_work_cb(uv_work_t *req) {
+  uv_ref((uv_handle_t *)&foreign_async);
+  uv_async_send(&foreign_async);
+  while (!atomic_load(&foreign_async_ran)) {
+    sched_yield();
+  }
+  uv_unref((uv_handle_t *)&foreign_async);
+}
+
+static napi_value test_ref_around_send(napi_env env, napi_callback_info info) {
+  uv_loop_t *loop = get_loop(env, false);
+  uv_async_init(loop, &foreign_async, foreign_async_cb);
+  uv_unref((uv_handle_t *)&foreign_async);
+  uv_queue_work(loop, &default_loop_work, ref_around_send_work_cb, NULL);
+  return NULL;
+}
+
+static napi_value test_default_loop_async(napi_env env,
+                                          napi_callback_info info) {
+  foreign_init_async(uv_default_loop());
+  return NULL;
+}
+
+static napi_value start_default_loop_timer(napi_env env,
+                                           napi_callback_info info) {
+  uv_timer_init(uv_default_loop(), &foreign_timer);
+  uv_timer_start(&foreign_timer, foreign_timer_cb, 1000000, 0);
+  return NULL;
+}
+
+static napi_value restart_default_loop_timer(napi_env env,
+                                             napi_callback_info info) {
+  uv_timer_start(&foreign_timer, foreign_timer_cb, 1, 0);
+  return NULL;
+}
+
+static void close_at_exit(void) {
+  uv_close((uv_handle_t *)&foreign_async, NULL);
+  print_line("returned");
+}
+
+// Bun counts the threads inside uv_async_send in the field after async_cb.
+static napi_value test_close_at_exit_with_sender_inside(
+    napi_env env, napi_callback_info info) {
+  uv_async_init(get_loop(env, false), &foreign_async, foreign_async_cb);
+  *(int32_t *)(&foreign_async.async_cb + 1) = 1;
+  atexit(close_at_exit);
+  return NULL;
+}
+
+static uv_async_t progress_async, blocking_async;
+static uv_work_t progress_work;
+static atomic_bool progress_allowed, progress_sent;
+
+static void progress_async_cb(uv_async_t *handle) { print_line("progress"); }
+
+static void progress_work_cb(uv_work_t *req) {
+  while (!atomic_load(&progress_allowed)) {
+    sched_yield();
+  }
+  uv_async_send(&progress_async);
+  atomic_store(&progress_sent, true);
+}
+
+static void progress_after_work_cb(uv_work_t *req, int status) {
+  print_line("after work");
+  uv_close((uv_handle_t *)&progress_async, NULL);
+}
+
+static void blocking_async_cb(uv_async_t *handle) {
+  atomic_store(&progress_allowed, true);
+  while (!atomic_load(&progress_sent)) {
+    sched_yield();
+  }
+  // The order holds without this. It lets the completion be posted first.
+  usleep(10000);
+  uv_close((uv_handle_t *)handle, NULL);
+}
+
+static napi_value test_progress_before_after_work(napi_env env,
+                                                  napi_callback_info info) {
+  uv_loop_t *loop = get_loop(env, false);
+  uv_async_init(loop, &progress_async, progress_async_cb);
+  uv_async_init(loop, &blocking_async, blocking_async_cb);
+  uv_queue_work(loop, &progress_work, progress_work_cb, progress_after_work_cb);
+  uv_async_send(&blocking_async);
+  return NULL;
+}
+
+static uv_timer_t close_order_timers[3];
+
+static void close_order_cb(uv_handle_t *handle) {
+  print_line(handle->data);
+  if (handle == (uv_handle_t *)&close_order_timers[1]) {
+    uv_close((uv_handle_t *)&close_order_timers[2], close_order_cb);
+  }
+}
+
+static napi_value test_close_in_close_cb(napi_env env,
+                                         napi_callback_info info) {
+  static char *const names[] = {"first", "second", "third"};
+  for (int i = 0; i < 3; i++) {
+    uv_timer_init(get_loop(env, false), &close_order_timers[i]);
+    close_order_timers[i].data = names[i];
+  }
+  uv_close((uv_handle_t *)&close_order_timers[0], close_order_cb);
+  uv_close((uv_handle_t *)&close_order_timers[1], close_order_cb);
+  return NULL;
+}
+
+static napi_value test_init_after_close(napi_env env, napi_callback_info info) {
+  uv_loop_t *loop = get_loop(env, false);
+  uv_async_init(loop, &foreign_async, foreign_async_cb);
+  uv_close((uv_handle_t *)&foreign_async, foreign_close_cb);
+  uv_timer_init(loop, &foreign_timer);
+  uv_close((uv_handle_t *)&foreign_timer, NULL);
+  uv_timer_init(loop, &foreign_timer);
+  uv_close((uv_handle_t *)&foreign_timer, foreign_close_cb);
+  uv_timer_init(loop, &foreign_timer);
+  return NULL;
+}
+
+static uv_async_t racing_async;
+static int racing_rounds;
+
+static void racing_async_cb(uv_async_t *handle) {}
+static void racing_close_cb(uv_handle_t *handle);
+
+static void *send_and_close(void *arg) {
+  uv_async_send(&racing_async);
+  uv_close((uv_handle_t *)&racing_async, racing_close_cb);
+  return NULL;
+}
+
+static void start_send_and_close(uv_loop_t *loop) {
+  pthread_t thread;
+  uv_async_init(loop, &racing_async, racing_async_cb);
+  pthread_create(&thread, NULL, send_and_close, NULL);
+  pthread_detach(thread);
+}
+
+static void racing_close_cb(uv_handle_t *handle) {
+  if (++racing_rounds < 2000) {
+    start_send_and_close(handle->loop);
+  } else {
+    foreign_init_async(handle->loop);
+  }
+}
+
+static napi_value test_send_and_close_on_thread(napi_env env,
+                                                napi_callback_info info) {
+  start_send_and_close(get_loop(env, false));
+  return NULL;
+}
+
 // --- uv_idle_t / uv_prepare_t / uv_check_t -----------------------------------
 
 struct watcher_test {
@@ -1736,6 +1965,38 @@ napi_value Init(napi_env env, napi_value exports) {
 
   napi_create_function(env, NULL, 0, test_queue_work_from_thread, NULL, &fn);
   napi_set_named_property(env, exports, "testQueueWorkFromThread", fn);
+
+  napi_create_function(env, NULL, 0, test_from_waited_thread, NULL, &fn);
+  napi_set_named_property(env, exports, "testFromWaitedThread", fn);
+
+  napi_create_function(env, NULL, 0, test_ref_around_send, NULL, &fn);
+  napi_set_named_property(env, exports, "testRefAroundSend", fn);
+
+  napi_create_function(env, NULL, 0, test_default_loop_async, NULL, &fn);
+  napi_set_named_property(env, exports, "testDefaultLoopAsync", fn);
+
+  napi_create_function(env, NULL, 0, start_default_loop_timer, NULL, &fn);
+  napi_set_named_property(env, exports, "startDefaultLoopTimer", fn);
+
+  napi_create_function(env, NULL, 0, restart_default_loop_timer, NULL, &fn);
+  napi_set_named_property(env, exports, "restartDefaultLoopTimer", fn);
+
+  napi_create_function(env, NULL, 0, test_close_at_exit_with_sender_inside,
+                       NULL, &fn);
+  napi_set_named_property(env, exports, "testCloseAtExitWithSenderInside", fn);
+
+  napi_create_function(env, NULL, 0, test_init_after_close, NULL, &fn);
+  napi_set_named_property(env, exports, "testInitAfterClose", fn);
+
+  napi_create_function(env, NULL, 0, test_send_and_close_on_thread, NULL, &fn);
+  napi_set_named_property(env, exports, "testSendAndCloseOnThread", fn);
+
+  napi_create_function(env, NULL, 0, test_progress_before_after_work, NULL,
+                       &fn);
+  napi_set_named_property(env, exports, "testProgressBeforeAfterWork", fn);
+
+  napi_create_function(env, NULL, 0, test_close_in_close_cb, NULL, &fn);
+  napi_set_named_property(env, exports, "testCloseInCloseCb", fn);
 
   napi_create_function(env, NULL, 0, test_mutex_init_destroy, NULL, &fn);
   napi_set_named_property(env, exports, "testMutexInitDestroy", fn);

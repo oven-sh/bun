@@ -145,11 +145,22 @@ describe.skipIf(!isWindows)("Bun.write(destination, bytes)", () => {
     });
   });
 
+  test("an error of a stream write reports the path", async () => {
+    const body = new Response(new ReadableStream({ pull: controller => controller.enqueue(new Uint8Array(1)) }));
+    expect(await captureError(Bun.write("a*", body))).toMatchObject({ code: "ENOENT", path: "a*" });
+  });
+
   test("writes to a path longer than MAX_PATH", async () => {
     using dir = tempDir("bun-write-long-path", {});
     const longName = Buffer.alloc(200, "a").toString();
     await Bun.write(join(String(dir), longName, longName), "x");
     expect(fs.readdirSync(String(dir), { recursive: true }).sort()).toEqual([longName, join(longName, longName)]);
+  });
+
+  test.each(["file.", "file "])("stream() reads what was written to the absolute name %j", async name => {
+    using dir = tempDir("bun-write-trailing-dot", { file: "other" });
+    await Bun.write(join(String(dir), name), "written");
+    expect(await new Response(Bun.file(join(String(dir), name)).stream()).text()).toBe("written");
   });
 
   test("the file is closed when the promise resolves", async () => {
@@ -205,6 +216,28 @@ describe.skipIf(!isWindows)("Bun.write(destination, bytes)", () => {
     pipe.close(pipe.writeFd);
     expect(await Bun.file(pipe.readFd).text()).toBe(Buffer.alloc(1300, "writtencopied").toString());
   });
+
+  test.concurrent.each(["Buffer.alloc(1 << 18)", "Bun.file(source)"])(
+    "a Worker that exits completes Bun.write(pipe, %s) for a slow reader",
+    async data => {
+      using dir = tempDir("bun-write-worker-slow-reader", { source: Buffer.alloc(1 << 18) });
+      using pipe = createPipe();
+      const worker = new Worker(
+        `const source = require("node:worker_threads").workerData;
+         Bun.write(${pipe.writeFd}, ${data});
+         process.exit(0);`,
+        { eval: true, workerData: join(String(dir), "source") },
+      );
+      worker.once("exit", () => pipe.close(pipe.writeFd));
+      let received = 0;
+      // The 64 reads take longer than the 500 ms that an exit waits for.
+      for (let bytesRead = -1; bytesRead !== 0; await Bun.sleep(12)) {
+        ({ bytesRead } = await promisify(fs.read)(pipe.readFd, Buffer.alloc(4096), 0, 4096, null));
+        received += bytesRead;
+      }
+      expect(received).toBe(1 << 18);
+    },
+  );
 });
 
 describe.skipIf(!isWindows)("Bun.write(destination, Bun.file())", () => {
@@ -344,6 +377,17 @@ describe.skipIf(!isWindows)("Bun.write(destination, Bun.file())", () => {
     expect(await Bun.write(Bun.file(join(String(dir), "destination")).slice(0, 4), Bun.file(pipe.readFd))).toBe(4);
     expect(fs.readFileSync(join(String(dir), "destination"), "utf8")).toBe("0123");
     expect(readThreeBytes(pipe.readFd)).toBe("456");
+  });
+
+  test("copies from a pipe to a hidden file", async () => {
+    using dir = tempDir("bun-copy-hidden", { destination: "a longer file" });
+    const path = join(String(dir), "destination");
+    expect(Bun.spawnSync(["attrib", "+h", path]).exitCode).toBe(0);
+    using pipe = createPipe();
+    fs.writeSync(pipe.writeFd, "new");
+    pipe.close(pipe.writeFd);
+    expect(await Bun.write(path, Bun.file(pipe.readFd))).toBe(3);
+    expect(fs.readFileSync(path, "utf8")).toBe("new");
   });
 
   test("copies to and from a named pipe path", async () => {
@@ -662,7 +706,6 @@ describe.concurrent("unawaited writes complete before the process exits", () => 
       expect(await run(script, stdoutKind)).toEqual({ stdout: "abc", file: "d", exitCode });
     });
 
-    // On POSIX the thread pool races with the exit.
     test
       .skipIf(!isWindows)
       .each([

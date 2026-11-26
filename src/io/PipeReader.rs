@@ -952,6 +952,12 @@ impl WindowsBufferedReader {
         sys::Result::Ok(ReadResult::Pending)
     }
 
+    /// See [`ReadSource::open_as_file`].
+    pub fn start_as_file(&self, ev: EventLoopHandle, file: MaybeOwnedFile) -> sys::Result<()> {
+        self.set_source(ReadSource::open_as_file(ev.loop_().port(), file)?);
+        self.start_with_current_source()
+    }
+
     fn start_reading(&self) {
         // A used-up limit stays paused: `start` has nothing to read and `unpause` reports it as EOF instead.
         if self.has_flag(ReaderFlags::IS_DONE)

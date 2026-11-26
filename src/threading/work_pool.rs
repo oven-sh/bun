@@ -188,6 +188,7 @@ impl FilePool {
                 stack_size: 8 * 1024 * 1024,
                 on_thread_start: bun_core::Output::Source::configure_thread_no_js,
                 has_warmup: true,
+                keeps_idle_threads: true,
             })
         });
         &POOL
@@ -209,6 +210,7 @@ pub static DEVICE_POOL: FifoPool = FifoPool::new(Config {
     stack_size: 4 * 1024 * 1024,
     on_thread_start: bun_core::Output::Source::configure_thread_no_js,
     has_warmup: false,
+    keeps_idle_threads: false,
 });
 
 impl WorkPool {

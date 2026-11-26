@@ -98,9 +98,12 @@ mod resolver_pool {
     use std::sync::LazyLock;
 
     use bun_threading::fifo_pool::{Config, FifoPool};
+    use bun_threading::work_pool::FilePool;
 
     pub(super) static SCRIPT_POOL: LazyLock<FifoPool> = LazyLock::new(|| {
         FifoPool::new(Config {
+            // Follows a `UV_THREADPOOL_SIZE` that the script has assigned to `process.env`.
+            max_threads: config().max_threads.max(FilePool::get().max_threads()),
             has_warmup: true,
             ..config()
         })
@@ -114,6 +117,7 @@ mod resolver_pool {
             stack_size: 1024 * 1024,
             on_thread_start: bun_core::Output::Source::configure_thread_no_js,
             has_warmup: false,
+            keeps_idle_threads: false,
         }
     }
 }
@@ -628,8 +632,13 @@ impl Outcome {
         global: &JSGlobalObject,
         context: bun_jsc::ContextId,
     ) {
+        let vm = global.bun_vm();
+        if vm.test_isolation_enabled.get() && promise.value().is_from_retired_test_isolation_realm()
+        {
+            return;
+        }
         // The lookup continues the script that asked for it.
-        let _context = global.bun_vm().enter_context(context);
+        let _context = vm.enter_context(context);
         crate::dispatch::fold(match self {
             Outcome::Value(v) => promise.resolve(global, v),
             Outcome::Error(e) => promise.reject(global, Ok(e)),

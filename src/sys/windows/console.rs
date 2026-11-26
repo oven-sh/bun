@@ -7,7 +7,7 @@
 
 use core::ffi::c_void;
 use core::ops::RangeInclusive;
-use std::os::windows::io::OwnedHandle;
+use std::os::windows::io::{AsRawHandle as _, OwnedHandle};
 use std::sync::OnceLock;
 
 use bun_core::WStr;
@@ -111,6 +111,19 @@ pub fn open(name: &WStr) -> Result<OwnedHandle, Win32Error> {
     super::CreateFileW(name, access, share, super::OPEN_EXISTING, 0)
 }
 
+/// Exit closes handles in ascending order. One with a pending read that precedes the connection ends the reads of every process.
+pub fn open_input() -> Result<OwnedHandle, Win32Error> {
+    // SAFETY: the PEB and its parameters live as long as the process.
+    let connection = unsafe { (*(*bun_core::windows_sys::peb()).ProcessParameters).ConsoleHandle };
+    let mut input = open(bun_core::wstr!("CONIN$"))?;
+    let mut lower_handles = Vec::new();
+    while (input.as_raw_handle() as isize) < connection as isize {
+        let duplicate = super::duplicate_handle(input.as_raw_handle())?;
+        lower_handles.push(core::mem::replace(&mut input, duplicate));
+    }
+    Ok(input)
+}
+
 fn query_host_pid() -> Option<DWORD> {
     const PROCESS_CONSOLE_HOST_PROCESS: ULONG = 49;
     const FLAG_MASK: usize = 3;
@@ -197,11 +210,16 @@ pub fn queued_record_count(input: HANDLE) -> Result<DWORD, Win32Error> {
 }
 
 fn read_cells(output: HANDLE, mut region: SMALL_RECT) -> Result<Vec<CHAR_INFO>, Win32Error> {
+    /// More than a display has room for.
+    const MAX_CELLS: usize = 1 << 20;
     let size = COORD {
         X: region.Right.wrapping_sub(region.Left).wrapping_add(1),
         Y: region.Bottom.wrapping_sub(region.Top).wrapping_add(1),
     };
     let len = usize::from(size.X.unsigned_abs()) * usize::from(size.Y.unsigned_abs());
+    if len > MAX_CELLS {
+        return Err(Win32Error::NOT_ENOUGH_MEMORY);
+    }
     let mut cells = vec![CHAR_INFO::default(); len];
     let origin = COORD { X: 0, Y: 0 };
     // SAFETY: `cells` is writable for `size`.
@@ -357,8 +375,7 @@ pub fn write_text(output: HANDLE, mut text: &[u16]) -> Result<(), Win32Error> {
 /// `(columns, rows)` of the visible window.
 pub fn window_size(output: HANDLE) -> Option<(u16, u16)> {
     let mut info: CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
-    // SAFETY: `info` is a valid out-param.
-    check(unsafe { kernel32::GetConsoleScreenBufferInfo(output, &raw mut info) }).ok()?;
+    check(kernel32::GetConsoleScreenBufferInfo(output, &mut info)).ok()?;
     let window = info.srWindow;
     let extent = |first, last| u16::try_from(i32::from(last) - i32::from(first) + 1).ok();
     extent(window.Left, window.Right).zip(extent(window.Top, window.Bottom))

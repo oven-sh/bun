@@ -34,6 +34,12 @@ describe("spawnSync", () => {
     });
   }
 
+  it.each([2 ** 31, 2 ** 32 + 1])("a timeout of %d ms does not expire immediately", timeout => {
+    const result = Bun.spawnSync({ cmd: [bunExe(), "-e", "setTimeout(() => {}, 5)"], env: bunEnv, timeout });
+    expect(result.exitedDueToTimeout).toBe(false);
+    expect(result.exitCode).toBe(0);
+  });
+
   // https://github.com/oven-sh/bun/issues/33932
   // Windows-only: it runs cmd.exe.
   it.skipIf(!isWindows)("timeout is measured from the current call, not from the previous spawnSync", async () => {

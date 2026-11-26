@@ -520,5 +520,10 @@ pub mod closer {
         pub fn close(file: File) {
             FilePool::go(move || drop(file));
         }
+
+        #[cfg(windows)]
+        pub fn close_pending(file: File, pending: Option<bun_iocp::PendingClose>) {
+            FilePool::go(move || drop((file, pending)));
+        }
     }
 }

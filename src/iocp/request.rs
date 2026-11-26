@@ -183,7 +183,10 @@ impl Requests {
         token: Token,
         result: Box<dyn Any + Send>,
     ) {
-        let Some(slot) = self.get(token) else { return };
+        let slot = self.get(token);
+        let Some(slot) = slot.filter(|slot| slot.state.get() == State::PendingResult) else {
+            return;
+        };
         let callback = self.take_callback(&slot);
         self.slab.borrow_mut().release(token);
         if let Some(Callback::Result(done)) = callback.filter(|_| !port.is_shutdown()) {

@@ -464,7 +464,6 @@ pub struct FILE_ID_FULL_DIR_INFORMATION {
     pub FileNameLength: ULONG,
     pub EaSize: ULONG,
     pub FileId: LARGE_INTEGER,
-    /// Fits the longest name.
     pub FileName: [WCHAR; 256],
 }
 
@@ -1016,9 +1015,9 @@ pub mod kernel32 {
     #[cfg_attr(windows, link(name = "kernel32"))]
     unsafe extern "system" {
         /// `GetConsoleScreenBufferInfo` (`wincon.h`).
-        pub fn GetConsoleScreenBufferInfo(
+        pub safe fn GetConsoleScreenBufferInfo(
             hConsoleOutput: HANDLE,
-            lpConsoleScreenBufferInfo: *mut CONSOLE_SCREEN_BUFFER_INFO,
+            lpConsoleScreenBufferInfo: &mut CONSOLE_SCREEN_BUFFER_INFO,
         ) -> BOOL;
         /// `FillConsoleOutputAttribute` (`wincon.h`).
         pub fn FillConsoleOutputAttribute(
@@ -1126,7 +1125,6 @@ impl NTSTATUS {
     pub const PENDING: NTSTATUS = NTSTATUS(0x0000_0103);
     /// `STATUS_END_OF_FILE` — `NtReadFile` past EOF.
     pub const END_OF_FILE: NTSTATUS = NTSTATUS(0xC000_0011);
-    pub const ALERTED: NTSTATUS = NTSTATUS(0x0000_0101);
     pub const CANCELLED: NTSTATUS = NTSTATUS(0xC000_0120);
     pub const DATATYPE_MISALIGNMENT: NTSTATUS = NTSTATUS(0x8000_0002);
     pub const PIPE_BROKEN: NTSTATUS = NTSTATUS(0xC000_014B);
@@ -1530,10 +1528,10 @@ unsafe extern "system" {
         hTemplateFile: HANDLE,
     ) -> HANDLE;
 
-    pub fn SetFilePointerEx(
+    pub safe fn SetFilePointerEx(
         hFile: HANDLE,
         liDistanceToMove: LARGE_INTEGER,
-        lpNewFilePointer: *mut LARGE_INTEGER,
+        lpNewFilePointer: &mut LARGE_INTEGER,
         dwMoveMethod: DWORD,
     ) -> BOOL;
 }
@@ -1555,7 +1553,7 @@ pub struct SYSTEM_INFO {
 }
 #[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
-    pub fn GetSystemInfo(lpSystemInfo: *mut SYSTEM_INFO);
+    pub safe fn GetSystemInfo(lpSystemInfo: &mut SYSTEM_INFO);
 }
 
 pub const TOKEN_QUERY: DWORD = 0x0008;
@@ -1789,8 +1787,9 @@ pub struct CURDIR {
 pub struct RTL_USER_PROCESS_PARAMETERS {
     // {MaximumLength, Length, Flags, DebugFlags} — 4 × ULONG.
     _reserved1: [u8; 16],
-    // {ConsoleHandle, ConsoleFlags+pad} — 2 × pointer-size.
-    _reserved2: [*mut c_void; 2],
+    pub ConsoleHandle: HANDLE,
+    // {ConsoleFlags+pad}
+    _reserved2: *mut c_void,
     pub hStdInput: HANDLE,
     pub hStdOutput: HANDLE,
     pub hStdError: HANDLE,

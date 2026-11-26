@@ -115,7 +115,7 @@ impl CopyFile {
                 result: Ok(0),
                 blocking_io: BlockingIo::default(),
             };
-            let cancel_tokens = copy.blocking_io.cancel_tokens();
+            let cancel_tokens = copy.blocking_io.cancel_tokens(cx);
             Job::<Self>::create(cx, copy, promise, cancel_tokens).use_device_pool(can_block)
         });
         value
@@ -149,7 +149,7 @@ impl CopyFile {
         let has_path = || {
             w::is_delete_pending(source.fd().native()) == Some(false) && is_source(path.as_zstr())
         };
-        // `CopyFileW` refuses streams, and truncates a file that is copied onto itself while it is open for writing.
+        // `CopyFileW` refuses streams, and needs two different files.
         if !has_path() || !stream_name(path.as_bytes()).is_empty() || is_source(to.0) {
             return None;
         }
@@ -183,7 +183,8 @@ impl CopyFile {
         while let Err(err) = copy() {
             match err.to_node_errno() {
                 E::EBUSY
-                    if let Ok(source) = sys::stat(from)
+                    if expected_source.is_none()
+                        && let Ok(source) = sys::stat(from)
                         && let Ok(destination) = sys::stat(to)
                         && source.is_same_file(&destination) =>
                 {
@@ -236,7 +237,15 @@ impl CopyFile {
             Some(borrowed) => borrowed,
             // The destination may be the source, so it is truncated after the copy.
             None if source_stat.is_some() => open_destination(0)?,
-            None => open_destination(O::TRUNC)?,
+            None => match open_destination(O::TRUNC) {
+                // https://github.com/oven-sh/bun/issues/6820
+                Err(err) if err.get_errno() == E::EPERM => {
+                    let (file, can_block) = open_destination(0)?;
+                    sys::ftruncate(file.fd(), 0).map_err(|_| err)?;
+                    (file, can_block)
+                }
+                opened => opened?,
+            },
         };
         let destination_stat = (source_stat.is_some() && !destination_can_block)
             .then(|| destination.stat().ok())
@@ -246,10 +255,16 @@ impl CopyFile {
             return Err(self.destination.attach_path(err));
         }
 
-        let is_same_stream = || {
-            let [source, destination] = [&source, &destination]
-                .map(|file| sys::get_fd_path_owned(file.fd()).unwrap_or_default());
-            stream_name(&source) == stream_name(&destination)
+        // An image or a snapshot of a volume has its serial number and file ids, and FAT reuses ids.
+        let is_same_stream = |has_links| {
+            let paths = [&source, &destination].map(|file| w::device_path(file.fd().native()));
+            let [Some(source), Some(destination)] = paths else {
+                return false;
+            };
+            source == destination
+                || has_links
+                    && volume_name(&source).eq(volume_name(&destination))
+                    && stream_name(&source) == stream_name(&destination)
         };
 
         Ok(Transfer {
@@ -258,8 +273,9 @@ impl CopyFile {
                 && !(destination.is_borrowed() && destination_can_block),
             is_same_file: source_stat
                 .zip(destination_stat)
-                .is_some_and(|(source, destination)| source.is_same_file(&destination))
-                && is_same_stream(),
+                .is_some_and(|(source, destination)| {
+                    source.is_same_file(&destination) && is_same_stream(source.st_nlink > 1)
+                }),
             source_size: source_stat.map_or(0, |stat| stat.st_size),
             destination_size: match (source_stat, destination_stat) {
                 (None, _) => 0,
@@ -286,6 +302,12 @@ fn can_use_copy_file(path: &[u8]) -> bool {
         name => (name, &[b"con", b"conin$", b"conout$", b"pipe"]),
     };
     !name.is_some_and(|name| strings::eql_any_case_insensitive_ascii(name, device_names))
+}
+
+/// The components of `\Device\HarddiskVolume1` or `\Device\Mup\server\share`.
+fn volume_name(device_path: &[u8]) -> impl Iterator<Item = &[u8]> {
+    let is_share = device_path.starts_with(b"\\Device\\Mup\\");
+    strings::split(device_path, b"\\").take(if is_share { 5 } else { 3 })
 }
 
 /// `:name` for an alternate data stream, otherwise empty.

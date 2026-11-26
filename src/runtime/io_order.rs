@@ -116,7 +116,10 @@ pub(crate) enum RetainedFile {
 
 impl RetainedFile {
     pub(crate) fn new(fd: Fd) -> Self {
-        if fd.stdio_tag().is_some() {
+        if let Some(tag) = fd.stdio_tag() {
+            if tag == bun_core::Stdio::StdIn {
+                sys::windows::named_pipe::mark_concurrent_reader();
+            }
             return Self::Borrowed(fd);
         }
         match sys::dup(fd) {

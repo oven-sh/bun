@@ -4,7 +4,7 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use bun_iocp::blocking::{self, CancelToken};
-use bun_iocp::{Completer, Completion, Handle, OverlappedFile, Port, Request};
+use bun_iocp::{Completion, Handle, OverlappedFile, Port, Request};
 use bun_ptr::{CellExt as _, OptionCellExt as _};
 use bun_sys::windows::named_pipe::{self, Kind};
 use bun_sys::windows::{self as w, NT_ERROR, NTSTATUS, Win32Error, Win32ErrorExt as _};
@@ -608,11 +608,17 @@ impl Inner {
         let buffer = self.state.acquire_buffer(max_len);
         let cancel_token = worker_token.clone();
         let is_kind_known = self.io_mode.get().is_some();
+        let is_remote = self.max_transfer_len != usize::MAX;
         blocking::spawn(move || {
             let kind = resolve_kind(&handle, is_kind_known);
             let read = match kind {
                 Kind::Synchronous => {
-                    read_synchronous(&handle, buffer, max_len, mode, &worker_token, &completer)
+                    // A reader that waits for the handle goes first, and running JS may be about to pause.
+                    let can_consume = || {
+                        (is_remote || !named_pipe::has_concurrent_reader())
+                            && completer.is_port_parked()
+                    };
+                    read_synchronous(&handle, buffer, max_len, mode, &worker_token, can_consume)
                 }
                 Kind::Overlapped | Kind::NotAPipe => BlockingRead::Readable(buffer),
             };
@@ -779,13 +785,13 @@ enum BlockingRead {
     Readable(Vec<u8>),
 }
 
-fn read_synchronous<T: Send + 'static>(
+fn read_synchronous(
     handle: &Handle,
     mut buffer: Vec<u8>,
     max_len: usize,
     mut mode: ConsumeMode,
     cancel_token: &CancelToken,
-    completer: &Completer<T>,
+    can_consume: impl Fn() -> bool,
 ) -> BlockingRead {
     /// On a remote pipe a zero-byte read returns immediately.
     const MAX_READABLE_WAITS: usize = 3;
@@ -813,8 +819,7 @@ fn read_synchronous<T: Send + 'static>(
                 break;
             }
             read_blocking(&mut buffer, 0)?;
-            // Running JS may have handed the input to a child process or be about to pause.
-            if cancel_token.is_cancelled() || !completer.is_port_parked() {
+            if cancel_token.is_cancelled() || !can_consume() {
                 return Ok(false);
             }
             mode = ConsumeMode::Immediate;

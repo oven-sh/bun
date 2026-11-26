@@ -1321,10 +1321,8 @@ impl WindowsStreamingWriter {
             self.base
                 .with_source(|source| source.write_file_sync(self.outgoing.take().slice()));
         }
-        if let IoEvent::Write(WriteEvent::VmTeardown) = event
-            && self.base.with_source(WriteSource::is_file) == Some(true)
-        {
-            self.base.close_sink(false);
+        if let IoEvent::Write(WriteEvent::VmTeardown) = event {
+            return self.base.close(handler, false);
         }
         match self.base.end_write(handler, event) {
             Some(Ok(written)) => self.on_write_complete(handler, written),
@@ -1387,6 +1385,9 @@ impl WindowsStreamingWriter {
     }
 
     fn submit_outgoing(&self) -> sys::Result<()> {
+        if !self.base.has_sink() {
+            return Err(sys::Error::from_code(sys::E::EPIPE, sys::Tag::pipe));
+        }
         let outgoing = self.outgoing.list.replace(self.base.spare_buffer.take());
         self.base.submit(Payload::Owned(outgoing))
     }

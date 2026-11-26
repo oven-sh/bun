@@ -39,8 +39,6 @@ pub(crate) struct PathWatcher {
     /// Owns the only directory handle, which blocks renaming its parents while it is open.
     pending_read: Cell<Option<Request>>,
     spare_buffer: Cell<Vec<u8>>,
-    /// Whether the last read completed with `BUFFER_OVERFLOW`.
-    is_last_read_truncated: Cell<bool>,
 }
 
 enum Target {
@@ -164,11 +162,11 @@ impl ChangeEvent {
 impl PathWatcher {
     fn read_changes(self: &Rc<Self>, file: &Rc<OverlappedFile>) -> Result<(), NTSTATUS> {
         const FILTER: u32 = w::FileNotifyChangeFilter::all().bits();
-        // The first read sets the size of the system's change buffer; network shares accept at most 64 KiB.
-        let buffer_size = if self.recursive { 64 * 1024 } else { 4096 };
+        // Bounds the names that one completion looks up on the JS thread.
+        const BUFFER_SIZE: usize = 4096;
         let mut buffer = self.spare_buffer.take();
         buffer.clear();
-        buffer.reserve_exact(buffer_size);
+        buffer.reserve_exact(BUFFER_SIZE);
         let this = Rc::downgrade(self);
         let owned_file = Rc::clone(file);
         let on_complete = move |completion| {
@@ -177,7 +175,7 @@ impl PathWatcher {
             }
         };
         let request = file
-            .read_changes(buffer, buffer_size, FILTER, self.recursive, on_complete)
+            .read_changes(buffer, BUFFER_SIZE, FILTER, self.recursive, on_complete)
             .map_err(|completion| completion.status)?;
         self.pending_read.set(Some(request));
         Ok(())
@@ -186,10 +184,7 @@ impl PathWatcher {
     fn on_changes(self: &Rc<Self>, file: &Rc<OverlappedFile>, completion: Completion) {
         let Completion { status, buffer, .. } = completion;
         let timestamp = Timespec::now(TimespecMockMode::ForceRealTime).ms_unsigned();
-        // A network share can report lost changes as `BUFFER_OVERFLOW`; only a repeated one is an error.
-        let is_truncated = status == NTSTATUS::BUFFER_OVERFLOW;
-        let was_truncated = self.is_last_read_truncated.replace(is_truncated);
-        if !NT_SUCCESS(status) && (was_truncated || !is_truncated) {
+        if !NT_SUCCESS(status) {
             return self.emit_error(file, status, timestamp);
         }
         let records = match status {
@@ -307,7 +302,6 @@ pub(crate) fn watch(
         target,
         pending_read: Cell::new(None),
         spare_buffer: Cell::default(),
-        is_last_read_truncated: Cell::new(false),
     });
     let handle = bun_iocp::Handle::from_owned(handle);
     let file = OverlappedFile::new_exclusive(vm.uws_loop().port(), handle);

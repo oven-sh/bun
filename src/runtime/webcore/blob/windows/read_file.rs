@@ -106,7 +106,7 @@ impl ReadFile {
             blocking_io: BlockingIo::default(),
         };
         let completion = PendingReadFileCompletion::new(completion);
-        let cancel_tokens = read.blocking_io.cancel_tokens();
+        let cancel_tokens = read.blocking_io.cancel_tokens(cx);
         let &PathOrFileDescriptor::Fd(fd) = pathlike(&read.store) else {
             return Job::<Self>::create(cx, read, completion, cancel_tokens).schedule();
         };

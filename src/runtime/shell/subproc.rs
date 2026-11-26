@@ -453,6 +453,8 @@ impl ShellSubprocess {
             cwd: spawn_args.cwd.into(),
             #[cfg(unix)]
             no_sigpipe,
+            #[cfg(windows)]
+            inherits_all_handles: matches!(event_loop, EventLoopHandle::Mini(_)),
             ..Default::default()
         };
 
@@ -1222,6 +1224,11 @@ impl PipeReader {
 
     /// The `Cmd` may drop every other `Rc`.
     pub(crate) fn read(self: &Rc<Self>, event: Option<IoEvent>) {
+        // See `IOReader::on_io`.
+        #[cfg(windows)]
+        if let Some(IoEvent::Read(bun_io::pipe_reader::ReadEvent::VmTeardown)) = event {
+            return self.reader.deinit();
+        }
         let event_loop = self.event_loop.as_event_loop_ctx();
         let result = self.reader.read_chunks(event_loop, event, |chunk, state| {
             self.on_read_chunk(&chunk, state)

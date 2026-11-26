@@ -610,6 +610,76 @@ describe("uv stubs", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent.each([
+    ["uv_async_init on an addon thread", "addon.testFromWaitedThread(0)", "async\n"],
+    ["uv_timer_start on an addon thread", "addon.testFromWaitedThread(1)", "timer\n"],
+    ["uv_unref on an addon thread", "addon.testFromWaitedThread(2)", ""],
+    ["uv_close on an addon thread", "addon.testFromWaitedThread(3)", "close\nclose\n"],
+    ["uv_ref and uv_unref in work_cb", "addon.testRefAroundSend()", "async\n"],
+    ["uv_timer_init right after uv_close", "addon.testInitAfterClose()", "close\nclose\n"],
+    ["uv_async_send and uv_close while the loop runs", "addon.testSendAndCloseOnThread()", "async\n"],
+    [
+      "uv_close in close_cb",
+      "addon.testCloseInCloseCb()",
+      isWindows ? "second\nthird\nfirst\n" : "second\nfirst\nthird\n",
+    ],
+    [
+      "uv_async_send in work_cb while another async callback runs",
+      "addon.testProgressBeforeAfterWork()",
+      "progress\nafter work\n",
+    ],
+    [
+      "uv_async_init on uv_default_loop in a Worker",
+      `startWorker("addon.testDefaultLoopAsync()").on("exit", () => clearInterval(keepAlive))`,
+      "async\n",
+    ],
+    [
+      "uv_timer_start on a timer that a terminated Worker started",
+      `const worker = startWorker("addon.startDefaultLoopTimer(); postMessage(0)").on("message", async () => {
+         await worker.terminate();
+         clearInterval(keepAlive);
+         addon.restartDefaultLoopTimer();
+       })`,
+      "timer\n",
+    ],
+  ])("%s", async (_, script, expected) => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      let keepAlive;
+      function startWorker(script) {
+        keepAlive = setInterval(() => {}, 1e6);
+        const { Worker } = require("node:worker_threads");
+        return new Worker(${JSON.stringify(`const addon = require(${JSON.stringify(addonPath)});`)} + script, { eval: true });
+      }
+      ${script};
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.skipIf(!isWindows)("uv_close at exit does not wait for a thread that has ended", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`addon.testCloseAtExitWithSenderInside(); process.exit(0);`);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("returned\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.skipIf(!isWindows)("after_work_cb runs after Bun.ModuleGraph#dispose()", async () => {
+    using dir = tempDir("uv-module-graph", {
+      "tenant.mjs": `export const start = addon => addon.testDefaultLoopWork();`,
+    });
+    const { stdout, stderr, exitCode } = await runInChild(`
+      const graph = new Bun.ModuleGraph({});
+      graph.import(${JSON.stringify(path.join(String(dir), "tenant.mjs"))}).then(({ start }) => {
+        graph.run(() => start(addon));
+        graph.dispose();
+      });
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("on the calling thread: 1\n");
+    expect(exitCode).toBe(0);
+  });
+
   // The handle tests below print the addon's returned state as one JSON line,
   // then one line per event.
   function stateAndEvents(stdout: string) {
@@ -625,9 +695,9 @@ describe("uv stubs", () => {
     "prepare 2 1",
     "check 2 1",
     "closing 1 0",
-    "close idle 1 0",
-    "close prepare 1 0",
     "close check 1 0",
+    "close prepare 1 0",
+    "close idle 1 0",
     "",
   ].join("\n");
 
@@ -701,8 +771,8 @@ describe("uv stubs", () => {
       "io",
       `check ${iteration} 1`,
       "closing 1 0",
-      "close prepare 1 0",
       "close check 1 0",
+      "close prepare 1 0",
       "",
     );
     expect(lines).toEqual(expected);

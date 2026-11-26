@@ -1,4 +1,4 @@
-//! A thread pool that starts tasks in FIFO order. Idle threads exit after a timeout, except the last one.
+//! A thread pool that starts tasks in FIFO order.
 
 use core::cell::Cell;
 use core::ptr;
@@ -38,6 +38,8 @@ pub struct Config {
     pub on_thread_start: fn(),
     /// See [`try_during_warmup`].
     pub has_warmup: bool,
+    /// Otherwise they exit after a timeout, except the last one. Windows cancels the pending I/O of a thread that exits.
+    pub keeps_idle_threads: bool,
 }
 
 pub struct FifoPool {
@@ -138,6 +140,7 @@ impl FifoPool {
             state.thread_count -= 1;
             state.idle_count -= 1;
             if state.thread_count == 0 {
+                drop(state);
                 exit_spawn_failed(&err);
             }
             return;
@@ -149,6 +152,10 @@ impl FifoPool {
             .name(self.config.name.into())
             .stack_size(self.config.stack_size)
             .spawn(|| self.run())
+    }
+
+    pub fn max_threads(&self) -> usize {
+        self.config.max_threads
     }
 
     pub fn has_current_thread(&self) -> bool {
@@ -209,7 +216,8 @@ impl FifoPool {
             if state.tasks.is_empty() && REMAINING_WARMUP_SUCCESSES.get() < MAX_WARMUP_SUCCESSES {
                 end_warmup();
             }
-            let should_persist = state.idle_count == 1 && REMAINING_WARMUP_SUCCESSES.get() == 0;
+            let can_exit = state.idle_count > 1 && !self.config.keeps_idle_threads;
+            let should_persist = !can_exit && REMAINING_WARMUP_SUCCESSES.get() == 0;
             if state.tasks.is_empty() && should_persist {
                 self.task_available.wait_guarded(&mut state);
             } else if state.tasks.is_empty()
@@ -220,7 +228,7 @@ impl FifoPool {
                 && state.tasks.is_empty()
             {
                 end_warmup();
-                if state.idle_count > 1 {
+                if state.idle_count > 1 && !self.config.keeps_idle_threads {
                     state.thread_count -= 1;
                     state.idle_count -= 1;
                     return;

@@ -849,7 +849,12 @@ unsafe extern "C" fn Bun__Chrome__writePipe(data: *const u8, len: usize) {
             return; // Chrome already exited; the Exited event is on its way to C++
         };
         scoped_log!(Chrome, "write {} bytes", len);
-        let _ = chrome.pipes.cmd.write(&chrome.pipes, bytes);
+        let cmd = &chrome.pipes.cmd;
+        if cmd.has_pending_data() {
+            cmd.enqueue(bytes);
+        } else {
+            cmd.try_write(&chrome.pipes, &[bytes]);
+        }
     });
 }
 

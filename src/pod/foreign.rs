@@ -98,6 +98,7 @@ mod windows {
         w::OVERLAPPED,
         w::PROCESS_INFORMATION,
         w::STARTUPINFOW,
+        w::SYSTEM_INFO,
         ws2_32::addrinfo,
     );
 }

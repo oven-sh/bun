@@ -9,6 +9,7 @@ use bun_jsc::JsCell;
 use bun_ptr::{OptionCellExt as _, RefPtr};
 use bun_sys::{self as sys, Fd};
 
+use crate::node::types::PathLikeExt as _;
 use crate::webcore::SinkHandle;
 use crate::webcore::blob;
 use crate::webcore::jsc::bindgen::{JsLocal, JsScope};
@@ -134,7 +135,7 @@ impl Lazy {
             }
             PathOrFileDescriptor::Path(path) => {
                 match sys::File::open(
-                    &bun_paths::Path::from(path.slice()),
+                    path.slice_z(&mut bun_paths::Path::new()),
                     sys::O::RDONLY | sys::O::NONBLOCK | sys::O::CLOEXEC,
                     0,
                 ) {

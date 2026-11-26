@@ -878,7 +878,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                          * buffer. This is what the comment above always described; it
                          * was keyed on the error flag, which kqueue does not set for
                          * a peer FIN. */
-                        if (s && !us_socket_is_closed(s) && (error || (!s->flags.is_paused && eof))) {
+                        if (s && !us_socket_is_closed(s) && (error || (!s->flags.is_paused && (eof || (events & LIBUS_SOCKET_READ_TO_END))))) {
                             continue;
                         }
                         /* Stop if on_data paused us (us_socket_pause from the data
@@ -892,10 +892,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         ) {
                             repeat_recv_count++;
 
-                            // When not hung up, read a maximum of 10 more times: a peer that refills the receive buffer
+                            // When not hung up, read a limited number of times: a peer that refills the receive buffer
                             // during on_data keeps every read full, and timers only run once we return to the loop.
                             // We don't bother with ioctl(FIONREAD) because we've set MSG_DONTWAIT
-                            if (repeat_recv_count <= 10) {
+                            if (repeat_recv_count <= LIBUS_MAX_REPEAT_RECV_COUNT) {
                                 continue;
                             }
                         }

@@ -111,6 +111,9 @@ impl From<File> for StreamFd {
 impl Drop for StreamFd {
     fn drop(&mut self) {
         if let MaybeOwnedFile::Owned(file) = core::mem::take(&mut self.0) {
+            #[cfg(windows)]
+            Closer::close_pending(file, Some(bun_uws::Loop::get().port().add_pending_close()));
+            #[cfg(not(windows))]
             Closer::close(file);
         }
     }

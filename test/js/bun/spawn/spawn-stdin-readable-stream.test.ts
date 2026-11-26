@@ -1327,3 +1327,40 @@ describe("spawn stdin ReadableStream", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+test.concurrent.skipIf(!isWindows).each([
+  ["a stream", `spawn(new ReadableStream({ async pull(c) { await 1; c.enqueue(chunk); c.close(); } }))`],
+  ["a generator", `spawn(new Response((async function* () { yield chunk; })()))`],
+  ["close()", `const { stdin } = spawn("pipe"); stdin.write(chunk); stdin.write(chunk); stdin.close();`],
+])("a Worker that ends with a blocked write closes the stdin of its child (%s)", async (_, start) => {
+  using dir = tempDir("worker-blocked-stdin", {
+    "child.js": `
+      const socket = require("net").connect(+process.argv[2], "127.0.0.1");
+      socket.on("close", () => process.exit());
+      socket.once("data", () => process.stdin.on("end", () => socket.end("end")).resume());
+    `,
+    "main.js": `
+      const { Worker, isMainThread, workerData, parentPort } = require("worker_threads");
+      const { once } = require("events");
+      if (isMainThread) {
+        const server = require("net").createServer().listen(0, "127.0.0.1", async () => {
+          const worker = new Worker(__filename, { workerData: server.address().port });
+          const [[socket]] = await Promise.all([once(server, "connection"), once(worker, "message")]);
+          await worker.terminate();
+          socket.write("read");
+          console.log(String(await once(socket, "data")));
+          server.close();
+        });
+      } else {
+        const chunk = Buffer.alloc(1 << 20);
+        const spawn = stdin => Bun.spawn([process.execPath, "child.js", String(workerData)], { stdin });
+        ${start};
+        setImmediate(() => setImmediate(() => parentPort.postMessage(0)));
+        setInterval(() => {}, 1e6);
+      }
+    `,
+  });
+  await using proc = spawn({ cmd: [bunExe(), "main.js"], env: bunEnv, cwd: String(dir), stderr: "inherit" });
+  expect(await proc.stdout.text()).toBe("end\n");
+  expect(await proc.exited).toBe(0);
+});

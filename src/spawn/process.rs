@@ -544,7 +544,7 @@ pub struct Exited {
     pub code: u8,
     /// The platform's signal number, or `0` for none; see `Status::signal`.
     pub signal: u8,
-    /// Untruncated `GetExitCodeProcess` DWORD; `code` is its low byte, or 1 if only that byte is 0.
+    /// Untruncated `GetExitCodeProcess` DWORD.
     /// NTSTATUS crash codes only survive here (0xC0000409 → `code` 9).
     #[cfg(windows)]
     pub raw: u32,
@@ -1294,8 +1294,7 @@ mod spawn_process_body {
         argv: CStrList<'_>,
         envp: Option<CStrList<'_>>,
     ) -> bun_sys::Result<SpawnResult> {
-        let inherited_handles = InheritedHandles::Explicit(options.inherited_handle);
-        let (child, pipes) = create_process(options, inherited_handles, argv, envp)?;
+        let (child, pipes) = create_process(options, argv, envp)?;
         let mut pipes = pipes.into_iter().map(|pipe| pipe.map(File::from));
         Ok(SpawnResult {
             pid: child.pid as PidT,
@@ -1314,7 +1313,6 @@ mod spawn_process_body {
     #[cfg(windows)]
     fn create_process(
         options: &SpawnOptions<'_>,
-        inherited_handles: InheritedHandles,
         argv: CStrList<'_>,
         envp: Option<CStrList<'_>>,
     ) -> bun_sys::Result<(windows_process::Child, Vec<Option<OwnedHandle>>)> {
@@ -1443,6 +1441,10 @@ mod spawn_process_body {
                 }
                 (Stdio::Pipe(fd), _) => {
                     has_inherited_fd = true;
+                    // `fd` can be a duplicate of a handle that this process reads.
+                    if index == 0 {
+                        w::named_pipe::mark_concurrent_reader();
+                    }
                     duplicate_fd(*fd)?
                 }
                 (Stdio::Path(path), _) => {
@@ -1462,7 +1464,10 @@ mod spawn_process_body {
 
         let options = windows_process::Options {
             descriptors: &descriptors,
-            inherited_handles,
+            inherited_handles: match options.inherits_all_handles {
+                true => InheritedHandles::All,
+                false => InheritedHandles::Explicit(options.inherited_handle),
+            },
             console: match options.pseudoconsole {
                 Some(console) => Console::Pseudo(console),
                 None if options.hide_window && !has_inherited_fd => Console::Hidden,
@@ -1497,6 +1502,9 @@ mod spawn_process_body {
             /// Whether the child gets this process's descriptor `3 + index`, under the same number.
             #[cfg(windows)]
             pub inherited_extra_fds: Box<[bool]>,
+            /// Ignored if there is a `SyncStdio::Buffer`.
+            #[cfg(windows)]
+            pub inherits_all_handles: bool,
         }
 
         #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1534,6 +1542,8 @@ mod spawn_process_body {
                     argv0: None,
                     #[cfg(windows)]
                     inherited_extra_fds: Box::default(),
+                    #[cfg(windows)]
+                    inherits_all_handles: true,
                 }
             }
         }
@@ -1583,16 +1593,9 @@ mod spawn_process_body {
                 [options.stdin, options.stdout, options.stderr].contains(&SyncStdio::Buffer);
             // Without pipes, the child is the foreground program on our console.
             let _child = (!has_pipes).then(crate::ctrl_c::Child::enter);
-            let (child, mut pipes) = create_process(
-                &options.to_spawn_options(false),
-                if has_pipes {
-                    InheritedHandles::Explicit(None)
-                } else {
-                    InheritedHandles::All
-                },
-                argv,
-                options.envp,
-            )?;
+            let mut spawn_options = options.to_spawn_options(false);
+            spawn_options.inherits_all_handles = options.inherits_all_handles && !has_pipes;
+            let (child, mut pipes) = create_process(&spawn_options, argv, options.envp)?;
             let process = child.handle.as_raw_handle();
             let [stdout, stderr] = bun_iocp::read_to_end([pipes[1].take(), pipes[2].take()])
                 .map_err(|err| {

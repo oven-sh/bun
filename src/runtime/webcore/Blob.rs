@@ -2976,7 +2976,11 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     if fd.0 < 0 {
                         return Err(crate::Error::InvalidValue);
                     }
-                    let mut path_or_fd = PathOrFileDescriptor::Fd(fd);
+                    #[cfg(windows)]
+                    if !matches!(fd.decode_windows(), bun_core::DecodeWindows::Crt(0..)) {
+                        return Err(crate::Error::InvalidValue);
+                    }
+                    let mut path_or_fd = PathOrFileDescriptor::Fd(Fd::from_crt(fd.crt()));
                     break 'file Blob::find_or_create_file_from_path(
                         &mut path_or_fd,
                         global_this,
@@ -3182,7 +3186,8 @@ fn start_file_sink(
         || bun_sys::File::open(path_z, flags, mode).map_err(|err| err.with_path(path.slice()));
     let file = match open() {
         Err(err) if err.get_errno() == bun_sys::E::ENOENT && mkdirp => {
-            mkdirp_parent(path.slice())?;
+            let parent = bun_paths::dirname(path.slice()).unwrap_or_else(|| path.slice());
+            mkdirp_parent(path.slice()).map_err(|err| err.with_path(parent))?;
             open()?
         }
         file => file?,

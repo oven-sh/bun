@@ -343,3 +343,36 @@ test.skipIf(!isLinux)(
   },
   60_000,
 );
+
+test.concurrent.skipIf(!isWindows).each(["cat > part && echo > marker", "cat | (cat > part && echo > marker)"])(
+  "terminating a worker is not the end of the input of %s",
+  async line => {
+    using dir = tempDir("shell-worker-terminate-input", {
+      "main.js": `
+        const { Worker, isMainThread } = require("worker_threads");
+        const fs = require("fs");
+        if (isMainThread) {
+          const worker = new Worker(__filename);
+          (async () => {
+            while (!fs.statSync("part", { throwIfNoEntry: false })?.size) await Bun.sleep(1);
+            await worker.terminate();
+            console.log(fs.existsSync("marker"));
+          })();
+        } else {
+          Bun.$\`${line}\`.quiet().then(() => {});
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: "pipe",
+      stderr: "inherit",
+    });
+    proc.stdin.write("first half\n");
+    proc.stdin.flush();
+    expect(await proc.stdout.text()).toBe("false\n");
+    expect(await proc.exited).toBe(0);
+  },
+);

@@ -74,6 +74,22 @@ test.concurrent("navigate, events and evaluate cross the pipes", async () => {
   });
 });
 
+test.concurrent("a command reaches the browser while the event loop is blocked", async () => {
+  using dir = tempDir("webview-blocked-loop", {});
+  const result = await runScenario(`
+    const marker = ${JSON.stringify(join(String(dir), "marker"))};
+    const view = newView();
+    await view.navigate("http://fake/");
+    const written = view.evaluate("Bun.write(" + JSON.stringify(marker) + ", 'x')");
+    const { existsSync } = require("fs");
+    for (const deadline = Date.now() + 3000; !existsSync(marker) && Date.now() < deadline; ) Bun.sleepSync(1);
+    print(existsSync(marker));
+    await written;
+    view.close();
+  `);
+  expect(result).toBe(true);
+});
+
 test.concurrent("a reply larger than the read buffer is reassembled", async () => {
   const result = await runScenario(`
     const view = newView();

@@ -35,6 +35,9 @@ struct Slot<T> {
     is_used: bool,
 }
 
+/// How many released values keep what they hold.
+const WARM_COUNT: usize = 64;
+
 /// Values have stable addresses and are reused after `release`.
 pub(crate) struct Slab<T> {
     slots: Vec<Slot<T>>,
@@ -50,7 +53,7 @@ impl<T: Default> Slab<T> {
         }
     }
 
-    /// A reused value is not reset.
+    /// A reused value may not be reset.
     pub(crate) fn acquire(&mut self) -> (Token, Rc<T>) {
         let index = self.free.pop().unwrap_or_else(|| {
             assert!(self.slots.len() < Token::SPARE_BIT);
@@ -80,6 +83,11 @@ impl<T: Default> Slab<T> {
         slot.is_used = false;
         slot.generation = (slot.generation + 1) & Token::GENERATION_MASK;
         self.free.push(token.index() as u32);
+        if let Some(&index) = self.free.iter().nth_back(WARM_COUNT)
+            && let Some(value) = Rc::get_mut(&mut self.slots[index as usize].value)
+        {
+            *value = T::default();
+        }
     }
 
     /// Skips released slots.
@@ -94,6 +102,7 @@ impl<T: Default> Slab<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::cell::Cell;
 
     #[test]
     fn released_token_is_invalid() {
@@ -108,5 +117,24 @@ mod tests {
         assert_ne!(first, second);
         assert!(slab.get(first).is_none());
         assert_eq!(slab.iter().count(), 1);
+    }
+
+    #[test]
+    fn only_recently_released_values_keep_their_contents() {
+        let mut slab = Slab::<Cell<bool>>::new();
+        let tokens: Vec<_> = (0..WARM_COUNT * 2)
+            .map(|_| {
+                let (token, value) = slab.acquire();
+                value.set(true);
+                token
+            })
+            .collect();
+        for token in tokens {
+            slab.release(token);
+        }
+        let kept_count = (0..WARM_COUNT * 2)
+            .filter(|_| slab.acquire().1.get())
+            .count();
+        assert_eq!(kept_count, WARM_COUNT);
     }
 }

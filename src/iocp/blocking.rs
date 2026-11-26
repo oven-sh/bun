@@ -35,6 +35,7 @@ pub fn spawn(job: impl FnOnce() + Send + 'static) {
             bun_core::Output::Source::configure_thread_no_js
         },
         has_warmup: false,
+        keeps_idle_threads: false,
     });
     POOL.go(job);
 }

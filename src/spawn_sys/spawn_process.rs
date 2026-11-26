@@ -308,6 +308,9 @@ pub struct SpawnOptions<'a> {
     /// An inheritable handle. The caller tells the child its value.
     #[cfg(windows)]
     pub inherited_handle: Option<bun_sys::windows::HANDLE>,
+    /// For commands that only run other commands, one spawn at a time.
+    #[cfg(windows)]
+    pub inherits_all_handles: bool,
 }
 
 impl Default for SpawnOptions<'_> {
@@ -342,6 +345,8 @@ impl Default for SpawnOptions<'_> {
             job: None,
             #[cfg(windows)]
             inherited_handle: None,
+            #[cfg(windows)]
+            inherits_all_handles: false,
         }
     }
 }

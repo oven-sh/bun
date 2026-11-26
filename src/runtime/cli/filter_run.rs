@@ -911,6 +911,8 @@ pub(crate) fn run_scripts_with_filter(
                 stderr: spawn::Stdio::Buffer,
                 cwd: without_trailing_sep(dirname_or_root(&script.package_json_path)).into(),
                 stream: true,
+                #[cfg(windows)]
+                inherits_all_handles: true,
                 ..Default::default()
             },
             remaining_dependencies: 0,

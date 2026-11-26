@@ -3,6 +3,7 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 
 use core::cell::Cell;
+use core::convert::Infallible;
 use core::ffi::{c_int, c_void};
 use core::ptr;
 use std::os::windows::io::{
@@ -58,14 +59,14 @@ unsafe extern "system" {
         IoStatus: NTSTATUS,
         IoStatusInformation: usize,
     ) -> NTSTATUS;
-    safe fn NtQueryInformationThread(
+    fn NtQueryInformationThread(
         ThreadHandle: HANDLE,
         ThreadInformationClass: ULONG,
         ThreadInformation: &mut THREAD_BASIC_INFORMATION,
         ThreadInformationLength: ULONG,
         ReturnLength: Option<&mut ULONG>,
     ) -> NTSTATUS;
-    safe fn NtSetInformationThread(
+    fn NtSetInformationThread(
         ThreadHandle: HANDLE,
         ThreadInformationClass: ULONG,
         ThreadInformation: &i32,
@@ -111,25 +112,29 @@ unsafe extern "system" {
         NumberOfConcurrentThreads: DWORD,
     ) -> HANDLE;
     safe fn SetFileCompletionNotificationModes(FileHandle: HANDLE, Flags: u8) -> BOOL;
-    fn CreateWaitableTimerExW(
-        lpTimerAttributes: *const c_void,
-        lpTimerName: *const u16,
+    safe fn CreateWaitableTimerExW(
+        lpTimerAttributes: Option<&Infallible>,
+        lpTimerName: Option<&Infallible>,
         dwFlags: DWORD,
         dwDesiredAccess: DWORD,
     ) -> HandleOrNull;
-    fn SetWaitableTimer(
+    safe fn SetWaitableTimer(
         hTimer: HANDLE,
         lpDueTime: &i64,
         lPeriod: i32,
-        pfnCompletionRoutine: *const c_void,
-        lpArgToCompletionRoutine: *const c_void,
+        pfnCompletionRoutine: Option<&Infallible>,
+        lpArgToCompletionRoutine: Option<&Infallible>,
         fResume: BOOL,
     ) -> BOOL;
     safe fn GetSystemTimeAsFileTime(lpSystemTimeAsFileTime: &mut FILETIME);
     safe fn GetPriorityClass(hProcess: HANDLE) -> DWORD;
     safe fn GetThreadPriorityBoost(hThread: HANDLE, pDisablePriorityBoost: &mut BOOL) -> BOOL;
     safe fn CancelSynchronousIo(hThread: HANDLE) -> BOOL;
-    safe fn OpenThread(dwDesiredAccess: DWORD, bInheritHandle: BOOL, dwThreadId: DWORD) -> HANDLE;
+    safe fn OpenThread(
+        dwDesiredAccess: DWORD,
+        bInheritHandle: BOOL,
+        dwThreadId: DWORD,
+    ) -> HandleOrNull;
 }
 
 #[link(name = "ws2_32")]
@@ -352,13 +357,16 @@ impl Priority {
         };
         let mut info = THREAD_BASIC_INFORMATION::default();
         let size = size_of_val(&info) as ULONG;
-        NtQueryInformationThread(
-            GetCurrentThread(),
-            ThreadBasicInformation,
-            &mut info,
-            size,
-            None,
-        );
+        // SAFETY: the class and the size are those of `info`.
+        unsafe {
+            NtQueryInformationThread(
+                GetCurrentThread(),
+                ThreadBasicInformation,
+                &mut info,
+                size,
+                None,
+            )
+        };
         let dynamic = info.Priority;
         let mut is_boost_disabled = 0;
         GetThreadPriorityBoost(GetCurrentThread(), &mut is_boost_disabled);
@@ -373,53 +381,39 @@ impl Priority {
     pub(crate) fn set_boost(&self, levels: i32) {
         // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-zwsetinformationthread
         const ThreadPriority: ULONG = 2;
-        NtSetInformationThread(
-            GetCurrentThread(),
-            ThreadPriority,
-            &(self.base + levels),
-            size_of::<i32>() as ULONG,
-        );
+        // SAFETY: the value of this class is an `i32`.
+        unsafe {
+            NtSetInformationThread(
+                GetCurrentThread(),
+                ThreadPriority,
+                &(self.base + levels),
+                size_of::<i32>() as ULONG,
+            )
+        };
     }
 }
 
 /// The handle has the `THREAD_TERMINATE` right that `CancelSynchronousIo` requires.
 pub(crate) fn open_current_thread() -> Option<OwnedHandle> {
     const THREAD_TERMINATE: DWORD = 1;
-    // SAFETY: `OpenThread` returns a new handle or null.
-    let thread = unsafe {
-        HandleOrNull::from_raw_handle(OpenThread(THREAD_TERMINATE, 0, GetCurrentThreadId()))
-    };
-    OwnedHandle::try_from(thread).ok()
+    OwnedHandle::try_from(OpenThread(THREAD_TERMINATE, 0, GetCurrentThreadId())).ok()
 }
 
 pub(crate) fn create_high_resolution_timer() -> Option<OwnedHandle> {
     const CREATE_WAITABLE_TIMER_HIGH_RESOLUTION: DWORD = 2;
     const TIMER_MODIFY_STATE: DWORD = 2;
-    // SAFETY: both pointer arguments may be null.
-    let timer = unsafe {
-        CreateWaitableTimerExW(
-            ptr::null(),
-            ptr::null(),
-            CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
-            bun_windows_sys::SYNCHRONIZE | TIMER_MODIFY_STATE,
-        )
-    };
+    let timer = CreateWaitableTimerExW(
+        None,
+        None,
+        CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+        bun_windows_sys::SYNCHRONIZE | TIMER_MODIFY_STATE,
+    );
     OwnedHandle::try_from(timer).ok()
 }
 
 /// `ticks` is a relative due time in units of 100 ns.
 pub(crate) fn set_timer(timer: &OwnedHandle, ticks: i64) -> bool {
-    // SAFETY: there is no completion routine.
-    unsafe {
-        SetWaitableTimer(
-            timer.as_raw_handle(),
-            &-ticks,
-            0,
-            ptr::null(),
-            ptr::null(),
-            0,
-        ) != 0
-    }
+    SetWaitableTimer(timer.as_raw_handle(), &-ticks, 0, None, None, 0) != 0
 }
 
 pub(crate) fn wait_for_object(object: &OwnedHandle) {
@@ -428,7 +422,7 @@ pub(crate) fn wait_for_object(object: &OwnedHandle) {
 
 struct WaitPacketApi {
     create: unsafe extern "system" fn(*mut HANDLE, DWORD, *const c_void) -> NTSTATUS,
-    associate: unsafe extern "system" fn(
+    associate: extern "system" fn(
         packet: HANDLE,
         port: HANDLE,
         target: HANDLE,
@@ -436,9 +430,9 @@ struct WaitPacketApi {
         context: usize,
         status: NTSTATUS,
         information: usize,
-        already_signaled: *mut BOOLEAN,
+        already_signaled: Option<&mut BOOLEAN>,
     ) -> NTSTATUS,
-    cancel: unsafe extern "system" fn(packet: HANDLE, remove_signaled: BOOLEAN) -> NTSTATUS,
+    cancel: extern "system" fn(packet: HANDLE, remove_signaled: BOOLEAN) -> NTSTATUS,
 }
 
 /// A wait completion packet: the kernel queues it to a port once an object is signaled.
@@ -485,19 +479,16 @@ impl WaitPacket {
         key: usize,
         context: usize,
     ) -> Result<(), NTSTATUS> {
-        // SAFETY: the arguments are handles and integers, and the optional out-pointer is null.
-        let status = unsafe {
-            (self.api.associate)(
-                self.handle.as_raw_handle(),
-                port.as_raw_handle(),
-                target.as_raw_handle(),
-                key,
-                context,
-                NTSTATUS::SUCCESS,
-                0,
-                ptr::null_mut(),
-            )
-        };
+        let status = (self.api.associate)(
+            self.handle.as_raw_handle(),
+            port.as_raw_handle(),
+            target.as_raw_handle(),
+            key,
+            context,
+            NTSTATUS::SUCCESS,
+            0,
+            None,
+        );
         if NT_SUCCESS(status) {
             Ok(())
         } else {
@@ -507,7 +498,6 @@ impl WaitPacket {
 
     /// Returns `false` if the packet is already being queued and cannot be associated again yet.
     pub(crate) fn try_cancel(&self) -> bool {
-        // SAFETY: the arguments are a handle and an integer.
-        unsafe { (self.api.cancel)(self.handle.as_raw_handle(), 1) != NTSTATUS::PENDING }
+        (self.api.cancel)(self.handle.as_raw_handle(), 1) != NTSTATUS::PENDING
     }
 }

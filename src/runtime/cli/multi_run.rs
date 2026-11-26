@@ -946,6 +946,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 stderr: spawn::Stdio::Buffer,
                 cwd: config.cwd.clone(),
                 stream: true,
+                #[cfg(windows)]
+                inherits_all_handles: true,
                 ..Default::default()
             },
         });

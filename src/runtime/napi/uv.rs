@@ -8,7 +8,7 @@
 //!
 //! - The addon allocates each handle or request and reads `data`, `loop` and
 //!   `type` from it ([`UvHandle`], [`UvReq`]). Bun owns the fields after those.
-//! - Only `uv_async_send` and `uv_queue_work` work off the loop's JS thread. A handle is valid
+//! - Only `uv_async_send` and `uv_queue_work` are thread-safe, but no call is bound to a thread. A handle is valid
 //!   until its `close_cb` has run, and a request until its `after_work_cb` has run.
 //! - A `uv_loop_t*` points to a [`UvLoop`]. Each VM has one. Only `data` (and `iocp` on Windows) is ABI.
 //! - `uv_async_send` sets the handle's `pending` flag and posts at most one
@@ -27,21 +27,21 @@ use core::convert::Infallible;
 use core::ffi::{c_int, c_uint, c_void};
 use core::marker::PhantomData;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering, fence};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU8, AtomicU32, Ordering, fence};
 
 use bun_core::{Timespec, TimespecMockMode};
 use bun_event_loop::{ContextId, TaskTag, Taskable, task_tag};
-use bun_io::KeepAlive;
 use bun_jsc::event_loop::ConcurrentTaskItem as ConcurrentTask;
 use bun_jsc::job::{OwnedJob, Running};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, Job, JsError, JsResult, JsThread, LoopKind, Posted, VmHandle};
 use bun_ptr::{AliasableBox, CellExt};
 use bun_sys::UV_E;
+use bun_threading::Guarded;
 use bun_threading::work_pool::FilePool;
 
-use crate::jsc_hooks::{RuntimeState, runtime_state, timer_all};
-use crate::timer::{EventLoopTimer, EventLoopTimerTag};
+use crate::jsc_hooks::{RuntimeState, runtime_state, try_runtime_state};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(uv, hidden);
 
@@ -114,37 +114,26 @@ type UvAfterWorkCb = unsafe extern "C" fn(*mut UvWork, c_int);
 
 /// Tracks whether a handle keeps the loop alive. Like in libuv, it does while it's
 /// both started (`uv_is_active`) and ref'd (`uv_has_ref`, the default).
-struct RefState {
-    keep_alive: KeepAlive,
-    referenced: Cell<bool>,
-    active: Cell<bool>,
-}
+struct RefState(AtomicU8);
 
 impl RefState {
+    const ACTIVE: u8 = 1;
+    const REFERENCED: u8 = 2;
+
     fn new() -> RefState {
-        RefState {
-            keep_alive: KeepAlive::default(),
-            referenced: Cell::new(true),
-            active: Cell::new(false),
-        }
+        RefState(AtomicU8::new(Self::REFERENCED))
     }
 
-    fn set_active(&self, active: bool) {
-        self.active.set(active);
-        self.sync();
+    fn has(&self, flag: u8) -> bool {
+        self.0.load(Ordering::SeqCst) & flag != 0
     }
 
-    fn set_referenced(&self, referenced: bool) {
-        self.referenced.set(referenced);
-        self.sync();
-    }
-
-    fn sync(&self) {
-        if self.active.get() && self.referenced.get() {
-            self.keep_alive.ref_(bun_io::js_vm_ctx());
-        } else {
-            self.keep_alive.unref(bun_io::js_vm_ctx());
-        }
+    /// Returns the change of the loop's keep-alive count.
+    fn set(&self, flag: u8, value: bool) -> i32 {
+        let update = |flags| if value { flags | flag } else { flags & !flag };
+        let old = self.0.update(Ordering::SeqCst, Ordering::SeqCst, update);
+        let count = |flags| i32::from(flags == Self::ACTIVE | Self::REFERENCED);
+        count(update(old)) - count(old)
     }
 }
 
@@ -159,8 +148,6 @@ enum DispatchState {
     Idle = 0,
     /// A dispatch task is queued, or the running one will queue another.
     Pending = 1,
-    /// The dispatch task is walking the handles.
-    Running = 2,
 }
 
 /// Backs `uv_loop_t`. It's a field of the VM's `RuntimeState`, so it lives exactly
@@ -177,6 +164,11 @@ pub(crate) struct UvLoop {
     shared: UvLoopShared,
     /// Async handles that are initialized and not closed.
     asyncs: HandleList<AsyncFields>,
+    /// True while a pass is on the stack. A nested event loop run skips the pass.
+    in_pass: Cell<bool>,
+    has_skipped_pass: Cell<bool>,
+    /// Handles taken from [`UvLoopShared::closing`].
+    closing_batch: Cell<Vec<Closing>>,
     idles: WatcherList,
     prepares: WatcherList,
     checks: WatcherList,
@@ -186,10 +178,28 @@ const _: () = assert!(core::mem::offset_of!(UvLoop, data) == 0);
 #[cfg(windows)]
 const _: () = assert!(core::mem::offset_of!(UvLoop, iocp) == 56);
 
-/// All that `uv_async_send` uses of the loop, from any thread.
+/// The part of the loop that any thread can use.
 struct UvLoopShared {
     handle: VmHandle,
     dispatch_state: AtomicU8,
+    /// A stack, as in libuv.
+    closing: Guarded<Vec<Closing>>,
+}
+
+/// A handle that waits for its `close_cb`.
+type Closing = (AtomicPtr<UvHandle>, UvCloseCb);
+
+/// `ExitProcess` ends the other threads wherever they are, and then runs the destructors of addons.
+fn has_ended_other_threads() -> bool {
+    #[cfg(windows)]
+    #[link(name = "ntdll")]
+    unsafe extern "system" {
+        safe fn RtlDllShutdownInProgress() -> u8;
+    }
+    #[cfg(windows)]
+    return RtlDllShutdownInProgress() != 0;
+    #[cfg(not(windows))]
+    false
 }
 
 const fn assert_sync<T: Sync>() {}
@@ -206,6 +216,21 @@ impl UvLoopShared {
         }
     }
 
+    fn add_keep_alive(&self, delta: i32) {
+        if delta == 0 {
+            return;
+        }
+        if !try_runtime_state()
+            .is_some_and(|state| core::ptr::eq(&raw const state.uv_loop.shared, self))
+        {
+            self.handle.add_keep_alive(LoopKind::Regular, delta);
+        } else if delta > 0 {
+            VirtualMachine::get().event_loop().ref_keep_alive();
+        } else {
+            VirtualMachine::get().event_loop().unref_keep_alive();
+        }
+    }
+
     /// Posts the dispatch task. The state is `Pending`, so no other thread posts one.
     fn post_dispatch(&self) {
         let task = core::ptr::null_mut::<UvLoop>();
@@ -217,73 +242,80 @@ impl UvLoopShared {
     }
 }
 
+type Handles<T> = Vec<NonNull<UvHandle<T>>>;
+
 /// Lists handles for a walk whose callbacks add and remove handles.
 struct HandleList<T> {
-    listed: Cell<Vec<NonNull<UvHandle<T>>>>,
-    /// Handles the running walk hasn't reached yet, in reverse order.
-    walking: Cell<Vec<NonNull<UvHandle<T>>>>,
+    /// The listed handles, and in reverse order those that the running walk hasn't reached yet.
+    handles: Guarded<[Handles<T>; 2]>,
+    /// Saves every iteration of the event loop the lock.
+    is_empty: AtomicBool,
 }
 
 impl<T> HandleList<T> {
     fn new() -> Self {
         HandleList {
-            listed: Cell::default(),
-            walking: Cell::default(),
+            handles: Guarded::default(),
+            is_empty: AtomicBool::new(true),
         }
+    }
+
+    fn update<R>(&self, f: impl FnOnce(&mut Handles<T>, &mut Handles<T>) -> R) -> R {
+        let mut handles = self.handles.lock();
+        let [listed, walking] = &mut *handles;
+        let result = f(listed, walking);
+        self.is_empty.store(listed.is_empty(), Ordering::Relaxed);
+        result
     }
 
     /// # Safety
     /// The list belongs to `handle`'s loop, and `handle` is removed before its `close_cb` runs.
     unsafe fn add(&self, handle: &HandleRef<'_, T>) {
-        self.listed.with_taken(|listed| listed.push(handle.ptr));
+        self.update(|listed, _| listed.push(handle.ptr));
     }
 
     /// SAFETY: same as [`Self::add`].
     unsafe fn prepend(&self, handle: &HandleRef<'_, T>) {
-        self.listed
-            .with_taken(|listed| listed.insert(0, handle.ptr));
+        self.update(|listed, _| listed.insert(0, handle.ptr));
     }
 
     /// Uses `retain` because a handle that was initialized twice is in the list twice.
     fn remove(&self, handle: &HandleRef<'_, T>) {
-        for list in [&self.listed, &self.walking] {
-            list.with_taken(|handles| handles.retain(|h| *h != handle.ptr));
+        if has_ended_other_threads() {
+            return;
         }
+        self.update(|listed, walking| {
+            for handles in [listed, walking] {
+                handles.retain(|h| *h != handle.ptr);
+            }
+        });
     }
 
     fn is_empty(&self) -> bool {
-        self.listed.with_taken(|listed| listed.is_empty())
+        self.is_empty.load(Ordering::Relaxed)
     }
 
     /// Handles added from here on wait for the next walk.
     fn begin_walk(&self) {
-        let mut listed = self.listed.take();
-        listed.reverse();
-        let walked = self.walking.replace(listed);
-        debug_assert!(walked.is_empty());
-        self.listed.set(walked);
+        self.update(|listed, walking| {
+            debug_assert!(walking.is_empty());
+            listed.reverse();
+            core::mem::swap(listed, walking);
+        });
     }
 
     /// # Safety
-    /// The caller is done with the handle before the event loop runs another task.
+    /// This is the loop's thread, and the caller is done with the handle before the event loop runs another task.
     unsafe fn walk_next(&self) -> Option<HandleRef<'_, T>> {
-        let next = self.walking.with_taken(Vec::pop)?;
-        // SAFETY: `add`'s contract, and fn contract. The list is not `Sync`: this is its loop's thread.
-        unsafe {
-            let handle = HandleRef::new(next);
-            self.add(&handle);
-            Some(handle)
-        }
+        let next =
+            self.update(|listed, walking| walking.pop().inspect(|&next| listed.push(next)))?;
+        // SAFETY: `add`'s contract, and fn contract.
+        Some(unsafe { HandleRef::new(next) })
     }
 
     /// Handles only remain here after a termination.
     fn end_walk(&self) {
-        self.walking.with_taken(|walking| {
-            if !walking.is_empty() {
-                self.listed
-                    .with_taken(|listed| listed.extend(walking.drain(..).rev()));
-            }
-        });
+        self.update(|listed, walking| listed.extend(walking.drain(..).rev()));
     }
 }
 
@@ -347,8 +379,12 @@ impl UvLoop {
             shared: UvLoopShared {
                 handle,
                 dispatch_state: AtomicU8::new(DispatchState::Idle as u8),
+                closing: Guarded::default(),
             },
             asyncs: HandleList::new(),
+            in_pass: Cell::new(false),
+            has_skipped_pass: Cell::new(false),
+            closing_batch: Cell::default(),
             idles: WatcherList::new(),
             prepares: WatcherList::new(),
             checks: WatcherList::new(),
@@ -405,29 +441,35 @@ impl UvLoop {
         unsafe { &raw mut (*state).uv_loop }
     }
 
+    /// A handle that a `close_cb` closes comes before the others on Windows and after them on POSIX, as in libuv.
+    fn pop_closing(&self) -> Option<Closing> {
+        let mut closing = self.shared.closing.lock();
+        if cfg!(windows) {
+            return closing.pop();
+        }
+        self.closing_batch.with_taken(|batch| {
+            if batch.is_empty() {
+                core::mem::swap(batch, &mut *closing);
+            }
+            batch.pop()
+        })
+    }
+
     /// Runs the task that `schedule_dispatch` posted.
     pub(crate) fn dispatch(&self, vm: &VirtualMachine) {
+        if self.in_pass.replace(true) {
+            return self.has_skipped_pass.set(true);
+        }
+        // A send during the pass posts the next one ahead of what its thread posts later.
         self.shared
             .dispatch_state
-            .store(DispatchState::Running as u8, Ordering::SeqCst);
+            .store(DispatchState::Idle as u8, Ordering::SeqCst);
         // Don't run callbacks once the VM is stopping. Threadsafe functions do the same.
         if vm.script_allowed() {
             self.run_pass(vm.global());
         }
-        // A send during the pass sets `Pending` instead of posting a task, and this
-        // then fails. The next pass is a new task, so a thread that keeps sending
-        // can't hold the event loop back from its timers and sockets.
-        if self
-            .shared
-            .dispatch_state
-            .compare_exchange(
-                DispatchState::Running as u8,
-                DispatchState::Idle as u8,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            )
-            .is_err()
-        {
+        self.in_pass.set(false);
+        if self.has_skipped_pass.take() {
             self.shared.post_dispatch();
         }
     }
@@ -520,10 +562,10 @@ pub(crate) struct UvHandle<T = ()> {
 pub(crate) struct HandleFields<T> {
     loop_: NonNull<UvLoop>,
     type_: c_uint,
-    close_cb: Cell<Option<UvCloseCb>>,
-    /// `ref_state` and `reserved` replace `handle_queue`, `u` and `next_closing` (`endgame_next` on Windows).
+    /// In the padding after `type`.
     ref_state: RefState,
-    reserved: [*mut c_void; 6],
+    /// Replaces `close_cb`, `handle_queue`, `u` and `next_closing` (`endgame_next` on Windows).
+    reserved: [*mut c_void; 8],
     flags: Cell<c_uint>,
     /// The fields of the handle's type.
     body: T,
@@ -532,11 +574,10 @@ pub(crate) struct HandleFields<T> {
 const _: () = assert!(core::mem::offset_of!(UvHandle, data) == 0);
 const _: () = assert!(core::mem::offset_of!(UvHandle, fields.loop_) == 8);
 const _: () = assert!(core::mem::offset_of!(UvHandle, fields.type_) == 16);
-const _: () = assert!(core::mem::offset_of!(UvHandle, fields.close_cb) == 24);
 const _: () = assert!(core::mem::offset_of!(UvHandle, fields.flags) == 88);
 const _: () = assert!(core::mem::size_of::<UvHandle>() == layout::HANDLE_SIZE);
 
-/// An initialized handle that the addon lends to its loop's thread. Its callbacks get the pointer it passed.
+/// An initialized handle that the addon lends to the calling thread. Its callbacks get the pointer it passed.
 #[repr(transparent)]
 pub(crate) struct HandleRef<'a, T = ()> {
     ptr: NonNull<UvHandle<T>>,
@@ -551,8 +592,8 @@ enum AnyHandle<'a> {
 
 impl<T> HandleRef<'_, T> {
     /// # Safety
-    /// `ptr` was initialized as a `T`, and this is its loop's thread. While the result
-    /// lives the loop is alive and `close_cb` does not run.
+    /// `ptr` was initialized as a `T`. While the result lives the loop is alive, `close_cb`
+    /// does not run, and other threads write only `data` and the atomics.
     unsafe fn new(ptr: NonNull<UvHandle<T>>) -> Self {
         HandleRef {
             ptr,
@@ -564,7 +605,7 @@ impl<T> HandleRef<'_, T> {
     ///
     /// # Safety
     /// `ptr` points to memory for a handle of type `type_`, whose body is a `T`. The addon
-    /// keeps it alive until its `close_cb` has run. `loop_` is this thread's loop.
+    /// keeps it alive until its `close_cb` has run. `loop_` is alive.
     unsafe fn init(
         ptr: NonNull<UvHandle<T>>,
         loop_: NonNull<UvLoop>,
@@ -574,9 +615,8 @@ impl<T> HandleRef<'_, T> {
         let fields = HandleFields {
             loop_,
             type_,
-            close_cb: Cell::new(None),
             ref_state: RefState::new(),
-            reserved: [core::ptr::null_mut(); 6],
+            reserved: [core::ptr::null_mut(); 8],
             flags: Cell::new(0),
             body,
         };
@@ -588,8 +628,19 @@ impl<T> HandleRef<'_, T> {
     }
 
     fn uv_loop(&self) -> &UvLoop {
-        // SAFETY: `new`'s contract. Other threads use only `shared`.
+        // SAFETY: `new`'s contract. Threads other than the loop's use only `shared` and the `HandleList`s.
         unsafe { self.loop_.as_ref() }
+    }
+
+    fn shared(&self) -> &UvLoopShared {
+        // SAFETY: `new`'s contract.
+        unsafe { &(*self.loop_.as_ptr()).shared }
+    }
+
+    /// Not for timers, which keep [`UvTimerNode::home`] alive.
+    fn set_active(&self, active: bool) {
+        let delta = self.ref_state.set(RefState::ACTIVE, active);
+        self.shared().add_keep_alive(delta);
     }
 
     /// For a callback of the addon's, after which the handle can be gone.
@@ -601,7 +652,7 @@ impl<T> HandleRef<'_, T> {
 impl<T> core::ops::Deref for HandleRef<'_, T> {
     type Target = HandleFields<T>;
     fn deref(&self) -> &HandleFields<T> {
-        // SAFETY: `new`'s contract. Other threads write only `data` and the atomics of `AsyncFields`.
+        // SAFETY: `new`'s contract.
         unsafe { &(*self.ptr.as_ptr()).fields }
     }
 }
@@ -628,6 +679,21 @@ impl HandleRef<'_> {
         self.downcast().map(|_| &**self)
     }
 
+    fn set_referenced(&self, referenced: bool) {
+        let Some(any) = self.downcast() else {
+            return;
+        };
+        let delta = self.ref_state.set(RefState::REFERENCED, referenced);
+        match any {
+            AnyHandle::Timer(timer) => {
+                if let Some(home) = timer.node().and_then(UvTimerNode::home) {
+                    home.uv_loop.shared.add_keep_alive(delta);
+                }
+            }
+            _ => self.shared().add_keep_alive(delta),
+        }
+    }
+
     /// libuv asserts on the wrong type, but the entry points return `UV_EINVAL`.
     fn as_watcher(&self, type_: c_uint) -> Option<HandleRef<'_, WatcherFields>> {
         match self.downcast() {
@@ -647,6 +713,10 @@ impl HandleRef<'_> {
 impl<T> HandleFields<T> {
     fn is_closing(&self) -> bool {
         self.flags.get() & UV_HANDLE_CLOSING != 0
+    }
+
+    fn is_active(&self) -> bool {
+        self.ref_state.has(RefState::ACTIVE)
     }
 }
 
@@ -712,7 +782,7 @@ pub(crate) unsafe extern "C" fn uv_async_init(
     };
     // SAFETY: fn contract.
     let async_ = unsafe { HandleRef::init(handle, loop_, UV_ASYNC, body) };
-    async_.ref_state.set_active(true);
+    async_.set_active(true);
     // SAFETY: `uv_close` removes it.
     unsafe { async_.uv_loop().asyncs.add(&async_) };
     0
@@ -795,7 +865,7 @@ impl HandleRef<'_, WatcherFields> {
     /// # Safety
     /// `cb` takes the handle.
     unsafe fn start(&self, cb: Option<UvWatcherCb>) -> c_int {
-        if self.ref_state.active.get() || self.is_closing() {
+        if self.is_active() || self.is_closing() {
             return 0;
         }
         if cb.is_none() {
@@ -806,17 +876,17 @@ impl HandleRef<'_, WatcherFields> {
         // The most recently started handle runs first: https://github.com/libuv/libuv/issues/3582
         // SAFETY: `uv_close` has not been called yet, and it stops the handle.
         unsafe { started.prepend(self) };
-        self.ref_state.set_active(true);
+        self.set_active(true);
         0
     }
 
     /// Implements `uv_{idle,prepare,check}_stop`. `uv_close` calls it too.
     fn stop(&self) {
-        if !self.ref_state.active.get() {
+        if !self.is_active() {
             return;
         }
         self.uv_loop().watchers(self.type_).started.remove(self);
-        self.ref_state.set_active(false);
+        self.set_active(false);
     }
 }
 
@@ -899,9 +969,17 @@ const _: () = assert!(core::mem::size_of::<UvTimer>() <= layout::TIMER_SIZE);
 pub(crate) struct UvTimerNode {
     pub(crate) event_loop_timer: EventLoopTimer,
     timer: NonNull<UvTimer>,
+    home: Cell<*const RuntimeState>,
 }
 
 impl UvTimerNode {
+    /// The VM whose heap links the node. `None` after it fired, and after VM teardown, which unlinks timers without telling their owners.
+    fn home(&self) -> Option<&RuntimeState> {
+        let is_linked = self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE;
+        // SAFETY: `arm` set it, and links nothing once the VM is stopping.
+        is_linked.then(|| unsafe { &*self.home.get() })
+    }
+
     /// Called after the heap pops the timer. Like libuv's `uv__run_timers`, it stops
     /// the timer and re-arms a repeating one before it calls the callback, so the
     /// callback can stop or close the handle.
@@ -911,7 +989,8 @@ impl UvTimerNode {
     pub(crate) unsafe fn on_fire(this: *mut UvTimerNode, vm: &VirtualMachine) -> JsResult<()> {
         // SAFETY: fn contract. A started timer is initialized and not closed.
         let timer = unsafe { HandleRef::new((*this).timer) };
-        timer.ref_state.set_active(false);
+        let delta = timer.ref_state.set(RefState::ACTIVE, false);
+        runtime_state().uv_loop.shared.add_keep_alive(delta);
         let repeat_ms = timer.body.repeat_ms.get();
         if repeat_ms != 0 {
             timer.arm(repeat_ms);
@@ -931,35 +1010,47 @@ impl UvTimerNode {
 }
 
 impl HandleRef<'_, TimerFields> {
-    /// Schedules the timer to fire `timeout_ms` from now and marks it started.
-    fn arm(&self, timeout_ms: u64) {
-        self.body.node.with_taken(|node| {
-            let Some(node) = node else {
-                // Closed.
-                return;
-            };
-            let due = Timespec::ms_from_now(
-                TimespecMockMode::ForceRealTime,
-                i64::try_from(timeout_ms).unwrap_or(i64::MAX),
-            );
-            timer_all().update(&raw const node.event_loop_timer, &due);
-            self.ref_state.set_active(true);
-        });
+    /// `None` once closed.
+    fn node(&self) -> Option<&UvTimerNode> {
+        // SAFETY: only `close` writes the cell, and nothing calls the addon while it holds the result.
+        unsafe { (*self.body.node.as_ptr()).as_deref() }
     }
 
-    /// Implements `uv_timer_stop`. Checks the node's state before removing it from the
-    /// heap because a fired node is already out, and VM teardown unlinks timers
-    /// without telling their owners.
-    fn stop(&self) {
-        if !self.ref_state.active.get() {
+    /// Schedules the timer to fire `timeout_ms` from now and marks it started.
+    fn arm(&self, timeout_ms: u64) {
+        let Some(node) = self.node() else {
+            return;
+        };
+        let home = node.home().unwrap_or_else(|| {
+            self.ref_state.set(RefState::ACTIVE, false);
+            try_runtime_state().unwrap_or_else(|| {
+                // SAFETY: a `UvLoop` is only ever that field.
+                unsafe { &*bun_core::from_field_ptr!(RuntimeState, uv_loop, self.loop_.as_ptr()) }
+            })
+        });
+        let delta = self.ref_state.set(RefState::ACTIVE, true);
+        if !home.uv_loop.shared.handle.script_allowed() {
             return;
         }
-        self.body.node.with_taken(|node| {
-            if let Some(node) = node {
-                node.event_loop_timer.disarm();
-            }
-        });
-        self.ref_state.set_active(false);
+        let due = Timespec::ms_from_now(
+            TimespecMockMode::ForceRealTime,
+            i64::try_from(timeout_ms).unwrap_or(i64::MAX),
+        );
+        node.home.set(home);
+        home.timer.update(&raw const node.event_loop_timer, &due);
+        // Last, because it wakes the loop of another thread.
+        home.uv_loop.shared.add_keep_alive(delta);
+    }
+
+    /// Implements `uv_timer_stop`.
+    fn stop(&self) {
+        let delta = self.ref_state.set(RefState::ACTIVE, false);
+        if let Some(node) = self.node()
+            && let Some(home) = node.home()
+        {
+            home.timer.remove(&node.event_loop_timer);
+            home.uv_loop.shared.add_keep_alive(delta);
+        }
     }
 
     /// Called by `uv_close`. Frees the node here because a stopping VM refuses the close task.
@@ -984,6 +1075,7 @@ pub(crate) unsafe extern "C" fn uv_timer_init(loop_: *mut UvLoop, handle: *mut U
         node: Cell::new(Some(AliasableBox::new(UvTimerNode {
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::UvTimer),
             timer: handle,
+            home: Cell::new(core::ptr::null()),
         }))),
         repeat_ms: Cell::new(0),
         #[cfg(windows)]
@@ -1069,14 +1161,10 @@ pub(crate) extern "C" fn uv_timer_get_due_in(handle: HandleRef<'_>) -> u64 {
     let Some(timer) = handle.as_timer() else {
         return 0;
     };
-    if !timer.ref_state.active.get() {
+    if !timer.is_active() {
         return 0;
     }
-    let Some(due) = timer
-        .body
-        .node
-        .with_taken(|node| node.as_ref().map(|node| node.event_loop_timer.next.get()))
-    else {
+    let Some(due) = timer.node().map(|node| node.event_loop_timer.next.get()) else {
         return 0;
     };
     let now = Timespec::now(TimespecMockMode::ForceRealTime);
@@ -1098,15 +1186,14 @@ pub(crate) extern "C" fn uv_update_time(_loop: *mut UvLoop) {}
 // uv_handle_t (functions that accept any handle type)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `uv_close` posts the handle as a task.
+/// `uv_close` posts a null pointer: the task is for the handle that [`UvLoop::pop_closing`] returns.
 impl Taskable for UvHandle {
     const TAG: TaskTag = task_tag::UvHandleClose;
     /// Still runs `close_cb` because that's where the addon frees the handle. Any JS
     /// it tries to run is refused.
-    unsafe fn release_unrun(this: *mut Self) {
+    unsafe fn release_unrun(_: *mut Self) {
         // On `Err` the exception is still pending, and the release dispatcher handles it.
-        // SAFETY: fn contract.
-        let _ = unsafe { UvHandle::run_close(this, VirtualMachine::get().global()) };
+        let _ = UvHandle::run_close(VirtualMachine::get().global());
     }
     /// Not tied to one context, like [`UvLoop`]'s task.
     unsafe fn context(_: *const Self) -> ContextId {
@@ -1117,18 +1204,15 @@ impl Taskable for UvHandle {
 impl UvHandle {
     /// Runs `close_cb` one turn after `uv_close`. The callback usually frees the
     /// handle, so don't read it afterwards.
-    ///
-    /// # Safety
-    /// `uv_close` posted the task for `handle`, which the addon keeps alive until
-    /// `close_cb` has run. This is the loop thread.
-    pub(crate) unsafe fn run_close(handle: *mut UvHandle, global: &JSGlobalObject) -> JsResult<()> {
-        // SAFETY: fn contract.
-        let handle = unsafe { HandleRef::new(NonNull::new_unchecked(handle)) };
-        bun_output::scoped_log!(uv, "uv_handle_t {:?}: close_cb", handle.ptr);
-        if let Some(close_cb) = handle.close_cb.get() {
+    pub(crate) fn run_close(global: &JSGlobalObject) -> JsResult<()> {
+        let Some((handle, close_cb)) = runtime_state().uv_loop.pop_closing() else {
+            return Ok(());
+        };
+        bun_output::scoped_log!(uv, "uv_handle_t {:?}: close_cb", handle);
+        {
             let _handles = CallbackScope::open(global);
             // SAFETY: calls the addon's callback on the loop thread with its handle.
-            unsafe { close_cb(handle.into_raw()) };
+            unsafe { close_cb(handle.into_inner()) };
         }
         if global.has_exception() {
             return Err(JsError::Thrown);
@@ -1151,45 +1235,48 @@ pub(crate) unsafe extern "C" fn uv_close(handle: HandleRef<'_>, close_cb: Option
         return;
     }
     handle.flags.update(|flags| flags | UV_HANDLE_CLOSING);
-    handle.close_cb.set(close_cb);
-    let uv_loop = handle.uv_loop();
+    if has_ended_other_threads() {
+        return;
+    }
     bun_output::scoped_log!(uv, "uv_handle_t {:?}: uv_close", handle.ptr);
+    let shared = handle.shared();
+    // Holds back `close_cb`, which can free the handle, if this is not the loop's thread.
+    let mut closing = shared.closing.lock();
+    closing.extend(close_cb.map(|close_cb| (AtomicPtr::new(handle.ptr.as_ptr()), close_cb)));
+    // The queued task keeps the loop alive until `close_cb` has run, like libuv's
+    // closing list. If the VM is gone, the task is refused and `close_cb` never runs.
+    let task = core::ptr::null_mut::<UvHandle>();
+    let _ = shared.handle.post_without_waking(LoopKind::Regular, task);
     match any {
         AnyHandle::Async(async_) => {
             async_.body.stop_sends();
-            uv_loop.asyncs.remove(&async_);
-            async_.ref_state.set_active(false);
+            async_.uv_loop().asyncs.remove(&async_);
+            async_.set_active(false);
         }
         AnyHandle::Timer(timer) => timer.close(),
         AnyHandle::Watcher(watcher) => watcher.stop(),
     }
-    // The queued task keeps the loop alive until `close_cb` has run, like libuv's
-    // closing list. If the VM is gone, the task is refused and `close_cb` never runs.
-    let _ = (uv_loop.shared.handle).post(LoopKind::Regular, handle.ptr.as_ptr());
+    shared.handle.wake();
 }
 
 /// Implements `void uv_ref(uv_handle_t*)`. Idempotent. Only matters while the handle
 /// is active.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn uv_ref(handle: HandleRef<'_>) {
-    if let Some(handle) = handle.as_initialized() {
-        handle.ref_state.set_referenced(true);
-    }
+    handle.set_referenced(true);
 }
 
 /// Implements `void uv_unref(uv_handle_t*)`. Idempotent.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn uv_unref(handle: HandleRef<'_>) {
-    if let Some(handle) = handle.as_initialized() {
-        handle.ref_state.set_referenced(false);
-    }
+    handle.set_referenced(false);
 }
 
 /// Implements `int uv_has_ref(const uv_handle_t*)`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn uv_has_ref(handle: HandleRef<'_>) -> c_int {
     let handle = handle.as_initialized();
-    c_int::from(handle.is_some_and(|handle| handle.ref_state.referenced.get()))
+    c_int::from(handle.is_some_and(|handle| handle.ref_state.has(RefState::REFERENCED)))
 }
 
 /// Implements `int uv_is_active(const uv_handle_t*)`. A watcher or timer is active
@@ -1198,7 +1285,7 @@ pub(crate) extern "C" fn uv_has_ref(handle: HandleRef<'_>) -> c_int {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn uv_is_active(handle: HandleRef<'_>) -> c_int {
     let handle = handle.as_initialized();
-    c_int::from(handle.is_some_and(|handle| handle.ref_state.active.get()))
+    c_int::from(handle.is_some_and(HandleFields::is_active))
 }
 
 /// Implements `int uv_is_closing(const uv_handle_t*)`. Returns true once `uv_close`
@@ -1371,7 +1458,7 @@ impl OwnedJob for UvWorkJob {
     type Js = ();
     type Shared = ();
     type Resume = Infallible;
-    const OUTLIVES_SCRIPT: bool = false;
+    const OUTLIVES_SCRIPT: bool = cfg!(windows);
     /// `work_cb` can block, and addons rely on the order and on `UV_THREADPOOL_SIZE`.
     const IS_FILE_IO: bool = true;
 

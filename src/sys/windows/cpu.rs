@@ -1,7 +1,6 @@
 //! The logical processors of one processor group.
 
 use core::ffi::c_void;
-use core::mem::MaybeUninit;
 use core::ptr;
 
 use bun_core::wstr;
@@ -26,12 +25,9 @@ const SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION: ULONG = 8;
 
 /// Ignores the process affinity mask.
 pub fn count() -> u32 {
-    let mut info = MaybeUninit::<SYSTEM_INFO>::zeroed();
-    // SAFETY: `info` is a valid out-param, and any bit pattern is a valid `SYSTEM_INFO`.
-    unsafe {
-        GetSystemInfo(info.as_mut_ptr());
-        info.assume_init().dwNumberOfProcessors
-    }
+    let mut info: SYSTEM_INFO = bun_core::ffi::zeroed();
+    GetSystemInfo(&mut info);
+    info.dwNumberOfProcessors
 }
 
 pub struct Processor {

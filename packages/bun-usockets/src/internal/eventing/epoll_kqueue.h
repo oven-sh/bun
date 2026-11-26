@@ -20,6 +20,9 @@
 
 #include "internal/loop_data.h"
 
+#define LIBUS_SOCKET_READ_TO_END 0
+#define LIBUS_MAX_REPEAT_RECV_COUNT 10
+
 #ifdef LIBUS_USE_EPOLL
 #include <sys/epoll.h>
 #include <sys/eventfd.h>

@@ -720,10 +720,7 @@ fn spawn_maybe_sync(
                             },
                         )?;
                         if timeout_int > 0 {
-                            timeout = Some(
-                                i32::try_from((timeout_int as u32) & 0x7FFF_FFFF)
-                                    .expect("int cast"),
-                            );
+                            timeout = Some(i32::try_from(timeout_int).unwrap_or(i32::MAX));
                         }
                     }
                 }

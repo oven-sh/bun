@@ -38,7 +38,7 @@ const _: () = {
 
 #[link(name = "kernel32")]
 unsafe extern "system" {
-    fn GlobalMemoryStatusEx(lpBuffer: &mut MEMORYSTATUSEX) -> BOOL;
+    safe fn GlobalMemoryStatusEx(lpBuffer: &mut MEMORYSTATUSEX) -> BOOL;
     pub safe fn GetTickCount64() -> u64;
 }
 
@@ -58,8 +58,7 @@ pub fn physical_memory() -> Option<PhysicalMemory> {
         dwLength: size_of::<MEMORYSTATUSEX>() as DWORD,
         ..bun_core::ffi::zeroed()
     };
-    // SAFETY: `dwLength` is the size of `status`.
-    if unsafe { GlobalMemoryStatusEx(&mut status) } == FALSE {
+    if GlobalMemoryStatusEx(&mut status) == FALSE {
         return None;
     }
     Some(PhysicalMemory {

@@ -300,8 +300,11 @@ impl WindowsNamedPipe {
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__resume_stream")]
     pub(crate) fn resume_stream(&self) -> bool {
-        let _ = self.reader.unpause();
-        self.reader.has_source()
+        let has_source = self.reader.has_source();
+        if has_source {
+            let _ = self.reader.unpause();
+        }
+        has_source
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__pause_stream")]
@@ -579,7 +582,7 @@ impl WindowsNamedPipe {
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__is_established", no_catch)]
     pub(crate) fn is_established(&self) -> bool {
-        !self.is_closed()
+        !self.flags.get().disconnected() && !self.is_closed()
     }
 
     pub(crate) fn ssl(&self) -> Option<*mut boringssl::SSL> {

@@ -60,14 +60,15 @@ fn read_env_var(name: &[u16]) -> Option<Vec<u16>> {
     super::getenv_w_allow_empty(WStr::from_slice_with_nul(&[name, &[0]].concat()))
 }
 
-/// `CreateProcessW` checks the file header before the extension.
-fn has_dos_signature(path: &mut Vec<u16>) -> bool {
-    let access = externs::GENERIC_READ;
+/// `CreateProcessW` opens the file for execution, and checks the file header before the extension.
+fn has_dos_signature(path: &mut Vec<u16>) -> Result<bool, Win32Error> {
+    const FILE_EXECUTE: DWORD = 0x20;
+    let access = externs::GENERIC_READ | FILE_EXECUTE;
     let share = crate::FILE_SHARE;
     let open = |path: &WStr| super::CreateFileW(path, access, share, externs::OPEN_EXISTING, 0);
+    let file = File::from(with_wstr(path, open)?);
     let mut magic = [0; 2];
-    with_wstr(path, open).is_ok_and(|file| File::from(file).read_all(&mut magic).is_ok())
-        && magic == *b"MZ"
+    Ok(file.read_all(&mut magic).is_ok() && magic == *b"MZ")
 }
 
 /// Members are terminated when this process exits. Their children do not become members.
@@ -266,8 +267,8 @@ impl Command {
         let full_path = resolve_full_path(program.clone()).map_err(Win32Error::to_node_errno)?;
         let arguments = &invocation.arguments;
         let is_verbatim = invocation.has_verbatim_arguments;
-        let is_batch_file =
-            command_line::is_batch_file(&full_path) && !has_dos_signature(&mut program);
+        let is_batch_file = command_line::is_batch_file(&full_path)
+            && !has_dos_signature(&mut program).map_err(Win32Error::to_node_errno)?;
         let command_line = if is_batch_file {
             if program.starts_with(&super::LONG_PATH_PREFIX) && full_path != program {
                 return Err(E::EINVAL);

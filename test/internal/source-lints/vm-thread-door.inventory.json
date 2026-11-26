@@ -94,7 +94,7 @@
     ]
   },
   "src/runtime/dns_jsc/dns.rs": {
-    "FifoPool": 4,
+    "FifoPool": 5,
     "WorkPool::schedule*": 1,
     "unsafe impl Send": [
       "DNSRequestOwner",

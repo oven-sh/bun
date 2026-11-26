@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
 use bun_iocp::blocking::{self, CancelToken};
-use bun_iocp::{Port, Request};
+use bun_iocp::{PendingClose, Port, Request};
 use bun_ptr::{CellExt as _, OptionCellExt as _};
 use bun_sys::windows::{self as w, NTSTATUS, Win32Error, named_pipe};
 use bun_sys::{self as sys, E, Fd, FdExt as _, Tag};
@@ -20,12 +20,13 @@ struct OwnedFd {
     fd: Fd,
     /// Closing the last handle to a file that was written can be slow.
     is_only_handle: bool,
+    pending_close: OnceLock<PendingClose>,
 }
 
 impl Drop for OwnedFd {
     fn drop(&mut self) {
         if self.is_only_handle {
-            Closer::close(sys::File::from_fd(self.fd));
+            Closer::close_pending(sys::File::from_fd(self.fd), self.pending_close.take());
         } else {
             self.fd.close();
         }
@@ -80,7 +81,11 @@ impl File {
         state.use_large_buffer();
         File(Rc::new(Inner {
             state,
-            fd: Arc::new(OwnedFd { fd, is_only_handle }),
+            fd: Arc::new(OwnedFd {
+                fd,
+                is_only_handle,
+                pending_close: OnceLock::new(),
+            }),
             is_on_disk: w::GetFileType(fd.native()) == w::FILE_TYPE_DISK,
             offset: Cell::new(None),
             last_full_read: Cell::new(None),
@@ -178,6 +183,14 @@ impl Drop for File {
     }
 }
 
+impl Drop for Inner {
+    fn drop(&mut self) {
+        if self.is_on_disk {
+            let _ = (self.fd.pending_close).set(self.state.port.add_pending_close());
+        }
+    }
+}
+
 impl HasSourceState for Inner {
     fn state(&self) -> &SourceState {
         &self.state
@@ -256,7 +269,7 @@ impl Inner {
             let event = if is_on_disk {
                 (!worker_token.is_cancelled()).then(|| read_disk(fd.fd, buffer, max_len, offset))
             } else {
-                worker_token.run(|| read_device(fd.fd, buffer, max_len, offset, &worker_token))
+                worker_token.run(|| read_device(fd.fd, buffer, max_len, offset))
             };
             drop(fd);
             completer.complete(event.unwrap_or(ReadEvent::Eof));
@@ -277,19 +290,15 @@ fn read_disk(fd: Fd, mut buffer: Vec<u8>, max_len: usize, offset: Option<u64>) -
     }
 }
 
-fn read_device(
-    fd: Fd,
-    mut buffer: Vec<u8>,
-    max_len: usize,
-    offset: Option<u64>,
-    cancel_token: &CancelToken,
-) -> ReadEvent {
+fn read_device(fd: Fd, mut buffer: Vec<u8>, max_len: usize, offset: Option<u64>) -> ReadEvent {
     let offset = offset.map(|offset| offset as i64);
     loop {
         match named_pipe::read_device(fd.native(), &mut buffer, max_len, offset) {
             Ok(_) if !buffer.is_empty() => return ReadEvent::Data(buffer),
-            // Ctrl+C on a console.
-            Ok(NTSTATUS::ALERTED) if !cancel_token.is_cancelled() => {}
+            Err(NTSTATUS::PIPE_EMPTY) if named_pipe::set_blocking(fd.native()).is_ok() => {}
+            Err(NTSTATUS::PIPE_EMPTY) => {
+                return ReadEvent::Err(sys::Error::from_code(E::EAGAIN, Tag::read));
+            }
             Ok(_) | Err(NTSTATUS::END_OF_FILE | NTSTATUS::PIPE_BROKEN) => return ReadEvent::Eof,
             Err(NTSTATUS::ACCESS_DENIED) => {
                 return ReadEvent::Err(sys::Error::from_code(E::EBADF, Tag::read));

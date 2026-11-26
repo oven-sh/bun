@@ -535,14 +535,15 @@ fn is_source_path_in_executable(path: &[u8]) -> bool {
 }
 
 /// What the executable holds lies on the file system that holds the executable.
-fn path_for_statfs<'a>(path: &'a PathLike<'_>, buf: &'a mut Path) -> &'a ZStr {
+fn path_for_statfs<'a>(args: &'a args::StatFS<'_>, buf: &'a mut Path) -> &'a ZStr {
+    let path = &args.path;
     match bun_core::self_exe_path() {
         Ok(executable)
             if is_in_executable(path.slice()) || is_source_path_in_executable(path.slice()) =>
         {
             executable
         }
-        _ => path.slice_z(buf),
+        _ => (args.path_with_drive.as_deref()).unwrap_or_else(|| path.slice_z(buf)),
     }
 }
 
@@ -3067,8 +3068,19 @@ pub(crate) mod args {
 
     pub(crate) type LCHmod<'a> = Chmod<'a>;
 
+    /// `\a` names the drive that is current at the call.
+    fn add_current_drive(path: &PathLike<'_>, arguments: &ArgumentsSlice) -> Option<Path> {
+        let is_rooted = bun_paths::has_leading_sep(path.slice());
+        (cfg!(windows) && arguments.will_be_async && is_rooted).then(|| {
+            let mut path = Path::from(path.slice());
+            path.add_current_drive();
+            path
+        })
+    }
+
     pub(crate) struct StatFS<'a> {
         pub path: PathLike<'a>,
+        pub(crate) path_with_drive: Option<Path>,
         pub(crate) big_int: bool,
     }
     impl StatFS<'static> {
@@ -3093,7 +3105,11 @@ pub(crate) mod args {
                 }
                 false
             };
-            Ok(StatFS { path, big_int })
+            Ok(StatFS {
+                path_with_drive: add_current_drive(&path, arguments),
+                path,
+                big_int,
+            })
         }
     }
 
@@ -3637,6 +3653,7 @@ pub(crate) mod args {
 
     pub(crate) struct Open<'a> {
         pub path: PathLike<'a>,
+        pub(crate) path_with_drive: Option<Path>,
         pub(crate) flags: FileSystemFlags,
         pub(crate) mode: Mode,
     }
@@ -3661,7 +3678,12 @@ pub(crate) mod args {
                     }
                 }
             }
-            Ok(Open { path, flags, mode })
+            Ok(Open {
+                path_with_drive: add_current_drive(&path, arguments),
+                path,
+                flags,
+                mode,
+            })
         }
     }
 
@@ -5744,6 +5766,8 @@ impl NodeFS {
         }
         let path = if cfg!(windows) && named.slice() == b"/dev/null" {
             bun_core::zstr!("\\\\.\\NUL")
+        } else if let Some(path) = &args.path_with_drive {
+            path
         } else {
             named.slice_z(&mut self.sync_error_buf)
         };
@@ -7222,7 +7246,7 @@ impl NodeFS {
     }
 
     pub(crate) fn statfs(&mut self, args: &args::StatFS, _: Flavor) -> Maybe<ret::StatFS> {
-        match sys::statfs(path_for_statfs(&args.path, &mut self.sync_error_buf)) {
+        match sys::statfs(path_for_statfs(args, &mut self.sync_error_buf)) {
             Ok(result) => Ok(ret::StatFS::init(&result, args.big_int)),
             Err(err) => Err(err.with_path(args.path.slice())),
         }

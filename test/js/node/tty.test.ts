@@ -595,6 +595,14 @@ describe.concurrent("stdio in a terminal", () => {
       });
       k32.WriteConsoleInputW(k32.GetStdHandle(STD_INPUT_HANDLE), records, events.length, new Uint32Array(1));
     }
+    // Shift makes the console deliver keys that arrived while it set up a read (microsoft/terminal#18816).
+    async function typeIntoLineRead(y, text) {
+      writeKeyEvents([...text].map(char => [1, 0x41, char.charCodeAt(0)]));
+      while (!isOnRow(y, text)) {
+        writeKeyEvents([[1, 0x10, 0]]);
+        await Bun.sleep(1);
+      }
+    }
   `;
   // ConPTY redraws what the child prints, so the child reports over a socket with `send(value)`.
   // `await waitForContinue()` in the child resumes when the test calls `sendContinue()`.
@@ -829,20 +837,40 @@ describe.concurrent("stdio in a terminal", () => {
       else expect(child.proc.signalCode).toBe("SIGINT");
     });
 
-    it("the EOF key at the start of a line ends process.stdin", async () => {
+    it.skipIf(isWindows)("Ctrl+D at the start of a line ends process.stdin", async () => {
       await using child = await spawnChild(`${lineReadScript} send("ready");`);
       expect(await child.receive()).toBe("ready");
       child.type("one\r");
       await child.expectData(`one${eol}`);
-      child.type(isWindows ? "\x1a\r" : "\x04");
+      child.type("\x04");
       expect(await child.receive()).toEqual(["data", "end"]);
     });
 
-    it.skipIf(!isWindows)("Ctrl+Z in the middle of a line is delivered as data", async () => {
+    it.skipIf(!isWindows).each(["\x1a", "a\x1az"])("Ctrl+Z is delivered as data in the line %j", async line => {
       await using child = await spawnChild(`${lineReadScript} send("ready");`);
       expect(await child.receive()).toBe("ready");
-      child.type("a\x1az\r");
-      await child.expectData("a\x1az\r\n");
+      child.type(line + "\r");
+      await child.expectData(line + "\r\n");
+    });
+
+    it.skipIf(!isWindows).each([
+      ["Ctrl+Z at the start of a line", "\x1a\r"],
+      ["Ctrl+C", "\x03"],
+    ])("%s ends the input of the shell's cat", async (_, keys) => {
+      await using child = await spawnChild(`
+        process.on("SIGINT", () => {});
+        const ended = Bun.$\`cat > out.txt\`.then(() => send(fs.readFileSync("out.txt", "utf8")));
+        while (!fs.statSync("out.txt", { throwIfNoEntry: false })?.size) await Bun.sleep(1);
+        await typeIntoLineRead(1, "?");
+        writeKeyEvents([[1, 0x08, 0x08]]);
+        while (isOnRow(1, "?")) await Bun.sleep(1);
+        send("ready");
+        await ended;
+      `);
+      child.type("one\r");
+      expect(await child.receive()).toBe("ready");
+      child.type(keys);
+      expect(await child.receive()).toBe("one\r\n");
     });
 
     it("delivers a line with a 4-byte UTF-8 character", async () => {
@@ -1389,6 +1417,72 @@ describe.concurrent("stdio in a terminal", () => {
       expect(await child.receive()).toBe("ready");
       child.type(keys);
       await child.expectData(expected);
+    });
+
+    it.skipIf(build < WINDOWS_11_24H2_BUILD)(
+      "Ctrl+^ is delivered after a pause() during another line read",
+      async () => {
+        await using child = await spawnChild(`
+        const other = Bun.spawn(["cmd.exe", "/d", "/c", "set /p line="], { stdio: ["inherit", "inherit", "inherit"] });
+        await typeIntoLineRead(0, "?");
+        forwardData(process.stdin);
+        await settleEventLoop();
+        process.stdin.pause();
+        while (!isOnRow(0, "^^")) await Bun.sleep(1);
+        writeKeyEvents([[1, 0x0d, 0x0d]]);
+        await other.exited;
+        process.stdin.resume();
+        send("ready");
+        await waitForContinue();
+        process.stdin.setRawMode(true);
+        send("raw");
+      `);
+        expect(await child.receive()).toBe("ready");
+        child.type("a\r");
+        await child.expectData("a\r\n");
+        child.sendContinue();
+        expect(await child.receive()).toBe("raw");
+        child.type("b");
+        await child.expectData("b");
+        child.type("\x1ec");
+        await child.expectData("\x1ec");
+      },
+    );
+
+    it.skipIf(build < WINDOWS_11_24H2_BUILD)("exiting does not end the line read of another process", async () => {
+      await using child = await spawnChild(
+        `
+          forwardData(process.stdin);
+          await typeIntoLineRead(0, "a");
+          await Bun.spawn([process.execPath, "other.js"], { stdio: ["inherit", "inherit", "inherit"] }).exited;
+          send("ready");
+        `,
+        {
+          // Frees handle values below that of the console connection.
+          "other.js": `
+            const k32 = require("bun:ffi").dlopen("kernel32.dll", {
+              FreeConsole: { returns: "i32" },
+              AttachConsole: { args: ["u32"], returns: "i32" },
+              CreateEventW: { args: ["ptr", "i32", "i32", "ptr"], returns: "i64" },
+              CloseHandle: { args: ["i64"], returns: "i32" },
+            }).symbols;
+            const createEvent = () => k32.CreateEventW(null, 0, 0, null);
+            k32.FreeConsole();
+            const events = Array.from({ length: 300 }, createEvent);
+            k32.AttachConsole(process.ppid);
+            // The handle table hands out freed values once its current page of 255 entries is full.
+            while (createEvent() < 0x800n);
+            for (let i = 0; i < 254; i++) createEvent();
+            events.forEach(event => k32.CloseHandle(event));
+            process.stdin.resume();
+            for (let i = 0; i < 20; i++) await Bun.sleep(1);
+            process.exit(0);
+          `,
+        },
+      );
+      expect(await child.receive()).toBe("ready");
+      child.type("b\r");
+      await child.expectData("ab\r\n");
     });
 
     // microsoft/terminal#18816

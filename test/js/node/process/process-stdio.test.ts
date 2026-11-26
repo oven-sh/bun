@@ -659,7 +659,6 @@ describe.concurrent.skipIf(!isWindows).each([
     expect(await run("read", readyScript + readScript)).toEqual({ stdout: "270004\n", stderr: "", exitCode: 0 });
   });
 
-  // These treat an empty message as EOF and do not wait on a PIPE_NOWAIT pipe.
   test.skipIf("message" in flags || "nowait" in flags).each([
     ["Bun.stdin.bytes()", `console.log((await Bun.stdin.bytes()).length);`],
     ["Bun.write()", `console.log(await Bun.write("copy", Bun.stdin));`],

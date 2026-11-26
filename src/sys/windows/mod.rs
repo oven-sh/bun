@@ -908,8 +908,29 @@ pub fn parent_process_id() -> Option<DWORD> {
 /// `None` if the process was created after the current one.
 pub fn open_parent_process(pid: DWORD) -> Option<OwnedHandle> {
     let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, pid).ok()?;
-    let creation_time = GetProcessTimes(process.as_raw_handle()).ok()?.creation;
-    (creation_time <= GetProcessTimes(GetCurrentProcess()).ok()?.creation).then_some(process)
+    let is_older_by = |query: fn(HANDLE) -> Option<u64>| {
+        Some(query(process.as_raw_handle())? <= query(GetCurrentProcess())?)
+    };
+    let is_older = is_older_by(process_sequence_number)
+        .or_else(|| is_older_by(|process| Some(GetProcessTimes(process).ok()?.creation)))?;
+    is_older.then_some(process)
+}
+
+/// Unlike the creation time, it does not follow the system clock. `None` on Wine.
+fn process_sequence_number(process: HANDLE) -> Option<u64> {
+    const PROCESS_SEQUENCE_NUMBER: ULONG = 92;
+    let mut number = 0u64;
+    // SAFETY: `number` is writable for the size passed.
+    let status = unsafe {
+        ntdll::NtQueryInformationProcess(
+            process,
+            PROCESS_SEQUENCE_NUMBER,
+            (&raw mut number).cast(),
+            size_of_val(&number) as ULONG,
+            ptr::null_mut(),
+        )
+    };
+    NT_SUCCESS(status).then_some(number)
 }
 
 /// A thread of the system's pool calls `callback` once. `object` stays open for that.
@@ -2323,7 +2344,7 @@ pub(crate) mod fd_table;
 pub use fd_table::{fd_identity, is_disk_file, pin_fd_generation};
 pub(crate) mod fs;
 pub use fs::{
-    HandleKind, copy_expected_file, create_junction, current_umask, guess_handle,
+    HandleKind, copy_expected_file, create_junction, current_umask, device_path, guess_handle,
     is_delete_pending, mkdtemp, open_osfhandle, reopen_buffered, symlink_dir, verbatim_path,
 };
 pub mod named_pipe;

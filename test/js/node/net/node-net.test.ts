@@ -3756,6 +3756,77 @@ it.each(Object.entries({ setDefaultAutoSelectFamily, setDefaultAutoSelectFamilyA
   },
 );
 
+describe.skipIf(!isWindows)("order of socket events on Windows", () => {
+  const nextTurn = () => new Promise(resolve => setImmediate(resolve));
+  async function listen(server: Server) {
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return (server.address() as AddressInfo).port;
+  }
+
+  it("a FIN queued behind the data is reported before immediates", async () => {
+    await using server = createServer(socket => socket.end("x"));
+    const client = connect(await listen(server), "127.0.0.1");
+    await once(client, "data");
+    await nextTurn();
+    const { readableEnded } = client;
+    client.destroy();
+    expect(readableEnded).toBe(true);
+  });
+
+  it("a reset during the data listener is reported before immediates", async () => {
+    const { promise, resolve } = Promise.withResolvers<boolean>();
+    await using server = createServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        client.resetAndDestroy();
+        // Nothing reports the arrival of the reset while this listener runs.
+        Bun.sleepSync(20);
+        setImmediate(() => resolve(socket.destroyed));
+      });
+    });
+    const client = connect(await listen(server), "127.0.0.1", () => setImmediate(() => client.write("x")));
+    expect(await promise).toBe(true);
+  });
+
+  it("immediates run after at most two reads of a socket", async () => {
+    const data = Buffer.alloc(16 << 20);
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const readCounts = [0];
+    let received = 0;
+    await using server = createServer(socket =>
+      socket.on("data", chunk => {
+        if (readCounts[0]++ === 0) setImmediate(() => readCounts.unshift(0));
+        if ((received += chunk.length) === data.length) resolve();
+      }),
+    );
+    const client = connect(await listen(server), "127.0.0.1");
+    client.write(data);
+    await promise;
+    client.destroy();
+    expect(Math.max(...readCounts)).toBeLessThanOrEqual(2);
+  });
+
+  it("a paused socket that has ended keeps its data until resume() if the peer resets", async () => {
+    await using server = createServer({ allowHalfOpen: true });
+    const client = connect({ port: await listen(server), host: "127.0.0.1", allowHalfOpen: true });
+    client.on("error", () => {});
+    const [socket] = (await once(server, "connection")) as [Socket];
+    const events: string[] = [];
+    const closed = new Promise(resolve =>
+      socket.on("error", (error: NodeJS.ErrnoException) => events.push(error.code!)).on("close", resolve),
+    );
+    socket.pause().end();
+    client.write(Buffer.alloc(1 << 20));
+    while (socket.readableLength < socket.readableHighWaterMark) await nextTurn();
+    client.resetAndDestroy();
+    // The reset must have no effect yet, so there is no event to wait for.
+    for (let i = 0; i < 20; i++) await Bun.sleep(1);
+    socket.once("data", () => events.push("data")).resume();
+    await closed;
+    expect(events).toEqual(["data", "ECONNRESET"]);
+  });
+});
+
 describe.concurrent.skipIf(!isWindows)("named pipes", () => {
   const pipeName = (suffix = "") => `\\\\.\\pipe\\bun-test-${randomUUID()}${suffix}`;
   async function startPipeServer(onConnection: (socket: Socket) => void, name = pipeName()) {
@@ -3798,6 +3869,16 @@ describe.concurrent.skipIf(!isWindows)("named pipes", () => {
   const run = (script: string, ...args: string[]) => runWithEnv(bunEnv, script, ...args);
   const successResult = (stdout: string) => ({ stdout, stderr: "", exitCode: 0, signalCode: null });
   const range = (n: number) => Array.from({ length: n }, (_, i) => String(i));
+
+  it("reads after the handle was paused and resumed while connecting", async () => {
+    using pipe = await startPipeServer(socket => socket.write("hi"));
+    const client = connect(pipe.name) as Socket & { _handle: { pause(): void; resume(): void } };
+    const data = once(client, "data");
+    client._handle.pause();
+    client._handle.resume();
+    expect(String(await data)).toBe("hi");
+    client.destroy();
+  });
 
   it.serial("accepts 200 connections made in the same tick", async () => {
     using pipe = await startPipeServer(echo);

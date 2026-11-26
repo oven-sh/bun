@@ -1,6 +1,7 @@
 use core::cell::{Cell, OnceCell};
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicBool, Ordering};
+use std::collections::VecDeque;
 use std::os::windows::io::{AsHandle as _, AsRawHandle as _, OwnedHandle};
 use std::rc::{Rc, Weak};
 use std::sync::OnceLock;
@@ -39,7 +40,7 @@ impl Input {
             return Ok(input);
         }
         let input = Input {
-            handle: open_input().or_else(|_| w::duplicate_handle(fallback))?,
+            handle: console::open_input().or_else(|_| w::duplicate_handle(fallback))?,
             watcher_gate: ConcurrencyGate::new()?,
         };
         Ok(INPUT.get_or_init(|| input))
@@ -92,10 +93,6 @@ impl Input {
     }
 }
 
-fn open_input() -> Result<OwnedHandle, Win32Error> {
-    console::open(bun_core::wstr!("CONIN$"))
-}
-
 static IS_RAW: AtomicBool = AtomicBool::new(false);
 
 enum LineReadState {
@@ -112,6 +109,8 @@ struct Shared {
     /// Notified when the line read ends or raw mode is left. Keyed by the address of the reader's `Inner`.
     readers: Vec<(usize, Completer<()>)>,
     buffered_text: Vec<u8>,
+    /// Read from the input buffer, and behind `buffered_text`.
+    untranslated_records: VecDeque<InputRecord>,
     end_event: Option<ReadEvent>,
     decoder: Utf16Decoder,
     /// `WAKE_CHAR`s written to the input buffer and not read back yet.
@@ -126,6 +125,7 @@ static SHARED: Guarded<Shared> = Guarded::new(Shared {
     has_watcher_thread: false,
     readers: Vec::new(),
     buffered_text: Vec::new(),
+    untranslated_records: VecDeque::new(),
     end_event: None,
     decoder: Utf16Decoder::new(),
     pending_wake_count: 0,
@@ -163,6 +163,13 @@ impl Shared {
         is_wake
     }
 
+    /// For when no line read is pending: another reader has the keys that are not queued.
+    fn forget_taken_wake_keys(&mut self, input: &Input) {
+        if self.pending_wake_count > 0 && console::queued_record_count(input.raw()) == Ok(0) {
+            self.pending_wake_count = 0;
+        }
+    }
+
     fn record_error(&mut self, err: Win32Error) {
         self.end_event = Some(match err {
             Win32Error::BROKEN_PIPE | Win32Error::NO_DATA | Win32Error::PIPE_NOT_CONNECTED => {
@@ -197,15 +204,26 @@ impl Shared {
                 if !is_synthetic_key
                     && !(record.is_key_input() && self.try_consume_wake_char(record.character))
                 {
-                    key_input::translate(record, &mut self.decoder, &mut self.buffered_text);
+                    self.untranslated_records.push_back(*record);
                 }
             }
+            self.translate_records();
             if records.len() < BATCH_SIZE || self.buffered_text.len() >= CHUNK_THRESHOLD {
                 break;
             }
         }
         if is_resized {
             crate::console_signals::check_window_size();
+        }
+    }
+
+    /// Leaves the rest for the next read.
+    fn translate_records(&mut self) {
+        const MAX_CHUNK_LEN: usize = 64 * 1024;
+        while self.buffered_text.len() < MAX_CHUNK_LEN
+            && let Some(record) = self.untranslated_records.pop_front()
+        {
+            key_input::translate(&record, &mut self.decoder, &mut self.buffered_text);
         }
     }
 
@@ -230,11 +248,6 @@ impl Shared {
     }
 
     fn add_line(&mut self, line: &[u16]) {
-        const CTRL_Z: u16 = 0x1A;
-        if let [CTRL_Z, .., LF] = line {
-            self.end_event = Some(ReadEvent::Eof);
-            return;
-        }
         for &code_unit in line {
             if !self.try_consume_wake_char(code_unit) {
                 self.decoder.push(code_unit, &mut self.buffered_text);
@@ -287,7 +300,7 @@ fn read_line(input: &'static Input) {
     if !shared.readers.is_empty() && !IS_RAW.load(Ordering::SeqCst) {
         let spare_handle = shared.spare_line_handle.take();
         let is_spare = spare_handle.is_some();
-        let private_handle = spare_handle.or_else(|| open_input().ok());
+        let private_handle = spare_handle.or_else(|| console::open_input().ok());
         let cancel_token = CancelToken::default();
         shared.has_watcher_thread =
             shared.has_watcher_thread || blocking::try_spawn_dedicated(|| watch_line_reads(input));
@@ -325,6 +338,7 @@ fn read_line(input: &'static Input) {
                 break shared;
             }
         };
+        shared.forget_taken_wake_keys(input);
     }
     shared.line_state = LineReadState::Idle;
     LINE_READ_DONE.notify_all();
@@ -656,7 +670,8 @@ impl Inner {
         let address = Rc::as_ptr(self).addr();
         shared.readers.retain(|reader| reader.0 != address);
         let should_read_keys = IS_RAW.load(Ordering::SeqCst) && !shared.is_reading_line();
-        if should_read_keys && has_waited {
+        shared.translate_records();
+        if should_read_keys && has_waited && shared.untranslated_records.is_empty() {
             shared.read_keys(input);
         }
         if !shared.buffered_text.is_empty() {
@@ -674,6 +689,9 @@ impl Inner {
             return Some(end_event);
         }
 
+        if !shared.is_reading_line() {
+            shared.forget_taken_wake_keys(input);
+        }
         let make_callback = || self.make_read_callback(|this| this.process_read(true));
         if should_read_keys {
             match Request::wait(&self.state.port, input.handle.as_handle(), make_callback()) {

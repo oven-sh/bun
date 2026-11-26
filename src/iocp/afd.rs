@@ -321,9 +321,14 @@ impl Sockets {
         {
             None => {}
             // In this iteration: after a write to a closed peer, `recv` no longer reports the graceful close.
-            Some(ready) if ready.contains(Readiness::DISCONNECT) => port.defer(packet),
+            Some(ready)
+                if ready.intersects(Readiness::DISCONNECT | Readiness::ABORT)
+                    && !port.has_deferred_batch() =>
+            {
+                port.defer(packet)
+            }
             // Before the next batch: the data may stop a sender, and `send` accepts any amount once buffer space is free.
-            Some(ready) if ready.contains(Readiness::RECEIVE) => {
+            Some(ready) if ready.contains(Readiness::RECEIVE) && port.can_skip_queue() => {
                 port.defer_to_next_iteration(packet)
             }
             Some(_) => port.post(packet),

@@ -210,8 +210,7 @@ pub(crate) fn complete_overlapped(
 }
 
 fn transferred((status, bytes): (NTSTATUS, usize)) -> Result<usize, Win32Error> {
-    // A partial message read: the next read returns the remainder.
-    if NT_SUCCESS(status) || status == NTSTATUS::BUFFER_OVERFLOW {
+    if NT_SUCCESS(status) {
         return Ok(bytes);
     }
     Err(Win32Error::from_ntstatus(status))
@@ -266,7 +265,7 @@ pub(crate) fn readv(
             let rc = unsafe { ReadFile(handle, buf, len, &raw mut read, null) };
             return super::check(rc).map(|()| read as usize);
         }
-        transferred(complete_transfer(handle, |event, io| {
+        let result = complete_transfer(handle, |event, io| {
             // SAFETY: `buf` is writable for `len` bytes until `complete_transfer` returns.
             unsafe {
                 ntdll::NtReadFile(
@@ -281,7 +280,12 @@ pub(crate) fn readv(
                     ptr::null(),
                 )
             }
-        }))
+        });
+        match result {
+            // A partial message read: the next read returns the remainder.
+            (NTSTATUS::BUFFER_OVERFLOW, bytes) => Ok(bytes),
+            result => transferred(result),
+        }
     })
 }
 

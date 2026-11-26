@@ -145,7 +145,7 @@ attempt((v, n) => { try { throw {}; } catch ({ [«1»v || «1»n]: a = «1»fail
 attempt((v, n) => (({ [«1»v || «1»n]: a }, b = «1»fail()) => a)({}));
 `,
   "with.cjs": `
-with («1»exports || «0»module) module ? «1»1 : «0»2;
+with («1»exports || «0»1) exports ? «1»1 : «0»2;
 `,
   "assignments.js": `
 function f(a, o) {
@@ -831,11 +831,28 @@ const unused =«1»
   () => 1;«0»
 Object([{ a: new Object(Object ||«1»
   1) }]);«0»
+Object(Object ||«1»
+  1) || 1;«0»
+for (; !Object(Object ||«1»
+  1); i) {}«0»
+Object(Object || {«1»
+}) || 1;«1»
+Object({«1»
+}); (function () {});«1»
+if (!Object({«1»
+})) i;«0»
+/* c8 ignore next */
+Object()«1»
+  || 1;«0»
+Object || [«1»
+], Object;«1»
 [i =«1»
   1] = [i];«1»
 class Fields { m() {«1»
   i; } a;«0»
   b; }«1»
+class More {«1»
+  a; m() {} }«0»
 null«1»
   // istanbul ignore next
   ?.a;

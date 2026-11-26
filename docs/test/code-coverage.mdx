@@ -84,7 +84,7 @@ Bun measures the code as you wrote it. Types, `import` statements, `export { …
 Bun reports what [Istanbul](https://istanbul.js.org) reports, which is what Jest, Vitest and `nyc` go by. It also reports code that Istanbul doesn't look at:
 
 - The last three kinds of branches above.
-- Every line with code. Istanbul counts the lines on which a statement starts. A line with only the head of a function is covered when the function is called.
+- Every line with code. Istanbul counts the lines on which a statement starts. A closing bracket doesn't cover such a line, or the code before it. A line with only the head of a function is covered when the function is called.
 - Private methods as functions, and `class`, `enum`, `namespace` and `export default` as statements.
 
 Methods and arrow functions have names like `Cart.total`. Istanbul calls them `(anonymous_0)`.
@@ -334,6 +334,8 @@ plugin({
   },
 });
 ```
+
+Don't edit code after its source map is written. If that moves the code, the report is wrong.
 
 To report the code that runs instead, which is the output of the transpiler or the bundle itself, set `coverageIgnoreSourcemaps` to `true`. You rarely want this outside of debugging.
 

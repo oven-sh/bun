@@ -269,7 +269,7 @@ impl<'a, 't> Walk<'a, 't> {
     }
 
     fn last_token(&mut self, end: u32, at: At) {
-        self.count_line(end.saturating_sub(1), at, Token::Minor);
+        self.count_line(end.saturating_sub(1), at, Token::Closing);
     }
 
     fn add_statement(&mut self, known_to: KnownTo, owner: u32, (start, end): (u32, u32), at: At) {
@@ -292,6 +292,10 @@ impl<'a, 't> Walk<'a, 't> {
             order: known_to.order(decision.0),
             kind,
             decision,
+            count_of_ignored_line: match self.count(at) {
+                count if count != UNKNOWN && self.on_line(decision.0, at).is_ignored => count,
+                _ => 0,
+            },
             arms: Arms::new(),
         })
     }

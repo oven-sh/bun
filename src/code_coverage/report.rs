@@ -28,6 +28,8 @@ pub(crate) enum Token {
     Code,
     /// It counts on a line without code.
     Minor,
+    /// It also counts before code, unless a statement that did not run starts on the line.
+    Closing,
 }
 
 /// `[start, end)` in bytes of the text.
@@ -61,6 +63,8 @@ pub(crate) struct Branch {
     pub(crate) order: u64,
     pub(crate) kind: &'static str,
     pub(crate) decision: (u32, u32),
+    /// 0 if the line that it starts on is not ignored.
+    pub(crate) count_of_ignored_line: u64,
     /// One that is not written is empty. A branch without arms still takes up a number.
     pub(crate) arms: Arms,
 }
@@ -69,8 +73,10 @@ pub(crate) struct Report<'a> {
     pub(crate) positions: Positions<'a>,
     /// Until it is finished, the offsets are in the code that has the map.
     map: Option<&'a InlineMap>,
-    /// By `Token`.
-    lines: Vec<[u64; 2]>,
+    /// The count, and where the code starts.
+    lines: Vec<(u64, u32)>,
+    /// The line, the offset and the count of what is not `Token::Code`.
+    other_tokens: Vec<(u32, u32, u64)>,
     pub(crate) statements: Vec<(u64, Counted)>,
     pub(crate) functions: Vec<Function>,
     pub(crate) branches: Vec<Branch>,
@@ -128,6 +134,12 @@ impl Summary {
     }
 }
 
+fn raise(most: &mut u64, count: u64) {
+    if *most == UNKNOWN || *most < count {
+        *most = count;
+    }
+}
+
 /// lcov knows a function by its name.
 fn make_unique(name: &mut Vec<u8>, uses_of_names: &mut StringHashMap<u32>) {
     loop {
@@ -176,7 +188,8 @@ impl<'a> Report<'a> {
     pub(crate) fn new(positions: Positions<'a>, map: Option<&'a InlineMap>) -> Report<'a> {
         let positions = map.map_or(positions, |it| Positions::new(&it.file));
         Report {
-            lines: vec![[UNKNOWN; 2]; positions.line_count()],
+            lines: vec![(UNKNOWN, u32::MAX); positions.line_count()],
+            other_tokens: Vec::new(),
             positions,
             map,
             statements: Vec::new(),
@@ -190,9 +203,19 @@ impl<'a> Report<'a> {
         let Some(offset) = (self.map).map_or(Some(offset), |it| Some(it.token(offset)?.0)) else {
             return;
         };
-        let line = &mut self.lines[self.positions.line_of(offset)][token as usize];
-        if *line == UNKNOWN || *line < count {
-            *line = count;
+        let line = self.positions.line_of(offset);
+        let (most, start) = &mut self.lines[line];
+        let offset = match token {
+            Token::Code => {
+                *start = offset.min(*start);
+                return raise(most, count);
+            }
+            // That of a generated call can be mapped to any parenthesis.
+            Token::Closing if self.map.is_none() => offset,
+            _ => u32::MAX - 1,
+        };
+        if offset < *start {
+            self.other_tokens.push((line as u32, offset, count));
         }
     }
 
@@ -250,13 +273,23 @@ impl<'a> Report<'a> {
         if let Some(map) = self.map.take() {
             self.move_to_file(map);
         }
-        for [code, minor] in self.lines.iter_mut().filter(|it| it[0] == UNKNOWN) {
-            *code = *minor;
+        for (_, it) in self.statements.iter().filter(|it| it.1.count == 0) {
+            let (most, start) = &mut self.lines[self.positions.line_of(it.start)];
+            if *most != UNKNOWN {
+                *start = 0;
+            }
+        }
+        for (line, offset, count) in self.other_tokens.drain(..) {
+            let (most, start) = &mut self.lines[line as usize];
+            if offset < *start {
+                raise(most, count);
+            }
         }
         // genhtml refuses a branch on a line without code, or that was taken on a line that did not run.
         for index in 0..self.branches.len() {
             let branch = &self.branches[index];
             if let Some(most) = branch.arms.iter().map(|it| it.count).max() {
+                let most = most.max(branch.count_of_ignored_line);
                 self.count_line_at(branch.decision.0, most, Token::Code);
             }
         }
@@ -276,7 +309,7 @@ impl<'a> Report<'a> {
     /// The lines with code, from 1, and their counts.
     pub(crate) fn lines(&self) -> impl Iterator<Item = (usize, u64)> {
         (1..)
-            .zip(self.lines.iter().map(|it| it[0]))
+            .zip(self.lines.iter().map(|it| it.0))
             .filter(|it| it.1 != UNKNOWN)
     }
 

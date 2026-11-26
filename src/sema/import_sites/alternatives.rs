@@ -49,6 +49,7 @@ const MOST_TEXTS_MADE: u32 = 4096;
 const MOST_VALUES_JOINED: usize = 256;
 /// The same of a variable. Every mention of it makes a path of each.
 const MOST_VALUES_ASSIGNED: usize = 16;
+const MOST_VALUES_KEPT_FOR_READ: usize = 64;
 const MOST_STORES_FOLLOWED: u32 = 1 << 16;
 /// How many expressions of one file are followed for what other code passes or makes.
 const MOST_PASSED_IN_FILE: u32 = 1 << 16;
@@ -710,6 +711,8 @@ enum FollowedKey {
     Expr(ExprId),
     Symbol(SymbolId),
     Property(ExprId, Atom),
+    /// All that the object literal holds.
+    AnyProperty(ExprId),
     /// The name of a method, and the place of its argument. `None` for a setter.
     Passed(Atom, Option<u32>),
 }
@@ -828,6 +831,8 @@ struct Follower<'i, 'a, 's> {
     /// The argument is a list, and what is asked for is what it holds.
     needs_elements: bool,
     has_read_data_file: Cell<bool>,
+    /// The last read was of many objects, each of whose properties is kept.
+    has_read_kept_objects: Cell<bool>,
     findings_of_file: Option<&'i FindingsOfFile>,
     findings: Findings,
     followed: FxHashMap<(u32, FollowedKey), Followed>,
@@ -914,6 +919,7 @@ impl<'i, 'a, 's> Follower<'i, 'a, 's> {
             follows_fields: false,
             needs_elements: false,
             has_read_data_file: Cell::new(false),
+            has_read_kept_objects: Cell::new(false),
             findings_of_file: None,
             findings: Findings::default(),
             followed: FxHashMap::default(),
@@ -1790,10 +1796,12 @@ impl Follower<'_, '_, '_> {
         let met_before = std::mem::replace(&mut self.met_in_progress, MetInProgress::NONE);
         let had_run_out = self.has_run_out.replace(false);
         let did_read_data_file = self.has_read_data_file.replace(false);
+        let did_read_kept_objects = self.has_read_kept_objects.replace(false);
         let values = match key.1 {
             FollowedKey::Expr(written) => self.values_of_written(written),
             FollowedKey::Symbol(symbol) => self.values_of_symbol(mention, symbol),
             FollowedKey::Property(literal, key) => self.values_of_property(literal, key),
+            FollowedKey::AnyProperty(literal) => self.values_of_any_property(literal),
             FollowedKey::Passed(member, place) => self.values_passed_under_member(member, place),
         };
         let values =
@@ -1808,7 +1816,16 @@ impl Follower<'_, '_, '_> {
         let is_asking = !self.needs_no_contents_proof()
             && (!self.asked_while_open.is_empty()
                 || !self.functions_whose_answers_are_asked.is_empty());
-        if met.function >= functions && !self.has_run_out.get() && !is_asking {
+        // What is made of properties that are kept is made of them again instead of being kept for each expression that reads it.
+        let is_read_again = self.has_read_kept_objects.replace(did_read_kept_objects)
+            && self.reads_member(key.1)
+            && values
+                .as_ref()
+                .is_some_and(|it| it.len() > MOST_VALUES_KEPT_FOR_READ);
+        if is_read_again {
+            self.visited.remove(&key.1);
+        }
+        if met.function >= functions && !self.has_run_out.get() && !is_asking && !is_read_again {
             let followed = Followed {
                 values: values.clone(),
                 open_parameter: self.open_parameters.get(opened).copied(),
@@ -1836,6 +1853,11 @@ impl Follower<'_, '_, '_> {
         self.has_read_data_file
             .set(did_read_data_file || self.has_read_data_file.get());
         values
+    }
+
+    fn reads_member(&self, key: FollowedKey) -> bool {
+        matches!(key, FollowedKey::Expr(e)
+            if matches!(expr_kind(self.inputs.hir, e), Some(ExprKind::Dot { .. } | ExprKind::Index { .. })))
     }
 
     /// What `e` holds wherever it stands.
@@ -5675,6 +5697,12 @@ impl Follower<'_, '_, '_> {
         keys: Option<&[Vec<u8>]>,
         chain: Chain,
     ) -> Option<Values> {
+        let is_object = |it: &Held| matches!(it, Held::Object(_));
+        if objects.len() > MOST_VALUES_KEPT_FOR_READ
+            || keys.is_none() && objects.iter().any(is_object)
+        {
+            self.has_read_kept_objects.set(true);
+        }
         let mut values = Distinct::new();
         let mut beside_spreads = Vec::new();
         let looks_beside_spreads = self.follows_fields && self.keeps_known_alternatives;
@@ -5986,9 +6014,8 @@ impl Follower<'_, '_, '_> {
 
     fn read_property(&mut self, literal: ExprId, keys: Option<&[Vec<u8>]>) -> Option<Values> {
         let Some(keys) = keys else {
-            let written = self.properties_of(literal)?;
-            let values = self.values_of_any(written.iter().map(|it| it.1))?;
-            return Some(with_undefined(values));
+            let key = (self.call_context(), FollowedKey::AnyProperty(literal));
+            return self.follow_once(key, literal);
         };
         let written = self.list_written(literal)?;
         if keys.is_empty() && !written.computed.is_empty() {
@@ -6025,6 +6052,12 @@ impl Follower<'_, '_, '_> {
         }
         let key = (self.call_context(), FollowedKey::Property(literal, key));
         self.follow_once(key, literal)
+    }
+
+    fn values_of_any_property(&mut self, literal: ExprId) -> Option<Values> {
+        let written = self.properties_of(literal)?;
+        let values = self.values_of_any(written.iter().map(|it| it.1))?;
+        Some(with_undefined(values))
     }
 
     fn values_of_property(&mut self, literal: ExprId, key: Atom) -> Option<Values> {

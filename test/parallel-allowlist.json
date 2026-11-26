@@ -1921,6 +1921,7 @@
     "aot/a-build-of-a-long-row-of-classes-takes-linear-time.test.ts",
     "aot/imports-that-another-load-comes-ahead-of.test.ts",
     "aot/resolved-urls-keep-their-queries.test.ts",
-    "aot/one-file-under-several-types-and-queries.test.ts"
+    "aot/one-file-under-several-types-and-queries.test.ts",
+    "aot/a-package-that-a-plugin-makes-is-not-found-by-a-require-of-a-made-name.test.ts"
   ]
 }

@@ -1,29 +1,27 @@
-// End-to-end runtime tests for the `Bun.TypeChecker` API (see
-// tmp/ts7-js-api-survey/implementation-plan.md §§2.2–2.3, 3, 4, 7.1).
+// End-to-end runtime tests for the `Bun.TypeChecker` API.
 //
 // The API is asynchronous only: TypeScript errors resolve a snapshot as
 // diagnostics, while invalid arguments, closed roots and stale views reject
-// or throw with the plan's exact error codes. Only `Bun.TypeChecker` is
-// publicly constructible; snapshot, project and program objects come from
-// their parents.
+// or throw with specific error codes. Only `Bun.TypeChecker` is publicly
+// constructible; snapshot, project and program objects come from their
+// parents.
 //
-// Every test runs in-process against small `tempDir` projects. No network,
-// no hardcoded ports, no sleeps. Type-level coverage lives in
+// Every test runs against small `tempDir` projects. No network, no hardcoded
+// ports, no sleeps. Type-level coverage lives in
 // test/integration/bun-types/fixture/type-checker.ts.
-//
-// Safety/platform coverage (§7.2–7.4) lives at the end of this file:
-// table-driven UTF-16 vs UTF-8 positions, platform path semantics, GC
-// ownership, worker/realm teardown in a subprocess, and differential reuse.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
-import { writeFileSync } from "node:fs";
-import { join, sep } from "node:path";
+import { heapStats } from "bun:jsc";
+import { bunEnv, bunExe, isRoot, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { chmodSync, writeFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
+import differentialCases from "../../cli/check/differential-cases.json";
 
 const CLOSED = "ERR_BUN_TYPE_CHECKER_CLOSED";
 const DISPOSED = "ERR_BUN_TYPE_CHECKER_SNAPSHOT_DISPOSED";
 const INVALID_TYPE = "ERR_INVALID_ARG_TYPE";
 const INVALID_VALUE = "ERR_INVALID_ARG_VALUE";
+const READ_FAILED = "ERR_BUN_TYPE_CHECKER_READ_FAILED";
 
 const tsconfig = JSON.stringify({
   compilerOptions: {
@@ -47,8 +45,6 @@ function project(files: Record<string, string>) {
 }
 
 function makeChecker(dir: string): any {
-  // `any` until packages/bun-types declares the surface; the runtime shape is
-  // pinned here so a declaration/runtime mismatch fails loudly, not silently.
   return new (Bun as any).TypeChecker({ cwd: dir });
 }
 
@@ -79,10 +75,9 @@ function configNames(snapshot: any, dir: string): string[] {
 }
 
 /**
- * Contract (plan §§3.2/4.1/6): `updateSnapshot` validates synchronously
- * and *rejects* for invalid arguments and a closed root; only the
- * constructor throws synchronously. This helper pins the rejection channel
- * rather than accepting either, so a change to the contract fails here.
+ * `updateSnapshot` *rejects* for invalid arguments and a closed root; only
+ * the constructor throws synchronously. This helper pins the rejection
+ * channel rather than accepting either.
  */
 async function expectUpdateRejected(checker: any, update: any, code: string) {
   let promise: Promise<any>;
@@ -105,7 +100,7 @@ function expectSyncCode(fn: () => unknown, code: string) {
   throw new Error(`Expected a throw with code ${code}, but the call returned`);
 }
 
-describe("Bun.TypeChecker: clean project and TS2322", () => {
+describe.concurrent("Bun.TypeChecker: clean project and TS2322", () => {
   test("a clean project resolves with zero diagnostics", async () => {
     using dir = project({ "a.ts": `export const answer: number = 42;\n` });
     await using checker = makeChecker(String(dir));
@@ -175,7 +170,7 @@ describe("Bun.TypeChecker: clean project and TS2322", () => {
   });
 });
 
-describe("Bun.TypeChecker: config diagnostics", () => {
+describe.concurrent("Bun.TypeChecker: config diagnostics", () => {
   test("a removed compiler option resolves as a config diagnostic, not a rejection", async () => {
     using dir = project({
       "tsconfig.json": `{ "compilerOptions": { "lib": ["esnext"], "types": [], "suppressImplicitAnyIndexErrors": true } }`,
@@ -233,7 +228,7 @@ describe("Bun.TypeChecker: config diagnostics", () => {
   });
 });
 
-describe("Bun.TypeChecker: messageChain and relatedInformation", () => {
+describe.concurrent("Bun.TypeChecker: messageChain and relatedInformation", () => {
   test("nested elaboration is preserved in relatedInformation", async () => {
     using dir = project({
       "a.ts": `interface User { id: number; name: string }\nconst u: User = { id: "oops", name: "ada" };\nexport {};\n`,
@@ -312,7 +307,7 @@ describe("Bun.TypeChecker: messageChain and relatedInformation", () => {
   });
 });
 
-describe("Bun.TypeChecker: file filtering and ordering", () => {
+describe.concurrent("Bun.TypeChecker: file filtering and ordering", () => {
   test("filtering is stable, unfiltered order is preserved, and unmatched files return []", async () => {
     using dir = project({
       "a.ts": `export const a: string = 1;\n`,
@@ -348,6 +343,21 @@ describe("Bun.TypeChecker: file filtering and ordering", () => {
     expect(await program.getDiagnostics("does/not/exist.ts")).toEqual([]);
   });
 
+  test("identical messages at different positions of one file are all reported", async () => {
+    using dir = project({
+      "a.ts": `export const a: string = 1;\nexport const b: string = 2;\nexport const c: string = 3;\n`,
+    });
+    await using checker = makeChecker(String(dir));
+
+    using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+    const diagnostics = await snapshot.getProject("tsconfig.json").program.getDiagnostics("a.ts");
+    expect(diagnostics.map((d: any) => [d.line, d.code])).toEqual([
+      [1, 2322],
+      [2, 2322],
+      [3, 2322],
+    ]);
+  });
+
   test("related information stays attached when filtering by the top-level file", async () => {
     using dir = project({
       "types.ts": `export interface User {\n  id: number;\n  email: string;\n}\n`,
@@ -369,7 +379,7 @@ describe("Bun.TypeChecker: file filtering and ordering", () => {
   });
 });
 
-describe("Bun.TypeChecker: project lifecycle", () => {
+describe.concurrent("Bun.TypeChecker: project lifecycle", () => {
   test("multiple explicit projects, duplicate opens, balanced closes, and unmatched close", async () => {
     const config = (extra: object = {}) =>
       JSON.stringify({ compilerOptions: JSON.parse(tsconfig).compilerOptions, ...extra });
@@ -472,7 +482,7 @@ describe("Bun.TypeChecker: project lifecycle", () => {
   });
 });
 
-describe("Bun.TypeChecker: source overlays", () => {
+describe.concurrent("Bun.TypeChecker: source overlays", () => {
   test("overriding an existing file, replacing it, and removing the override reveals disk", async () => {
     using dir = project({ "a.ts": `export const answer: number = 42;\n` });
     await using checker = makeChecker(String(dir));
@@ -565,7 +575,7 @@ describe("Bun.TypeChecker: source overlays", () => {
   });
 });
 
-describe("Bun.TypeChecker: immutability", () => {
+describe.concurrent("Bun.TypeChecker: immutability", () => {
   test("mutating a returned diagnostic or array does not affect later reads", async () => {
     using dir = project({ "a.ts": `export const answer: string = 42;\n` });
     await using checker = makeChecker(String(dir));
@@ -604,7 +614,7 @@ describe("Bun.TypeChecker: immutability", () => {
   });
 });
 
-describe("Bun.TypeChecker: disposal", () => {
+describe.concurrent("Bun.TypeChecker: disposal", () => {
   test("dispose() is idempotent and stale access throws ERR_BUN_TYPE_CHECKER_SNAPSHOT_DISPOSED", async () => {
     using dir = project({ "a.ts": `export const answer: string = 42;\n` });
     await using checker = makeChecker(String(dir));
@@ -651,7 +661,7 @@ describe("Bun.TypeChecker: disposal", () => {
   });
 });
 
-describe("Bun.TypeChecker: concurrent update ordering", () => {
+describe.concurrent("Bun.TypeChecker: concurrent update ordering", () => {
   test("queued updates A and B are isolated per call and delivered in order", async () => {
     using dir = project({ "a.ts": `export const answer: number = 42;\n` });
     await using checker = makeChecker(String(dir));
@@ -688,7 +698,7 @@ describe("Bun.TypeChecker: concurrent update ordering", () => {
   });
 });
 
-describe("Bun.TypeChecker: close during queued work", () => {
+describe.concurrent("Bun.TypeChecker: close during queued work", () => {
   test("close rejects undelivered and new updates, is repeatable, and drains", async () => {
     using dir = project({ "a.ts": `export const answer: number = 42;\n` });
     const checker = makeChecker(String(dir));
@@ -733,7 +743,7 @@ describe("Bun.TypeChecker: close during queued work", () => {
   });
 });
 
-describe("Bun.TypeChecker: validation", () => {
+describe.concurrent("Bun.TypeChecker: validation", () => {
   test("invalid constructor options throw with the exact validation code", () => {
     expectSyncCode(() => new (Bun as any).TypeChecker({ cwd: 42 }), INVALID_TYPE);
     expectSyncCode(() => new (Bun as any).TypeChecker({ cwd: new URL("https://example.invalid/x") }), INVALID_VALUE);
@@ -767,6 +777,64 @@ describe("Bun.TypeChecker: validation", () => {
     await expectUpdateRejected(checker, { sourceChanges: new Map([["a\0b", "x"]]) }, INVALID_VALUE);
   });
 
+  test("a throwing openProjects getter rejects with that error and changes nothing", async () => {
+    using dir = project({ "a.ts": `export const answer: number = 42;\n` });
+    await using checker = makeChecker(String(dir));
+
+    const boom = new Error("getter boom");
+    await expect(
+      checker.updateSnapshot({
+        get openProjects() {
+          throw boom;
+        },
+      }),
+    ).rejects.toBe(boom);
+
+    using snapshot = await checker.updateSnapshot({});
+    expect(snapshot.getProjects()).toEqual([]);
+  });
+
+  test("a throwing sourceChanges Map iterator rejects with that error", async () => {
+    using dir = project({ "a.ts": `export const answer: number = 42;\n` });
+    await using checker = makeChecker(String(dir));
+
+    const boom = new Error("entries boom");
+    const patchedEntries = new Map([["a.ts", "x"]]);
+    patchedEntries.entries = () => {
+      throw boom;
+    };
+    await expect(checker.updateSnapshot({ sourceChanges: patchedEntries })).rejects.toBe(boom);
+
+    const patchedNext = new Map([["a.ts", "x"]]);
+    patchedNext.entries = (() => ({
+      next() {
+        throw boom;
+      },
+    })) as any;
+    await expect(checker.updateSnapshot({ sourceChanges: patchedNext })).rejects.toBe(boom);
+
+    using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+    expect(snapshot.getProjects()).toHaveLength(1);
+  });
+
+  test("a getter that closes the checker makes the update reject as closed", async () => {
+    using dir = project({ "a.ts": `export const answer: number = 42;\n` });
+    const checker = makeChecker(String(dir));
+
+    let closing: Promise<void> | undefined;
+    await expectUpdateRejected(
+      checker,
+      {
+        get openProjects() {
+          closing = checker.close();
+          return ["tsconfig.json"];
+        },
+      },
+      CLOSED,
+    );
+    await closing;
+  });
+
   test("a failed validation applies no part of the update", async () => {
     using dir = project({ "a.ts": `export const answer: number = 42;\n` });
     await using checker = makeChecker(String(dir));
@@ -792,13 +860,12 @@ describe("Bun.TypeChecker: validation", () => {
   });
 });
 
-describe("Bun.TypeChecker: incomplete and read failures", () => {
+describe.concurrent("Bun.TypeChecker: incomplete and read failures", () => {
   test("an ordinary missing module resolves as TS2307, never as an adapter failure", async () => {
-    // §4.1/§7.1 item 12: `ERR_BUN_TYPE_CHECKER_READ_FAILED` and
-    // `ERR_BUN_TYPE_CHECKER_INCOMPLETE` cover adapter-level I/O that would
-    // otherwise look clean. They are unit-tested at the native adapter layer
-    // (deterministic across platforms); this end-to-end guard pins the other
-    // side of the boundary — a normal "cannot find file" must stay a diagnostic.
+    // `ERR_BUN_TYPE_CHECKER_READ_FAILED` and `ERR_BUN_TYPE_CHECKER_INCOMPLETE`
+    // cover adapter-level I/O that would otherwise look clean. This guard pins
+    // the other side of the boundary: a normal "cannot find file" must stay a
+    // diagnostic.
     using dir = project({ "a.ts": `import "./does-not-exist";\nexport {};\n` });
     await using checker = makeChecker(String(dir));
 
@@ -807,6 +874,18 @@ describe("Bun.TypeChecker: incomplete and read failures", () => {
     // A side-effect import (`import "./x"`) is TS2882; a named import is TS2307.
     expect(diagnostics.map((d: any) => d.code)).toEqual([2882]);
     expect(diagnostics[0].category).toBe("error");
+  });
+
+  test.skipIf(isWindows || isRoot)("a check that cannot read a source file rejects and the queue keeps going", async () => {
+    using dir = project({ "a.ts": `export const answer: number = 42;\n`, "locked.ts": `export {};\n` });
+    chmodSync(join(String(dir), "locked.ts"), 0);
+    await using checker = makeChecker(String(dir));
+
+    await expectUpdateRejected(checker, { openProjects: ["tsconfig.json"] }, READ_FAILED);
+
+    // The failed job released its slot: later updates run and settle.
+    using snapshot = await checker.updateSnapshot({ closeProjects: ["tsconfig.json"] });
+    expect(snapshot.getProjects()).toEqual([]);
   });
 
   test("filtering by an unreadable-looking path returns [] rather than a false clean project error", async () => {
@@ -818,7 +897,7 @@ describe("Bun.TypeChecker: incomplete and read failures", () => {
   });
 });
 
-describe("Bun.TypeChecker: UTF-16 positions (§7.2)", () => {
+describe.concurrent("Bun.TypeChecker: UTF-16 positions", () => {
   // Every case computes the expected `pos`/`end` from JavaScript string
   // indexing (UTF-16 code units). For non-ASCII cases the UTF-8 byte offset
   // differs, so a byte-offset implementation cannot pass by accident. The
@@ -945,7 +1024,7 @@ describe("Bun.TypeChecker: UTF-16 positions (§7.2)", () => {
   });
 });
 
-describe("Bun.TypeChecker: platform path semantics (§7.2)", () => {
+describe.concurrent("Bun.TypeChecker: platform path semantics", () => {
   test("POSIX: a backslash is a literal filename character, not a separator", async () => {
     if (process.platform === "win32") return;
     using dir = project({ "a.ts": `export const answer: number = 42;\n` });
@@ -998,31 +1077,54 @@ describe("Bun.TypeChecker: platform path semantics (§7.2)", () => {
   });
 });
 
-describe("Bun.TypeChecker: GC and ownership (§7.3)", () => {
-  test("disposed snapshots do not keep their diagnostics alive", async () => {
-    const { heapStats } = require("bun:jsc") as typeof import("bun:jsc");
-    const count = () => heapStats().objectTypeCounts.Object ?? 0;
+describe("Bun.TypeChecker: GC and ownership", () => {
+  const counts = () => {
+    const { objectTypeCounts } = heapStats();
+    return {
+      snapshots: objectTypeCounts.TypeCheckerSnapshot ?? 0,
+      projects: objectTypeCounts.TypeCheckerProject ?? 0,
+      programs: objectTypeCounts.TypeCheckerProgram ?? 0,
+    };
+  };
 
-    using dir = project({ "a.ts": `export const answer: string = 42;\n` });
-    await using checker = makeChecker(String(dir));
-
-    // Warm up so one-off allocations are settled.
-    using warm = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
-    await warm.getProject("tsconfig.json").program.getDiagnostics();
-    Bun.gc(true);
-
-    const before = count();
-    {
+  // Each wrapper owns a native ref to its snapshot, so a leaked ref (or a
+  // reference cycle between them) keeps the whole chain of wrappers alive.
+  async function makeAndDrop(checker: any, n: number, dispose: boolean) {
+    for (let i = 0; i < n; i++) {
       const snapshot = await checker.updateSnapshot({});
-      await snapshot.getProject("tsconfig.json").program.getDiagnostics();
-      snapshot.dispose();
+      const found = snapshot.getProject("tsconfig.json");
+      await found.program.getDiagnostics();
+      snapshot.getProjects();
+      if (dispose) snapshot.dispose();
     }
-    Bun.gc(true);
-    // Disposal released the snapshot's diagnostics; the object count must not
-    // grow by a snapshot's worth. A generous bound avoids GC-timing flakes
-    // while still catching a leaked diagnostics vector.
-    expect(count() - before).toBeLessThanOrEqual(64);
-  });
+  }
+
+  for (const dispose of [true, false]) {
+    test(`snapshot, project and program wrappers are collected (${dispose ? "disposed" : "not disposed"})`, async () => {
+      using dir = project({ "a.ts": `export const answer: string = 42;\n` });
+      await using checker = makeChecker(String(dir));
+      using seed = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+      await makeAndDrop(checker, 1, dispose);
+      Bun.gc(true);
+      const before = counts();
+
+      const created = 6;
+      await makeAndDrop(checker, created, dispose);
+      // Collection is the condition: a few collections may be needed before the
+      // wrappers made in the loop above are unreachable.
+      let after = counts();
+      for (let attempt = 0; attempt < 20 && after.snapshots - before.snapshots > 2; attempt++) {
+        Bun.gc(true);
+        await Bun.sleep(0);
+        after = counts();
+      }
+      expect({
+        snapshots: after.snapshots - before.snapshots <= 2,
+        projects: after.projects - before.projects <= 2 * 2,
+        programs: after.programs - before.programs <= 2 * 2,
+      }).toEqual({ snapshots: true, projects: true, programs: true });
+    });
+  }
 
   test("a live snapshot survives GC and queued checks do not disturb it", async () => {
     using dir = project({ "a.ts": `export const answer: string = 42;\n` });
@@ -1049,75 +1151,10 @@ describe("Bun.TypeChecker: GC and ownership (§7.3)", () => {
     fixed.dispose();
     errored.dispose();
   });
-
-  test("many short-lived snapshots are collected after disposal", async () => {
-    const { heapStats } = require("bun:jsc") as typeof import("bun:jsc");
-
-    using dir = project({ "a.ts": `export const answer: number = 42;\n` });
-    await using checker = makeChecker(String(dir));
-
-    // Warm up.
-    using warm = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
-    Bun.gc(true);
-    const before = heapStats().objectTypeCounts.Object ?? 0;
-
-    for (let i = 0; i < 8; i++) {
-      const snapshot = await checker.updateSnapshot({});
-      await snapshot.getProject("tsconfig.json").program.getDiagnostics();
-      snapshot.dispose();
-    }
-    Bun.gc(true);
-    // Eight disposed snapshots must not accumulate: the bound is per-snapshot
-    // headroom, well below what a leak of one snapshot's diagnostics costs.
-    expect((heapStats().objectTypeCounts.Object ?? 0) - before).toBeLessThanOrEqual(8 * 64);
-  });
 });
 
-describe("Bun.TypeChecker: worker/realm teardown (§7.3)", () => {
-  test("a check started in a Worker that is terminated settles and the parent exits cleanly", async () => {
-    using dir = project({ "a.ts": `export const answer: string = 42;\n` });
-
-    const workerSource = `
-const checker = new Bun.TypeChecker({ cwd: ${JSON.stringify(String(dir))} });
-const pending = checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
-pending.then(
-  snapshot => postMessage({ kind: "snapshot", codes: snapshot.getProjects().map(p => p.configFileName) }),
-  error => postMessage({ kind: "rejected", code: error.code ?? null }),
-);
-postMessage({ kind: "started" });
-`;
-    const worker = new Worker(URL.createObjectURL(new Blob([workerSource], { type: "text/javascript" })));
-    try {
-      const messages: any[] = [];
-      const { promise, resolve, reject } = Promise.withResolvers<void>();
-      worker.onmessage = event => {
-        messages.push(event.data);
-        if (event.data.kind === "started") {
-          // Real checking work is in flight; terminating the realm must not
-          // crash the parent or deliver into the dead realm.
-          worker.terminate();
-          resolve();
-        }
-      };
-      worker.onerror = reject;
-      await promise;
-      expect(messages[0].kind).toBe("started");
-      // The worker is gone: no snapshot message can follow its termination.
-      expect(messages.some((m: any) => m.kind === "snapshot" || m.kind === "rejected")).toBe(false);
-    } finally {
-      worker.terminate();
-    }
-  });
-
-  test("a checker closed inside a Worker prints its marker and the subprocess exits 0", async () => {
-    using dir = project({ "a.ts": `export const answer: number = 42;\n` });
-
-    const script = `
-const checker = new Bun.TypeChecker({ cwd: ${JSON.stringify(String(dir))} });
-await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
-await checker.close();
-console.log("typechecker-worker-done");
-`;
+describe.concurrent("Bun.TypeChecker: worker/realm teardown", () => {
+  async function runScript(script: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
       env: bunEnv,
@@ -1125,47 +1162,108 @@ console.log("typechecker-worker-done");
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(normalizeBunSnapshot(stdout.trim(), String(dir))).toBe("typechecker-worker-done");
+    return { stdout, stderr, exitCode };
+  }
+
+  const inWorker = (workerSource: string, after: string) => `
+const worker = new Worker(URL.createObjectURL(new Blob([${JSON.stringify(workerSource)}], { type: "text/javascript" })));
+const { promise, resolve, reject } = Promise.withResolvers();
+worker.onmessage = event => resolve(event.data);
+worker.onerror = event => reject(event.error ?? event);
+const message = await promise;
+${after}
+`;
+
+  test("a Worker terminated in the middle of a check leaves a process that exits cleanly", async () => {
+    using dir = project({ "a.ts": `export const answer: string = 42;\n` });
+    const workerSource = `
+const checker = new Bun.TypeChecker({ cwd: ${JSON.stringify(String(dir))} });
+checker.updateSnapshot({ openProjects: ["tsconfig.json"] }).then(
+  () => postMessage("delivered"),
+  error => postMessage("rejected " + error.code),
+);
+postMessage("started");
+`;
+    const { stdout, exitCode } = await runScript(
+      inWorker(
+        workerSource,
+        `
+const closed = new Promise(resolve => worker.addEventListener("close", resolve));
+worker.terminate();
+await closed;
+console.log("terminated after", message);
+`,
+      ),
+    );
+    expect(stdout).toBe("terminated after started\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a checker used and closed inside a Worker delivers its result to the parent", async () => {
+    using dir = project({ "a.ts": `export const answer: string = 42;\n` });
+    const workerSource = `
+const checker = new Bun.TypeChecker({ cwd: ${JSON.stringify(String(dir))} });
+const snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+const codes = (await snapshot.getProjects()[0].program.getDiagnostics()).map(d => d.code);
+await checker.close();
+postMessage(codes);
+`;
+    const { stdout, exitCode } = await runScript(
+      inWorker(workerSource, `console.log(JSON.stringify(message)); worker.terminate();`),
+    );
+    expect(stdout).toBe("[2322]\n");
     expect(exitCode).toBe(0);
   });
 });
 
-describe("Bun.TypeChecker: differential reuse (§7.4)", () => {
-  // Reuse the pinned differential cases where practical: the API's
-  // code/text/file identity must match what `bun check` already reports for
-  // the same program. Cases are read from test/cli/check/differential-cases.json
-  // (the repository's existing pinned dependency — no download at test time).
-  test("API diagnostics match the pinned differential case programs", async () => {
-    const cases = (await Bun.file(join(import.meta.dir, "../../cli/check/differential-cases.json")).json()) as Record<
-      string,
-      { files: Record<string, string>; build?: boolean }
-    >;
-    // A small deterministic sample: the first three single-file cases whose
-    // program is a plain (non-build) check. Debug builds check a sample too.
-    const picked = Object.entries(cases)
-      .filter(([, it]) => !it.build && Object.keys(it.files).length <= 3 && it.files["a.ts"]?.includes("sentinel"))
-      .slice(0, 3);
-    expect(picked.length).toBeGreaterThan(0);
+describe.concurrent("Bun.TypeChecker: agreement with bun check", () => {
+  // The diagnostics of the API must be the diagnostics that `bun check`
+  // prints for the same project: same file, position, category, code and
+  // first line of the message.
+  const cases = Object.entries(
+    differentialCases as Record<string, { files: Record<string, string>; build?: boolean }>,
+  )
+    .filter(([, it]) => !it.build && Object.keys(it.files).length <= 3 && it.files["a.ts"]?.includes("sentinel"))
+    .slice(0, 3);
 
-    for (const [name, it] of picked) {
+  test("the sample is not empty", () => {
+    expect(cases.length).toBeGreaterThan(0);
+  });
+
+  for (const [name, it] of cases) {
+    test(name, async () => {
       using dir = tempDir("bun-typecheck-differential", it.files as any);
-      await using checker = makeChecker(String(dir));
+      const cwd = String(dir);
 
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "check"],
+        cwd,
+        env: { ...bunEnv, NO_COLOR: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const header = /^(.+)\((\d+),(\d+)\): (error|warning|suggestion|message) TS(\d+): (.*)$/;
+      const fromCheck = stdout
+        .split("\n")
+        .map(line => header.exec(line))
+        .filter(match => match !== null)
+        .map(([, file, line, column, category, code, text]) => `${file}:${line}:${column} ${category} TS${code} ${text}`)
+        .sort();
+
+      await using checker = makeChecker(cwd);
       using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
       const diagnostics = await snapshot.getProject("tsconfig.json").program.getDiagnostics();
-      // Every picked case contains the sentinel `const sentinel: number = "";`
-      // so the API must surface at least one TS2322 for it.
-      expect(
-        diagnostics.some((d: any) => d.code === 2322),
-        name,
-      ).toBe(true);
-      for (const diagnostic of diagnostics) {
-        expect(["error", "warning", "suggestion", "message"]).toContain(diagnostic.category);
-        expect(typeof diagnostic.code).toBe("number");
-        expect(typeof diagnostic.text).toBe("string");
-        expect(diagnostic.text.length).toBeGreaterThan(0);
-      }
-    }
-  });
+      const fromApi = diagnostics
+        .filter((d: any) => d.fileName !== undefined)
+        .map(
+          (d: any) =>
+            `${relative(cwd, d.fileName).replaceAll("\\", "/")}:${d.line}:${d.column} ${d.category} TS${d.code} ${d.text.split("\n")[0]}`,
+        )
+        .sort();
+
+      expect(fromApi.length).toBeGreaterThan(0);
+      expect(fromApi).toEqual(fromCheck);
+    });
+  }
 });

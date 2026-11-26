@@ -10,7 +10,7 @@ use bun_wyhash::Wyhash;
 
 use bun_http_types::Method as http_method;
 use bun_removable_features::{Feature, is_removed};
-use bun_url::URL;
+use bun_url::{PercentEncoding, URL};
 pub(crate) use http_method::{Method, Optional as MethodOptional};
 
 use super::server_body::ServerInitContext;
@@ -214,9 +214,43 @@ pub(crate) struct StaticRouteEntry {
     pub method: MethodOptional,
 }
 
+/// What a client sends for `path`, where that is not `path`: a URL parser escapes the path percent-encode set, and Chrome also escapes `|`.
+fn request_spellings(path: &[u8]) -> [Option<Box<[u8]>>; 2] {
+    let in_set = PercentEncoding::in_path_percent_encode_set;
+    [
+        PercentEncoding::encode(path, in_set),
+        if strings::contains_char(path, b'|') {
+            PercentEncoding::encode(path, |byte| byte == b'|' || in_set(byte))
+        } else {
+            None
+        },
+    ]
+}
+
 impl StaticRouteEntry {
     fn memory_cost(&self) -> usize {
         self.path.len() + self.route.memory_cost()
+    }
+
+    /// Adds the route of a file the bundler wrote. The page, a script or a stylesheet holds the name as it is, so the route is also under each spelling a client requests.
+    pub(crate) fn push_bundled_file(
+        routes: &mut Vec<StaticRouteEntry>,
+        path: &[u8],
+        route: AnyRoute,
+        method: MethodOptional,
+    ) {
+        for spelling in request_spellings(path).into_iter().flatten() {
+            routes.push(StaticRouteEntry {
+                path: spelling,
+                route: route.clone(),
+                method,
+            });
+        }
+        routes.push(StaticRouteEntry {
+            path: Box::from(path),
+            route,
+            method,
+        });
     }
 }
 
@@ -311,20 +345,6 @@ impl ServerConfig {
         that.normalize_static_routes_list()?;
 
         Ok(that)
-    }
-
-    pub(crate) fn append_static_route(
-        &mut self,
-        path: &[u8],
-        route: AnyRoute,
-        method: MethodOptional,
-    ) -> Result<(), crate::Error> {
-        self.static_routes.push(StaticRouteEntry {
-            path: Box::<[u8]>::from(path),
-            route,
-            method,
-        });
-        Ok(())
     }
 }
 

@@ -632,11 +632,12 @@ impl AnyRoute {
         methods.insert(Method::GET);
         methods.insert(Method::HEAD);
 
-        init_ctx.user_routes.push(server_config::StaticRouteEntry {
-            path: route_path.into_portable().as_bytes().into(),
+        server_config::StaticRouteEntry::push_bundled_file(
+            init_ctx.user_routes,
+            route_path.into_portable().as_bytes(),
             route,
-            method: methods,
-        });
+            methods,
+        );
         Ok(None)
     }
 

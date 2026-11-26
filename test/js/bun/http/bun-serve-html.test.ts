@@ -740,9 +740,9 @@ test("serve html whose file is deleted before its first bundle", async () => {
 });
 
 /** Runs the `serve.ts` of a fixture directory to completion. */
-async function runServeFixture(dir: { toString(): string }, env: Record<string, string> = {}) {
+async function runServeFixture(dir: { toString(): string }, env: Record<string, string> = {}, file = "serve.ts") {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "serve.ts"],
+    cmd: [bunExe(), file],
     env: { ...bunEnv, ...env },
     cwd: String(dir),
     stdout: "pipe",
@@ -2104,4 +2104,245 @@ test.concurrent.skipIf(isWindows).each([
     naming: { entry: "serve.[ext]", chunk: prefix + "[name]-[hash].[ext]" },
   });
   expect(await bunRun(join(String(dir), "out", "serve.js"))).toSpawn("200");
+});
+
+// A build names each output after its source, and the page, the script and the
+// stylesheet hold that name as it is. A client's URL parser escapes some of its
+// bytes before the request leaves, so the route of the output has to answer
+// that spelling of the name too. With the page at "/*" a miss is not a 404: the
+// page answers the request for its own image.
+test.concurrent.each([
+  ["/", "false"],
+  ["/*", "false"],
+  // Every request for the page builds it again, and adds the routes again.
+  ["/", "{ hmr: false }"],
+  ["/*", "{ hmr: false }"],
+])(
+  "serves an asset under the path a client requests for its name (page at %s, development: %s)",
+  async (mount, development) => {
+    // Windows has no file name with a "|".
+    const bar = !isWindows;
+    using dir = tempDir("bun-serve-html-asset-request-spellings", {
+      "index.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./style.css"></head><body><img src="./my img.png"><img src="./ünï.png"><img src="./100% done.png"><img src="./a^b{c}.png">${bar ? `<img src="./a|b c.png"><img src="./p|q.png">` : ""}<script type="module" src="./app.ts"></script></body></html>`,
+      "style.css": `body { background: url("./bg ünï.png"); }`,
+      "app.ts": `import photos from "./fünf photos.png"; import literal from "./a%20b.png"; console.log(photos, literal);`,
+      "my img.png": "html, space",
+      "ünï.png": "html, non-ASCII",
+      "100% done.png": "html, percent",
+      "a^b{c}.png": "html, caret and braces",
+      ...(bar ? { "a|b c.png": "html, bar and space", "p|q.png": "html, bar" } : {}),
+      // Under 128 KB the bundler writes a url() as a data: URL.
+      "bg ünï.png": Buffer.alloc(129 * 1024, "c"),
+      "fünf photos.png": "js, non-ASCII and space",
+      // The name is these nine bytes. A client sends them as they are.
+      "a%20b.png": "js, literal escape",
+      "serve.ts": /*ts*/ `
+        import { connect } from "node:net";
+        import page from "./index.html";
+
+        using server = Bun.serve({
+          hostname: "127.0.0.1",
+          port: 0,
+          development: ${development},
+          routes: { [process.env.MOUNT]: page },
+          fetch: () => new Response("fallback", { status: 404 }),
+        });
+
+        // Sends the path as it is written here. fetch() gives it to a URL parser first.
+        function get(path) {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          const chunks = [];
+          const socket = connect(server.port, "127.0.0.1", () => {
+            socket.write("GET " + path + " HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n");
+          });
+          socket.on("data", chunk => chunks.push(chunk));
+          socket.on("error", reject);
+          socket.on("close", () => {
+            const response = Buffer.concat(chunks).toString();
+            const head = response.slice(0, response.indexOf("\\r\\n\\r\\n"));
+            const body = response.slice(head.length + 4);
+            resolve([
+              head.slice(0, head.indexOf("\\r\\n")),
+              head.match(/^content-type: (.*)$/im)?.[1] ?? null,
+              body.length > 64 ? body.length : body,
+            ]);
+          });
+          return promise;
+        }
+
+        const text = async ref => await (await fetch(new URL(ref, server.url))).text();
+        const html = await text("/");
+        const names = [
+          ...html.matchAll(/<img src="([^"]+)"/g),
+          ...(await text(html.match(/<link[^>]* href="([^"]+)"/)[1])).matchAll(/url\\("?([^")]+)"?\\)/g),
+          ...(await text(html.match(/<script[^>]* src="([^"]+)"/)[1])).matchAll(/"(\\/[^"]+\\.png)"/g),
+        ].map(match => match[1]);
+
+        // What the URL parser of a client makes of a name. Chrome also writes "|" as "%7C".
+        const escapes = { " ": "%20", "ü": "%C3%BC", "ï": "%C3%AF", "^": "%5E", "{": "%7B", "}": "%7D" };
+        const spell = (name, bar) => name.replace(/[ üï^{}|]/g, char => escapes[char] ?? bar);
+        const results = [];
+        for (const name of names) {
+          for (const path of new Set([spell(name, "|"), spell(name, "%7C")])) {
+            results.push([path.replace(/-[a-z0-9]+\\.png$/, ".png"), ...(await get(path))]);
+          }
+        }
+        // The name itself still answers a client that escapes nothing.
+        results.push(["as it is", ...(await get(names.find(name => name.includes("ü"))))]);
+        // console.log() reads "%" in its first argument as a format.
+        process.stdout.write(JSON.stringify(results));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir, { MOUNT: mount });
+    const served = (body: string | number) => ["HTTP/1.1 200 OK", "image/png", body];
+    expect({ results: stdout === "" ? null : JSON.parse(stdout), exitCode }, stderr).toEqual({
+      // [the request path without the hash, status line, content type, body or its length]
+      results: [
+        ["/my%20img.png", ...served("html, space")],
+        ["/%C3%BCn%C3%AF.png", ...served("html, non-ASCII")],
+        ["/100%%20done.png", ...served("html, percent")],
+        ["/a%5Eb%7Bc%7D.png", ...served("html, caret and braces")],
+        ...(bar ? [["/a|b%20c.png", ...served("html, bar and space")]] : []),
+        ...(bar ? [["/a%7Cb%20c.png", ...served("html, bar and space")]] : []),
+        ...(bar ? [["/p|q.png", ...served("html, bar")]] : []),
+        ...(bar ? [["/p%7Cq.png", ...served("html, bar")]] : []),
+        ["/bg%20%C3%BCn%C3%AF.png", ...served(129 * 1024)],
+        ["/f%C3%BCnf%20photos.png", ...served("js, non-ASCII and space")],
+        ["/a%20b.png", ...served("js, literal escape")],
+        ["as it is", ...served("html, non-ASCII")],
+      ],
+      exitCode: 0,
+    });
+  },
+);
+
+// Nothing the bundler writes names the built page by its own file name, so
+// that route has the name as it is and no other spelling. Another spelling
+// would answer in place of the route that the user has at that path.
+test.concurrent("the route of the built page under its own file name has no other spelling", async () => {
+  const pageTitled = (title: string) => `<!DOCTYPE html><html><head><title>${title}</title></head><body></body></html>`;
+  using dir = tempDir("bun-serve-html-own-name-route", {
+    "my page.html": pageTitled("first build"),
+    "serve.ts": /*ts*/ `
+      import { join } from "node:path";
+      import page from "./my page.html";
+
+      const title = async (server, path) =>
+        (await (await fetch(server.url.origin + path)).text()).match(/<title>(.*?)<\\/title>/)?.[1] ?? null;
+      const titles = {};
+      {
+        using server = Bun.serve({
+          port: 0,
+          development: false,
+          routes: { "/": page, "/my%20page.html": new Response("<title>user route</title>") },
+        });
+        titles.page = await title(server, "/");
+        titles.userRoute = await title(server, "/my%20page.html");
+      }
+      {
+        // Every request builds the page again.
+        using server = Bun.serve({ port: 0, development: { hmr: false }, routes: { "/my%20page.html": page } });
+        titles.beforeEdit = await title(server, "/my%20page.html");
+        await Bun.write(join(import.meta.dir, "my page.html"), ${JSON.stringify(pageTitled("second build"))});
+        titles.afterEdit = await title(server, "/my%20page.html");
+      }
+      process.stdout.write(JSON.stringify(titles));
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  expect({ titles: stdout === "" ? null : JSON.parse(stdout), exitCode }, stderr).toEqual({
+    titles: { page: "first build", userRoute: "user route", beforeEdit: "first build", afterEdit: "second build" },
+    exitCode: 0,
+  });
+});
+
+// A built server (bun build --target=bun) names the chunks of a page after the
+// page, so the script and the stylesheet of "my page.html" need the spelling a
+// client requests as much as an image does. It registers each file of the
+// manifest of the page for GET and HEAD, and such a route answers in place of
+// a route that the user has at the same path. The spelling a client requests
+// has that precedence too, as the name itself has.
+test.concurrent("a built server serves each file of a page under the path a client requests", async () => {
+  using dir = tempDir("html-built-server-request-spellings", {
+    "my page.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./style.css"></head><body><img src="./my img.png"><img src="./logo.png"><script type="module" src="./main.ts"></script></body></html>`,
+    "style.css": `body { color: red; }`,
+    "main.ts": `import("./my lazy.ts").then(lazy => console.log(lazy.default));`,
+    "my lazy.ts": `export default "lazy chunk";`,
+    "my img.png": "image, space",
+    "logo.png": "image, plain",
+    "serve.ts": /*ts*/ `
+      import { join } from "node:path";
+      import page from "./my page.html";
+
+      const files = JSON.parse(process.env.FILES);
+      const fallback = () => new Response("fallback", { status: 404 });
+      // [status, content type, the body is the file]
+      async function request(server, method, name) {
+        const response = await fetch(server.url.origin + "/" + name.replaceAll(" ", "%20"), { method });
+        const body = await response.text();
+        const isFile = method === "HEAD" ? body === "" : body === (await Bun.file(join(import.meta.dir, name)).text());
+        return [response.status, response.headers.get("content-type"), isFile];
+      }
+
+      const results = {};
+      for (const mount of ["/", "/*"]) {
+        using server = Bun.serve({ hostname: "127.0.0.1", port: 0, routes: { [mount]: page }, fetch: fallback });
+        results[mount] = [];
+        for (const name of files) {
+          results[mount].push([
+            name.replace(/-[a-z0-9]+\\./, "."),
+            ...(await request(server, "GET", name)),
+            ...(await request(server, "HEAD", name)),
+          ]);
+        }
+      }
+      {
+        const user = new Response("user route");
+        using server = Bun.serve({
+          hostname: "127.0.0.1",
+          port: 0,
+          routes: { "/logo.png": user, "/my%20img.png": user, "/*": page },
+        });
+        results.besideUserRoutes = [await request(server, "GET", "logo.png"), await request(server, "GET", "my img.png")];
+      }
+      process.stdout.write(JSON.stringify(results));
+    `,
+  });
+  const build = await Bun.build({
+    entrypoints: [join(String(dir), "serve.ts")],
+    outdir: join(String(dir), "out"),
+    target: "bun",
+    splitting: true,
+    // The chunk names of the bun build command, and asset names that a route of the user can hold.
+    naming: { chunk: "[name]-[hash].[ext]", asset: "[name].[ext]" },
+  });
+  const unhashed = (name: string) => name.replace(/-[a-z0-9]+\./, ".");
+  const files = build.outputs
+    .map(output => output.path.replace(/^.*[\\/]/, ""))
+    .filter(name => /^(?:my |logo).*\.(?:js|css|png)$/.test(name))
+    .sort((a, b) => (unhashed(a) < unhashed(b) ? -1 : 1));
+  const { stdout, stderr, exitCode } = await runServeFixture(
+    join(String(dir), "out"),
+    { FILES: JSON.stringify(files) },
+    "serve.js",
+  );
+  const served = (name: string, type: string) => [name, 200, type, true, 200, type, true];
+  const everyFile = [
+    served("logo.png", "image/png"),
+    served("my img.png", "image/png"),
+    served("my lazy.js", "text/javascript;charset=utf-8"),
+    served("my page.css", "text/css;charset=utf-8"),
+    served("my page.js", "text/javascript;charset=utf-8"),
+  ];
+  expect({ results: stdout === "" ? null : JSON.parse(stdout), exitCode }, stderr).toEqual({
+    results: {
+      "/": everyFile,
+      "/*": everyFile,
+      besideUserRoutes: [
+        [200, "image/png", true],
+        [200, "image/png", true],
+      ],
+    },
+    exitCode: 0,
+  });
 });

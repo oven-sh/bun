@@ -41,7 +41,8 @@ impl JobContext for CheckTask {
     type Js = CheckJs;
 
     fn run(off: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
-        off.run_checked();
+        // The constructor has thrown where the type checker is removed.
+        bun_removable_features::removable_body!(Check, Abort, { off.run_checked() });
         Some(done)
     }
 

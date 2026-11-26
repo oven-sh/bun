@@ -144,12 +144,6 @@ fn scan_block(
     }
     let starts = at_least(0xC0);
     let starts_3_or_4 = at_least(0xE0);
-    // C0 and C1 would be overlong, and F5 and above go past U+10FFFF.
-    let never_valid = (bytes & u8x32::splat(0xFE)).simd_eq(u8x32::splat(0xC0))
-        | bytes.simd_ge(u8x32::splat(0xF5));
-    if never_valid.any() {
-        return None;
-    }
     let starts_4 = if starts_3_or_4 != 0 {
         at_least(0xF0)
     } else {
@@ -165,7 +159,9 @@ fn scan_block(
         // These leave less of the range for the byte after them.
         let next = load(rest, base + 1);
         let (a0, x90) = (u8x32::splat(0xA0), u8x32::splat(0x90));
-        let narrowed = (bytes.simd_eq(u8x32::splat(0xE0)) & next.simd_lt(a0))
+        // F5 and above go past U+10FFFF.
+        let narrowed = bytes.simd_ge(u8x32::splat(0xF5))
+            | (bytes.simd_eq(u8x32::splat(0xE0)) & next.simd_lt(a0))
             | (bytes.simd_eq(u8x32::splat(0xED)) & next.simd_ge(a0))
             | (bytes.simd_eq(u8x32::splat(0xF0)) & next.simd_lt(x90))
             | (bytes.simd_eq(u8x32::splat(0xF4)) & next.simd_ge(x90));
@@ -180,7 +176,9 @@ fn scan_block(
         let (len, saves) = match bytes[i] {
             0xF0.. => (4, 2),
             0xE0.. => (3, 2),
-            _ => (2, 1),
+            // C0 and C1 would be overlong.
+            0xC2.. => (2, 1),
+            _ => return None,
         };
         found(base + i + len, saves);
     }

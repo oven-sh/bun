@@ -156,6 +156,13 @@ describe("Bun.cron API", () => {
     expect(() => Bun.cron(`${dir}/test%file.ts`, "* * * * *", "test-bad")).toThrow(/percent/i);
   });
 
+  test("a URL of a path longer than the system takes throws ENAMETOOLONG like node:fs", () => {
+    const url = pathToFileURL((isWindows ? "C:\\" : "/") + Buffer.alloc(200_000, "a/").toString() + "job.ts");
+    const refused = expect.objectContaining({ code: "ENAMETOOLONG" });
+    expect(() => Bun.cron(url, "@daily", "test-bad")).toThrow(refused);
+    expect(() => Bun.cron(url.href, "@daily", "test-bad")).toThrow(refused);
+  });
+
   test.each([
     { href: "file:///a%2Fb.ts", code: "ERR_INVALID_FILE_URL_PATH" },
     { href: "file:///a%00b.ts", code: "ERR_INVALID_ARG_VALUE" },

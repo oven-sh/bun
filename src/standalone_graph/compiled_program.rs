@@ -1089,7 +1089,7 @@ fn requests_directory(name: &[u8]) -> bool {
 
 /// The disk refuses a name of this length whatever it leads to, so the executable holds nothing there either.
 #[inline]
-pub(crate) fn is_too_long(name: &[u8]) -> bool {
+pub fn is_too_long(name: &[u8]) -> bool {
     name.len() >= MAX_PATH_BYTES
 }
 

@@ -25,7 +25,7 @@ pub use compiled_program::{
     CompiledEntryPointInput, CompiledPackageNameInput, CompiledPathAliasInput, CompiledProgramInput,
 };
 pub use compiled_program::{
-    find_written_code, find_written_file, has_written_files, normalize_source_path,
+    find_written_code, find_written_file, has_written_files, is_too_long, normalize_source_path,
 };
 #[cfg(not(windows))]
 pub use compiled_program::{

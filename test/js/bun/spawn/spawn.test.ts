@@ -13,12 +13,24 @@ import {
   isPosix,
   isRoot,
   isWindows,
+  MAX_PATH_BYTES,
   shellExe,
   tempDir,
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import path, { join } from "path";
 
 let tmp: string;
@@ -2483,4 +2495,34 @@ it("doesn't crash when a subprocess pipe is canceled and the event loop runs ins
   });
   expect(body).toBe("ok");
   await build;
+});
+
+// https://github.com/oven-sh/bun/issues/49604
+// On Windows libuv opens the file, and what it answers for such a path is its own.
+describe.skipIf(isWindows)("Bun.file() with a path over the limit as stdio", () => {
+  const cmd = [bunExe(), "-e", "console.log('ran')"];
+  const slots = {
+    stdin: (file: Bun.BunFile) => ({ stdin: file }),
+    stdout: (file: Bun.BunFile) => ({ stdout: file }),
+    stderr: (file: Bun.BunFile) => ({ stderr: file }),
+    "stdio[3]": (file: Bun.BunFile) => ({ stdio: ["ignore", "ignore", "ignore", file] }),
+  } as const;
+
+  it.each(Object.keys(slots) as (keyof typeof slots)[])("%s: the process is not started", slot => {
+    using dir = tempDir("spawn-long-path", {});
+    const long = (realpathSync(String(dir)) + Buffer.alloc(6000, "/" + Buffer.alloc(199, "a")).toString()).slice(
+      0,
+      MAX_PATH_BYTES + 300,
+    );
+    // macOS keeps the first `PATH_MAX - 1` bytes of a path that it opens for a child. They name a file that could be made.
+    const kept = long.slice(0, MAX_PATH_BYTES - 1);
+    mkdirSync(path.dirname(kept), { recursive: true });
+    const refused = expect.objectContaining({ code: "ENAMETOOLONG" });
+    expect(() => spawn({ cmd, env: bunEnv, ...slots[slot](Bun.file(long)) })).toThrow(refused);
+    expect(() => spawnSync({ cmd, env: bunEnv, ...slots[slot](Bun.file(long)) })).toThrow(refused);
+    expect(existsSync(kept)).toBe(false);
+
+    const { exitCode } = spawnSync({ cmd, env: bunEnv, stderr: "inherit", stdout: Bun.file(kept) });
+    expect({ written: readFileSync(kept, "utf8"), exitCode }).toEqual({ written: "ran\n", exitCode: 0 });
+  });
 });

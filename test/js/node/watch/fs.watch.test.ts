@@ -10,6 +10,7 @@ import {
   isMacOS,
   isRoot,
   isWindows,
+  MAX_PATH_BYTES,
   tempDir,
   tempDirWithFiles,
 } from "harness";
@@ -1926,6 +1927,22 @@ test("fs.watch reports an error for relative paths that no longer fit in the pat
   // Unfixed builds overflow the pooled path buffer during the cwd join and abort
   // the subprocess instead of throwing a catchable error.
   expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/49604
+// Bun watches the normalized path, so no syscall gets the path as it is written.
+// Node's gets it, and refuses it for its length.
+test.each([
+  ["`..` after each folder", (dir: string) => dir + Buffer.alloc(MAX_PATH_BYTES * 2, "/a/..").toString() + "/x"],
+  ["`.` folders", (dir: string) => dir + Buffer.alloc(MAX_PATH_BYTES * 2, "/.").toString() + "/x"],
+  ["separators", (dir: string) => dir + Buffer.alloc(MAX_PATH_BYTES * 2, "/").toString() + "x"],
+])("fs.watch refuses a path of MAX_PATH_BYTES or more that is short once normalized: %s", (_, written) => {
+  using dir = tempDir("fswatch-long-written", { x: "" });
+  const long = written(String(dir)).replaceAll("/", path.sep);
+  const refused = expect.objectContaining({ code: "ENAMETOOLONG", syscall: "watch" });
+  expect(() => fs.watch(long, () => {})).toThrow(refused);
+  expect(() => fs.watch(Buffer.from(long), () => {})).toThrow(refused);
+  fs.watch(path.join(String(dir), "x"), () => {}).close();
 });
 
 // The native FSWatcher holds a weak reference to its JS wrapper (rooted by

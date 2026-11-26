@@ -101,7 +101,14 @@ fn parse_title(global: &JSGlobalObject, title: &[u8]) -> JsResult<Title> {
 /// With the checks and the errors of `node:fs`.
 fn path_of_url(global: &JSGlobalObject, url: JSValue) -> JsResult<PathLike<'static>> {
     let mut arguments = ArgumentsSlice::init(global.bun_vm(), core::slice::from_ref(&url));
-    PathLike::from_js_required(global, &mut arguments, "path")
+    let path = PathLike::from_js_required(global, &mut arguments, "path")?;
+    // The resolver gets the path, and no syscall that would refuse it for its length.
+    if path.slice().len() >= bun_paths::MAX_PATH_BYTES {
+        use bun_jsc::SysErrorJsc as _;
+        let error = sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::open);
+        return Err(global.throw_value(error.with_path(path.slice()).to_js(global)));
+    }
+    Ok(path)
 }
 
 /// Relative to the file that called.

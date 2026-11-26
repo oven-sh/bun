@@ -1,12 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { isLinux, isMacOS, isPosix, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isPosix, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
-// On POSIX systems, MAX_PATH_BYTES is 4096.
-// Path validation must account for the actual UTF-8 byte length of strings,
-// not just the number of characters (UTF-16 code units), since multi-byte
-// characters expand when encoded as UTF-8.
+// The limit of a path (4096 on Linux) is in UTF-8 bytes, not in characters
+// (UTF-16 code units): multi-byte characters expand when encoded as UTF-8.
 describe.if(isPosix)("path length validation with multi-byte characters", () => {
   // U+4E00 (一) is a CJK character that is 3 bytes in UTF-8 (0xE4 0xB8 0x80).
   // 2000 such characters = 2000 UTF-16 code units but 6000 UTF-8 bytes,
@@ -49,8 +47,8 @@ describe.if(isPosix)("path length validation with multi-byte characters", () => 
   // PATH_MAX bytes used to pass the `0..=MAX_PATH_BYTES` length guard, then
   // `slice_z` had no room for the NUL and returned "" — the
   // syscall ran on the empty path and came back ENOENT instead of
-  // ENAMETOOLONG. PATH_MAX-1 (kernel rejects) and PATH_MAX+1 (guard rejects)
-  // were already correct; only this one length was wrong.
+  // ENAMETOOLONG. PATH_MAX-1 and PATH_MAX+1 were already correct; only this
+  // one length was wrong. The kernel rejects all three now.
   describe.each([
     ["Linux", isLinux, 4096],
     ["macOS", isMacOS, 1024],
@@ -107,8 +105,8 @@ describe.if(isWindows)("path length validation in normalizePathWindows", () => {
 
   // The UTF-8→UTF-16 conversion at the top of normalizePathWindows forwards
   // only the output pointer to simdutf, which performs no bounds checking.
-  // Upstream path validation caps at MAX_PATH_BYTES (~98302 on Windows), not
-  // PATH_MAX_WIDE, so inputs in (32767, 98302] bytes reach the conversion.
+  // Nothing bounds the path before it, so inputs of more than 32767 bytes
+  // reach the conversion.
   it("rejects relative paths longer than the UTF-16 conversion buffer", () => {
     const tooLong = Buffer.alloc(40000, "a").toString();
     expect(() => fs.readdirSync(tooLong)).toThrow("ENAMETOOLONG");
@@ -131,15 +129,14 @@ describe.if(isWindows)("path length validation in normalizePathWindows", () => {
   });
 });
 
-// On Windows, node:fs converts paths to UTF-16 into fixed-size wide buffers
+// On Windows, node:fs converted paths to UTF-16 into fixed-size wide buffers
 // (PathLike.osPath: a [32767]u16 WPathBuffer; PathLike.osPathKernel32: the
-// 98302-byte PathBuffer viewed as [49151]u16). Path validation only bounds
-// the UTF-8 *byte* length (98302), so an ASCII path of 32767..98302 chars
-// passed validation and the UTF-8→UTF-16 conversion wrote past the wide
-// buffer (simdutf performs no bounds checking), panicking with "range end
-// index 49151 out of range for slice of length 49150". Paths that long can't
-// exist on NT (PATH_MAX_WIDE caps them), so the conversions now reject them
-// up front: exists → false, other ops → ENAMETOOLONG.
+// 98302-byte PathBuffer viewed as [49151]u16). For an ASCII path of 32767
+// chars or more the UTF-8→UTF-16 conversion wrote past the wide buffer
+// (simdutf performs no bounds checking), panicking with "range end index
+// 49151 out of range for slice of length 49150". Paths that long can't
+// exist on NT (PATH_MAX_WIDE caps them), so the conversions reject them:
+// exists → false, other ops → ENAMETOOLONG.
 describe.if(isWindows)("path length validation against UTF-16 conversion buffers", () => {
   // Used to overflow the 49151-u16 osPathKernel32 view (exists, recursive
   // mkdir, copyFile src).
@@ -239,6 +236,10 @@ describe.if(isWindows)("Buffer paths containing malformed byte sequences", () =>
 // ENAMETOOLONG arrives like any other of its errors: through the callback, and
 // with its name. The lengths clear MAX_PATH_BYTES on every platform: 4096
 // Linux, 1024 macOS, 98302 Windows.
+//
+// On Windows most of these operations go to libuv, as in Node. Which error
+// it gives such a path depends on the operation, and `chown` and `lchown` do
+// nothing there.
 describe.each([
   // One name over NAME_MAX.
   ["one name", (isWindows ? "C:\\" : "/") + Buffer.alloc(isWindows ? 100_000 : 5_000, "a").toString()],
@@ -251,44 +252,50 @@ describe.each([
   const other = "fs-path-length-other-operand";
 
   type Callback = (err: unknown) => void;
-  // [name, call, whether node reports `tooLong` as `err.path` (it is the
-  // `dest` of the two-operand calls, and mkdtemp appends its suffix), the
-  // `err.syscall` of node on Linux where Bun has the same]
-  const calls: [string, (cb: Callback) => void, boolean, string | undefined][] = [
-    ["access", cb => fs.access(tooLong, cb), true, "access"],
-    ["appendFile", cb => fs.appendFile(tooLong, "x", cb), true, "open"],
-    ["chmod", cb => fs.chmod(tooLong, 0o644, cb), true, "chmod"],
-    ["chown", cb => fs.chown(tooLong, 0, 0, cb), true, "chown"],
-    ["copyFile", cb => fs.copyFile(tooLong, other, cb), true, "copyfile"],
-    ["cp", cb => fs.cp(tooLong, other, cb), true, "lstat"],
-    ["lstat", cb => fs.lstat(tooLong, cb), true, "lstat"],
-    ["mkdir", cb => fs.mkdir(tooLong, cb), true, "mkdir"],
-    ["mkdir recursive", cb => fs.mkdir(tooLong, { recursive: true }, cb), true, "mkdir"],
-    ["mkdtemp", cb => fs.mkdtemp(tooLong, cb), false, "mkdtemp"],
-    ["open", cb => fs.open(tooLong, "r", cb), true, "open"],
-    ["opendir", cb => fs.opendir(tooLong, cb), true, "opendir"],
-    ["readdir", cb => fs.readdir(tooLong, cb), true, "scandir"],
-    ["readdir recursive", cb => fs.readdir(tooLong, { recursive: true }, cb), true, undefined],
-    ["readFile", cb => fs.readFile(tooLong, cb), true, "open"],
-    ["readlink", cb => fs.readlink(tooLong, cb), true, "readlink"],
-    ["realpath", cb => fs.realpath(tooLong, cb), true, "lstat"],
-    ["realpath.native", cb => fs.realpath.native(tooLong, cb), true, "realpath"],
-    ["rename oldPath", cb => fs.rename(tooLong, other, cb), true, "rename"],
-    ["rename newPath", cb => fs.rename(other, tooLong, cb), false, "rename"],
-    ["rm", cb => fs.rm(tooLong, cb), true, undefined],
-    ["rmdir", cb => fs.rmdir(tooLong, cb), true, "rmdir"],
-    ["stat", cb => fs.stat(tooLong, cb), true, "stat"],
-    ["stat with a Buffer path", cb => fs.stat(Buffer.from(tooLong), cb), true, "stat"],
-    ["stat with a file: URL path", cb => fs.stat(pathToFileURL(tooLong), cb), true, "stat"],
-    ["statfs", cb => fs.statfs(tooLong, cb), true, "statfs"],
-    ["symlink", cb => fs.symlink(other, tooLong, cb), false, "symlink"],
-    ["truncate", cb => fs.truncate(tooLong, cb), true, undefined],
-    ["unlink", cb => fs.unlink(tooLong, cb), true, "unlink"],
-    ["utimes", cb => fs.utimes(tooLong, 0, 0, cb), true, "utime"],
-    ["writeFile", cb => fs.writeFile(tooLong, "x", cb), true, "open"],
+  // [name, call, where node reports `tooLong` (mkdtemp appends its suffix to
+  // it), the `err.syscall` of node on Linux where Bun has the same]
+  const calls: [string, (cb: Callback) => void, "path" | "dest" | undefined, string | undefined][] = [
+    ["access", cb => fs.access(tooLong, cb), "path", "access"],
+    ["appendFile", cb => fs.appendFile(tooLong, "x", cb), "path", "open"],
+    ["chmod", cb => fs.chmod(tooLong, 0o644, cb), "path", "chmod"],
+    ["chown", cb => fs.chown(tooLong, 0, 0, cb), "path", "chown"],
+    ["copyFile src", cb => fs.copyFile(tooLong, other, cb), "path", "copyfile"],
+    ["copyFile dest", cb => fs.copyFile(import.meta.path, tooLong, cb), "dest", "copyfile"],
+    ["cp src", cb => fs.cp(tooLong, other, cb), "path", "lstat"],
+    ["cp dest", cb => fs.cp(import.meta.path, tooLong, cb), "path", "lstat"],
+    ["lchown", cb => fs.lchown(tooLong, 0, 0, cb), "path", "lchown"],
+    ["link existingPath", cb => fs.link(tooLong, other, cb), "path", "link"],
+    ["link newPath", cb => fs.link(import.meta.path, tooLong, cb), "dest", "link"],
+    ["lstat", cb => fs.lstat(tooLong, cb), "path", "lstat"],
+    ["lutimes", cb => fs.lutimes(tooLong, 0, 0, cb), "path", "lutime"],
+    ["mkdir", cb => fs.mkdir(tooLong, cb), "path", "mkdir"],
+    ["mkdir recursive", cb => fs.mkdir(tooLong, { recursive: true }, cb), "path", "mkdir"],
+    ["mkdtemp", cb => fs.mkdtemp(tooLong, cb), undefined, "mkdtemp"],
+    ["open", cb => fs.open(tooLong, "r", cb), "path", "open"],
+    ["opendir", cb => fs.opendir(tooLong, cb), "path", "opendir"],
+    ["readdir", cb => fs.readdir(tooLong, cb), "path", "scandir"],
+    ["readdir recursive", cb => fs.readdir(tooLong, { recursive: true }, cb), "path", undefined],
+    ["readFile", cb => fs.readFile(tooLong, cb), "path", "open"],
+    ["readlink", cb => fs.readlink(tooLong, cb), "path", "readlink"],
+    ["realpath", cb => fs.realpath(tooLong, cb), "path", "lstat"],
+    ["realpath.native", cb => fs.realpath.native(tooLong, cb), "path", "realpath"],
+    ["rename oldPath", cb => fs.rename(tooLong, other, cb), "path", "rename"],
+    ["rename newPath", cb => fs.rename(other, tooLong, cb), "dest", "rename"],
+    ["rm", cb => fs.rm(tooLong, cb), "path", undefined],
+    ["rmdir", cb => fs.rmdir(tooLong, cb), "path", "rmdir"],
+    ["stat", cb => fs.stat(tooLong, cb), "path", "stat"],
+    ["stat with a Buffer path", cb => fs.stat(Buffer.from(tooLong), cb), "path", "stat"],
+    ["stat with a file: URL path", cb => fs.stat(pathToFileURL(tooLong), cb), "path", "stat"],
+    ["statfs", cb => fs.statfs(tooLong, cb), "path", "statfs"],
+    ["symlink path", cb => fs.symlink(other, tooLong, cb), "dest", "symlink"],
+    ["symlink target", cb => fs.symlink(tooLong, other, cb), "path", "symlink"],
+    ["truncate", cb => fs.truncate(tooLong, cb), "path", undefined],
+    ["unlink", cb => fs.unlink(tooLong, cb), "path", "unlink"],
+    ["utimes", cb => fs.utimes(tooLong, 0, 0, cb), "path", "utime"],
+    ["writeFile", cb => fs.writeFile(tooLong, "x", cb), "path", "open"],
   ];
 
-  it.each(calls)("fs.%s", async (_, call, pathIsReported, syscall) => {
+  it.each(calls)("fs.%s", async (name, call, reportedAs, syscall) => {
     const { promise, resolve } = Promise.withResolvers<unknown>();
     let returned = false;
     let calledBeforeReturning = false;
@@ -297,14 +304,20 @@ describe.each([
       resolve(err);
     });
     returned = true;
-    const err = (await promise) as NodeJS.ErrnoException;
+    const err = (await promise) as NodeJS.ErrnoException | null;
     expect(calledBeforeReturning).toBe(false);
-    expect(err.code).toBe("ENAMETOOLONG");
-    if (pathIsReported) {
-      expect(err.path).toBe(tooLong);
+    expect(fs.existsSync(other)).toBe(false);
+    if (isWindows) {
+      const doesNothing = name === "chown" || name === "lchown";
+      expect(err?.code ?? null).toEqual(doesNothing ? null : expect.stringMatching(/^(ENAMETOOLONG|ENOENT|EINVAL)$/));
+      return;
+    }
+    expect(err!.code).toBe("ENAMETOOLONG");
+    if (reportedAs) {
+      expect(err![reportedAs]).toBe(tooLong);
     }
     if (isLinux && syscall) {
-      expect(err.syscall).toBe(syscall);
+      expect(err!.syscall).toBe(syscall);
     }
   });
 
@@ -319,7 +332,7 @@ describe.each([
     order.push("returned");
     const err = (await promise) as NodeJS.ErrnoException;
     expect(order).toEqual(["returned", "callback"]);
-    expect(err.code).toBe("ENAMETOOLONG");
+    expect(err.code).toMatch(isWindows ? /^(ENAMETOOLONG|ENOENT|EINVAL)$/ : /^ENAMETOOLONG$/);
   });
 
   it("fs.exists answers false", async () => {
@@ -339,16 +352,23 @@ describe.each([
     );
   });
 
-  it("the sync variants throw it, naming the path and the syscall", () => {
+  it.skipIf(isWindows)("the sync variants throw it, naming the path and the syscall", () => {
     const stat = { code: "ENAMETOOLONG", path: tooLong, syscall: "stat" };
     expect(() => fs.statSync(tooLong)).toThrow(expect.objectContaining(stat));
     expect(() => fs.statSync(Buffer.from(tooLong))).toThrow(expect.objectContaining(stat));
     expect(() => fs.renameSync(other, tooLong)).toThrow(
-      expect.objectContaining({ code: "ENAMETOOLONG", syscall: "rename" }),
+      expect.objectContaining({ code: "ENAMETOOLONG", syscall: "rename", dest: tooLong }),
     );
   });
 
-  it("the promise variants reject with it, naming the path and the syscall", async () => {
+  it.if(isWindows)("the sync variants throw what the system says", () => {
+    const refused = expect.objectContaining({ code: expect.stringMatching(/^(ENAMETOOLONG|ENOENT|EINVAL)$/) });
+    expect(() => fs.statSync(tooLong)).toThrow(refused);
+    expect(() => fs.statSync(Buffer.from(tooLong))).toThrow(refused);
+    expect(() => fs.renameSync(other, tooLong)).toThrow(refused);
+  });
+
+  it.skipIf(isWindows)("the promise variants reject with it, naming the path and the syscall", async () => {
     const failure = ({ code, path, syscall }: NodeJS.ErrnoException) => ({ code, path, syscall });
     expect({
       stat: await fs.promises.stat(tooLong).catch(failure),
@@ -360,4 +380,39 @@ describe.each([
       unlink: { code: "ENAMETOOLONG", path: tooLong, syscall: "unlink" },
     });
   });
+});
+
+// The sync calls of a VM share one buffer for the path, and it only grows.
+// A sanitizer build keeps freed memory for a while, so the number says nothing there.
+it.skipIf(isASAN || isDebug)("the memory for a long path is freed after the call", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const fs = require("node:fs");
+        function attempt(path) {
+          try {
+            fs.statSync(path);
+          } catch (error) {
+            return error.code;
+          }
+        }
+        Bun.gc(true);
+        const before = process.memoryUsage.rss();
+        const code = attempt(Buffer.alloc(64 << 20, "a/").toString());
+        // The VM keeps the last error that was thrown, and that one has the path.
+        attempt("does-not-exist");
+        Bun.gc(true);
+        console.log(code, Math.round((process.memoryUsage.rss() - before) / 1024 / 1024));`,
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [code, grownMiB] = stdout.trim().split(" ");
+  // On Windows libuv picks the error.
+  expect(code).toMatch(/^(ENAMETOOLONG|ENOENT|EINVAL)$/);
+  // The path is 64 MiB.
+  expect(Number(grownMiB)).toBeLessThan(32);
+  expect(exitCode).toBe(0);
 });

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, MAX_PATH_BYTES, tempDir } from "harness";
 import { join, sep } from "path";
 import { pathToFileURL } from "url";
 
@@ -216,7 +216,11 @@ describe.each([MAX_PATH_BYTES, MAX_PATH_BYTES + 70_000, 1 << 20])("Bun.file() wi
 
   test.each(paths)("given as %s, fails when the file is used", async (_, path, name) => {
     const file = Bun.file(path());
-    const failed = (syscall: string) => ({ code: "ENAMETOOLONG", syscall, path: name });
+    // On Windows libuv does most of these, and what it answers for such a path is its own.
+    const failed = (syscall: string) =>
+      isWindows
+        ? { code: expect.stringMatching(/^(ENAMETOOLONG|ENOENT|EINVAL)$/), syscall: expect.any(String), path: name }
+        : { code: "ENAMETOOLONG", syscall, path: name };
     const failure = (promise: Promise<unknown>) =>
       promise.then(
         () => "resolved",
@@ -254,11 +258,12 @@ describe.each([MAX_PATH_BYTES, MAX_PATH_BYTES + 70_000, 1 << 20])("Bun.file() wi
     const blob = await fs.openAsBlob(absolute);
     const clone = structuredClone(Bun.file(absolute));
     const code = ({ code }: NodeJS.ErrnoException) => code;
+    const refused = isWindows ? expect.stringMatching(/^(ENAMETOOLONG|ENOENT|EINVAL)$/) : "ENAMETOOLONG";
     expect({
       blob: await blob.text().catch(code),
       clone: await clone.text().catch(code),
       cloneName: clone.name,
-    }).toEqual({ blob: "ENAMETOOLONG", clone: "ENAMETOOLONG", cloneName: absolute });
+    }).toEqual({ blob: refused, clone: refused, cloneName: absolute });
   });
 });
 
@@ -275,4 +280,27 @@ test.skipIf(isWindows)("a path one byte under the limit still reaches the disk",
   ).toBe("ENOENT");
   expect(await Bun.write(path, "under the limit")).toBe(15);
   expect(await Bun.file(path).text()).toBe("under the limit");
+});
+
+// The file keeps a copy of its path, and the collector has to know how much that is.
+test("Bun.file() with a long path is collected under memory pressure", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const path = "/" + Buffer.alloc(1 << 20, "a/").toString();
+        let peak = 0;
+        for (let i = 0; i < 2000; i++) {
+          Bun.file(path);
+          if (i % 50 === 0) peak = Math.max(peak, process.memoryUsage.rss());
+        }
+        console.log(Math.round(peak / 1024 / 1024));`,
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  // 2000 copies are 2000 MiB.
+  expect(Number(stdout)).toBeWithin(1, isASAN || isDebug ? 1100 : 600);
+  expect(exitCode).toBe(0);
 });

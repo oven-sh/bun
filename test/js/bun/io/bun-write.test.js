@@ -1850,12 +1850,15 @@ it.skipIf(!isLinux).each([true, false])(
 describe.each([MAX_PATH_BYTES, MAX_PATH_BYTES + 70_000])("Bun.write() to a path of %d bytes", length => {
   const written = start =>
     (start + Buffer.alloc(length, "a" + path.sep).toString()).slice(0, length - 2) + path.sep + "b";
-  // On Windows the operation that refuses the path differs with what is written.
-  const failedAt = path => (isWindows ? { code: "ENAMETOOLONG" } : { code: "ENAMETOOLONG", syscall: "open", path });
+  // On Windows libuv opens the file, and what it answers for such a path is its own. macOS asks for the source of a copy with another syscall.
+  const failedAt = path =>
+    isWindows
+      ? { code: expect.stringMatching(/^(ENAMETOOLONG|ENOENT|EINVAL)$/) }
+      : { code: "ENAMETOOLONG", path, ...(isLinux && { syscall: "open" }) };
   const failure = promise =>
     promise.then(
       () => "resolved",
-      ({ code, syscall, path }) => (isWindows ? { code } : { code, syscall, path }),
+      ({ code, syscall, path }) => (isWindows ? { code } : { code, path, ...(isLinux && { syscall }) }),
     );
 
   it.each([{}, { createPath: true }, { createPath: false }])(

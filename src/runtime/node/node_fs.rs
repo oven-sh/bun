@@ -244,15 +244,21 @@ fn compiled_program_graph() -> Option<&'static bun_standalone_graph::Graph> {
     standalone_module_graph().filter(|graph| graph.compiled_program.is_some())
 }
 
-/// The graph, for a path under its own root: it is asked in front of the disk.
+/// The graph, for a path under its own root: it is asked in front of the disk. Not for a path that the disk refuses for its length: the graph holds nothing there, and is not asked about each folder of one.
 #[inline]
 fn graph_before_disk(path: &[u8]) -> Option<&'static bun_standalone_graph::Graph> {
-    standalone_module_graph().filter(|_| bun_standalone_graph::is_bun_standalone_file_path(path))
+    standalone_module_graph().filter(|_| {
+        bun_standalone_graph::is_bun_standalone_file_path(path)
+            && !bun_standalone_graph::is_too_long(path)
+    })
 }
 
-/// The graph, for any other path.
+/// The graph, for any other path that the disk may take.
 fn graph_after_disk(path: &[u8]) -> Option<&'static bun_standalone_graph::Graph> {
-    compiled_program_graph().filter(|_| !bun_standalone_graph::is_bun_standalone_file_path(path))
+    compiled_program_graph().filter(|_| {
+        !bun_standalone_graph::is_bun_standalone_file_path(path)
+            && !bun_standalone_graph::is_too_long(path)
+    })
 }
 
 /// For a removal by the program, which may remove files of its own, also half of a folder.

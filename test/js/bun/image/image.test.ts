@@ -1,10 +1,10 @@
 import { S3Client } from "bun";
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterAll, describe, expect, test } from "bun:test";
-import { isMacOS, isWindows, tempDir } from "harness";
-import { closeSync, openSync, truncateSync } from "node:fs";
+import { isMacOS, isWindows, MAX_PATH_BYTES, tempDir } from "harness";
+import { closeSync, openSync, readdirSync, truncateSync } from "node:fs";
 import zlib from "node:zlib";
-import { join } from "path";
+import { join, sep } from "path";
 
 // ─── Fixture builders ───────────────────────────────────────────────────────
 // Fixtures are generated in-process so the test stays hermetic and we never
@@ -1240,6 +1240,23 @@ describe("Bun.Image", () => {
       expect((await out3.bytes())[0]).toBe(0x89);
       // 4. fs error propagates from Bun.write, not the Image layer.
       await expect(new Bun.Image(cornersPng).png().write(String(dir))).rejects.toThrow();
+    });
+
+    // https://github.com/oven-sh/bun/issues/49604
+    test(".write(dest) rejects for a path that is too long, with the error of the open", async () => {
+      using dir = tempDir("image-write-long", {});
+      const long = join(String(dir), Buffer.alloc(MAX_PATH_BYTES * 2, "a" + sep).toString(), "out.png");
+      const error = await new Bun.Image(cornersPng)
+        .png()
+        .write(long)
+        .catch(e => e);
+      // On Windows libuv opens the file, and what it answers for such a path is its own.
+      expect({ code: error.code, syscall: error.syscall }).toEqual(
+        isWindows
+          ? { code: expect.stringMatching(/^(ENAMETOOLONG|ENOENT|EINVAL)$/), syscall: expect.any(String) }
+          : { code: "ENAMETOOLONG", syscall: "open" },
+      );
+      expect(readdirSync(String(dir))).toEqual([]);
     });
 
     test(".write(dest) refuses the Blob destinations Bun.write refuses, with the same error", async () => {

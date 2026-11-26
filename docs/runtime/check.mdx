@@ -445,6 +445,76 @@ for (const log of result.logs) {
 /app/src/index.ts:3: TS2322: Type 'string' is not assignable to type 'number'.
 ```
 
+### `Bun.TypeChecker`
+
+`Bun.TypeChecker` runs the same checker as `bun check` from JavaScript and returns its diagnostics as structured values. The object model is inspired by TypeScript 7. Bun does not promise exact TypeScript 7.0.2 API compatibility. It also does not provide editor support through this API.
+
+```ts check.ts icon="/icons/typescript.svg"
+await using checker = new Bun.TypeChecker({ cwd: process.cwd() });
+
+using snapshot = await checker.updateSnapshot({
+  openProjects: ["tsconfig.json"],
+});
+
+const project = snapshot.getProject("tsconfig.json");
+if (project === undefined) {
+  throw new Error("The requested project did not produce a result");
+}
+
+for (const diagnostic of await project.program.getDiagnostics()) {
+  console.error({
+    file: diagnostic.fileName,
+    offset: diagnostic.pos,
+    code: `TS${diagnostic.code}`,
+    message: diagnostic.text,
+  });
+}
+```
+
+The checker resolves `cwd` when you construct it. The value defaults to `process.cwd()` and never changes for that checker. Pass an absolute native path or a `file:` URL. Open a `tsconfig.json` or a directory that contains one. Paths in `openProjects`, `closeProjects`, `sourceChanges`, and the lookup methods resolve against the checker `cwd`, not against a project's directory. A path can be a string or a `file:` URL.
+
+`updateSnapshot()` applies that call's project and source changes, then runs one full check on a background thread. Calls on one checker run in invocation order, and each call captures its own state before it queues. A later call's edits never appear in an earlier call's snapshot. The resolved snapshot is an immutable, materialized result. Bun does not retain a native checker session or program between snapshots. Each update performs a full check, including `updateSnapshot({})`. Bun makes no incremental-performance claim, and no change-notification hint is required: the next update reads the current disk state.
+
+Pass projects explicitly with `openProjects`. Opening the same project twice increments its open refcount. A matching `closeProjects` entry decrements it, and the project stays open until the count reaches zero. Closing a project that is not open does nothing. In one update, `closeProjects` applies before `openProjects`, so naming a project in both reloads it. The snapshot includes every project the check produced, including referenced projects and projects with no diagnostics, in stable project order. `getProject()` resolves its argument the same way as `openProjects` and returns `undefined` when the snapshot has no result for it. Project objects are new in each snapshot, even when the project did not change.
+
+Replace an unsaved buffer with a persistent source overlay:
+
+```ts source-overlay.ts icon="/icons/typescript.svg"
+using next = await checker.updateSnapshot({
+  sourceChanges: new Map([["src/index.ts", `const answer: string = 42;\n`]]),
+});
+
+const nextProject = next.getProject("tsconfig.json");
+if (nextProject === undefined) {
+  throw new Error("The requested project did not produce a result");
+}
+
+const diagnostics = await nextProject.program.getDiagnostics("src/index.ts");
+console.log(diagnostics[0].code);
+```
+
+The overlay persists across snapshots until a later `sourceChanges` entry replaces it. Pass `null` to remove one overlay:
+
+```ts remove-overlay.ts icon="/icons/typescript.svg"
+using disk = await checker.updateSnapshot({
+  sourceChanges: new Map([["src/index.ts", null]]),
+});
+```
+
+Removing an overlay reveals the file on disk again. Removing an overlay for a file that exists only in memory removes that file from the next check. `undefined` is not a valid overlay value. Validation of one update is atomic: a failed validation applies no part of the update.
+
+The earlier snapshot still shows the old text after you take a newer snapshot. Taking `next` never mutates `snapshot`. A snapshot stays valid until you dispose it or close the checker. `getProjects()`, `getProject()`, and `configFileName` are local getters. They do not run the checker. `getDiagnostics()` is asynchronous by design, but it reads the materialized snapshot and does not run the checker again. Each call returns fresh arrays and diagnostic objects, so mutating a returned value changes neither the snapshot nor a later result.
+
+Type errors resolve the snapshot as diagnostics. They do not reject `updateSnapshot()`. Invalid arguments, unreadable sources, and incomplete checks reject it. A rejected update never produces a snapshot that looks clean. `getDiagnostics(file)` returns only that project's diagnostics for one file, in checker order. It returns an empty array for a clean file or a file with no matching diagnostics. Filtering by file keeps each diagnostic's related information attached, even when the related location is in another file.
+
+A diagnostic contains a `fileName`, `code`, string `category`, and rendered `text`. `category` is `"error"`, `"warning"`, `"suggestion"`, or `"message"`. `code` has no `TS` prefix. `fileName` is an absolute native path. Embedded libraries keep a `bundled:///libs/...` name. A source range also contains `pos`, `end`, `line`, `column`, `endLine`, and `endColumn`. `pos` and `end` are zero-based UTF-16 code-unit offsets. The lines and columns are one-based, and the columns count UTF-16 code units. Range fields are absent when a diagnostic has no source range. `messageChain` holds the structured elaboration under `text`, when the checker provides it. `relatedInformation` holds related source locations, such as where a name was declared, and keeps the same fields recursively.
+
+`dispose()` invalidates one snapshot immediately and releases its diagnostic data. It is idempotent and never throws. The same invalidation is available through `Symbol.dispose`. After disposal, `getProjects()` and `getProject()` throw, `configFileName` and `program` throw, and `getDiagnostics()` rejects. Each of those errors uses `ERR_BUN_TYPE_CHECKER_SNAPSHOT_DISPOSED`. Disposing one snapshot does not affect another snapshot or close the checker.
+
+`close()` rejects new updates and updates that have not been delivered, disposes every live snapshot, and resolves after native checks that are already running finish. Their results are detached rather than delivered. Closing does not cancel native work that is already running. Repeated `close()` calls return the same completion promise, and `Symbol.asyncDispose` delegates to `close()`. An update after close rejects with `ERR_BUN_TYPE_CHECKER_CLOSED`. The same code rejects an undelivered update detached by close.
+
+There is no synchronous checking variant and no retained semantic session. This API does not provide semantic type, symbol, or signature queries, AST or source-file objects, emit or declaration output, direct compiler-option overrides, parsed-config or resolved-option introspection, inferred projects or open files, watch subscriptions, cancellation, or editor and language-server features.
+
 ### `bun compile`
 
 [`bun compile`](/compiler/aot) always type checks, because it uses your types to generate machine code. `bun check --aot ./server.ts` reports every error that the build would report, and builds nothing. Like the build, it takes entry points. It also reports the type errors in code that the executable leaves out, such as a function that nothing calls. `bun compile --check` stops at those too.

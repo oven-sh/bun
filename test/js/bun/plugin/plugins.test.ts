@@ -2302,7 +2302,7 @@ describe.concurrent("onLoad that declines", () => {
     ["a promise that is pending, then fulfilled with null", "async () => { await Bun.sleep(1); return null; }"],
   ];
   const unsupported = (way: string) =>
-    `TypeError: require() async module "/dep-${way}.ts" is unsupported. use "await import()" instead.`;
+    `Error: require() async module "/dep-${way}.ts" is unsupported. use "await import()" instead.`;
 
   describe.each([...settled.map(row => [...row, false] as const), ...pending.map(row => [...row, true] as const)])(
     "with %s",
@@ -2433,7 +2433,7 @@ describe.concurrent("onLoad that declines", () => {
       console.log(Object.keys(require.cache).filter(key => /dep-require|syntax-error/.test(key)));
     `;
     expect(await run(setup, { "entry.ts": entry, "syntax-error.ts": "export default (;" })).toEqual({
-      stdout: ["TypeError", "TypeError", "[]"],
+      stdout: ["Error", "Error", "[]"],
       stderr: "",
       exitCode: 0,
     });

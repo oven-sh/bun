@@ -317,7 +317,7 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
     [
       "top-level-await.js",
       "wrap",
-      { name: "TypeError", message: 'require() async module "<id>" is unsupported. use "await import()" instead.' },
+      { name: "Error", message: 'require() async module "<id>" is unsupported. use "await import()" instead.' },
     ],
     // The module._compile wrapper deletes the require.cache entry before the CommonJS file runs.
     ["cjs-throws.js", "pirates-evict", { name: "Error", message: "boom" }],

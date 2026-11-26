@@ -3,7 +3,7 @@
   "printed": [
     "SAID body of tax",
     "SAID mocked rate threw RangeError of the body threw TypeError threw TypeError undefined undefined",
-    "SAID required rate threw TypeError require() as threw TypeError threw TypeError undefined undefined"
+    "SAID required rate threw Error require() as threw TypeError threw TypeError undefined undefined"
   ],
   "tests": [
     "(fail) a"

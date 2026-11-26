@@ -361,6 +361,6 @@ const errors: ErrorCodeMapping = [
   ["HPE_INVALID_URL", Error],
   ["ERR_HTTP2_TOO_MANY_ORIGINS", Error],
   ["ERR_PATCH_DOES_NOT_APPLY", Error],
-  ["ERR_REQUIRE_ASYNC_MODULE", TypeError],
+  ["ERR_REQUIRE_ASYNC_MODULE", Error],
 ];
 export default errors;

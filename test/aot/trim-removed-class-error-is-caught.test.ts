@@ -101,6 +101,10 @@ const partsOf = (stdout: string) =>
       "a method of a date",
       `${fromTheRun("toLocaleDateString")}try { console.log("made", typeof new Date(0)[key]()); } ${handlers}`,
     ],
+    [
+      "new Bun.TypeChecker() in a --trimmed executable",
+      `try { new Bun.TypeChecker({ cwd: "." }); console.log("made"); } catch (error) { console.log("caught", error.code); } finally { console.log("finally"); }\nconsole.log("end");\n`,
+    ],
   ] as const;
   test.skipIf(!canTrim).concurrent(
     "a try block catches the error of an API that --trim removed",
@@ -112,7 +116,12 @@ const partsOf = (stdout: string) =>
         parts: Object.fromEntries(
           parts.map(([name]) => [
             name,
-            expect.stringMatching(/^(made .+|caught ERR_FEATURE_REMOVED)\nfinally\nend\n$/),
+            // `Bun.TypeChecker` is guarded by the same `Check` feature, but its
+            // constructor reports the plan's catchable unavailable error
+            // (ERR_BUN_TYPE_CHECKER_UNAVAILABLE) instead of ERR_FEATURE_REMOVED.
+            name === "new Bun.TypeChecker() in a --trimmed executable"
+              ? "caught ERR_BUN_TYPE_CHECKER_UNAVAILABLE\nfinally\nend\n"
+              : expect.stringMatching(/^(made .+|caught ERR_FEATURE_REMOVED)\nfinally\nend\n$/),
           ]),
         ),
         stderr: "",
@@ -167,6 +176,16 @@ if (!result.success) throw new AggregateError(result.logs);
       "glob",
       `async function make() { ${makeGlob("Bun.Glob")} }\ntry { await make(); } ${handlers}`,
     ],
+    [
+      "new Bun.TypeChecker() in a trimmed executable without the check feature",
+      "check",
+      `try { new Bun.TypeChecker({ cwd: "." }); } catch (error) { console.log("caught", error.code); } finally { console.log("finally"); }\nconsole.log("end");\n`,
+    ],
+    [
+      "new Bun.TypeChecker() when its feature is removed by compile.trim.remove",
+      "check",
+      `try { new Bun.TypeChecker({ cwd: "." }); } catch (error) { console.log("caught", error.code); } finally { console.log("finally"); }\nconsole.log("end");\n`,
+    ],
   ] as const;
   test.skipIf(!canTrim).concurrent(
     "a try block catches the error of an API that compile.trim.remove removed",
@@ -184,7 +203,17 @@ if (!result.success) throw new AggregateError(result.logs);
         ...features,
       ]);
       expect({ ...rest, parts: partsOf(stdout) }).toEqual({
-        parts: Object.fromEntries(parts.map(([name]) => [name, "caught ERR_FEATURE_REMOVED\nfinally\nend\n"])),
+        parts: Object.fromEntries(
+          parts.map(([name, feature]) => [
+            name,
+            // `Bun.TypeChecker` is guarded by the same `Check` feature, but its
+            // constructor reports the plan's catchable unavailable error
+            // (ERR_BUN_TYPE_CHECKER_UNAVAILABLE) instead of ERR_FEATURE_REMOVED.
+            feature === "check"
+              ? "caught ERR_BUN_TYPE_CHECKER_UNAVAILABLE\nfinally\nend\n"
+              : "caught ERR_FEATURE_REMOVED\nfinally\nend\n",
+          ]),
+        ),
         stderr: "",
         exitCode: 0,
       });

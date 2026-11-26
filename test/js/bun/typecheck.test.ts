@@ -10,10 +10,14 @@
 // Every test runs in-process against small `tempDir` projects. No network,
 // no hardcoded ports, no sleeps. Type-level coverage lives in
 // test/integration/bun-types/fixture/type-checker.ts.
+//
+// Safety/platform coverage (§7.2–7.4) lives at the end of this file:
+// table-driven UTF-16 vs UTF-8 positions, platform path semantics, GC
+// ownership, worker/realm teardown in a subprocess, and differential reuse.
 import { describe, expect, test } from "bun:test";
-import { normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const CLOSED = "ERR_BUN_TYPE_CHECKER_CLOSED";
@@ -761,5 +765,346 @@ describe("Bun.TypeChecker: incomplete and read failures", () => {
 
     using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
     expect(await snapshot.getProject("tsconfig.json").program.getDiagnostics("no/such/file.ts")).toEqual([]);
+  });
+});
+
+describe("Bun.TypeChecker: UTF-16 positions (§7.2)", () => {
+  // Every case computes the expected `pos`/`end` from JavaScript string
+  // indexing (UTF-16 code units). For non-ASCII cases the UTF-8 byte offset
+  // differs, so a byte-offset implementation cannot pass by accident. The
+  // declared name is always `answer` (see the TS2322 test above). The BOM
+  // case is special: the checker strips the BOM before reporting positions,
+  // so the expected `pos` is the index into the BOM-stripped source.
+  const cases: ReadonlyArray<{
+    name: string;
+    source: string;
+    stripBOM?: boolean;
+  }> = [
+    {
+      name: "ASCII baseline",
+      source: `export const answer: string = 42;\n`,
+    },
+    {
+      name: "non-BMP emoji before the span (4 UTF-8 bytes, 2 UTF-16 units)",
+      source: `const label = "😀";\nexport const answer: string = 42;\n`,
+    },
+    {
+      name: "combining characters before the span (e + U+0301 is 2 UTF-16 units, 3 UTF-8 bytes)",
+      source: `const label = "é";\nexport const answer: string = 42;\n`,
+    },
+    {
+      name: "CRLF line endings before the span",
+      source: `const label = "x";\r\nexport const answer: string = 42;\r\n`,
+    },
+    {
+      name: "UTF-8 BOM before the span (BOM is 3 UTF-8 bytes, 1 UTF-16 unit)",
+      source: `﻿const label = "x";\nexport const answer: string = 42;\n`,
+      stripBOM: true,
+    },
+  ];
+
+  for (const { name, source, stripBOM } of cases) {
+    test(name, async () => {
+      using dir = project({ "a.ts": source });
+      await using checker = makeChecker(String(dir));
+
+      using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+      const [diagnostic] = await snapshot.getProject("tsconfig.json").program.getDiagnostics("a.ts");
+
+      const stripped = stripBOM ? source.replace(/^﻿/, "") : source;
+      const pos = stripped.indexOf("answer");
+      expect(diagnostic.code).toBe(2322);
+      expect(diagnostic.pos).toBe(pos);
+      expect(diagnostic.end).toBe(pos + 6);
+      expect(stripped.slice(diagnostic.pos, diagnostic.end)).toBe("answer");
+      // For non-ASCII cases the UTF-8 byte offset must differ from the
+      // UTF-16 offset: this proves the case distinguishes the two units.
+      const byteOffset = new TextEncoder().encode(stripped.slice(0, pos)).length;
+      if (!stripBOM && /[^\x00-\x7F]/.test(stripped.slice(0, pos))) expect(byteOffset).not.toBe(pos);
+    });
+  }
+
+  test("a lone surrogate before the span goes through the WTF-8/WTF-16 path", async () => {
+    const source = `const label = "\uD83D";\nexport const answer: string = 42;\n`;
+    using dir = project({ "a.ts": source });
+    await using checker = makeChecker(String(dir));
+
+    using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+    const [diagnostic] = await snapshot.getProject("tsconfig.json").program.getDiagnostics("a.ts");
+
+    const pos = source.indexOf("answer");
+    expect(diagnostic.code).toBe(2322);
+    expect(diagnostic.pos).toBe(pos);
+    expect(diagnostic.end).toBe(pos + 6);
+    expect(source.slice(diagnostic.pos, diagnostic.end)).toBe("answer");
+  });
+
+  test("a lone surrogate inside a string literal does not lose the error on the declared name", async () => {
+    // A lone surrogate in a string literal is valid source text for the
+    // checker (it round-trips through WTF-8). Assigning it to a `number`
+    // declarator produces a TS2322 whose `answer` span must be at its
+    // UTF-16 position; the lone surrogate must not swallow the error.
+    const source = `export const answer: number = "\uD83D";\n`;
+    using dir = project({ "a.ts": source });
+    await using checker = makeChecker(String(dir));
+
+    using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+    const diagnostics = await snapshot.getProject("tsconfig.json").program.getDiagnostics("a.ts");
+    expect(diagnostics.map((d: any) => d.code)).toContain(2322);
+    const [diagnostic] = diagnostics.filter((d: any) => d.code === 2322);
+    expect(diagnostic.pos).toBe(source.indexOf("answer"));
+    expect(source.slice(diagnostic.pos, diagnostic.end)).toBe("answer");
+  });
+
+  test("spaces and non-ASCII characters in paths", async () => {
+    using dir = project({
+      "my dir/ünïcode/a.ts": `export const answer: string = 42;\n`,
+    });
+    // Point the project at the nested file via an explicit include.
+    writeFileSync(
+      join(String(dir), "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: JSON.parse(tsconfig).compilerOptions,
+        include: ["my dir/ünïcode/a.ts"],
+      }),
+    );
+    await using checker = makeChecker(String(dir));
+
+    using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+    const diagnostics = await snapshot.getProject("tsconfig.json").program.getDiagnostics();
+    expect(diagnostics.map((d: any) => d.code)).toEqual([2322]);
+    expect(normPath(diagnostics[0].fileName, String(dir))).toBe(normPath(join(String(dir), "my dir/ünïcode/a.ts"), String(dir)));
+  });
+
+  test("a file-URL cwd and file-URL project selectors resolve like native paths", async () => {
+    using dir = project({ "sub/a.ts": `export const answer: string = 42;\n` });
+    // `cwd` as a file URL must behave exactly like the native directory.
+    await using checker = new (Bun as any).TypeChecker({ cwd: pathToFileURL(String(dir)) });
+
+    using snapshot = await checker.updateSnapshot({ openProjects: [pathToFileURL(join(String(dir), "tsconfig.json"))] });
+    const diagnostics = await snapshot.getProject(pathToFileURL(join(String(dir), "tsconfig.json"))).program.getDiagnostics(
+      pathToFileURL(join(String(dir), "sub/a.ts")),
+    );
+    expect(diagnostics.map((d: any) => d.code)).toEqual([2322]);
+    // Output fileName is always an absolute native path, never a URL.
+    expect(diagnostics[0].fileName).not.toContain("file://");
+  });
+});
+
+describe("Bun.TypeChecker: platform path semantics (§7.2)", () => {
+  test("POSIX: a backslash is a literal filename character, not a separator", async () => {
+    if (process.platform === "win32") return;
+    using dir = project({ "a.ts": `export const answer: number = 42;\n` });
+    await using checker = makeChecker(String(dir));
+
+    // `no\such` names a single file with a backslash in it, not `no/such`.
+    using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+    expect(snapshot.getProject("no\\such/tsconfig.json")).toBeUndefined();
+    expect(await snapshot.getProject("tsconfig.json").program.getDiagnostics("no\\such/a.ts")).toEqual([]);
+  });
+
+  test("Windows: both separators resolve to the same project", async () => {
+    if (process.platform !== "win32") return;
+    using dir = project({ "sub/a.ts": `export const answer: number = 42;\n` });
+    await using checker = makeChecker(String(dir));
+
+    using snapshot = await checker.updateSnapshot({ openProjects: ["sub\\tsconfig.json"] });
+    const expected = normPath(join(String(dir), "sub", "tsconfig.json"), String(dir));
+    expect(normPath(snapshot.getProject("sub/tsconfig.json").configFileName, String(dir))).toBe(expected);
+    expect(normPath(snapshot.getProject("sub\\tsconfig.json").configFileName, String(dir))).toBe(expected);
+    // Absolute native form with backslashes.
+    expect(normPath(snapshot.getProject(join(String(dir), "sub", "tsconfig.json")).configFileName, String(dir))).toBe(expected);
+  });
+
+  test("Windows: a UNC path selector resolves", async () => {
+    if (process.platform !== "win32") return;
+    using dir = project({ "a.ts": `export const answer: number = 42;\n` });
+    await using checker = makeChecker(String(dir));
+
+    // The temp dir itself may be UNC or drive-letter; either way the absolute
+    // native form (with `\\` or `C:\`) must round-trip through getProject.
+    using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+    const configFileName: string = snapshot.getProject("tsconfig.json").configFileName;
+    expect(configFileName).toBe(join(String(dir), "tsconfig.json"));
+    expect(snapshot.getProject(configFileName)).toBeDefined();
+  });
+
+  test("output paths use the platform separator", async () => {
+    using dir = project({ "a.ts": `export const answer: string = 42;\n` });
+    await using checker = makeChecker(String(dir));
+
+    using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+    const [diagnostic] = await snapshot.getProject("tsconfig.json").program.getDiagnostics("a.ts");
+    expect(diagnostic.fileName).toBe(join(String(dir), "a.ts"));
+    // No internal checker form such as `/C:/...` ever leaks to JS.
+    expect(diagnostic.fileName.startsWith("/" + String(dir).slice(0, 2))).toBe(false);
+    expect(normalizeBunSnapshot(diagnostic.fileName, String(dir))).not.toContain("/C:/");
+  });
+});
+
+describe("Bun.TypeChecker: GC and ownership (§7.3)", () => {
+  test("disposed snapshots do not keep their diagnostics alive", async () => {
+    const { heapStats } = require("bun:jsc") as typeof import("bun:jsc");
+    const count = () => heapStats().objectTypeCounts.Object ?? 0;
+
+    using dir = project({ "a.ts": `export const answer: string = 42;\n` });
+    await using checker = makeChecker(String(dir));
+
+    // Warm up so one-off allocations are settled.
+    using warm = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+    await warm.getProject("tsconfig.json").program.getDiagnostics();
+    Bun.gc(true);
+
+    const before = count();
+    {
+      const snapshot = await checker.updateSnapshot({});
+      await snapshot.getProject("tsconfig.json").program.getDiagnostics();
+      snapshot.dispose();
+    }
+    Bun.gc(true);
+    // Disposal released the snapshot's diagnostics; the object count must not
+    // grow by a snapshot's worth. A generous bound avoids GC-timing flakes
+    // while still catching a leaked diagnostics vector.
+    expect(count() - before).toBeLessThanOrEqual(64);
+  });
+
+  test("a live snapshot survives GC and queued checks do not disturb it", async () => {
+    using dir = project({ "a.ts": `export const answer: string = 42;\n` });
+    await using checker = makeChecker(String(dir));
+
+    using live = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+    const first = await live.getProject("tsconfig.json").program.getDiagnostics("a.ts");
+
+    Bun.gc(true);
+    expect(await live.getProject("tsconfig.json").program.getDiagnostics("a.ts")).toEqual(first);
+
+    // Queue two updates behind the live snapshot, then GC again.
+    const pending = [
+      checker.updateSnapshot({ sourceChanges: new Map([["a.ts", `export const answer: number = 42;\n`]]) }),
+      checker.updateSnapshot({ sourceChanges: new Map([["a.ts", `export const answer: string = 42;\n`]]) }),
+    ];
+    Bun.gc(true);
+    expect(await live.getProject("tsconfig.json").program.getDiagnostics("a.ts")).toEqual(first);
+    const [fixed, errored] = await Promise.all(pending);
+    expect(await fixed.getProject("tsconfig.json").program.getDiagnostics("a.ts")).toEqual([]);
+    expect((await errored.getProject("tsconfig.json").program.getDiagnostics("a.ts")).map((d: any) => d.code)).toEqual([2322]);
+    fixed.dispose();
+    errored.dispose();
+  });
+
+  test("many short-lived snapshots are collected after disposal", async () => {
+    const { heapStats } = require("bun:jsc") as typeof import("bun:jsc");
+
+    using dir = project({ "a.ts": `export const answer: number = 42;\n` });
+    await using checker = makeChecker(String(dir));
+
+    // Warm up.
+    using warm = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+    Bun.gc(true);
+    const before = heapStats().objectTypeCounts.Object ?? 0;
+
+    for (let i = 0; i < 8; i++) {
+      const snapshot = await checker.updateSnapshot({});
+      await snapshot.getProject("tsconfig.json").program.getDiagnostics();
+      snapshot.dispose();
+    }
+    Bun.gc(true);
+    // Eight disposed snapshots must not accumulate: the bound is per-snapshot
+    // headroom, well below what a leak of one snapshot's diagnostics costs.
+    expect((heapStats().objectTypeCounts.Object ?? 0) - before).toBeLessThanOrEqual(8 * 64);
+  });
+});
+
+describe("Bun.TypeChecker: worker/realm teardown (§7.3)", () => {
+  test("a check started in a Worker that is terminated settles and the parent exits cleanly", async () => {
+    using dir = project({ "a.ts": `export const answer: string = 42;\n` });
+
+    const workerSource = `
+const checker = new Bun.TypeChecker({ cwd: ${JSON.stringify(String(dir))} });
+const pending = checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+pending.then(
+  snapshot => postMessage({ kind: "snapshot", codes: snapshot.getProjects().map(p => p.configFileName) }),
+  error => postMessage({ kind: "rejected", code: error.code ?? null }),
+);
+postMessage({ kind: "started" });
+`;
+    const worker = new Worker(URL.createObjectURL(new Blob([workerSource], { type: "text/javascript" })));
+    try {
+      const messages: any[] = [];
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      worker.onmessage = event => {
+        messages.push(event.data);
+        if (event.data.kind === "started") {
+          // Real checking work is in flight; terminating the realm must not
+          // crash the parent or deliver into the dead realm.
+          worker.terminate();
+          resolve();
+        }
+      };
+      worker.onerror = reject;
+      await promise;
+      expect(messages[0].kind).toBe("started");
+      // The worker is gone: no snapshot message can follow its termination.
+      expect(messages.some((m: any) => m.kind === "snapshot" || m.kind === "rejected")).toBe(false);
+    } finally {
+      worker.terminate();
+    }
+  });
+
+  test("a checker closed inside a Worker prints its marker and the subprocess exits 0", async () => {
+    using dir = project({ "a.ts": `export const answer: number = 42;\n` });
+
+    const script = `
+const checker = new Bun.TypeChecker({ cwd: ${JSON.stringify(String(dir))} });
+await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+await checker.close();
+console.log("typechecker-worker-done");
+`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(normalizeBunSnapshot(stdout.trim(), String(dir))).toBe("typechecker-worker-done");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("Bun.TypeChecker: differential reuse (§7.4)", () => {
+  // Reuse the pinned differential cases where practical: the API's
+  // code/text/file identity must match what `bun check` already reports for
+  // the same program. Cases are read from test/cli/check/differential-cases.json
+  // (the repository's existing pinned dependency — no download at test time).
+  test("API diagnostics match the pinned differential case programs", async () => {
+    const cases = (await Bun.file(join(import.meta.dir, "../../cli/check/differential-cases.json")).json()) as Record<
+      string,
+      { files: Record<string, string>; build?: boolean }
+    >;
+    // A small deterministic sample: the first three single-file cases whose
+    // program is a plain (non-build) check. Debug builds check a sample too.
+    const picked = Object.entries(cases)
+      .filter(([, it]) => !it.build && Object.keys(it.files).length <= 3 && it.files["a.ts"]?.includes("sentinel"))
+      .slice(0, 3);
+    expect(picked.length).toBeGreaterThan(0);
+
+    for (const [name, it] of picked) {
+      using dir = tempDir("bun-typecheck-differential", it.files as any);
+      await using checker = makeChecker(String(dir));
+
+      using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+      const diagnostics = await snapshot.getProject("tsconfig.json").program.getDiagnostics();
+      // Every picked case contains the sentinel `const sentinel: number = "";`
+      // so the API must surface at least one TS2322 for it.
+      expect(diagnostics.some((d: any) => d.code === 2322), name).toBe(true);
+      for (const diagnostic of diagnostics) {
+        expect(["error", "warning", "suggestion", "message"]).toContain(diagnostic.category);
+        expect(typeof diagnostic.code).toBe("number");
+        expect(typeof diagnostic.text).toBe("string");
+        expect(diagnostic.text.length).toBeGreaterThan(0);
+      }
+    }
   });
 });

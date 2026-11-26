@@ -6,6 +6,7 @@
 
 #include "BunClientData.h"
 #include "BunStreamSource.h"
+#include "GeneratedReadableStream.h"
 #include "GeneratedSink.h"
 #include "JSBuffer.h"
 #include "JSDOMWrapperCache.h"
@@ -485,6 +486,21 @@ static JSPromise* readableStreamCancelDeferred(JSGlobalObject* globalObject, JSR
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
 
+extern "C" void Bun__FileReader__resumeForReader(void* source);
+
+// Bun: a reader starts a file source again that setFlowing(false) stopped. The mirror of releaseNativeSourceRef.
+static void resumeNativeSourceForReader(JSReadableStream* stream)
+{
+    if (stream->m_controllerKind != ControllerKind::Default)
+        return;
+    auto* controller = defaultControllerOf(stream);
+    if (controller->m_algorithms.kind != SourceKind::Native)
+        return;
+    auto* handle = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get())->handle();
+    if (auto* fileSource = dynamicDowncast<Bun::Bindgen::Generated::JSFileInternalReadableStreamSource>(handle))
+        Bun__FileReader__resumeForReader(fileSource->wrapped());
+}
+
 // ReadableStreamReaderGenericInitialize(reader, stream)
 void readableStreamReaderGenericInitialize(JSGlobalObject* globalObject, JSReadableStreamReaderBase* reader, JSReadableStream* stream)
 {
@@ -505,6 +521,7 @@ void readableStreamReaderGenericInitialize(JSGlobalObject* globalObject, JSReada
     reader->m_closedPromise.set(vm, reader, closedPromise);
     reader->m_stream.set(vm, reader, stream);
     stream->m_reader.set(vm, stream, reader);
+    resumeNativeSourceForReader(stream);
 }
 
 // Bun: drop the native handle's event-loop ref when its consumer releases the lock.

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 75f031a0fb08eb5f36391098d1937366c68d96a4700c5fb966ad437d2c99bf40.
+// Written against that file with the SHA-256 49e5371df6c0d2ede6ccf28a49ad74ddf51ebbb9998571940514ee2feb5598be.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -143,6 +143,8 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
   $assert(fd === 0);
   const native: ReadableStream<Uint8Array> = Bun.stdin.stream();
   const source: $Bindgen.FileInternalReadableStreamSource = native.$bunNativePtr;
+  // After a short read, EOF gets a poll wakeup of its own, as on a libuv stream.
+  source?.setLibuvReads?.(true);
 
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
@@ -286,15 +288,12 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
         // to exit even if one of them throws or never drains the buffer.
         stream_reachedEof = true;
         disown();
-        // A flowing stream reads by itself. A 'data' consumer that called pause() ends it with resume() or read().
-        const state = stream._readableState;
-        const endsItself = state.flowing === true || (state.paused && !state.readableListening);
         // push(null) instead of emitting 'end' by hand so read(n) can still
         // return the buffered < n byte remainder and 'end'/'readableEnded'
         // come from the stream machinery once the buffer drains.
         stream.push(null);
         // A net.Socket stdin: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L231-L232
-        if (!endsItself && (isTTY || fdType !== BunProcessStdinFdType.file)) originalRead.$call(stream, 0);
+        if (isTTY || fdType !== BunProcessStdinFdType.file) originalRead.$call(stream, 0);
       }
     } catch (err) {
       if (value) triggerRead.$call(stream, undefined);

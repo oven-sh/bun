@@ -204,8 +204,18 @@ bitflags::bitflags! {
         const KEEP_ALIVE               = 1 << 10; // default true
         /// A read failed with a non-retry errno. Set before the bytes read ahead of the failure are delivered, so a pull from inside that delivery cannot read the fd past the error. `start()`, `unpause()` and `from()` keep it: only `reset()` clears it.
         const READ_FAILED              = 1 << 11;
+        /// Set by the consumer (`process.stdin`): EOF is not read in the poll wakeup of a short read, as on a libuv stream.
+        const LIBUV_READS              = 1 << 12;
+        /// The last read under `LIBUV_READS` was not a whole multiple of `LIBUV_READ_SIZE`. Only a poll event for the fd clears it.
+        const SHORT_READ               = 1 << 13;
+        /// The poll does not report the last close of this fd (a named FIFO on XNU's kqueue), so `LIBUV_READS` does nothing.
+        const POLL_MISSES_EOF          = 1 << 14;
     }
 }
+
+/// The size of libuv's read buffer: `uv__read` goes back to the loop after a read that did not fill it.
+#[cfg(unix)]
+const LIBUV_READ_SIZE: usize = 64 * 1024;
 
 #[cfg(unix)]
 impl PosixFlags {
@@ -486,10 +496,33 @@ impl PosixBufferedReader {
         Some((self.get_fd(), self.get_file_type()))
     }
 
+    /// The consumer's switch for `LIBUV_READS`.
+    pub fn set_libuv_reads(&self, enable: bool) {
+        self.update_flags(|f| f.set(PosixFlags::LIBUV_READS, enable));
+    }
+
+    fn note_read_len(&self, n: usize) {
+        let flags = self.flags.get();
+        if flags.contains(PosixFlags::LIBUV_READS | PosixFlags::POLLABLE)
+            && !flags.contains(PosixFlags::POLL_MISSES_EOF)
+            && !n.is_multiple_of(LIBUV_READ_SIZE)
+        {
+            self.flags.set(flags | PosixFlags::SHORT_READ);
+        }
+    }
+
+    /// A terminal (read as a non-blocking pipe) gives its EOF to one read only, so after a short read only a poll event reads it again.
+    fn waits_for_poll(&self, file_type: FileType) -> bool {
+        file_type == FileType::NonblockingPipe && self.has_flag(PosixFlags::SHORT_READ)
+    }
+
     /// For a read that no poll event started. A used-up limit is reported without reading, so there is nothing to wait for.
     fn readiness(&self, file_type: FileType, fd: Fd) -> bun_core::Pollable {
         if file_type == FileType::Pipe && !self.limit.reached() {
             return bun_core::is_readable(fd);
+        }
+        if self.waits_for_poll(file_type) {
+            return bun_core::Pollable::NotReady;
         }
         bun_core::Pollable::Ready
     }
@@ -540,9 +573,14 @@ impl PosixBufferedReader {
             return ReadOnce::Stop(Stop::Eof);
         }
         match self.sys_read(file_type, fd, &mut buf) {
+            // A pipe or a socket reports EOF again: after a short read it is left to a poll event of its own.
+            sys::Result::Ok(0) if self.has_flag(PosixFlags::SHORT_READ) => {
+                ReadOnce::Stop(Stop::WouldBlock)
+            }
             sys::Result::Ok(0) => ReadOnce::Stop(Stop::Eof),
             sys::Result::Ok(n) => {
                 self.offset.update(|offset| offset + n);
+                self.note_read_len(n);
                 let limit_reached = self.limit.charge(n);
                 if self.charge_max_buffer(n) {
                     ReadOnce::Read(n, Some(Stop::OverBudget))
@@ -577,7 +615,10 @@ impl PosixBufferedReader {
             match self.read_once_into(file_type, fd, &mut scratch[filled..]) {
                 ReadOnce::Read(n, stop) => {
                     filled += n;
-                    if stop.is_some() || file_type == FileType::Pipe {
+                    if stop.is_some()
+                        || file_type == FileType::Pipe
+                        || self.waits_for_poll(file_type)
+                    {
                         return (filled, stop);
                     }
                 }
@@ -605,6 +646,7 @@ impl PosixBufferedReader {
                     if stop.is_some()
                         || file_type == FileType::Pipe
                         || (streaming && buffer.len() >= 128 * 1024)
+                        || self.waits_for_poll(file_type)
                     {
                         return stop;
                     }
@@ -669,6 +711,7 @@ impl<'a> ReadLoop<'a> {
         let received_hup = match event {
             Some(event) => {
                 bun_sys::syslog!("onPoll({}) = {}", fd, event.size_or_offset);
+                reader.update_flags(|f| f.remove(PosixFlags::SHORT_READ));
                 event.is_hup()
             }
             None => match reader.readiness(file_type, fd) {
@@ -753,6 +796,9 @@ impl<'a> ReadLoop<'a> {
         }
         if !keep_going && !self.received_hup {
             return ControlFlow::Break(ReadResult::Pending);
+        }
+        if reader.waits_for_poll(self.file_type) {
+            return ControlFlow::Break(reader.watch(*self.ev));
         }
         if self.file_type != FileType::Pipe {
             return ControlFlow::Continue(());

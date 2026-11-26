@@ -1,8 +1,8 @@
 import { createSocketPair } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
-import { exec } from "node:child_process";
-import { closeSync, readSync, writeFileSync, writeSync } from "node:fs";
+import { exec, execFileSync } from "node:child_process";
+import { closeSync, constants, openSync, readSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 test.concurrent("pipe does the right thing", async () => {
@@ -1115,24 +1115,32 @@ describe("'end' at EOF on a pipe, socket or terminal", () => {
         node: `let n = 0; process.stdin.on("data", d => { n += d.length; }); process.stdin.on("end", () => console.log(n));`,
       };
       const run = async (name: keyof typeof readers) => {
-        await using proc = Bun.spawn({
-          cmd: [
-            "sh",
-            "-c",
-            'mkfifo "$2" && { printf abc > "$2" & } && exec "$0" -e "$1" < "$2"',
-            bunExe(),
-            readers[name],
-            join(String(dir), name),
-          ],
-          stdin: "ignore",
-          stdout: "pipe",
-          stderr: "pipe",
-          env: bunEnv,
-          timeout: 10_000,
-          killSignal: "SIGKILL",
-        });
-        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-        return { stdout: stdout.trim(), exitCode, signalCode: proc.signalCode };
+        const fifo = join(String(dir), name);
+        execFileSync("mkfifo", [fifo]);
+        // The first descriptor holds the FIFO open, so neither open waits for the other end.
+        const writer = openSync(fifo, constants.O_RDWR);
+        const reader = openSync(fifo, constants.O_RDONLY);
+        try {
+          // The bytes are in the FIFO and its last writer is gone before the child starts.
+          try {
+            expect(writeSync(writer, "abc")).toBe(3);
+          } finally {
+            closeSync(writer);
+          }
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "-e", readers[name]],
+            stdin: reader,
+            stdout: "pipe",
+            stderr: "pipe",
+            env: bunEnv,
+            timeout: 10_000,
+            killSignal: "SIGKILL",
+          });
+          const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+          return { stdout: stdout.trim(), exitCode, signalCode: proc.signalCode };
+        } finally {
+          closeSync(reader);
+        }
       };
       const [web, node] = await Promise.all([run("web"), run("node")]);
       // epoll reports the hang-up of a FIFO.

@@ -417,6 +417,19 @@ diff --git a/package.json b/package.json
     expect(await bunOk(dir, env, "run", "index.ts")).toBe("PATCHED!\n");
   });
 
+  test.if(isWindows)("a path that is relative to a drive names nothing in the project", async () => {
+    await using project = createProject("patch-drive-relative", {
+      "is-even.patch": isEvenPatch("patched"),
+    });
+    const { dir, env } = project;
+    const path = dir.slice(0, "C:".length) + "is-even.patch";
+    await Bun.write(join(dir, "package.json"), packageJson({ "is-even": "1.0.0" }, { "is-even@1.0.0": path }));
+
+    const { stderr, exitCode } = await runBun(dir, env, "install");
+    expect(stderr).toContain(path);
+    expect(exitCode).toBe(1);
+  });
+
   test("shouldn't infinite loop on failure to apply patch", async () => {
     // The patch targets a path that does not exist inside the package.
     const badPatch = /* patch */ `diff --git a/index.js b/node_modules/is-even/index.js

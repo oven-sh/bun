@@ -1,15 +1,13 @@
 // Texts that grow by short pieces, end with a long one and are keys of maps and sets.
-function scan(source, escapes) {
-    let contents = "", start = 0;
-    for (let i = 0; i < source.length; i++) {
-        if (source.charCodeAt(i) !== 92)
-            continue;
-        contents += source.substring(start, i);
-        contents += escapes[source[i + 1]] ?? source[i + 1];
-        start = ++i + 1;
+function unfolded(folded, marks) {
+    const parts = folded.split("/");
+    let text = parts[0];
+    for (let k = 1; k < parts.length; k++) {
+        const [mark] = parts[k];
+        text += marks[mark] ?? mark;
+        text += parts[k].slice(1);
     }
-    contents += source.substring(start);
-    return contents;
+    return text;
 }
 
 function sum(text) {
@@ -27,22 +25,22 @@ function intern(text) {
     return found;
 }
 
-const escapes = { n: "\n", t: "\t", e: "€" };
-function sourceOf(lines, escape) {
-    let source = "";
+const marks = { n: "\n", t: "\t", e: "€" };
+function foldedOf(lines, mark) {
+    let folded = "";
     for (let i = 0; i < lines; i++)
-        source += "line " + i + " of a template with some words in it\\" + escape;
-    return source;
+        folded += "line " + i + " of a letter with some words in it/" + mark;
+    return folded;
 }
 
 for (const lines of [10, 500, 1500, 4000]) {
-    for (const escape of ["n", "e"]) {
+    for (const mark of ["n", "e"]) {
         for (const tail of ["", "end", "x".repeat(20000), "y".repeat(400000)]) {
-            const source = sourceOf(lines, escape) + tail;
-            const first = scan(source, escapes);
+            const folded = foldedOf(lines, mark) + tail;
+            const first = unfolded(folded, marks);
             const entry = intern(first);
-            const again = intern(scan(source, escapes));
-            console.log(lines, escape, tail.length, entry === again, entry.id, sum(entry.text) === sum(first), sum(again.text), entry.text.endsWith(tail));
+            const again = intern(unfolded(folded, marks));
+            console.log(lines, mark, tail.length, entry === again, entry.id, sum(entry.text) === sum(first), sum(again.text), entry.text.endsWith(tail));
         }
     }
 }

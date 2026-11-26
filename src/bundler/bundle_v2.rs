@@ -399,7 +399,6 @@ pub mod bv2_impl {
     use bun_core::strings;
     use bun_core::{FeatureFlags, Output};
     use bun_resolver::DataURL;
-    use bun_resolver::cache::SourceFd;
     use bun_resolver::fs::PathResolverExt as _;
     use bun_resolver::{self as _resolver, is_package_path};
     use bun_threading::ThreadPool as ThreadPoolLib;
@@ -561,7 +560,7 @@ pub mod bv2_impl {
                     .filter(|cp| {
                         path.len() > cp.dir.len()
                             && path.starts_with(&cp.dir)
-                            && bun_core::path_sep::is_sep_any(path[cp.dir.len()])
+                            && bun_paths::is_sep(path[cp.dir.len()])
                     })
                     .max_by_key(|cp| cp.dir.len())
                     .map(|cp| &*cp.server_exports)
@@ -972,29 +971,26 @@ pub mod bv2_impl {
                 pub map: bun_collections::StringHashMap<Box<[u8]>>,
             }
             impl FileMap {
-                /// Keys are stored with forward slashes (`file_map_from_js`).
+                /// A key has forward slashes, but in names that the disk has. On Windows its drive letter is uppercase.
+                pub fn key(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+                    use bun_paths::portable::from_portable_rooted;
+                    let mut key = match bun_paths::to_portable(path) {
+                        std::borrow::Cow::Borrowed(path) => {
+                            bun_sys::converted_spelling(path, from_portable_rooted)
+                        }
+                        converted => converted,
+                    };
+                    if cfg!(windows) && matches!(*key, [b'a'..=b'z', b':', b'/', ..]) {
+                        key.to_mut()[0].make_ascii_uppercase();
+                    }
+                    key
+                }
                 fn get_key_value(&self, specifier: &[u8]) -> Option<(&[u8], &[u8])> {
                     if self.map.is_empty() {
                         return None;
                     }
-                    #[cfg(not(windows))]
-                    {
-                        self.map
-                            .get_key_value(specifier)
-                            .map(|(key, value)| (key.as_ref(), value.as_ref()))
-                    }
-                    #[cfg(windows)]
-                    {
-                        let mut buf = bun_paths::path_buffer_pool::get();
-                        if specifier.len() > buf.len() {
-                            return None;
-                        }
-                        let normalized =
-                            bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
-                        self.map
-                            .get_key_value(normalized)
-                            .map(|(key, value)| (key.as_ref(), value.as_ref()))
-                    }
+                    let (key, value) = self.map.get_key_value(&*Self::key(specifier))?;
+                    Some((key.as_ref(), value.as_ref()))
                 }
                 pub(crate) fn get(&self, specifier: &[u8]) -> Option<&[u8]> {
                     self.get_key_value(specifier).map(|(_, value)| value)
@@ -1014,6 +1010,7 @@ pub mod bv2_impl {
                     arena: &'b bun_alloc::Arena,
                     source_file: &[u8],
                     specifier: &[u8],
+                    kind: ImportKind,
                 ) -> Option<bun_resolver::Result<'b>> {
                     if self.map.is_empty() {
                         return None;
@@ -1026,73 +1023,20 @@ pub mod bv2_impl {
                         return Some(Self::result_for_key(dupe(key)));
                     }
 
-                    // Also try joining a relative specifier against the importer's
-                    // directory. Relative = not posix-absolute and not Windows
-                    // drive-absolute (e.g. `C:/`).
-                    if !specifier.is_empty() && !bun_paths::is_absolute_loose(specifier) {
-                        // `source_file` may itself be relative (e.g. on Windows
-                        // when the bundler stores paths relative to cwd).
-                        let mut abs_source_buf = bun_paths::path_buffer_pool::get();
-                        let abs_source_file: &[u8] = if bun_paths::is_absolute_loose(source_file) {
-                            source_file
-                        } else {
-                            bun_resolver::fs::FileSystem::get()
-                                .abs_buf_checked(&[source_file], &mut *abs_source_buf)?
-                        };
-
-                        // Normalize `source_file` to forward slashes (Windows paths
-                        // from the real filesystem may use backslashes).
-                        let mut source_file_buf = bun_paths::path_buffer_pool::get();
-                        if abs_source_file.len() > source_file_buf.len() {
-                            return None;
-                        }
-                        let normalized_source_file = bun_paths::resolve_path::path_to_posix_buf::<u8>(
-                            abs_source_file,
-                            &mut **source_file_buf,
-                        );
-
-                        let mut buf = bun_paths::path_buffer_pool::get();
-                        let source_dir = bun_paths::resolve_path::dirname::<
-                            bun_paths::platform::Posix,
-                        >(normalized_source_file);
-                        // If `dirname` returns empty but the path has a drive
-                        // letter, use the drive root.
-                        let effective_source_dir: &[u8] = if source_dir.is_empty() {
-                            if normalized_source_file.len() >= 3
-                                && normalized_source_file[1] == b':'
-                                && normalized_source_file[2] == b'/'
-                            {
-                                &normalized_source_file[0..3] // "C:/"
-                            } else if !normalized_source_file.is_empty()
-                                && normalized_source_file[0] == b'/'
-                            {
-                                b"/"
-                            } else {
-                                bun_resolver::fs::FileSystem::get().top_level_dir()
-                            }
-                        } else {
-                            source_dir
-                        };
-                        // `.loose` preserves Windows drive letters; normalize
-                        // separators in-place on Windows afterwards.
-                        let joined_len = bun_paths::resolve_path::join_abs_string_buf_checked::<
-                            bun_paths::platform::Loose,
-                        >(
-                            effective_source_dir, &mut **buf, &[specifier]
-                        )?
-                        .len();
-                        if cfg!(windows) {
-                            bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
-                                &mut buf[0..joined_len],
-                            );
-                        }
-                        let joined = &buf[0..joined_len];
-                        if let Some((key, _)) = self.map.get_key_value(joined) {
-                            return Some(Self::result_for_key(dupe(key.as_ref())));
-                        }
+                    if specifier.is_empty() || bun_paths::portable::is_absolute(specifier) {
+                        return None;
                     }
-
-                    None
+                    // A key keeps the root it was written with: `/a` on Windows, `C:/a` on POSIX.
+                    let base = match bun_paths::portable::is_absolute(source_file) {
+                        true => b"",
+                        false => bun_resolver::fs::FileSystem::get().top_level_dir(),
+                    };
+                    let specifier = bun_resolver::path_of_specifier(specifier, kind);
+                    let parts = [base, source_file, b"..", &specifier];
+                    let mut joined = bun_paths::Path::resolve(&parts);
+                    joined.copy_trailing_sep_from(&specifier);
+                    let (key, _) = self.get_key_value(&joined)?;
+                    Some(Self::result_for_key(dupe(key)))
                 }
 
                 #[inline]
@@ -2916,7 +2860,9 @@ pub mod bv2_impl {
         ) -> Result<EntryPointModule, Error> {
             // Check FileMap first for in-memory entry points
             if let Some(file_map) = self.file_map {
-                if let Some(file_map_result) = file_map.resolve(self.arena(), b"", entry_point) {
+                if let Some(file_map_result) =
+                    file_map.resolve(self.arena(), b"", entry_point, ImportKind::EntryPointBuild)
+                {
                     let target = match file_map_result.path_const() {
                         Some(path) => self.target_of_entry_point(path),
                         None => self.transpiler.options.target,
@@ -3989,9 +3935,10 @@ pub mod bv2_impl {
                 let loaders = &*input_files.loader;
                 let targets = self.graph.ast.items_target();
                 let mut has_unusable_output_path = false;
+                let is_executable = self.transpiler.options.compile_mode.is_executable();
                 // Without an output directory the paths are only returned, so they can have any length.
-                let opens_output_paths = !self.transpiler.resolver.opts.output_dir.is_empty()
-                    || self.transpiler.options.compile_mode.is_executable();
+                let opens_output_paths =
+                    !self.transpiler.resolver.opts.output_dir.is_empty() || is_executable;
                 let mut templates: Vec<(usize, options::PathTemplate)> = Vec::new();
 
                 for reachable_source in reachable_files {
@@ -4028,22 +3975,24 @@ pub mod bv2_impl {
                         {
                             let source = &sources[index];
                             // TODO: outbase
-                            let pathname =
-                                Fs::PathName::init(bun_paths::resolve_path::relative_platform::<
-                                    bun_paths::resolve_path::platform::Auto,
-                                    false,
-                                >(
-                                    &self.transpiler.options.root_dir,
-                                    source.path.text,
-                                ));
+                            let relative = bun_paths::Path::relative(
+                                &self.transpiler.options.root_dir,
+                                source.path.text,
+                            );
+                            let pathname = Fs::PathName::init(&relative);
 
                             template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
                             template.placeholder.dir = pathname.dir.to_vec().into_boxed_slice();
+                            // In an executable `node:fs` finds `D:/a/b.txt`, and not `./b.txt`.
+                            if bun_paths::is_absolute(&relative) && !is_executable {
+                                template.resolve_dir(&self.transpiler.options.root_dir);
+                            }
                             let mut ext: &[u8] = pathname.ext;
                             if !ext.is_empty() && ext[0] == b'.' {
                                 ext = &ext[1..];
                             }
                             template.placeholder.ext = ext.to_vec().into_boxed_slice();
+                            template.placeholder.replace_backslashes();
 
                             if template.needs(options::PlaceholderField::Hash) {
                                 template.placeholder.hash = Some(
@@ -4075,7 +4024,6 @@ pub mod bv2_impl {
                     }
                 }
 
-                let is_executable = self.transpiler.options.compile_mode.is_executable();
                 // The output path of a copied file -> its output file and its module.
                 let mut copied: bun_collections::StringHashMap<(u32, usize)> = Default::default();
                 for (index, mut template) in templates {
@@ -4086,7 +4034,7 @@ pub mod bv2_impl {
                             let mut v = Vec::new();
                             template.print(&mut v, !is_executable).expect("oom");
                             // Like a chunk's `final_rel_path`: `/`-separated on every platform.
-                            bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut v);
+                            bun_paths::to_portable_in_place::<u8>(&mut v);
                             v.into_boxed_slice()
                         };
                         let mut output_path = print(&template);
@@ -4377,11 +4325,8 @@ pub mod bv2_impl {
                             // right now because DevServer requires a table to map
                             // watched files and dirs to their respective dependants.
                             let file = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
-                                let mut buf = bun_paths::path_buffer_pool::get();
-                                // On kqueue platforms paths are already
-                                // posix-separated so `z()` alone suffices.
                                 match bun_sys::File::open(
-                                    bun_paths::resolve_path::z(path.text, &mut *buf),
+                                    &bun_paths::Path::from(path.text),
                                     bun_watcher::WATCH_OPEN_FLAGS,
                                     0,
                                 ) {
@@ -4862,22 +4807,14 @@ pub mod bv2_impl {
         if !outdir.is_empty() {
             // Open the output directory and write the metafile relative to it,
             // routed through `bun_sys::File`.
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let written = match bun_paths::resolve_path::join_z_buf_checked::<
-                bun_paths::resolve_path::platform::Auto,
-            >(&mut buf.0[..], &[outdir, file_path])
-            {
-                Some(joined_z) => {
-                    // Create parent directories if needed (relative to outdir).
-                    let parent = bun_paths::resolve_path::dirname::<
-                        bun_paths::resolve_path::platform::Loose,
-                    >(joined_z.as_bytes());
-                    if !parent.is_empty() {
+            let written = match bun_paths::Path::join(&[outdir, file_path]).check_len() {
+                Ok(joined) => {
+                    if let Some(parent) = joined.dirname() {
                         let _ = bun_sys::mkdir_recursive(parent);
                     }
-                    bun_sys::File::write_file(bun_core::Fd::cwd(), joined_z, content)
+                    bun_sys::File::write_file(bun_core::Fd::cwd(), &joined, content)
                 }
-                None => Err(bun_sys::Error::from_code(
+                Err(_) => Err(bun_sys::Error::from_code(
                     bun_sys::E::ENAMETOOLONG,
                     bun_sys::Tag::open,
                 )),
@@ -4923,11 +4860,7 @@ pub mod bv2_impl {
         fn should_add_watcher(&self, path: &[u8]) -> bool {
             if self.dev_server.is_some() {
                 strings::index_of(path, b"/node_modules/").is_none()
-                    && (if cfg!(windows) {
-                        strings::index_of(path, b"\\node_modules\\").is_none()
-                    } else {
-                        true
-                    })
+                    && !(cfg!(windows) && strings::contains(path, bun_paths::NODE_MODULES_NEEDLE))
             } else {
                 true // `bun build --watch` has always watched node_modules
             }
@@ -5886,9 +5819,12 @@ pub mod bv2_impl {
                 if let Some(file_map) = self.file_map
                     && !matches!(ctx.plugin_answer, PluginAnswer::Path(_))
                 {
-                    if let Some(_file_map_result) =
-                        file_map.resolve(heap, source.path.text, import_record.path.text)
-                    {
+                    if let Some(_file_map_result) = file_map.resolve(
+                        heap,
+                        source.path.text,
+                        import_record.path.text,
+                        import_record.kind,
+                    ) {
                         let mut file_map_result = _file_map_result;
                         let mut path_primary = file_map_result.path_pair.primary;
                         let path_loader = Fs::Path::init(path_primary.text)
@@ -6026,13 +5962,14 @@ pub mod bv2_impl {
                                             bstr::BStr::new(&source.path.text),
                                             bstr::BStr::new(&import_record.path.text)
                                         );
-                                        // Only re-query if the folder was ever looked up. Another thread can have busted it first.
+                                        // Only re-query if we previously had something cached.
                                         if self
                                             .transpiler_for_target(target)
                                             .resolver
                                             .bust_dir_cache_from_specifier(
                                                 source.path.text,
                                                 import_record.path.text,
+                                                import_record.kind,
                                             )
                                         {
                                             had_busted_dir_cache = true;
@@ -6043,7 +5980,10 @@ pub mod bv2_impl {
                                         // Tell DevServer about the resolution failure.
                                         dev.track_resolution_failure(
                                             source.path.text,
-                                            import_record.path.text,
+                                            &_resolver::path_of_specifier(
+                                                import_record.path.text,
+                                                import_record.kind,
+                                            ),
                                             ctx.target.bake_graph(), // use the source file target not the altered one
                                             loader,
                                         )
@@ -6130,32 +6070,13 @@ pub mod bv2_impl {
                                             );
                                         }
                                     } else {
-                                        #[cfg(windows)]
-                                        let mut buf = bun_paths::path_buffer_pool::get();
                                         let top_level_dir = Fs::FileSystem::get().top_level_dir();
-                                        let specifier_to_use: &[u8] = if loader == Loader::Html
-                                            && import_record.path.text.starts_with(top_level_dir)
-                                        {
-                                            let specifier_to_use =
-                                                &import_record.path.text[top_level_dir.len()..];
-                                            #[cfg(windows)]
-                                            {
-                                                if specifier_to_use.len() <= buf.len() {
-                                                    &*bun_paths::resolve_path::path_to_posix_buf::<u8>(
-                                                        specifier_to_use,
-                                                        &mut *buf,
-                                                    )
-                                                } else {
-                                                    specifier_to_use
-                                                }
-                                            }
-                                            #[cfg(not(windows))]
-                                            {
-                                                specifier_to_use
-                                            }
-                                        } else {
-                                            import_record.path.text
-                                        };
+                                        let text = import_record.path.text;
+                                        let below_root = (text.strip_prefix(top_level_dir))
+                                            .filter(|_| loader == Loader::Html)
+                                            .map(bun_paths::to_portable);
+                                        let specifier_to_use =
+                                            below_root.as_deref().unwrap_or(text);
                                         add_error(
                                             log,
                                             Some(source),
@@ -6268,12 +6189,11 @@ pub mod bv2_impl {
                         if !matches!(ctx.plugin_answer, PluginAnswer::Path(_))
                             && let Some(entry) = dev_server.is_file_cached(path.text, bake_graph)
                         {
-                            let rel = bun_paths::resolve_path::relative_platform::<
-                                bun_paths::resolve_path::platform::Loose,
-                                false,
-                            >(
-                                Fs::FileSystem::get().top_level_dir(), path.text
-                            );
+                            let rel = bun_paths::Path::relative(
+                                Fs::FileSystem::get().top_level_dir(),
+                                path.text,
+                            )
+                            .into_portable();
                             // A cached JSON or text module is also an `Asset`, but it has no asset URL.
                             if loader == Loader::Html
                                 && entry.kind == bake_types::CacheKind::Asset
@@ -6297,7 +6217,7 @@ pub mod bv2_impl {
                                 import_record.path.is_disabled = false;
                             } else {
                                 import_record.path.text = path.text;
-                                import_record.path.pretty = rel;
+                                import_record.path.pretty = self.arena().alloc_slice_copy(&rel);
                                 import_record.path = self
                                     .path_with_pretty_initialized(path, target)
                                     .expect("oom");
@@ -7005,10 +6925,10 @@ pub mod bv2_impl {
                         .text;
                     if this.should_add_watcher(source_path) {
                         match file {
-                            SourceFd::Borrowed(_) => {
+                            bun_sys::MaybeOwnedFile::Borrowed(_) => {
                                 let _ = bun_watcher.add_file_by_path_slow(source_path);
                             }
-                            SourceFd::Owned(file) => {
+                            bun_sys::MaybeOwnedFile::Owned(file) => {
                                 let hash = bun_wyhash::hash(source_path) as u32;
                                 let _ = match Fs::as_interned_path(source_path) {
                                     Some(path) if !cfg!(windows) => {
@@ -7397,8 +7317,6 @@ pub mod bv2_impl {
         }
     }
 
-    pub use bun_core::cheap_prefix_normalizer;
-
     #[derive(Clone, Copy, Default)]
     pub struct PartRange {
         pub source_index: Index,
@@ -7606,19 +7524,13 @@ pub mod bv2_impl {
         } else {
             b""
         };
+        let mut rel;
         let mut prefixed = Vec::new();
         let mut path_clone: crate::bun_fs::Path<'_> = *path;
         path_clone.pretty = if path.is_file() || is_node {
-            let rel = bun_paths::resolve_path::relative_platform::<
-                bun_paths::resolve_path::platform::Loose,
-                false,
-            >(top_level_dir, path.text);
-            if ssr_prefix.is_empty() {
-                rel
-            } else {
-                prefixed = [ssr_prefix, rel].concat();
-                &prefixed
-            }
+            rel = bun_paths::Path::relative(top_level_dir, path.text).into_portable();
+            rel.prepend(ssr_prefix);
+            &rel
         } else {
             prefixed.reserve(ssr_prefix.len() + path.namespace.len() + 1 + path.text.len());
             prefixed.extend_from_slice(ssr_prefix);

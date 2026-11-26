@@ -1,11 +1,12 @@
 // Direct `extern "C"` re-exports of the Google Highway SIMD C++ helpers.
 // Per crate map: `bun.highway.*` → `bun_highway::*` (same C++ backing).
-#![feature(core_io_borrowed_buf, hint_prefetch)]
+#![feature(core_io_borrowed_buf, fn_align, hint_prefetch)]
 
 pub mod brotli;
 pub mod checksums;
 pub mod webp;
 pub mod zlib;
+pub mod zstd;
 
 unsafe extern "C" {
     fn highway_index_of_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
@@ -714,6 +715,16 @@ impl ByteSet {
         let len = unsafe { highway_byte_set_prefix_length(text.as_ptr(), text.len(), self) };
         debug_assert_eq!(len, scalar());
         len
+    }
+
+    /// [`Self::prefix_len`] for a loop over many short runs, each of which would pay for a call.
+    #[inline]
+    pub fn short_prefix_len(&self, text: &[u8]) -> usize {
+        let (head, rest) = text.split_at(text.len().min(SCALAR_CUTOFF - 1));
+        match self.prefix_len(head) {
+            len if len < head.len() => len,
+            len => len + self.prefix_len(rest),
+        }
     }
 }
 
@@ -1813,6 +1824,32 @@ macro_rules! with_bmi2 {
             baseline($($arg),*)
         }
     };
+}
+
+/// The same for generic code, with BMI1 and LZCNT too. `run` and what it calls have to be `#[inline(always)]`.
+#[inline(always)]
+pub fn with_bmi2<R>(run: impl FnOnce() -> R) -> R {
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    if is_x86_feature_detected!("bmi1")
+        && is_x86_feature_detected!("bmi2")
+        && is_x86_feature_detected!("lzcnt")
+    {
+        #[target_feature(enable = "bmi1,bmi2,lzcnt")]
+        #[rustc_align(64)]
+        fn bmi2<R>(run: impl FnOnce() -> R) -> R {
+            run()
+        }
+        // SAFETY: the CPU has the three features.
+        return unsafe { bmi2(run) };
+    }
+    out_of_line(run)
+}
+
+/// In a function of its own, which is aligned: the speed of its loops does not depend on what is linked before it.
+#[inline(never)]
+#[rustc_align(64)]
+pub fn out_of_line<R>(run: impl FnOnce() -> R) -> R {
+    run()
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/worker_threads.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 4b1d2dfce35036bd4b694be3a8983426d217479f024b4892787b351a84305ca9.
+// Written against that file with the SHA-256 3df5d2644db4a035b3d4fdc2597dd4def4a570466397f5de1010dd7ad4427d60.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 declare const self: EventTarget & {
@@ -10,7 +10,7 @@ type WebWorker = globalThis.Worker;
 
 const EventEmitter = require("node:events");
 const { SafeMap } = require("internal/primordials");
-const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
+const { throwNotImplemented, warnNotImplementedOnce, builtinChannel } = require("internal/shared");
 const {
   validateString,
   validateObject,
@@ -847,6 +847,8 @@ function moveMessagePortToContext(port, _context) {
   throwNotImplemented("worker_threads.moveMessagePortToContext");
 }
 
+const workerThreadsChannel = builtinChannel("worker_threads");
+
 class Worker extends EventEmitter {
   #worker: WebWorker;
   #performance;
@@ -1038,6 +1040,10 @@ class Worker extends EventEmitter {
         });
       }
       urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
+    }
+
+    if (workerThreadsChannel.hasSubscribers) {
+      workerThreadsChannel.publish({ worker: this });
     }
   }
 

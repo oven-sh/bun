@@ -1,24 +1,23 @@
 # -- source: typed-arrays-constructed-by-names.js
-# const utils = {};
-# function setTyped(on) { if (on) utils.Buf16 = Uint16Array; else utils.Buf16 = Array; }
-# globalThis.held = new Map([["setTyped", setTyped], ["utils", utils]]);
-# globalThis.held.get("setTyped")(true);
-# function State(n) { this.heap = new utils.Buf16(n); this.length = n; }
-# function clear(state) { for (let i = 0; i < state.length; i++) state.heap[i] = 0; return state; }
-# function sum(state) { let s = 0; for (let i = 0; i < state.length; i++) s += state.heap[i] * 2; return s; }
-# globalThis.held.set("make", n => new State(n)); globalThis.held.set("clear", clear); globalThis.held.set("sum", sum);
-# const get = name => globalThis.held.get(name), made = get("make")(9);
-# for (let i = 0; i < 9; i++) made.heap[i] = 65530 + i;
-# const before = get("sum")(made), constructorBefore = made.heap.constructor.name;
-# get("setTyped")(false); const list = get("clear")(get("make")(4));
-# print(before, constructorBefore, get("sum")(get("clear")(made)), list.heap.constructor.name, get("sum")(list), list.heap.length);
+# const shop = {};
+# shop.Tray = Uint16Array;
+# function wood() { shop.Tray = Array; return "wood"; }
+# function Rack(hooks) { this.tray = new shop.Tray(hooks); this.hooks = hooks; }
+# function hang(rack, first) { for (let k = 0; k < rack.hooks; k++) rack.tray[k] = first + k * 3; return rack; }
+# function heaviest(rack) { let most = -1; for (let k = 0; k < rack.hooks; k++) if (rack.tray[k] > most) most = rack.tray[k]; return most; }
+# globalThis.held = { wood, hang, heaviest, rack: hooks => new Rack(hooks) };
+# const ask = (name, ...given) => globalThis.held[JSON.parse(JSON.stringify(name))](...given);
+# const metal = ask("hang", ask("rack", 9), 65530);
+# const most = ask("heaviest", metal), made = metal.tray.constructor.name, said = ask("wood");
+# const board = ask("hang", ask("rack", 4), 65534.5);
+# print(most, made, metal.tray[8], said, board.tray.constructor.name, ask("heaviest", board), ask("heaviest", ask("hang", metal, 2)), board.tray.length);
 # -- end of source
 # The program stores Uint16Array and Array under the name by which the constructor makes the field: the typed array is what makers lay in it, and the loops over the field ask for it.
-# f3 = clear, f4 = sum
+# f3 = hang, f4 = heaviest
 # RUN(STORES): walk f3:Body mechanisms=all
 # STORES: testedType=Uint16Array
 # RUN(READS): walk f4:Body mechanisms=all
 # READS: = GetTypedArrayElement
 # RUN(ANSWERS): run-in-shell mechanisms=all
-# ANSWERS: 786396 Uint16Array 0 Array 0 4
+# ANSWERS: 65533 Uint16Array 18 wood Array 65543.5 26 4
 # ANSWERS-NEXT: exited with 0

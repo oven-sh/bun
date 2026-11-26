@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { isWindows } from "harness";
 import path from "node:path";
 import { type BundlerTestBundleAPI, itBundled } from "./expectBundled";
 
@@ -798,6 +799,67 @@ body {
       expect(cssBundle).toContain(".content");
       expect(cssBundle).toContain("background-color");
       expect(cssBundle).toContain("box-sizing: border-box");
+    },
+  });
+
+  // A browser reads `\\app.js` as `/app.js`.
+  itBundled("html/absolute-path-written-with-a-backslash", {
+    outdir: "out/",
+    files: {
+      "/pages/index.html": `<script src="\\app.js"></script>`,
+      "/app.js": "console.log('at the root')",
+      "/pages/app.js": "console.log('beside the page')",
+    },
+    entryPoints: ["/pages/index.html"],
+    onAfterBundle(api) {
+      const src = api.readFile("out/index.html").match(/src="(.*\.js)"/);
+      expect(api.readFile("out/" + src![1])).toContain("at the root");
+    },
+  });
+
+  // `\\?\` starts a path only on Windows.
+  (isWindows ? itBundled : itBundled.skip)("html/path-that-starts-with-two-backslashes", {
+    outdir: "out/",
+    files: {
+      "/pages/index.html": `<script src="\\\\?\\{{root}}\\app.js"></script>`,
+      "/app.js": "console.log('found')",
+    },
+    entryPoints: ["/pages/index.html"],
+    onAfterBundle(api) {
+      const src = api.readFile("out/index.html").match(/src="(.*\.js)"/);
+      expect(api.readFile("out/" + src![1])).toContain("found");
+    },
+  });
+
+  for (const [name, src] of Object.entries({
+    "one-letter-directory": "d\\app.js",
+    "trailing-slash": "lib.d/",
+  })) {
+    itBundled(`html/script-src-${name}`, {
+      outdir: "out/",
+      files: {
+        "/pages/index.html": `<script src="${src}"></script>`,
+        "/pages/d/app.js": "console.log('found')",
+        "/pages/lib.d/index.js": "console.log('found')",
+        "/pages/lib.d.js": "console.log('sibling')",
+      },
+      entryPoints: ["/pages/index.html"],
+      onAfterBundle(api) {
+        const src = api.readFile("out/index.html").match(/src="(.*\.js)"/);
+        expect(api.readFile("out/" + src![1])).toContain("found");
+      },
+    });
+  }
+
+  itBundled("html/backslash-before-a-query-with-a-colon", {
+    outdir: "out/",
+    files: {
+      "/pages/index.html": `<img src="/pages\\pic.png?t=1:2">`,
+      "/pages/pic.png": "png",
+    },
+    entryPoints: ["/pages/index.html"],
+    onAfterBundle(api) {
+      expect(api.readFile("out/index.html")).toMatch(/src="\.\/pic-\w+\.png/);
     },
   });
 

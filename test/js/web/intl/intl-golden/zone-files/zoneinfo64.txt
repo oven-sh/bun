@@ -1,0 +1,68 @@
+// The source of zoneinfo64.res: zones with the kinds of rules that the shipped file does not use. Compile with ICU's genrb.
+zoneinfo64:table(nofallback) {
+ TZVersion { "2099z" }
+ Zones:array {
+  /* Africa/Cairo: fixed days of the month */ :table {
+    trans:intvector { 0 }
+    typeOffsets:intvector { 7509, 0, 7200, 0 }
+    typeMap:bin { "01" }
+    finalRule { "Fixed" }
+    finalRaw:int { 7200 }
+    finalYear:int { 2000 }
+  }
+  /* America/Chicago: the second and the first Sunday */ :table {
+    trans:intvector { 100000000 }
+    typeOffsets:intvector { -21036, 0, -21600, 0 }
+    typeMap:bin { "01" }
+    finalRule { "Nth" }
+    finalRaw:int { -21600 }
+    finalYear:int { 1990 }
+  }
+  /* America/Denver: days of the week counted from the end of the month, in standard time */ :table {
+    trans:intvector { 100000000 }
+    typeOffsets:intvector { -25196, 0, -25200, 0 }
+    typeMap:bin { "01" }
+    finalRule { "Last" }
+    finalRaw:int { -25200 }
+    finalYear:int { 1990 }
+  }
+  /* Asia/Seoul: times of 64 bits */ :table {
+    transPre32:intvector { -1, 100000000 }
+    trans:intvector { 0, 100000000 }
+    transPost32:intvector { 1, 5 }
+    typeOffsets:intvector { 30472, 0, 30600, 0, 32400, 0, 32400, 3600 }
+    typeMap:bin { "01030203" }
+  }
+  /* Etc/GMT */ :table {
+    typeOffsets:intvector { 0, 0 }
+  }
+  /* Etc/UTC */ :table {
+    typeOffsets:intvector { 0, 0 }
+  }
+  /* Etc/Unknown */ :table {
+    typeOffsets:intvector { 0, 0 }
+  }
+  /* Europe/Dublin: negative savings, in UTC */ :table {
+    trans:intvector { 100000000 }
+    typeOffsets:intvector { -1521, 0, 3600, 0 }
+    typeMap:bin { "01" }
+    finalRule { "Negative" }
+    finalRaw:int { 3600 }
+    finalYear:int { 2000 }
+  }
+  /* GMT */ :int { 4 }
+  /* US/Central */ :int { 1 }
+  /* UTC */ :int { 5 }
+ }
+ Names {
+  "Africa/Cairo", "America/Chicago", "America/Denver", "Asia/Seoul", "Etc/GMT", "Etc/UTC", "Etc/Unknown", "Europe/Dublin", "GMT",
+  "US/Central", "UTC"
+ }
+ Rules {
+  Fixed:intvector { 3, 1, 0, 0, 0, 9, 1, 0, 3600, 0, 3600 }
+  Last:intvector { 2, -1, 1, 7200, 1, 9, -2, 7, 7200, 1, 1800 }
+  Negative:intvector { 9, -31, -1, 3600, 2, 2, -31, -1, 3600, 2, -3600 }
+  Nth:intvector { 2, 2, 1, 7200, 0, 10, 1, 1, 7200, 0, 3600 }
+ }
+ Regions:array { "EG", "US", "US", "KR", "001", "001", "001", "IE", "001", "US", "001" }
+}

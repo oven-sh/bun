@@ -1,21 +1,21 @@
-# f1 = make, f2 = lay
+# f1 = launch, f2 = empty
 # -- source: stores-into-an-object-that-the-body-does-not-make-lean-on-no-guard.ts
 # declare function sink(...values: unknown[]): void;
-# class Sign {
-#     flags: number; name: string; list?: object[]; id: number; parent?: Sign; members?: object; exports?: object; twin?: Sign; only?: boolean; used?: number; place?: number; links?: object;
-#     constructor(flags: number) {
-#         this.flags = flags; this.name = ""; this.list = undefined; this.id = 0; this.parent = undefined; this.members = undefined; this.exports = undefined;
-#         this.twin = undefined; this.only = undefined; this.used = undefined; this.place = undefined; this.links = undefined;
+# class Barge {
+#     tons: number; river: string; crew?: object[]; locks: number; tow?: Barge; hold?: object; toll?: object; twin?: Barge; loaded?: boolean; depth?: number; berth?: number; flag?: object;
+#     constructor(tons: number) {
+#         this.tons = tons; this.river = "Elbe"; this.crew = [this]; this.locks = 3; this.hold = [tons]; this.tow = undefined; this.toll = undefined;
+#         this.depth = tons / 7; this.berth = undefined; this.loaded = true; this.twin = undefined; this.flag = undefined;
 #     }
 # }
-# function make() { return new Sign(1); }
-# const held = make();
-# function lay(name: string) {
-#     const sign = held;
-#     sign.name = name; sign.list = undefined; sign.id = 0; sign.parent = undefined; sign.members = undefined; sign.exports = undefined;
-#     sign.twin = undefined; sign.only = undefined; sign.used = undefined; sign.place = undefined; sign.links = undefined;
+# function launch() { return new Barge(12); }
+# const ferry = launch();
+# function empty(river: string) {
+#     const barge = ferry;
+#     barge.river = river; barge.hold = undefined; barge.crew = undefined; barge.locks = 1; barge.toll = undefined; barge.tow = undefined; barge.depth = undefined;
+#     barge.loaded = undefined; barge.berth = undefined; barge.twin = undefined; barge.flag = undefined;
 # }
-# sink(make, lay);
+# sink(launch, empty);
 # -- end of source
 # RUN(PLAN): plan units mechanisms=all
 # PLAN: unit f2:Body

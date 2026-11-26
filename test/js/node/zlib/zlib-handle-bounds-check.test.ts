@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { totalmem } from "node:os";
 import zlib from "node:zlib";
 import { inflate, nothing, Z_FINISH } from "./zlib-golden/engine";
@@ -359,6 +359,24 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
        catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
       "threw ERR_INVALID_STATE: zlib binding closed",
     ],
+    [
+      "zstd: a handle whose init() dictionary was rejected is closed",
+      `const C = zlib.createZstdCompress()._handle.constructor;
+       const h = new C(11);
+       try { h.init(new Uint32Array(0), undefined, new Uint32Array(2), () => {}, Buffer.from("37a430ec01000000", "hex")); } catch {}
+       try { h.writeSync(0, null, 0, 0, new Uint8Array(64), 0, 64); console.log("handled"); }
+       catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      CLOSED,
+    ],
+    [
+      "zstd: reset() before init() does nothing",
+      `const C = zlib.createZstdCompress()._handle.constructor;
+       const h = new C(10), out = new Uint8Array(64);
+       h.reset();
+       h.writeSync(zlib.constants.ZSTD_e_end, null, 0, 0, out, 0, 64);
+       console.log(out.some(Boolean) ? "wrote a frame" : "handled");`,
+      "handled",
+    ],
   ];
 
   for (const [name, body, expected] of cases) {
@@ -408,7 +426,7 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
   test.concurrent.each([
     ["ZSTD_c_stableInBuffer", "createZstdCompress", 1006],
     ["ZSTD_d_stableOutBuffer", "createZstdDecompress", 1001],
-  ])("zstd: init() refuses %s, which makes zstd keep a buffer of the last write", async (_, create, key) => {
+  ])("zstd: init() refuses the experimental %s", async (_, create, key) => {
     expect(
       await run(
         `for (const value of [0, 1]) {
@@ -418,7 +436,10 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
            catch (e) { console.log("threw " + e.code + ": " + e.message); }
          }`,
       ),
-    ).toEqual({ stdout: "true\nthrew ERR_ZLIB_INITIALIZATION_FAILED: Setting parameter failed", exitCode: 0 });
+    ).toEqual({
+      stdout: Array(2).fill("threw ERR_ZLIB_INITIALIZATION_FAILED: Setting parameter failed").join("\n"),
+      exitCode: 0,
+    });
   });
 
   test.concurrent("zstd: a compressor that failed does not read the input of the write that failed", async () => {
@@ -436,6 +457,28 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
          h.writeSync(zlib.constants.ZSTD_e_flush, pattern, 0, pattern.length, out, 0, out.length);`,
       ),
     ).toEqual({ stdout: "ZSTD_error_srcSize_wrong\nZSTD_error_srcSize_wrong", exitCode: 0 });
+  });
+
+  test.concurrent("zstd: a compressor that broke its pledge keeps failing until reset()", async () => {
+    expect(
+      await run(
+        `const stream = zlib.createZstdCompress({ pledgedSrcSize: 5 });
+         const h = stream._handle;
+         h.onerror = (message, errno, code) => console.log(code);
+         const out = Buffer.alloc(64);
+         const write = input => h.writeSync(zlib.constants.ZSTD_e_end, input, 0, input.length, out, 0, out.length);
+         write(Buffer.from("hi"));
+         write(Buffer.from("hello"));
+         h.reset();
+         write(Buffer.from("hello"));
+         console.log(zlib.zstdDecompressSync(out.subarray(0, out.length - stream._writeState[0])).toString());
+         h.reset();
+         write(Buffer.from("hi"));`,
+      ),
+    ).toEqual({
+      stdout: "ZSTD_error_srcSize_wrong\nZSTD_error_srcSize_wrong\nhello\nZSTD_error_srcSize_wrong",
+      exitCode: 0,
+    });
   });
 
   test.concurrent("zstd: a decompressor that failed keeps failing until reset()", async () => {
@@ -716,7 +759,14 @@ describe("zstd compressor with workers and a dictionary", () => {
 
   test.each([
     ["destroy()", `stream.destroy(); console.log("ok");`],
-    ["reset() and the next frame", `stream.reset(); stream.end("x"); await finished(stream); console.log("ok");`],
+    [
+      "reset() and the next frame",
+      // reset() refuses if the job got to report output before write() returned.
+      `stream.reset();
+       stream.end("x");
+       await finished(stream).catch(e => { if (e.code !== "ERR_ZLIB_INCOMPLETE_FRAME") throw e; });
+       console.log("ok");`,
+    ],
   ])("doesn't crash on %s while a job is running", async (_, body) => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", prelude + body],
@@ -918,5 +968,197 @@ describe("zlib native handle errors and arguments", () => {
       it.handle.params(0, 0);
       expect(it.finish(plain)).toEqual(zlib.gzipSync(plain));
     });
+  });
+});
+
+describe.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 12 * 1024 ** 3)("2 ** 32 bytes", () => {
+  const size = 2 ** 32;
+  // The CRC-32 of zeros with a 1 at the end, and their number modulo 2 ** 32.
+  const trailer = "1bdf05a500000000";
+  const prelude = `import zlib from "node:zlib";\nconst size = ${size};\n`;
+  const iter = `
+    import { from, fromSync, pull, pullSync, text, textSync } from "node:stream/iter";
+    import iter from "node:zlib/iter";
+  `;
+  // In a process of its own, which gives the memory back to the next one.
+  async function run(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--experimental-stream-iter", "--no-warnings", "-e", prelude + script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  test.each([
+    ["inflateSync", size],
+    ["inflate", size],
+    ["inflateSync", size - 0.5],
+  ])("as the chunkSize of %s(): %d", async (method, chunkSize) => {
+    expect(
+      await run(`
+        const print = (error, out) => console.log(error ?? out.toString("hex"));
+        const out = zlib.${method}(zlib.deflateSync("abc"), { chunkSize: ${chunkSize} }, print);
+        if (out) print(null, out);
+      `),
+    ).toEqual({ stdout: "616263", stderr: "", exitCode: 0 });
+  });
+
+  test.each([
+    "textSync(pullSync(fromSync(input), iter.decompressDeflateSync({ chunkSize: size })))",
+    "await text(pull(from(input), iter.decompressDeflate({ chunkSize: size })))",
+  ])("as the chunkSize of zlib/iter: %s", async read => {
+    expect(await run(`${iter} const input = zlib.deflateSync("abc"); console.log(${read});`)).toEqual({
+      stdout: "abc",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.each(["write", "writeSync"])("are more than the handle can count after %s()", async method => {
+    expect(
+      await run(`
+        const [large, small, whole] = [Buffer.allocUnsafe(size), Buffer.alloc(64), zlib.deflateSync("")];
+        const write = ({ _handle: handle, _writeState: state }, prepare, ...args) =>
+          new Promise(resolve => {
+            const done = uncounted => resolve(state.join() + " + " + uncounted);
+            handle.init(15, 1, 8, 0, state, done, undefined);
+            prepare?.(handle);
+            const result = handle.${method}(0, ...args);
+            ${method === "writeSync" ? "done(result);" : ""}
+          }).catch(error => error.code + " " + error.message);
+        const end = handle => handle.writeSync(0, whole, 0, whole.length, small, 0, 64);
+        console.log(await write(zlib.createDeflate(), null, small, 0, 64, large, 0, size));
+        console.log(await write(zlib.createDeflate(), null, large, 0, size, small, 0, 1));
+        console.log(await write(zlib.createInflate(), end, large, 0, size, small, 0, 64));
+        console.log(await write(zlib.createInflate(), end, large, 1, size - 1, small, 0, 64));
+      `),
+    ).toEqual({
+      stdout: [
+        "ERR_OUT_OF_RANGE out_len must be <= 4294967295",
+        // There is not even room for the header.
+        "0,4294967295 + 1",
+        "64,4294967295 + 1",
+        "64,4294967295 + undefined",
+      ].join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("end where they end", async () => {
+    expect(
+      await run(`
+        const [large, small] = [Buffer.allocUnsafe(size), Buffer.alloc(64)];
+        for (const method of ["write", "writeSync"]) {
+          for (const args of [[large, size, 1, small, 0, 64], [small, 0, 64, large, size, 1]]) {
+            try {
+              zlib.createDeflate()._handle[method](0, ...args);
+            } catch (error) {
+              console.log(error.message);
+            }
+          }
+        }
+        console.log(zlib.createDeflate()._handle.writeSync(0, large, size, 0, small, 0, 64));
+      `),
+    ).toEqual({
+      stdout: ["in", "out", "in", "out"]
+        .map(it => `${it}_off + ${it}_len (4294967297) exceeds ${it}put buffer length (4294967296)\n`)
+        .concat("undefined")
+        .join(""),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("are all read", async () => {
+    expect(
+      await run(`
+        ${iter}
+        const input = Buffer.allocUnsafe(size), last = zlib.zstdCompressSync("abc");
+        // A skippable frame.
+        input.writeUInt32LE(0x184d2a50);
+        input.writeUInt32LE(size - 8 - last.length, 4);
+        last.copy(input, size - last.length);
+        for (const read of [
+          () => zlib.zstdDecompressSync(input),
+          () => util.promisify(zlib.zstdDecompress)(input),
+          () => zlib.createZstdDecompress()._processChunk(input.buffer, zlib.constants.ZSTD_e_end),
+          () => textSync(pullSync(fromSync(input), iter.decompressZstdSync())),
+          () => text(pull(from(input), iter.decompressZstd())),
+        ]) {
+          console.log(String(await read()));
+        }
+      `),
+    ).toEqual({ stdout: Array(5).fill("abc").join("\n"), stderr: "", exitCode: 0 });
+  });
+
+  test("are all read if the first write takes none of them", async () => {
+    expect(
+      await run(`
+        ${iter}
+        // The decoder counts the last byte of a frame once all of its output is out.
+        const first = zlib.zstdCompressSync(Buffer.alloc(100_000, "a"));
+        const last = Buffer.concat([first, zlib.zstdCompressSync("b")]);
+        const input = [first.subarray(0, -1), Buffer.allocUnsafe(size)];
+        input[1][0] = first.at(-1);
+        input[1].writeUInt32LE(0x184d2a50, 1);
+        input[1].writeUInt32LE(size - 9 - last.length, 5);
+        last.copy(input[1], size - last.length);
+        async function stream() {
+          const decoder = zlib.createZstdDecompress();
+          decoder.write(input[0]);
+          const out = Buffer.concat(await decoder.end(input[1]).toArray());
+          console.log(decoder.bytesWritten - first.length);
+          return String(out);
+        }
+        function atOnce() {
+          const decoder = zlib.createZstdDecompress();
+          decoder._handle.writeSync(0, input[0], 0, input[0].length, Buffer.alloc(64), 0, 64);
+          return String(decoder._processChunk(input[1], zlib.constants.ZSTD_e_end));
+        }
+        for (const read of [
+          stream,
+          () => new async_hooks.AsyncLocalStorage().run(1, stream),
+          atOnce,
+          () => textSync(pullSync(fromSync(input), iter.decompressZstdSync())),
+          () => text(pull(from(input), iter.decompressZstd())),
+        ]) {
+          const out = await read();
+          console.log(out.length, out.slice(-2));
+        }
+      `),
+    ).toEqual({
+      stdout: [size - 1, "200001 ab", size - 1, ...Array(4).fill("200001 ab")].join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("do not count as written behind the end of a stream", async () => {
+    expect(
+      await run(`
+        const inflate = zlib.createInflate(), whole = zlib.deflateSync("abc");
+        inflate.write(whole);
+        console.log(String(await inflate.end(Buffer.allocUnsafe(size)).toArray()), inflate.bytesWritten - whole.length);
+      `),
+    ).toEqual({ stdout: "abc 0", stderr: "", exitCode: 0 });
+  });
+
+  // These builds take minutes to compress so much.
+  const isSlow = isDebug || isASAN;
+
+  test.skipIf(isSlow).each(["gzipSync", "gzip"])("are all taken by %s()", async method => {
+    expect(
+      await run(`
+        const input = Buffer.alloc(size);
+        input[size - 1] = 1;
+        const print = (error, out) => console.log(error ?? out.subarray(-8).toString("hex"));
+        const out = zlib.${method}(input, { level: 1, chunkSize: 1 << 20 }, print);
+        if (out) print(null, out);
+      `),
+    ).toEqual({ stdout: trailer, stderr: "", exitCode: 0 });
   });
 });

@@ -1,24 +1,28 @@
 // answers: with-library
 // # The allocator gives a slot to a value that it lets go of while the value's range goes on, and the store stands behind the definition.
-// # Where no way that follows asks for the value again, no step reads the slot: here the start of the line, which each laid-out turn of the loop
+// # Where no way that follows asks for the value again, no step reads the slot: here the place where a stretch of weights begins, which each laid-out turn of the loop
 // # hands on unchanged and defines anew. Such a slot is not written.
+// # f2 = stretches, f3 = longest
 // # RUN(SLOTS): allocate f2:Body mechanisms=all
 // # REQUIRES(SLOTS): x86_64 as-written
 // # SLOTS: isDeadSlot
+// # RUN(OTHERS): allocate f3:Body mechanisms=all
+// # REQUIRES(OTHERS): x86_64 as-written
+// # OTHERS: isDeadSlot
+// # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 9 of 9 of 9
 // # CHECK-NEXT: exited with 0
 declare function report(value: unknown): void;
-function isLineBreak(ch: number): boolean { return ch === 10 || ch === 13 || ch === 8232 || ch === 8233; }
-function computeLineStarts(text: string): number[] { const result: number[] = []; let pos = 0; let lineStart = 0; while (pos < text.length) { const ch = text.charCodeAt(pos); pos++; switch (ch) { case 13: if (text.charCodeAt(pos) === 10) pos++; case 10: result.push(lineStart); lineStart = pos; break; default: if (ch > 127 && isLineBreak(ch)) { result.push(lineStart); lineStart = pos; } break; } } result.push(lineStart); return result; }
-(globalThis as any).kept = [computeLineStarts];
-const text: string = JSON.parse('"one\\ntwo\\r\\nthree\\u2028four five six seven eight nine ten\\n"');
-report([computeLineStarts(text).join(",")].join(" "));
-report([computeLineStarts("").join(",")].join(" "));
-report([computeLineStarts("\n").join(",")].join(" "));
-report([computeLineStarts("\r\n\r\n").join(",")].join(" "));
-report([computeLineStarts("no break at all in this text of some length").join(",")].join(" "));
-report([computeLineStarts("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm\nn\no\np\nq\nr").join(",")].join(" "));
-report([computeLineStarts("  x ").join(",")].join(" "));
-report([computeLineStarts("twelve chars\r" + "x".repeat(40) + "\n" + "y".repeat(7)).join(",")].join(" "));
+function id<T>(value: T): T { (globalThis as any).leaked = value; return (globalThis as any).leaked; }
+function stretches(weights: number[]): number[] { const out: number[] = []; let from = 0; for (let i = 0; i < weights.length; i++) { const weight = weights[i]; if (weight < 0) { out.push(i - from); from = i + 1; } else if (weight > 1000) out.push(-from); } out.push(weights.length - from); return out; }
+function longest(weights: number[], limit: number): number { let best = 0; let from = 0; let bestFrom = 0; let sum = 0; for (let i = 0; i < weights.length; i++) { sum += weights[i]; if (weights[i] > limit) { if (i - from > best) { best = i - from; bestFrom = from; } from = i + 1; sum = 0; } } return best * 100 + bestFrom + sum; }
+report(stretches(id([1, 2, -1, 3, 2000, -5, 7])).join());
+report(stretches(id([])).join());
+report(stretches(id([-1, -2, -3])).join());
+report(stretches(id([0.5, 1001, -0.5, NaN, Infinity, -Infinity])).join());
+report(longest(id([1, 2, 9, 3, 4, 5, 9, 1]), id(6)));
+report(longest(id([]), id(1)));
+report(longest(id([0.5, 7.5, 1, 1, 1, 1, 8, 2]), id(7)));
+for (let turn = 0; turn < 1; turn++) report(stretches(id([3, 4, 5, -1, 5000, 1, 1, 1, 1, 1, 1, 1, -2, 6])).join() + longest(id([1, 1, 1, 1, 1, 1, 1, 1, 1, 9, 1]), id(3)));
 report("end");

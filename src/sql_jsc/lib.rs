@@ -1,4 +1,5 @@
 #![warn(unused_must_use)]
+#![feature(arbitrary_self_types)]
 
 // ──────────────────────────────────────────────────────────────────────────
 // Module tree wired with explicit `#[path]` attrs (files use PascalCase

@@ -1,11 +1,11 @@
+use std::borrow::Cow;
 use std::collections::VecDeque;
 
 use bstr::BStr;
 use bun_collections::{DynamicBitSet, HashMap, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 use bun_glob::Prepared;
-use bun_paths::path_buffer_pool;
-use bun_paths::resolve_path::{join_abs_string_buf_checked, platform, platform_to_posix_in_place};
+use bun_paths::{MAX_PATH_BYTES, Path, from_portable, to_portable};
 
 use crate::bun_fs::FileSystem;
 use crate::dependency::Behavior;
@@ -49,9 +49,12 @@ pub struct WorkspaceGraph {
 enum Base {
     All,
     Name(Prepared<Box<[u8]>>),
-    Path(Prepared<Box<[u8]>>),
-    Subtree(Prepared<Box<[u8]>>),
+    Path(Spellings),
+    Subtree(Spellings),
 }
+
+/// With `\` as a separator, and as an escape if that selects nothing.
+type Spellings = [Prepared<Box<[u8]>>; 2];
 
 struct Selector {
     negated: bool,
@@ -71,6 +74,32 @@ fn strip_negations(raw: &[u8]) -> (&[u8], bool) {
     (remain, negated)
 }
 
+/// `packages\*` is `packages/*`, as in npm. In an entry that separates with `/` or escapes a bracket, `\` is an escape.
+pub fn workspaces_entry(written: &[u8]) -> Cow<'_, [u8]> {
+    let (path, _) = strip_negations(written);
+    let mut rest = path.strip_prefix(b"./").unwrap_or(path);
+    if strings::contains_char(rest, b'/')
+        || !strings::contains_char(rest, b'\\')
+        || matches!(rest, b"\\" | b".\\")
+    {
+        return written.into();
+    }
+    while let Some((_, after)) = strings::split_once_char(rest, b'\\') {
+        if let [
+            b'[' | b']' | b'{' | b'}' | b')' | b'!' | b'?' | b',' | b'|' | b' ' | b'\\',
+            ..,
+        ] = after
+        {
+            return written.into();
+        }
+        rest = after;
+    }
+    let negations = &written[..written.len() - path.len()];
+    [negations, &to_portable(&from_portable(path))]
+        .concat()
+        .into()
+}
+
 /// The `!` entries of a `workspaces` array. `bun install` and `bun run --filter` apply the same
 /// rule.
 #[derive(Default)]
@@ -82,15 +111,20 @@ impl NegatedWorkspaces {
     pub fn take(&mut self, entry: &[u8]) -> bool {
         let (glob, negated) = strip_negations(entry);
         if negated {
-            let mut glob = glob.to_vec();
-            platform_to_posix_in_place::<u8>(&mut glob);
-            let mut remain: &[u8] = &glob;
-            while let Some(rest) = remain.strip_prefix(b"./") {
-                remain = rest;
+            // `!a\.b` can mean `a/.b` or `a.b`, so it excludes both.
+            if let Cow::Owned(converted) = workspaces_entry(glob) {
+                self.push(&converted);
             }
-            self.0.push(strings::without_trailing_slash(remain).into());
+            self.push(&to_portable(glob));
         }
         negated
+    }
+
+    fn push(&mut self, mut glob: &[u8]) {
+        while let Some(rest) = glob.strip_prefix(b"./") {
+            glob = rest;
+        }
+        self.0.push(strings::without_trailing_slash(glob).into());
     }
 
     /// Only call this for a `dir` that a glob entry matched. A workspace that's listed by its exact
@@ -106,8 +140,27 @@ impl NegatedWorkspaces {
     }
 }
 
+pub fn abs_posix_dir(base: &[u8], path: &[u8]) -> Box<[u8]> {
+    bun_paths::without_trailing_sep(&Path::resolve(&[base, path]).into_portable()).into()
+}
+
+/// Whether every `\` stands before what a glob would not take for a letter.
+fn only_escapes(mut glob: &[u8]) -> bool {
+    while let Some((_, rest)) = strings::split_once_char(glob, b'\\') {
+        let [
+            b'*' | b'?' | b'[' | b']' | b'{' | b'}' | b'!' | b',' | b'\\',
+            rest @ ..,
+        ] = rest
+        else {
+            return false;
+        };
+        glob = rest;
+    }
+    true
+}
+
 /// Accepted shapes: `!`* then `...`/`...^` prefix and/or `...`/`^...` suffix around `*`, `{dir}`, `./path` or a name glob.
-fn parse(raw: &[u8], original_cwd: &[u8], path_buf: &mut [u8]) -> Selector {
+fn parse(raw: &[u8], original_cwd: &[u8]) -> Selector {
     let (mut remain, negated) = strip_negations(raw);
     let mut dependencies = false;
     let mut dependents = false;
@@ -138,22 +191,28 @@ fn parse(raw: &[u8], original_cwd: &[u8], path_buf: &mut [u8]) -> Selector {
         Global::crash();
     }
 
-    let resolve = |part: &[u8], path_buf: &mut [u8]| -> Prepared<Box<[u8]>> {
-        let Some(joined) =
-            join_abs_string_buf_checked::<platform::Posix>(original_cwd, path_buf, &[part])
-        else {
-            Output::err_generic("--filter \"{}\" path is too long", (BStr::new(raw),));
-            Global::crash();
-        };
-        Prepared::new(strings::without_trailing_slash(joined).into())
+    let resolve = |part: &[u8]| -> Spellings {
+        // A glob reads `\` as an escape.
+        let escape = |path: &[u8]| strings::replace_owned(&to_portable(path), b"\\", b"\\\\");
+        let base = escape(original_cwd);
+        let converted = escape(&bun_sys::converted_spelling(part, from_portable));
+        let escaped = if only_escapes(part) { part } else { &converted };
+        [&converted, escaped].map(|part| {
+            let joined = abs_posix_dir(&base, part);
+            if joined.len() >= MAX_PATH_BYTES {
+                Output::err_generic("--filter \"{}\" path is too long", (BStr::new(raw),));
+                Global::crash();
+            }
+            Prepared::new(joined)
+        })
     };
 
     let base = if remain == b"*" || remain == b"**" {
         Base::All
     } else if remain.len() >= 2 && remain[0] == b'{' && remain[remain.len() - 1] == b'}' {
-        Base::Subtree(resolve(&remain[1..remain.len() - 1], path_buf))
+        Base::Subtree(resolve(&remain[1..remain.len() - 1]))
     } else if remain.first() == Some(&b'.') {
-        Base::Path(resolve(remain, path_buf))
+        Base::Path(resolve(remain))
     } else {
         Base::Name(Prepared::new(remain.into()))
     };
@@ -167,7 +226,7 @@ fn parse(raw: &[u8], original_cwd: &[u8], path_buf: &mut [u8]) -> Selector {
     }
 }
 
-fn base_matches(base: &Base, c: &Candidate<'_>, explicit_root_only: bool) -> bool {
+fn base_matches(base: &Base, spelling: usize, c: &Candidate<'_>, explicit_root_only: bool) -> bool {
     match base {
         // A package.json without a name (bun run --filter's walk) is only selectable by path.
         Base::All => {
@@ -178,11 +237,11 @@ fn base_matches(base: &Base, c: &Candidate<'_>, explicit_root_only: bool) -> boo
             }
         }
         Base::Name(glob) => glob.r#match(c.name).matches(),
-        Base::Path(glob) => glob.r#match(c.abs_posix_dir).matches(),
-        Base::Subtree(glob) => {
+        Base::Path(globs) => globs[spelling].r#match(c.abs_posix_dir).matches(),
+        Base::Subtree(globs) => {
             let mut dir = c.abs_posix_dir;
             loop {
-                if glob.r#match(dir).matches() {
+                if globs[spelling].r#match(dir).matches() {
                     return true;
                 }
                 match strings::last_index_of_char(dir, b'/') {
@@ -270,14 +329,18 @@ pub fn select(
     let mut exclude = bitset(n);
     let mut any_positive = false;
     let mut unmatched_patterns: Vec<usize> = Vec::new();
-    let mut path_buf = path_buffer_pool::get();
 
     for (index, raw) in patterns.iter().enumerate() {
-        let sel = parse(raw, original_cwd, &mut path_buf.0);
+        let sel = parse(raw, original_cwd);
         let mut set = bitset(n);
-        for (i, c) in candidates.iter().enumerate() {
-            if base_matches(&sel.base, c, explicit_root_only) {
-                set.set(i);
+        for spelling in 0..2 {
+            for (i, c) in candidates.iter().enumerate() {
+                if base_matches(&sel.base, spelling, c, explicit_root_only) {
+                    set.set(i);
+                }
+            }
+            if set.count() > 0 {
+                break;
             }
         }
         if sel.dependencies || sel.dependents {
@@ -299,7 +362,7 @@ pub fn select(
 
     if !any_positive {
         for (i, c) in candidates.iter().enumerate() {
-            if base_matches(&Base::All, c, explicit_root_only) {
+            if base_matches(&Base::All, 0, c, explicit_root_only) {
                 include.set(i);
             }
         }
@@ -499,7 +562,6 @@ pub fn select_lockfile_workspaces(
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let top_level_dir = FileSystem::get().top_level_dir();
 
-    let mut path_buf = path_buffer_pool::get();
     let dirs: Vec<Box<[u8]>> = ids
         .iter()
         .map(|&pkg_id| {
@@ -508,16 +570,7 @@ pub fn select_lockfile_workspaces(
                 ResolutionTag::Workspace => res.workspace().slice(string_buf),
                 _ => b".",
             };
-            // A path out of bun.lock that fits no path buffer is selected by its name only.
-            strings::without_trailing_slash(
-                join_abs_string_buf_checked::<platform::Posix>(
-                    top_level_dir,
-                    &mut path_buf.0,
-                    &[rel],
-                )
-                .unwrap_or_default(),
-            )
-            .into()
+            abs_posix_dir(top_level_dir, rel)
         })
         .collect();
 

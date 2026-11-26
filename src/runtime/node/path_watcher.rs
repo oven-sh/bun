@@ -14,7 +14,7 @@
 //!
 //!   PathWatcherManager        process-global, lazy, owns the OS resource
 //!     ├─ Linux:   one inotify fd + one reader thread, wd → PathWatcher map
-//!     ├─ macOS:   delegates to fs_events.rs (one CFRunLoop thread, one FSEventStream)
+//!     ├─ macOS:   delegates to fs_events.rs (one CFRunLoop thread, one FSEventStream per 4096 watchers)
 //!     └─ FreeBSD: one kqueue fd + one reader thread, fd → PathWatcher map
 //!
 //!   PathWatcher               one per unique (realpath, recursive) — deduped
@@ -39,10 +39,6 @@ use bun_core::strings;
 use bun_core::{Output, zstr};
 use bun_core::{ZStr, handle_oom};
 use bun_paths as path;
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_paths::platform;
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_paths::resolve_path::join_z_buf_spill;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_sys::Fd;
 use bun_sys::{self as sys, E, Tag};
@@ -165,6 +161,8 @@ pub(crate) struct PathWatcher {
     pub(super) recursive: bool,
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     is_file: bool,
+    #[cfg(target_os = "macos")]
+    pub(super) is_fifo: bool,
 
     /// JS `FSWatcher` contexts sharing this OS watch. Each gets its own ChangeEvent
     /// for per-handler duplicate suppression (same as `win_watcher.rs`).
@@ -341,21 +339,31 @@ pub(crate) fn watch(
     let mut resolve_buf = path::path_buffer_pool::get();
     let mut is_file = false;
     let probe = match sys::open(path, sys::O::PATH | sys::O::DIRECTORY | sys::O::CLOEXEC, 0) {
-        Ok(fd) => sys::CloseOnDrop::new(fd),
-        Err(e) => {
-            if e.get_errno() == E::ENOTDIR {
-                is_file = true;
-                match sys::open(path, sys::O::PATH | sys::O::CLOEXEC, 0) {
-                    Ok(fd) => sys::CloseOnDrop::new(fd),
-                    Err(e2) => return Err(e2.without_path()),
-                }
-            } else {
-                return Err(e.without_path());
+        Ok(fd) => Some(sys::CloseOnDrop::new(fd)),
+        Err(e) if e.get_errno() != E::ENOTDIR => return Err(e.without_path()),
+        // Opening a FIFO waits for a writer without O_PATH, and with O_NONBLOCK it wakes one that waits.
+        #[cfg(target_os = "macos")]
+        Err(_) if sys::stat(path).is_ok_and(|st| bun_core::S::ISFIFO(st.st_mode as _)) => None,
+        Err(_) => {
+            is_file = true;
+            match sys::open(path, sys::O::PATH | sys::O::CLOEXEC, 0) {
+                Ok(fd) => Some(sys::CloseOnDrop::new(fd)),
+                Err(e2) => return Err(e2.without_path()),
             }
         }
     };
+    let resolved = match &probe {
+        Some(probe) => sys::get_fd_path_z(probe.fd(), &mut resolve_buf),
+        #[cfg(target_os = "macos")]
+        None => match sys::get_full_path(path, &mut resolve_buf).map(|full| full.len()) {
+            Ok(len) => Ok(ZStr::nul_terminate(&mut resolve_buf, len)),
+            Err(e) => Err(e),
+        },
+        #[cfg(not(target_os = "macos"))]
+        None => Ok(path),
+    };
     // fall back to the caller's path; best effort
-    let resolved = sys::get_fd_path_z(probe.fd(), &mut resolve_buf).unwrap_or(path);
+    let resolved = resolved.unwrap_or(path);
 
     let mut key_buf = path::path_buffer_pool::get();
     let key = PathWatcherManager::make_key(key_buf.as_mut_slice(), resolved.as_bytes(), recursive);
@@ -377,10 +385,12 @@ pub(crate) fn watch(
     let mut handlers = ArrayHashMap::default();
     handle_oom(handlers.put(ctx, ChangeEvent::default()));
     let id = manager.watchers.insert(PathWatcher {
-        path: ZBox::from_bytes(resolved.as_bytes()),
+        path: resolved.to_zbox(),
         recursive,
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         is_file,
+        #[cfg(target_os = "macos")]
+        is_fifo: probe.is_none(),
         handlers,
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         descriptors: Vec::new(),
@@ -411,10 +421,10 @@ pub(crate) fn watch(
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 #[derive(Default)]
 struct WalkScratch {
-    /// NUL-terminated absolute path of the directory being read, or of the entry passed to `cb`.
-    abs: Vec<u8>,
+    /// Absolute path of the directory being read, or of the entry passed to `cb`.
+    abs: path::Path,
     /// Same path, relative to the watch root.
-    rel: Vec<u8>,
+    rel: path::Path,
     /// Unvisited entries as `[is_file][name][0]` records, innermost directory last.
     pending: Vec<u8>,
     /// Directories with records in `pending`, outermost first.
@@ -423,7 +433,7 @@ struct WalkScratch {
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 struct WalkLevel {
-    /// Length of the directory's path in `abs` (without the NUL) and in `rel`.
+    /// Length of the directory's path in `abs` and in `rel`.
     abs_len: usize,
     rel_len: usize,
     /// Offset of the directory's first record in `pending`.
@@ -436,26 +446,17 @@ struct WalkLevel {
 impl WalkScratch {
     /// Truncates `abs` and `rel` to the directory's path, then appends `name`. Returns `abs`.
     fn set_entry<'a>(
-        abs: &'a mut Vec<u8>,
-        rel: &mut Vec<u8>,
+        abs: &'a mut path::Path,
+        rel: &mut path::Path,
         abs_len: usize,
         rel_len: usize,
         name: &[u8],
     ) -> &'a ZStr {
         rel.truncate(rel_len);
-        if rel_len != 0 {
-            rel.push(path::SEP);
-        }
-        rel.extend_from_slice(name);
+        rel.push(name);
         abs.truncate(abs_len);
-        // Only the root directory ends with a separator.
-        if abs.last() != Some(&path::SEP) {
-            abs.push(path::SEP);
-        }
-        abs.extend_from_slice(name);
-        let len = abs.len();
-        abs.push(0);
-        ZStr::nul_terminate(abs, len)
+        abs.push(name);
+        abs
     }
 
     fn open_dir(abs: &ZStr) -> sys::Result<sys::Dir> {
@@ -470,7 +471,7 @@ impl WalkScratch {
         dir: &sys::Dir,
         cb: &mut impl FnMut(&ZStr, &[u8], bool),
     ) {
-        let abs_len = self.abs.len() - 1;
+        let abs_len = self.abs.len();
         let rel_len = self.rel.len();
         let start = self.pending.len();
         let mut it = sys::dir_iterator::iterate(dir.fd());
@@ -519,8 +520,8 @@ fn walk_subtree<const DIRS_ONLY: bool>(
     cb: &mut impl FnMut(&ZStr, &[u8], bool),
 ) {
     let mut scratch = WalkScratch {
-        abs: abs_dir.as_bytes_with_nul().to_vec(),
-        rel: rel_dir.to_vec(),
+        abs: path::Path::from(abs_dir),
+        rel: path::Path::from(rel_dir),
         ..Default::default()
     };
     if let Ok(dir) = WalkScratch::open_dir(abs_dir) {
@@ -745,8 +746,7 @@ impl Linux {
         let manager = DEFAULT_MANAGER.wait();
         // Large enough for a burst of events; inotify guarantees whole events per read.
         let mut buf: Box<[u8; 64 * 1024]> = bun_core::boxed_zeroed();
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let mut rel_spill: Vec<u8> = Vec::new();
+        let mut rel_path = path::Path::new();
 
         loop {
             let rc = sys::linux::read(fd.native(), &mut *buf);
@@ -881,12 +881,9 @@ impl Linux {
                     } else if name.is_empty() {
                         owner_subpath
                     } else {
-                        join_z_buf_spill::<platform::Posix>(
-                            path_buf.as_mut_slice(),
-                            &mut rel_spill,
-                            &[owner_subpath, name],
-                        )
-                        .as_bytes()
+                        rel_path.set(owner_subpath);
+                        rel_path.push(name);
+                        &rel_path
                     };
 
                     watcher.emit(
@@ -907,13 +904,8 @@ impl Linux {
                         && (ev.mask & (IN::CREATE | IN::MOVED_TO) != 0)
                         && !name.is_empty()
                     {
-                        let mut abs_buf = path::path_buffer_pool::get();
-                        let mut abs_spill: Vec<u8> = Vec::new();
-                        let child_abs = join_z_buf_spill::<platform::Posix>(
-                            abs_buf.as_mut_slice(),
-                            &mut abs_spill,
-                            &[watcher_path, owner_subpath, name],
-                        );
+                        let child_abs: &ZStr =
+                            &path::Path::join(&[watcher_path, owner_subpath, name]);
                         // Borrowck: `rel` may borrow `wd_map`, which `add_one` mutates.
                         let rel_owned: Box<[u8]> = Box::from(rel);
                         // These may rehash `wd_map`; `owners` is re-fetched next iteration.
@@ -965,7 +957,7 @@ impl Linux {
 // ────────────────────────────────────────────────────────────────────────────────
 
 /// macOS: delegate to `fs_events.rs`, which already runs one CFRunLoop thread with
-/// one FSEventStream covering every watched path.
+/// FSEventStreams covering every watched path.
 #[cfg(target_os = "macos")]
 fn start_fsevents() -> sys::Result<()> {
     fsevents::start().map_err(|e| {
@@ -982,17 +974,20 @@ fn start_fsevents() -> sys::Result<()> {
 
 #[cfg(target_os = "macos")]
 impl PathWatcherManager {
-    /// Lock order: `FSEventsLoop::mutex`, then this.
     pub(super) fn lock() -> bun_threading::guarded::GuardedLock<'static, Self, Mutex> {
         DEFAULT_MANAGER.wait().lock()
     }
 
-    pub(super) fn watchers(&self) -> impl Iterator<Item = &PathWatcher> {
-        self.watchers.slots.iter().flatten()
+    /// `FSEventStreamStart` fails with more paths than this.
+    const PATHS_PER_STREAM: usize = 4096;
+
+    pub(super) fn stream_count(&self) -> usize {
+        self.watchers.slots.len().div_ceil(Self::PATHS_PER_STREAM)
     }
 
-    pub(super) fn watcher_count(&self) -> usize {
-        self.by_path.len()
+    pub(super) fn watchers_of_stream(&self, index: usize) -> impl Iterator<Item = &PathWatcher> {
+        let mut streams = self.watchers.slots.chunks(Self::PATHS_PER_STREAM);
+        streams.nth(index).into_iter().flatten().flatten()
     }
 }
 

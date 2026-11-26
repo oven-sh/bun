@@ -53,7 +53,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         // Statements nest arbitrarily deep (e.g. hundreds of `{` blocks), and each
         // level stacks a `visit_stmts` + `s_*` frame, so guard here like
-        // `visit_expr_in_out` does for expressions.
+        // `visit_expr_as` does for expressions.
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             self.report_stack_overflow(stmt.loc);
             return Ok(());

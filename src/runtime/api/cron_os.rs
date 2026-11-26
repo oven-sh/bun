@@ -15,12 +15,11 @@ use bun_jsc::{
     EncodedSliceJsc as _, EventLoopHandle, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue,
     JsCell, JsResult,
 };
-use bun_paths::{platform, resolve_path};
-use bun_ptr::{RefPtr, ThisPtr};
+use bun_paths::Path;
+use bun_ptr::RefPtr;
 use bun_removable_features::removable_body_behind_value;
 use bun_resolver::fs::FileSystem;
-use bun_sys::{self as sys, Fd, File};
-use scopeguard::ScopeGuard;
+use bun_sys::{self as sys, Fd};
 
 #[cfg(not(windows))]
 use crate::api::bun::process::SpawnResultExt as _;
@@ -58,6 +57,12 @@ pub(crate) fn register(
             b'%' => "Path must not contain percent signs (cron interprets % as newline)",
             _ => "Path must not contain line breaks",
         }));
+    }
+    // Debian's cron reads `\\` as `\`, and fish reads `\'` as `'`.
+    if cfg!(not(windows)) && (strings::contains(&script, b"\\\\") || script.ends_with(b"\\")) {
+        return Err(invalid(
+            "Path must not end with a backslash or contain two in a row",
+        ));
     }
     let Ok(exe) = bun_core::self_exe_path() else {
         return Err(global.throw(format_args!("Failed to get bun executable path")));
@@ -103,7 +108,7 @@ fn path_of_url(global: &JSGlobalObject, url: JSValue) -> JsResult<PathLike<'stat
 fn resolve_script(global: &JSGlobalObject, path: &[u8]) -> Option<Vec<u8>> {
     let caller = global.get_caller_src_loc();
     let caller = caller.str.to_utf8();
-    let dir = resolve_path::dirname::<platform::Auto>(caller.slice());
+    let dir = bun_paths::dirname_or_root(caller.slice());
     let dir: &[u8] = if dir.is_empty() { b"." } else { dir };
     let mut resolved = (global.bun_vm().transpiler)
         .with_mut(|t| (t.resolver).resolve(dir, path, bun_ast::ImportKind::EntryPointRun))
@@ -174,7 +179,7 @@ impl OsJobs {
                 for job in self.0.take() {
                     // The child outlives the VM, and the file is its input or the installed plist.
                     if let Some(file) = job.step.take().and_then(|(step, _)| step.into_file()) {
-                        ScopeGuard::into_inner(file);
+                        file.keep();
                     }
                 }
             });
@@ -182,7 +187,7 @@ impl OsJobs {
     }
 }
 
-/// `OsJobs` has the one ref. A function that takes a `ThisPtr` may release it.
+/// `OsJobs` holds it until `finish`.
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct OsJob {
     ref_count: Cell<u32>,
@@ -199,7 +204,7 @@ pub(crate) struct OsJob {
 bun_spawn::link_impl_ProcessExit! {
     Cron for OsJob => |this| {
         // SAFETY: a live job installed the handler, and its handle detaches it.
-        on_process_exit(status, _rusage) => OsJob::on_process_exit(ThisPtr::new(this), status),
+        on_process_exit(status, _rusage) => RefPtr::init_ref(this).on_process_exit(status),
     }
 }
 
@@ -217,28 +222,23 @@ impl OsJob {
         let owner = Owner::new(PollTag::Cron, job.as_ptr().cast());
         // SAFETY: `owner` points to the heap allocation that holds this reader.
         unsafe { job.output.set_owner(owner) };
-        let (this, promise) = (job.this_ptr(), job.promise.get().value());
-        (runtime_state().cron_os_jobs.0).with_mut(|jobs| jobs.push(job));
-        Self::run(this, first.map(Some));
+        let promise = job.promise.get().value();
+        (runtime_state().cron_os_jobs.0).with_mut(|jobs| jobs.push(job.clone()));
+        job.run(first.map(Some));
         promise
     }
 
-    fn run(this: ThisPtr<Self>, next: Next) {
-        let process = match next.and_then(|next| next.map(|c| this.spawn(c)).transpose()) {
+    fn run(self: &RefPtr<Self>, next: Next) {
+        let process = match next.and_then(|next| next.map(|c| self.spawn(c)).transpose()) {
             Ok(Some(process)) => process,
-            Ok(None) => return Self::finish(this, Ok(())),
-            Err(failure) => return Self::finish(this, Err(failure)),
+            Ok(None) => return self.finish(Ok(())),
+            Err(failure) => return self.finish(Err(failure)),
         };
-        process.set_exit_handler(this);
-        // `this` may be freed on every path but `Ok(false)`.
-        match process.watch_or_reap() {
-            Ok(false) => this.process.set(Some(process)),
-            Ok(true) => {}
-            Err(err) => {
-                if !process.has_exited() {
-                    process.on_exit(Status::Err(err), &bun_core::ffi::zeroed());
-                }
-            }
+        process.set_exit_owner(self);
+        let mut rusage = bun_core::ffi::zeroed();
+        match process.watch_or_exit(&mut rusage) {
+            Some(exit) => exit.dispatch(&rusage),
+            None => self.process.set(Some(process)),
         }
     }
 
@@ -246,10 +246,14 @@ impl OsJob {
         let vm = VirtualMachine::get();
         let event_loop = EventLoopHandle::init(vm.event_loop_ptr());
         #[cfg(windows)]
-        let (mut path_buf, envp) = (
-            bun_paths::path_buffer_pool::get(),
-            vm.env_loader().map.to_envp(),
-        );
+        let (schtasks, envp) = {
+            let path = vm.env_loader().map.get(b"PATH").unwrap_or(b"");
+            let found = bun_which::which(path, b"", b"schtasks");
+            (
+                found.ok_or("Could not find 'schtasks' in PATH")?,
+                vm.env_loader().map.to_envp(),
+            )
+        };
         let options = SpawnOptions {
             stdin: Stdio::Ignore,
             stdout,
@@ -259,11 +263,7 @@ impl OsJob {
             #[cfg(windows)]
             stderr: Stdio::Buffer,
             #[cfg(windows)]
-            argv0: {
-                let path = vm.env_loader().map.get(b"PATH").unwrap_or(b"");
-                let found = bun_which::which(&mut path_buf, path, b"", b"schtasks");
-                Some(found.ok_or("Could not find 'schtasks' in PATH")?.into())
-            },
+            argv0: Some((&*schtasks).into()),
             #[cfg(windows)]
             windows: spawn::WindowsOptions {
                 loop_: event_loop,
@@ -282,10 +282,10 @@ impl OsJob {
 
         let mut child = Child::OutputEnded(Ok(Vec::new()));
         #[cfg(unix)]
-        if let Some(stdout) = spawned.stdout.take().map(File::into_raw) {
+        if let Some(stdout) = spawned.stdout.take() {
             use bun_io::PosixFlags;
             (self.output).update_flags(|f| f.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET));
-            let read = (self.output.start(bun_io::js_vm_ctx(), stdout, true))
+            let read = (self.output.start(bun_io::js_vm_ctx(), stdout.into(), true))
                 .map_err(|_| "Failed to start reading stdout")?;
             child = (self.take_output(read)).map_or(Child::Running, Child::OutputEnded);
         }
@@ -311,22 +311,22 @@ impl OsJob {
         }
     }
 
-    pub(crate) fn on_io(this: ThisPtr<Self>, event: IoEvent) {
-        let read = this.output.read(bun_io::js_vm_ctx(), Some(event));
-        let Some(output) = this.take_output(read) else {
+    pub(crate) fn on_io(self: &RefPtr<Self>, event: IoEvent) {
+        let read = self.output.read(bun_io::js_vm_ctx(), Some(event));
+        let Some(output) = self.take_output(read) else {
             return;
         };
-        match this.step.take() {
-            Some((step, Child::Running)) => this.step.set(Some((step, Child::OutputEnded(output)))),
-            Some((step, Child::Exited(exit))) => Self::end_step(this, step, exit, output),
+        match self.step.take() {
+            Some((step, Child::Running)) => self.step.set(Some((step, Child::OutputEnded(output)))),
+            Some((step, Child::Exited(exit))) => self.end_step(step, exit, output),
             other @ (Some((_, Child::OutputEnded(_))) | None) => {
                 debug_assert!(false, "the output ended twice");
-                this.step.set(other);
+                self.step.set(other);
             }
         }
     }
 
-    fn on_process_exit(this: ThisPtr<Self>, status: Status) {
+    fn on_process_exit(self: &RefPtr<Self>, status: Status) {
         let exit = match status {
             Status::Running => return,
             Status::Exited(exited) if exited.code == 0 => Ok(()),
@@ -334,31 +334,30 @@ impl OsJob {
             Status::Signaled(signal) => Err(Failure::Signaled(signal)),
             Status::Err(err) => Err(Failure::Wait(err)),
         };
-        match this.step.take() {
-            Some((step, Child::Running)) => this.step.set(Some((step, Child::Exited(exit)))),
-            Some((step, Child::OutputEnded(output))) => Self::end_step(this, step, exit, output),
+        match self.step.take() {
+            Some((step, Child::Running)) => self.step.set(Some((step, Child::Exited(exit)))),
+            Some((step, Child::OutputEnded(output))) => self.end_step(step, exit, output),
             other @ (Some((_, Child::Exited(_))) | None) => {
                 debug_assert!(false, "the child exited twice");
-                this.step.set(other);
+                self.step.set(other);
             }
         }
     }
 
     fn end_step(
-        this: ThisPtr<Self>,
+        self: &RefPtr<Self>,
         step: Step,
         exit: Result<(), Failure>,
         output: sys::Result<Vec<u8>>,
     ) {
-        this.process.set(None);
-        Self::run(this, after(step, exit, output));
+        self.process.set(None);
+        self.run(after(step, exit, output));
     }
 
-    fn finish(this: ThisPtr<Self>, result: Result<(), Failure>) {
+    fn finish(self: &RefPtr<Self>, result: Result<(), Failure>) {
         let _entered = VirtualMachine::get().enter_event_loop_scope();
-        // Dropped before the scope ends, which is where the reactions run.
         let Some(job) = runtime_state().cron_os_jobs.0.with_mut(|jobs| {
-            let i = jobs.iter().position(|job| job.as_ptr() == this.as_ptr())?;
+            let i = jobs.iter().position(|job| job.as_ptr() == self.as_ptr())?;
             Some(jobs.swap_remove(i))
         }) else {
             return;
@@ -391,8 +390,7 @@ fn after(step: Step, exit: Result<(), Failure>, output: sys::Result<Vec<u8>>) ->
     Err(failure)
 }
 
-/// A path that is unlinked when it drops.
-type OwnedFile = ScopeGuard<ZBox, fn(ZBox)>;
+type OwnedFile = sys::UnlinkOnDrop<ZBox>;
 
 fn write_file(
     path: &[u8],
@@ -400,11 +398,11 @@ fn write_file(
     contents: &[u8],
     [create_failed, write_failed]: [&'static str; 2],
 ) -> Result<OwnedFile, Failure> {
-    let owned: OwnedFile = scopeguard::guard(ZBox::from_bytes(path), |p| _ = sys::unlink(&p));
     let flags = sys::O::WRONLY | sys::O::CREAT | flag;
-    let file = File::openat(Fd::cwd(), owned.as_bytes(), flags, mode).map_err(|_| create_failed)?;
-    file.write_all(contents).map_err(|_| write_failed)?;
-    Ok(owned)
+    let tmp = sys::Tmpfile::open(Fd::cwd(), ZBox::from_bytes(path), flags, mode)
+        .map_err(|_| create_failed)?;
+    tmp.file.write_all(contents).map_err(|_| write_failed)?;
+    Ok(tmp.close())
 }
 
 /// Under a name that cannot be guessed.
@@ -418,8 +416,8 @@ fn write_temp_file(
     let name = FileSystem::tmpname(suffix.as_bytes(), &mut buf.0, bun_core::fast_random())
         .map_err(|_| "Out of memory")?;
     let dir = bun_resolver::fs::RealFS::platform_temp_dir();
-    let path = resolve_path::join_abs_string::<platform::Auto>(dir, &[name.as_bytes()]);
-    write_file(path, (sys::O::EXCL, 0o600), contents, errors)
+    let path = Path::resolve(&[bun_core::top_level_dir(), dir, name.as_bytes()]);
+    write_file(&path, (sys::O::EXCL, 0o600), contents, errors)
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
@@ -450,8 +448,7 @@ mod backend {
 
     fn find() -> Result<Vec<u8>, Failure> {
         let path = bun_core::env_var::PATH.get().unwrap_or(b"/usr/bin:/bin");
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let found = bun_which::which(&mut buf, path, b"", b"crontab");
+        let found = bun_which::which(path, b"", b"crontab");
         Ok(found.ok_or("crontab not found in PATH")?.to_vec())
     }
 
@@ -506,14 +503,13 @@ mod backend {
 
     pub(super) fn register(job: &Registration<'_>) -> Result<Command, Failure> {
         let home = HOME.get().ok_or("HOME environment variable not set")?;
-        let dir = format!("{}/Library/LaunchAgents", BStr::new(home));
-        (Fd::cwd().make_path(dir.as_bytes()))
+        (Fd::cwd().make_path(&[home, b"/Library/LaunchAgents"].concat()))
             .map_err(|_| "Failed to create ~/Library/LaunchAgents directory")?;
         let mut logs = bun_paths::path_buffer_pool::get();
         let logs = sys::darwin_user_temp_dir(&mut logs)
             .ok_or("Failed to find a private temporary directory for the logs")?;
         let plist = write_file(
-            plist_path(home, &job.title).as_bytes(),
+            &plist_path(home, &job.title),
             (sys::O::TRUNC, 0o644),
             bun_cron::launchd::plist(job, logs).as_bytes(),
             ["Failed to create plist file", "Failed to write plist"],
@@ -525,9 +521,10 @@ mod backend {
         Ok(bootout(title, Step::Bootout(title.clone())))
     }
 
-    fn plist_path(home: &[u8], title: &Title) -> String {
-        let home = BStr::new(home);
-        format!("{home}/Library/LaunchAgents/bun.cron.{title}.plist")
+    fn plist_path(home: &[u8], title: &Title) -> Path {
+        let mut path = Path::from(home);
+        write!(path, "/Library/LaunchAgents/bun.cron.{title}.plist");
+        path
     }
 
     fn bootout(title: &Title, step: Step) -> Command {
@@ -546,7 +543,7 @@ mod backend {
         pub(super) fn next(self, _: &[u8]) -> Next {
             match self {
                 Step::BootoutOld(plist) => {
-                    let plist = ScopeGuard::into_inner(plist);
+                    let plist = plist.keep();
                     let domain = format!("gui/{}", sys::c::getuid());
                     let argv = [
                         b"/bin/launchctl",
@@ -559,7 +556,7 @@ mod backend {
                 Step::Bootstrap => Ok(None),
                 Step::Bootout(title) => {
                     let home = HOME.get().ok_or("HOME not set")?;
-                    let _ = sys::unlink(&ZBox::from_bytes(plist_path(home, &title)));
+                    let _ = sys::unlink(&plist_path(home, &title));
                     Ok(None)
                 }
             }

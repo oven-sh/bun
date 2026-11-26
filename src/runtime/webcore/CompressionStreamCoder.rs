@@ -27,7 +27,7 @@ use bun_jsc::{
 };
 
 use bun_zlib::{Deflater, Inflater, deflate, inflate};
-use bun_zstd::c as zstd;
+use bun_zstd::{EndDirective, Status};
 
 /// Matches `Bun::WebStreams::CompressionFormat` in `StreamsForward.h`.
 #[repr(u8)]
@@ -82,11 +82,18 @@ fn zlib_error(error: bun_zlib::Error, message: &'static str) -> CodecError {
     }
 }
 
-fn zstd_error(code: bun_zstd::ErrorCode, message: &'static str) -> CodecError {
-    if code.is_alloc_failure() {
-        CodecError::OutOfMemory
-    } else {
-        CodecError::Message(message)
+/// [`append_step`] for zstd. Returns the input consumed.
+fn append_zstd_step(
+    out: &mut Vec<u8>,
+    cap: usize,
+    failure: &'static str,
+    step: impl FnOnce(&mut bun_zstd::Output<'_>) -> (usize, Result<Status, bun_zstd::Error>),
+) -> Result<(usize, Status), CodecError> {
+    let budget = reserve_step(out, cap)?;
+    match step(&mut bun_zstd::Output::spare_capacity(out, budget)) {
+        (consumed, Ok(status)) => Ok((consumed, status)),
+        (_, Err(bun_zstd::Error::MemoryAllocation)) => Err(CodecError::OutOfMemory),
+        (_, Err(_)) => Err(CodecError::Message(failure)),
     }
 }
 
@@ -113,8 +120,8 @@ enum Backend {
     Inflate(Box<Inflater>),
     BrotliEncode(Box<bun_brotli::Encoder>),
     BrotliDecode(Box<bun_brotli::Decoder>),
-    ZstdEncode(bun_zstd::OwnedCCtx),
-    ZstdDecode(bun_zstd::OwnedDCtx),
+    ZstdEncode(Box<bun_zstd::Encoder>),
+    ZstdDecode(Box<bun_zstd::Decoder>),
 }
 
 pub(crate) struct CompressionStreamCoder {
@@ -200,21 +207,10 @@ impl CompressionStreamCoder {
                 }
                 Backend::BrotliDecode(Box::default())
             }
-            (Format::Zstd, false) => {
-                let mut p = bun_zstd::OwnedCCtx::new()
-                    .ok_or(CodecError::Message("failed to initialize zstd encoder"))?;
-                if let Some(lvl) = level {
-                    if p.set_parameter(zstd::ZSTD_c_compressionLevel, lvl).is_err() {
-                        return Err(CodecError::Message("failed to set zstd level"));
-                    }
-                }
-                Backend::ZstdEncode(p)
-            }
-            (Format::Zstd, true) => {
-                let p = bun_zstd::OwnedDCtx::new()
-                    .ok_or(CodecError::Message("failed to initialize zstd decoder"))?;
-                Backend::ZstdDecode(p)
-            }
+            (Format::Zstd, false) => Backend::ZstdEncode(Box::new(bun_zstd::Encoder::new(
+                level.unwrap_or(bun_zstd::DEFAULT_LEVEL),
+            ))),
+            (Format::Zstd, true) => Backend::ZstdDecode(Box::new(bun_zstd::Decoder::new())),
         };
         Ok(Box::new(Self {
             backend,
@@ -227,20 +223,6 @@ impl CompressionStreamCoder {
                 .context_of_caller()
                 .id(),
         }))
-    }
-
-    const ZSTD_MAGIC: [u8; 4] = 0xFD2F_B528u32.to_le_bytes();
-    const ZSTD_MAGIC_SKIPPABLE: [u8; 3] = [0x2A, 0x4D, 0x18];
-
-    /// True when `head` (1..=4 bytes) is a prefix of a zstd or skippable
-    /// frame magic.
-    fn is_zstd_frame_prefix(head: &[u8]) -> bool {
-        head.iter().zip(Self::ZSTD_MAGIC).all(|(a, b)| *a == b)
-            || ((head[0] & 0xF0) == 0x50
-                && head[1..]
-                    .iter()
-                    .zip(Self::ZSTD_MAGIC_SKIPPABLE)
-                    .all(|(a, b)| *a == b))
     }
 
     /// One step of the chunk (or, with `finish`, the final flush) in progress:
@@ -426,8 +408,11 @@ impl CompressionStreamCoder {
                 }
             }
             Backend::ZstdEncode(p) => {
-                // ZSTD_EndDirective: 0 = ZSTD_e_continue, 2 = ZSTD_e_end.
-                let end: core::ffi::c_uint = if finish { 2 } else { 0 };
+                let end = if finish {
+                    EndDirective::End
+                } else {
+                    EndDirective::Continue
+                };
                 let mut remaining = input;
                 loop {
                     if out.len() >= cap {
@@ -435,11 +420,12 @@ impl CompressionStreamCoder {
                             consumed: input.len() - remaining.len(),
                         });
                     }
-                    let (consumed, hint) =
-                        append_step(out, cap, |spare| p.step(remaining, spare, end))?;
+                    let (consumed, status) =
+                        append_zstd_step(out, cap, "zstd encode failed", |spare| {
+                            p.step(remaining, spare, end)
+                        })?;
                     remaining = &remaining[consumed..];
-                    let hint = hint.map_err(|code| zstd_error(code, "zstd encode failed"))?;
-                    if remaining.is_empty() && (!finish || hint == 0) {
+                    if remaining.is_empty() && (!finish || status == Status::Complete) {
                         return Ok(Progress::Done);
                     }
                 }
@@ -454,7 +440,7 @@ impl CompressionStreamCoder {
                             return Ok(Progress::Done);
                         }
                         let head = &remaining[..remaining.len().min(4)];
-                        if !Self::is_zstd_frame_prefix(head) {
+                        if !bun_zstd::may_start_frame(head) {
                             return Err(CodecError::TrailingJunk);
                         }
                         if head.len() < 4 {
@@ -465,7 +451,6 @@ impl CompressionStreamCoder {
                             self.zstd_head_len = head.len() as u8;
                             return Ok(Progress::Done);
                         }
-                        p.reset();
                         self.ended = false;
                     }
                     if out.len() >= cap {
@@ -473,9 +458,12 @@ impl CompressionStreamCoder {
                             consumed: input.len() - remaining.len(),
                         });
                     }
-                    let (consumed, hint) = append_step(out, cap, |spare| p.step(remaining, spare))?;
+                    let (consumed, status) =
+                        append_zstd_step(out, cap, "zstd decode failed", |spare| {
+                            p.step(remaining, spare)
+                        })?;
                     remaining = &remaining[consumed..];
-                    if hint.map_err(|code| zstd_error(code, "zstd decode failed"))? == 0 {
+                    if status == Status::Complete {
                         self.ended = true;
                         continue;
                     }

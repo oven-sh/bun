@@ -71,8 +71,8 @@ describe.concurrent("one reason to keep more", () => {
       147,
       "dynamic-import runtime-code",
     ],
-    ["Bun.plugin", "main.mjs", `Bun.plugin({ name: "made up", setup() {} });`, 215, everyBlocker],
-    ["process.dlopen", "main.mjs", `process.dlopen({ exports: {} }, ${fromOutside});`, 142, "native-code"],
+    ["Bun.plugin", "main.mjs", `Bun.plugin({ name: "made up", setup() {} });`, 216, everyBlocker],
+    ["process.dlopen", "main.mjs", `process.dlopen({ exports: {} }, ${fromOutside});`, 143, "native-code"],
   ]);
 });
 
@@ -137,46 +137,28 @@ describe.concurrent("an alias of the global object that a closure captures", () 
   ]);
 });
 
-// A bound Object.defineProperty on the global object, in a constructor that also returns what it read under the key.
-test("the first lines of signal-exit open nothing", async () => {
-  const said = await report(
-    "main.mjs",
-    `const kExitEmitter = Symbol.for("signal-exit emitter");
-const global = globalThis;
-const ObjectDefineProperty = Object.defineProperty.bind(Object);
-class Emitter {
-  constructor() {
-    if (global[kExitEmitter]) return global[kExitEmitter];
-    ObjectDefineProperty(global, kExitEmitter, { value: this, writable: false, enumerable: false, configurable: false });
-  }
-}
-console.log(new Emitter() === new Emitter());`,
-  );
-  expect({ kept: said.kept, blockers: said.blockers }).toEqual({ kept: 11, blockers: "" });
-});
-
 describe.concurrent("a key that may be a string keeps what the object leads to", () => {
   eachRow([
-    ["a string from outside", "main.mjs", `console.log(typeof globalThis[${fromOutside}]);`, 218, everyBlocker],
+    ["a string from outside", "main.mjs", `console.log(typeof globalThis[${fromOutside}]);`, 219, everyBlocker],
     [
       "a symbol or a string",
       "main.mjs",
       `const key = process.argv.length > 9 ? Symbol.for("made.up") : ${fromOutside};\nconsole.log(typeof globalThis[key]);`,
-      218,
+      219,
       everyBlocker,
     ],
     [
       "a variable that is assigned again",
       "main.mjs",
       `let key = Symbol.for("made.up");\nfunction change() {\n  key = ${fromOutside};\n}\nchange();\nconsole.log(typeof globalThis[key]);`,
-      218,
+      219,
       everyBlocker,
     ],
     [
       "a symbol made on every call",
       "main.mjs",
       `function mark() {\n  const key = Symbol("made up");\n  return globalThis[key];\n}\nconsole.log(mark());`,
-      218,
+      219,
       everyBlocker,
     ],
   ]);

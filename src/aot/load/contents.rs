@@ -394,7 +394,10 @@ fn may_declaration_read_this(files: &Files<'_>, target: Sym, most: u32) -> bool 
 
 fn may_function_read_this(files: &Files<'_>, file: FileId, function: FnId) -> bool {
     let (hir, bound) = (files.hir(file), files.bound(file));
-    let jsx_takes_this = files.analysis(file).jsx_takes_this();
+    let Some(compiled) = files.compiled(file) else {
+        return true;
+    };
+    let jsx_takes_this = compiled.analysis.jsx_takes_this();
     let has_eval = || {
         let flags = bound.function_flags(function);
         flags.contains(FunctionFlags::HAS_DIRECT_EVAL)

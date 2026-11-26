@@ -75,7 +75,7 @@
   "workspace": {
     "packageJson": {
       "dependencies": [
-        "npm:better-sqlite3@8.5.0"
+        "npm:better-sqlite3@13.2.0"
       ]
     }
   }

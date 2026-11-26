@@ -1,6 +1,6 @@
 "use strict";
-function scaled(n, rows, s, c, m, l) { for (let i = m - 1; i >= l; i--) { for (let k = 0; k < n; k++) rows[k][i] = c * rows[k][i] - s; } return rows; }
-function rotated(n, rows, s, c, m, l) { let h; for (let i = m - 1; i >= l; i--) { for (let k = 0; k < n; k++) { h = rows[k][i + 1]; rows[k][i + 1] = s * rows[k][i] + c * h; rows[k][i] = c * rows[k][i] - s * h; } } return rows; }
+function scaled(n, rows, less, by, past, to) { for (let at = past - 1; at >= to; at--) { for (let k = 0; k < n; k++) rows[k][at] = rows[k][at] * by - less; } return rows; }
+function rotated(n, rows, part, rest, past, to) { let held; for (let at = past - 1; at >= to; at--) { for (let k = 0; k < n; k++) { held = rows[k][at + 1]; rows[k][at + 1] = rows[k][at] * part + held / 2; rows[k][at] = (held - rows[k][at]) * rest; } } return rows; }
 function summedDown(n, rows, width) { for (let k = 1; k < n; k++) { for (let j = 0; j < width; j++) rows[k][j] = rows[k - 1][j] + rows[k][j]; } return rows; }
 function laid(n, rows, value, at) { for (let k = 0; k < n; k++) rows[k][at] = value; return rows; }
 function shown(rows) { return rows.map((row) => (row === null || row === undefined ? String(row) : typeof row === "string" ? row : Array.from(row, (x) => (x === undefined ? "-" : typeof x === "bigint" ? x + "n" : String(x))).join())).join(";"); }

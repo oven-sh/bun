@@ -8,9 +8,7 @@
 
 use bun_core::strings;
 use bun_node_path as node;
-use bun_paths::resolve_path::{
-    platform_to_posix_in_place, posix_to_platform_in_place, slashes_to_posix_in_place,
-};
+use bun_paths::{to_native_in_place, to_portable_in_place};
 use bun_sema::resolve::is_same_path;
 
 /// The platform whose path rules apply. Windows paths begin with a drive or a share and are case-insensitive.
@@ -35,13 +33,13 @@ impl Style {
 /// Converts a native path or a command-line argument. Replaces `\` with `/` on platforms where `\` is a separator.
 pub fn from_native(path: &[u8]) -> Vec<u8> {
     let mut path = path.to_vec();
-    platform_to_posix_in_place(&mut path);
+    to_portable_in_place(&mut path);
     path
 }
 
 /// Converts a path to the platform's native form, which is how ESLint prints it.
 pub fn to_native(mut path: Vec<u8>) -> Vec<u8> {
-    posix_to_platform_in_place(&mut path);
+    to_native_in_place(&mut path);
     path
 }
 
@@ -55,7 +53,7 @@ pub fn portable(from: &[u8], raw_path: &[u8]) -> Vec<u8> {
 fn from_node_path(style: Style, answer: &[u8]) -> Vec<u8> {
     let mut path = answer.to_vec();
     if style == Style::Windows {
-        slashes_to_posix_in_place(&mut path);
+        strings::replace_char_in_place(&mut path, b'\\', b'/');
     }
     path
 }

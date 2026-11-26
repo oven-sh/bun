@@ -38,7 +38,7 @@ pub struct CompressOption {
 /// The level of the cached compressor, so the common `compress: true` / `compress: "gzip"` path reuses its memory.
 pub const DEFAULT_DEFLATE_LEVEL: i32 = 6;
 pub const DEFAULT_BROTLI_QUALITY: i32 = 6;
-pub const DEFAULT_ZSTD_LEVEL: i32 = 3;
+pub const DEFAULT_ZSTD_LEVEL: i32 = bun_zstd::DEFAULT_LEVEL;
 
 /// Where [`compress_into`] put its output.
 pub(crate) enum CompressOutput {
@@ -181,22 +181,16 @@ fn compress_zstd(
     level: Option<i32>,
     spill: &mut Vec<u8>,
 ) -> crate::Result<CompressOutput> {
+    let level = level.unwrap_or(DEFAULT_ZSTD_LEVEL);
     let bound = bun_zstd::compress_bound(input.len());
-    if bun_zstd::is_error(bound) {
-        return Err(crate::Error::CompressionFailed);
-    }
-    if bound <= state.shared_buffer.len() {
-        return match bun_zstd::compress(&mut state.shared_buffer[..], input, level) {
-            bun_zstd::Result::Success(n) => Ok(CompressOutput::Shared(n)),
-            bun_zstd::Result::Err(_) => Err(crate::Error::CompressionFailed),
-        };
-    }
-
-    spill
-        .try_reserve_exact(bound)
-        .map_err(|_| bun_alloc::AllocError)?;
-    match bun_zstd::compress_append(spill, input, level) {
-        bun_zstd::Result::Success(_) => Ok(CompressOutput::Spilled),
-        bun_zstd::Result::Err(_) => Err(crate::Error::CompressionFailed),
-    }
+    let result = if bound.is_some_and(|bound| bound <= state.shared_buffer.len()) {
+        let mut out = bun_zstd::Output::slice(&mut state.shared_buffer[..]);
+        bun_zstd::compress(input, &mut out, level).map(|()| CompressOutput::Shared(out.written()))
+    } else {
+        bun_zstd::compress_append(spill, input, level).map(|()| CompressOutput::Spilled)
+    };
+    result.map_err(|error| match error {
+        bun_zstd::Error::MemoryAllocation => bun_alloc::AllocError.into(),
+        _ => crate::Error::CompressionFailed,
+    })
 }

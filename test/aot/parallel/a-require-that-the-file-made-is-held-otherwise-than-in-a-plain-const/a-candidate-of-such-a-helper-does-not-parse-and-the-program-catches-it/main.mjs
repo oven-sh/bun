@@ -1,16 +1,15 @@
 import { createRequire } from "node:module";
-const CANDIDATES = ["./broken.json", "./gauge-info.json"];
-function read(moduleUrl, candidates) {
+const PLACES = ["./broken.json", "./gauge-info.json"];
+function markFrom(here, places) {
+  let mark = "none";
   try {
-    const require = createRequire(moduleUrl);
-    for (const candidate of candidates)
+    const load = createRequire(here);
+    for (const place of places) {
       try {
-        const parsed = require(candidate);
-        if (parsed.version) return parsed.version;
+        mark = load(place).version || mark;
       } catch {}
-    return null;
-  } catch {
-    return null;
-  }
+    }
+  } catch {}
+  return mark;
 }
-console.log("SAID", read(import.meta.url, CANDIDATES) || "0.0.0");
+console.log("SAID", markFrom(import.meta.url, PLACES));

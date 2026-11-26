@@ -9,7 +9,6 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, normalizeBunSnapshot, tls as tlsCert } from "harness";
-import diagnostics from "node:diagnostics_channel";
 import { EventEmitter, once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -874,20 +873,28 @@ describe.each(["GET", "POST"] as const)("a response to %s whose headers are not 
 
   test("pushStream() releases the streams that it has reserved", async () => {
     const refs: WeakRef<object>[] = [];
-    const onCreated = ({ stream }: any) => void (stream.id % 2 === 0 && refs.push(new WeakRef(stream)));
     const transport = new Transport();
     const server = http2.createServer({ maxSendHeaderBlockLength: 1000 });
     server.emit("connection", transport);
-    diagnostics.subscribe("http2.server.stream.created", onCreated);
     try {
       transport.push(Buffer.concat([PREFACE, encodeFrame(FrameType.SETTINGS, 0, 0), request(1)]));
       const [stream] = await once(server, "stream");
       stream.on("error", () => {}).respond(tooLong);
-      for (let i = 0; i < 32; i++) stream.pushStream({}, () => {});
+      // Nobody is handed such a stream. pushStream() ends its readable side.
+      const prototype = Object.getPrototypeOf(stream);
+      const { push } = prototype;
+      prototype.push = function (chunk: unknown) {
+        if (!this.destroyed) refs.push(new WeakRef(this));
+        return push.call(this, chunk);
+      };
+      try {
+        for (let i = 0; i < 32; i++) stream.pushStream({}, () => {});
+      } finally {
+        delete prototype.push;
+      }
       expect(refs.length).toBe(32);
       expect(await liveCount(refs)).toBeLessThanOrEqual(GC_STRAGGLERS);
     } finally {
-      diagnostics.unsubscribe("http2.server.stream.created", onCreated);
       transport.destroy();
     }
   });

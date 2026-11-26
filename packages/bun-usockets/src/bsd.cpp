@@ -60,6 +60,7 @@ static void init_debug_logging() {
 #include <errno.h>
 #else /* _WIN32 */
 #include <mstcpip.h>
+#include <mswsock.h>
 #endif
 
 #if defined(__APPLE__)
@@ -831,11 +832,84 @@ int bsd_addr_get_port(struct bsd_addr_t *addr) {
     return addr->port;
 }
 
+#ifdef _WIN32
+/* Winsock's accept() on a non-blocking socket is two steps: it polls, then waits for the
+ * connection it saw. If another holder of the socket takes that connection in between, the wait
+ * lasts until the next client arrives. An overlapped AcceptEx() can be called off instead. */
+static SOCKET win32_accept_shared(SOCKET fd, struct bsd_addr_t *addr) {
+    WSAPOLLFD pending = {fd, POLLRDNORM, 0};
+    if (WSAPoll(&pending, 1, 0) == 0) {
+        WSASetLastError(WSAEWOULDBLOCK);
+        return INVALID_SOCKET;
+    }
+
+    WSAPROTOCOL_INFOW info;
+    int info_length = (int) sizeof(info);
+    GUID id = WSAID_ACCEPTEX;
+    LPFN_ACCEPTEX accept_ex;
+    DWORD bytes, flags;
+    /* CancelIoEx() needs a socket that is a kernel handle. */
+    if (getsockopt(fd, SOL_SOCKET, SO_PROTOCOL_INFOW, (char *) &info, &info_length) != 0
+            || !(info.dwServiceFlags1 & XP1_IFS_HANDLES)
+            || info.iProtocol != IPPROTO_TCP
+            || WSAIoctl(fd, SIO_GET_EXTENSION_FUNCTION_POINTER, &id, sizeof(id), &accept_ex, sizeof(accept_ex), &bytes, NULL, NULL) != 0) {
+        return accept(fd, (struct sockaddr *) addr, &addr->len);
+    }
+
+    /* A new socket of the same provider, not a duplicate. */
+    info.dwProviderReserved = 0;
+    us_fd_t accepted{WSASocketW(FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO, &info, 0,
+                                WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT)};
+    if (!accepted) {
+        return INVALID_SOCKET;
+    }
+    WSAEVENT event = WSACreateEvent();
+    if (event == WSA_INVALID_EVENT) {
+        return INVALID_SOCKET;
+    }
+
+    /* The low bit keeps the completion off a port that another holder has tied the socket to. */
+    OVERLAPPED overlapped = {};
+    overlapped.hEvent = (HANDLE) ((ULONG_PTR) event | 1);
+    constexpr DWORD address_length = sizeof(struct sockaddr_storage) + 16;
+    char addresses[2 * address_length];
+    BOOL ok = accept_ex(fd, accepted.get(), addresses, 0, address_length, address_length, &bytes, &overlapped);
+    if (!ok && WSAGetLastError() == WSA_IO_PENDING) {
+        /* A queued connection has completed it by now. One that arrives later may still do so. */
+        if (!HasOverlappedIoCompleted(&overlapped)) {
+            CancelIoEx((HANDLE) fd, &overlapped);
+            /* The request writes to this frame until it is over, whatever becomes of fd. */
+            WaitForSingleObject(event, INFINITE);
+        }
+        ok = WSAGetOverlappedResult(fd, &overlapped, &bytes, FALSE, &flags);
+    }
+    int error = ok ? 0 : WSAGetLastError();
+    WSACloseEvent(event);
+    if (!ok) {
+        WSASetLastError(error == WSA_OPERATION_ABORTED ? WSAEWOULDBLOCK : error);
+        return INVALID_SOCKET;
+    }
+
+    if (setsockopt(accepted.get(), SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char *) &fd, sizeof(fd)) != 0) {
+        return INVALID_SOCKET;
+    }
+    /* A connection that the peer already reset has no address. The first read reports the reset. */
+    if (getpeername(accepted.get(), (struct sockaddr *) addr, &addr->len) != 0) {
+        addr->mem.ss_family = AF_UNSPEC;
+    }
+    return accepted.release();
+}
+#endif
+
 // called by dispatch_ready_poll
-LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd_addr_t *addr) {
+LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd_addr_t *addr, int shared) {
     ssize_t injected = 0; int unused = 0;
     if (US_FAULT_CHECK(US_FAULT_ACCEPT, fd, injected, unused)) return LIBUS_SOCKET_ERROR;
     (void)injected; (void)unused;
+#ifndef _WIN32
+    /* A POSIX accept() honors O_NONBLOCK on a shared socket too. */
+    (void)shared;
+#endif
 
     while (1) {
         addr->len = sizeof(addr->mem);
@@ -843,8 +917,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
 #if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
         // Linux, FreeBSD
         us_fd_t accepted_fd{accept4(fd, (struct sockaddr *) addr, &addr->len, SOCK_CLOEXEC | SOCK_NONBLOCK)};
+#elif defined(_WIN32)
+        us_fd_t accepted_fd{shared ? win32_accept_shared(fd, addr) : accept(fd, (struct sockaddr *) addr, &addr->len)};
 #else
-        // Windows, OS X
+        // OS X
         us_fd_t accepted_fd{accept(fd, (struct sockaddr *) addr, &addr->len)};
 #endif
 

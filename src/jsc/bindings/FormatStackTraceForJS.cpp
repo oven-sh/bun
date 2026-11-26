@@ -28,6 +28,7 @@
 #include "headers-handwritten.h"
 
 #include <wtf/Scope.h>
+#include <wtf/SetForScope.h>
 #include <wtf/Threading.h>
 
 using namespace JSC;
@@ -340,7 +341,7 @@ WTF::String formatStackTrace(
         remappedFrame.position.byte_position = -1;
         originalLineColumns[i] = {};
 
-        if (!frame.hasLineAndColumnInfo()) continue;
+        if (!Zig::hasSourcePosition(frame)) continue;
 
 #if ENABLE(AOT)
         if (frame.isCompiledFrame()) [[unlikely]] {
@@ -357,7 +358,7 @@ WTF::String formatStackTrace(
         }
 #endif
 
-        originalLineColumns[i] = frame.computeLineAndColumn();
+        originalLineColumns[i] = Zig::lineAndColumn(frame);
 
         JSC::JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
         if (auto* callee = frame.callee()) {
@@ -398,8 +399,9 @@ WTF::String formatStackTrace(
         OrdinalNumber displayLine = {};
         OrdinalNumber displayColumn = {};
         WTF::String sourceURLForFrame = sourceURLs[i];
+        bool hasPosition = Zig::hasSourcePosition(frame);
 
-        if (frame.hasLineAndColumnInfo()) {
+        if (hasPosition) {
             originalLine = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].line);
             originalColumn = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].column);
             displayLine = originalLine;
@@ -458,7 +460,7 @@ WTF::String formatStackTrace(
 
         if (!sourceURLForFrame.isEmpty()) {
             sb.append(sourceURLForFrame);
-            if (frame.hasLineAndColumnInfo()) {
+            if (hasPosition) {
                 sb.append(':');
                 sb.append(displayLine.oneBasedInt());
                 sb.append(':');
@@ -545,7 +547,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
         // global object.
         JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
 
-        if (stackFrame.hasLineAndColumnInfo()) {
+        if (Zig::hasSourcePosition(stackFrame)) {
             auto* callee = stackFrame.callee();
             // https://github.com/oven-sh/bun/issues/17698
             if (callee) {
@@ -616,10 +618,8 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
             RETURN_IF_EXCEPTION(scope, {});
             if (prepareStackTrace) {
                 if (prepareStackTrace.isCell() && prepareStackTrace.isObject() && prepareStackTrace.isCallable()) {
-                    globalObject->isInsideErrorPrepareStackTraceCallback = true;
-                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
-                    globalObject->isInsideErrorPrepareStackTraceCallback = false;
-                    RELEASE_AND_RETURN(scope, result);
+                    SetForScope insideCallback(globalObject->isInsideErrorPrepareStackTraceCallback, true);
+                    RELEASE_AND_RETURN(scope, computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject()));
                 }
             }
         }
@@ -627,10 +627,8 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
         if (JSValue prepareStackTrace = globalObject->m_errorConstructorPrepareStackTraceValue.get()) {
             if (prepareStackTrace) {
                 if (prepareStackTrace.isCallable()) {
-                    globalObject->isInsideErrorPrepareStackTraceCallback = true;
-                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
-                    globalObject->isInsideErrorPrepareStackTraceCallback = false;
-                    RELEASE_AND_RETURN(scope, result);
+                    SetForScope insideCallback(globalObject->isInsideErrorPrepareStackTraceCallback, true);
+                    RELEASE_AND_RETURN(scope, computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject()));
                 }
             }
         }

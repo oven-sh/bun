@@ -9,7 +9,6 @@ use bun_jsc::{
     self as jsc, AbortSignal, CommonAbortReason, JSFunction, JSGlobalObject, JSHostFn,
     JSPromise, JSValue, JsClass as _, JsResult, Strong, StringJsc as _, WrapperGuard, bun_string_jsc,
 };
-use bun_paths::resolve_path;
 use bun_ptr::CellExt as _;
 use bun_resolver::fs::FileSystem;
 
@@ -506,9 +505,7 @@ fn mode(base: &BaseScope) -> &'static str {
 }
 
 fn file_name(buntest: &BunTest) -> Vec<u8> {
-    let mut name = resolve_path::relative(FileSystem::instance().top_level_dir(), buntest.file.path).to_vec();
-    resolve_path::platform_to_posix_in_place::<u8>(&mut name);
-    name
+    bun_paths::Path::relative(FileSystem::instance().top_level_dir(), buntest.file.path).into_portable().to_vec()
 }
 
 #[optimize(size)]

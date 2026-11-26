@@ -1,47 +1,50 @@
 // STATISTIC: FunctionNamesReadFromMirrors >= 4
 "use strict";
-const Space = {};
+const Mill = {};
 (function () {
-  function Maths() {}
-  function Shape(size) {
-    this.size = size;
+  function Stones() {}
+  function Sack(weight) {
+    this.weight = weight;
   }
-  Space.Maths = Maths;
-  Space.Shape = Shape;
+  Mill.Sack = Sack;
+  Mill.Stones = Stones;
 })();
 (function () {
-  const Maths = Space.Maths, Shape = Space.Shape;
-  Maths.clamp = function (value, low, high) {
-    return value < low ? low : value > high ? high : value;
+  const Sack = Mill.Sack, Stones = Mill.Stones;
+  Stones.worn = function (grain, turns, most) {
+    const left = grain - turns / 8;
+    if (left !== left) return most;
+    return Math.min(left, most);
   };
-  Maths.mix = function (a, b, part) {
-    return Maths.clamp(a, 0, 10) * (1 - part) + Maths.clamp(b, 0, 10) * part;
+  Stones.ground = function (first, second, share) {
+    return Stones.worn(second, 2, 9) * share - Stones.worn(first, 1, 12) / 4;
   };
-  Shape.scale = function (shape, by) {
-    shape.size = Maths.clamp(shape.size * by, 1, 64);
-    return shape;
+  Sack.filled = function (sack, by) {
+    sack.weight = Stones.worn(sack.weight + by, 3, 50);
+    return sack;
   };
-  Space.run = function (count, inner) {
-    let sum = 0;
-    for (let k = 0; k < count; k++) {
-      const shape = new Shape(k + 0.5);
-      for (let j = 0; j < inner; j++) sum += Maths.mix(Shape.scale(shape, 1.5).size, j, 0.25);
-      sum += Maths.clamp(sum, 0, 1);
+  Mill.run = function (days, loads) {
+    let flour = 0;
+    for (let day = days; day > 0; day--) {
+      const sack = new Sack(day + 0.5);
+      let load = loads;
+      while (load-- > 0) flour += Stones.ground(Sack.filled(sack, 1.5).weight, load, 0.25);
+      flour += Stones.worn(flour, 8, 1);
     }
-    return sum;
+    return flour;
   };
 })();
-console.log(Space.run(6, 3), Space.run(2, 9));
-const clamp = Space.Maths.clamp;
-Space.Maths.clamp = function (value) {
-  return clamp(value, 2, 4);
+console.log(Mill.run(6, 3), Mill.run(2, 9));
+const worn = Mill.Stones.worn;
+Mill.Stones.worn = function (grain) {
+  return worn(grain, 2, 4);
 };
-console.log(Space.run(6, 3));
-Space.Maths.clamp = undefined;
+console.log(Mill.run(6, 3));
+Mill.Stones.worn = undefined;
 try {
-  console.log(Space.run(6, 3));
+  console.log(Mill.run(6, 3));
 } catch (error) {
   console.log(error.constructor.name);
 }
-Space.Maths.clamp = clamp;
-console.log(Space.run(6, 3));
+Mill.Stones.worn = worn;
+console.log(Mill.run(6, 3));

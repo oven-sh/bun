@@ -37,10 +37,9 @@ use crate::mal_prelude::*;
 
 use bun_ast::Source;
 use bun_collections::AutoBitSet;
-use bun_core::strings;
 use bun_io::Write;
 use bun_js_printer::Encoding;
-use bun_paths::resolve_path::{platform, platform_to_posix_in_place, relative_normalized};
+use bun_paths::Path;
 use bun_resolver::fs::FileSystem;
 
 use crate::chunk::Content;
@@ -174,8 +173,9 @@ pub(crate) fn write_with_assets<W: Write + ?Sized>(
                 if inject_compiler_filesystem_prefix {
                     temp_buffer.clear();
                     temp_buffer.extend_from_slice(public_path);
-                    temp_buffer
-                        .extend_from_slice(strings::remove_leading_dot_slash(&ch.final_rel_path));
+                    temp_buffer.extend_from_slice(bun_paths::without_leading_dot_slash(
+                        &ch.final_rel_path,
+                    ));
                     bun_js_printer::write_json_string::<_, { Encoding::Utf8 }>(
                         &temp_buffer,
                         writer,
@@ -243,7 +243,7 @@ pub(crate) fn write_with_assets<W: Write + ?Sized>(
                 temp_buffer.clear();
                 temp_buffer.extend_from_slice(public_path);
                 temp_buffer
-                    .extend_from_slice(strings::remove_leading_dot_slash(&ch.final_rel_path));
+                    .extend_from_slice(bun_paths::without_leading_dot_slash(&ch.final_rel_path));
                 &temp_buffer[..]
             } else {
                 &ch.final_rel_path
@@ -299,7 +299,7 @@ pub(crate) fn write_with_assets<W: Write + ?Sized>(
                 let path: &[u8] = if inject_compiler_filesystem_prefix {
                     temp_buffer.clear();
                     temp_buffer.extend_from_slice(public_path);
-                    temp_buffer.extend_from_slice(strings::remove_leading_dot_slash(
+                    temp_buffer.extend_from_slice(bun_paths::without_leading_dot_slash(
                         &output_file.dest_path,
                     ));
                     &temp_buffer[..]
@@ -355,10 +355,6 @@ fn source_path_relative_to_root<'b>(
     path: &[u8],
 ) -> &'b [u8] {
     buf.clear();
-    buf.extend_from_slice(strings::remove_leading_dot_slash(relative_normalized::<
-        platform::Auto,
-        false,
-    >(root_dir, path)));
-    platform_to_posix_in_place(&mut buf[..]);
+    buf.extend_from_slice(&Path::relative(root_dir, path).into_portable());
     buf
 }

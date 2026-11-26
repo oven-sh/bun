@@ -315,7 +315,15 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWebSocketDOMConstructo
     auto* structure = structureForNewTarget<WebSocket>(lexicalGlobalObject, callFrame);
     RETURN_IF_EXCEPTION(throwScope, {});
     CheckServerIdentityCallbacks checkServerIdentity { options };
-    RELEASE_AND_RETURN(throwScope, wrapNewWebSocket(lexicalGlobalObject, *castedThis->globalObject(), *context, structure, WebSocket::create(*context, url, WTF::move(options)), checkServerIdentity));
+    EnsureStillAliveScope requestTracer = options.requestTracer = WebSocket::createRequestTracer(*context);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    auto socket = WebSocket::create(*context, url, WTF::move(options));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    JSValue result = JSValue::decode(wrapNewWebSocket(lexicalGlobalObject, *castedThis->globalObject(), *context, structure, WTF::move(socket), checkServerIdentity));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (requestTracer.value()) [[unlikely]]
+        uncheckedDowncast<JSWebSocket>(result)->wrapped().setRequestTracer(vm, result.asCell(), requestTracer.value());
+    return JSValue::encode(result);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSWebSocketConstructorConstruct, JSWebSocketDOMConstructor::construct);
 
@@ -788,6 +796,7 @@ void JSWebSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->wrapped().checkServerIdentity(false).visit(visitor);
     thisObject->wrapped().checkServerIdentity(true).visit(visitor);
     thisObject->wrapped().asyncContext().visit(visitor);
+    thisObject->wrapped().requestTracer().visit(visitor);
     visitor.append(thisObject->m_owner);
     visitor.append(thisObject->m_handlers);
 }

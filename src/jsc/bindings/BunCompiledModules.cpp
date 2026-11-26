@@ -740,7 +740,7 @@ static std::optional<AOT::ModuleID> evaluatedOriginalKeyModule(Zig::GlobalObject
     return module;
 }
 
-JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& key, const ScriptFetchParameters* attributes)
+JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& key, const ScriptFetchParameters* attributes, const String& importer)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -774,6 +774,10 @@ JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& k
     AbstractModuleRecord* record = AOT::moduleRecord(globalObject, *module);
     if (scope.exception()) [[unlikely]]
         return rejected();
+    if (isBunTest) {
+        auto importing = importer.isEmpty() ? std::nullopt : findModuleForPath(importer);
+        AOT::noteImporterOfFetch(globalObject, *module, importing && !AOT::isEvicted(globalObject, *importing) ? *importing : AOT::ModuleID());
+    }
     // Another fetch in flight may request the module once it is mocked.
     bool isAlone = globalObject->onLoadPlugins.waitingMockFetches.isEmpty() && !AOT::hasBatchedFetches(globalObject);
     // A require() cannot wait.
@@ -1701,25 +1705,6 @@ static void pushObservableChild(JSGlobalObject* realm, JSObject* parent, JSObjec
     call(realm, function, getCallData(function), jsUndefined(), arguments);
 }
 
-static void createChildrenArray(JSGlobalObject* realm, JSCommonJSModule* parent)
-{
-    auto& vm = getVM(realm);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    MarkedArgumentBuffer children;
-    for (WriteBarrier<Unknown> child : parent->m_children) {
-        bool isListed = false;
-        for (size_t index = 0; index < children.size(); ++index)
-            isListed |= children.at(index) == child.get();
-        if (!isListed)
-            children.append(child.get());
-    }
-    JSArray* list = constructArray(realm, static_cast<ArrayAllocationProfile*>(nullptr), children);
-    RETURN_IF_EXCEPTION(scope, void());
-    parent->m_childrenValue.set(vm, parent, list);
-    WTF::Locker locker { parent->cellLock() };
-    parent->m_children.clear();
-}
-
 bool appendNewChildrenOfCompiledModule(JSGlobalObject* realm, JSCommonJSModule* parent)
 {
     auto compiled = compiledModuleOfRequirer(parent);
@@ -1729,16 +1714,14 @@ bool appendNewChildrenOfCompiledModule(JSGlobalObject* realm, JSCommonJSModule* 
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool areShown = AOT::forEachNewChild(parent->globalObject(), *compiled, [&](JSObject* child) {
         if (!parent->m_childrenValue && !child->inherits<JSCommonJSModule>()) {
-            createChildrenArray(realm, parent);
+            parent->createChildrenArray(realm);
             RETURN_IF_EXCEPTION(scope, void());
         }
         if (parent->m_childrenValue) {
             pushObservableChild(realm, parent, child);
             return;
         }
-        WTF::Locker locker { parent->cellLock() };
-        parent->m_children.append(WriteBarrier<Unknown>());
-        parent->m_children.last().set(vm, parent, child);
+        parent->addChild(vm, uncheckedDowncast<JSCommonJSModule>(child));
     });
     RETURN_IF_EXCEPTION(scope, false);
     return areShown;
@@ -1760,16 +1743,13 @@ static void appendModuleChildren(JSGlobalObject* realm, JSObject* module, JSObje
     bool hasLeftCompiledModule = parent->compiledModule == JSCommonJSModule::noCompiledModule;
     // m_children only has module objects. Stand-ins go into the array itself.
     if (!parent->m_childrenValue && childOrNull && hasLeftCompiledModule && !childOrNull->inherits<JSCommonJSModule>()) {
-        createChildrenArray(realm, parent);
+        parent->createChildrenArray(realm);
         RETURN_IF_EXCEPTION(scope, void());
     }
     // The array is created when it is first read: from the compiled module or, if the object was detached, from m_children.
     if (!parent->m_childrenValue) {
-        if (childOrNull && hasLeftCompiledModule) {
-            WTF::Locker locker { parent->cellLock() };
-            parent->m_children.append(WriteBarrier<Unknown>());
-            parent->m_children.last().set(vm, parent, childOrNull);
-        }
+        if (childOrNull && hasLeftCompiledModule)
+            parent->addChild(vm, uncheckedDowncast<JSCommonJSModule>(childOrNull));
         return;
     }
     scope.release();
@@ -2342,6 +2322,13 @@ static bool isSpy(JSGlobalObject* globalObject, const String& mocked)
     BUN_END_REMOVABLE_ENTRY_POINT
 }
 
+static bool isRequiringMock(JSGlobalObject* globalObject, const String& mocked)
+{
+    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, bool)
+    return isRequiringModuleMock(defaultGlobalObject(globalObject), mocked);
+    BUN_END_REMOVABLE_ENTRY_POINT
+}
+
 static bool hasSynchronousFactory(JSGlobalObject* globalObject, const String& mocked, bool isOriginalSynchronous)
 {
     BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, bool)
@@ -2431,6 +2418,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &wasFetchedByTestFile,
     &hasSynchronousFactory,
     &isSpy,
+    &isRequiringMock,
     &sourceAfterRelease,
     &hasPendingPatch,
     &evictOriginal,
@@ -2438,7 +2426,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &isESModuleInNode,
 };
 // A member missing from the initializer is null, which tells the engine that the host does not support it.
-static_assert(sizeof(AOT::ModuleHost) == 67 * sizeof(void*));
+static_assert(sizeof(AOT::ModuleHost) == 68 * sizeof(void*));
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);
 bool recordAddonLoadedFromDisk(JSGlobalObject*, const String& path);
@@ -2760,7 +2748,7 @@ const AOT::ModuleHost compiledModuleHost {};
 std::optional<AOT::ModuleID> compiledModuleForPath(const String&) { return std::nullopt; }
 std::optional<bool> isHiddenFromRequireCache(const String&) { return false; }
 std::optional<AOT::ModuleID> findMockedModule(const String&) { return std::nullopt; }
-JSPromise* compiledModuleSource(Zig::GlobalObject*, const String&, const ScriptFetchParameters*) { return nullptr; }
+JSPromise* compiledModuleSource(Zig::GlobalObject*, const String&, const ScriptFetchParameters*, const String&) { return nullptr; }
 JSPromise* importCompiledModule(Zig::GlobalObject*, const String&, const ScriptFetchParameters*, int64_t) { return nullptr; }
 JSValue requireCompiledModuleForTestRunner(Zig::GlobalObject*, const String&) { return {}; }
 bool requireCompiledModule(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }

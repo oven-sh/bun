@@ -492,8 +492,8 @@ if (isMainThread) {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[]\n", stderr: "", exitCode: 0 });
-  // The program waits up to 5 s for its Worker, two times. The limit of the test is above that, so the program reports a Worker that stopped.
-}, 20_000);
+  // The program waits up to 5 s for its Worker, two times, and reports a Worker that stopped. The tests of test/aot run the program compiled: with a sanitizer it then takes over 20 s to start.
+}, 90_000);
 
 describe("NODE_PATH test", () => {
   const prepareTest = () => {

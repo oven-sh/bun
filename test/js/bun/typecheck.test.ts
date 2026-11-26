@@ -78,15 +78,18 @@ function configNames(snapshot: any, dir: string): string[] {
     .sort();
 }
 
-/** `updateSnapshot` may reject or throw synchronously for invalid shapes; either must carry the exact code. */
+/**
+ * Contract (plan §§3.2/4.1/6): `updateSnapshot` validates synchronously
+ * and *rejects* for invalid arguments and a closed root; only the
+ * constructor throws synchronously. This helper pins the rejection channel
+ * rather than accepting either, so a change to the contract fails here.
+ */
 async function expectUpdateRejected(checker: any, update: any, code: string) {
   let promise: Promise<any>;
   try {
     promise = checker.updateSnapshot(update);
-  } catch (error: any) {
-    expect(error).toBeInstanceOf(Error);
-    expect(error.code).toBe(code);
-    return;
+  } catch {
+    throw new Error("updateSnapshot threw synchronously; expected a rejected Promise");
   }
   await expect(async () => await promise).toThrowWithCodeAsync(Error, code);
 }
@@ -187,7 +190,9 @@ describe("Bun.TypeChecker: config diagnostics", () => {
     // Config diagnostics are reported against the tsconfig itself.
     expect(diagnostics.length).toBeGreaterThan(0);
     for (const diagnostic of diagnostics) {
-      expect(normPath(diagnostic.fileName, String(dir))).toBe(normPath(join(String(dir), "tsconfig.json"), String(dir)));
+      expect(normPath(diagnostic.fileName, String(dir))).toBe(
+        normPath(join(String(dir), "tsconfig.json"), String(dir)),
+      );
       expect(diagnostic.category).toBe("error");
     }
     expect(diagnostics.map((d: any) => `TS${d.code}: ${d.text}`)).toEqual([
@@ -251,6 +256,34 @@ describe("Bun.TypeChecker: messageChain and relatedInformation", () => {
     expect(normPath(related.fileName, String(dir))).toBe(normPath(join(String(dir), "a.ts"), String(dir)));
   });
 
+  test("a real messageChain carries code/category/text without fileName or range", async () => {
+    using dir = project({
+      "a.ts": `const value: number = 1;\nvalue();\nexport {};\n`,
+    });
+    await using checker = makeChecker(String(dir));
+
+    using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+    const [diagnostic] = await snapshot.getProject("tsconfig.json").program.getDiagnostics("a.ts");
+
+    expect(diagnostic.code).toBe(2349);
+    expect(diagnostic.category).toBe("error");
+    expect(diagnostic.text).toBe("This expression is not callable.\n  Type 'Number' has no call signatures.");
+    // The entire chain entry, not just the top-level text. Chain entries are
+    // elaboration lines: code/category/text plus nesting, never fileName or
+    // source range (the native `MessageChain` carries no location).
+    expect(diagnostic.messageChain).toEqual([
+      {
+        code: 2757,
+        category: "error",
+        text: "Type 'Number' has no call signatures.",
+      },
+    ]);
+    const entry = diagnostic.messageChain[0];
+    expect("fileName" in entry).toBe(false);
+    expect("pos" in entry).toBe(false);
+    expect("line" in entry).toBe(false);
+  });
+
   test("related information points at the declaration in another file", async () => {
     using dir = project({
       "types.ts": `export interface User {\n  id: number;\n  email: string;\n}\n`,
@@ -292,7 +325,9 @@ describe("Bun.TypeChecker: file filtering and ordering", () => {
     const program = snapshot.getProject("tsconfig.json").program;
 
     const all = await program.getDiagnostics();
-    expect(normDiagnostics(all, String(dir)).map((d: any) => `${d.fileName}:${d.line}:${d.column}:TS${d.code}`)).toEqual([
+    expect(
+      normDiagnostics(all, String(dir)).map((d: any) => `${d.fileName}:${d.line}:${d.column}:TS${d.code}`),
+    ).toEqual([
       `${normPath(join(String(dir), "a.ts"), String(dir))}:1:14:TS2322`,
       `${normPath(join(String(dir), "b.ts"), String(dir))}:1:14:TS2322`,
     ]);
@@ -305,9 +340,9 @@ describe("Bun.TypeChecker: file filtering and ordering", () => {
     expect(normPath(onlyA[0].fileName, String(dir))).toBe(normPath(join(String(dir), "a.ts"), String(dir)));
 
     // File-URL form filters identically.
-    expect(normDiagnostics(await program.getDiagnostics(pathToFileURL(join(String(dir), "b.ts"))), String(dir))).toEqual(
-      normDiagnostics(await program.getDiagnostics("b.ts"), String(dir)),
-    );
+    expect(
+      normDiagnostics(await program.getDiagnostics(pathToFileURL(join(String(dir), "b.ts"))), String(dir)),
+    ).toEqual(normDiagnostics(await program.getDiagnostics("b.ts"), String(dir)));
 
     expect(await program.getDiagnostics("clean.ts")).toEqual([]);
     expect(await program.getDiagnostics("does/not/exist.ts")).toEqual([]);
@@ -336,7 +371,8 @@ describe("Bun.TypeChecker: file filtering and ordering", () => {
 
 describe("Bun.TypeChecker: project lifecycle", () => {
   test("multiple explicit projects, duplicate opens, balanced closes, and unmatched close", async () => {
-    const config = (extra: object = {}) => JSON.stringify({ compilerOptions: JSON.parse(tsconfig).compilerOptions, ...extra });
+    const config = (extra: object = {}) =>
+      JSON.stringify({ compilerOptions: JSON.parse(tsconfig).compilerOptions, ...extra });
     using dir = project({
       "one/tsconfig.json": config({ include: ["*.ts"] }),
       "one/a.ts": `export const a: string = 1;\n`,
@@ -371,7 +407,9 @@ describe("Bun.TypeChecker: project lifecycle", () => {
       openProjects: ["two/tsconfig.json"],
     });
     expect(configNames(reloaded, String(dir))).toEqual([two]);
-    expect((await reloaded.getProject("two/tsconfig.json").program.getDiagnostics()).map((d: any) => d.code)).toEqual([2322]);
+    expect((await reloaded.getProject("two/tsconfig.json").program.getDiagnostics()).map((d: any) => d.code)).toEqual([
+      2322,
+    ]);
   });
 
   test("getProject resolves relative, absolute, directory and file-URL forms", async () => {
@@ -467,9 +505,9 @@ describe("Bun.TypeChecker: source overlays", () => {
     await using checker = makeChecker(String(dir));
 
     using missing = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
-    expect((await missing.getProject("tsconfig.json").program.getDiagnostics("index.ts")).map((d: any) => d.code)).toContain(
-      2307,
-    );
+    expect(
+      (await missing.getProject("tsconfig.json").program.getDiagnostics("index.ts")).map((d: any) => d.code),
+    ).toContain(2307);
 
     using provided = await checker.updateSnapshot({
       sourceChanges: new Map([["virtual.ts", `export const value: number = 1;\n`]]),
@@ -480,15 +518,15 @@ describe("Bun.TypeChecker: source overlays", () => {
       sourceChanges: new Map([["virtual.ts", `export const value: string = "x";\n`]]),
     });
     // The overlay's type flows to `index.ts`, which reports the mismatch there.
-    expect((await broken.getProject("tsconfig.json").program.getDiagnostics("index.ts")).map((d: any) => d.code)).toEqual([
-      2322,
-    ]);
+    expect(
+      (await broken.getProject("tsconfig.json").program.getDiagnostics("index.ts")).map((d: any) => d.code),
+    ).toEqual([2322]);
 
     // Removing the virtual-only override removes the file from the next check.
     using removed = await checker.updateSnapshot({ sourceChanges: new Map([["virtual.ts", null]]) });
-    expect((await removed.getProject("tsconfig.json").program.getDiagnostics("index.ts")).map((d: any) => d.code)).toContain(
-      2307,
-    );
+    expect(
+      (await removed.getProject("tsconfig.json").program.getDiagnostics("index.ts")).map((d: any) => d.code),
+    ).toContain(2307);
   });
 
   test("declaration-file overlays participate in checking", async () => {
@@ -504,9 +542,9 @@ describe("Bun.TypeChecker: source overlays", () => {
     using redeclared = await checker.updateSnapshot({
       sourceChanges: new Map([["types.d.ts", `declare const answer: string;\n`]]),
     });
-    expect((await redeclared.getProject("tsconfig.json").program.getDiagnostics("a.ts")).map((d: any) => d.code)).toEqual([
-      2322,
-    ]);
+    expect(
+      (await redeclared.getProject("tsconfig.json").program.getDiagnostics("a.ts")).map((d: any) => d.code),
+    ).toEqual([2322]);
   });
 
   test("disk edits are observed by updateSnapshot({}) without a file-change hint", async () => {
@@ -519,7 +557,9 @@ describe("Bun.TypeChecker: source overlays", () => {
     writeFileSync(join(String(dir), "a.ts"), `export const answer: string = 42;\n`);
 
     using after = await checker.updateSnapshot({});
-    expect((await after.getProject("tsconfig.json").program.getDiagnostics("a.ts")).map((d: any) => d.code)).toEqual([2322]);
+    expect((await after.getProject("tsconfig.json").program.getDiagnostics("a.ts")).map((d: any) => d.code)).toEqual([
+      2322,
+    ]);
     // The old snapshot still shows the old disk state.
     expect(await before.getProject("tsconfig.json").program.getDiagnostics("a.ts")).toEqual([]);
   });
@@ -655,7 +695,9 @@ describe("Bun.TypeChecker: close during queued work", () => {
 
     using seed = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
     const pending1 = checker.updateSnapshot({});
-    const pending2 = checker.updateSnapshot({ sourceChanges: new Map([["a.ts", `export const answer: string = 42;\n`]]) });
+    const pending2 = checker.updateSnapshot({
+      sourceChanges: new Map([["a.ts", `export const answer: string = 42;\n`]]),
+    });
     const closePromise = checker.close();
 
     await expect(async () => await pending1).toThrowWithCodeAsync(Error, CLOSED);
@@ -707,13 +749,21 @@ describe("Bun.TypeChecker: validation", () => {
     await expectUpdateRejected(checker, { openProjects: [42] }, INVALID_TYPE);
     await expectUpdateRejected(checker, { openProjects: [null] }, INVALID_TYPE);
     await expectUpdateRejected(checker, { openProjects: ["a\0b"] }, INVALID_VALUE);
-    await expectUpdateRejected(checker, { openProjects: [new URL("https://example.invalid/tsconfig.json")] }, INVALID_VALUE);
+    await expectUpdateRejected(
+      checker,
+      { openProjects: [new URL("https://example.invalid/tsconfig.json")] },
+      INVALID_VALUE,
+    );
     await expectUpdateRejected(checker, { closeProjects: [{}] }, INVALID_TYPE);
     await expectUpdateRejected(checker, { sourceChanges: { "a.ts": "x" } }, INVALID_TYPE);
     await expectUpdateRejected(checker, { sourceChanges: new Map([["a.ts", 42]]) }, INVALID_TYPE);
     // `undefined` is invalid: removal must be spelled `null`.
     await expectUpdateRejected(checker, { sourceChanges: new Map([["a.ts", undefined]]) }, INVALID_TYPE);
-    await expectUpdateRejected(checker, { sourceChanges: new Map([[new URL("https://example.invalid/a.ts"), "x"]]) }, INVALID_VALUE);
+    await expectUpdateRejected(
+      checker,
+      { sourceChanges: new Map([[new URL("https://example.invalid/a.ts"), "x"]]) },
+      INVALID_VALUE,
+    );
     await expectUpdateRejected(checker, { sourceChanges: new Map([["a\0b", "x"]]) }, INVALID_VALUE);
   });
 
@@ -873,7 +923,9 @@ describe("Bun.TypeChecker: UTF-16 positions (§7.2)", () => {
     using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
     const diagnostics = await snapshot.getProject("tsconfig.json").program.getDiagnostics();
     expect(diagnostics.map((d: any) => d.code)).toEqual([2322]);
-    expect(normPath(diagnostics[0].fileName, String(dir))).toBe(normPath(join(String(dir), "my dir/ünïcode/a.ts"), String(dir)));
+    expect(normPath(diagnostics[0].fileName, String(dir))).toBe(
+      normPath(join(String(dir), "my dir/ünïcode/a.ts"), String(dir)),
+    );
   });
 
   test("a file-URL cwd and file-URL project selectors resolve like native paths", async () => {
@@ -881,10 +933,12 @@ describe("Bun.TypeChecker: UTF-16 positions (§7.2)", () => {
     // `cwd` as a file URL must behave exactly like the native directory.
     await using checker = new (Bun as any).TypeChecker({ cwd: pathToFileURL(String(dir)) });
 
-    using snapshot = await checker.updateSnapshot({ openProjects: [pathToFileURL(join(String(dir), "tsconfig.json"))] });
-    const diagnostics = await snapshot.getProject(pathToFileURL(join(String(dir), "tsconfig.json"))).program.getDiagnostics(
-      pathToFileURL(join(String(dir), "sub/a.ts")),
-    );
+    using snapshot = await checker.updateSnapshot({
+      openProjects: [pathToFileURL(join(String(dir), "tsconfig.json"))],
+    });
+    const diagnostics = await snapshot
+      .getProject(pathToFileURL(join(String(dir), "tsconfig.json")))
+      .program.getDiagnostics(pathToFileURL(join(String(dir), "sub/a.ts")));
     expect(diagnostics.map((d: any) => d.code)).toEqual([2322]);
     // Output fileName is always an absolute native path, never a URL.
     expect(diagnostics[0].fileName).not.toContain("file://");
@@ -913,7 +967,9 @@ describe("Bun.TypeChecker: platform path semantics (§7.2)", () => {
     expect(normPath(snapshot.getProject("sub/tsconfig.json").configFileName, String(dir))).toBe(expected);
     expect(normPath(snapshot.getProject("sub\\tsconfig.json").configFileName, String(dir))).toBe(expected);
     // Absolute native form with backslashes.
-    expect(normPath(snapshot.getProject(join(String(dir), "sub", "tsconfig.json")).configFileName, String(dir))).toBe(expected);
+    expect(normPath(snapshot.getProject(join(String(dir), "sub", "tsconfig.json")).configFileName, String(dir))).toBe(
+      expected,
+    );
   });
 
   test("Windows: a UNC path selector resolves", async () => {
@@ -987,7 +1043,9 @@ describe("Bun.TypeChecker: GC and ownership (§7.3)", () => {
     expect(await live.getProject("tsconfig.json").program.getDiagnostics("a.ts")).toEqual(first);
     const [fixed, errored] = await Promise.all(pending);
     expect(await fixed.getProject("tsconfig.json").program.getDiagnostics("a.ts")).toEqual([]);
-    expect((await errored.getProject("tsconfig.json").program.getDiagnostics("a.ts")).map((d: any) => d.code)).toEqual([2322]);
+    expect((await errored.getProject("tsconfig.json").program.getDiagnostics("a.ts")).map((d: any) => d.code)).toEqual([
+      2322,
+    ]);
     fixed.dispose();
     errored.dispose();
   });
@@ -1098,7 +1156,10 @@ describe("Bun.TypeChecker: differential reuse (§7.4)", () => {
       const diagnostics = await snapshot.getProject("tsconfig.json").program.getDiagnostics();
       // Every picked case contains the sentinel `const sentinel: number = "";`
       // so the API must surface at least one TS2322 for it.
-      expect(diagnostics.some((d: any) => d.code === 2322), name).toBe(true);
+      expect(
+        diagnostics.some((d: any) => d.code === 2322),
+        name,
+      ).toBe(true);
       for (const diagnostic of diagnostics) {
         expect(["error", "warning", "suggestion", "message"]).toContain(diagnostic.category);
         expect(typeof diagnostic.code).toBe("number");

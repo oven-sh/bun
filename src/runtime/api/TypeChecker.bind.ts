@@ -38,7 +38,7 @@ export const TypeChecker = b.class({
   },
   proto: {
     updateSnapshot: {
-      args: { update: TypeCheckerSnapshotUpdate.nullable },
+      args: { update: b.any },
       returns: snapshotPromise,
       capability: "js",
       throws: true,

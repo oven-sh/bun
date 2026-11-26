@@ -53,20 +53,28 @@ import { expectType } from "./utilities";
     expectType(diagnostic.code).is<number>();
     expectType(diagnostic.category).is<Bun.TypeCheckerDiagnosticCategory>();
     expectType(diagnostic.text).is<string>();
-    expectType(diagnostic.messageChain).is<readonly Bun.TypeCheckerDiagnostic[] | undefined>();
+    expectType(diagnostic.messageChain).is<readonly Bun.TypeCheckerMessageChain[] | undefined>();
     expectType(diagnostic.relatedInformation).is<readonly Bun.TypeCheckerDiagnostic[] | undefined>();
 
     const category: "error" | "warning" | "suggestion" | "message" = diagnostic.category;
     void category;
 
-    // Message chains and related information are recursive diagnostics.
+    // Message chain entries are elaboration lines without file/range fields.
     diagnostic.messageChain?.forEach(child => {
-      expectType(child).is<Bun.TypeCheckerDiagnostic>();
+      expectType(child).is<Bun.TypeCheckerMessageChain>();
       expectType(child.category).is<Bun.TypeCheckerDiagnosticCategory>();
-      child.relatedInformation?.forEach(related => {
-        expectType(related).is<Bun.TypeCheckerDiagnostic>();
-        expectType(related.text).is<string>();
+      expectType(child.code).is<number>();
+      expectType(child.text).is<string>();
+      child.messageChain?.forEach(nested => {
+        expectType(nested).is<Bun.TypeCheckerMessageChain>();
       });
+    });
+
+    // Related information is recursive diagnostics with full fields.
+    diagnostic.relatedInformation?.forEach(related => {
+      expectType(related).is<Bun.TypeCheckerDiagnostic>();
+      expectType(related.text).is<string>();
+      expectType(related.fileName).is<string | undefined>();
     });
 
     if (diagnostic.pos !== undefined && diagnostic.end !== undefined) {

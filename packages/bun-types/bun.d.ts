@@ -3181,6 +3181,27 @@ declare module "bun" {
   type TypeCheckerDiagnosticCategory = "error" | "warning" | "suggestion" | "message";
 
   /**
+   * One entry of a diagnostic's structured elaboration
+   * ({@link Bun.TypeCheckerDiagnostic.messageChain}).
+   *
+   * Chain entries are elaboration lines, not source locations: the checker
+   * reports them without a file or source range, so those fields do not
+   * appear on chain entries even though they are typed on the parent
+   * diagnostic. Nesting is preserved through `messageChain`.
+   */
+  interface TypeCheckerMessageChain {
+    /** The numeric diagnostic code, without the `TS` prefix. */
+    readonly code: number;
+    readonly category: TypeCheckerDiagnosticCategory;
+
+    /** The fully rendered message for this elaboration line. */
+    readonly text: string;
+
+    /** Structured elaboration under {@link Bun.TypeCheckerMessageChain.text}. */
+    readonly messageChain?: readonly TypeCheckerMessageChain[] | undefined;
+  }
+
+  /**
    * One diagnostic from a checked project, in the wording `bun check` prints.
    *
    * Diagnostics are ordinary values, not rejections: a project with type
@@ -3218,9 +3239,18 @@ declare module "bun" {
     /** The fully rendered message. */
     readonly text: string;
 
-    /** Structured elaboration of {@link Bun.TypeCheckerDiagnostic.text}, when the checker provides it. */
-    readonly messageChain?: readonly TypeCheckerDiagnostic[] | undefined;
-    /** Related source locations, such as where a name was declared, when the checker provides them. */
+    /**
+     * Structured elaboration of {@link Bun.TypeCheckerDiagnostic.text},
+     * when the checker provides it. Entries are
+     * {@link Bun.TypeCheckerMessageChain} values: they carry no `fileName`
+     * or source range.
+     */
+    readonly messageChain?: readonly TypeCheckerMessageChain[] | undefined;
+    /**
+     * Related source locations, such as where a name was declared, when
+     * the checker provides them. Same fields recursively as the parent
+     * diagnostic.
+     */
     readonly relatedInformation?: readonly TypeCheckerDiagnostic[] | undefined;
   }
 
@@ -3301,6 +3331,12 @@ declare module "bun" {
      *
      * @param file A path resolved the same way as
      * {@link Bun.TypeCheckerSnapshot.getProject}'s argument.
+     */
+    /**
+     * Rejects with `ERR_BUN_TYPE_CHECKER_SNAPSHOT_DISPOSED` when the owning
+     * snapshot has been disposed, and with `ERR_INVALID_ARG_TYPE` /
+     * `ERR_INVALID_ARG_VALUE` for an invalid `file` argument. Never runs
+     * the checker; reads the materialized snapshot.
      */
     getDiagnostics(file?: TypeCheckerPath): Promise<readonly TypeCheckerDiagnostic[]>;
   }
@@ -3431,9 +3467,18 @@ declare module "bun" {
      * projects open runs a fresh full check and re-reads disk state, so no
      * change-notification hints are needed.
      *
-     * Resolves even when the check found TypeScript errors. Rejects for
-     * invalid arguments, adapter or I/O failures, and any call made after
-     * {@link Bun.TypeChecker.close} has begun.
+     * Resolves even when the check found TypeScript errors. The returned
+     * Promise rejects for adapter or I/O failures (including
+     * `ERR_BUN_TYPE_CHECKER_INCOMPLETE` and
+     * `ERR_BUN_TYPE_CHECKER_READ_FAILED`), for an undelivered update
+     * detached by {@link Bun.TypeChecker.close}, and for a call made after
+     * `close()` has begun (with `ERR_BUN_TYPE_CHECKER_CLOSED`).
+     *
+     * Invalid arguments — a closed checker, a non-object update, a project
+     * entry that is not a string or file URL, or a source value that is not
+     * a string or `null` — throw synchronously instead of returning a
+     * rejected Promise. A failed call never mutates the checker's desired
+     * state.
      */
     updateSnapshot(update?: TypeCheckerSnapshotUpdate): Promise<TypeCheckerSnapshot>;
 

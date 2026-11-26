@@ -434,6 +434,17 @@ impl<'a> Error<'a> {
             ErrorState::ToThrow(value) => global.throw_value(value),
         }
     }
+
+    /// The error value itself, without throwing: for rejecting a Promise
+    /// from inside a host call that must return a value. The returned value
+    /// is not thrown.
+    #[cold]
+    pub fn to_error_value(self, global: &JSGlobalObject) -> JSValue {
+        match self.0 {
+            ErrorState::Pending(error) => crate::host_fn::host_call_error_value(global, error),
+            ErrorState::ToThrow(value) => value,
+        }
+    }
 }
 
 impl From<JsError> for Error<'_> {

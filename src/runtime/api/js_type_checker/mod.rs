@@ -22,6 +22,13 @@ use crate::generated_bindgen::type_checker::{
 
 // ── errors ────────────────────────────────────────────────────────────────
 
+fn closed_error_value(global: &JSGlobalObject) -> JSValue {
+    ErrorCode::BUN_TYPE_CHECKER_CLOSED.fmt(
+        global,
+        format_args!("Bun.TypeChecker: this TypeChecker is closed"),
+    )
+}
+
 pub(crate) fn closed_error_pub<'a>(heap: &JsHeap<'a>) -> bun_jsc::bindgen::Error<'a> {
     heap.error_with_code(
         ErrorCode::BUN_TYPE_CHECKER_CLOSED,
@@ -190,7 +197,7 @@ impl TypeChecker {
     fn parse_update<'a>(
         &self,
         cx: &mut JsScope<'a>,
-        update: Option<&TypeCheckerSnapshotUpdate<'a>>,
+        update: JsLocal<'a>,
     ) -> Result<ValidatedUpdate, bun_jsc::bindgen::Error<'a>> {
         let heap = &cx.heap;
         // SAFETY: `heap` and `global` denote the same object; `global` is
@@ -200,7 +207,20 @@ impl TypeChecker {
         let mut open_selectors: Vec<Vec<u8>> = Vec::new();
         let mut sources: Vec<(Vec<u8>, Option<Vec<u8>>)> = Vec::new();
 
-        if let Some(update) = update {
+        let update_js = update.to_js();
+        if update_js.is_undefined() || update_js.is_null() {
+            // `updateSnapshot()` with no argument means an empty update.
+        } else if !update_js.is_object() {
+            return Err(heap.error_with_code(
+                ErrorCode::INVALID_ARG_TYPE,
+                format_args!("Bun.TypeChecker: update must be an object"),
+            ));
+        } else {
+            let update = TypeCheckerSnapshotUpdate {
+                open_projects: JsLocal::new(heap, update_js.get(global, b"openProjects")?.unwrap_or(JSValue::UNDEFINED)),
+                close_projects: JsLocal::new(heap, update_js.get(global, b"closeProjects")?.unwrap_or(JSValue::UNDEFINED)),
+                source_changes: JsLocal::new(heap, update_js.get(global, b"sourceChanges")?.unwrap_or(JSValue::UNDEFINED)),
+            };
             let cwd: &[u8] = &self.cwd;
             // closeProjects first, then openProjects (close-and-reopen reloads).
             for entry in js_array_items(heap, global, update.close_projects)? {
@@ -274,10 +294,31 @@ impl TypeChecker {
         &self,
         _this_value: bun_jsc::bindgen::JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        update: Option<&TypeCheckerSnapshotUpdate<'a>>,
+        update: JsLocal<'a>,
     ) -> Result<JsLocal<'a>, bun_jsc::bindgen::Error<'a>> {
-        self.check_not_closing(&cx.heap)?;
-        let validated = self.parse_update(cx, update)?;
+        // Contract (plan §§3.2/4.1/6): invalid arguments and a closed root
+        // reject the returned Promise; only the constructor throws
+        // synchronously. Rejected updates never mutate desired state.
+        if let Err(e) = self.check_not_closing(&cx.heap) {
+            let promise = JSPromiseStrong::init(cx.global());
+            let value = promise.value();
+            let mut p = promise;
+            let err_value = closed_error_value(cx.global());
+            let _ = p.swap().reject_as_handled(cx.global(), err_value);
+            let _ = e;
+            return Ok(JsLocal::new(&cx.heap, value));
+        }
+        let validated = match self.parse_update(cx, update) {
+            Ok(validated) => validated,
+            Err(e) => {
+                let promise = JSPromiseStrong::init(cx.global());
+                let value = promise.value();
+                let mut p = promise;
+                let err_value = e.to_error_value(cx.global());
+                let _ = p.swap().reject_as_handled(cx.global(), err_value);
+                return Ok(JsLocal::new(&cx.heap, value));
+            }
+        };
 
         // Apply to desired state; capture the per-call image.
         self.desired.with_mut(|desired| {
@@ -630,7 +671,7 @@ impl TypeCheckerProgram {
         cx: &mut JsScope<'a>,
         file: JsLocal<'a>,
     ) -> Result<JsLocal<'a>, bun_jsc::bindgen::Error<'a>> {
-        let promise = JSPromiseStrong::init(cx.global());
+        let mut promise = JSPromiseStrong::init(cx.global());
         let value = promise.value();
         if self.snapshot.lifetime.is_disposed() {
             let err_value = bun_jsc::ErrorCode::BUN_TYPE_CHECKER_SNAPSHOT_DISPOSED.fmt(
@@ -649,7 +690,9 @@ impl TypeCheckerProgram {
             let raw = match path_from_value(heap, file.to_js(), "file") {
                 Ok(raw) => raw,
                 Err(e) => {
-                    return Err(e);
+                    let err_value = e.to_error_value(cx.global());
+                    promise.swap().reject_as_handled(cx.global(), err_value)?;
+                    return Ok(JsLocal::new(&cx.heap, value));
                 }
             };
             Some(resolve_against(&self.snapshot.cwd, &raw))

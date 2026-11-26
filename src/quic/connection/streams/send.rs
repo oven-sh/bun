@@ -94,9 +94,12 @@ fn is_under_way(stream: &Stream) -> bool {
 impl Stream {
     /// How many bytes the application is left with once so many are `taken`.
     #[inline]
-    pub(crate) fn set_unwritten(&mut self, len: u64, taken: u64) {
-        self.unwritten = len;
-        let (has_much, end) = (len >= WRITE_CHUNK, self.send.end() + taken + len);
+    pub(crate) fn set_unwritten(&mut self, unwritten: u64, taken: u64) {
+        self.unwritten = unwritten;
+        let (has_much, end) = (
+            unwritten >= WRITE_CHUNK,
+            self.send.end() + taken + unwritten,
+        );
         self.flags.set(Flags::HAS_MUCH_TO_WRITE, has_much);
         (self.flags).set(Flags::WILL_BE_LONG, has_much && end > LONG_LEN);
     }
@@ -199,10 +202,10 @@ impl State {
         self.credit_ahead = self.credit_ahead.saturating_sub(len);
     }
 
-    /// A stream that has too much to pass keeps its turn.
+    /// A stream that has too much to pass keeps its turn, but does not try again in this round.
     pub(crate) fn on_turned_down(&self, id: StreamId, stream: &mut Stream) {
         if self.invitation(id, stream) == Some(Invitation::Passing) {
-            stream.write_round = 0;
+            stream.write_round = !self.write_round;
         }
     }
 
@@ -570,7 +573,7 @@ impl State {
                 let reserve = self.reserve_for(it, it.flags.contains(Flags::HAS_MUCH_TO_WRITE));
                 (is_long && self.may_pass(it.to_send())
                     || at == next_class && self.has_waited_long(it))
-                    && it.write_round != self.write_round
+                    && ![self.write_round, !self.write_round].contains(&it.write_round)
                     && it.send.unsent_len() + self.min_credit() <= LITTLE
                     && self.credit_ahead + reserve >= self.min_credit()
             })

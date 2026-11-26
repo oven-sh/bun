@@ -1,7 +1,7 @@
 //! Streams that are sent in order, by an application that writes when it is asked to.
 
 use bun_quic::Direction::Unidirectional;
-use bun_quic::{Connection, Duration, Side, StreamId};
+use bun_quic::{Connection, Duration, Event, Side, StreamId};
 
 use crate::harness::messages::{GET, OK};
 use crate::harness::network::Network;
@@ -289,6 +289,27 @@ fn a_stream_that_is_too_long_to_pass_keeps_its_turn() {
     raw.peer.send(blocked, b"a", false);
     raw.peer.send(other, &filler(9000, 9000), false);
     assert_eq!(raw.wake_after(0, other), 18_000);
+}
+
+#[test]
+fn a_stream_that_writes_nothing_is_asked_twice_at_most() {
+    let mut raw = asked("");
+    let [long, other, empty] = [(); 3].map(|()| raw.peer.open(Unidirectional));
+    raw.peer.send(long, &filler(0, 900_000), false);
+    raw.peer.send(other, &filler(0, 9000), false);
+    raw.advance(RTT);
+    raw.peer.polls = false;
+    raw.connection().want_write(StreamId(empty));
+    raw.send("ack");
+    let mut asked_for = Vec::new();
+    while asked_for.len() < 9
+        && let Some((_, _, Event::Stream(id, ..))) = raw.peer.endpoint.poll_event(raw.now)
+    {
+        raw.connection().write(id, &[]);
+        raw.connection().want_write(id);
+        asked_for.push(id.0);
+    }
+    assert_eq!(asked_for, [empty, long, other, empty]);
 }
 
 #[test]

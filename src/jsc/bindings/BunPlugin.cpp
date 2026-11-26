@@ -3830,8 +3830,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
                 if (evicted.add(importer).isNewEntry || stayed) {
                     JSC::AOT::releaseModuleAndImporters(globalObject, *requirer, std::nullopt);
                     evictReleased();
-                    if (stayed)
-                        keys.append(importer);
+                    keys.append(importer);
                     continue;
                 }
             }

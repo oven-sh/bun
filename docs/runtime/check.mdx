@@ -447,7 +447,7 @@ for (const log of result.logs) {
 
 ### `Bun.TypeChecker`
 
-`Bun.TypeChecker` runs the same checker as `bun check` from JavaScript and returns its diagnostics as structured values. The object model is inspired by TypeScript 7. Bun does not promise exact TypeScript 7.0.2 API compatibility. It also does not provide editor support through this API.
+`Bun.TypeChecker` runs the checker behind `bun check` from JavaScript and returns its diagnostics as structured values. Its object model follows the TypeScript 7 API, but Bun does not promise full compatibility with TypeScript 7.0.2. It does not provide editor support.
 
 ```ts check.ts icon="/icons/typescript.svg"
 await using checker = new Bun.TypeChecker({ cwd: process.cwd() });
@@ -471,13 +471,23 @@ for (const diagnostic of await project.program.getDiagnostics()) {
 }
 ```
 
-The checker resolves `cwd` when you construct it. The value defaults to `process.cwd()` and never changes for that checker. Pass an absolute native path, a `file:` URL, or a relative path, which resolves against `process.cwd()` at construction. If the process's working directory cannot be read, the constructor throws. A project is named by its config file, like in TypeScript 7: the path is used as given, and a directory does not stand for the `tsconfig.json` inside it. A path that does not name a readable config file, such as a missing file or a directory, gives no project and no error. The checker keeps it open, so the project appears in the first update after the file exists. Paths in `openProjects`, `closeProjects`, `sourceChanges`, and the lookup methods resolve against the checker `cwd`, not against a project's directory. A path can be a string or a `file:` URL.
+The checker resolves `cwd` once, when you construct it, and never changes it. `cwd` defaults to `process.cwd()`. Pass an absolute native path, a `file:` URL, or a relative path. Bun resolves a relative path against `process.cwd()` at construction. The constructor throws if Bun cannot read the working directory of the process.
 
-Paths are compared the way TypeScript 7 compares them. When the file system that holds `cwd` is case-insensitive, `SRC/a.ts` and `src/a.ts` name the same file, project, or overlay, in `openProjects`, `closeProjects`, `sourceChanges`, `getProject()`, and `getDiagnostics(file)`. Bun tests this once, when it constructs the checker. The names you pass are kept for what the checker reads and reports. On a case-sensitive file system, paths are compared exactly.
+You name a project by its config file, as in TypeScript 7. Bun uses the path as given, and a directory does not stand for the `tsconfig.json` inside it. A path that is not a readable config file, such as a missing file or a directory, gives no project and no error. The checker keeps that path open, so the project appears in the first update after the file exists.
 
-`updateSnapshot()` applies that call's project and source changes, then runs one full check on a background thread. Calls on one checker run in invocation order, and each call captures its own state before it queues. A later call's edits never appear in an earlier call's snapshot. The resolved snapshot is an immutable, materialized result. Bun does not retain a native checker session or program between snapshots. Each update performs a full check, including `updateSnapshot({})`. Bun makes no incremental-performance claim, and no change-notification hint is required: the next update reads the current disk state.
+Paths in `openProjects`, `closeProjects`, `sourceChanges`, and the lookup methods resolve against the `cwd` of the checker, not the directory of a project. Each path can be a string or a `file:` URL.
 
-Pass projects explicitly with `openProjects`. Like the TypeScript 7 API, a checker holds each project at most once. Opening a project that is already open does nothing, and one `closeProjects` entry closes it. Closing a project that is not open does nothing. Both lists are matched against the projects that were open before the update, so naming an open project in both closes it, and naming a closed project in both opens it. The snapshot lists the projects that the check reported, including projects with no diagnostics, sorted by config file path, which is the order TypeScript 7 uses. A project you open is listed. A project that it only references is not, because Bun reads it and does not check it, like `bun check -p`. Open it to check it, and it appears in the next snapshot. If a `tsconfig.json` has `references` and no files of its own, Bun follows the references as `bun check` does, and the snapshot lists each referenced project with its diagnostics. TypeScript 7 lists only the projects you opened in both cases. `getProject()` resolves its argument the same way as `openProjects` and returns `undefined` when the snapshot has no result for it. Project objects are new in each snapshot, even when the project did not change.
+Bun compares paths the way TypeScript 7 does. On a case-insensitive file system, `SRC/a.ts` and `src/a.ts` name the same file, project, or overlay. This holds in `openProjects`, `closeProjects`, `sourceChanges`, `getProject()`, and `getDiagnostics(file)`. Bun tests the file system that holds `cwd` once, when it constructs the checker. The checker keeps the names you pass for what it reads and reports. On a case-sensitive file system, Bun compares paths exactly.
+
+`updateSnapshot()` applies the project and source changes of that call, then runs one full check on a background thread. Calls on one checker run in the order you make them. Each call captures its own state before it queues, so the edits of a later call never appear in an earlier snapshot. A snapshot is an immutable result, and Bun keeps no native checker session or program between snapshots. Every update runs a full check, including `updateSnapshot({})`. The next update reads the current disk state, so you don't need to tell the checker about changes. Bun makes no promise about incremental performance.
+
+Pass projects with `openProjects`. As in the TypeScript 7 API, a checker holds each project at most once. Opening a project that is already open does nothing. One `closeProjects` entry closes a project, and closing a project that is not open does nothing. Bun matches both lists against the projects that were open before the update. A project named in both lists closes if it was open and opens if it was closed.
+
+The snapshot lists the projects that the check reported, including projects with no diagnostics. Bun sorts them by config file path, as TypeScript 7 does. A project you open is listed. A project that it only references is not, because Bun reads it without checking it, like `bun check -p`. Open the referenced project to check it. It then appears in the next snapshot.
+
+If a `tsconfig.json` has `references` and no files of its own, Bun follows the references as `bun check` does. The snapshot then lists each referenced project with its diagnostics. In both cases, TypeScript 7 lists only the projects you opened.
+
+`getProject()` resolves its argument like `openProjects` does. It returns `undefined` when the snapshot has no result for that project. Each snapshot has new project objects, even for a project that did not change.
 
 Replace an unsaved buffer with a persistent source overlay:
 
@@ -503,29 +513,55 @@ using disk = await checker.updateSnapshot({
 });
 ```
 
-Removing an overlay reveals the file on disk again. Removing an overlay for a file that exists only in memory removes that file from the next check. `undefined` is not a valid overlay value. Validation of one update is atomic: a failed validation applies no part of the update.
+Removing an overlay shows the file on disk again. If the file exists only in memory, removing its overlay removes the file from the next check. `undefined` is not a valid overlay value. Bun validates each update atomically: if validation fails, Bun applies no part of the update.
 
-The earlier snapshot still shows the old text after you take a newer snapshot. Taking `next` never mutates `snapshot`. A snapshot stays valid until you dispose it or close the checker. `getProjects()`, `getProject()`, and `configFileName` are local getters. They do not run the checker. Each call to `getProjects()` and each read of `program` returns new wrapper objects over the same snapshot data, so compare projects by `configFileName`, not by identity. `getDiagnostics()` is asynchronous by design, but it reads the materialized snapshot and does not run the checker again. Each call returns fresh arrays and diagnostic objects, so mutating a returned value changes neither the snapshot nor a later result.
+An earlier snapshot keeps its old text after you take a newer one. Taking `next` never changes `snapshot`. A snapshot stays valid until you dispose it or close the checker.
 
-Type errors resolve the snapshot as diagnostics. They do not reject `updateSnapshot()`. Invalid arguments, an update after `close()`, unreadable sources, and incomplete checks reject the returned promise. A rejected update never produces a snapshot that looks clean. `getDiagnostics(file)` returns only that project's diagnostics for one file, in checker order. `file` can also be a `bundled:///libs/...` name, which is compared as it is, to get the diagnostics that are in one of Bun's embedded libraries. `file` must be a file of the project's program or a file that has a diagnostic in it, such as its `tsconfig.json`. Any other name rejects with `ERR_INVALID_ARG_VALUE`, so a misspelled name does not read as clean, and TypeScript 7 rejects it too. A clean file of the program returns an empty array. Filtering by file keeps each diagnostic's related information attached, even when the related location is in another file.
+`getProjects()`, `getProject()`, and `configFileName` are local getters. They do not run the checker. Each call to `getProjects()` and each read of `program` returns new wrapper objects over the same snapshot data, so compare projects by `configFileName`, not by identity. `getDiagnostics()` is asynchronous, but it reads the snapshot and does not run the checker again. Each call returns new arrays and diagnostic objects, so changing a returned value affects neither the snapshot nor a later result.
 
-A diagnostic contains a `fileName`, `code`, string `category`, and rendered `text`. `category` is `"error"`, `"warning"`, `"suggestion"`, or `"message"`. `code` has no `TS` prefix. `fileName` is an absolute native path. Embedded libraries keep a `bundled:///libs/...` name. `pos` and `end` are zero-based UTF-16 code-unit offsets, and are `0` when a diagnostic has no source range. A source range also contains `line`, `column`, `endLine`, and `endColumn`. The lines and columns are one-based, and the columns count UTF-16 code units. Those four are absent when a diagnostic has no source range. `messageChain` holds the structured elaboration under `text`, when the checker provides it. Its entries are diagnostics of their own, like in TypeScript 7. Each has a `code`, a `category`, a `text` that is only its own line, and a nested `messageChain` when there is one. The elaboration of a type error repeats the `fileName` and the range of the error. The elaboration of what the configuration or the program reports, such as the note under a removed compiler option, has no `fileName`, and `pos` and `end` of `0`. TypeScript 7 has `-1` for them. `relatedInformation` holds related source locations, such as where a name was declared, and keeps the same fields recursively.
+Type errors are diagnostics in the resolved snapshot. They do not reject `updateSnapshot()`. These cases reject the returned promise: invalid arguments, an update after `close()`, unreadable sources, and incomplete checks. A rejected update never produces a snapshot that looks clean.
 
-`dispose()` invalidates one snapshot immediately and releases its diagnostic data. It is idempotent and never throws. The same invalidation is available through `Symbol.dispose`. After disposal, `getProjects()` and `getProject()` throw, `configFileName` and `program` throw, and `getDiagnostics()` rejects. Each of those errors uses `ERR_BUN_TYPE_CHECKER_SNAPSHOT_DISPOSED`. Disposing one snapshot does not affect another snapshot or close the checker.
+`getDiagnostics(file)` returns the diagnostics of one file in that project, in checker order. `file` must be a file of the program of the project, or a file that has a diagnostic, such as its `tsconfig.json`. Any other name rejects with `ERR_INVALID_ARG_VALUE`, so a misspelled name never looks clean. TypeScript 7 rejects it too. A clean file of the program returns an empty array. `file` can also be a `bundled:///libs/...` name, which Bun compares as it is, to get the diagnostics in one of Bun's embedded libraries. Filtering by file keeps the related information of each diagnostic, even when the related location is in another file.
 
-`close()` rejects every update that has not been delivered with `ERR_BUN_TYPE_CHECKER_CLOSED`, stops every live snapshot from answering, and resolves after a native check that is already running finishes. That check's update rejects with the same code, just before `close()` resolves, and its result is discarded. Closing does not cancel the native work. Repeated `close()` calls return the same completion promise, and `Symbol.asyncDispose` delegates to `close()`. An update after close rejects with `ERR_BUN_TYPE_CHECKER_CLOSED`, including an update whose argument getters close the checker while it is being read. Like every other failure of `updateSnapshot()`, this is a rejection and never a synchronous throw.
+A diagnostic has these fields:
 
-There is no synchronous checking variant and no retained semantic session. This API does not provide semantic type, symbol, or signature queries, AST or source-file objects, emit or declaration output, direct compiler-option overrides, parsed-config or resolved-option introspection, inferred projects or open files, watch subscriptions, cancellation, or editor and language-server features.
+- `fileName`: an absolute native path. Embedded libraries keep a `bundled:///libs/...` name.
+- `code`: the error number, without a `TS` prefix.
+- `category`: `"error"`, `"warning"`, `"suggestion"`, or `"message"`.
+- `text`: the rendered message.
+- `pos` and `end`: zero-based UTF-16 code-unit offsets. Both are `0` when the diagnostic has no source range.
+- `line`, `column`, `endLine`, and `endColumn`: one-based, and the columns count UTF-16 code units. These four are absent when the diagnostic has no source range.
+- `messageChain`: the structured elaboration under `text`, when the checker provides one. Its entries are diagnostics of their own, as in TypeScript 7. Each has a `code`, a `category`, a `text` with only its own line, and a nested `messageChain` if there is one.
+- `relatedInformation`: related source locations, such as where a name was declared. It has the same fields, recursively.
+
+The elaboration of a type error repeats the `fileName` and the range of the error. The elaboration of what the configuration or the program reports, such as the note under a removed compiler option, has no `fileName`, and its `pos` and `end` are `0`. TypeScript 7 uses `-1`.
+
+`dispose()` invalidates one snapshot at once and releases its diagnostic data. It is idempotent and never throws. `Symbol.dispose` does the same. After disposal, `getProjects()`, `getProject()`, `configFileName`, and `program` throw, and `getDiagnostics()` rejects. All of them use `ERR_BUN_TYPE_CHECKER_SNAPSHOT_DISPOSED`. Disposing a snapshot does not affect other snapshots and does not close the checker.
+
+`close()` rejects every update that Bun has not delivered, with `ERR_BUN_TYPE_CHECKER_CLOSED`. It also stops every live snapshot from answering. If a native check is already running, `close()` waits for it to finish and then resolves. The update for that check rejects with the same code just before `close()` resolves, and Bun discards its result. Closing does not cancel native work. Repeated `close()` calls return the same promise, and `Symbol.asyncDispose` calls `close()`.
+
+An update after `close()` rejects with `ERR_BUN_TYPE_CHECKER_CLOSED`. That includes an update whose argument getters close the checker while Bun reads them. As with every other failure of `updateSnapshot()`, this is a rejection and never a synchronous throw.
+
+`Bun.TypeChecker` has no synchronous checking and no retained semantic session. It does not provide:
+
+- semantic type, symbol, or signature queries
+- AST or source-file objects
+- emit or declaration output
+- direct compiler-option overrides
+- parsed-config or resolved-option introspection
+- inferred projects or open files
+- watch subscriptions or cancellation
+- editor or language-server features
 
 #### Differences from the TypeScript 7 API
 
 If you move code between the TypeScript 7 API and `Bun.TypeChecker`, these differences affect the diagnostics you get. They follow from running the same checks as `bun check`.
 
-- **One list, in the order `bun check` prints.** TypeScript 7 has one method for each kind of diagnostic: syntactic, semantic, declaration, program, global, and config file. `getDiagnostics()` returns all of them as `tsc` would print them: diagnostics without a file first, then by file path and position. A diagnostic that TypeScript 7 returns from two methods appears once. `end` is never before `pos`. TypeScript 7 returns a range that ends before it starts for some syntax errors in a `tsconfig.json`.
-- **A syntax error or an invalid option stops the type check of that project.** Like `tsc` and [`bun check`](#stopped-before-type-checking), the project's diagnostics then hold those errors and no type errors. The TypeScript 7 API still returns the type errors of files that parse. Other projects in the same snapshot are not affected.
-- **Suggestions are not reported.** Bun does not ask the checker for them, so there are no hints for unused variables while `noUnusedLocals` is off, no deprecation hints, and no `reportsUnnecessary` or `reportsDeprecated` fields. Top-level diagnostics are not expected to have the category `"suggestion"`.
+- **One list, in the order `bun check` prints.** TypeScript 7 has one method for each kind of diagnostic: syntactic, semantic, declaration, program, global, and config file. `getDiagnostics()` returns all of them in the order `tsc` prints: diagnostics without a file first, then by file path and position. A diagnostic that TypeScript 7 returns from two methods appears once. `end` is never before `pos`. For some syntax errors in a `tsconfig.json`, TypeScript 7 returns a range that ends before it starts.
+- **A syntax error or an invalid option stops the type check of that project.** As in `tsc` and [`bun check`](#stopped-before-type-checking), the diagnostics of the project then hold those errors and no type errors. The TypeScript 7 API still returns the type errors of files that parse. Other projects in the same snapshot are not affected.
+- **Suggestions are not reported.** Bun does not ask the checker for them. There are no hints for unused variables while `noUnusedLocals` is off, no deprecation hints, and no `reportsUnnecessary` or `reportsDeprecated` fields. Top-level diagnostics are not expected to have the category `"suggestion"`.
 - **No identifiers, file lists, or timing.** `Snapshot` and `Project` have no `id`, `Snapshot` has no `isDisposed()`, and a project has no list of its source files. There is no timing or profiling API.
-- **Paths are strings and `URL` objects.** TypeScript 7 also accepts `{ uri }` objects, which `Bun.TypeChecker` rejects with `ERR_INVALID_ARG_TYPE`. A string is always a native path, so a `file:` URL in a string is not a URL. Pass a `URL` object.
+- **Paths are strings and `URL` objects.** TypeScript 7 also accepts `{ uri }` objects. `Bun.TypeChecker` rejects them with `ERR_INVALID_ARG_TYPE`. Bun always reads a string as a native path, so a `file:` URL in a string is not a URL. Pass a `URL` object.
 
 ### `bun compile`
 

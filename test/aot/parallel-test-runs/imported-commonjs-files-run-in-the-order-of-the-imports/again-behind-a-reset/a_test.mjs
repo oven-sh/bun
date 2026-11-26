@@ -4,7 +4,7 @@ const tried = async load => {
     await load();
     console.log("loaded");
   } catch (error) {
-    console.log("failed", error.code ?? error.message);
+    console.log("failed", error.code ?? error.message.replace(import.meta.dir, ""));
   }
 };
 test("among-es-modules", async () => {

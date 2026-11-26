@@ -10,6 +10,7 @@
 // ports, no sleeps. Type-level coverage lives in
 // test/integration/bun-types/fixture/type-checker.ts.
 import { describe, expect, test } from "bun:test";
+import { typeCheckerSnapshotDataLiveCount as live } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { bunEnv, bunExe, isRoot, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { chmodSync, writeFileSync } from "node:fs";
@@ -1125,6 +1126,27 @@ describe("Bun.TypeChecker: GC and ownership", () => {
       }).toEqual({ snapshots: true, projects: true, programs: true });
     });
   }
+
+  test("dispose() releases the snapshot's data at once, and only once", async () => {
+    using dir = project({ "a.ts": `export const answer: string = 42;\n` });
+    await using checker = makeChecker(String(dir));
+    const snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+    const program = snapshot.getProject("tsconfig.json").program;
+    expect((await program.getDiagnostics("a.ts")).map((d: any) => d.code)).toEqual([2322]);
+
+    // No await between the reads: other tests' snapshots cannot change the count.
+    const before = live();
+    snapshot.dispose();
+    const afterDispose = live();
+    snapshot.dispose();
+    const afterSecondDispose = live();
+    expect({ released: before - afterDispose, again: afterDispose - afterSecondDispose }).toEqual({
+      released: 1,
+      again: 0,
+    });
+    // The project and program views still hold the snapshot, but not its data.
+    await expect(program.getDiagnostics()).rejects.toMatchObject({ code: DISPOSED });
+  });
 
   test("a live snapshot survives GC and queued checks do not disturb it", async () => {
     using dir = project({ "a.ts": `export const answer: string = 42;\n` });

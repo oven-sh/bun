@@ -7,6 +7,7 @@ pub(crate) mod convert;
 pub(crate) mod state;
 pub(crate) mod task;
 
+use core::sync::atomic::{AtomicUsize, Ordering};
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -408,7 +409,7 @@ struct ValidatedUpdate {
 pub(crate) struct TypeCheckerSnapshot {
     ref_count: bun_ptr::RefCount<TypeCheckerSnapshot>,
     /// `None` once disposed (or once the root was closed and this was read).
-    data: JsCell<Option<Rc<bun_type_checker::SnapshotData>>>,
+    data: JsCell<Option<Rc<HeldData>>>,
     root_closed: Rc<Cell<bool>>,
     cwd: Box<[u8]>,
 }
@@ -418,7 +419,7 @@ impl TypeCheckerSnapshot {
     fn data<'a>(
         &self,
         heap: &JsHeap<'a>,
-    ) -> Result<Rc<bun_type_checker::SnapshotData>, bun_jsc::bindgen::Error<'a>> {
+    ) -> Result<Rc<HeldData>, bun_jsc::bindgen::Error<'a>> {
         if self.root_closed.get() {
             self.data.set(None);
         }
@@ -464,6 +465,36 @@ impl TypeCheckerSnapshot {
     }
 }
 
+static LIVE_SNAPSHOT_DATA: AtomicUsize = AtomicUsize::new(0);
+
+/// The data of one delivered snapshot, counted while it is alive.
+pub(crate) struct HeldData(bun_type_checker::SnapshotData);
+
+impl HeldData {
+    fn new(data: bun_type_checker::SnapshotData) -> Self {
+        LIVE_SNAPSHOT_DATA.fetch_add(1, Ordering::Relaxed);
+        Self(data)
+    }
+}
+
+impl Drop for HeldData {
+    fn drop(&mut self) {
+        LIVE_SNAPSHOT_DATA.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+impl core::ops::Deref for HeldData {
+    type Target = bun_type_checker::SnapshotData;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// `bun:internal-for-testing`: snapshot data that a snapshot has not yet released, in every VM of the process.
+pub(crate) fn snapshot_data_live_count() -> usize {
+    LIVE_SNAPSHOT_DATA.load(Ordering::Relaxed)
+}
+
 pub(crate) fn make_snapshot_js(
     global: &JSGlobalObject,
     data: bun_type_checker::SnapshotData,
@@ -472,7 +503,7 @@ pub(crate) fn make_snapshot_js(
 ) -> bun_jsc::JsResult<JSValue> {
     let snapshot = TypeCheckerSnapshot {
         ref_count: bun_ptr::RefCount::init(),
-        data: JsCell::new(Some(Rc::new(data))),
+        data: JsCell::new(Some(Rc::new(HeldData::new(data)))),
         root_closed,
         cwd,
     };

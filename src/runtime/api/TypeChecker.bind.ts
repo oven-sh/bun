@@ -117,3 +117,5 @@ export const TypeCheckerSnapshot = b.class({
     },
   },
 });
+
+export const snapshotDataLiveCount = b.fn({ returns: b.usize });

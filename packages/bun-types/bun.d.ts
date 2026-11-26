@@ -3222,12 +3222,13 @@ declare module "bun" {
 
     /**
      * Structured elaboration of {@link Bun.TypeCheckerDiagnostic.text},
-     * when the checker provides it. Entries have `pos` and `end` (`0`, they
-     * are not source locations), `code`, `category`, `text` and, when
-     * nested, a `messageChain`. Unlike typescript-go, an entry has no
-     * `fileName` and no range of its own: typescript-go repeats the
-     * location of the parent diagnostic, or uses `-1` when the parent has
-     * none.
+     * when the checker provides it. Entries are diagnostics of their own,
+     * like in typescript-go: each has a `code`, a `category`, a `text` that
+     * is only its own line, and, when nested, a `messageChain`. The
+     * elaboration of a type error repeats the `fileName` and the range of
+     * the error. The elaboration of what the configuration or the program
+     * reports, such as the note under a removed compiler option, has no
+     * `fileName`, and `pos` and `end` of `0`, where typescript-go has `-1`.
      */
     readonly messageChain?: readonly TypeCheckerDiagnostic[] | undefined;
     /**
@@ -3313,11 +3314,11 @@ declare module "bun" {
     /**
      * Returns all diagnostics for this project, or only those for `file`.
      *
-     * A clean file and a file with no matching diagnostics both return an
-     * empty array. Diagnostics are in the order `bun check` prints them,
-     * and filtering by file keeps each diagnostic's related information
-     * attached to it. A project with a syntax error or an invalid compiler
-     * option has those errors and no type errors, like `bun check`.
+     * A clean file of the program returns an empty array. Diagnostics are in
+     * the order `bun check` prints them, and filtering by file keeps each
+     * diagnostic's related information attached to it. A project with a
+     * syntax error or an invalid compiler option has those errors and no
+     * type errors, like `bun check`.
      * The returned array and diagnostic objects are fresh values; mutating
      * them does not affect the snapshot.
      *
@@ -3325,12 +3326,16 @@ declare module "bun" {
      * {@link Bun.TypeCheckerSnapshot.getProject}'s argument, and compared
      * case-insensitively when the file system is. A string such as
      * `bundled:///libs/lib.es5.d.ts` is compared as it is, to select the
-     * diagnostics in one of Bun's embedded libraries.
+     * diagnostics in one of Bun's embedded libraries. It must be a file of
+     * the project's program, or a file that has a diagnostic in it, such as
+     * its `tsconfig.json`: any other name rejects, so a misspelled name does
+     * not read as clean.
      */
     /**
      * Rejects with `ERR_BUN_TYPE_CHECKER_SNAPSHOT_DISPOSED` when the owning
      * snapshot has been disposed, and with `ERR_INVALID_ARG_TYPE` /
-     * `ERR_INVALID_ARG_VALUE` for an invalid `file` argument. Never runs
+     * `ERR_INVALID_ARG_VALUE` for an invalid `file` argument or one that is not
+     * a file of the project. Never runs
      * the checker; reads the materialized snapshot.
      */
     getDiagnostics(file?: TypeCheckerPath): Promise<readonly TypeCheckerDiagnostic[]>;
@@ -3366,9 +3371,11 @@ declare module "bun" {
     /**
      * Every project result the check produced, sorted by config file path
      * like TypeScript 7, including referenced projects and projects with no
-     * diagnostics. A referenced project that was not opened is listed with
-     * no diagnostics because it is not checked, so an empty list for it does
-     * not mean it is clean.
+     * diagnostics. A project that was opened is listed. A project that it
+     * only references is not, because it is read and not checked, unless the
+     * opened `tsconfig.json` has `references` and no files of its own: Bun
+     * then follows them like `bun check`, and lists each with its
+     * diagnostics.
      *
      * Local and non-blocking: this does not run the checker.
      */

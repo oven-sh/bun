@@ -3139,9 +3139,10 @@ impl<'p, 's> Checker<'p, 's> {
         });
     }
 
-    /// True if the innermost query is about the type of a variable that isn't declared in any of the expressions being checked
-    /// as arguments, and a visible loop asks for it. Nothing about those calls is a context for its initializer, and tsgo
-    /// stores its type. Without the loop, the next check of the arguments finds the same.
+    /// True if the innermost query is about the type of a variable that isn't declared in any of
+    /// the expressions being checked as arguments, and a visible loop in its own function asks for
+    /// it. Nothing about those calls is a context for its initializer, and tsgo stores its type.
+    /// Without the loop, the next check of the arguments finds the same.
     #[cold]
     #[inline(never)]
     fn is_declared_outside_of_inference(&self) -> bool {
@@ -3162,14 +3163,16 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         };
         let at = self.hir(file)[pat].pos;
-        matches!(
-            root_declaration(self.bound(file), pat),
-            crate::bind::PatParent::Var(_)
-        ) && self.inference_contexts.iter().all(|it| {
-            let is_inside =
-                || (self.start_of(file, it.node)..self.end_of_expr(file, it.node)).contains(&at);
-            it.file != file || !is_inside()
-        })
+        let crate::bind::PatParent::Var(variable) = root_declaration(self.bound(file), pat) else {
+            return false;
+        };
+        self.is_in_function_of_innermost_loop(file, variable)
+            && self.inference_contexts.iter().all(|it| {
+                let is_inside = || {
+                    (self.start_of(file, it.node)..self.end_of_expr(file, it.node)).contains(&at)
+                };
+                it.file != file || !is_inside()
+            })
     }
 
     #[inline]

@@ -3371,6 +3371,24 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// True if `variable` is declared in the function that has the innermost loop in progress.
+    pub(super) fn is_in_function_of_innermost_loop(
+        &self,
+        file: FileId,
+        variable: VarDeclId,
+    ) -> bool {
+        let Some(reference) = self.flow_loops.last().map(|pushed| &pushed.1) else {
+            return false;
+        };
+        let bound = self.bound(file);
+        let statement = bound.var_stmt[variable.idx()];
+        reference.file == file
+            && reference.at.is_some()
+            && statement.is_some()
+            && self.enclosing_fn_of_expr(file, reference.at)
+                == self.enclosing_fn(file, bound.parent_of_stmt(statement))
+    }
+
     /// `checkIdentifier`'s `declarationContainer`, for a variable or parameter in `file`.
     fn declaration_container(&self, file: FileId, symbol: SymbolId) -> Option<Container> {
         let bound = self.bound(file);

@@ -1,6 +1,7 @@
 #![feature(adt_const_params, allocator_ext)]
 #![feature(core_io, core_io_borrowed_buf, vec_split_at_spare)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
+#![feature(portable_simd)] // `Utf16OffsetTable` finds the starts of characters 32 bytes at a time
 #![feature(freeze)] // `impl_field_parent!`'s `shared` arm rejects `Freeze` children at compile time
 #![allow(non_snake_case)]
 // bun_core is the T0 foundation crate that bun_threading, bun_sys, and

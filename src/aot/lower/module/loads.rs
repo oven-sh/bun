@@ -1143,7 +1143,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.continue_in(done);
     }
 
-    fn add_to_set_of_requires(&mut self, set: VariableKey, made: ValueId) {
+    pub(in crate::lower) fn add_to_set_of_requires(&mut self, set: VariableKey, made: ValueId) {
         let variable = self.file.ensure_variable(set);
         let held = self.builder.get_module_variable(variable);
         let requires = self.builder.create_variable(None);
@@ -1393,6 +1393,34 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    fn emit_test_of_own_require(&mut self, callee: ValueId) -> ValueId {
+        let expected = self.emit_expected_callee(BuiltinId::ModuleRequire);
+        let is_expected = self.builder.strict_eq(callee, expected);
+        if !self.file.keeps_requires_of_runs() {
+            return is_expected;
+        }
+        let is_own = self.builder.create_variable(None);
+        let of_this_run = self.create_block();
+        let of_other_run = self.create_block();
+        let decided = self.create_block();
+        self.builder
+            .branch(is_expected, Edge::to(of_this_run), Edge::to(of_other_run));
+
+        self.continue_in(of_this_run);
+        let yes = self.builder.boolean(true);
+        self.builder.write_variable(is_own, yes);
+        self.jump(decided);
+
+        self.continue_in(of_other_run);
+        let kept = VariableKey::RequiresMadeForOwnFile(self.file.file);
+        let is_kept = self.emit_test_of_set_of_requires(kept, callee);
+        self.builder.write_variable(is_own, is_kept);
+        self.jump(decided);
+
+        self.continue_in(decided);
+        self.builder.read_variable(is_own)
+    }
+
     fn emit_test_of_method(
         &mut self,
         callee: Callee,
@@ -1415,10 +1443,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
         self.continue_in(method_is_expected);
         let is_require = match require {
-            OwnRequire::OfFile => {
-                let expected_receiver = self.emit_expected_callee(BuiltinId::ModuleRequire);
-                self.builder.strict_eq(receiver, expected_receiver)
-            }
+            OwnRequire::OfFile => self.emit_test_of_own_require(receiver),
             OwnRequire::Made
             | OwnRequire::MadeForPath(_)
             | OwnRequire::OfOtherFile(_)
@@ -1487,10 +1512,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let referrer = self.referrer_of(site);
         let spelled_modules = candidates.spelled_modules();
         let is_answered_by_program = |spelled: &&SpelledModule| {
-            !matches!(spelled.module, ModuleRef::External { .. })
-                && does_import_meta_resolve_ask_resolver(
-                    self.file.queries.atom_bytes(spelled.spelling),
-                )
+            // A name among others brings no built-in module into the program, so the resolver answers for one.
+            !matches!(
+                spelled.module,
+                ModuleRef::External { .. } | ModuleRef::Runtime(_)
+            ) && does_import_meta_resolve_ask_resolver(
+                self.file.queries.atom_bytes(spelled.spelling),
+            )
         };
         let answered: Vec<&SpelledModule> = spelled_modules
             .iter()
@@ -3057,6 +3085,9 @@ fn lower_tested_call(
     lowering.did_lower_callee_of_site(callee.function);
     let mut other_callee = callee;
     let condition = match test {
+        CalleeTest::Expected(BuiltinId::ModuleRequire) => {
+            lowering.emit_test_of_own_require(callee.function)
+        }
         CalleeTest::Expected(expected) => {
             let expected = lowering.emit_expected_callee(expected);
             lowering.builder.strict_eq(callee.function, expected)
@@ -3097,6 +3128,11 @@ fn lower_tested_call(
     let other = lowering.create_block();
     let done = lowering.create_block();
     let (if_true, if_false) = match test {
+        CalleeTest::Expected(BuiltinId::ModuleRequire)
+            if lowering.file.keeps_requires_of_runs() =>
+        {
+            (Edge::to(matched), Edge::to(other))
+        }
         CalleeTest::Expected(_) => {
             other_callee.function = lowering.builder.add_edge_result(other);
             other_callee.key = None;

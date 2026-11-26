@@ -76,6 +76,9 @@
   "src/runtime/cli/open.rs": {
     "thread spawn": 1
   },
+  "src/runtime/cli/pm_diff_command.rs": {
+    "thread spawn": 1
+  },
   "src/runtime/cli/publish_command.rs": {
     "thread spawn": 1
   },
@@ -197,7 +200,9 @@
     "WorkPool::schedule*": 1
   },
   "src/runtime/webcore/blob/fd_job.rs": {
-    "WorkPool::schedule*": 1
+    "unsafe impl Waiter": [
+      "Parked"
+    ]
   },
   "src/runtime/webcore/fetch/FetchTasklet.rs": {
     "HTTPThread::schedule": 1

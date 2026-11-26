@@ -1561,7 +1561,6 @@ pub(crate) mod __gated_printer {
         pub(crate) prev_op_end: i32,
         pub(crate) prev_num_end: i32,
         pub(crate) prev_reg_exp_end: i32,
-        pub(crate) call_target: Option<ExprData>,
         pub(crate) writer: W,
 
         pub(crate) renamer: rename::Renamer<'a>,
@@ -3412,9 +3411,7 @@ pub(crate) mod __gated_printer {
                         }
                     }
                     // We only want to generate an unbound eval() in CommonJS
-                    self.call_target = Some(e.target.data);
-
-                    let is_unbound_eval = !e.is_direct_eval
+                    let is_unbound_eval = e.kind != E::CallKind::DirectEval
                         && self.is_unbound_eval_identifier(e.target)
                         && e.optional_chain.is_none();
 
@@ -3423,10 +3420,8 @@ pub(crate) mod __gated_printer {
                         self.print_space();
                         self.print_expr(e.target, Level::Postfix, ExprFlag::none());
                         self.print(b")");
-                    } else if let ExprData::ECommonjsExportIdentifier(id) = e.target.data {
-                        self.print_commonjs_export_identifier(id, e.target.loc, true);
                     } else {
-                        self.print_expr(e.target, Level::Postfix, target_flags);
+                        self.print_callee(e.target, target_flags);
                     }
 
                     if e.optional_chain == Some(js_ast::OptionalChain::Start) {
@@ -4125,23 +4120,7 @@ pub(crate) mod __gated_printer {
 
                     if let Some(tag) = &e.tag {
                         self.add_source_mapping(expr.loc);
-                        // Optional chains are forbidden in template tags
-                        // `Expr::is_optional_chain` is gated upstream; inline its body.
-                        let is_optional_chain = match &expr.data {
-                            ExprData::EDot(d) => d.optional_chain.is_some(),
-                            ExprData::EIndex(i) => i.optional_chain.is_some(),
-                            ExprData::ECall(c) => c.optional_chain.is_some(),
-                            _ => false,
-                        };
-                        if is_optional_chain {
-                            self.print(b"(");
-                            self.print_expr(*tag, Level::Lowest, ExprFlag::none());
-                            self.print(b")");
-                        } else if let ExprData::ECommonjsExportIdentifier(id) = tag.data {
-                            self.print_commonjs_export_identifier(id, tag.loc, true);
-                        } else {
-                            self.print_expr(*tag, Level::Postfix, ExprFlag::none());
-                        }
+                        self.print_callee(tag.expr, ExprFlag::none());
                     } else {
                         self.add_source_mapping(expr.loc);
                     }
@@ -4233,24 +4212,10 @@ pub(crate) mod __gated_printer {
                             let import_record =
                                 self.import_record(namespace.import_record_index as usize);
                             if namespace.was_originally_property_access {
-                                let mut wrap = false;
                                 did_print = true;
-
-                                if let Some(target) = &self.call_target {
-                                    wrap = e.was_originally_identifier()
-                                        && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_));
-                                }
-
-                                if wrap {
-                                    self.print_whitespacer(ws!(b"(0, "));
-                                }
                                 self.print_space_before_identifier();
                                 self.add_source_mapping(expr.loc);
                                 self.print_namespace_alias(import_record, namespace);
-
-                                if wrap {
-                                    self.print(b")");
-                                }
                             } else if import_record
                                 .flags
                                 .contains(ImportRecordFlags::WAS_ORIGINALLY_REQUIRE)
@@ -4272,18 +4237,6 @@ pub(crate) mod __gated_printer {
 
                         if !did_print {
                             did_print = true;
-
-                            let wrap = if let Some(target) = &self.call_target {
-                                e.was_originally_identifier()
-                                    && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_))
-                            } else {
-                                false
-                            };
-
-                            if wrap {
-                                self.print_whitespacer(ws!(b"(0, "));
-                            }
-
                             self.print_space_before_identifier();
                             self.add_source_mapping(expr.loc);
                             self.print_symbol(namespace.namespace_ref);
@@ -4297,10 +4250,6 @@ pub(crate) mod __gated_printer {
                                 // TODO: addSourceMappingForName
                                 self.print_string_literal_utf8(alias, false);
                                 self.print(b"]");
-                            }
-
-                            if wrap {
-                                self.print(b")");
                             }
                         }
                     }
@@ -4553,6 +4502,16 @@ pub(crate) mod __gated_printer {
                 self.print(b"[");
                 self.print_string_literal_utf8(namespace.alias.slice(), false);
                 self.print(b"]");
+            }
+        }
+
+        /// The target of a call, or the tag of a template.
+        #[inline(always)] // Not one more stack frame for each link of "a()()()"
+        fn print_callee(&mut self, callee: Expr, flags: ExprFlagSet) {
+            if let ExprData::ECommonjsExportIdentifier(id) = callee.data {
+                self.print_commonjs_export_identifier(id, callee.loc, true);
+            } else {
+                self.print_expr(callee, Level::Postfix, flags);
             }
         }
 
@@ -6851,7 +6810,6 @@ pub(crate) mod __gated_printer {
                 prev_op_end: -1,
                 prev_num_end: -1,
                 prev_reg_exp_end: -1,
-                call_target: None,
                 writer,
                 renamer,
                 prev_stmt_tag: StmtTag::SEmpty,

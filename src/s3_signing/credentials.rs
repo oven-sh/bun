@@ -774,17 +774,17 @@ impl S3Credentials {
             });
         }
 
-        if contains_newline_or_cr(aws_content_hash)
-            || search_params.is_some_and(contains_newline_or_cr)
-            || acl.is_some_and(contains_newline_or_cr)
-            || storage_class.is_some_and(contains_newline_or_cr)
-            || content_md5.as_deref().is_some_and(contains_newline_or_cr)
-            || content_disposition.is_some_and(contains_newline_or_cr)
-            || content_encoding.is_some_and(contains_newline_or_cr)
-            || session_token.is_some_and(contains_newline_or_cr)
-            || contains_newline_or_cr(region)
-            || contains_newline_or_cr(&self.access_key_id)
-            || contains_newline_or_cr(&host)
+        if contains_newline_or_nul(aws_content_hash)
+            || search_params.is_some_and(contains_newline_or_nul)
+            || acl.is_some_and(contains_newline_or_nul)
+            || storage_class.is_some_and(contains_newline_or_nul)
+            || content_md5.as_deref().is_some_and(contains_newline_or_nul)
+            || content_disposition.is_some_and(contains_newline_or_nul)
+            || content_encoding.is_some_and(contains_newline_or_nul)
+            || session_token.is_some_and(contains_newline_or_nul)
+            || contains_newline_or_nul(region)
+            || contains_newline_or_nul(&self.access_key_id)
+            || contains_newline_or_nul(&host)
         {
             return Err(SignError::InvalidHeaderValue);
         }
@@ -1261,10 +1261,9 @@ impl CanonicalRequest {
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Returns true if the given slice contains any CR (\r) or LF (\n) characters,
-/// which would allow HTTP header injection if used in a header value.
-fn contains_newline_or_cr(value: &[u8]) -> bool {
-    strings::index_of_any(value, b"\r\n").is_some()
+/// Returns true if the given slice contains CR, LF or NUL, which a header value cannot hold.
+fn contains_newline_or_nul(value: &[u8]) -> bool {
+    strings::index_of_any(value, b"\r\n\0").is_some()
 }
 
 fn is_valid_host_component(value: &[u8]) -> bool {

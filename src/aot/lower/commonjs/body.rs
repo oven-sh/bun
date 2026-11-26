@@ -8,7 +8,9 @@ use smallvec::SmallVec;
 use super::variables::{BodyForm, WRAPPER_PARAMETERS, emit_entry_value};
 use crate::builtins::resolve::reads_what_wrapper_hands_in;
 use crate::ir::generated::{ECMAMode, Function, FunctionFlags, FunctionKind, FunctionSyntax};
-use crate::ir::{DeclaredType, FunctionId, FunctionKey, PropertyKeyId, TypeTable, ValueId};
+use crate::ir::{
+    DeclaredType, FunctionId, FunctionKey, PropertyKeyId, TypeTable, ValueId, VariableKey,
+};
 use crate::lower::function::{self, EntryArguments};
 use crate::lower::member::PropertyName;
 use crate::lower::scope::{BindingForm, BindingRef, ScopeSlot};
@@ -380,6 +382,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             entry_values.push((binding, value));
         }
         self.allocate_scope(scope, &entry_values);
+        if self.file.keeps_requires_of_runs() {
+            let require = emit_entry_value(self, CommonJsVariable::Require);
+            let kept = VariableKey::RequiresMadeForOwnFile(self.file.file);
+            self.add_to_set_of_requires(kept, require);
+        }
         self.instantiate_functions(scope);
     }
 }

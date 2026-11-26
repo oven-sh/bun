@@ -1,6 +1,6 @@
 import { diff } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
 
 // Unless a test says otherwise, what is expected is what the package `diff` 9.0.0 returns.
 
@@ -10,6 +10,10 @@ const short = (changes: Changes | undefined) =>
 const edits = (changes: Changes) => changes.reduce((n, c) => n + (c.added || c.removed ? c.count : 0), 0);
 const numbered = (count: number, line: (i: number) => unknown) =>
   Array.from({ length: count }, (_, i) => `${line(i)}\n`).join("");
+const repeat = (text: string, count: number) => Buffer.alloc(Buffer.byteLength(text) * count, text).toString();
+const rule = repeat("=", 67);
+// With 8 more bytes. wyhash multiplies those by the 8 before them xor this constant.
+const colliding = "x\xdb\x28\xb4\xa0\xd1\x7e\x03\xe7";
 
 function random(seed: number) {
   return (below: number) => ((seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) >>> 8) % below;
@@ -88,6 +92,11 @@ describe("lines", () => {
     expect(short(diff.lines(a, b))).toEqual(expected);
   });
 
+  test("more than 65,535 UTF-16 lines are kept", () => {
+    const kept = "世" + Buffer.alloc(200_000, "\n").toString();
+    expect(diff.lines(kept + "a", kept + "b").map(change => change.count)).toEqual([200_000, 1, 1]);
+  });
+
   test("ropes and substrings", () => {
     const base = numbered(50, i => `line ${i}`);
     const rope = base.slice(7) + "tail\n";
@@ -128,12 +137,81 @@ describe("words", () => {
     ["each punctuation mark", "f(a);", "f(a));", [["=", "f(a)", 4], ["+", ")", 1], ["=", ";", 1]]],
     ["Latin letters with diacritics", "naïve_1 x", "naïve_1 ḁ\u00ad", [["=", "naïve_1 ", 2], ["-", "x", 1], ["+", "ḁ\u00ad", 1]]],
     ["× and ˇ are not letters", "a×bˇc", "a×bˇd", [["=", "a×bˇ", 4], ["-", "c", 1], ["+", "d", 1]]],
+    ["µ is a letter", "5µs", "5ms", [["-", "5µs", 1], ["+", "5ms", 1]]],
+    ["Cyrillic", "привет мир", "привет друг", [["=", "привет ", 2], ["-", "мир", 1], ["+", "друг", 1]]],
+    ["Arabic, with its comma", "قط، كلب", "قطة، كلب", [["-", "قط", 1], ["+", "قطة", 1], ["=", "، كلب", 3]]],
+    ["Persian, with a non-joiner", "می\u200cروم", "می\u200cرود", [["-", "می\u200cروم", 1], ["+", "می\u200cرود", 1]]],
+    ["Devanagari, with its marks", "नमस्ते।", "नमस्कार।", [["-", "नमस्ते", 1], ["+", "नमस्कार", 1], ["=", "।", 1]]],
+    ["Hangul", "안녕 세계", "안녕 세상", [["=", "안녕 ", 2], ["-", "세계", 1], ["+", "세상", 1]]],
+    ["Hangul after Latin", "Bun을", "Node을", [["-", "Bun", 1], ["+", "Node", 1], ["=", "을", 1]]],
+    ["a combining accent", "cafe\u0301s", "cafe\u0301", [["-", "cafe\u0301s", 1], ["+", "cafe\u0301", 1]]],
+    ["each Thai character", "กข", "กค", [["=", "ก", 1], ["-", "ข", 1], ["+", "ค", 1]]],
     ["each CJK character", "世界", "世间", [["=", "世", 1], ["-", "界", 1], ["+", "间", 1]]],
     ["a surrogate pair", "a😀", "a😁", [["=", "a", 1], ["-", "😀", 1], ["+", "😁", 1]]],
     ["the spaces of \\s", "a\u00a0\ufeff\u2028b", "a\u0085b", [["=", "a", 1], ["-", "\u00a0\ufeff\u2028", 1], ["+", "\u0085", 1], ["=", "b", 1]]],
   ])("%s", (_, a, b, expected) => {
     expect(short(diff.words(a, b))).toEqual(expected);
   });
+});
+
+test("words and chars count the tokens of long texts", () => {
+  const text = repeat("one  two,\r\n😀é\u00a0\u3000世", 5000);
+  for (const [fn, count] of [
+    [diff.words, 9 * 5000],
+    [diff.chars, 16 * 5000],
+  ] as const) {
+    expect(short(fn(text + "(" + text, text + ")" + text))).toEqual([
+      ["=", text, count],
+      ["-", "(", 1],
+      ["+", ")", 1],
+      ["=", text, count],
+    ]);
+    expect(short(fn(text, ""))).toEqual([["-", text, count]]);
+  }
+});
+
+test("words splits every code unit", () => {
+  const scripts = ["Han", "Hiragana", "Katakana", "Yi", "Thai", "Lao", "Myanmar", "Khmer"]
+    .concat("Tai_Le", "New_Tai_Lue", "Tai_Tham", "Tai_Viet")
+    .map(script => String.raw`\p{sc=${script}}`);
+  const hangul = String.raw`\u1100-\u11FF\u3130-\u318F\uA960-\uA97F\uAC00-\uD7FF\uFFA0-\uFFDC`;
+  const others = String.raw`\xB7\u02C7\u02D8-\u02DD\u0387\u20D0-\u20FF\u3000-\u312F\u31A0-\u31BF\uA9E0-\uA9FF\uFE00-\uFE0F\uFF61-\uFF9F`;
+  const word = String.raw`[[\p{ID_Continue}\xAD\u0100-\u02FF\u200C\u200D]--[${scripts.join("")}${hangul}${others}\u{10000}-\u{10FFFF}]]`;
+  const token = new RegExp(String.raw`(\r?\n)|${word}+|[${hangul}]+|[^\S\n\r]+|[^${word}]`, "vg");
+  // Newer than the table of identifiers.
+  const isNew = /[\u088F\u0897\u0C5C\u0CDC\u1ACF-\u1AEB\u1C89\u1C8A\uA7CB-\uA7DC\uA7F1]/v;
+  const wrong: number[] = [];
+  const step = (unit: number) =>
+    (unit > 0x3400 && unit < 0xa400) || (unit > 0xac00 && unit < 0xd700) ? 0x100 : isDebug && unit > 0x300 ? 0x61 : 1;
+  for (let unit = 0; unit <= 0xffff; unit += step(unit)) {
+    const c = String.fromCharCode(unit);
+    if (isNew.test(c)) continue;
+    // Each neighbor comes a different number of times, so the count tells which one it is joined to.
+    const text = ["a" + c, " " + c, c + "\n", "\ud83d" + c, c + "\ude00"].map((it, i) => (it + ".").repeat(i + 1));
+    for (const part of [text.slice(0, 3).join(""), text.join("")]) {
+      if (diff.words(part, "")[0].count !== part.match(token)!.length) wrong.push(unit);
+    }
+  }
+  expect(wrong).toEqual([]);
+});
+
+test("chars counts surrogate pairs at odd and even offsets of a long text", () => {
+  for (const first of ["", "世"]) {
+    const text = first + repeat("😀", 40_000);
+    expect(diff.chars(text + "a", text + "b")[0].count).toBe(40_000 + first.length);
+  }
+});
+
+// The single unit is the low 16 bits of `(first << 10) + second`.
+test.each([
+  ["words, CRLF", diff.words, "\r\n", "\u340a"],
+  ["words, surrogate pair", diff.words, "😀", "\ud200"],
+  ["chars, surrogate pair", diff.chars, "😀", "\ud200"],
+])("%s: a token of two code units differs from a single unit", (_, fn, a, b) => {
+  expect(short(fn(a, b))).toEqual([
+    ["-", a, 1],
+    ["+", b, 1],
+  ]);
 });
 
 describe("chars", () => {
@@ -144,6 +222,8 @@ describe("chars", () => {
     ["same low surrogate", "\u{1F600}", "\u{1FA00}", [["-", "\u{1F600}", 1], ["+", "\u{1FA00}", 1]]],
     ["a pair and its first half", "😀", "\ud83d", [["-", "😀", 1], ["+", "\ud83d", 1]]],
     ["a pair and its second half", "😀", "\ude00", [["-", "😀", 1], ["+", "\ude00", 1]]],
+    ["lone surrogates count once each", "\ude00\ud83d\ud83d😀\ude00a", "\ude00\ud83d\ud83d😀\ude00b", [["=", "\ude00\ud83d\ud83d😀\ude00", 5], ["-", "a", 1], ["+", "b", 1]]],
+    ["a pair only in the common end", "ab😀", "ba😀", [["-", "a", 1], ["=", "b", 1], ["+", "a", 1], ["=", "😀", 1]]],
     ["a pair counts once", "😀😀a", "😀😀b", [["=", "😀😀", 2], ["-", "a", 1], ["+", "b", 1]]],
   ])("%s", (_, a, b, expected) => {
     expect(short(diff.chars(a, b))).toEqual(expected);
@@ -206,6 +286,28 @@ describe("arrays", () => {
     expect(reads).toBe(1);
   });
 
+  test("elements that only the call holds survive a collection", () => {
+    const fresh = (from: number) => {
+      const array: unknown[] = [];
+      for (let i = 0; i < 20; i++) {
+        Object.defineProperty(array, i, { get: () => (Bun.gc(true), { id: from + i }) });
+      }
+      return array;
+    };
+    const ids = (from: number) => Array.from({ length: 20 }, (_, i) => ({ id: from + i }));
+    expect(short(diff.arrays(fresh(0), fresh(20)))).toEqual([
+      ["-", ids(0), 20],
+      ["+", ids(20), 20],
+    ]);
+
+    const old: unknown[] = ids(0);
+    const overwrites = Object.defineProperty([], 0, { get: () => (old.fill(0), Bun.gc(true), "new") });
+    expect(short(diff.arrays(old, overwrites))).toEqual([
+      ["-", ids(0), 20],
+      ["+", ["new"], 1],
+    ]);
+  });
+
   test("what a getter throws is thrown", () => {
     const error = new Error("from the getter");
     const throwing = Object.defineProperty(Array(20).fill(0), 15, {
@@ -232,15 +334,38 @@ describe("of several shortest diffs, the one that diff picks", () => {
     ["words", diff.words, [".", ",", "\n", "(", "\r\n", "世"]],
     ["chars", diff.chars, ["a", "b", "c", "é", "\n"]],
     ["chars, UTF-16", diff.chars, ["a", "😀", "😁", "\u{1FA00}", "世"]],
+    ["chars, same low bits", diff.chars, ["a", "\u0161", "\u6161", "\ud861", "\u{1F461}", "\u{1F861}"]],
+    ["words, same low bits", diff.words, [".", "\u4e2e", "\u4f2e", "\u{1F42E}", "\u{1F82E}"]],
   ])("%s", (_, fn, alphabet) => {
     const next = random(1);
     for (let i = 0; i < 150; i++) {
-      // The longer ones take several attempts of the search, and rounds of more than 64 steps.
-      const [a, b] = similarPair(next, alphabet, i % 50 ? 16 : 200);
+      // The longer ones take rows of several words, or a search with rounds of more than 64 steps.
+      const [a, b] = similarPair(next, alphabet, i % 25 ? 16 : i % 50 ? 200 : 600);
       const expected = reference(a, b);
       expect({ a, b, changes: short(fn(a.join(""), b.join(""))) }).toEqual({ a, b, changes: expected });
     }
   });
+});
+
+test.each([64, 65, 128, 129, 256, 257])("of several shortest diffs, the one that diff picks: %d new tokens", length => {
+  const next = random(length);
+  const letters = (count: number) => Array.from({ length: count }, () => "abc"[next(1000) % 3]);
+  const [a, b] = [
+    ["<", ...letters(100), ">"],
+    ["(", ...letters(length - 2), ")"],
+  ];
+  expect(short(diff.chars(a.join(""), b.join("")))).toEqual(reference(a, b));
+});
+
+test("of several shortest diffs of long inputs with few edits, the one that diff picks", () => {
+  const next = random(7);
+  const alphabet = ["a\n", "b\n", "\n", "}\n"];
+  const between = Array.from({ length: 300 }, (_, i) => `${i}\n`);
+  for (let i = 0; i < 40; i++) {
+    const [first, last] = [similarPair(next, alphabet, 16), similarPair(next, alphabet, 16)];
+    const [a, b] = [0, 1].map(side => [`${side}:\n`, ...first[side], ...between, ...last[side], `${side}:\n`]);
+    expect(short(diff.lines(a.join(""), b.join("")))).toEqual(reference(a, b));
+  }
 });
 
 test("of several shortest diffs of unrelated inputs, the one that diff picks", () => {
@@ -248,6 +373,69 @@ test("of several shortest diffs of unrelated inputs, the one that diff picks", (
   for (const distinct of [3, 30, 300]) {
     const [a, b] = [0, 1].map(() => Array.from({ length: 300 + next(40) }, () => `${next(1000) % distinct}\n`));
     expect(short(diff.lines(a.join(""), b.join("")))).toEqual(reference(a, b));
+  }
+});
+
+describe("a long common end", () => {
+  const splits = [
+    ["lines", diff.lines, "x\n", "a\n", "y\n"],
+    ["words", diff.words, ",", ".", ";"],
+    ["chars", diff.chars, "x", "a", "y"],
+    ["chars, UTF-16", diff.chars, "世", "😀", "😁"],
+  ] as const;
+
+  test.each(splits)("%s: an edit moves into it as far as it can", (_, fn, removed, repeated, last) => {
+    // About 1,024 tokens of the end are tried first.
+    for (const count of [10, ...Array.from({ length: 8 }, (_, i) => 1024 + i), 5000]) {
+      const end = repeat(repeated, count);
+      expect(short(fn(removed + end + last, repeated + end + last))).toEqual([
+        ["-", removed, 1],
+        ["=", end, count],
+        ["+", repeated, 1],
+        ["=", last, 1],
+      ]);
+    }
+  });
+
+  test.each(splits)("%s: the part that no edit reaches is kept", (_, fn, ...alphabet) => {
+    const next = random(3);
+    const some = (length: number) => Array.from({ length }, () => alphabet[next(3)]);
+    const [a, b, near, far] = [some(20), some(20), some(200), some(5000)];
+    const expected = reference([...a, ...near], [...b, ...near]);
+    const [operation, value, count] = expected.pop()!;
+    expect(operation).toBe("=");
+    expect(short(fn([...a, ...near, ...far].join(""), [...b, ...near, ...far].join("")))).toEqual([
+      ...expected,
+      ["=", value + far.join(""), count + far.length],
+    ]);
+  });
+});
+
+test.each(["x", "\u0a00\u4e0a\u0a0a"])("all lines differ, and the last has no newline: %j", unit => {
+  const a = numbered(200, i => `a${i}${unit}`) + unit;
+  const b = numbered(300, i => `b${i}${unit}`) + unit + unit;
+  expect(short(diff.lines(a, b))).toEqual([
+    ["-", a, 201],
+    ["+", b, 301],
+  ]);
+  expect(short(diff.lines("", b))).toEqual([["+", b, 301]]);
+});
+
+test.each([
+  ["Latin-1", (i: number) => `${i}\n`],
+  ["UTF-16 with the byte of a newline in other characters", (i: number) => `\u0a00${i}\u4e0a\u0a0a\n`],
+  ["long lines", (i: number) => `${Buffer.alloc(300, "x")}${i}\n`],
+])("few edits between runs of equal lines, %s", (_, line) => {
+  const next = random(7);
+  for (let i = 0; i < 30; i++) {
+    const a = Array.from({ length: 150 }, (_, at) => line(at > 100 ? at % 2 : next(4) ? at : next(3)));
+    const b = a.slice();
+    for (let edit = next(6); edit >= 0; edit--) b.splice(next(110), next(3), ...a.slice(0, next(3)), line(next(2)));
+    if (i % 3 === 0) b.push("end");
+    const expected = reference(a, b);
+    const count = expected.reduce((n, [operation, , count]) => n + (operation === "=" ? 0 : count), 0);
+    expect(short(diff.lines(a.join(""), b.join(""), { maxEditLength: count }))).toEqual(expected);
+    if (count > 0) expect(diff.lines(a.join(""), b.join(""), { maxEditLength: count - 1 })).toBeUndefined();
   }
 });
 
@@ -288,6 +476,195 @@ describe("maxEditLength", () => {
       ["+", "aaa", 3],
     ]);
   });
+
+  // Too long for the table that short inputs use.
+  const shared = Array.from({ length: 1100 }, (_, i) => i % 7);
+  test.each([
+    ["equal", shared, shared, 0],
+    ["one starts with the other", shared, [...shared, 3, 3, 3], 3],
+    ["one is inside the other", shared, [3, ...shared, 3, 3], 3],
+    ["a pair of edits", [3, ...shared], [...shared, 3], 2],
+    ["a pair of edits, and lengths that differ", [3, ...shared], [...shared, 3, 3, 3, 3], 5],
+  ])("long inputs: %s", (_, a, b, expected) => {
+    const limits = [0, 1, 2, 3, 4, 5, 6];
+    const found = (from: number[], to: number[]) =>
+      limits.map(maxEditLength => diff.arrays(from, to, { maxEditLength })).map(it => it && edits(it));
+    const within = limits.map(limit => (limit < expected ? undefined : expected));
+    expect([found(a, b), found(b, a)]).toEqual([within, within]);
+  });
+
+  test("is exact beyond what the search reaches", () => {
+    const next = random(9);
+    const a = Array.from({ length: 20_000 }, () => next(200));
+    const b = a.flatMap(it => [[], [it, next(200)]][next(1000) % 8] ?? [it]);
+    const count = edits(diff.arrays(a, b));
+    expect(edits(diff.arrays(a, b, { maxEditLength: count })!)).toBe(count);
+    expect(diff.arrays(a, b, { maxEditLength: count - 1 })).toBeUndefined();
+    expect(diff.arrays(a, b, { maxEditLength: count >> 1 })).toBeUndefined();
+  });
+});
+
+describe("options that ignore a difference", () => {
+  const [ignoreCase, ignoreWhitespace, stripTrailingCr] = [true, true, true];
+  // prettier-ignore
+  test.each([
+    ["lines", { ignoreCase }, "a\nB\nc\n", "A\nb\nd\n", [["=", "A\nb\n", 2], ["-", "c\n", 1], ["+", "d\n", 1]]],
+    ["lines", { ignoreCase }, "ÀÞ\n×\n@\n[\n", "àþ\n÷\n`\n{\n", [["=", "àþ\n", 1], ["-", "×\n@\n[\n", 3], ["+", "÷\n`\n{\n", 3]]],
+    ["lines", { ignoreCase }, "İ\nx\n", "i\u0307\ny\n", [["=", "i\u0307\n", 1], ["-", "x\n", 1], ["+", "y\n", 1]]],
+    ["lines", { ignoreCase }, "ΑΣ\nΣΑ\n\ud800ΑΣ\n", "ας\nσα\n\ud800ας\n", [["=", "ας\nσα\n\ud800ας\n", 3]]],
+    ["lines", { ignoreCase }, "ΑΣ", "ασ", [["-", "ΑΣ", 1], ["+", "ασ", 1]]],
+    ["lines", { ignoreCase }, "\ud800Σ", "\ud801σ", [["-", "\ud800Σ", 1], ["+", "\ud801σ", 1]]],
+    ["lines", { ignoreCase }, "a \n", "A\n", [["-", "a \n", 1], ["+", "A\n", 1]]],
+    ["words", { ignoreCase }, "The Fox", "the dog", [["=", "the ", 2], ["-", "Fox", 1], ["+", "dog", 1]]],
+    ["words", { ignoreCase }, "\u212a \u212aa", "k ka", [["=", "k ka", 3]]],
+    ["words", { ignoreCase }, "ΟΔΟΣ Мир", "οδος дом", [["=", "οδος ", 2], ["-", "Мир", 1], ["+", "дом", 1]]],
+    ["chars", { ignoreCase }, "aBc", "AbD", [["=", "Ab", 2], ["-", "c", 1], ["+", "D", 1]]],
+    ["chars", { ignoreCase }, "ΑΣ𐐀İ", "ασ𐐨i", [["=", "ασ𐐨", 3], ["-", "İ", 1], ["+", "i", 1]]],
+    ["lines", { ignoreWhitespace }, "a\n b\nc\n", "\ta \r\nb\nd\n", [["=", "\ta \r\nb\n", 2], ["-", "c\n", 1], ["+", "d\n", 1]]],
+    ["lines", { ignoreWhitespace }, "a b\n", "a  b\n", [["-", "a b\n", 1], ["+", "a  b\n", 1]]],
+    ["lines", { ignoreWhitespace }, "a\n\n", "a\n \n", [["=", "a\n \n", 2]]],
+    ["lines", { ignoreWhitespace }, "a\n", "a\n ", [["=", "a\n", 1], ["+", " ", 1]]],
+    ["lines", { ignoreWhitespace }, "a\n", "a", [["=", "a", 1]]],
+    ["lines", { ignoreWhitespace }, "\ufeffa\u3000\n\x85b\n", "\xa0a\nb\n", [["=", "\xa0a\n", 1], ["-", "\x85b\n", 1], ["+", "b\n", 1]]],
+    ["lines", { ignoreWhitespace }, "a\n", "A\n", [["-", "a\n", 1], ["+", "A\n", 1]]],
+    ["lines", { ignoreWhitespace, ignoreCase }, " a\nİ \n", "A\ni\u0307\n", [["=", "A\ni\u0307\n", 2]]],
+    ["lines", { ignoreWhitespace, ignoreCase }, "x\nA\nA\nb\n", " a\nA\nA\nb\n", [["-", "x\n", 1], ["=", " a\nA\n", 2], ["+", "A\n", 1], ["=", "b\n", 1]]],
+    ["chars", { ignoreCase }, "xAA世", "aAA世", [["-", "x", 1], ["=", "aA", 2], ["+", "A", 1], ["=", "世", 1]]],
+    ["lines", { stripTrailingCr }, "a\r\nb\r\n", "a\nc\r\n", [["=", "a\n", 1], ["-", "b\n", 1], ["+", "c\n", 1]]],
+    ["lines", { stripTrailingCr }, "世\r\r\n\r\nb\r", "世\r\n\nb", [["-", "世\r\n", 1], ["+", "世\n", 1], ["=", "\n", 1], ["-", "b\r", 1], ["+", "b", 1]]],
+    ["lines", { ignoreCase: false, ignoreWhitespace: false, stripTrailingCr: false }, "a\r\n", "a\n", [["-", "a\r\n", 1], ["+", "a\n", 1]]],
+    ["lines", { ignoreWhitespace, maxEditLength: 1 }, " a\nb\n", "a\nc\n", undefined],
+    ["lines", { ignoreWhitespace, maxEditLength: 2 }, " a\nb\n", "a\nc\n", [["=", "a\n", 1], ["-", "b\n", 1], ["+", "c\n", 1]]],
+  ] as const)("%s %j: %j, %j", (name, options, a, b, expected) => {
+    expect(short(diff[name](a, b, options))).toEqual(expected as any);
+  });
+
+  // prettier-ignore
+  test.each([
+    [{ ignoreWhitespace }, "a\nb\nc\nd\n", "  a\nx\n  c\nd", "@@ -1,4 +1,4 @@\n   a\n-b\n+x\n   c\n d\n\\ No newline at end of file\n"],
+    [{ ignoreWhitespace, context: 1 }, "a\nb\nc\nd\ne\nf\ng\n", " a\nx\n c\n d\n e\ny\n g\n", "@@ -1,3 +1,3 @@\n  a\n-b\n+x\n  c\n@@ -5,3 +5,3 @@\n  e\n-f\n+y\n  g\n"],
+    [{ ignoreCase }, "a\nb\n", "A\nc\n", "@@ -1,2 +1,2 @@\n A\n-b\n+c\n"],
+    [{ stripTrailingCr }, "a\r\nb\r\n", "a\nc\n", "@@ -1,2 +1,2 @@\n a\n-b\n+c\n"],
+    [{ ignoreWhitespace, ignoreCase }, "a\n", " A", ""],
+  ])("a patch keeps the new lines, %j: %j, %j", (options, a, b, expected) => {
+    expect(diff.createPatch(a, b, options)).toBe(expected);
+    expect(diff.hunks(a, b, options)).toEqual(diff.parsePatch(expected)[0]?.hunks ?? []);
+  });
+
+  test.skipIf(isDebug).each([
+    ["end", "", (middle: string, common: string) => middle + common],
+    ["end, indented", " ", (middle: string, common: string) => middle + common],
+    ["start, indented", " ", (middle: string, common: string) => common + middle],
+  ])("a long common %s does not count for the limit of the search", (_, indent, join) => {
+    const next = random(7);
+    const text = (length: number) => numbered(length, () => next(10_000) % 26);
+    const [a, b, common] = [text(20_000), text(20_000), repeat(text(1000), 200)];
+    const maxEditLength = edits(diff.lines(join(a, common), join(b, common)));
+    const indented = join(b, common).replace(/^(?!$)/gm, indent);
+    expect(edits(diff.lines(join(a, common), indented, { ignoreWhitespace: true, maxEditLength }))).toBe(maxEditLength);
+  });
+
+  test.each(["", "世"])("long texts have the edits of the same texts in one spelling: %j", wide => {
+    const next = random(11);
+    const alphabet = Array.from({ length: 40 }, (_, i) => `line${wide}${i}\n`);
+    const shape = (changes: Changes) => changes.map(({ added, removed, count }) => [added, removed, count]);
+    for (let round = 0; round < 10; round++) {
+      const [a, b] = similarPair(next, alphabet, 2000);
+      const respell = (line: string) => [line, ` ${line}`, line.toUpperCase(), line.replace("\n", "\t\r\n")][next(4)];
+      const [x, y] = [a, b].map(lines => lines.map(respell).join(""));
+      const changes = diff.lines(x, y, { ignoreWhitespace, ignoreCase });
+      expect(shape(changes)).toEqual(shape(diff.lines(a.join(""), b.join(""))));
+      expect(changes.map(it => (it.removed ? "" : it.value)).join("")).toBe(y);
+    }
+  });
+});
+
+describe("a Latin-1 text and a UTF-16 text", () => {
+  // The same characters, two bytes each.
+  const wide = (text: string) => Buffer.from(text, "utf16le").toString("utf16le");
+  const narrow = (text: string) => Buffer.from(text, "latin1").toString("latin1");
+  // A text is copied if it is shorter than this, or than 32 units for each token that changed.
+  const head = repeat("-", 2 ** 20) + "\n";
+  const ways: [string, (a: string, b: string) => unknown][] = [
+    ["lines", diff.lines],
+    ["words", diff.words],
+    ["chars", diff.chars],
+    ["hunks", diff.hunks],
+    ["createPatch", (a, b) => diff.createPatch(a, b, { oldFileName: "a", newHeader: "世" })],
+    ["ignoreCase", (a, b) => [diff.lines, diff.words, diff.chars].map(fn => fn(a, b, { ignoreCase: true }))],
+    ["ignoreWhitespace", (a, b) => diff.lines(a, b, { ignoreWhitespace: true })],
+  ];
+
+  test.each(ways)("%s: the same result as for two UTF-16 texts", (_, fn) => {
+    const next = random(1);
+    // U+0161 has the low byte of "a", and U+6161 the bytes of "aa". The last three are Latin-1 in lower case.
+    const others = ["世", "😀", "\ud83d", "\ude00", "\u0161", "\u6161", "\u010a", "Σ", "\u212a", "\u212b", "\u0178"];
+    for (let i = 0; i < (isDebug ? 14 : 150); i++) {
+      const long = repeat("e", [0, 7, 8, 63, 64, 65, 200][i % 7]);
+      const token = () => long + ["a", "aa", "A", "k", "å", "ÿ", " "][next(7)] + ["\n", "\n", " ", ""][next(4)];
+      const tokens = Array.from({ length: next(i % 5 ? 12 : 80) }, token);
+      const changed = tokens.map(it => [token(), "", others[next(others.length)] + it][next(12)] ?? it);
+      const first = i % (isDebug ? 13 : 4) ? "" : head;
+      const [a, b] = [narrow(first + tokens.join("")), wide(first + changed.join(""))];
+      expect([fn(a, b), fn(b, a)]).toEqual([fn(wide(a), b), fn(b, wide(a))]);
+    }
+  });
+
+  test("lines that are made to collide", () => {
+    const count = isDebug ? 3000 : 50_000;
+    const end = Buffer.from(colliding.slice(1), "latin1").toString("utf16le") + "abc";
+    const hash = (i: number) => Bun.hash.wyhash(Buffer.from(`${1_000_000 + i}${end}\n`, "utf16le"));
+    expect(hash(1)).toBe(hash(2));
+    const [a, b] = [numbered(count, i => i), numbered(count, i => `${1_000_000 + (i >> 1)}${end}\n${i}`)].map(
+      text => repeat(head, isDebug ? 1 : 5) + text,
+    );
+    expect([edits(diff.lines(a, b)), edits(diff.lines(b, a))]).toEqual([count, count]);
+  });
+
+  // The table has 512 slots here and tries 64 for a line. ignoreWhitespace always uses it, without the newline.
+  test("Latin-1 lines that all want the same slot of the table", () => {
+    const lines: string[] = [];
+    for (let i = 0; lines.length < 80; i++)
+      if ((Bun.hash.wyhash(Buffer.from(`${i}`, "utf16le")) & 0x1ffn) === 0n) lines.push(`${i}\n`);
+    const moved = (at: number) => [head, ...lines.slice(at), "世\n", ...lines.slice(0, at)].join("");
+    const options = { ignoreWhitespace: true };
+    expect(edits(diff.lines(head + lines.join(""), moved(20), options))).toBe(41);
+    expect(edits(diff.lines(moved(60), head + lines.join(""), options))).toBe(41);
+  });
+
+  // 16 MB of Latin-1 in lines of 1,024 characters. All that is allocated before the call stays alive, so the peak is
+  // the current use, and a UTF-16 copy would add 32 MB to it. VmHWM, because maxRSS starts at the peak of the parent.
+  test.concurrent.skipIf(!isLinux || isDebug).each([
+    ["lines, one edit", "diff.lines(a, b)", 8192],
+    ["lines, the other way round", "diff.lines(b, a)", 8192],
+    ["lines, edits all over", "diff.lines(a, b)", 100],
+    ["lines, all changed", "diff.lines(b, a)", 1],
+    ["words", "diff.words(a, b)", 8192],
+    ["chars", "diff.chars(a, b)", 8192],
+    ["hunks", "diff.hunks(a, b, { context: 0 })", 100],
+    ["createPatch", "diff.createPatch(a, b, { context: 0 })", 100],
+    ["createPatch, only the header is UTF-16", "diff.createPatch(a, a, { oldFileName: 'a', oldHeader: '世' })", 1],
+    ["ignoreCase", "diff.lines(a, b, { ignoreCase: true })", 8192],
+    ["ignoreWhitespace", "diff.lines(a, b, { ignoreWhitespace: true })", 100],
+  ])("the Latin-1 text is not copied: %s", async (_, call, every) => {
+    const script = `
+      const { diff } = Bun;
+      const peak = () => /VmHWM:\\s*(\\d+)/.exec(require("fs").readFileSync("/proc/self/status", "utf8"))[1] / 1024;
+      const narrow = Buffer.alloc(16 * 1024 * 1024, Buffer.alloc(1023, "ab ").toString() + "\\n");
+      for (let line = 0; line < 16384; line++) narrow.write(String(line), line * 1024);
+      const a = narrow.toString("latin1");
+      const wide = Buffer.from(a, "utf16le");
+      for (let line = 16384 - ${every}; line > 0; line -= ${every}) wide.writeUInt16LE(0x4e16, line * 2048 + 20);
+      const b = wide.toString("utf16le");
+      const before = peak();
+      globalThis.alive = [${call}, narrow, wide, a, b];
+      console.log(peak() - before);
+    `;
+    await using child = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+    const [megabytes, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+    expect(parseFloat(megabytes)).toBeLessThan(isASAN ? 24 : 16);
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("large inputs, on which diff is quadratic", () => {
@@ -304,6 +681,24 @@ describe("large inputs, on which diff is quadratic", () => {
     const b = Buffer.alloc(300, "ba").toString();
     expect(edits(diff.chars(a, b))).toBe(a.length - b.length);
     expect(edits(diff.chars(b, a))).toBe(a.length - b.length);
+  });
+
+  test("most of one side is missing from the other, and the rest is out of order", () => {
+    const long = "c" + Buffer.alloc(10_000, "ab").toString();
+    expect(short(diff.chars(long, "bacba"))).toEqual([
+      ["-", "ca", 2],
+      ["=", "ba", 2],
+      ["+", "c", 1],
+      ["=", "ba", 2],
+      ["-", long.slice(6), long.length - 6],
+    ]);
+    expect(short(diff.chars("bacba", long))).toEqual([
+      ["+", "ca", 2],
+      ["=", "ba", 2],
+      ["-", "c", 1],
+      ["=", "ba", 2],
+      ["+", long.slice(6), long.length - 6],
+    ]);
   });
 
   test("reversed", () => {
@@ -339,6 +734,19 @@ describe("large inputs, on which diff is quadratic", () => {
     expect(diff.lines(a, b, { maxEditLength: expectedEdits - 1 })).toBeUndefined();
   });
 
+  test("of two copies, the second matches by one token more", () => {
+    const next = random(8);
+    const text = (letters: string, length: number) => Array.from({ length }, () => letters[next(1000) % 5]).join("");
+    const [a, b, twice] = [text("abcde", 3000), text("abcde", 3000), text("fghij", 6000)];
+    const changes = diff.chars(`${a}.${twice}z${twice}<`, `${b}.z${twice}>`);
+    expect(short(changes)!.slice(-4)).toEqual([
+      ["-", twice, 6000],
+      ["=", `z${twice}`, 6001],
+      ["-", "<", 1],
+      ["+", ">", 1],
+    ]);
+  });
+
   // Each edit is alone, and the inputs drift apart by as much as the edits allow: nothing is left over for an estimate
   // of the number of edits to be too high by.
   test.each(["removed first", "added first"])("maxEditLength is exact with lines %s", order => {
@@ -353,9 +761,8 @@ describe("large inputs, on which diff is quadratic", () => {
   });
 
   test("lines that are made to collide", () => {
-    // wyhash multiplies the last 8 bytes by the 8 before them xor this constant.
     const part = isDebug ? 3000 : 50_000;
-    const lines = Array.from({ length: 4 * part }, (_, i) => `x\xdb\x28\xb4\xa0\xd1\x7e\x03\xe7${1_000_000 + i}\n`);
+    const lines = Array.from({ length: 4 * part }, (_, i) => `${colliding}${1_000_000 + i}\n`);
     expect(new Set(lines.slice(0, 50).map(line => Bun.hash.wyhash(Buffer.from(line, "latin1")))).size).toBe(1);
     const [a, b] = [lines.slice(0, -part).join(""), lines.slice(part).join("")];
     expect(diff.lines(a, b).map(change => change.count)).toEqual([part, 2 * part, part]);
@@ -375,10 +782,18 @@ describe("large inputs, on which diff is quadratic", () => {
   });
 
   test.skipIf(isDebug)("past the limit of the search, a long run of equal characters stays unchanged", () => {
-    const times = (letter: string, n: number) => Buffer.alloc(n, letter).toString();
-    const a = "x" + times("c", 20_000) + times("x", 100_000) + "d";
-    const b = "xd" + times("x", 100_000) + times("c", 20_000);
+    const a = "x" + repeat("c", 20_000) + repeat("x", 100_000) + "d";
+    const b = "xd" + repeat("x", 100_000) + repeat("c", 20_000);
     expect(edits(diff.chars(a, b))).toBeLessThan(41_000);
+  });
+
+  test.skipIf(isDebug)("a long common end counts for the limit of the search", () => {
+    const next = random(5);
+    const text = (length: number) => String.fromCharCode(...Array.from({ length }, () => 97 + (next(10_000) % 26)));
+    const [shared, inserted] = [4000, 450].map(length => Array.from({ length: 40 }, () => text(length)));
+    const [a, b] = [0, 1].map(side => shared.map((part, i) => (i % 2 === side ? inserted[i] + part : part)).join(""));
+    const end = repeat(text(1000), 3000);
+    expect(edits(diff.chars(a + "." + end, b + "," + end))).toBeLessThanOrEqual(40 * 450 + 2);
   });
 });
 
@@ -396,7 +811,7 @@ describe("hunks", () => {
 
   // prettier-ignore
   test.each([
-    ["4 by default", changed(10), undefined, [[6, 9, 6, 9]]],
+    ["3 by default", changed(10), undefined, [[7, 7, 7, 7]]],
     ["0", changed(10), 0, [[10, 1, 10, 1]]],
     ["Infinity", changed(10), Infinity, [[1, 20, 1, 20]]],
     ["cut at the start and the end", changed(2, 19), 3, [[1, 5, 1, 5], [16, 5, 16, 5]]],
@@ -415,12 +830,20 @@ describe("hunks", () => {
     ["new", "a\n", "a", ["-a", "+a", marker]],
     ["both", "a", "b", ["-a", marker, "+b", marker]],
     ["a kept line", "a\nb", "x\nb", ["-a", "+x", " b", marker]],
+    ["many lines", "", text + "x", [...text.split("\n", 20).map(line => "+" + line), "+x", marker]],
   ])("no newline at the end of %s", (_, a, b, lines) => {
     expect(diff.hunks(a, b).map(hunk => hunk.lines)).toEqual([lines]);
   });
 
   test("CR, empty lines and UTF-16", () => {
     expect(diff.hunks("\né\r\n", "\n世\r\n")[0].lines).toEqual([" ", "-é\r", "+世\r"]);
+    const long = Buffer.alloc(70, "a").toString();
+    expect(diff.hunks(`${long}\n${long}ÿ\n\x80\n`, `${long}\n${long}ÿ\n${long}Ā\n`)[0].lines).toEqual([
+      ` ${long}`,
+      ` ${long}ÿ`,
+      "-\x80",
+      `+${long}Ā`,
+    ]);
   });
 
   test.each([-1, 0.5, NaN])("context: %p is refused", context => {
@@ -434,7 +857,7 @@ describe("hunks", () => {
 });
 
 describe("createPatch", () => {
-  const body = "@@ -1,1 +1,1 @@\n-a\n+b\n";
+  const body = "@@ -1 +1 @@\n-a\n+b\n";
   // prettier-ignore
   test.each([
     ["no names", {}, ""],
@@ -452,8 +875,8 @@ describe("createPatch", () => {
   });
 
   test("the header of an empty range names the line before it", () => {
-    expect(diff.createPatch("", "a\n")).toBe("@@ -0,0 +1,1 @@\n+a\n");
-    expect(diff.createPatch("a\nb\n", "a\n", { context: 0 })).toBe("@@ -2,1 +1,0 @@\n-b\n");
+    expect(diff.createPatch("", "a\n")).toBe("@@ -0,0 +1 @@\n+a\n");
+    expect(diff.createPatch("a\nb\n", "a\n", { context: 0 })).toBe("@@ -2 +1,0 @@\n-b\n");
   });
 
   test("equal texts, as with diff -u", () => {
@@ -477,11 +900,20 @@ describe("parsePatch", () => {
 
   // prettier-ignore
   test.each([
-    ["empty", "", [{ hunks: [] }]],
+    ["empty", "", []],
+    ["not a patch", "text\n", []],
+    ["trimmed", "@@ -1,2 +1,2 @@\n-a\n+b", [{ hunks: [{ oldStart: 1, oldLines: 2, newStart: 1, newLines: 2, lines: ["-a", "+b", ""] }] }]],
+    ["cut after the header", "@@ -1 +1 @@", "Added line count did not match for hunk at line 1"],
+    ["cut before the first change", "@@ -1,2 +1,2 @@\n a", "Added line count did not match for hunk at line 1"],
+    ["short after the marker", "@@ -1,2 +1 @@\n-a\n\\ x", "Added line count did not match for hunk at line 1"],
+    ["lines without a hunk header", "--- f\n+++ f\n-a\n+b\n", 'Hunk at line 3 does not start with "@@ -start,lines +start,lines @@"'],
+    ["text in place of a hunk", "--- f\n+++ f\n\nReplace a with b.\n", 'Hunk at line 4 does not start with "@@ -start,lines +start,lines @@"'],
+    ["git: text in place of a hunk", "diff --git a/f b/f\nnew file mode 100644\n--- /dev/null\n+++ b/f\nb\n", 'Hunk at line 5 does not start with "@@ -start,lines +start,lines @@"'],
+    ["four lines short", "@@ -1,5 +1,5 @@\n-a\n+b", "Added line count did not match for hunk at line 1"],
     ["only a hunk", body, [{ hunks: [hunk] }]],
     ["no newline at the end", body.trimEnd(), [{ hunks: [hunk] }]],
     ["diff -u", `--- a\t2024-01-01 \tz\n+++ b\n${body}`, [{ oldFileName: "a", oldHeader: "2024-01-01", newFileName: "b", newHeader: "", hunks: [hunk] }]],
-    ["Index:", `Index: a b \n${"=".repeat(67)}\n${body}`, [{ index: "a b", hunks: [hunk] }]],
+    ["Index:", `Index: a b \n${rule}\n${body}`, [{ index: "a b", hunks: [hunk] }]],
     ["Mercurial", `diff -r 9117c6 -r 273ce1 .hgignore\n${body}`, [{ index: ".hgignore", hunks: [hunk] }]],
     ["other diff commands are not headers", `Index: f\ndiff -u -p -r1.1 f\n${body}`, [{ index: "f", hunks: [hunk] }]],
     ["files without an index line", `--- a\n+++ a\n${body}--- 世\n+++ 世\n${body}`, [
@@ -518,12 +950,16 @@ describe("parsePatch", () => {
       { isGit: true, isBinary: true, oldFileName: "a/\t", newFileName: "b/s", hunks: [] },
       { isGit: true, hunks: [] },
     ]],
-    ["an svn section without hunks, then a git section", `Index: e\n${"=".repeat(67)}\nCannot display\ndiff --git a/f b/f\n${body}`, [
+    ["an svn section without hunks, then a git section", `Index: e\n${rule}\nCannot display\ndiff --git a/f b/f\n${body}`, [
       { index: "e", hunks: [] },
       { isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] },
     ]],
-    ["two svn sections without hunks", `Index: e\n${"=".repeat(67)}\nIndex: f\n`, [{ index: "e", hunks: [] }, { index: "f", hunks: [] }]],
-    ["a rule between git sections", `diff --git a/e b/e\n${"=".repeat(67)}\ndiff --git a/f b/f\n`, [
+    ["an svn section that ends with a rule, then a git section", `Index: e\n${rule}\nCannot display\n${rule}\ndiff --git a/f b/f\n${body}`, [{ index: "e", hunks: [] }, { isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
+    ["a rule between hunks", `${body}${rule}\n${body}`, [{ hunks: [hunk] }, { hunks: [hunk] }]],
+    // diff returns an entry without anything in it.
+    ["a rule in the footer", `diff --git a/f b/f\n${body}\n${rule}\nfooter\n`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
+    ["two svn sections without hunks", `Index: e\n${rule}\nIndex: f\n`, [{ index: "e", hunks: [] }, { index: "f", hunks: [] }]],
+    ["a rule between git sections", `diff --git a/e b/e\n${rule}\ndiff --git a/f b/f\n`, [
       { isGit: true, oldFileName: "a/e", newFileName: "b/e", hunks: [] },
       { isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [] },
     ]],
@@ -536,7 +972,8 @@ describe("parsePatch", () => {
     ["diff -c", "*** o\n--- n\n***************\n*** 1 ****\n! a\n--- 1 ----\n! b\n", 'Missing "+++ ..." file header for n'],
     ["diff -c, then a git section", "*** o\n--- n\n***************\ndiff --git a/g b/g\n", 'Missing "+++ ..." file header for n'],
     ["Index: and ---, then a git section", "Index: f\n--- f\ndiff --git a/g b/g\n", 'Missing "+++ ..." file header for f'],
-    ["a rule and ---, then a git section", `Index: f\r\n${"=".repeat(67)}\r\n--- f\r\ndiff --git a/g b/g\r\n`, 'Missing "+++ ..." file header for f'],
+    ["a rule and ---, then a git section", `Index: f\r\n${rule}\r\n--- f\r\ndiff --git a/g b/g\r\n`, 'Missing "+++ ..." file header for f'],
+    ["a rule and ---, then a hunk", `${rule}\n--- f\n${body}`, 'Missing "+++ ..." file header for f'],
     ["only ---, then a combined hunk", "--- f\n@@@ -1 -1 +1 @@@\ndiff --git a/g b/g\n", 'Missing "+++ ..." file header for f'],
     ["--- and +++ without hunks, then a git section", "diff --cc f\n--- a/f\n+++ b/f\ndiff --git a/g b/g\n", [
       { oldFileName: "a/f", oldHeader: "", newFileName: "b/f", newHeader: "", hunks: [] },
@@ -565,9 +1002,19 @@ describe("parsePatch", () => {
       { isGit: true, oldFileName: "a/f", oldHeader: "", newFileName: "b/f", newHeader: "", hunks: [hunk] },
       { isGit: true, oldFileName: "a/g", newFileName: "b/g", hunks: [] },
     ]],
+    ["--- after a rule in a commit message", `Subject: x\n\n${rule}\n--- x\ndiff --git a/f b/f\n${body}`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
+    ["--- after a rule in the second commit", `diff --git a/f b/f\n${body}-- \n\n${rule}\n--- x\ndiff --git a/f b/f\n${body}`, Array(2).fill({ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] })],
+    ["--- after a rule on the first line", `${rule}\n--- x\ndiff --git a/f b/f\n${body}`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
+    ["--- before stars in a commit message", `Subject: x\n\n--- x\n***************\ndiff --git a/f b/f\n${body}`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
+    ["--- before a pair", `--- x\n--- o\n+++ n\n${body}`, [{ oldFileName: "o", oldHeader: "", newFileName: "n", newHeader: "", hunks: [hunk] }]],
+    ["+++ before Index:", `+++ x\nIndex: f\n${body}`, [{ index: "f", hunks: [hunk] }]],
+    ["cut after an empty line and ---", `${body}\n--- o\n`, 'Missing "+++ ..." file header for o'],
+    ["--- after diff in a commit message", `diff -u is fine\n--- x\ndiff --git a/f b/f\n${body}`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
+    ["cut after diff -u and ---", `${body}diff -u o n\n--- o\n`, 'Missing "+++ ..." file header for o'],
+    ["cut before the added line", "@@ -1 +1 @@\n-a", "Added line count did not match for hunk at line 1"],
     ["a removed line too many that starts with --", `${body}--- x\ndiff --git a/f b/f\n`, "Hunk at line 1 has more lines than expected (expected 1 old lines and 1 new lines)"],
     // diff makes two entries of each file.
-    ["svn diff --git", `Index: e\n${"=".repeat(67)}\ndiff --git a/e b/e\nnew file mode 100644\nIndex: f\n${"=".repeat(67)}\ndiff --git a/f b/f\n--- a/f\t(revision 1)\n+++ b/f\t(working copy)\n${body}`, [
+    ["svn diff --git", `Index: e\n${rule}\ndiff --git a/e b/e\nnew file mode 100644\nIndex: f\n${rule}\ndiff --git a/f b/f\n--- a/f\t(revision 1)\n+++ b/f\t(working copy)\n${body}`, [
       { index: "e", isGit: true, isCreate: true, newMode: "100644", oldFileName: "a/e", newFileName: "b/e", hunks: [] },
       { index: "f", isGit: true, oldFileName: "a/f", oldHeader: "(revision 1)", newFileName: "b/f", newHeader: "(working copy)", hunks: [hunk] },
     ]],
@@ -588,6 +1035,7 @@ describe("parsePatch", () => {
   // prettier-ignore
   test.each([
     ["git format-patch", `Subject: x\n\n---\n f | 2 +-\n\ndiff --git a/f b/f\n--- a/f\n+++ b/f\n${body}-- \n2.43.0\n`, [{ isGit: true, oldFileName: "a/f", oldHeader: "", newFileName: "b/f", newHeader: "", hunks: [withCR] }]],
+    ["--- between a rule and stars in a commit message", `${rule}\n--- x\n***************\ndiff --git a/f b/f\n${body}`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [withCR] }]],
     ["markers alone in the text around the hunks", `+++\nIndex:\ndiff -r abc\n${body}\n---\n+++\n`, [{ hunks: [withCR] }]],
     ["names from diff --git", 'diff --git a/f b/f\ndiff --git "a/\\t" b/世\n', [
       { isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [] },
@@ -607,6 +1055,7 @@ describe("parsePatch", () => {
 describe("applyPatch", () => {
   const marker = "\\ No newline at end of file";
   const replace = (oldStart: number) => ({ oldStart, lines: ["-a", "+b"] });
+  const mismatch = expect.objectContaining({ code: "ERR_PATCH_DOES_NOT_APPLY" });
 
   // prettier-ignore
   test.each([
@@ -622,6 +1071,7 @@ describe("applyPatch", () => {
     ["no match", "x\n", [replace(1)], undefined],
     ["a kept line does not match", "x\na\n", [{ oldStart: 1, lines: [" y", "-a"] }], undefined],
     ["longer than the source", "a", [{ oldStart: 1, lines: ["-a", "-a"] }], undefined],
+    ["a line with a newline in it", "a\nb\n", [{ oldStart: 1, lines: ["-a\nb"] }], undefined],
     ["an insertion without context", "a\nc\n", [{ oldStart: 2, lines: ["+b"] }], "a\nb\nc\n"],
     ["an insertion at the end", "a\n", [{ oldStart: 2, lines: ["+b"] }], "a\nb\n"],
     ["an empty last line", "a\n\n", [{ oldStart: 2, lines: ["-", "+b"] }], "a\nb\n"],
@@ -632,6 +1082,7 @@ describe("applyPatch", () => {
     ["a kept line without its space", "\na\n", [{ oldStart: 1, lines: ["", "-a", "+b"] }], "\nb\n"],
     ["adds the last newline", "a", [{ oldStart: 1, lines: ["-a", marker, "+a"] }], "a\n"],
     ["adds a last newline that is there", "a\n", [{ oldStart: 1, lines: ["-a", marker, "+a"] }], undefined],
+    ["adds the last newline, no match", "x\ny", [{ oldStart: 1, lines: ["-a", marker, "+a"] }], undefined],
     ["removes the last newline", "a\n", [{ oldStart: 1, lines: ["-a", "+a", marker] }], "a"],
     ["removes a last newline that is not there", "a", [{ oldStart: 1, lines: ["-a", "+a", marker] }], undefined],
     ["no last newline on either side", "a", [{ oldStart: 1, lines: ["-a", marker, "+b", marker] }], "b"],
@@ -640,6 +1091,7 @@ describe("applyPatch", () => {
     ["LF patch, CRLF source, no last newline", "c\r\na", [{ oldStart: 1, lines: [" c", "-a", marker, "+b", marker] }], "c\r\nb"],
     ["CRLF patch, LF source", "a\nc\n", [{ oldStart: 1, lines: ["-a\r", "+b\r"] }], "b\nc\n"],
     ["LF patch, mixed source", "a\r\nc\n", [replace(1)], undefined],
+    ["CRLF patch, mixed source", "a\nc\r\n", [{ oldStart: 2, lines: ["-c\r", "+b\r"] }], "a\nb\r\n"],
     ["mixed patch, CRLF source", "a\r\n", [{ oldStart: 1, lines: ["-a\r", "+b"] }], "b\n"],
     ["mixed patch, LF source", "a\n", [{ oldStart: 1, lines: ["-a", "+b\r"] }], "b\r\n"],
     ["CRLF, not at oldStart", "x\r\na\r\r\n", [{ oldStart: 1, lines: ["-a\r\r", "+b\r"] }], "x\r\nb\r\n"],
@@ -649,9 +1101,12 @@ describe("applyPatch", () => {
     // diff writes lines twice, or makes up empty ones.
     ["oldStart before the previous hunk", "a\nc\na\n", [{ oldStart: 2, lines: ["-c"] }, replace(1)], "a\nb\n"],
     ["an insertion before the previous hunk", "a\nc\n", [{ oldStart: 2, lines: ["-c"] }, { oldStart: 1, lines: ["+b"] }], undefined],
-    ["an insertion past the end", "a\n", [{ oldStart: 4, lines: ["+b"] }], undefined],
-    ["an insertion one line past the end", "a\n", [{ oldStart: 3, lines: ["+b"] }], undefined],
-    ["removes an empty line after the last newline", "\na\n", [{ oldStart: 3, lines: ["-", "+b"] }], undefined],
+    ["an insertion past the end", "a\n", [{ oldStart: 4, lines: ["+b"] }], "a\nb\n"],
+    ["an insertion at oldStart 0", "a\n", [{ oldStart: 0, lines: ["+b"] }], "b\na\n"],
+    ["after a hunk at oldStart 0", "a\nc\n", [{ oldStart: 0, lines: ["+b"] }, { oldStart: 2, lines: ["+b"] }], "b\na\nb\nc\n"],
+    ["no context, the new line is at oldStart", "b\na\n", [replace(1)], "b\nb\n"],
+    ["removes an empty line after the last newline", "a\n", [{ oldStart: 2, lines: ["-", "+b"] }], undefined],
+    ["the same, fits earlier", "\na\n", [{ oldStart: 3, lines: ["-", "+b"] }], "b\na\n"],
     ["adds after an empty line after the last newline", "a\n", [{ oldStart: 1, lines: [" a", " ", "+b"] }], undefined],
     ["removes an empty line of an empty source", "", [{ oldStart: 1, lines: ["-", "+b"] }], undefined],
     // diff leaves half a line ending.
@@ -666,16 +1121,110 @@ describe("applyPatch", () => {
     // diff changes the last newline wherever the hunk fits.
     ["removes the last newline, before the end", "a\nx\n", [{ oldStart: 1, lines: ["-a", "+b", marker] }], undefined],
     ["adds the last newline, before the end", "a\nx", [{ oldStart: 1, lines: ["-a", marker, "+b"] }], undefined],
-    ["removes the last newline, fits at the end too", "a\na\n", [{ oldStart: 1, lines: ["-a", "+b", marker] }], undefined],
+    ["removes the last newline, fits at the end too", "a\na\n", [{ oldStart: 1, lines: ["-a", "+b", marker] }], "a\nb"],
+    // As git apply and GNU patch. diff takes the nearest place.
+    ["context only before, fits at the end too", "y\na\nx\na\n", [{ oldStart: 2, lines: [" a", "+b"] }], "y\na\nx\na\nb\n"],
+    ["the same, CRLF and UTF-16", "世\r\nx\r\n世\r\n", [{ oldStart: 1, lines: [" 世", "+b"] }], "世\r\nx\r\n世\r\nb\r\n"],
+    ["keeps a line without newline, fits at the end too", "c\na\nc\na", [{ oldStart: 1, lines: ["-c", " a", marker] }], "c\na\na"],
+    ["context only before, not at the end", "a\nx\n", [{ oldStart: 1, lines: [" a", "+b"] }], "a\nb\nx\n"],
+    ["context only before, the end of the last line", "a\nxa\n", [{ oldStart: 1, lines: [" a", "+b"] }], "a\nb\nxa\n"],
+    ["context only before, the last line has no newline", "a\nx\na", [{ oldStart: 1, lines: [" a", "+b"] }], "a\nb\nx\na"],
+    ["context only before, not the last hunk", "a\nc\na\n", [{ oldStart: 1, lines: [" a", "+b"] }, { oldStart: 2, lines: ["-c"] }], "a\nb\na\n"],
+    ["context only before, the previous hunk has the end", "c\na\n", [replace(2), { oldStart: 2, lines: [" a", "+b"] }], undefined],
+    ["context on both sides, fits at the end too", "a\nc\na\nc\n", [{ oldStart: 1, lines: [" a", "+b", " c"] }], "a\nb\nc\na\nc\n"],
   ])("%s", (_, source, hunks, expected) => {
-    expect(diff.applyPatch(source, hunks)).toBe(expected);
+    if (expected === undefined) expect(() => diff.applyPatch(source, hunks)).toThrow(mismatch);
+    else expect(diff.applyPatch(source, hunks)).toBe(expected);
+  });
+
+  // prettier-ignore
+  test.each([
+    ["x\n", [replace(1)], 'Hunk 1 does not apply: expected "a" at line 1, found "x"'],
+    ["a\nc\n世\r\n", [replace(1), { oldStart: 2, lines: [" c", "-世"] }], 'Hunk 2 does not apply: expected "世" at line 3, found "世\\r"'],
+    ["x\na\nc\n", [replace(1), { oldStart: 2, lines: ["-d"] }], 'Hunk 2 does not apply: expected "d" at line 3, found "c"'],
+    ["a\n", [{ oldStart: 1, lines: ["-a", "-c"] }], 'Hunk 1 does not apply: expected "c" at line 2, found the end of the source'],
+    ["", [replace(9)], 'Hunk 1 does not apply: expected "a" at line 1, found the end of the source'],
+    ["x\na\nb\n", [{ oldStart: 1, lines: [" x", "-a\nb"] }], 'Hunk 1 does not apply: expected "a\\nb" at line 2, found "a"'],
+    [Buffer.alloc(300, "x").toString(), [replace(1)], `Hunk 1 does not apply: expected "a" at line 1, found "${Buffer.alloc(256, "x")}"`],
+    [`${Buffer.alloc(300, "x")}a`, [{ oldStart: 1, lines: [`-${Buffer.alloc(300, "x")}b`] }], `Hunk 1 does not apply: expected "${Buffer.alloc(128, "x")}b" at line 1, found "${Buffer.alloc(128, "x")}a"`],
+    ["x\n", [{ oldStart: 1, lines: [" x", "-a\nb"] }], 'Hunk 1 does not apply: expected "a\\nb" at line 2, found the end of the source'],
+    ["b\n", [replace(1)], "Hunk 1 does not apply: the source already has its changes"],
+    ["a\nc\n", [{ oldStart: 2, lines: ["-c"] }, { oldStart: 1, lines: ["+b"] }], "Hunk 2 does not apply: it goes before the end of the previous hunk"],
+    ["a\n", [{ oldStart: 1, lines: ["-a", marker, "+a"] }], "Hunk 1 does not apply: the source does not end as the hunk says"],
+  ])("the error for %j", (source, hunks, message) => {
+    expect(() => diff.applyPatch(source, hunks)).toThrow(
+      expect.objectContaining({ code: "ERR_PATCH_DOES_NOT_APPLY", message }),
+    );
+  });
+
+  // The old lines are still there, so diff applies these again.
+  test.each([
+    ["}\n\nb\n", "}\n\na {\n}\n\nb\n"],
+    ["a\n", "a\nb\n"],
+    ["a\n", "a\nb\na\n"],
+    ["a\n", "b\na\n"],
+  ])("twice: %j to %j", (a, b) => {
+    expect(() => diff.applyPatch(b, diff.createPatch(a, b))).toThrow("the source already has its changes");
+  });
+
+  test.each([
+    "Sorry, I can't do that.",
+    "1c1\n< a\n---\n> b\n",
+    "  @@ -1 +1 @@\n  -a\n  +b\n",
+    "\x1b[36m@@ -1 +1 @@\x1b[m\n\x1b[31m-a\x1b[m\n\x1b[32m+b\x1b[m\n",
+    "diff --git a/f b/f\nindex 1..2 100644\n",
+  ])("no hunks in %j", patch => {
+    expect(() => diff.applyPatch("a\n", patch)).toThrow(
+      new SyntaxError('The patch has no line that starts with "@@ -start,lines +start,lines @@"'),
+    );
+  });
+
+  test.each([
+    "",
+    " \r\n",
+    `Index: f\n${rule}\n--- f\n+++ f\n`,
+    `Index: f\n${rule}\n--- f\n+++ f\n\nProperty changes on: f\n___\nAdded: svn:executable\n## -0,0 +1 ##\n+*\n`,
+    "diff --git a/f b/g\nrename from f\nrename to g\n-- \n2.43.0\n",
+    "diff --git a/f b/g\ncopy from f\ncopy to g\n",
+    "diff --git a/f b/f\nold mode 100644\nnew mode 100755\n",
+    "diff --git a/f b/f\nnew file mode 100644\n",
+    "diff --git a/f b/f\ndeleted file mode 100644\n",
+  ])("%j changes no lines", patch => {
+    expect(diff.applyPatch("a\n", patch)).toBe("a\n");
+  });
+
+  test("a trimmed patch", () => {
+    const patch = diff.createPatch("a\n\n\n\nx\n", "b\n\n\n\nx\n");
+    expect(diff.applyPatch("a\n\n\n\nx\n", patch.trim())).toBe("b\n\n\n\nx\n");
+    expect(diff.applyPatch("a\r\n\r\n\r\n\r\n", patch.trim())).toBe("b\r\n\r\n\r\n\r\n");
+    expect(() => diff.applyPatch("a\n\nx\ny\n", patch.trim())).toThrow(mismatch);
+  });
+
+  test.each([
+    ["a\nc\n", "b\nc\n"],
+    ["a\n\n", "b\n\n"],
+    ["a\n", "a\nb\n"],
+    ["a\nb\n", "a\n"],
+    ["a\nc", "b\nc"],
+    ["a", "b"],
+    ["a", "世\n"],
+  ])("a trimmed CRLF patch: %j to %j", (a, b) => {
+    const [oldText, newText] = [a, b].map(text => text.replaceAll("\n", "\r\n"));
+    const converted = diff.createPatch(a, b).replaceAll("\n", "\r\n").trim();
+    expect([diff.applyPatch(a, converted), diff.applyPatch(a, diff.parsePatch(converted)[0])]).toEqual(
+      Array(2).fill(a.includes("\n") ? b : newText),
+    );
+    if (!a.includes("\n")) return;
+    const patch = diff.createPatch(oldText, newText).trim();
+    for (const it of [patch, diff.parsePatch(patch)[0], diff.parsePatch(patch)[0].hunks]) {
+      expect([diff.applyPatch(oldText, it), diff.applyPatch(a, it)]).toEqual([newText, b]);
+    }
   });
 
   test("a string", () => {
-    expect(diff.applyPatch("a\n", "")).toBe("a\n");
     expect(diff.applyPatch("é\n", "--- f\n+++ f\n@@ -1 +1 @@\n-é\n+世\n")).toBe("世\n");
-    expect(diff.applyPatch("x\n", "@@ -1 +1 @@\n-a\n+b\n")).toBeUndefined();
-    expect(diff.applyPatch("x\n", "@@ -2147483647,0 +1 @@\n+b\n")).toBeUndefined();
+    expect(() => diff.applyPatch("x\n", "@@ -1 +1 @@\n-a\n+b\n")).toThrow(mismatch);
+    expect(diff.applyPatch("x\n", "@@ -2147483647,0 +1 @@\n+b\n")).toBe("x\nb\n");
     expect(() => diff.applyPatch("a\n", "@@ -1 +1 @@\nx")).toThrow(
       new SyntaxError("Hunk at line 1 contained invalid line x"),
     );
@@ -688,7 +1237,7 @@ describe("applyPatch", () => {
   });
 
   test("svn diff --git", () => {
-    const headers = `Index: f\n${"=".repeat(67)}\ndiff --git a/f b/f\n--- a/f\t(revision 1)\n+++ b/f\t(working copy)\n`;
+    const headers = `Index: f\n${rule}\ndiff --git a/f b/f\n--- a/f\t(revision 1)\n+++ b/f\t(working copy)\n`;
     expect(diff.applyPatch("a\n", `${headers}@@ -1 +1 @@\n-a\n+b\n`)).toBe("b\n");
   });
 
@@ -712,13 +1261,22 @@ describe("applyPatch", () => {
     const hunks = (count: number) =>
       Array.from({ length: count }, (_, i) => ({ oldStart: i % 2 ? 50_000 : 1, lines: [" x"] }));
     expect(diff.applyPatch(source, hunks(20)) === source).toBeTrue();
-    expect(diff.applyPatch(source, hunks(2000))).toBeUndefined();
+    expect(() => diff.applyPatch(source, hunks(2000))).toThrow(mismatch);
   });
 
   test("a hunk with the hash of every place", () => {
-    const count = isDebug ? 10_000 : 100_000;
-    const patch = `@@ -1,${count + 1} +1,${count + 1} @@\n${Buffer.alloc(3 * count, " a\n")} a\r\n`;
-    expect(diff.applyPatch(Buffer.alloc(4 * count, "a\n").toString(), patch)).toBeUndefined();
+    const [a, b] = ["a", "b"].map(last => `${colliding}0000000${last}`);
+    expect(Bun.hash.wyhash(Buffer.from(a, "latin1"))).toBe(Bun.hash.wyhash(Buffer.from(b, "latin1")));
+    const count = isDebug ? 5000 : 60_000;
+    const lines = [...Array(count).fill(` ${a}`), `-${b}`];
+    expect(() =>
+      diff.applyPatch(
+        Array(2 * count)
+          .fill(a)
+          .join("\n"),
+        [{ oldStart: 1, lines }],
+      ),
+    ).toThrow(mismatch);
   });
 
   test("hunks that are longer than a string", () => {
@@ -728,8 +1286,9 @@ describe("applyPatch", () => {
     );
   });
 
-  test("a binary patch", () => {
-    expect(() => diff.applyPatch("a", "diff --git a/f b/f\nBinary files a/f and b/f differ\n")).toThrow(
+  const binary = "diff --git a/f b/f\nBinary files a/f and b/f differ\n";
+  test.each([binary, diff.parsePatch(binary)[0]])("a binary patch: %j", patch => {
+    expect(() => diff.applyPatch("a", patch)).toThrow(
       expect.objectContaining({
         code: "ERR_INVALID_ARG_VALUE",
         message: "The argument 'patch' must change a text file. Received a binary patch",
@@ -743,10 +1302,25 @@ describe("applyPatch", () => {
     );
   });
 
-  test("a parsed file in place of its hunks", () => {
-    expect(() => diff.applyPatch("a\n", diff.parsePatch("")[0] as any)).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: "patch must be a string or an array of hunks" }),
-    );
+  test("a trimmed CRLF patch that ends with a hunk of one line", () => {
+    expect(diff.applyPatch("a\r\nc\r\n", "@@ -1 +1 @@\n-a\r\n+x\r\n@@ -2,0 +3 @@\n+b")).toBe("x\r\nc\r\nb\r\n");
+  });
+
+  test("a trimmed patch whose last hunk alone has CRLF", () => {
+    expect(diff.applyPatch("a\nc\r\n", "@@ -1 +1 @@\n-a\n+x\n@@ -2 +2 @@\n-c\r\n+b")).toBe("x\nb\r\n");
+  });
+
+  test("as the callback of reduce()", () => {
+    const patches = [diff.createPatch("a\n", "b\n"), diff.createPatch("b\n", "c\n")];
+    expect(patches.reduce(diff.applyPatch, "a\n")).toBe("c\n");
+  });
+
+  test.each([[[]], [{ autoConvertLineEndings: null }]])("options: %j", options => {
+    expect((diff.applyPatch as Function)("a\r\n", [replace(1)], options)).toBe("b\r\n");
+  });
+
+  test("a parsed file", () => {
+    expect(diff.applyPatch("a\n", diff.parsePatch("--- f\n+++ f\n@@ -1 +1 @@\n-a\n+b\n")[0])).toBe("b\n");
   });
 
   test("a line without an operation", () => {
@@ -761,8 +1335,28 @@ describe("applyPatch", () => {
   test("a long hunk that nearly fits everywhere", () => {
     const kept = Buffer.alloc(200_000, "a\n").toString();
     const lines = [...Array(50_000).fill(" a"), "-b"];
-    expect(diff.applyPatch(kept, [{ oldStart: 1, lines }])).toBeUndefined();
+    expect(() => diff.applyPatch(kept, [{ oldStart: 1, lines }])).toThrow(mismatch);
     expect(diff.applyPatch(kept + "b\n", [{ oldStart: 1, lines }]) === kept).toBeTrue();
+  });
+
+  test("a long hunk that differs everywhere in only a CR", () => {
+    const kept = "x\r\n" + Buffer.alloc(400_000, "a\n").toString();
+    const lines = [...Array(100_000).fill(" a"), "-a\r"];
+    expect(() => diff.applyPatch(kept, [{ oldStart: 1, lines }])).toThrow(mismatch);
+    expect(diff.applyPatch(kept + "a\r\n", [{ oldStart: 1, lines }]) === kept).toBeTrue();
+  });
+
+  test.each(["é", "世"])("hunks that are far apart, %s", unit => {
+    const lines = Array.from({ length: 3000 }, (_, i) => (i % 700 ? unit + i : Buffer.alloc(2000, "x").toString()));
+    const hunks = [0, 1, 699, 701, 1500, 2999].map(i => ({ oldStart: i + 1, lines: ["-" + lines[i], "+new"] }));
+    const patched = lines.map((line, i) => (hunks.some(hunk => hunk.oldStart === i + 1) ? "new" : line));
+    for (const [before, end] of [
+      ["", ""],
+      ["", "\n"],
+      ["a\nb\n", "\n"],
+    ]) {
+      expect(diff.applyPatch(before + lines.join("\n") + end, hunks)).toBe(before + patched.join("\n") + end);
+    }
   });
 
   test("undoes createPatch and hunks", () => {
@@ -775,7 +1369,7 @@ describe("applyPatch", () => {
       ).map(lines => lines.join("") + ["", "end"][next(2)]);
       const options = { context: next(4), oldFileName: "f" };
       const [patch, hunks] = [diff.createPatch(a, b, options), diff.hunks(a, b, options)];
-      expect({ a, parsed: diff.parsePatch(patch)[0].hunks, patched: diff.applyPatch(a, patch) }).toEqual({
+      expect({ a, parsed: diff.parsePatch(patch)[0]?.hunks ?? [], patched: diff.applyPatch(a, patch) }).toEqual({
         a,
         parsed: hunks,
         patched: b,
@@ -785,10 +1379,36 @@ describe("applyPatch", () => {
   });
 });
 
+const forAll = { timeout: 100, callback() {}, comparator() {}, oneChangePerToken: true };
+const forLines = { ...forAll, newlineIsToken: true, ignoreNewlineAtEof: true };
+describe.each([
+  ["lines", "", forLines],
+  ["hunks", "", forLines],
+  ["createPatch", "", { ...forLines, headerOptions: {} }],
+  ["words", "", { ...forAll, intlSegmenter: {} }],
+  ["chars", "", forAll],
+  ["arrays", [], { ...forAll, ignoreCase: true }],
+  ["applyPatch", "", { fuzzFactor: 1, compareLine() {}, autoConvertLineEndings: false }],
+] as const)("%s", (name, input, options) => {
+  const call = (options: object) => (diff[name] as Function)(input, input, options);
+  test.each(Object.entries(options))("refuses %s of diff", (option, value) => {
+    expect(() => call({ [option]: value })).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_VALUE",
+        message: `The property 'options.${option}' is not supported`,
+      }),
+    );
+    expect(call({ [option]: !value })).toEqual(call({}));
+  });
+});
+
 test.each([
   ["lines", [1, "a"]],
   ["lines", ["a"]],
   ["lines", ["a", "b", 1]],
+  ["lines", ["a", "b", { ignoreWhitespace: 1 }]],
+  ["hunks", ["a", "b", { stripTrailingCr: "true" }]],
+  ["chars", ["a", "b", { ignoreCase: null }]],
   ["words", [null, "a"]],
   ["chars", ["a", ["a"]]],
   ["arrays", ["a", []]],
@@ -797,6 +1417,7 @@ test.each([
   ["createPatch", ["a", "b", { oldFileName: 1 }]],
   ["parsePatch", []],
   ["applyPatch", ["a"]],
+  ["applyPatch", ["a", {}]],
   ["applyPatch", ["a", [{ hunks: [] }]]],
   ["applyPatch", ["a", [{ oldStart: 1, lines: [1] }]]],
 ] as const)("%s(...%j) is refused", (name, args) => {

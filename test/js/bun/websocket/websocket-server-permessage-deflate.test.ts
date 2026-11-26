@@ -115,6 +115,32 @@ async function secondCopySize(peer: Peer, n: number): Promise<number> {
 }
 
 describe.concurrent("Bun.serve perMessageDeflate", () => {
+  test.each([
+    ["15.3", "at once", false],
+    ["15.3", "later", false],
+    ["15.4", "at once", true],
+    ["15.4", "later", true],
+  ])("Safari %s, upgraded %s, compresses: %p", async (version, when, compresses) => {
+    let offer: string | null = null;
+    await using server = serve({
+      port: 0,
+      async fetch(req, server) {
+        if (when === "later") await new Promise(setImmediate);
+        server.upgrade(req);
+        offer = req.headers.get("sec-websocket-extensions");
+      },
+      websocket: { perMessageDeflate: true, message() {} },
+    });
+    using client = await RawClient.upgrade(server.port, {
+      headers: {
+        "Sec-WebSocket-Extensions": "permessage-deflate",
+        "User-Agent": `Mozilla/5.0 Version/${version} Safari/605.1.15`,
+      },
+    });
+    expect(!!client.header("sec-websocket-extensions")).toBe(compresses);
+    expect(offer).toBe(compresses ? "permessage-deflate" : "");
+  });
+
   describe("dedicated compressor sizes", () => {
     test.each([
       // [compress option, window header, n that fits in the window, n that doesn't]
@@ -503,6 +529,49 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
     } finally {
       for (const peer of peers) peer.close();
     }
+  });
+
+  test("the shared decompressor keeps nothing of a long message for the next connection", async () => {
+    await using server = serve({
+      port: 0,
+      fetch: (req, server) => void server.upgrade(req),
+      websocket: { perMessageDeflate: true, message: (ws, message) => void ws.send(String(message.length)) },
+    });
+    const text = Buffer.from(pseudoRandomText(20000));
+    const deflate = (dictionary?: Buffer) => deflateRawSync(text, { dictionary, finishFlush: constants.Z_SYNC_FLUSH });
+    const answers: string[] = [];
+    for (const payload of [
+      deflate().subarray(0, -4),
+      deflate(text).subarray(0, -4),
+      Buffer.concat([deflate(), Buffer.of(7)]),
+      deflate().subarray(0, -4),
+    ]) {
+      using client = await RawClient.upgrade(server.port!, {
+        headers: { "Sec-WebSocket-Extensions": "permessage-deflate" },
+      });
+      client.binary(payload, { rsv1: true });
+      answers.push(await client.next());
+    }
+    const invalid = 'close 1007 "Received invalid compressed data"';
+    expect(answers).toEqual(['text "20000"', invalid, invalid, 'text "20000"']);
+  });
+
+  test.skipIf(isASAN)("the servers of a thread share one compressor", async () => {
+    const script = `
+      import { heapStats } from "bun:jsc";
+      const allocated = () => (Bun.gc(true), heapStats().mimalloc.allocated.current);
+      const serve = () => Bun.serve({ port: 0, fetch() {}, websocket: { perMessageDeflate: true, message() {} } });
+      const servers = [serve()];
+      const before = allocated();
+      for (let i = 0; i < 50; i++) servers.push(serve());
+      console.log((allocated() - before) / 50 / 1024);
+      for (const server of servers) server.stop(true);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // A server takes about 25 KB, a compressor 400 KB.
+    expect(Number(stdout)).toBeLessThan(150);
+    expect(exitCode).toBe(0);
   });
 });
 

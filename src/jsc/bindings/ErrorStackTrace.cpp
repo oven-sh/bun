@@ -266,14 +266,24 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
         stackTrace.shrink(stackTraceLimit);
 }
 
-static bool isVisibleBuiltinFunction(JSC::CodeBlock* codeBlock)
+static bool isVisibleBuiltinFunction(JSC::ScriptExecutable* executable)
 {
-    if (!codeBlock->ownerExecutable()) {
-        return false;
-    }
+    return executable && !Zig::sourceURL(executable->source()).isEmpty();
+}
 
-    const JSC::SourceCode& source = codeBlock->source();
-    return !Zig::sourceURL(source).isEmpty();
+JSC::FunctionExecutable* suspendedFunctionWithoutCode(const JSC::StackFrame& frame)
+{
+    if (!frame.isAsyncFrameWithoutCodeBlock())
+        return nullptr;
+    auto* function = dynamicDowncast<JSC::JSFunction>(frame.callee());
+    return function && !function->isHostFunction() ? function->jsExecutable() : nullptr;
+}
+
+JSC::LineColumn lineAndColumn(const JSC::StackFrame& frame)
+{
+    if (auto* executable = suspendedFunctionWithoutCode(frame)) [[unlikely]]
+        return { static_cast<unsigned>(executable->firstLine()), executable->startColumn() };
+    return frame.computeLineAndColumn();
 }
 
 JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
@@ -295,8 +305,9 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
         m_isWasmFrame = true;
     } else if (auto* codeBlock = frame.codeBlock()) {
         auto* unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
-        if (!unlinkedCodeBlock->isBuiltinFunction() || isVisibleBuiltinFunction(codeBlock)) {
+        if (!unlinkedCodeBlock->isBuiltinFunction() || isVisibleBuiltinFunction(codeBlock->ownerExecutable())) {
             m_codeBlock = codeBlock;
+            m_executable = codeBlock->ownerExecutable();
             m_bytecodeIndex = frame.bytecodeIndex();
         }
 
@@ -304,6 +315,10 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
         if (codeType == JSC::FunctionCode || codeType == JSC::EvalCode) {
             m_isFunctionOrEval = true;
         }
+    } else if (auto* executable = suspendedFunctionWithoutCode(frame)) {
+        if (!executable->isBuiltinFunction() || isVisibleBuiltinFunction(executable))
+            m_executable = executable;
+        m_isFunctionOrEval = true;
 #if ENABLE(AOT)
     } else if (frame.isCompiledFrame()) {
         m_isAOTCompiled = true;
@@ -318,20 +333,16 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
 #endif
     }
 
-    if (!m_codeBlock && frame.hasLineAndColumnInfo()) {
-        auto lineColumn = frame.computeLineAndColumn();
+    if (!m_codeBlock && hasSourcePosition(frame)) {
+        auto lineColumn = lineAndColumn(frame);
         m_sourcePositions = { OrdinalNumber::fromOneBasedInt(lineColumn.line), OrdinalNumber::fromOneBasedInt(lineColumn.column) };
         m_sourcePositionsState = SourcePositionsState::Calculated;
-        auto codeType = frame.codeBlock()->codeType();
-        if (codeType == JSC::FunctionCode || codeType == JSC::EvalCode) {
-            m_isFunctionOrEval = true;
-        }
     }
 }
 
 intptr_t JSCStackFrame::sourceID() const
 {
-    return m_codeBlock ? m_codeBlock->ownerExecutable()->sourceID() : JSC::noSourceID;
+    return m_executable ? m_executable->sourceID() : JSC::noSourceID;
 }
 
 JSC::JSString* JSCStackFrame::sourceURL()
@@ -548,6 +559,8 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
     }
 
     if (!frame.hasLineAndColumnInfo()) [[unlikely]] {
+        if (auto* executable = suspendedFunctionWithoutCode(frame))
+            return sourceURL(executable->source());
         return "[native code]"_s;
     }
 
@@ -752,6 +765,8 @@ String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* fla
         }
     } else if (callee) {
         functionName = Zig::functionName(vm, callee);
+        if (auto* executable = suspendedFunctionWithoutCode(frame); executable && flags)
+            *flags |= FunctionNameFlags::Function | (executable->isBuiltinFunction() ? FunctionNameFlags::Builtin : FunctionNameFlags::None);
     }
 
     if ((flags && (*flags & static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword))) && isConstructor && !functionName.isEmpty()) {

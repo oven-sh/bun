@@ -185,9 +185,8 @@ export function getStdinStream(
 
   stream.fd = fd;
 
-  // The descriptor belongs to the process: reading resumes after 'end' (see the
-  // 'resume' handler) and children inherit it. Destroying stdin, which the
-  // 'end' handler below does, must not close it.
+  // The descriptor belongs to the process and children inherit it. Destroying
+  // stdin, which the 'end' handler below does, must not close it.
   stream._destroy = function (this: StdinStream, err: Error | null, cb: $Node.ErrorCallback) {
     cb(err);
   };
@@ -292,6 +291,8 @@ export function getStdinStream(
 
   stream.on("resume", () => {
     if (stream.isPaused()) return; // fake resume
+    // After EOF, _undestroy() would clear `ended` and 'end' would never be emitted.
+    if (stream_reachedEof) return;
     $debug('on("resume");');
     own();
     stream._undestroy();

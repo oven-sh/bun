@@ -9,11 +9,13 @@ use core::ops::Range;
 use std::io::Write as _;
 
 use bun_core::strings::{
-    contains_char, is_js_line_terminator, is_js_whitespace, to_utf16_alloc_for_real,
+    CodeUnits, contains_char, is_js_line_terminator, is_js_whitespace, to_utf16_alloc_for_real,
 };
 use bun_core::{UnwrapOrOom as _, slice_as_bytes};
 
-use crate::tokens::{Edit, Split, Unit, is, line_start};
+use crate::tokens::{
+    Edit, Split, Unit, as_slice, count_newlines, for_each_line_end, is, line_start,
+};
 
 /// A start is the first line of the range, from 1. If the range is empty, it is the line after it.
 pub struct PatchHunk<Line> {
@@ -30,73 +32,92 @@ fn extend_ascii<T: Unit>(out: &mut Vec<T>, ascii: &[u8]) {
 
 // ───────────────────────────── create ─────────────────────────────
 
-pub enum Line<'a, T> {
-    /// ` `, `-` or `+`, and the line without its `\n`.
-    Text(u8, &'a [T]),
+pub const NO_NEWLINE: &[u8] = b"\\ No newline at end of file";
+
+pub enum Line {
+    /// ` `, `-` or `+`, and the place of the line without its `\n`: in the old text for `-`, else in the new one.
+    Text(u8, Range<usize>),
     NoNewline,
 }
 
-impl<T: Unit> Line<'_, T> {
-    pub fn write(&self, out: &mut Vec<T>) {
-        match *self {
-            Line::Text(operation, text) => {
-                out.push(T::from_u8(operation));
-                out.extend_from_slice(text);
-            }
-            Line::NoNewline => extend_ascii(out, b"\\ No newline at end of file"),
-        }
+fn push_line<T: Unit>(lines: &mut Vec<Line>, operation: u8, text: &[T], line: Range<usize>) {
+    if is(text[..line.end].last(), b'\n') {
+        lines.push(Line::Text(operation, line.start..line.end - 1));
+    } else {
+        lines.extend([Line::Text(operation, line), Line::NoNewline]);
     }
 }
 
-/// How many lines of `text` were pushed: at most `limit`.
-fn push_lines<'a, T: Unit>(
-    lines: &mut Vec<Line<'a, T>>,
+/// `text[range]` has `count` lines.
+fn push_lines<T: Unit>(
+    lines: &mut Vec<Line>,
     operation: u8,
-    text: &'a [T],
-    limit: usize,
-) -> usize {
-    let (mut at, mut count) = (0, 0);
-    while at < text.len() && count < limit {
-        let end = Split::Lines.end(text, at);
-        if let Some(line) = text[at..end].strip_suffix(&[T::from_u8(b'\n')]) {
-            lines.push(Line::Text(operation, line));
-        } else {
-            lines.extend([Line::Text(operation, &text[at..end]), Line::NoNewline]);
+    text: &[T],
+    range: Range<usize>,
+    count: usize,
+) {
+    let (from, mut at) = (range.start, range.start);
+    // One pass over the text is faster than a search for each line only if there are many.
+    if count > 16 {
+        for_each_line_end(&text[range.clone()], |end| {
+            lines.push(Line::Text(operation, at..from + end - 1));
+            at = from + end;
+        });
+    } else {
+        for _ in 1..count {
+            let end = Split::Lines.end(text, at);
+            push_line(lines, operation, text, at..end);
+            at = end;
         }
-        at = end;
-        count += 1;
     }
-    count
+    if at < range.end {
+        push_line(lines, operation, text, at..range.end);
+    }
 }
 
-/// `edits` are by [`Split::Lines`].
-pub fn hunks<'a, T: Unit>(
-    a: &'a [T],
-    b: &'a [T],
+/// `edits` are by [`Split::Lines`]. The lines that are kept are those of `b`.
+pub fn hunks<'a>(
+    a: CodeUnits<'a>,
+    b: CodeUnits<'a>,
     edits: &'a [Edit],
     context: usize,
-) -> impl Iterator<Item = PatchHunk<Line<'a, T>>> {
+) -> impl Iterator<Item = PatchHunk<Line>> {
     let reach = context.saturating_mul(2);
     let groups = edits.chunk_by(move |one, next| next.tokens.a_lo - one.tokens.a_hi <= reach);
     groups.map(move |group| {
         let first = &group[0];
         let before = context.min(first.tokens.a_lo);
-        let mut at = (0..before).fold(first.units.a_lo, |at, _| line_start(a, at - 1));
-        let (mut lines, mut old_lines, mut new_lines) = (Vec::new(), 0, 0);
+        let mut at = (0..before).fold(
+            first.units.b_lo,
+            |at, _| as_slice!(b => line_start(b, at - 1)),
+        );
+        let (start_a, start_b) = (first.tokens.a_lo - before, first.tokens.b_lo - before);
+        let last = &group[group.len() - 1];
+        let inserted: usize = group.iter().map(|edit| edit.tokens.inserted()).sum();
+        // With room for a usual context after the last edit, and two markers.
+        let mut lines =
+            Vec::with_capacity(last.tokens.a_hi - start_a + inserted + context.min(8) + 2);
+        let mut line = start_a;
         for &Edit { units, tokens } in group {
-            let same = push_lines(&mut lines, b' ', &a[at..units.a_lo], usize::MAX);
-            push_lines(&mut lines, b'-', &a[units.a_lo..units.a_hi], usize::MAX);
-            push_lines(&mut lines, b'+', &b[units.b_lo..units.b_hi], usize::MAX);
-            old_lines += same + tokens.deleted();
-            new_lines += same + tokens.inserted();
-            at = units.a_hi;
+            let mut push = |operation, text, range, count| {
+                as_slice!(text => push_lines(&mut lines, operation, text, range, count));
+            };
+            push(b' ', b, at..units.b_lo, tokens.a_lo - line);
+            push(b'-', a, units.a_lo..units.a_hi, tokens.deleted());
+            push(b'+', b, units.b_lo..units.b_hi, tokens.inserted());
+            (at, line) = (units.b_hi, tokens.a_hi);
         }
-        let after = push_lines(&mut lines, b' ', &a[at..], context);
+        let mut after = 0;
+        as_slice!(b => while after < context && at < b.len() {
+            let end = Split::Lines.end(b, at);
+            push_line(&mut lines, b' ', b, at..end);
+            (at, after) = (end, after + 1);
+        });
         PatchHunk {
-            old_start: first.tokens.a_lo - before + 1,
-            old_lines: old_lines + after,
-            new_start: first.tokens.b_lo - before + 1,
-            new_lines: new_lines + after,
+            old_start: start_a + 1,
+            old_lines: last.tokens.a_hi - start_a + after,
+            new_start: start_b + 1,
+            new_lines: last.tokens.b_hi - start_b + after,
             lines,
         }
     })
@@ -114,18 +135,34 @@ pub fn write_file_header<T: Unit>(out: &mut Vec<T>, marker: &[u8], name: &[u8], 
     out.push(T::from_u8(b'\n'));
 }
 
-pub fn write_hunk<T: Unit>(out: &mut Vec<T>, hunk: &PatchHunk<Line<'_, T>>) {
-    // The header of an empty range names the line before it.
+/// `write_text` appends the text of a [`Line::Text`].
+pub fn write_hunk<T: Unit>(
+    out: &mut Vec<T>,
+    hunk: PatchHunk<Line>,
+    write_text: impl Fn(&mut Vec<T>, u8, Range<usize>),
+) {
+    let range = |start: usize, lines: usize| {
+        core::fmt::from_fn(move |f| match lines {
+            // An empty range names the line before it.
+            0 => write!(f, "{},0", start - 1),
+            1 => write!(f, "{start}"),
+            _ => write!(f, "{start},{lines}"),
+        })
+    };
     let header = format!(
-        "@@ -{},{} +{},{} @@\n",
-        hunk.old_start - usize::from(hunk.old_lines == 0),
-        hunk.old_lines,
-        hunk.new_start - usize::from(hunk.new_lines == 0),
-        hunk.new_lines,
+        "@@ -{} +{} @@\n",
+        range(hunk.old_start, hunk.old_lines),
+        range(hunk.new_start, hunk.new_lines),
     );
     extend_ascii(out, header.as_bytes());
-    for line in &hunk.lines {
-        line.write(out);
+    for line in hunk.lines {
+        match line {
+            Line::Text(operation, range) => {
+                out.push(T::from_u8(operation));
+                write_text(out, operation, range);
+            }
+            Line::NoNewline => extend_ascii(out, NO_NEWLINE),
+        }
         out.push(T::from_u8(b'\n'));
     }
 }
@@ -183,6 +220,8 @@ pub struct FilePatch {
     pub is_create: bool,
     pub is_delete: bool,
     pub is_binary: bool,
+    /// The patch was trimmed. Its last lines include a `\r` that has to be appended to it.
+    pub lost_cr: bool,
     /// A line is its place in the patch.
     pub hunks: Vec<PatchHunk<Range<usize>>>,
 }
@@ -268,7 +307,7 @@ fn split_while<T: Unit>(text: &[T], matches: impl Fn(u32) -> bool) -> (&[T], &[T
     )
 }
 
-fn trim<T: Unit>(text: &[T]) -> &[T] {
+pub(crate) fn trim<T: Unit>(text: &[T]) -> &[T] {
     let (_, text) = split_while(text, is_js_whitespace);
     let trailing = text.iter().rev();
     &text[..text.len()
@@ -397,6 +436,13 @@ fn git_header_names<T: Unit>(names: &[T]) -> Option<(Name, Name)> {
 }
 
 impl FilePatch {
+    fn is_empty(&self) -> bool {
+        !self.is_git
+            && self.index.is_none()
+            && self.old_file_name.is_none()
+            && self.hunks.is_empty()
+    }
+
     fn read_git_extended_header<T: Unit>(&mut self, line: &[T]) {
         let name = |prefix: &[u8], side: u8| {
             let (name, _) = split_while(strip(line, prefix)?, |unit| !is_js_line_terminator(unit));
@@ -493,11 +539,11 @@ struct Parser<'a, T> {
     next_header: NextHeader,
 }
 
-/// The line that starts a hunk or a section, seen from the last `---` or `+++` that looked for it.
+/// The line that starts a hunk or a section or ends a pair, seen from the last `---` or `+++` that looked for it.
 #[derive(Clone, Copy, Default)]
 struct NextHeader {
     number: usize,
-    is_git: bool,
+    is_section: bool,
 }
 
 impl<'a, T: Unit> Parser<'a, T> {
@@ -517,7 +563,7 @@ impl<'a, T: Unit> Parser<'a, T> {
         self.number += 1;
     }
 
-    /// A commit message can have a line like `--- Original Message ---`. It is alone, and `diff --git` follows it.
+    /// A commit message can have a line like `--- Original Message ---`. It is alone, and a section follows it.
     fn is_at_file_header(&mut self) -> bool {
         let Some(line) = self.peek().filter(|line| is_file_header(line)) else {
             return false;
@@ -527,56 +573,66 @@ impl<'a, T: Unit> Parser<'a, T> {
             ..*self
         };
         ahead.advance();
-        // The stars start a hunk of `diff -c`.
-        let is_continued = ahead.peek().is_some_and(|it| {
-            after_marker(it, b"+++").is_some() || strip(it, &[b'*'; 15]).is_some()
-        });
-        if is(line.first(), b'-') && (is_continued || self.is_after_index()) {
+        let next = ahead.peek().unwrap_or_default();
+        if is(line.first(), b'-')
+            && (after_marker(next, b"+++").is_some() || self.is_in_header(next))
+        {
             return true;
         }
         if self.number >= self.next_header.number {
+            let mut last = line;
             while let Some(line) = ahead.peek()
                 && !is_diff_header(line)
                 && strip(line, b"@@").is_none()
+                && !(after_marker(line, b"+++").is_some() && after_marker(last, b"---").is_some())
             {
+                last = line;
                 ahead.advance();
             }
             self.next_header = NextHeader {
                 number: ahead.number,
-                is_git: ahead
-                    .peek()
-                    .is_some_and(|it| strip(it, GIT_HEADER).is_some()),
+                is_section: ahead.peek().is_some_and(|it| strip(it, b"@@").is_none()),
             };
         }
-        !self.next_header.is_git
+        !self.next_header.is_section
     }
 
-    /// After `Index:` or its rule.
-    fn is_after_index(&self) -> bool {
-        let end = self
-            .line
-            .as_ref()
-            .and_then(|line| line.start.checked_sub(1));
-        end.is_some_and(|end| {
-            let line = without_cr(&self.text[line_start(self.text, end)..end]);
-            index_name(line).is_some() || is_rule(line)
+    /// The lines before this one, from the nearest.
+    fn before(&self) -> impl Iterator<Item = &'a [T]> {
+        let (text, mut start) = (self.text, self.line.as_ref().map_or(0, |line| line.start));
+        core::iter::from_fn(move || {
+            let end = start.checked_sub(1)?;
+            start = line_start(text, end);
+            Some(without_cr(&text[start..end]))
         })
+    }
+
+    fn is_after_rule_of_index(&self) -> bool {
+        let mut before = self.before();
+        before.next().is_some_and(is_rule) && before.next().and_then(index_name).is_some()
+    }
+
+    /// After `Index:` or its rule, or between `*** name` and the stars that start a hunk of `diff -c`.
+    fn is_in_header(&self, next: &[T]) -> bool {
+        let last = self.before().next().unwrap_or_default();
+        index_name(last).is_some()
+            || self.is_after_rule_of_index()
+            || after_marker(last, b"***").is_some() && strip(next, &[b'*'; 15]).is_some()
     }
 
     fn file(&mut self) -> Result<FilePatch, ParseError> {
         let mut file = FilePatch::default();
-        let (mut has_diff_header, mut is_after_rule) = (false, false);
+        let mut has_diff_header = false;
         while let Some(line) = self.peek()
             && !self.is_at_file_header()
             && !is_hunk_header(line)
         {
             // `svn diff --git` writes `Index:`, the rule and `diff --git`.
-            let is_svn_git = is_after_rule && !file.is_git && strip(line, GIT_HEADER).is_some();
+            let is_svn_git = strip(line, GIT_HEADER).is_some() && self.is_after_rule_of_index();
             if is_diff_header(line) && core::mem::replace(&mut has_diff_header, true) && !is_svn_git
             {
                 return Ok(file);
             }
-            is_after_rule = is_rule(line);
             if file.is_git {
                 file.read_git_extended_header(line);
             } else if let Some(names) = strip(line, GIT_HEADER) {
@@ -605,20 +661,74 @@ impl<'a, T: Unit> Parser<'a, T> {
             }
             _ => {}
         }
+        if self.is_at_stray_line() {
+            return Err(ParseError::InvalidHunkHeader { at: self.number });
+        }
 
+        let mut first_text = None;
         while let Some(line) = self.peek()
             && !is_diff_header(line)
             && !self.is_at_file_header()
             && !is_rule(line)
         {
             if is_hunk_header(line) {
+                let header = self.line.clone().map_or(&[][..], |line| &self.text[line]);
                 file.hunks.push(self.hunk(line)?);
+                file.lost_cr = self.restore_cr(header, &mut file.hunks);
             } else {
+                if first_text.is_none() && !trim(line).is_empty() {
+                    first_text = Some((self.number, line));
+                }
                 // `Only in dir: file` of `diff -r`, `Property changes on:` of `svn diff`, the rest of an email.
                 self.advance();
             }
         }
-        Ok(file)
+        match first_text {
+            Some((at, line))
+                if file.hunks.is_empty() && strip(line, b"Property changes on:").is_none() =>
+            {
+                Err(ParseError::InvalidHunkHeader { at })
+            }
+            _ => Ok(file),
+        }
+    }
+
+    /// See [`FilePatch::lost_cr`].
+    fn restore_cr(&self, header: &[T], hunks: &mut [PatchHunk<Range<usize>>]) -> bool {
+        let end = self.text.len();
+        if self.line.is_some() || is(self.text.last(), b'\r') {
+            return false;
+        }
+        let Some((last, earlier)) = hunks.split_last_mut() else {
+            return false;
+        };
+        let at = last.lines.partition_point(|line| line.end < end);
+        let (whole, trimmed) = last.lines.split_at_mut(at);
+        let earlier = if whole.is_empty() { &*earlier } else { &[] };
+        let whole = || earlier.iter().flat_map(|hunk| &hunk.lines).chain(&*whole);
+        let is_marker = |line: &Range<usize>| is(self.text.get(line.start), b'\\');
+        let has_cr = |line: &Range<usize>| is(self.text[line.clone()].last(), b'\r');
+        let lost_cr = !trimmed.is_empty()
+            && (is(header.last(), b'\r')
+                || !trimmed.iter().any(is_marker)
+                    && whole()
+                        .zip(whole().skip(1).map(is_marker).chain([false]))
+                        .all(|(line, is_marked)| is_marked || is_marker(line) || has_cr(line))
+                    && whole().any(has_cr));
+        if lost_cr {
+            trimmed.iter_mut().for_each(|line| line.end += 1);
+        }
+        lost_cr
+    }
+
+    /// At a line that only a hunk has.
+    fn is_at_stray_line(&mut self) -> bool {
+        let next = self.peek().unwrap_or_default();
+        next.first()
+            .is_some_and(|&it| matches!(it.into(), 0x20 | 0x2B | 0x2D))
+            && !self.is_at_file_header()
+            // The signature that `git format-patch` ends a message with.
+            && strip(trim(next), b"--") != Some(&[])
     }
 
     fn hunk(&mut self, header: &[T]) -> Result<PatchHunk<Range<usize>>, ParseError> {
@@ -626,7 +736,7 @@ impl<'a, T: Unit> Parser<'a, T> {
         let mut hunk = hunk_header(header).ok_or(ParseError::InvalidHunkHeader { at })?;
         self.advance();
 
-        let (mut added, mut removed) = (0, 0);
+        let (mut added, mut removed, mut kept) = (0, 0, 0);
         while let Some(place) = self.line.clone() {
             let line = without_cr(&self.text[place.clone()]);
             if removed >= hunk.old_lines && added >= hunk.new_lines && !is(line.first(), b'\\') {
@@ -636,7 +746,9 @@ impl<'a, T: Unit> Parser<'a, T> {
             match Operation::of(line).filter(|_| !is_after_last_newline) {
                 Some(Operation::Add) => added += 1,
                 Some(Operation::Remove) => removed += 1,
-                Some(Operation::Keep) => (added, removed) = (added + 1, removed + 1),
+                Some(Operation::Keep) => {
+                    (added, removed, kept) = (added + 1, removed + 1, kept + 1)
+                }
                 Some(Operation::NoNewline) => {}
                 None => {
                     let line = widen(&line[..line.len().min(MAX_QUOTED)]);
@@ -647,11 +759,17 @@ impl<'a, T: Unit> Parser<'a, T> {
             self.advance();
         }
 
-        if added == 0 && hunk.new_lines == 1 {
-            hunk.new_lines = 0;
-        }
-        if removed == 0 && hunk.old_lines == 1 {
-            hunk.old_lines = 0;
+        // `trim()` takes the empty lines that the last hunk keeps at its end.
+        let end = self.text.len();
+        if self.line.is_none()
+            && let Some(missing @ 1..=3) = hunk.old_lines.checked_sub(removed)
+            && added + missing == hunk.new_lines
+            && !starts_with_space(&self.text[end - 1..])
+            && added + removed != 2 * kept
+            && !is(self.text.get(line_start(self.text, end)), b'\\')
+        {
+            hunk.lines.extend(core::iter::repeat_n(end..end, missing));
+            return Ok(hunk);
         }
         if added != hunk.new_lines {
             return Err(ParseError::AddedCount { at });
@@ -659,14 +777,7 @@ impl<'a, T: Unit> Parser<'a, T> {
         if removed != hunk.old_lines {
             return Err(ParseError::RemovedCount { at });
         }
-        if let Some(next) = self.peek()
-            && next
-                .first()
-                .is_some_and(|&it| matches!(it.into(), 0x20 | 0x2B | 0x2D))
-            && !self.is_at_file_header()
-            // The signature that `git format-patch` ends a message with.
-            && strip(trim(next), b"--") != Some(&[])
-        {
+        if self.is_at_stray_line() {
             return Err(ParseError::ExtraLines {
                 at,
                 old_lines: hunk.old_lines,
@@ -677,7 +788,6 @@ impl<'a, T: Unit> Parser<'a, T> {
     }
 }
 
-/// At least one file.
 pub fn parse<T: Unit>(text: &[T]) -> Result<Vec<FilePatch>, ParseError> {
     let mut parser = Parser {
         text,
@@ -687,9 +797,24 @@ pub fn parse<T: Unit>(text: &[T]) -> Result<Vec<FilePatch>, ParseError> {
     };
     let mut files = Vec::new();
     while parser.line.is_some() {
-        files.push(parser.file()?);
+        let file = parser.file()?;
+        if !file.is_empty() {
+            files.push(file);
+        }
     }
     Ok(files)
+}
+
+/// Whether `text`, which has `file` or none and no hunks, is a patch that changes no lines.
+pub fn can_lack_hunks<T: Unit>(text: &[T], file: Option<&FilePatch>) -> bool {
+    let Some(file) = file else {
+        return trim(text).is_empty();
+    };
+    file.is_rename
+        || file.is_copy
+        || file.old_mode.is_some()
+        || file.new_mode.is_some()
+        || file.new_header.is_some()
 }
 
 // ───────────────────────────── apply ─────────────────────────────
@@ -715,10 +840,51 @@ impl Operation {
     }
 }
 
-/// `lines[line]` of `hunks[hunk]` starts with none of ` `, `-`, `+` and `\`.
-pub struct InvalidOperation {
-    pub hunk: usize,
-    pub line: usize,
+/// `hunk` counts from 0.
+pub enum ApplyError {
+    /// `lines[line]` starts with none of ` `, `-`, `+` and `\`.
+    InvalidOperation {
+        hunk: usize,
+        line: usize,
+    },
+    Mismatch {
+        hunk: usize,
+        reason: Mismatch,
+    },
+}
+
+pub enum Mismatch {
+    /// The first difference where the hunk says it goes. `line` counts from 1.
+    Line {
+        line: usize,
+        expected: Name,
+        found: Option<Name>,
+    },
+    AlreadyApplied,
+    Order,
+    LastNewline,
+}
+
+impl core::fmt::Display for Mismatch {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let text = |text: &'_ Name| bun_core::EncodedSlice::utf16(text).to_string();
+        match self {
+            Self::Line {
+                line,
+                expected,
+                found,
+            } => {
+                write!(f, "expected {:?} at line {line}", text(expected))?;
+                match found {
+                    Some(found) => write!(f, ", found {:?}", text(found)),
+                    None => write!(f, ", found the end of the source"),
+                }
+            }
+            Self::AlreadyApplied => write!(f, "the source already has its changes"),
+            Self::Order => write!(f, "it goes before the end of the previous hunk"),
+            Self::LastNewline => write!(f, "the source does not end as the hunk says"),
+        }
+    }
 }
 
 pub struct HunkToApply<'a, T> {
@@ -733,6 +899,16 @@ struct Step<'a, T> {
     cr: Option<T>,
     /// Neither `\ No newline at end of file` nor the line that says it of.
     has_line_ending: bool,
+}
+
+impl<T: Unit> Step<'_, T> {
+    fn has_newline(&self) -> bool {
+        T::index_of_unit(self.text, T::from_u8(b'\n')).is_some()
+    }
+
+    fn len(&self) -> usize {
+        self.text.len() + self.cr.as_slice().len()
+    }
 }
 
 fn steps_of<'a, T: Unit>(lines: &[&'a [T]]) -> Result<Vec<Step<'a, T>>, usize> {
@@ -753,39 +929,66 @@ fn steps_of<'a, T: Unit>(lines: &[&'a [T]]) -> Result<Vec<Step<'a, T>>, usize> {
 }
 
 /// A patch with only `\n` gets `\r\n` for a source with only `\r\n`, and the other way round.
-fn convert_line_endings<T: Unit>(terminated: &[&[T]], hunks: &mut [Vec<Step<'_, T>>]) {
-    if terminated.is_empty() {
+fn convert_line_endings<T: Unit>(source: &[T], hunks: &mut [Vec<Step<'_, T>>]) {
+    let terminated = &source[..line_start(source, source.len())];
+    let Some((_, terminated)) = terminated.split_last() else {
         return;
-    }
-    let with_cr = terminated
-        .iter()
-        .filter(|line| is(line.last(), b'\r'))
-        .count();
+    };
+    let has_cr = || split(terminated).map(|line| is(line.last(), b'\r'));
     let steps = || hunks.iter().flatten();
-    if with_cr == terminated.len() {
-        if steps().all(|step| step.cr.is_none() || step.operation == Operation::NoNewline) {
-            let steps = hunks.iter_mut().flatten();
-            steps.for_each(|step| step.cr = step.has_line_ending.then(|| T::from_u8(b'\r')));
-        }
-    } else if with_cr == 0
-        && steps().all(|step| step.cr.is_some() || !step.has_line_ending)
+    if steps().all(|step| step.cr.is_none() || step.operation == Operation::NoNewline)
+        && has_cr().all(|it| it)
+    {
+        let steps = hunks.iter_mut().flatten();
+        steps.for_each(|step| step.cr = step.has_line_ending.then(|| T::from_u8(b'\r')));
+    } else if steps().all(|step| step.cr.is_some() || !step.has_line_ending)
         // On a line without a newline it is text.
         && steps().any(|step| {
             step.cr.is_some() && (step.has_line_ending || step.operation == Operation::NoNewline)
         })
+        && !has_cr().any(|it| it)
     {
         let steps = hunks.iter_mut().flatten();
         steps.for_each(|step| step.cr = None);
     }
 }
 
-/// `source.split("\n")` ends with an empty line if `source` ends with a newline. False if that is not as `last_hunk` says.
-fn change_last_newline<T: Unit>(lines: &mut Vec<&[T]>, last_hunk: &[Step<'_, T>]) -> bool {
+/// `text.split("\n")`
+fn split<T: Unit>(text: &[T]) -> impl Iterator<Item = &[T]> {
+    let mut rest = Some(text);
+    core::iter::from_fn(move || {
+        let (line, after) = rest?.split_at(Parser::line_from(rest?, 0).end);
+        rest = after.get(1..);
+        Some(line)
+    })
+}
+
+/// Where a line of `source.split("\n")` starts, counting a newline after each line, even the last.
+#[derive(Clone, Copy, Default)]
+struct Place {
+    line: usize,
+    unit: usize,
+}
+
+impl Place {
+    /// The next line, if this one has `length` units.
+    fn after(self, length: usize) -> Self {
+        let (line, unit) = (self.line + 1, self.unit + length + 1);
+        Self { line, unit }
+    }
+}
+
+/// A last newline makes an empty last line. `end` moves by that line if `last_hunk` adds or removes the newline.
+/// False if the source does not end as `last_hunk` says.
+fn change_last_newline<T: Unit>(
+    end: &mut Place,
+    has_newline: bool,
+    last_hunk: &[Step<'_, T>],
+) -> bool {
     let lacks_newline = |side: Operation| {
         let mut pairs = last_hunk.array_windows();
         pairs.any(|[one, next]| one.operation == side && next.operation == Operation::NoNewline)
     };
-    let has_newline = lines.last().is_some_and(|line| line.is_empty());
     match (
         lacks_newline(Operation::Remove),
         lacks_newline(Operation::Add),
@@ -793,28 +996,41 @@ fn change_last_newline<T: Unit>(lines: &mut Vec<&[T]>, last_hunk: &[Step<'_, T>]
         (false, false) => return true,
         (true, _) if has_newline => return false,
         (true, true) => {}
-        (true, false) => lines.push(&[]),
-        (false, true) if has_newline => drop(lines.pop()),
+        (true, false) => *end = end.after(0),
+        (false, true) if has_newline => (end.line, end.unit) = (end.line - 1, end.unit - 1),
         (false, true) => return false,
     }
     true
 }
 
+/// As if the end of the source had cut it short.
+fn has_only_context_before<T>(hunk: &[Step<'_, T>]) -> bool {
+    let is_kept = |step: &Step<'_, T>| step.operation == Operation::Keep;
+    hunk.first().is_some_and(is_kept) && !hunk.last().is_some_and(is_kept)
+}
+
+/// In lines.
+fn growth<T>(hunk: &[Step<'_, T>]) -> isize {
+    let count = |operation| hunk.iter().filter(|it| it.operation == operation).count() as isize;
+    count(Operation::Add) - count(Operation::Remove)
+}
+
 const HASH_BASE: u64 = 0x9E37_79B9_7F4A_7C15;
 
-/// The hash of some lines and `line` after them. A `\r` at its end can be in [`Step::cr`], so none counts.
-fn roll<T: Unit>(hash: u64, mut line: &[T]) -> u64 {
-    while let Some(shorter) = line.strip_suffix(&[T::from_u8(b'\r')]) {
-        line = shorter;
-    }
-    hash.wrapping_mul(HASH_BASE)
-        .wrapping_add(bun_wyhash::hash(slice_as_bytes(line)))
+/// `hash` of some lines, extended by `line` and `cr`. A last `\r` counts the same in either.
+fn roll<T: Unit>(hash: u64, line: &[T], cr: Option<T>) -> u64 {
+    let text = if cr.is_some() { line } else { without_cr(line) };
+    let has_cr = cr.is_some() || text.len() < line.len();
+    let line = bun_wyhash::hash_with_seed(has_cr.into(), slice_as_bytes(text));
+    hash.wrapping_mul(HASH_BASE).wrapping_add(line)
 }
 
 struct Source<'a, T> {
-    lines: Vec<&'a [T]>,
-    /// Of the first 0, 1, 2 .. lines. Trying a place takes one step, however much of the hunk matches there.
-    hashes: OnceCell<Vec<u64>>,
+    text: &'a [T],
+    /// Without the empty one after the last newline.
+    line_count: usize,
+    end: Place,
+    index: OnceCell<Index>,
     /// What is left for trying places, in all hunks together.
     work: Cell<usize>,
 }
@@ -823,49 +1039,215 @@ struct Source<'a, T> {
 const WORK: usize = 1 << 22;
 const WORK_PER_UNIT: usize = 16;
 
-impl<T: Unit> Source<'_, T> {
-    /// The place from `min` on, nearest to `wanted`, that has what the hunk keeps and removes.
-    fn locate(&self, steps: &[Step<'_, T>], wanted: isize, min: usize) -> Option<usize> {
+/// Entry `n` is for the first `n` lines.
+struct Index {
+    /// Trying a place takes one step, however much of the hunk matches there.
+    hashes: Vec<u64>,
+    /// With their newlines. A JS string has at most `i32::MAX` units.
+    lengths: Vec<u32>,
+}
+
+impl<'a, T: Unit> Source<'a, T> {
+    fn text_from(&self, unit: usize) -> &'a [T] {
+        self.text.get(unit..).unwrap_or_default()
+    }
+
+    /// The lines from `unit` on, then empty lines forever.
+    fn lines(&self, unit: usize) -> impl Iterator<Item = &'a [T]> {
+        split(self.text_from(unit)).chain(core::iter::repeat(&[][..]))
+    }
+
+    /// Where `line` starts. It is not before `before`.
+    fn place(&self, line: usize, before: Place) -> Place {
+        if let Some(index) = self.index.get() {
+            let unit = index.lengths[line] as usize;
+            return Place { line, unit };
+        }
+        // Counting the newlines of a block is faster than finding each. Only the last block is read line by line.
+        let (mut left, mut unit) = (line - before.line, before.unit);
+        let mut blocks = self.text_from(unit).chunks(512);
+        while left > 0
+            && let Some(block) = blocks.next()
+            && let newlines = count_newlines(block)
+            && newlines < left
+        {
+            (left, unit) = (left - newlines, unit + block.len());
+        }
+        let rest = self.lines(unit).take(left);
+        let unit = rest.fold(unit, |unit, line| unit + line.len() + 1);
+        Place { line, unit }
+    }
+
+    /// Appends the units from `from` to `to`. Past the end of the text they are the newlines that [`Place`] counts.
+    fn copy(&self, out: &mut Vec<T>, from: Place, to: Place) {
+        let (text, length) = (self.text_from(from.unit), to.unit - from.unit);
+        let end = out.len() + length;
+        out.extend_from_slice(&text[..text.len().min(length)]);
+        out.resize(end, T::from_u8(b'\n'));
+    }
+
+    /// The first step that the lines from `at` on do not have, and where.
+    fn difference<'s>(
+        &self,
+        mut steps: impl Iterator<Item = &'s Step<'s, T>>,
+        mut at: Place,
+    ) -> Option<(&'s Step<'s, T>, Place)>
+    where
+        T: 's,
+    {
+        steps.find_map(|step| {
+            let rest = self.text_from(at.unit).strip_prefix(step.text);
+            let rest = rest.and_then(|rest| rest.strip_prefix(step.cr.as_slice()));
+            if rest.is_some_and(|rest| rest.is_empty() || is(rest.first(), b'\n')) {
+                at = at.after(step.len());
+                return None;
+            }
+            Some((step, at))
+        })
+    }
+
+    /// `wanted`, if it is a line of the source from `first` on.
+    fn declared(&self, wanted: isize, first: Place) -> Option<Place> {
+        let line = usize::try_from(wanted).ok();
+        let line = line.filter(|line| (first.line..self.line_count).contains(line));
+        line.map(|line| self.place(line, first))
+    }
+
+    fn is_applied(&self, steps: &[Step<'_, T>], wanted: isize, first: Place) -> bool {
+        let new = || {
+            let steps = steps.iter();
+            steps.filter(|step| matches!(step.operation, Operation::Keep | Operation::Add))
+        };
+        new().any(|step| step.operation == Operation::Add)
+            && self.declared(wanted, first).is_some_and(|at| {
+                at.line + new().count() <= self.line_count && self.difference(new(), at).is_none()
+            })
+    }
+
+    /// Why [`Self::locate`] found nothing.
+    #[cold]
+    fn mismatch(&self, steps: &[Step<'_, T>], wanted: isize, first: Place) -> Mismatch {
+        if self.is_applied(steps, wanted, first) {
+            return Mismatch::AlreadyApplied;
+        }
+        let mut old = steps
+            .iter()
+            .filter(|step| matches!(step.operation, Operation::Keep | Operation::Remove));
+        let line = wanted.clamp(first.line as isize, self.line_count as isize) as usize;
+        let at = self.place(line, first);
+        let left = self.line_count - line;
+        let difference = match old.clone().position(Step::has_newline) {
+            Some(before) => old
+                .nth(before)
+                .map(|step| (step, self.place(line + before.min(left), at))),
+            None => self.difference(old.by_ref().take(left), at),
+        };
+        let found = difference.filter(|(_, at)| at.line < self.line_count);
+        let found = found.and_then(|(_, at)| self.lines(at.unit).next());
+        let at_end = || Some((old.next()?, self.line_count));
+        let Some((step, line)) = difference.map(|(step, at)| (step, at.line)).or_else(at_end)
+        else {
+            return Mismatch::Order;
+        };
+        let pairs = step.text.iter().zip(found.unwrap_or_default());
+        let same = pairs.take_while(|(a, b)| a == b).count();
+        let quote = |text: &[T], cr: Option<T>| {
+            let units = text[same.saturating_sub(MAX_QUOTED / 2)..].iter().copied();
+            widen(&units.chain(cr).take(MAX_QUOTED).collect::<Vec<_>>())
+        };
+        Mismatch::Line {
+            line: line + 1,
+            expected: quote(step.text, step.cr),
+            found: found.map(|found| quote(found, None)),
+        }
+    }
+
+    /// The place from `first` on, nearest to `wanted`, that has what the hunk keeps and removes.
+    fn locate(
+        &self,
+        steps: &[Step<'_, T>],
+        wanted: isize,
+        first: Place,
+        prefers_end: bool,
+    ) -> Option<Place> {
         let old = || {
             let steps = steps.iter();
             steps.filter(|step| matches!(step.operation, Operation::Keep | Operation::Remove))
         };
         let old_lines = old().count();
-        let max = self.lines.len().checked_sub(old_lines)?;
+        // The empty line after the last newline can only be kept.
+        let end = match steps.last().map(|step| step.operation) {
+            Some(Operation::Keep | Operation::NoNewline) => self.end.line,
+            _ => self.line_count,
+        };
+        let (min, max) = (first.line, end.checked_sub(old_lines)?);
         if old_lines == 0 {
-            let wanted = usize::try_from(wanted).ok();
-            return wanted.filter(|at| (min..=max).contains(at));
+            let wanted = wanted.clamp(0, max as isize) as usize;
+            return (wanted >= min).then(|| self.place(wanted, first));
         }
         if min > max {
             return None;
         }
-        let fits = |at: usize| {
-            let mut pairs = old().zip(&self.lines[at..]);
-            pairs.all(|(step, line)| line.strip_suffix(step.cr.as_slice()) == Some(step.text))
+        // `fits` would match such a line across two lines of the source.
+        if old().any(Step::has_newline) {
+            return None;
+        }
+        let fits = |at: Place| self.difference(old(), at).is_none();
+        // It can fit again, next to what it added. Without context, having those lines can be chance.
+        let is_applied = |from: Place| {
+            old().any(|step| step.operation == Operation::Keep)
+                && self.is_applied(steps, wanted, from)
         };
+        let units = || old().map(|step| step.len() + 1).sum::<usize>();
+        let has_newline = is(self.text.last(), b'\n');
+        if prefers_end
+            && let Some(line) = self.line_count.checked_sub(old_lines)
+            && let Some(unit) = (self.text.len() + usize::from(!has_newline)).checked_sub(units())
+            && unit >= first.unit
+            && (unit == 0 || is(self.text.get(unit - 1), b'\n'))
+            && old()
+                .next_back()
+                .is_some_and(|it| it.has_line_ending == has_newline)
+            && fits(Place { line, unit })
+        {
+            let moved = line as isize - wanted;
+            let is_twice = moved > 0 && moved == growth(steps) && is_applied(first);
+            return (!is_twice).then_some(Place { line, unit });
+        }
         let nearest = wanted.clamp(min as isize, max as isize) as usize;
-        if fits(nearest) {
-            return Some(nearest);
+        let place = |line: usize| self.place(line, first);
+        let at = place(nearest);
+        let fits_here = fits(at);
+        if (prefers_end || !fits_here) && is_applied(at) {
+            return None;
+        }
+        if fits_here {
+            return Some(at);
         }
 
-        let hashes = self.hashes.get_or_init(|| {
-            let rolled = self.lines.iter().scan(0, |hash, line| {
-                *hash = roll(*hash, line);
-                Some(*hash)
+        let Index { hashes, .. } = self.index.get_or_init(|| {
+            let lines = self.lines(0).take(self.end.line);
+            let rolled = lines.scan((0, 0), |(hash, length), line| {
+                (*hash, *length) = (roll(*hash, line, None), *length + line.len() as u32 + 1);
+                Some((*hash, *length))
             });
-            core::iter::once(0).chain(rolled).collect()
+            let count = self.end.line + 1;
+            let mut index = (Vec::with_capacity(count), Vec::with_capacity(count));
+            index.extend(core::iter::once((0, 0)).chain(rolled));
+            let (hashes, lengths) = index;
+            Index { hashes, lengths }
         });
-        let hash = old().fold(0, |hash, step| roll(hash, step.text));
+        let hash = old().fold(0, |hash, step| roll(hash, step.text, step.cr));
         let shift = HASH_BASE.wrapping_pow(old_lines as u32);
         let around = (1..=(max - nearest).max(nearest - min)).flat_map(|distance| {
             let later = Some(nearest + distance).filter(|&at| at <= max);
             let earlier = nearest.checked_sub(distance).filter(|&at| at >= min);
             later.into_iter().chain(earlier)
         });
-        let units: usize = old().map(|step| step.text.len() + 1).sum();
-        let mut work = self.work.get();
+        let (units, mut work) = (units(), self.work.get());
         for at in around {
             if hashes[at + old_lines].wrapping_sub(hashes[at].wrapping_mul(shift)) == hash {
+                let at = place(at);
                 if fits(at) {
                     self.work.set(work);
                     return Some(at);
@@ -878,89 +1260,92 @@ impl<T: Unit> Source<'_, T> {
     }
 }
 
-/// `None`: a hunk does not fit.
-pub fn apply<T: Unit>(
-    source: &[T],
-    hunks: &[HunkToApply<'_, T>],
-) -> Result<Option<Vec<T>>, InvalidOperation> {
+pub fn apply<T: Unit>(source: &[T], hunks: &[HunkToApply<'_, T>]) -> Result<Vec<T>, ApplyError> {
     let mut steps = Vec::with_capacity(hunks.len());
     for (hunk, HunkToApply { lines, .. }) in hunks.iter().enumerate() {
-        steps.push(steps_of(lines).map_err(|line| InvalidOperation { hunk, line })?);
+        steps.push(steps_of(lines).map_err(|line| ApplyError::InvalidOperation { hunk, line })?);
     }
+    let mismatch = |left: usize, reason: Mismatch| {
+        let hunk = hunks.len().saturating_sub(left + 1);
+        Err(ApplyError::Mismatch { hunk, reason })
+    };
 
-    let newline = T::from_u8(b'\n');
-    let mut lines = Vec::with_capacity(Split::Lines.count(source) + 1);
-    let mut rest = source;
-    while let Some(length) = T::index_of_unit(rest, newline) {
-        lines.push(&rest[..length]);
-        rest = &rest[length + 1..];
-    }
-    convert_line_endings(&lines, &mut steps);
+    convert_line_endings(source, &mut steps);
     // Without the empty one after the last newline.
-    let line_count = lines.len() + usize::from(!rest.is_empty());
-    lines.push(rest);
-    if let Some(last_hunk) = steps.last()
-        && !change_last_newline(&mut lines, last_hunk)
-    {
-        return Ok(None);
+    let line_count = Split::Lines.count(source);
+    let has_newline = source.is_empty() || is(source.last(), b'\n');
+    let mut end = Place {
+        line: line_count + usize::from(has_newline),
+        unit: source.len() + 1,
+    };
+    let last_hunk = steps.last().map_or(&[][..], |steps| steps);
+    let has_marker = last_hunk.iter().any(|step| !step.has_line_ending);
+    if has_marker && !change_last_newline(&mut end, has_newline, last_hunk) {
+        return mismatch(0, Mismatch::LastNewline);
     }
+    let is_made_at_end = has_marker || has_only_context_before(last_hunk);
 
-    let mut out = Vec::with_capacity(source.len() + 1);
+    let units = |operation: Operation| -> usize {
+        let steps = steps.iter().flatten();
+        let steps = steps.filter(|step| step.operation == operation);
+        steps.map(|step| step.len() + 1).sum()
+    };
+    let growth = units(Operation::Add).saturating_sub(units(Operation::Remove));
+    // A hunk may not fit, so no more than twice the source is reserved.
+    let mut out = Vec::with_capacity(end.unit + growth.min(source.len()));
     let source = Source {
-        lines,
-        hashes: OnceCell::new(),
+        text: source,
+        line_count,
+        end,
+        index: OnceCell::new(),
         work: Cell::new(WORK + WORK_PER_UNIT * source.len()),
     };
-    let copy = |out: &mut Vec<T>, range: Range<usize>| {
-        for line in &source.lines[range] {
-            out.extend_from_slice(line);
-            out.push(newline);
-        }
-    };
     // Lines that a hunk keeps after its last change are not copied yet: the next hunk can start among them.
-    let mut copied = 0;
+    let mut copied = Place::default();
     let mut offset = 0;
-    for (hunk, steps) in hunks.iter().zip(&steps) {
-        let declared = hunk.old_start as isize - 1;
-        let Some(mut at) = source.locate(steps, declared + offset, copied) else {
-            return Ok(None);
+    for (left, (hunk, steps)) in (0..hunks.len()).rev().zip(hunks.iter().zip(&steps)) {
+        let declared = hunk.old_start.saturating_sub(1) as isize;
+        let prefers_end = left == 0 && is_made_at_end;
+        let Some(mut at) = source.locate(steps, declared + offset, copied, prefers_end) else {
+            return mismatch(left, source.mismatch(steps, declared + offset, copied));
         };
-        offset = at as isize - declared;
-        copy(&mut out, copied..at);
+        offset = at.line as isize - declared;
+        source.copy(&mut out, copied, at);
         copied = at;
         let mut has_last_line = false;
         for step in steps {
             has_last_line |= !step.has_line_ending
                 && matches!(step.operation, Operation::Add | Operation::Remove);
+            let next = at.after(step.len());
             match step.operation {
-                Operation::Keep => at += 1,
+                Operation::Keep => at = next,
                 Operation::Remove => {
-                    copy(&mut out, copied..at);
-                    at += 1;
-                    copied = at;
+                    source.copy(&mut out, copied, at);
+                    (at, copied) = (next, next);
                 }
                 Operation::Add => {
-                    copy(&mut out, copied..at);
+                    source.copy(&mut out, copied, at);
                     copied = at;
-                    out.extend(step.text.iter().chain(&step.cr));
-                    out.push(newline);
+                    out.extend_from_slice(step.text);
+                    out.extend(step.cr);
+                    out.push(T::from_u8(b'\n'));
                 }
                 Operation::NoNewline => {}
             }
         }
-        if copied > line_count || (has_last_line && at < line_count) {
-            return Ok(None);
+        if copied.line > line_count || (has_last_line && at.line < line_count) {
+            return mismatch(left, Mismatch::LastNewline);
         }
     }
-    copy(&mut out, copied..source.lines.len());
+    source.copy(&mut out, copied, end);
     out.pop();
     // Half of a line ending, unless a line without a newline had it.
-    if is(out.last(), b'\r') && !is(rest.last(), b'\r') {
+    if is(out.last(), b'\r') && !is(source.text.last(), b'\r') {
         let mut steps = steps.iter().flatten();
         let last_added = steps.rfind(|step| step.operation == Operation::Add);
         if last_added.is_none_or(|step| step.has_line_ending) {
-            return Ok(None);
+            return mismatch(0, Mismatch::LastNewline);
         }
     }
-    Ok(Some(out))
+    Ok(out)
 }

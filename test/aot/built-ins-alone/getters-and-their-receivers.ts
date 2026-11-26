@@ -19,6 +19,7 @@ const otherInstances = [
   'import { statfsSync } from "node:fs";\nstatfsSync(".")',
   'import { readdirSync } from "node:fs";\nreaddirSync("/", { withFileTypes: true })[0]',
   'import { opendirSync } from "node:fs";\nconst folder = opendirSync("/");\nfolder.closeSync();\nfolder',
+  'new Bun.RedisClient("redis://127.0.0.1:1", { autoReconnect: false })',
   'new File(["a"], "n")',
   "new FormData()",
   'new MessageEvent("x", { data: { a: 1 }, ports: [] })',

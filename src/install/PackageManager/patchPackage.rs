@@ -6,7 +6,9 @@ use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{ZBox, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::{OSPath, ParentEqual, Path, dirname_or_root, is_parent_or_equal, to_portable};
-use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _, existing_spelling};
+use bun_sys::{
+    self as sys, DeleteTreeOnDrop, Dir, Fd, FdDirExt as _, FdExt as _, existing_spelling,
+};
 
 use crate::bin;
 use crate::bun_fs::FileSystem;
@@ -160,21 +162,17 @@ pub(crate) fn write_pending_patch(
     let mut tmpname_buf = [0u8; 1024];
     let tempfile_name =
         bun_paths::fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
-    let tmpdir = get_temporary_directory(manager).handle.fd();
-    if let Err(e) = sys::File::write_file(tmpdir, tempfile_name, &patch.contents) {
-        Output::err(e, "failed to write patch to temp file", ());
-        Global::crash();
-    }
-    if let Err(e) = sys::renameat_concurrently(
-        tmpdir,
-        tempfile_name,
-        Fd::cwd(),
-        &patch.path,
-        sys::RenameOptions {
-            move_fallback: true,
-        },
-    ) {
-        Output::err(e, "failed renaming patch file to patches dir", ());
+    let tmpdir = &get_temporary_directory(manager).handle;
+    let flags = sys::O::RDWR | sys::O::CREAT | sys::O::TRUNC;
+    let moved = sys::Tmpfile::open(tmpdir, tempfile_name, flags, 0o664)
+        .and_then(|tmp| tmp.file.write_all(&patch.contents).map(|()| tmp))
+        .map_err(|e| (e, "failed to write patch to temp file"))
+        .and_then(|tmp| {
+            tmp.finish_at(Fd::cwd(), &patch.path)
+                .map_err(|(e, _)| (e, "failed renaming patch file to patches dir"))
+        });
+    if let Err((e, what)) = moved {
+        Output::err(e, what, ());
         Global::crash();
     }
     Ok(Some(patch.path))
@@ -688,8 +686,8 @@ fn patch_applies(
     let Some(patchfile) = patchfile.filter(|patchfile| patchfile.skipped.is_empty()) else {
         return false;
     };
-    let scratch = TempTree(temp_sibling(folder));
-    if let Err(e) = copy_cache_entry(cache_dir, cache_dir_subpath, &scratch.0) {
+    let scratch = DeleteTreeOnDrop::new(Fd::cwd(), temp_sibling(folder));
+    if let Err(e) = copy_cache_entry(cache_dir, cache_dir_subpath, &scratch) {
         bun_core::pretty_errorln!(
             "<r><red>error<r>: failed to copy package to test the patch: {}",
             e.name(),
@@ -697,7 +695,7 @@ fn patch_applies(
         return false;
     }
     let applied = Dir::cwd()
-        .open_dir(&scratch.0, Default::default())
+        .open_dir(&scratch, Default::default())
         .map_err(bun_patch::ApplyError::Sys)
         .and_then(|dir| patchfile.apply(dir.fd));
     if let Err(e) = applied {
@@ -745,11 +743,11 @@ fn diff_against_cache(
         }
     };
 
-    let symlinks_dir = TempTree(temp_path_in(b"node_modules"));
+    let symlinks_dir = DeleteTreeOnDrop::new(Fd::cwd(), temp_path_in(b"node_modules"));
     // The `./` that `from_cwd` adds puts a `/./` in the folder prefixes that are stripped from the
     // diff afterwards, which no path inside the package can match.
-    let old = git_diff_path(cwd, old_folder, &symlinks_dir.0, b"old");
-    let new = git_diff_path(cwd, new_folder, &symlinks_dir.0, b"new");
+    let old = git_diff_path(cwd, old_folder, &symlinks_dir, b"old");
+    let new = git_diff_path(cwd, new_folder, &symlinks_dir, b"new");
     let paths = match (old, new) {
         (Ok(old), Ok(new)) => bun_patch::git_diff_preprocess_paths(&old, &new),
         (Err(e), _) | (_, Err(e)) => {
@@ -802,7 +800,7 @@ const ITERATE: sys::OpenDirOptions = sys::OpenDirOptions {
 struct HiddenFromDiff {
     folder: Dir,
     stash: Dir,
-    stash_path: Vec<u8>,
+    stash_path: Path,
 }
 
 impl HiddenFromDiff {
@@ -868,7 +866,7 @@ impl Drop for HiddenFromDiff {
             }
             Err(e) => bun_core::warn!(
                 "failed to move {} back into package folder: {}",
-                bstr::BStr::new(&self.stash_path),
+                bstr::BStr::new(self.stash_path.as_bytes()),
                 e
             ),
         }
@@ -1113,7 +1111,7 @@ fn make_bins_executable(
     }
     // `bin::Linker` sets the mode of the files it links to. The links themselves are not needed, so
     // they go in a temporary folder.
-    let links = TempTree(temp_sibling(folder));
+    let links = DeleteTreeOnDrop::new(Fd::cwd(), temp_sibling(folder));
     let Ok(cache_path) = sys::get_fd_path_owned(cache_dir) else {
         return;
     };
@@ -1122,7 +1120,7 @@ fn make_bins_executable(
         target_node_modules_path: Some(&cache_path),
         target_package_name: cache_dir_subpath,
         seen: None,
-        node_modules_path: &Path::from(&links.0),
+        node_modules_path: &links,
         package_name: cache_dir_subpath,
         global_bin_path: ZStr::EMPTY,
         string_buf: lockfile.buffers.string_bytes.as_slice(),
@@ -1322,35 +1320,18 @@ fn is_link_position(folder: &[u8]) -> bool {
 
 /// Uses the same naming as an install's staging folder, so that `bun prune` removes it if a crash
 /// leaves it behind.
-fn temp_path_in(dir: &[u8]) -> Vec<u8> {
+fn temp_path_in(dir: &[u8]) -> Path {
     let mut path = Path::from(dir);
     path.push_fmt(format_args!(
         "{}{:016x}",
         StagingPath::PREFIX,
         bun_core::fast_random()
     ));
-    path.to_vec()
+    path
 }
 
-fn temp_sibling(folder: &[u8]) -> Vec<u8> {
+fn temp_sibling(folder: &[u8]) -> Path {
     temp_path_in(bun_paths::dirname(folder).unwrap_or_default())
-}
-
-/// Deleted on drop, unless it was renamed away or kept.
-struct TempTree(Vec<u8>);
-
-impl TempTree {
-    fn keep(mut self) -> Vec<u8> {
-        core::mem::take(&mut self.0)
-    }
-}
-
-impl Drop for TempTree {
-    fn drop(&mut self) {
-        if !self.0.is_empty() {
-            let _ = Fd::cwd().delete_tree(&self.0);
-        }
-    }
 }
 
 /// `folder` is never left half-written: the copy is created next to it and then renamed into place.
@@ -1361,47 +1342,46 @@ fn replace_with_cache_copy(
     folder: &[u8],
 ) -> Result<(), crate::Error> {
     let cwd = Fd::cwd();
-    let staging = TempTree(temp_sibling(folder));
-    copy_cache_entry(cache_dir, cache_dir_subpath, &staging.0)?;
+    let staging = DeleteTreeOnDrop::new(cwd, temp_sibling(folder));
+    copy_cache_entry(cache_dir, cache_dir_subpath, &staging)?;
 
     let old_path = temp_sibling(folder);
     let folder_z = ZBox::from_bytes(folder);
-    let staging_z = ZBox::from_bytes(&staging.0);
-    let old_z = ZBox::from_bytes(&old_path);
 
-    let has_old = match move_aside(&folder_z, &old_z) {
+    let has_old = match move_aside(&folder_z, &old_path) {
         Ok(()) => true,
         Err(e) if e.get_errno() == sys::E::ENOENT => false,
         Err(e) => return Err(e.into()),
     };
     // `old_path` is only marked for deletion now. After a failed `move_aside` it can hold entries
     // that could not be moved back.
-    let old = TempTree(old_path);
+    let old = DeleteTreeOnDrop::new(cwd, old_path);
 
-    if let Err(e) = rename_staging_into_place(cwd, &staging_z, &folder_z) {
-        if has_old && let Err(restore_err) = move_aside(&old_z, &folder_z) {
+    if let Err(e) = rename_staging_into_place(cwd, &staging, &folder_z) {
+        if has_old && let Err(restore_err) = move_aside(&old, &folder_z) {
             bun_core::warn!(
                 "failed to restore previous package folder (now at {}): {}",
-                bstr::BStr::new(&old.keep()),
+                bstr::BStr::new(old.keep().as_bytes()),
                 restore_err
             );
         }
         return Err(e.into());
     }
+    staging.keep();
 
     if has_old {
         // If the old folder was a symlink, its target is not the project's to change, so only the
         // symlink itself is removed.
-        if is_link(&old.0) {
-            if let Err(e) = link_store_siblings(cache_path, &old.0, folder) {
+        if is_link(&old) {
+            if let Err(e) = link_store_siblings(cache_path, &old, folder) {
                 bun_core::warn!(
                     "failed to link package dependencies into {}: {}",
                     bstr::BStr::new(folder),
                     e
                 );
             }
-            let _ = crate::isolated_install::installer::remove_link(&old_z);
-        } else if let Err(e) = keep_nested_packages(&old.0, folder) {
+            let _ = crate::isolated_install::installer::remove_link(&old);
+        } else if let Err(e) = keep_nested_packages(&old, folder) {
             bun_core::warn!(
                 "failed to keep packages under {}, run bun install to restore them: {}",
                 bstr::BStr::new(folder),

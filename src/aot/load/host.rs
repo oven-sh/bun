@@ -14,7 +14,7 @@ use bun_resolve_builtins::Alias;
 use bun_sema::atom::Interner;
 use bun_sema::bind::Bound;
 use bun_sema::fold::Decisions;
-use bun_sema::hir::{self, CallId, ExprId, File, NodeData};
+use bun_sema::hir::{self, CallId, ExprId, ExprKind, File, NodeData, StmtId, StmtKind};
 use bun_sema::hir_from_data::{DataValue, FOLDER_OF_DATABASE, HostValue};
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::program::{HostLoader, HostModuleId};
@@ -40,7 +40,9 @@ use crate::diagnostics::{
     FileDiagnostic, LoadMessages, log_diagnostic, range_of_node, syntax_errors_of,
 };
 use crate::load::builtin_uses::{self, BuiltinUseInput};
-use crate::load::bundled_commonjs::{blank_commonjs_wrapper, is_bundled_commonjs};
+use crate::load::bundled_commonjs::{
+    blank_commonjs_wrapper, blank_commonjs_wrapper_with_tail, is_bundled_commonjs,
+};
 use crate::load::compiler_declarations;
 use crate::load::contents::worker_entries::{
     count_highest_level_on_way, find_file_named_as_in_executable, find_file_on_way,
@@ -292,6 +294,25 @@ fn is_javascript_too(typescript_options: &CompileParseOptions<'_>, text: &[u8]) 
     !hir.has_errors
         && !hir.ran_out_of_stack
         && diagnostics.all(|it| it.class != hir::DiagnosticClass::EarlyError)
+}
+
+fn find_tail_of_bundled_function(
+    options: &CompileParseOptions<'_>,
+    text: &[u8],
+) -> Option<std::ops::Range<usize>> {
+    let session = Session::new();
+    let atoms = Interner::new_in(&session);
+    let hir = parse_for_compile(session.arena(), options, text, &atoms);
+    let mut statements = hir.ids::<StmtId>(hir.body);
+    let (Some(statement), None) = (statements.next(), statements.next()) else {
+        return None;
+    };
+    let StmtKind::Expr(function) = hir[statement].kind else {
+        return None;
+    };
+    let is_whole =
+        syntax_errors_of(&hir).next().is_none() && matches!(hir[function].kind, ExprKind::Fn(_));
+    is_whole.then(|| hir[function].end as usize - 1..hir[statement].loc.end as usize)
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1791,12 +1812,22 @@ impl CodeHost for LoadHost<'_> {
                 || hir::find_transpiled_mark(text).is_some(),
         };
         let is_bundled_commonjs = is_bundled_commonjs(text);
-        let body_of_bundle = match is_bundled_commonjs {
+        let mut body_of_bundle = match is_bundled_commonjs {
             true => blank_commonjs_wrapper(text),
             false => None,
         };
         let parsed_text = body_of_bundle.as_deref().unwrap_or(text);
         let mut hir = parse_for_compile(arena, &compile_options, parsed_text, atoms);
+        // A last line that begins with `//` may be a comment or the rest of a template, so then the parser finds the end.
+        if is_bundled_commonjs
+            && (body_of_bundle.is_none() || syntax_errors_of(&hir).next().is_some())
+            && let Some(tail) = find_tail_of_bundled_function(&compile_options, text)
+            && let Some(body) = blank_commonjs_wrapper_with_tail(text, tail)
+        {
+            hir = parse_for_compile(arena, &compile_options, &body, atoms);
+            body_of_bundle = Some(body);
+        }
+        let parsed_text = body_of_bundle.as_deref().unwrap_or(text);
         let is_entry_text = self.plugins.loader_of_entry_text(path).is_some();
         let is_language_assumed = is_entry_text
             || (matches!(served_by, ServedBy::Disk)

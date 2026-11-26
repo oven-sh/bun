@@ -13,6 +13,7 @@ workspace = true
 bun_alloc.workspace = true
 bun_opaque.workspace = true
 bun_ptr.workspace = true
+bun_websocket.workspace = true
 thiserror.workspace = true
 strum.workspace = true
 bstr.workspace = true
@@ -22,6 +23,7 @@ bun_boringssl_sys.workspace = true
 bun_core.workspace = true
 bun_errno.workspace = true
 bun_hpack.workspace = true
+bun_http1.workspace = true
 bun_http_types.workspace = true
 
 [target.'cfg(windows)'.dependencies]

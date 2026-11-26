@@ -2549,7 +2549,7 @@ declare module "bun" {
      * ## DNS resolver client
      *
      * Bun supports three DNS resolvers:
-     * - `c-ares` - Uses the c-ares library to perform DNS resolution. This is the default on Linux.
+     * - `c-ares` - Uses Bun's own asynchronous resolver, which is modeled on the c-ares library. This is the default on Linux.
      * - `system` - Uses the system's non-blocking DNS resolver API if available, falls back to `getaddrinfo`. This is the default on macOS and the same as `getaddrinfo` on Linux.
      * - `getaddrinfo` - Uses the POSIX standard `getaddrinfo` function. Causes performance issues under concurrent loads.
      *
@@ -2604,8 +2604,7 @@ declare module "bun" {
          * `"system"` uses the same API underneath (except non-blocking).
          *
          * On Windows, libuv's non-blocking DNS resolver is used by default, and
-         * when specifying backends "system", "libc", or "getaddrinfo". The c-ares
-         * backend isn't supported on Windows.
+         * when specifying backends "system", "libc", or "getaddrinfo".
          */
         backend?: "libc" | "c-ares" | "system" | "getaddrinfo";
       },
@@ -6033,12 +6032,36 @@ declare module "bun" {
       maxEditLength?: number | undefined;
     }
 
-    interface HunksOptions extends Options {
+    interface TextOptions extends Options {
+      /**
+       * Tokens match if they are equal after `toLowerCase()`. What is kept comes from the new text.
+       *
+       * @default false
+       */
+      ignoreCase?: boolean | undefined;
+    }
+
+    interface LinesOptions extends TextOptions {
+      /**
+       * Lines match if they are equal after `trim()`. What is kept comes from the new text.
+       *
+       * @default false
+       */
+      ignoreWhitespace?: boolean | undefined;
+      /**
+       * Replace each `\r\n` with `\n` in both texts first, like `diff --strip-trailing-cr`.
+       *
+       * @default false
+       */
+      stripTrailingCr?: boolean | undefined;
+    }
+
+    interface HunksOptions extends LinesOptions {
       /**
        * The number of unchanged lines before and after each change, like `diff -U`.
        * An integer from 0, or `Infinity` for the whole file.
        *
-       * @default 4
+       * @default 3
        */
       context?: number | undefined;
     }
@@ -6118,25 +6141,26 @@ declare module "bun" {
      * // ]
      * ```
      */
-    function lines(oldText: string, newText: string, options?: Options & { maxEditLength?: undefined }): Change[];
-    function lines(oldText: string, newText: string, options?: Options): Change[] | undefined;
+    function lines(oldText: string, newText: string, options?: LinesOptions & { maxEditLength?: undefined }): Change[];
+    function lines(oldText: string, newText: string, options?: LinesOptions): Change[] | undefined;
 
     /**
-     * Compare two strings word by word. A token is a word of Latin letters, digits and `_`,
-     * a run of spaces, a line ending, or any other single character.
+     * Compare two strings word by word. A token is a word of letters, digits and `_`, a run of spaces,
+     * a line ending, or any other single character. In scripts without spaces between words,
+     * like Chinese, Japanese and Thai, each character is a token.
      *
      * @returns The changes, or `undefined` if there are more than `maxEditLength` edits
      */
-    function words(oldText: string, newText: string, options?: Options & { maxEditLength?: undefined }): Change[];
-    function words(oldText: string, newText: string, options?: Options): Change[] | undefined;
+    function words(oldText: string, newText: string, options?: TextOptions & { maxEditLength?: undefined }): Change[];
+    function words(oldText: string, newText: string, options?: TextOptions): Change[] | undefined;
 
     /**
      * Compare two strings by Unicode code point.
      *
      * @returns The changes, or `undefined` if there are more than `maxEditLength` edits
      */
-    function chars(oldText: string, newText: string, options?: Options & { maxEditLength?: undefined }): Change[];
-    function chars(oldText: string, newText: string, options?: Options): Change[] | undefined;
+    function chars(oldText: string, newText: string, options?: TextOptions & { maxEditLength?: undefined }): Change[];
+    function chars(oldText: string, newText: string, options?: TextOptions): Change[] | undefined;
 
     /**
      * Compare two arrays element by element, with `===`.
@@ -6193,15 +6217,20 @@ declare module "bun" {
      * Apply a patch for one file to `source`.
      *
      * The lines that a hunk keeps and removes have to match exactly. If they don't match at
-     * `oldStart`, Bun uses the nearest line where they do. If `source` only has `\r\n` line
-     * endings and the patch only has `\n`, or the reverse, the patch is converted first.
+     * `oldStart`, Bun uses the nearest line where they do, within a limit on the steps of that search.
+     * If `source` only has `\r\n` line endings and the patch only has `\n`, or the reverse, the patch
+     * is converted first.
      *
-     * @param patch A unified diff, or hunks from {@link hunks} or {@link parsePatch}
-     * @returns The patched text, or `undefined` if a hunk does not match
-     * @throws SyntaxError if `patch` is a malformed unified diff
+     * @param patch A unified diff, a file from {@link parsePatch}, or hunks
+     * @returns The patched text
+     * @throws Error with the code `ERR_PATCH_DOES_NOT_APPLY` if a hunk does not match
+     * @throws SyntaxError if `patch` is not a unified diff, or is malformed
      * @throws TypeError if `patch` changes several files, or is a binary patch from `git diff`
      */
-    function applyPatch(source: string, patch: string | Pick<Hunk, "oldStart" | "lines">[]): string | undefined;
+    function applyPatch(
+      source: string,
+      patch: string | Pick<FilePatch, "hunks" | "isBinary"> | Pick<Hunk, "oldStart" | "lines">[],
+    ): string;
   }
 
   namespace unsafe {

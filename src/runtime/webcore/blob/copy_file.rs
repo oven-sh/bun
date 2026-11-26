@@ -213,7 +213,7 @@ impl CopyFile {
         let mut max_length = self.max_length;
         // BSD fstat on a pipe reports bytes currently buffered in st_size;
         // only a regular-file st_size is a length.
-        if stat.st_size != 0 && bun_sys::S::ISREG(mode) {
+        if stat.st_size > 0 && bun_sys::S::ISREG(mode) {
             max_length = (size_of_file(stat).min(max_length)).saturating_sub(self.offset);
             if max_length == 0 {
                 return Ok(0);
@@ -348,14 +348,13 @@ impl CopyFile {
 
 #[cfg(not(windows))]
 fn size_of_file(stat: &Stat) -> SizeType {
-    SizeType::try_from(stat.st_size).expect("int cast")
+    stat.st_size.max(0) as SizeType
 }
 
 /// Whether it was set.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn clear_append(fd: Fd) -> bool {
-    // SAFETY: F_GETFL takes no pointer.
-    let flags = unsafe { libc::fcntl(fd.native(), libc::F_GETFL, 0) };
+    let flags = bun_sys::get_fcntl_flags(fd).unwrap_or(0) as i32;
     if flags & bun_sys::O::APPEND == 0 {
         return false;
     }

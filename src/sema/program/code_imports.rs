@@ -1,10 +1,11 @@
 use super::code_barrels::ImportRequests;
 use super::code_load::{Analyzed, CodeTarget, LoadKey, LoadedCode};
 use super::*;
+use crate::fold::Decisions;
 use crate::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, ResolvedFrom, find_names_folded_by_transpiler,
-    find_written_arms, is_linked_by_bundler, is_name_read_by_transpiler, is_name_written_out,
-    is_site_of_handed_url,
+    find_require_call, find_written_arms, is_linked_by_bundler, is_name_read_by_transpiler,
+    is_name_written_out, is_site_of_handed_url,
 };
 use crate::resolve::{
     CodeFailure, CodeFile, CodeImportForm, CodeImportKind, CodeRequest, CodeResolution,
@@ -657,6 +658,33 @@ fn may_have_unread_type(hir: &hir::File<'_>, site: &ImportSite) -> bool {
         _ => true,
     };
     has_options && type_attribute(hir, site).is_none()
+}
+
+/// Whether a `require()` has options that may name a type that the build doesn't know.
+pub fn may_name_type_at_run_time(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+    site: &ImportSite,
+) -> bool {
+    let (ImportSiteKind::Require(call) | ImportSiteKind::ImportMetaRequire(call)) = site.kind
+    else {
+        return false;
+    };
+    let ExprKind::Call(call) = hir[call].kind else {
+        return false;
+    };
+    let Call { callee, args, .. } = hir[call];
+    let found = find_require_call(hir, bound, Some(decisions), callee, args);
+    let arguments = found.map_or(args, |found| found.args);
+    let Some(options) = hir.ids(arguments).nth(1) else {
+        return false;
+    };
+    let names_type = !matches!(
+        written_member(hir, options, known::r#type),
+        WrittenMember::Absent
+    );
+    names_type && type_attribute(hir, site).is_none()
 }
 
 enum WrittenMember {

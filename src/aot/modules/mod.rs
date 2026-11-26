@@ -60,6 +60,7 @@ pub use requests::Spelling;
 pub(crate) use spelled_files::{directory_of, find_files_that_unknown_names_may_require};
 pub(crate) use test_replacements::asks_for_original_beside_mock;
 pub use unlinked_files::UnlinkedFiles;
+pub(crate) use wrapped::parent_of_pattern;
 pub use wrapped::{InnerModule, InnerModuleKind, WrappedModules};
 pub(crate) use written_descriptor::{DescribedPart, WrittenDescriptor};
 

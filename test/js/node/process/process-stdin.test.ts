@@ -1106,32 +1106,38 @@ describe("'end' at EOF on a pipe, socket or terminal", () => {
       });
     });
 
-    // kqueue does not report the last close of an empty FIFO, so there a FIFO is read to EOF in the wakeup of the chunk.
-    test.concurrent("a FIFO on stdin ends", async () => {
+    // kqueue does not report the last close of an empty FIFO, so on macOS a FIFO does not get the rule.
+    // process.stdin must end on a FIFO wherever a reader of Bun.stdin.stream() ends. A child that does not end is killed.
+    test.concurrent("a FIFO on stdin ends where a reader of Bun.stdin.stream() ends", async () => {
       using dir = tempDir("stdin-fifo", {});
-      await using proc = Bun.spawn({
-        cmd: [
-          "sh",
-          "-c",
-          'mkfifo "$2" && { printf abc > "$2" & } && exec "$0" -e "$1" < "$2"',
-          bunExe(),
-          trace + immediateAndTick,
-          join(String(dir), "fifo"),
-        ],
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-        env: bunEnv,
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({
-        events: stdout.trim().split(" ").sort(),
-        exitCode,
-        stderr: exitCode === 0 ? undefined : stderr,
-      }).toEqual({
-        events: ["data3", "end", "immediate", "tick"],
-        exitCode: 0,
-      });
+      const readers = {
+        web: `let n = 0; for await (const chunk of Bun.stdin.stream()) n += chunk.length; console.log(n);`,
+        node: `let n = 0; process.stdin.on("data", d => { n += d.length; }); process.stdin.on("end", () => console.log(n));`,
+      };
+      const run = async (name: keyof typeof readers) => {
+        await using proc = Bun.spawn({
+          cmd: [
+            "sh",
+            "-c",
+            'mkfifo "$2" && { printf abc > "$2" & } && exec "$0" -e "$1" < "$2"',
+            bunExe(),
+            readers[name],
+            join(String(dir), name),
+          ],
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+          env: bunEnv,
+          timeout: 10_000,
+          killSignal: "SIGKILL",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        return { stdout: stdout.trim(), exitCode, signalCode: proc.signalCode };
+      };
+      const [web, node] = await Promise.all([run("web"), run("node")]);
+      // epoll reports the hang-up of a FIFO.
+      if (isLinux) expect(web).toEqual({ stdout: "3", exitCode: 0, signalCode: null });
+      expect(node).toEqual(web);
     });
 
     // 'data' took the chunk and EOF is still unread when the next reader comes.

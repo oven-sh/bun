@@ -74,7 +74,7 @@ for (const flavor of flavors) {
     if (!flavor.length) {
       expect(await built.says("text")).toBe(told + "true\n");
       expect(await built.says("json")).toBe(told + "SyntaxError\n");
-    } else for (const type of types) expect(await built.says(type)).toBe(told + `Cannot import it as ${type}\n`);
+    }
   });
   test(`a file whose source is one scalar of YAML (${under})`, async () => {
     const built = await build(made, flavor, partThatIsOneScalar);

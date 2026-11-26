@@ -50,7 +50,7 @@
   },
   "aot/the-console-and-the-loader-of-an-executable-publish-to-no-diagnostics-channel.test.ts": {
     "default": 3000,
-    "asan": 16000
+    "asan": 12000
   },
   "aot/a-folder-lists-an-imported-file-at-the-name-of-an-entry-point.test.ts": {
     "default": 60000,
@@ -82,7 +82,7 @@
   },
   "aot/require-resolve-of-a-whole-path-answers-where-the-file-lies.test.ts": {
     "default": 1380,
-    "asan": 25900
+    "asan": 15000
   },
   "aot/what-a-build-says-is-written-at-once.test.ts": {
     "default": 60000,
@@ -2198,7 +2198,7 @@
   },
   "aot/global-code-gets-the-runner-only-where-the-build-sees-it.test.ts": {
     "default": 2300,
-    "asan": 16800
+    "asan": 9200
   },
   "aot/guessed-worker-files.test.ts": {
     "default": 60000,
@@ -3962,7 +3962,7 @@
   },
   "aot/what-await-answers-for-an-import-of-the-library-is-in-sight.test.ts": {
     "default": 2200,
-    "asan": 18100
+    "asan": 10800
   },
   "aot/what-bun-ffi-deletes-is-gone-for-compiled-code-too-where-code-from-disk-loads-it.test.ts": {
     "default": 60000,

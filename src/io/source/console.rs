@@ -1,6 +1,6 @@
 use core::cell::{Cell, OnceCell};
 use core::ffi::c_int;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 use std::collections::VecDeque;
 use std::os::windows::io::{AsHandle as _, AsRawHandle as _, OwnedHandle};
 use std::rc::{Rc, Weak};
@@ -93,7 +93,8 @@ impl Input {
     }
 }
 
-static IS_RAW: AtomicBool = AtomicBool::new(false);
+/// The input flags of the raw mode that was requested last, or 0 in normal mode.
+static RAW_FLAGS: AtomicU32 = AtomicU32::new(0);
 
 enum LineReadState {
     Idle,
@@ -297,7 +298,7 @@ fn read_line(input: &'static Input) {
     const BUFFER_LEN: usize = 8192;
     let mut buffer = vec![0; BUFFER_LEN];
     let mut shared = SHARED.lock();
-    if !shared.readers.is_empty() && !IS_RAW.load(Ordering::SeqCst) {
+    if !shared.readers.is_empty() && RAW_FLAGS.load(Ordering::SeqCst) == 0 {
         let spare_handle = shared.spare_line_handle.take();
         let is_spare = spare_handle.is_some();
         let private_handle = spare_handle.or_else(|| console::open_input().ok());
@@ -439,24 +440,27 @@ fn set_mode(handle: HANDLE, mode: Mode) -> sys::Result<()> {
         Mode::RawVt => w::ENABLE_WINDOW_INPUT | VT,
     };
     // Set before the console leaves normal mode and cleared after it is back, so that no line read starts in raw mode.
-    let was_raw = IS_RAW.fetch_or(mode != Mode::Normal, Ordering::SeqCst);
+    let previous_flags = match mode {
+        Mode::Normal => RAW_FLAGS.load(Ordering::SeqCst),
+        Mode::Raw | Mode::RawVt => RAW_FLAGS.swap(flags, Ordering::SeqCst),
+    };
     if mode != Mode::Normal {
         stop_line_read(input);
-    } else if !was_raw {
+    } else if previous_flags == 0 {
         return Ok(());
     }
-    // Other processes attached to the console change its mode too.
-    let is_set =
-        console::mode(input.raw()).is_ok_and(|current| (current ^ flags) & (COOKED | VT) == 0);
+    // Unlike in Node.js, a repeated call recovers from another process having turned line input back on.
+    let is_set = previous_flags == flags
+        && console::mode(input.raw()).is_ok_and(|current| current & w::ENABLE_LINE_INPUT == 0);
     if !is_set {
         // The mode is restored through `handle` at exit, so it must have the access to change it.
         console::set_mode(handle, flags)
             .or_else(|_| console::set_mode(handle, flags & !VT))
-            .inspect_err(|_| IS_RAW.store(was_raw, Ordering::SeqCst))
+            .inspect_err(|_| RAW_FLAGS.store(previous_flags, Ordering::SeqCst))
             .map_err(map_error)?;
     }
     if mode == Mode::Normal {
-        IS_RAW.store(false, Ordering::SeqCst);
+        RAW_FLAGS.store(0, Ordering::SeqCst);
         notify_readers(SHARED.lock());
     }
     Ok(())
@@ -478,7 +482,7 @@ extern "C" fn Bun__ttySetMode(fd: c_int, mode: c_int, _state: *mut u8, _drain: c
 
 #[unsafe(no_mangle)]
 extern "C" fn uv_tty_reset_mode() -> c_int {
-    if IS_RAW.swap(false, Ordering::SeqCst) {
+    if RAW_FLAGS.swap(0, Ordering::SeqCst) != 0 {
         bun_core::output::windows_stdio::restore_stdin_mode();
     }
     0
@@ -669,7 +673,7 @@ impl Inner {
         let mut shared = SHARED.lock();
         let address = Rc::as_ptr(self).addr();
         shared.readers.retain(|reader| reader.0 != address);
-        let should_read_keys = IS_RAW.load(Ordering::SeqCst) && !shared.is_reading_line();
+        let should_read_keys = RAW_FLAGS.load(Ordering::SeqCst) != 0 && !shared.is_reading_line();
         shared.translate_records();
         if should_read_keys && has_waited && shared.untranslated_records.is_empty() {
             shared.read_keys(input);

@@ -1676,6 +1676,36 @@ describe.concurrent("stdio in a terminal", () => {
       expect(await child.receive()).toBe(ENABLE_WINDOW_AND_VT_INPUT);
     });
 
+    const LINE_MODE = 0x7;
+    const ENABLE_PROCESSED_INPUT = 0x1;
+    const ENABLE_LINE_INPUT = 0x2;
+    const ENABLE_MOUSE_INPUT = 0x10;
+    const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200;
+    const ENABLE_MOUSE_AND_VT_INPUT = ENABLE_MOUSE_INPUT | ENABLE_VIRTUAL_TERMINAL_INPUT;
+    it.each([
+      [
+        "replaces the mode when it enables raw mode",
+        false,
+        ENABLE_MOUSE_AND_VT_INPUT,
+        true,
+        ENABLE_WINDOW_AND_VT_INPUT,
+      ],
+      ["replaces the mode when it disables raw mode", true, LINE_MODE | ENABLE_MOUSE_INPUT, false, LINE_MODE],
+      ["keeps VT input off when it is repeated", true, ENABLE_MOUSE_INPUT, true, ENABLE_MOUSE_INPUT],
+      ["keeps Ctrl+C handling on when it is repeated", true, ENABLE_PROCESSED_INPUT, true, ENABLE_PROCESSED_INPUT],
+      // Node.js ignores this call.
+      ["turns line input off again when it is repeated", true, ENABLE_LINE_INPUT, true, ENABLE_WINDOW_AND_VT_INPUT],
+    ])("setRawMode() %s", async (_, wasRaw, before, isRaw, after) => {
+      await using child = await spawnChild(`${inputModePrelude}
+        process.stdin.setRawMode(${wasRaw});
+        k32.SetConsoleMode(k32.GetStdHandle(STD_INPUT_HANDLE), ${before});
+        const before = getInputMode();
+        process.stdin.setRawMode(${isRaw});
+        send({ before, after: getInputMode() });
+      `);
+      expect(await child.receive()).toEqual({ before, after });
+    });
+
     it("setRawMode() fails on a read-only console handle", async () => {
       await using child = await spawnChild(`${inputModePrelude}
         const before = getInputMode();

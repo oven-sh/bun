@@ -3474,11 +3474,10 @@ declare module "bun" {
      * detached by {@link Bun.TypeChecker.close}, and for a call made after
      * `close()` has begun (with `ERR_BUN_TYPE_CHECKER_CLOSED`).
      *
-     * Invalid arguments — a closed checker, a non-object update, a project
-     * entry that is not a string or file URL, or a source value that is not
-     * a string or `null` — throw synchronously instead of returning a
-     * rejected Promise. A failed call never mutates the checker's desired
-     * state.
+     * Invalid arguments (a non-object update, a project entry that is not
+     * a string or file URL, or a source value that is not a string or
+     * `null`) also reject the returned Promise instead of throwing. A
+     * failed call never mutates the checker's desired state.
      */
     updateSnapshot(update?: TypeCheckerSnapshotUpdate): Promise<TypeCheckerSnapshot>;
 

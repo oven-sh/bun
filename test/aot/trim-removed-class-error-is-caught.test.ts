@@ -103,7 +103,7 @@ const partsOf = (stdout: string) =>
     ],
     [
       "new Bun.TypeChecker() in a --trimmed executable",
-      `try { new Bun.TypeChecker({ cwd: "." }); console.log("made"); } catch (error) { console.log("caught", error.code); } finally { console.log("finally"); }\nconsole.log("end");\n`,
+      `try { console.log("made", typeof new Bun.TypeChecker({ cwd: "." })); } ${handlers}`,
     ],
   ] as const;
   test.skipIf(!canTrim).concurrent(
@@ -116,12 +116,7 @@ const partsOf = (stdout: string) =>
         parts: Object.fromEntries(
           parts.map(([name]) => [
             name,
-            // `Bun.TypeChecker` is guarded by the same `Check` feature, but its
-            // constructor reports the plan's catchable unavailable error
-            // (ERR_BUN_TYPE_CHECKER_UNAVAILABLE) instead of ERR_FEATURE_REMOVED.
-            name === "new Bun.TypeChecker() in a --trimmed executable"
-              ? "caught ERR_BUN_TYPE_CHECKER_UNAVAILABLE\nfinally\nend\n"
-              : expect.stringMatching(/^(made .+|caught ERR_FEATURE_REMOVED)\nfinally\nend\n$/),
+            expect.stringMatching(/^(made .+|caught ERR_FEATURE_REMOVED)\nfinally\nend\n$/),
           ]),
         ),
         stderr: "",
@@ -206,12 +201,7 @@ if (!result.success) throw new AggregateError(result.logs);
         parts: Object.fromEntries(
           parts.map(([name, feature]) => [
             name,
-            // `Bun.TypeChecker` is guarded by the same `Check` feature, but its
-            // constructor reports the plan's catchable unavailable error
-            // (ERR_BUN_TYPE_CHECKER_UNAVAILABLE) instead of ERR_FEATURE_REMOVED.
-            feature === "check"
-              ? "caught ERR_BUN_TYPE_CHECKER_UNAVAILABLE\nfinally\nend\n"
-              : "caught ERR_FEATURE_REMOVED\nfinally\nend\n",
+            "caught ERR_FEATURE_REMOVED\nfinally\nend\n",
           ]),
         ),
         stderr: "",

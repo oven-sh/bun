@@ -1,29 +1,34 @@
-type Patch = { x: number; y: number; width: number; height: number };
-type Board = { width: number; height: number; words: Int32Array; patch: Patch | undefined };
-const MASK = 3;
-const out: string[] = [];
-function setAt(board: Board, x: number, y: number, name: number, span: number): void {
-  if (x < 0 || y < 0 || x >= board.width || y >= board.height) return;
-  const at = (y * board.width + x) << 1;
-  board.words[at] = name; board.words[at + 1] = (name << 17) | span;
+type Hive = { frames: number; wax: Uint32Array; rows: [from: number, till: number] | null };
+const KINDS = 7;
+const told: string[] = [];
+function hive(): Hive {
+  const frames = 11, rows = 43, wax = new Uint32Array(frames * rows);
+  for (let place = wax.length - 1; place >= 0; place--) wax[place] = ((place * 13) % 29) * 8 + (place % 6 === 2 ? 5 : place % 3);
+  return { rows: [2, rows], wax, frames };
 }
-function shrink(board: Board): void { board.words = board.words.subarray(0, board.words.length >> 1); }
-function markWide(board: Board, deed: (board: Board) => void): number {
-  const patch = board.patch; if (!patch) return 0;
-  let found = 0;
-  const lastX = Math.min(board.width - 2, patch.x + patch.width - 1), lastY = Math.min(board.height, patch.y + patch.height);
-  for (let y = patch.y; y < lastY; y++) {
-    for (let x = patch.x; x <= lastX; x++) {
-      const word = board.words[((y * board.width + x) << 1) + 1]!;
-      if ((word & MASK) !== 1) continue;
-      found += board.words[(y * board.width + x) << 1]! + (board.words[((y * board.width + x) << 1) + 3] ?? -1000);
-      if (found % 7 === 0) deed(board);
+function tapped(of: Hive, after: (of: Hive) => void): number {
+  let honey = 0;
+  if (of.rows === null) return honey;
+  const [from, till] = of.rows, { frames } = of;
+  let row = from;
+  while (row < till) {
+    for (let frame = frames; --frame >= 0;) {
+      const cell = of.wax[frame + row * frames]!;
+      if ((cell & KINDS) < 5) continue;
+      honey = honey * 2 + (cell >>> 3) - (of.wax[frame + row * frames - 1] ?? 500) - (of.wax[frame + (row + 1) * frames] ?? 7);
+      honey |= 0;
+      if (honey % 5 === 0) after(of);
     }
+    row++;
   }
-  return found;
+  return honey;
 }
-const make = (): Board => { const board: Board = { width: 40, height: 12, words: new Int32Array(40 * 12 * 2), patch: { x: 0, y: 0, width: 40, height: 12 } }; for (let y = 0; y < 12; y++) for (let x = 0; x < 40; x++) setAt(board, x, y, (x * 3 + y) % 11, x % 9 === 4 ? 1 : 0); return board; };
-const quiet = make(); for (let turn = 0; turn < 50; turn++) out.push(String(markWide(quiet, () => {})));
-const cut = make(); out.push(String(markWide(cut, shrink)), String(cut.words.length), String(markWide(cut, shrink)), String(cut.words.length));
-const gone = make(); out.push(String(markWide(gone, (board) => { structuredClone(board.words.buffer, { transfer: [board.words.buffer] }); })), String(gone.words.length));
-console.log(out.slice(0, 2).join(), out.slice(50).join());
+const full = hive();
+for (let turn = 0; turn < 50; turn++) told.push(String(tapped(full, () => {})));
+const opened = hive(), half = (of: Hive) => { of.wax = of.wax.subarray(0, of.wax.length / 2); };
+told.push(String(tapped(opened, half)), String(opened.wax.length), String(tapped(opened, half)), String(opened.wax.length));
+const empty = hive();
+told.push(String(tapped(empty, of => { structuredClone(of.wax.buffer, { transfer: [of.wax.buffer] }); })), String(empty.wax.length));
+empty.rows = null;
+told.push(String(tapped(empty, half)));
+console.log(told.slice(0, 2).join(), told.slice(50).join());

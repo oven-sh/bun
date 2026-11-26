@@ -1,8 +1,7 @@
 var out = [];
-function flatten(tokens, index, result, callback) { while (index < tokens.length) { const token = tokens[index++]; if (Array.isArray(token)) { for (const part of token) flatten([part], 0, result.slice(), seq => flatten(tokens, index, seq, callback)); return; } result.push(token); } callback(result); }
-flatten(JSON.parse('["a",["b","c"],"d",["e"]]'), 0, [], r => out.push(r.join('')));
-function mergeInner(source, project, active, index) { var done = []; source.forEach(function (v) { active++; project(v, index++, function (x) { active--; done.push(x + ':' + active + ':' + index); }); }); return done; }
-out.push(mergeInner([1, 2, 3], (v, i, cb) => cb(v * i), 0, 0).join()); out.push(mergeInner([1, 2], (v, i, cb) => cb(v * i), 0.5, -0).join());
+function stepped(n, by) { const now = () => n; const seen = []; while (n < 20) { seen.push(now()); n += by; } seen.push(now()); return seen.join(); } out.push(stepped(3, 5), stepped(0.5, 9), stepped("1", 2).length);
+function served(guests, cook, busy, turn) { var plates = []; guests.forEach(guest => { busy += 1; cook(turn, guest, plate => { plates.push([plate, --busy, turn].join('-')); }); turn++; }); return plates.join(); }
+out.push(served([1, 2, 3], (turn, guest, done) => done(guest * turn), 0, 0), served([1, 2], (turn, guest, done) => done(guest * turn), 0.5, -0));
 function eachOf(list, n, f) { var keep = function () { return n; }; for (; n < list.length; n++) f(list[n], n, keep); return keep; } out.push(eachOf(['a', 'b'], 0, (v, i, k) => out.push(v + i + k()))());
 function bornLater(list) { var n; var get = () => n; list.forEach(v => { n = n === undefined ? v : n + v; }); return get; } out.push(bornLater([1, 2, 3])(), bornLater([])(), bornLater([0.5])());
 function sloppyArguments(a, b) { arguments[0]++; const f = () => a + b; b *= 2; arguments[1] = arguments[1] + 1; return f(); } out.push(sloppyArguments(1, 2), sloppyArguments(1.5, 2), sloppyArguments('x', 1));

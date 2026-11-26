@@ -1264,6 +1264,56 @@ describe("expect()", () => {
       expect([array]).toEqual(expect.arrayContaining([[1, expect.stringContaining("x")]]));
     });
 
+    // Vitest counts the own keys first, so the matcher is never asked.
+    test_skipIf(isVitest)("gives a matcher in arrayContaining() the value of an inherited getter", () => {
+      class Named {
+        get name() {
+          return "x";
+        }
+      }
+      const received = (/** @type {object} */ own) => [new Proxy(Object.assign(new Named(), own), {})];
+      const isX = { asymmetricMatch: (/** @type {unknown} */ value) => value === "x" };
+      for (const name of [expect.stringContaining("x"), isX]) {
+        expect(received({})).toEqual(expect.arrayContaining([{ name }]));
+        expect(received({ id: 1 })).toEqual(expect.arrayContaining([{ name, id: 1 }]));
+        expect(received({ id: 1 })).not.toEqual(expect.arrayContaining([{ name }]));
+        expect(received({})).not.toEqual(expect.arrayContaining([{ other: name }]));
+        const hides = Object.defineProperty({}, "name", { value: "x" });
+        for (const object of [hides, new Proxy(hides, {})]) {
+          expect(object).not.toEqual({ name });
+          expect([object]).not.toEqual(expect.arrayContaining([{ name }]));
+        }
+      }
+      for (const name of [expect.stringContaining("y"), { asymmetricMatch: () => false }, "x"]) {
+        expect(received({})).not.toEqual(expect.arrayContaining([{ name }]));
+      }
+      expect([{}]).toEqual(expect.arrayContaining([{ ["__proto__"]: expect.any(Object) }]));
+
+      class HoldsMatcher {
+        get name() {
+          return isX;
+        }
+      }
+      expect([new Proxy(new HoldsMatcher(), {})]).toEqual(expect.arrayContaining([{ name: isX }]));
+
+      class Throws {
+        get name() {
+          throw new RangeError("from the getter");
+        }
+      }
+      expect(() =>
+        expect([new Proxy(new Throws(), {})]).toEqual(expect.arrayContaining([{ name: expect.anything() }])),
+      ).toThrow(new RangeError("from the getter"));
+      const trap = {
+        getOwnPropertyDescriptor() {
+          throw new RangeError("from the trap");
+        },
+      };
+      expect(() =>
+        expect([new Proxy(new Named(), trap)]).toEqual(expect.arrayContaining([{ name: expect.anything() }])),
+      ).toThrow(new RangeError("from the trap"));
+    });
+
     if (isBun) {
       it("does not crash on an element that the other array does not have", async () => {
         const { bunEnv, bunExe } = require("harness");
@@ -3970,6 +4020,39 @@ describe("expect()", () => {
       expect({ a: { v: 1 }, b: { v: 2 } }).not.toMatchObject({ a: shared, b: shared });
       expect({ a: shared, b: shared }).toMatchObject({ a: { v: 1 }, b: { v: 1 } });
       expect({ a: shared, b: [shared, { c: shared }] }).not.toMatchObject({ a: {}, b: [{}, { c: { v: 2 } }] });
+    });
+    test("does not take the prototype for a __proto__ property", () => {
+      const pattern = JSON.parse('{"__proto__":{"x":1}}');
+      expect({ __proto__: { x: 1 } }).not.toMatchObject(pattern);
+      expect({ nested: { __proto__: { x: 1 } } }).not.toMatchObject({ nested: pattern });
+      expect(new Proxy({ __proto__: { x: 1 } }, {})).not.toMatchObject(pattern);
+      expect({ a: 1 }).not.toMatchObject(JSON.parse('{"a":1,"__proto__":{}}'));
+      expect(JSON.parse('{"__proto__":{"x":2}}')).not.toMatchObject(pattern);
+      expect(JSON.parse('{"a":1,"__proto__":{"x":1,"y":2}}')).toMatchObject(pattern);
+      expect({ a: 1 }).toEqual(expect.objectContaining(JSON.parse('{"a":1,"__proto__":{}}')));
+      expect(Object.create(null)).not.toMatchObject(pattern);
+      const invented = { has: () => true, get: () => ({ x: 1 }) };
+      expect(new Proxy(Object.create(null), invented)).not.toMatchObject(pattern);
+      expect(Object.prototype).not.toMatchObject({ ["__proto__"]: null });
+    });
+    test("finds an inherited __proto__ property", () => {
+      const pattern = JSON.parse('{"__proto__":{"x":1}}');
+      const parent = JSON.parse('{"__proto__":{"x":1,"y":2}}');
+      expect(Object.create(parent)).toMatchObject(pattern);
+      expect(Object.create(Object.create(parent))).toMatchObject(pattern);
+      expect(new Proxy(Object.create(parent), {})).toMatchObject(pattern);
+      expect(Object.create(new Proxy(parent, {}))).toMatchObject(pattern);
+      expect(Object.create(JSON.parse('{"__proto__":{"x":2}}'))).not.toMatchObject(pattern);
+      expect({}).toMatchObject(Object.create(JSON.parse('{"__proto__":{}}')));
+
+      const endless = { getPrototypeOf: () => new Proxy({}, endless) };
+      expect(() => expect(new Proxy({}, endless)).toMatchObject(pattern)).toThrow(RangeError);
+      for (const trap of ["getOwnPropertyDescriptor", "getPrototypeOf"]) {
+        const throws = () => {
+          throw new RangeError(trap);
+        };
+        expect(() => expect(new Proxy({}, { [trap]: throws })).toMatchObject(pattern)).toThrow(new RangeError(trap));
+      }
     });
     test("ends on cycles", () => {
       const received = { v: 1, other: { v: 2 } };

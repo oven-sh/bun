@@ -1,6 +1,6 @@
-# `setEnd(setPos(range, pos), end)`, each a small function that hands its first parameter back, all three copied into `finish`.
-# A copy whose test fails leaves for the call that it stands for. The answer of that call met the answer of the copy, and behind the meeting nothing was known of `range`:
-# the second store tested it again. Nothing was done in the copy around either, so the failing test leaves for the call of THAT copy: one test of `range` serves both stores.
+# `pours(cup, much)` given to `warms(.., by)`, each a small function that hands its first parameter back, all three copied into `drinks`.
+# A copy whose test fails leaves for the call that it stands for. The answer of that call met the answer of the copy, and behind the meeting nothing was known of `cup`:
+# the second store tested it again. Nothing was done in the copy around either, so the failing test leaves for the call of THAT copy: one test of `cup` serves both stores.
 # RUN: walk f4 mechanisms=all
 # CHECK-LABEL: code f4:Body
 # CHECK: = TypeTest {{*}} testedType=L0
@@ -8,14 +8,14 @@
 # CHECK-NOT: function=f1
 # CHECK: = CallDirect {{*}} function=f3
 # CHECK-NOT: = TypeTest {{*}} testedType=L0
-# CHECK: = PutSlot {{*}} key="pos"
+# CHECK: = PutSlot {{*}} key="full"
 # CHECK-NOT: = TypeTest {{*}} testedType=L0
-# CHECK: = PutSlot {{*}} key="end"
+# CHECK: = PutSlot {{*}} key="heat"
 # -- source: main.ts
-# class Span { pos = 0; end = 0; }
-# function setPos(range: Span, pos: number) { range.pos = pos; return range; }
-# function setEnd(range: Span, end: number) { range.end = end; return range; }
-# function setBoth(range: Span, pos: number, end: number) { return setEnd(setPos(range, pos), end); }
-# function finish(range: Span, pos: number, end: number) { setBoth(range, pos, end); return range; }
-# (globalThis as any).kept = [Span, setPos, setEnd, setBoth, finish];
+# class Cup { heat = 20; full = 0; }
+# function pours(cup: Cup, much: number) { cup.full = much > 250 ? 250 : much; return cup; }
+# function warms(cup: Cup, by: number) { cup.heat = by * 2; return cup; }
+# function serves(cup: Cup, by: number, much: number) { return warms(pours(cup, much), by); }
+# function drinks(cup: Cup, much: number) { const served = serves(cup, 35, much); return served === cup; }
+# (globalThis as any).kept = [drinks, serves, warms, pours, Cup];
 # -- end of source

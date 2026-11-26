@@ -4480,7 +4480,7 @@ it("development error log prints the request pathname verbatim", async () => {
   expect(exitCode).toBe(0);
 });
 
-// The HTTP parser shares HttpParser.h between Bun.serve and node:http. When a request
+// Bun.serve and node:http share the HTTP parser. When a request
 // handler tears the connection down from inside the request-body data callback, the
 // parser must stop consuming the rest of the TCP segment instead of routing a request
 // that was pipelined behind the body onto the already-closed socket.
@@ -6347,3 +6347,76 @@ it("Proxy-Connection: close does not end a Bun.serve connection", async () => {
     socket.destroy();
   }
 });
+
+it.each([
+  ["in mixed case that reaches a handler has its name", "Post", /^HTTP\/1\.1 200 .*\r\n\r\nPOST$/s],
+  ["with a byte above 0x7f is a bad request", "P\u00d6ST", /^HTTP\/1\.1 400 Bad Request\r\n/],
+])("a method %s", async (_, method, expected) => {
+  const handler = (req: Request) => new Response(req.method);
+  // With two names for one parameter, the router has a route left for a method it does not know.
+  using server = serve({ port: 0, fetch: handler, routes: { "/u/:id": handler, "/u/:name": handler } });
+  const socket = connect(server.port!, "127.0.0.1");
+  try {
+    let received = "";
+    socket.on("data", chunk => (received += chunk));
+    socket.write(`${method} / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+    await once(socket, "close");
+    expect(received).toMatch(expected);
+  } finally {
+    socket.destroy();
+  }
+});
+
+it.concurrent.each(["before", "inside", "after"])(
+  "a handler upgrades its socket %s a request that runs under it",
+  async when => {
+    const script = `
+      import { connect } from "node:net";
+      const seen = { upgraded: false, body: "", message: "" };
+      const built = Promise.withResolvers();
+      let outer;
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req, server) {
+          if (req.method === "POST") {
+            if ("${when}" === "inside") seen.upgraded = server.upgrade(outer);
+            return req.text().then(body => new Response(body));
+          }
+          if (!req.headers.has("upgrade")) return new Response("ready");
+          outer = req;
+          if ("${when}" === "before") seen.upgraded = server.upgrade(req);
+          // It runs the event loop until an async setup() settles.
+          const setup = async () => {
+            seen.body = await (await fetch(server.url, { method: "POST", body: "body" })).text();
+          };
+          built.resolve(Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins: [{ name: "wait", setup }] }));
+          if ("${when}" === "after") seen.upgraded = server.upgrade(req);
+        },
+        websocket: {
+          message(ws, message) {
+            seen.message = message;
+            ws.terminate();
+          },
+        },
+      });
+      const socket = connect(server.port, "127.0.0.1");
+      socket.on("error", () => {});
+      socket.on("close", () => {
+        console.log(JSON.stringify(seen));
+        process.exit(0);
+      });
+      // The head takes two reads, so the parser has a buffer to put back.
+      socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\nGET / HTTP/1.1\\r\\nHost: x\\r\\nUpgrade: websocket\\r\\n");
+      socket.once("data", async () => {
+        socket.write("Connection: Upgrade\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\nSec-WebSocket-Version: 13\\r\\n\\r\\n");
+        await built.promise;
+        socket.write(Buffer.from([0x81, 0x82, 0, 0, 0, 0, 0x68, 0x69]));
+      });
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe(JSON.stringify({ upgraded: true, body: "body", message: "hi" }));
+    expect(exitCode).toBe(0);
+  },
+);

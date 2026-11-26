@@ -21,6 +21,7 @@ use crate::h2_client::dispatch::{
 };
 
 use crate::h3_client::h3_client;
+use crate::internal_state::TransportEnd;
 
 /// Upgrade an lsquic-supplied `*mut quic::Socket` callback argument to `&mut`.
 ///
@@ -261,7 +262,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
     }
     stream.status_code = status;
     stream.decoded_headers = headers;
-    session.deliver(stream, false);
+    session.deliver(stream, None);
 }
 
 extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint, fin: c_int) {
@@ -270,14 +271,15 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
     // SAFETY: lsquic guarantees `data` points to `len` valid bytes (or `(null,0)`).
     let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
     stream.body_buffer.extend_from_slice(slice);
-    stream.session_mut().deliver(stream, fin != 0);
+    let end = (fin != 0).then_some(TransportEnd::Clean);
+    stream.session_mut().deliver(stream, end);
 
     let Some(stream) = stream_of(s) else { return };
     if fin != 0 || stream.read_paused {
         return;
     }
     let Some(client) = &stream.client else { return };
-    if client.signals.is_receive_paused() {
+    if client.holds_off_receiving() {
         stream.read_paused = true;
         s.want_read(false);
     }
@@ -317,5 +319,8 @@ extern "C" fn on_stream_close(s: *mut quic::Stream) {
         stream.status_code,
         stream.headers_delivered,
     );
-    stream.session_mut().deliver(stream, true);
+    // A FIN that was read detached the stream in `on_stream_data`.
+    stream
+        .session_mut()
+        .deliver(stream, Some(TransportEnd::Failed));
 }

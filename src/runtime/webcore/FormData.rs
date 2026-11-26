@@ -161,7 +161,8 @@ pub(crate) fn to_js_from_multipart_data(
             if field.is_file {
                 let filename_str = field.filename.slice(buf);
 
-                let mut blob = Blob::create(value_str, wrap.global, false);
+                let mut blob = Blob::try_create(value_str, wrap.global, false)
+                    .map_err(|_| wrap.global.throw_out_of_memory())?;
                 let filename = EncodedSlice::utf8(filename_str);
 
                 if !field.content_type.is_empty() {

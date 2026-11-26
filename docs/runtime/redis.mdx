@@ -54,6 +54,8 @@ By default, the client reads connection information from the following environme
 - `VALKEY_URL`
 - If not set, defaults to `"redis://localhost:6379"`
 
+An empty value counts as not set.
+
 ### Connection Lifecycle
 
 The Redis client automatically handles connections in the background:
@@ -100,8 +102,8 @@ await redis.set("user:1:name", "Alice");
 // Get a key
 const name = await redis.get("user:1:name");
 
-// Get a key as Uint8Array
-const buffer = await redis.getBuffer("user:1:name");
+// Get a key as a Buffer
+const buffer = await redis.get("user:1:name", { buffer: true });
 
 // Delete a key
 await redis.del("user:1:name");
@@ -125,6 +127,9 @@ await redis.set("counter", "0");
 
 // Increment by 1
 await redis.incr("counter");
+
+// Redis 8.8 or Valkey 9.2: increment and set the expiration in one command
+const [value, increment] = await redis.increx("counter", "BYINT", 5, "EX", 60);
 
 // Decrement by 1
 await redis.decr("counter");
@@ -171,6 +176,17 @@ const randomTag = await redis.srandmember("tags");
 
 // Pop (remove and return) a random member
 const poppedTag = await redis.spop("tags");
+```
+
+### Binary Data
+
+Bun decodes replies as UTF-8. To get `Buffer`s, pass `{ buffer: true }` as the last argument of `send()` or of a method that reads stored data. In a transaction, `true` holds for the result in the reply to `EXEC`, and on `EXEC` for all results. `dump()` needs no option. `getBuffer(key)` is deprecated as of Bun 1.5: use `get(key, { buffer: true })`.
+
+```ts redis.ts icon="/icons/typescript.svg"
+await redis.hset("images", "logo", new Uint8Array([0xff, 0xd8]));
+
+await redis.hget("images", "logo", { buffer: true }); // <Buffer ff d8>
+await redis.send("HGET", ["images", "logo"], { buffer: true }); // <Buffer ff d8>
 ```
 
 ---
@@ -249,6 +265,9 @@ Publish messages with the `publish()` method:
 
 ```typescript redis.ts icon="/icons/typescript.svg"
 await client.publish(channelName, message);
+
+// A buffer is sent as its bytes
+await client.publish(channelName, new Uint8Array([0xff, 0xfe]));
 ```
 
 ### Subscriptions
@@ -288,7 +307,7 @@ const client = new RedisClient("redis://localhost:6379", {
 
 ### Raw Commands
 
-Use the `send` method to run any Redis command, including ones without a dedicated method. The first argument is the command name, and the second is an array of string arguments.
+Use the `send` method to run any Redis command, including ones without a dedicated method. The first argument is the command name. The second is an array of strings, numbers, buffers or in-memory `Blob`s. `Bun.file()` and `S3File` throw here and in every other method: pass `await file.bytes()`.
 
 ```ts redis.ts icon="/icons/typescript.svg"
 // Run any Redis command
@@ -300,6 +319,8 @@ await redis.send("LPUSH", ["mylist", "value1", "value2"]);
 // Get list range
 const list = await redis.send("LRANGE", ["mylist", "0", "-1"]);
 ```
+
+A `null` or `undefined` argument throws where it would shift or drop another one, as in `mget(a, undefined, c)` or `set(key, value, undefined, "NX")`. After `MULTI`, catch such errors and send `DISCARD`, or later commands stay queued.
 
 ### Connection Events
 
@@ -338,11 +359,11 @@ console.log(client.bufferedAmount);
 The client automatically converts Redis responses to JavaScript values:
 
 - Integer responses are returned as JavaScript numbers
-- Bulk strings are returned as JavaScript strings
+- Bulk and verbatim strings are returned as JavaScript strings, or as `Buffer`s with `{ buffer: true }`. Object keys are always strings: with the option, a key that is not UTF-8 text is an `ERR_ENCODING_INVALID_ENCODED_DATA` error, whose `reply` has `[key, value]` pairs.
 - Simple strings are returned as JavaScript strings
 - Null bulk strings and null arrays are returned as `null`
 - Array responses are returned as JavaScript arrays
-- Big number responses (RESP3) are returned as `BigInt`. A payload that is not an integer literal is returned as a string. `getBuffer` returns the payload as a `Buffer`.
+- Big number responses (RESP3) are returned as `BigInt`. A payload that is not an integer literal is returned as a string.
 - Error responses throw JavaScript errors with appropriate error codes
 - Boolean responses (RESP3) are returned as JavaScript booleans
 - Map responses (RESP3) are returned as JavaScript objects
@@ -410,6 +431,7 @@ const client = new RedisClient("redis://localhost:6379", {
   //   cert: "path/to/cert.pem",
   //   key: "path/to/key.pem",
   //   serverName: "redis.example.com", // SNI and the name the certificate must match (default: the URL host)
+  //   checkServerIdentity: (hostname, cert) => undefined, // replaces the name check; return an Error to refuse
   // }
 });
 ```
@@ -424,6 +446,8 @@ When a connection is lost, the client automatically attempts to reconnect with e
 4. While disconnected, the client:
    - Queues commands if `enableOfflineQueue` is true (default)
    - Rejects commands immediately if `enableOfflineQueue` is false
+5. A timeout or a busy server counts as one retry. After one, the retries keep the process alive only for a command, a subscription or a handler. Errors such as `WRONGPASS` end the retries
+6. The client returns to the database of its last successful `SELECT`, also after `close()` and `connect()`. It forgets that database at `RESET` and when the server refuses it
 
 ---
 
@@ -436,7 +460,7 @@ The Redis client supports various URL formats:
 new RedisClient("redis://localhost:6379");
 new RedisClient("redis://localhost:6379");
 
-// With authentication
+// With authentication (percent-encode special characters with encodeURIComponent)
 new RedisClient("redis://username:password@localhost:6379");
 
 // With database number

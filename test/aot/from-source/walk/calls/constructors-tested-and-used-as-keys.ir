@@ -1,25 +1,24 @@
 # -- source: main.cjs
-# var Box = {};
-# (function (box, nothing) {
-#   box.is = function (value, type) {
-#     if (value === null) return false;
-#     if (type instanceof Function && value instanceof type) return true;
-#     if (value.constructor.__implements !== nothing && value.constructor.__implements[type]) return true;
-#     return false;
+# var Barn = {};
+# (function (barn) {
+#   barn.shares = function (beast, kind) {
+#     if (beast instanceof kind) return beast.hay > 2;
+#     var friends = beast.constructor.friends;
+#     return friends === undefined ? beast.hay > 7 : friends[kind] > 0;
 #   };
-# })(Box);
-# function Circle(x) { this.x = x; }
-# Circle.prototype.take = function (other) { if (Box.is(other, Circle)) this.x += other.x; return this.x; };
-# function Square(x) { this.x = x; this.side = 2; }
-# Square.prototype.take = function (other) { if (Box.is(other, Square)) this.x += other.side; return this.x; };
-# function Segment(x) { this.x = x; this.end = x + 1; }
-# Segment.prototype.take = function (other) { if (Box.is(other, Segment)) this.x += other.end; return this.x; };
-# function run(count) {
-#   var circle = new Circle(1), square = new Square(2), segment = new Segment(0.5), sum = 0;
-#   for (var i = 0; i < count; i++) sum += circle.take(square) + square.take(segment) + segment.take(circle);
+# })(Barn);
+# function Horse(hay) { this.hay = hay; }
+# Horse.prototype.eats = function (other) { if (Barn.shares(other, Horse)) this.hay -= other.hay / 2; return this.hay; };
+# function Goat(hay) { this.hay = hay; this.horns = 2; }
+# Goat.prototype.eats = function (other) { if (Barn.shares(other, Goat)) this.hay += other.horns; return this.hay; };
+# function Hen(hay) { this.hay = hay; this.eggs = hay + 1; }
+# Hen.prototype.eats = function (other) { if (Barn.shares(other, Hen)) this.eggs++; return this.eggs; };
+# function winter(days) {
+#   var horse = new Horse(8), goat = new Goat(3), hen = new Hen(0.5), sum = 0;
+#   for (var day = 0; day < days; day++) sum += horse.eats(goat) + goat.eats(goat) + hen.eats(horse);
 #   return sum;
 # }
-# console.log(run(10), run(100));
+# console.log(winter(10), winter(100));
 # -- end of source
 # Constructors that instanceof and a key ask stay known: each method has one caller, and no class escapes.
 # RUN: link functions

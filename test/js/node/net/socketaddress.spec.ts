@@ -92,6 +92,14 @@ describe("SocketAddress constructor", () => {
     },
   );
 
+  it.each([
+    { address: "nope" },
+    { address: "::1", family: "ipv4" },
+    { address: "127.0.0.1", family: "ipv6" },
+  ] as SocketAddressInitOptions[])("given %j, throws ERR_INVALID_ADDRESS", options => {
+    expect(() => new SocketAddress(options)).toThrowWithCode(Error, "ERR_INVALID_ADDRESS");
+  });
+
   // ===========================================================================
   // ============================= LEAK DETECTION ==============================
   // ===========================================================================
@@ -213,6 +221,14 @@ describe("SocketAddress.parse", () => {
     const sa = SocketAddress.parse(input);
     expect(sa).toBeDefined();
     expect((sa as any).toJSON()).toMatchObject(expected);
+  });
+
+  it.each([
+    ["1.2.3.4:81/", { address: "1.2.3.4", port: 81, family: "ipv4" }],
+    ["[::1]:81/", { address: "::1", port: 81, family: "ipv6" }],
+  ])("(%s as a 16-bit string) == %o", (input, expected) => {
+    const sa = SocketAddress.parse(Buffer.from(input, "utf16le").toString("utf16le"));
+    expect((sa as any)?.toJSON()).toMatchObject(expected);
   });
 
   it.each([

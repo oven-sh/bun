@@ -18,6 +18,7 @@ import {
 } from "node:zlib";
 import * as zlibGolden from "../../../node/zlib/zlib-golden/observe";
 import { decodeDifferences, encodeDifferences, inParts, loadCases } from "../../image/webp-golden/observe";
+import * as zstdGolden from "../../util/zstd-golden/observe";
 
 // Use Buffer.alloc instead of "x".repeat() — repeat is slow in debug JSC builds.
 const ascii256 = Buffer.alloc(256, "a").toString();
@@ -748,5 +749,27 @@ describe("DEFLATE: Highway runtime dispatch", () => {
   test.each([1, 4, 6, 9, 12])("round trip at level %i", level => {
     const input = Buffer.from(bytes.subarray(0, 6000).toString("hex").replaceAll("0", "zero "));
     expect(input.equals(Bun.gunzipSync(Bun.gzipSync(input, { library, level })))).toBe(true);
+  });
+});
+
+const zstd = await zstdGolden.loadCases();
+
+describe("zstd codec: BMI2 runtime dispatch", () => {
+  // The hot loops of src/zstd are compiled with and without BMI2 on x64, and zstd-golden.test.ts gets to see the ones
+  // that suit the machine. In small parts, for the sake of Intel SDE.
+  test.each(inParts(zstd.encode, ["small"], 20))("compress, part %#", async some => {
+    expect(await zstdGolden.encodeDifferences(some)).toBe("");
+  });
+  test("as many literals as src/jsc/bindings/highway_zstd.cpp takes where it can", () => {
+    let state = 1;
+    const next = () => (state = (Math.imul(state, 1103515245) + 12345) >>> 0) >>> 24;
+    const frame = Bun.zstdCompressSync(
+      Uint8Array.from({ length: 20_000 }, () => next() & next()),
+      { level: 1 },
+    );
+    expect([frame.length, crc32(frame)]).toEqual([16390, 1591368713]);
+  });
+  test.each(inParts(zstd.decode, ["stored"], 40))("decompress, part %#", async some => {
+    expect(await zstdGolden.decodeDifferences(some)).toBe("");
   });
 });

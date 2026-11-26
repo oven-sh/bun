@@ -10,59 +10,64 @@ const attempt = f => {
   }
 };
 
-function Features() {
-  this._owner = null;
-  this._red = 0;
-  this._green = 1;
+function Candle() {
+  this._holder = null;
+  this._wax = 0;
+  this._wick = 1;
 }
-Object.defineProperty(Features.prototype, "red", {
+Object.defineProperty(Candle.prototype, "wax", {
   configurable: true,
   get: function () {
-    return this._red;
+    return this._wax;
   },
 });
-const early = new Features();
-print(attempt(() => (early.red = 3)), early.red);
-Object.defineProperty(Features.prototype, "red", {
+const early = new Candle();
+print(attempt(() => (early.wax = 3)), early.wax);
+Object.defineProperty(Candle.prototype, "wax", {
   configurable: true,
   set: function (value) {
-    this._red = value;
-    this._owner._key += value;
+    this._wax = value;
+    this._holder.light += 2 * value;
   },
 });
-Object.defineProperty(Features.prototype, "green", {
+Object.defineProperty(Candle.prototype, "wick", {
   configurable: true,
   set: function (value) {
-    this._green = value;
-    this._owner._key -= value;
+    const holder = this._holder;
+    holder.light = holder.light * 3 - value;
+    this._wick = value;
   },
 });
-print(early.green);
-Object.defineProperty(Features.prototype, "green", {
+print(early.wick);
+Object.defineProperty(Candle.prototype, "wick", {
   configurable: true,
   get: function () {
-    return this._green;
+    return this._wick;
   },
 });
-function Contact() {
-  this._key = 0;
-  this.features = new Features();
-  this.features._owner = this;
+function lit(holder) {
+  const candle = new Candle();
+  candle._holder = holder;
+  return candle;
 }
-function write(contact, value) {
-  const features = contact.features;
-  features.red = value;
-  features.green = value + 1;
-  return features.red + features.green;
+function Holder() {
+  this.candle = lit(this);
+  this.light = 0;
 }
-function run(contacts, times) {
+function write(holder, value) {
+  const { candle } = holder;
+  candle.wick = value + 2;
+  candle.wax = value;
+  return candle.wick * 5 - candle.wax;
+}
+function run(holders, times) {
   let sum = 0;
-  for (let k = 0; k < times; k++) sum += write(contacts[k % contacts.length], k & 7);
+  for (let k = 0; k < times; k++) sum += write(holders[k % holders.length], k & 7);
   return sum;
 }
-const contacts = [new Contact(), new Contact(), new Contact()];
-print(run(contacts, 50), contacts.map(contact => contact._key));
-print(attempt(() => (early.red = 4)), early.red, attempt(() => (early.green = 4)), early.green);
+const holders = [new Holder(), new Holder(), new Holder()];
+print(run(holders, 50), holders.map(holder => holder.light));
+print(attempt(() => (early.wax = 4)), early.wax, attempt(() => (early.wick = 4)), early.wick);
 
 class Point {
   constructor(x) {
@@ -94,14 +99,14 @@ function move(points, times) {
 const points = [new Point(1), new Point(2)];
 print(move(points, 30), points.map(point => point.stores));
 
-Object.defineProperty(contacts[1].features, "red", { value: 5, writable: true, configurable: true });
-print(run(contacts, 9), contacts.map(contact => contact._key), contacts[1].features._red);
+Object.defineProperty(holders[1].candle, "wax", { value: 5, writable: true, configurable: true });
+print(run(holders, 9), holders.map(holder => holder.light), holders[1].candle._wax);
 Object.defineProperty(Point.prototype, "x", { get: undefined });
 print(move(points, 4), points.map(point => point.stores));
 Object.defineProperty(Point.prototype, "x", { get: () => 2, set: undefined });
 print(attempt(() => move(points, 4)), points[0].x);
-delete Features.prototype.red;
-print(run(contacts, 9), contacts.map(contact => contact._key), Object.keys(contacts[0].features));
-Object.defineProperty(Features.prototype, "green", { value: 8, writable: false });
-print(attempt(() => run(contacts, 9)), contacts[0].features.green);
+delete Candle.prototype.wax;
+print(run(holders, 9), holders.map(holder => holder.light), Object.keys(holders[0].candle));
+Object.defineProperty(Candle.prototype, "wick", { value: 8, writable: false });
+print(attempt(() => run(holders, 9)), holders[0].candle.wick);
 console.log(printed.join("\n"));

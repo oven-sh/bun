@@ -2,23 +2,23 @@
 // COUNTER: operationAOTPutByIdSloppy <= 100
 // COUNTER: operationAOTPutById <= 100
 const create = Object.create;
-const Base = { extend(fields) { const below = create(this); if (fields) below.mixIn(fields); below.init = function () { return below; }; below.init.prototype = below; below.above = this; return below; }, mixIn(fields) { for (const name in fields) this[name] = fields[name]; } };
-const words = []; for (let i = 0; i < 16; i++) { const word = Base.extend(); word.high = i; word.low = i * 7; words[i] = word; }
+const Bead = { strung(red) { const first = function () { return made; }, made = create(this, { first: { value: first, writable: true, configurable: true, enumerable: true } }); if (red !== undefined) made.red = red; first.prototype = made; return made; } };
+const beads = []; for (let i = 0; i < 16; i++) { const bead = Bead.strung(); bead.red = i; bead.blue = i * 7; beads[i] = bead; }
 let sum = 0;
-for (let turn = 0; turn < 400; turn++) { for (let i = 0; i < 16; i++) { const word = words[i]; word.high = (word.low + turn) | 0; word.low = (word.high ^ i) | 0; } sum = (sum * 31 + words[turn & 15].low) | 0; }
-console.log(sum, Object.keys(words[3]).join());
+for (let turn = 0; turn < 400; turn++) { for (let i = 0; i < 16; i++) { const bead = beads[i]; bead.red = (bead.blue + turn) | 0; bead.blue = (bead.red ^ i) | 0; } sum = (sum * 31 + beads[turn & 15].blue) | 0; }
+console.log(sum, Object.keys(beads[3]).join());
 
-function getHigh(o) { return o.high; } function setHigh(o, v) { o.high = v; } function hasLow(o) { return "low" in o; }
-const below = []; for (let i = 0; i < 16; i++) below[i] = new words[i].init();
-const own = words.map(word => create(word)); const later = words.map(word => Object.setPrototypeOf({ own: 1 }, word));
-class Below extends words[5].init { constructor() { super(); this.own = 2; } }
+function getRed(o) { return o.red; } function setRed(o, v) { o.red = v; } function hasBlue(o) { return "blue" in o; }
+const below = []; for (let i = 0; i < 16; i++) below[i] = new beads[i].first();
+const own = beads.map(bead => create(bead)); const later = beads.map(bead => Object.setPrototypeOf({ own: 1 }, bead));
+class Below extends beads[5].first { constructor() { super(); this.own = 2; } }
 const said = [];
 for (let turn = 0; turn < 6; turn++) {
-  let seen = 0; for (let i = 0; i < 16; i++) seen += getHigh(own[i]) - getHigh(later[i]) + getHigh(below[i]) + hasLow(own[i]);
-  said.push(seen, own[2] instanceof words[2].init, own[2] instanceof words[3].init, getHigh(new Below()));
-  if (turn === 1) for (let i = 0; i < 16; i++) setHigh(words[i], i + 0.5);
-  if (turn === 2) { Object.defineProperty(words[4], "high", { get() { return 1000; }, set(v) { said.push("set " + v); }, configurable: true }); setHigh(own[4], 3); setHigh(words[4], 4); }
-  if (turn === 3) { delete words[5].high; words[6].low = undefined; delete words[7].low; Object.freeze(words[8]); setHigh(words[8], "refused"); setHigh(own[8], "refused"); }
-  if (turn === 4) { Object.setPrototypeOf(words[5], { high: 77 }); setHigh(own[9], "own"); words[9].init.prototype = words[10]; said.push(own[9] instanceof words[9].init, new words[9].init().low === words[9].low); }
+  let seen = 0; for (let i = 0; i < 16; i++) seen += getRed(own[i]) - getRed(later[i]) + getRed(below[i]) + hasBlue(own[i]);
+  said.push(seen, own[2] instanceof beads[2].first, own[2] instanceof beads[3].first, getRed(new Below()));
+  if (turn === 1) for (let i = 0; i < 16; i++) setRed(beads[i], i + 0.5);
+  if (turn === 2) { Object.defineProperty(beads[4], "red", { get() { return 1000; }, set(v) { said.push("set " + v); }, configurable: true }); setRed(own[4], 3); setRed(beads[4], 4); }
+  if (turn === 3) { delete beads[5].red; beads[6].blue = undefined; delete beads[7].blue; Object.freeze(beads[8]); setRed(beads[8], "refused"); setRed(own[8], "refused"); }
+  if (turn === 4) { Object.setPrototypeOf(beads[5], { red: 77 }); setRed(own[9], "own"); beads[9].first.prototype = beads[10]; said.push(own[9] instanceof beads[9].first, new beads[9].first().blue === beads[9].blue); }
 }
 console.log(said.join(" "));

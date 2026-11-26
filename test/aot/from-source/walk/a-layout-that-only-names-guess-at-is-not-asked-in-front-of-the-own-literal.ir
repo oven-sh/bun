@@ -1,32 +1,33 @@
-# `var opts = options || {}`; what is given is an empty literal that a loop over keys fills. What is seen to arrive at `options` is that literal; the layout with the four names (L3, the literal the loop
-# reads from) is only the weakest guess by names. An earlier text asked [L3] first and [L0] on its failing side: the first never passed (433 instructions a turn with options given; 329 now; 122 without).
-# What is asked first must be what is written or seen on the other ways; else the body's own literal is asked alone and its failing side is as likely. f1 = configure.
+# `var asked = wish || {}`; what is given is an empty literal that a loop over keys fills. What is seen to arrive at `wish` is that literal; the layout with the four names (L3, the literal the loop
+# reads from) is only the weakest guess by names. An earlier text asked [L3] first and [L0] on its failing side: the first never passed (433 instructions a turn with a wish given; 329 then; 122 without).
+# What is asked first must be what is written or seen on the other ways; else the body's own literal is asked alone and its failing side is as likely. f1 = frames.
+# A call stands between the join and the reads: there the way that brings the literal meets the other (where only tests of its names follow it goes past them).
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK-NOT: layouts=[L3]
-# CHECK: = GetSlotOrUndefined {{*}}key="encoding" receivers=[L0, L1] level=Proven
+# CHECK: = GetSlotOrUndefined {{*}}key="color" receivers=[L0, L1] level=Proven
 # CHECK-NOT: layouts=[L3]
 # CHECK: Return
 # -- source: a-layout-that-only-names-guess-at-is-not-asked-in-front-of-the-own-literal.cjs
-# function configure(stream, options) {
-#   var opts = options || {};
-#   var encoding = opts.encoding !== undefined ? opts.encoding : null;
-#   var limit = opts.limit | 0;
-#   var length = opts.length != null && !isNaN(opts.length) ? opts.length | 0 : 0;
-#   var strict = opts.strict === true ? 1 : 0;
-#   return stream + limit + length + strict + (encoding === null ? 0 : 1) + (opts.verify ? 1 : 0);
+# function frames(wall, wish) {
+#   var asked = wish || {};
+#   var all = Math.abs(wall) * 2;
+#   if (asked.color !== undefined) all = -all;
+#   all += asked.depth | 0;
+#   all -= (asked.holes | 0) * 3;
+#   return asked.glass === true ? all + 10 : all;
 # }
-# const table = { configure };
+# const tools = { frames };
 # const turns = Number(process.argv[2] || 1) * 100000;
 # const given = process.argv[3] !== "absent";
-# function make(i) {
+# function wishOf(i) {
 #   const made = {};
-#   const from = { limit: 3, length: i & 7, encoding: "utf8", strict: true };
-#   for (const key in from) made[key] = from[key];
+#   const said = { color: "red", depth: i & 7, glass: true, holes: i & 3 };
+#   for (const key in said) made[key] = said[key];
 #   return made;
 # }
-# const handed = [make(1), make(2), make(3), make(4)];
+# const wishes = [wishOf(1), wishOf(2), wishOf(3), wishOf(4)];
 # let sum = 0;
-# for (let i = 0; i < turns; i++) sum += table[process.argv.length > 99 ? "x" : "configure"](i & 1, given ? handed[i & 3] : undefined);
+# for (let i = 0; i < turns; i++) sum += tools[process.argv.length > 99 ? "x" : "frames"](i & 1, given ? wishes[i & 3] : undefined);
 # console.log(sum / turns);
 # -- end of source

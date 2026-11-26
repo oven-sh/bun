@@ -2,44 +2,44 @@
 "use strict";
 let limit = -1, count = 0;
 const pass = (v) => { if (++count === limit) throw new RangeError("stop"); return v; };
-class State {
+class Mark {
   constructor(i) { this.i = i; }
-  init(v) { this.pos = pass(v); this.line = 1; this.type = v > 2 ? "big" : "small"; this.value = pass(null); this.depth = 0.5; return this; }
-  reset() { this.pos = 0; this.line = 0; this.type = "none"; this.value = undefined; }
-  step() { ++this.pos; this.line = this.pos; return this.type + this.line; }
-  sum() { return this.pos + this.line + this.depth; }
-  early(v) { if (v === 9) return this; this.pos = v; this.line = v; this.type = v; this.value = v; return this; }
+  begin(v) { this.at = pass(v); this.row = 1; this.sort = v > 2 ? "big" : "small"; this.value = pass(null); this.depth = 0.5; return this; }
+  reset() { this.at = 0; this.row = 0; this.sort = "none"; this.value = undefined; }
+  step() { ++this.at; this.row = this.at; return this.sort + this.row; }
+  sum() { return this.at + this.row + this.depth; }
+  early(v) { if (v === 9) return this; this.at = v; this.row = v; this.sort = v; this.value = v; return this; }
 }
-class Heir extends State { init(v) { super.init(v); this.late = v; return this; } get depth() { return 7; } set depth(v) { this.hidden = v; } }
-class Lazy extends State { init(v) { this.only = v; return this; } }
+class Heir extends Mark { begin(v) { super.begin(v); this.late = v; return this; } get depth() { return 7; } set depth(v) { this.hidden = v; } }
+class Lazy extends Mark { begin(v) { this.only = v; return this; } }
 class Owner {
-  constructor(s) { this.state = s; }
-  move() { this.state.pos = this.state.pos + 1; this.state.line = this.state.pos; return this.state.type; }
-  copy() { this.state.value = this.state.type; this.state.depth = this.state.value; return this.state.depth; }
-  snapshot() { const s = this.state; return [s.pos, s.line, s.type, s.value, s.depth].map(String).join(); }
-  scan(n) { let w = 0; for (let k = 0; k < n; k++) { if (this.state.pos > 5) { this.state.reset(); } else { ++this.state.pos; w += this.state.line; } } return w + ":" + this.state.pos; }
+  constructor(s) { this.mark = s; }
+  move() { this.mark.at = this.mark.at + 1; this.mark.row = this.mark.at; return this.mark.sort; }
+  copy() { this.mark.value = this.mark.sort; this.mark.depth = this.mark.value; return this.mark.depth; }
+  snapshot() { const s = this.mark; return [s.at, s.row, s.sort, s.value, s.depth].map(String).join(); }
+  scan(n) { let w = 0; for (let k = 0; k < n; k++) { if (this.mark.at > 5) { this.mark.reset(); } else { ++this.mark.at; w += this.mark.row; } } return w + ":" + this.mark.at; }
 }
-globalThis.kept = [State, Owner, Heir, Lazy];
-if (process.argv[9]) { new State(1)[process.argv[9]] = 2; new Owner()[process.argv[9]] = 3; }
-const part = (s, n) => { limit = count + n; try { s.init(3); } catch (e) { limit = -1; return s; } limit = -1; return s; };
+globalThis.kept = [Mark, Owner, Heir, Lazy];
+if (process.argv[9]) { new Mark(1)[process.argv[9]] = 2; new Owner()[process.argv[9]] = 3; }
+const part = (s, n) => { limit = count + n; try { s.begin(3); } catch (e) { limit = -1; return s; } limit = -1; return s; };
 const makers = {
-  before: (i) => new State(i),
-  behind: (i) => new State(i).init(i),
-  twice: (i) => new State(i).init(i).init(4),
-  part: (i) => part(new State(i), i & 1 ? 1 : 2),
-  early: (i) => new State(i).early(i & 1 ? 9 : i),
-  reset: (i) => { const s = new State(i); s.reset(); return s; },
-  mixed: (i) => (i & 1 ? new State(i) : new State(i).init(i)),
-  heir: (i) => new Heir(i).init(i),
-  lazy: (i) => new Lazy(i).init(i),
-  deleted: (i) => { const s = new State(i).init(i); delete s.line; return s; },
-  frozen: (i) => (i === 3 ? Object.freeze(new State(i).init(i)) : new State(i).init(i)),
-  accessor: (i) => Object.defineProperty(new State(i).init(i), "line", { get() { return "L" + this.i; }, set(v) { this.through = v; }, configurable: true, enumerable: true }),
-  readOnly: (i) => Object.defineProperty(new State(i).init(i), "pos", { value: 3, writable: false, configurable: true, enumerable: true }),
-  literal: (i) => ({ i, pos: 1, line: 2, type: "l", value: 3, depth: 4, reset: State.prototype.reset }),
-  foreign: (i) => { const s = Object.create(State.prototype); State.prototype.init.call(s, i); return s; },
-  proxy: (i) => new Proxy(new State(i).init(i), {}),
-  none: (i) => (i === 4 ? undefined : new State(i).init(i)),
+  before: (i) => new Mark(i),
+  behind: (i) => new Mark(i).begin(i),
+  twice: (i) => new Mark(i).begin(i).begin(4),
+  part: (i) => part(new Mark(i), i & 1 ? 1 : 2),
+  early: (i) => new Mark(i).early(i & 1 ? 9 : i),
+  reset: (i) => { const s = new Mark(i); s.reset(); return s; },
+  mixed: (i) => (i & 1 ? new Mark(i) : new Mark(i).begin(i)),
+  heir: (i) => new Heir(i).begin(i),
+  lazy: (i) => new Lazy(i).begin(i),
+  deleted: (i) => { const s = new Mark(i).begin(i); delete s.row; return s; },
+  frozen: (i) => (i === 3 ? Object.freeze(new Mark(i).begin(i)) : new Mark(i).begin(i)),
+  accessor: (i) => Object.defineProperty(new Mark(i).begin(i), "row", { get() { return "L" + this.i; }, set(v) { this.through = v; }, configurable: true, enumerable: true }),
+  readOnly: (i) => Object.defineProperty(new Mark(i).begin(i), "at", { value: 3, writable: false, configurable: true, enumerable: true }),
+  literal: (i) => ({ i, at: 1, row: 2, sort: "l", value: 3, depth: 4, reset: Mark.prototype.reset }),
+  foreign: (i) => { const s = Object.create(Mark.prototype); Mark.prototype.begin.call(s, i); return s; },
+  proxy: (i) => new Proxy(new Mark(i).begin(i), {}),
+  none: (i) => (i === 4 ? undefined : new Mark(i).begin(i)),
 };
 const out = [];
 function every(title) {
@@ -51,22 +51,22 @@ function every(title) {
       for (let i = 0; i < owners.length; i++) {
         const o = owners[i];
         try { s += o.move() + o.copy() + o.scan(4) + "|" + o.snapshot() + "|"; } catch (e) { s += e.constructor.name; }
-        try { s += o.state.step() + o.state.sum() + " "; } catch (e) { s += e.constructor.name + " "; }
+        try { s += o.mark.step() + o.mark.sum() + " "; } catch (e) { s += e.constructor.name + " "; }
       }
     }
-    for (const o of owners) { try { s += Object.keys(o.state).join() + ";"; } catch (e) { s += e.constructor.name + ";"; } }
+    for (const o of owners) { try { s += Object.keys(o.mark).join() + ";"; } catch (e) { s += e.constructor.name + ";"; } }
     out.push(title + " " + maker + " " + s);
   }
 }
 every("plain");
-State.prototype.line = "above";
+Mark.prototype.row = "above";
 every("above");
-delete State.prototype.line;
-Object.defineProperty(State.prototype, "value", { get() { return "got" + this.i; }, set(v) { this.through = v; }, configurable: true });
+delete Mark.prototype.row;
+Object.defineProperty(Mark.prototype, "value", { get() { return "got" + this.i; }, set(v) { this.through = v; }, configurable: true });
 every("setter");
-delete State.prototype.value;
-Object.defineProperty(State.prototype, "depth", { value: 1, writable: false, configurable: true });
+delete Mark.prototype.value;
+Object.defineProperty(Mark.prototype, "depth", { value: 1, writable: false, configurable: true });
 every("readOnlyAbove");
-delete State.prototype.depth;
+delete Mark.prototype.depth;
 every("again");
 for (const line of out) console.log(line.slice(0, 400), line.length, [...line].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) | 0, 0));

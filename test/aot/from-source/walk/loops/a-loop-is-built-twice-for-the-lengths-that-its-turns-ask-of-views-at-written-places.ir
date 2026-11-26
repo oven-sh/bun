@@ -1,11 +1,11 @@
 # -- source: main.cjs
 # "use strict";
-# function add(out, a, b) { out[0] = a[0] + b[0]; out[1] = a[1] + b[1]; out[2] = a[2] + b[2]; return out; }
-# function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+# function blends(mix, red, blue) { mix[0] = red[0] * 0.75 + blue[2]; mix[2] = blue[1] - red[0]; mix[1] = red[1] + mix[0] * 0.5; return mix; }
+# function bright(mix, red) { return mix[2] * 3 + mix[0] - red[2] * mix[1]; }
 # const sizes = JSON.parse("[3, 3, 3, 2]");
-# const o = new Float64Array(sizes[0]), p = new Float64Array(sizes[1]), q = new Float64Array(sizes[2]), short = new Float64Array(sizes[3]);
+# const m = new Float64Array(sizes[0]), p = new Float64Array(sizes[1]), q = new Float64Array(sizes[2]), short = new Float64Array(sizes[3]);
 # p.set([1.5, 2.5, 3.5]); q.set([0.5, 0.25, 4]);
-# function f(t, b) { p[0] = t & 7; let s = 0; for (let i = 0; i < 100; i++) { add(o, p, b); s += dot(o, p); } return s; }
+# function f(t, b) { p[0] = t & 7; let s = 0; for (let i = 0; i < 100; i++) { blends(m, p, b); s += bright(m, p); } return s; }
 # print(f(1, q), f(2, q), f(1, short));
 # -- end of source
 # f3 = f
@@ -26,8 +26,8 @@
 # CHECK: @OptionalDouble = GetTypedArrayElement
 # CHECK: Return
 # RUN(ANSWER): run-in-shell
-# ANSWER: 3462.5 3812.5 NaN
+# ANSWER: -1456.25 -1812.5 NaN
 # ANSWER-NEXT: exited with 0
 # RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
-# CHECKED: 3462.5 3812.5 NaN
+# CHECKED: -1456.25 -1812.5 NaN
 # CHECKED-NEXT: exited with 0

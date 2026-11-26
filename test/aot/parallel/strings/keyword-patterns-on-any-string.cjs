@@ -2,7 +2,7 @@
 "use strict";
 const shift = code => String.fromCharCode(code + process.pid % 1);
 const run = text => Array.from(text, unit => shift(unit.charCodeAt(0))).join("");
-const make = (words, flags = "") => new RegExp(run("^(?:") + run(words).replace(/ /g, "|") + run(")$"), flags);
+const make = (words, flags = "") => new RegExp(`${run("^(?:")}${run(words).split(" ").join("|")}${run(")$")}`, flags);
 const words = "break case catch café Δ Δx dΔ private package";
 const wide = make(words), narrow = make(words.replace(/ [^ ]*Δ[^ ]*/g, ""));
 const answers = [];

@@ -350,3 +350,26 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
     });
   });
 });
+
+test.concurrent.each([".js", ".json", ".ts", ".mjs", ".mts", ".cts"])(
+  "Module._extensions['%s'] validates the path",
+  async extension => {
+    using dir = tempDir("extensions-path", {
+      "x": `console.log("ran")`,
+      "main.cjs": `
+        const M = require("module");
+        try {
+          M._extensions["${extension}"](new M("m"), require("path").join(__dirname, "x") + "\\0${extension}");
+        } catch (error) {
+          console.log(error.code);
+        }
+      `,
+    });
+    expect(await bunRun(path.join(String(dir), "main.cjs"))).toEqual({
+      stdout: "ERR_INVALID_ARG_VALUE",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+);

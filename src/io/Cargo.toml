@@ -26,4 +26,5 @@ bun_errno.workspace = true
 bun_threading.workspace = true
 
 [target.'cfg(unix)'.dependencies]
+rustc-hash = "2"
 bun_spawn_sys.workspace = true

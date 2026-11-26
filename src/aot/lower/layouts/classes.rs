@@ -27,7 +27,9 @@ use crate::known_helpers::StateOwner;
 use crate::lower::class::ClassElement;
 use crate::lower::module::LibraryFunctionForm;
 use crate::lower::positions::is_made_by_its_file;
-use crate::lower::{CheckerTypeId, FileLowering, NameOfHeir, SourceKind, class, module};
+use crate::lower::{
+    CheckerTypeId, FileLowering, NameOfHeir, SourceKind, class, known_call, module,
+};
 use crate::modules::{InnerModuleKind, ModuleRef};
 
 type Supertypes = SmallVec<[LayoutId; 4]>;
@@ -751,7 +753,9 @@ impl FileLowering<'_, '_, '_, '_> {
     ) -> Option<LayoutId> {
         let layout = self.declare_constructor_function_layout(function)?;
         if function.file == self.file && !self.fragment.is_layout_defined(layout) {
-            let constructor = match self.decisions().is_dead_function(function.function) {
+            let is_never_made = self.decisions().is_dead_function(function.function)
+                || known_call::is_left_out(self, self.file, function.function);
+            let constructor = match is_never_made {
                 true => None,
                 false => Some(self.reference_function(FunctionKey::Source(function))),
             };

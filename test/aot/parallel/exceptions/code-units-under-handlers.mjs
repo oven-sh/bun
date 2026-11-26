@@ -7,7 +7,7 @@ function scan(list) {
   try {
     for (let i = 0; i < list.length; i++) {
       var unit = list[i];
-      if (unit >= 5760) text += String.fromCharCode(unit);
+      if (unit > 5000) text += String.fromCharCode(unit);
       else text += String.fromCharCode(unit) + "|";
     }
   } catch (error) {
@@ -17,23 +17,22 @@ function scan(list) {
   }
   return text;
 }
-function next() {
+function draw() {
   try {
-    while (this.left--) {
-      var unit = this.pos;
-      switch (unit) {
-        case 32: case 160: case 13: this.blank++;
-        default: unit >= 5760 && (this.last = String.fromCharCode(unit));
-      }
+    for (let turns = this.turns; turns > 0; turns = this.turns -= 1) {
+      var bead = this.bead;
+      if (bead > 5000) this.sign = String.fromCharCode(bead);
+      else if (bead === 41 || bead === 77) this.plain += 2;
+      else this.plain += 1;
     }
   } catch (error) {
-    log.push(error.message, String(unit));
+    log.push(error.message, String(bead));
   }
-  return [unit, this.last, this.blank];
+  return [this.plain, bead, this.sign];
 }
 const bad = { valueOf() { throw new Error("no number"); } };
 for (let turn = 0; turn < 4; turn++) {
-  log.push(scan([65, 70000, 5760, 1.5, -1]), scan([65, "66", undefined, null, true]), scan([65601, bad, 67]));
-  log.push(next.call({ left: 5, pos: 32, blank: 0, last: "" }), next.call({ left: 3, pos: 70001, blank: 0, last: "" }), next.call({ left: 3, get pos() { return this.left ? 6000 : bad; }, blank: 0, last: "" }));
+  log.push(scan([65, 70000, 5001, 1.5, -1]), scan([65, "66", undefined, null, true]), scan([65601, bad, 67]));
+  log.push(draw.call({ turns: 5, bead: 41, plain: 0, sign: "" }), draw.call({ turns: 3, bead: 70001, plain: 0, sign: "" }), draw.call({ turns: 3, get bead() { return this.turns > 1 ? 6000 : bad; }, plain: 0, sign: "" }));
 }
 console.log(JSON.stringify(log));

@@ -186,6 +186,23 @@ describe.concurrent("--cpu-prof", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.skipIf(isWindows)("a backslash in --cpu-prof-dir is part of the name", async () => {
+    using dir = tempDir("cpu-prof-dir-backslash", {});
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-dir", "a\\b", "--cpu-prof-name", "p.cpuprofile", "-e", "1"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
+    expect(readdirSync(String(dir), { recursive: true }).sort()).toEqual(["a\\b", "a\\b/p.cpuprofile"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("profile captures function names", async () => {
     using dir = tempDir("cpu-prof-functions", {
       "test.js": `

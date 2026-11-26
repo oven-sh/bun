@@ -1551,6 +1551,10 @@ diagnostics_channel[unsubscribe] cew function
 diagnostics_channel[unsubscribe]: function function name="unsubscribe" length=2 above=Function extensible=true
 diagnostics_channel[unsubscribe][length] c-- number
 diagnostics_channel[unsubscribe][name] c-- string
+diagnostics_channel[boundedChannel] cew function
+diagnostics_channel[boundedChannel]: function function name="boundedChannel" length=1 above=Function extensible=true
+diagnostics_channel[boundedChannel][length] c-- number
+diagnostics_channel[boundedChannel][name] c-- string
 diagnostics_channel[Channel] cew function
 diagnostics_channel[Channel]: function class name="Channel" length=1 above=Function extensible=true
 diagnostics_channel[Channel][length] c-- number
@@ -1584,10 +1588,39 @@ diagnostics_channel[Channel][prototype][runStores] c-w function
 diagnostics_channel[Channel][prototype][runStores]: function function name="runStores" length=3 above=Function extensible=true
 diagnostics_channel[Channel][prototype][runStores][length] c-- number
 diagnostics_channel[Channel][prototype][runStores][name] c-- string
+diagnostics_channel[Channel][prototype][withStoreScope] c-w function
+diagnostics_channel[Channel][prototype][withStoreScope]: function function name="withStoreScope" length=0 above=Function extensible=true
+diagnostics_channel[Channel][prototype][withStoreScope][length] c-- number
+diagnostics_channel[Channel][prototype][withStoreScope][name] c-- string
 diagnostics_channel[Channel][Symbol(Symbol.hasInstance)] c-w function
 diagnostics_channel[Channel][Symbol(Symbol.hasInstance)]: function function name="[Symbol.hasInstance]" length=1 above=Function extensible=true
 diagnostics_channel[Channel][Symbol(Symbol.hasInstance)][length] c-- number
 diagnostics_channel[Channel][Symbol(Symbol.hasInstance)][name] c-- string
+diagnostics_channel[BoundedChannel] cew function
+diagnostics_channel[BoundedChannel]: function class name="BoundedChannel" length=1 above=Function extensible=true
+diagnostics_channel[BoundedChannel][length] c-- number
+diagnostics_channel[BoundedChannel][name] c-- string
+diagnostics_channel[BoundedChannel][prototype] --- object
+diagnostics_channel[BoundedChannel][prototype]: object above=Object extensible=true
+diagnostics_channel[BoundedChannel][prototype][constructor] c-w function
+diagnostics_channel[BoundedChannel][prototype][constructor] = diagnostics_channel[BoundedChannel]
+diagnostics_channel[BoundedChannel][prototype][hasSubscribers] c-a accessor get=function set=undefined
+diagnostics_channel[BoundedChannel][prototype][subscribe] c-w function
+diagnostics_channel[BoundedChannel][prototype][subscribe]: function function name="subscribe" length=1 above=Function extensible=true
+diagnostics_channel[BoundedChannel][prototype][subscribe][length] c-- number
+diagnostics_channel[BoundedChannel][prototype][subscribe][name] c-- string
+diagnostics_channel[BoundedChannel][prototype][unsubscribe] c-w function
+diagnostics_channel[BoundedChannel][prototype][unsubscribe]: function function name="unsubscribe" length=1 above=Function extensible=true
+diagnostics_channel[BoundedChannel][prototype][unsubscribe][length] c-- number
+diagnostics_channel[BoundedChannel][prototype][unsubscribe][name] c-- string
+diagnostics_channel[BoundedChannel][prototype][withScope] c-w function
+diagnostics_channel[BoundedChannel][prototype][withScope]: function function name="withScope" length=0 above=Function extensible=true
+diagnostics_channel[BoundedChannel][prototype][withScope][length] c-- number
+diagnostics_channel[BoundedChannel][prototype][withScope][name] c-- string
+diagnostics_channel[BoundedChannel][prototype][run] c-w function
+diagnostics_channel[BoundedChannel][prototype][run]: function function name="run" length=3 above=Function extensible=true
+diagnostics_channel[BoundedChannel][prototype][run][length] c-- number
+diagnostics_channel[BoundedChannel][prototype][run][name] c-- string
 events: function function name="EventEmitter" length=1 above=Function extensible=true
 events[length] c-- number
 events[name] c-- string

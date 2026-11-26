@@ -32,7 +32,7 @@ pub(in crate::lower) use self::plan::{
     find_fields_under_signed_members, find_keys_that_hold_decorators,
     find_what_is_printed_for_each_object, has_decorators, has_instance_brand,
     has_private_static_storage, is_auto_accessor, is_declaration_only, is_decorated_private_name,
-    is_derived_class, is_printed_as_getter_and_setter, runtime_members,
+    is_derived_class, is_filled_by_decorators, is_printed_as_getter_and_setter, runtime_members,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

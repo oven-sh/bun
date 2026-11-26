@@ -46,7 +46,7 @@ const guessHandleType = internalDgram.guessHandleType;
 const kOwnerSymbol = Symbol("owner symbol");
 const async_id_symbol = Symbol("async_id_symbol");
 
-const { throwNotImplemented, ErrnoException, ExceptionWithHostPort } = require("internal/shared");
+const { throwNotImplemented, ErrnoException, ExceptionWithHostPort, builtinChannel } = require("internal/shared");
 const {
   validateString,
   validateNumber,
@@ -540,7 +540,7 @@ function onMessage(nread: number, handle: UDPHandle, buf: Buffer, rinfo: RemoteI
   self.emit("message", buf, rinfo);
 }
 
-let udpSocketChannel: ReturnType<typeof import("./diagnostics_channel").default.channel> | undefined;
+const udpSocketChannel = builtinChannel("udp.socket");
 
 function Socket(this: $Node.DgramSocket, type: string | DgramOptions, listener?: MessageListener) {
   EventEmitter.$call(this);
@@ -610,9 +610,6 @@ function Socket(this: $Node.DgramSocket, type: string | DgramOptions, listener?:
       const disposable = EventEmitter.addAbortListener(signal, onAborted);
       this.once("close", disposable[SymbolDispose]);
     }
-  }
-  if (!udpSocketChannel) {
-    udpSocketChannel = require("node:diagnostics_channel").channel("udp.socket");
   }
   if (udpSocketChannel.hasSubscribers) {
     udpSocketChannel.publish({

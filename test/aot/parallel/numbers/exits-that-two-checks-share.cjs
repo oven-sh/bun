@@ -1,12 +1,13 @@
 // What an iteration leaves by through either of two checks finds every value where the iteration began.
-function add(x, w, i, j, c, n) {
-  while (--n >= 0) {
-    const l = (x[i] & 0x3fff) * 3 + w[j] + c;
-    i++;
-    w[j++] = l & 0xffff;
-    c = l >> 16;
+function pour(jars, shelf, from, to, spilled, left) {
+  for (; left > 0; left--) {
+    const level = shelf[to] + 5 * (jars[from] & 1023) - spilled;
+    shelf[to] = level % 2048;
+    spilled = level >> 11;
+    to += 1;
+    from += 1;
   }
-  return [i, j, c, n, w.join()].join(" ");
+  return [from, to, spilled, left, shelf.join()].join(" ");
 }
 function pick(a, b, n) {
   let best = -1, at = -1, s = 0;
@@ -35,7 +36,7 @@ const make = {
 for (let k = 0; k < 11; k++) {
   for (const x in make) {
     for (const w in make) {
-      console.log(k, x, w, add(make[x](k), make[w](10 - k), 0, 0, 5, 11), add(make[x](k), make[w](k), 1, 2, 0, 9), pick(make[x](k), make[w](k), 11));
+      console.log(k, x, w, pour(make[x](k), make[w](10 - k), 0, 0, 5, 11), pour(make[x](k), make[w](k), 1, 2, 0, 9), pick(make[x](k), make[w](k), 11));
     }
   }
 }

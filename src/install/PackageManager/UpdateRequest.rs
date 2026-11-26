@@ -175,19 +175,10 @@ impl UpdateRequest {
         // remove
         'outer: for positional in positionals {
             let mut input: Vec<u8> = strings::trim(positional, b" \n\r\t").to_vec();
-            {
-                // Replacing "\\\\" (2 bytes) with "/" (1 byte) never grows the string, so a
-                // buffer of `input.len` bytes is always sufficient. Previously this was a
-                // fixed `[2048]u8` stack array which overflowed for longer positionals.
-                let mut temp = vec![0u8; input.len()];
-                // `strings::replace` returns the replacement count.
-                let len = strings::replace(&input, b"\\\\", b"/", &mut temp);
-                let new_len = input.len() - len;
-                let input2 = &mut temp[..new_len];
-                bun_paths::resolve_path::platform_to_posix_in_place(input2);
-                input[..new_len].copy_from_slice(input2);
-                input.truncate(new_len);
+            if cfg!(windows) || !input.starts_with(b"/") {
+                input = strings::replace_owned(&input, b"\\\\", b"/");
             }
+            bun_paths::to_portable_in_place(&mut input);
             match subcommand {
                 Subcommand::Link | Subcommand::Unlink => {
                     if !input.starts_with(b"link:") {

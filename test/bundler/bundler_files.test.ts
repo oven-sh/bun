@@ -1,7 +1,8 @@
 import type { BunPlugin, OnResolveCallback } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { basename } from "node:path";
+import { bunEnv, bunExe, bunRun, isWindows, substDrive, tempDir } from "harness";
+import { readdirSync, readFileSync, symlinkSync } from "node:fs";
+import { basename, join, relative, sep } from "node:path";
 
 describe("bundler files option", () => {
   test("basic in-memory file bundling", async () => {
@@ -976,6 +977,118 @@ describe("bundler files option", () => {
       expect(exitCode).toBe(0);
     });
   }
+
+  test("a specifier with a trailing slash does not match a file", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/app/entry.js"],
+      files: { "/app/entry.js": `import "./util.js/";`, "/app/util.js": `` },
+      throw: false,
+    });
+    expect(result.logs.map(log => log.message)).toEqual([`Could not resolve: "./util.js/"`]);
+  });
+
+  test("the output of a key that starts with a slash has a relative name", async () => {
+    using dir = tempDir("files-rooted-key", {});
+    const options = { entrypoints: ["/in-memory/index.js"], files: { "/in-memory/index.js": `console.log(1);` } };
+    expect((await Bun.build(options)).outputs[0].path).toBe("in-memory/index.js");
+    const { outputs } = await Bun.build({ ...options, outdir: String(dir) });
+    expect(outputs[0].path).toBe(join(String(dir), "in-memory", "index.js"));
+    expect(await Bun.file(outputs[0].path).text()).toContain("console.log(1)");
+  });
+
+  test("the metafile and the source map name a key that starts with a slash from the working directory", async () => {
+    const { outputs, metafile } = await Bun.build({
+      entrypoints: ["/in-memory/index.js"],
+      files: { "/in-memory/index.js": `console.log(1);` },
+      naming: "[name].js",
+      metafile: true,
+      sourcemap: "external",
+    });
+    const name = relative(process.cwd(), "/in-memory/index.js").replaceAll(sep, "/");
+    expect({ inputs: Object.keys(metafile!.inputs), sources: (await outputs[1].json()).sources }).toEqual({
+      inputs: [name],
+      sources: [name],
+    });
+  });
+
+  test.skipIf(!isWindows)("the output of a key on another volume stays in outdir", async () => {
+    using dir = tempDir("files-other-volume", {});
+    using drive = substDrive(String(dir));
+    const keys = [`${drive.root}a\\b\\index.js`, `\\\\?\\${drive.root}a\\index.js`, `B:\\a\\index.js`];
+    const outdir = join(String(dir), "out");
+    const { outputs } = await Bun.build({
+      entrypoints: keys,
+      files: Object.fromEntries(keys.map(key => [key, `console.log(1);`])),
+      root: String(dir),
+      outdir,
+    });
+    expect(outputs.map(output => relative(outdir, output.path)).sort()).toEqual([
+      "B_\\a\\index.js",
+      `____${drive.root[0]}_\\a\\index.js`,
+      "a\\b\\index.js",
+    ]);
+    expect(readdirSync(String(dir))).toEqual(["out"]);
+  });
+
+  test.concurrent.skipIf(!isWindows).each(["drive", "junction"])(
+    "a key is relative to a working directory that is reached through a %s",
+    async through => {
+      using dir = tempDir("files-cwd", {
+        "w/build.js": `await Bun.build({ entrypoints: ["/src/a.js"], files: { "/src/a.js": "" }, outdir: "out" });`,
+        "w/src/a.js": "// source",
+      });
+      using drive = substDrive(String(dir));
+      symlinkSync(join(String(dir), "w"), join(String(dir), "link"), "junction");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.js"],
+        cwd: through === "drive" ? join(drive.root, "w") : join(String(dir), "link"),
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
+      expect(readFileSync(join(String(dir), "w", "src", "a.js"), "utf8")).toBe("// source");
+      expect(readdirSync(join(String(dir), "w", "out"), { recursive: true })).toEqual(["src", "src\\a.js"]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("a key with backslashes overrides the file", async () => {
+    using dir = tempDir("files-backslash-key", {
+      "entry.js": `import "./src/a.js";`,
+      "src/a.js": `console.log("disk");`,
+    });
+    const { outputs } = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      files: { [`${dir}\\src\\a.js`]: `console.log("memory");` },
+    });
+    expect(await outputs[0].text()).toContain(`console.log("memory")`);
+  });
+
+  test("a key with a backslash is one module under both spellings", async () => {
+    const { outputs } = await Bun.build({
+      entrypoints: ["/app/e.js"],
+      files: { "/app/e.js": String.raw`require("./x\\m.js"); require("./x/m.js");`, "/app/x\\m.js": `once();` },
+    });
+    expect((await outputs[0].text()).match(/once\(\)/g)).toHaveLength(1);
+  });
+
+  test("a page with a relative key loads the override of its script", async () => {
+    using dir = tempDir("files-relative-html", {
+      "web/a.js": `console.log("disk");`,
+      "build.js": `
+        const { outputs } = await Bun.build({
+          entrypoints: ["./web/index.html"],
+          files: {
+            "./web/index.html": '<script src="a.js"></script>',
+            [process.cwd() + "/web/a.js"]: 'console.log("memory");',
+          },
+        });
+        eval(await outputs.find(output => output.path.endsWith(".js")).text());
+      `,
+    });
+    expect(await bunRun(`${dir}/build.js`)).toSpawn("memory");
+  });
 
   test("an html entry point in files of a server build is a page for the browser", async () => {
     const result = await Bun.build({

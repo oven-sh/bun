@@ -3,6 +3,9 @@ edition = "2021"
 version = "0.1.0"
 name = "ffi_napi_bench"
 
+# Standalone benchmark: opt out of the repo-root [workspace].
+[workspace]
+
 [lib]
 crate-type = ["cdylib"]
 

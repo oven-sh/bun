@@ -172,7 +172,7 @@ pub(crate) struct FetchSession {
     used: Cell<bool>,
     /// The wrapper. Strong while a `SessionHold` exists: a request parks its
     /// socket in this session's pool, and collecting the session closes the pool.
-    this_value: JsCell<JsRef>,
+    pub(crate) this_value: JsCell<JsRef>,
     /// The wrapper and each `SessionHold` hold a ref.
     ref_count: Cell<u32>,
     /// Armed in the context whose script made the session: the connections its pool keeps
@@ -274,10 +274,8 @@ impl FetchSession {
         }
         let check_server_identity = Self::parse_options(&mut this, cx.global(), init.to_js())?;
 
-        let session = RefPtr::from(this);
-        let this = session.this_ptr();
-        let this_value = structure.create(&cx.heap, session);
-        this.this_value.set(JsRef::init_weak(this_value.to_js()));
+        let this_value = structure.create(&cx.heap, RefPtr::from(this));
+        this_value.set_js_ref_weak();
         if let Some(callback) = check_server_identity {
             js::check_server_identity_set_cached(this_value.to_js(), cx.global(), callback);
         }
@@ -412,7 +410,6 @@ impl FetchSession {
     }
 
     pub(crate) fn finalize(&self) {
-        self.this_value.with_mut(|r| r.finalize());
         self.close();
     }
 }

@@ -207,7 +207,7 @@ impl InHtml {
     /// True if the code runs as Babel or acorn-typescript read it, where TypeScript's own parser reads something else
     /// (`Dialect::babel_ts`). That's an expression in a template, which Prettier parses with Babel too, and a Svelte
     /// component, which Svelte's compiler parses with acorn-typescript. Prettier parses a `<script lang="ts">` with
-    /// `typescript`, in Svelte too.
+    /// `typescript`, in Svelte too. A binding in a template has the root of a program: `html::js::with_file` knows it.
     pub fn is_read_by_babel(&self) -> bool {
         self.has_babel_tree
             || self.is_svelte_script

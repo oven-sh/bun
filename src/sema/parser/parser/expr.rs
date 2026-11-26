@@ -873,7 +873,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             };
         self.lx.reset(at_const);
         let at = (self.lx.start, self.lx.end);
-        // `const<>` is a const assertion too, and `checkGrammarTypeArguments` reports the list.
+        // `const<>` is a const assertion too (`IsConstTypeReference`), and TypeScript 7.0 reports nothing about the list.
         let has_empty_type_arguments = !is_whole_type
             && self.look_ahead(|p| {
                 p.next();

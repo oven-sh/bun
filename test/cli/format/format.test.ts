@@ -1008,17 +1008,37 @@ describe.concurrent("bun fmt", () => {
       expect(result.exitCode).toBe(2);
     });
 
-    // A `<script lang="ts">` is TypeScript's. Vue's compiler reads the expressions of the template with Babel, which
-    // takes `const` for all of the type. Prettier 3.9.9 prints the same.
+    // A `<script lang="ts">` is TypeScript's. Vue's compiler reads the expressions and the bindings of the template
+    // with Babel, which takes `const` for all of the type. Prettier 3.9.9 prints the same.
     test("a Vue component has TypeScript's reading in the script and Babel's in the template", async () => {
-      const vue = (script: string, bound: string, text: string) =>
-        `<script setup lang="ts">\n${script}\n</script>\n\n<template>\n  <p :a="${bound}">{{ ${text} }}</p>\n</template>\n`;
-      const files = { "a.vue": vue("let a = x as const|y+1;", "x as const|y+1", "x as const?+y:x") };
-      const result = await formatChecked(files, [], { reads: ["a.vue"] });
-      expect({ ...result.files, stderr: result.stderr }).toEqual({
-        "a.vue": vue("let a = (x as const | y) + 1;", "(x as const) | (y + 1)", "(x as const) ? +y : x"),
-        stderr: "",
-      });
+      const written = [
+        '<script setup lang="ts">',
+        "let a = x as const|y+1;",
+        "</script>",
+        "",
+        "<template>",
+        '  <A v-slot="{ b = x as const|y+1 }" v-for="(c = x as const|y+1) in d" :e="x as const|y+1" @f="g = x as const|y+1">{{ x as const?+y:x }}</A>',
+        "</template>",
+        "",
+      ];
+      const printed = [
+        '<script setup lang="ts">',
+        "let a = (x as const | y) + 1;",
+        "</script>",
+        "",
+        "<template>",
+        "  <A",
+        '    v-slot="{ b = (x as const) | (y + 1) }"',
+        '    v-for="c = (x as const) | (y + 1) in d"',
+        '    :e="(x as const) | (y + 1)"',
+        '    @f="g = (x as const) | (y + 1)"',
+        "    >{{ (x as const) ? +y : x }}</A",
+        "  >",
+        "</template>",
+        "",
+      ];
+      const result = await formatChecked({ "a.vue": written.join("\n") }, [], { reads: ["a.vue"] });
+      expect({ ...result.files, stderr: result.stderr }).toEqual({ "a.vue": printed.join("\n"), stderr: "" });
       expect(result.exitCode).toBe(0);
     });
 

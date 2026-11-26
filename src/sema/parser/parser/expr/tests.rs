@@ -206,6 +206,7 @@ fn type_after_const_that_typescript_reports() {
     }
 }
 
+// TypeScript 7.0.2 reports nothing about the list.
 #[test]
 fn empty_type_arguments_after_const() {
     let [without_recovery, with_comments, recovering] = parsers();
@@ -213,13 +214,15 @@ fn empty_type_arguments_after_const() {
         let found = reading_of("x as const<>", options);
         assert_eq!(found, Err(Rejection::Reported));
     }
-    expect_reading(
-        recovering,
-        &[
-            ("x as const<>", "const(x)"),
-            ("x as const<> || y", "binary(const(x), y)"),
-        ],
-    );
+    let cases = [
+        ("x as const<>", "const(x)"),
+        ("x as const<> || y", "binary(const(x), y)"),
+        ("<const < >>x", "const(x)"),
+    ];
+    expect_reading(recovering, &cases);
+    for (value, _) in cases {
+        assert_eq!(diagnostics_of(value, recovering), [], "{value}");
+    }
 }
 
 #[test]

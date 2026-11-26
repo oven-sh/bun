@@ -199,7 +199,9 @@ pub(crate) fn with_file(
     let Some(parse) = Parse::from_formatter(f) else {
         return false;
     };
-    let parse = parse.read_by_babel(in_html.is_read_by_babel());
+    // Prettier parses a binding with Babel, like an expression.
+    let is_binding = matches!(piece, Piece::Binding(_));
+    let parse = parse.read_by_babel(is_binding || in_html.is_read_by_babel());
     let mut options = options_in_html(f.options(), in_html);
     // In Prettier the file name is still the HTML file's, so `<T,>() => {}` keeps its comma because the name isn't
     // `.ts`. oxfmt prints a script like a separate file.
@@ -424,6 +426,8 @@ pub(crate) fn with_sorted_classes(
     const BEFORE: &[u8] = b"let __prettier_temp__ = ";
     let source = [BEFORE, code].concat();
     let mut changes = None;
+    // What sorts the classes reads the expression as what prints it does.
+    let parse = parse.read_by_babel(true);
     for path in paths_of(Syntax::BabelTs, code) {
         parse.call(path, &source, false, &mut |file| {
             if !file.has_parse_errors() {

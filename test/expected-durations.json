@@ -7060,11 +7060,11 @@
     "windows-aarch64": 800
   },
   "bundler/bundler_compile.test.ts": {
-    "default": 34100,
-    "asan": 101700,
-    "musl": 40800,
-    "windows": 78400,
-    "windows-aarch64": 63000
+    "default": 10600,
+    "asan": 31500,
+    "musl": 12600,
+    "windows": 24300,
+    "windows-aarch64": 19500
   },
   "bundler/bundler_compile_aot.test.ts": {
     "default": 2300,
@@ -7079,6 +7079,20 @@
     "musl": 11400,
     "windows": 21600,
     "windows-aarch64": 16000
+  },
+  "bundler/bundler_compile_embedded.test.ts": {
+    "default": 13000,
+    "asan": 38600,
+    "musl": 15500,
+    "windows": 29800,
+    "windows-aarch64": 23900
+  },
+  "bundler/bundler_compile_imports.test.ts": {
+    "default": 10600,
+    "asan": 31500,
+    "musl": 12600,
+    "windows": 24300,
+    "windows-aarch64": 19500
   },
   "bundler/bundler_compile_splitting.test.ts": {
     "default": 13300,

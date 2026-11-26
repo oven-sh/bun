@@ -29,6 +29,8 @@ test/js/node/test/parallel/test-child-process-promisified.js
 test/js/node/test/parallel/test-child-process-exec-encoding.js
 test/js/node/test/parallel/test-child-process-execfile.js
 test/bundler/bundler_compile.test.ts
+test/bundler/bundler_compile_embedded.test.ts
+test/bundler/bundler_compile_imports.test.ts
 test/bundler/bundler_plugin.test.ts
 test/bundler/transpiler/bun-pragma.test.ts
 test/bundler/transpiler/runtime-transpiler.test.ts

@@ -307,6 +307,8 @@
     "bundler/bun-build-compile.test.ts",
     "bundler/bundler_compile.test.ts",
     "bundler/bundler_compile_autoload.test.ts",
+    "bundler/bundler_compile_embedded.test.ts",
+    "bundler/bundler_compile_imports.test.ts",
     "bundler/bundler_edgecase.test.ts",
     "bundler/bundler_html_server.test.ts",
     "bundler/bundler_npm.test.ts",

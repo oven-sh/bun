@@ -372,7 +372,8 @@ Check `error.name` or use `instanceof`, not `error.message`.
 | `--preload`, `--import` in `BUN_OPTIONS`                               | Import the file from your entry point, or build with `--compile-inspector`               |
 | `preload` in `bunfig.toml`                                             | It's ignored. Import the file from your entry point, or build with `--compile-inspector` |
 | The same, built with `--no-compile-function-source` or `--obfuscate`   | It's an error at startup. Build with `--no-compile-autoload-bunfig`                      |
-| `--inspect` in `BUN_OPTIONS`, `BUN_INSPECT`                            | Build with `--compile-inspector`                                                         |
+| `--inspect` in `BUN_OPTIONS`                                           | Build with `--compile-inspector`                                                         |
+| `BUN_INSPECT`                                                          | It's ignored. Build with `--compile-inspector`                                           |
 | `--unhandled-rejections` in `BUN_OPTIONS`                              | Build with `--compile-exec-argv=--unhandled-rejections=<mode>`                           |
 | `--sql-preconnect` in `BUN_OPTIONS`                                    | Build with `--compile-exec-argv=--sql-preconnect`                                        |
 | Breakpoints and `debugger`                                             | `bun --inspect-brk ./app.ts`                                                             |

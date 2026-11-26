@@ -156,15 +156,29 @@ describe.concurrent("the debugger", () => {
     expect(await started("default", { BUN_OPTIONS: options })).toEqual(needsInspector(option));
   });
 
-  test.each(["default", "without-function-source", "obfuscated", "by-api-without-function-source"])(
-    "%s rejects BUN_INSPECT",
-    async name => {
-      expect(await started(name, { BUN_INSPECT: "ws://127.0.0.1:0/own" })).toEqual(needsInspector("BUN_INSPECT"));
-    },
-  );
+  // Editors set them for every process in their terminals.
+  const editorVariables = {
+    BUN_INSPECT: "ws://127.0.0.1:0/own?wait=1",
+    BUN_INSPECT_CONNECT_TO: "unix:///nobody-listens-here.sock",
+    BUN_INSPECT_NOTIFY: "unix:///nobody-listens-here.sock",
+    BUN_INSPECT_PRELOAD: "./before.ts",
+  };
+  const ignored: [string, Record<string, string>][] = [
+    ...Object.entries(editorVariables).map(([name, value]): [string, Record<string, string>] => [
+      name,
+      { [name]: value },
+    ]),
+    ["BUN_INSPECT that breaks", { BUN_INSPECT: "ws://127.0.0.1:0/own?break=1" }],
+    ["all four variables", editorVariables],
+  ];
+  for (const name of ["default", "without-function-source", "obfuscated", "by-api-without-function-source"])
+    test.each(ignored)(`${name} ignores %s`, async (_, env) => {
+      expect(await started(name, env)).toEqual(alone);
+    });
 
-  test("ignores BUN_INSPECT_CONNECT_TO, which editors set for every process in their terminals", async () => {
-    expect(await started("default", { BUN_INSPECT_CONNECT_TO: "unix:///nobody-listens-here.sock" })).toEqual(alone);
+  test("a default build rejects --inspect where BUN_INSPECT is set too", async () => {
+    const env = { BUN_OPTIONS: "--inspect=127.0.0.1:0", BUN_INSPECT: editorVariables.BUN_INSPECT };
+    expect(await started("default", env)).toEqual(needsInspector("--inspect"));
   });
 });
 
@@ -226,6 +240,29 @@ describe.concurrent.each(["with-inspector", "with-inspector-without-function-sou
     const { stdout, stderr, exitCode } = await started(name, { BUN_INSPECT: "ws://127.0.0.1:0/own" });
     expect(stderr).not.toContain("can't be used");
     expect({ stdout, exitCode }).toEqual({ stdout: alone.stdout, exitCode: 0 });
+  });
+
+  test("listens where BUN_INSPECT says, tells BUN_INSPECT_NOTIFY, and waits for a client", async () => {
+    const { promise: isListening, resolve } = Promise.withResolvers<void>();
+    using notified = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open: () => resolve(), data() {} } });
+    const reserved = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+    const url = `ws://127.0.0.1:${reserved.port}/own`;
+    await reserved.stop(true);
+    const program = started(name, {
+      BUN_INSPECT: url + "?wait=1",
+      BUN_INSPECT_NOTIFY: `tcp://127.0.0.1:${notified.port}`,
+    });
+    await Promise.race([isListening, program]);
+    const client = new WebSocket(url);
+    client.onopen = () => client.send(JSON.stringify({ id: 1, method: "Inspector.initialized" }));
+    // The program doesn't end while a client is connected.
+    let answer = "";
+    client.onmessage = event => {
+      answer = String(event.data);
+      client.close();
+    };
+    const { stdout, exitCode } = await program;
+    expect({ answer, stdout, exitCode }).toEqual({ answer: '{"result":{},"id":1}', stdout: alone.stdout, exitCode: 0 });
   });
 });
 

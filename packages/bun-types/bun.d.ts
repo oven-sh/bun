@@ -3252,21 +3252,23 @@ declare module "bun" {
      * Each entry is the path of a config file, resolved against the
      * checker's `cwd`; a directory does not stand for the `tsconfig.json`
      * in it. Paths are compared case-insensitively when the file system
-     * is. Opening the same project twice
-     * increments its open refcount; it stays open until a matching
-     * {@link Bun.TypeCheckerSnapshotUpdate.closeProjects} entry brings the
-     * count back to zero. Projects pulled in by reference may also appear
-     * in the snapshot.
+     * is. A path that does not name a readable config file, such as a
+     * missing file or a directory, gives no project and no error; the
+     * project appears in the first update after the file exists. A
+     * checker holds each project at most once, so opening an open project
+     * does nothing. Projects pulled in by reference may also appear in the
+     * snapshot.
      */
     readonly openProjects?: readonly TypeCheckerPath[] | undefined;
 
     /**
-     * Undo one matching open of each listed project.
+     * Close each listed project.
      *
      * Closing a project that is not open is an idempotent no-op, so cleanup
-     * paths do not need to track exact ownership. `closeProjects` applies
-     * before `openProjects` within one update, so listing a project in both
-     * reloads it.
+     * paths do not need to track exact ownership. Both lists are matched
+     * against the projects open before the update, like in TypeScript 7:
+     * listing an open project in both closes it, and listing a closed
+     * project in both opens it.
      */
     readonly closeProjects?: readonly TypeCheckerPath[] | undefined;
 

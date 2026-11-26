@@ -311,12 +311,7 @@ impl TypeChecker {
         };
 
         let captured = self.desired.with_mut(|desired| {
-            for selector in &validated.close_selectors {
-                desired.apply_close(selector);
-            }
-            for selector in &validated.open_selectors {
-                desired.apply_open(selector);
-            }
+            desired.apply_projects(&validated.close_selectors, &validated.open_selectors);
             for (path, text) in validated.sources {
                 desired.apply_source(&path, text);
             }

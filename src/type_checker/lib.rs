@@ -17,4 +17,4 @@ pub use snapshot::{
     AdapterError, ChainData, DiagnosticData, ProjectData, SnapshotData, category_name,
     native_file_name,
 };
-pub use state::{CanonicalPath, DesiredState, OpenProject, SourceOverlay};
+pub use state::{CanonicalPath, DesiredState, SourceOverlay};

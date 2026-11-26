@@ -394,30 +394,35 @@ describe.concurrent("Bun.TypeChecker: project lifecycle", () => {
     using both = await checker.updateSnapshot({ openProjects: ["one/tsconfig.json", "two/tsconfig.json"] });
     expect(configNames(both, String(dir))).toEqual([one, two]);
 
-    // Opening the same project again does not duplicate it.
-    using reopened = await checker.updateSnapshot({ openProjects: ["one/tsconfig.json"] });
+    // Opening a project that is already open does nothing, in the same call or in a later one.
+    using reopened = await checker.updateSnapshot({
+      openProjects: ["one/tsconfig.json", "one/tsconfig.json"],
+    });
     expect(configNames(reopened, String(dir))).toEqual([one, two]);
 
-    // Duplicate opens in one call are reference-counted: one close leaves it open.
-    using stillOpen = await checker.updateSnapshot({ closeProjects: ["one/tsconfig.json"] });
-    expect(configNames(stillOpen, String(dir))).toEqual([one, two]);
-
+    // Like typescript-go's API session, a project is held once: one close releases it.
     using closed = await checker.updateSnapshot({ closeProjects: ["one/tsconfig.json"] });
     expect(configNames(closed, String(dir))).toEqual([two]);
 
-    // Closing an unopened project is an idempotent no-op.
-    using noOp = await checker.updateSnapshot({ closeProjects: ["never/opened/tsconfig.json"] });
+    // Closing a project that is not open is an idempotent no-op.
+    using noOp = await checker.updateSnapshot({ closeProjects: ["one/tsconfig.json", "never/opened/tsconfig.json"] });
     expect(configNames(noOp, String(dir))).toEqual([two]);
 
-    // Close-and-reopen in one call reloads the desired project.
-    using reloaded = await checker.updateSnapshot({
+    // Both lists are matched against the projects open before the call: naming an open project in both
+    // closes it, and naming a closed project in both opens it.
+    using closedAgain = await checker.updateSnapshot({
       closeProjects: ["two/tsconfig.json"],
       openProjects: ["two/tsconfig.json"],
     });
-    expect(configNames(reloaded, String(dir))).toEqual([two]);
-    expect((await reloaded.getProject("two/tsconfig.json").program.getDiagnostics()).map((d: any) => d.code)).toEqual([
-      2322,
-    ]);
+    expect(configNames(closedAgain, String(dir))).toEqual([]);
+    using openedAgain = await checker.updateSnapshot({
+      closeProjects: ["two/tsconfig.json"],
+      openProjects: ["two/tsconfig.json"],
+    });
+    expect(configNames(openedAgain, String(dir))).toEqual([two]);
+    expect(
+      (await openedAgain.getProject("two/tsconfig.json").program.getDiagnostics()).map((d: any) => d.code),
+    ).toEqual([2322]);
   });
 
   test("getProject resolves relative, absolute and file-URL forms of a config file, never a directory", async () => {
@@ -439,33 +444,33 @@ describe.concurrent("Bun.TypeChecker: project lifecycle", () => {
     expect(snapshot.getProject("missing/tsconfig.json")).toBeUndefined();
     // A directory does not stand for the tsconfig.json inside it.
     expect(snapshot.getProject("sub")).toBeUndefined();
-    expect(snapshot.getProject(join(String(dir), "sub"))).toBeUndefined();
-    expect(snapshot.getProject(pathToFileURL(join(String(dir), "sub")))).toBeUndefined();
   });
 
-  test("a directory is not a project: it does not stand for the tsconfig.json inside it", async () => {
+  test("a directory is not a project, and the tsconfig.json inside it is not checked", async () => {
     using dir = project({ "sub/tsconfig.json": tsconfig, "sub/a.ts": `export const a: string = 1;\n` });
     await using checker = makeChecker(String(dir));
 
     using snapshot = await checker.updateSnapshot({ openProjects: ["sub"] });
-    expect(configNames(snapshot, String(dir))).toEqual([normPath(join(String(dir), "sub"), String(dir))]);
+    expect(snapshot.getProjects()).toEqual([]);
+    expect(snapshot.getProject("sub")).toBeUndefined();
     expect(snapshot.getProject("sub/tsconfig.json")).toBeUndefined();
-    expect(await snapshot.getProject("sub").program.getDiagnostics()).toEqual([]);
   });
 
-  test("a config file that does not exist is still a project, with no diagnostics", async () => {
+  test("a config file that does not exist is no project, and appears once it is created", async () => {
     using dir = project({ "a.ts": `export const a: string = 1;\n` });
     await using checker = makeChecker(String(dir));
 
-    using snapshot = await checker.updateSnapshot({ openProjects: ["nope.json", "tsconfig.json"] });
-    expect(configNames(snapshot, String(dir))).toEqual([
-      normPath(join(String(dir), "nope.json"), String(dir)),
+    using missing = await checker.updateSnapshot({ openProjects: ["later.json", "tsconfig.json"] });
+    expect(configNames(missing, String(dir))).toEqual([normPath(join(String(dir), "tsconfig.json"), String(dir))]);
+    expect(missing.getProject("later.json")).toBeUndefined();
+
+    writeFileSync(join(String(dir), "later.json"), tsconfig);
+    using created = await checker.updateSnapshot({});
+    expect(configNames(created, String(dir))).toEqual([
+      normPath(join(String(dir), "later.json"), String(dir)),
       normPath(join(String(dir), "tsconfig.json"), String(dir)),
     ]);
-    expect(await snapshot.getProject("nope.json").program.getDiagnostics()).toEqual([]);
-    expect((await snapshot.getProject("tsconfig.json").program.getDiagnostics()).map((d: any) => d.code)).toEqual([
-      2322,
-    ]);
+    expect((await created.getProject("later.json").program.getDiagnostics()).map((d: any) => d.code)).toEqual([2322]);
   });
 
   test("referenced projects appear and a shared file is checked in each project", async () => {

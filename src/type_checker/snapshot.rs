@@ -134,20 +134,6 @@ impl SnapshotData {
         }
     }
 
-    /// A project that could not be loaded. Like typescript-go, which keeps a configured project for a
-    /// config file that is missing and has no diagnostics to report for it.
-    pub fn unloaded(config_path: &[u8]) -> Self {
-        Self {
-            projects: vec![ProjectData {
-                index: 0,
-                config_path: config_path.to_vec(),
-            }],
-            diagnostics: Vec::new(),
-            by_project: vec![Vec::new()],
-            fs_case_sensitive: true,
-        }
-    }
-
     pub fn from_report(report: Report) -> Self {
         let projects: Vec<ProjectData> = report
             .projects

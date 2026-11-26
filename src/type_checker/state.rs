@@ -11,13 +11,6 @@ use crate::path::canonical_key;
 /// One canonical path. The key of [`DesiredState`] maps.
 pub type CanonicalPath = Box<[u8]>;
 
-/// An open project: the selector as the caller spelled it first, and how many opens it has.
-#[derive(Clone)]
-pub struct OpenProject {
-    pub selector: Box<[u8]>,
-    pub count: u32,
-}
-
 /// A source overlay: the path as the caller spelled it last, and its text.
 #[derive(Clone)]
 pub struct SourceOverlay {
@@ -33,8 +26,8 @@ pub struct SourceOverlay {
 #[derive(Clone)]
 pub struct DesiredState {
     pub case_sensitive: bool,
-    /// Canonical config selector -> open refcount.
-    pub open_projects: FxHashMap<CanonicalPath, OpenProject>,
+    /// Canonical config selector -> selector as first opened. A project is held at most once.
+    pub open_projects: FxHashMap<CanonicalPath, Box<[u8]>>,
     /// Canonical source path -> overlay.
     pub sources: FxHashMap<CanonicalPath, SourceOverlay>,
 }
@@ -54,26 +47,30 @@ impl DesiredState {
         }
     }
 
-    pub fn apply_close(&mut self, selector: &[u8]) {
-        let key = canonical_key(selector, self.case_sensitive);
-        match self.open_projects.get_mut(&*key) {
-            Some(open) if open.count > 1 => open.count -= 1,
-            Some(_) => {
-                self.open_projects.remove(&*key);
-            }
-            None => {}
+    /// Applies one update's `closeProjects` and `openProjects` like typescript-go's API session
+    /// (`handleUpdateSnapshot`): both lists are matched against the projects held before the update,
+    /// so opening a held project and closing a project that is not held do nothing, and a project
+    /// named in both lists is closed.
+    pub fn apply_projects(&mut self, close: &[Vec<u8>], open: &[Vec<u8>]) {
+        let case_sensitive = self.case_sensitive;
+        let to_close: Vec<Vec<u8>> = close
+            .iter()
+            .map(|selector| canonical_key(selector, case_sensitive))
+            .filter(|key| self.open_projects.contains_key(&key[..]))
+            .collect();
+        let to_open: Vec<(Vec<u8>, &Vec<u8>)> = open
+            .iter()
+            .map(|selector| (canonical_key(selector, case_sensitive), selector))
+            .filter(|(key, _)| !self.open_projects.contains_key(&key[..]))
+            .collect();
+        for key in to_close {
+            self.open_projects.remove(&key[..]);
         }
-    }
-
-    pub fn apply_open(&mut self, selector: &[u8]) {
-        let key = canonical_key(selector, self.case_sensitive);
-        self.open_projects
-            .entry(key.into_boxed_slice())
-            .or_insert_with(|| OpenProject {
-                selector: Box::from(selector),
-                count: 0,
-            })
-            .count += 1;
+        for (key, selector) in to_open {
+            self.open_projects
+                .entry(key.into_boxed_slice())
+                .or_insert_with(|| Box::from(&selector[..]));
+        }
     }
 
     pub fn apply_source(&mut self, path: &[u8], text: Option<Vec<u8>>) {
@@ -99,7 +96,7 @@ impl DesiredState {
         let mut keyed: Vec<(&[u8], &[u8])> = self
             .open_projects
             .iter()
-            .map(|(key, open)| (&**key, &*open.selector))
+            .map(|(key, selector)| (&**key, &**selector))
             .collect();
         keyed.sort_unstable_by_key(|(key, _)| *key);
         keyed.into_iter().map(|(_, selector)| selector).collect()
@@ -110,18 +107,24 @@ impl DesiredState {
 mod tests {
     use super::*;
 
+    fn sel(s: &[u8]) -> Vec<Vec<u8>> {
+        vec![s.to_vec()]
+    }
+
     #[test]
-    fn refcounts_open_and_close() {
+    fn a_project_is_held_at_most_once() {
         let mut state = DesiredState::default();
-        state.apply_open(b"/a/tsconfig.json");
-        state.apply_open(b"/a/tsconfig.json");
+        state.apply_projects(
+            &[],
+            &[b"/a/tsconfig.json".to_vec(), b"/a/tsconfig.json".to_vec()],
+        );
         assert_eq!(state.open_projects.len(), 1);
-        state.apply_close(b"/a/tsconfig.json");
-        assert_eq!(state.open_projects.len(), 1);
-        state.apply_close(b"/a/tsconfig.json");
+        state.apply_projects(&[], &sel(b"/a/tsconfig.json"));
+        // One close releases it: opening twice never took two references.
+        state.apply_projects(&sel(b"/a/tsconfig.json"), &[]);
         assert!(state.open_projects.is_empty());
-        // Closing an unopened project is a no-op.
-        state.apply_close(b"/never");
+        // Closing a project that is not held does nothing.
+        state.apply_projects(&sel(b"/never"), &[]);
         assert!(state.open_projects.is_empty());
     }
 
@@ -138,9 +141,9 @@ mod tests {
     #[test]
     fn captured_state_is_independent() {
         let mut state = DesiredState::default();
-        state.apply_open(b"/a/tsconfig.json");
+        state.apply_projects(&[], &sel(b"/a/tsconfig.json"));
         let captured = state.clone();
-        state.apply_close(b"/a/tsconfig.json");
+        state.apply_projects(&sel(b"/a/tsconfig.json"), &[]);
         state.apply_source(b"/a.ts", Some(b"x".to_vec()));
         assert_eq!(captured.open_projects.len(), 1);
         assert!(captured.sources.is_empty());
@@ -148,28 +151,33 @@ mod tests {
     }
 
     #[test]
-    fn close_before_open_ordering() {
+    fn close_and_open_in_one_update_are_matched_against_the_held_projects() {
         let mut state = DesiredState::default();
-        // close-then-open in one update reloads.
-        state.apply_open(b"/a/tsconfig.json");
-        state.apply_close(b"/a/tsconfig.json");
-        state.apply_open(b"/a/tsconfig.json");
+        state.apply_projects(&[], &sel(b"/a/tsconfig.json"));
+        // Held: the open is skipped and the close applies, so the project ends up closed.
+        state.apply_projects(&sel(b"/a/tsconfig.json"), &sel(b"/a/tsconfig.json"));
+        assert!(state.open_projects.is_empty());
+        // Not held: the close is skipped and the open applies.
+        state.apply_projects(&sel(b"/a/tsconfig.json"), &sel(b"/a/tsconfig.json"));
         assert_eq!(state.open_projects.len(), 1);
     }
 
     #[test]
     fn case_insensitive_open_and_close_share_one_entry() {
         let mut state = DesiredState::new(false);
-        state.apply_open(b"/W/App/tsconfig.json");
-        state.apply_open(b"/w/app/tsconfig.json");
+        state.apply_projects(
+            &[],
+            &[
+                b"/W/App/tsconfig.json".to_vec(),
+                b"/w/app/tsconfig.json".to_vec(),
+            ],
+        );
         assert_eq!(state.open_projects.len(), 1);
         assert_eq!(
             state.project_selectors(),
             vec![&b"/W/App/tsconfig.json"[..]]
         );
-        state.apply_close(b"/W/APP/tsconfig.json");
-        assert_eq!(state.open_projects.len(), 1);
-        state.apply_close(b"/w/app/TSCONFIG.json");
+        state.apply_projects(&sel(b"/w/APP/TSCONFIG.json"), &[]);
         assert!(state.open_projects.is_empty());
     }
 
@@ -189,8 +197,10 @@ mod tests {
     #[test]
     fn case_sensitive_keeps_spellings_apart() {
         let mut state = DesiredState::new(true);
-        state.apply_open(b"/a/tsconfig.json");
-        state.apply_open(b"/A/tsconfig.json");
+        state.apply_projects(
+            &[],
+            &[b"/a/tsconfig.json".to_vec(), b"/A/tsconfig.json".to_vec()],
+        );
         state.apply_source(b"/SRC/a.ts", Some(b"x".to_vec()));
         state.apply_source(b"/src/a.ts", Some(b"y".to_vec()));
         assert_eq!(state.open_projects.len(), 2);

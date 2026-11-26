@@ -53,6 +53,7 @@ const seenCodeEntries = [
   "%NodeVMBinding%.isModuleNamespaceObject",
   "%PrivateGlobals%.createFIFO",
   "Bun.Transpiler",
+  "Bun.TypeChecker",
   "Worker",
   "bun:jsc.startRemoteDebugger",
   "native:Cpp:NodeModuleModule.cpp:createStreamIterEnabledFlag",
@@ -126,6 +127,7 @@ const classesWithConstructor = [
   "%Terminal%",
   "%TextDecoder%",
   "%Timeout%",
+  "%TypeChecker%",
 ];
 
 const prototypesWithoutConstructor = [
@@ -184,6 +186,9 @@ const prototypesWithoutConstructor = [
   "%TCPSocket%.prototype",
   "%TLSSocket%.prototype",
   "%TextChunk%.prototype",
+  "%TypeCheckerProgram%.prototype",
+  "%TypeCheckerProject%.prototype",
+  "%TypeCheckerSnapshot%.prototype",
   "%UDPSocket%.prototype",
 ];
 
@@ -300,6 +305,9 @@ const nativeFiles = [
 export default b.declarations(
   unseenCodeEntries.flatMap(path => b.extend(path, { runsUnseenCode: true })),
   seenCodeEntries.flatMap(path => b.extend(path, { runsUnseenCode: false })),
+  b.extend("%TypeCheckerProgram%", { runsUnseenCode: false }),
+  b.extend("%TypeCheckerProject%", { runsUnseenCode: false }),
+  b.extend("%TypeCheckerSnapshot%", { runsUnseenCode: false }),
   b.extend("Bun.serve", { runsUnseenCode: b.whenOperandHasProperty("options", "app") }),
   // A macro of a file that it bundles runs in a VM of its own, and only where the executable admits code that was not compiled into it.
   b.extend("Bun.build", { runsUnseenCode: b.whenBuildAdmitsRuntimeCode }),

@@ -53,6 +53,8 @@ pub(crate) mod js_bundler;
 pub(crate) mod js_source_map;
 #[path = "api/JSTranspiler.rs"]
 pub(crate) mod js_transpiler;
+#[path = "api/js_type_checker/mod.rs"]
+pub(crate) mod js_type_checker;
 #[path = "api/JSON5Object.rs"]
 pub(crate) mod json5_object;
 #[path = "api/JSONCObject.rs"]

@@ -121,23 +121,25 @@ describe("Bun.TypeChecker: clean project and TS2322", () => {
     using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
     const diagnostics = await snapshot.getProject("tsconfig.json").program.getDiagnostics();
 
-    const pos = source.indexOf("42");
+    // The checker (like tsc) reports TS2322 on the declarator name `answer`,
+    // not on the initializer `42`.
+    const pos = source.indexOf("answer");
     expect(normDiagnostics(diagnostics, String(dir))).toEqual([
       {
         fileName: normPath(join(String(dir), "a.ts"), String(dir)),
         pos,
-        end: pos + 2,
+        end: pos + 6,
         line: 1,
         column: pos + 1,
         endLine: 1,
-        endColumn: pos + 3,
+        endColumn: pos + 7,
         code: 2322,
         category: "error",
         text: "Type 'number' is not assignable to type 'string'.",
       },
     ]);
     // The UTF-16 span must slice the source back to the offending token.
-    expect(source.slice(diagnostics[0].pos, diagnostics[0].end)).toBe("42");
+    expect(source.slice(diagnostics[0].pos, diagnostics[0].end)).toBe("answer");
   });
 
   test("positions are UTF-16 code units, not UTF-8 bytes", async () => {
@@ -149,11 +151,11 @@ describe("Bun.TypeChecker: clean project and TS2322", () => {
     using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
     const [diagnostic] = await snapshot.getProject("tsconfig.json").program.getDiagnostics("a.ts");
 
-    const pos = source.indexOf("42");
+    const pos = source.indexOf("answer");
     expect(diagnostic.pos).toBe(pos);
-    expect(diagnostic.end).toBe(pos + 2);
+    expect(diagnostic.end).toBe(pos + 6);
     expect(new TextEncoder().encode(source.slice(0, pos)).length).not.toBe(pos);
-    expect(source.slice(diagnostic.pos, diagnostic.end)).toBe("42");
+    expect(source.slice(diagnostic.pos, diagnostic.end)).toBe("answer");
   });
 
   test("an update with no projects resolves to an empty snapshot", async () => {
@@ -199,11 +201,17 @@ describe("Bun.TypeChecker: config diagnostics", () => {
     using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
     const diagnostics = await snapshot.getProject("tsconfig.json").program.getDiagnostics();
 
+    // A malformed config still matches the TypeChecker contract: diagnostics,
+    // not a rejection. The config diagnostic itself is on the tsconfig; the
+    // checker may also surface unrelated diagnostics (e.g. a lib conflict).
     expect(diagnostics.length).toBeGreaterThan(0);
-    expect(diagnostics[0].category).toBe("error");
-    expect(typeof diagnostics[0].code).toBe("number");
-    expect(typeof diagnostics[0].text).toBe("string");
-    expect(normPath(diagnostics[0].fileName, String(dir))).toBe(normPath(join(String(dir), "tsconfig.json"), String(dir)));
+    const configDiagnostics = diagnostics.filter(
+      (d: any) => normPath(d.fileName, String(dir)) === normPath(join(String(dir), "tsconfig.json"), String(dir)),
+    );
+    expect(configDiagnostics.length).toBeGreaterThan(0);
+    expect(configDiagnostics[0].category).toBe("error");
+    expect(typeof configDiagnostics[0].code).toBe("number");
+    expect(typeof configDiagnostics[0].text).toBe("string");
   });
 
   test("a project with zero diagnostics still appears in getProjects()", async () => {
@@ -217,7 +225,7 @@ describe("Bun.TypeChecker: config diagnostics", () => {
 });
 
 describe("Bun.TypeChecker: messageChain and relatedInformation", () => {
-  test("nested elaboration is preserved as a full messageChain", async () => {
+  test("nested elaboration is preserved in relatedInformation", async () => {
     using dir = project({
       "a.ts": `interface User { id: number; name: string }\nconst u: User = { id: "oops", name: "ada" };\nexport {};\n`,
     });
@@ -228,21 +236,15 @@ describe("Bun.TypeChecker: messageChain and relatedInformation", () => {
 
     expect(diagnostic.code).toBe(2322);
     expect(diagnostic.category).toBe("error");
-    // The whole nested structure, not just the top-level text.
-    expect(diagnostic.messageChain?.map((entry: any) => normDiagnostic(entry, String(dir)))).toEqual([
-      {
-        code: 2322,
-        category: "error",
-        text: "Types of property 'id' are incompatible.",
-        messageChain: [
-          {
-            code: 2322,
-            category: "error",
-            text: "Type 'string' is not assignable to type 'number'.",
-          },
-        ],
-      },
-    ]);
+    // The whole related structure, not just the top-level text. The checker
+    // reports property elaboration as related info (TS6500), not a messageChain.
+    expect(Array.isArray(diagnostic.relatedInformation)).toBe(true);
+    expect(diagnostic.relatedInformation).toHaveLength(1);
+    const related = diagnostic.relatedInformation[0];
+    expect(related.code).toBe(6500);
+    expect(related.category).toBe("message");
+    expect(related.text).toBe("The expected type comes from property 'id' which is declared here on type 'User'");
+    expect(normPath(related.fileName, String(dir))).toBe(normPath(join(String(dir), "a.ts"), String(dir)));
   });
 
   test("related information points at the declaration in another file", async () => {
@@ -259,9 +261,13 @@ describe("Bun.TypeChecker: messageChain and relatedInformation", () => {
     expect(diagnostic.relatedInformation?.map((entry: any) => normDiagnostic(entry, String(dir)))).toEqual([
       {
         fileName: normPath(join(String(dir), "types.ts"), String(dir)),
+        pos: 40,
+        end: 45,
         line: 3,
         column: 3,
-        code: 2741,
+        endLine: 3,
+        endColumn: 8,
+        code: 2728,
         category: "message",
         text: "'email' is declared here.",
       },
@@ -283,8 +289,8 @@ describe("Bun.TypeChecker: file filtering and ordering", () => {
 
     const all = await program.getDiagnostics();
     expect(normDiagnostics(all, String(dir)).map((d: any) => `${d.fileName}:${d.line}:${d.column}:TS${d.code}`)).toEqual([
-      `${normPath(join(String(dir), "a.ts"), String(dir))}:1:24:TS2322`,
-      `${normPath(join(String(dir), "b.ts"), String(dir))}:1:24:TS2322`,
+      `${normPath(join(String(dir), "a.ts"), String(dir))}:1:14:TS2322`,
+      `${normPath(join(String(dir), "b.ts"), String(dir))}:1:14:TS2322`,
     ]);
 
     // A second read returns the same order.
@@ -387,8 +393,17 @@ describe("Bun.TypeChecker: project lifecycle", () => {
   });
 
   test("referenced projects appear and a shared file is checked in each project", async () => {
+    // Composite projects require `rootDir` covering the shared file; without
+    // it the check stops with TS6059 before type checking (verified against
+    // `bun check` on the same fixture).
     const composite = JSON.stringify({
-      compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, composite: true, outDir: "dist" },
+      compilerOptions: {
+        ...JSON.parse(tsconfig).compilerOptions,
+        composite: true,
+        declaration: true,
+        outDir: "dist",
+        rootDir: "..",
+      },
       include: ["*.ts", "../shared/*.ts"],
     });
     using dir = project({
@@ -460,7 +475,8 @@ describe("Bun.TypeChecker: source overlays", () => {
     using broken = await checker.updateSnapshot({
       sourceChanges: new Map([["virtual.ts", `export const value: string = "x";\n`]]),
     });
-    expect((await broken.getProject("tsconfig.json").program.getDiagnostics("virtual.ts")).map((d: any) => d.code)).toEqual([
+    // The overlay's type flows to `index.ts`, which reports the mismatch there.
+    expect((await broken.getProject("tsconfig.json").program.getDiagnostics("index.ts")).map((d: any) => d.code)).toEqual([
       2322,
     ]);
 
@@ -600,14 +616,18 @@ describe("Bun.TypeChecker: concurrent update ordering", () => {
     expect(await seed.getProject("tsconfig.json").program.getDiagnostics("a.ts")).toEqual([]);
 
     const deliveryOrder: string[] = [];
+    // Each overlay must disagree with the *other* call's disk baseline to be
+    // observable: `string = 42` errors against `string`, `boolean = 1` errors
+    // against `boolean`. (The original `string = "a"` / `boolean = true`
+    // overlays are both clean and cannot prove isolation.)
     const promiseA = checker
-      .updateSnapshot({ sourceChanges: new Map([["a.ts", `export const answer: string = "a";\n`]]) })
+      .updateSnapshot({ sourceChanges: new Map([["a.ts", `export const answer: string = 42;\n`]]) })
       .then((snapshot: any) => {
         deliveryOrder.push("a");
         return snapshot;
       });
     const promiseB = checker
-      .updateSnapshot({ sourceChanges: new Map([["a.ts", `export const answer: boolean = true;\n`]]) })
+      .updateSnapshot({ sourceChanges: new Map([["a.ts", `export const answer: boolean = 1;\n`]]) })
       .then((snapshot: any) => {
         deliveryOrder.push("b");
         return snapshot;
@@ -617,8 +637,8 @@ describe("Bun.TypeChecker: concurrent update ordering", () => {
     expect(deliveryOrder).toEqual(["a", "b"]);
     const textA = (await snapshotA.getProject("tsconfig.json").program.getDiagnostics("a.ts")).map((d: any) => d.text);
     const textB = (await snapshotB.getProject("tsconfig.json").program.getDiagnostics("a.ts")).map((d: any) => d.text);
-    expect(textA).toEqual(["Type 'string' is not assignable to type 'number'."]);
-    expect(textB).toEqual(["Type 'boolean' is not assignable to type 'number'."]);
+    expect(textA).toEqual(["Type 'number' is not assignable to type 'string'."]);
+    expect(textB).toEqual(["Type 'number' is not assignable to type 'boolean'."]);
     snapshotA.dispose();
     snapshotB.dispose();
   });
@@ -730,7 +750,8 @@ describe("Bun.TypeChecker: incomplete and read failures", () => {
 
     using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
     const diagnostics = await snapshot.getProject("tsconfig.json").program.getDiagnostics("a.ts");
-    expect(diagnostics.map((d: any) => d.code)).toEqual([2307]);
+    // A side-effect import (`import "./x"`) is TS2882; a named import is TS2307.
+    expect(diagnostics.map((d: any) => d.code)).toEqual([2882]);
     expect(diagnostics[0].category).toBe("error");
   });
 

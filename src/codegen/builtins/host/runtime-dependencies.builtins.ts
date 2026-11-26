@@ -345,6 +345,7 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "Buffer.prototype.toJSON": functionsIn("builtins/JSBufferPrototype", "toJSON"),
   "Bun.$": functionsIn("builtins/shell", "createBunShellTemplateFunction"),
   "Bun.Glob": functionsIn("builtins/Glob", "scan", "scanSync"),
+  "%TypeCheckerSnapshot%": functionsIn("builtins/TypeCheckerSnapshot", "dispose"),
   "Bun.build": pluginFunctionsOfBuild,
   "Bun.peek": [heldAs(b.functionIn("builtins/Peek", "peek"), "Bun.peek"), b.functionIn("builtins/Peek", "peekStatus")],
   "Bun.plugin": bundlerPluginFunctions,

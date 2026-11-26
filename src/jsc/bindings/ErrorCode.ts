@@ -361,5 +361,10 @@ const errors: ErrorCodeMapping = [
   ["HPE_INVALID_URL", Error],
   ["ERR_HTTP2_TOO_MANY_ORIGINS", Error],
   ["ERR_PATCH_DOES_NOT_APPLY", Error],
+  ["ERR_BUN_TYPE_CHECKER_CLOSED", Error],
+  ["ERR_BUN_TYPE_CHECKER_SNAPSHOT_DISPOSED", Error],
+  ["ERR_BUN_TYPE_CHECKER_UNAVAILABLE", Error],
+  ["ERR_BUN_TYPE_CHECKER_INCOMPLETE", Error],
+  ["ERR_BUN_TYPE_CHECKER_READ_FAILED", Error],
 ];
 export default errors;

@@ -130,13 +130,11 @@ fn split_callback<'a>(
 /// everything else uses `AsyncFSTask`, and that choice is encoded in the
 /// `async_::*` type aliases rather than derivable from `F` alone.
 fn run_async<A: FsArgument>(
-    this: &Binding,
     cx: &mut JsScope<'_>,
     args: &[JsLocal<'_>],
     arm: AsyncArm,
     create_task: fn(
         &bun_jsc::JsThread<'_>,
-        &Binding,
         ThreadIsolated<A>,
         &VirtualMachine,
         Option<JSValue>,
@@ -151,7 +149,7 @@ fn run_async<A: FsArgument>(
     };
     let vm: &VirtualMachine = global.bun_vm();
     move_waiting_descriptors();
-    Ok(create_task(&cx, this, args, vm, callback))
+    Ok(create_task(&cx, args, vm, callback))
 }
 
 enum ParsedAsyncArgs<A> {
@@ -231,7 +229,7 @@ impl Binding {
             ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, None, error),
         };
         let vm: &VirtualMachine = global.bun_vm();
-        Ok(AsyncCpTask::create(&cx, self, cp_args, vm))
+        Ok(AsyncCpTask::create(&cx, cp_args, vm))
     }
 
     /// `callSync(.cp)`.
@@ -288,7 +286,7 @@ impl Binding {
                 &cx, &rd_args, vm, callback,
             ));
         }
-        Ok(async_::Readdir::create(&cx, self, rd_args, vm, callback))
+        Ok(async_::Readdir::create(&cx, rd_args, vm, callback))
     }
 
     /// `callSync(.watch)` — `args::Watch` borrows `globalThis` so it can't go
@@ -351,14 +349,14 @@ macro_rules! node_fs_bindings {
                     cx: &mut JsScope<'_>,
                     args: &[JsLocal<'_>],
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(self, cx, args, AsyncArm::Promise, async_::$F::create)
+                    run_async::<$Args>(cx, args, AsyncArm::Promise, async_::$F::create)
                 }
                 pub(crate) fn $callback(
                     &self,
                     cx: &mut JsScope<'_>,
                     args: &[JsLocal<'_>],
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(self, cx, args, AsyncArm::Callback, async_::$F::create)
+                    run_async::<$Args>(cx, args, AsyncArm::Callback, async_::$F::create)
                 }
             )*
         }

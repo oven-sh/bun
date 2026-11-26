@@ -588,6 +588,8 @@ describe("structuredClone with Blob and File", () => {
       const bad = Buffer.concat([good.subarray(0, at - 4), len, long, good.subarray(at + probe.length)]);
 
       // `Bun.file()` takes such a path too, and the syscall of each read refuses it.
+      // On Windows libuv makes these calls, and what it answers for such a path is its own.
+      const refused = isWindows ? expect.stringMatching(/^(ENAMETOOLONG|ENOENT|EINVAL)$/) : "ENAMETOOLONG";
       for (const blob of [deserialize(bad), v8.deserialize(bad)]) {
         const code = (e: NodeJS.ErrnoException) => e.code;
         expect({
@@ -595,7 +597,7 @@ describe("structuredClone with Blob and File", () => {
           exists: await blob.exists(),
           stat: await blob.stat().catch(code),
           text: await blob.text().catch(code),
-        }).toEqual({ name: long.toString(), exists: false, stat: "ENAMETOOLONG", text: "ENAMETOOLONG" });
+        }).toEqual({ name: long.toString(), exists: false, stat: refused, text: refused });
       }
     });
 

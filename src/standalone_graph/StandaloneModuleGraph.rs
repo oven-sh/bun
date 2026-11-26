@@ -181,17 +181,21 @@ impl StandaloneModuleGraph {
     }
 
     pub(crate) fn lookup_file(&self, name: &[u8]) -> Option<&File> {
-        if compiled_program::is_too_long(name) {
-            return None;
-        }
         #[cfg(windows)]
         let mut buf = path::Path::new();
         #[cfg(windows)]
         let name = normalize_file_key(name, &mut buf);
-        self.files
-            .get(name)
-            .or_else(|| self.files.get(&self.root_asset_key(name)?))
-            .or_else(|| self.files.get(&self.key_of_file_above_root(name)?))
+        // A key can be longer than the paths of the system that runs the executable: another system built it.
+        let other_spelling = || {
+            if compiled_program::is_too_long(name) {
+                return None;
+            }
+            let key = self
+                .root_asset_key(name)
+                .or_else(|| self.key_of_file_above_root(name))?;
+            self.files.get(&key)
+        };
+        self.files.get(name).or_else(other_spelling)
     }
 
     pub fn find_ref(&self, name: &[u8]) -> Option<&File> {

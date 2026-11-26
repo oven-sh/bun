@@ -1101,7 +1101,7 @@ fn absolute_key(name: &[u8]) -> Option<Path> {
     }
     // Every `stat` that the disk fails comes by here, most of them with a path that is a key as it stands.
     if cfg!(not(windows)) && is_normalized_posix_path(name) {
-        return (Path::from(name.strip_suffix(b"/").unwrap_or(name)).check_len()).ok();
+        return Some(Path::from(name.strip_suffix(b"/").unwrap_or(name)));
     }
     let mut working_directory = path_buffer_pool::get();
     // On Windows an absolute name can still take its drive from the working directory.
@@ -1341,6 +1341,9 @@ impl StandaloneModuleGraph {
 
     /// Whether a listing of `path` comes from the graph.
     pub fn owns_directory(&self, path: &[u8]) -> bool {
+        if is_too_long(path) {
+            return false;
+        }
         if is_bun_standalone_file_path(path) {
             return true;
         }

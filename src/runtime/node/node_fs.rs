@@ -183,11 +183,6 @@ pub(crate) use super::node_fs_constant as constants;
 pub(crate) use super::node_fs_stat_watcher as StatWatcher;
 pub(crate) use super::node_fs_watcher as Watcher;
 
-/// `Binding` is the JSC-class instance that owns the per-thread `NodeFS`
-/// (`super::node_fs_binding::Binding`). Re-exported so the async `create()`
-/// entry points keep their `&mut Binding` signature.
-pub(crate) use super::node_fs_binding::Binding;
-
 /// `jsc.JSPromise.Strong` — re-exported under its Rust crate name:
 /// `bun_jsc::js_promise::Strong` / the `JSPromiseStrong` alias.
 use bun_jsc::JSPromiseStrong;
@@ -1243,7 +1238,6 @@ mod _async_tasks {
         /// `callback`: as for [`AsyncFSTask::create`].
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
-            _binding: &Binding,
             task_args: ThreadIsolated<A>,
             vm: &VirtualMachine,
             callback: Option<JSValue>,
@@ -1284,6 +1278,24 @@ mod _async_tasks {
                     unsafe { &*(&*task.args as *const A as *const $Args) }
                 }};
             }
+            // For an answer without a request, or with one that libuv refuses before it calls back. It reaches the caller as the answer of a request does.
+            macro_rules! answer_now {
+                ($Ret:ty, $answer:expr) => {{
+                    // SAFETY: identity write — `R == $Ret` for this `F`.
+                    unsafe {
+                        core::ptr::write(
+                            &mut task.result as *mut Maybe<R> as *mut Maybe<$Ret>,
+                            $answer,
+                        )
+                    };
+                    let task_ptr: *mut Self = task;
+                    task.global_object()
+                        .bun_vm()
+                        .event_loop()
+                        .enqueue_task(bun_jsc::Task::init(task_ptr));
+                    return task.completion.value();
+                }};
+            }
             match F {
                 NodeFSFunctionEnum::Open => {
                     let args: &args::Open = args_as!(args::Open);
@@ -1298,19 +1310,7 @@ mod _async_tasks {
                         named.slice_z(&mut scratch)
                     };
                     if let Some(answer) = answer {
-                        // SAFETY: identity write — `R == ret::Open` for this `F`.
-                        unsafe {
-                            core::ptr::write(
-                                &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Open>,
-                                answer,
-                            )
-                        };
-                        let task_ptr: *mut Self = task;
-                        task.global_object()
-                            .bun_vm()
-                            .event_loop()
-                            .enqueue_task(bun_jsc::Task::init(task_ptr));
-                        return task.completion.value();
+                        answer_now!(ret::Open, answer);
                     }
                     let mut flags: c_int = args.flags.as_int();
                     flags = uv::O::from_bun_o(flags);
@@ -1330,7 +1330,10 @@ mod _async_tasks {
                             Some(Self::uv_callback),
                         )
                     };
-                    debug_assert!(rc == uv::ReturnCode::ZERO);
+                    if let Some(err) = rc.to_error(sys::Tag::open) {
+                        let answer: Maybe<ret::Open> = Err(err.with_path(named.slice()));
+                        answer_now!(ret::Open, answer);
+                    }
                     sys::syslog!(
                         "uv open({}, {}, {}) = scheduled",
                         ::bstr::BStr::new(path.as_bytes()),
@@ -1480,7 +1483,10 @@ mod _async_tasks {
                             Some(Self::uv_callbackreq),
                         )
                     };
-                    debug_assert!(rc == uv::ReturnCode::ZERO);
+                    if let Some(err) = rc.to_error(sys::Tag::statfs) {
+                        let answer: Maybe<ret::StatFS> = Err(err.with_path(args.path.slice()));
+                        answer_now!(ret::StatFS, answer);
+                    }
                     sys::syslog!("uv statfs({}) = ~~", ::bstr::BStr::new(path.as_bytes()));
                 }
                 _ => unreachable!("UVFSRequest type not implemented"),
@@ -2037,17 +2043,6 @@ mod _async_tasks {
         /// `callback`: the `node:fs` callback to call with the result. `None` returns a promise.
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
-            _binding: &Binding,
-            args: ThreadIsolated<A>,
-            vm: &VirtualMachine,
-            callback: Option<JSValue>,
-        ) -> JSValue {
-            Self::schedule(cx, args, vm, callback)
-        }
-
-        /// [`Self::create`] for a caller that has no `Binding`.
-        pub(crate) fn schedule(
-            cx: &bun_jsc::JsThread<'_>,
             args: ThreadIsolated<A>,
             vm: &VirtualMachine,
             callback: Option<JSValue>,
@@ -2287,7 +2282,6 @@ mod _async_tasks {
         /// tracker, and this VM's loop.
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
-            _binding: &Binding,
             cp_args: ThreadIsolated<args::Cp<'static>>,
             vm: &VirtualMachine,
         ) -> JSValue {

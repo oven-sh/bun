@@ -1330,6 +1330,54 @@ describe("bundler", () => {
     run: { stdout: JSON.stringify({ a: "from a", b: "from b", sameA: "same", sameB: "same", icon: "icon" }) },
   });
 
+  // https://github.com/oven-sh/bun/issues/49604
+  // The executable holds nothing at a path that the system refuses for its
+  // length, so the system answers for it, also for a listing. On Windows
+  // libuv picks the error.
+  if (!isWindows) {
+    itBundled("compile/PathOverTheLimitUnderTheRoot", {
+      compile: true,
+      files: {
+        "/entry.ts": /* js */ `
+          import fs from "node:fs";
+          import asset from "./asset.file" with { type: "file" };
+          const code = error => error.code;
+          const attempt = read => { try { return read(); } catch (error) { return error.code; } };
+          const long = import.meta.dir + "/" + Buffer.alloc(6000, "a/").toString() + "b";
+          console.log(JSON.stringify({
+            underRoot: Bun.main.startsWith(import.meta.dir + "/"),
+            readdir: attempt(() => fs.readdirSync(long)),
+            readdirRecursive: attempt(() => fs.readdirSync(long, { recursive: true })),
+            readdirPromise: await fs.promises.readdir(long).catch(code),
+            readdirRecursivePromise: await fs.promises.readdir(long, { recursive: true }).catch(code),
+            stat: attempt(() => fs.statSync(long)),
+            read: attempt(() => fs.readFileSync(long)),
+            exists: fs.existsSync(long),
+            file: await Bun.file(long).text().catch(code),
+            asset: fs.readFileSync(asset, "utf8"),
+            root: fs.readdirSync(import.meta.dir).length > 0,
+          }));
+        `,
+        "/asset.file": "kept",
+      },
+      run: {
+        stdout: JSON.stringify({
+          underRoot: true,
+          readdir: "ENAMETOOLONG",
+          readdirRecursive: "ENAMETOOLONG",
+          readdirPromise: "ENAMETOOLONG",
+          readdirRecursivePromise: "ENAMETOOLONG",
+          stat: "ENAMETOOLONG",
+          read: "ENAMETOOLONG",
+          exists: false,
+          file: "ENAMETOOLONG",
+          asset: "kept",
+          root: true,
+        }),
+      },
+    });
+  }
+
   // A browser chunk of a full-stack executable cannot reach the embedded
   // module graph, so its text imports stay inline string literals.
   itBundled("compile/TextImportClientChunkStaysInline", {

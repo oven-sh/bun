@@ -57,6 +57,15 @@ impl ShellWork for ShellMkdirTask {
             false => Path::join(&[&self.cwd_path, &self.filepath]),
         };
 
+        // libuv makes the folder on Windows, and does not say ENAMETOOLONG for each path that is.
+        if cfg!(windows) && filepath.len() >= bun_paths::MAX_PATH_BYTES {
+            self.err = Some(
+                bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::mkdir)
+                    .with_path(filepath.as_bytes()),
+            );
+            return;
+        }
+
         let mut node_fs = NodeFS::default();
         let args = fs_args::Mkdir {
             path: PathLike::borrowed(filepath.as_bytes()),

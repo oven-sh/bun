@@ -1768,10 +1768,12 @@ console.log("survived", require("./late.js"));`,
               return resolve.apply(this, arguments);
             };
             Module.runMain(__dirname + "/other.cjs");
+            Module.prototype.require.call(null, __dirname + "/required.cjs");
           `,
           "other.cjs": `console.log("runs");`,
+          "required.cjs": ``,
         },
-        ["other.cjs true true", "runs"],
+        ["other.cjs true true", "runs", "required.cjs true false"],
       ],
       [
         "stays when it leaves require.cache, and a second run of the file is not it",

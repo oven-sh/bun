@@ -857,7 +857,7 @@ static JSString* resolveMainModule(Zig::GlobalObject* globalObject, JSValue main
     JSValue resolve = globalObject->get(globalObject, builtinNames(vm).resolveSyncPrivateName());
     RETURN_IF_EXCEPTION(scope, nullptr);
     MarkedArgumentBuffer arguments;
-    for (JSValue argument : { JSValue(name), JSValue(jsEmptyString(vm)), jsBoolean(false), jsBoolean(false), jsUndefined(), jsNull(), jsUndefined(), JSValue(globalObject->requireMap()) })
+    for (JSValue argument : { JSValue(name), JSValue(jsEmptyString(vm)), jsBoolean(false), jsBoolean(false), jsUndefined(), jsNull(), jsUndefined(), JSValue(globalObject->requireMap()), jsBoolean(true) })
         arguments.append(argument);
     JSValue key = JSC::call(globalObject, resolve, JSC::getCallData(resolve), jsUndefined(), arguments);
     RETURN_IF_EXCEPTION(scope, nullptr);

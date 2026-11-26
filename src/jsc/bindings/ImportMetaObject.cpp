@@ -304,6 +304,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     JSValue resolveFilenameOptions = callFrame->argument(6);
     // Null for require.resolve().
     auto* requireMap = dynamicDowncast<JSC::JSMap>(callFrame->argument(7));
+    bool isMain = callFrame->argument(8).isTrue();
 
     // require() / require.resolve() from a disposed Bun.ModuleGraph's module throws.
     if (auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(parentModule)) {
@@ -357,7 +358,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 MarkedArgumentBuffer args;
                 args.append(moduleName);
                 args.append(parentModule);
-                args.append(jsBoolean(parentModule.isNull()));
+                args.append(jsBoolean(isMain));
                 args.append(resolveFilenameOptions);
 
                 JSValue thisValue = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);

@@ -1,6 +1,7 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isPosix, isWindows, tempDir } from "harness";
 import fs from "node:fs";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 // The limit of a path (4096 on Linux) is in UTF-8 bytes, not in characters
@@ -250,6 +251,10 @@ describe.each([
   // The operand that is not under test. Every operation below fails on
   // `tooLong`, so this path is never created.
   const other = "fs-path-length-other-operand";
+  // macOS looks for what it renames before it looks at the new name.
+  const dir = tempDir("fs-path-length-existing", { existing: "kept" });
+  const existing = join(String(dir), "existing");
+  afterAll(() => dir[Symbol.dispose]());
 
   type Callback = (err: unknown) => void;
   // [name, call, where node reports `tooLong` (mkdtemp appends its suffix to
@@ -280,7 +285,7 @@ describe.each([
     ["realpath", cb => fs.realpath(tooLong, cb), "path", "lstat"],
     ["realpath.native", cb => fs.realpath.native(tooLong, cb), "path", "realpath"],
     ["rename oldPath", cb => fs.rename(tooLong, other, cb), "path", "rename"],
-    ["rename newPath", cb => fs.rename(other, tooLong, cb), "dest", "rename"],
+    ["rename newPath", cb => fs.rename(existing, tooLong, cb), "dest", "rename"],
     ["rm", cb => fs.rm(tooLong, cb), "path", undefined],
     ["rmdir", cb => fs.rmdir(tooLong, cb), "path", "rmdir"],
     ["stat", cb => fs.stat(tooLong, cb), "path", "stat"],
@@ -307,6 +312,7 @@ describe.each([
     const err = (await promise) as NodeJS.ErrnoException | null;
     expect(calledBeforeReturning).toBe(false);
     expect(fs.existsSync(other)).toBe(false);
+    expect(fs.readFileSync(existing, "utf8")).toBe("kept");
     if (isWindows) {
       const doesNothing = name === "chown" || name === "lchown";
       expect(err?.code ?? null).toEqual(doesNothing ? null : expect.stringMatching(/^(ENAMETOOLONG|ENOENT|EINVAL)$/));
@@ -356,7 +362,7 @@ describe.each([
     const stat = { code: "ENAMETOOLONG", path: tooLong, syscall: "stat" };
     expect(() => fs.statSync(tooLong)).toThrow(expect.objectContaining(stat));
     expect(() => fs.statSync(Buffer.from(tooLong))).toThrow(expect.objectContaining(stat));
-    expect(() => fs.renameSync(other, tooLong)).toThrow(
+    expect(() => fs.renameSync(existing, tooLong)).toThrow(
       expect.objectContaining({ code: "ENAMETOOLONG", syscall: "rename", dest: tooLong }),
     );
   });
@@ -365,7 +371,7 @@ describe.each([
     const refused = expect.objectContaining({ code: expect.stringMatching(/^(ENAMETOOLONG|ENOENT|EINVAL)$/) });
     expect(() => fs.statSync(tooLong)).toThrow(refused);
     expect(() => fs.statSync(Buffer.from(tooLong))).toThrow(refused);
-    expect(() => fs.renameSync(other, tooLong)).toThrow(refused);
+    expect(() => fs.renameSync(existing, tooLong)).toThrow(refused);
   });
 
   it.skipIf(isWindows)("the promise variants reject with it, naming the path and the syscall", async () => {

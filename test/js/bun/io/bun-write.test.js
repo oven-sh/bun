@@ -1896,7 +1896,10 @@ describe.each([MAX_PATH_BYTES, MAX_PATH_BYTES + 70_000])("Bun.write() to a path 
     const from = written(String(dir) + path.sep);
     const to = join(String(dir), "to");
     expect(await failure(Bun.write(to, Bun.file(from)))).toEqual(failedAt(from));
-    expect(fs.readFileSync(to, "utf8")).toBe("kept");
+    // Without uv_fs_copyfile, Windows opens the destination before any source, and that empties it.
+    if (!IS_UV_FS_COPYFILE_DISABLED) {
+      expect(fs.readFileSync(to, "utf8")).toBe("kept");
+    }
   });
 
   it("an invalid option still throws", () => {

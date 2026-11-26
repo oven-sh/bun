@@ -1131,4 +1131,23 @@ describe.concurrent("one file under several types", () => {
       ]),
     );
   });
+
+  test("has one entry in require.cache until it is deleted, which require() does not answer with", async () => {
+    expect(
+      await run({
+        "main.mjs": `
+          import imported from "./data.txt" with { type: "yaml" };
+          const key = require.resolve("./data.txt");
+          const entry = require.cache[key];
+          const said = [entry === require.cache[key], entry.exports === imported];
+          delete require.cache[key];
+          said.push(key in require.cache);
+          const again = await import("./data.txt", { with: { type: "yaml" } });
+          said.push(require.cache[key] === entry, require.cache[key].exports === again.default);
+          said.push(require("./data.txt").default, require.cache[key].exports.default);
+          console.log(JSON.stringify(said));
+        `,
+      }),
+    ).toEqual(passes([true, true, false, false, true, "a: 1", "a: 1"]));
+  });
 });

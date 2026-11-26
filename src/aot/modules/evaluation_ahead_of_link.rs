@@ -11,12 +11,19 @@ struct HoldUp {
     until_end_of: u32,
 }
 
+#[derive(Copy, Clone, Default)]
+struct Marks {
+    index_on_stack: u32,
+    /// What was passed runs no later than the importer it was passed in.
+    load_that_passed: u32,
+}
+
 /// What `JSC::EvaluationAheadOfLink` does at run time, for a load that finds nothing loaded.
 #[derive(Default)]
 pub(super) struct EvaluationAheadOfLink {
     path: Vec<Importer>,
     stack: Vec<FileId>,
-    index_on_stack: Vec<u32>,
+    marks: Vec<Marks>,
     last_index: u32,
     ancestor_index: u32,
     ahead: Vec<FileId>,
@@ -24,16 +31,13 @@ pub(super) struct EvaluationAheadOfLink {
     hold_up: Option<HoldUp>,
     pub(super) is_below_deferred_import: bool,
     load: u32,
-    /// What was passed runs no later than the importer it was passed in.
-    load_that_passed: Vec<u32>,
 }
 
 impl EvaluationAheadOfLink {
     pub(super) fn begin(&mut self, file_count: usize) {
-        self.index_on_stack.resize(file_count, 0);
-        self.load_that_passed.resize(file_count, 0);
+        self.marks.resize(file_count, Marks::default());
         for file in self.stack.drain(..) {
-            self.index_on_stack[file.idx()] = 0;
+            self.marks[file.idx()].index_on_stack = 0;
         }
         self.path.clear();
         self.ahead.clear();
@@ -47,7 +51,7 @@ impl EvaluationAheadOfLink {
         self.last_index += 1;
         let index = self.last_index;
         self.stack.push(file);
-        self.index_on_stack[file.idx()] = index;
+        self.marks[file.idx()].index_on_stack = index;
         self.path.push(Importer {
             file,
             index,
@@ -66,12 +70,12 @@ impl EvaluationAheadOfLink {
         } else {
             self.hold_up.take_if(|it| left.index <= it.until_end_of);
             while let Some(member) = self.stack.pop() {
-                self.index_on_stack[member.idx()] = 0;
+                self.marks[member.idx()].index_on_stack = 0;
                 if member == left.file {
                     break;
                 }
                 if !self.is_below_deferred_import {
-                    self.load_that_passed[member.idx()] = self.load;
+                    self.marks[member.idx()].load_that_passed = self.load;
                 }
             }
         }
@@ -79,7 +83,7 @@ impl EvaluationAheadOfLink {
     }
 
     pub(super) fn come_back_to(&mut self, file: FileId) {
-        let index = self.index_on_stack[file.idx()];
+        let index = self.marks[file.idx()].index_on_stack;
         if index != 0 {
             self.ancestor_index = self.ancestor_index.min(index);
         }
@@ -90,10 +94,11 @@ impl EvaluationAheadOfLink {
     }
 
     pub(super) fn pass_import(&mut self, file: FileId, modules_ahead_of_it: usize) {
-        if self.is_below_deferred_import || self.index_on_stack[file.idx()] != 0 {
+        let marks = &mut self.marks[file.idx()];
+        if self.is_below_deferred_import || marks.index_on_stack != 0 {
             return;
         }
-        let load = core::mem::replace(&mut self.load_that_passed[file.idx()], self.load);
+        let load = core::mem::replace(&mut marks.load_that_passed, self.load);
         if load == self.load || self.hold_up.is_some() {
             return;
         }

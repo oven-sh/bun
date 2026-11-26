@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/CommonJS.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 9fc46259248d38962a9047e75ac18adb27649601e760d701f4f73f2dae166f97.
+// Written against that file with the SHA-256 e1375c3fb7d4fec3da1913c8d9e8b56801d86128c6ff8f2813b4f8c297daa6c2.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // This file contains functions used for the CommonJS module loader
@@ -252,6 +252,8 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
   const isBuiltinKey = (key: string | symbol) =>
     typeof key === "string" && (key.startsWith("node:") || key.startsWith("bun:"));
   const hasKey = (key: string) => requireMap.$has(key) || (!isBuiltinKey(key) && $esmRegistryHasEvaluated(key, owner));
+  // What import attributes have made of files. It is not in `requireMap`, because require() does not answer with it.
+  const otherForms = new $Map<string, { form: unknown; mod: JSCommonJSModule }>();
   var proxy = new Proxy(inner, {
     get(_target, key: string) {
       const entry = requireMap.$get(key);
@@ -264,9 +266,15 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
           requireMap.$set(key, mod);
           return mod;
         }
-        // What an import attribute has made of the file is here to be deleted. require() does not answer with it.
-        const otherForm = $esmNamespaceForCjs(key, owner, true);
-        if (otherForm !== undefined) return $createCommonJSModule(key, otherForm, true, owner);
+        const form = $esmNamespaceForCjs(key, owner, true);
+        if (form !== undefined) {
+          let shown = otherForms.$get(key);
+          if (shown?.form !== form) {
+            shown = { form, mod: $createCommonJSModule(key, form, true, owner) };
+            otherForms.$set(key, shown);
+          }
+          return shown!.mod;
+        }
       }
 
       return inner[key];
@@ -282,6 +290,7 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
     },
 
     deleteProperty(_target, key: string) {
+      otherForms.$delete(key);
       requireMap.$delete(key);
       $esmRegistryDelete(key, owner);
       $evictIsolationSourceProviderCache(key);

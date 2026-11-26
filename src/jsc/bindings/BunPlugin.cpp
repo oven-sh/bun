@@ -2642,7 +2642,7 @@ static bool isLoadedByPlugin(Zig::GlobalObject* globalObject, const String& key)
 JSC_DECLARE_HOST_FUNCTION(jsFunctionGiveTurnsToModuleMocks);
 
 // Ranks again once all of `fetches` have settled, or from the next microtask if there are none.
-__attribute__((minsize)) static void rerankAfter(Zig::GlobalObject* globalObject, Vector<JSC::JSPromise*>& fetches)
+__attribute__((minsize)) static void rerankAfter(Zig::GlobalObject* globalObject, JSC::MarkedVector<JSC::JSPromise*>& fetches)
 {
     auto& vm = JSC::getVM(globalObject);
     if (fetches.isEmpty()) {
@@ -2652,9 +2652,9 @@ __attribute__((minsize)) static void rerankAfter(Zig::GlobalObject* globalObject
     globalObject->onLoadPlugins.loadsBeingFetched++;
     auto* countdown = JSC::InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), jsNumber(fetches.size()), jsNumber(globalObject->onLoadPlugins.timesRanked));
     JSC::JSFunction* settled = JSC::JSFunction::create(vm, globalObject, 2, String(), jsFunctionGiveTurnsToModuleMocks, ImplementationVisibility::Private);
-    for (auto* fetch : fetches)
-        fetch->performPromiseThenWithContext(vm, globalObject, settled, settled, jsUndefined(), countdown);
-    fetches.shrink(0);
+    for (size_t index = 0; index < fetches.size(); ++index)
+        fetches.at(index)->performPromiseThenWithContext(vm, globalObject, settled, settled, jsUndefined(), countdown);
+    fetches.clear();
 }
 
 // Finds the load each waiting mock belongs to. Once a load has fetched all it can without a factory, ranks its mocks in the order
@@ -2705,12 +2705,12 @@ __attribute__((noinline, minsize)) static Vector<JSC::Identifier> rankWaitingMod
     // What a running factory has requested for comes first, the latest first: the mocks it leads to are called in its order, as in Vitest.
     Vector<UniquedStringImpl*> loads;
     Vector<String> finished;
-    Vector<JSC::JSPromise*> fetches;
+    JSC::MarkedVector<JSC::JSPromise*> fetches;
     // If a factory imports a module that's still being read, we can't tell yet whether that module imports the mock, so the factory gets a private copy.
     // To avoid that, don't start a factory while any load is reading a file. Don't wait for onLoad() callbacks, which may depend on the test's progress.
     bool isReadingFile = false;
 #if ENABLE(AOT)
-    Vector<JSC::JSPromise*> heldFetches;
+    JSC::MarkedVector<JSC::JSPromise*> heldFetches;
 #endif
     auto addFetch = [&](const String& key, JSC::JSPromise* fetch) {
 #if ENABLE(AOT)
@@ -2986,7 +2986,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionGiveTurnsToModuleMocks, __att
                 if (waiting.load == load.string())
                     waiting.rank = 0;
             }
-            Vector<JSC::JSPromise*> fetches { importInFlight };
+            JSC::MarkedVector<JSC::JSPromise*> fetches;
+            fetches.append(importInFlight);
             rerankAfter(globalObject, fetches);
         }
     }

@@ -2060,6 +2060,111 @@ describe("strikethrough", () => {
   });
 });
 
+// Each line ending in the text of a block is a hard break, and the blanks in front of it are dropped.
+describe("hardSoftBreaks", () => {
+  test.each([
+    ["a\nb", "a<br />\nb", "a\nb"],
+    ["a \nb", "a<br />\nb", "a \nb"],
+    ["a \t\nb", "a<br />\nb", "a \t\nb"],
+    ["a\r\nb", "a<br />\nb", "a\nb"],
+    ["a\nb\nc", "a<br />\nb<br />\nc", "a\nb\nc"],
+    ["a\n   b", "a<br />\nb", "a\nb"],
+    ["a\\\\\nb", "a\\<br />\nb", "a\\\nb"],
+    ["*a\nb*", "<em>a<br />\nb</em>", "<em>a\nb</em>"],
+    ["**a**\nb", "<strong>a</strong><br />\nb", "<strong>a</strong>\nb"],
+    ["[a\nb](u)", '<a href="u">a<br />\nb</a>', '<a href="u">a\nb</a>'],
+    ["a\nb  ", "a<br />\nb", "a\nb"],
+    // These are hard breaks without the option too.
+    ["a  \nb", "a<br />\nb", "a<br />\nb"],
+    ["a\\\nb", "a<br />\nb", "a<br />\nb"],
+    // A line ending in a code span, in raw HTML or in the alt text of an image is not a break.
+    ["`a\nb`", "<code>a b</code>", "<code>a b</code>"],
+    ["a <b\nc> d", "a <b\nc> d", "a <b\nc> d"],
+    ["![a\nb](u)", '<img src="u" alt="a b" />', '<img src="u" alt="a b" />'],
+    [
+      "[![a\nb](i) c\nd](u)",
+      '<a href="u"><img src="i" alt="a b" /> c<br />\nd</a>',
+      '<a href="u"><img src="i" alt="a b" /> c\nd</a>',
+    ],
+  ])("%j", (text, on, off) => {
+    expect(Markdown.html(text, { hardSoftBreaks: true })).toBe(`<p>${on}</p>\n`);
+    expect(Markdown.html(text, { hardSoftBreaks: false })).toBe(`<p>${off}</p>\n`);
+    expect(Markdown.html(text)).toBe(`<p>${off}</p>\n`);
+  });
+
+  test("is also spelled hard_soft_breaks", () => {
+    expect(Markdown.html("a\nb", { hard_soft_breaks: true } as any)).toBe("<p>a<br />\nb</p>\n");
+  });
+
+  test("applies in a heading, a list item and a block quote, and not in a code block or an HTML block", () => {
+    const html = (text: string) => Markdown.html(text, { hardSoftBreaks: true });
+    expect(html("a\nb\n===")).toBe("<h1>a<br />\nb</h1>\n");
+    expect(html("- a\n  b")).toBe("<ul>\n<li>a<br />\nb</li>\n</ul>\n");
+    expect(html("> a\nb")).toBe("<blockquote>\n<p>a<br />\nb</p>\n</blockquote>\n");
+    expect(html("a\nb\n\nc\nd")).toBe("<p>a<br />\nb</p>\n<p>c<br />\nd</p>\n");
+    expect(html("```\na\nb\n```")).toBe("<pre><code>a\nb\n</code></pre>\n");
+    expect(html("<div>\na\nb\n</div>")).toBe("<div>\na\nb\n</div>\n");
+  });
+});
+
+// Each `_` of a run that opens or closes is one <u>. The runs pair as they do for emphasis, and `*` is unchanged.
+describe("underline", () => {
+  test.each([
+    ["_a_", "<u>a</u>", "<em>a</em>"],
+    ["__a__", "<u><u>a</u></u>", "<strong>a</strong>"],
+    ["___a___", "<u><u><u>a</u></u></u>", "<em><strong>a</strong></em>"],
+    ["__a_", "_<u>a</u>", "_<em>a</em>"],
+    ["_a__", "<u>a</u>_", "<em>a</em>_"],
+    ["__a _b_ c__", "<u><u>a <u>b</u> c</u></u>", "<strong>a <em>b</em> c</strong>"],
+    ["_a_b_", "<u>a_b</u>", "<em>a_b</em>"],
+    ["(_a_)", "(<u>a</u>)", "(<em>a</em>)"],
+    ["_a\nb_", "<u>a\nb</u>", "<em>a\nb</em>"],
+    ["**_a_**", "<strong><u>a</u></strong>", "<strong><em>a</em></strong>"],
+    ["__*a*__", "<u><u><em>a</em></u></u>", "<strong><em>a</em></strong>"],
+    ["*a _b_ c*", "<em>a <u>b</u> c</em>", "<em>a <em>b</em> c</em>"],
+    ["_a *b_ c*", "<u>a *b</u> c*", "<em>a *b</em> c*"],
+    ["~~_a_~~ _~b~_", "<del><u>a</u></del> <u><del>b</del></u>", "<del><em>a</em></del> <em><del>b</del></em>"],
+    ["[_a_](u)", '<a href="u"><u>a</u></a>', '<a href="u"><em>a</em></a>'],
+    // These are the same without the option.
+    ["*a* **b** ***c***", "<em>a</em> <strong>b</strong> <em><strong>c</strong></em>"],
+    ["snake_case_name", "snake_case_name"],
+    ["_a _b", "_a _b"],
+    ["\\_a_ `_b_`", "_a_ <code>_b_</code>"],
+    ["![_a_](u)", '<img src="u" alt="a" />'],
+  ])("%j", (text, on, off = on) => {
+    expect(Markdown.html(text, { underline: true })).toBe(`<p>${on}</p>\n`);
+    expect(Markdown.html(text, { underline: false })).toBe(`<p>${off}</p>\n`);
+    expect(Markdown.html(text)).toBe(`<p>${off}</p>\n`);
+  });
+
+  test("applies in a heading and in the cell of a table", () => {
+    const html = (text: string) => Markdown.html(text, { underline: true });
+    expect(html("# _a_")).toBe("<h1><u>a</u></h1>\n");
+    expect(html("|_a_|\n|-|\n|__b__|")).toBe(
+      "<table>\n<thead>\n<tr><th><u>a</u></th></tr>\n</thead>\n<tbody>\n<tr><td><u><u>b</u></u></td></tr>\n</tbody>\n</table>\n",
+    );
+  });
+
+  test("a long run is one <u> for each `_` that it opens or closes with", () => {
+    const repeated = (fill: string, count: number) => Buffer.alloc(count * fill.length, fill).toString();
+    const html = (text: string) => Markdown.html(text, { underline: true });
+    const nested = (depth: number, text: string) => `${repeated("<u>", depth)}${text}${repeated("</u>", depth)}`;
+    expect(html(`${repeated("_", 13)}!${repeated("_", 13)}`)).toBe(`<p>${nested(13, "!")}</p>\n`);
+    expect(html(`${repeated("_", 2000)}a${repeated("_", 2000)}`)).toBe(`<p>${nested(2000, "a")}</p>\n`);
+    // One run can open for many closers, and close many openers.
+    expect(html(`${repeated("_", 14)}a${repeated("__ a", 6)}__`)).toBe(
+      `<p>${repeated("<u>", 14)}a${repeated("</u></u> a", 6)}</u></u></p>\n`,
+    );
+    expect(html(`${repeated("__a ", 7)}b${repeated("_", 14)}`)).toBe(
+      `<p>${repeated("<u><u>a ", 7)}b${repeated("</u>", 14)}</p>\n`,
+    );
+  });
+
+  test("goes with hardSoftBreaks", () => {
+    expect(Markdown.html("_a\nb_", { underline: true, hardSoftBreaks: true })).toBe("<p><u>a<br />\nb</u></p>\n");
+  });
+});
+
 test("a long delimiter run uses all of its characters to open and close emphasis", () => {
   const repeated = (fill: string, count: number) => Buffer.alloc(count * fill.length, fill).toString();
   const nested = (depth: number, text: string) =>
@@ -2095,6 +2200,7 @@ test.each([
       wikiLinks: true,
       latexMath: true,
       underline: true,
+      hardSoftBreaks: true,
     },
   ],
 ])(

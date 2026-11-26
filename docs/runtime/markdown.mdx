@@ -59,9 +59,9 @@ All available options:
 | `tasklists`            | `true`  | GFM task lists (`- [x] item`)                               |
 | `autolinks`            | `false` | Enable autolinks — see [Autolinks](#autolinks)              |
 | `headings`             | `false` | Heading IDs and autolinks — see [Heading IDs](#heading-ids) |
-| `hardSoftBreaks`       | `false` | Treat soft line breaks as hard breaks                       |
+| `hardSoftBreaks`       | `false` | Every line ending in a paragraph is a hard break (`<br />`) |
 | `wikiLinks`            | `false` | Enable `[[wiki links]]`                                     |
-| `underline`            | `false` | `__text__` renders as `<u>` instead of `<strong>`           |
+| `underline`            | `false` | Underscores mark underline. See [Underline](#underline)     |
 | `latexMath`            | `false` | Enable `$inline$` and `$$display$$` math                    |
 | `collapseWhitespace`   | `false` | Collapse whitespace in text                                 |
 | `permissiveAtxHeaders` | `false` | ATX headers without space after `#`                         |
@@ -96,6 +96,15 @@ Bun.markdown.html("## Hello World", { headings: true });
 // Enable only heading IDs (no autolink)
 Bun.markdown.html("## Hello World", { headings: { ids: true } });
 // '<h2 id="hello-world">Hello World</h2>\n'
+```
+
+#### Underline
+
+With `underline: true`, underscores mark underlined text instead of emphasis. Each `_` of a matched run is one `<u>` element, so `__text__` is two nested `<u>` elements. Asterisks still mark emphasis.
+
+```ts
+Bun.markdown.html("_one_ __two__ *three*", { underline: true });
+// '<p><u>one</u> <u><u>two</u></u> <em>three</em></p>\n'
 ```
 
 ---
@@ -162,6 +171,8 @@ The `listItem` callback receives everything needed to render markers directly:
 | `codespan`      | —                                  | Inline code (`` `code` ``)   |
 | `strikethrough` | —                                  | Strikethrough (`~~text~~`)   |
 | `text`          | —                                  | Plain text content           |
+
+Underlined text has no callback. With `underline: true`, the text inside `_text_` passes through unchanged. `Bun.markdown.render()` writes a hard break and a soft break as the same newline.
 
 ### Examples
 
@@ -357,6 +368,7 @@ You can override every HTML tag the parser produces:
 | `img`        | `{ src, alt?, title? }`      | Image (no children)                                             |
 | `code`       | `{ children }`               | Inline code                                                     |
 | `del`        | `{ children }`               | Strikethrough (`~~text~~`)                                      |
+| `u`          | `{ children }`               | Underline (`_text_`), when `underline: true` is enabled         |
 | `br`         | `{}`                         | Hard line break (no children)                                   |
 
 ### React 18 and older

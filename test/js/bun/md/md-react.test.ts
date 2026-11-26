@@ -373,6 +373,34 @@ This is **bold** and *italic*.
     const pChildren = children("line1\nline2\n")[0].props.children;
     expect(pChildren).toContain("\n");
   });
+
+  /** The type of each element, and each string as it is. */
+  const shape = (nodes: any[]): any[] => nodes.map(node => (typeof node === "string" ? node : node.type));
+
+  test("hardSoftBreaks makes each line ending a br element", () => {
+    expect(shape(children("a \nb\nc\n")[0].props.children)).toEqual(["a ", "\n", "b", "\n", "c"]);
+    expect(shape(children("a \nb\nc\n", undefined, { hardSoftBreaks: true })[0].props.children)).toEqual([
+      "a",
+      "br",
+      "b",
+      "br",
+      "c",
+    ]);
+  });
+
+  test("hardSoftBreaks leaves the line ending in the alt of an image", () => {
+    const img = children("![a\nb](u)\n", undefined, { hardSoftBreaks: true })[0].props.children[0];
+    expect(img.props).toEqual({ src: "u", alt: "a\nb" });
+  });
+
+  test("underline makes each `_` of a matched run a u element", () => {
+    const [outer, space, em] = children("__a__ *b*\n", undefined, { underline: true })[0].props.children;
+    expect(outer.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
+    expect([outer.type, shape(outer.props.children)]).toEqual(["u", ["u"]]);
+    expect(outer.props.children[0].props).toEqual({ children: ["a"] });
+    expect([space, em.type]).toEqual([" ", "em"]);
+    expect(shape(children("__a__ *b*\n")[0].props.children)).toEqual(["strong", " ", "em"]);
+  });
 });
 
 // ============================================================================
@@ -438,6 +466,18 @@ describe("Bun.markdown.react renderToString", () => {
     expect(html).toContain("<br/>");
     expect(html).toContain("line1");
     expect(html).toContain("line2");
+  });
+
+  test("hardSoftBreaks", () => {
+    expect(reactRender("a\nb\n", undefined, { hardSoftBreaks: true })).toBe("<p>a<br/>b</p>");
+    expect(reactRender("a\nb\n")).toBe("<p>a<!-- -->\n<!-- -->b</p>");
+  });
+
+  test("underline", () => {
+    expect(reactRender("_a_ __b__ *c*\n", undefined, { underline: true })).toBe(
+      "<p><u>a</u> <u><u>b</u></u> <em>c</em></p>",
+    );
+    expect(reactRender("_a_ __b__ *c*\n")).toBe("<p><em>a</em> <strong>b</strong> <em>c</em></p>");
   });
 
   test("blockquote", () => {
@@ -601,6 +641,20 @@ describe("Bun.markdown.react component overrides", () => {
     expect(el.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(el.type).toBe("custom-hr");
     expect(el.props).toEqual({});
+  });
+
+  test("u override with the underline option", () => {
+    function Underline({ children }: any) {
+      return React.createElement("ins", null, ...children);
+    }
+    const u = children("_a_\n", { u: Underline }, { underline: true })[0].props.children[0];
+    expect(u.type).toBe(Underline);
+    expect(u.props).toEqual({ children: ["a"] });
+  });
+
+  test("br override with the hardSoftBreaks option", () => {
+    const [a, br, b] = children("a\nb\n", { br: "custom-br" }, { hardSoftBreaks: true })[0].props.children;
+    expect([a, br.type, br.props, b]).toEqual(["a", "custom-br", {}, "b"]);
   });
 });
 

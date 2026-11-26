@@ -41,6 +41,13 @@ describe("bun <file.md>", () => {
     expect(await runMd("**bold** *italic* ~~strike~~ `code` regular\n")).toMatchSnapshot();
   });
 
+  test("renders `_` as italic and `__` as bold, like `*` and `**`", async () => {
+    const styled = "\x1b[3mem\x1b[23m \x1b[1mstrong\x1b[22m\x1b[0m\n";
+    expect(await runMd("_em_ __strong__\n")).toBe(styled);
+    expect(await runMd("*em* **strong**\n")).toBe(styled);
+    expect(Bun.markdown.ansi("_em_ __strong__\n")).toBe(styled);
+  });
+
   test("renders ordered, unordered, and task lists", async () => {
     expect(
       await runMd(

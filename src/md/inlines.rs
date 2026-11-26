@@ -412,7 +412,7 @@ impl Parser<'_> {
                         while sp > text_start && content[sp - 1] == b' ' {
                             sp -= 1;
                         }
-                        if emit_end - sp >= 2 {
+                        if emit_end - sp >= usize::from(self.hard_break_spaces) {
                             // Also strip any trailing tabs/spaces before the space run
                             let spaces = sp;
                             while sp > text_start
@@ -420,8 +420,15 @@ impl Parser<'_> {
                             {
                                 sp -= 1;
                             }
-                            is_hard = sp == spaces
-                                || !compat::tab_before_the_blanks_is_no_hard_break(&self.flags);
+                            // Alt text stays flat: no renderer writes a line break in it.
+                            let is_forced =
+                                self.hard_break_spaces == 0 && self.image_nesting_level == 0;
+                            is_hard = is_forced
+                                || (emit_end - spaces >= 2
+                                    && (sp == spaces
+                                        || !compat::tab_before_the_blanks_is_no_hard_break(
+                                            &self.flags,
+                                        )));
                             if is_hard {
                                 emit_end = sp;
                             }
@@ -515,11 +522,19 @@ impl Parser<'_> {
                         let mut marker = base + i;
 
                         // Emit closing tags first (innermost to outermost)
-                        if d.emph_char == b'~' {
-                            if d.close_count > 0 {
-                                self.at(marker, marker + d.close_count);
-                                self.leave_span(SpanType::Del)?;
-                                marker += d.close_count;
+                        if d.emph_char >= self.not_emphasis_from {
+                            if d.emph_char == b'~' {
+                                if d.close_count > 0 {
+                                    self.at(marker, marker + d.close_count);
+                                    self.leave_span(SpanType::Del)?;
+                                    marker += d.close_count;
+                                }
+                            } else {
+                                for _ in 0..d.close_count {
+                                    self.at(marker, marker + 1);
+                                    self.leave_span(SpanType::U)?;
+                                    marker += 1;
+                                }
                             }
                         } else if d.more != 0 {
                             let sizes = all_match_sizes(&resolved, d, false);
@@ -540,10 +555,18 @@ impl Parser<'_> {
                         }
 
                         // Emit opening tags (outermost to innermost)
-                        if d.emph_char == b'~' {
-                            if d.open_count > 0 {
-                                self.at(marker, marker + d.open_count);
-                                self.enter_span(SpanType::Del)?;
+                        if d.emph_char >= self.not_emphasis_from {
+                            if d.emph_char == b'~' {
+                                if d.open_count > 0 {
+                                    self.at(marker, marker + d.open_count);
+                                    self.enter_span(SpanType::Del)?;
+                                }
+                            } else {
+                                for _ in 0..d.open_count {
+                                    self.at(marker, marker + 1);
+                                    self.enter_span(SpanType::U)?;
+                                    marker += 1;
+                                }
                             }
                         } else if d.more != 0 {
                             let sizes = all_match_sizes(&resolved, d, true);

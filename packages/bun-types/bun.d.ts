@@ -1622,11 +1622,18 @@ declare module "bun" {
       strikethrough?: boolean;
       /** Enable GFM task lists (`- [x] item`). Default: `true`. */
       tasklists?: boolean;
-      /** Treat soft line breaks as hard line breaks. Default: `false`. */
+      /**
+       * Make every line ending in the text of a paragraph or heading a hard line
+       * break (`<br />`). Default: `false`.
+       */
       hardSoftBreaks?: boolean;
       /** Enable wiki-style links (`[[target]]` or `[[target|label]]`). Default: `false`. */
       wikiLinks?: boolean;
-      /** Enable underline syntax (`__text__` renders as `<u>` instead of `<strong>`). Default: `false`. */
+      /**
+       * Underscores mark underlined text instead of emphasis. Each `_` of a matched
+       * run is one `<u>`: `_text_` renders as `<u>text</u>`, and `__text__` as two
+       * nested `<u>`. Asterisks still mark emphasis. Default: `false`.
+       */
       underline?: boolean;
       /** Enable LaTeX math (`$inline$` and `$$display$$`). Default: `false`. */
       latexMath?: boolean;
@@ -1947,7 +1954,7 @@ declare module "bun" {
      *
      * Supports headings, lists, tables, inline styles, syntax-highlighted
      * code blocks, links, images, and blockquotes. By default, enables all
-     * GFM extensions plus wikilinks, underline, and LaTeX math.
+     * GFM extensions plus wikilinks and LaTeX math.
      *
      * @param input The markdown string or buffer to render
      * @param theme Optional theme overrides

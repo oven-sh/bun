@@ -386,6 +386,22 @@ describe("Bun.markdown.render", () => {
     expect(result).toBe('<h2 id="hello-world">Hello World</h2>');
   });
 
+  test("with the underline option, `_` is not emphasis and its text passes through", () => {
+    const callbacks = {
+      strong: (children: string) => `<b>${children}</b>`,
+      emphasis: (children: string) => `<i>${children}</i>`,
+    };
+    const input = "__a__ _b_ **c** *d*\n";
+    expect(Markdown.render(input, callbacks, { underline: true })).toBe("a b <b>c</b> <i>d</i>");
+    expect(Markdown.render(input, callbacks)).toBe("<b>a</b> <i>b</i> <b>c</b> <i>d</i>");
+  });
+
+  test("with the hardSoftBreaks option, the blanks before a line ending are dropped", () => {
+    const callbacks = { text: (text: string) => `[${text}]` };
+    expect(Markdown.render("a \nb\n", callbacks, { hardSoftBreaks: true })).toBe("[a]\n[b]");
+    expect(Markdown.render("a \nb\n", callbacks)).toBe("[a ]\n[b]");
+  });
+
   test("table callbacks", () => {
     const result = Markdown.render("| A | B |\n|---|---|\n| 1 | 2 |\n", {
       table: (children: string) => `<table>${children}</table>`,

@@ -128,34 +128,44 @@ impl Options {
         permissive_www_autolinks: true,
         permissive_email_autolinks: true,
         wiki_links: true,
-        underline: true,
         latex_math: true,
         ..Self::NONE
     };
 
     pub(crate) fn to_flags(self) -> Flags {
+        // Every field is named: a new option must not compile until it is routed here.
+        #[rustfmt::skip]
+        let Options {
+            tables, strikethrough, tasklists, permissive_autolinks, permissive_url_autolinks,
+            permissive_www_autolinks, permissive_email_autolinks, hard_soft_breaks, wiki_links,
+            underline, latex_math, collapse_whitespace, permissive_atx_headers,
+            no_indented_code_blocks, no_html_blocks, no_html_spans, footnotes, math_blocks,
+            directives, no_single_tilde, micromark, micromark_to_the_letter, mdx,
+            tag_filter: _, heading_ids: _, autolink_headings: _,
+        } = self;
         Flags {
-            tables: self.tables,
-            strikethrough: self.strikethrough,
-            tasklists: self.tasklists,
-            permissive_url_autolinks: self.permissive_url_autolinks || self.permissive_autolinks,
-            permissive_www_autolinks: self.permissive_www_autolinks || self.permissive_autolinks,
-            permissive_email_autolinks: self.permissive_email_autolinks
-                || self.permissive_autolinks,
-            wiki_links: self.wiki_links,
-            latex_math: self.latex_math,
-            collapse_whitespace: self.collapse_whitespace,
-            permissive_atx_headers: self.permissive_atx_headers,
-            no_indented_code_blocks: self.no_indented_code_blocks,
-            no_html_blocks: self.no_html_blocks,
-            no_html_spans: self.no_html_spans,
-            footnotes: self.footnotes,
-            math_blocks: self.math_blocks,
-            directives: self.directives,
-            no_single_tilde: self.no_single_tilde,
-            micromark: self.micromark,
-            micromark_to_the_letter: self.micromark_to_the_letter,
-            mdx: self.mdx,
+            tables,
+            strikethrough,
+            tasklists,
+            permissive_url_autolinks: permissive_url_autolinks || permissive_autolinks,
+            permissive_www_autolinks: permissive_www_autolinks || permissive_autolinks,
+            permissive_email_autolinks: permissive_email_autolinks || permissive_autolinks,
+            hard_soft_breaks,
+            wiki_links,
+            underline,
+            latex_math,
+            collapse_whitespace,
+            permissive_atx_headers,
+            no_indented_code_blocks,
+            no_html_blocks,
+            no_html_spans,
+            footnotes,
+            math_blocks,
+            directives,
+            no_single_tilde,
+            micromark,
+            micromark_to_the_letter,
+            mdx,
         }
     }
 

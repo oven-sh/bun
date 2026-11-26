@@ -42,6 +42,10 @@ pub(crate) struct Parser<'a> {
     pub(crate) size: OFF,
     pub(crate) has_carriage_return: bool,
     pub(crate) flags: Flags,
+    // How many spaces before a line ending make it a hard break: 2 normally, 0 if hard_soft_breaks
+    pub(crate) hard_break_spaces: u8,
+    // The lowest delimiter byte that is not emphasis: `~` normally, `_` if underline (`*` < `_` < `~`)
+    pub(crate) not_emphasis_from: u8,
 
     // Output
     pub(crate) renderer: Renderer<'a>,
@@ -259,6 +263,8 @@ impl<'a> Parser<'a> {
             size,
             has_carriage_return: bun_core::strings::contains_char(text, b'\r'),
             flags,
+            hard_break_spaces: if flags.hard_soft_breaks { 0 } else { 2 },
+            not_emphasis_from: if flags.underline { b'_' } else { b'~' },
             renderer: rend,
             image_nesting_level: 0,
             link_nesting_level: 0,

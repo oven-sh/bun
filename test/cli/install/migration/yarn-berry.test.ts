@@ -2061,6 +2061,37 @@ catalogs:
     expect(url.exitCode).toBe(0);
   });
 
+  test.concurrent("bun add as the first command, of a name that an override refers to", async () => {
+    const range = "^1.0.0 || ^2.0.0 || ^3.0.0";
+    const { packageDir: dir } = await testRegistry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: ["a"],
+          dependencies: { "one-fixed-dep": "1.0.0" },
+          overrides: { "no-deps": "$no-deps" },
+        }),
+        "a/package.json": JSON.stringify({ name: "a", peerDependencies: { "no-deps": range } }),
+        "yarn.lock": yarnLock({
+          "root@workspace:.": [`resolution: "root@workspace:."`, `dependencies:`, `  one-fixed-dep: "npm:1.0.0"`],
+          "a@workspace:a": [`resolution: "a@workspace:a"`, `peerDependencies:`, `  no-deps: "${range}"`],
+          "one-fixed-dep@npm:1.0.0": [
+            `resolution: "one-fixed-dep@npm:1.0.0"`,
+            `dependencies:`,
+            `  no-deps: "npm:1.0.0"`,
+          ],
+          "no-deps@npm:1.0.0": [`resolution: "no-deps@npm:1.0.0"`],
+        }),
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "add", "no-deps@npm:a-dep@1.0.1");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(lockedVersions(await bunLockOf(dir))).toEqual(["a-dep@1.0.1", "a@workspace:a", "one-fixed-dep@1.0.0"]);
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("bun update <name> as the first command updates that package only", async () => {
     const dir = await fixture("basic");
 

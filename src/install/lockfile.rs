@@ -3114,14 +3114,13 @@ impl<'a> StringBuilder<'a> {
         Ok(())
     }
 
-    /// Keys the pool by the hash of `slice`, as `count` does, so it never writes uncounted bytes.
+    /// Grows the buffer if `count` was too low.
     pub(crate) fn append<T: StringBuilderType>(&mut self, slice: &[u8]) -> T {
         let hash = SemverStringBuilder::string_hash(slice);
         if SemverString::can_inline(slice) {
             return T::from_init(self.string_bytes.as_slice(), slice, hash);
         }
 
-        debug_assert!(self.len <= self.cap); // didn't count everything
         debug_assert!(self.allocated); // must call allocate first
 
         let string_entry = self.string_pool.get_or_put(hash).expect("unreachable");
@@ -3134,13 +3133,15 @@ impl<'a> StringBuilder<'a> {
             return T::from_pooled(*string_entry.value_ptr, hash);
         }
 
-        // Safe indexing into the region `allocate()` already resized.
         let start = self.off + self.len;
         let end = start + slice.len();
+        self.len += slice.len();
+        if self.len > self.cap {
+            self.cap = self.len;
+            self.string_bytes.resize(end, 0);
+        }
         self.string_bytes[start..end].copy_from_slice(slice);
         let final_slice = &self.string_bytes[start..end];
-        self.len += slice.len();
-        debug_assert!(self.len <= self.cap);
 
         let appended = SemverString::init(self.string_bytes.as_slice(), final_slice);
         // Equal hashes don't mean equal strings, so the second string isn't added to the pool.

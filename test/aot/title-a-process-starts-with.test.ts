@@ -2,7 +2,6 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { built, slot, spawned } from "./harness/commands";
-import { afterAll } from "./harness/default-timeout";
 import { test } from "./supported";
 
 // On Windows the title of a process is the title of its console. The processes on a console share it and it outlives
@@ -12,6 +11,24 @@ import { test } from "./supported";
 const files = {
   "stores-first.mjs": `if (process.argv.length > 3) process.title = process.argv[3];\n`,
   "imports-later.mjs": `export { title } from "node:process";\n`,
+  "steps.mjs": `const { commands, steps } = JSON.parse(process.argv[2]);
+const results = [];
+let left = crypto.randomUUID();
+for (const step of steps) {
+  const own = step.stores ? [crypto.randomUUID()] : [];
+  const { stdout, stderr, exitCode, signalCode } = Bun.spawnSync({
+    cmd: [...commands[step.way], left, ...own],
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 90_000,
+    killSignal: "SIGKILL",
+  });
+  results.push({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode, signal: signalCode ?? null, own: own[0] });
+  left = own[0] ?? left;
+}
+console.log(JSON.stringify(results));
+`,
   "main.mjs": `import "./stores-first.mjs";
 import process, { title } from "node:process";
 import * as everything from "node:process";
@@ -30,9 +47,6 @@ console.log(
 );
 `,
 };
-
-const titleOfThisProcess = process.title;
-if (isWindows) afterAll(() => void (process.title = titleOfThisProcess));
 
 test(
   "an executable starts with the title that `bun run` starts with",
@@ -55,16 +69,15 @@ test(
         { way: "plain", stores: true },
       ] as const;
 
-      const answers: object[] = [];
-      let left = crypto.randomUUID();
-      for (const step of steps) {
-        const own = step.stores ? [crypto.randomUUID()] : [];
-        const ran = await spawned([...commands[step.way], left, ...own], folder, bunEnv);
-        const { stdout, ...rest } = ran;
-        expect({ ...step, ...rest }).toEqual({ ...step, stderr: "", exitCode: 0, signal: null });
-        answers.push({ ...step, ...JSON.parse(stdout) });
-        left = own[0] ?? left;
-      }
+      // The steps are the only processes on the console of the process that runs them.
+      const runner = [bunExe(), "run", "steps.mjs", JSON.stringify({ commands, steps })];
+      const { stdout, ...rest } = await spawned(runner, folder, bunEnv, 240_000, true);
+      expect(rest).toEqual({ stderr: "", exitCode: 0, signal: null });
+      const answers: object[] = JSON.parse(stdout).map((ran: any, index: number) => {
+        const { own, stdout, ...rest } = ran;
+        expect({ ...steps[index], ...rest }).toEqual({ ...steps[index], stderr: "", exitCode: 0, signal: null });
+        return { ...steps[index], ...JSON.parse(stdout) };
+      });
 
       const isKept = (answers[1] as { member: string }).member === "left";
       console.error(`TITLE: a process starts with the title that the last one has left: ${isKept}`);

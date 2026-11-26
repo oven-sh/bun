@@ -23,8 +23,12 @@ const tamper = /* js */ `
 `;
 
 async function run(program: string, ...args: string[]) {
+  return runAlone(tamper + program, ...args);
+}
+
+async function runAlone(program: string, ...args: string[]) {
   await using child = Bun.spawn({
-    cmd: [bunExe(), "-e", tamper + program, ...args],
+    cmd: [bunExe(), "-e", program, ...args],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
@@ -48,6 +52,23 @@ test.concurrent.each(["the global is replaced", "the global is deleted", "regist
     expect(await run(program, how)).toEqual({ stdout: "4 -1", stderr: "", exitCode: 0 });
   },
 );
+
+// The engine makes the two classes when they are first asked for. Here that is inside open() and createContext(),
+// after the program has stored its own values: what the program stored must still be there afterwards.
+test.concurrent("the replacements stay on globalThis when nothing has read the globals before", async () => {
+  const program = /* js */ `
+    const mine = { FinalizationRegistry() { throw new Error("blocked"); }, WeakRef() { throw new Error("blocked"); } };
+    globalThis.FinalizationRegistry = mine.FinalizationRegistry;
+    globalThis.WeakRef = mine.WeakRef;
+    (async () => {
+      const handle = await require("node:fs").promises.open(process.execPath);
+      await handle.close();
+      require("node:vm").createContext({});
+      console.log(globalThis.FinalizationRegistry === mine.FinalizationRegistry, globalThis.WeakRef === mine.WeakRef);
+    })();
+  `;
+  expect(await runAlone(program)).toEqual({ stdout: "true true", stderr: "", exitCode: 0 });
+});
 
 test.concurrent.skipIf(isWindows)(
   "a dropped FileHandle still gives its fd back when all three are replaced",

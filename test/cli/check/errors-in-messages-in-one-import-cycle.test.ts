@@ -13,6 +13,33 @@ const compilerOptions = {
   lib: ["esnext"],
   types: [],
 };
+const errors = ["nowhere", `((o: { r: number }) => o)({ r: "a" })`, `C0.s("a")`, "C0.s()", "C0.o(null!, 2n)"];
+const places = [
+  (e: string) => `export const o = { m() { return ${e}; } };\nexport const f2 = (a: typeof o) => o;`,
+  (e: string) => `export const f2 = (a: number) => ({ r: () => ${e} });`,
+  (e: string) => `export const f2 = (a = () => ${e}, b = C0.s(null!)) => { if (a) return { r: 1 }; return b; };`,
+];
+
+function ring(pairs: number) {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < pairs; i++) {
+    files[`a${i}.ts`] =
+      `import { C0, f1 } from "./b${i}";\n${places[i % 3](errors[i % 5])}\nexport const q0: never = [f1(1)];\n`;
+    files[`b${i}.ts`] = `import { f2 } from "./a${i}";
+import { f1 as before } from "./b${(i + pairs - 1) % pairs}";
+export const seen = before(1);
+export class C0 {
+  static s(a: number): number { return a; }
+  static o(a: string, b: number): number;
+  static o(a: number, b: string): string;
+  static o(a: any, b: any): any { return a; }
+}
+export function f1(a: number) { return () => [2n].map(f2)[0]; }
+`;
+  }
+  return files;
+}
+
 // In `m1.ts` the message about `[2n].map(f0)` prints what `f0` returns, and with it, deeper, the errors of `m0.ts`.
 const apart = {
   "m0.ts": `import { C1, o1 } from "./m1";
@@ -41,8 +68,11 @@ export const q2: never = { k: f2(1) };
 `,
 };
 
-test("three files", async () => {
-  const files: Record<string, string> = apart;
+test.concurrent.each([
+  ["6 pairs of files", ring(6)],
+  ["20 pairs of files", ring(20)],
+  ["three files", apart],
+] as const)("%s", async (_, files) => {
   using dir = tempDir("check-errors-in-one-cycle", {
     "tsconfig.json": JSON.stringify({ compilerOptions, files: Object.keys(files) }),
     ...files,

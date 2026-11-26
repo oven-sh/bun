@@ -3527,7 +3527,7 @@ impl<'p, 's> Checker<'p, 's> {
     ///
     /// The target of an alias is an exception. A file that prints the name of a type it doesn't import resolves the
     /// exports of every module in the program (`exporting_modules`), whether it imports them or not.
-    fn is_reachable_only_by_importers(&self, from: usize) -> bool {
+    pub(super) fn is_reachable_only_by_importers(&self, from: usize) -> bool {
         let (files, Some(visited)) = (self.files(), self.task.file) else {
             return false;
         };

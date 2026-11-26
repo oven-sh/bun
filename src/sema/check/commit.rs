@@ -66,6 +66,9 @@
 //!   gets there. So a task ignores what a task of a later file has stored under a file, if the later task found an error
 //!   there and this task would still report it (`View::hides`). A task only moves forward in program order, so it
 //!   never finds such entries of its own. This covers the entries under nodes, not those under records.
+//! - **A task that finds an error while it prints a message is only trusted if it's first**
+//!   (`Checker::discard_task_unless_first`). tsc drops what it finds two messages deep. The check of an earlier file may
+//!   get there in more messages or in fewer, but not if it finds what the later task has stored.
 //! - **What a task stores about an expression of the file it visits never leaves the task**
 //!   (`crate::table::Location::KEEPS_VISITED_FILE_LOCAL`). That's most of what a check stores, and other tasks rarely
 //!   look it up. It's neither logged nor counted as a `Task::hold_back`.

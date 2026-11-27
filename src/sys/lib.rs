@@ -4418,8 +4418,6 @@ impl std::io::Write for FileWriter {
 // through the libuv/kernel32 layer in `windows_impl` above.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `bun.sys.Error.Int` — backing integer for `errno`.
-pub type ErrorInt = error::Int;
 /// Errno enum,
 /// aliased to `bun_errno::E` (= `SystemErrno`); variants currently
 /// keep the `E` prefix (`EAGAIN` not `AGAIN`). Unprefixed associated consts

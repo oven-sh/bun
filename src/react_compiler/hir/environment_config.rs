@@ -82,6 +82,17 @@ pub struct EnvironmentConfig {
     /// phi or in an object, stays the ref value that it was. It is then reported where `.current`
     /// is read. Upstream forgets where that was, and reports it at each use.
     pub joined_ref_values_keep_their_place: bool,
+    /// For `validate_ref_access_during_render`: a function or an object with no ref in it that grows where it is
+    /// joined, as `x = { x }` in a loop does, asks for no other round. To upstream it does, each round, and fails:
+    /// "Ref type environment did not converge".
+    pub growth_of_ref_free_structures_is_no_change: bool,
+    /// For `validate_ref_access_during_render`: a property whose type is a ref's, as `props.inputRef` in
+    /// `<input ref={props.inputRef} />`, is a ref of its own. To upstream it stands for its object, which is then
+    /// that ref, and `props.value` is reported as its value.
+    pub ref_typed_properties_are_refs_of_their_own: bool,
+    /// For `validate_ref_access_during_render`: `ref.current ?? (ref.current = init)` sets the ref once, as
+    /// `if (ref.current == null) ref.current = init` does. Upstream reports both the read and the write.
+    pub nullish_test_before_ref_init_is_a_guard: bool,
     /// An effect on a variable is reported where it is. Upstream puts the first effect of a kind on a variable for
     /// all the later ones, so that each write to a captured variable is reported at the first.
     pub effects_keep_their_place: bool,
@@ -156,6 +167,9 @@ impl Default for EnvironmentConfig {
             validate_hooks_usage: true,
             validate_ref_access_during_render: true,
             joined_ref_values_keep_their_place: false,
+            growth_of_ref_free_structures_is_no_change: false,
+            ref_typed_properties_are_refs_of_their_own: false,
+            nullish_test_before_ref_init_is_a_guard: false,
             effects_keep_their_place: false,
             jsx_can_be_reordered: true,
             arguments_of_no_alias_methods_escape: true,

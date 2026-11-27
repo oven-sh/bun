@@ -43,6 +43,9 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
     EnvironmentConfig {
         validate_ref_access_during_render: true,
         joined_ref_values_keep_their_place: is_oxlint,
+        growth_of_ref_free_structures_is_no_change: is_oxlint,
+        ref_typed_properties_are_refs_of_their_own: is_oxlint,
+        nullish_test_before_ref_init_is_a_guard: is_oxlint,
         effects_keep_their_place: is_oxlint,
         jsx_can_be_reordered: false,
         arguments_of_no_alias_methods_escape: false,

@@ -12,8 +12,8 @@ use crate::hir::environment::Environment;
 use crate::hir::object_shape::HookKind;
 use crate::hir::visitors::{self, pattern_operands, terminal_operands};
 use crate::hir::{
-    AliasingEffect, BlockId, HirFunction, Identifier, IdentifierId, InstructionValue, Place,
-    PrimitiveValue, PropertyLiteral, Terminal, Type, UnaryOperator,
+    AliasingEffect, BlockId, HirFunction, Identifier, IdentifierId, InstructionValue,
+    LogicalOperator, Place, PrimitiveValue, PropertyLiteral, Terminal, Type, UnaryOperator,
 };
 
 const ERROR_DESCRIPTION: &str = "React refs are values that are not needed for rendering. \
@@ -286,6 +286,37 @@ impl Drop for RefAccessRefType {
     }
 }
 
+/// Whether `ty` is a `Structure` with no ref in it: no ref, no value of one, no guard, and no function that reads one.
+fn is_ref_free_structure(ty: &RefAccessType) -> bool {
+    let RefAccessType::Structure { value, fn_type } = ty else {
+        return false;
+    };
+    // What types hold is shared: each is looked at once.
+    let mut seen: HashSet<*const ()> = HashSet::default();
+    let mut pending: SmallVec<[_; 4]> = SmallVec::new();
+    pending.push((value, fn_type));
+    while let Some((value, fn_type)) = pending.pop() {
+        if fn_type.as_ref().is_some_and(|it| it.read_ref_effect) {
+            return false;
+        }
+        let returned = (fn_type.as_ref())
+            .map(|it| (it.return_type.view(), Rc::as_ptr(&it.return_type).cast::<()>()));
+        let held = (value.as_ref()).map(|it| (it.view(), Rc::as_ptr(it).cast::<()>()));
+        for (view, address) in returned.into_iter().chain(held) {
+            match view {
+                View::None | View::Nullable => {}
+                View::Guard(_) | View::Ref(_) | View::RefValue(..) => return false,
+                View::Structure(value, fn_type) => {
+                    if seen.insert(address) {
+                        pending.push((value, fn_type));
+                    }
+                }
+            }
+        }
+    }
+    true
+}
+
 impl RefAccessType {
     /// Try to convert a `RefAccessType` to a `RefAccessRefType` (the Ref/RefValue/Structure subset).
     fn to_ref_type(&self) -> Option<RefAccessRefType> {
@@ -511,6 +542,12 @@ impl TypeKind {
 
 struct Env {
     joins: Joins,
+    /// `EnvironmentConfig::growth_of_ref_free_structures_is_no_change`
+    ignores_ref_free_growth: bool,
+    /// `EnvironmentConfig::ref_typed_properties_are_refs_of_their_own`
+    keeps_ref_typed_properties: bool,
+    /// `EnvironmentConfig::nullish_test_before_ref_init_is_a_guard`
+    allows_nullish_init: bool,
     /// Whether the type of any identifier is that of a ref or of the value of one.
     has_ref_types: bool,
     /// By identifier. Empty if none is a ref's or a ref value's.
@@ -547,6 +584,9 @@ impl Env {
                 values: Joined::default(),
                 returned: Joined::default(),
             },
+            ignores_ref_free_growth: env.config.growth_of_ref_free_structures_is_no_change,
+            keeps_ref_typed_properties: env.config.ref_typed_properties_are_refs_of_their_own,
+            allows_nullish_init: env.config.nullish_test_before_ref_init_is_a_guard,
             has_ref_types,
             type_kinds: match has_ref_types {
                 true => env.identifiers.iter().map(type_kind_of).collect(),
@@ -665,7 +705,10 @@ impl Env {
         if current.is_none() && widened_value == RefAccessType::None {
             // No change needed
         } else if current.map_or(true, |c| c != &widened_value) {
-            self.changed = true;
+            let is_ref_free_growth = self.ignores_ref_free_growth
+                && current.is_some_and(is_ref_free_structure)
+                && is_ref_free_structure(&widened_value);
+            self.changed |= !is_ref_free_growth;
             let read_in = self.read_in[operand_id.0 as usize].get();
             self.read_before_change_in = self.read_before_change_in.max(read_in);
         }
@@ -886,6 +929,53 @@ fn guard_check(errors: &mut Vec<CompilerDiagnostic>, operand: &Place, env: &Env)
     }
 }
 
+/// The ref that `ref.current ?? (ref.current = init)` initializes, where `block_id` ends with the branch of that
+/// `??` on `test`: `test` is the value of a ref, and the other side of the branch writes to that ref.
+fn ref_of_nullish_init(
+    func: &HirFunction,
+    block_id: BlockId,
+    test: &Place,
+    alternate: BlockId,
+    coalesce_tests: &mut Option<IdBitSet<BlockId>>,
+    env: &Env,
+) -> Option<RefId> {
+    let Some(&RefAccessType::RefValue {
+        ref_id: Some(ref_id),
+        ..
+    }) = env.peek(test.identifier)
+    else {
+        return None;
+    };
+    let coalesce_tests = coalesce_tests.get_or_insert_with(|| {
+        (func.body.blocks.values())
+            .filter_map(|block| match &block.terminal {
+                Terminal::Logical {
+                    operator: LogicalOperator::NullishCoalescing,
+                    test,
+                    ..
+                } => Some(*test),
+                _ => None,
+            })
+            .collect()
+    });
+    if !coalesce_tests.contains(block_id) {
+        return None;
+    }
+    let alternate = func.body.blocks.get(&alternate)?;
+    let stores_same_ref = alternate.instructions.iter().any(|instr_id| {
+        let InstructionValue::PropertyStore { object, .. } =
+            &func.instructions[instr_id.0 as usize].value
+        else {
+            return false;
+        };
+        matches!(
+            env.peek(object.identifier),
+            Some(RefAccessType::Ref { ref_id: stored }) if *stored == ref_id
+        )
+    });
+    stores_same_ref.then_some(ref_id)
+}
+
 // --- Main entry point ---
 
 pub(crate) fn validate_no_ref_access_in_render(func: &HirFunction, env: &mut Environment) {
@@ -931,6 +1021,9 @@ fn collect_temporaries_sidemap(func: &HirFunction, env: &mut Env) {
                     {
                         continue;
                     }
+                    if env.keeps_ref_typed_properties && env.is_ref_type(instr.lvalue.identifier) {
+                        continue;
+                    }
                     let temp = env.temporary(object.identifier);
                     env.define(instr.lvalue.identifier, temp);
                 }
@@ -962,6 +1055,8 @@ fn validate_no_ref_access_in_render_impl(
     }
 
     let mut interpolated_as_jsx: Option<IdBitSet<IdentifierId>> = None;
+    // The test blocks of each `??`.
+    let mut coalesce_tests: Option<IdBitSet<BlockId>> = None;
 
     let mut is_settled = false;
 
@@ -1479,6 +1574,28 @@ fn validate_no_ref_access_in_render_impl(
             // Process terminal operands
             let is_return = matches!(&block.terminal, Terminal::Return { .. });
             if !is_return && !ref_env.may_report() {
+                continue;
+            }
+            if let Terminal::Branch {
+                test,
+                alternate,
+                fallthrough,
+                ..
+            } = &block.terminal
+                && ref_env.allows_nullish_init
+                && let Some(ref_id) = ref_of_nullish_init(
+                    func,
+                    block.id,
+                    test,
+                    *alternate,
+                    &mut coalesce_tests,
+                    ref_env,
+                )
+            {
+                if !safe_blocks.iter().any(|(_, r)| *r == ref_id) {
+                    safe_blocks.push((*fallthrough, ref_id));
+                }
+                // The test asks whether the ref is set. It is not an access.
                 continue;
             }
             for operand in terminal_operands(&block.terminal) {

@@ -3428,12 +3428,8 @@ fn intern_transpile_path(value: &[u8]) -> &'static [u8] {
     // Fast path: `value` already lives in the process-lifetime `FilenameStore`
     // backing arena (resolver-interned, or a prior `intern_transpile_path`
     // result) — no hash, no probe, no append.
-    if Fs::FilenameStore::instance().exists(value) {
-        // SAFETY: `exists` is a pointer-range check (like `is_slice_in_buffer`): the
-        // bytes lie wholly within `FilenameStore`'s backing storage, which is
-        // process-lifetime and never freed, so widening to `'static` is sound.
-        // Same widening as `FilenameStore::append_slice` itself performs.
-        return unsafe { core::slice::from_raw_parts(value.as_ptr(), value.len()) };
+    if let Some(interned) = Fs::FilenameStore::instance().as_interned(value) {
+        return interned;
     }
     TRANSPILE_PATH_INTERN.with(|cell| {
         let mut set = cell.borrow_mut();

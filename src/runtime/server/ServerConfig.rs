@@ -1330,9 +1330,6 @@ impl ServerConfig {
                         );
                     }
                 }
-                // `base_url` (and so `hostname`/`pathname`) borrow into the
-                // original allocation; drop the borrow before reassigning.
-                drop(base_url);
                 args.base_uri = buf.into_boxed_slice();
             }
         } else {

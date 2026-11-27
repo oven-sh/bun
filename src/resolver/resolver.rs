@@ -175,27 +175,17 @@ use bun_ast::SideEffects;
 // ── Process-lifetime arenas for DirInfo-cached parses ─────────────────────
 // The DirInfo cache (`DirInfo::hash_map_instance()`) is a true process-lifetime
 // singleton; entries hold `&'static PackageJSON` / `&'static TSConfigJSON` and
-// borrow `&'static [u8]` source bytes. PORTING.md §Forbidden bars `Box::leak`/
-// `mem::forget` for this — process-lifetime storage must go through
-// `LazyLock`. These append-only arenas are that storage; the `Box<T>` heap
-// address is stable across `Vec` growth, so handing out `&'static T` is sound.
+// borrow `&'static [u8]` source bytes.
 
 /// Intern a parsed `PackageJSON` into the process-lifetime DirInfo arena.
-/// Returns `NonNull` (not `&'static`) so mut-provenance survives to write
-/// sites — handing out `&T` here and casting back to `*mut T` would be UB
-/// under Stacked Borrows.
-fn intern_package_json(pkg: PackageJSON) -> core::ptr::NonNull<PackageJSON> {
-    // `Box` is load-bearing: returns `NonNull<PackageJSON>` derived from the
-    // box interior, treated as `'static`; unboxing would dangle on `Vec` realloc.
-    #[expect(clippy::vec_box)]
-    static ARENA: std::sync::LazyLock<bun_threading::Guarded<Vec<Box<PackageJSON>>>> =
+fn intern_package_json(pkg: PackageJSON) -> &'static PackageJSON {
+    // Keeps each `PackageJSON` reachable for LSAN.
+    static ARENA: std::sync::LazyLock<bun_threading::Guarded<Vec<&'static PackageJSON>>> =
         std::sync::LazyLock::new(Default::default);
     let mut guard = ARENA.lock();
-    guard.push(Box::new(pkg));
-    // SAFETY: ARENA is `'static` (LazyLock); entries are never removed; the
-    // `Box<PackageJSON>` heap address is stable across `Vec` reallocation.
-    // Derive from `&mut **last` so the returned pointer carries mut-provenance.
-    core::ptr::NonNull::from(&mut **guard.last_mut().unwrap())
+    let pkg = Box::leak(Box::new(pkg));
+    guard.push(pkg);
+    pkg
 }
 
 // `bun_core::declare_scope!` emits the per-scope `static ScopedLogger`; the
@@ -1348,20 +1338,7 @@ impl<'a> Resolver<'a> {
                 bstr::BStr::new(source_dir),
             );
             // Trap into an attached debugger.
-            // NOTE: `core::arch::breakpoint()` is still unstable on the pinned
-            // toolchain; emit the trap instruction directly via stable `asm!`.
-            #[cfg(target_arch = "x86_64")]
-            // SAFETY: `int3` only raises SIGTRAP/EXCEPTION_BREAKPOINT; no memory or
-            // register state is touched.
-            unsafe {
-                core::arch::asm!("int3")
-            };
-            #[cfg(target_arch = "aarch64")]
-            // SAFETY: `brk` only raises SIGTRAP/EXCEPTION_BREAKPOINT; no memory or
-            // register state is touched.
-            unsafe {
-                core::arch::asm!("brk #0xf000")
-            };
+            core::arch::breakpoint();
         }
 
         let mut scope = self.extension_order_scope();
@@ -1386,18 +1363,13 @@ impl<'a> Resolver<'a> {
             this.timer.reset();
         }
 
-        // The tracing-elapsed accumulation
-        // fires on EVERY return path. Capture raw field ptrs (Copy) so the closure
-        // does not hold a `&mut self` borrow across the function body.
-        let elapsed_ptr: *mut u64 = core::ptr::addr_of_mut!(this.elapsed);
-        let timer_ptr: *const Timer = core::ptr::addr_of!(this.timer);
-        scopeguard::defer! {
+        // The tracing-elapsed accumulation fires on EVERY return path.
+        let mut traced = scopeguard::guard(this, |this| {
             if FeatureFlags::TRACING {
-                // SAFETY: `self` outlives this guard (drops at end of fn body);
-                // `elapsed`/`timer` are not borrowed when the guard fires.
-                unsafe { *elapsed_ptr += (*timer_ptr).read(); }
+                this.elapsed += this.timer.read();
             }
-        }
+        });
+        let this = &mut **traced;
 
         if this.log_ref().level == bun_ast::Level::Verbose {
             if this.debug_logs.is_some() {
@@ -1971,20 +1943,11 @@ impl<'a> Resolver<'a> {
                         Fs::FileSystem::set_max_fd(file.native());
                     }
 
-                    // NOTE: snapshot `need_to_close_files` and raw-ptr the entry so
-                    // the closure captures only Copy values — keeps `self` and
-                    // `query.entry` reborrowable across the guard's lifetime.
+                    // NOTE: snapshot `need_to_close_files` so the guard does not borrow `self`.
                     let need_close = self.fs_ref().fs.need_to_close_files();
-                    // ARENA — Entry lives in the BSSMap singleton; guard runs before
-                    // the slot is reused (resolver mutex held). Capture as `BackRef`
-                    // (Copy, Deref) so the closure stays Copy-only while the read is
-                    // a safe `BackRef::get()` instead of a raw-ptr deref.
-                    let entry_ref = bun_ptr::BackRef::<Fs::file_system::Entry>::from(
-                        core::ptr::NonNull::new(query.entry).expect("EntryStore slot"),
-                    );
+                    let e = query.entry();
                     scopeguard::defer! {
                         if need_close {
-                            let e = entry_ref.get();
                             // Every cached-`Entry` rewrite takes the per-entry mutex.
                             let _entry_guard = e.mutex.lock_guard();
                             let fd = e.cache().fd;
@@ -3248,7 +3211,7 @@ impl<'a> Resolver<'a> {
                     // Walk up from the source directory to the nearest package.json that lists the
                     // package.
                     while let Some(dir) = listing_dir
-                        && let Some(package_json) = dir.package_json_for_dependencies()
+                        && let Some(package_json) = dir.package_json_for_dependencies
                     {
                         // check if this package.json was already added to the lockfile
                         // and try to look up the dependency from there
@@ -3321,8 +3284,10 @@ impl<'a> Resolver<'a> {
                         listing_dir =
                             core::iter::successors(dir.get_parent(), |up| up.get_parent()).find(
                                 |up| {
-                                    up.package_json_for_dependencies
-                                        != dir.package_json_for_dependencies
+                                    up.package_json_for_dependencies.map(core::ptr::from_ref)
+                                        != dir
+                                            .package_json_for_dependencies
+                                            .map(core::ptr::from_ref)
                                 },
                             );
                     }
@@ -4310,7 +4275,7 @@ impl<'a> Resolver<'a> {
         file: &[u8],
         dirname_fd: FD,
         package_id: Option<Install::PackageID>,
-    ) -> crate::CrateResult<Option<core::ptr::NonNull<PackageJSON>>> {
+    ) -> crate::CrateResult<Option<&'static PackageJSON>> {
         use crate::package_json::{IncludeDependencies, IncludeScripts};
         // NOTE: `IncludeDependencies` is a
         // const generic on `PackageJSON::parse`, `IncludeScripts` is runtime (it only
@@ -4339,9 +4304,7 @@ impl<'a> Resolver<'a> {
         };
         let Some(pkg) = pkg else { return Ok(None) };
 
-        // NOTE: the DirInfo cache holds `&'static` refs. PORTING.md
-        // §Forbidden bars `Box::leak`; intern into the process-lifetime arena
-        // owned alongside the DirInfo singleton instead.
+        // NOTE: the DirInfo cache holds `&'static` refs.
         Ok(Some(intern_package_json(pkg)))
     }
 
@@ -6183,9 +6146,6 @@ impl<'a> Resolver<'a> {
                 }
 
                 if parent_package_json.lists_dependencies() {
-                    // NOTE: store the raw `NonNull` field (not the
-                    // `&'static` accessor result) so mut-provenance flows
-                    // through to `enqueue_dependency_to_resolve`.
                     info.package_json_for_dependencies = parent_.package_json;
                 }
             }
@@ -6314,9 +6274,6 @@ impl<'a> Resolver<'a> {
                         }
 
                         if pkg.lists_dependencies() {
-                            // NOTE: store the raw `NonNull` field (not the
-                            // `&'static` accessor result) so mut-provenance flows
-                            // through to `enqueue_dependency_to_resolve`.
                             info.package_json_for_dependencies = info.package_json;
                         }
 
@@ -6372,10 +6329,8 @@ impl<'a> Resolver<'a> {
                 let loaded = self.load_tsconfig(tsconfigpath, fd);
                 self.log = log;
                 // A leaked Box, interned into DirInfo: it outlives the resolver.
-                info.tsconfig_json = loaded?.map(|it| {
-                    NonNull::new(bun_core::heap::into_raw(it)).expect("heap::alloc is non-null")
-                });
-                info.enclosing_tsconfig_json = info.tsconfig_json();
+                info.tsconfig_json = loaded?.map(|it| &*Box::leak(it));
+                info.enclosing_tsconfig_json = info.tsconfig_json;
             }
         }
 
@@ -6583,7 +6538,7 @@ impl<'a> Resolver<'a> {
     pub fn tsconfig_json(&mut self, dir_info: &DirInfo::DirInfo) -> Option<TSConfigRef> {
         match self.tsconfig_override() {
             Some(it) => it.map(TSConfigRef::Override),
-            None => dir_info.tsconfig_json().map(TSConfigRef::OfDirectory),
+            None => dir_info.tsconfig_json.map(TSConfigRef::OfDirectory),
         }
     }
 }

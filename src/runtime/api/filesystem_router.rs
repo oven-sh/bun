@@ -8,7 +8,6 @@ use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult, LogJsc};
 use bun_paths::{self as path};
-use bun_ptr::BackRef;
 
 use bun_http_types::URLPath;
 use bun_resolver::Resolver;
@@ -116,7 +115,7 @@ impl FileSystemRouter {
             // Snapshot the cached `DirEntry`'s entry pointers under `entries_mutex`
             // (other threads rewrite the map in place under that lock), then drop
             // the guard: `bust_dir_cache` / the recursion below re-acquire it.
-            let entry_ptrs: Vec<*mut Fs::Entry> = {
+            let entries: Vec<&Fs::Entry> = {
                 let _entries_lock = Fs::FileSystem::get().fs.entries_mutex.lock_guard();
                 match dir_ref.get_entries_const() {
                     Some(entries) => entries.data.values().copied().collect(),
@@ -124,13 +123,7 @@ impl FileSystemRouter {
                 }
             };
             {
-                'outer: for entry_ptr in entry_ptrs {
-                    // BACKREF: `entry_ptr` is a `*mut Entry` into the process-static
-                    // EntryStore; the store outlives this loop. Wrap once so the
-                    // shared-only reads below are safe `Deref`s.
-                    let entry = BackRef::from(
-                        core::ptr::NonNull::new(entry_ptr).expect("EntryStore entry"),
-                    );
+                'outer: for entry in entries {
                     if entry.base().first() == Some(&b'.') {
                         continue 'outer;
                     }
@@ -364,7 +357,7 @@ pub(crate) struct MatchedRoute {
     /// Its values borrow `pathname`.
     params_list: route_param::List<'static>,
     /// Made by the first of `params` and `query` to need it.
-    param_map: JsCell<Option<QueryStringMap>>,
+    param_map: JsCell<Option<QueryStringMap<'static>>>,
     origin: Option<WTFString>,
     asset_prefix: Option<WTFString>,
     base_dir: WTFString,
@@ -378,7 +371,7 @@ impl MatchedRoute {
     /// A name that comes once has a string, and one that comes again has an array of them.
     fn create_query_object<'a>(
         heap: &JsHeap<'a>,
-        map: Option<&QueryStringMap>,
+        map: Option<&QueryStringMap<'_>>,
     ) -> bindgen::Result<'a, JsLocal<'a>> {
         let Some(map) = map else {
             return Ok(heap.create_empty_object().as_value());

@@ -1684,7 +1684,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 
     // Singleton is process-lifetime; never freed.
 
-    pub fn exists(&self, value: &[u8]) -> bool {
+    fn exists(&self, value: &[u8]) -> bool {
         // Pointer-range check against the backing storage. Done with addresses
         // rather than forming a `&[u8]` over `MaybeUninit<u8>` storage (which
         // would assert byte-validity of the unwritten tail).

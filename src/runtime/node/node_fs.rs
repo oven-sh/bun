@@ -183,11 +183,6 @@ pub(crate) use super::node_fs_constant as constants;
 pub(crate) use super::node_fs_stat_watcher as StatWatcher;
 pub(crate) use super::node_fs_watcher as Watcher;
 
-/// `Binding` is the JSC-class instance that owns the per-thread `NodeFS`
-/// (`super::node_fs_binding::Binding`). Re-exported so the async `create()`
-/// entry points keep their `&mut Binding` signature.
-pub(crate) use super::node_fs_binding::Binding;
-
 /// `jsc.JSPromise.Strong` — re-exported under its Rust crate name:
 /// `bun_jsc::js_promise::Strong` / the `JSPromiseStrong` alias.
 use bun_jsc::JSPromiseStrong;
@@ -244,15 +239,21 @@ fn compiled_program_graph() -> Option<&'static bun_standalone_graph::Graph> {
     standalone_module_graph().filter(|graph| graph.compiled_program.is_some())
 }
 
-/// The graph, for a path under its own root: it is asked in front of the disk.
+/// The graph, for a path under its own root: it is asked in front of the disk. Not for a path that the disk refuses for its length: the graph holds nothing there, and is not asked about each folder of one.
 #[inline]
 fn graph_before_disk(path: &[u8]) -> Option<&'static bun_standalone_graph::Graph> {
-    standalone_module_graph().filter(|_| bun_standalone_graph::is_bun_standalone_file_path(path))
+    standalone_module_graph().filter(|_| {
+        bun_standalone_graph::is_bun_standalone_file_path(path)
+            && !bun_standalone_graph::is_too_long(path)
+    })
 }
 
-/// The graph, for any other path.
+/// The graph, for any other path that the disk may take.
 fn graph_after_disk(path: &[u8]) -> Option<&'static bun_standalone_graph::Graph> {
-    compiled_program_graph().filter(|_| !bun_standalone_graph::is_bun_standalone_file_path(path))
+    compiled_program_graph().filter(|_| {
+        !bun_standalone_graph::is_bun_standalone_file_path(path)
+            && !bun_standalone_graph::is_too_long(path)
+    })
 }
 
 /// For a removal by the program, which may remove files of its own, also half of a folder.
@@ -1237,7 +1238,6 @@ mod _async_tasks {
         /// `callback`: as for [`AsyncFSTask::create`].
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
-            binding: &Binding,
             task_args: ThreadIsolated<A>,
             vm: &VirtualMachine,
             callback: Option<JSValue>,
@@ -1278,35 +1278,39 @@ mod _async_tasks {
                     unsafe { &*(&*task.args as *const A as *const $Args) }
                 }};
             }
+            // For an answer without a request, or with one that libuv refuses before it calls back. It reaches the caller as the answer of a request does.
+            macro_rules! answer_now {
+                ($Ret:ty, $answer:expr) => {{
+                    // SAFETY: identity write — `R == $Ret` for this `F`.
+                    unsafe {
+                        core::ptr::write(
+                            &mut task.result as *mut Maybe<R> as *mut Maybe<$Ret>,
+                            $answer,
+                        )
+                    };
+                    let task_ptr: *mut Self = task;
+                    task.global_object()
+                        .bun_vm()
+                        .event_loop()
+                        .enqueue_task(bun_jsc::Task::init(task_ptr));
+                    return task.completion.value();
+                }};
+            }
             match F {
                 NodeFSFunctionEnum::Open => {
                     let args: &args::Open = args_as!(args::Open);
                     let named = &args.path;
                     let refusal = refuse_open_for_write(named.slice(), args.flags.as_int());
                     let answer: Option<Maybe<ret::Open>> = refusal.map(Err);
+                    // libuv copies `path` before `uv_fs_open` returns.
+                    let mut scratch = Path::new();
                     let path = if strings::eql_comptime(named.slice(), b"/dev/null") {
                         bun_core::zstr!("\\\\.\\NUL")
                     } else {
-                        // SAFETY (R-2): single-JS-thread `JsCell` projection of the
-                        // scratch path buffer; the borrow is held only across the
-                        // libuv enqueue below (which copies `path` internally) and
-                        // never across a JS re-entry point.
-                        named.slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf })
+                        named.slice_z(&mut scratch)
                     };
                     if let Some(answer) = answer {
-                        // SAFETY: identity write — `R == ret::Open` for this `F`.
-                        unsafe {
-                            core::ptr::write(
-                                &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Open>,
-                                answer,
-                            )
-                        };
-                        let task_ptr: *mut Self = task;
-                        task.global_object()
-                            .bun_vm()
-                            .event_loop()
-                            .enqueue_task(bun_jsc::Task::init(task_ptr));
-                        return task.completion.value();
+                        answer_now!(ret::Open, answer);
                     }
                     let mut flags: c_int = args.flags.as_int();
                     flags = uv::O::from_bun_o(flags);
@@ -1326,7 +1330,10 @@ mod _async_tasks {
                             Some(Self::uv_callback),
                         )
                     };
-                    debug_assert!(rc == uv::ReturnCode::ZERO);
+                    if let Some(err) = rc.to_error(sys::Tag::open) {
+                        let answer: Maybe<ret::Open> = Err(err.with_path(named.slice()));
+                        answer_now!(ret::Open, answer);
+                    }
                     sys::syslog!(
                         "uv open({}, {}, {}) = scheduled",
                         ::bstr::BStr::new(path.as_bytes()),
@@ -1464,11 +1471,9 @@ mod _async_tasks {
                 }
                 NodeFSFunctionEnum::Statfs => {
                     let args: &args::StatFS = args_as!(args::StatFS);
-                    // SAFETY (R-2): single-JS-thread `JsCell` projection; held only
-                    // across the libuv enqueue (copies `path` internally).
-                    let path = path_for_statfs(&args.path, unsafe {
-                        &mut binding.node_fs.get_mut().sync_error_buf
-                    });
+                    // libuv copies `path` before `uv_fs_statfs` returns.
+                    let mut scratch = Path::new();
+                    let path = path_for_statfs(&args.path, &mut scratch);
                     // SAFETY: libuv copies `path` internally before return.
                     let rc = unsafe {
                         uv::uv_fs_statfs(
@@ -1478,7 +1483,10 @@ mod _async_tasks {
                             Some(Self::uv_callbackreq),
                         )
                     };
-                    debug_assert!(rc == uv::ReturnCode::ZERO);
+                    if let Some(err) = rc.to_error(sys::Tag::statfs) {
+                        let answer: Maybe<ret::StatFS> = Err(err.with_path(args.path.slice()));
+                        answer_now!(ret::StatFS, answer);
+                    }
                     sys::syslog!("uv statfs({}) = ~~", ::bstr::BStr::new(path.as_bytes()));
                 }
                 _ => unreachable!("UVFSRequest type not implemented"),
@@ -2035,17 +2043,6 @@ mod _async_tasks {
         /// `callback`: the `node:fs` callback to call with the result. `None` returns a promise.
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
-            _binding: &Binding,
-            args: ThreadIsolated<A>,
-            vm: &VirtualMachine,
-            callback: Option<JSValue>,
-        ) -> JSValue {
-            Self::schedule(cx, args, vm, callback)
-        }
-
-        /// [`Self::create`] for a caller that has no `Binding`.
-        pub(crate) fn schedule(
-            cx: &bun_jsc::JsThread<'_>,
             args: ThreadIsolated<A>,
             vm: &VirtualMachine,
             callback: Option<JSValue>,
@@ -2285,7 +2282,6 @@ mod _async_tasks {
         /// tracker, and this VM's loop.
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
-            _binding: &Binding,
             cp_args: ThreadIsolated<args::Cp<'static>>,
             vm: &VirtualMachine,
         ) -> JSValue {
@@ -5027,6 +5023,12 @@ fn encode_path_result(bytes: &[u8], encoding: Encoding) -> StringOrBuffer<'stati
 }
 
 impl NodeFS {
+    /// A path of any length passes through the scratch, and a VM keeps the scratch for as long as it lives.
+    #[inline]
+    pub(crate) fn release_long_path(&mut self) {
+        self.sync_error_buf.release_over(4 * paths::MAX_PATH_BYTES);
+    }
+
     pub(crate) fn access(&mut self, args: &args::Access, _: Flavor) -> Maybe<ret::Access> {
         let p = args.path.slice();
         let mode = args.mode.as_int();

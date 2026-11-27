@@ -360,6 +360,13 @@ pub mod posix_spawn {
         }
 
         fn open_z(&mut self, fd: Fd, path: &CStr, flags: u32, mode: mode_t) -> sys::Result<()> {
+            // `posix_spawn_file_actions_addopen` keeps the first `PATH_MAX - 1` bytes of a longer path, and the child would open that other file.
+            if path.count_bytes() >= libc::PATH_MAX as usize {
+                return Err(sys::Error::from_code(
+                    sys::E::ENAMETOOLONG,
+                    SYSCALL_POSIX_SPAWN,
+                ));
+            }
             let flags_c: c_int = flags as c_int;
             // SAFETY: self.actions is live; path is NUL-terminated
             spawn_errno(errno_from_posix_spawn(unsafe {

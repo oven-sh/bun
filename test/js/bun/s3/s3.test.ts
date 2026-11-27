@@ -1086,23 +1086,26 @@ for (let credentials of allCredentials) {
           );
         });
 
-        it("should error when path is too long", async () => {
-          await Promise.all(
-            [s3, (path, ...args) => S3(...args).file(path)].map(async fn => {
-              try {
-                const s3file = fn("test" + "a".repeat(4096), {
-                  ...s3Options,
-                  bucket: S3Bucket,
-                });
-
-                await s3file.write("Hello Bun!");
-                expect.unreachable();
-              } catch (e: any) {
-                // ERR_STRING_TOO_LONG can occur when the path is too long to convert to a JS string
-                expect(["ENAMETOOLONG", "ERR_S3_INVALID_PATH", "ERR_STRING_TOO_LONG"]).toContain(e?.code);
-              }
-            }),
-          );
+        // A key is not a path of the file system: S3 sets its limit, whatever the length.
+        it.each([1025, 4096, 70_000])("should error when path is too long, %d bytes", async length => {
+          const key = Buffer.alloc(length, "a/").toString();
+          const options = { ...s3Options, bucket: S3Bucket };
+          const code = (e: any) => e?.code;
+          const files = [s3(key, options), S3(options).file(key), file("s3://" + S3Bucket + "/" + key, options)];
+          for (const s3file of files) {
+            expect({
+              write: await s3file.write("Hello Bun!").catch(code),
+              text: await s3file.text().catch(code),
+              exists: await s3file.exists().catch(code),
+              unlink: await s3file.unlink().catch(code),
+            }).toEqual({
+              write: "ERR_S3_INVALID_PATH",
+              text: "ERR_S3_INVALID_PATH",
+              exists: "ERR_S3_INVALID_PATH",
+              unlink: "ERR_S3_INVALID_PATH",
+            });
+            expect(() => s3file.presign()).toThrow(expect.objectContaining({ code: "ERR_S3_INVALID_PATH" }));
+          }
         });
       });
       describe.concurrent("credentials", () => {

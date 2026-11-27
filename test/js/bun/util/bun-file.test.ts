@@ -1,7 +1,9 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import fs from "fs";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "path";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, MAX_PATH_BYTES, tempDir } from "harness";
+import { join, sep } from "path";
+import { pathToFileURL } from "url";
 
 test("delete() and stat() should work with unicode paths", async () => {
   await using dir = tempDir("delete-stat-unicode-path", {
@@ -196,5 +198,109 @@ test.concurrent.each([
   const [live, pathIsAlive] = stdout.trim().split(" ");
   expect(pathIsAlive).toBe("true");
   expect(Number(live)).toBeWithin(1, 50);
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/49604
+// No folder name is over NAME_MAX, so only the length of the whole path is at fault.
+describe.each([MAX_PATH_BYTES, MAX_PATH_BYTES + 70_000, 1 << 20])("Bun.file() with a path of %d bytes", length => {
+  const written = (start: string) =>
+    (start + Buffer.alloc(length, "a" + sep).toString()).slice(0, length - 2) + sep + "b";
+  const absolute = written(isWindows ? "C:\\" : "/");
+  const paths: [string, () => string | Uint8Array | URL, string][] = [
+    ["a string", () => absolute, absolute],
+    ["a relative string", () => written(""), written("")],
+    ["a Uint8Array", () => new TextEncoder().encode(absolute), absolute],
+    ["a file: URL", () => pathToFileURL(absolute), absolute],
+  ];
+
+  test.each(paths)("given as %s, fails when the file is used", async (_, path, name) => {
+    const file = Bun.file(path());
+    // On Windows libuv does most of these, and what it answers for such a path is its own.
+    const failed = (syscall: string) =>
+      isWindows
+        ? { code: expect.stringMatching(/^(ENAMETOOLONG|ENOENT|EINVAL)$/), syscall: expect.any(String), path: name }
+        : { code: "ENAMETOOLONG", syscall, path: name };
+    const failure = (promise: Promise<unknown>) =>
+      promise.then(
+        () => "resolved",
+        ({ code, syscall, path }) => ({ code, syscall, path }),
+      );
+    expect({
+      name: file.name,
+      size: file.size,
+      exists: await file.exists(),
+      stat: await failure(file.stat()),
+      text: await failure(file.text()),
+      bytes: await failure(file.bytes()),
+      arrayBuffer: await failure(file.arrayBuffer()),
+      json: await failure(file.json()),
+      unlink: await failure(file.unlink()),
+      response: await failure(new Response(file).text()),
+      // A file that has given its size gives a slice of that size.
+      slice: await failure(Bun.file(path()).slice(0, 1).text()),
+    }).toEqual({
+      name,
+      size: 0,
+      exists: false,
+      stat: failed("stat"),
+      text: failed("open"),
+      bytes: failed("open"),
+      arrayBuffer: failed("open"),
+      json: failed("open"),
+      unlink: failed("unlink"),
+      response: failed("open"),
+      slice: failed("open"),
+    });
+  });
+
+  test("fs.openAsBlob() and structuredClone() give a file that fails the same way", async () => {
+    const blob = await fs.openAsBlob(absolute);
+    const clone = structuredClone(Bun.file(absolute));
+    const code = ({ code }: NodeJS.ErrnoException) => code;
+    const refused = isWindows ? expect.stringMatching(/^(ENAMETOOLONG|ENOENT|EINVAL)$/) : "ENAMETOOLONG";
+    expect({
+      blob: await blob.text().catch(code),
+      clone: await clone.text().catch(code),
+      cloneName: clone.name,
+    }).toEqual({ blob: refused, clone: refused, cloneName: absolute });
+  });
+});
+
+test.skipIf(isWindows)("a path one byte under the limit still reaches the disk", async () => {
+  using dir = tempDir("bun-file-long-path", {});
+  const folder = "/" + Buffer.alloc(99, "a").toString();
+  const path = (String(dir) + Buffer.alloc(MAX_PATH_BYTES, folder).toString()).slice(0, MAX_PATH_BYTES - 3) + "/b";
+  expect(path.length).toBe(MAX_PATH_BYTES - 1);
+  expect(await Bun.file(path).exists()).toBe(false);
+  expect(
+    await Bun.file(path)
+      .stat()
+      .catch(e => e.code),
+  ).toBe("ENOENT");
+  expect(await Bun.write(path, "under the limit")).toBe(15);
+  expect(await Bun.file(path).text()).toBe("under the limit");
+});
+
+// The file keeps a copy of its path, and the collector has to know how much that is.
+test("Bun.file() with a long path is collected under memory pressure", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const path = "/" + Buffer.alloc(1 << 20, "a/").toString();
+        let peak = 0;
+        for (let i = 0; i < 2000; i++) {
+          Bun.file(path);
+          if (i % 50 === 0) peak = Math.max(peak, process.memoryUsage.rss());
+        }
+        console.log(Math.round(peak / 1024 / 1024));`,
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  // 2000 copies are 2000 MiB.
+  expect(Number(stdout)).toBeWithin(1, isASAN || isDebug ? 1100 : 600);
   expect(exitCode).toBe(0);
 });

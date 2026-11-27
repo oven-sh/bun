@@ -55,8 +55,6 @@ pub struct ArgumentsSlice<'a> {
     remaining_start: usize,
     pub vm: &'a VirtualMachine,
     pub will_be_async: bool,
-    /// An errno a converter met under `will_be_async`; the binding rejects its promise with it.
-    pub deferred_error: Option<Box<bun_sys::SystemError>>,
 }
 
 impl<'a> ArgumentsSlice<'a> {
@@ -72,7 +70,6 @@ impl<'a> ArgumentsSlice<'a> {
             remaining_start: 0,
             vm,
             will_be_async: false,
-            deferred_error: None,
         }
     }
 

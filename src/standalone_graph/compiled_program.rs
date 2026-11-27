@@ -10,7 +10,7 @@ use bun_collections::StringArrayHashMap;
 use bun_collections::index_sort;
 use bun_core::strings;
 use bun_core::{StringBuilder, StringPointer, bytes_of, slice_as_bytes};
-use bun_paths::{Path, path_buffer_pool, to_portable};
+use bun_paths::{MAX_PATH_BYTES, Path, path_buffer_pool, to_portable};
 use bun_resolver::compiled_program::{
     CompiledEntryPoint, CompiledFurtherPackageName, CompiledPackageName, CompiledPathAlias,
     CompiledProgram, FoundForFileSystemAlone, ImageFile, NamesReadLater, RefusedData,
@@ -1087,15 +1087,21 @@ fn requests_directory(name: &[u8]) -> bool {
     !cfg!(windows) && without_dots.unwrap_or(name).last() == Some(&b'/')
 }
 
+/// The disk refuses a name of this length whatever it leads to, so the executable holds nothing there either.
+#[inline]
+pub fn is_too_long(name: &[u8]) -> bool {
+    name.len() >= MAX_PATH_BYTES
+}
+
 /// `name` as a key of `files` and `dirs`: absolute, normalized, posix-separated, without trailing separators.
 fn absolute_key(name: &[u8]) -> Option<Path> {
     let name = bun_paths::without_nt_prefix(name);
-    if name.is_empty() || strings::contains_char(name, 0) {
+    if name.is_empty() || is_too_long(name) || strings::contains_char(name, 0) {
         return None;
     }
     // Every `stat` that the disk fails comes by here, most of them with a path that is a key as it stands.
     if cfg!(not(windows)) && is_normalized_posix_path(name) {
-        return (Path::from(name.strip_suffix(b"/").unwrap_or(name)).check_len()).ok();
+        return Some(Path::from(name.strip_suffix(b"/").unwrap_or(name)));
     }
     let mut working_directory = path_buffer_pool::get();
     // On Windows an absolute name can still take its drive from the working directory.
@@ -1335,6 +1341,9 @@ impl StandaloneModuleGraph {
 
     /// Whether a listing of `path` comes from the graph.
     pub fn owns_directory(&self, path: &[u8]) -> bool {
+        if is_too_long(path) {
+            return false;
+        }
         if is_bun_standalone_file_path(path) {
             return true;
         }
@@ -1503,6 +1512,9 @@ impl StandaloneModuleGraph {
 
     /// For a path the disk does not have: whether any of `stat`, `find_ref`, `find_dir` and `source_path_kind` can find something there.
     pub fn may_answer_for(&self, path: &[u8]) -> bool {
+        if is_too_long(path) {
+            return false;
+        }
         if is_bun_standalone_file_path(path) {
             return true;
         }
@@ -2013,6 +2025,9 @@ impl StandaloneModuleGraph {
     fn traverses_non_directory(&self, name: &[u8]) -> bool {
         if cfg!(windows) {
             return false;
+        }
+        if is_too_long(name) {
+            return true;
         }
         let is_folder = |path: &[u8]| {
             self.find_dir(path)
@@ -2525,6 +2540,9 @@ impl StandaloneModuleGraph {
         name: &'a [u8],
         buffer: &'a mut Path,
     ) -> Option<&'a [u8]> {
+        if is_too_long(name) {
+            return None;
+        }
         if is_bun_standalone_file_path(name) {
             let program = self.compiled_program.as_ref();
             let is_directory = |key: &[u8]| {

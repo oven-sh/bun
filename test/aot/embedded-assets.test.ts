@@ -5029,3 +5029,73 @@ console.log(fs.readFileSync(path.join(__dirname, "folder\\ufffd", "note.txt"), "
     120_000,
   );
 });
+
+// https://github.com/oven-sh/bun/issues/49604
+// The disk refuses a path of that length whatever it leads to, so the executable holds nothing there either.
+test.skipIf(isWindows)(
+  "a path longer than the disk takes names nothing in the executable",
+  async () => {
+    using dir = tempDir("aot-path-over-the-limit", {
+      "app/sub/keep.txt": "kept",
+      "app/main.mjs": `import fs from "node:fs";
+import os from "node:os";
+const say = (label, read) => {
+  try {
+    console.log(label, read());
+  } catch (error) {
+    console.log(label, error.code);
+  }
+};
+const code = error => error.code;
+// Each \`..\` comes after a folder that the executable holds, and the path is only just too long.
+for (const [shape, steps] of [["..", "sub/../".repeat(600)], [".", "./".repeat(2100)]]) {
+  const file = __dirname + "/" + steps + "sub/keep.txt";
+  const folder = __dirname + "/" + steps + "sub";
+  say(shape + " file exists", () => fs.existsSync(file));
+  say(shape + " file read", () => fs.readFileSync(file, "utf8"));
+  console.log(shape, "Bun.file exists", await Bun.file(file).exists());
+  console.log(shape, "Bun.file text", await Bun.file(file).text().catch(code));
+  console.log(shape, "Bun.file stat", await Bun.file(file).stat().then(it => it.size, code));
+  say(shape + " folder stat", () => fs.statSync(folder).isDirectory());
+  say(shape + " folder exists", () => fs.existsSync(folder));
+  say(shape + " folder list", () => fs.readdirSync(folder).join());
+  say(shape + " folder access", () => fs.accessSync(folder));
+  say(shape + " folder open", () => fs.opendirSync(folder).closeSync());
+  say(shape + " mkdir", () => fs.mkdirSync(folder + "/made"));
+  say(shape + " mkdir recursive", () => fs.mkdirSync(folder + "/made/deep", { recursive: true }));
+}
+say("under the limit", () => fs.readFileSync(__dirname + "/" + "sub/../".repeat(20) + "sub/keep.txt", "utf8"));
+// Each \`..\` comes after a folder that the disk has. Without the refusal, the lookups of these do not end in the time that a test has.
+const far = ("/" + os.tmpdir().split("/")[1] + "/../").repeat(20000) + "data.txt";
+say("far file read", () => fs.readFileSync(far, "utf8"));
+console.log("far Bun.file exists", await Bun.file(far).exists());
+say("far mkdir", () => fs.mkdirSync(far));
+`,
+    });
+    const { plain, compiled } = await bothWays(String(dir), "./main.mjs", "--asset", "./sub");
+    const refused = (shape: string) =>
+      [
+        "file exists false",
+        "file read ENAMETOOLONG",
+        "Bun.file exists false",
+        "Bun.file text ENAMETOOLONG",
+        "Bun.file stat ENAMETOOLONG",
+        "folder stat ENAMETOOLONG",
+        "folder exists false",
+        "folder list ENAMETOOLONG",
+        "folder access ENAMETOOLONG",
+        "folder open ENAMETOOLONG",
+        "mkdir ENAMETOOLONG",
+        "mkdir recursive ENAMETOOLONG",
+      ]
+        .map(line => `${shape} ${line}\n`)
+        .join("");
+    expect(plain.stdout).toBe(
+      refused("..") +
+        refused(".") +
+        "under the limit kept\nfar file read ENAMETOOLONG\nfar Bun.file exists false\nfar mkdir ENAMETOOLONG\n",
+    );
+    expect(compiled).toEqual({ stdout: plain.stdout, stderr: "", exitCode: 0 });
+  },
+  120_000,
+);

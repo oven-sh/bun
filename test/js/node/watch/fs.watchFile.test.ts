@@ -1,5 +1,5 @@
 import { pathToFileURL } from "bun";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "path";
 
@@ -50,6 +50,15 @@ describe("fs.watchFile", () => {
     expect(entries[0][0].mtimeMs).toBe(0);
     expect(entries[0][1].size).toBe(0);
     expect(entries[0][1].mtimeMs).toBe(0);
+  });
+  // As in Node, where the failed `stat` is that of a file that is not there.
+  test("zeroed stats for a path longer than the system takes", async () => {
+    const long = path.join(testDir, Buffer.alloc(MAX_PATH_BYTES * 2, "a" + path.sep).toString(), "x");
+    const { promise, resolve } = Promise.withResolvers<fs.Stats[]>();
+    fs.watchFile(long, { interval: 20 }, (curr, prev) => resolve([curr, prev]));
+    const [curr, prev] = await promise;
+    fs.unwatchFile(long);
+    expect([curr.size, curr.mtimeMs, prev.size, prev.mtimeMs]).toEqual([0, 0, 0, 0]);
   });
   test("it watches a file", async () => {
     let { promise, resolve } = Promise.withResolvers<void>();

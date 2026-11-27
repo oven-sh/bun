@@ -7,7 +7,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{StringJsc as _, Utf8WithStringJsc as _};
 pub(crate) use bun_jsc::{ThreadIsolated, ThreadIsolatedArg};
-use bun_paths::{MAX_PATH_BYTES, NameTooLong, OSPath, Path};
+use bun_paths::{NameTooLong, OSPath, Path};
 use bun_sys::{self, Fd, IoVec, IoVecMut, Mode, O};
 
 use crate::node::util::validators;
@@ -49,11 +49,6 @@ pub(crate) trait FdArgExt: FdJsc {
     }
 }
 impl FdArgExt for Fd {}
-
-// LAYERING: `bun_sys::SystemError → JSValue` bridge (reshapes the T1 data
-// struct into the `#[repr(C)]` FFI layout and forwards to C++). Re-exported so
-// `system_error.to_error_instance(ctx)` resolves via the canonical impl.
-pub(crate) use bun_sys_jsc::SystemErrorJsc;
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -775,7 +770,6 @@ pub(crate) trait PathLikeExt {
     ) -> JsResult<Option<PathLike<'static>>>
     where
         Self: Sized;
-    /// Throws ENAMETOOLONG too; [`Self::from_js`] defers it for async bindings instead.
     fn from_bun_string(
         global: &JSGlobalObject,
         str: bun_core::String,
@@ -869,8 +863,7 @@ impl PathLikeExt for PathLike<'_> {
         {
             let str = arg.to_bun_string(ctx)?;
             arguments.eat();
-            let path = path_like_from_string(ctx, str, arguments.will_be_async)?;
-            return Valid::path_length(path, ctx, arguments).map(Some);
+            return path_like_from_string(ctx, str, arguments.will_be_async).map(Some);
         }
         Self::from_js_resolved_by(ctx, arguments, RelativePaths::StartAtWorkingDirectory)
     }
@@ -970,7 +963,7 @@ impl PathLikeExt for PathLike<'_> {
             }
         };
 
-        Valid::path_length(path, ctx, arguments).map(Some)
+        Ok(Some(path))
     }
 
     fn from_bun_string(
@@ -979,11 +972,7 @@ impl PathLikeExt for PathLike<'_> {
         will_be_async: bool,
     ) -> JsResult<PathLike<'static>> {
         let relative_paths = RelativePaths::StartAtWorkingDirectory;
-        let path = path_like_resolved_by(global, str, relative_paths, will_be_async)?;
-        match Valid::path_too_long(path.slice()) {
-            Some(err) => Err(global.throw_value(err.to_error_instance(global))),
-            None => Ok(path),
-        }
+        path_like_resolved_by(global, str, relative_paths, will_be_async)
     }
 }
 
@@ -1038,7 +1027,7 @@ fn path_like_resolved_by(
     path_like_from_string(global, str, will_be_async)
 }
 
-/// `str` as a `PathLike`, NUL-checked; the caller checks the length ([`Valid::path_length`]).
+/// `str` as a `PathLike`, NUL-checked. No length check: the syscall reports ENAMETOOLONG.
 fn path_like_from_string(
     global: &JSGlobalObject,
     str: bun_core::String,
@@ -1084,38 +1073,6 @@ fn shared_or_utf8<T>(
 pub(crate) struct Valid;
 
 impl Valid {
-    /// The ENAMETOOLONG the syscall would return: no `PathBuffer` fits this path plus its NUL.
-    pub(crate) fn path_too_long(path: &[u8]) -> Option<bun_sys::SystemError> {
-        if path.len() < MAX_PATH_BYTES {
-            return None;
-        }
-        let mut system_error =
-            bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
-                .with_path(path)
-                .to_system_error();
-        system_error.syscall = bun_core::String::DEAD;
-        Some(system_error)
-    }
-
-    /// Sync bindings throw; async ones get it as `arguments.deferred_error` and a placeholder path.
-    pub(crate) fn path_length(
-        path: PathLike<'static>,
-        ctx: &JSGlobalObject,
-        arguments: &mut ArgumentsSlice,
-    ) -> JsResult<PathLike<'static>> {
-        let Some(err) = Self::path_too_long(path.slice()) else {
-            return Ok(path);
-        };
-        drop(path);
-        if !arguments.will_be_async {
-            return Err(ctx.throw_value(err.to_error_instance(ctx)));
-        }
-        if arguments.deferred_error.is_none() {
-            arguments.deferred_error = Some(Box::new(err));
-        }
-        Ok(PathLike::default())
-    }
-
     pub(crate) fn path_buffer(slice: &[u8], ctx: &JSGlobalObject) -> JsResult<()> {
         if slice.is_empty() {
             return Err(

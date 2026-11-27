@@ -3,7 +3,6 @@ use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
 use bun_sys::Maybe;
-use bun_sys_jsc::SystemErrorJsc as _;
 
 use crate::generated_bindgen::node_fs_binding::RmOptions;
 use crate::node::ThreadIsolated;
@@ -49,8 +48,11 @@ where
     // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned
     // (`sys::Error.path` is `Box<[u8]>`, not a borrow into `sync_error_buf`).
     run_sync_with::<R, A>(cx, args, |args| {
-        this.node_fs
-            .with_mut(|nfs| NodeFS::dispatch::<R, A, F>(nfs, args, Flavor::Sync))
+        this.node_fs.with_mut(|nfs| {
+            let result = NodeFS::dispatch::<R, A, F>(nfs, args, Flavor::Sync);
+            nfs.release_long_path();
+            result
+        })
     })
 }
 
@@ -66,7 +68,9 @@ where
     run_sync_with::<R, A>(cx, args, |args| {
         crate::jsc_hooks::with_node_fs(vm, |node_fs| {
             node_fs.vm = Some(vm);
-            NodeFS::dispatch::<R, A, F>(node_fs, args, Flavor::Sync)
+            let result = NodeFS::dispatch::<R, A, F>(node_fs, args, Flavor::Sync);
+            node_fs.release_long_path();
+            result
         })
     })
 }
@@ -126,13 +130,11 @@ fn split_callback<'a>(
 /// everything else uses `AsyncFSTask`, and that choice is encoded in the
 /// `async_::*` type aliases rather than derivable from `F` alone.
 fn run_async<A: FsArgument>(
-    this: &Binding,
     cx: &mut JsScope<'_>,
     args: &[JsLocal<'_>],
     arm: AsyncArm,
     create_task: fn(
         &bun_jsc::JsThread<'_>,
-        &Binding,
         ThreadIsolated<A>,
         &VirtualMachine,
         Option<JSValue>,
@@ -147,12 +149,12 @@ fn run_async<A: FsArgument>(
     };
     let vm: &VirtualMachine = global.bun_vm();
     move_waiting_descriptors();
-    Ok(create_task(&cx, this, args, vm, callback))
+    Ok(create_task(&cx, args, vm, callback))
 }
 
 enum ParsedAsyncArgs<A> {
     Args(ThreadIsolated<A>),
-    /// The operation fails without being scheduled (an aborted signal, a path that is too long).
+    /// The operation fails without being scheduled (an aborted signal).
     Rejected(JSValue),
 }
 
@@ -172,9 +174,6 @@ fn parse_async_args<A: FsArgument>(
         {
             return Ok(ParsedAsyncArgs::Rejected(abort_error));
         }
-    }
-    if let Some(err) = slice.deferred_error.take() {
-        return Ok(ParsedAsyncArgs::Rejected((*err).to_error_instance(global)));
     }
     Ok(ParsedAsyncArgs::Args(args))
 }
@@ -230,7 +229,7 @@ impl Binding {
             ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, None, error),
         };
         let vm: &VirtualMachine = global.bun_vm();
-        Ok(AsyncCpTask::create(&cx, self, cp_args, vm))
+        Ok(AsyncCpTask::create(&cx, cp_args, vm))
     }
 
     /// `callSync(.cp)`.
@@ -287,7 +286,7 @@ impl Binding {
                 &cx, &rd_args, vm, callback,
             ));
         }
-        Ok(async_::Readdir::create(&cx, self, rd_args, vm, callback))
+        Ok(async_::Readdir::create(&cx, rd_args, vm, callback))
     }
 
     /// `callSync(.watch)` — `args::Watch` borrows `globalThis` so it can't go
@@ -350,14 +349,14 @@ macro_rules! node_fs_bindings {
                     cx: &mut JsScope<'_>,
                     args: &[JsLocal<'_>],
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(self, cx, args, AsyncArm::Promise, async_::$F::create)
+                    run_async::<$Args>(cx, args, AsyncArm::Promise, async_::$F::create)
                 }
                 pub(crate) fn $callback(
                     &self,
                     cx: &mut JsScope<'_>,
                     args: &[JsLocal<'_>],
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(self, cx, args, AsyncArm::Callback, async_::$F::create)
+                    run_async::<$Args>(cx, args, AsyncArm::Callback, async_::$F::create)
                 }
             )*
         }

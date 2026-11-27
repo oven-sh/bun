@@ -1721,7 +1721,7 @@ impl BlobExt for Blob {
                 match &file.pathlike {
                     PathOrFileDescriptor::Path(path_like) => {
                         let vm = global_this.bun_vm();
-                        Ok(crate::node::fs::async_::Stat::schedule(
+                        Ok(crate::node::fs::async_::Stat::create(
                             &cx,
                             crate::node::fs::args::Stat::owned_copy_of(path_like),
                             vm,
@@ -1730,7 +1730,7 @@ impl BlobExt for Blob {
                     }
                     PathOrFileDescriptor::Fd(fd) => {
                         let vm = global_this.bun_vm();
-                        Ok(crate::node::fs::async_::Fstat::schedule(
+                        Ok(crate::node::fs::async_::Fstat::create(
                             &cx,
                             crate::node::fs::args::Fstat::for_fd(*fd),
                             vm,
@@ -1753,7 +1753,7 @@ impl BlobExt for Blob {
                     return Ok(JSValue::UNDEFINED);
                 }
                 let vm = global_this.bun_vm();
-                Ok(crate::node::fs::async_::Stat::schedule(
+                Ok(crate::node::fs::async_::Stat::create(
                     &cx,
                     crate::node::fs::args::Stat::owned(name.to_vec()),
                     vm,
@@ -3162,11 +3162,8 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                 }
                 PathOrFileDescriptorSerializeTag::Path => {
                     let path_len = reader.read_int_le::<u32>()?;
-                    // Apply the same checks as the JS API (`Valid::path_string_length`, `Valid::path_null_bytes`).
-                    if path_len as usize >= bun_paths::MAX_PATH_BYTES {
-                        return Err(crate::Error::InvalidValue);
-                    }
                     let path = read_slice(reader, path_len as usize)?;
+                    // The check of the JS API (`Valid::path_null_bytes`).
                     if strings::index_of_char(&path, 0).is_some() {
                         return Err(crate::Error::InvalidValue);
                     }

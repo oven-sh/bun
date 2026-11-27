@@ -124,6 +124,9 @@ pub struct EnvironmentConfig {
     /// A tag can make something new of the same template each time. So a tagged template is a source of reactivity, and
     /// no scope that it is in is kept, unless the signature of the tag says that it is pure. To upstream it is a call.
     pub tagged_templates_are_always_called: bool,
+    /// The `finally` block of a `try` is lowered after the rest of it, and so is the `try` block that has no `catch`:
+    /// the function is not compiled, and the rules see what the blocks use. Upstream lowers neither.
+    pub finally_blocks_are_lowered: bool,
     /// `React.useMemo` is React's if `React` is imported from React, under whatever name. To upstream it is if the name
     /// is `React`, wherever that comes from.
     pub react_is_known_by_its_module: bool,
@@ -198,6 +201,7 @@ impl Default for EnvironmentConfig {
             captured_targets_with_keys_force_temporaries: false,
             unreachable_code_is_reported_at_its_function: false,
             tagged_templates_are_always_called: false,
+            finally_blocks_are_lowered: false,
             react_is_known_by_its_module: true,
             dependencies_are_sorted_by_bytes: false,
             callback_dependencies_end_before_current: false,

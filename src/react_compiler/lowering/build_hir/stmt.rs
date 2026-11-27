@@ -45,6 +45,20 @@ fn lower_block_statement(
     lower_block_statement_inner(builder, body)
 }
 
+/// Not in upstream (oxc 4372e145f): the `finally` block of a `try`, lowered after the rest of it.
+fn lower_finally_block(
+    builder: &mut HirBuilder,
+    finally: Option<&ast::Finally>,
+) -> Result<(), CompilerDiagnostic> {
+    let Some(finally) = finally else {
+        return Ok(());
+    };
+    builder.push_scope(finally.loc);
+    let result = lower_block_statement(builder, finally.stmts.slice());
+    builder.pop_scope();
+    result
+}
+
 pub(super) fn lower_block_statement_with_scope(
     builder: &mut HirBuilder,
     body: &[Stmt],
@@ -1338,6 +1352,14 @@ fn lower_statement(
                         loc,
                         suggestions: None,
                     })?;
+                    if builder.environment().config.finally_blocks_are_lowered {
+                        // Not in upstream (oxc 4372e145f).
+                        builder.push_scope(stmt_loc);
+                        let result = lower_block_statement(builder, &try_stmt.body);
+                        builder.pop_scope();
+                        result?;
+                        lower_finally_block(builder, try_stmt.finally.as_ref())?;
+                    }
                     return Ok(());
                 }
             };
@@ -1532,6 +1554,9 @@ fn lower_statement(
                 },
                 continuation_block,
             );
+            if builder.environment().config.finally_blocks_are_lowered {
+                lower_finally_block(builder, try_stmt.finally.as_ref())?;
+            }
         }
         Data::SLabel(labeled_stmt) => {
             let label_name = label_string(builder, Some(labeled_stmt.name))?

@@ -1,6 +1,6 @@
 use bun_quic::Direction::{Bidirectional, Unidirectional};
 use bun_quic::Side::Client;
-use bun_quic::{Algorithm, Duration, KeepAlive, Layer, StreamId};
+use bun_quic::{Algorithm, Connection, Duration, KeepAlive, Layer, StreamId};
 
 use crate::harness::messages::{GET, OK};
 use crate::harness::paths::{NEW, new_id};
@@ -806,6 +806,133 @@ fn several_packets_are_probed_sooner() {
             assert_eq!(raw.now - start, Duration::from_micros(timeout));
         }
     }
+}
+
+/// With a peer that is late for the pacer, and then sends all that is left.
+fn late_burst(len: usize, finishes: bool) -> Raw {
+    let mut raw = Raw::client().connected();
+    let id = raw.peer.open(Unidirectional);
+    raw.peer.send(id, &filler(0, len), finishes);
+    raw.forget();
+    raw.now = raw.now + Duration::from_millis(15);
+    raw.forget();
+    raw
+}
+
+#[test]
+fn burst_with_nothing_to_follow_is_probed_at_once() {
+    let mut raw = late_burst(35_000, true);
+    assert_eq!((raw.wait(), raw.frames()), (1, "ping, ping, ping".into()));
+    for timeout in [40, 80] {
+        assert_eq!(raw.wait(), timeout);
+        assert!(raw.outline().starts_with("1[ack, stream]; 1[ack, stream]"));
+    }
+
+    assert_eq!(late_burst(25_000, true).wait(), 40);
+
+    let mut raw = late_burst(35_000, true);
+    raw.send("ack");
+    raw.advance(500);
+    assert_eq!(raw.frames(), "");
+
+    let mut raw = late_burst(35_000, true);
+    raw.now = raw.now + Duration::from_millis(40);
+    assert!(raw.outline().starts_with("1[ack, stream]; 1[ack, stream]"));
+    assert_eq!(raw.wait(), 80);
+}
+
+#[test]
+fn what_follows_a_burst_takes_data_along_if_the_window_has_room() {
+    for (len, delay, expected) in [
+        (47_300, 0, "1[ack, ping]; 1[ack, ping]; 1[ack, ping]"),
+        (46_000, 1, "1[ack, stream]; 1[ack, ping]; 1[ack, ping]"),
+    ] {
+        let mut raw = late_burst(len, false);
+        raw.now = raw.now + Duration::from_millis(delay);
+        let id = raw.peer.open(Unidirectional);
+        raw.peer.send(id, &filler(0, 30_000), true);
+        raw.advance(1 - delay);
+        assert_eq!(raw.outline(), expected);
+    }
+}
+
+#[test]
+fn what_follows_a_burst_goes_on_its_own() {
+    let mut raw = Raw::client().connected();
+    let id = raw.peer.open(Unidirectional);
+    raw.peer.send(id, &filler(0, 300_000), false);
+    for _ in 0..30 {
+        raw.advance(RTT);
+        raw.send("ack");
+    }
+    raw.peer.send(id, &filler(0, 100_000), false);
+    raw.forget();
+    raw.now = raw.now + Duration::from_millis(15);
+    raw.forget();
+    assert!(core::mem::take(&mut raw.peer.longest_run) > 2);
+    assert_eq!((raw.wait(), raw.frames()), (1, "ping, ping, ping".into()));
+    assert_eq!(raw.peer.longest_run, 1);
+}
+
+#[test]
+fn startup_outlasts_late_bursts_unless_more_is_to_come() {
+    type Action = fn(&mut Connection, StreamId);
+    let actions: [Action; 2] = [|_, _| {}, |it, id| it.await_data(id, true)];
+    let lens = actions.map(|action| {
+        let mut raw = Raw::client().connected();
+        let [id, other] = [(); 2].map(|()| raw.peer.open(Unidirectional));
+        let mut first = 0;
+        for _ in 0..8 {
+            raw.peer.send(id, &filler(0, 30_000), false);
+            first = raw.take().len();
+            raw.now = raw.now + Duration::from_millis(RTT);
+            action(raw.connection(), StreamId(other));
+            raw.send("ack");
+            raw.connection().await_data(StreamId(other), false);
+            raw.advance(RTT);
+            raw.send("ack");
+            raw.advance(RTT);
+            raw.send("ack");
+            raw.forget();
+        }
+        first
+    });
+    assert_eq!(lens, [16, 12]);
+}
+
+#[test]
+fn probe_that_follows_a_burst_is_not_in_the_way_of_the_next_one() {
+    let mut raw = late_burst(35_000, true);
+    raw.wait();
+    let probe = raw.take()[0].number;
+    raw.advance(RTT);
+    raw.send(&format!("ack 0-{}", probe - 1));
+    let id = raw.peer.open(Unidirectional);
+    raw.peer.send(id, &filler(0, 30_000), true);
+    assert_eq!(raw.sizes().len(), 16);
+}
+
+#[test]
+fn other_pings_are_in_flight() {
+    let time_out: fn(&mut Raw) = |raw| {
+        raw.request_packets("a");
+        raw.wait();
+    };
+    let acknowledge: fn(&mut Raw) = |raw| (0..42).for_each(|_| raw.send("ping"));
+    let lens = [time_out, acknowledge].map(|elicit| {
+        let mut raw = Raw::client().connected();
+        raw.advance(RTT);
+        raw.send("ack");
+        elicit(&mut raw);
+        let last = raw.take().pop().unwrap();
+        assert_eq!(last.frames.last().unwrap(), "ping");
+        raw.advance(RTT);
+        raw.send(&format!("ack 0-{}", last.number - 1));
+        let id = raw.peer.open(Unidirectional);
+        raw.peer.send(id, &filler(0, 30_000), true);
+        raw.sizes().len()
+    });
+    assert_eq!(lens, [13, 15]);
 }
 
 #[test]

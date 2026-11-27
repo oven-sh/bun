@@ -9,8 +9,8 @@ const MIN_PERIOD_LEN: u64 = 1024 * SEGMENT;
 const TOLERATED_SLOWDOWN: u64 = 25;
 const TOLERATED_LOSS: u64 = 60;
 /// In periods.
-const MIN_BACKOFF: u32 = 7;
-const MAX_BACKOFF: u32 = 63;
+const MIN_BACKOFF: u8 = 7;
+const MAX_BACKOFF: u8 = 63;
 
 #[derive(Default)]
 struct Period {
@@ -18,7 +18,7 @@ struct Period {
     acked: u64,
     lost: u64,
     /// That have cut bursts short.
-    max_overflows: u32,
+    max_overflows: u8,
     /// It is made of whole cycles, in each of which the sender probes for bandwidth.
     is_comparable: bool,
 }
@@ -26,14 +26,14 @@ struct Period {
 #[derive(Default)]
 pub(super) struct Trial {
     /// How many overflows are disregarded.
-    spared: u32,
+    spared: u8,
     /// Whether that number has yet to prove itself.
     is_new: bool,
     /// The last one that has not.
-    failed: u32,
+    failed: u8,
     /// In how many periods to try it again.
-    pause: u32,
-    backoff: u32,
+    pause: u8,
+    backoff: u8,
     /// From bursts that were too long.
     is_recovering: bool,
     period: Period,
@@ -46,7 +46,7 @@ pub(super) struct Trial {
 
 impl Trial {
     #[inline]
-    pub(super) fn max_overflows(&self) -> u32 {
+    pub(super) fn max_overflows(&self) -> u8 {
         MAX_OVERFLOWS - self.spared
     }
 
@@ -67,7 +67,7 @@ impl Trial {
         now: Instant,
         feedback: &Feedback,
         starts_cycle: Option<bool>,
-        overflows: u32,
+        overflows: u8,
     ) {
         let period = &mut self.period;
         period.acked += feedback.acked;

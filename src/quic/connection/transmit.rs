@@ -12,7 +12,7 @@ use super::timers::Timer;
 use super::{Connection, Ending, Phase, ack_frequency};
 use crate::batch::{Batch, Position};
 use crate::coding::{Write, two_byte_varint, varint_len};
-use crate::congestion::Permit;
+use crate::congestion::{Flight, Permit};
 use crate::crypto::TAG_LEN;
 use crate::endpoint::Shared;
 use crate::error::Result;
@@ -55,6 +55,8 @@ struct Draft {
     first_frame: u32,
     control: Control,
     is_eliciting: bool,
+    /// It only asks what has become of a burst.
+    is_follow_up: bool,
     /// The datagram has to have at least [`MIN_DATAGRAM_LEN`] bytes.
     is_expanded: bool,
     /// After the tag.
@@ -206,7 +208,7 @@ impl Connection {
             let next_number = self.spaces.data.next_number;
             if self.congestion.spreads_out() {
                 self.runs.suspend(next_number);
-            } else if self.pto_count == 0 {
+            } else if self.pto_count == 0 && !draft.is_follow_up {
                 let (to_send, room) = (|| self.streams.to_send(), self.congestion.room());
                 max_run = (self.runs).max_len(next_number, to_send, room, self.path.mtu.current);
             }
@@ -308,6 +310,7 @@ impl Connection {
             first_frame: space.sent.frames.end(),
             control: Control::empty(),
             is_eliciting: false,
+            is_follow_up: false,
             is_expanded: false,
             end: 0,
         };
@@ -331,7 +334,10 @@ impl Connection {
         }
         space.sent.packets.push_back(SentPacket {
             number: draft.packet.number,
-            flight: self.congestion.on_sent(now, len as u16, &self.rtt),
+            flight: match draft.is_follow_up {
+                true => Flight::aside(now),
+                false => self.congestion.on_sent(now, len as u16, &self.rtt),
+            },
             first_frame: draft.first_frame,
             frame_count: space.sent.frames.end().wrapping_sub(draft.first_frame) as u16,
             control: draft.control,
@@ -405,7 +411,9 @@ impl Connection {
 
     #[inline]
     fn may_send(&mut self, now: Instant) -> bool {
-        match (self.congestion).permit(now, self.streams.state.unsent()) {
+        let state = &self.streams.state;
+        let expects_more = || state.expects_more() || !self.datagrams.unsent.is_empty();
+        match (self.congestion).permit(now, state.unsent(), expects_more) {
             Permit::Now => {
                 let is_held_back = self.spaces.data.sent.packets.len() >= MAX_TRACKED_PACKETS
                     || self.has_peer_moved();
@@ -459,15 +467,17 @@ impl Connection {
         shared: &mut Shared,
     ) -> Option<Draft> {
         let is_probe = self.spaces.data.probes > 0;
-        let has_frames = is_probe || self.has_frames();
+        let is_follow_up = is_probe && self.pto_count == 0 && self.is_confirmed();
+        let is_exempt = is_probe && !is_follow_up;
+        let has_frames = is_exempt || self.has_frames();
         if !has_frames && !self.streams.state.awaits_writes() {
             (self.congestion).on_run_dry(self.streams.state.awaits_data());
         }
         let may_elicit =
-            has_frames && (is_probe || self.may_send(now) && !self.waits_for_more(now));
+            has_frames && (is_exempt || self.may_send(now) && !self.waits_for_more(now));
         let breaks_silence = core::mem::take(&mut self.silence.owes_ping);
         let is_ack_due = self.spaces.data.received.is_ack_due || breaks_silence;
-        if !may_elicit && !is_ack_due {
+        if !may_elicit && !is_ack_due && !is_probe {
             return None;
         }
         let (mut draft, end) = self.begin(SpaceId::Data, out, end)?;
@@ -498,6 +508,7 @@ impl Connection {
         if !draft.is_eliciting && (is_probe || asks_for_ack || breaks_silence) && out.len() < end {
             out.push(kind::PING as u8);
             draft.is_eliciting = !breaks_silence;
+            draft.is_follow_up = is_follow_up;
         }
         draft.finish(out)
     }

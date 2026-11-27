@@ -16,6 +16,7 @@ fn path(bytes_per_second: u64) -> Network {
         it.parameters.initial_max_data = 90_000_000;
         it.parameters.initial_max_stream_data_uni = 90_000_000;
         it.parameters.initial_max_streams_uni = 9000;
+        it.parameters.max_datagram_frame_size = 1200;
     });
     (network.bytes_per_second, network.max_queueing) = (bytes_per_second, Duration::from_secs(1));
     network.connect();
@@ -259,6 +260,29 @@ fn time_is_made_up_for_if_more_is_awaited() {
         raw.peer.send(id, &filler(0, 90_000), false);
         assert_eq!(raw.wake_after(0, id) / 1000, expected);
     }
+}
+
+#[test]
+fn window_follows_the_rate_however_busy_the_application_is() {
+    let windows = [false, true].map(|sends_datagrams| {
+        let mut network = path(1_250_000);
+        if !sends_datagrams {
+            network.upload(3, 9_000_000);
+        }
+        for period in 0..300 {
+            if period == 30 {
+                network.bytes_per_second /= 5;
+            }
+            let connection = network.client.connection();
+            while sends_datagrams && connection.unsent_datagrams() < 300 {
+                connection.send_datagram(0, vec![0; 1100]);
+            }
+            network.now = network.now + Duration::from_millis(20);
+            network.run_for(Duration::from_millis(3));
+        }
+        network.client.connection().stats().congestion_window
+    });
+    assert!(windows.iter().all(|&it| it < 20_000), "{windows:?}");
 }
 
 #[test]

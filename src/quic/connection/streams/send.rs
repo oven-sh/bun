@@ -414,6 +414,11 @@ impl State {
         self.awaited > 0
     }
 
+    /// Than what is unsent.
+    pub(crate) fn expects_more(&self) -> bool {
+        self.awaits_data() || !self.writable.is_empty() || self.has_lost_data()
+    }
+
     pub(crate) fn want_write(&mut self, id: StreamId, stream: &mut Stream) {
         if stream.flags.contains(Flags::WRITE_DONE) {
             return;
@@ -1143,6 +1148,20 @@ mod tests {
             stream.set_unwritten(LONG_LEN - 2, taken);
             assert_eq!(stream.flags.contains(Flags::WILL_BE_LONG), is_long);
         }
+    }
+
+    #[test]
+    fn what_is_awaited_lost_or_yet_to_be_written_is_more() {
+        let (mut state, mut stream) = (in_order(), stream(0, 1, 0));
+        assert!(!state.expects_more());
+        state.await_data(&mut stream, true);
+        assert!(state.expects_more());
+        state.await_data(&mut stream, false);
+        state.lost.push_back(ID);
+        assert!(state.expects_more());
+        state.lost.clear();
+        state.want_write(ID, &mut stream);
+        assert!(state.expects_more());
     }
 
     #[test]

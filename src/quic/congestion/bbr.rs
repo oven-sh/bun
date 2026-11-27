@@ -230,11 +230,9 @@ impl Bbr {
         self.recovery.is_some()
     }
 
-    pub(super) fn holds_back(&self) -> bool {
-        self.is_recovering()
-            || self.pacing_gain() < Gain::UNIT
-            || self.was_congested_in_cycle && self.is_cycling()
-            || self.suspects_short_queue()
+    #[inline]
+    pub(super) fn is_draining(&self) -> bool {
+        matches!(self.mode, Mode::Drain | Mode::ProbeRtt { .. })
     }
 
     pub(super) fn min_rtt(&self, rtt: &Rtt) -> Duration {
@@ -271,6 +269,16 @@ impl Bbr {
     pub(super) fn on_application_limited(&mut self, last_sent: u64) {
         self.sampler.on_application_limited(last_sent);
         self.ran_dry_at = last_sent;
+    }
+
+    /// For when the rate of what follows is not up to the path.
+    pub(super) fn on_held_back(&mut self, last_sent: u64) {
+        self.sampler.on_application_limited(last_sent);
+    }
+
+    /// For time in which the sender did not get to run, which says nothing about the path.
+    pub(super) fn skip_until(&mut self, time: Instant) {
+        self.sampler.sent_at = self.sampler.sent_at.max(time);
     }
 
     /// §4.3.4.4.

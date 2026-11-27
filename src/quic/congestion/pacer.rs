@@ -1,6 +1,8 @@
 //! RFC 9002 §7.7.
 
 use super::Feedback;
+use super::bandwidth_sampler::micros;
+use super::catch_up::CatchUp;
 use super::rtt::{GRANULARITY, Rtt};
 use super::trial::Trial;
 use crate::time::{Duration, Instant};
@@ -12,12 +14,12 @@ const BURST: u8 = 10;
 const MIN_CHARGE: u64 = 1200;
 const MAX_QUANTUM: u64 = 64 * 1024;
 const MICROS_PER_HALVING: u64 = 512;
-pub(super) const MAX_OVERFLOWS: u32 = 5;
+pub(super) const MAX_OVERFLOWS: u8 = 5;
 /// After how many without an overflow one is forgotten.
 const QUANTA_PER_OVERFLOW: u64 = 256;
 /// If it is back within this many, it takes four times as long to forget it again.
 const QUANTA_PER_RELAPSE: u64 = 32;
-const MAX_RELAPSES: u32 = 3;
+const MAX_RELAPSES: u8 = 3;
 /// In bytes. It takes more than a burst to overflow a longer one.
 const SHORT_QUEUE: u64 = 96 * 1024;
 /// In packets.
@@ -32,7 +34,11 @@ const SHARED_DOWN_TO: u32 = 3_000;
 /// The share from which on the ends get lost often enough by chance.
 const LOSSY_ABOVE: u32 = 30_000;
 const MIN_SHARED_QUANTUM: u64 = 4096;
-const MAX_SHARED_OVERFLOWS: u32 = 2;
+const MAX_SHARED_OVERFLOWS: u8 = 2;
+/// What can always be made up for.
+const MIN_LAG: Duration = Duration::from_millis(2);
+/// To be very late is rare if it has not happened for so many times as long.
+const RARE_AFTER: u64 = 5;
 const FRACTION_BITS: u32 = 24;
 
 /// Of a packet in its burst.
@@ -54,24 +60,29 @@ pub(super) struct Pacer {
     catch_up_until: Instant,
     /// Since that was set.
     was_window_full: bool,
+    catch_up: CatchUp,
+    /// When the burst started that is being watched, or would have.
+    late_at: Instant,
+    /// In microseconds. What a sender that waits for the window is taken to be late by, as it has no way to tell.
+    lateness: u32,
     /// What `next` is rounded down by, in fractions of a microsecond.
-    remainder: u64,
+    remainder: u32,
     /// In fractions of a microsecond.
     time_per_byte: u64,
     max_lag: Duration,
     /// How many bytes go out together.
-    quantum: u64,
+    quantum: u32,
     /// The part of it that does not depend on the rate.
-    bonus: u64,
+    bonus: u32,
     /// Of the current one.
-    rest: u64,
+    rest: u32,
     /// Of a queue on the path. Each one halves the bursts.
-    overflows: u32,
+    overflows: u8,
     sent_since_overflow: u64,
     /// Or rather since one was forgotten.
     has_forgotten: bool,
     /// Which overflow has come back, and how many times.
-    relapses: (u32, u32),
+    relapses: (u8, u8),
     last_sent_at: Instant,
     /// When what has been sent is through an interface that is only faster than the pace by a third.
     left_at: Instant,
@@ -94,7 +105,10 @@ pub(super) struct Pacer {
 impl Pacer {
     pub(super) fn set_rate(&mut self, len: u64, per: Duration, rtt: &Rtt) {
         let time_per_byte = per.as_micros().saturating_mul(1 << FRACTION_BITS) / len.max(1);
-        if self.was_window_full && time_per_byte < self.time_per_byte {
+        if self.was_window_full
+            && self.catch_up_until != Instant::NEVER
+            && time_per_byte < self.time_per_byte
+        {
             // It stays as many bytes.
             let lag = self.catch_up_until - GRANULARITY - self.next;
             self.next = self.next + (lag - lag * time_per_byte / self.time_per_byte);
@@ -106,14 +120,15 @@ impl Pacer {
             true => MAX_QUANTUM >> (rtt.min.as_micros() / MICROS_PER_HALVING).min(63),
             false => 0,
         }
-        .min(self.max_quantum());
+        .min(self.max_quantum()) as u32;
         let steady = len.saturating_mul(GRANULARITY.as_micros()) / per.as_micros().max(1);
         self.steady = steady;
         let limit = match self.is_shared {
             true => (steady / 2).clamp(MIN_SHARED_QUANTUM, MAX_QUANTUM),
             false => 0,
         };
-        self.quantum = (steady.saturating_add(self.bonus)).clamp(1, self.max_quantum().max(limit));
+        self.quantum =
+            (steady.saturating_add(self.bonus())).clamp(1, self.max_quantum().max(limit)) as u32;
     }
 
     #[inline]
@@ -130,16 +145,16 @@ impl Pacer {
     }
 
     pub(super) fn is_queue_short(&self, queue_delay: Duration) -> bool {
-        queue_delay.as_micros() < self.time_per_byte.saturating_mul(SHORT_QUEUE) >> FRACTION_BITS
+        queue_delay < self.time_for(SHORT_QUEUE)
     }
 
     #[inline]
     pub(super) fn bonus(&self) -> u64 {
-        self.bonus
+        self.bonus.into()
     }
 
     pub(super) fn quantum(&self) -> u64 {
-        self.quantum
+        self.quantum.into()
     }
 
     /// What the rate comes to in [`GRANULARITY`].
@@ -154,13 +169,14 @@ impl Pacer {
         if !is_idle && self.rest == 0 && self.next > now + self.lead() {
             return 0;
         }
-        let lag = match now <= self.catch_up_until {
-            true => now - self.next,
+        let is_owed = self.catch_up.is_on || !self.is_rarely_as_late(now);
+        let lag = match now <= self.catch_up_until && is_owed {
+            true => (now - self.next).min(self.max_owed()),
             false => Duration::ZERO,
         };
         let paced = (self.steady).saturating_mul((lag + GRANULARITY).as_micros());
         let burst = if is_idle { BURST } else { self.burst_tokens };
-        paced / GRANULARITY.as_micros() + self.quantum + u64::from(burst + 1) * datagram_len
+        paced / GRANULARITY.as_micros() + self.quantum() + u64::from(burst + 1) * datagram_len
     }
 
     /// How early a quantum may go out.
@@ -186,7 +202,82 @@ impl Pacer {
             return None;
         }
         (self.catch_up_until, self.was_window_full) = (self.next + self.max_lag, false);
+        self.catch_up.end();
         Some(self.next)
+    }
+
+    /// After [`Self::delay`]. What is queued on the path thus comes to last until a busy sender is back.
+    #[inline]
+    pub(super) fn catch_up_however_late(&mut self) {
+        self.catch_up_until = Instant::NEVER;
+    }
+
+    /// Before it. `next_sent` is the sequence number of the packet in question. Returns whether this keeps back what
+    /// the path may well have taken.
+    #[inline]
+    pub(super) fn limit_catching_up(
+        &mut self,
+        now: Instant,
+        next_sent: u64,
+        datagram_len: u16,
+        window: u64,
+    ) -> bool {
+        let is_over = now > self.catch_up_until;
+        if is_over || now > self.last_sent_at + MIN_LAG {
+            self.catch_up.end();
+        }
+        !is_over
+            && !self.catch_up.is_on
+            && self.next + MIN_LAG < now
+            && self.start_catching_up(now, next_sent, datagram_len, window)
+    }
+
+    #[inline(never)]
+    fn start_catching_up(
+        &mut self,
+        now: Instant,
+        next_sent: u64,
+        datagram_len: u16,
+        window: u64,
+    ) -> bool {
+        let (lag, is_rare) = (now - self.next, self.is_rarely_as_late(now));
+        if is_rare || !self.catch_up.is_watching() {
+            self.late_at = now;
+        }
+        if is_rare {
+            self.on_limited_otherwise();
+            return false;
+        }
+        let mut owed = lag.min(self.max_owed());
+        let is_cut_short = owed < lag;
+        if self.was_window_full {
+            let arrived = self.catch_up.arrived().unwrap_or(0);
+            let step = self.time_for((window / 2).max(arrived + arrived * 3 / 8));
+            owed = (owed.min(step)).min(Duration::from_micros(self.lateness.into()));
+            self.lateness /= 2;
+        } else {
+            self.lateness = micros(lag);
+        }
+        self.next = now - owed;
+        self.catch_up.start(next_sent, datagram_len, is_cut_short);
+        is_cut_short && self.catch_up.is_limit_proven()
+    }
+
+    /// If so, a queue that lasts until the next time would be in the way for much longer than it is of use.
+    #[inline]
+    fn is_rarely_as_late(&self, now: Instant) -> bool {
+        let lag = now - self.next;
+        lag > self.max_lag && now - self.late_at > lag * RARE_AFTER
+    }
+
+    #[inline]
+    fn max_owed(&self) -> Duration {
+        self.time_for(self.catch_up.limit.into()).max(MIN_LAG)
+    }
+
+    #[inline]
+    fn time_for(&self, len: u64) -> Duration {
+        Duration::from_micros(self.time_per_byte.saturating_mul(len) >> FRACTION_BITS)
     }
 
     #[inline]
@@ -194,33 +285,30 @@ impl Pacer {
         self.catch_up_until = Instant::default();
     }
 
-    /// Whoever wakes late fills the window before it has read the acknowledgments that are waiting.
+    /// Whoever wakes late fills the window before it has read the acknowledgments that are waiting. One that is still
+    /// growing is going to be full again when the sender is next held up.
     #[inline]
-    pub(super) fn on_window_full(&mut self, now: Instant, window: u64) {
+    pub(super) fn on_window_full(&mut self, now: Instant, window: u64, is_growing: bool) {
         if core::mem::replace(&mut self.was_window_full, true) {
             return;
         }
-        if self.is_queue_in_doubt() || self.next + GRANULARITY >= now {
-            return self.on_limited_otherwise();
+        if is_growing && self.catch_up.is_watching() {
+            // How much goes out at once depends on how far it opens.
+            self.catch_up.is_on = false;
+        } else if self.next + GRANULARITY >= now {
+            self.on_limited_otherwise();
+        } else {
+            self.next = self.next.max(now - self.time_for(window));
+            self.catch_up_until = self.catch_up_until.min(now + GRANULARITY);
         }
-        let owed = self.time_per_byte.saturating_mul(window / 2) >> FRACTION_BITS;
-        self.next = self.next.max(now - Duration::from_micros(owed));
-        self.catch_up_until = self.catch_up_until.min(now + GRANULARITY);
     }
 
-    /// Once they have been read.
+    /// For when that has turned out to be wrong once they have been read.
     #[inline]
-    pub(super) fn reconsider_catching_up(&mut self, is_held_back: bool) {
-        if self.was_window_full && (is_held_back || self.is_queue_in_doubt()) {
+    pub(super) fn stop_catching_up(&mut self) {
+        if self.was_window_full {
             self.on_limited_otherwise();
         }
-    }
-
-    fn is_queue_in_doubt(&self) -> bool {
-        self.overflows > 0
-            || self.trial.max_overflows() < MAX_OVERFLOWS
-            || self.trial.is_unsettled()
-            || self.is_shared
     }
 
     pub(super) fn on_application_limited(&mut self, awaits_more: bool) {
@@ -228,6 +316,22 @@ impl Pacer {
             self.on_limited_otherwise();
         }
         self.has_run_dry = true;
+        self.catch_up.on_run_dry();
+    }
+
+    #[inline]
+    pub(super) fn ends_with_burst(&self) -> bool {
+        self.has_run_dry && self.catch_up.is_long()
+    }
+
+    pub(super) fn end_burst(&mut self) {
+        self.catch_up.on_followed_up();
+    }
+
+    /// Whether what makes up for waking late is on its way.
+    #[inline]
+    pub(super) fn awaits_burst(&self) -> bool {
+        self.catch_up.is_watching()
     }
 
     pub(super) fn hurry(&mut self) {
@@ -236,6 +340,7 @@ impl Pacer {
 
     pub(super) fn on_idle_restart(&mut self, now: Instant, is_recovering: bool) {
         (self.next, self.left_at) = (self.next.min(now), now);
+        self.catch_up.end();
         self.is_restarting = self.has_run_dry && !is_recovering;
         if now - self.last_sent_at > self.max_lag {
             self.trial.abandon();
@@ -263,6 +368,7 @@ impl Pacer {
 
     #[inline]
     pub(super) fn on_sent(&mut self, now: Instant, len: u16) -> Place {
+        self.catch_up.on_sent();
         let time = self.time_per_byte.saturating_mul(len.into());
         let pause = Duration::from_micros(time.saturating_mul(PAUSE) >> FRACTION_BITS);
         let gap = now - self.last_sent_at;
@@ -284,7 +390,7 @@ impl Pacer {
             self.burst_tokens -= 1;
             return place;
         }
-        self.rest = self.rest.saturating_sub(charge);
+        self.rest = self.rest.saturating_sub(charge as u32);
         self.sent_since_overflow += len;
         if self.sent_since_overflow > QUANTA_PER_OVERFLOW * self.max_quantum() {
             self.forget_overflow();
@@ -292,8 +398,9 @@ impl Pacer {
         if now > self.catch_up_until {
             self.next = self.next.max(now);
         }
-        let time = (self.time_per_byte.saturating_mul(charge)).saturating_add(self.remainder);
-        self.remainder = time % (1 << FRACTION_BITS);
+        let time =
+            (self.time_per_byte.saturating_mul(charge)).saturating_add(self.remainder.into());
+        self.remainder = (time % (1 << FRACTION_BITS)) as u32;
         self.next = self.next + Duration::from_micros(time >> FRACTION_BITS);
         place
     }
@@ -319,9 +426,26 @@ impl Pacer {
         self.lost_starts > LOSSY_ABOVE
     }
 
-    pub(super) fn on_feedback(&mut self, has_loss: bool) {
+    /// If the packet with this sequence number was the last one before waking late.
+    #[inline]
+    pub(super) fn woke_after(&self, sequence: u64) -> Option<Instant> {
+        (self.catch_up.started_after(sequence)).then_some(self.late_at)
+    }
+
+    #[inline]
+    pub(super) fn on_settled(&mut self, sequence: u64) {
+        self.catch_up.on_settled(sequence);
+    }
+
+    #[inline]
+    pub(super) fn on_lost(&mut self, sequence: u64) {
+        self.catch_up.on_lost(sequence);
+    }
+
+    pub(super) fn on_feedback(&mut self, feedback: &Feedback) {
         self.is_restarting = false;
-        if has_loss {
+        self.catch_up.on_feedback(feedback);
+        if feedback.lost > 0 {
             (self.burst_tokens, self.rest) = (0, 0);
         }
     }
@@ -333,10 +457,10 @@ impl Pacer {
         self.overflows = (self.overflows + 1).min(self.trial.max_overflows());
         if core::mem::take(&mut self.has_forgotten) {
             let (overflow, count) = self.relapses;
-            let count = u32::from(overflow == self.overflows) * count + 1;
+            let count = u8::from(overflow == self.overflows) * count + 1;
             self.relapses = (
                 self.overflows,
-                u32::from(is_relapse) * count.min(MAX_RELAPSES),
+                u8::from(is_relapse) * count.min(MAX_RELAPSES),
             );
         }
         self.sent_since_overflow = 0;
@@ -344,7 +468,7 @@ impl Pacer {
 
     fn forget_overflow(&mut self) {
         let (overflow, count) = self.relapses;
-        let quanta = QUANTA_PER_OVERFLOW << (u32::from(overflow == self.overflows) * 2 * count);
+        let quanta = QUANTA_PER_OVERFLOW << (u8::from(overflow == self.overflows) * 2 * count);
         if self.sent_since_overflow > quanta * self.max_quantum() {
             if overflow > self.overflows {
                 self.relapses = (0, 0);
@@ -370,7 +494,7 @@ impl Pacer {
             return self.trial.abandon();
         }
         let starts_cycle = starts_cycle.filter(|_| now - self.last_sent_at <= self.max_lag);
-        let overflows = self.overflows * u32::from(self.max_quantum() < self.steady);
+        let overflows = self.overflows * u8::from(self.max_quantum() < self.steady);
         self.trial.update(now, feedback, starts_cycle, overflows);
         self.overflows = self.overflows.min(self.trial.max_overflows());
     }

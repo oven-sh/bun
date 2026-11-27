@@ -1,7 +1,8 @@
 use std::collections::{BTreeSet, VecDeque};
-use std::ops::RangeInclusive;
+use std::ops::{Range, RangeInclusive};
 
 use super::bandwidth_sampler::BandwidthSampler;
+use super::catch_up::CatchUp;
 use super::ceiling::Ceiling;
 use super::crowd::Crowd;
 use super::pacer::MAX_OVERFLOWS;
@@ -74,7 +75,7 @@ impl Sender {
     }
 
     fn fill(&mut self) -> &mut Self {
-        while self.controller.permit(self.now, 0) != Permit::Blocked {
+        while self.controller.permit(self.now, 0, || true) != Permit::Blocked {
             self.send(1);
         }
         self
@@ -83,7 +84,7 @@ impl Sender {
     /// Returns how many packets are permitted right now.
     fn burst(&mut self) -> u64 {
         let before = self.controller.in_flight();
-        while self.controller.permit(self.now, 0) == Permit::Now {
+        while self.controller.permit(self.now, 0, || true) == Permit::Now {
             self.send(1);
         }
         (self.controller.in_flight() - before) / SEGMENT
@@ -156,6 +157,8 @@ struct Path {
     ack_period: u64,
     /// Likewise for when the sender gets to run.
     wake_period: u64,
+    /// For how long the sender does not get to run, and at the multiples of what.
+    busy: (u64, u64),
     random: Random,
     free_at: Instant,
     /// When the sender learns whether they have arrived.
@@ -182,6 +185,7 @@ impl Path {
             drops: 0,
             ack_period: 1,
             wake_period: 1,
+            busy: (0, 1),
             random: Random(1),
             free_at: START,
             pending: VecDeque::new(),
@@ -232,7 +236,7 @@ impl Path {
         self.controller.end_ack(self.now, &self.rtt);
         let (mut next, mut burst) = (Instant::NEVER, 0);
         while self.unsent > 0 {
-            match (self.controller).permit(self.now, self.unsent.saturating_mul(LEN)) {
+            match (self.controller).permit(self.now, self.unsent.saturating_mul(LEN), || false) {
                 Permit::Now => self.send(),
                 Permit::At(time) => {
                     next = time;
@@ -248,6 +252,8 @@ impl Path {
         self.longest_burst = self.longest_burst.max(burst);
         if let Some((known_at, ..)) = self.pending.front() {
             self.now = round_up(next.min(*known_at), self.wake_period);
+            let (len, period) = self.busy;
+            self.now = self.now + micros(len.saturating_sub(self.now.as_micros() % period));
         }
     }
 
@@ -382,6 +388,13 @@ fn pace(pacer: &mut Pacer, now: Instant) -> (u64, Duration) {
         }
         pacer.on_sent(now, 1000);
         count += 1;
+    }
+}
+
+fn losing(lost: u64) -> Feedback {
+    Feedback {
+        lost,
+        ..Feedback::default()
     }
 }
 
@@ -620,7 +633,7 @@ fn pacer_allows_a_burst_after_a_pause() {
     pacer.on_idle_restart(START, true);
     assert_eq!(pace(&mut pacer, START), (1, millis(5)));
     pacer.on_idle_restart(START, false);
-    pacer.on_feedback(true);
+    pacer.on_feedback(&losing(1));
     assert_eq!(pace(&mut pacer, START), (1, millis(5)));
     pacer.on_overflow(true, 0);
     for (lost_starts, burst) in [(0, 6), (15, 6), (1, 11)] {
@@ -668,7 +681,7 @@ fn pacer_is_early_by_single_packets_while_the_burst_is_unheard_of() {
         pacer.on_idle_restart(START, is_recovering);
         pace(&mut pacer, START);
         if is_heard_of {
-            pacer.on_feedback(false);
+            pacer.on_feedback(&losing(0));
         }
         let (count, delay) = pace(&mut pacer, START + micros(100));
         assert_eq!(count, early, "{len}");
@@ -689,18 +702,18 @@ fn feedback_ends_the_caution_after_a_pause() {
 
 #[test]
 fn pacer_makes_up_for_waking_late() {
-    for (late, is_limited_otherwise, expected) in [
-        (0, false, 1),
-        (20, false, 5),
-        (50, false, 11),
-        (51, false, 1),
-        (20, true, 1),
+    let nothing: fn(&mut Pacer) = |_| {};
+    for (late, before, expected) in [
+        (0, nothing, 1),
+        (20, nothing, 5),
+        (50, nothing, 11),
+        (51, nothing, 1),
+        (20, Pacer::on_limited_otherwise, 1),
+        (5000, Pacer::catch_up_however_late, 1001),
     ] {
         let mut pacer = pacer_at(1000, millis(5));
         let (_, delay) = pace(&mut pacer, START);
-        if is_limited_otherwise {
-            pacer.on_limited_otherwise();
-        }
+        before(&mut pacer);
         let (count, _) = pace(&mut pacer, START + delay + millis(late));
         assert_eq!(count, expected, "{late}");
     }
@@ -709,73 +722,843 @@ fn pacer_makes_up_for_waking_late() {
 #[test]
 fn pacer_makes_up_for_waking_late_once_the_window_has_room() {
     let nothing: fn(&mut Pacer) = |_| {};
-    let overflow: fn(&mut Pacer) = |it| it.on_overflow(false, 0);
-    let share_by_now: fn(&mut Pacer) = |it| {
-        (0..9).for_each(|_| it.on_start_settled(true));
-        it.reconsider_catching_up(false);
-    };
     let double: fn(&mut Pacer) = |it| it.set_rate(2000, millis(1), &steady(millis(17)));
     let halve: fn(&mut Pacer) = |it| it.set_rate(500, millis(1), &steady(millis(17)));
-    let share: fn(&mut Pacer) = |it| (0..9).for_each(|_| it.on_start_settled(true));
-    for (late, window, before, after, wait, expected) in [
-        (40_000, 100_000, nothing, nothing, 0, 42),
-        (40_000, 100_000, nothing, nothing, 1000, 43),
-        (40_000, 100_000, nothing, nothing, 1001, 2),
-        (40_000, 40_000, nothing, nothing, 0, 22),
-        (40_000, 2000, nothing, nothing, 0, 3),
-        (40_000, 100_000, overflow, nothing, 0, 1),
-        (40_000, 100_000, share, nothing, 0, 2),
-        (40_000, 100_000, Pacer::on_limited_otherwise, nothing, 0, 2),
-        (
-            40_000,
-            100_000,
-            nothing,
-            |it| it.reconsider_catching_up(false),
-            0,
-            42,
-        ),
-        (
-            40_000,
-            100_000,
-            nothing,
-            |it| it.reconsider_catching_up(true),
-            0,
-            2,
-        ),
-        (40_000, 100_000, nothing, share_by_now, 0, 2),
-        (40_000, 40_000, nothing, double, 0, 24),
-        (40_000, 40_000, nothing, halve, 0, 11),
-        (1001, 100_000, nothing, nothing, 1000, 4),
-        (1000, 100_000, nothing, nothing, 1000, 2),
+    for (late, max_owed, before, after, wait, expected) in [
+        (40_000, 50_000, nothing, nothing, 0, 42),
+        (40_000, 50_000, nothing, nothing, 1000, 43),
+        (40_000, 50_000, nothing, nothing, 1001, 2),
+        (40_000, 20_000, nothing, nothing, 0, 22),
+        (40_000, 1000, nothing, nothing, 0, 3),
+        (40_000, 50_000, Pacer::on_limited_otherwise, nothing, 0, 2),
+        (40_000, 50_000, nothing, Pacer::stop_catching_up, 0, 2),
+        (40_000, 20_000, nothing, double, 0, 24),
+        (40_000, 20_000, nothing, halve, 0, 11),
+        (1001, 50_000, nothing, nothing, 1000, 4),
+        (1000, 50_000, nothing, nothing, 1000, 2),
     ] {
         let mut pacer = pacer_at(1000, millis(1));
         let now = START + pace(&mut pacer, START).1 + micros(late);
         before(&mut pacer);
-        (0..2).for_each(|_| pacer.on_window_full(now, window));
+        (0..2).for_each(|_| pacer.on_window_full(now, max_owed, false));
         after(&mut pacer);
         assert_eq!(pace(&mut pacer, now + micros(wait)).0, expected, "{late}");
     }
 }
 
 #[test]
-fn pacer_is_only_held_back_if_the_window_has_been_full() {
+fn pacer_is_only_stopped_if_the_window_has_been_full() {
     let mut pacer = pacer_at(1000, millis(1));
-    pacer.on_window_full(START, 100_000);
+    pacer.on_window_full(START, 50_000, false);
     let now = START + pace(&mut pacer, START).1 + millis(40);
-    pacer.reconsider_catching_up(true);
+    pacer.stop_catching_up();
     assert_eq!(pace(&mut pacer, now).0, 42);
+}
+
+fn settle(pacer: &mut Pacer, packets: Range<u64>) {
+    packets.for_each(|it| pacer.on_settled(it));
+    pacer.on_feedback(&Feedback::default());
+}
+
+/// `lost` counts from the first packet.
+fn catch_up(it: &mut CatchUp, len: u64, is_cut_short: bool, lost: impl Iterator<Item = u64>) {
+    let first = u64::from(u32::MAX) - 5;
+    it.start(first, 1, is_cut_short);
+    (0..len).for_each(|_| it.on_sent());
+    it.end();
+    lost.for_each(|at| it.on_lost(first + at));
+    (0..len).for_each(|at| it.on_settled(first + at));
+    it.on_feedback(&Feedback::default());
+}
+
+#[test]
+fn catching_up_is_limited_by_what_gets_through() {
+    for (limit, len, early, late, expected) in [
+        (u32::MAX, 100, 0..0, 98..100, u32::MAX),
+        (u32::MAX, 100, 0..0, 97..100, 85),
+        (u32::MAX, 100, 0..0, 97..200, 85),
+        (u32::MAX, 100, 45..50, 50..62, u32::MAX),
+        (u32::MAX, 100, 45..50, 50..63, 81),
+        (u32::MAX, 100, 25..50, 76..100, u32::MAX),
+        (u32::MAX, 100, 25..50, 75..100, 44),
+        (u32::MAX, 101, 25..50, 76..101, u32::MAX),
+        (u32::MAX, 100, 1..50, 50..100, 10),
+        (u32::MAX, 100, 0..50, 50..100, u32::MAX),
+        (u32::MAX, 10, 0..0, 5..10, u32::MAX),
+        (u32::MAX, 11, 0..0, 5..11, 10),
+        (100, 100, 0..0, 50..100, 88),
+        (100, 120, 0..0, 110..120, 97),
+        (11, 11, 0..0, 5..11, 10),
+        (100, 200, 0..0, 190..200, 100),
+        (100, 100, 0..0, 0..0, 100),
+    ] {
+        let mut it = CatchUp::default();
+        it.limit = limit;
+        catch_up(&mut it, len, false, early.chain(late));
+        assert_eq!(it.limit, expected);
+    }
+}
+
+#[test]
+fn limit_of_catching_up_is_in_bytes() {
+    let mut it = CatchUp::default();
+    let bursts = [
+        (1200, 50, 10),
+        (1500, 28, 0),
+        (1500, 30, 5),
+        (1500, 27, 0),
+        (1500, 30, 7),
+        (1500, 27, 0),
+        (100, 11, 9),
+    ];
+    let limits = bursts.map(|(datagram_len, len, lost)| {
+        it.start(0, datagram_len, true);
+        (0..len).for_each(|_| it.on_sent());
+        it.end();
+        (len - lost..len).for_each(|at| it.on_lost(at));
+        (0..len).for_each(|at| it.on_settled(at));
+        it.on_feedback(&Feedback::default());
+        it.limit
+    });
+    let expected = [42_000, 46_125, 40_360, 44_382, 38_835, 42_762, 37_417];
+    assert_eq!(limits, expected);
+
+    let mut it = CatchUp::default();
+    it.start(0, 1500, false);
+    (0..11).for_each(|_| it.on_sent());
+    (2..11).for_each(|at| it.on_lost(at));
+    (0..11).for_each(|at| it.on_settled(at));
+    it.on_feedback(&Feedback::default());
+    assert_eq!(it.limit, 15_000);
+}
+
+#[test]
+fn what_has_arrived_only_counts_if_the_end_is_spared() {
+    for (early, late, expected) in [
+        (0, 0, Some(40_000)),
+        (0, 1, None),
+        (1, 2, Some(37_000)),
+        (1, 3, None),
+        (3, 0, Some(37_000)),
+    ] {
+        let mut it = CatchUp::default();
+        it.start(0, 1000, false);
+        (0..40).for_each(|_| it.on_sent());
+        (0..early)
+            .chain(40 - late..40)
+            .for_each(|at| it.on_lost(at));
+        (0..40).for_each(|at| it.on_settled(at));
+        assert_eq!(it.arrived(), expected);
+    }
+}
+
+#[test]
+fn burst_that_takes_all_there_is_has_not_been_cut_short() {
+    for (dry_after, expected) in [(19, 171), (20, 160), (21, 171)] {
+        let mut it = CatchUp::default();
+        it.limit = 160;
+        it.start(0, 1, true);
+        for sent in 1..=21 {
+            it.on_sent();
+            if sent == dry_after {
+                it.on_run_dry();
+            }
+            if sent == 20 {
+                it.end();
+                if sent != dry_after {
+                    it.on_run_dry();
+                }
+            }
+        }
+        (0..21).for_each(|at| it.on_settled(at));
+        it.on_feedback(&Feedback::default());
+        assert_eq!(it.limit, expected);
+    }
+}
+
+#[test]
+fn limit_of_catching_up_grows_ever_faster() {
+    let mut it = CatchUp::default();
+    it.limit = 160;
+    let mut grow = |lost| {
+        let len = u64::from(it.limit);
+        catch_up(&mut it, len, true, len - lost..len);
+        it.limit
+    };
+    let lens = [0; 11].map(&mut grow);
+    assert_eq!(
+        lens,
+        [171, 182, 194, 219, 247, 278, 348, 436, 546, 820, 1231]
+    );
+    assert_eq!([31, 0].map(&mut grow), [1078, 1146]);
+
+    (0..300).for_each(|_| catch_up(&mut it, 40, true, 0..0));
+    it.limit = 1000;
+    catch_up(&mut it, 40, true, 0..0);
+    assert_eq!(it.limit, 1501);
+
+    it.limit = u32::MAX - 100;
+    catch_up(&mut it, 40, true, 0..0);
+    assert_eq!(it.limit, u32::MAX);
+}
+
+#[test]
+fn limit_of_catching_up_grows_fast_if_there_is_more_room_than_last_time() {
+    for (room, expected) in [(124, [149, 159]), (123, [211, 317])] {
+        let mut it = CatchUp::default();
+        it.limit = 160;
+        catch_up(&mut it, 160, true, room..160);
+        let lens = [false, true, true].map(|is_cut_short| {
+            catch_up(&mut it, 140, is_cut_short, 0..0);
+            it.limit
+        });
+        assert_eq!((lens[0], &lens[1..]), (140, &expected[..]));
+    }
+
+    let mut it = CatchUp::default();
+    it.limit = 160;
+    for (lost, expected) in [(100, 140), (3, 123), (0, 131)] {
+        let len = u64::from(it.limit);
+        catch_up(&mut it, len, true, len - lost..len);
+        assert_eq!(it.limit, expected);
+    }
+}
+
+#[test]
+fn limit_of_catching_up_is_proven_by_a_burst_that_it_has_cut_short() {
+    let mut it = CatchUp::default();
+    for (is_cut_short, lost, expected) in [
+        (false, 0, false),
+        (true, 0, true),
+        (false, 0, true),
+        (true, 40, true),
+        (false, 3, false),
+    ] {
+        catch_up(&mut it, 40, is_cut_short, 40 - lost..40);
+        assert_eq!(it.is_limit_proven(), expected);
+    }
+}
+
+#[test]
+fn bursts_that_are_short_or_lost_altogether_tell_nothing() {
+    for (len, lost) in [(10, 5..10), (160, 0..160), (0, 0..0)] {
+        let mut it = CatchUp::default();
+        it.limit = 160;
+        catch_up(&mut it, len, true, lost);
+        assert_eq!((it.limit, it.is_watching()), (160, false));
+    }
+}
+
+#[test]
+fn catching_up_is_judged_when_its_fate_is_known() {
+    let mut it = CatchUp::default();
+    it.start(100, 1, false);
+    (0..40).for_each(|_| it.on_sent());
+    it.end();
+    it.start(140, 1, true);
+    it.on_sent();
+    it.end();
+    for (settled, are_lost, arrived, expected) in [
+        (90..100, true, Some(0), u32::MAX),
+        (140..150, false, Some(0), u32::MAX),
+        (100..120, false, Some(20), u32::MAX),
+        (121..150, true, None, u32::MAX),
+        (120..121, true, None, 18),
+        (150..151, false, None, 18),
+    ] {
+        for at in settled {
+            it.on_settled(at);
+            if are_lost {
+                it.on_lost(at);
+            }
+        }
+        it.on_feedback(&Feedback::default());
+        assert_eq!((it.arrived(), it.limit), (arrived, expected));
+    }
+
+    it.start(200, 1, false);
+    assert_eq!(it.arrived(), Some(0));
+    (0..40).for_each(|_| it.on_sent());
+    it.end();
+    (210..240).for_each(|at| it.on_lost(at));
+    (200..240).for_each(|at| it.on_settled(at));
+    it.on_feedback(&Feedback {
+        is_persistent_congestion: true,
+        ..Feedback::default()
+    });
+    it.on_feedback(&Feedback::default());
+    assert_eq!(it.limit, 18);
+}
+
+#[test]
+fn catching_up_is_watched_afresh_after_persistent_congestion() {
+    let mut it = CatchUp::default();
+    catch_up(&mut it, 40, false, 0..0);
+    it.start(100, 1, false);
+    (0..40).for_each(|_| it.on_sent());
+    it.on_feedback(&Feedback {
+        is_persistent_congestion: true,
+        ..Feedback::default()
+    });
+    catch_up(&mut it, 40, false, 20..40);
+    assert_eq!(it.limit, 18);
+}
+
+#[test]
+fn only_so_much_of_a_burst_is_watched() {
+    let mut it = CatchUp::default();
+    catch_up(&mut it, 70_000, false, 60_000..70_000);
+    assert_eq!(it.limit, 52_500);
+}
+
+#[test]
+fn what_is_sent_after_the_start_has_arrived_is_not_part_of_a_burst() {
+    for (arrived, expected) in [(99, 35), (100, u32::MAX)] {
+        let mut it = CatchUp::default();
+        it.start(100, 1, false);
+        (0..40).for_each(|_| it.on_sent());
+        it.on_settled(arrived);
+        it.on_feedback(&Feedback::default());
+        (0..40).for_each(|_| it.on_sent());
+        it.end();
+        (140..180).for_each(|at| it.on_lost(at));
+        (arrived + 1..180).for_each(|at| it.on_settled(at));
+        it.on_feedback(&Feedback::default());
+        assert_eq!(it.limit, expected);
+    }
+}
+
+#[test]
+fn burst_that_arrives_at_once_is_judged_at_once() {
+    let mut it = CatchUp::default();
+    it.start(100, 1, false);
+    (0..40).for_each(|_| it.on_sent());
+    (100..140).for_each(|at| it.on_settled(at));
+    it.on_feedback(&Feedback::default());
+    assert!(!it.is_watching());
+}
+
+/// Like [`pace`], for no more than the packets with these sequence numbers.
+fn pace_late(pacer: &mut Pacer, now: Instant, packets: Range<u64>) -> (Range<u64>, Instant) {
+    let mut sent = packets.start;
+    while sent < packets.end {
+        pacer.limit_catching_up(now, sent, 1000, 60_000);
+        if let Some(next) = pacer.delay(now) {
+            return (packets.start..sent, next);
+        }
+        pacer.on_sent(now, 1000);
+        sent += 1;
+    }
+    (packets, now)
+}
+
+#[test]
+fn pacer_keeps_to_the_limit_of_catching_up() {
+    for (per, room, late, expected) in [
+        (1000, 30, [40_000; 3], [(42, 43), (28, 29), (30, 31)]),
+        (1000, 30, [20_000; 3], [(22, 23), (22, 23), (22, 23)]),
+        (
+            1000,
+            30,
+            [40_000, 26_250, 40_000],
+            [(42, 43), (28, 29), (28, 29)],
+        ),
+        (50, 60, [2000, 9000, 0], [(80, 81), (220, 221), (40, 41)]),
+        (50, 60, [2001, 9000, 0], [(80, 81), (80, 93), (40, 41)]),
+        (50, 10, [3000; 3], [(100, 101), (80, 81), (80, 81)]),
+    ] {
+        let mut pacer = pacer_at(1000, micros(per));
+        let (mut now, mut sent) = (START + pace(&mut pacer, START).1, 0..0);
+        let lens = late.map(|late| {
+            now = now + micros(late);
+            let allowance = pacer.allowance(now, false, 1000);
+            (sent, now) = pace_late(&mut pacer, now, sent.end..u64::MAX);
+            if sent.start == 0 {
+                sent.clone().skip(room).for_each(|it| pacer.on_lost(it));
+            }
+            settle(&mut pacer, sent.clone());
+            (sent.end - sent.start, allowance / 1000)
+        });
+        assert_eq!(lens, expected);
+    }
+}
+
+#[test]
+fn catching_up_ends_with_whatever_else_holds_the_sender_back() {
+    let nothing: fn(&mut Pacer, Instant) = |_, _| {};
+    let full: fn(&mut Pacer, Instant) = |it, now| it.on_window_full(now, 90_000, false);
+    for (end, wait, expected) in [
+        (nothing, 0, 22),
+        (|it, _| it.on_limited_otherwise(), 0, 43),
+        (full, 1000, 22),
+        (full, 1001, 43),
+    ] {
+        let mut pacer = pacer_at(1000, millis(1));
+        let now = START + pace(&mut pacer, START).1 + millis(40);
+        pace_late(&mut pacer, now, 0..22);
+        end(&mut pacer, now);
+        pacer.limit_catching_up(now + micros(wait), 22, 1000, 60_000);
+        (22..25).for_each(|_| _ = pacer.on_sent(now + micros(wait), 1000));
+        let (sent, next) = pace_late(&mut pacer, now + micros(wait), 25..u64::MAX);
+        (22..sent.end).for_each(|it| pacer.on_lost(it));
+        settle(&mut pacer, 0..sent.end);
+        assert_eq!(
+            pacer.allowance(next + millis(40), false, 1000) / 1000,
+            expected
+        );
+    }
+}
+
+#[test]
+fn a_burst_is_only_watched_from_its_start() {
+    let mut pacer = pacer_at(1000, millis(1));
+    let now = START + pace(&mut pacer, START).1 + millis(40);
+    let now = pace_late(&mut pacer, now, 0..u64::MAX).1 + millis(40);
+    pace_late(&mut pacer, now, 42..60);
+    settle(&mut pacer, 0..46);
+    let (sent, next) = pace_late(&mut pacer, now, 60..u64::MAX);
+    (70..sent.end).for_each(|it| pacer.on_lost(it));
+    settle(&mut pacer, 46..sent.end);
+    assert_eq!(pacer.allowance(next + millis(40), false, 1000), 43_000);
+}
+
+#[test]
+fn limit_of_catching_up_counts_datagrams() {
+    let bursts = [(2, 1460), (3, 1460), (3, 730)].map(|(lost, datagram_len)| {
+        let mut sender = bbr_probing();
+        sender.controller.set_datagram_len(datagram_len);
+        sender.burst();
+        sender.wait(millis(8)).burst();
+        let arrived = sender.flights.len() - lost;
+        sender.wait(millis(10)).feedback(0, arrived).send(4);
+        sender.wait(millis(10)).feedback(lost, 4).send(1);
+        sender.wait(millis(10)).feedback(0, 1).burst()
+    });
+    assert_eq!(bursts, [184, 70, 46]);
+}
+
+#[test]
+fn only_bbr_catches_up_however_late() {
+    for (algorithm, expected) in [(Algorithm::Bbr, 19), (Algorithm::Cubic, 2)] {
+        let mut sender = Sender::new(algorithm);
+        sender.rtt.update(millis(40), Duration::ZERO);
+        sender.send(10).burst();
+        assert_eq!(sender.wait(millis(500)).burst(), expected);
+    }
+}
+
+#[test]
+fn bbr_owes_a_whole_window_once_it_has_started_up() {
+    let mut sender = bbr_probing();
+    sender.send(170).burst();
+    sender.wait(millis(500)).burst();
+    assert_eq!(sender.segments(), 186);
+    assert_eq!(sender.feedback(0, 170).burst(), 120);
+}
+
+#[test]
+fn a_full_window_only_ends_catching_up_once_it_has_stopped_growing() {
+    let bursts = [Sender::new(Algorithm::Bbr), bbr_probing()].map(|mut sender| {
+        sender.rtt.update(millis(10), Duration::ZERO);
+        sender.send(10).burst();
+        sender.wait(millis(50)).burst();
+        sender.wait(millis(50)).burst();
+        let len = sender.flights.len() - 1;
+        let burst = sender.wait(millis(50)).feedback(0, len).burst();
+        (burst, sender.segments())
+    });
+    assert_eq!(bursts, [(34, 63), (5, 305)]);
+}
+
+/// Of 1000 bytes per millisecond, whose window of 60,000 bytes has stopped a burst of `len` packets.
+fn pacer_with_full_window(late: Duration, len: u64) -> (Pacer, Instant) {
+    let mut pacer = pacer_at(1000, millis(1));
+    let now = START + pace(&mut pacer, START).1 + late;
+    pacer.catch_up_however_late();
+    pace_late(&mut pacer, now, 0..len);
+    pacer.on_window_full(now, 60_000, true);
+    (pacer, now)
+}
+
+#[test]
+fn growing_window_is_filled_in_steps() {
+    for (len, arrived, wait, expected) in [
+        (5, 0..5, 0, 32),
+        (5, 0..5, 40, 32),
+        (21, 0..21, 40, 32),
+        (24, 0..24, 40, 35),
+        (24, 0..23, 40, 33),
+        (40, 0..40, 40, 47),
+    ] {
+        let (mut pacer, now) = pacer_with_full_window(millis(45), len);
+        settle(&mut pacer, arrived);
+        let (sent, _) = pace_late(&mut pacer, now + millis(wait), len..u64::MAX);
+        assert_eq!(sent.end - len, expected);
+    }
+}
+
+#[test]
+fn step_does_not_outdo_a_burst_that_has_lost_its_end() {
+    let (mut pacer, now) = pacer_with_full_window(millis(45), 40);
+    pacer.on_lost(39);
+    settle(&mut pacer, 0..40);
+    let now = now + millis(40);
+    assert_eq!(pace_late(&mut pacer, now, 40..u64::MAX).0, 40..72);
+}
+
+#[test]
+fn steps_do_not_prove_the_limit_of_catching_up() {
+    let (mut pacer, now) = pacer_with_full_window(millis(45), 5);
+    settle(&mut pacer, 0..5);
+    let (sent, next) = pace_late(&mut pacer, now, 5..u64::MAX);
+    settle(&mut pacer, sent.clone());
+    pacer.on_window_full(next + millis(45), 60_000, false);
+    assert!(!pacer.limit_catching_up(next + millis(45), sent.end, 1000, 10_000));
+}
+
+#[test]
+fn waiting_for_the_window_counts_for_as_long_as_the_pacer_was_late() {
+    let (mut pacer, mut now) = pacer_with_full_window(millis(20), 5);
+    let lens = [5, 6, 7, 8, 9, 10].map(|sent| {
+        now = now + millis(40);
+        pacer.limit_catching_up(now, sent, 1000, 60_000);
+        let allowance = pacer.allowance(now, false, 1000);
+        pacer.on_sent(now, 1000);
+        allowance / 1000 - 3
+    });
+    assert_eq!(lens, [20, 10, 5, 2, 1, 0]);
+}
+
+#[test]
+fn growing_window_that_fills_in_time_ends_catching_up_unless_a_burst_is_on_its_way() {
+    for (is_growing, arrived, expected) in [(true, 21, 22), (true, 22, 2), (false, 21, 2)] {
+        let mut pacer = pacer_at(1000, millis(1));
+        let now = START + pace(&mut pacer, START).1 + millis(20);
+        let (sent, now) = pace_late(&mut pacer, now, 0..u64::MAX);
+        pacer.catch_up_however_late();
+        settle(&mut pacer, 0..arrived);
+        pacer.on_window_full(now, 60_000, is_growing);
+        let (sent, _) = pace_late(&mut pacer, now + millis(40), sent.end..u64::MAX);
+        assert_eq!(sent.end - sent.start, expected);
+    }
+}
+
+#[test]
+fn an_empty_flight_starts_another_burst() {
+    let (mut pacer, now) = pacer_with_full_window(millis(20), 5);
+    pace_late(&mut pacer, now, 5..10);
+    let now = now + millis(40);
+    pacer.on_idle_restart(now, true);
+    pacer.on_sent(now, 1000);
+    assert_eq!(pace_late(&mut pacer, now, 11..u64::MAX).0, 11..23);
+}
+
+#[test]
+fn being_very_late_is_only_made_up_for_if_it_is_common() {
+    for (late, period, expected) in [
+        (50_004, 1_000_000, [52, 52]),
+        (50_005, 1_000_000, [2, 2]),
+        (100_000, 500_000, [2, 102]),
+        (100_000, 500_001, [2, 2]),
+    ] {
+        let mut pacer = pacer_at(1000, millis(1));
+        let mut sent = 0..0;
+        let lens = [0, period].map(|at| {
+            let now = START + millis(1000) + micros(at);
+            let start = now - micros(late) - millis(2);
+            pacer.on_limited_otherwise();
+            (sent, _) = pace_late(&mut pacer, start, sent.end..u64::MAX);
+            pacer.catch_up_however_late();
+            let allowance = pacer.allowance(now, false, 1000);
+            (sent, _) = pace_late(&mut pacer, now, sent.end..u64::MAX);
+            assert_eq!(allowance / 1000, sent.end - sent.start + 1);
+            sent.end - sent.start
+        });
+        assert_eq!(lens, expected, "{late} {period}");
+    }
+}
+
+#[test]
+fn being_very_late_for_once_keeps_nothing_back() {
+    let mut pacer = pacer_at(1000, millis(1));
+    let now = START + millis(1000);
+    let next = now + pace(&mut pacer, now).1;
+    pacer.catch_up_however_late();
+    assert!(!pacer.limit_catching_up(next + millis(60), 0, 1000, 60_000));
+}
+
+#[test]
+fn limit_of_catching_up_is_not_proven_by_what_little_is_left() {
+    for (runs_dry, expected) in [(false, 24), (true, 22)] {
+        let mut pacer = pacer_at(1000, millis(1));
+        let now = START + pace(&mut pacer, START).1 + millis(40);
+        let (sent, now) = pace_late(&mut pacer, now, 0..u64::MAX);
+        (22..sent.end).for_each(|it| pacer.on_lost(it));
+        settle(&mut pacer, sent);
+        let (sent, now) = pace_late(&mut pacer, now + millis(40), 50..55);
+        if runs_dry {
+            pacer.on_application_limited(true);
+        }
+        settle(&mut pacer, sent);
+        assert_eq!(
+            pacer.allowance(now + millis(10), false, 1000) / 1000,
+            expected
+        );
+    }
+}
+
+#[test]
+fn what_is_owed_stays_so_while_it_is_made_up_for() {
+    let mut pacer = pacer_at(1000, millis(1));
+    let now = START + pace(&mut pacer, START).1 + millis(40);
+    let (sent, now) = pace_late(&mut pacer, now, 0..u64::MAX);
+    pacer.on_limited_otherwise();
+    let (sent, now) = pace_late(&mut pacer, now + millis(300), sent.end..u64::MAX);
+    pacer.catch_up_however_late();
+    let now = now + millis(100);
+    pace_late(&mut pacer, now, sent.end..sent.end + 30);
+    assert_eq!(pacer.allowance(now, false, 1000), 73_000);
+}
+
+#[test]
+fn being_very_late_counts_while_a_burst_is_watched() {
+    let mut pacer = pacer_at(1000, millis(1));
+    let now = START + pace(&mut pacer, START).1 + millis(20);
+    let (mut sent, mut now) = pace_late(&mut pacer, now, 0..u64::MAX);
+    let lens = [400, 0].map(|idle| {
+        pacer.on_limited_otherwise();
+        (sent, now) = pace_late(&mut pacer, now + millis(idle), sent.end..u64::MAX);
+        pacer.catch_up_however_late();
+        (sent, now) = pace_late(&mut pacer, now + millis(60), sent.end..u64::MAX);
+        sent.end - sent.start
+    });
+    assert_eq!(lens, [2, 62]);
+}
+
+#[test]
+fn time_of_waking_late_is_that_of_the_burst_being_watched() {
+    let mut pacer = pacer_at(1000, millis(1));
+    let woke_at = START + pace(&mut pacer, START).1 + millis(20);
+    let (sent, now) = pace_late(&mut pacer, woke_at, 10..u64::MAX);
+    pace_late(&mut pacer, now + millis(20), sent.end..u64::MAX);
+    let times = [8, 9, 10, sent.end - 1].map(|it| pacer.woke_after(it));
+    assert_eq!(times, [None, Some(woke_at), None, None]);
+}
+
+#[test]
+fn growing_window_keeps_to_the_limit_of_catching_up() {
+    let mut pacer = pacer_at(1000, millis(1));
+    let now = START + pace(&mut pacer, START).1 + millis(40);
+    let (sent, now) = pace_late(&mut pacer, now, 0..u64::MAX);
+    (22..sent.end).for_each(|it| pacer.on_lost(it));
+    settle(&mut pacer, sent.clone());
+    pacer.catch_up_however_late();
+    let now = now + millis(40);
+    let (sent, _) = pace_late(&mut pacer, now, sent.end..sent.end + 5);
+    pacer.on_window_full(now, 60_000, true);
+    let (sent, _) = pace_late(&mut pacer, now + millis(40), sent.end..u64::MAX);
+    assert_eq!(sent.end - sent.start, 21);
+}
+
+#[test]
+fn only_a_limit_that_is_proven_and_reached_keeps_anything_back() {
+    let mut pacer = pacer_at(1000, millis(1));
+    let (mut now, mut sent) = (START + pace(&mut pacer, START).1, 0..0);
+    let wakes = [(40, 20), (40, 0), (21, 0), (22, 0), (40, 3), (40, 0)];
+    let results = wakes.map(|(late, lost)| {
+        now = now + millis(late);
+        let first = sent.end;
+        let result = pacer.limit_catching_up(now, first, 1000, 60_000);
+        pacer.delay(now);
+        pacer.on_sent(now, 1000);
+        (sent, now) = pace_late(&mut pacer, now, first + 1..u64::MAX);
+        (sent.end - lost..sent.end).for_each(|it| pacer.on_lost(it));
+        settle(&mut pacer, first..sent.end);
+        result
+    });
+    assert_eq!(results, [false, false, false, true, true, false]);
+}
+
+#[test]
+fn what_is_cut_short_says_nothing_about_the_bandwidth_once_the_limit_is_proven() {
+    let mut sender = bbr_probing();
+    sender.burst();
+    let are_limited = [40, 0, 0, 0, 3, 0].map(|lost| {
+        let before = sender.flights.len();
+        let len = sender.wait(millis(9)).burst() as usize;
+        let first = sender.flights.get(before);
+        let is_limited = first.is_some_and(|it| it.is_application_limited);
+        sender.wait(millis(1)).feedback(0, before + len - lost);
+        sender.feedback(lost, 0).send(2).burst();
+        is_limited
+    });
+    assert_eq!(are_limited, [false, false, false, true, true, false]);
+}
+
+#[test]
+fn last_burst_says_nothing_about_the_bandwidth_during_startup() {
+    for (is_starting, late, excess, expects_more, expected) in [
+        (true, 5, 0, false, true),
+        (true, 5, 1, false, false),
+        (true, 5, 0, true, false),
+        (true, 1, 0, false, false),
+        (false, 5, 0, false, false),
+    ] {
+        let mut sender = match is_starting {
+            true => Sender::new(Algorithm::Bbr),
+            false => bbr_probing(),
+        };
+        sender.rounds_of(10, 1, millis(10)).send(10).burst();
+        let unsent = sender.window() - sender.controller.in_flight() + excess;
+        let now = sender.wait(millis(late)).now;
+        sender.controller.permit(now, unsent, || expects_more);
+        let last = sender.send(1).flights.back();
+        assert_eq!(last.map(|it| it.is_application_limited), Some(expected));
+    }
+}
+
+#[test]
+fn end_of_a_long_burst_is_followed_up_once() {
+    for (late, len, expected) in [
+        (2001, 10, false),
+        (2001, 11, true),
+        (2000, 11, false),
+        (2001, 45, false),
+    ] {
+        let mut pacer = pacer_at(1000, micros(100));
+        let now = START + pace(&mut pacer, START).1 + micros(late);
+        let (sent, now) = pace_late(&mut pacer, now, 0..len);
+        pace_late(&mut pacer, now, sent.end..len);
+        assert!(!pacer.ends_with_burst());
+        pacer.on_application_limited(false);
+        assert_eq!(pacer.ends_with_burst(), expected, "{late} {len}");
+    }
+
+    let mut sender = bbr_probing();
+    sender.burst();
+    let now = sender.wait(millis(8)).now;
+    sender.controller.permit(now, 0, || true);
+    sender.send(300).run_dry();
+    let takes = [(); 2].map(|()| sender.controller.take_end_of_burst());
+    assert_eq!(takes, [true, false]);
+}
+
+#[test]
+fn bursts_are_only_followed_up_while_packets_get_lost() {
+    let mut pacer = pacer_at(1000, micros(100));
+    let mut now = START;
+    for _ in 0..2 {
+        let results = [11, 10, 11, 11, 11, 11, 20].map(|len| {
+            now = now + pace(&mut pacer, now).1 + millis(3);
+            pace_late(&mut pacer, now, 1..1 + len);
+            pacer.on_application_limited(false);
+            let ends_with_burst = pacer.ends_with_burst();
+            pacer.end_burst();
+            ends_with_burst
+        });
+        assert_eq!(results, [true, false, true, true, true, false, false]);
+        pacer.on_lost(0);
+    }
+}
+
+#[test]
+fn what_is_sent_aside_does_not_count() {
+    let mut sender = Sender::new(Algorithm::Bbr);
+    sender.send(5);
+    let flight = Flight::aside(sender.now);
+    assert!(flight.starts_burst());
+    assert!(!sender.controller.discard(&flight));
+    assert_eq!(sender.controller.in_flight(), 5 * SEGMENT);
+}
+
+#[test]
+fn discarded_packets_do_not_keep_a_burst_from_being_judged() {
+    let mut sender = bbr_probing();
+    sender.burst();
+    let before = sender.flights.len();
+    let len = sender.wait(millis(8)).burst() as usize;
+    for flight in sender.flights.drain(before..=before) {
+        sender.controller.discard(&flight);
+    }
+    sender.wait(millis(10)).feedback(0, before + len - 21);
+    sender
+        .feedback(20, 0)
+        .send(2)
+        .wait(millis(10))
+        .feedback(0, 1);
+    sender.burst();
+    assert_eq!((len, sender.wait(millis(10)).burst()), (64, 42));
+}
+
+#[test]
+fn a_pause_starts_another_burst() {
+    for (pause, expected) in [(2000, 220), (2001, 40)] {
+        let mut pacer = pacer_at(1000, millis(1));
+        let now = START + pace(&mut pacer, START).1 + millis(40);
+        let (sent, now) = pace_late(&mut pacer, now, 0..u64::MAX);
+        (20..sent.end).for_each(|it| pacer.on_lost(it));
+        settle(&mut pacer, sent);
+        let now = now + millis(40);
+        pace_late(&mut pacer, now, 50..51);
+        pacer.set_rate(1000, micros(100), &steady(millis(17)));
+        let (sent, _) = pace_late(&mut pacer, now + micros(pause), 51..u64::MAX);
+        assert_eq!(sent.end - sent.start, expected);
+    }
+}
+
+#[test]
+fn time_away_does_not_count_as_time_of_sending() {
+    let gains = [0, 1].map(|unheard_of| {
+        let mut sender = bbr_probing();
+        sender.burst();
+        sender.wait(millis(15)).burst();
+        let len = sender.flights.len() - unheard_of;
+        sender.wait(millis(15)).burst();
+        sender.feedback(0, len).send(1);
+        gain(sender.wait(millis(10)).feedback(0, usize::MAX))
+    });
+    assert_eq!(gains, [201, 135]);
+}
+
+#[test]
+fn bbr_does_not_make_up_for_probing_the_round_trip() {
+    let mut path = Path::fast(Algorithm::Bbr, 400);
+    path.unsent = u64::MAX / 2;
+    while path.controller.window() > 4 * SEGMENT {
+        path.now = path.now + millis(5);
+        path.step();
+    }
+    path.longest_burst = 0;
+    path.saturate(millis(400), |_| {});
+    assert_within(path.longest_burst, 1..=30);
+}
+
+#[test]
+fn what_is_owed_to_a_growing_window_stays_as_much_time() {
+    let (mut pacer, now) = pacer_with_full_window(millis(20), 5);
+    pacer.set_rate(2000, millis(1), &steady(millis(17)));
+    assert_eq!(pace_late(&mut pacer, now, 5..u64::MAX).0, 5..39);
+}
+
+#[test]
+fn bursts_after_a_pause_of_the_application_are_not_watched() {
+    let mut pacer = pacer_at(1000, millis(1));
+    let now = START + pace(&mut pacer, START).1 + millis(40);
+    let (sent, now) = pace_late(&mut pacer, now, 0..u64::MAX);
+    (20..sent.end).for_each(|it| pacer.on_lost(it));
+    settle(&mut pacer, sent);
+    pacer.on_application_limited(false);
+    let (sent, now) = pace_late(&mut pacer, now + millis(40), 50..u64::MAX);
+    settle(&mut pacer, sent);
+    assert_eq!(pacer.allowance(now + millis(40), false, 1000), 22_250);
 }
 
 #[test]
 fn acknowledgments_that_are_read_late_let_bbr_go_on() {
-    for (algorithm, lost, expected) in [
-        (Algorithm::Bbr, 0, 16),
-        (Algorithm::Bbr, 1, 2),
-        (Algorithm::Cubic, 0, 3),
-    ] {
+    for (algorithm, expected) in [(Algorithm::Bbr, 28), (Algorithm::Cubic, 3)] {
         let mut sender = Sender::new(algorithm);
         sender.rtt.update(millis(40), Duration::ZERO);
-        sender.send(20).feedback(lost, 0).burst();
+        sender.send(20).burst();
         let len = sender.flights.len();
         sender.wait(millis(50)).burst();
         assert_eq!(sender.controller.room(), 0);
@@ -825,7 +1608,7 @@ fn pacer_drops_the_rest_of_a_quantum_after_a_loss() {
     pacer.set_rate(1000, millis(5), &rtt);
     assert_eq!(pacer.delay(START), None);
     pacer.on_sent(START, 1000);
-    pacer.on_feedback(true);
+    pacer.on_feedback(&losing(1));
     assert_eq!(pacer.delay(START), Some(START + millis(5)));
 }
 
@@ -1134,23 +1917,6 @@ fn bursts_get_longer_as_far_as_it_makes_no_difference() {
 }
 
 #[test]
-fn overflows_that_are_disregarded_limit_what_is_made_up_for() {
-    for has_retreated in [false, true] {
-        let mut periods = Periods::new();
-        periods.run(5, |_| (110, 10));
-        periods.overflows = false;
-        periods.run(has_retreated.into(), |_| (110, 90));
-        let Periods { pacer, now, .. } = &mut periods;
-        (0..MAX_OVERFLOWS * 256 * 64).for_each(|_| _ = pacer.on_sent(*now, 1024));
-        assert_eq!(pacer.max_turn(), usize::MAX);
-        *now = *now + millis(10_000);
-        *now = *now + pace(pacer, *now).1 + millis(40);
-        pacer.on_window_full(*now, 1 << 20);
-        assert_eq!(pace(pacer, *now).0, 17);
-    }
-}
-
-#[test]
 fn losses_at_first_do_not_excuse_longer_bursts() {
     let quanta = Periods::new().run(4, |len| match len {
         2 => (110, 30),
@@ -1313,7 +2079,7 @@ fn pauses_do_not_make_failed_trials_more_frequent() {
 }
 
 /// A second later. Returns how many halvings are spared.
-fn judge(trial: &mut Trial, now: &mut Instant, acked: u64, lost: u64, starts_cycle: bool) -> u32 {
+fn judge(trial: &mut Trial, now: &mut Instant, acked: u64, lost: u64, starts_cycle: bool) -> u8 {
     let feedback = Feedback {
         acked: acked * SEGMENT,
         lost: lost * SEGMENT,
@@ -1704,7 +2470,10 @@ fn window_and_pace_limit_the_first_flight() {
         let mut sender = Sender::new(algorithm);
         assert_eq!(sender.burst(), burst);
         let next = START + micros(delay);
-        assert_eq!(sender.controller.permit(START, 0), Permit::At(next));
+        assert_eq!(
+            sender.controller.permit(START, 0, || true),
+            Permit::At(next)
+        );
         assert_eq!(sender.fill().controller.in_flight(), INITIAL_WINDOW);
     }
 }
@@ -1722,7 +2491,7 @@ fn loss_ends_the_burst() {
 
 #[test]
 fn only_the_pacer_is_caught_up_with() {
-    for algorithm in ALGORITHMS {
+    for (algorithm, expected) in [(Algorithm::Cubic, 1..=3), (Algorithm::Bbr, 5..=8)] {
         let mut sender = Sender::new(algorithm);
         sender.rtt.update(millis(100), Duration::ZERO);
         assert_eq!(sender.burst(), 11);
@@ -1730,7 +2499,7 @@ fn only_the_pacer_is_caught_up_with() {
         assert_eq!(sender.run_dry().wait(millis(8)).burst(), 1);
         while sender.wait(millis(2)).burst() > 0 {}
         sender.wait(millis(80)).feedback(0, 20);
-        assert_within(sender.burst(), 1..=3);
+        assert_within(sender.burst(), expected);
     }
 }
 
@@ -1748,9 +2517,9 @@ fn a_full_window_is_refilled_in_larger_pieces_on_short_paths() {
             let mut sender = Sender::new(algorithm);
             sender.rtt.update(micros(100), Duration::ZERO);
             sender.fill().wait(micros(100)).feedback(lost, acked);
-            sender.controller.permit(sender.now, unsent);
+            sender.controller.permit(sender.now, unsent, || true);
             let before = sender.wait(micros(later)).flights.len();
-            while sender.controller.permit(sender.now, unsent) == Permit::Now {
+            while sender.controller.permit(sender.now, unsent, || true) == Permit::Now {
                 sender.send(1);
             }
             assert_within((sender.flights.len() - before) as u64, burst);
@@ -1874,6 +2643,23 @@ fn links_are_filled_by_senders_that_wake_late() {
 }
 
 #[test]
+fn links_are_filled_by_senders_that_are_busy_at_times() {
+    for (buffer, drops, used, lost) in [
+        (2000, 0, 90..=101, 0..=0),
+        (2000, 30, 85..=101, 2..=4),
+        (300, 0, 58..=66, 0..=3),
+        (300, 30, 56..=66, 2..=6),
+    ] {
+        let mut path = Path::fast(Algorithm::Bbr, buffer);
+        (path.busy, path.drops) = ((100_000, 200_000), drops);
+        path.saturate(millis(5000), |_| {});
+        (path.delivered, path.lost) = (0, 0);
+        assert_within(path.saturate(millis(5000), |_| {}), used);
+        assert_within(path.lost * 100 / path.delivered, lost);
+    }
+}
+
+#[test]
 fn links_are_filled_if_acknowledgments_are_bunched() {
     for algorithm in ALGORITHMS {
         let mut path = Path::new(algorithm, micros(100), millis(2), 400);
@@ -1945,7 +2731,7 @@ fn any_sequence_of_calls_is_fine() {
             }
             assert_eq!(controller.in_flight(), in_flight);
             assert_within(controller.window(), 2 * SEGMENT..=MAX_WINDOW);
-            match controller.permit(now, 0) {
+            match controller.permit(now, 0, || true) {
                 Permit::Now => assert!(in_flight < controller.window()),
                 Permit::At(time) => assert!(time > now && in_flight > 0),
                 Permit::Blocked => assert!(in_flight >= controller.window()),
@@ -2805,50 +3591,6 @@ fn bbr_keeps_what_it_knows_about_packets_when_it_starts_over() {
 }
 
 #[test]
-fn acknowledgments_that_are_read_late_may_tell_bbr_to_hold_back() {
-    for (lost, is_spread, expected) in [(0, false, 16), (1, false, 2), (0, true, 2)] {
-        let mut sender = Sender::new(Algorithm::Bbr);
-        sender.rtt.update(millis(40), Duration::ZERO);
-        sender.send(20).burst();
-        sender.wait(millis(50)).burst();
-        sender.controller.spread.is_on = is_spread;
-        sender.wait(micros(100)).feedback(lost, 19);
-        assert_eq!(sender.burst(), expected);
-    }
-}
-
-#[test]
-fn bbr_holds_back_if_the_queue_may_be_short() {
-    let holds_back = |sender: &Sender| sender.controller.holds_back();
-    let mut sender = Sender::new(Algorithm::Bbr);
-    for _ in 0..3 {
-        assert!(!holds_back(&sender));
-        sender.send(20).run_dry().wait(millis(20)).feedback(1, 19);
-        sender.send(1).run_dry().wait(millis(20)).feedback(0, 1);
-    }
-    assert!(holds_back(&sender));
-
-    let mut sender = Sender::new(Algorithm::Bbr);
-    sender.rounds_of(60, 20, millis(10));
-    sender.send(60).wait(millis(13)).feedback(1, 59);
-    for expected in [true, false] {
-        sender.rounds_of(60, 5, micros(10_001));
-        assert_eq!(holds_back(&sender), expected);
-    }
-    sender.send(80).wait(micros(10_001)).feedback(0, 60);
-    assert!(gain(&sender) < 100 && holds_back(&sender));
-
-    let mut sender = Sender::new(Algorithm::Bbr);
-    sender.rounds_of(20, 1, millis(10)).send(20).run_dry();
-    sender
-        .wait(millis(14))
-        .feedback(1, 19)
-        .send(1)
-        .wait(millis(10));
-    assert!(!holds_back(sender.feedback(0, 1)));
-}
-
-#[test]
 fn bbr_does_not_catch_up_while_it_drains_the_queue() {
     let mut path = Path::fast(Algorithm::Bbr, 400);
     path.unsent = u64::MAX / 2;
@@ -2856,12 +3598,26 @@ fn bbr_does_not_catch_up_while_it_drains_the_queue() {
         path.step();
     }
     path.now = path.now + millis(60);
-    while path.controller.permit(path.now, u64::MAX) == Permit::Now {
+    while path.controller.permit(path.now, u64::MAX, || true) == Permit::Now {
         path.send();
     }
     path.longest_burst = 0;
     path.step();
     assert_within(path.longest_burst, 1..=20);
+}
+
+#[test]
+fn bbr_stops_catching_up_when_it_starts_to_drain_the_queue() {
+    let bursts = [2, 3].map(|rounds| {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(1, 1, millis(10));
+        sender.rounds_of(66, rounds, millis(11)).send(10).burst();
+        sender.wait(millis(30)).burst();
+        let len = sender.flights.len();
+        sender.wait(millis(30)).burst();
+        sender.feedback(0, len).burst()
+    });
+    assert_eq!(bursts, [92, 13]);
 }
 
 #[test]
@@ -3165,7 +3921,10 @@ fn bbr_does_not_end_startup_for_an_outage() {
 fn bbr_allows_for_a_retransmission() {
     let mut sender = Sender::new(Algorithm::Bbr);
     sender.fill().wait(millis(10)).feedback(1, 0);
-    assert_ne!(sender.controller.permit(sender.now, 0), Permit::Blocked);
+    assert_ne!(
+        sender.controller.permit(sender.now, 0, || true),
+        Permit::Blocked
+    );
 }
 
 #[test]

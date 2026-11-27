@@ -5,7 +5,7 @@ use super::space::{Space, SpaceId, Spaces};
 use super::streams::Flags;
 use super::timers::Timer;
 use super::{Connection, Phase};
-use crate::congestion::{Controller, Flight};
+use crate::congestion::{Controller, Flight, GRANULARITY};
 use crate::error::{Error, Result};
 use crate::event::{CloseReason, Event};
 use crate::frame::Ack;
@@ -396,6 +396,9 @@ impl Connection {
         let timeout = match id {
             _ if !space.sent.has_in_flight() => return Instant::NEVER,
             SpaceId::Data if self.phase != Phase::Confirmed => return Instant::NEVER,
+            SpaceId::Data if self.congestion.ends_with_burst() => {
+                return space.sent.last_at + GRANULARITY;
+            }
             SpaceId::Data if self.expects_prompt_ack() => {
                 (self.probe_timeout()).min(self.rtt.smoothed * 2)
             }
@@ -498,6 +501,13 @@ impl Connection {
                 crate::with(space, |it| it.probes = 1);
             }
             (_, SpaceId::Data) => {
+                if self.congestion.take_end_of_burst()
+                    && now < self.probe_time(SpaceId::Data, &self.spaces.data)
+                {
+                    // It takes later packets to tell which ones are lost (RFC 9002 §6.1.1).
+                    self.spaces.data.probes = INITIAL_PACKET_THRESHOLD as u8;
+                    return self.set_loss_timer(now);
+                }
                 // What is already waiting gets its turn, but requests had better stay unsent.
                 let is_waiting = self.side.is_server() && self.streams.state.has_lost_data();
                 self.probe(SpaceId::Data, (PROBES - u8::from(is_waiting)).into());

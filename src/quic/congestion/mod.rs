@@ -2,6 +2,7 @@
 
 mod bandwidth_sampler;
 mod bbr;
+mod catch_up;
 mod ceiling;
 mod crowd;
 mod cubic;
@@ -44,7 +45,7 @@ pub(crate) struct Flight {
     pub(crate) at: Instant,
     pub(crate) len: u16,
     place: Place,
-    /// Counts from 1, across the packet number spaces.
+    /// Counts from 1, across the packet number spaces, for those that count at all.
     pub(crate) sequence: u64,
     /// The low bits of the number of bytes delivered before.
     delivered: u32,
@@ -58,6 +59,15 @@ pub(crate) struct Flight {
 const _: () = assert!(size_of::<Flight>() == 32);
 
 impl Flight {
+    /// For a packet that is too small to count, but would keep the flight from being empty.
+    pub(crate) fn aside(at: Instant) -> Self {
+        Self {
+            at,
+            place: Place::First,
+            ..Self::default()
+        }
+    }
+
     #[inline]
     pub(crate) fn starts_burst(&self) -> bool {
         self.place != Place::Later
@@ -102,6 +112,7 @@ pub(crate) struct Controller {
     pacer: Pacer,
     spread: Spread,
     crowd: Crowd,
+    datagram_len: u16,
     in_flight: u64,
     /// Until when to wait for more room in a window that has been full.
     refill_at: Instant,
@@ -112,7 +123,7 @@ pub(crate) struct Controller {
     last_foreign: u64,
     last_lost: u64,
     /// How many packets in a row were lost up to `last_lost`, unless the first of them started a burst.
-    lost_run: Option<u32>,
+    lost_run: Option<u16>,
     /// How many packets the last bursts have lost at their ends, and the last of them.
     lost_ends: u64,
     last_lost_end: u64,
@@ -134,6 +145,7 @@ impl Controller {
             pacer: Pacer::default(),
             spread: Spread::default(),
             crowd: Crowd::default(),
+            datagram_len,
             in_flight: 0,
             refill_at: Instant::default(),
             prior_in_flight: 0,
@@ -161,6 +173,7 @@ impl Controller {
     }
 
     pub(crate) fn set_datagram_len(&mut self, datagram_len: u16) {
+        self.datagram_len = datagram_len;
         match &mut self.model {
             Model::Cubic(Cubic { segment: it, .. }) | Model::Bbr(Bbr { segment: it, .. }) => {
                 *it = segment(datagram_len);
@@ -199,16 +212,23 @@ impl Controller {
     /// For one more packet, which may be what fills the window over the brim. After that, it may wait until more of
     /// what is `unsent` can be sent together.
     #[inline]
-    pub(crate) fn permit(&mut self, now: Instant, unsent: u64) -> Permit {
+    pub(crate) fn permit(
+        &mut self,
+        now: Instant,
+        unsent: u64,
+        expects_more: impl FnOnce() -> bool,
+    ) -> Permit {
         if self.in_flight == 0 {
             return Permit::Now;
         }
         let window = self.window();
         if self.in_flight >= window {
             self.refill_at = Instant::NEVER;
-            match self.holds_back() {
-                true => self.pacer.on_limited_otherwise(),
-                false => self.pacer.on_window_full(now, window),
+            match &self.model {
+                Model::Bbr(bbr) if !bbr.is_draining() => {
+                    self.pacer.on_window_full(now, window, !bbr.is_cycling());
+                }
+                _ => self.pacer.on_limited_otherwise(),
             }
             return Permit::Blocked;
         }
@@ -221,7 +241,23 @@ impl Controller {
             }
             self.refill_at = Instant::default();
         }
-        self.pacer.delay(now).map_or(Permit::Now, Permit::At)
+        let is_held_back =
+            (self.pacer).limit_catching_up(now, self.last_sent + 1, self.datagram_len, window);
+        if self.pacer.awaits_burst()
+            && let Model::Bbr(bbr) = &mut self.model
+            // What goes out all at once with nothing to follow spends most of the time on an empty path.
+            && (is_held_back
+                || !bbr.is_cycling() && unsent <= window - self.in_flight && !expects_more())
+        {
+            bbr.on_held_back(self.last_sent);
+        }
+        let Some(time) = self.pacer.delay(now) else {
+            return Permit::Now;
+        };
+        if !self.holds_back() {
+            self.pacer.catch_up_however_late();
+        }
+        Permit::At(time)
     }
 
     /// Whether what is `unsent` would be one more of many small packets.
@@ -311,11 +347,12 @@ impl Controller {
         }
     }
 
-    /// Whether a window that has been full is to be the end of making up for waking late.
+    /// Whether to only make up for waking a little late, and only until the window is full.
+    #[inline]
     fn holds_back(&self) -> bool {
         match &self.model {
             Model::Cubic(_) => true,
-            Model::Bbr(bbr) => bbr.holds_back() || self.spread.is_on,
+            Model::Bbr(bbr) => bbr.is_draining(),
         }
     }
 
@@ -335,6 +372,19 @@ impl Controller {
         }
     }
 
+    /// Whether nothing follows a burst that a queue may have had no room for.
+    #[inline]
+    pub(crate) fn ends_with_burst(&self) -> bool {
+        self.pacer.ends_with_burst()
+    }
+
+    /// Likewise, but only once.
+    pub(crate) fn take_end_of_burst(&mut self) -> bool {
+        let ends_with_burst = self.ends_with_burst();
+        self.pacer.end_burst();
+        ends_with_burst
+    }
+
     /// For a packet with DATAGRAM frames, which do not wait for one another (RFC 9221 §5).
     pub(crate) fn hurry(&mut self) {
         self.pacer.hurry();
@@ -352,6 +402,7 @@ impl Controller {
         if is_counted {
             self.in_flight = self.in_flight.saturating_sub(flight.len.into());
             self.crowd.on_settled();
+            self.pacer.on_settled(flight.sequence);
         }
         is_counted
     }
@@ -385,6 +436,7 @@ impl Controller {
                 false => (!flight.starts_burst()).then_some(1),
             };
             self.last_lost = flight.sequence;
+            self.pacer.on_lost(flight.sequence);
             if ends_burst && let Some(len) = self.lost_run {
                 self.on_end_lost(flight, len.into());
             }
@@ -431,7 +483,7 @@ impl Controller {
         if feedback.acked == 0 && feedback.lost == 0 {
             return;
         }
-        self.pacer.on_feedback(feedback.lost > 0);
+        self.pacer.on_feedback(&feedback);
         self.crowd.on_feedback(now, rtt);
         if feedback.lost > 0 {
             self.crowd.on_loss(now, self.in_flight, rtt);
@@ -447,6 +499,10 @@ impl Controller {
             Model::Cubic(cubic) => cubic.on_feedback(now, &feedback, rtt),
             Model::Bbr(bbr) => {
                 bbr.on_feedback(now, &feedback, rtt);
+                let newest = feedback.newest_acked.map(|it| it.sequence);
+                if let Some(time) = newest.and_then(|it| self.pacer.woke_after(it)) {
+                    bbr.skip_until(time);
+                }
                 (self.pacer).try_longer_bursts(now, &feedback, bbr.starts_cycle(now));
                 let is_typical = !self.pacer.is_on_trial() && !feedback.is_persistent_congestion;
                 match bbr.is_cycling() && is_typical {
@@ -455,7 +511,9 @@ impl Controller {
                 }
             }
         }
-        self.pacer.reconsider_catching_up(self.holds_back());
+        if self.holds_back() {
+            self.pacer.stop_catching_up();
+        }
         self.update_pacing_rate(rtt);
     }
 

@@ -432,7 +432,7 @@ pub(crate) fn binding<'a>(cx: &mut JsScope<'a>) -> JsWrapper<'a, Binding> {
         }),
     }
     .into_js(&cx.heap);
-    let binding = wrapper.guard();
+    let binding = wrapper.payload_guard();
     let path = &binding.node_fs.get().sync_error_buf;
     // LSAN does not scan the JS heap, and the VM that runs macros is never torn down.
     bun_core::asan::register_root_region((&raw const *path).cast(), size_of_val(path));

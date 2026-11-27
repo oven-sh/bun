@@ -472,7 +472,7 @@ impl UDPSocket {
 
     /// Recover `&UDPSocket` from the uws user-data slot. Centralises the
     /// `unsafe { &*(*socket).user().cast() }` back-ref deref shared by every
-    /// `extern "C"` callback below — the user pointer was set to the
+    /// socket callback above — the user pointer was set to the
     /// `UDPSocket` in [`udp_socket`] via
     /// `uws::udp::Socket::create(.., user_data = this_ptr)` and remains live
     /// until `on_close` (uws guarantees no callback after close). All mutated
@@ -508,8 +508,8 @@ impl UDPSocket {
         }
         .into_js_wrapper(cx.global());
         let js_value = this_value.to_js();
-        // Until `open` has dropped on an error: `on_close` reaches the payload.
-        let this = this_value.guard();
+        // Keeps the wrapper alive until `open` has dropped on an error: `on_close` reaches the payload.
+        let this = this_value.payload_guard();
         let this_ptr: *mut Self = this.as_ptr();
 
         this.config

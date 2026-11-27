@@ -95,12 +95,6 @@ type CppType =
       type: "named";
       name: string;
       position: Srcloc;
-    }
-  | {
-      type: "fn";
-      parameters: CppParameter[];
-      returnType: CppType;
-      position: Srcloc;
     };
 
 type PositionedError = {
@@ -291,7 +285,7 @@ function processDeclarator(
   // Recursively peel off pointers
   if (declarator?.name === "PointerDeclarator") {
     if (!rootmostType) throwError(nodePosition(declarator, ctx), "no rootmost type provided to PointerDeclarator");
-    const isConst = !!declarator.parent?.getChild("const") || rootmostType.type === "fn";
+    const isConst = !!declarator.parent?.getChild("const");
     const parentAttributes = declarator.parent?.getChildren("Attribute") ?? [];
     const isNonNull = parentAttributes.some(attr => text(attr.getChild("AttributeName")!, ctx) === "ZIG_NONNULL");
 
@@ -305,27 +299,6 @@ function processDeclarator(
     });
   } else if (declarator?.name === "ReferenceDeclarator") {
     throwError(nodePosition(declarator, ctx), "references are not allowed");
-  } else if (declarator?.name === "FunctionDeclarator" && !declarator.getChild("Identifier")) {
-    const lhs = declarator.getChild("ParenthesizedDeclarator");
-    const rhs = declarator.getChild("ParameterList");
-    if (!lhs || !rhs) {
-      throwError(
-        nodePosition(declarator, ctx),
-        "FunctionDeclarator has neither Identifier nor ParenthesizedDeclarator:\n" +
-          prettyPrintLezerNode(declarator, ctx.sourceCode),
-      );
-    }
-    const fnType: CppType = {
-      type: "fn",
-      parameters: [],
-      returnType: rootmostType,
-      position: nodePosition(declarator, ctx),
-    };
-    for (const arg of rhs.getChildren("ParameterDeclaration")) {
-      const paramDeclarator = processDeclarator(ctx, arg);
-      fnType.parameters.push({ type: paramDeclarator.type, name: text(paramDeclarator.final, ctx) });
-    }
-    return processDeclarator(ctx, lhs, fnType);
   }
 
   return { type: rootmostType, final: declarator };
@@ -388,7 +361,7 @@ type ExportTag = "check_slow" | "zero_is_throw" | "false_is_throw" | "null_is_th
 // `JSGlobalObject__hasException` ctor asserts.
 //
 // Parameter and return types are emitted as raw C-ABI Rust types (pointers stay
-// `*mut`/`*const` unless `[[ZIG_NONNULL]]`) so the wrappers compose with whatever
+// `*mut`/`*const` unless a handle or `[[ZIG_NONNULL]]`) so the wrappers compose with whatever
 // newtypes the per-type ergonomic shims (`JSValue::get`, `JSPromise::resolve`,
 // …) hold; those shims forward into `crate::cpp::*`.
 
@@ -523,11 +496,6 @@ function generateRustType(type: CppType, parent: CppType | null): string {
     const constKw = type.isConst ? "*const " : "*mut ";
     return constKw + generateRustType(type.child, type);
   }
-  if (type.type === "fn") {
-    // Function pointers are nullable in C; model as Option<extern "C" fn(...)>.
-    const params = type.parameters.map(p => generateRustType(p.type, null)).join(", ");
-    return `Option<unsafe extern "C" fn(${params}) -> ${generateRustType(type.returnType, null)}>`;
-  }
   if (type.type === "named" && type.name === "void") {
     if (parent?.type === "pointer") return "core::ffi::c_void";
     if (!parent) return "()";
@@ -623,7 +591,7 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
       wrapParams.push(`${ident}: ${isConst ? "&" : "&mut "}${isMany ? `[${pointee}]` : pointee}`);
       callArgs.push(isMany ? `${ident}.${isConst ? "as_ptr" : "as_mut_ptr"}().cast(), ${ident}.len()` : ident);
       if (isMany) i++;
-    } else if (p.type.type === "pointer" || p.type.type === "fn") {
+    } else if (p.type.type === "pointer") {
       needsUnsafe = true;
       wrapParams.push(`${ident}: ${generateRustType(p.type, null)}`);
       callArgs.push(ident);

@@ -1763,11 +1763,7 @@ impl<'a> Formatter<'a> {
                             formatter: &mut quoting,
                             writer: writer.ctx,
                         };
-                        value.for_each(
-                            global,
-                            &mut iter,
-                            MapIterator::<W, ENABLE_ANSI_COLORS>::for_each,
-                        )?;
+                        value.for_each(global, &mut iter, MapIterator::for_each)?;
                     }
                     let _ = self.write_indent(writer.ctx);
                     writer.write_all(b"}");
@@ -1802,11 +1798,7 @@ impl<'a> Formatter<'a> {
                             formatter: &mut quoting,
                             writer: writer.ctx,
                         };
-                        value.for_each(
-                            global,
-                            &mut iter,
-                            SetIterator::<W, ENABLE_ANSI_COLORS>::for_each,
-                        )?;
+                        value.for_each(global, &mut iter, SetIterator::for_each)?;
                     }
                     let _ = self.write_indent(writer.ctx);
                     writer.write_all(b"}");

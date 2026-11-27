@@ -575,7 +575,7 @@ impl DevServer {
     pub(crate) fn set_routes<const SSL: bool, const DEBUG: bool>(
         &mut self,
         server: &crate::server::NewServer<SSL, DEBUG>,
-        app: &mut bun_uws::NewApp<SSL>,
+        app: &mut uws::NewApp<SSL>,
     ) -> crate::Result<bool> {
         // TODO: all paths here must be prefixed with publicPath if set.
         self.server = Some(AnyServer::from(server));
@@ -585,9 +585,9 @@ impl DevServer {
 
         // Each `dev_route_tramp::<SSL, ID>` is a distinct C function with its handler baked in.
         macro_rules! route {
-            ($method:ident, $pattern:expr, $id:expr) => {{
-                app.$method($pattern, Some(dev_route_tramp::<SSL, { $id }>), dev);
-            }};
+            ($method:ident, $pattern:expr, $id:expr) => {
+                app.$method($pattern, Some(dev_route_tramp::<SSL, { $id }>), dev)
+            };
         }
 
         route!(

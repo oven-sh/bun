@@ -2578,7 +2578,6 @@ impl<'a> Repl<'a> {
             return;
         };
         let word_start = ctx.prefix_start;
-        let prefix = ctx.prefix;
 
         let mut target = JSValue::UNDEFINED;
         if !ctx.object_expr.is_empty() {
@@ -2589,7 +2588,7 @@ impl<'a> Repl<'a> {
             }
         }
 
-        let completions = Bun__REPL__getCompletions(global, target, prefix);
+        let completions = Bun__REPL__getCompletions(global, target, ctx.prefix);
 
         if completions.is_undefined() || !completions.is_array() {
             self.insert_tab_spaces();

@@ -98,14 +98,14 @@ impl core::ops::Deref for HeadersRef {
     type Target = FetchHeaders;
     #[inline]
     fn deref(&self) -> &FetchHeaders {
-        bun_opaque::opaque_deref(self.0.as_ptr())
+        FetchHeaders::opaque_ref(self.as_ptr())
     }
 }
 
 impl core::ops::DerefMut for HeadersRef {
     #[inline]
     fn deref_mut(&mut self) -> &mut FetchHeaders {
-        bun_opaque::opaque_deref_mut(self.0.as_ptr())
+        FetchHeaders::opaque_mut(self.as_ptr())
     }
 }
 

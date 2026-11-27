@@ -499,7 +499,7 @@ impl<const SSL: bool> Response<SSL> {
 
     pub fn on_data<U, H>(&mut self, _handler: H, optional_data: *mut U)
     where
-        H: Fn(*mut U, &mut Response<SSL>, &[u8], bool) + Copy + 'static,
+        H: Fn(*mut U, AnyResponse, &[u8], bool) + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
@@ -510,22 +510,16 @@ impl<const SSL: bool> Response<SSL> {
             last: bool,
             user_data: *mut c_void,
         ) where
-            H: Fn(*mut U, &mut Response<SSL>, &[u8], bool) + Copy + 'static,
+            H: Fn(*mut U, AnyResponse, &[u8], bool) + Copy + 'static,
         {
             // null user-data is always a no-op.
             if user_data.is_null() {
                 return;
             }
-            // SAFETY: both are the same opaque handle. uWS callback contract — `chunk_ptr[..len]` is
-            // valid for the call.
-            unsafe {
-                thunk::zst::<H>()(
-                    user_data.cast::<U>(),
-                    &mut *std::ptr::from_mut(this).cast::<Response<SSL>>(),
-                    thunk::c_slice(chunk_ptr, len),
-                    last,
-                )
-            }
+            // SAFETY: uWS callback contract — `chunk_ptr[..len]` is valid for the call.
+            let chunk = unsafe { thunk::c_slice(chunk_ptr, len) };
+            let res = Response::<SSL>::res_to_any(this);
+            thunk::zst::<H>()(user_data.cast::<U>(), res, chunk, last)
         }
         c::uws_res_on_data(
             Self::ssl_flag(),

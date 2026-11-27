@@ -34,7 +34,7 @@ impl Status {
 unsafe extern "C" {
     pub(crate) fn simdutf__validate_utf8(buf: *const u8, len: usize) -> bool;
     pub(crate) fn simdutf__validate_utf8_with_errors(buf: *const u8, len: usize) -> SIMDUTFResult;
-    pub(crate) fn simdutf__validate_ascii(buf: *const u8, len: usize) -> bool;
+    fn simdutf__validate_ascii(buf: *const u8, len: usize) -> bool;
     pub fn simdutf__validate_ascii_with_errors(buf: *const u8, len: usize) -> SIMDUTFResult;
     pub fn simdutf__validate_utf16le(buf: *const u16, len: usize) -> bool;
     fn simdutf__convert_utf8_to_utf16le_with_errors(
@@ -52,8 +52,8 @@ unsafe extern "C" {
         input: *const u16,
         length: usize,
     ) -> usize;
-    pub(crate) fn simdutf__utf16_length_from_utf8(input: *const u8, length: usize) -> usize;
-    pub(crate) fn simdutf__utf8_length_from_latin1(input: *const u8, length: usize) -> usize;
+    fn simdutf__utf16_length_from_utf8(input: *const u8, length: usize) -> usize;
+    fn simdutf__utf8_length_from_latin1(input: *const u8, length: usize) -> usize;
     fn simdutf__convert_latin1_to_utf8(
         input: *const u8,
         length: usize,

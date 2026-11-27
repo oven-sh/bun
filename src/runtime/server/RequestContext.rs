@@ -1863,7 +1863,6 @@ where
                     if let Some(response) = self.response_mut() {
                         if let Some(mut headers_) = response.swap_init_headers() {
                             self.do_write_headers(&mut headers_);
-                            drop(headers_);
                         }
                     }
                     let cr = RangeRequest::format_content_range(
@@ -3631,7 +3630,6 @@ where
 
             self.do_write_status(status);
             self.do_write_headers(&mut headers_);
-            drop(headers_);
         } else if needs_content_range {
             status = 206;
             self.do_write_status(status);

@@ -2350,7 +2350,7 @@ impl JSValue {
             each,
             result: Ok(()),
         };
-        self.for_each(global, &mut iteration, next::<F>)?;
+        self.for_each(global, &mut iteration, next)?;
         iteration.result
     }
 }

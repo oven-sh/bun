@@ -211,7 +211,7 @@ impl Response {
     }
     pub(crate) fn on_data<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
-        H: Fn(*mut UD, &mut Response, &[u8], bool) + Copy + 'static,
+        H: Fn(*mut UD, AnyResponse, &[u8], bool) + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
@@ -222,14 +222,14 @@ impl Response {
             last: bool,
             p: *mut c_void,
         ) where
-            H: Fn(*mut UD, &mut Response, &[u8], bool) + Copy + 'static,
+            H: Fn(*mut UD, AnyResponse, &[u8], bool) + Copy + 'static,
         {
             if p.is_null() {
                 return;
             }
             // SAFETY: uWS callback contract — `chunk_ptr[..len]` is valid for the call.
             let chunk = unsafe { thunk::c_slice(chunk_ptr, len) };
-            thunk::zst::<H>()(p.cast::<UD>(), r, chunk, last);
+            thunk::zst::<H>()(p.cast::<UD>(), AnyResponse::H2(r), chunk, last);
         }
         c::uws_h2_res_on_data(self, Some(cb::<UD, H>), ud.cast())
     }

@@ -1629,7 +1629,7 @@ impl FFI {
             obj.put_may_be_index(global, &key, cb)?;
         }
 
-        let lib = this_value.guard();
+        let lib = this_value.payload_guard();
         lib.dylib.set(Some(dylib));
         lib.functions.set(symbols);
         js::symbols_value_set_cached(js_object, global, obj);
@@ -1704,7 +1704,7 @@ impl FFI {
             obj.put_may_be_index(global, &key, cb)?;
         }
 
-        this_value.guard().functions.set(symbols);
+        this_value.payload_guard().functions.set(symbols);
         js::symbols_value_set_cached(js_object, global, obj);
         Ok(js_object)
     }

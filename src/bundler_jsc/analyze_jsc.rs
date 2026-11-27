@@ -19,7 +19,7 @@ use handles::{Identifier, IdentifierSlot, JSModuleRecord};
 extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord<'a>(
     global_object: &'a JSGlobalObject,
     vm: &VM,
-    module_loader: *mut JSModuleLoader,
+    module_loader: &JSModuleLoader,
     module_key: &Identifier,
     source_code: &SourceCode,
     res: &ModuleInfoDeserialized,
@@ -46,7 +46,7 @@ extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord<'a>(
 fn to_js_module_record<'a>(
     global_object: &'a JSGlobalObject,
     vm: &VM,
-    module_loader: *mut JSModuleLoader,
+    module_loader: &JSModuleLoader,
     module_key: &Identifier,
     source_code: &SourceCode,
     res: &ModuleInfoDeserialized,
@@ -70,18 +70,18 @@ fn to_js_module_record<'a>(
     // Every id goes through here: in range (or a sentinel, which
     // `IdCursor` already vetted) and materialized.
     let ready = |id: StringID| -> Result<&Identifier, analyze::ModuleInfoError> {
-        let Some(slot) = identifiers.get(id.0 as usize) else {
+        let Some(target) = identifiers.get(id.0 as usize) else {
             return Ok(JSC__VM__starPrivateName(vm, id == StringID::STAR_DEFAULT));
         };
-        if let Some(identifier) = JSC__Identifier__nonNull(slot) {
+        if let Some(identifier) = JSC__Identifier__nonNull(target) {
             return Ok(identifier);
         }
         match res.string(id.0) {
             // SAFETY: 16-bit `chars` start at an even offset of a heap block, so they are aligned.
             Some(ModuleInfoString::Chars { chars, is_8bit }) => Some(unsafe {
-                JSC__Identifier__setFromChars(slot, vm, chars.as_ptr(), chars.len(), is_8bit)
+                JSC__Identifier__setFromChars(target, vm, chars.as_ptr(), chars.len(), is_8bit)
             }),
-            Some(ModuleInfoString::Slot(n)) => JSC__Identifier__setFromSlot(slot, vm, n),
+            Some(ModuleInfoString::Slot(slot)) => JSC__Identifier__setFromSlot(target, vm, slot),
             None => None,
         }
         .ok_or(analyze::ModuleInfoError::BadModuleInfo)
@@ -100,8 +100,7 @@ fn to_js_module_record<'a>(
             )
         })
         .count();
-    // SAFETY: `module_loader` is the live loader that C++ passed. The record is held on the stack
-    // only, which the collector scans.
+    // SAFETY: the record is held on the stack only, which the collector scans.
     let module_record = unsafe {
         JSC_JSModuleRecord__create(
             global_object,
@@ -263,17 +262,18 @@ fn to_js_module_record<'a>(
 
 // ─── opaque FFI types ─────────────────────────────────────────────────────────
 
-/// A module of their own, so that only C++ can make one.
+/// Not `opaque_ffi!`, whose `opaque_ref` takes any pointer: only C++ can make these.
 mod handles {
     use core::cell::UnsafeCell;
     use core::ffi::c_void;
 
-    /// A `JSC::Identifier` that is null until C++ sets it, and never again.
+    /// A `JSC::Identifier` that is null until C++ sets it, and not null after that.
     #[repr(transparent)]
     pub(super) struct IdentifierSlot(UnsafeCell<*const c_void>);
     /// A `JSC::Identifier` that is not null.
     #[repr(transparent)]
     pub(super) struct Identifier(IdentifierSlot);
+    /// Pointer-aligned, so `bun_opaque::opaque_deref` rejects it.
     #[repr(C)]
     pub(super) struct JSModuleRecord(UnsafeCell<[*const c_void; 0]>);
 }
@@ -325,7 +325,7 @@ unsafe extern "C" {
     fn JSC_JSModuleRecord__create<'a>(
         global_object: &'a JSGlobalObject,
         vm: &VM,
-        module_loader: *mut JSModuleLoader,
+        module_loader: &JSModuleLoader,
         module_key: &Identifier,
         source_code: &SourceCode,
         has_import_meta: bool,

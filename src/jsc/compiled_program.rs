@@ -894,7 +894,7 @@ pub fn deny_write_execute_memory() {
 
 /// Each of the three tables is the one that keeps the variable from being read.
 #[cfg(bun_locked_environment)]
-fn is_never_read(entry: &core::ffi::CStr, name: &[u8]) -> bool {
+fn is_never_read(entry: CStrRef<'_>, name: &[u8]) -> bool {
     // The allocator compares names without regard to case.
     if name
         .get(..9)
@@ -903,7 +903,7 @@ fn is_never_read(entry: &core::ffi::CStr, name: &[u8]) -> bool {
         let name = ZBox::from_vec(name.to_ascii_lowercase());
         return !mi_is_read_from_environment(name.as_zstr().into());
     }
-    bun_core::is_never_read(name) || Bun__isOptionThatCompiledCodeDoesNotTake(entry.into())
+    bun_core::is_never_read(name) || Bun__isOptionThatCompiledCodeDoesNotTake(entry)
 }
 
 #[cfg(bun_locked_environment)]
@@ -926,9 +926,8 @@ pub fn refuse_variables_that_are_never_read() {
     // SAFETY: at startup, and nothing here changes the environment.
     let names: Vec<&[u8]> = unsafe { bun_sys::environ() }
         .iter()
-        .filter_map(|entry| {
-            let entry = entry.to_cstr();
-            let bytes = entry.to_bytes();
+        .filter_map(|&entry| {
+            let bytes = entry.to_cstr().to_bytes();
             let end = bun_core::strings::index_of_char_usize(bytes, b'=').unwrap_or(bytes.len());
             let name = &bytes[..end];
             is_never_read(entry, name).then_some(name)

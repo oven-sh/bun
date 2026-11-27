@@ -2,24 +2,23 @@ use crate::AnyResponse;
 use crate::response::Response;
 
 /// Response types that can drive a `BodyReaderMixin`: must support registering
-/// data/abort callbacks and converting to `AnyResponse`.
+/// data/abort callbacks.
 ///
 /// Only `Response<SSL>` is wired today (DevServer's only consumer is HTTP/1.x).
 pub trait BodyResponse: Sized + 'static {
     fn on_data<U, H>(&mut self, handler: H, ctx: *mut U)
     where
-        H: Fn(*mut U, &mut Self, &[u8], bool) + Copy + 'static;
+        H: Fn(*mut U, AnyResponse, &[u8], bool) + Copy + 'static;
     fn on_aborted<U, H>(&mut self, handler: H, ctx: *mut U)
     where
         H: Fn(*mut U, AnyResponse) + Copy + 'static;
-    fn to_any(&mut self) -> AnyResponse;
 }
 
 impl<const SSL: bool> BodyResponse for Response<SSL> {
     #[inline]
     fn on_data<U, H>(&mut self, handler: H, ctx: *mut U)
     where
-        H: Fn(*mut U, &mut Self, &[u8], bool) + Copy + 'static,
+        H: Fn(*mut U, AnyResponse, &[u8], bool) + Copy + 'static,
     {
         Response::<SSL>::on_data(self, handler, ctx)
     }
@@ -29,10 +28,6 @@ impl<const SSL: bool> BodyResponse for Response<SSL> {
         H: Fn(*mut U, AnyResponse) + Copy + 'static,
     {
         Response::<SSL>::on_aborted(self, handler, ctx)
-    }
-    #[inline]
-    fn to_any(&mut self) -> AnyResponse {
-        Response::<SSL>::res_to_any(self.downcast())
     }
 }
 
@@ -55,12 +50,11 @@ impl<H: BodyReaderHandler> BodyReaderMixin<H> {
             handler,
             body: Vec::new(),
         }));
-        resp.on_data(Self::on_data::<R>, this);
+        resp.on_data(Self::on_data, this);
         resp.on_aborted(Self::on_aborted, this);
     }
 
-    fn on_data<R: BodyResponse>(this: *mut Self, r: &mut R, chunk: &[u8], last: bool) {
-        let resp = r.to_any();
+    fn on_data(this: *mut Self, resp: AnyResponse, chunk: &[u8], last: bool) {
         // SAFETY: the box from `read_body`. `read` disarms both callbacks before it answers.
         let result = unsafe { (*this).read(resp, chunk, last) };
         if let Err(err) = &result {

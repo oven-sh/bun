@@ -832,7 +832,6 @@ impl Runner {
             js_args.args[last] = javascript_object;
         }
 
-        jsc::mark_binding();
         Run::run_async(vm, log, bump, caller, &js_args.args, source, id)
     }
 }

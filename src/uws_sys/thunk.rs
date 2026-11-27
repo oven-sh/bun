@@ -13,9 +13,6 @@
 //! * `zst::<H>()`         — conjure a ZST handler value (handlers are
 //!   monomorphised zero-sized types, so no runtime data is needed).
 //! * `c_slice`            — `(ptr,len) → &[u8]` (empty when len==0 / null).
-//!
-//! All functions are `unsafe fn` (callers uphold the uWS callback contract)
-//! and `#[inline(always)]` so codegen is identical to the hand-rolled thunks.
 
 use core::ptr::NonNull;
 

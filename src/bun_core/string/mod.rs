@@ -1345,7 +1345,7 @@ impl<'a> EncodedSlice<'a> {
     /// Number of bytes the UTF-16LE encoding of this string would occupy.
     pub(crate) fn utf16_byte_length(self) -> usize {
         if self.is_utf8() {
-            return bun_simdutf_sys::simdutf::length::utf16::from::utf8(self.slice()) * 2;
+            return crate::strings::element_length_utf8_into_utf16(self.slice()) * 2;
         }
         if self.is_16bit() {
             return self.len * 2;

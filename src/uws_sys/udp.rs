@@ -331,7 +331,7 @@ extern "C" fn on_data<H: Fn(*mut Socket, Packets<'_>) + Copy + 'static>(
     thunk::zst::<H>()(socket, Packets { buf, indices });
 }
 
-/// The datagrams of one read, lent to the data callback.
+/// The packets of one read, lent to the data callback.
 pub struct Packets<'a> {
     buf: &'a PacketBuffer,
     indices: Range<c_int>,
@@ -341,8 +341,8 @@ impl<'a> Iterator for Packets<'a> {
     type Item = Packet<'a>;
 
     fn next(&mut self) -> Option<Packet<'a>> {
-        let (buf, index) = (self.buf, self.indices.next()?);
-        Some(Packet { buf, index })
+        let buf = self.buf;
+        self.indices.next().map(|index| Packet { buf, index })
     }
 }
 
@@ -353,7 +353,7 @@ pub struct Packet<'a> {
 }
 
 impl<'a> Packet<'a> {
-    /// On Windows only the address is initialized: it must not be copied.
+    /// On Windows the bytes past the address are uninitialized: the storage must not be copied.
     pub fn peer(self) -> &'a sockaddr_storage {
         // SAFETY: `index` is below the count that came with `buf`. The address is a part of `buf`,
         // which only the frame that calls `on_data` has.

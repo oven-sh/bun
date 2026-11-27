@@ -929,7 +929,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
                 resp_ref.on_data(
                     |u: *mut ServerRequestContext<SSL, DEBUG>,
-                     _: &mut uws_sys::NewAppResponse<SSL>,
+                     _: uws_sys::AnyResponse,
                      chunk: &[u8],
                      last: bool| {
                         ServerRequestContext::<SSL, DEBUG>::on_buffered_body_chunk(u, chunk, last)

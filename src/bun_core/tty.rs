@@ -51,12 +51,7 @@ impl State {
 
     #[inline]
     pub fn set_mode(&mut self, fd: c_int, mode: Mode, when: SetAttrWhen) -> c_int {
-        Bun__ttySetMode(
-            fd,
-            mode as c_int,
-            self,
-            (when == SetAttrWhen::Drain) as c_int,
-        )
+        Bun__ttySetMode(fd, mode, self, (when == SetAttrWhen::Drain) as c_int)
     }
 }
 
@@ -86,5 +81,5 @@ impl Drop for RawModeGuard {
 }
 
 unsafe extern "C" {
-    safe fn Bun__ttySetMode(fd: c_int, mode: c_int, state: &mut State, drain: c_int) -> c_int;
+    safe fn Bun__ttySetMode(fd: c_int, mode: Mode, state: &mut State, drain: c_int) -> c_int;
 }

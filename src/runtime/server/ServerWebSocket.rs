@@ -1305,7 +1305,7 @@ impl WsPackageSocket {
         })
     }
 
-    /// Entry point for every uWS callback. Folds any exception the handler left pending.
+    /// Runs `callback` for an event and folds any exception the handler left pending.
     ///
     /// Runs in the context of the script that created the server, like every other `http.Server`
     /// connection event. It doesn't use the handlers' own context, because each server has one

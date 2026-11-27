@@ -222,7 +222,7 @@ fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
     source.extend_from_slice(b"\n})");
     let name = b"bun-lint-plugins.js";
     let mut exception = JSValue::UNDEFINED;
-    let program = bun_jsc::cpp::Bun__REPL__evaluate(global, &source, name, &mut exception);
+    let program = jsc::cpp::Bun__REPL__evaluate(global, &source, name, &mut exception);
     if !exception.is_undefined() {
         return Err(message_of(global, exception));
     }

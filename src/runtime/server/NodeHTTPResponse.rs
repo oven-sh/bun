@@ -552,7 +552,7 @@ impl NodeHTTPResponse {
             return Ok(None);
         };
 
-        let ws = ServerWebSocket::init_for_ws_package(handler.get(), websocket).guard();
+        let ws = ServerWebSocket::init_for_ws_package(handler.get(), websocket).payload_guard();
 
         // If it fails, this is still an HTTP response, and uws still calls it.
         let Some(raw_response) = self.writer().filter(|raw| raw.write_handshake(handshake)) else {

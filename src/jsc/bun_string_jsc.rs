@@ -13,9 +13,7 @@ use crate::{EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError, JsResult};
 // `&mut String` are ABI-identical to non-null `*const String`/`*mut String`,
 // so shims that take only those are declared `safe fn`.
 //
-// `[[ZIG_EXPORT(...)]]`-annotated symbols (`BunString__toJS`, `BunString__fromJS`,
-// `BunString__transferToJS`, `BunString__toJSON`, `BunString__createUTF8ForJS`,
-// `Bun__parseDate`) are NOT redeclared here — route through `crate::cpp::*`,
+// `[[ZIG_EXPORT(...)]]`-annotated symbols are NOT redeclared here — route through `crate::cpp::*`,
 // which owns the canonical extern decl + per-mode exception scope.
 unsafe extern "C" {
     safe fn BunString__toJSDOMURL(global_object: &JSGlobalObject, in_: &String) -> JSValue;

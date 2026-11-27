@@ -1358,8 +1358,7 @@ impl XxHash64State {
 
     #[inline(always)]
     pub fn update(&mut self, bytes: &[u8]) {
-        // SAFETY: `self` holds what the kernel wrote; `bytes.ptr/len` are a valid readable range
-        // (never dereferenced when empty).
+        // SAFETY: `bytes.ptr/len` are a valid readable range (never dereferenced when empty).
         unsafe { highway_xxhash64_update(self, bytes.as_ptr(), bytes.len()) };
     }
 

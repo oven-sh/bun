@@ -270,7 +270,7 @@ impl Listener {
                 }
                 .into_js_wrapper(cx.global());
                 let js_value = this_value.to_js();
-                let this_ref = this_value.guard();
+                let this_ref = this_value.payload_guard();
                 let this: *mut Listener = this_ref.as_ptr();
                 // TODO: server_name is not supported on named pipes, I belive its , lets wait for
                 // someone to ask for it
@@ -388,7 +388,7 @@ impl Listener {
         }
         .into_js_wrapper(cx.global());
         let js_value = this_value.to_js();
-        let this_ref = this_value.guard();
+        let this_ref = this_value.payload_guard();
         let this: *mut Listener = this_ref.as_ptr();
         this_ref
             .group

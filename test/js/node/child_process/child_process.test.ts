@@ -15,6 +15,7 @@ import {
   tls as tlsCert,
   tmpdirSync,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import {
   ChildProcess,
   exec,
@@ -483,6 +484,48 @@ describe("spawn()", () => {
       }
     },
   );
+
+  // Runs sh and cat. The listener blocks until the next chunk is written. A parked read takes every other chunk, a pull the ones between.
+  it.skipIf(isWindows).each([100, 3000])("delivers %d bytes that are there before a pull as one chunk", async size => {
+    const chunkOf = (letter: string) => Buffer.alloc(size, letter).toString();
+    const letters = ["b", "c", "d", "e"];
+    using dir = tempDir("chunk-before-pull", Object.fromEntries(letters.map(letter => [letter, chunkOf(letter)])));
+    const file = (name: string) => path.join(String(dir), name);
+    mkfifo(file("go"), 0o600);
+    const go = fs.openSync(file("go"), "r+");
+    const child = spawn(
+      "sh",
+      [
+        "-c",
+        `exec 3<go; printf a; for f in ${letters.join(" ")}; do read _ <&3 || exit 1; cat $f; : >$f.written; done`,
+      ],
+      { cwd: String(dir) },
+    );
+    try {
+      const chunks: string[] = [];
+      let received = 0;
+      const { promise: failed, reject } = Promise.withResolvers<never>();
+      child.on("error", reject);
+      child.stdout.on("data", (chunk: Buffer) => {
+        chunks.push(chunk.toString());
+        received += chunk.byteLength;
+        const next = letters[(received - 1) / size];
+        if (next === undefined) return;
+        fs.writeSync(go, "\n");
+        const deadline = Date.now() + 4000;
+        while (!fs.existsSync(file(`${next}.written`))) {
+          if (Date.now() > deadline) return reject(new Error(`the child did not write ${next}`));
+          Bun.sleepSync(1);
+        }
+      });
+      const [code] = await Promise.race([once(child, "close"), failed]);
+      expect(chunks).toEqual(["a", ...letters.map(chunkOf)]);
+      expect(code).toBe(0);
+    } finally {
+      child.kill();
+      fs.closeSync(go);
+    }
+  });
 
   it("should allow us to set env", async () => {
     async function getChildEnv(env: any): Promise<object> {

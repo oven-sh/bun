@@ -779,6 +779,10 @@ function parseOptions(
     "options.queue_timeout",
     options.queueTimeout ?? options.queue_timeout ?? query.queueTimeout,
   );
+  // A timer takes no longer delay.
+  if (queueTimeout !== undefined && Math.round(queueTimeout) > 2 ** 31 - 1) {
+    throw $ERR_INVALID_ARG_VALUE("options.queue_timeout", queueTimeout / 1000, "must be at most 2147483.647 seconds");
+  }
 
   const max = Number(options.max ?? query.max ?? 10);
   if (max > 2 ** 31 || max < 1 || max !== max) {

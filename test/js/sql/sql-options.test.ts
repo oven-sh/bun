@@ -73,14 +73,18 @@ describe("the query of a postgres:// URL", () => {
     expect(optionsOf(url, { queue_timeout: 2 }).queueTimeout).toBe(2000);
     expect(optionsOf(url, { queueTimeout: 0.5, queue_timeout: 2 }).queueTimeout).toBe(500);
     expect(optionsOf(url, { queueTimeout: 0 }).queueTimeout).toBe(0);
-    for (const refused of [-1, NaN, "soon", 2 ** 31 + 1]) {
+    expect(optionsOf(url, { queueTimeout: 2147483.647 }).queueTimeout).toBe(2147483.647 * 1000);
+    // Longer than a timer can be.
+    for (const refused of [-1, NaN, "soon", 2147483.648, 2 ** 31]) {
       expect(() => optionsOf(url, { queueTimeout: refused })).toThrow(
         expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
       );
     }
-    expect(() => optionsOf("postgres://uh/ud?queue_timeout=soon")).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
-    );
+    for (const refused of ["soon", "2147483.648"]) {
+      expect(() => optionsOf(`postgres://uh/ud?queue_timeout=${refused}`)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+      );
+    }
   });
 
   test("every other key is a startup parameter", () => {

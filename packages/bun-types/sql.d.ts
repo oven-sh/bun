@@ -588,6 +588,8 @@ declare module "bun" {
        * a query that Bun sends on a connection that already runs other
        * queries. `sql.begin()` and `sql.reserve()` need an idle connection,
        * so on a pool that queries keep busy they are the callers that wait.
+       *
+       * At most 2147483.647 seconds, about 24.8 days.
        * @default 0 (no limit)
        */
       queueTimeout?: number | undefined;

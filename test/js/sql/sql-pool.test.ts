@@ -1623,10 +1623,10 @@ describe.each(scripted)("$adapter, scripted server", script => {
       expect(await closing).toBe("resolved");
     });
 
-    test.concurrent("2 ** 31 seconds is not a timer of 1 ms", async () => {
+    test.concurrent("the longest queueTimeout is not a timer of 1 ms", async () => {
       await using server = await serverOf(serving);
-      await using sql = new SQL({ url: url(server.port), max: 1, queueTimeout: 2 ** 31 });
-      expect(sql.options.queueTimeout).toBe(2 ** 31 * 1000);
+      await using sql = new SQL({ url: url(server.port), max: 1, queueTimeout: 2147483.647 });
+      expect(Math.round(sql.options.queueTimeout)).toBe(2 ** 31 - 1);
       let waiting: PromiseLike<string>;
       {
         using _ = await sql.reserve();

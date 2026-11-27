@@ -589,8 +589,8 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     }
     const queueTimeout = $getByIdDirect(connectionInfo, "queueTimeout");
     if (queueTimeout !== undefined && queueTimeout > 0) {
-      // setTimeout turns a longer delay into 1 ms
-      this.#queueTimeout = Math.min(Math.ceil(queueTimeout), 2 ** 31 - 1);
+      // Whole milliseconds, as a timer counts them: 1.001 s is 1000.9999999999999 ms.
+      this.#queueTimeout = Math.max(Math.round(queueTimeout), 1);
     }
   }
 

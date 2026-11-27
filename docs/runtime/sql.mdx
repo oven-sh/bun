@@ -1459,6 +1459,7 @@ A pool that queries keep busy therefore rejects `begin()` and `reserve()`, and n
 - The wait for a connection that Bun is still opening counts. With a `queueTimeout` below `connectionTimeout`, the callers of a server that does not answer reject with `ERR_POSTGRES_QUEUE_TIMEOUT` and not with the error of the connection attempt. When an attempt has failed and no connection has opened since, that failure is the `cause` of the error.
 - Bun reports the error of a query that you only [started with `.execute()`](#unhandled-rejections) and that has no handler, like a failure to connect.
 - A caller that waits keeps the process alive until it gets a connection or its `queueTimeout` ends.
+- The longest `queueTimeout` is 2147483.647 seconds, about 24.8 days. Bun refuses a longer one when you create the client.
 - SQLite has no pool and ignores the option.
 
 Bun turns on TCP keepalive (60 seconds) for PostgreSQL and MySQL connections, so a query fails instead of waiting forever when the server disappears without closing the connection.

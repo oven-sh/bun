@@ -160,11 +160,6 @@ impl<'a> Compiler<'a> {
             Err(ConvertError::Using) => return Ok(()),
             Err(ConvertError::ThisParameter) => return Err(Vec::new()),
             Err(ConvertError::TooDeep) => return Err(vec![too_deep()]),
-            // oxc's lowering throws it, which drops everything else that's said of the function.
-            Err(ConvertError::LoneSurrogateKey(span)) => {
-                let reason = "Unsupported key type in ObjectExpression".to_owned();
-                return Err(vec![todo(reason, span)]);
-            }
         };
         let host = LintHost::new(&converted, arena, self.file.text());
         let node = match &converted.root {
@@ -190,6 +185,10 @@ impl<'a> Compiler<'a> {
             wanted,
             converted.recorded.iter().any(is_wanted),
         );
+        // oxc's lowering throws it, which drops everything else that's said of the function.
+        if let Some(span) = unsupported_key(&converted, &linted.result) {
+            return Err(vec![todo(UNSUPPORTED_KEY.to_owned(), span)]);
+        }
         logged.extend(findings(&converted, linted.logged));
         let recorded = converted.recorded.iter().map(|it| match *it {
             Recorded::DuplicateFbtTags {
@@ -262,6 +261,40 @@ fn implicit_arguments(span: Span) -> Finding {
 }
 
 const CANNOT_BE_REORDERED: &str = "(BuildHIR::node.lowerReorderableExpression) Expression type `";
+
+const UNSUPPORTED_KEY: &str = "Unsupported key type in ObjectExpression";
+
+/// An invariant of the lowering that has no `(BuildHIR::` before it.
+const COULD_NOT_FIND_BINDING: &str = "Could not find binding for declaration";
+
+/// The string key with a lone surrogate at which oxc's lowering gives up on the function. The tree has no key there,
+/// which Bun's lowering records and goes on.
+fn unsupported_key(converted: &Converted, result: &Result<(), CompilerError>) -> Option<Span> {
+    let keys = &converted.lone_surrogate_keys;
+    let first = *keys.first()?;
+    let Err(error) = result else {
+        return None;
+    };
+    if !error.is_thrown {
+        let is_recorded = |key: &Span| {
+            error.details.iter().any(|it| {
+                matches!(it, CompilerErrorOrDiagnostic::ErrorDetail(it)
+                    if it.reason == UNSUPPORTED_KEY && span_of(converted, it.loc) == Some(*key))
+            })
+        };
+        return keys.iter().copied().find(is_recorded);
+    }
+    // A pass has thrown, which drops what was recorded of the keys. If it's the lowering, that can be before it came
+    // to a key: the order of the source stands in for its own. Any other pass comes after it.
+    let is_before_keys = error.details.first().is_some_and(|it| match it {
+        CompilerErrorOrDiagnostic::ErrorDetail(it) => {
+            (it.reason.starts_with("(BuildHIR::") || it.reason == COULD_NOT_FIND_BINDING)
+                && span_of(converted, it.loc).is_some_and(|at| at.start < first.start)
+        }
+        CompilerErrorOrDiagnostic::Diagnostic(_) => false,
+    });
+    (!is_before_keys).then_some(first)
+}
 
 /// `a || b` is a `BinaryExpression` in Bun's tree, so that's what the lowering calls it. ESTree has a
 /// `LogicalExpression`.

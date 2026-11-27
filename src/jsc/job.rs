@@ -27,6 +27,7 @@ use core::ptr::NonNull;
 use bun_core::{from_field_ptr, heap};
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_io::{JsKeepAlive, KeepAlive};
+use bun_threading::thread_pool::{Batch, ThreadPool};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 use crate::debugger::AsyncTaskTracker;
@@ -393,6 +394,17 @@ impl<C: OwnedJob> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
     #[track_caller]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
+        WorkPool::schedule(Self::create(cx, off, js));
+    }
+
+    /// As [`schedule`](Self::schedule), on a pool that outlives the run.
+    #[track_caller]
+    pub fn schedule_on(pool: &ThreadPool, cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
+        pool.schedule(Batch::from(Self::create(cx, off, js)));
+    }
+
+    #[track_caller]
+    fn create(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) -> *mut WorkPoolTask {
         let job = heap::into_raw(Box::new(Self {
             header: JobHeader {
                 // SAFETY: (this and the entry below) the erased dispatchers are
@@ -426,12 +438,12 @@ impl<C: OwnedJob> Job<C> {
             off,
             js,
         }));
-        // SAFETY: live until completed/released on this thread; the pool owns it now.
+        // SAFETY: live until completed/released on this thread.
         unsafe {
             if C::Shared::CANCELLABLE {
                 cx.vm().jobs.with_mut(|j| j.push(&raw mut (*job).header));
             }
-            WorkPool::schedule(&raw mut (*job).pooled.task);
+            &raw mut (*job).pooled.task
         }
     }
 

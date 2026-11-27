@@ -33,7 +33,6 @@ describe("issue/03830", () => {
   it.concurrent.each([
     // [name, where transformSync+import() runs in macro.ts]
     ["inside the exported macro fn", "fn-body"],
-    // Loading a macro runs the module's top-level, under a MacroModeGuard of its own.
     ["at macro-module top level", "top-level"],
   ])("import() works after a nested Bun.Transpiler %s", async (_, where) => {
     // The macro VM has to be able to load modules after a nested transformSync().

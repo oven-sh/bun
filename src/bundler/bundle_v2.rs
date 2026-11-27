@@ -39,7 +39,7 @@ use crate::PathToSourceIndexMap::{ModuleMap, PathToSourceIndexMap};
 use crate::barrel_imports::RequestedExports;
 use crate::cache::ExternalFreeFunction;
 use crate::options::{self, Target};
-use crate::transpiler::Transpiler;
+use crate::transpiler::{MacroThread, Transpiler};
 
 // ── re-exports so callers can reference these via `bundle_v2::…` ──
 pub use crate::ParseTask;
@@ -64,6 +64,8 @@ pub struct BundleV2<'a> {
     pub(crate) target_transpilers: TargetTranspilers<'a>,
     /// Before what tasks borrow: dropping it joins the threads of a pool it owns.
     pub graph: Graph<'a>,
+    /// After `graph`, whose drop hands the threads that wait for macros their `Worker`s.
+    pub macro_thread: MacroThread,
     /// When Bun Bake is used, the resolved framework is passed here.
     pub(crate) framework: Option<std::sync::Arc<bake::Framework>>,
     pub(crate) r#loop: EventLoop,
@@ -226,6 +228,7 @@ pub struct BakeOptions<'a> {
     /// `Some` with a separate SSR graph.
     pub ssr_transpiler: Option<&'a mut Transpiler<'a>>,
     pub plugins: Option<NonNull<JSBundlerPlugin>>,
+    pub macro_thread: MacroThread,
 }
 
 impl<'a> BundleV2<'a> {
@@ -2663,6 +2666,7 @@ pub mod bv2_impl {
                 target_transpilers: Default::default(),
                 framework: None,
                 graph: Graph::new(heap, ThreadPool::init(thread_pool)),
+                macro_thread: Default::default(),
                 r#loop: event_loop,
                 has_any_css_locals: Default::default(),
                 bytecode_order: None,
@@ -2708,6 +2712,7 @@ pub mod bv2_impl {
                 };
                 this.framework = Some(bo.framework);
                 this.plugins = bo.plugins;
+                this.macro_thread = bo.macro_thread;
                 if let Some(plugins) = this.plugins_ref() {
                     plugins.freeze_filters();
                 }

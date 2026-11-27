@@ -606,7 +606,7 @@ fn transpile(
     loader: Loader,
     module_type: ModuleType,
 ) -> Option<Module> {
-    let (arena, macro_load_states) = (Arena::new(), Default::default());
+    let (arena, deferred_macros) = (Arena::new(), Cell::new(false));
     let mut ast_memory = ASTMemoryAllocator::borrowing(&arena);
     let _ast_scope = ast_memory.enter();
     let mut cache = RuntimeTranspilerCache::default();
@@ -624,8 +624,7 @@ fn transpile(
         file_descriptor: None,
         opened_file: Some(&mut file),
         macro_remappings: Default::default(),
-        macro_js_ctx: bun_bundler::transpiler::default_macro_js_value(),
-        macro_load_states: &macro_load_states,
+        macros: bun_bundler::transpiler::Macros::Defer(&deferred_macros),
         jsx: options.jsx.clone(),
         emit_decorator_metadata: options.emit_decorator_metadata,
         experimental_decorators: options.experimental_decorators,

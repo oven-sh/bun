@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("Bun.build rejects when a macro throws while it is imported", async () => {
   using dir = tempDir("bun-build-macro-import-fails", {
@@ -10,10 +10,7 @@ test("Bun.build rejects when a macro throws while it is imported", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build.ts"],
     cwd: String(dir),
-    // The VM of the bundler's thread is never destroyed, nor the source map that it parses to print the error.
-    env: isASAN
-      ? { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") }
-      : bunEnv,
+    env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });

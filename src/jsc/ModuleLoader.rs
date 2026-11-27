@@ -26,7 +26,6 @@ pub struct ModuleLoader {
     pub eval_source: core::cell::OnceCell<Box<bun_ast::Source<'static>>>,
     /// User's `-e` bytes under `--interactive` (see `Eval::interactive_script`).
     pub interactive_eval_script: core::cell::Cell<Option<&'static [u8]>>,
-    pub macro_load_states: bun_js_parser::Macro::MacroLoadStates,
 }
 
 static IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS: core::sync::atomic::AtomicBool =
@@ -124,7 +123,6 @@ unsafe extern "Rust" {
     /// Defined in `bun_runtime::jsc_hooks`. `None` when the specifier is not a
     /// builtin / standalone-graph module.
     pub(crate) safe fn __bun_fetch_builtin_module(
-        jsc_vm: &VirtualMachine,
         global: &JSGlobalObject,
         specifier: &bun_core::String,
     ) -> Option<ResolvedSource>;
@@ -226,7 +224,7 @@ extern "C" fn Bun__fetchBuiltinModule(
         *ret = ErrorableResolvedSource::err(error);
         return true;
     }
-    match __bun_fetch_builtin_module(jsc_vm, global_object, specifier) {
+    match __bun_fetch_builtin_module(global_object, specifier) {
         Some(resolved) => {
             *ret = ErrorableResolvedSource::ok(resolved);
             true

@@ -147,6 +147,7 @@ struct WorkerVmInit {
     transform_options: bun_options_types::schema::api::TransformOptions,
     env_loader: bun_dotenv::Loader,
     proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
+    no_macros: bool,
 }
 
 /// What the worker thread is handed: its refcounted `WebWorker` (a ref of the
@@ -172,17 +173,20 @@ struct OwnedByThread {
 unsafe impl Send for OwnedByThread {}
 
 /// The address space for the tables of a thread that has not started. Null if it needs none.
-struct ReservedPages(*mut c_void);
+pub(crate) struct ReservedPages(*mut c_void);
+
+// SAFETY: nothing uses the address space until a thread adopts it, and any thread can release it.
+unsafe impl Send for ReservedPages {}
 
 impl ReservedPages {
-    fn try_new(threads_are_ending: bool) -> Option<Self> {
+    pub(crate) fn try_new(threads_are_ending: bool) -> Option<Self> {
         let mut pages = core::ptr::null_mut();
         // SAFETY: `pages` is a live local the callee writes once.
         unsafe { Bun__AOT__tryReservePagesForNewThread(&raw mut pages, threads_are_ending) }
             .then(|| Self(pages))
     }
 
-    fn adopt(self) -> PagesOfThread {
+    pub(crate) fn adopt(self) -> PagesOfThread {
         Bun__AOT__adoptPagesForNewThread(ManuallyDrop::new(self).0);
         PagesOfThread(PhantomData)
     }
@@ -196,7 +200,13 @@ impl Drop for ReservedPages {
 
 /// What the current thread has not used of the pages that it adopted.
 #[must_use]
-struct PagesOfThread(PhantomData<*const ()>);
+pub(crate) struct PagesOfThread(PhantomData<*const ()>);
+
+impl PagesOfThread {
+    pub(crate) fn did_start(&self) {
+        Bun__AOT__didStartThread();
+    }
+}
 
 impl Drop for PagesOfThread {
     fn drop(&mut self) {
@@ -537,6 +547,7 @@ impl WebWorker {
             transform_options,
             env_loader,
             proxy_env_slots,
+            no_macros: parent.transpiler.get().options.no_macros,
         };
 
         // The construction ref: handed to C++ on success, dropped on failure.
@@ -939,6 +950,7 @@ impl WebWorker {
             transform_options,
             mut env_loader,
             proxy_env_slots,
+            no_macros,
         } = init;
         let mut log = bun_ast::Log::default();
         let dot_slash = OnceCell::new();
@@ -959,6 +971,7 @@ impl WebWorker {
                     ));
                 }
             };
+            vm.transpiler.with_mut(|t| t.options.no_macros = no_macros);
             // Never released: `shutdown()` destroys the `JSC::VM`, and the lock with it.
             JSC__VM__getAPILock(vm.global().vm());
             self.spin(&dot_slash);

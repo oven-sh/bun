@@ -18,6 +18,7 @@ mod services;
 pub mod testing;
 
 use crate::bundle_v2::{BundleV2, FileMap, JSBundlerPlugin, dispatch};
+use crate::transpiler::MacroThread;
 use crate::{EventLoop, OutputFile, Transpiler};
 use bun_aot::BuildFailed;
 use bun_aot::engine::{EngineResult, ExecutableIdentity, TargetImageForm};
@@ -66,6 +67,7 @@ pub struct AotBuildRequest<'r, 'a> {
     pub worker_pool: Option<NonNull<bun_threading::ThreadPool>>,
     pub plugins: Option<PluginSetup<'a>>,
     pub file_map: Option<&'a FileMap>,
+    pub macro_thread: MacroThread,
     pub typescript_libs: Libs<'r>,
 }
 
@@ -132,6 +134,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         worker_pool,
         plugins,
         file_map,
+        macro_thread,
         typescript_libs,
     } = request;
 
@@ -176,6 +179,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         arena,
     );
     bundle.file_map = file_map;
+    bundle.macro_thread = macro_thread;
     if let Some(setup) = plugins {
         bundle.plugins = Some(setup.plugins);
         bundle.plugin_context = setup.context;

@@ -3112,13 +3112,14 @@ declare module "bun" {
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
      * @param code The code to transpile
+     * @param ctx An object to pass to macros. Each call gets a copy, made like with `structuredClone()`.
      */
     transformSync(code: Bun.StringOrBuffer, loader: JavaScriptLoader, ctx: object): string;
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
      * @param code The code to transpile
-     * @param ctx An object to pass to macros
+     * @param ctx An object to pass to macros. Each call gets a copy, made like with `structuredClone()`.
      */
     transformSync(code: Bun.StringOrBuffer, ctx: object): string;
 

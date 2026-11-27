@@ -18,7 +18,7 @@ use core::ops::{Deref, DerefMut};
 
 use bstr::BStr;
 
-use bun_bundler::transpiler::{MacroJSCtx, Transpiler};
+use bun_bundler::transpiler::{Macros, Transpiler};
 use bun_collections::VecExt;
 use bun_core::strings;
 #[cfg(unix)]
@@ -2103,16 +2103,12 @@ impl<'a> Repl<'a> {
         // until that pass. Lowering wraps the declaration in `try/finally` first,
         // which the REPL transform passes through intact.
 
+        let macro_thread = vm.macro_thread();
         let define = &vm.transpiler.get().options.define;
         opts.macro_remap = Some(&vm.transpiler.get().options.macro_remap);
-        // SAFETY: JS thread; the VM outlives the parse. Does not hold for a macro: `enable_macro_mode`
-        // borrows the transpiler mutably while the parser holds `define` and `macro_remap`.
+        // SAFETY: JS thread, which runs no script during the parse; the VM outlives it.
         opts.macro_context = Some(unsafe {
-            Transpiler::macro_context(
-                vm.transpiler.as_ptr(),
-                &vm.module_loader.macro_load_states,
-                MacroJSCtx::ZERO,
-            )
+            Transpiler::macro_context(vm.transpiler.as_ptr(), Macros::run_on(&macro_thread))
         });
 
         // Create log for errors
@@ -2127,11 +2123,11 @@ impl<'a> Repl<'a> {
             Err(_) => return None,
         };
 
-        let parse_result = match parser.parse() {
-            Ok(r) => r,
-            Err(_) => return None,
-        };
-        let bun_js_parser::Result::Ast(mut ast) = parse_result else {
+        let parse_result = parser.parse();
+        if vm.did_run_macros().is_err() {
+            return None;
+        }
+        let Ok(bun_js_parser::Result::Ast(mut ast)) = parse_result else {
             return None;
         };
         // Don't call ast.deinit() - the arena handles cleanup

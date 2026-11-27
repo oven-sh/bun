@@ -53,6 +53,15 @@ pub struct Conditions {
     pub require: crate::package_json::ConditionsMap,
     pub style: crate::package_json::ConditionsMap,
 }
+impl Clone for Conditions {
+    fn clone(&self) -> Self {
+        Self {
+            import: bun_core::handle_oom(self.import.clone()),
+            require: bun_core::handle_oom(self.require.clone()),
+            style: bun_core::handle_oom(self.style.clone()),
+        }
+    }
+}
 
 /// `Copy` tag selecting one of the extension-order lists owned by
 /// [`BundleOptions`]. Replaces the previous `*const [Box<[u8]>]`
@@ -86,6 +95,7 @@ pub fn owned_string_list(s: &[&[u8]]) -> Box<[Box<[u8]>]> {
     s.iter().map(|s| Box::<[u8]>::from(*s)).collect()
 }
 
+#[derive(Clone)]
 pub struct ExtensionOrder {
     pub default: ExtensionOrderGroup,
     pub node_modules: ExtensionOrderGroup,
@@ -96,6 +106,7 @@ pub struct ExtensionOrder {
     /// [`ExtOrder`] tag resolves into storage with the same owner/lifetime.
     pub css: Box<[Box<[u8]>]>,
 }
+#[derive(Clone)]
 pub struct ExtensionOrderGroup {
     pub default: Box<[Box<[u8]>]>,
     pub esm: Box<[Box<[u8]>]>,
@@ -162,6 +173,13 @@ pub use ::bun_options_types::ForceNodeEnv;
 pub struct Framework {
     pub built_in_modules: bun_collections::StringArrayHashMap<bun_options_types::BuiltInModule>,
 }
+impl Clone for Framework {
+    fn clone(&self) -> Self {
+        Self {
+            built_in_modules: bun_core::handle_oom(self.built_in_modules.clone()),
+        }
+    }
+}
 
 /// Resolver-tier `BundleOptions` — the canonical resolver-input struct.
 /// `bun_bundler::options::BundleOptions` (the ~200-field CLI/config
@@ -169,6 +187,7 @@ pub struct Framework {
 /// `bun_bundler::transpiler::resolver_bundle_options_subset`; the bundler
 /// depends on this crate, so this type is the lower-tier source of truth
 /// for everything resolution reads.
+#[derive(Clone)]
 pub struct BundleOptions {
     pub target: Target,
     pub packages: Packages,

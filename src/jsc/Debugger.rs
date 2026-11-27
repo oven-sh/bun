@@ -462,9 +462,6 @@ impl Debugger {
         bun_threading::Futex::wake(&FUTEX_ATOMIC, 1);
 
         debuggee.wake();
-        // `vm.event_loop` may have flipped between `regular_event_loop` and
-        // `macro_event_loop` inside the re-entrant JS above;
-        // `event_loop()` re-reads the slot.
         this.event_loop().tick();
         debuggee.wake();
 

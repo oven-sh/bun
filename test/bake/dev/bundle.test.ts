@@ -2210,3 +2210,27 @@ devTest("recovers from an unresolved css url() and html script src longer than t
     expect((await dev.fetch("/")).status).toBe(200);
   },
 });
+
+devTest("each bundle runs the macro that is on disk, in a new context", {
+  framework: minimalFramework,
+  files: {
+    "macro.ts": `let calls = 0; export const version = () => "1," + ++calls;`,
+    "routes/index.ts": `
+      import { version } from "../macro.ts" with { type: "macro" };
+      export default function (req, meta) {
+        return new Response("1," + version());
+      }
+    `,
+  },
+  // Fewer threads than bundles, so that one parses the file twice.
+  env: { UV_THREADPOOL_SIZE: "2" },
+  async test(dev) {
+    await dev.fetch("/").equals("1,1,1");
+    for (const version of [2, 3]) {
+      // Not part of the bundle, so there is no reload to wait for.
+      fs.writeFileSync(dev.join("macro.ts"), `let calls = 0; export const version = () => "${version}," + ++calls;`);
+      await dev.patch("routes/index.ts", { find: `${version - 1},`, replace: `${version},` });
+      await dev.fetch("/").equals(`${version},${version},1`);
+    }
+  },
+});

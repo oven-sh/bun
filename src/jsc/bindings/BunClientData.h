@@ -3,7 +3,6 @@
 // A counted reference to a VM's handle (bun_jsc::VmHandle): what any thread other than the
 // VM's own uses to post work to it, keep its loop alive, or ask whether it may still run
 // script. Valid however long it is held.
-#include "BunLoopKind.h"
 #include <wtf/SharedTask.h>
 struct BunVmHandleRef;
 extern "C" const BunVmHandleRef* Bun__VmHandle__retain(void* bunVM); // JS thread
@@ -30,8 +29,8 @@ namespace WebCore {
 class WorkerMessagingProxy;
 class EventLoopTask;
 }
-extern "C" bool Bun__VmHandle__post(const BunVmHandleRef*, WebCore::EventLoopTask*, BunLoopKind);
-extern "C" void Bun__VmHandle__refKeepAlive(const BunVmHandleRef*, BunLoopKind, int delta);
+extern "C" bool Bun__VmHandle__post(const BunVmHandleRef*, WebCore::EventLoopTask*);
+extern "C" void Bun__VmHandle__refKeepAlive(const BunVmHandleRef*, int delta);
 extern "C" void Bun__VmHandle__wake(const BunVmHandleRef*); // any thread
 // Node's can_call_into_js(): false once the VM's stop was requested (terminate()/exit/teardown). Any thread.
 extern "C" bool Bun__VmHandle__scriptAllowed(const BunVmHandleRef*);

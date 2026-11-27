@@ -37,6 +37,8 @@ use bun_jsc::{
 use bun_ast::ImportKind;
 use bun_ast::Loader;
 use bun_bundler::options::{self, ModuleType};
+use bun_bundler::transpiler::Macros;
+use bun_jsc::runtime_transpiler_store::CallsMacros;
 use bun_resolve_builtins::Module as HardcodedModule;
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
@@ -359,7 +361,7 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
     // Worker init routes through this same hook but must not configure a
     // debugger, so gate on `worker_ptr` to keep `vm.debugger == None` for
     // workers.
-    if opts.worker_ptr.is_null() {
+    if opts.worker_ptr.is_null() && !vm.is_macro_host() {
         configure_debugger(vm, &opts.debugger);
     }
 
@@ -1046,7 +1048,7 @@ fn name_text_of_blob_url(blob_id: &[u8], vm: &VirtualMachine) -> Option<Vec<u8>>
 /// `value` to a `Response`/`Request` (whose data shapes + `BodyMixin` impl live
 /// in this crate, above `bun_jsc` / `bun_js_parser_jsc`) and returns its body
 /// Blob wrapped in a resolved Promise; `Ok(None)` to fall through to the
-/// `Blob`/`BuildMessage`/`ResolveMessage` arms in `Macro::Run::coerce`.
+/// `Blob`/`BuildMessage`/`ResolveMessage` arms in `macro_host::Conversion::visit`.
 fn body_mixin_get_blob(
     value: JSValue,
     global: &JSGlobalObject,
@@ -1714,7 +1716,31 @@ fn transpile_source_code_inner<const DATA_ONLY: bool>(
     jsc_vm: &VirtualMachine,
     args: &TranspileArgs<'_>,
 ) -> crate::Result<ResolvedSource> {
-    let mut resolved_source = transpile_source_code_of_any_provenance::<DATA_ONLY>(jsc_vm, args)?;
+    let deferred = Cell::new(false);
+    let result = transpile_with::<DATA_ONLY>(jsc_vm, args, Macros::Defer(&deferred));
+    if !DATA_ONLY && deferred.get() {
+        return transpile_waiting_for_macros(jsc_vm, args);
+    }
+    result
+}
+
+#[cold]
+fn transpile_waiting_for_macros(
+    jsc_vm: &VirtualMachine,
+    args: &TranspileArgs<'_>,
+) -> crate::Result<ResolvedSource> {
+    let result = transpile_with::<false>(jsc_vm, args, Macros::run_on(&jsc_vm.macro_thread()));
+    jsc_vm.did_run_macros()?;
+    result
+}
+
+fn transpile_with<const DATA_ONLY: bool>(
+    jsc_vm: &VirtualMachine,
+    args: &TranspileArgs<'_>,
+    macros: Macros<'_>,
+) -> crate::Result<ResolvedSource> {
+    let mut resolved_source =
+        transpile_source_code_of_any_provenance::<DATA_ONLY>(jsc_vm, args, macros)?;
     resolved_source.is_static |= is_input_static(jsc_vm, args);
     Ok(resolved_source)
 }
@@ -1741,10 +1767,11 @@ fn is_input_static(vm: &VirtualMachine, args: &TranspileArgs<'_>) -> bool {
     }
 }
 
-/// The body of [`transpile_source_code_inner`], which says whether the result is static code.
+/// The body of [`transpile_with`], which says whether the result is static code.
 fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
     jsc_vm: &VirtualMachine,
     args: &TranspileArgs<'_>,
+    macros: Macros<'_>,
 ) -> crate::Result<ResolvedSource> {
     use Loader as L;
     let extra = args.extra;
@@ -1799,11 +1826,8 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
             bun_ast::Stmt::data_store_reset();
 
             let hash = bun_watcher::Watcher::get_hash(path.text);
-            let (main, main_hash) = (jsc_vm.main(), jsc_vm.main_hash.get());
-            let is_main = main.is_some_and(|main| {
-                main.len() == path.text.len() && main_hash == hash && main == path.text
-            });
-            let is_preload = jsc_vm.is_in_preload.get() && jsc_vm.preload_hash.get() == hash;
+            let is_main = jsc_vm.main() == Some(path.text);
+            let is_preload = jsc_vm.is_current_preload(path.text);
 
             // ── Arena take/give-back ────────────────────────────────────────
             // Reuse the per-VM arena when free; allocate a
@@ -1934,9 +1958,8 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
 
             let is_node_override = !DATA_ONLY && specifier.starts_with(node_fallbacks::IMPORT_PATH);
 
-            let macro_mode = jsc_vm.macro_mode.get();
             let has_any_macro_remappings = !DATA_ONLY && jsc_vm.has_any_macro_remappings.get();
-            let macro_remappings = if macro_mode || !has_any_macro_remappings || is_node_override {
+            let macro_remappings = if !has_any_macro_remappings || is_node_override {
                 bun_resolver::package_json::MacroMap::default()
             } else {
                 // Note: `MacroMap`'s value type
@@ -2039,8 +2062,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     // entry point.
                     remove_cjs_module_wrapper: is_main
                         && jsc_vm.module_loader.eval_source.get().is_some(),
-                    macro_js_ctx: bun_bundler::transpiler::default_macro_js_value(),
-                    macro_load_states: &jsc_vm.module_loader.macro_load_states,
+                    macros,
                     replace_exports: Default::default(),
                 };
                 let own = (jsc_vm.transpiler)
@@ -2067,12 +2089,22 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         (*transpiler).parse_maybe_return_file_only::<true>(parse_options, None)
                     }
                 } else {
-                    // SAFETY: JS thread. Does not hold for a macro: loading it comes back here
-                    // while this parse still borrows the transpiler.
+                    // SAFETY: JS thread; parsing runs no script on it.
                     unsafe {
                         (*transpiler).parse_maybe_return_file_only::<false>(parse_options, None)
                     }
                 };
+
+                if let Macros::Defer(deferred) = macros
+                    && deferred.get()
+                {
+                    if set_breakpoint_on_first_line {
+                        bun_jsc::runtime_transpiler_store::give_back_break_point_on_first_line();
+                    }
+                    // SAFETY: JS thread; the parse is done with it.
+                    unsafe { (*args.log).reset() };
+                    return Err(crate::Error::ParseError);
+                }
 
                 let Some(mut parse_result) = parse_result else {
                     // Register with watcher even on parse failure.
@@ -2710,7 +2742,7 @@ fn maybe_watch_file(
     path: &Fs::Path,
     hash: u32,
 ) {
-    let Some(watcher) = jsc_vm.bun_watcher.get() else {
+    let Some(watcher) = &jsc_vm.transpiler.get().resolver.watcher else {
         return;
     };
     if input_file.is_none() {
@@ -2727,7 +2759,7 @@ fn maybe_watch_file(
 
 /// Like `maybe_watch_file`, for a file the transpiler didn't open itself.
 fn auto_watch_file(jsc_vm: &VirtualMachine, path_text: &[u8]) {
-    let Some(watcher) = jsc_vm.bun_watcher.get() else {
+    let Some(watcher) = &jsc_vm.transpiler.get().resolver.watcher else {
         return;
     };
     if !bun_paths::is_absolute(path_text) || bun_core::strings::contains(path_text, b"node_modules")
@@ -2957,11 +2989,9 @@ fn get_hardcoded_module(
     }
 }
 
-/// `ModuleLoader.fetchBuiltinModule(jsc_vm, specifier)` — `HardcodedModule`
-/// lookup + macro-namespace + standalone-module-graph probe.
+/// `HardcodedModule` lookup + standalone-module-graph probe.
 #[unsafe(no_mangle)]
 fn __bun_fetch_builtin_module(
-    jsc_vm: &VirtualMachine,
     global: &JSGlobalObject,
     specifier: &bun_core::String,
 ) -> Option<ResolvedSource> {
@@ -2981,20 +3011,6 @@ fn __bun_fetch_builtin_module(
             tag,
             ..ResolvedSource::default()
         });
-    }
-
-    // ── `macro:` namespace ──────────────────────────────────────────────
-    if spec.starts_with(b"macro:") {
-        use bun_bundler::entry_points::MacroEntryPoint;
-        let id = MacroEntryPoint::generate_id_from_specifier(spec);
-        if let Some(entry) = jsc_vm.macro_entry_points.get().get(&id) {
-            return Some(ResolvedSource {
-                source_code: bun_core::String::clone_utf8(entry.code()),
-                source_url: specifier.clone(),
-                ..ResolvedSource::default()
-            });
-        }
-        return None;
     }
 
     // ── Standalone-module-graph probe ───────────────────────────────────
@@ -3330,9 +3346,7 @@ fn get_loader_and_virtual_source<'a>(
         .or_else(|| suffix.map(options::ImportSuffix::loader))
         .or(loader);
 
-    let is_main = jsc_vm.main() == Some(specifier)
-        || (jsc_vm.is_in_preload.get()
-            && jsc_vm.preload_hash.get() == bun_watcher::Watcher::get_hash(specifier));
+    let is_main = jsc_vm.main() == Some(specifier) || jsc_vm.is_current_preload(specifier);
 
     // package.json sniff for `.js`/`.ts` module-type.
     let is_js_like = loader.map(|l| l.is_java_script_like()).unwrap_or(true);
@@ -3759,7 +3773,7 @@ fn transpile_file<const DATA_ONLY: bool>(
         && !lr.is_main
         && lr.path.is_file()
         && !lr.specifier.starts_with(node_fallbacks::IMPORT_PATH)
-        && !jsc_vm.macro_mode.get()
+        && !jsc_vm.is_macro_host()
         && !jsc_vm.has_any_macro_remappings.get()
         && !bun_jsc::node_compile_cache::is_enabled()
         && (jsc_vm.transpiler)
@@ -3778,26 +3792,36 @@ fn transpile_file<const DATA_ONLY: bool>(
         }
     }
 
+    let can_transpile_async = !DATA_ONLY
+        && !had_blob
+        && lr.virtual_source.is_none()
+        && allow_promise
+        && jsc_vm.transpiler_store.enabled.get()
+        // The fetch hook of the Node compile cache has to see every module.
+        && !bun_jsc::node_compile_cache::is_enabled();
+    let transpile_async = |loader: Loader, calls_macros: Option<CallsMacros>| {
+        let aot_package_config =
+            (jsc_vm.transpiler).with_mut(|t| t.find_aot_package_config(lr.path.text, loader));
+        jsc_vm.transpiler_store.transpile(
+            jsc_vm,
+            global,
+            specifier.clone(),
+            &lr.path,
+            referrer.clone(),
+            loader,
+            lr.package_json,
+            aot_package_config,
+            module_loader,
+            calls_macros,
+        )
+    };
+
     'transpile_async: {
-        if DATA_ONLY {
-            break 'transpile_async;
-        }
         let concurrent_loader = lr.loader.unwrap_or(Loader::File);
-        let (has_loaded, is_in_preload, store_enabled) = (
-            jsc_vm.has_loaded.get(),
-            jsc_vm.is_in_preload.get(),
-            jsc_vm.transpiler_store.enabled.get(),
-        );
-        if !had_blob
-            && lr.virtual_source.is_none()
-            && allow_promise
-            && (has_loaded || is_in_preload)
+        if can_transpile_async
+            && (jsc_vm.has_loaded.get() || jsc_vm.is_in_preload.get())
             && concurrent_loader.is_java_script_like()
             && !lr.is_main
-            && store_enabled
-            // With the Node compile cache enabled, transpile on-thread so the
-            // fetch hook sees every module.
-            && !bun_jsc::node_compile_cache::is_enabled()
         {
             // Disgusting workaround: polyfills like
             // `reflect-metadata` are CJS-with-side-effects that other ESM
@@ -3810,19 +3834,7 @@ fn transpile_file<const DATA_ONLY: bool>(
                 }
             }
 
-            let aot_package_config = (jsc_vm.transpiler)
-                .with_mut(|t| t.find_aot_package_config(lr.path.text, concurrent_loader));
-            return jsc_vm.transpiler_store.transpile(
-                jsc_vm,
-                global,
-                specifier.clone(),
-                &lr.path,
-                referrer.clone(),
-                concurrent_loader,
-                lr.package_json,
-                aot_package_config,
-                module_loader,
-            );
+            return transpile_async(concurrent_loader, None);
         }
     }
 
@@ -3865,6 +3877,10 @@ fn transpile_file<const DATA_ONLY: bool>(
                 // For Node.js compatibility, requiring a file with an unknown
                 // extension is treated as a JS file.
                 break 'loader Loader::Ts;
+            }
+            // Any file can turn out to be the one that a macro is imported from.
+            if jsc_vm.is_macro_host() {
+                break 'loader Loader::Tsx;
             }
             // For ESM, Bun treats unknown extensions as the file loader.
             Loader::File
@@ -3910,7 +3926,24 @@ fn transpile_file<const DATA_ONLY: bool>(
         extra: &extra,
     };
 
-    match transpile_source_code_inner::<DATA_ONLY>(jsc_vm, &args) {
+    let deferred = Cell::new(false);
+    let mut result = transpile_with::<DATA_ONLY>(jsc_vm, &args, Macros::Defer(&deferred));
+    if !DATA_ONLY && deferred.get() {
+        if can_transpile_async {
+            let is_main = jsc_vm.main() == Some(lr.path.text);
+            if is_main {
+                jsc_vm.has_loaded.set(true);
+            }
+            let file = CallsMacros {
+                module_type,
+                is_test_entry_point: (is_main || jsc_vm.is_current_preload(lr.path.text))
+                    && jsc_vm.transpiler.get().options.rewrite_jest_for_tests,
+            };
+            return transpile_async(synchronous_loader, Some(file));
+        }
+        result = transpile_waiting_for_macros(jsc_vm, &args);
+    }
+    match result {
         Ok(resolved) => *ret = ErrorableResolvedSource::ok(resolved),
         Err(err) => {
             if let Some(value) = transpile_error_value(global, specifier, referrer, &mut log, err) {

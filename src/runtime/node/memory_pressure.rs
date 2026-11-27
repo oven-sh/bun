@@ -354,9 +354,7 @@ mod windows {
                 break;
             }
             let task = super::pressure_task(super::level::CRITICAL);
-            if let bun_jsc::vm_handle::Posted::Refused(_) =
-                vm.post(bun_jsc::LoopKind::Regular, task)
-            {
+            if let bun_jsc::vm_handle::Posted::Refused(_) = vm.post(task) {
                 // VM torn down: drop the notification.
                 break;
             }

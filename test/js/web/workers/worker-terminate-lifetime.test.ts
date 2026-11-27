@@ -1384,7 +1384,7 @@ test.skipIf(!isASAN).concurrent.each([
     "the strings its FileSystemRouter interned",
     `new Bun.FileSystemRouter({ dir: __dirname + "/pages", style: "nextjs" })`,
   ],
-  ["the entry points of its macros", `require("./imports-macro.js")`],
+  ["the thread that runs its macros", `require("./imports-macro.js")`],
   ["its require.extensions", `require.extensions[".foo"] = () => {}`],
 ])(
   "a worker's end frees %s",
@@ -1412,8 +1412,7 @@ test.skipIf(!isASAN).concurrent.each([
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Debug builds print each macro call.
-    expect({ stdout: stdout.replace("[macro] call one\n", ""), stderr, exitCode }).toEqual({
+    expect({ stdout, stderr, exitCode }).toEqual({
       stdout: "ok\n",
       stderr: "",
       exitCode: 0,

@@ -386,6 +386,12 @@ impl Loop {
         })
     }
 
+    /// Whether [`Self::drain_requests`] would find anything.
+    pub fn has_requests() -> bool {
+        // SAFETY: as in `drain_requests`.
+        unsafe { (*Self::get()).active_reqs.count > 0 }
+    }
+
     /// Complete every in-flight request on this thread's loop (fs, write,
     /// connect): requests cannot be cancelled, and their callbacks expect the
     /// VM that issued them — and may start more work (a shell pipeline moving

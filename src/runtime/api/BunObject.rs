@@ -501,29 +501,6 @@ fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
     fun
 }
 
-pub(crate) fn register_macro<'a>(
-    heap: &JsHeap<'a>,
-    id: f64,
-    callback: JsLocal<'a>,
-) -> bindgen::Result<'a, ()> {
-    let id = id as i32;
-    if id == -1 || id == 0 {
-        return Err(heap.error_with_code(
-            ErrorCode::INVALID_ARG_TYPE,
-            format_args!("Internal error registering macros: invalid id"),
-        ));
-    }
-
-    if callback.as_callable().is_none() {
-        return Err(heap.error(format_args!("Macro must be a function")));
-    }
-    let vm = VirtualMachine::get();
-    let callback = jsc::Strong::create(callback.to_js(), vm.global());
-    vm.macros.with_mut(|macros| macros.insert(id, callback));
-
-    Ok(())
-}
-
 fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     EncodedSlice::from_bytes(bun_resolver::fs::FileSystem::get().top_level_dir()).to_js(global_this)
 }

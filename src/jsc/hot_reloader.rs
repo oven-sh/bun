@@ -216,7 +216,7 @@ impl HotReloader {
         PENDING_RELOADS.fetch_add(1, Ordering::Relaxed);
 
         BunDebugger__willHotReload();
-        let _ = handle.post(crate::LoopKind::Regular, Box::new(HotReloadTask));
+        let _ = handle.post(Box::new(HotReloadTask));
 
         // The JS thread emits kill-signal listeners then execve; if it's stuck in sync code it
         // never drains the posted task. Arm a one-shot timer that forces the reload after a

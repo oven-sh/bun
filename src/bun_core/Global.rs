@@ -1,7 +1,7 @@
 #![allow(non_upper_case_globals, non_snake_case)]
 
 use core::ffi::{CStr, c_int};
-use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 use const_format::{concatcp, formatcp};
 
@@ -33,7 +33,12 @@ static TOP_LEVEL_DIR: crate::RwLock<&'static [u8]> = crate::RwLock::new(b".");
 #[inline]
 pub fn set_top_level_dir(dir: &'static [u8]) {
     *TOP_LEVEL_DIR.write() = dir;
+    Bun__cwdVersion.fetch_add(1, Ordering::SeqCst);
 }
+
+/// Tells each thread whether the `process.cwd()` that it has cached still holds.
+#[unsafe(no_mangle)]
+static Bun__cwdVersion: AtomicU32 = AtomicU32::new(0);
 
 /// Top-level directory recorded at startup (defaults to `"."`).
 #[inline]
@@ -50,6 +55,7 @@ pub fn set_working_directory_in_executable(directory: Option<&'static [u8]>) {
     let mut current = WORKING_DIRECTORY_IN_EXECUTABLE.write();
     *current = directory;
     HAS_WORKING_DIRECTORY_IN_EXECUTABLE.store(directory.is_some(), Ordering::Release);
+    Bun__cwdVersion.fetch_add(1, Ordering::SeqCst);
 }
 
 /// Where `process.cwd()`, `path.resolve()` and the path arguments of `node:fs` and `Bun.file()` start, if not in the system's working directory.

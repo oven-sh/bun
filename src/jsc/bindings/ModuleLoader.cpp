@@ -372,7 +372,7 @@ static OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject
         (void)scope.tryClearException();
         return result;
     }
-    // While the transpiler reads the bytes, another thread can write to a SharedArrayBuffer and a macro can overwrite or detach any buffer.
+    // While the transpiler reads the bytes, another thread can write to a SharedArrayBuffer.
     auto copyContents = [&](std::span<const uint8_t> bytes) -> bool {
         if (!result.sourceTextCopy.tryAppend(bytes)) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
@@ -586,6 +586,12 @@ static JSValue handleVirtualModuleResult(
         __builtin_unreachable();
     }
     }
+}
+
+extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__throwIfGraphOfLoaderIsDisposed(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue moduleLoader)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    Bun::throwIfModuleGraphDisposed(globalObject, scope, Bun::moduleGraphOfLoader(globalObject, uncheckedDowncast<JSC::JSModuleLoader>(JSC::JSValue::decode(moduleLoader))));
 }
 
 extern "C" void Bun__onFulfillAsyncModule(

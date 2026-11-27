@@ -290,9 +290,7 @@ macro_rules! new_store {
 // thread_local_ast_store! — the per-thread *front-end* wrapper around a
 // `new_store!`-generated slab.
 //
-// `Expr` and `Stmt` each need three `#[thread_local]` slots (instance ptr,
-// optional `ASTMemoryAllocator` override, `disable_reset` flag) plus the
-// twelve identical accessor/lifecycle fns. The two hand-written copies in
+// `Expr` and `Stmt` each need the same `#[thread_local]` slots and fns. The two hand-written copies in
 // expr.rs / stmt.rs were byte-for-byte twins modulo the backing type and the
 // "Expr"/"Stmt" panic-string label. This macro stamps out one
 // `pub mod Store { … }` per call site so the duplication lives here once.
@@ -319,7 +317,7 @@ macro_rules! thread_local_ast_store {
             // `#[thread_local]` (bare `__thread` slot) — `memory_allocator()` is
             // read on every node `alloc` (the hottest TLS in the parser), and
             // the `thread_local!` macro's `LocalKey` wrapper showed up in
-            // next-lint profiles. All three are `Cell<ptr|bool>` (no destructor,
+            // next-lint profiles. Both are `Cell<ptr>` (no destructor,
             // const init).
             #[thread_local]
             pub(crate) static INSTANCE: Cell<*mut Backing> = Cell::new(::core::ptr::null_mut());
@@ -333,8 +331,6 @@ macro_rules! thread_local_ast_store {
             pub(crate) static MEMORY_ALLOCATOR: Cell<
                 Option<::bun_ptr::BackRef<$crate::ASTMemoryAllocator, ::bun_ptr::Mut>>,
             > = Cell::new(None);
-            #[thread_local]
-            pub(crate) static DISABLE_RESET: Cell<bool> = Cell::new(false);
 
             #[inline]
             fn instance() -> *mut Backing {
@@ -379,34 +375,18 @@ macro_rules! thread_local_ast_store {
                 }
                 match instance_mut() {
                     None => create(),
-                    Some(store) => {
-                        if !DISABLE_RESET.get() {
-                            Backing::reset(store);
-                        }
-                    }
+                    Some(store) => Backing::reset(store),
                 }
             }
 
             pub fn reset() {
-                if DISABLE_RESET.get() || !memory_allocator().is_null() {
+                if !memory_allocator().is_null() {
                     return;
                 }
                 // Caller contract — instance is set when reset() is called.
                 Backing::reset(
                     instance_mut().expect(concat!($label, " Store::reset: instance not set")),
                 );
-            }
-
-            /// Toggled by long-lived
-            /// callers (transpiler, bundler) that want the Store to persist
-            /// across multiple parse calls.
-            #[inline]
-            pub(crate) fn set_disable_reset(b: bool) {
-                DISABLE_RESET.set(b);
-            }
-            #[inline]
-            pub fn disable_reset() -> bool {
-                DISABLE_RESET.get()
             }
 
             pub fn deinit() {

@@ -84,7 +84,7 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
         // @190n: we may need to use requestTerminate or throwTerminationException
         // instead to terminate the worker sooner
         worker.exit();
-    } else {
+    } else if !vm.exit_from_macro(code) {
         // A watch-reload kill-signal handler may call process.exit; node restarts the child
         // regardless. `process.exit()` must never return control to JS, so replace the process
         // here instead of unwinding — the 'exit' event has already been dispatched by the caller.
@@ -599,11 +599,6 @@ mod _impl {
         match vm.set_process_cwd(on_disk) {
             bun_sys::Result::Ok(()) => {
                 bun_core::set_working_directory_in_executable(None);
-                if vm.test_isolation_enabled.get() {
-                    vm.test_isolation_state.saved_cwd.with_mut(|saved| {
-                        saved.get_or_insert(prev_cwd);
-                    });
-                }
                 bun_string_jsc::create_utf8_for_js(
                     global_object,
                     bun_paths::without_trailing_sep(vm.top_level_dir()),
@@ -624,7 +619,9 @@ mod _impl {
     extern "C" fn bun_process_edit_windows_env_var(k: &BunString, v: &BunString) {
         use bun_core::WStr;
         const _: () = assert!(cfg!(windows));
-        if k.tag() == bun_core::Tag::Empty {
+        if k.tag() == bun_core::Tag::Empty
+            || bun_jsc::virtual_machine::VirtualMachine::get().is_macro_host()
+        {
             return;
         }
         // `String::{is_8bit,latin1,utf16,length}` dispatch to the WTF impl when

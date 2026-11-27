@@ -10,7 +10,7 @@ use bun_bundler::aot::PluginSetup;
 use bun_bundler::bundle_v2::{BuildResult, BundleV2, dispatch};
 use bun_bundler::options::{self, OutputFile, OutputKind, Side};
 use bun_bundler::output_file::Value as OutputFileValue;
-use bun_bundler::transpiler::Transpiler;
+use bun_bundler::transpiler::{MacroThread, Transpiler};
 use bun_core::env::OperatingSystem;
 use bun_event_loop::BoxedTask;
 use bun_io::JsKeepAlive;
@@ -55,6 +55,7 @@ pub(crate) struct JSBundleCompletionTask {
     context: jsc::ContextId,
     /// This build's copy of the VM's env.
     env: bun_dotenv::Loader,
+    macro_thread: MacroThread,
     log: bun_ast::Log,
     result: bun_bundler::Result<BuildResult>,
     plugins: Option<JsPtr<Plugin>>,
@@ -186,6 +187,7 @@ impl JSBundleCompletionTask {
             context,
             // Copy on the JS thread because only the JS thread writes to the VM's loader.
             env: bun_core::handle_oom(vm.env_loader().clone_loaded()),
+            macro_thread: vm.macro_thread_for_build(),
             log: bun_ast::Log::init(),
             result: Err(bun_bundler::Error::BuildFailed),
             plugins,
@@ -1174,6 +1176,7 @@ impl JSBundleCompletionTask {
         generation: bun_core::Generation,
     ) -> bun_bundler::Result<BuildResult> {
         let log = &mut self.log;
+        let macro_thread = core::mem::take(&mut self.macro_thread);
         let opts = Self::transform_options(&self.config);
         let env = Some(&raw mut self.env);
         let transpiler = transpiler.insert(Transpiler::init(heap, &raw mut *log, opts, env)?);
@@ -1207,6 +1210,7 @@ impl JSBundleCompletionTask {
                     completion,
                 }),
                 file_map,
+                macro_thread,
             };
             let compiled =
                 compile_ahead_of_time::compile(config, compile, aot, &entry_points, bundler);
@@ -1218,6 +1222,7 @@ impl JSBundleCompletionTask {
         bv2.plugin_context = self.context;
         bv2.completion = Some(completion);
         bv2.file_map = file_map;
+        bv2.macro_thread = macro_thread;
 
         bv2.run_from_js_in_new_thread(&entry_points)
     }

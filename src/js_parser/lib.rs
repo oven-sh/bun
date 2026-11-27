@@ -35,8 +35,11 @@ pub use parse::parse_entry::{
 // The part of macros that needs no JSC. The rest is in `bun_js_parser_jsc::Macro`.
 #[allow(non_snake_case)]
 pub mod Macro {
-    use bun_collections::{ArrayHashMap, StringArrayHashMap};
-    use core::cell::RefCell;
+    use bun_collections::StringArrayHashMap;
+    use bun_threading::thread_pool::{Config, ThreadPool};
+    use core::any::Any;
+    use core::cell::Cell;
+    use std::sync::{Arc, OnceLock};
 
     pub const NAMESPACE: &[u8] = b"macro";
     pub const NAMESPACE_WITH_COLON: &[u8] = b"macro:";
@@ -46,51 +49,59 @@ pub mod Macro {
         str_.starts_with(NAMESPACE_WITH_COLON)
     }
 
-    /// `JSValue` is `#[repr(transparent)] i64` (PORTING.md §JSC types). This
-    /// newtype carries the encoded bits at the lowest tier that needs them so
-    /// `Transpiler::ParseOptions.macro_js_ctx` and `MacroContext.javascript_object`
-    /// share one canonical type without `bun_js_parser` / `bun_bundler` taking a
-    /// `bun_jsc` dep. Higher tiers convert with `JSValue(ctx.0)` / `MacroJSCtx(v.0)`.
-    #[repr(transparent)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-    pub struct MacroJSCtx(pub i64);
-    impl MacroJSCtx {
-        /// Spec `default_macro_js_value` = `JSValue.zero`.
-        pub const ZERO: Self = MacroJSCtx(0);
-    }
-    impl Default for MacroJSCtx {
-        #[inline]
-        fn default() -> Self {
-            Self::ZERO
-        }
-    }
+    /// A share of the thread that runs macros and of those that wait for it. The last one joins them, so they must not drop it.
+    #[derive(Clone, Default)]
+    pub struct MacroThread(Arc<Threads>);
 
-    #[derive(Clone, Copy)]
-    pub enum MacroLoadState {
-        /// The load failed or has not finished.
-        Disabled,
-        Loaded,
-    }
-
-    /// Keyed by `MacroEntryPoint::generate_id`. A macro can start a nested parse that uses the same table.
     #[derive(Default)]
-    pub struct MacroLoadStates(RefCell<ArrayHashMap<i32, MacroLoadState>>);
-    impl MacroLoadStates {
-        pub fn get(&self, id: i32) -> Option<MacroLoadState> {
-            self.0.borrow().get(&id).copied()
+    struct Threads {
+        /// A `bun_jsc::macro_host::MacroHost`, which this crate cannot name.
+        host: OnceLock<Box<dyn Any + Send + Sync>>,
+        waiting_pool: OnceLock<ThreadPool>,
+    }
+
+    impl MacroThread {
+        pub fn host<T: Any + Send + Sync>(&self, init: impl FnOnce() -> T) -> &T {
+            let host = self.0.host.get_or_init(|| Box::new(init()));
+            host.downcast_ref().expect("one type of host")
         }
 
-        pub fn set(&self, id: i32, state: MacroLoadState) {
-            self.0.borrow_mut().insert(id, state);
+        /// For a parse with [`Macros::Run`], which on the `WorkPool` would take a thread from work that the macro waits for.
+        pub fn waiting_pool(&self) -> &ThreadPool {
+            self.0.waiting_pool.get_or_init(|| {
+                ThreadPool::init(Config {
+                    max_threads: u32::from(bun_core::get_thread_count()),
+                    ..Default::default()
+                })
+                .named("Bun Macro Wait")
+                .without_spare_threads()
+            })
+        }
+    }
+
+    /// What a parse does at the call of a macro.
+    #[derive(Clone, Copy)]
+    pub enum Macros<'a> {
+        /// Sets the flag and fails. The caller drops the errors and parses again with `Run`.
+        Defer(&'a Cell<bool>),
+        /// Sleeps until `thread` answers.
+        Run {
+            thread: &'a MacroThread,
+            /// A `bun_jsc::macro_host::CopiedValue`: the last argument of every call.
+            context: Option<&'a dyn Any>,
+        },
+    }
+    impl<'a> Macros<'a> {
+        pub fn run_on(thread: &'a MacroThread) -> Self {
+            Macros::Run {
+                thread,
+                context: None,
+            }
         }
 
-        pub fn clear(&self) {
-            self.0.borrow_mut().clear();
-        }
-
-        pub fn replace(&self, states: Self) -> Self {
-            self.0.swap(&states.0);
-            states
+        /// `Run` if there is a thread, else `Defer`.
+        pub fn run_on_or_defer(thread: Option<&'a MacroThread>, deferred: &'a Cell<bool>) -> Self {
+            thread.map_or(Macros::Defer(deferred), Macros::run_on)
         }
     }
 
@@ -98,10 +109,7 @@ pub mod Macro {
     pub struct MacroContext<'a> {
         /// A `bun_bundler::Transpiler`, which this crate cannot name.
         transpiler: *mut (),
-        pub macro_load_states: &'a MacroLoadStates,
-        /// Encoded `JSC.JSValue` (the caller-supplied macro JS context).
-        /// `bun_js_parser_jsc` reinterprets the bits as a `JSValue`.
-        pub javascript_object: MacroJSCtx,
+        pub macros: Macros<'a>,
     }
 
     // Defined `#[no_mangle]` in `bun_js_parser_jsc::Macro`.
@@ -117,33 +125,16 @@ pub mod Macro {
             caller: bun_ast::Expr,
             function_name: &[u8],
         ) -> Result<bun_ast::Expr, crate::Error>;
-        // See [`collect_vm_garbage`] for the call-site contract.
-        safe fn __bun_macro_collect_vm_garbage();
     }
 
-    /// Sweep this thread's bundler-macro VM so JS-wrapper-owned native boxes
-    /// (e.g. a `new Bun.Transpiler()` constructed inside a macro body) are
-    /// finalized before the worker thread's TLS root vanishes. Only call from
-    /// `bun_bundler::ThreadPool::Worker::drop`, not inside JS execution or a
-    /// GC sweep, where re-entering `run_gc(true)` is unsound.
-    #[inline]
-    pub fn collect_vm_garbage() {
-        __bun_macro_collect_vm_garbage();
-    }
     impl<'a> MacroContext<'a> {
         /// # Safety
-        /// `transpiler` is a `bun_bundler::Transpiler` that is live for `'a`, and nothing else
+        /// `transpiler` is a `bun_bundler::Transpiler`. It and `macros` are live, and nothing else
         /// uses its resolver, or writes to its options, at the time the parser calls a macro.
-        pub unsafe fn new(
-            transpiler: *mut (),
-            macro_load_states: &'a MacroLoadStates,
-            javascript_object: MacroJSCtx,
-        ) -> Self {
-            Self {
-                transpiler,
-                macro_load_states,
-                javascript_object,
-            }
+        pub unsafe fn new(transpiler: *mut (), macros: Macros<'_>) -> Self {
+            // SAFETY: the caller's contract. `'a` is that of the AST, which outlives the parse.
+            let macros = unsafe { core::mem::transmute::<Macros<'_>, Macros<'a>>(macros) };
+            Self { transpiler, macros }
         }
 
         pub fn transpiler(self) -> *mut () {

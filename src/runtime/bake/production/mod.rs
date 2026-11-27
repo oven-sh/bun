@@ -549,6 +549,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 ssr_transpiler: ssr_transpiler.as_mut(),
                 plugins: (options.bundler_options.plugin.as_ref())
                     .map(|plugin| plugin.as_non_null()),
+                macro_thread: vm.macro_thread_for_build(),
             },
             &options.arena,
             Some(NonNull::from(&any_loop)),

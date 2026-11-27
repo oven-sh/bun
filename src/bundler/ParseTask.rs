@@ -3,6 +3,7 @@
 //! read the file (or use already-loaded contents), run the JS/CSS/etc. parser,
 //! and ship a `Result` back to the bundler thread.
 
+use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem::offset_of;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -36,7 +37,7 @@ use crate::bundle_v2::{self as bundler, BundleV2};
 use crate::cache::{Entry as CacheEntry, ExternalFreeFunction};
 use crate::html_scanner::scan_import_records;
 use crate::options::{self, Loader};
-use crate::transpiler::{MacroJSCtx, Transpiler};
+use crate::transpiler::{Macros, Transpiler};
 use crate::{ContentHasher, UseDirective, perf, target_from_hashbang};
 use bun_resolver::fs::{ByteOrderMark, PathResolverExt as _};
 use bun_resolver::{self as _resolver, Resolver};
@@ -108,6 +109,8 @@ pub struct ParseTask<'a> {
 pub enum ParseTaskStage<'a> {
     NeedsSourceCode,
     NeedsParse(CacheEntry<'a>),
+    /// On `MacroThread::waiting_pool`.
+    NeedsParseWithMacros(CacheEntry<'a>),
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2130,6 +2133,7 @@ pub mod parse_worker {
         log: &mut Log,
         bump: &'static Bump,
         contents: &'static [u8],
+        macros: Macros<'_>,
     ) -> core::result::Result<Success<'static>, AnyError> {
         let worker_ctx = this.ctx;
 
@@ -2257,14 +2261,8 @@ pub mod parse_worker {
         // a worker-owned `Transpiler` that outlives the parse.
         // SAFETY: ARENA — `topts` outlives `opts` (worker-owned for the bundle pass).
         opts.allow_unresolved = unsafe { bun_collections::detach_ref(&topts.allow_unresolved) };
-        // SAFETY: the worker owns `transpiler` and the table and outlives the parse; a macro cannot reach the worker.
-        opts.macro_context = Some(unsafe {
-            Transpiler::macro_context(
-                transpiler,
-                &(*worker_raw).macro_load_states,
-                MacroJSCtx::ZERO,
-            )
-        });
+        // SAFETY: the worker owns `transpiler`. It and `macros` outlive the parse.
+        opts.macro_context = Some(unsafe { Transpiler::macro_context(transpiler, macros) });
         opts.package_version = task.package_version.slice();
         // SAFETY: the resolver outlives the parse, which only calls it from this thread.
         opts.import_meta_glob = Some(unsafe { Resolver::import_meta_glob_host(resolver) });
@@ -2460,8 +2458,6 @@ pub mod parse_worker {
         opts.module_type = task.module_type;
         opts.is_entry_point = task.is_entry_point;
 
-        task.jsx.parse = loader.is_jsx();
-
         let mut unique_key_for_additional_file = FileLoaderHash {
             key: ast::StoreStr::EMPTY,
             content_hash: 0,
@@ -2496,6 +2492,11 @@ pub mod parse_worker {
             } else {
                 get_empty_ast::<E::Object>(log, transpiler, opts, bump, source)
             };
+        // The next parse starts from the same `task`.
+        let ast_result = match macros {
+            Macros::Defer(deferred) if deferred.get() => Err(crate::Error::ParserError),
+            _ => ast_result,
+        };
         let mut ast = match ast_result {
             Ok(a) => a,
             Err(e) => {
@@ -2505,6 +2506,7 @@ pub mod parse_worker {
             }
         };
 
+        task.jsx.parse = loader.is_jsx();
         ast.target = target;
         ast.module_type = task.module_type;
         if ast.parts.len() <= 1
@@ -2569,8 +2571,12 @@ pub mod parse_worker {
 
         let value: ResultValue = 'value: {
             let stage = core::mem::replace(&mut this.stage, ParseTaskStage::NeedsSourceCode);
+            let may_wait_for_macros = matches!(stage, ParseTaskStage::NeedsParseWithMacros(_))
+                || ctx.graph.pool().owns_worker_pool();
             let entry = match stage {
-                ParseTaskStage::NeedsParse(entry) => entry,
+                ParseTaskStage::NeedsParse(entry) | ParseTaskStage::NeedsParseWithMacros(entry) => {
+                    entry
+                }
                 ParseTaskStage::NeedsSourceCode => {
                     let read = match get_source_code(&mut this, &worker, &mut log) {
                         Ok(_) if log.has_errors() => Err(crate::Error::SyntaxError),
@@ -2602,8 +2608,33 @@ pub mod parse_worker {
             file_to_watch = entry.file.filter(|_| ctx.bun_watcher.is_some());
 
             let (bump, contents) = (worker.arena(), entry.contents);
-            match run_with_source_code(&mut this, &mut worker, &mut step, &mut log, bump, contents)
-            {
+            let deferred = Cell::new(false);
+            let parsed = run_with_source_code(
+                &mut this,
+                &mut worker,
+                &mut step,
+                &mut log,
+                bump,
+                contents,
+                Macros::run_on_or_defer(
+                    may_wait_for_macros.then_some(&ctx.macro_thread),
+                    &deferred,
+                ),
+            );
+            if deferred.get() {
+                this.stage = ParseTaskStage::NeedsParseWithMacros(CacheEntry {
+                    contents,
+                    file: file_to_watch,
+                });
+                // The bundle can end before `schedule` returns.
+                let macro_thread = ctx.macro_thread.clone();
+                let this = bun_core::heap::into_raw(this);
+                // SAFETY: a field of the box above, which the task's callback takes back.
+                let task = ThreadPoolLib::Batch::from(unsafe { &raw mut (*this).task });
+                macro_thread.waiting_pool().schedule(task);
+                return;
+            }
+            match parsed {
                 Ok(ast) => {
                     // When using HMR, always flag asts with errors as parse failures.
                     // Not done outside of the dev server out of fear of breaking existing code.

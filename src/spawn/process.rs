@@ -724,11 +724,14 @@ impl Process {
         if let Poller::WaiterThread(keep_alive) = self.poller.replace(Poller::Detached) {
             // Only here: a `Process` dropped on another thread is detached, and must not reach for its loop.
             keep_alive.unref(self.event_loop_ctx());
+            self.event_loop_ctx().loop_().dec();
         }
     }
 
     fn leave_to_waiter_thread(&self) {
         self.detach_poller();
+        // Like a poll, it can still run JS when it does not keep the loop alive.
+        self.event_loop_ctx().loop_().inc();
         let keep_alive = KeepAlive::default();
         keep_alive.ref_(self.event_loop_ctx());
         self.poller.set(Poller::WaiterThread(keep_alive));
@@ -794,15 +797,12 @@ pub mod waiter_thread_posix {
 
     pub struct NewQueue<T: ProcessLike> {
         pub(crate) queue: ConcurrentQueue<T>,
-        /// Entries in `queue` plus the waiter thread's `active`. Decremented only after the entry's exit is posted.
-        pub(crate) watched: AtomicU32,
     }
 
     impl<T: ProcessLike> NewQueue<T> {
         pub(crate) const fn new() -> Self {
             Self {
                 queue: ConcurrentQueue::new(),
-                watched: AtomicU32::new(0),
             }
         }
     }
@@ -931,7 +931,6 @@ pub mod waiter_thread_posix {
 
     impl<T: ProcessLike> NewQueue<T> {
         pub(crate) fn append(&self, process: RefPtr<T>) {
-            self.watched.fetch_add(1, Ordering::SeqCst);
             self.queue.push(bun_core::heap::alloc_nn(TaskQueueEntry {
                 process,
                 next: bun_threading::Link::new(),
@@ -972,7 +971,6 @@ pub mod waiter_thread_posix {
                     }
                     post_wait_result(active.remove(i), result, &rusage);
                 }
-                self.watched.fetch_sub(1, Ordering::SeqCst);
             }
         }
     }
@@ -1065,11 +1063,6 @@ pub mod waiter_thread_posix {
         #[inline]
         pub(crate) fn should_use_waiter_thread() -> bool {
             bun_spawn_sys::waiter_thread_flag::get()
-        }
-
-        /// True while any thread's child has an exit still to post. After `false`, the caller must still check its task queue.
-        pub fn is_watching() -> bool {
-            INSTANCE.js_process.watched.load(Ordering::SeqCst) > 0
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]

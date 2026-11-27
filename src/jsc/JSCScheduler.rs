@@ -38,16 +38,14 @@ impl JSCDeferredWorkTask {
 }
 
 /// JSC helper threads (DeferredWorkTimer): deliver a deferred-work job to the
-/// VM's `kind` loop (captured by `JSCTaskScheduler::onAddPendingWork` on the JS
-/// thread when the work was registered). Returns whether the VM took it.
+/// VM's loop. Returns whether the VM took it.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
     r: *const crate::vm_handle::Shared,
     task: *mut JSCDeferredWorkTask,
-    kind: crate::LoopKind,
 ) -> bool {
     crate::mark_binding!();
     // SAFETY: C++ passes the reference its JSVMClientData holds.
     let handle = unsafe { crate::VmHandle::borrow_ref(r) };
-    matches!(handle.post(kind, task), crate::Posted::Queued)
+    matches!(handle.post(task), crate::Posted::Queued)
 }

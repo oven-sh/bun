@@ -11,7 +11,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsError, StringJsc as _};
 /// `impl From<JsError> for ToJSError` here (both foreign), so callers use
 /// `.map_err(js_err)?` instead of bare `?`.
 #[inline]
-fn js_err(e: JsError) -> ToJSError {
+pub(crate) fn js_err(e: JsError) -> ToJSError {
     match e {
         JsError::Thrown | JsError::Terminated => ToJSError::JSError,
         JsError::OutOfMemory => ToJSError::OutOfMemory,

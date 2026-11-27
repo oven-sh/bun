@@ -32,6 +32,7 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSObject> m_nextTickFunction;
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L113-L116
     WriteBarrier<JSString> m_cachedCwd;
+    uint32_t m_cachedCwdVersion { 0 };
     // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
     WriteBarrier<JSObject> m_onWarning;
     // A function of the library: it hands native code what it kept for a tick. No tick runs once the process exits.
@@ -87,9 +88,12 @@ public:
     static JSValue emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObject, JSValue errorInstance);
     static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor);
 
-    JSString* cachedCwd() { return m_cachedCwd.get(); }
-    void setCachedCwd(JSC::VM& vm, JSString* cwd) { m_cachedCwd.set(vm, this, cwd); }
-    void clearCachedCwd() { m_cachedCwd.clear(); }
+    JSString* cachedCwd(uint32_t version) { return version == m_cachedCwdVersion ? m_cachedCwd.get() : nullptr; }
+    void setCachedCwd(JSC::VM& vm, JSString* cwd, uint32_t version)
+    {
+        m_cachedCwd.set(vm, this, cwd);
+        m_cachedCwdVersion = version;
+    }
 
     JSValue getArgv(JSGlobalObject* globalObject);
     JSValue getExecArgv(JSGlobalObject* globalObject);

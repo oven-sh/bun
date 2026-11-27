@@ -615,6 +615,7 @@ pub(super) fn request_from_context<'r>(
             worker_pool: None,
             plugins: None,
             file_map: run_compiled::files_in_memory(),
+            macro_thread: Default::default(),
         }),
         executable: ExecutableSettings {
             target: &ctx.bundler_options.compile_target,

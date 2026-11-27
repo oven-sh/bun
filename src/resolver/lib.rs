@@ -1651,8 +1651,6 @@ pub mod cache {
             Set {
                 fs: Fs {
                     shared_buffer: MutableString::init(0).expect("unreachable"),
-                    macro_shared_buffer: MutableString::init(0).expect("unreachable"),
-                    use_alternate_source_cache: false,
                     stream: false,
                 },
                 json: Json::init(),
@@ -1664,9 +1662,6 @@ pub mod cache {
     /// reuse and streaming reads.
     pub struct Fs {
         pub(crate) shared_buffer: MutableString,
-        pub(crate) macro_shared_buffer: MutableString,
-
-        pub use_alternate_source_cache: bool,
         pub(crate) stream: bool,
     }
 
@@ -1777,17 +1772,6 @@ pub mod cache {
     }
 
     impl Fs {
-        // When we are in a macro, the shared buffer may be in use by the in-progress macro.
-        // so we have to dynamically switch it out.
-        #[inline]
-        fn shared_buffer(&mut self) -> &mut MutableString {
-            if !self.use_alternate_source_cache {
-                &mut self.shared_buffer
-            } else {
-                &mut self.macro_shared_buffer
-            }
-        }
-
         /// `arena`: when
         /// `!use_shared_buffer && arena.is_some()` the file body is read
         /// directly into `arena`, so the bytes are
@@ -1810,7 +1794,12 @@ pub mod cache {
                     ),
                     _ => {
                         let stream = self.stream;
-                        read_file_contents(file, use_shared_buffer, self.shared_buffer(), stream)?
+                        read_file_contents(
+                            file,
+                            use_shared_buffer,
+                            &mut self.shared_buffer,
+                            stream,
+                        )?
                     }
                 };
                 Ok(Contents::from(contents))

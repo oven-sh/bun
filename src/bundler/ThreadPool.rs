@@ -27,7 +27,6 @@ use crate::BundleV2;
 use crate::options_impl::Target;
 use crate::parse_task::{ContentsOrFd, ParseTask, ParseTaskStage};
 use crate::transpiler::Transpiler;
-use bun_js_parser as js_ast;
 
 bun_core::declare_scope!(ThreadPool, visible);
 
@@ -126,6 +125,11 @@ impl ThreadPool {
             WorkerPool::Owned(pool) => pool,
             WorkerPool::Lent(pool) => pool,
         }
+    }
+
+    /// Whether nothing but this bundle schedules tasks on [`Self::worker_pool`].
+    pub(crate) fn owns_worker_pool(&self) -> bool {
+        matches!(self.worker_pool, WorkerPool::Owned(_))
     }
 
     /// Sends every thread that may hold a [`Worker`] through its idle queue.
@@ -277,7 +281,6 @@ pub struct Worker {
     /// `'static` stands for the borrow of `heap`.
     pub(crate) transpiler: Transpiler<'static>,
     other_transpiler: Option<Box<Transpiler<'static>>>,
-    pub(crate) macro_load_states: js_ast::Macro::MacroLoadStates,
 
     pub(crate) temporary_arena: bun_alloc::Arena,
     pub(crate) stmt_list: StmtList,
@@ -329,7 +332,6 @@ impl Drop for WorkerGuard {
 impl Drop for Worker {
     fn drop(&mut self) {
         bun_core::scoped_log!(ThreadPool, "Worker.drop()");
-        js_ast::Macro::collect_vm_garbage();
         WORKER_LIVE_COUNT.fetch_sub(1, Ordering::SeqCst);
     }
 }
@@ -367,7 +369,6 @@ impl Worker {
             ctx,
             transpiler: Transpiler::for_worker(ctx.transpiler(), arena, log),
             other_transpiler: None,
-            macro_load_states: Default::default(),
             temporary_arena: bun_alloc::Arena::new(),
             stmt_list: StmtList::init(),
             // Shares `heap` with the parser: mimalloc caches only the last heap a thread touched.

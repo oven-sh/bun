@@ -81,6 +81,7 @@ pub(crate) struct BundlerInputs<'a> {
     pub(crate) worker_pool: Option<NonNull<bun_threading::ThreadPool>>,
     pub(crate) plugins: Option<PluginSetup<'a>>,
     pub(crate) file_map: Option<&'a FileMap>,
+    pub(crate) macro_thread: bun_bundler::transpiler::MacroThread,
 }
 
 pub(crate) struct ExecutableSettings<'r> {

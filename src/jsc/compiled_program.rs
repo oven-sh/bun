@@ -1048,9 +1048,9 @@ pub extern "C" fn Bun__AOT__allowsCodeFromDisk() -> bool {
     program_of_executable().is_some_and(|program| program.allows_code_from_disk)
 }
 
-/// On the thread of a Worker that starts from text, before its VM is created. Nothing where this Bun runs nothing but compiled code.
+/// On the thread of a Worker that starts from text, or of its macros, before its VM is created. Nothing where this Bun runs nothing but compiled code.
 pub(crate) fn use_no_image_on_this_thread(specifier: &[u8]) {
-    // SAFETY: the only caller, `WebWorker::start_vm`, calls this before the thread has a VM.
+    // SAFETY: both callers, `WebWorker::start_vm` and `macro_host::Start::run`, call this before the thread has a VM.
     if unsafe { Bun__AOT__useNoImageOnThisThread(FfiSlice::new(specifier)) } {
         bun_core::run_no_compiled_program_on_this_thread();
     }

@@ -765,6 +765,7 @@ const nativeCalls = [
       { file: inBindings("JSEnvironmentVariableMap.cpp") },
       { file: inBindings("JSEnvironmentVariableMap.h") },
       { file: inBindings("JSPropertyIterator.cpp") },
+      { file: inBindings("MacroHost.cpp") },
       { file: inBindings("ZigGlobalObject.cpp"), times: 4 },
       { file: inBindings("ZigGlobalObject.h") },
     ],
@@ -796,6 +797,8 @@ const nativeCalls = [
         onBehalfOf: startedWorkers,
         calls: environmentObjectMade(listedWithValues),
       },
+      // It repeats the stores of another thread, which has read one of the names above.
+      { file: inBindings("MacroHost.cpp"), caller: "Bun__MacroHost__setEnvVar", onBehalfOf: ["process.env"] },
       // It copies the object that the thread has. It makes none.
       {
         file: inBindings("webcore/JSWorker.cpp"),

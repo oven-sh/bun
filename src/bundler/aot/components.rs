@@ -3,6 +3,7 @@ use crate::bun_fs as Fs;
 use crate::options::Target;
 use crate::parse_task::Step;
 use crate::parse_task::parse_worker::run_with_source_code;
+use crate::transpiler::Macros;
 use crate::{ParseTask, Worker};
 use bun_aot::load::source_provider::{ComponentFile, apply_jsx_settings};
 use bun_ast::{Index, Log};
@@ -54,7 +55,16 @@ fn parse(context: &BuildContext, file: &ComponentFile<'_>, log: &mut Log) -> boo
         set_main_inlining(&mut worker, false);
         let mut task = create_task(context, file);
         let mut step = Step::Pending;
-        let parsed = run_with_source_code(&mut task, &mut worker, &mut step, log, arena, contents);
+        let macros = Macros::run_on(&context.bundle().macro_thread);
+        let parsed = run_with_source_code(
+            &mut task,
+            &mut worker,
+            &mut step,
+            log,
+            arena,
+            contents,
+            macros,
+        );
         parsed.is_ok_and(|success| !success.log.has_errors())
     })
 }

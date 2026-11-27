@@ -1034,7 +1034,7 @@ impl JSGlobalObject {
     /// to destroy the JSC VM: finalizers still come here, and the global object
     /// goes in no particular order with them.
     fn names_bun_vm(&self, vm: &VirtualMachine) -> bool {
-        vm.regular_event_loop.global_is_going() || core::ptr::eq(self.bun_vm_unsafe().cast(), vm)
+        vm.event_loop.global_is_going() || core::ptr::eq(self.bun_vm_unsafe().cast(), vm)
     }
 
     /// Shared-reference accessor for the Bun `VirtualMachine`. Alias of

@@ -1,4 +1,5 @@
 #![cfg_attr(test, feature(linkage))]
+#![feature(maybe_uninit_as_bytes)]
 
 #[cfg(test)]
 pub mod builtins;

@@ -963,11 +963,7 @@ unsafe impl<T: Sync> Sync for ListedItems<'_, T> {}
 impl<'s, T> ListedItems<'s, T> {
     #[inline]
     fn own(list: List<'s, T>) -> Self {
-        // SAFETY: the pointer of a box isn't null.
-        ListedItems(
-            unsafe { NonNull::new_unchecked(list.into_raw()) },
-            PhantomData,
-        )
+        ListedItems(list.into_non_null(), PhantomData)
     }
 
     fn lent(list: &[T]) -> Self {

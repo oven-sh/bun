@@ -1169,8 +1169,7 @@ impl SignedHeaders {
         if key.storage_class {
             push!(b";x-amz-storage-class");
         }
-        // SAFETY: n <= 256 by construction.
-        unsafe { core::slice::from_raw_parts(buf.as_ptr(), n) }
+        &buf[..n]
     }
 }
 

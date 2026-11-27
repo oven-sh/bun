@@ -96,6 +96,9 @@ impl crate::webcore::sink::WrappedSink for ArrayBufferSink {
     fn as_non_null(wrapped: &Self::Wrapped) -> core::ptr::NonNull<Self> {
         wrapped.as_non_null()
     }
+    fn enter_wrapped(wrapped: &mut Self::Wrapped) -> &mut Self {
+        wrapped
+    }
 }
 
 impl crate::webcore::sink::JsSinkType for ArrayBufferSink {

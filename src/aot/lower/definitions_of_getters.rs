@@ -325,7 +325,9 @@ impl FileLowering<'_, '_, '_, '_> {
         let (lists_lacking, bound_setter) = match shape {
             Shape::ExportDefinesGetters => (false, None),
             Shape::ExportGettersIfMissing => (true, None),
-            Shape::ExportDefinesGettersAndBoundSetters => {
+            Shape::ExportDefinesGettersAndBoundSetters
+                if self.inputs.known_helpers.has_room_for_names() =>
+            {
                 (false, Some(self.find_unseen_setter(site.callee)?))
             }
             _ => return None,
@@ -635,7 +637,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         });
         let setter = self.file.declare_idle_setter(call, bound);
         for (name, getter) in getters {
-            let key = PropertyName::Constant(self.file.name_key(name));
+            let key = self.file.name_key(name);
+            self.file.fragment.note_key_laid_by_descriptor(key);
+            let key = PropertyName::Constant(key);
             let function = self.lower_named_evaluation(getter, key);
             self.set_position(self.file.hir[call].pos);
             let yes = self.builder.boolean(true);

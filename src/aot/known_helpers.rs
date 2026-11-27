@@ -32,7 +32,7 @@ use crate::ir::{InParallel, for_each_mut};
 use crate::modules::{ImportBinding, ModuleGraph, ModuleRef};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Parent, SymbolId};
-use bun_sema::hir::{BinOp, ExprId, ExprKind, File, FnId, NodeData, StmtId, StmtKind};
+use bun_sema::hir::{BinOp, Call, ExprId, ExprKind, File, FnId, NodeData, StmtId, StmtKind};
 use bun_sema::program::{FileId, Files, Sym};
 use bun_sema::util::FxHashSet;
 use std::sync::OnceLock;
@@ -57,6 +57,31 @@ pub struct KnownHelpers {
     private_states: Vec<OnceLock<FilePrivateStates>>,
     binding_names: FxHashSet<Atom>,
     imported: Vec<ImportedHelpers>,
+    has_room_for_names: bool,
+}
+
+/// How many names a program's export helpers may define one by one: each takes compile time and a place in the type tables.
+const MAX_NAMES_DEFINED: usize = 16_384;
+
+fn count_names_listed_for_helpers(hir: &File<'_>) -> usize {
+    let count_listed = |call: &Call| {
+        let mut arguments = hir.ids(call.args);
+        let (Some(_), Some(table), None) = (arguments.next(), arguments.next(), arguments.next())
+        else {
+            return 0;
+        };
+        let ExprKind::Object(properties) = hir[hir.skip_type_assertions(table)].kind else {
+            return 0;
+        };
+        let lists_functions = properties.iter().all(|property| {
+            matches!(
+                hir[hir.skip_type_assertions(hir[property].value)].kind,
+                ExprKind::Fn(_)
+            )
+        });
+        if lists_functions { properties.len() } else { 0 }
+    };
+    hir.calls.iter().map(count_listed).sum()
 }
 
 fn find_by_key<K: Ord + Copy, V>(sorted: &[(K, V)], key: K) -> Option<&V> {
@@ -135,6 +160,7 @@ impl KnownHelpers {
         let mut known = KnownHelpers::default();
         known.files.resize_with(file_count, FileHelpers::default);
         let mut has_private_state = false;
+        let mut defines_names = false;
         for (file, helpers) in found {
             let bound = files.bound(file);
             let names = helpers
@@ -144,7 +170,15 @@ impl KnownHelpers {
             has_private_state |= helpers
                 .functions()
                 .any(|(_, function)| reads_private_state(function.shape.helper()));
+            defines_names |= helpers
+                .functions()
+                .any(|(_, function)| function.shape == Shape::ExportDefinesGettersAndBoundSetters);
             known.files[file.idx()] = helpers;
+        }
+        if defines_names {
+            let files_compiled = files.compiled_files().iter();
+            let names = files_compiled.map(|&file| count_names_listed_for_helpers(files.hir(file)));
+            known.has_room_for_names = names.sum::<usize>() <= MAX_NAMES_DEFINED;
         }
         if has_private_state {
             known.private_states.resize_with(file_count, OnceLock::new);
@@ -186,6 +220,11 @@ impl KnownHelpers {
         let is_only_value =
             held.closure == held.definition && !files.bound(home.file).is_visible_to_eval(home.id);
         (is_only_value && self.holds_for_importers(home.file, values, known)).then_some(known)
+    }
+
+    /// Whether the names that the bundler's own export helper lays are few enough to be defined one by one.
+    pub fn has_room_for_names(&self) -> bool {
+        self.has_room_for_names
     }
 
     pub fn leave_replaceable_variables(&mut self, modules: &ModuleGraph) {

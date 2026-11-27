@@ -1081,6 +1081,7 @@
     "aot/run-parallel-time-limit-message.test.ts",
     "aot/run-time-plugins-and-compiled-modules.test.ts",
     "aot/runner-loads-by-name.test.ts",
+    "aot/require-resolve-of-a-computed-name-gives-the-path-of-the-file.test.ts",
     "aot/a-load-plugin-of-the-program-is-asked-before-a-form-of-the-file.test.ts",
     "aot/runner-suites.test.ts",
     "aot/runs-at-once-1.test.ts",

@@ -9,6 +9,7 @@ use crate::load::{
     EntryPointKind, PerProject, ProgramFile, ProjectId, Sources, file_size, is_host_path,
     read_file_bytes,
 };
+use crate::module_keys::path_without_form;
 use crate::modules::{ModuleGraph, ModuleRef, SiteAnswer};
 use crate::report::{FunctionSources, ModuleOrigin, ModuleSource, SourceTexts};
 use crate::statistics::{Stage, StepClock};
@@ -139,6 +140,15 @@ fn find_folder_looked_from(
     from_file(file).or_else(|| from_file(found))
 }
 
+/// The path under which require.resolve() gives a file, whatever form of the file the program has.
+fn path_of_file_itself<'a>(files: &Files<'_>, sources: &'a Sources, file: FileId) -> &'a [u8] {
+    let path = sources.public_path(file);
+    let is_query_its_own = bun_core::strings::contains_char(files.module(file).file_name(), b'?');
+    path_without_form(path)
+        .filter(|_| !is_query_its_own)
+        .unwrap_or(path)
+}
+
 pub(super) fn collect_names_followed(
     files: &Files<'_>,
     sources: &Sources,
@@ -159,7 +169,11 @@ pub(super) fn collect_names_followed(
             let Some(folder) = find_folder_looked_from(files, sources, file, site, target) else {
                 return;
             };
-            let found = || Some(sources.public_path(target).to_vec());
+            let path = match site {
+                ImportSiteKind::RequireResolve(_) => path_of_file_itself(files, sources, target),
+                _ => sources.public_path(target),
+            };
+            let found = || Some(path.to_vec());
             names.push(FollowedName {
                 folder_and_name_as_written: [&folder[..], b"//", name].concat(),
                 public_path_for_require: is_required.then(found).flatten(),

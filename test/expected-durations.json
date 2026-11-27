@@ -4302,6 +4302,10 @@
     "default": 9000,
     "asan": 36000
   },
+  "aot/require-resolve-of-a-computed-name-gives-the-path-of-the-file.test.ts": {
+    "default": 9000,
+    "asan": 36000
+  },
   "aot/arguments-of-a-call-that-returns-early.test.ts": {
     "default": 1600,
     "asan": 3000,

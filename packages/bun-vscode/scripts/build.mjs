@@ -6,7 +6,7 @@ import { dirname } from "node:path";
 process.chdir(dirname(import.meta.dirname));
 
 buildSync({
-  entryPoints: ["src/extension.ts", "src/web-extension.ts"],
+  entryPoints: ["src/extension.ts"],
   outdir: "dist",
   bundle: true,
   external: ["vscode"],

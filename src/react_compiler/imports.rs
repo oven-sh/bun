@@ -43,9 +43,6 @@ pub(crate) struct ProgramContext {
     pub(crate) instrument_gating_name: Option<String>,
     pub(crate) hook_guard_name: Option<String>,
 
-    // Variable renames from lowering, to be applied back to the Babel AST
-    pub(crate) renames: Vec<crate::hir::environment::BindingRename>,
-
     /// `OutputMode::Lint`: upstream's `env.logErrors()`. What a validation reports that does not
     /// keep the function from being compiled.
     pub(crate) logged: CompilerError,
@@ -73,7 +70,6 @@ impl ProgramContext {
             instrument_fn_name: None,
             instrument_gating_name: None,
             hook_guard_name: None,
-            renames: Vec::new(),
             logged: CompilerError::new(),
             known_referenced_names: IndexSet::new(),
             imports: IndexMap::new(),

@@ -184,11 +184,6 @@ pub(crate) fn compile_fn(
 
     dump_lowered(&hir, &env);
 
-    // Copy renames from lowering to context (keep on env for codegen to apply to type annotations)
-    if !env.renames.is_empty() {
-        context.renames.extend(env.renames.iter().cloned());
-    }
-
     // Upstream `lower()` ends with `if (builder.errors.hasAnyErrors()) return Err(...)`
     // before `builder.build()`, so any error recorded during lowering — Todo
     // (throw-in-try, var, …), Syntax, or Invariant — short-circuits the

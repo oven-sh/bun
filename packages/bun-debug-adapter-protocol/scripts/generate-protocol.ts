@@ -15,7 +15,6 @@ async function run() {
   const schema: Protocol = await download(
     "https://microsoft.github.io/debug-adapter-protocol/debugAdapterProtocol.json",
   );
-  write("protocol.json", JSON.stringify(schema));
   const types = formatProtocol(schema);
   write("index.d.ts", `// GENERATED - DO NOT EDIT\n${types}`);
 }

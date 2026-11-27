@@ -1093,11 +1093,7 @@ fn handle_error(
         .any(|d| d.category() == ErrorCategory::Config);
 
     if should_panic || is_config_error {
-        Some(CompileOutput::Error {
-            error: err,
-            events: Vec::new(),
-            ordered_log: Vec::new(),
-        })
+        Some(CompileOutput::Error { error: err })
     } else {
         None
     }
@@ -1579,9 +1575,6 @@ fn finish_program(
         } else {
             CompileOutput::Changed {
                 diagnostics: state.diagnostics,
-                events: Vec::new(),
-                ordered_log: Vec::new(),
-                renames: convert_renames(&state.context.renames),
             }
         };
     }
@@ -1591,21 +1584,5 @@ fn finish_program(
 
     CompileOutput::Changed {
         diagnostics: state.diagnostics,
-        events: Vec::new(),
-        ordered_log: Vec::new(),
-        renames: convert_renames(&state.context.renames),
     }
-}
-
-fn convert_renames(
-    renames: &[crate::hir::environment::BindingRename],
-) -> Vec<crate::compile_result::BindingRenameInfo> {
-    renames
-        .iter()
-        .map(|r| crate::compile_result::BindingRenameInfo {
-            original: bun_core::BStr::new(r.original.slice()).to_string(),
-            renamed: bun_core::BStr::new(r.renamed.slice()).to_string(),
-            declaration_start: r.declaration_start,
-        })
-        .collect()
 }

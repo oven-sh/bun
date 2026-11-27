@@ -1231,8 +1231,12 @@ fn todo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
     } else if reason
         == "Support functions with unreachable code that may contain hoisted declarations"
     {
+        // `todo_support_functions_unreachable_code_that_may_contain_hoisted_declarations`
         let func = primary_span.and_then(|at| function_at(file, at));
-        out.move_to(func.map(crate::program::diagnostic_span));
+        out.move_to(func.map(|func| match func.name() {
+            Some(name) => name.span(),
+            None => function_head(func),
+        }));
     } else if reason.starts_with("Support member expression chains longer than ") {
         // `todo_member_expression_chain_too_long`. A `Todo` reaches here as a `CompilerErrorDetail`, which has no
         // message of its own.

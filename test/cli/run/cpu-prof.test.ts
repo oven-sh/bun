@@ -459,6 +459,107 @@ describe.concurrent("--cpu-prof", () => {
     expect(mdContent).toContain("# CPU Profile");
   });
 
+  // Builtin JavaScript calls these native functions by a private name ($requireCommonJS). The functions themselves have
+  // the name "anonymous" or no name, which is what error.stack shows.
+  describe("names the private native functions", () => {
+    const busy = `const end = performance.now() + 500; while (performance.now() < end) {}`;
+    const nativeFrame = (functionName: string) => ({
+      functionName,
+      scriptId: "0",
+      url: "",
+      lineNumber: -1,
+      columnNumber: -1,
+    });
+
+    async function profileOf(files: Record<string, string>, entry: string) {
+      const dir = tempDir("cpu-prof-private-native", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--cpu-prof", "--cpu-prof-md", "--cpu-prof-name=p", entry],
+        cwd: String(dir),
+        // Debug builds show the frames of builtin JavaScript in error.stack unless this is off.
+        env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: "0" },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const nodes: any[] = JSON.parse(readFileSync(join(String(dir), "p.cpuprofile"), "utf-8")).nodes;
+      const markdown = readFileSync(join(String(dir), "p.md"), "utf-8");
+      return { stdout, exitCode, nodes, markdown, [Symbol.dispose]: () => dir[Symbol.dispose]() };
+    }
+
+    test("requireCommonJS, between require() and the module it loads", async () => {
+      using result = await profileOf(
+        {
+          "main.cjs": `require("./loaded.cjs");`,
+          "loaded.cjs": `console.log(new Error().stack.split("\\n")[2]);\n${busy}`,
+        },
+        "main.cjs",
+      );
+      const { nodes } = result;
+      const parentOf = new Map<number, any>();
+      for (const node of nodes) for (const child of node.children ?? []) parentOf.set(child, node);
+      const loaded = nodes.filter(node => node.callFrame.url.endsWith("/loaded.cjs"));
+      expect({
+        loader: [...new Set(loaded.map(node => JSON.stringify(parentOf.get(node.id)?.callFrame)))].map(f =>
+          JSON.parse(f),
+        ),
+        callerOfLoader: [
+          ...new Set(loaded.map(node => parentOf.get(parentOf.get(node.id)?.id)?.callFrame.functionName)),
+        ],
+        markdown: result.markdown.includes("| `requireCommonJS` | `[native code]` |"),
+        // The name is for profiles only.
+        stdout: result.stdout,
+      }).toEqual({
+        loader: [nativeFrame("requireCommonJS")],
+        callerOfLoader: ["require"],
+        markdown: true,
+        stdout: "    at anonymous (unknown)\n",
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    test.each([
+      // A row of the table of private functions, in ZigGlobalObject.cpp.
+      ["esmLoadSync", "main.cjs", { "main.cjs": `require("./loaded.mjs");`, "loaded.mjs": `${busy}\nexport {};` }],
+      [
+        "resolveSync",
+        "main.cjs",
+        {
+          "main.cjs": `
+            const end = performance.now() + 500;
+            while (performance.now() < end) {
+              try {
+                require.resolve("./does-not-exist");
+              } catch {}
+            }`,
+        },
+      ],
+      // A private function of a bun:sqlite statement. It runs every statement of the string after the first.
+      [
+        "runTail",
+        "main.mjs",
+        {
+          "main.mjs": `
+            const sql = new Bun.SQL(":memory:");
+            const end = performance.now() + 500;
+            while (performance.now() < end) {
+              await sql.unsafe(
+                "select 1; with recursive c(x) as (select 1 union all select x + 1 from c where x < 20000) select count(*) from c",
+              );
+            }
+            await sql.close();`,
+        },
+      ],
+    ])("%s", async (name, entry, files) => {
+      using result = await profileOf(files, entry);
+      expect({
+        callFrame: result.nodes.find(node => node.callFrame.functionName === name)?.callFrame,
+        markdown: result.markdown.includes(`| \`${name}\` | \`[native code]\` |`),
+      }).toEqual({ callFrame: nativeFrame(name), markdown: true });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
   describe("bun test", () => {
     const file = (name: string) => `
       import { test } from "bun:test";

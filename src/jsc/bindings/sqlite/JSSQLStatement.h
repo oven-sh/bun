@@ -87,4 +87,8 @@ Structure* createJSSQLDatabaseStructure(JSGlobalObject* globalObject);
 
 JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject);
 
+// Private functions of a statement. Zig::profileNameOfPrivateFunction names them in a CPU profile.
+JSC_DECLARE_HOST_FUNCTION(jsSQLStatementSetColumnNameTransformFunction);
+JSC_DECLARE_HOST_FUNCTION(jsSQLStatementRunTailFunction);
+
 } // namespace WebCore

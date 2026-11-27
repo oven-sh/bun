@@ -327,8 +327,6 @@ JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes);
 JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnDeclaredTypes);
 JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetSafeIntegers);
 JSC_DECLARE_CUSTOM_SETTER(jsSqlStatementSetSafeIntegers);
-JSC_DECLARE_HOST_FUNCTION(jsSQLStatementSetColumnNameTransformFunction);
-JSC_DECLARE_HOST_FUNCTION(jsSQLStatementRunTailFunction);
 
 static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, int code, const char* msg, int64_t byteOffset)
 {

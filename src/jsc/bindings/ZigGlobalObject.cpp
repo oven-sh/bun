@@ -3597,6 +3597,73 @@ private:
     }
 };
 
+// Private native functions, all `DontDelete | ReadOnly` with no name.
+using BuiltinName = WebCore::BunBuiltinNames::Name;
+struct PrivateFunction {
+    BuiltinName name;
+    uint8_t length;
+    JSC::EncodedJSValue(JSC_HOST_CALL_ATTRIBUTES* function)(JSC::JSGlobalObject*, JSC::CallFrame*);
+};
+static constexpr PrivateFunction privateFunctions[] = {
+    { BuiltinName::k_makeGetterTypeError, 2, makeGetterTypeErrorForBuiltins },
+    { BuiltinName::k_makeDOMException, 2, makeDOMExceptionForBuiltins },
+    { BuiltinName::k_addAbortAlgorithmToSignal, 2, addAbortAlgorithmToSignal },
+    { BuiltinName::k_removeAbortAlgorithmFromSignal, 2, removeAbortAlgorithmFromSignal },
+    { BuiltinName::k_isAbortSignal, 1, isAbortSignal },
+    { BuiltinName::k_peekPromiseStatus, 1, jsBunPeekPromiseStatus },
+    { BuiltinName::k_peekPromiseSettledValue, 1, jsBunPeekPromiseSettledValue },
+    { BuiltinName::k_pokePromiseAsHandled, 1, jsBunPokePromiseAsHandled },
+    { BuiltinName::k_webStreamClosedPromise, 1, jsWebStreamClosedPromise },
+    { BuiltinName::k_webStreamControllerError, 2, jsWebStreamControllerError },
+    { BuiltinName::k_esmNamespaceForCjs, 2, functionEsmNamespaceForCjs },
+    { BuiltinName::k_esmRegistryDelete, 2, functionEsmRegistryDelete },
+    { BuiltinName::k_esmRegistryEvaluatedKeys, 1, functionEsmRegistryEvaluatedKeys },
+    { BuiltinName::k_esmRegistryHasEvaluated, 2, functionEsmRegistryHasEvaluated },
+    { BuiltinName::k_requireCacheWillSet, 3, functionRequireCacheWillSet },
+    { BuiltinName::k_isHiddenFromRequireCache, 1, functionIsHiddenFromRequireCache },
+    { BuiltinName::k_requireCacheDidDelete, 2, functionRequireCacheDidDelete },
+    { BuiltinName::k_requireCacheCompiledEntry, 2, functionRequireCacheCompiledEntry },
+    { BuiltinName::k_esmLoadSync, 2, functionEsmLoadSync },
+    { BuiltinName::k_makeErrorWithCode, 2, jsFunctionMakeErrorWithCode },
+    { BuiltinName::k_toClass, 1, jsFunctionToClass },
+    { BuiltinName::k_inherits, 1, jsFunctionInherits },
+    { BuiltinName::k_makeAbortError, 1, jsFunctionMakeAbortError },
+};
+
+// Private native functions that putDirectNativeFunction installs, which gives them the name "anonymous".
+// error.stack shows that name: a stack taken while a module loads has the frame of requireCommonJS or of requireNativeModule.
+// requireNativeModule loads a module that Bun has built in ("node:fs"), never a .node addon, so a profile has another name for it.
+// macro(name, length, function, name in a CPU profile)
+// clang-format off
+#define FOR_EACH_ANONYMOUS_PRIVATE_FUNCTION(macro) \
+    macro(createUninitializedArrayBuffer, 1, functionCreateUninitializedArrayBuffer, "createUninitializedArrayBuffer") \
+    macro(resolveSync, 1, functionImportMeta__resolveSyncPrivate, "resolveSync") \
+    macro(createInternalModuleById, 1, InternalModuleRegistry::jsCreateInternalModuleById, "createInternalModuleById") \
+    macro(requireCommonJS, 5, Bun::jsFunctionRequireCommonJS, "requireCommonJS") \
+    macro(requireNativeModule, 1, Bun::jsFunctionRequireNativeModule, "requireBuiltinModule") \
+    macro(createCommonJSModule, 2, Bun::jsFunctionCreateCommonJSModule, "createCommonJSModule") \
+    macro(evaluateCommonJSModule, 2, Bun::jsFunctionEvaluateCommonJSModule, "evaluateCommonJSModule") \
+    macro(evictIsolationSourceProviderCache, 1, jsFunctionEvictIsolationSourceProviderCache, "evictIsolationSourceProviderCache")
+// clang-format on
+
+String profileNameOfPrivateFunction(JSC::VM& vm, JSC::TaggedNativeFunction function)
+{
+#define RETURN_PROFILE_NAME_IF_SAME(name, length, nativeFunction, profileName) \
+    if (function == JSC::toTagged(nativeFunction))                             \
+        return MAKE_STATIC_STRING_IMPL(profileName);
+    FOR_EACH_ANONYMOUS_PRIVATE_FUNCTION(RETURN_PROFILE_NAME_IF_SAME)
+    // JSSQLStatementPrototype installs these two.
+    RETURN_PROFILE_NAME_IF_SAME(setColumnNameTransform, 1, WebCore::jsSQLStatementSetColumnNameTransformFunction, "setColumnNameTransform")
+    RETURN_PROFILE_NAME_IF_SAME(runTail, 1, WebCore::jsSQLStatementRunTailFunction, "runTail")
+#undef RETURN_PROFILE_NAME_IF_SAME
+
+    for (auto& entry : privateFunctions) {
+        if (function == JSC::toTagged(entry.function))
+            return WebCore::builtinNames(vm).publicName(entry.name).string();
+    }
+    return String();
+}
+
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -3607,38 +3674,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     // ----- Private/Static Properties -----
 
-    // Private native functions, all `DontDelete | ReadOnly` with no name.
-    using BuiltinName = WebCore::BunBuiltinNames::Name;
-    struct PrivateFunction {
-        BuiltinName name;
-        uint8_t length;
-        JSC::EncodedJSValue(JSC_HOST_CALL_ATTRIBUTES* function)(JSC::JSGlobalObject*, JSC::CallFrame*);
-    };
-    static constexpr PrivateFunction privateFunctions[] = {
-        { BuiltinName::k_makeGetterTypeError, 2, makeGetterTypeErrorForBuiltins },
-        { BuiltinName::k_makeDOMException, 2, makeDOMExceptionForBuiltins },
-        { BuiltinName::k_addAbortAlgorithmToSignal, 2, addAbortAlgorithmToSignal },
-        { BuiltinName::k_removeAbortAlgorithmFromSignal, 2, removeAbortAlgorithmFromSignal },
-        { BuiltinName::k_isAbortSignal, 1, isAbortSignal },
-        { BuiltinName::k_peekPromiseStatus, 1, jsBunPeekPromiseStatus },
-        { BuiltinName::k_peekPromiseSettledValue, 1, jsBunPeekPromiseSettledValue },
-        { BuiltinName::k_pokePromiseAsHandled, 1, jsBunPokePromiseAsHandled },
-        { BuiltinName::k_webStreamClosedPromise, 1, jsWebStreamClosedPromise },
-        { BuiltinName::k_webStreamControllerError, 2, jsWebStreamControllerError },
-        { BuiltinName::k_esmNamespaceForCjs, 2, functionEsmNamespaceForCjs },
-        { BuiltinName::k_esmRegistryDelete, 2, functionEsmRegistryDelete },
-        { BuiltinName::k_esmRegistryEvaluatedKeys, 1, functionEsmRegistryEvaluatedKeys },
-        { BuiltinName::k_esmRegistryHasEvaluated, 2, functionEsmRegistryHasEvaluated },
-        { BuiltinName::k_requireCacheWillSet, 3, functionRequireCacheWillSet },
-        { BuiltinName::k_isHiddenFromRequireCache, 1, functionIsHiddenFromRequireCache },
-        { BuiltinName::k_requireCacheDidDelete, 2, functionRequireCacheDidDelete },
-        { BuiltinName::k_requireCacheCompiledEntry, 2, functionRequireCacheCompiledEntry },
-        { BuiltinName::k_esmLoadSync, 2, functionEsmLoadSync },
-        { BuiltinName::k_makeErrorWithCode, 2, jsFunctionMakeErrorWithCode },
-        { BuiltinName::k_toClass, 1, jsFunctionToClass },
-        { BuiltinName::k_inherits, 1, jsFunctionInherits },
-        { BuiltinName::k_makeAbortError, 1, jsFunctionMakeAbortError },
-    };
     Vector<GlobalPropertyInfo, 32> staticGlobals;
     staticGlobals.append(GlobalPropertyInfo { builtinNames.lazyPrivateName(),
         JSC::JSFunction::create(vm, this, 0, "@lazy"_s, JS2Native::jsDollarLazy, ImplementationVisibility::Public),
@@ -3665,34 +3700,10 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     putDirectBuiltinFunction(vm, this, builtinNames.overridableRequirePrivateName(), commonJSOverridableRequireCodeGenerator(vm), 0);
 
-    putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    putDirectNativeFunction(vm, this, builtinNames.resolveSyncPrivateName(), 1, functionImportMeta__resolveSyncPrivate, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    putDirectNativeFunction(vm, this, builtinNames.createInternalModuleByIdPrivateName(), 1, InternalModuleRegistry::jsCreateInternalModuleById, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    // A stack taken while a module loads has the frame of one of these two. putDirectNativeFunction names them "anonymous".
-    putDirectNativeFunction(vm, this, builtinNames.requireCommonJSPrivateName(), 5, Bun::jsFunctionRequireCommonJS, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    putDirectNativeFunction(vm, this, builtinNames.requireNativeModulePrivateName(), 1, Bun::jsFunctionRequireNativeModule, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-
-    putDirectNativeFunction(vm, this,
-        builtinNames.createCommonJSModulePrivateName(),
-        2,
-        Bun::jsFunctionCreateCommonJSModule,
-        ImplementationVisibility::Public,
-        NoIntrinsic,
-        PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | 0);
-    putDirectNativeFunction(vm, this,
-        builtinNames.evaluateCommonJSModulePrivateName(),
-        2,
-        Bun::jsFunctionEvaluateCommonJSModule,
-        ImplementationVisibility::Public,
-        NoIntrinsic,
-        PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | 0);
-    putDirectNativeFunction(vm, this,
-        builtinNames.evictIsolationSourceProviderCachePrivateName(),
-        1,
-        jsFunctionEvictIsolationSourceProviderCache,
-        ImplementationVisibility::Public,
-        NoIntrinsic,
-        PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | 0);
+#define INSTALL_ANONYMOUS_PRIVATE_FUNCTION(name, length, nativeFunction, profileName) \
+    putDirectNativeFunction(vm, this, builtinNames.name##PrivateName(), length, nativeFunction, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    FOR_EACH_ANONYMOUS_PRIVATE_FUNCTION(INSTALL_ANONYMOUS_PRIVATE_FUNCTION)
+#undef INSTALL_ANONYMOUS_PRIVATE_FUNCTION
 
     putDirectCustomAccessor(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().BufferPrivateName(), JSC::CustomGetterSetter::create(vm, JSBuffer_getter, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
     putDirectCustomAccessor(vm, builtinNames.TransformStreamPrivateName(), CustomGetterSetter::create(vm, TransformStream_getter, nullptr), attributesForStructure(static_cast<unsigned>(PropertyAttribute::DontEnum)) | PropertyAttribute::CustomValue);

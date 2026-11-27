@@ -6,9 +6,9 @@
 
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use crate::hir::{
-    AstAlloc, BuiltinTag, Effect, HirVec, InstructionValue, JsxAttribute, JsxTag, ObjectProperty,
-    ObjectPropertyOrSpread, ObjectPropertyType, Place, PrimitiveValue, PropertyLiteral,
-    SourceLocation, StoreStr, VariableBinding,
+    AstAlloc, BuiltinTag, Effect, HirVec, InstructionValue, JsxAttribute, JsxTag, NonLocalBinding,
+    NonLocalKind, ObjectProperty, ObjectPropertyOrSpread, ObjectPropertyType, Place,
+    PrimitiveValue, PropertyLiteral, SourceLocation, StoreStr, VariableBinding,
 };
 use bun_ast::expr::Data as ExprData;
 use bun_ast::{E, Expr, G, Loc, Ref};
@@ -90,6 +90,12 @@ fn lower_jsx_element_name(builder: &mut HirBuilder, tag: &Expr) -> Result<JsxTag
             let place = lower_jsx_member_expression(builder, &dot, tag.loc)?;
             Ok(JsxTag::Place(place))
         }
+        ExprData::EThis(_) if builder.environment().config.this_in_a_jsx_tag_is_a_name => {
+            Ok(JsxTag::Builtin(BuiltinTag {
+                name: StoreStr::new(b"this"),
+                loc,
+            }))
+        }
         _ => {
             // Anything else (e.g. the auto-imported Fragment / jsx runtime tag that
             // doesn't fit the above shapes) is lowered as an ordinary expression.
@@ -122,6 +128,20 @@ fn lower_jsx_member_expression(
             lower_tag_identifier(builder, id.ref_, id_loc, expr_loc)?
         }
         ExprData::EDot(inner) => lower_jsx_member_expression(builder, &inner, expr.target.loc)?,
+        ExprData::EThis(_) if builder.environment().config.this_in_a_jsx_tag_is_a_name => {
+            lower_value_to_temporary(
+                builder,
+                InstructionValue::LoadGlobal {
+                    binding: NonLocalBinding {
+                        ref_: Ref::NONE,
+                        kind: NonLocalKind::Global {
+                            name: StoreStr::new(b"this"),
+                        },
+                    },
+                    loc: convert_loc(expr.target.loc),
+                },
+            )?
+        }
         _ => {
             builder.record_error(CompilerErrorDetail {
                 category: ErrorCategory::Todo,

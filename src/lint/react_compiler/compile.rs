@@ -76,6 +76,7 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
         unwanted_throws_are_not_looked_for: is_oxlint,
         fixture_modules_have_no_types: is_oxlint,
         jsx_tags_hoist_no_declaration: is_oxlint,
+        this_in_a_jsx_tag_is_a_name: is_oxlint,
         operators_say_nothing_of_their_operands: is_oxlint,
         scopes_without_dependencies_in_use_memo_are_merged: is_oxlint,
         functions_given_to_jsx_are_not_assumed_called: is_oxlint,

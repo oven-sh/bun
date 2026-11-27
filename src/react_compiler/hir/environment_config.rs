@@ -207,6 +207,10 @@ pub struct EnvironmentConfig {
     /// And a function in the pattern of a declaration, in a default or in a computed key, refers to what the
     /// declaration declares as one in its initializer does. That is oxc. Bun's lowering looks at the initializer only.
     pub jsx_tags_hoist_no_declaration: bool,
+    /// `this` in the tag of a JSX element is a name, as it is to upstream's parser and to Bun's: `<this />` is a host
+    /// element, and `<this.a />` reads a global. That is oxc. The tree of `bun lint` has `this` itself there, which is
+    /// lowered as the expression is for `<this />`, and is a todo of its own as the object of `<this.a />`.
+    pub this_in_a_jsx_tag_is_a_name: bool,
     /// For `infer_types`: an arithmetic or relational operator says nothing of the type of its operands, so `x` in
     /// `x - 1` can still be an object that is written to elsewhere. To upstream both operands are primitives wherever
     /// they are used, and a write to one or a dependency on one is not seen.
@@ -324,6 +328,7 @@ impl Default for EnvironmentConfig {
             unwanted_throws_are_not_looked_for: false,
             fixture_modules_have_no_types: false,
             jsx_tags_hoist_no_declaration: false,
+            this_in_a_jsx_tag_is_a_name: false,
             operators_say_nothing_of_their_operands: false,
             scopes_without_dependencies_in_use_memo_are_merged: false,
             functions_given_to_jsx_are_not_assumed_called: false,

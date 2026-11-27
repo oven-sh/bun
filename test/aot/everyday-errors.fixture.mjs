@@ -225,7 +225,7 @@ const failures = {
   "tdz-class"() { { new A(); class A {} } },
   "tdz-class-in-argument"() { { id(new A()); class A {} } },
   "undeclared-construct"() { new notDeclaredAnywhere(); },
-  "not-a-constructor-in-extends"() { const o = id({}); class A extends new o.Missing() {} },
+  "not-a-constructor-in-extends"() { var o = id({}); class A extends new o.Missing() {} },
   "tdz-parameter"() { function f(a = b, b = 1) { return a; } f(); },
   "undeclared-read"() { return notDeclaredAnywhere; },
   "undeclared-call"() { notDeclaredAnywhere(); },

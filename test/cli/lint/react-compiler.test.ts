@@ -682,6 +682,20 @@ ${chain}
       6, 13, 20, 27, 34, 41, 48, 56, 57, 64, 80, 86, 94, 102, 110, 119, 128, 136, 148,
     ]);
   });
+
+  test("a value is reactive if a reactive branch in a `try`, a reactive throw or an outer reactive branch decides it", async () => {
+    const diagnostics = await matches("control reactivity");
+    // The last function of each file has no reactive value, and isn't reported.
+    expect({
+      "branches-in-try.jsx": linesOf(diagnostics["branches-in-try.jsx"], "memo-dependencies"),
+      "throws-in-try.jsx": linesOf(diagnostics["throws-in-try.jsx"], "memo-dependencies"),
+      "outer-branches.jsx": linesOf(diagnostics["outer-branches.jsx"], "memo-dependencies"),
+    }).toEqual({
+      "branches-in-try.jsx": [17, 29, 47],
+      "throws-in-try.jsx": [13, 26],
+      "outer-branches.jsx": [12],
+    });
+  });
 });
 
 describe.concurrent("bun lint: how a diagnostic's labels, help and note are printed", () => {

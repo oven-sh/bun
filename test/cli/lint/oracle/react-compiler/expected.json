@@ -15182,6 +15182,180 @@
      }
     ]
    }
+  },
+  "control reactivity": {
+   "exit": 1,
+   "files": 3,
+   "diagnostics": {
+    "branches-in-try.jsx": [
+     {
+      "code": "react(memo-dependencies)",
+      "help": "Missing dependencies can cause a value to update less often than it should, resulting in stale UI",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 32,
+         "length": 2,
+         "line": 17,
+         "offset": 278
+        }
+       },
+       {
+        "label": "Missing dependency `v`",
+        "span": {
+         "column": 28,
+         "length": 1,
+         "line": 17,
+         "offset": 274
+        }
+       }
+      ],
+      "message": "Found missing memoization dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(memo-dependencies)",
+      "help": "Missing dependencies can cause a value to update less often than it should, resulting in stale UI",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 32,
+         "length": 2,
+         "line": 29,
+         "offset": 486
+        }
+       },
+       {
+        "label": "Missing dependency `v`",
+        "span": {
+         "column": 28,
+         "length": 1,
+         "line": 29,
+         "offset": 482
+        }
+       }
+      ],
+      "message": "Found missing memoization dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(memo-dependencies)",
+      "help": "Missing dependencies can cause a value to update less often than it should, resulting in stale UI",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 32,
+         "length": 2,
+         "line": 47,
+         "offset": 775
+        }
+       },
+       {
+        "label": "Missing dependency `v`",
+        "span": {
+         "column": 28,
+         "length": 1,
+         "line": 47,
+         "offset": 771
+        }
+       }
+      ],
+      "message": "Found missing memoization dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     }
+    ],
+    "outer-branches.jsx": [
+     {
+      "code": "react(memo-dependencies)",
+      "help": "Missing dependencies can cause a value to update less often than it should, resulting in stale UI",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 32,
+         "length": 2,
+         "line": 12,
+         "offset": 220
+        }
+       },
+       {
+        "label": "Missing dependency `v`",
+        "span": {
+         "column": 28,
+         "length": 1,
+         "line": 12,
+         "offset": 216
+        }
+       }
+      ],
+      "message": "Found missing memoization dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     }
+    ],
+    "throws-in-try.jsx": [
+     {
+      "code": "react(memo-dependencies)",
+      "help": "Missing dependencies can cause a value to update less often than it should, resulting in stale UI",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 32,
+         "length": 2,
+         "line": 13,
+         "offset": 258
+        }
+       },
+       {
+        "label": "Missing dependency `v`",
+        "span": {
+         "column": 28,
+         "length": 1,
+         "line": 13,
+         "offset": 254
+        }
+       }
+      ],
+      "message": "Found missing memoization dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(memo-dependencies)",
+      "help": "Missing dependencies can cause a value to update less often than it should, resulting in stale UI",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 32,
+         "length": 2,
+         "line": 26,
+         "offset": 508
+        }
+       },
+       {
+        "label": "Missing dependency `v`",
+        "span": {
+         "column": 28,
+         "length": 1,
+         "line": 26,
+         "offset": 504
+        }
+       }
+      ],
+      "message": "Found missing memoization dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     }
+    ]
+   }
   }
  },
  "eslint": {

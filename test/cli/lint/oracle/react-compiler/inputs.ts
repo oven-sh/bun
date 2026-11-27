@@ -4605,6 +4605,151 @@ export function NoOperator(props) {
 `,
 };
 
+/**
+ * A variable whose value depends on which way a branch went, or on whether a call threw. It's read outside the
+ * `useMemo` callback (`const v = value`), because a variable that the callback captures is a dependency either way.
+ * oxlint 1.87 reported nothing in these files. The last function of each isn't reported: nothing in it is reactive.
+ */
+const controlReactivity: Files = {
+  ".oxlintrc.json": rc(),
+  // The branch is inside a `try` that has a `catch`.
+  "branches-in-try.jsx": `import { useMemo } from "react";
+
+const FLAG = globalThis.FLAG;
+
+export function IfInTry({ cond }) {
+  let value;
+  try {
+    if (cond) {
+      value = "a";
+    } else {
+      value = "b";
+    }
+  } catch {
+    value = "c";
+  }
+  const v = value;
+  const m = useMemo(() => [v], []);
+  return <div>{m}</div>;
+}
+
+export function TernaryInTry({ cond }) {
+  let value;
+  try {
+    value = cond ? "a" : "b";
+  } catch {
+    value = "c";
+  }
+  const v = value;
+  const m = useMemo(() => [v], []);
+  return <div>{m}</div>;
+}
+
+export function SwitchInTry({ kind }) {
+  let value;
+  try {
+    switch (kind) {
+      case 1:
+        value = "a";
+        break;
+      default:
+        value = "d";
+    }
+  } catch {
+    value = "c";
+  }
+  const v = value;
+  const m = useMemo(() => [v], []);
+  return <div>{m}</div>;
+}
+
+export function ConstantIfInTry() {
+  let value;
+  try {
+    if (FLAG) {
+      value = "a";
+    } else {
+      value = "b";
+    }
+  } catch {
+    value = "c";
+  }
+  const v = value;
+  const m = useMemo(() => [v], []);
+  return <div>{m}</div>;
+}
+`,
+  // Whether the `catch` runs depends on a reactive value. In the second one, so does whether the second call runs.
+  "throws-in-try.jsx": `import { useMemo } from "react";
+
+const FLAG = globalThis.FLAG;
+
+export function ThrowDependsOnAProp({ value }) {
+  let status = "valid";
+  try {
+    validate(value);
+  } catch {
+    status = "invalid";
+  }
+  const v = status;
+  const m = useMemo(() => [v], []);
+  return <div>{m}</div>;
+}
+
+export function ThrowAfterAThrowThatDepends({ value }) {
+  let status = "valid";
+  try {
+    validate(value);
+    validate();
+  } catch {
+    status = "invalid";
+  }
+  const v = status;
+  const m = useMemo(() => [v], []);
+  return <div>{m}</div>;
+}
+
+export function ConstantThrow() {
+  let status = "valid";
+  try {
+    validate(FLAG);
+  } catch {
+    status = "invalid";
+  }
+  const v = status;
+  const m = useMemo(() => [v], []);
+  return <div>{m}</div>;
+}
+`,
+  // The inner branch, which isn't reactive, is the nearest one that decides whether the assignment is kept.
+  "outer-branches.jsx": `import { useMemo } from "react";
+
+const FLAG = globalThis.FLAG;
+
+export function OuterBranch({ prop }) {
+  let x = 0;
+  if (prop) {
+    x = 1;
+    if (FLAG) return null;
+  }
+  const v = x;
+  const m = useMemo(() => [v], []);
+  return <div>{m}</div>;
+}
+
+export function ConstantBranches() {
+  let x = 0;
+  if (FLAG) {
+    x = 1;
+    if (FLAG) return null;
+  }
+  const v = x;
+  const m = useMemo(() => [v], []);
+  return <div>{m}</div>;
+}
+`,
+};
+
 const ownNameOfTheComponent = `import { memo, useRef } from "react";
 
 export default memo(function Tree({ items }) {
@@ -5013,6 +5158,7 @@ function Component(props) {
   "late passes": latePasses,
   "using declarations": usingDeclarations,
   "operator operands": operatorOperands,
+  "control reactivity": controlReactivity,
 };
 
 type RawDiagnostic = { filename?: string; url?: string; [key: string]: unknown };

@@ -282,7 +282,7 @@ pub struct GENERAL_NAME {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// OPENSSL_STACK low-level ABI (used by the typed `sk_*` inline wrappers)
+// OPENSSL_STACK low-level ABI (used by `GeneralNames`)
 // ═══════════════════════════════════════════════════════════════════════════
 
 type OPENSSL_sk_free_func = Option<unsafe extern "C" fn(*mut c_void)>;
@@ -305,12 +305,9 @@ unsafe extern "C" {
 }
 
 impl OwnedSslCtx {
-    /// Takes the +1 `raw` carries; `None` when `raw` is null.
-    ///
-    /// # Safety
-    /// `raw` must be null or carry a reference the caller is giving up.
-    pub unsafe fn from_raw(raw: *mut SSL_CTX) -> Option<Self> {
-        core::ptr::NonNull::new(raw).map(Self)
+    pub fn retain(ctx: &SSL_CTX) -> Self {
+        SSL_CTX_up_ref(ctx);
+        Self(ctx.into())
     }
 
     pub fn as_ptr(&self) -> *mut SSL_CTX {
@@ -326,8 +323,7 @@ impl OwnedSslCtx {
 impl Clone for OwnedSslCtx {
     /// Another reference to the same `SSL_CTX` (`SSL_CTX_up_ref`).
     fn clone(&self) -> Self {
-        SSL_CTX_up_ref(self);
-        Self(self.0)
+        Self::retain(self)
     }
 }
 
@@ -948,7 +944,7 @@ unsafe extern "C" {
     // ── SSL ──────────────────────────────────────────────────────────────
     pub safe fn SSL_library_init() -> c_int;
     pub safe fn SSL_load_error_strings();
-    pub safe fn SSL_CTX_up_ref(ctx: &SSL_CTX) -> c_int;
+    safe fn SSL_CTX_up_ref(ctx: &SSL_CTX) -> c_int;
     pub safe fn SSL_get_peer_cert_chain(ssl: &mut SSL) -> Option<&struct_stack_st_X509>;
 
     // ── X509 ─────────────────────────────────────────────────────────────
@@ -1049,7 +1045,7 @@ pub const RSA_PKCS1_OAEP_PADDING: c_int = 4;
 /// parameters.
 pub(crate) type ossl_ssize_t = isize;
 
-/// `struct bio_method_st` (`typedef ... BIO_METHOD`). Not written to once there is a reference to it.
+/// `struct bio_method_st` (`typedef ... BIO_METHOD`). Not written to once there is a reference to it, so it is `Sync`.
 #[repr(C)]
 pub struct BIO_METHOD {
     _p: [usize; 0],
@@ -1102,7 +1098,7 @@ pub type pem_password_cb = unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut 
 
 unsafe extern "C" {
     // ── SSL_CTX ──────────────────────────────────────────────────────────
-    pub fn SSL_CTX_new(method: *const SSL_METHOD) -> *mut SSL_CTX;
+    pub fn SSL_CTX_new(method: *const SSL_METHOD) -> Option<OwnedSslCtx>;
     fn SSL_CTX_free(ctx: *mut SSL_CTX);
     pub safe fn SSL_CTX_get_verify_mode(ctx: &SSL_CTX) -> c_int;
     /// Refuses a `sid_ctx_len` over 32 before it reads.
@@ -1211,10 +1207,8 @@ unsafe extern "C" {
 
     // ── SSL_CIPHER ───────────────────────────────────────────────────────
     pub safe fn SSL_get_current_cipher(ssl: &SSL) -> Option<&'static SSL_CIPHER>;
-    pub safe fn SSL_CIPHER_get_name(cipher: &SSL_CIPHER) -> Option<CStrRef<'_>>;
-    pub safe fn SSL_CIPHER_standard_name(cipher: &SSL_CIPHER) -> Option<CStrRef<'_>>;
-    pub safe fn SSL_CIPHER_get_min_version(cipher: &SSL_CIPHER) -> u16;
-    pub safe fn SSL_CIPHER_get_kx_nid(cipher: &SSL_CIPHER) -> c_int;
+    pub safe fn SSL_CIPHER_get_name(cipher: &SSL_CIPHER) -> CStrRef<'_>;
+    pub safe fn SSL_CIPHER_standard_name(cipher: &SSL_CIPHER) -> CStrRef<'_>;
 
     // ── BIO ──────────────────────────────────────────────────────────────
     pub safe fn BIO_new(method: &'static BIO_METHOD) -> Option<core::ptr::NonNull<BIO>>;
@@ -1251,11 +1245,10 @@ unsafe extern "C" {
     pub safe fn ERR_clear_error();
     pub safe fn ERR_get_error() -> u32;
     pub safe fn ERR_peek_last_error() -> u32;
-    // `ERR_error_string_n` declared once in the crypto/err block above.
-    pub safe fn ERR_lib_error_string(packed_error: u32) -> Option<CStrRef<'static>>;
-    pub safe fn ERR_func_error_string(packed_error: u32) -> Option<CStrRef<'static>>;
-    /// For `ERR_LIB_SYS` this is `strerror`'s string, so `'a` must end before the next `strerror`.
-    pub fn ERR_reason_error_string<'a>(packed_error: u32) -> Option<CStrRef<'a>>;
+    pub safe fn ERR_lib_error_string(packed_error: u32) -> CStrRef<'static>;
+    pub safe fn ERR_func_error_string(packed_error: u32) -> CStrRef<'static>;
+    /// SAFETY: for `ERR_LIB_SYS` this is `strerror`'s string, so `'a` ends before the next `strerror`.
+    pub fn ERR_reason_error_string<'a>(packed_error: u32) -> CStrRef<'a>;
     pub safe fn ERR_load_ERR_strings();
     pub safe fn ERR_load_crypto_strings();
 
@@ -1427,24 +1420,14 @@ unsafe extern "C" {
         u: *mut c_void,
     ) -> *mut X509_CRL;
 
-    /// Returns X509_V_OK (0) when `issuer` could have issued `subject`.
-    pub safe fn X509_check_issued(issuer: &X509, subject: &X509) -> c_int;
-
     pub safe fn SSL_get_certificate(ssl: &mut SSL) -> Option<&X509>;
     /// `None` when the peer sent no certificate.
     safe fn SSL_get_peer_certificate(ssl: &SSL) -> Option<OwnedX509>;
     /// Returns a BORROWED reference to the context's leaf certificate, or null.
     pub fn SSL_CTX_get0_certificate(ctx: *const SSL_CTX) -> *mut X509;
 
-    pub safe fn SSL_get_session(ssl: &SSL) -> *mut SSL_SESSION;
     /// `abort()`s once the handshake has begun.
     pub safe fn SSL_set_session(ssl: &SSL, session: &SSL_SESSION) -> c_int;
-    pub safe fn SSL_session_reused(ssl: &SSL) -> c_int;
-    pub safe fn SSL_SESSION_get0_ticket(
-        session: &SSL_SESSION,
-        out_ticket: &mut *const u8,
-        out_len: &mut usize,
-    );
     fn i2d_SSL_SESSION(session: &SSL_SESSION, outp: &mut *mut u8) -> c_int;
     safe fn SSL_SESSION_up_ref(session: &SSL_SESSION) -> c_int;
     fn SSL_SESSION_free(session: *mut SSL_SESSION);

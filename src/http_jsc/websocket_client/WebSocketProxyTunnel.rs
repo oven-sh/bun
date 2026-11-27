@@ -227,7 +227,6 @@ impl WebSocketProxyTunnel {
                         Some(hostname_z.as_zstr().into()),
                         bun_http::AlpnOffer::H1,
                     );
-                    // hostname_z dropped here (owned NUL-terminated copy)
                 }
             }
         }

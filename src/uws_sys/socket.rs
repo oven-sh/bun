@@ -968,6 +968,13 @@ impl AnySocket {
         }
     }
 
+    pub fn as_tls(&self) -> Option<&SocketTLS> {
+        match self {
+            AnySocket::SocketTcp(_) => None,
+            AnySocket::SocketTls(s) => Some(s),
+        }
+    }
+
     any_socket_forward! {
         fn is_closed(&self) -> bool;
         fn is_shutdown(&self) -> bool;

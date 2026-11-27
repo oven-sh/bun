@@ -111,12 +111,8 @@ impl SSLContextCache {
             if let Some(entry) = entries.map.get(&d) {
                 let ctx = entry.ctx.get();
                 if !ctx.is_null() {
-                    // SAFETY: ctx non-null and tombstone write is serialized by this mutex;
-                    // the up_ref is the +1 `from_raw` takes.
-                    return unsafe {
-                        boringssl::SSL_CTX_up_ref(&*ctx);
-                        OwnedSslCtx::from_raw(ctx)
-                    };
+                    // SAFETY: non-null, and this mutex serializes the tombstone write.
+                    return Some(OwnedSslCtx::retain(unsafe { &*ctx }));
                 }
             }
         }
@@ -137,11 +133,8 @@ impl SSLContextCache {
                 let slot = &occupied.get().ctx;
                 let existing = slot.get();
                 if !existing.is_null() {
-                    // SAFETY: existing non-null; the up_ref is the +1 `from_raw` takes.
-                    return unsafe {
-                        boringssl::SSL_CTX_up_ref(&*existing);
-                        OwnedSslCtx::from_raw(existing)
-                    };
+                    // SAFETY: non-null, and this mutex serializes the tombstone write.
+                    return Some(OwnedSslCtx::retain(unsafe { &*existing }));
                 }
                 // Tombstone — adopt the rebuilt CTX into the existing slot.
                 if set_entry(&ctx, occupied.get()) {

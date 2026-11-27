@@ -166,7 +166,7 @@ pub(crate) fn eligible(client: &crate::HTTPClient<'_>) -> bool {
 /// Offer any cached session for this key and install an unarmed sink.
 ///
 /// # Safety
-/// `socket` must be live and `ssl` its pre-handshake `SSL*`; `ctx` must outlive `ssl`.
+/// `socket` must be live and `ssl` its pre-handshake `SSL`; `ctx` must outlive `ssl`.
 pub(crate) unsafe fn install(
     socket: *mut bun_uws::us_socket_t,
     ssl: &SSL,

@@ -24,7 +24,7 @@ pub fn callback_of(global: &JSGlobalObject, tls: JSValue) -> JsResult<Option<JSV
     }
 }
 
-/// `Err` is what the connection fails with. Done with `ssl` before it runs user code, which can close the connection.
+/// `Err` is what the connection fails with. Last uses `ssl` before it runs user code, which can close the connection.
 pub fn check(
     global: &JSGlobalObject,
     callback: JSValue,
@@ -46,7 +46,7 @@ fn verdict(
     ssl: Option<&mut SSL>,
     hostname: &[u8],
 ) -> JsResult<Option<JSValue>> {
-    let Some(cert) = ssl.and_then(|ssl| ssl.peer_leaf_certificate()) else {
+    let Some(cert) = ssl.and_then(SSL::peer_leaf_certificate) else {
         return Ok(Some(no_verdict(global)));
     };
     let cert = bun_jsc::from_js_host_call(global, || Bun__X509__toJSLegacyEncoding(cert, global))?;

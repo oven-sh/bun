@@ -29,6 +29,7 @@ returns! {
         OpenSSL_add_all_algorithms RSA_free;
     1: SSL_library_init EVP_Digest EVP_DigestInit EVP_DigestUpdate EVP_DigestFinal
         EVP_MD_CTX_cleanup BIO_new_mem_buf BIO_free PEM_read_bio_RSA_PUBKEY;
+    // An `&EVP_MD` is pointer-aligned.
     8: EVP_sha1 EVP_sha256;
     256: RSA_size;
     0xffff_ffff: JSC__parseIndex;

@@ -1755,12 +1755,9 @@ impl<'a> HTTPClient<'a> {
     /// Valid only before the handshake starts, so [`Self::on_connect`] is the only caller.
     fn configure_tls<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         if IS_SSL {
-            // SAFETY: socket.get_native_handle() returns a valid *mut SSL on TLS sockets
-            let ssl_ptr: *mut boringssl::c::SSL = socket
-                .get_native_handle()
-                .map(|p| p.cast())
-                .unwrap_or(core::ptr::null_mut());
-            if !ssl_ptr.is_null() {
+            if let Some(ssl) = socket.get_native_handle() {
+                // SAFETY: a TLS socket's handle is its `SSL`; it has just opened, and nothing in this block closes it.
+                let ssl = unsafe { &*ssl.cast::<boringssl::c::SSL>() };
                 let raw_hostname = get_tls_hostname(self, self.http_proxy.is_some());
 
                 // Build a NUL-terminated SNI string only when the hostname is not an
@@ -1782,9 +1779,7 @@ impl<'a> HTTPClient<'a> {
                     None
                 };
 
-                // SAFETY: `ssl_ptr` was null-checked above and is the live SSL
-                // handle for this just-opened socket.
-                configure_http_client_with_alpn(unsafe { &*ssl_ptr }, host_z, self.alpn_offer());
+                configure_http_client_with_alpn(ssl, host_z, self.alpn_offer());
 
                 if self.flags.reject_unauthorized {
                     socket.set_inline_reject();
@@ -1796,7 +1791,7 @@ impl<'a> HTTPClient<'a> {
                     .filter(|_| crate::session_cache::eligible(self))
                 {
                     let want_tunnel = self.http_proxy.is_some() && self.url.is_https();
-                    // SAFETY: `ssl_ptr` is live and pre-handshake (uSockets starts
+                    // SAFETY: `ssl` is pre-handshake (uSockets starts
                     // the handshake when the open callback returns); `get_ssl_ctx`
                     // returns the static `https_context` or the heap context this
                     // client holds a strong ref on, both of which outlive
@@ -1804,7 +1799,7 @@ impl<'a> HTTPClient<'a> {
                     unsafe {
                         crate::session_cache::install(
                             raw_socket,
-                            &*ssl_ptr,
+                            ssl,
                             self.get_ssl_ctx::<true>(),
                             self.connected_url.hostname,
                             self.connected_url.get_port_auto(),

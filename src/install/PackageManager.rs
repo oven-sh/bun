@@ -970,9 +970,7 @@ mod holder {
         std::sync::OnceLock::new();
 
     /// Process-lifetime storage for `http::http_thread::InitOpts.ca` C-strings
-    /// (never freed). The HTTP thread
-    /// reads these asynchronously after `init()` returns, so they must outlive
-    /// the local that builds them.
+    /// (never freed).
     pub(super) static CA: std::sync::OnceLock<Vec<bun_core::SensitiveCString>> =
         std::sync::OnceLock::new();
 }

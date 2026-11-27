@@ -31,6 +31,7 @@ returns! {
         highway_memmem;
     1: SSL_library_init EVP_Digest EVP_DigestInit EVP_DigestUpdate
         EVP_DigestFinal EVP_MD_CTX_cleanup RAND_bytes PKCS5_PBKDF2_HMAC;
+    // An `&EVP_MD` is pointer-aligned.
     8: EVP_sha256 EVP_md5;
 }
 

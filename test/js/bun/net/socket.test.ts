@@ -1020,11 +1020,12 @@ it.skipIf(isWindows)("should not crash when a socket from a file descriptor is c
 });
 
 it.skipIf(isWindows).each(["close", "end"] as const)(
-  "both halves of upgradeTLS() are closed after %s() had to wait for the peer",
+  "upgradeTLS() closes both halves when open() throws while %s() waits for the peer",
   async method => {
     const [fd, peer] = createSocketPair();
     const closed = Promise.withResolvers<void>();
     const tcp = await Bun.connect({ fd, socket: { data() {}, close: () => closed.resolve() } } as any);
+    // Fill the send buffer, so that the TLS close has to wait.
     for (const chunk of [Buffer.alloc(65536), Buffer.alloc(1)]) while (tcp.write(chunk) > 0);
     const [raw, secure] = tcp.upgradeTLS({
       tls: { rejectUnauthorized: false },

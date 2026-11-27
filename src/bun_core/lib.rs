@@ -2374,6 +2374,7 @@ pub mod ffi {
     /// Replaces the `// SAFETY: H is a ZST → mem::zeroed()` comment repeated
     /// at every callback trampoline that smuggles a generic `H: Fn*` through C
     /// (`uws_sys::thunk`, `server_body::route_thunk`).
+    /// `Copy` keeps the opaque FFI handles out: they are ZSTs too.
     #[inline(always)]
     pub fn conjure_zst<H: Copy>() -> H {
         const {

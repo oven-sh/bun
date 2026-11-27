@@ -268,7 +268,7 @@ extern "C" fn select_alpn_callback(
 
 /// BoringSSL reads the server ALPN callback off the *current* `ssl->ctx`, and
 /// SNI replaces that with `SSL_set_SSL_CTX` before ALPN negotiation.
-pub(in crate::socket) fn install_sni_alpn_selector(ctx: &SSL_CTX) {
+pub(in crate::socket) fn install_alpn_selector(ctx: &SSL_CTX) {
     // SAFETY: the callback reads no `arg`, only ex_data slot 0, which `on_open` alone sets. It reports
     // a selection only once it has written one.
     unsafe {
@@ -813,7 +813,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             context
                 .as_class_ref::<crate::api::bun_secure_context::SecureContext>()
                 .map(|sc| sc.ctx.clone())
-                .inspect(|ctx| install_sni_alpn_selector(ctx))
+                .inspect(|ctx| install_alpn_selector(ctx))
         };
         socket.sni_resolve(ctx, is_error);
     }
@@ -1379,7 +1379,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                         // `ssl` holds `self`. `ssl` holds a reference to its context.
                         unsafe {
                             boringssl_sys::SSL_set_ex_data(ssl_ptr, 0, this_ptr.cast::<c_void>());
-                            install_sni_alpn_selector(&*boringssl_sys::SSL_get_SSL_CTX(ssl));
+                            install_alpn_selector(&*boringssl_sys::SSL_get_SSL_CTX(ssl));
                         }
                     }
                     // A rejecting client must refuse a bad chain DURING the
@@ -1935,6 +1935,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !self.has_handlers() {
             self.detach_native_callback();
             self.socket.set(SocketHandler::<SSL>::DETACHED);
+            // The raw twin of `upgradeTLS` gets its close only from here, as below.
             if let Some(raw) = self.twin.take() {
                 crate::dispatch::fold(raw.on_close(socket, err, reason));
             }

@@ -610,13 +610,9 @@ pub mod ssl_wrapper {
             } else {
                 boring_sys::SSL_VERIFY_NONE
             };
-            // SAFETY: `ssl` is this wrapper's live `SSL*`, before any handshake
-            // byte has been processed. The callback always returns 1 so
-            // BoringSSL never aborts mid-flight; JS reads `verify_error` and
-            // decides.
-            unsafe {
-                boring_sys::SSL_set_verify(ssl.as_ref(), mode, Some(always_continue_verify));
-            }
+            // SAFETY: `ssl` is this wrapper's live `SSL*`.
+            let ssl = unsafe { ssl.as_ref() };
+            boring_sys::SSL_set_verify(ssl, mode, Some(always_continue_verify));
         }
 
         /// Client whose `rejectUnauthorized` policy is on: refuse a bad server
@@ -630,13 +626,12 @@ pub mod ssl_wrapper {
             let Some(ssl) = self.ssl.get() else { return };
             self.callbacks.inline_reject.set(true);
             // SAFETY: `ssl` is this wrapper's live `SSL*`.
-            unsafe {
-                boring_sys::SSL_set_verify(
-                    ssl.as_ref(),
-                    boring_sys::SSL_VERIFY_PEER,
-                    Some(record_verify_failure),
-                );
-            }
+            let ssl = unsafe { ssl.as_ref() };
+            boring_sys::SSL_set_verify(
+                ssl,
+                boring_sys::SSL_VERIFY_PEER,
+                Some(record_verify_failure),
+            );
         }
 
         /// Parks sessions and key-log lines for `on_session`, `on_keylog` and `latest_session`. Call it before `start()`.
@@ -976,7 +971,7 @@ pub mod ssl_wrapper {
 
         /// Update the handshake state. Returns true if we can call handle_reading.
         fn update_handshake_state(&self, ssl: &boring_sys::SSL, handler: &mut dyn Handler) -> bool {
-            if self.flags.closed_notified() || self.ssl.get().is_none() {
+            if self.flags.closed_notified() {
                 return false;
             }
 

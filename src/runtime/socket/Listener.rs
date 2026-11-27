@@ -743,7 +743,7 @@ impl Listener {
             return Ok(());
         };
 
-        super::socket_body::install_sni_alpn_selector(&sni_ctx);
+        super::socket_body::install_alpn_selector(&sni_ctx);
 
         // The C SNI tree SSL_CTX_up_ref()s; ours drops here.
         // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
@@ -1739,7 +1739,7 @@ fn decode_sni_result(
         return core::ptr::null_mut();
     }
     if let Some(sc) = result.as_class_ref::<SecureContext>() {
-        super::socket_body::install_sni_alpn_selector(&sc.ctx);
+        super::socket_body::install_alpn_selector(&sc.ctx);
         // The C dispatcher frees this +1 after `SSL_set_SSL_CTX` takes its own.
         return sc.ctx.clone().into_raw().cast();
     }

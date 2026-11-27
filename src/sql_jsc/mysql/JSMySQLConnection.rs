@@ -922,11 +922,9 @@ impl<const SSL: bool> SocketHandler<SSL> {
         if success == 1 && !this.awaits_tls_handshake() {
             return;
         }
-        let mut ssl = match this.socket.get() {
-            // SAFETY: `on_close` detaches the socket, and `ssl` is last used before anything closes it.
-            AnySocket::SocketTls(tls) => unsafe { tls.ssl_mut() },
-            AnySocket::SocketTcp(_) => None,
-        };
+        let socket = this.socket.get();
+        // SAFETY: `on_close` detaches the socket, and `ssl` is last used before anything closes it.
+        let mut ssl = socket.as_tls().and_then(|tls| unsafe { tls.ssl_mut() });
         let name_matches = |hostname: &[u8]| {
             !hostname.is_empty()
                 && ssl

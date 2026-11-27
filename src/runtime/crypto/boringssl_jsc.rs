@@ -41,8 +41,8 @@ fn lib_short_name(lib: u32) -> &'static str {
     }
 }
 
-fn non_empty(string: Option<CStrRef<'_>>) -> Option<&[u8]> {
-    Some(string?.to_cstr().to_bytes()).filter(|bytes| !bytes.is_empty())
+fn non_empty(string: CStrRef<'_>) -> Option<&[u8]> {
+    Some(string.to_cstr().to_bytes()).filter(|bytes| !bytes.is_empty())
 }
 
 /// `err_code` was popped off the error queue. The entries behind it belong to the same failure,

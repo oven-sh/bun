@@ -631,7 +631,7 @@ impl UpgradedDuplex {
     }
 
     fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
-        self.wrapper_ref().and_then(|w| w.ssl()).map(|p| p.as_ptr())
+        Some(self.wrapper_ref()?.ssl()?.as_ptr())
     }
 
     #[uws_callback(export = "UpgradedDuplex__ssl_error", no_catch)]

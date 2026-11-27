@@ -5,6 +5,7 @@
 
 use core::ffi::c_long;
 use core::marker::PhantomData;
+use core::ptr;
 
 use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX};
 use bun_core::{CStrRef, SensitiveCString};
@@ -38,7 +39,6 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
 fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     use bun_windows_sys as fs;
     use bun_windows_sys::FILETIME;
-    use core::ptr;
     use std::os::windows::io::{AsRawHandle as _, HandleOrInvalid, OwnedHandle};
     // Spec parity: `bun.sys.stat` on Windows is libuv `uv_fs_stat`, which opens
     // via `CreateFileW` *without* `FILE_FLAG_OPEN_REPARSE_POINT` and therefore
@@ -109,10 +109,8 @@ impl<'a> From<Option<&'a [SensitiveCString]>> for CStrArray<'a> {
 
 impl<'a> CStrArray<'a> {
     fn iter(self) -> impl Iterator<Item = CStrRef<'a>> {
-        let strings = (!self.ptr.is_null()).then(|| {
-            // SAFETY: the parts of a slice that is borrowed for `'a`.
-            unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
-        });
+        // SAFETY: null, or the parts of a slice that is borrowed for `'a`.
+        let strings = unsafe { ptr::slice_from_raw_parts(self.ptr, self.len).as_ref() };
         strings.unwrap_or_default().iter().map(CStrRef::from)
     }
 }

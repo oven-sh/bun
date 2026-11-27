@@ -2174,7 +2174,7 @@ impl QuicSession {
     }
     pub(crate) fn get_certificate(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();
-        // SAFETY: only lsquic frees the `SSL`, and `ssl` is used for one call that stays out of it.
+        // SAFETY: only lsquic frees the `SSL`, and the one call that uses `ssl` does not call lsquic.
         let ssl = unsafe { self.conn_ssl().as_ref() };
         if let Some(der) = ssl.and_then(tls::local_certificate_der) {
             return ArrayBuffer::create_buffer(global, der.as_slice());
@@ -2191,7 +2191,7 @@ impl QuicSession {
     }
     pub(crate) fn get_peer_certificate(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();
-        // SAFETY: only lsquic frees the `SSL`, and `ssl` is used for one call that stays out of it.
+        // SAFETY: only lsquic frees the `SSL`, and the one call that uses `ssl` does not call lsquic.
         let ssl = unsafe { self.conn_ssl().as_ref() };
         if let Some(der) = ssl.and_then(tls::peer_certificate_der) {
             return ArrayBuffer::create_buffer(global, &der);
@@ -2208,7 +2208,7 @@ impl QuicSession {
     }
     pub(crate) fn get_ephemeral_key(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();
-        // SAFETY: only lsquic frees the `SSL`, and `ssl` is used for one call that stays out of it.
+        // SAFETY: only lsquic frees the `SSL`, and the one call that uses `ssl` does not call lsquic.
         let ssl = unsafe { self.conn_ssl().as_ref() };
         let Some((kind, name, bits)) = ssl
             .and_then(tls::ephemeral_key_info)

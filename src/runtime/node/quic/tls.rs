@@ -352,8 +352,7 @@ impl TlsContext {
         // SAFETY: each SSL_CTX call below is paired with the matching free on
         // failure via Drop (the half-built `this` is dropped on early return).
         unsafe {
-            let Some(owned) = ssl::OwnedSslCtx::from_raw(ssl::SSL_CTX_new(ssl::TLS_method()))
-            else {
+            let Some(owned) = ssl::SSL_CTX_new(ssl::TLS_method()) else {
                 return Err("failed to allocate SSL_CTX");
             };
             let ctx = owned.as_ptr();

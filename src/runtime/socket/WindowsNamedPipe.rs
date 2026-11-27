@@ -690,7 +690,7 @@ impl WindowsNamedPipe {
     }
 
     pub(crate) fn ssl(&self) -> Option<*mut boringssl::SSL> {
-        self.wrapper_ref().and_then(|w| w.ssl()).map(|p| p.as_ptr())
+        Some(self.wrapper_ref()?.ssl()?.as_ptr())
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__ssl_error", no_catch)]

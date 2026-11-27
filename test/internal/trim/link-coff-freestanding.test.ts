@@ -17,6 +17,7 @@ import { builtinModulesHeaderBytes, createLinker, parseArguments } from "../../.
 import { peImage } from "../../../scripts/build/trim/linked-image.ts";
 import { coff } from "../../../scripts/build/trim/linker-coff.ts";
 import { foldedEntryPointsHeading } from "../../../scripts/build/trim/report.ts";
+import { trimTableMagic } from "../../../scripts/build/trim/table.ts";
 import { packageOf } from "../icu-data-package.ts";
 import {
   baseRelocationDirectory,
@@ -29,11 +30,11 @@ import {
   freestandingSkipReasons,
   freestandingSources,
   guardObjects,
-  linked,
+  linked as linkedCompilingAll,
   moreObjects,
   objcopy,
   output,
-  plainLink,
+  plainLink as plainLinkCompilingAll,
   pointerRelocationType,
   readPe,
   recordRelocationTypes,
@@ -42,7 +43,7 @@ import {
   targetSource,
   thinLtoFlags,
   triple,
-  wrapped,
+  wrapped as wrappedCompilingAll,
   type LinkedProgram,
   type LinkOptions,
   type Machine,
@@ -51,6 +52,7 @@ import {
   buildGuardCrate,
   builtinUsing,
   callAll,
+  cleanExit,
   compileRust,
   embedderSource,
   entryCalling,
@@ -77,6 +79,7 @@ import {
   spellingsStubs,
   start,
   writeLinkInputs,
+  type ProcessResult,
 } from "./toy-program.ts";
 
 setDefaultTimeout(60_000);
@@ -88,10 +91,54 @@ for (const machine of machines) {
   if (reason !== undefined) skipNotice(testFile, `${reason}: the cases for ${machine} do not run`);
 }
 
+// A size is the compiler's: it reads # in what a link prints and in its review files. The minimum of a feature is the case's.
+const withoutSizes = (text: string) =>
+  text.replace(/(?<= (?:Abort|ReturnDefault|Throw) )\d+|\d+(?= bytes\))|(?<!minimum of )\b\d+\.\d\d(?= MB)/g, "#");
+
+// The link fails, and stderr has this failure and nothing else.
+function expectOnlyFailure(folder: string, linkResult: ProcessResult, failure: string) {
+  const { stderr, exitCode } = linkResult;
+  expect({ stderr: withoutSizes(stderr), exitCode }).toEqual({ stderr: `trim: ${failure}\n`, exitCode: 1 });
+  expectLinkFailure(folder, output, linkResult, []);
+}
+
+// clang takes longer over the feature's code than over all else of a case, so a machine compiles each text of it once: a case that names no flags for it has clang check its syntax, and takes a copy of the object.
+const featureCodeObjects = new Map<string, Promise<Buffer>>();
+
+// Compiled as the cases compile it: in the small program, which is linked once without the trim.
+async function compileFeatureCode(text: string, { machine, isFreestanding }: LinkOptions) {
+  using dir = tempDir("trim-coff-freestanding-feature-code", { ...freestandingSources(40), "feature_code.c": text });
+  await plainLinkCompilingAll(String(dir), { machine, isFreestanding });
+  return readFileSync(join(String(dir), "feature_code.obj"));
+}
+
+async function withSharedFeatureCode<Options extends LinkOptions>(folder: string, options: Options): Promise<Options> {
+  const { machine, isFreestanding, objects = defaultObjects, compileFlags = {} } = options;
+  if (!objects.includes("feature_code") || compileFlags.feature_code !== undefined) return options;
+  const text = readFileSync(join(folder, "feature_code.c"), "utf8");
+  const key = `${machine} ${isFreestanding} ${text}`;
+  if (!featureCodeObjects.has(key)) featureCodeObjects.set(key, compileFeatureCode(text, options));
+  const object = await featureCodeObjects.get(key)!;
+  return {
+    ...options,
+    // -c is unused then, which clang is not to warn about.
+    compileFlags: { ...compileFlags, feature_code: ["-fsyntax-only", "-Qunused-arguments"] },
+    afterCompile(folder) {
+      writeFileSync(join(folder, "feature_code.obj"), object);
+      options.afterCompile?.(folder);
+    },
+  };
+}
+
+const linked = async (folder: string, options: Parameters<typeof linkedCompilingAll>[1] = {}) =>
+  linkedCompilingAll(folder, await withSharedFeatureCode(folder, options));
+const wrapped = async (folder: string, options: LinkOptions = {}) =>
+  wrappedCompilingAll(folder, await withSharedFeatureCode(folder, options));
+const plainLink = async (folder: string, options: LinkOptions = {}) =>
+  plainLinkCompilingAll(folder, await withSharedFeatureCode(folder, options));
+
 describe.concurrent.each(machines)("a trimmable link with lld-link and no library, for %s", machine => {
   const testLink = test.skipIf(freestandingSkipReasons[machine] !== undefined);
-  // A link of thousands of functions. Beside twenty others on a machine with few processors it gets a twentieth of them, and a minute is not enough.
-  const testLargeLink = test.serial.skipIf(freestandingSkipReasons[machine] !== undefined);
   const optionsWith = (more: LinkOptions = {}): LinkOptions => ({ machine, isFreestanding: true, ...more });
   const sources = freestandingSources();
   // Where the size of the feature's code decides nothing.
@@ -104,29 +151,6 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     ${declarations}
     int main(int argc, char **argv) { return argc > 5 ? GUARDED(Extra, entered, argc) & 63 : ${result}; }
   `;
-
-  testLargeLink("removes a feature and cuts its pages out of the PE file", async () => {
-    using dir = tempDir("trim-coff-freestanding", freestandingSources(4000));
-    const folder = String(dir);
-    const { executable, trimmedExecutable, addressOf, featuresOf, summary, soundness } = await linked(
-      folder,
-      optionsWith(),
-    );
-    expect(peImage(executable).isArm64).toBe(machine === "arm64");
-    const removable = ["feature_code", "feature_code_0", "feature_code_3999", "entered", "feature_numbers"];
-    expect(removable.map(featuresOf)).toEqual(removable.map(() => [Extra]));
-    expect(["retained", "main", "retained_table"].map(featuresOf)).toEqual([undefined, undefined, undefined]);
-    expect(addressOf("feature_table")).toBe(addressOf("retained_table"));
-    // What the model says cannot be without the feature goes with it.
-    expect(summary.removed).toContain(Extra);
-    expect(summary.removed).not.toContain(Other);
-    expect(summary.removedBytes).toBeGreaterThan(100_000);
-    expect(summary.fileBytesSaved).toBeGreaterThanOrEqual(128 * 1024);
-    expect(statSync(executable).size - statSync(trimmedExecutable).size).toBe(summary.fileBytesSaved);
-    expect(soundness.cutSectionCount).toBeGreaterThan(0);
-    expect(soundness.filledBytes).toBeGreaterThan(0);
-    expect([...new Set(recordRelocationTypes(join(folder, "main.obj")))]).toEqual([pointerRelocationType[machine]]);
-  });
 
   testLink("lists the section of the built-in modules with the features that read it", async () => {
     using dir = tempDir("trim-coff-freestanding", {
@@ -196,11 +220,10 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     const asBitcode = (names: string[]) => Object.fromEntries(names.map(name => [name, thinLtoFlags]));
     const compilesAgain = "the second link compiles the bitcode again";
 
-    test.each([
+    testLink.each([
       ["a member of an archive", { "shelf.lib": aliasedObjects }],
       ["a file of its own", {}],
     ])("where %s refers to a weak alias, which what is compiled from it does not define", async (_, archives) => {
-      if (freestandingSkipReasons[machine] !== undefined) return;
       using dir = tempDir("trim-coff-freestanding", aliasedSources);
       const folder = String(dir);
       const { addressOf, featuresOf, summary } = await linked(
@@ -225,7 +248,7 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
         "main.c": mainReturning("int native_step(int);", "native_step(argc)"),
       });
       const folder = String(dir);
-      const { addressOf, summary } = await linked(
+      const { featuresOf, summary } = await linked(
         folder,
         optionsWith({
           objects: [...defaultObjects, "native_step", "bitcode_step"],
@@ -233,7 +256,7 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
           compileFlags: asBitcode(["bitcode_step"]),
         }),
       );
-      expect(["shared_words", "bitcode_step"].map(addressOf)).toEqual([expect.any(Number), expect.any(Number)]);
+      expect(["shared_words", "bitcode_step"].map(featuresOf)).toEqual([undefined, undefined]);
       expect(summary.removed).toContain(Extra);
       expect(existsSync(join(folder, "work", "aliases.s"))).toBe(false);
     });
@@ -270,7 +293,7 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
         [`${native}.c`]: `int from_native(int x) { return x * 7; }`,
         "main.c": mainReturning("int from_bitcode(int);", "from_bitcode(argc)"),
       });
-      const { addressOf } = await linked(
+      const { featuresOf } = await linked(
         String(dir),
         optionsWith({
           objects: [...defaultObjects, bitcode, native],
@@ -278,7 +301,7 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
           compileFlags: asBitcode([bitcode]),
         }),
       );
-      expect(["from_bitcode", "from_native"].map(addressOf)).toEqual([expect.any(Number), expect.any(Number)]);
+      expect(["from_bitcode", "from_native"].map(featuresOf)).toEqual([undefined, undefined]);
     });
 
     // lld-link writes what it compiled from both to one file name, the second over the first.
@@ -306,22 +329,21 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     using dir = tempDir("trim-coff-freestanding", sources);
     const folder = String(dir);
     const { executable, table } = await linked(folder, optionsWith());
-    expect(reviewFiles(folder, output)).toEqual([
-      "entry-points.txt",
-      "groups.txt",
-      "needs.txt",
-      "requires.txt",
-      "retained-by.txt",
-    ]);
-    const entryPoints = entryPointsText(folder, output).trimEnd().split("\n");
-    expect(entryPoints).toHaveLength(1);
-    expect(entryPoints[0]).toStartWith(`${Extra} Abort `);
+    const reviewFile = (name: string) => withoutSizes(readFileSync(join(folder, `${output}.trim`, name), "utf8"));
+    expect(Object.fromEntries(reviewFiles(folder, output).map(name => [name, reviewFile(name)]))).toEqual({
+      "entry-points.txt": `${Extra} Abort # entered (entry.obj, # bytes) <- main (main.obj, # bytes)\n`,
+      "groups.txt": `0 # MB ${Extra}\n\n${Extra} # MB\n`,
+      "needs.txt": "\n",
+      "requires.txt": "\n",
+      "retained-by.txt": "\n",
+    });
     expect(table.sets).toEqual([[indexOf(Extra)]]);
     expect(table.edges).toEqual([]);
-    expect(sectionInFile(executable, ".buntrim")).toBeDefined();
+    const { file, sections } = readPe(executable);
+    const tableAt = sectionInFile(executable, ".buntrim")!.offset;
+    expect(file.toString("latin1", tableAt, tableAt + trimTableMagic.length)).toBe(trimTableMagic);
     const state = sectionInFile(executable, ".bunfeat")!;
     expect(state.size).toBeGreaterThanOrEqual(stateBytes);
-    const { file, sections } = readPe(executable);
     expect(file.toString("latin1", state.offset, state.offset + 8)).toBe("BUNFEAT\0");
     // The records are for the link alone.
     expect(sections.filter(({ name }) => name.startsWith(".bun_rem"))).toEqual([]);
@@ -338,7 +360,8 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     using first = tempDir("trim-coff-freestanding-first", smallSources);
     using second = tempDir("trim-coff-freestanding-second", smallSources);
     const linkResults = await Promise.all([first, second].map(dir => wrapped(String(dir), optionsWith())));
-    expect(linkResults.map(({ exitCode }) => exitCode)).toEqual([0, 0]);
+    const succeeded = { stderr: "", exitCode: 0 };
+    expect(linkResults.map(({ stderr, exitCode }) => ({ stderr, exitCode }))).toEqual([succeeded, succeeded]);
     expect(readFileSync(join(String(first), output)).equals(readFileSync(join(String(second), output)))).toBe(true);
   });
 
@@ -385,15 +408,6 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     },
   );
 
-  testLargeLink("repoints the debug directory of a file whose sections were split", async () => {
-    using dir = tempDir("trim-coff-freestanding", freestandingSources(4000));
-    const folder = String(dir);
-    const { soundness } = await linked(folder, optionsWith({ linkFlags: ["/debug", "/pdb:program.pdb"] }));
-    expect(existsSync(join(folder, "program.pdb"))).toBe(true);
-    expect(soundness.cutSectionCount).toBeGreaterThan(0);
-    expect(soundness.codeViewEntries).toBeGreaterThan(0);
-  });
-
   testLink("drops the base relocations of the pages it cuts", async () => {
     const pointerCount = 40_000;
     const fullBlockBytes = 8 + 2 * 512;
@@ -426,8 +440,9 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     expect(table.edges).toEqual([
       { from: indexOf(Extra), to: indexOf(Other), strength: "Reference", isFollowed: true },
     ]);
-    expect(readFileSync(join(folder, `${output}.trim`, "requires.txt"), "utf8")).toStartWith(
-      `${Extra} requires ${Other}: 1 references`,
+    expect(withoutSizes(readFileSync(join(folder, `${output}.trim`, "requires.txt"), "utf8"))).toBe(
+      `${Extra} requires ${Other}: 1 references\n` +
+        `    entry_of_other (other.obj, # bytes) <- entered (entry.obj, # bytes)\n`,
     );
     expect(featuresOf("entry_of_other")).toEqual([Other]);
   });
@@ -622,10 +637,13 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
       using dir = tempDir("trim-coff-freestanding", files);
       const folder = String(dir);
       const builtins = [builtinUsing(spelledBuiltin, "toy.extra", Extra)];
-      expectLinkFailure(folder, output, await wrapped(folder, optionsWith({ objects: twoFeatureObjects, builtins })), [
-        "UndeclaredUse: toy.extra (entered (entry.obj, ",
-        `reaches a guard of ${Other}, and its table entry has no "uses ${Other}"`,
-      ]);
+      expectOnlyFailure(
+        folder,
+        await wrapped(folder, optionsWith({ objects: twoFeatureObjects, builtins })),
+        `UndeclaredUse: toy.extra (entered (entry.obj, # bytes)) reaches a guard of ${Other}, ` +
+          `and its table entry has no "uses ${Other}": a program that calls it would lose ${Other} under --trim\n` +
+          `      -> entry_of_other (other.obj, # bytes)`,
+      );
     });
   });
 
@@ -1080,7 +1098,10 @@ __asm__(".section .rdata$note,\"dr\",associative,parent\n.quad feature_noted\n.t
       const folder = String(dir);
       const options = await compileRustInputs(folder);
       if (options !== undefined)
-        expectLinkFailure(folder, output, await wrapped(folder, options), ["GuardWithoutReference"]);
+        expectLinkFailure(folder, output, await wrapped(folder, options), [
+          "GuardWithoutReference: the guard in rust_call_abort (",
+          `an entry point of ${Extra}: the compiler inlined it, so nothing can be cut`,
+        ]);
     });
   });
 
@@ -1196,9 +1217,9 @@ extern "C" int unreferenced(int x) { return GUARDED(Extra, entered, x); }
           return skipNotice(testFile, "llvm-objcopy is not on PATH: the link without records does not run");
         for (const name of inlineGuardOptions.objects!) {
           const removal = await run([objcopy, `--remove-section=${coffRecordSectionName}`, `${name}.obj`], folder);
-          expect(removal.exitCode).toBe(0);
+          expect(removal).toEqual(cleanExit);
         }
-        expect((await run(command, folder)).exitCode).toBe(0);
+        expect(await run(command, folder)).toEqual(cleanExit);
         const withoutRecords = readLink(folder);
         expect(withoutRecords.recordSections).toEqual([]);
         expect(withoutRecords.graph.count).toBe(reading.graph.count);
@@ -1305,7 +1326,9 @@ extern "C" int unreferenced(int x) { return GUARDED(Extra, entered, x); }
       const command = await plainLink(folder, optionsWith());
       const { features, builtinUses } = writeLinkInputs(folder);
       const words = ["bun", "link.ts", join(folder, "work"), features, builtinUses, "--", ...command];
-      expect(() => coff(createLinker(parseArguments(words)).linker).writeTable(Buffer.alloc(8))).toThrow(BuildError);
+      const writeTable = () => coff(createLinker(parseArguments(words)).linker).writeTable(Buffer.alloc(8));
+      expect(writeTable).toThrow(BuildError);
+      expect(writeTable).toThrow(new BuildError(`${join(folder, output)} has no section .buntrim`));
     });
   });
 
@@ -1382,12 +1405,14 @@ extern "C" int unreferenced(int x) { return GUARDED(Extra, entered, x); }
     });
     const folder = String(dir);
     const objects = ["feature_code", "entry", "embedder", "main"];
-    expectLinkFailure(folder, output, await wrapped(folder, optionsWith({ objects })), [
-      "EntryPointReferencedByRetainedCode",
-      "calls_directly",
-      "entered",
-      "main",
-    ]);
+    expectOnlyFailure(
+      folder,
+      await wrapped(folder, optionsWith({ objects })),
+      `EntryPointReferencedByRetainedCode: calls_directly (main.obj, # bytes) refers to entered (entry.obj, # bytes), ` +
+        `an entry point of ${Extra}, and is not one of its guards\n` +
+        `  calls_directly (main.obj, # bytes)\n` +
+        `      <- main (main.obj, # bytes)`,
+    );
   });
 
   testLink("fails on retained code that calls an entry point by a name that the link command defines", async () => {
@@ -1400,11 +1425,14 @@ extern "C" int unreferenced(int x) { return GUARDED(Extra, entered, x); }
     });
     const folder = String(dir);
     const options = optionsWith({ objects: guardObjects, linkFlags: ["/alternatename:another_name=entered"] });
-    expectLinkFailure(folder, output, await wrapped(folder, options), [
-      "EntryPointReferencedByRetainedCode",
-      "calls_alias",
-      "entered",
-    ]);
+    expectOnlyFailure(
+      folder,
+      await wrapped(folder, options),
+      `EntryPointReferencedByRetainedCode: calls_alias (main.obj, # bytes) refers to entered (entry.obj, # bytes), ` +
+        `an entry point of ${Extra}, and is not one of its guards\n` +
+        `  calls_alias (main.obj, # bytes)\n` +
+        `      <- main (main.obj, # bytes)`,
+    );
   });
 
   testLink("fails on an entry point that runs before main", async () => {
@@ -1418,11 +1446,13 @@ extern "C" int unreferenced(int x) { return GUARDED(Extra, entered, x); }
       `,
     });
     const folder = String(dir);
-    expectLinkFailure(folder, output, await wrapped(folder, optionsWith({ objects: guardObjects })), [
-      "EntryPointReferencedByRetainedCode",
-      ".CRT$XCU",
-      "entered_early",
-    ]);
+    expectOnlyFailure(
+      folder,
+      await wrapped(folder, optionsWith({ objects: guardObjects })),
+      `EntryPointReferencedByRetainedCode: .CRT$XCU (entry.obj, # bytes) refers to ` +
+        `entered_early (entry.obj, # bytes), an entry point of ${Extra}, and is not one of its guards\n` +
+        `  .CRT$XCU (entry.obj, # bytes)`,
+    );
   });
 
   testLink("fails on a record written with 32-bit image-relative words", async () => {
@@ -1432,7 +1462,11 @@ extern "C" int unreferenced(int x) { return GUARDED(Extra, entered, x); }
       "main.c": `${smallSources["main.c"]}\n${record}\n`,
     });
     const folder = String(dir);
-    expectLinkFailure(folder, output, await wrapped(folder, optionsWith()), ["UnreadInput", "UnsupportedRelocations"]);
+    expectOnlyFailure(
+      folder,
+      await wrapped(folder, optionsWith()),
+      "UnreadInput: main.obj could not be read (UnsupportedRelocations), so what it refers to is unknown",
+    );
   });
 
   testLink("names what retains the rest of a feature below its minimum size", async () => {
@@ -1442,20 +1476,28 @@ extern "C" int unreferenced(int x) { return GUARDED(Extra, entered, x); }
     });
     const folder = String(dir);
     const options = optionsWith({ objects: guardObjects, minimums: { [Extra]: 1_000_000 } });
-    expectLinkFailure(folder, output, await wrapped(folder, options), [
-      "FeatureBelowMinimum",
-      "feature_code_5",
-      "main",
-    ]);
+    expectOnlyFailure(
+      folder,
+      await wrapped(folder, options),
+      `FeatureBelowMinimum: # MB can be removed with ${Extra}, below its minimum of 1.00 MB: ` +
+        `retained code refers to the rest\n` +
+        `  # MB in 1 sections are reached from its entry points, from at most one other feature's, ` +
+        `and from retained code; where retained code first reaches them:\n` +
+        `  # MB feature_code_5 (feature_code.obj, # bytes)\n` +
+        `      <- main (main.obj, # bytes)`,
+    );
   });
 
   testLink("fails on a feature below its minimum size", async () => {
     using dir = tempDir("trim-coff-freestanding", sources);
     const folder = String(dir);
-    expectLinkFailure(folder, output, await wrapped(folder, optionsWith({ minimums: { [Extra]: 10_000_000 } })), [
-      "FeatureBelowMinimum",
-      Extra,
-    ]);
+    const linkResult = await wrapped(folder, optionsWith({ minimums: { [Extra]: 10_000_000 } }));
+    expectLinkFailure(folder, output, linkResult, []);
+    // What follows names one of two tables that the linker folds into one.
+    expect(withoutSizes(linkResult.stderr)).toStartWith(
+      `trim: FeatureBelowMinimum: # MB can be removed with ${Extra}, below its minimum of 10.00 MB: ` +
+        `retained code refers to the rest\n`,
+    );
   });
 
   testLink("names an entry point folded with retained code where its feature is below its minimum", async () => {
@@ -1471,7 +1513,10 @@ extern "C" int unreferenced(int x) { return GUARDED(Extra, entered, x); }
     const folder = String(dir);
     const options = optionsWith({ objects: ["entry", "embedder", "main"], minimums: { [Extra]: 1 } });
     const linkResult = await wrapped(folder, options);
-    expectLinkFailure(folder, output, linkResult, ["FeatureBelowMinimum"]);
+    expectLinkFailure(folder, output, linkResult, [
+      `trim: FeatureBelowMinimum: 0.00 MB can be removed with ${Extra}, below its minimum of 0.00 MB: ` +
+        `retained code refers to the rest\n`,
+    ]);
     expect(linkResult.stderr).toMatch(
       /\n  its entry point (entered|retained_equal) \(\w+\.obj, \d+ bytes\) is folded with other code, so it stays: (entered|retained_equal)\n/,
     );
@@ -1480,9 +1525,50 @@ extern "C" int unreferenced(int x) { return GUARDED(Extra, entered, x); }
   testLink("fails when nothing can ever mark a guarded feature as used", async () => {
     using dir = tempDir("trim-coff-freestanding", sources);
     const folder = String(dir);
-    expectLinkFailure(folder, output, await wrapped(folder, optionsWith({ builtins: [] })), [
-      "GuardWithoutUser: main (main.obj, ",
-      `an entry point of ${Extra}, and no table entry uses ${Extra} and no feature's code enters it`,
-    ]);
+    expectOnlyFailure(
+      folder,
+      await wrapped(folder, optionsWith({ builtins: [] })),
+      `GuardWithoutUser: main (main.obj, # bytes) enters entered (entry.obj, # bytes), an entry point of ${Extra}, ` +
+        `and no table entry uses ${Extra} and no feature's code enters it: --trim would always remove it`,
+    );
+  });
+});
+
+// A link of thousands of functions. Beside twenty others on a machine with few processors it gets a twentieth of them, and a minute is not enough.
+// Cases begin in the order of the file, so these four are the last of it: what runs beside them when they begin soon ends, and then only the four run.
+describe.concurrent.each(machines)("a trimmable link with lld-link and no library, for %s", machine => {
+  const testLink = test.skipIf(freestandingSkipReasons[machine] !== undefined);
+  const optionsWith = (more: LinkOptions = {}): LinkOptions => ({ machine, isFreestanding: true, ...more });
+
+  testLink("removes a feature and cuts its pages out of the PE file", async () => {
+    using dir = tempDir("trim-coff-freestanding", freestandingSources(4000));
+    const folder = String(dir);
+    const { executable, trimmedExecutable, addressOf, featuresOf, summary, soundness } = await linked(
+      folder,
+      optionsWith(),
+    );
+    expect(peImage(executable).isArm64).toBe(machine === "arm64");
+    const removable = ["feature_code", "feature_code_0", "feature_code_3999", "entered", "feature_numbers"];
+    expect(removable.map(featuresOf)).toEqual(removable.map(() => [Extra]));
+    expect(["retained", "main", "retained_table"].map(featuresOf)).toEqual([undefined, undefined, undefined]);
+    expect(addressOf("feature_table")).toBe(addressOf("retained_table"));
+    // What the model says cannot be without the feature goes with it.
+    expect(summary.removed).toContain(Extra);
+    expect(summary.removed).not.toContain(Other);
+    expect(summary.removedBytes).toBeGreaterThan(100_000);
+    expect(summary.fileBytesSaved).toBeGreaterThanOrEqual(128 * 1024);
+    expect(statSync(executable).size - statSync(trimmedExecutable).size).toBe(summary.fileBytesSaved);
+    expect(soundness.cutSectionCount).toBeGreaterThan(0);
+    expect(soundness.filledBytes).toBeGreaterThan(0);
+    expect([...new Set(recordRelocationTypes(join(folder, "main.obj")))]).toEqual([pointerRelocationType[machine]]);
+  });
+
+  testLink("repoints the debug directory of a file whose sections were split", async () => {
+    using dir = tempDir("trim-coff-freestanding", freestandingSources(4000));
+    const folder = String(dir);
+    const { soundness } = await linked(folder, optionsWith({ linkFlags: ["/debug", "/pdb:program.pdb"] }));
+    expect(existsSync(join(folder, "program.pdb"))).toBe(true);
+    expect(soundness.cutSectionCount).toBeGreaterThan(0);
+    expect(soundness.codeViewEntries).toBeGreaterThan(0);
   });
 });

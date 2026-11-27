@@ -7620,6 +7620,303 @@ for (const [directory, rules] of [
   for (const [name, text] of Object.entries(latePassFiles)) latePasses[`${directory}/${name}`] = text;
 }
 
+// An effect hook under another name. oxc's compiler knows the hook by its type and labels what's called.
+const effectNames: Files = {
+  ".oxlintrc.json": rc(),
+  // React's name for the hook is the one it's imported by, from `react` or `react-dom`.
+  "imported.jsx": `import { useState as useValue, useEffect as useE, useLayoutEffect as useLE, useInsertionEffect as useIE } from "react";
+import { useEffect as useDomEffect } from "react-dom";
+import { useEffect as onMount, useLayoutEffect as Mounted } from "react";
+
+export function Imported() {
+  const [count, setCount] = useValue(0);
+  useE(() => {
+    setCount(1);
+  }, []);
+  useLE(() => {
+    setCount(2);
+  }, []);
+  useIE(() => {
+    setCount(3);
+  }, []);
+  useDomEffect(() => {
+    setCount(4);
+  }, []);
+  return <div>{count}</div>;
+}
+
+export function NotNamedLikeAHook() {
+  const [count, setCount] = useValue(0);
+  onMount(() => {
+    setCount(1);
+  }, []);
+  Mounted(() => {
+    setCount(2);
+  }, []);
+  return <div>{count}</div>;
+}
+
+export function WithAFunctionExpression() {
+  const [count, setCount] = useValue(0);
+  useE(function () {
+    if (count < 3) setCount(count + 1);
+  });
+  return <div>{count}</div>;
+}
+`,
+  // The dependencies are labeled too.
+  "derived.jsx": `import { useState, useEffect as useE, useLayoutEffect as useLE } from "react";
+
+export function FullName({ first, last }) {
+  const [full, setFull] = useState("");
+  useE(() => {
+    setFull(first + " " + last);
+  }, [first, last]);
+  return <div>{full}</div>;
+}
+
+export function Copy({ value }) {
+  const [copy, setCopy] = useState(value);
+  useE(() => {
+    setCopy(value);
+  }, [value]);
+  return <div>{copy}</div>;
+}
+
+export function Local({ first, last }) {
+  const [full, setFull] = useState("");
+  const effect = useE;
+  effect(() => {
+    setFull(first + " " + last);
+  }, [first, last]);
+  return <div>{full}</div>;
+}
+
+export function InALayoutEffect({ value }) {
+  const [copy, setCopy] = useState(value);
+  useLE(() => {
+    setCopy(value);
+  }, [value]);
+  return <div>{copy}</div>;
+}
+`,
+  // A variable that has the hook's type. One that has either of two hooks has none, and nor has one of the module.
+  "local.jsx": `import React, { useState, useEffect, useLayoutEffect } from "react";
+
+const useModuleEffect = useEffect;
+
+export function Constant() {
+  const [count, setCount] = useState(0);
+  const effect = useEffect;
+  effect(() => {
+    setCount(1);
+  }, []);
+  return <div>{count}</div>;
+}
+
+export function Chained() {
+  const [count, setCount] = useState(0);
+  const first = useLayoutEffect;
+  const second = first;
+  second(() => {
+    setCount(1);
+  }, []);
+  return <div>{count}</div>;
+}
+
+export function Assigned() {
+  const [count, setCount] = useState(0);
+  let effect;
+  effect = useEffect;
+  effect(() => {
+    setCount(1);
+  }, []);
+  return <div>{count}</div>;
+}
+
+export function Destructured() {
+  const [count, setCount] = useState(0);
+  const { useInsertionEffect: insert } = React;
+  insert(() => {
+    setCount(1);
+  }, []);
+  return <div>{count}</div>;
+}
+
+export function FromAMember() {
+  const [count, setCount] = useState(0);
+  const layout = React.useLayoutEffect;
+  layout(() => {
+    setCount(1);
+  }, []);
+  return <div>{count}</div>;
+}
+
+export function EitherOfTwo({ early }) {
+  const [count, setCount] = useState(0);
+  const effect = early ? useLayoutEffect : useEffect;
+  effect(() => {
+    setCount(1);
+  }, []);
+  return <div>{count}</div>;
+}
+
+export function OfTheModule() {
+  const [count, setCount] = useState(0);
+  useModuleEffect(() => {
+    setCount(1);
+  }, []);
+  return <div>{count}</div>;
+}
+`,
+  // Only the object called `React` has the hooks.
+  "members.jsx": `import * as React from "react";
+import Other, * as Namespace from "react";
+
+export function Members() {
+  const [count, setCount] = React.useState(0);
+  React.useEffect(() => {
+    setCount(1);
+  }, []);
+  React["useLayoutEffect"](() => {
+    setCount(2);
+  }, []);
+  React[\`useInsertionEffect\`](() => {
+    setCount(3);
+  }, []);
+  (React.useEffect)(() => {
+    setCount(4);
+  }, []);
+  return <div>{count}</div>;
+}
+
+export function OtherNames() {
+  const [count, setCount] = React.useState(0);
+  Other.useEffect(() => {
+    setCount(1);
+  }, []);
+  Namespace.useLayoutEffect(() => {
+    setCount(2);
+  }, []);
+  return <div>{count}</div>;
+}
+`,
+  // From another module it's a hook of its own, and so is one that the file declares.
+  "other-modules.jsx": `import { useState } from "react";
+import { useEffect as useE, useLayoutEffect } from "./effects";
+
+function useInsertionEffect(callback) {
+  callback();
+}
+
+export function Renamed() {
+  const [count, setCount] = useState(0);
+  useE(() => {
+    setCount(1);
+  }, []);
+  return <div>{count}</div>;
+}
+
+export function SameName() {
+  const [count, setCount] = useState(0);
+  useLayoutEffect(() => {
+    setCount(1);
+  }, []);
+  return <div>{count}</div>;
+}
+
+export function Declared() {
+  const [count, setCount] = useState(0);
+  useInsertionEffect(() => {
+    setCount(1);
+  }, []);
+  return <div>{count}</div>;
+}
+`,
+  // The first label is the call in the effect's callback.
+  "called-in-the-effect.jsx": `import { useState, useEffect as useE, useLayoutEffect as useLE, useEffectEvent as useEvent } from "react";
+
+export function AnEffectEvent() {
+  const [count, setCount] = useState(0);
+  const onTick = useEvent(() => {
+    setCount(1);
+  });
+  useE(() => {
+    onTick();
+  }, []);
+  return <div>{count}</div>;
+}
+
+export function AFunction() {
+  const [count, setCount] = useState(0);
+  const reset = () => {
+    setCount(0);
+  };
+  useLE(() => {
+    reset();
+  }, []);
+  return <div>{count}</div>;
+}
+
+export function InATimer() {
+  const [count, setCount] = useState(0);
+  useE(() => {
+    setTimeout(() => {
+      setCount(1);
+    }, 10);
+  }, []);
+  return <div>{count}</div>;
+}
+`,
+  // A cast has a span of its own. `!` and type arguments have none.
+  "typescript.tsx": `import { useState, useEffect as useE, useLayoutEffect as useLE } from "react";
+
+export function NonNull() {
+  const [count, setCount] = useState(0);
+  useE!(() => {
+    setCount(1);
+  }, []);
+  useLE!!(() => {
+    setCount(2);
+  }, []);
+  return <div>{count}</div>;
+}
+
+export function Cast() {
+  const [count, setCount] = useState(0);
+  (useE as any)(() => {
+    setCount(1);
+  }, []);
+  (useLE satisfies unknown)(() => {
+    setCount(2);
+  }, []);
+  return <div>{count}</div>;
+}
+
+export function TypeArguments() {
+  const [count, setCount] = useState(0);
+  useE<void>(() => {
+    setCount(1);
+  }, []);
+  (useLE<void>)(() => {
+    setCount(2);
+  }, []);
+  return <div>{count}</div>;
+}
+
+export function InParentheses() {
+  const [count, setCount] = useState(0);
+  (useE)(() => {
+    setCount(1);
+  }, []);
+  useLE?.(() => {
+    setCount(2);
+  }, []);
+  return <div>{count}</div>;
+}
+`,
+};
+
 /** The small input directories, keyed by test name. */
 export const small: Record<string, Files> = {
   comments,
@@ -7888,6 +8185,7 @@ function Component(props) {
   "jsx tags": jsxTags,
   "fixture modules": fixtureModules,
   "assumed calls": assumedCalls,
+  "effect names": effectNames,
 };
 
 type RawDiagnostic = { filename?: string; url?: string; [key: string]: unknown };

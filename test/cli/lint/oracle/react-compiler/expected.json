@@ -23821,6 +23821,1228 @@
      }
     ]
    }
+  },
+  "effect names": {
+   "exit": 1,
+   "files": 7,
+   "diagnostics": {
+    "called-in-the-effect.jsx": [
+     {
+      "code": "react(exhaustive-effect-dependencies)",
+      "help": "Missing dependencies can cause an effect to fire less often than it should",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 6,
+         "length": 2,
+         "line": 21,
+         "offset": 462
+        }
+       },
+       {
+        "label": "Missing dependency `reset`",
+        "span": {
+         "column": 5,
+         "length": 5,
+         "line": 20,
+         "offset": 448
+        }
+       }
+      ],
+      "message": "Found missing effect dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 5,
+         "line": 20,
+         "offset": 448
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 5,
+         "line": 19,
+         "offset": 430
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 6,
+         "line": 9,
+         "offset": 259
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 4,
+         "line": 8,
+         "offset": 242
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     }
+    ],
+    "derived.jsx": [
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 18,
+         "length": 4,
+         "line": 21,
+         "offset": 520
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(no-deriving-state-in-effects)",
+      "help": "This effect derives state from the reactive value `value`, causing an extra render and potentially showing a stale value. Calculate the derived value during render, then remove the redundant state and effect.",
+      "labels": [
+       {
+        "label": "This state update stores a value that can be calculated during render",
+        "span": {
+         "column": 5,
+         "length": 7,
+         "line": 14,
+         "offset": 360
+        }
+       },
+       {
+        "label": "This reactive value contributes to the derived state",
+        "span": {
+         "column": 7,
+         "length": 5,
+         "line": 15,
+         "offset": 382
+        }
+       }
+      ],
+      "message": "Values derived from props and state should be calculated during render, not in an effect",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(no-deriving-state-in-effects)",
+      "help": "This effect derives state from the reactive values `first`, `last`, causing an extra render and potentially showing a stale value. Calculate the derived value during render, then remove the redundant state and effect.",
+      "labels": [
+       {
+        "label": "This state update stores a value that can be calculated during render",
+        "span": {
+         "column": 5,
+         "length": 7,
+         "line": 23,
+         "offset": 547
+        }
+       },
+       {
+        "label": "These reactive values contribute to the derived state",
+        "span": {
+         "column": 7,
+         "length": 5,
+         "line": 24,
+         "offset": 582
+        }
+       },
+       {
+        "span": {
+         "column": 14,
+         "length": 4,
+         "line": 24,
+         "offset": 589
+        }
+       }
+      ],
+      "message": "Values derived from props and state should be calculated during render, not in an effect",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(no-deriving-state-in-effects)",
+      "help": "This effect derives state from the reactive values `first`, `last`, causing an extra render and potentially showing a stale value. Calculate the derived value during render, then remove the redundant state and effect.",
+      "labels": [
+       {
+        "label": "This state update stores a value that can be calculated during render",
+        "span": {
+         "column": 5,
+         "length": 7,
+         "line": 6,
+         "offset": 183
+        }
+       },
+       {
+        "label": "These reactive values contribute to the derived state",
+        "span": {
+         "column": 7,
+         "length": 5,
+         "line": 7,
+         "offset": 218
+        }
+       },
+       {
+        "span": {
+         "column": 14,
+         "length": 4,
+         "line": 7,
+         "offset": 225
+        }
+       }
+      ],
+      "message": "Values derived from props and state should be calculated during render, not in an effect",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 7,
+         "line": 14,
+         "offset": 360
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 4,
+         "line": 13,
+         "offset": 343
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 7,
+         "line": 23,
+         "offset": 547
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 6,
+         "line": 22,
+         "offset": 528
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 7,
+         "line": 31,
+         "offset": 736
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 5,
+         "line": 30,
+         "offset": 718
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 7,
+         "line": 6,
+         "offset": 183
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 4,
+         "line": 5,
+         "offset": 166
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     }
+    ],
+    "imported.jsx": [
+     {
+      "code": "react(capitalized-calls)",
+      "help": "Render `Mounted` with JSX if it is a component; otherwise rename it to start with a lowercase letter or allowlist it in the compiler configuration",
+      "labels": [
+       {
+        "label": "`Mounted` may be a component",
+        "span": {
+         "column": 3,
+         "length": 7,
+         "line": 27,
+         "offset": 656
+        }
+       }
+      ],
+      "message": "Capitalized function called without JSX",
+      "note": "`Mounted` is treated as a component because it begins with an uppercase letter; React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/static-components",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 20,
+         "length": 8,
+         "line": 36,
+         "offset": 856
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 4,
+         "line": 35,
+         "offset": 818
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 11,
+         "offset": 382
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 5,
+         "line": 10,
+         "offset": 364
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 14,
+         "offset": 425
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 5,
+         "line": 13,
+         "offset": 407
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 17,
+         "offset": 475
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 12,
+         "line": 16,
+         "offset": 450
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 25,
+         "offset": 631
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 7,
+         "line": 24,
+         "offset": 611
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 28,
+         "offset": 676
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 7,
+         "line": 27,
+         "offset": 656
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 8,
+         "offset": 339
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 4,
+         "line": 7,
+         "offset": 322
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     }
+    ],
+    "local.jsx": [
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 12,
+         "length": 9,
+         "line": 27,
+         "offset": 577
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 17,
+         "length": 15,
+         "line": 16,
+         "offset": 365
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 18,
+         "length": 21,
+         "line": 45,
+         "offset": 952
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 18,
+         "length": 35,
+         "line": 54,
+         "offset": 1150
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 18,
+         "length": 5,
+         "line": 17,
+         "offset": 399
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 18,
+         "length": 9,
+         "line": 7,
+         "offset": 193
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 26,
+         "length": 15,
+         "line": 54,
+         "offset": 1158
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 3,
+         "length": 6,
+         "line": 46,
+         "offset": 977
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 3,
+         "length": 6,
+         "line": 55,
+         "offset": 1189
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 44,
+         "length": 9,
+         "line": 54,
+         "offset": 1176
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 19,
+         "offset": 427
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 6,
+         "line": 18,
+         "offset": 408
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 29,
+         "offset": 609
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 6,
+         "line": 28,
+         "offset": 590
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 38,
+         "offset": 807
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 6,
+         "line": 37,
+         "offset": 788
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 47,
+         "offset": 996
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 6,
+         "line": 46,
+         "offset": 977
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 9,
+         "offset": 225
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 6,
+         "line": 8,
+         "offset": 206
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     }
+    ],
+    "members.jsx": [
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 10,
+         "offset": 243
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 24,
+         "line": 9,
+         "offset": 206
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 13,
+         "offset": 308
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 27,
+         "line": 12,
+         "offset": 268
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 16,
+         "offset": 363
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 4,
+         "length": 15,
+         "line": 15,
+         "offset": 334
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 7,
+         "offset": 181
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 15,
+         "line": 6,
+         "offset": 153
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     }
+    ],
+    "typescript.tsx": [
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 3,
+         "length": 5,
+         "line": 41,
+         "offset": 808
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 4,
+         "length": 4,
+         "line": 16,
+         "offset": 338
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 4,
+         "length": 5,
+         "line": 19,
+         "offset": 389
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 17,
+         "offset": 363
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 4,
+         "length": 11,
+         "line": 16,
+         "offset": 338
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 20,
+         "offset": 426
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 4,
+         "length": 23,
+         "line": 19,
+         "offset": 389
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 28,
+         "offset": 581
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 4,
+         "line": 27,
+         "offset": 558
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 31,
+         "offset": 632
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 4,
+         "length": 5,
+         "line": 30,
+         "offset": 607
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 39,
+         "offset": 783
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 4,
+         "length": 4,
+         "line": 38,
+         "offset": 765
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 42,
+         "offset": 828
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 5,
+         "line": 41,
+         "offset": 808
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 6,
+         "offset": 169
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 4,
+         "line": 5,
+         "offset": 151
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 9,
+         "offset": 214
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 5,
+         "line": 8,
+         "offset": 194
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     }
+    ]
+   }
   }
  },
  "eslint": {

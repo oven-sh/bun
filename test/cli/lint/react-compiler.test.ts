@@ -820,6 +820,36 @@ ${chain}
       "object.a.b": [128, 134, 143, 149],
     });
   });
+
+  test("the effect that contains a setState call is labeled under any name of the hook", async () => {
+    const diagnostics = await matches("effect names");
+    type Labeled = { labels: { label?: string; span: { line: number } }[] };
+    /** The lines of the effects that are labeled. */
+    const effects = (path: string) =>
+      (diagnostics[path] as Labeled[])
+        .flatMap(it => it.labels.filter(label => label.label === "This is the containing effect"))
+        .map(label => label.span.line)
+        .sort((a, b) => a - b);
+    expect({
+      "imported.jsx": effects("imported.jsx"),
+      "derived.jsx": effects("derived.jsx"),
+      "local.jsx": effects("local.jsx"),
+      "members.jsx": effects("members.jsx"),
+      "called-in-the-effect.jsx": effects("called-in-the-effect.jsx"),
+      "typescript.tsx": effects("typescript.tsx"),
+    }).toEqual({
+      "imported.jsx": [7, 10, 13, 16, 24, 27, 35],
+      "derived.jsx": [5, 13, 22, 30],
+      // Not the two that are called by a name without a type.
+      "local.jsx": [8, 18, 28, 37, 46],
+      "members.jsx": [6, 9, 12, 15],
+      "called-in-the-effect.jsx": [8, 19],
+      "typescript.tsx": [5, 8, 16, 19, 27, 30, 38, 41],
+    });
+    // What the three calls of `useEffect` derive. A layout effect isn't checked for it.
+    expect(linesOf(diagnostics["derived.jsx"], "no-deriving-state-in-effects")).toEqual([6, 14, 23]);
+    expect(diagnostics["other-modules.jsx"]).toBeUndefined();
+  });
 });
 
 describe.concurrent("bun lint: how a diagnostic's labels, help and note are printed", () => {

@@ -120,6 +120,8 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
             frame.code_type = !stackFrame.isConstructor() ? ZigStackFrameCodeFunction : ZigStackFrameCodeConstructor;
             break;
         }
+    } else if (Zig::suspendedFunctionWithoutCode(stackFrame)) [[unlikely]] {
+        frame.code_type = ZigStackFrameCodeFunction;
     }
 
     WTF::String functionName = Zig::functionName(vm, stackFrame, nullptr);
@@ -144,8 +146,15 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, Bun::O
     }
 #endif
     auto code = stackFrame.codeBlock();
-    if (!code)
+    if (!code) {
+        if (Zig::suspendedFunctionWithoutCode(stackFrame)) {
+            auto lineColumn = Zig::lineAndColumn(stackFrame);
+            position.line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
+            position.column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
+            position.byte_position = -1;
+        }
         return;
+    }
 
     auto* provider = code->source().provider();
     if (!provider) [[unlikely]]
@@ -448,7 +457,7 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
 
         while (frame_i < frame_count && stack_frame_i < total_frame_count) {
             // Skip native frames
-            while (stack_frame_i < total_frame_count && !(frames.at(stack_frame_i).hasLineAndColumnInfo()) && !(frames.at(stack_frame_i).isWasmFrame())) {
+            while (stack_frame_i < total_frame_count && !Zig::hasSourcePosition(frames.at(stack_frame_i)) && !(frames.at(stack_frame_i).isWasmFrame())) {
                 stack_frame_i++;
             }
             if (stack_frame_i >= total_frame_count)

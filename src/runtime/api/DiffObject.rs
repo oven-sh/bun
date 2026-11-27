@@ -14,18 +14,22 @@ use bun_text_diff::tokens::{
 };
 
 use crate::generated_bindgen::diff_object::{
-    ArrayChange, Change, FilePatch, Hunk, HunkToApply, HunksOptions, LinesOptions, Options,
-    PatchOptions, PatchToApply, TextOptions,
+    ApplyOptions, ArrayChange, Change, FilePatch, FileToApply, Hunk, HunkToApply, HunksOptions,
+    LinesOptions, Options, PatchOptions, PatchToApply, TextOptions,
 };
 
 trait JsUnit: Unit {
     fn of(string: &String) -> Cow<'_, [Self]>;
+    fn extend(out: &mut Vec<Self>, string: &String, range: Range<usize>);
     /// `operation`, which is ASCII, and then `text`. If there is no memory, a string that throws when it is converted.
     fn line(operation: u8, text: &[Self]) -> String;
 }
 impl JsUnit for u8 {
     fn of(string: &String) -> Cow<'_, [u8]> {
         Cow::Borrowed(string.latin1())
+    }
+    fn extend(out: &mut Vec<u8>, string: &String, range: Range<usize>) {
+        out.extend_from_slice(&string.latin1()[range]);
     }
     fn line(operation: u8, text: &[u8]) -> String {
         let (line, units) = String::create_uninitialized_latin1(1 + text.len());
@@ -42,6 +46,12 @@ impl JsUnit for u16 {
             Cow::Borrowed(string.utf16())
         } else {
             Cow::Owned(string.latin1().iter().map(|&unit| unit.into()).collect())
+        }
+    }
+    fn extend(out: &mut Vec<u16>, string: &String, range: Range<usize>) {
+        match units(string) {
+            CodeUnits::U8(latin1) => out.extend(latin1[range].iter().map(|&unit| u16::from(unit))),
+            CodeUnits::U16(utf16) => out.extend_from_slice(&utf16[range]),
         }
     }
     fn line(operation: u8, text: &[u16]) -> String {
@@ -74,6 +84,14 @@ macro_rules! by_width {
     };
 }
 
+fn units(string: &String) -> CodeUnits<'_> {
+    if string.is_utf16() {
+        CodeUnits::U16(string.utf16())
+    } else {
+        CodeUnits::U8(string.latin1())
+    }
+}
+
 fn clone_units<T: Unit>(units: &[T]) -> String {
     match T::units(units) {
         CodeUnits::U8(latin1) => String::clone_latin1(latin1),
@@ -94,8 +112,37 @@ fn limit<'a>(heap: &JsHeap<'a>, name: &str, value: f64) -> bindgen::Result<'a, u
     ))
 }
 
-fn max_edits<'a>(heap: &JsHeap<'a>, option: Option<f64>) -> bindgen::Result<'a, usize> {
-    limit(heap, "maxEditLength", option.unwrap_or(f64::INFINITY))
+#[cold]
+fn unsupported<'a>(heap: &JsHeap<'a>, options: &[(&str, bool)]) -> bindgen::Error<'a> {
+    let (name, _) = options.iter().find(|it| it.1).copied().unwrap_or_default();
+    heap.error_with_code(
+        ErrorCode::INVALID_ARG_VALUE,
+        format_args!("The property 'options.{name}' is not supported"),
+    )
+}
+
+macro_rules! refuse {
+    ($heap:expr, $($name:literal: $is_set:expr),*) => {
+        if $($is_set)|* {
+            return Err(unsupported($heap, &[$(($name, $is_set)),*]));
+        }
+    };
+}
+
+/// Reads the options of all functions that compare.
+macro_rules! max_edits {
+    ($heap:expr, $options:expr, $($refused:tt)*) => {{
+        refuse!(
+            $heap,
+            "timeout": $options.timeout,
+            "callback": $options.callback,
+            "comparator": $options.comparator,
+            "oneChangePerToken": $options.one_change_per_token,
+            $($refused)*
+        );
+        let max = $options.max_edit_length.unwrap_or(f64::INFINITY);
+        limit($heap, "maxEditLength", max)?
+    }};
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -143,7 +190,7 @@ struct Compare {
 }
 
 impl Compare {
-    fn diff<T: Unit>(self, split: Split, a: &[T], b: &[T]) -> Option<Vec<Edit>> {
+    fn diff(self, split: Split, a: CodeUnits<'_>, b: CodeUnits<'_>) -> Option<Vec<Edit>> {
         diff_text_ignoring(split, a, b, self.ignore, self.max_edits)
     }
 }
@@ -155,7 +202,12 @@ macro_rules! compare_lines {
                 case: $options.ignore_case,
                 whitespace: $options.ignore_whitespace,
             },
-            max_edits: max_edits($heap, $options.max_edit_length)?,
+            max_edits: max_edits!(
+                $heap,
+                $options,
+                "newlineIsToken": $options.newline_is_token,
+                "ignoreNewlineAtEof": $options.ignore_newline_at_eof
+            ),
         }
     };
 }
@@ -200,16 +252,14 @@ fn without_cr(texts: [&String; 2]) -> Option<Box<[String; 2]>> {
 }
 
 #[inline(never)]
-fn text_runs<T: JsUnit>(
-    split: Split,
-    old: &String,
-    new: &String,
-    compare: Compare,
-) -> Option<Vec<Run>> {
-    let (a, b) = (T::of(old), T::of(new));
-    let edits = compare.diff(split, &a, &b)?;
-    let kept_at_end = |from| split.count(&b[from..]);
-    Some(runs(edits.into_iter(), b.len(), kept_at_end))
+fn text_runs(split: Split, old: &String, new: &String, compare: Compare) -> Option<Vec<Run>> {
+    let b = units(new);
+    let edits = compare.diff(split, units(old), b)?;
+    let kept_at_end = |from| match b {
+        CodeUnits::U8(b) => split.count(&b[from..]),
+        CodeUnits::U16(b) => split.count(&b[from..]),
+    };
+    Some(runs(edits.into_iter(), new.length(), kept_at_end))
 }
 
 #[inline(always)]
@@ -219,7 +269,7 @@ fn changes<'s>(
     compare: Compare,
 ) -> Option<impl Iterator<Item = Change> + use<'s>> {
     let [old, new] = texts.get();
-    let runs = by_width!([old, new], text_runs(split, old, new, compare));
+    let runs = text_runs(split, old, new, compare);
     let change = move |Run { kind, range, count }| Change {
         value: texts.get()[usize::from(kind != Kind::Removed)].shared_substring(range),
         added: kind == Kind::Added,
@@ -249,7 +299,7 @@ macro_rules! split_by {
             options: &TextOptions,
         ) -> bindgen::Result<'a, Option<impl Iterator<Item = Change> + use<'s>>> {
             let ignore = Ignore { case: options.ignore_case, whitespace: false };
-            let max_edits = max_edits(heap, options.max_edit_length)?;
+            let max_edits = max_edits!(heap, options, "intlSegmenter": options.intl_segmenter);
             Ok(changes($split, Texts::new(heap, [old, new], false)?, Compare { ignore, max_edits }))
         }
     )*};
@@ -351,7 +401,7 @@ pub(crate) fn arrays<'a>(
     new: JsLocal<'a, JSArray>,
     options: &Options,
 ) -> bindgen::Result<'a, Option<JsLocal<'a, JSArray>>> {
-    let max_edits = max_edits(&cx.heap, options.max_edit_length)?;
+    let max_edits = max_edits!(&cx.heap, options, "ignoreCase": options.ignore_case);
     MarkedArgumentBuffer::new(|old_copy| {
         MarkedArgumentBuffer::new(|new_copy| {
             let (old, new) = ((old.to_js(), old_copy), (new.to_js(), new_copy));
@@ -370,17 +420,15 @@ fn hunk_with<L>(hunk: patch::PatchHunk<L>, line: impl FnMut(L) -> String) -> Hun
     }
 }
 
-fn hunks_of<T: JsUnit>(
-    old: &String,
-    new: &String,
-    context: usize,
-    compare: Compare,
-) -> Option<Vec<Hunk>> {
-    let (a, b) = (T::of(old), T::of(new));
-    let edits = compare.diff(Split::Lines, &a, &b)?;
-    let hunks = patch::hunks(&a, &b, &edits, context).map(|hunk| {
+fn hunks_of(old: &String, new: &String, context: usize, compare: Compare) -> Option<Vec<Hunk>> {
+    let (a, b) = (units(old), units(new));
+    let edits = compare.diff(Split::Lines, a, b)?;
+    let hunks = patch::hunks(a, b, &edits, context).map(|hunk| {
         hunk_with(hunk, |line| match line {
-            patch::Line::Text(operation, text) => T::line(operation, text),
+            patch::Line::Text(operation, range) => match if operation == b'-' { a } else { b } {
+                CodeUnits::U8(text) => u8::line(operation, &text[range]),
+                CodeUnits::U16(text) => u16::line(operation, &text[range]),
+            },
             patch::Line::NoNewline => String::clone_latin1(patch::NO_NEWLINE),
         })
     });
@@ -397,7 +445,7 @@ pub(crate) fn hunks<'a>(
     let compare = compare_lines!(heap, options);
     let texts = Texts::new(heap, [old, new], options.strip_trailing_cr)?;
     let [old, new] = texts.get();
-    Ok(by_width!([old, new], hunks_of(old, new, context, compare)))
+    Ok(hunks_of(old, new, context, compare))
 }
 
 struct FileHeader<'a> {
@@ -413,8 +461,8 @@ fn format_patch<T: JsUnit>(
     context: usize,
     compare: Compare,
 ) -> Option<String> {
-    let (a, b) = (T::of(old), T::of(new));
-    let edits = compare.diff(Split::Lines, &a, &b)?;
+    let (a, b) = (units(old), units(new));
+    let edits = compare.diff(Split::Lines, a, b)?;
     let mut out = Vec::new();
     // As `diff -u`: no differences, no output.
     if !edits.is_empty() {
@@ -422,8 +470,10 @@ fn format_patch<T: JsUnit>(
             patch::write_file_header(&mut out, file.marker, file.name, &T::of(file.header));
         }
     }
-    for hunk in patch::hunks(&a, &b, &edits, context) {
-        patch::write_hunk(&mut out, &hunk);
+    for hunk in patch::hunks(a, b, &edits, context) {
+        patch::write_hunk(&mut out, hunk, |out, operation, range| {
+            T::extend(out, if operation == b'-' { old } else { new }, range);
+        });
     }
     Some(clone_units(&out))
 }
@@ -438,6 +488,7 @@ pub(crate) fn create_patch<'a>(
     new: &String,
     options: &PatchOptions<'_>,
 ) -> bindgen::Result<'a, Option<String>> {
+    refuse!(heap, "headerOptions": options.header_options);
     let context = limit(heap, "context", options.context)?;
     let compare = compare_lines!(heap, options);
     let texts = Texts::new(heap, [old, new], options.strip_trailing_cr)?;
@@ -488,19 +539,42 @@ pub(crate) fn create_patch<'a>(
     ))
 }
 
-fn parse<'a, T: Unit>(heap: &JsHeap<'a>, text: &[T]) -> bindgen::Result<'a, Vec<patch::FilePatch>> {
-    patch::parse(text).map_err(|error| heap.syntax_error(format_args!("{error}")))
+/// The lines of the hunks are places in `text` as it is afterwards.
+fn parse<'a, T: Unit>(
+    heap: &JsHeap<'a>,
+    text: &mut Cow<'_, [T]>,
+) -> bindgen::Result<'a, Vec<patch::FilePatch>> {
+    let files = patch::parse(text).map_err(|error| heap.syntax_error(format_args!("{error}")))?;
+    if files.last().is_some_and(|file| file.lost_cr) {
+        text.to_mut().push(T::from_u8(b'\r'));
+    }
+    Ok(files)
 }
 
-pub(crate) fn parse_patch<'a, 's>(
+fn parse_string<'a, T: JsUnit>(
     heap: &JsHeap<'a>,
-    text: &'s String,
-) -> bindgen::Result<'a, impl Iterator<Item = FilePatch> + use<'s>> {
-    let files = if text.is_utf16() {
-        parse(heap, text.utf16())?
-    } else {
-        parse(heap, text.latin1())?
-    };
+    text: &String,
+) -> bindgen::Result<'a, (String, Vec<patch::FilePatch>)> {
+    let mut units = T::of(text);
+    let files = parse(heap, &mut units)?;
+    if units.len() == text.length() {
+        return Ok((text.clone(), files));
+    }
+    if units.len() > String::max_length() {
+        return Err(heap.string_too_long());
+    }
+    let restored = clone_units(&units);
+    if restored.is_dead() {
+        return Err(heap.memory_allocation_failed());
+    }
+    Ok((restored, files))
+}
+
+pub(crate) fn parse_patch<'a>(
+    heap: &JsHeap<'a>,
+    text: &String,
+) -> bindgen::Result<'a, impl Iterator<Item = FilePatch> + use<>> {
+    let (text, files) = by_width!([text], parse_string(heap, text))?;
     let name = |name: Option<patch::Name>| name.map(|name| String::clone_utf16(&name));
     let flag = |is_set: bool| is_set.then_some(true);
     let hunk = move |hunk| hunk_with(hunk, |line| text.shared_substring(line));
@@ -518,7 +592,7 @@ pub(crate) fn parse_patch<'a, 's>(
         is_create: flag(file.is_create),
         is_delete: flag(file.is_delete),
         is_binary: flag(file.is_binary),
-        hunks: file.hunks.into_iter().map(hunk).collect(),
+        hunks: file.hunks.into_iter().map(&hunk).collect(),
     }))
 }
 
@@ -526,10 +600,16 @@ fn apply<'a, T: JsUnit>(
     heap: &JsHeap<'a>,
     source: &String,
     hunks: &[patch::HunkToApply<'_, T>],
-) -> bindgen::Result<'a, Option<String>> {
-    match patch::apply(&T::of(source), hunks) {
-        Ok(patched) => Ok(patched.map(|patched| clone_units(&patched))),
-        Err(patch::InvalidOperation { hunk, line }) => Err(heap.error_with_code(
+) -> bindgen::Result<'a, String> {
+    // A widened source is freed before the result is copied.
+    let patched = patch::apply(&T::of(source), hunks);
+    match patched {
+        Ok(patched) => Ok(clone_units(&patched)),
+        Err(patch::ApplyError::Mismatch { hunk, reason }) => Err(heap.error_with_code(
+            ErrorCode::PATCH_DOES_NOT_APPLY,
+            format_args!("Hunk {} does not apply: {reason}", hunk + 1),
+        )),
+        Err(patch::ApplyError::InvalidOperation { hunk, line }) => Err(heap.error_with_code(
             ErrorCode::INVALID_ARG_VALUE,
             format_args!(
                 "The property 'patch[{hunk}].lines[{line}]' must start with \" \", \"-\", \"+\" or \"\\\""
@@ -538,14 +618,21 @@ fn apply<'a, T: JsUnit>(
     }
 }
 
+fn binary_patch<'a>(heap: &JsHeap<'a>) -> bindgen::Error<'a> {
+    heap.error_with_code(
+        ErrorCode::INVALID_ARG_VALUE,
+        format_args!("The argument 'patch' must change a text file. Received a binary patch"),
+    )
+}
+
 fn apply_text<'a, T: JsUnit>(
     heap: &JsHeap<'a>,
     source: &String,
     text: &String,
-) -> bindgen::Result<'a, Option<String>> {
-    let text = T::of(text);
-    let files = parse(heap, &text)?;
-    let [file] = &files[..] else {
+) -> bindgen::Result<'a, String> {
+    let mut text = T::of(text);
+    let files = parse(heap, &mut text)?;
+    if files.len() > 1 {
         return Err(heap.error_with_code(
             ErrorCode::INVALID_ARG_VALUE,
             format_args!(
@@ -553,14 +640,18 @@ fn apply_text<'a, T: JsUnit>(
                 files.len()
             ),
         ));
-    };
-    if file.is_binary {
-        return Err(heap.error_with_code(
-            ErrorCode::INVALID_ARG_VALUE,
-            format_args!("The argument 'patch' must change a text file. Received a binary patch"),
-        ));
     }
-    let hunks = file.hunks.iter().map(|hunk| patch::HunkToApply {
+    let file = files.first();
+    if file.is_some_and(|file| file.is_binary) {
+        return Err(binary_patch(heap));
+    }
+    let hunks = file.map_or(&[][..], |file| &file.hunks);
+    if hunks.is_empty() && !patch::can_lack_hunks(&text, file) {
+        return Err(heap.syntax_error(format_args!(
+            "The patch has no line that starts with \"@@ -start,lines +start,lines @@\""
+        )));
+    }
+    let hunks = hunks.iter().map(|hunk| patch::HunkToApply {
         old_start: hunk.old_start as u32,
         lines: hunk.lines.iter().map(|line| &text[line.clone()]).collect(),
     });
@@ -571,7 +662,7 @@ fn apply_hunks<'a, T: JsUnit>(
     heap: &JsHeap<'a>,
     source: &String,
     hunks: &[HunkToApply],
-) -> bindgen::Result<'a, Option<String>> {
+) -> bindgen::Result<'a, String> {
     let lines = hunks.iter().map(|hunk| hunk.lines.iter().map(T::of));
     let lines: Vec<Vec<Cow<'_, [T]>>> = lines.map(Iterator::collect).collect();
     let hunks = hunks.iter().zip(&lines);
@@ -586,10 +677,18 @@ pub(crate) fn apply_patch<'a>(
     heap: &JsHeap<'a>,
     source: &String,
     patch: PatchToApply,
-) -> bindgen::Result<'a, Option<String>> {
+    options: &ApplyOptions,
+) -> bindgen::Result<'a, String> {
+    refuse!(
+        heap,
+        "fuzzFactor": options.fuzz_factor,
+        "compareLine": options.compare_line,
+        "autoConvertLineEndings": !options.auto_convert_line_endings
+    );
     match patch {
         PatchToApply::Text(text) => by_width!([source, &text], apply_text(heap, source, &text)),
-        PatchToApply::Hunks(hunks) => {
+        PatchToApply::File(file) if file.is_binary => Err(binary_patch(heap)),
+        PatchToApply::Hunks(hunks) | PatchToApply::File(FileToApply { hunks, .. }) => {
             let lines = || hunks.iter().flat_map(|hunk| &hunk.lines);
             // One string can be in there many times.
             if lines().map(String::length).sum::<usize>() > String::max_length() {

@@ -959,6 +959,15 @@ const modules: [string, string[], string[]][] = [
     ],
   ],
   [
+    "util-diff-of-inputs-that-are-far-apart",
+    ["native:Bindgen:node_util_binding.bind.ts:diffNumbers"],
+    [
+      'import { diff } from "node:util";',
+      "const lines = name => Array.from({ length: 300 }, (_, index) => name + index);",
+      'console.log(diff(lines("a"), lines("b")).length);',
+    ],
+  ],
+  [
     "util-get-system-error-name-answers-text",
     [
       "native:Bindgen:node_util_binding.bind.ts:internalErrorName",

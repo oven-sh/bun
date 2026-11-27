@@ -1,5 +1,5 @@
 // DIAGNOSTIC: TS100150 1
-
+// DIAGNOSTIC: TS100177 1
 // RUN(KNOWN): lower
 // KNOWN-LABEL: function {{*}}name="known"
 // KNOWN-NOT: = Call

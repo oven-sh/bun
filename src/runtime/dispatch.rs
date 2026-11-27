@@ -83,7 +83,7 @@ macro_rules! payload {
     };
 }
 
-/// [`in_features!`] for an arm that needs only that, as `$payload`.
+/// [`in_features!`] for an arm that needs only the payload, as `$payload`.
 macro_rules! task_arm {
     (
         $task:ident,
@@ -449,8 +449,8 @@ pub(crate) fn run_task(
 
         // ── fetch / S3 ───────────────────────────────────────────────────
         task_tag::FetchTasklet => {
-            task_arm!(task, [Fetch], |tasklet: FetchTasklet| -> JsResult<()> {
-                FetchTasklet::on_progress_update(tasklet)
+            task_arm!(task, [Fetch], |js_ref: FetchTasklet| -> JsResult<()> {
+                FetchTasklet::on_progress_update(js_ref)
             })?
         }
         task_tag::FetchTaskletDeinit => task_arm!(
@@ -464,13 +464,13 @@ pub(crate) fn run_task(
             task,
             [S3Client],
             |request: S3HttpSimpleTask| -> JsResult<()> {
-                S3HttpSimpleTask::on_response(request)?;
+                request.on_response()?;
                 Ok(())
             }
         )?,
         task_tag::S3HttpDownloadStreamingTask => {
             task_arm!(task, [S3Client], |download: S3HttpDownloadStreamingTask| {
-                S3HttpDownloadStreamingTask::on_response(download);
+                download.on_response();
             })
         }
         task_tag::S3RefusedRequest => task_arm!(
@@ -528,14 +528,14 @@ pub(crate) fn run_task(
         task_tag::UvHandleClose => {
             #[cfg(unix)]
             {
-                use crate::napi::uv_posix::UvHandle;
+                use crate::napi::uv_posix::HandleRef;
                 in_features!(
                     [NativeAddons],
                     (
-                        uv_handle: <UvHandle as Taskable>::Payload = payload!(task, UvHandle),
+                        uv_handle: HandleRef<'static> = payload!(task, HandleRef),
                         global: &JSGlobalObject = global,
                     ) -> JsResult<()> {
-                        UvHandle::run_close(uv_handle, global)
+                        uv_handle.run_close(global)
                     }
                 )?;
             }
@@ -1472,9 +1472,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
                 bun_bundler::bundle_v2::api::JSBundler::LoadDeferred
             )
         }
-        task_tag::BundleV2ParseTaskResult => {
-            release_in!([Bundler], BundleV2ParseTaskResult)
-        }
+        task_tag::BundleV2ParseTaskResult => release_in!([Bundler], BundleV2ParseTaskResult),
         task_tag::FetchTaskletRequestDrain => {
             release_in!([Fetch], crate::webcore::fetch::FetchTaskletRequestDrain)
         }
@@ -1487,15 +1485,11 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
                 crate::api::html_rewriter::RewriterPipeBackgroundPull
             )
         }
-        task_tag::RunTestsTask => {
-            release_in!([Test], crate::test_runner::bun_test::RunTestsTask)
-        }
+        task_tag::RunTestsTask => release_in!([Test], crate::test_runner::bun_test::RunTestsTask),
         task_tag::DnsErrorDeferred => {
             release_in!([Dns], crate::dns_jsc::answer_jsc::ErrorDeferredTask)
         }
-        task_tag::HandledPromise => {
-            release!(bun_jsc::virtual_machine_exports::HandledPromiseTask)
-        }
+        task_tag::HandledPromise => release!(bun_jsc::virtual_machine_exports::HandledPromiseTask),
         task_tag::GraphContextStopAgain => release!(GraphContextStopAgain),
         task_tag::DeadContextStopAgain => release!(DeadContextStopAgain),
         task_tag::GraphContextStopAndFree => release!(GraphContextStopAndFree),
@@ -1519,9 +1513,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             #[cfg(windows)]
             unreachable!("posix-only tag");
         }
-        task_tag::FlushPendingFileSinkTask => {
-            release_in!([FileSink, Spawn, Shell], FileSink)
-        }
+        task_tag::FlushPendingFileSinkTask => release_in!([FileSink, Spawn, Shell], FileSink),
         task_tag::RuntimeTranspilerStore => {
             release_in!([RuntimeTranspiler], RuntimeTranspilerStore)
         }
@@ -1530,9 +1522,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::S3HttpSimpleTask => release_in!([S3Client], S3HttpSimpleTask),
         task_tag::S3RefusedRequest => release_in!([S3Client], S3RefusedRequest),
-        task_tag::S3UploadWriterCollected => {
-            release_in!([S3Client], S3UploadWriterCollected)
-        }
+        task_tag::S3UploadWriterCollected => release_in!([S3Client], S3UploadWriterCollected),
         task_tag::SendQueueDeferred => release_in!([Ipc], crate::ipc::SendQueue),
         task_tag::ServerAllConnectionsClosedTask => {
             release_in!([Serve], ServerAllConnectionsClosedTask)
@@ -1561,9 +1551,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::ShellAsyncCpTask => release_in!([Shell], crate::node::fs::ShellAsyncCpTask),
         task_tag::StreamPending => release_in!([WebStreams], StreamPending),
         task_tag::ThreadSafeFunction => release_in!([NativeAddons], ThreadSafeFunction),
-        task_tag::ThreadSafeFunctionRefRequest => {
-            release_in!([NativeAddons], TsfnRefRequest)
-        }
+        task_tag::ThreadSafeFunctionRefRequest => release_in!([NativeAddons], TsfnRefRequest),
         task_tag::UvLoopDispatch => {
             #[cfg(unix)]
             release_in!([NativeAddons], crate::napi::uv_posix::UvLoop);
@@ -1572,7 +1560,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::UvHandleClose => {
             #[cfg(unix)]
-            release_in!([NativeAddons], crate::napi::uv_posix::UvHandle);
+            release_in!([NativeAddons], crate::napi::uv_posix::HandleRef<'static>);
             #[cfg(not(unix))]
             unreachable!("posix-only tag");
         }

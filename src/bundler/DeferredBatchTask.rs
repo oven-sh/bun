@@ -1,6 +1,6 @@
 //! Once every other parse/resolve of a pass is done while some onLoad plugins have called `.defer()`, this
 //! hops to the plugins' (JS) thread and resolves those `.defer()` promises so the plugins resume; then it
-//! comes back. It is embedded in its `BundleV2` and counts as one of the pass's pending items while it is
+//! comes back. It points at its `BundleV2` and counts as one of the pass's pending items while it is
 //! out, so the pass cannot finish and be freed under it (a plugin may answer a deferred load without
 //! awaiting `.defer()`, so nothing else orders the pass's completion after this hop).
 
@@ -38,7 +38,7 @@ impl bun_event_loop::Taskable for DeferredBatch {
 impl DeferredBatch {
     /// SAFETY: `bv2` is not moved or dropped, and no other hop is scheduled, until this one has come back.
     pub(crate) unsafe fn schedule(bv2: &mut BundleV2<'_>) {
-        let batch = Self(std::ptr::from_mut(bv2).cast());
+        let batch = Self(core::ptr::from_mut(bv2).cast());
         // Refused: the VM was torn down mid-bundle, the hop never runs.
         bv2.js_loop_for_plugins().post_task::<Self>(batch);
     }

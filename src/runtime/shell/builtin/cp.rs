@@ -405,7 +405,7 @@ impl OwnedTask for ShellCpTask {
             Err(Stop::Fail(err)) => self.err = Some(*err),
             Err(Stop::Skip) => {}
         }
-        poster.post(self, |this| &mut this.task.concurrent_task);
+        poster.post_intrusive(self, |this| &mut this.task.concurrent_task);
     }
 }
 

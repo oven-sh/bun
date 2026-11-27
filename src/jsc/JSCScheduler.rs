@@ -1,24 +1,20 @@
+use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 
 use crate::{JSGlobalObject, JsResult};
 
-bun_opaque::opaque_ffi! {
-    /// Opaque FFI handle for a JSC deferred work task (constructed on the C++ side).
-    pub struct JSCDeferredWorkTask;
-}
-
-/// Deleted on drop.
+/// A JSC deferred work task (constructed on the C++ side). Deleted on drop.
 #[repr(transparent)]
-pub struct OwnedJSCDeferredWorkTask(NonNull<JSCDeferredWorkTask>);
+pub struct JSCDeferredWorkTask(NonNull<c_void>);
 
 unsafe extern "C" {
-    safe fn Bun__runDeferredWork(task: OwnedJSCDeferredWorkTask);
-    fn Bun__deleteDeferredWorkTask(task: NonNull<JSCDeferredWorkTask>);
+    safe fn Bun__runDeferredWork(task: JSCDeferredWorkTask);
+    fn Bun__deleteDeferredWorkTask(task: NonNull<c_void>);
 }
 
-impl Drop for OwnedJSCDeferredWorkTask {
+impl Drop for JSCDeferredWorkTask {
     fn drop(&mut self) {
         // SAFETY: `self` is the only owner.
         unsafe { Bun__deleteDeferredWorkTask(self.0) }
@@ -27,17 +23,17 @@ impl Drop for OwnedJSCDeferredWorkTask {
 
 impl Taskable for JSCDeferredWorkTask {
     const TAG: TaskTag = task_tag::JSCDeferredWorkTask;
-    type Payload = OwnedJSCDeferredWorkTask;
+    type Payload = Self;
     /// A cross-thread Atomics.notify / Wasm / FinalizationRegistry completion:
     /// its `Ref<Ticket>` drops before ~VM.
-    fn release_unrun(_: Self::Payload) {}
+    fn release_unrun(_: Self) {}
     /// `JSCTaskScheduler::runPendingWork` checks the graph that scheduled the work.
-    fn context(_: &Self::Payload) -> bun_event_loop::ContextId {
+    fn context(_: &Self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
 
-impl OwnedJSCDeferredWorkTask {
+impl JSCDeferredWorkTask {
     /// The C++ side reports what a job throws at its own boundary; what can
     /// still be pending here is the VM's termination.
     pub fn run(self, global: &JSGlobalObject) -> JsResult<()> {
@@ -51,11 +47,11 @@ impl OwnedJSCDeferredWorkTask {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
     r: *const crate::vm_handle::Shared,
-    task: OwnedJSCDeferredWorkTask,
+    task: JSCDeferredWorkTask,
     kind: crate::LoopKind,
 ) {
     crate::mark_binding!();
     // SAFETY: C++ passes the reference its JSVMClientData holds.
     let handle = unsafe { crate::VmHandle::borrow_ref(r) };
-    let _ = handle.post::<JSCDeferredWorkTask>(kind, task);
+    drop(handle.post::<JSCDeferredWorkTask>(kind, task));
 }

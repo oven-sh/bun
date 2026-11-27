@@ -23,6 +23,7 @@ use core::cell::OnceCell;
 use core::cell::{Cell, UnsafeCell};
 use core::ffi::c_void;
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
@@ -50,11 +51,17 @@ unsafe impl bun_threading::Linked for AnyTaskWithExtraContext {
 /// FIFO of the nodes of queued tasks.
 type Queue = LinearFifo<*mut AnyTaskWithExtraContext, DynamicBuffer<*mut AnyTaskWithExtraContext>>;
 
+/// The part of a [`MiniEventLoop`] that other threads use.
+pub struct Inbox {
+    tasks: ConcurrentTaskQueue,
+    uws_loop: AtomicPtr<UwsLoop>,
+}
+
 /// Shared borrows only: what a tick runs reaches the loop again, and other threads post to it.
 pub struct MiniEventLoop {
     /// No borrow spans a task.
     tasks: UnsafeCell<Queue>,
-    concurrent_tasks: ConcurrentTaskQueue,
+    pub inbox: Inbox,
     pub loop_: &'static UwsLoop,
     #[cfg(not(windows))]
     file_polls: OnceCell<Box<FilePollStore>>,
@@ -83,7 +90,7 @@ pub fn init_global(env: Option<&'static mut DotEnvLoader>) -> &'static MiniEvent
     // The process-global loader is stored as `AtomicPtr<Loader>`.
     global.env = env
         .map(NonNull::from)
-        .or_else(|| NonNull::new(dotenv::INSTANCE.load(core::sync::atomic::Ordering::Acquire)));
+        .or_else(|| NonNull::new(dotenv::INSTANCE.load(Ordering::Acquire)));
     if global.env.is_none() {
         // Thread-lifetime singleton.
         global.env = Some(bun_core::heap::into_raw_nn(Box::new(DotEnvLoader::init())));
@@ -134,10 +141,14 @@ impl MiniEventLoop {
     }
 
     pub(crate) fn init() -> MiniEventLoop {
+        let loop_: &UwsLoop = UwsLoop::get();
         MiniEventLoop {
             tasks: UnsafeCell::new(Queue::init()),
-            concurrent_tasks: ConcurrentTaskQueue::default(),
-            loop_: UwsLoop::get(),
+            inbox: Inbox {
+                tasks: ConcurrentTaskQueue::default(),
+                uws_loop: AtomicPtr::new(core::ptr::from_ref(loop_).cast_mut()),
+            },
+            loop_,
             #[cfg(not(windows))]
             file_polls: OnceCell::new(),
             env: None,
@@ -154,7 +165,7 @@ impl MiniEventLoop {
     fn tick_concurrent(&self) -> usize {
         // SAFETY: no task runs in this borrow.
         let tasks = unsafe { &mut *self.tasks.get() };
-        let concurrent = self.concurrent_tasks.pop_batch();
+        let concurrent = self.inbox.tasks.pop_batch();
         let count = concurrent.count;
         if count == 0 {
             return tasks.readable_length();
@@ -232,33 +243,6 @@ impl MiniEventLoop {
         self.on_after_event_loop();
     }
 
-    /// For a task that `node` returns a field of.
-    pub fn post<T: MiniTask>(
-        &self,
-        task: Box<T>,
-        node: impl FnOnce(&mut T) -> &mut AnyTaskWithExtraContext,
-    ) {
-        let task = bun_core::heap::into_raw_nn(task);
-        // SAFETY: nothing else can reach the box before the callback takes it back.
-        let node = node(unsafe { &mut *task.as_ptr() });
-        *node = AnyTaskWithExtraContext {
-            ctx: Some(task.cast()),
-            callback: |task, _| {
-                // SAFETY: `ctx`, and a node that was queued once runs once.
-                unsafe { bun_core::heap::take(task.cast::<T>()) }.run_from_main_thread();
-            },
-            next: bun_threading::Link::new(),
-        };
-        self.push(NonNull::from(node));
-    }
-
-    fn push(&self, task: NonNull<AnyTaskWithExtraContext>) {
-        // Read first: the push lets a bundle finish and drop `self`. The main and bundle threads never call `free_thread_loop`.
-        let loop_ = self.loop_;
-        self.concurrent_tasks.push(task);
-        loop_.wakeup();
-    }
-
     /// The caller supplies `field_offset = core::mem::offset_of!(C, <field>)` of the
     /// embedded `AnyTaskWithExtraContext`.
     ///
@@ -282,8 +266,40 @@ impl MiniEventLoop {
                 ),
                 next: bun_threading::Link::new(),
             });
-            self.push(NonNull::new_unchecked(task));
+            self.inbox
+                .enqueue_task_concurrent(NonNull::new_unchecked(task));
         }
+    }
+}
+
+impl Inbox {
+    /// For a task that `node` returns a field of.
+    pub fn post_intrusive<T: MiniTask>(
+        &self,
+        task: Box<T>,
+        node: impl FnOnce(&mut T) -> &mut AnyTaskWithExtraContext,
+    ) {
+        let task = bun_core::heap::into_raw_nn(task);
+        // SAFETY: nothing else can reach the box before the callback takes it back.
+        let node = node(unsafe { &mut *task.as_ptr() });
+        *node = AnyTaskWithExtraContext {
+            ctx: Some(task.cast()),
+            callback: |task, _| {
+                // SAFETY: this is `ctx`, the box given up above, and a queued node runs once.
+                unsafe { bun_core::heap::take(task.cast::<T>()) }.run_from_main_thread();
+            },
+            next: bun_threading::Link::new(),
+        };
+        self.enqueue_task_concurrent(NonNull::from(node));
+    }
+
+    fn enqueue_task_concurrent(&self, task: NonNull<AnyTaskWithExtraContext>) {
+        // Read first: the push lets a bundle finish and drop `self`.
+        let uws_loop = self.uws_loop.load(Ordering::Relaxed);
+        self.tasks.push(task);
+        // SAFETY: the main and bundle threads never call `free_thread_loop`. `Loop` is `!Sync`, but
+        // any thread may wake it.
+        unsafe { bun_uws::us_wakeup_loop(uws_loop) };
     }
 }
 
@@ -320,6 +336,6 @@ impl MiniEventLoop {
 impl Drop for MiniEventLoop {
     fn drop(&mut self) {
         // `tasks.deinit()` is implicit via Queue's Drop.
-        debug_assert!(self.concurrent_tasks.is_empty());
+        debug_assert!(self.inbox.tasks.is_empty());
     }
 }

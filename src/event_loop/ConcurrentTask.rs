@@ -51,7 +51,7 @@ pub mod task_tag {
     tags! {
         AnyTaskJob,               // bun_jsc::Job<C> (typed pool job, one erased tag)
         BakePendingReloadEvent,   // bake::dev_server::PendingReloadEvent
-        BundleV2DeferredBatchTask, // bun.bundle_v2.DeferredBatchTask
+        BundleV2DeferredBatchTask, // bun_bundler::DeferredBatchTask::DeferredBatch
         BundleV2PluginResolve,    // bun.bundle_v2.Resolve (JS-thread hop)
         BundleV2PluginLoad,       // bun.bundle_v2.Load (JS-thread hop)
         BundleV2PluginResolveAnswered, // bun.bundle_v2.Resolve (hop back to the bundle's loop)
@@ -82,7 +82,7 @@ pub mod task_tag {
         HTMLRewriterBackgroundPull,
         JSBundleCompletionTask,
         JSCDeferredWorkTask,
-        NapiAsyncWork,            // napi_async_work
+        NapiAsyncWork,            // FinishedAsyncWork
         NapiFinalizerTask,
         NativePromiseContextDeferredDerefTask,
         Open,
@@ -162,11 +162,6 @@ impl ContextId {
     pub const fn from_raw(raw: u32) -> ContextId {
         ContextId(raw)
     }
-
-    #[inline]
-    pub const fn raw(self) -> u32 {
-        self.0
-    }
 }
 
 /// What it takes to be queued as a [`Task`]: a tag, what the task owns, and how that is released unrun.
@@ -221,7 +216,7 @@ impl<T: BoxedTask> Taskable for T {
         task.release_unrun();
     }
     fn context(task: &Box<T>) -> ContextId {
-        (**task).context()
+        task.context()
     }
 }
 
@@ -261,6 +256,18 @@ impl Task {
     }
 
     #[inline]
+    pub const fn tag(&self) -> TaskTag {
+        self.tag
+    }
+
+    /// Whose script the task continues: what its type's `context` said when the task
+    /// was made. The event loop checks it before it runs the task.
+    #[inline]
+    pub const fn context(&self) -> ContextId {
+        self.context
+    }
+
+    #[inline]
     pub fn from_boxed<T: BoxedTask>(task: Box<T>) -> Task {
         Task::new::<T>(task)
     }
@@ -272,17 +279,6 @@ impl Task {
         debug_assert!(self.tag == T::TAG);
         // SAFETY: fn contract.
         unsafe { self.payload.as_ptr().cast::<T::Payload>().read() }
-    }
-
-    #[inline]
-    pub const fn tag(&self) -> TaskTag {
-        self.tag
-    }
-
-    /// What [`Taskable::context`] said when the task was made.
-    #[inline]
-    pub const fn context(&self) -> ContextId {
-        self.context
     }
 }
 
@@ -345,7 +341,7 @@ unsafe impl Linked for ConcurrentTask {
     }
 }
 
-/// A node that no [`Queue`] has yet. No `Drop`, as [`Task`].
+/// A node that is in no [`Queue`]. No `Drop`, as [`Task`].
 pub struct OwnedConcurrentTask(NonNull<ConcurrentTask>);
 
 impl ConcurrentTask {
@@ -398,7 +394,7 @@ impl OwnedConcurrentTask {
         unsafe {
             let task = core::ptr::read(&raw const (*self.0.as_ptr()).task);
             if self.0.as_ref().auto_delete {
-                drop(bun_core::heap::take(self.0.as_ptr()));
+                bun_core::heap::destroy(self.0.as_ptr());
             }
             task
         }

@@ -542,10 +542,18 @@ impl<T: AnyRefCounted + ThreadSafeRefCounted> RefPtr<T> {
         let count = unsafe { &*T::get_ref_count(this.as_ptr()) };
         count.assert_valid();
         let old_count = count.raw_count.fetch_sub(1, Ordering::SeqCst);
+        bun_core::scoped_log!(
+            ref_count,
+            "0x{:x} deref {} -> {}",
+            this.addr(),
+            old_count,
+            old_count - 1,
+        );
         debug_assert!(old_count > 0);
         if old_count != 1 {
             return None;
         }
+        // Relaxed: no other thread has a ref.
         count.raw_count.store(1, Ordering::Relaxed);
         Some(Self(this))
     }

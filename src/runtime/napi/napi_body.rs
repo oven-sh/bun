@@ -67,7 +67,7 @@ impl Taskable for ThreadSafeFunction {
     type Payload = Arc<Self>;
     /// The env's cleanup hook (`env_teardown`) does what the dispatch would have done.
     fn release_unrun(_: Self::Payload) {}
-    /// As `napi_async_work`.
+    /// As `FinishedAsyncWork`.
     fn context(_: &Self::Payload) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
@@ -75,7 +75,7 @@ impl Taskable for ThreadSafeFunction {
 impl BoxedTask for TsfnRefRequest {
     const TAG: TaskTag = task_tag::ThreadSafeFunctionRefRequest;
     fn release_unrun(self: Box<Self>) {}
-    /// As `napi_async_work`.
+    /// As `FinishedAsyncWork`.
     fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
@@ -1940,7 +1940,7 @@ pub(super) enum AsyncWorkStatus {
 }
 
 /// must be globally allocated
-pub(crate) struct napi_async_work {
+struct napi_async_work {
     /// Only the pool thread uses it between `schedule` and the post back.
     off_thread: UnsafeCell<AsyncWorkOffThread>,
     status: AtomicU32, // AsyncWorkStatus
@@ -2061,12 +2061,12 @@ impl napi_async_work {
         }
         let task = Task::new::<FinishedAsyncWork>(FinishedAsyncWork(this));
         // SAFETY: as above.
-        let task = unsafe {
+        let node = unsafe {
             NapiEnv__asyncWorkLeftThreadPool(off_thread.env);
             ConcurrentTask::in_place(&raw mut off_thread.concurrent_task, task)
         };
         // A VM tearing down runs `complete` from its queue release, as Node does at environment cleanup.
-        ticket.post(task);
+        ticket.post(node);
     }
 
     fn cancel(status: &AtomicU32) -> bool {

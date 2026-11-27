@@ -113,13 +113,13 @@ bun_jsc::impl_abort_handle_owner!(S3HttpSimpleTask, abort_handle, |this, _cause|
 
 impl Taskable for S3HttpSimpleTask {
     const TAG: TaskTag = task_tag::S3HttpSimpleTask;
-    /// Its context's list points into it until `on_response` leaves.
+    /// Not a `Box`: its context points at `abort_handle` until `on_response` calls `leave`.
     type Payload = AliasableBox<Self>;
     /// A response the HTTP thread handed back during teardown: its native
     /// completion is what finishes the caller's operation (and settles a promise
     /// nobody can observe — script is forbidden), so run it.
     fn release_unrun(this: Self::Payload) {
-        let _ = S3HttpSimpleTask::on_response(this);
+        let _ = this.on_response();
     }
     /// `on_response` enters the request's context itself, stopped or not: a multipart upload still
     /// sends its rollback for a graph that was disposed.
@@ -299,14 +299,14 @@ impl S3HttpSimpleTask {
     }
 
     /// this is the task callback from the last task result and is always in the main thread
-    pub(crate) fn on_response(this: AliasableBox<Self>) -> bun_jsc::JsResult<()> {
+    pub(crate) fn on_response(self: AliasableBox<Self>) -> bun_jsc::JsResult<()> {
         // The next request of a multipart upload, a retry, and the script this calls continue
         // what the requesting script started.
         // (In a stopped context, whatever a retry arms is aborted at once.)
         let vm = VirtualMachine::get();
-        let _context = vm.enter_context(this.context);
-        this.abort_handle.leave();
-        let mut this = this.into_box();
+        let _context = vm.enter_context(self.context);
+        self.abort_handle.leave();
+        let mut this = self.into_box();
 
         let callback = this.callback.take().expect("a request is answered once");
         if !this.result.is_success() {
@@ -424,10 +424,8 @@ impl S3HttpSimpleTask {
         unsafe {
             let ticket = (*this).http_ticket.take().expect(Self::HOLDS_TICKET);
             let task = Task::new::<Self>(AliasableBox::from_non_null(NonNull::new_unchecked(this)));
-            ticket.post(ConcurrentTask::in_place(
-                &raw mut (*this).concurrent_task,
-                task,
-            ));
+            let node = &raw mut (*this).concurrent_task;
+            ticket.post(ConcurrentTask::in_place(node, task));
         }
     }
 

@@ -1962,7 +1962,7 @@ impl Resolver {
             (*poll).poll_cb_depth -= 1;
             if (*poll).poll_cb_depth == 0 && (*poll).closed {
                 // The task queue isn't drained until this libuv callback returns.
-                let poll = core::ptr::NonNull::new_unchecked(poll);
+                let poll = ptr::NonNull::new_unchecked(poll);
                 let poll = bun_ptr::AliasableBox::from_non_null(poll);
                 vm.enqueue_task(jsc::Task::new::<UvDnsPoll>(poll));
             }

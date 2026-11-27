@@ -53,7 +53,7 @@ pub(crate) enum State {
         next: usize,
         missing: bool,
     },
-    /// The line, tiled out to ~BUFSIZ.
+    /// Stdout is an fd. The line, tiled out to ~BUFSIZ.
     Yes(Vec<u8>),
 }
 

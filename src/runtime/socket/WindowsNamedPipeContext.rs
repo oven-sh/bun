@@ -53,7 +53,8 @@ bun_jsc::impl_abort_handle_owner!(WindowsNamedPipeContext, abort_handle, |this, 
 
 /// Not freed in place: `WindowsNamedPipe::on_close` uses the pipe after `on_close` returns.
 fn schedule_deinit(this: AliasableBox<WindowsNamedPipeContext>) {
-    (this.vm).enqueue_task(Task::new::<WindowsNamedPipeContext>(this));
+    let vm = this.vm;
+    vm.enqueue_task(Task::new::<WindowsNamedPipeContext>(this));
 }
 
 /// The ref a pipe holds on the socket it carries.

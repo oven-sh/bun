@@ -3669,11 +3669,11 @@ impl SocketMode {
 impl bun_event_loop::Taskable for DuplexUpgradeContext {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::DuplexUpgradeContext;
     type Payload = RefPtr<Self>;
-    /// `StartTLS` will not run. If the TLSSocket is still attached (no wrapper was created, so no
+    /// `run_start_tls` will not run. If the TLSSocket is still attached (no wrapper was created, so no
     /// close ever detached it), route it through its close first — that
     /// detaches it from the duplex, so its finalizer
     /// during ~VM finds nothing to reach into.
-    fn release_unrun(ctx: RefPtr<Self>) {
+    fn release_unrun(ctx: Self::Payload) {
         if let Some(tls) = ctx.tls.replace(None) {
             // Neuter the listener thunks now, while the wrapper is still
             // strongly held.
@@ -3685,8 +3685,8 @@ impl bun_event_loop::Taskable for DuplexUpgradeContext {
         ctx.release_connection();
     }
     /// The hop continues the script that upgraded the duplex: once that context has stopped, a
-    /// `StartTLS` that has not run yet must not start (`release_unrun` closes what there is).
-    fn context(ctx: &RefPtr<Self>) -> bun_event_loop::ContextId {
+    /// `run_start_tls` that has not run yet must not start (`release_unrun` closes what there is).
+    fn context(ctx: &Self::Payload) -> bun_event_loop::ContextId {
         ctx.context
     }
 }
@@ -3709,7 +3709,7 @@ pub(crate) static DUPLEX_UPGRADE_CONTEXT_LIVE_COUNT: core::sync::atomic::AtomicU
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy_box = Self::queue_free)]
 pub(crate) struct DuplexUpgradeContext {
-    /// One ref for the open connection (`connection_ref`), one for the queued `StartTLS` and one per entry
+    /// One ref for the open connection (`connection_ref`), one for the queued `run_start_tls` and one per entry
     /// point on the stack ([`UpgradedDuplex::ctx`]). At zero the
     /// free is queued. No ref is taken after
     /// that.
@@ -3724,12 +3724,12 @@ pub(crate) struct DuplexUpgradeContext {
     pub ssl_config: JsCell<Option<SSLConfig>>,
     /// Prebuilt `SSL_CTX` (from `opts.tls.secureContext` — the memoised
     /// `tls.createSecureContext` path). Moved into `start_tls_with_ctx`;
-    /// dropped with the context if the transport closes ahead of StartTLS.
+    /// dropped with the context if the transport closes ahead of `run_start_tls`.
     pub owned_ctx: JsCell<Option<boringssl_sys::OwnedSslCtx>>,
     pub upgrade: UpgradedDuplex,
     pub is_open: Cell<bool>,
     /// Server-side `requestCert`/`rejectUnauthorized`, applied to the `SSL*`
-    /// when `StartTLS` builds it. Unused for client upgrades.
+    /// when `run_start_tls` builds it. Unused for client upgrades.
     pub server_verify: crate::socket::upgraded_duplex::ServerVerify,
     mode: SocketMode,
     /// A TLS socket over a JS duplex is in no uSockets group, so the context
@@ -3758,7 +3758,7 @@ impl DuplexUpgradeContext {
         from_duplex::<true>(&self.upgrade)
     }
 
-    /// The transport closed, or `StartTLS` could not start it.
+    /// The transport closed, or `run_start_tls` could not start it.
     fn release_connection(&self) {
         if let Some(_connection_ref) = self.connection_ref.take() {
             // Nothing is left for the owning context to close, and its hook would take a ref.
@@ -3770,7 +3770,8 @@ impl DuplexUpgradeContext {
     /// drops while that entry point's `&self` is live, so the context is not
     /// freed in place: the queued hop frees it.
     fn queue_free(this: AliasableBox<Self>) {
-        (this.vm.event_loop()).enqueue_task(jsc::Task::new::<DuplexUpgradeContextFree>(this));
+        let event_loop = this.vm.event_loop();
+        event_loop.enqueue_task(jsc::Task::new::<DuplexUpgradeContextFree>(this));
     }
 
     pub(super) fn on_end(&self) {
@@ -3795,15 +3796,15 @@ impl DuplexUpgradeContext {
             }
         } else if let Some(tls) = self.tls.replace(None) {
             // Pre-open error (e.g. the duplex emitted non-Buffer data
-            // before the queued `.StartTLS` task ran). `handle_connect_error`
+            // before the queued `run_start_tls` ran). `handle_connect_error`
             // → `mark_inactive` releases `tls.handlers`; null `tls` so the
-            // still-queued `.StartTLS` → `onOpen` — and any further
+            // still-queued `run_start_tls` → `onOpen` — and any further
             // duplex events — skip the TLSSocket instead of hitting
             // `has_handlers() == false` in `onOpen`.
             //
             // Neuter the JS listener thunks now, while the wrapper is still
             // strongly held, so the `Drop` teardown later (the
-            // queued `StartTLS` releases the connection's ref, after
+            // queued `run_start_tls` releases the connection's ref, after
             // `handle_connect_error` downgrades the wrapper) is a no-op on
             // already-cleared shadows.
             self.upgrade.teardown();
@@ -3838,7 +3839,7 @@ impl DuplexUpgradeContext {
         self.release_connection();
     }
 
-    /// `start_tls` dispatches `on_open` and the first handshake pass.
+    /// [`Self::queue_start_tls`]'s task.
     pub(crate) fn run_start_tls(self: RefPtr<Self>) {
         // After a pre-open error. No `SSLWrapper` is made, whose close would release the connection.
         if self.tls.is_none() {
@@ -3872,7 +3873,7 @@ impl DuplexUpgradeContext {
             }
             let errno = sys::SystemErrno::ECONNREFUSED as c_int;
             if let Some(tls) = self.tls.replace(None) {
-                // Now, while the wrapper is still strongly held.
+                // Neuter the listener thunks while the wrapper is still strongly held.
                 self.upgrade.teardown();
                 crate::dispatch::fold(tls.handle_connect_error(errno, 0));
             }
@@ -3885,7 +3886,8 @@ impl DuplexUpgradeContext {
     }
 
     fn queue_start_tls(self: &RefPtr<Self>) {
-        (self.vm.event_loop()).enqueue_task(jsc::Task::new::<Self>(self.clone()));
+        let task = jsc::Task::new::<Self>(self.clone());
+        self.vm.event_loop().enqueue_task(task);
     }
 }
 

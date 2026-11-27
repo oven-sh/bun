@@ -984,7 +984,7 @@ pub mod waiter_thread_posix {
                     subprocess: process,
                     task: AnyTaskWithExtraContext::default(),
                 });
-                mini.post(task, |task| &mut task.task);
+                mini.inbox.post_intrusive(task, |task| &mut task.task);
             }
         }
     }

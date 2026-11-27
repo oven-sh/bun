@@ -157,7 +157,9 @@ impl Async {
             EventLoopHandle::Js { owner } => {
                 owner.enqueue_task_after_yield(bun_jsc::Task::from_boxed(task))
             }
-            EventLoopHandle::Mini(mini) => mini.post(task, |task| &mut task.mini_task),
+            EventLoopHandle::Mini(mini) => {
+                mini.inbox.post_intrusive(task, |task| &mut task.mini_task)
+            }
         }
     }
 }

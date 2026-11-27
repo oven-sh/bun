@@ -361,8 +361,7 @@ impl VmHandle {
     /// the VM is closed. For posters that hold no ticket.
     pub fn post<T: Taskable>(&self, kind: LoopKind, task: T::Payload) -> Posted<T::Payload> {
         self.post_with(T::TAG, task, |task| {
-            let node = ConcurrentTaskItem::create::<T>(task);
-            self.0.deliver(kind, node);
+            self.0.deliver(kind, ConcurrentTaskItem::create::<T>(task));
         })
     }
 
@@ -801,12 +800,12 @@ pub unsafe extern "C" fn Bun__VmHandle__release(r: *const Shared) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__VmHandle__post(
     r: *const Shared,
-    task: crate::cpp_task::OwnedCppTask,
+    task: crate::cpp_task::CppTask,
     kind: LoopKind,
 ) {
     // SAFETY: fn contract.
     let handle = unsafe { VmHandle::borrow_ref(r) };
-    let _ = handle.post::<crate::CppTask>(kind, task);
+    drop(handle.post::<crate::CppTask>(kind, task));
 }
 
 /// The JS thread, or the collector's while the JS thread is stopped.
@@ -880,7 +879,7 @@ const _: () = assert!(State::Open as u8 == 0);
 /// takes one more ticket.
 pub enum ConcurrentPoster {
     Js(Ticket),
-    Mini(&'static bun_event_loop::MiniEventLoop::MiniEventLoop),
+    Mini(&'static bun_event_loop::MiniEventLoop::Inbox),
 }
 
 impl Clone for ConcurrentPoster {
@@ -905,7 +904,7 @@ impl ConcurrentPoster {
                 let vm = unsafe { &*owner.bun_vm().cast::<VirtualMachine>() };
                 ConcurrentPoster::Js(vm.ticket())
             }
-            bun_event_loop::EventLoopHandle::Mini(mini) => ConcurrentPoster::Mini(mini),
+            bun_event_loop::EventLoopHandle::Mini(mini) => ConcurrentPoster::Mini(&mini.inbox),
         }
     }
 
@@ -918,7 +917,7 @@ impl ConcurrentPoster {
     }
 
     /// For a task that `node` returns a field of.
-    pub fn post<T: BoxedTask + MiniTask>(
+    pub fn post_intrusive<T: BoxedTask + MiniTask>(
         &self,
         task: Box<T>,
         node: fn(&mut T) -> &mut EventLoopTask,
@@ -929,7 +928,9 @@ impl ConcurrentPoster {
                     node(task).insert_js()
                 }));
             }
-            ConcurrentPoster::Mini(mini) => mini.post(task, |task| node(task).insert_mini()),
+            ConcurrentPoster::Mini(inbox) => {
+                inbox.post_intrusive(task, |task| node(task).insert_mini())
+            }
         }
     }
 }
@@ -944,7 +945,7 @@ struct VmPoster {
 impl bun_event_loop::PostToJs for VmPoster {
     fn post(&self, task: OwnedConcurrentTask) -> Posted {
         self.handle.post_with(task.tag(), task, |task| {
-            (self.handle.0).deliver(self.kind, task);
+            self.handle.0.deliver(self.kind, task);
         })
     }
 }

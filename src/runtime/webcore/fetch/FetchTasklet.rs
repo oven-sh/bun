@@ -96,17 +96,18 @@ impl Drop for HttpThreadRef {
     fn drop(&mut self) {
         if let Some(last) = self.tasklet.take().and_then(RefPtr::drop_unless_last) {
             // It holds JSC handles, so it is freed on the JS thread.
-            (self.ticket).post(ConcurrentTask::create::<FetchTaskletDeinitHop>(last));
+            let task = ConcurrentTask::create::<FetchTaskletDeinitHop>(last);
+            self.ticket.post(task);
         }
     }
 }
 
-/// The JS thread's ref. There is one for each tasklet, in `js_ref` or in the queue.
-pub struct ProgressUpdate(RefPtr<FetchTasklet>);
+/// One for each tasklet, in `js_ref` or in the queue.
+pub struct JsThreadRef(RefPtr<FetchTasklet>);
 
 impl Taskable for FetchTasklet {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTasklet;
-    type Payload = ProgressUpdate;
+    type Payload = JsThreadRef;
     /// No other progress update follows one that does not run.
     fn release_unrun(_: Self::Payload) {}
     /// `on_progress_update` decides: a fetch whose context stopped reports nothing, and what is left
@@ -138,7 +139,7 @@ pub struct FetchTasklet {
     /// the VM through `global_this` instead and never touches this.
     http_ref: Option<HttpThreadRef>,
     /// `None` while it is queued in `concurrent_task`. Guarded by `mutex` up to `release_at_shutdown`.
-    js_ref: Option<ProgressUpdate>,
+    js_ref: Option<JsThreadRef>,
     pub global_this: GlobalRef,
     pub(crate) request_body: HTTPRequestBody,
     /// This side's ref; the HTTP thread holds the other.
@@ -755,7 +756,7 @@ impl FetchTasklet {
         result
     }
 
-    pub(crate) fn on_progress_update(ProgressUpdate(js_ref): ProgressUpdate) -> JsResult<()> {
+    pub(crate) fn on_progress_update(JsThreadRef(js_ref): JsThreadRef) -> JsResult<()> {
         jsc::mark_binding!();
         bun_output::scoped_log!(FetchTasklet, "onProgressUpdate");
         let this = js_ref.as_ptr();
@@ -768,8 +769,9 @@ impl FetchTasklet {
             let is_done = !(*this).result.has_more;
             // A copy: script that runs below can spin the event loop up to the last update.
             if !is_done {
-                (*this).js_ref = Some(ProgressUpdate(js_ref.clone()));
+                (*this).js_ref = Some(JsThreadRef(js_ref.clone()));
             }
+            // Rebound so that it drops before `_context`.
             let _js_ref = js_ref;
             (*this).update_progress(vm, lock, is_done)?;
             if (*this).trace.is_some() {
@@ -2407,7 +2409,7 @@ impl FetchTasklet {
         let node_ref = Self::from_raw_mut(node);
         node_ref.poll_ref.ref_(bun_io::js_vm_ctx());
 
-        let js_ref = node_ref.js_ref.insert(ProgressUpdate(js_ref));
+        let js_ref = node_ref.js_ref.insert(JsThreadRef(js_ref));
         // Out on the HTTP thread from here until its final callback: its context
         // aborts it when it stops, and the VM waits for it (the ticket).
         node_ref.http_ref = Some(HttpThreadRef {

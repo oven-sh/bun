@@ -56,7 +56,6 @@ impl YesTask {
             if let Sink::Memory(memory) = Builtin::sink(interp, cmd, IoKind::Stdout)
                 && let Err(e) = memory.write(&self.chunk)
             {
-                drop(self);
                 let name = bstr::BStr::new(e.name());
                 return Builtin::fail(interp, cmd, format_args!("{name}\n"));
             }
@@ -68,7 +67,7 @@ impl YesTask {
             }
             EventLoopHandle::Mini(mini) => {
                 mini.loop_.tick();
-                mini.post(self, |this| &mut this.mini_task);
+                mini.inbox.post_intrusive(self, |this| &mut this.mini_task);
             }
         }
         Yield::suspended()

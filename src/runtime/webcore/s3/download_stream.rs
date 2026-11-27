@@ -23,8 +23,8 @@ pub struct S3HttpDownloadStreamingTask {
     pub(crate) headers: Headers,
     /// JS thread only.
     pub(crate) wrapper: AliasableBox<S3DownloadStreamWrapper>,
-    /// For the next report, and `None` while one is queued in `concurrent_task`. Guarded by `mutex`.
-    pub(crate) owner: Option<AliasableBox<Self>>,
+    /// `None` while it is queued in `concurrent_task`. Guarded by `mutex`.
+    pub(crate) self_box: Option<AliasableBox<Self>>,
     pub(crate) signal_store: bun_http::signals::Store,
     pub poll_ref: JsKeepAlive,
 
@@ -56,7 +56,7 @@ impl Taskable for S3HttpDownloadStreamingTask {
     type Payload = AliasableBox<Self>;
     /// The completion frees the task; run it.
     fn release_unrun(this: Self::Payload) {
-        S3HttpDownloadStreamingTask::on_response(this);
+        this.on_response();
     }
     /// The completion frees the request; the stream it feeds was aborted with its context
     /// (`abort_handle`).
@@ -141,8 +141,8 @@ impl S3HttpDownloadStreamingTask {
     }
 
     /// this is the task callback from the last task result and is always in the main thread
-    pub(crate) fn on_response(owner: AliasableBox<Self>) {
-        let this = owner.as_ptr();
+    pub(crate) fn on_response(self: AliasableBox<Self>) {
+        let this = self.as_ptr();
         // SAFETY: only this thread frees `this`: below, or in a later task. No borrow spans
         // `report_progress` (which invokes `on_chunk` or `on_error`).
         unsafe {
@@ -151,10 +151,10 @@ impl S3HttpDownloadStreamingTask {
             let state = (*this).get_state();
             // The HTTP thread does not call back again once `has_more` is false.
             let finished = if state.has_more() {
-                (*this).owner = Some(owner);
+                (*this).self_box = Some(self);
                 None
             } else {
-                Some(owner)
+                Some(self)
             };
             Self::report_progress(this, state);
             drop(guard);
@@ -253,16 +253,16 @@ impl S3HttpDownloadStreamingTask {
             if self.reported_response_buffer.list.is_empty() && !is_done {
                 return None;
             }
-            return self.owner.take();
+            return self.self_box.take();
         }
         None
     }
 
-    fn into_concurrent_task(owner: AliasableBox<Self>) -> OwnedConcurrentTask {
-        let this = owner.as_ptr();
-        // SAFETY: nothing else uses the node, and `owner` is back only once it has left the queue.
+    fn into_concurrent_task(self: AliasableBox<Self>) -> OwnedConcurrentTask {
+        let this = self.as_ptr();
+        // SAFETY: nothing else uses the node, and `self_box` is filled again only once it has left the queue.
         unsafe {
-            ConcurrentTask::in_place(&raw mut (*this).concurrent_task, Task::new::<Self>(owner))
+            ConcurrentTask::in_place(&raw mut (*this).concurrent_task, Task::new::<Self>(self))
         }
     }
 
@@ -289,7 +289,7 @@ impl S3HttpDownloadStreamingTask {
         // SAFETY: as above; the HTTP thread is the only one touching it here.
         if let Some(owner) = unsafe { (*this).process_http_callback(result) } {
             // we are always unlocked here and its safe to enqueue
-            let task = Self::into_concurrent_task(owner);
+            let task = owner.into_concurrent_task();
             // SAFETY: not done ⇒ `this` (and the ticket in it) outlives the post.
             unsafe {
                 done_ticket
@@ -321,10 +321,10 @@ impl S3HttpDownloadStreamingTask {
                 (*this).request_error = Some(bun_http::Error::Aborted);
                 state.set_request_error(1);
                 (*this).set_state(state);
-                (*this).owner.take()
+                (*this).self_box.take()
             };
             if let Some(owner) = owner {
-                ticket.post(Self::into_concurrent_task(owner));
+                ticket.post(owner.into_concurrent_task());
             }
             drop(ticket);
         }

@@ -1,3 +1,4 @@
+use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::vm_handle::KeepAliveTicket;
@@ -6,21 +7,16 @@ use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 unsafe extern "C" {
-    safe fn Bun__performTask(global: &JSGlobalObject, task: OwnedCppTask);
-    fn Bun__deleteEventLoopTask(task: NonNull<CppTask>);
+    safe fn Bun__performTask(global: &JSGlobalObject, task: CppTask);
+    fn Bun__deleteEventLoopTask(task: NonNull<c_void>);
     fn Bun__EventLoopTaskNoContext__performTask(task: *mut EventLoopTaskNoContext);
 }
 
-bun_opaque::opaque_ffi! {
-    /// A task created from C++ code, usually via ScriptExecutionContext.
-    pub struct CppTask;
-}
-
-/// Deleted on drop.
+/// A task created from C++ code, usually via ScriptExecutionContext. Deleted on drop.
 #[repr(transparent)]
-pub struct OwnedCppTask(NonNull<CppTask>);
+pub struct CppTask(NonNull<c_void>);
 
-impl Drop for OwnedCppTask {
+impl Drop for CppTask {
     fn drop(&mut self) {
         // SAFETY: `self` is the only owner.
         unsafe { Bun__deleteEventLoopTask(self.0) }
@@ -29,22 +25,20 @@ impl Drop for OwnedCppTask {
 
 impl Taskable for CppTask {
     const TAG: TaskTag = task_tag::CppTask;
-    type Payload = OwnedCppTask;
+    type Payload = Self;
     /// Its captured `Ref`s drop against the still-live heap.
-    fn release_unrun(_: OwnedCppTask) {}
+    fn release_unrun(_: Self) {}
     /// A `WebCore::EventLoopTask`: C++ posted it to a context and checks that context there.
-    fn context(_: &OwnedCppTask) -> bun_event_loop::ContextId {
+    fn context(_: &Self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
 
-impl OwnedCppTask {
+impl CppTask {
     pub fn run(self, global: &JSGlobalObject) -> JsResult<()> {
         crate::mark_binding!();
         // The task may declare a throw scope of its own without an enclosing one.
-        crate::top_scope!(scope, global);
-        Bun__performTask(global, self);
-        scope.return_if_exception()
+        crate::call_check_slow(global, || Bun__performTask(global, self))
     }
 }
 

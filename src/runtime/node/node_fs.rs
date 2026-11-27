@@ -2375,9 +2375,9 @@ mod _async_tasks {
                 .poster
                 .take()
                 .expect("fs.cp in flight holds its poster");
-            // Only the shell's task can have a mini loop.
+            // Only the shell's task can have a mini loop. Its node is free once a copy has started.
             if IS_SHELL {
-                poster.post(this, |this| {
+                poster.post_intrusive(this, |this| {
                     let shelltask = this.shelltask.as_mut().expect("IS_SHELL ⇒ shelltask");
                     &mut shelltask.task.concurrent_task
                 });

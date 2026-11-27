@@ -1050,29 +1050,29 @@ pub(crate) extern "C" fn uv_update_time(_loop: *mut UvLoop) {}
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `uv_close` posts the handle as a task.
-impl Taskable for UvHandle {
+impl Taskable for HandleRef<'static> {
     const TAG: TaskTag = task_tag::UvHandleClose;
-    type Payload = HandleRef<'static>;
+    type Payload = Self;
     /// Still runs `close_cb` because that's where the addon frees the handle. Any JS
     /// it tries to run is refused.
-    fn release_unrun(handle: Self::Payload) {
+    fn release_unrun(handle: Self) {
         // On `Err` the exception is still pending, and the release dispatcher handles it.
-        let _ = UvHandle::run_close(handle, VirtualMachine::get().global());
+        let _ = handle.run_close(VirtualMachine::get().global());
     }
     /// Not tied to one context, like [`UvLoop`]'s task.
-    fn context(_: &Self::Payload) -> ContextId {
+    fn context(_: &Self) -> ContextId {
         ContextId::NONE
     }
 }
 
-impl UvHandle {
+impl HandleRef<'static> {
     /// Runs `close_cb` one turn after `uv_close`. The callback usually frees the handle.
-    pub(crate) fn run_close(handle: HandleRef<'static>, global: &JSGlobalObject) -> JsResult<()> {
-        bun_output::scoped_log!(uv, "uv_handle_t {:?}: close_cb", handle.ptr);
-        if let Some(close_cb) = handle.close_cb.get() {
+    pub(crate) fn run_close(self, global: &JSGlobalObject) -> JsResult<()> {
+        bun_output::scoped_log!(uv, "uv_handle_t {:?}: close_cb", self.ptr);
+        if let Some(close_cb) = self.close_cb.get() {
             let _handles = CallbackScope::open(global);
             // SAFETY: calls the addon's callback on the loop thread with its handle.
-            unsafe { close_cb(handle.into_raw()) };
+            unsafe { close_cb(self.into_raw()) };
         }
         if global.has_exception() {
             return Err(JsError::Thrown);
@@ -1109,7 +1109,7 @@ pub(crate) unsafe extern "C" fn uv_close(handle: HandleRef<'_>, close_cb: Option
     let closing = unsafe { HandleRef::new(handle.ptr) };
     // The queued task keeps the loop alive until `close_cb` has run, like libuv's
     // closing list. If the VM is gone, the task is refused and `close_cb` never runs.
-    let _ = (uv_loop.shared.handle).post::<UvHandle>(LoopKind::Regular, closing);
+    let _ = (uv_loop.shared.handle).post::<HandleRef>(LoopKind::Regular, closing);
 }
 
 /// Implements `void uv_ref(uv_handle_t*)`. Idempotent. Only matters while the handle
@@ -1187,7 +1187,7 @@ enum WorkState {
 }
 
 /// Matches `struct uv_work_s`.
-pub(crate) type UvWork = UvReq<WorkFields>;
+type UvWork = UvReq<WorkFields>;
 
 /// Addons also read the first three fields. `state` replaces libuv's `struct uv__work`.
 #[repr(C)]

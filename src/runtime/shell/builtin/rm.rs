@@ -183,6 +183,7 @@ pub(crate) struct ShellRmTask {
 
 /// One per directory in the recursive walk.
 pub(crate) struct DirTask {
+    /// A box: the root takes it back in [`DirTask::post_run`].
     pub(crate) task_manager: *mut ShellRmTask,
     pub(crate) parent_task: *mut DirTask,
     /// `None` for the root, which removes [`ShellRmTask::operand`].
@@ -348,8 +349,7 @@ impl ShellRmTask {
 
     fn remove_entry(&self, dir_task: *mut DirTask) -> Maybe<Owner> {
         // SAFETY: `dir_task` is live; this thread owns it. `path` is read-only after construction.
-        let path = unsafe { (*dir_task).path.as_ref() };
-        let path = path.unwrap_or(&self.operand).as_zstr();
+        let path: &ZStr = unsafe { (*dir_task).path.as_ref() }.unwrap_or(&self.operand);
         let Some(dir) = self.remove_or_open(dir_task, path)? else {
             return Ok(Owner::ThisThread);
         };
@@ -416,8 +416,7 @@ impl ShellRmTask {
 
     fn remove_entry_dir_after_children(&self, dir_task: *mut DirTask) -> Maybe<Owner> {
         // SAFETY: `dir_task` is live; this thread owns it.
-        let path = unsafe { (*dir_task).path.as_ref() };
-        let path = path.unwrap_or(&self.operand).as_zstr();
+        let path: &ZStr = unsafe { (*dir_task).path.as_ref() }.unwrap_or(&self.operand);
         loop {
             match bun_sys::rmdirat(self.cwd, path) {
                 Ok(()) => {
@@ -535,9 +534,8 @@ impl DirTask {
 
                 // Before the parent's decrement, which can finish the root and with it the poster.
                 if tm.opts.verbose && !me.deleted_entries.is_empty() {
-                    let poster = tm.task.poster.as_ref();
-                    let poster = poster.expect("rm task on the pool holds its poster");
-                    poster.post(me, |me| &mut me.concurrent_task);
+                    let poster = tm.task.poster.as_ref().expect("held on the pool");
+                    poster.post_intrusive(me, |me| &mut me.concurrent_task);
                 } else {
                     drop(me);
                 }
@@ -552,7 +550,8 @@ impl DirTask {
                 }
 
                 let mut tm = bun_core::heap::take(task_manager);
-                (tm.task.take_poster()).post(tm, |tm| &mut tm.task.concurrent_task);
+                let poster = tm.task.take_poster();
+                poster.post_intrusive(tm, |tm| &mut tm.task.concurrent_task);
             }
         }
         // Otherwise need to wait.

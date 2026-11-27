@@ -638,7 +638,7 @@ fn download_stream(
         wrapper,
         headers,
         http_ticket: None,
-        owner: None,
+        self_box: None,
         signal_store: Default::default(),
         poll_ref: JsKeepAlive::active(),
         mutex: Default::default(),
@@ -654,7 +654,7 @@ fn download_stream(
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpDownloadStreamingTask>(),
     });
     let task_ptr = owner.as_ptr();
-    // SAFETY: just allocated, non-null, and `task` is not used once `task_ptr` is dereferenced.
+    // SAFETY: just allocated, `owner` is not dereferenced, and `task` is not used once `task_ptr` is.
     // `'static`: `url`, `headers_buf` and `http_proxy` borrow heap buffers that `*task` owns and
     // never writes again, for the HTTP thread. They remain valid until `task` is dropped in
     // `S3HttpDownloadStreamingTask::on_response`. See `execute_simple_s3_request`.
@@ -696,7 +696,7 @@ fn download_stream(
     );
     task.async_http_id = http.async_http_id;
     task.wrapper.task.set(task_ptr);
-    task.owner = Some(owner);
+    task.self_box = Some(owner);
     // enable streaming
     http.enable_response_body_streaming();
     // queue http request

@@ -13,7 +13,7 @@ use bun_uws_sys as uws_sys;
 use bun_uws_sys::app::c as uws_app_c;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult};
-use bun_ptr::{AliasableBox, AsCtxPtr, OptionCellExt as _};
+use bun_ptr::{AsCtxPtr, OptionCellExt as _};
 
 use crate::webcore::Request;
 
@@ -1772,7 +1772,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// The last ref is gone: the JS wrapper is collected and the server is drained.
-    fn schedule_deinit(server: AliasableBox<Self>) {
+    fn schedule_deinit(server: bun_ptr::AliasableBox<Self>) {
         httplog!("scheduleDeinit");
         let terminated = server.flags.get().contains(ServerFlags::TERMINATED);
 
@@ -1788,7 +1788,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // App.close can cause finalizers to run.
             // scheduleDeinit can be called inside a finalizer.
             // Therefore, the task does it.
-            (server.flags).update(|f| f | ServerFlags::TERMINATED | ServerFlags::CLOSE_SCHEDULED);
+            server
+                .flags
+                .update(|f| f | ServerFlags::TERMINATED | ServerFlags::CLOSE_SCHEDULED);
         }
 
         let vm = server.vm;
@@ -1800,6 +1802,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if self.flags.get().contains(ServerFlags::CLOSE_SCHEDULED) {
             // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
             bun_opaque::opaque_deref_mut(self.app().unwrap()).close();
+            // Microtasks that the close queued run before the server is freed.
             self.vm().drain_microtasks();
         }
     }
@@ -3846,6 +3849,7 @@ pub(crate) enum SavedRequestUnion<'a> {
     Saved(&'a SavedRequest),
 }
 
+// ─── schedule_deinit's task ──────────────────────────────────────────────────
 impl<const SSL: bool, const DEBUG: bool> bun_event_loop::Taskable for NewServer<SSL, DEBUG> {
     const TAG: bun_event_loop::TaskTag = match (SSL, DEBUG) {
         (false, false) => bun_event_loop::task_tag::HTTPServerDeinit,
@@ -3853,7 +3857,7 @@ impl<const SSL: bool, const DEBUG: bool> bun_event_loop::Taskable for NewServer<
         (false, true) => bun_event_loop::task_tag::DebugHTTPServerDeinit,
         (true, true) => bun_event_loop::task_tag::DebugHTTPSServerDeinit,
     };
-    type Payload = AliasableBox<Self>;
+    type Payload = bun_ptr::AliasableBox<Self>;
     /// Frees nothing: a server whose deinit is still queued when its VM stops stays allocated.
     fn release_unrun(server: Self::Payload) {
         server.into_raw();

@@ -2124,7 +2124,7 @@ pub(crate) type WorkPoolTask = bun_threading::work_pool::Task;
 /// interpreter checks its own context before anything reaches script (`Interpreter::interrupted`,
 /// `finish`, `fail`).
 pub(crate) struct ShellTask {
-    event_loop: EventLoopHandle,
+    event_loop: bun_io::EventLoopCtx,
     /// How the pool thread bounces the task back to its owning loop; held only
     /// while the task is out on the pool. For a JS
     /// loop this is the ticket its VM waits for: the context lives in
@@ -2137,13 +2137,13 @@ pub(crate) struct ShellTask {
     pub(crate) concurrent_task: bun_event_loop::EventLoopTask,
 }
 
-// SAFETY: pool threads use `poster`, which holds the VM's ticket, and the node, and copy `event_loop`
-// and `interp`. The task is run and dropped on its loop's thread.
+// SAFETY: pool threads write the node and copy `event_loop` and `interp`. The task is run and dropped
+// on its loop's thread.
 unsafe impl Send for ShellTask {}
 
 impl Drop for ShellTask {
     fn drop(&mut self) {
-        self.keep_alive.unref(self.event_loop.as_event_loop_ctx());
+        self.keep_alive.unref(self.event_loop);
     }
 }
 
@@ -2168,30 +2168,29 @@ impl ShellTask {
     }
 
     #[track_caller]
-    fn with_keep_alive(interp: &Interpreter, keep_alive: bun_io::KeepAlive) -> Self {
-        let event_loop = interp.event_loop;
+    fn new_no_ref(interp: &Interpreter) -> Self {
         ShellTask {
             poster: Some(bun_jsc::ConcurrentPoster::from_event_loop_handle(
-                &event_loop,
+                &interp.event_loop,
             )),
-            event_loop,
-            keep_alive,
+            event_loop: interp.event_loop.as_event_loop_ctx(),
+            keep_alive: Default::default(),
             interp: interp.as_ctx_ptr(),
             concurrent_task: Default::default(),
         }
     }
 
-    /// For a task that is about to leave its loop's thread: takes the keep-alive and the ticket.
+    /// For a task that is about to leave its loop's thread: takes the ticket and the keep-alive.
     #[track_caller]
     pub(super) fn new(interp: &Interpreter) -> Self {
-        let keep_alive = bun_io::KeepAlive::init();
-        keep_alive.ref_(interp.event_loop.as_event_loop_ctx());
-        Self::with_keep_alive(interp, keep_alive)
+        let task = Self::new_no_ref(interp);
+        task.keep_alive.ref_(task.event_loop);
+        task
     }
 
     /// Moved out: the owning thread may free the task once it is queued.
     pub(super) fn take_poster(&mut self) -> bun_jsc::ConcurrentPoster {
-        (self.poster.take()).expect("shell task on the pool holds its poster")
+        self.poster.take().expect("held on the pool")
     }
 }
 
@@ -2217,8 +2216,7 @@ impl<W: ShellWork> PoolTask<W> {
     }
 
     pub(crate) fn schedule_no_ref(interp: &Interpreter, work: W) {
-        let task = ShellTask::with_keep_alive(interp, bun_io::KeepAlive::init());
-        Self::schedule_task(task, work);
+        Self::schedule_task(ShellTask::new_no_ref(interp), work);
     }
 
     #[track_caller]
@@ -2240,7 +2238,8 @@ impl<W: ShellWork> bun_threading::work_pool::OwnedTask for PoolTask<W> {
     fn run(mut self: Box<Self>) {
         self.work.run_from_thread_pool(&self.task);
         log!("ShellTask onFinish");
-        (self.task.take_poster()).post(self, |this| &mut this.task.concurrent_task);
+        let poster = self.task.take_poster();
+        poster.post_intrusive(self, |this| &mut this.task.concurrent_task);
     }
 }
 

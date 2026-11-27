@@ -100,7 +100,8 @@ fn to_js_module_record<'a>(
             )
         })
         .count();
-    // SAFETY: the record is held on the stack only, which the collector scans.
+    // SAFETY: the record is held on the stack only, which the collector scans. The printer wrote `res`
+    // together with `source_code`.
     let module_record = unsafe {
         JSC_JSModuleRecord__create(
             global_object,
@@ -322,6 +323,8 @@ bun_opaque::opaque_ffi! {
     pub(crate) struct JSModuleLoader;
 }
 unsafe extern "C" {
+    /// SAFETY: the record is kept alive for `'a`. By the time it is linked, each entry that was added names a
+    /// module that it requests, or a variable of `source_code`: JSC does not check.
     fn JSC_JSModuleRecord__create<'a>(
         global_object: &'a JSGlobalObject,
         vm: &VM,

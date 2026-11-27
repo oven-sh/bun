@@ -2796,7 +2796,7 @@ pub use bun_pod::{
 
 // ─── extern_union_accessors! ──────────────────────────────────────────────────
 // Wraps each bare-union field read in a tag-asserted `unsafe` accessor so call
-// sites stay safe. `Resolution` and `Bin` share it.
+// sites stay safe.
 //
 // Emits, per arm, `pub fn $field(&self) -> &$Ty` and optionally
 // `pub fn $field_mut(&mut self) -> &mut $Ty`, each guarded by

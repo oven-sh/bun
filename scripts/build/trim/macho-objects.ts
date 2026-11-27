@@ -17,6 +17,7 @@ const N_TYPE = 0x0e;
 const N_SECT = 0x0e;
 const N_EXT = 0x01;
 const N_NO_DEAD_STRIP = 0x0020;
+const N_WEAK_DEF = 0x0080;
 const N_ALT_ENTRY = 0x0200;
 const SECTION_TYPE = 0xff;
 const S_CSTRING_LITERALS = 2;
@@ -61,6 +62,8 @@ export interface MachOReferences {
   /** Of each atom. "L", "G": a local, a global name. "S": a string. "W": a literal. "U": why a literal was not read. */
   references: Map<string, Set<string>>;
   externals: string[];
+  /** The names at the end of a section or of an atom, which have no bytes → the atom in front, if the linker keeps them in it. */
+  endLabels: Map<string, string | undefined>;
   retained: string[];
   liveWithoutReference: string[];
   unreadStrings: number;
@@ -85,6 +88,7 @@ interface SymbolEntry {
   name: string;
   type: number;
   section: number;
+  description: number;
   value: number;
 }
 
@@ -150,11 +154,12 @@ function readSymbols({ entries, strings }: SymbolTable, sections: Section[], res
       name: stringAt(strings, entries.readUInt32LE(entry)),
       type: entries[entry + 4]!,
       section: entries[entry + 5]!,
+      description: entries.readUInt16LE(entry + 6),
       value: Number(entries.readBigUInt64LE(entry + 8)),
     };
     symbols.push(symbol);
     if ((symbol.type & N_STAB) !== 0 || (symbol.type & N_TYPE) !== N_SECT) continue;
-    const description = entries.readUInt16LE(entry + 6);
+    const { description } = symbol;
     if ((description & N_ALT_ENTRY) === 0) {
       const names = namesByAddress[symbol.section - 1]!;
       names.set(symbol.value, names.has(symbol.value) ? names.get(symbol.value) + "\x01" + symbol.name : symbol.name);
@@ -182,8 +187,6 @@ function createObjectLookup(readFrom: ReadBytes, sections: Section[], atoms: Ato
     }
     return low > 0 ? list[low - 1]![1] : undefined;
   };
-  const sectionNumberAt = (address: number) =>
-    sections.findIndex(other => other.address <= address && address < other.address + other.size) + 1;
   const sectionType = (section: number) => (sections[section - 1]?.flags ?? 0) & SECTION_TYPE;
   const isCStringSection = (section: number) => sectionType(section) === S_CSTRING_LITERALS;
   const literalSize = (section: number) => literalSizes.get(sectionType(section));
@@ -206,7 +209,7 @@ function createObjectLookup(readFrom: ReadBytes, sections: Section[], atoms: Ato
     const end = text.indexOf(0, at);
     return text.toString("latin1", at === 0 ? 0 : text.lastIndexOf(0, at - 1) + 1, end < 0 ? text.length : end);
   };
-  return { atomAt, sectionNumberAt, isCStringSection, literalSize, literalAt, enclosingString };
+  return { atomAt, isCStringSection, literalSize, literalAt, enclosingString };
 }
 
 interface ObjectFile {
@@ -224,8 +227,38 @@ function addReference(result: MachOReferences, from: string, to: string): void {
   else set.add(to);
 }
 
+// As ObjFile::parseSymbols of ld64.lld: in the order of the symbol table, weak external names last, the first plain name of an address starts an atom.
+function findEndLabels(
+  { sections, symbols, lookup: { atomAt } }: ObjectFile,
+  hasSubsectionsViaSymbols: boolean,
+): MachOReferences["endLabels"] {
+  const isWeak = ({ type, description }: SymbolEntry) => (type & N_EXT) !== 0 && (description & N_WEAK_DEF) !== 0;
+  const defined = symbols.filter(({ type }) => (type & N_STAB) === 0 && (type & N_TYPE) === N_SECT);
+  const started = sections.map(() => new Set<number>());
+  const endLabels: MachOReferences["endLabels"] = new Map();
+  for (const symbol of [...defined.filter(symbol => !isWeak(symbol)), ...defined.filter(isWeak)]) {
+    const { name, section, description, value } = symbol;
+    const { address, size } = sections[section - 1]!;
+    if ((description & N_ALT_ENTRY) === 0) started[section - 1]!.add(value);
+    const isInAtomInFront = !hasSubsectionsViaSymbols || !started[section - 1]!.has(value);
+    const endsAtom =
+      hasSubsectionsViaSymbols &&
+      isInAtomInFront &&
+      value > address &&
+      atomAt(section, value) !== atomAt(section, value - 1);
+    if (!endsAtom && value !== address + size) continue;
+    if (!isWeak(symbol)) {
+      endLabels.set(name, isInAtomInFront ? atomAt(section, value - 1) : undefined);
+      continue;
+    }
+    // The linker moves the names beside a weak one to the definition it selects: only the map says where they are.
+    for (const other of defined) if (other.section === section && other.value === value) endLabels.delete(other.name);
+  }
+  return endLabels;
+}
+
 function readRecordSection({ readFrom, symbols, lookup }: ObjectFile, section: Section) {
-  const { atomAt, sectionNumberAt } = lookup;
+  const { atomAt } = lookup;
   const relocations = readFrom(section.relocations, section.count * 8);
   const bytes = readFrom(section.offset, section.size);
   const references = new Map<number, string>();
@@ -237,7 +270,7 @@ function readRecordSection({ readFrom, symbols, lookup }: ObjectFile, section: S
     if (!isPointer || field < 0 || field + 8 > bytes.length) return undefined;
     const value = signed64At(bytes, field);
     if (!isExtern(word)) {
-      const atom = atomAt(sectionNumberAt(value), value);
+      const atom = atomAt(symbolNumber(word), value);
       if (atom !== undefined) references.set(field, "L" + atom);
       continue;
     }
@@ -258,7 +291,7 @@ function readSectionReferences(
   index: number,
   result: MachOReferences,
 ): void {
-  const { atomAt, sectionNumberAt, isCStringSection, literalSize, literalAt, enclosingString } = lookup;
+  const { atomAt, isCStringSection, literalSize, literalAt, enclosingString } = lookup;
   const section = sections[index]!;
   const addLiteralReference = (from: string, literalSection: number, address: number, name?: string) => {
     const literal = literalAt(literalSection, address);
@@ -297,7 +330,7 @@ function readSectionReferences(
     if (runsBeforeMain && isExtern(word)) result.retained.push(symbols[symbolNumber(word)]!.name);
     if (runsBeforeMain && !isExtern(word) && isPointer) {
       const address = Number(readContents().readBigUInt64LE(field));
-      const called = atomAt(sectionNumberAt(address), address);
+      const called = atomAt(symbolNumber(word), address);
       if (called !== undefined) result.retained.push(called);
     }
     if (from === undefined) continue;
@@ -319,7 +352,8 @@ function readSectionReferences(
         // The linker does the same here: Rust's `vec.extend_from_slice(&[0; 4])` passes the end of the four bytes.
         addLiteralReference(from, target.section, target.value, target.name);
       } else {
-        addReference(result, from, "L" + (atomAt(target.section, target.value) ?? target.name));
+        const atom = result.endLabels.has(target.name) ? undefined : atomAt(target.section, target.value);
+        addReference(result, from, "L" + (atom ?? target.name));
       }
       continue;
     }
@@ -341,14 +375,13 @@ function readSectionReferences(
         : isPointer
           ? Number(readContents().readBigUInt64LE(field))
           : readContents().readInt32LE(field);
-    const targetSection = sectionNumberAt(address);
+    const targetSection = symbolNumber(word);
     if (isCStringSection(targetSection)) {
-      addReference(result, from, "S" + enclosingString(targetSection, address)!);
-      continue;
-    }
-    if (isShortAddress && isCStringSection(symbolNumber(word))) {
-      result.unreadStrings++;
-      result.unreadStringPlaces.push(`${from}: 0x${address.toString(16)} is outside the section of strings`);
+      const text = enclosingString(targetSection, address);
+      if (text === undefined) {
+        result.unreadStrings++;
+        result.unreadStringPlaces.push(`${from}: 0x${address.toString(16)} is outside the section of strings`);
+      } else addReference(result, from, "S" + text);
       continue;
     }
     if (literalSize(targetSection) !== undefined) {
@@ -369,6 +402,7 @@ function readObject(readFrom: ReadBytes): MachOReferences | UnreadReason {
   const result: MachOReferences = {
     references: new Map(),
     externals: [],
+    endLabels: new Map(),
     retained: [],
     liveWithoutReference: [],
     unreadStrings: 0,
@@ -380,6 +414,7 @@ function readObject(readFrom: ReadBytes): MachOReferences | UnreadReason {
   const { symbols, alternateEntries, atoms } = readSymbols(symbolTable, sections, result);
   const lookup = createObjectLookup(readFrom, sections, atoms);
   const object: ObjectFile = { isX64, readFrom, sections, symbols, atoms, lookup };
+  result.endLabels = findEndLabels(object, hasSubsectionsViaSymbols);
   for (const symbol of symbols) {
     if (
       (symbol.type & N_STAB) !== 0 ||
@@ -395,7 +430,7 @@ function readObject(readFrom: ReadBytes): MachOReferences | UnreadReason {
   }
   for (const entry of alternateEntries) {
     const atom = lookup.atomAt(entry.section, entry.value);
-    if (atom === undefined) continue;
+    if (atom === undefined || result.endLabels.has(entry.name)) continue;
     addReference(result, atom, "L" + entry.name);
     addReference(result, entry.name, "L" + atom);
   }

@@ -18,10 +18,7 @@ use bun_io::JsKeepAlive;
 use bun_jsc::AbortSignal;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    ArrayBuffer, EventLoopHandle, JSGlobalObject, JSValue, JsResult, PinnedArrayBuffer,
-    StringJsc as _,
-};
+use bun_jsc::{ArrayBuffer, JSGlobalObject, JSValue, JsResult, PinnedArrayBuffer, StringJsc as _};
 use bun_paths::{self as paths, OSPath, OSPathChar, OSPathSliceZ, Path};
 use bun_sys::FdExt as _;
 use bun_sys::{self as sys, E, Fd as FD, Maybe, Mode, SystemErrno};
@@ -1224,19 +1221,11 @@ mod _async_tasks {
     }
 
     #[cfg(windows)]
-    impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, F>
+    impl<R: FsReturn + 'static, A: FsArgument + 'static, const F: NodeFSFunctionEnum>
+        UVFSRequest<R, A, F>
     where
         Op<{ F }>: NodeFSDispatch<R, A>,
     {
-        /// Deref the raw `global_object` pointer.
-        ///
-        /// Invariant: set from a live `&JSGlobalObject` in `create()` and never
-        /// null; the JSC global outlives every task (JSC_BORROW per LIFETIMES.tsv).
-        #[inline]
-        pub(crate) fn global_object(&self) -> &JSGlobalObject {
-            self.global_object.get()
-        }
-
         /// `callback`: as for [`AsyncFSTask::create`].
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
@@ -1245,11 +1234,11 @@ mod _async_tasks {
             vm: &VirtualMachine,
             callback: Option<JSValue>,
         ) -> JSValue {
-            let task = Box::new(Self {
+            let mut task = Box::new(Self {
                 completion: FsCompletion::new(cx.global(), callback),
                 span: task_args.begin_span(cx.global(), F.into(), ""),
                 args: task_args,
-                // Sentinel — overwritten by `uv_callback` (or the early-return arms
+                // Sentinel — overwritten by `uv_callback` (or the early return
                 // below) before any read on the JS thread. `Maybe<R>` is
                 // `Result<R, sys::Error>` and may be niche-optimised for arbitrary
                 // `R`; never construct an all-zero `Result` value.
@@ -1260,34 +1249,50 @@ mod _async_tasks {
                 tracker: AsyncTaskTracker::init(vm),
                 context: cx.context().id(),
             });
-            // Transfer ownership to libuv: the box outlives the async request and is
-            // reclaimed in `run_from_js_thread`. `heap::release`
-            // names that hand-off — it is `Box::leak` under the hood; the reclaim
-            // happens there, not in this scope.
-            let task: &mut Self = bun_core::heap::release(task);
             task.tracker.did_schedule(cx.global());
 
             let loop_ = uv::Loop::get();
-            task.req.data = core::ptr::from_mut::<Self>(task).cast::<c_void>();
 
             // The match resolves at compile time (`F` is a const generic), but
             // each arm's body needs `A` re-asserted to its concrete `args::*`
-            // type — same identity-cast pattern as `NodeFS::dispatch` (per the
+            // type, with a downcast that the optimizer folds away (per the
             // `async_::*` aliases, `A == $Args` for the matched `F`).
             macro_rules! args_as {
-                ($Args:ty) => {{
-                    debug_assert_eq!(core::mem::size_of::<A>(), core::mem::size_of::<$Args>());
-                    // SAFETY: identity cast — `A == $Args` for this `F` (see `async_::*`).
-                    // `ThreadIsolated<A>` is `repr(transparent)`; deref through it for the inner `A`.
-                    unsafe { &*(&*task.args as *const A as *const $Args) }
-                }};
+                ($task:ident, $Args:ty) => {
+                    <dyn core::any::Any>::downcast_ref::<$Args>(&*$task.args)
+                        .expect("the arguments of F")
+                };
             }
+            let answer: Option<Maybe<R>> = match F {
+                NodeFSFunctionEnum::Open => {
+                    let args = args_as!(task, args::Open);
+                    refuse_open_for_write(args.path.slice(), args.flags.as_int()).map(Err)
+                }
+                NodeFSFunctionEnum::Writev => {
+                    let args = args_as!(task, args::Writev);
+                    args.buffers.readable().is_empty().then(|| {
+                        NodeFS::default()
+                            .uv_dispatch::<R, A, F>(&task.args, uv::ReturnCodeI64::ZERO)
+                    })
+                }
+                _ => None,
+            };
+            if let Some(answer) = answer {
+                // The sentinel owns nothing, so it needs no drop.
+                let _sentinel =
+                    core::mem::ManuallyDrop::new(core::mem::replace(&mut task.result, answer));
+                let value = task.completion.value();
+                task.enqueue();
+                return value;
+            }
+
+            // libuv has the box until it calls back.
+            let task: &mut Self = bun_core::heap::release(task);
+            task.req.data = core::ptr::from_mut::<Self>(task).cast::<c_void>();
             match F {
                 NodeFSFunctionEnum::Open => {
-                    let args: &args::Open = args_as!(args::Open);
+                    let args = args_as!(task, args::Open);
                     let named = &args.path;
-                    let refusal = refuse_open_for_write(named.slice(), args.flags.as_int());
-                    let answer: Option<Maybe<ret::Open>> = refusal.map(Err);
                     let path = if strings::eql_comptime(named.slice(), b"/dev/null") {
                         bun_core::zstr!("\\\\.\\NUL")
                     } else {
@@ -1297,21 +1302,6 @@ mod _async_tasks {
                         // never across a JS re-entry point.
                         named.slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf })
                     };
-                    if let Some(answer) = answer {
-                        // SAFETY: identity write — `R == ret::Open` for this `F`.
-                        unsafe {
-                            core::ptr::write(
-                                &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Open>,
-                                answer,
-                            )
-                        };
-                        let task_ptr: *mut Self = task;
-                        task.global_object()
-                            .bun_vm()
-                            .event_loop()
-                            .enqueue_task(bun_jsc::Task::init(task_ptr));
-                        return task.completion.value();
-                    }
                     let mut flags: c_int = args.flags.as_int();
                     flags = uv::O::from_bun_o(flags);
                     let mut mode: c_int = args.mode as c_int;
@@ -1339,7 +1329,7 @@ mod _async_tasks {
                     );
                 }
                 NodeFSFunctionEnum::Close => {
-                    let args: &args::Close = args_as!(args::Close);
+                    let args = args_as!(task, args::Close);
                     let fd = args.fd.uv();
                     // SAFETY: libuv async request.
                     let rc = unsafe {
@@ -1349,7 +1339,7 @@ mod _async_tasks {
                     sys::syslog!("uv close({}) = scheduled", fd);
                 }
                 NodeFSFunctionEnum::Read => {
-                    let args: &args::Read = args_as!(args::Read);
+                    let args = args_as!(task, args::Read);
                     let fd = args.fd.uv();
                     let buf = args.buffer.slice();
                     let off = (buf.len()).min(args.offset as usize);
@@ -1373,7 +1363,7 @@ mod _async_tasks {
                     sys::syslog!("uv read({}) = scheduled", fd);
                 }
                 NodeFSFunctionEnum::Write => {
-                    let args: &args::Write = args_as!(args::Write);
+                    let args = args_as!(task, args::Write);
                     let fd = args.fd.uv();
                     let buf = args.buffer.slice();
                     let off = (buf.len()).min(args.offset as usize);
@@ -1396,7 +1386,7 @@ mod _async_tasks {
                     sys::syslog!("uv write({}) = scheduled", fd);
                 }
                 NodeFSFunctionEnum::Readv => {
-                    let args: &args::Readv = args_as!(args::Readv);
+                    let args = args_as!(task, args::Readv);
                     let fd = args.fd.uv();
                     let bufs = args.buffers.writable();
                     let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
@@ -1424,24 +1414,9 @@ mod _async_tasks {
                     );
                 }
                 NodeFSFunctionEnum::Writev => {
-                    let args: &args::Writev = args_as!(args::Writev);
+                    let args = args_as!(task, args::Writev);
                     let fd = args.fd.uv();
                     let bufs = args.buffers.readable();
-                    if bufs.is_empty() {
-                        // SAFETY: identity write — `R == ret::Writev == ret::Write` for this `F`.
-                        unsafe {
-                            core::ptr::write(
-                                &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Writev>,
-                                Ok(ret::Write { bytes_written: 0 }),
-                            )
-                        };
-                        let task_ptr: *mut Self = task;
-                        task.global_object()
-                            .bun_vm()
-                            .event_loop()
-                            .enqueue_task(bun_jsc::Task::init(task_ptr));
-                        return task.completion.value();
-                    }
                     let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
                     let sum: usize = bufs.iter().map(sys::IoVec::size).sum();
                     // SAFETY: see Readv arm.
@@ -1467,7 +1442,7 @@ mod _async_tasks {
                     );
                 }
                 NodeFSFunctionEnum::Statfs => {
-                    let args: &args::StatFS = args_as!(args::StatFS);
+                    let args = args_as!(task, args::StatFS);
                     // SAFETY (R-2): single-JS-thread `JsCell` projection; held only
                     // across the libuv enqueue (copies `path` internally).
                     let path = path_for_statfs(&args.path, unsafe {
@@ -1491,62 +1466,47 @@ mod _async_tasks {
             task.completion.value()
         }
 
-        extern "C" fn uv_callback(req: *mut uv::fs_t) {
-            // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
-            let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>((*req).data) };
-            let mut node_fs = NodeFS::default();
-            // `req` aliases `this.req` (see create(): `task.req.data = from_mut(task)`); once
-            // `this: &mut Self` is live, re-deriving through the raw `req` would create a
-            // second overlapping `&mut` (Stacked-Borrows UB). Go through `this.req` instead.
-            this.result = NodeFS::uv_dispatch::<R, A, F>(&mut node_fs, &this.args, this.req.result);
-            let this_ptr: *mut Self = this;
-            this.global_object()
+        fn enqueue(self: Box<Self>) {
+            self.global_object
                 .bun_vm()
                 .event_loop()
-                .enqueue_task(bun_jsc::Task::init(this_ptr));
+                .enqueue_task(bun_jsc::Task::from_boxed(self));
+        }
+
+        extern "C" fn uv_callback(req: *mut uv::fs_t) {
+            // SAFETY: req.data is the box that create() released to libuv, which is done with it.
+            let mut this = unsafe { bun_core::heap::take((*req).data.cast::<Self>()) };
+            let mut node_fs = NodeFS::default();
+            this.result = NodeFS::uv_dispatch::<R, A, F>(&mut node_fs, &this.args, this.req.result);
+            this.enqueue();
         }
 
         extern "C" fn uv_callbackreq(req: *mut uv::fs_t) {
             // Same as uv_callback but passes `req` through to the dispatch fn (statfs needs req.ptr).
-            // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
-            let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>((*req).data) };
+            // SAFETY: req.data is the box that create() released to libuv, which is done with it.
+            let mut this = unsafe { bun_core::heap::take((*req).data.cast::<Self>()) };
             let mut node_fs = NodeFS::default();
-            // `req` aliases `this.req`; once `this: &mut Self` is live, re-deriving `&mut *req`
-            // would overlap it (Stacked-Borrows UB). Go through `this.req` instead — disjoint-field
-            // borrow alongside `&this.args` / `this.result =`. Hoist the result read so it isn't
-            // evaluated after `&mut this.req` is formed in the same call expression.
             let rc = this.req.result;
             this.result =
                 NodeFS::uv_dispatch_req::<R, A, F>(&mut node_fs, &this.args, &mut this.req, rc);
-            let this_ptr: *mut Self = this;
-            this.global_object()
-                .bun_vm()
-                .event_loop()
-                .enqueue_task(bun_jsc::Task::init(this_ptr));
+            this.enqueue();
         }
 
-        /// SAFETY: `this` must be the pointer Box::leak'd in `create()`. The body frees it before it calls back, so it is not `&mut self`.
-        pub(crate) unsafe fn run_from_js_thread(this: *mut Self) -> JsResult<()> {
-            // SAFETY: fn contract. The borrow ends before the free below.
-            let (result, completion, global_ref, tracker) = unsafe {
-                let task = &mut *this;
+        pub(crate) fn run_from_js_thread(self: Box<Self>) -> JsResult<()> {
+            // The block frees the arguments, which pin their buffers. A callback runs inside `resolve`/`reject`, and a pinned buffer cannot be transferred.
+            let (result, completion, global_ref, tracker) = {
+                let mut task = self;
                 core::mem::take(&mut task.span).settle(task.result.as_ref().err());
                 if let Ok(result) = &task.result {
                     task.args.write_back(result.bytes_read());
                 }
                 (
-                    core::mem::replace(&mut task.result, Err(sys::Error::default())),
-                    core::mem::replace(
-                        &mut task.completion,
-                        FsCompletion::Promise(JSPromiseStrong::empty()),
-                    ),
+                    task.result,
+                    task.completion,
                     task.global_object,
                     task.tracker,
                 )
             };
-            // The arguments pin their buffers. A callback runs inside `resolve`/`reject`, and a pinned buffer cannot be transferred.
-            // SAFETY: fn contract. `this` is not used again.
-            unsafe { bun_core::heap::destroy(this) };
 
             let global_object = global_ref.get();
             let success = matches!(result, Ok(_));
@@ -1839,25 +1799,21 @@ mod _async_tasks {
         }
     }
 
-    /// `Taskable` glue for the libuv-request ops (Windows), which complete on
+    /// `BoxedTask` glue for the libuv-request ops (Windows), which complete on
     /// the JS thread and re-enter through the task queue under a per-`F` tag.
     #[cfg(windows)]
-    impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> bun_event_loop::Taskable
-        for UVFSRequest<R, A, F>
+    impl<R: FsReturn + 'static, A: FsArgument + 'static, const F: NodeFSFunctionEnum>
+        bun_event_loop::BoxedTask for UVFSRequest<R, A, F>
     where
         Op<{ F }>: NodeFSDispatch<R, A>,
     {
         const TAG: bun_event_loop::TaskTag = F.task_tag();
         /// A libuv fs request that completed into the queue after the last
         /// tick: the drop releases its promise handle and keep-alive.
-        unsafe fn release_unrun(this: *mut Self) {
-            // SAFETY: fn contract — `Box::leak`'d in `UVFSRequest::create`.
-            unsafe { bun_core::heap::destroy(this) }
-        }
+        fn release_unrun(self: Box<Self>) {}
         /// The context whose script asked.
-        unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
-            // SAFETY: fn contract.
-            unsafe { (*this).context }
+        fn context(&self) -> bun_event_loop::ContextId {
+            self.context
         }
     }
 
@@ -2114,8 +2070,6 @@ mod _async_tasks {
     pub(crate) struct NewAsyncCpTask<const IS_SHELL: bool> {
         pub(crate) promise: JSPromiseStrong,
         pub args: ThreadIsolated<args::Cp<'static>>,
-        /// Owning-thread uses (global object).
-        pub(crate) evtloop: EventLoopHandle,
         /// How the last subtask's thread delivers the completion (moved out
         /// by it: the loop may free `self` once the completion is queued). For
         /// a JS loop this is the ticket its VM waits for — the arguments may
@@ -2123,7 +2077,7 @@ mod _async_tasks {
         pub(crate) poster: core::cell::Cell<Option<bun_jsc::ConcurrentPoster>>,
         pub task: WorkPoolTask,
         /// Written from any workpool thread (first `finish_concurrently` caller wins via
-        /// `has_result` CAS); read on the JS thread in `run_from_js_thread`. Wrapped in
+        /// `has_result` CAS); read in `run_from_js_thread` or `report_to_shell`. Wrapped in
         /// `Cell` so concurrent subtasks can hold `&Self` and `.set()` without aliased
         /// `&mut`. Cross-thread soundness is provided by the `has_result` CAS (single
         /// writer) + `subtask_count` AcqRel fence (happens-before for the JS-thread
@@ -2137,12 +2091,12 @@ mod _async_tasks {
         pub(crate) context: bun_event_loop::ContextId,
         pub(crate) has_result: AtomicBool,
         /// What this has written where the executable holds something, for the
-        /// notes of `run_from_js_thread`. A copy that fails has written some of it.
+        /// completion to note. A copy that fails has written some of it.
         written: bun_threading::Guarded<Vec<Box<[u8]>>>,
         /// Number of in-flight references to `this`. Starts at 1 for the main
         /// directory-scan task; incremented for each `SingleTask` spawned. Every
         /// holder calls `onSubtaskDone` exactly once when finished (regardless of
-        /// success or error). `runFromJSThread` — which destroys `this` — is only
+        /// success or error). The completion — which destroys `this` — is only
         /// enqueued once the count reaches zero, so subtasks still running on the
         /// thread pool never dereference a freed parent.
         pub(crate) subtask_count: AtomicUsize,
@@ -2255,7 +2209,7 @@ mod _async_tasks {
             // `self: Box<Self>` drops here (frees the owned `path_buf`).
             drop(self);
             // Must be the very last use of the parent: when the count reaches
-            // zero, runFromJSThread is enqueued and may destroy the parent.
+            // zero, the completion is enqueued and may destroy the parent.
             NewAsyncCpTask::on_subtask_done(cp_task.as_mut_ptr());
         }
     }
@@ -2310,7 +2264,7 @@ mod _async_tasks {
         }
 
         /// `fs.cp` / `fs.promises.cp` (JS thread): a promise, an async-stack
-        /// tracker, and this VM's loop.
+        /// tracker, and a ticket for this VM's loop.
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
             _binding: &Binding,
@@ -2324,7 +2278,6 @@ mod _async_tasks {
             Self::schedule_new(
                 promise,
                 cp_args,
-                EventLoopHandle::init(vm.event_loop_ptr()),
                 bun_jsc::ConcurrentPoster::Js(vm.ticket()),
                 tracker,
                 cx.context().id(),
@@ -2334,7 +2287,7 @@ mod _async_tasks {
         }
 
         /// The shell's `cp` builtin, from its pool task (any thread): no VM or
-        /// global is touched — the loop and poster are the ones the shell task
+        /// global is touched — the poster is the one the shell task
         /// already captured on its own thread.
         pub(crate) fn create_for_shell(
             cp_args: ThreadIsolated<args::Cp<'static>>,
@@ -2344,7 +2297,6 @@ mod _async_tasks {
             Self::schedule_new(
                 JSPromiseStrong::default(),
                 cp_args,
-                shelltask.task.event_loop,
                 poster,
                 AsyncTaskTracker { id: 0 },
                 // As `ShellCpTask`, which is waiting for this.
@@ -2356,7 +2308,6 @@ mod _async_tasks {
         fn schedule_new(
             promise: JSPromiseStrong,
             cp_args: ThreadIsolated<args::Cp<'static>>,
-            evtloop: EventLoopHandle,
             poster: bun_jsc::ConcurrentPoster,
             tracker: AsyncTaskTracker,
             context: bun_event_loop::ContextId,
@@ -2371,7 +2322,6 @@ mod _async_tasks {
                 // Sentinel — overwritten by `finish_concurrently` (gated by the
                 // `has_result` CAS) before any read on the JS thread.
                 result: core::cell::Cell::new(Ok(())),
-                evtloop,
                 poster: core::cell::Cell::new(Some(poster)),
                 task: work_pool_task(Self::work_pool_callback),
                 _keep_alive: if IS_SHELL {
@@ -2399,7 +2349,7 @@ mod _async_tasks {
 
         /// May be called from any thread (the subtasks).
         /// Records the result (first caller wins). Does NOT schedule destruction —
-        /// `runFromJSThread` is only enqueued from `onSubtaskDone` once every
+        /// the completion is only enqueued from `onSubtaskDone` once every
         /// in-flight subtask has dropped its reference, so that subtasks still
         /// running on the thread pool don't dereference a freed parent.
         fn finish_concurrently(&self, result: Maybe<ret::Cp>) {
@@ -2419,7 +2369,7 @@ mod _async_tasks {
 
         /// Called exactly once by the main directory-scan task and once by each
         /// `SingleTask` when it is done touching `this`. The last caller (count
-        /// drops to zero) enqueues `runFromJSThread`, which resolves the promise
+        /// drops to zero) enqueues the completion, which reports the result
         /// and destroys `this`.
         ///
         /// Takes the pointer that `schedule_new` leaked, because the last caller reclaims the `Box`.
@@ -2447,39 +2397,39 @@ mod _async_tasks {
                 .poster
                 .take()
                 .expect("fs.cp in flight holds its poster");
-            if poster.is_js() {
+            // Only the shell's task can have a mini loop.
+            if !IS_SHELL || poster.is_js() {
                 poster.post_js(ConcurrentTask::ConcurrentTask::create_boxed(this));
             } else {
                 let at = AnyTaskWithExtraContext::from_callback_auto_deinit(this, |task, _| {
-                    let _ = task.run_from_js_thread(); // TODO: properly propagate exception upwards
+                    task.report_to_shell();
                 });
                 // `from_callback_auto_deinit` heap-allocates; never null.
                 poster.post_mini(core::ptr::NonNull::new(at).expect("heap task"));
             }
         }
 
-        pub(crate) fn run_from_js_thread(mut self: Box<Self>) -> JsResult<()> {
+        fn note_written(&mut self) {
             for path in self.written.get_mut().drain(..) {
                 note_opened_for_write(&path, true);
             }
-            if IS_SHELL {
-                // Move the result out — `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap
-                // `Ok(())` placeholder.
-                let result = core::mem::replace(self.result.get_mut(), Ok(()));
-                let src = core::mem::take(&mut self.args.src);
-                let dest = core::mem::take(&mut self.args.dest);
-                let shelltask = self.shelltask.take().expect("IS_SHELL ⇒ shelltask");
-                shelltask.cp_on_finish(src, dest, result);
-                return Ok(());
-            }
-            let go_ptr = self.evtloop.global_object();
-            if go_ptr.is_null() {
-                panic!(
-                    "No global object, this indicates a bug in Bun. Please file a GitHub issue."
-                );
-            }
-            // SAFETY: non-null erased *mut JSGlobalObject from the JS event loop vtable.
-            let global_object: &JSGlobalObject = unsafe { &*go_ptr.cast::<JSGlobalObject>() };
+        }
+
+        pub(crate) fn report_to_shell(mut self: Box<Self>) {
+            self.note_written();
+            let result = core::mem::replace(self.result.get_mut(), Ok(()));
+            let src = core::mem::take(&mut self.args.src);
+            let dest = core::mem::take(&mut self.args.dest);
+            let shelltask = self.shelltask.take().expect("IS_SHELL ⇒ shelltask");
+            shelltask.cp_on_finish(src, dest, result);
+            drop(self);
+        }
+
+        pub(crate) fn run_from_js_thread(
+            mut self: Box<Self>,
+            global_object: &JSGlobalObject,
+        ) -> JsResult<()> {
+            self.note_written();
             let success = (*self.result.get_mut()).is_ok();
             let promise_value = self.promise.value();
             let promise = self.promise.get();
@@ -2512,7 +2462,7 @@ mod _async_tasks {
         /// calls "copy_single_file_sync") will be dispatched as a separate task.
         pub(crate) fn cp_async(nodefs: &mut NodeFS, this: *mut Self) {
             // The directory-scan task holds one reference in `subtask_count`
-            // (initialized to 1 in create*). Drop it on return. `runFromJSThread`
+            // (initialized to 1 in create*). Drop it on return. The completion
             // (which destroys `this`) is only enqueued once this reference and
             // every spawned SingleTask's reference have been dropped.
             // `this` is the live Box-leaked task; on_subtask_done only enqueues destruction
@@ -7583,8 +7533,7 @@ impl NodeFS {
             // `fs_t.ptr` *is* the nullable C
             // string pointer (libuv stores the realpath result directly), so
             // `ptr_as::<c_char>()` yields the value, not a pointer-to-Option.
-            // SAFETY: `rc` was not an error ⇒ libuv populated `req.ptr`.
-            let ptr: *const c_char = unsafe { req.ptr_as::<c_char>() };
+            let ptr = req.ptr_as::<c_char>();
             if ptr.is_null() {
                 return Err(sys::Error {
                     errno: E::ENOENT as _,
@@ -7593,6 +7542,7 @@ impl NodeFS {
                     ..Default::default()
                 });
             }
+            // SAFETY: on success `req.ptr` is a NUL-terminated string that `req` owns.
             let buf = unsafe { bun_core::ffi::cstr(ptr) }.to_bytes();
             let _ = variant;
             if args.encoding == Encoding::Utf8 {

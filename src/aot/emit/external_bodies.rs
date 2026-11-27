@@ -84,7 +84,8 @@ fn unit_index_of(list: &FunctionsOfUnit, unit_count: usize) -> u32 {
 }
 
 pub struct ExternalBodies {
-    code: Vec<u32>,
+    /// A `Vec`, not a `Box`: `bodies` point into it while it moves.
+    code: Vec<MaybeUninit<u32>>,
     bodies: Vec<ExternalFunctionBody>,
     units: Vec<UnitIdRemap>,
     _functions: LinkedFunctions,
@@ -108,7 +109,7 @@ impl ExternalBodies {
                 .sum()
         };
         let word_count: usize = lists.iter().map(words_of).sum();
-        let mut code: Vec<u32> = Vec::with_capacity(word_count);
+        let mut code = Box::new_uninit_slice(word_count).into_vec();
         let no_body = ExternalFunctionBody {
             code: core::ptr::null(),
             word_count: 0,
@@ -126,8 +127,7 @@ impl ExternalBodies {
         unsafe impl Send for Task<'_> {}
 
         let mut tasks = Vec::new();
-        let (mut free_code, mut free_bodies) =
-            (&mut code.spare_capacity_mut()[..word_count], &mut *bodies);
+        let (mut free_code, mut free_bodies) = (&mut *code, &mut *bodies);
         for list in lists {
             if list.functions.is_empty() {
                 continue;
@@ -165,8 +165,6 @@ impl ExternalBodies {
             }
         });
         drop(tasks);
-        // SAFETY: the tasks share out the first `word_count` words among the bodies, and each body has filled its own.
-        unsafe { code.set_len(word_count) };
         ExternalBodies {
             code,
             bodies,

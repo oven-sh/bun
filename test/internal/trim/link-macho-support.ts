@@ -62,7 +62,7 @@ interface Section {
   offset: number;
 }
 
-function readMachO(file: Buffer) {
+export function readMachO(file: Buffer) {
   const segments: Section[] = [];
   const sections: Section[] = [];
   const readOnlySegments: string[] = [];
@@ -196,14 +196,14 @@ function lostFixups(whole: Buffer, trimmed: Buffer, removedRanges: { start: numb
   return lost;
 }
 
-export function recordRelocationKinds(object: Buffer) {
+export function relocationKinds(object: Buffer, sectionName: string) {
   const kinds = new Set<"symbol" | "section">();
   let at = 32;
   for (let command = object.readUInt32LE(16); command > 0; command--) {
     const sectionCount = object.readUInt32LE(at) === 0x19 ? object.readUInt32LE(at + 64) : 0;
     for (let index = 0; index < sectionCount; index++) {
       const section = at + 72 + index * 80;
-      if (object.toString("latin1", section, section + 16).replace(/\0.*$/, "") !== "__bun_entries") continue;
+      if (object.toString("latin1", section, section + 16).replace(/\0.*$/, "") !== sectionName) continue;
       const relocations = object.readUInt32LE(section + 56);
       for (let entry = 0; entry < object.readUInt32LE(section + 60); entry++) kinds.add((object.readUInt32LE(relocations + entry * 8 + 4) >>> 27) & 1 ? "symbol" : "section");
     }
@@ -264,11 +264,11 @@ export async function wrapped(machine: Machine, folder: string, program: Program
   return await run(linkArguments(writeLinkInputs(folder, { minimums, builtins }), command, { demangler: tools["llvm-cxxfilt"]! }), folder);
 }
 
-export async function linkByHand(machine: Machine, folder: string, objects: string[]) {
-  await compileObjects(machine, folder, objects);
+export async function linkByHand(machine: Machine, folder: string, objects: string[], { compileFlags, linkFlags = [] }: Pick<Program, "compileFlags" | "linkFlags"> = {}) {
+  await compileObjects(machine, folder, objects, compileFlags);
   const inputs = objects.map(name => (isSharedObject(name) ? featureCodeObjects.get(machine.name)! : join(folder, `${name}.o`)));
   const [executable, map] = [join(folder, "hand"), join(folder, "hand.map")];
-  expect((await run([tools.clang!, ...inputs, ...baseLinkFlags(machine, map), "-o", executable], folder)).exitCode).toBe(0);
+  expect((await run([tools.clang!, ...inputs, ...baseLinkFlags(machine, map), ...linkFlags, "-o", executable], folder)).exitCode).toBe(0);
   return { executable, map, exportedSymbols: join(folder, "exported.txt") };
 }
 

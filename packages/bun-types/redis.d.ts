@@ -196,6 +196,9 @@ declare module "bun" {
 
     /**
      * Get the value of a key as a Uint8Array
+     *
+     * @deprecated Use {@link get} with `{ buffer: true }` instead. Before Bun 1.5, `get()` ignores that option.
+     *
      * @param key The key to get
      * @returns Promise that resolves with the key's value as a Uint8Array, or null if the key doesn't exist
      */

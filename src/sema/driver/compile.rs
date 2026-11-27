@@ -69,7 +69,7 @@ pub struct CompileRequest<'a, 's> {
 }
 
 pub struct LoadedProgram<'s> {
-    program: &'s UnsafeCell<Program<'s>>,
+    program: &'s mut UnsafeCell<Program<'s>>,
     files: &'s Files<'s>,
     checker_session: &'s SessionSlot,
     program_inputs: bun_sema::check::ProgramInputs,
@@ -98,9 +98,7 @@ pub(crate) struct WithoutBunTypes {
     pub errors_with_bun_types: Option<Vec<(Vec<u8>, u32)>>,
 }
 
-// SAFETY: the program is mutated through `&mut self`, or by `free_checker` when nothing uses it any more.
-unsafe impl Send for LoadedProgram<'_> {}
-// SAFETY: as above.
+// SAFETY: the program is mutated through `&mut self`, or by `free_checker` and `renew_checker` when nothing uses it any more.
 unsafe impl Sync for LoadedProgram<'_> {}
 
 impl<'s> LoadedProgram<'s> {
@@ -235,8 +233,7 @@ impl<'s> LoadedProgram<'s> {
 impl Drop for LoadedProgram<'_> {
     fn drop(&mut self) {
         if !*self.is_checker_freed.get_mut() {
-            // SAFETY: `&mut self`.
-            unsafe { &mut *self.program.get() }.release();
+            self.program.get_mut().release();
         }
     }
 }

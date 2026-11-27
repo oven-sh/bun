@@ -390,7 +390,6 @@ where
                 BinTag::Map => {
                     w.begin_object()?;
 
-                    // SAFETY: tag == Map guards the `map` union field.
                     let data: &[ExternalString] =
                         pkg.bin.map().get(this.buffers.extern_strings.as_slice());
                     let mut bin_i: usize = 0;

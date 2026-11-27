@@ -3578,6 +3578,189 @@ export function Reachable(props) {
   return <div>{x}</div>;
 }
 `,
+  // A parameter that a function in the `catch` block refers to and something assigns to. From `OnlyRead` on, that
+  // isn't so, or the block is reached when the function is lowered.
+  "written-parameter.jsx": `import { useEffect, useRef } from "react";
+
+export function Assigns() {
+  const ref = useRef(null);
+  let x = 0;
+  try {
+  } catch (error) {
+    const reset = () => {
+      error = null;
+    };
+    x = reset;
+  }
+  return <div>{ref.current}{x}</div>;
+}
+
+export function AssignsAndIsUnused() {
+  try {
+  } catch (error) {
+    const reset = () => {
+      error = null;
+    };
+  }
+  return <div />;
+}
+
+export function Updates() {
+  let x = 0;
+  try {
+  } catch (count) {
+    const next = () => {
+      count++;
+    };
+    x = next;
+  }
+  return <div>{x}</div>;
+}
+
+export function InAnEffect() {
+  try {
+  } catch (error) {
+    useEffect(() => {
+      error = null;
+    });
+  }
+  return <div />;
+}
+
+export function InAFunctionDeclaration() {
+  let x = 0;
+  try {
+  } catch (error) {
+    function reset() {
+      error = null;
+    }
+    x = reset;
+  }
+  return <div>{x}</div>;
+}
+
+export function InANestedFunction() {
+  let x = 0;
+  try {
+  } catch (error) {
+    const later = () => () => {
+      error = null;
+    };
+    x = later;
+  }
+  return <div>{x}</div>;
+}
+
+export function WithFinally() {
+  let x = 0;
+  try {
+  } catch (error) {
+    const reset = () => {
+      error = null;
+    };
+    x = reset;
+  } finally {
+    x = 3;
+  }
+  return <div>{x}</div>;
+}
+
+export function InALoop(props) {
+  let x = 0;
+  for (const item of props.items) {
+    try {
+    } catch (error) {
+      const reset = () => {
+        error = item;
+      };
+      x = reset;
+    }
+  }
+  return <div>{x}</div>;
+}
+
+export function WrittenAndReadByTwo() {
+  let x = 0;
+  try {
+  } catch (error) {
+    const reset = () => {
+      error = null;
+    };
+    const read = () => error;
+    x = [reset, read];
+  }
+  return <div>{x}</div>;
+}
+
+export function WrittenOutsideAndRead() {
+  let x = 0;
+  try {
+  } catch (error) {
+    error = null;
+    x = () => error;
+  }
+  return <div>{x}</div>;
+}
+
+export function OnlyRead() {
+  let x = 0;
+  try {
+  } catch (error) {
+    const read = () => error;
+    x = read;
+  }
+  return <div>{x}</div>;
+}
+
+export function WrittenOutside() {
+  let x = 0;
+  try {
+  } catch (error) {
+    error = null;
+    x = error;
+  }
+  return <div>{x}</div>;
+}
+
+export function AnotherVariable() {
+  let x = 0;
+  try {
+  } catch (error) {
+    let other = 1;
+    const reset = () => {
+      other = 2;
+    };
+    x = reset;
+  }
+  return <div>{x}</div>;
+}
+
+export function AfterADeclaration() {
+  let x = 0;
+  try {
+    const unused = 1;
+  } catch (error) {
+    const reset = () => {
+      error = null;
+    };
+    x = reset;
+  }
+  return <div>{x}</div>;
+}
+
+export function Reachable(props) {
+  let x = 0;
+  try {
+    props.load();
+  } catch (error) {
+    const reset = () => {
+      error = null;
+    };
+    x = reset;
+  }
+  return <div>{x}</div>;
+}
+`,
 };
 
 /** A property key that's half of a surrogate pair can't be compiled. A string value can. */

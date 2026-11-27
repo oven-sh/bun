@@ -12188,7 +12188,7 @@
   },
   "unreachable catch": {
    "exit": 1,
-   "files": 2,
+   "files": 3,
    "diagnostics": {
     "with-a-report.jsx": [
      {
@@ -12243,6 +12243,283 @@
       ],
       "message": "Cannot access refs during render",
       "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "written-parameter.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "<unknown> error$5",
+      "labels": [
+       {
+        "label": "this is uninitialized",
+        "span": {
+         "column": 12,
+         "length": 5,
+         "line": 160,
+         "offset": 2431
+        }
+       }
+      ],
+      "message": "[InferMutationAliasingEffects] Expected value kind to be initialized",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "<unknown> error$6",
+      "labels": [
+       {
+        "label": "this is uninitialized",
+        "span": {
+         "column": 12,
+         "length": 5,
+         "line": 173,
+         "offset": 2625
+        }
+       }
+      ],
+      "message": "[InferMutationAliasingEffects] Expected value kind to be initialized",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 11,
+         "line": 13,
+         "offset": 228
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 14,
+         "length": 5,
+         "line": 52,
+         "offset": 792
+        }
+       }
+      ],
+      "message": "Support functions with unreachable code that may contain hoisted declarations",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 15,
+         "length": 7,
+         "line": 41,
+         "offset": 634
+        }
+       }
+      ],
+      "message": "Support functions with unreachable code that may contain hoisted declarations",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 18,
+         "length": 2,
+         "line": 127,
+         "offset": 1946
+        }
+       }
+      ],
+      "message": "Support functions with unreachable code that may contain hoisted declarations",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 18,
+         "length": 7,
+         "line": 30,
+         "offset": 485
+        }
+       }
+      ],
+      "message": "Support functions with unreachable code that may contain hoisted declarations",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 19,
+         "length": 2,
+         "line": 64,
+         "offset": 972
+        }
+       }
+      ],
+      "message": "Support functions with unreachable code that may contain hoisted declarations",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 19,
+         "length": 7,
+         "line": 104,
+         "offset": 1585
+        }
+       }
+      ],
+      "message": "Support functions with unreachable code that may contain hoisted declarations",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 19,
+         "length": 7,
+         "line": 148,
+         "offset": 2260
+        }
+       }
+      ],
+      "message": "Support functions with unreachable code that may contain hoisted declarations",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 19,
+         "length": 7,
+         "line": 19,
+         "offset": 339
+        }
+       }
+      ],
+      "message": "Support functions with unreachable code that may contain hoisted declarations",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 19,
+         "length": 7,
+         "line": 76,
+         "offset": 1151
+        }
+       }
+      ],
+      "message": "Support functions with unreachable code that may contain hoisted declarations",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 19,
+         "length": 7,
+         "line": 8,
+         "offset": 159
+        }
+       }
+      ],
+      "message": "Support functions with unreachable code that may contain hoisted declarations",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 21,
+         "length": 7,
+         "line": 91,
+         "offset": 1392
+        }
+       }
+      ],
+      "message": "Support functions with unreachable code that may contain hoisted declarations",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 4,
+         "length": 9,
+         "line": 80,
+         "offset": 1204
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle TryStatement with a finalizer ('finally') clause",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 9,
+         "length": 2,
+         "line": 118,
+         "offset": 1814
+        }
+       }
+      ],
+      "message": "Support functions with unreachable code that may contain hoisted declarations",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
       "severity": "error"
      }
     ]

@@ -587,13 +587,17 @@ ${chain}
 
   test("a `catch` block that can't be reached is removed", async () => {
     const diagnostics = await matches("unreachable catch");
-    expect(Object.keys(diagnostics)).toEqual(["with-a-report.jsx"]);
+    expect(Object.keys(diagnostics)).toEqual(["with-a-report.jsx", "written-parameter.jsx"]);
     // The third is in a `catch` block that can be reached.
     expect(locationsOf(diagnostics["with-a-report.jsx"])).toEqual([
       ["react(immutability)", 34, 3],
       ["react(refs)", 11, 19],
       ["react(refs)", 44, 9],
     ]);
+    // A parameter that a function assigns to is an error only where the block is reached: no react(syntax).
+    const written = diagnostics["written-parameter.jsx"];
+    expect(rulesIn({ written })).toEqual(["react(invariant)", "react(refs)", "react(todo)"]);
+    expect(linesOf(written, "invariant")).toEqual([160, 173]);
   });
 
   test("a property key that's half of a surrogate pair is reported, and a string value isn't", async () => {

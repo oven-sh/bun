@@ -7,6 +7,7 @@ import {
   isRoot,
   isWindows,
   normalizeBunSnapshot,
+  substDrive,
   tempDir,
   tmpdirSync,
 } from "harness";
@@ -1255,6 +1256,181 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
       "src/a.ts": Buffer.from(source),
       "src/x.wasm": wasm,
     });
+  });
+
+  /** `src/x.wasm` with an old modification time. A write sets the time, also when it writes the same bytes. */
+  function oldSource(dir: string) {
+    const file = path.join(dir, "src", "x.wasm");
+    fs.utimesSync(file, 1_600_000_000, 1_600_000_000);
+    const inode = fs.statSync(file).ino;
+    return () => {
+      const now = fs.statSync(file);
+      return { bytes: fs.readFileSync(file), sameInode: now.ino === inode, mtimeMs: now.mtimeMs };
+    };
+  }
+  const untouched = { bytes: wasm, sameInode: true, mtimeMs: 1_600_000_000_000 };
+
+  // Each row: the working directory, then the arguments. The file is `src/x.wasm`.
+  test.each([
+    ["src", ["./x.wasm", "--outdir", "."]],
+    [".", ["./src/x.wasm", "--outdir", "src"]],
+    [".", ["./src/x.wasm", "--outdir=./src/"]],
+    ["src", ["./x.wasm", "--outdir", "../src"]],
+    [".", ["./src/x.wasm", "--outfile", "./src/x.wasm"]],
+    [".", ["./src/x.wasm", "--outdir", "src", "--entry-naming", "[name].wasm"]],
+  ])("does not write a file onto itself: in %s, %p", async (cwd, args) => {
+    using dir = tempDir("no-bundle-copy-in-place", { "src/x.wasm": wasm });
+    const source = oldSource(String(dir));
+
+    const { stdout, stderr, exitCode } = await build(path.join(String(dir), cwd), args);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("x.wasm  11 bytes  (asset)");
+    expect(exitCode).toBe(0);
+
+    expect(readTree(String(dir))).toEqual({ "src/x.wasm": wasm });
+    expect(source()).toEqual(untouched);
+  });
+
+  // Each row: what else the directory has, then the arguments. The output path is another spelling of `src/x.wasm`.
+  // Windows needs a privilege for a symbolic link.
+  test.skipIf(isWindows).each<[string, (dir: string) => void, string[]]>([
+    ["a link to its directory as --outdir", dir => fs.symlinkSync("src", path.join(dir, "out")), ["--outdir", "out"]],
+    [
+      "a link to its directory in --outfile",
+      dir => fs.symlinkSync("src", path.join(dir, "out")),
+      ["--outfile", "out/x.wasm"],
+    ],
+    [
+      "a second link to the file",
+      dir => {
+        fs.mkdirSync(path.join(dir, "dist"));
+        fs.linkSync(path.join(dir, "src", "x.wasm"), path.join(dir, "dist", "x.wasm"));
+      },
+      ["--outdir", "dist"],
+    ],
+    [
+      "a symbolic link to the file",
+      dir => {
+        fs.mkdirSync(path.join(dir, "dist"));
+        fs.symlinkSync(path.join("..", "src", "x.wasm"), path.join(dir, "dist", "x.wasm"));
+      },
+      ["--outdir", "dist"],
+    ],
+    ["a `..` in --outdir", dir => fs.mkdirSync(path.join(dir, "a")), ["--outdir", "a/../src"]],
+    ["a `..` in --entry-naming", () => {}, ["--outdir", "dist", "--entry-naming", "../src/[name].[ext]"]],
+  ])("does not write a file onto itself through %s", async (_, prepare, args) => {
+    using dir = tempDir("no-bundle-copy-in-place-alias", { "src/x.wasm": wasm });
+    prepare(String(dir));
+    const source = oldSource(String(dir));
+
+    const { stdout, stderr, exitCode } = await build(String(dir), ["./src/x.wasm", ...args]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("x.wasm  11 bytes  (asset)");
+    expect(exitCode).toBe(0);
+
+    expect(fs.readdirSync(path.join(String(dir), "src"))).toEqual(["x.wasm"]);
+    expect(source()).toEqual(untouched);
+  });
+
+  // Each row reads like a path to `src/x.wasm`. With `link` for `real/sub`, it is `real/src/x.wasm`.
+  // Windows removes `..` from a path before it follows a link.
+  test.skipIf(isWindows).each([
+    ["--outdir", ["--outdir", "link/../src"]],
+    ["--entry-naming", ["--outdir", "link", "--entry-naming", "../src/[name].[ext]"]],
+  ])("writes the file when a `..` in %s follows a link to another directory", async (_, args) => {
+    using dir = tempDir("no-bundle-copy-link", { "src/x.wasm": wasm });
+    fs.mkdirSync(path.join(String(dir), "real", "sub"), { recursive: true });
+    fs.symlinkSync(path.join("real", "sub"), path.join(String(dir), "link"));
+    const source = oldSource(String(dir));
+
+    const { stdout, stderr, exitCode } = await build(String(dir), ["./src/x.wasm", ...args]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("x.wasm  11 bytes  (asset)");
+    expect(exitCode).toBe(0);
+
+    expect(readTree(String(dir))).toEqual({ "real/src/x.wasm": wasm, "src/x.wasm": wasm });
+    expect(source()).toEqual(untouched);
+  });
+
+  test("writes the transpiled files of the same build onto their sources", async () => {
+    using dir = tempDir("no-bundle-copy-in-place-mixed", {
+      "src/a.js": `export   const a = 1 ;\n`,
+      "src/s.css": `.x{color:red}\n`,
+      "src/x.wasm": wasm,
+    });
+    const source = oldSource(String(dir));
+
+    const { stdout, stderr, exitCode } = await build(String(dir), [
+      "./src/a.js",
+      "./src/s.css",
+      "./src/x.wasm",
+      "--outdir",
+      "src",
+    ]);
+    expect(stderr).toBe("");
+    expect(stdout.replace(/in \d+ms/, "in {time}ms")).toBe(
+      "Transpiled file in {time}ms\n\n  a.js    20 bytes  (chunk)\n  s.css   21 bytes  (chunk)\n  x.wasm  11 bytes  (asset)\n\n",
+    );
+    expect(exitCode).toBe(0);
+
+    expect(readTree(String(dir))).toEqual({
+      "src/a.js": Buffer.from("export const a = 1;\n"),
+      "src/s.css": Buffer.from(".x {\n  color: red;\n}\n"),
+      "src/x.wasm": wasm,
+    });
+    expect(source()).toEqual(untouched);
+  });
+
+  // The bundler calls a stylesheet an asset too. Its bytes are not those of its source.
+  test("without --no-bundle, a stylesheet that is its own --outfile is written", async () => {
+    using dir = tempDir("bundle-css-in-place", { "a.css": `.x{color:red}\n` });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./a.css", "--outfile", "./a.css"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("a.css  33 bytes  (asset)");
+    expect(exitCode).toBe(0);
+
+    expect(readTree(String(dir))).toEqual({ "a.css": Buffer.from("/* a.css */\n.x {\n  color: red;\n}\n") });
+  });
+
+  // On Windows the working directory can be on a drive that `subst` made, or behind a junction.
+  test.skipIf(!isWindows).each(["drive", "junction"])(
+    "copies a file, and does not write it onto itself, in a working directory behind a %s",
+    async through => {
+      using dir = tempDir("no-bundle-copy-windows", { "w/src/x.wasm": wasm });
+      using drive = substDrive(String(dir));
+      fs.symlinkSync(path.join(String(dir), "w"), path.join(String(dir), "link"), "junction");
+      const cwd = through === "drive" ? path.join(drive.root, "w") : path.join(String(dir), "link");
+      const source = oldSource(path.join(String(dir), "w"));
+
+      const copied = await build(cwd, ["./src/x.wasm", "--outdir=out"]);
+      expect({ stderr: copied.stderr, exitCode: copied.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const inPlace = await build(cwd, ["./src/x.wasm", "--outdir", "src"]);
+      expect({ stderr: inPlace.stderr, exitCode: inPlace.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+      expect(readTree(path.join(String(dir), "w"))).toEqual({ "out/x.wasm": wasm, "src/x.wasm": wasm });
+      expect(source()).toEqual(untouched);
+    },
+  );
+
+  // Root can write a file of mode 444, and Windows does not have the mode.
+  test.skipIf(isWindows || isRoot)("accepts a read-only file whose output path is the file itself", async () => {
+    using dir = tempDir("no-bundle-copy-read-only", { "x.wasm": wasm });
+    fs.chmodSync(path.join(String(dir), "x.wasm"), 0o444);
+
+    const { stdout, stderr, exitCode } = await build(String(dir), ["./x.wasm", "--outdir", "."]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("x.wasm  11 bytes  (asset)");
+    expect(exitCode).toBe(0);
+
+    expect(readTree(String(dir))).toEqual({ "x.wasm": wasm });
   });
 
   // Root can read a file of mode 000, and Windows does not have the mode.

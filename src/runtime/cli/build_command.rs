@@ -1170,7 +1170,16 @@ impl BuildCommand {
             for f in output_files.iter() {
                 use bun_io::Write as _;
 
-                if let Err(err) = f.write_to_disk(root_dir.fd) {
+                // `--no-bundle` holds the bytes of `src_path` for this output, so a write onto
+                // `src_path` changes nothing when it succeeds and truncates the source when it fails.
+                let is_its_own_source = opt_transform_only
+                    && f.output_kind == options::OutputKind::Asset
+                    && super::compile_command::is_same_file_at(
+                        root_dir.fd,
+                        &f.dest_path,
+                        &f.src_path,
+                    );
+                if !is_its_own_source && let Err(err) = f.write_to_disk(root_dir.fd) {
                     Output::err(
                         err,
                         "failed to write file '{}'",

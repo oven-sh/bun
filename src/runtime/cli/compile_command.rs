@@ -28,7 +28,7 @@ use bun_standalone_graph::StandaloneModuleGraph::{
 use bun_sys::Fd;
 use bun_trim::TrimError;
 
-pub(crate) use self::build::{check_entry_points_are_kept, compile_to_executable};
+pub(crate) use self::build::{check_entry_points_are_kept, compile_to_executable, is_same_file_at};
 pub(crate) use self::command::compile_from_context;
 pub(crate) use self::configuration::DEFAULT_LIBRARY_OUTDIR;
 pub(crate) use self::library::{

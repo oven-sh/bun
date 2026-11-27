@@ -1203,7 +1203,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     cancel_timers,
     end_hot_run_timers,
     stop_dns_for_vm_teardown,
-    stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
+    stop_active_handles_for_vm_teardown,
     disarm_all_timers_for_vm_teardown,
     close_timer_loop_handles_after_vm_destroyed,
 };
@@ -1355,22 +1355,13 @@ fn end_hot_run_timers(vm: &VirtualMachine, cancel: CancelHotRunTimers) {
 ///
 /// # Safety
 /// `runtime_state()` is installed; JS thread; the JSC VM is already destroyed.
-unsafe fn close_timer_loop_handles_after_vm_destroyed(_vm: *mut VirtualMachine) {
+unsafe fn close_timer_loop_handles_after_vm_destroyed() {
     #[cfg(windows)]
     timer_all().close_loop_handles_for_vm_teardown();
 }
 
-/// `RuntimeHooks::stop_active_handles_for_vm_teardown` — see [`stop_active_handles_for_vm_teardown`].
-///
-/// # Safety
-/// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
-unsafe fn stop_active_handles_for_vm_teardown_hook(vm: *mut VirtualMachine) -> SweepResult {
-    // SAFETY: per the contract above.
-    stop_active_handles_for_vm_teardown(unsafe { &*vm })
-}
-
 /// `RuntimeHooks::disarm_all_timers_for_vm_teardown`.
-unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
+unsafe fn disarm_all_timers_for_vm_teardown() {
     if let Some(all) = try_timer_all() {
         // SAFETY: JS thread; teardown has forbidden script.
         unsafe { all.disarm_all_for_vm_teardown() };
@@ -1403,7 +1394,8 @@ pub(crate) fn stop_active_handles_for_test_isolation(vm: &VirtualMachine) {
     let _ = stop_active_handles(vm, bun_jsc::StopReason::Disposed);
 }
 
-pub(crate) fn stop_active_handles_for_vm_teardown(vm: &VirtualMachine) -> SweepResult {
+/// `RuntimeHooks::stop_active_handles_for_vm_teardown`
+fn stop_active_handles_for_vm_teardown(vm: &VirtualMachine) -> SweepResult {
     stop_active_handles(vm, bun_jsc::StopReason::VmTeardown)
 }
 

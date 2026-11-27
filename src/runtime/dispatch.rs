@@ -661,7 +661,7 @@ pub(crate) fn run_task(
                 global: &JSGlobalObject = global,
                 vm: &VirtualMachine = vm,
             ) {
-                vm.transpiler_store.run_from_js_thread(el, global, vm.into());
+                vm.transpiler_store.run_from_js_thread(el, global, vm);
             }
         ),
 

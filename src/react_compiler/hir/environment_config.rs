@@ -170,6 +170,12 @@ pub struct EnvironmentConfig {
     /// `x - 1` can still be an object that is written to elsewhere. To upstream both operands are primitives wherever
     /// they are used, and a write to one or a dependency on one is not seen.
     pub operators_say_nothing_of_their_operands: bool,
+    /// For `propagate_scope_dependencies_hir`: a function that is given to JSX, as a prop or a child, is not assumed
+    /// to be called, so what it reads is no dependency that is read during render. Upstream assumes the call.
+    pub functions_given_to_jsx_are_not_assumed_called: bool,
+    /// For `propagate_scope_dependencies_hir`: a call in a branch or in a loop does not show that a function is called
+    /// during render, be it the function that is called or one given to a hook there. To upstream any call shows it.
+    pub calls_in_branches_show_no_function_called: bool,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
@@ -248,6 +254,8 @@ impl Default for EnvironmentConfig {
             fixture_modules_have_no_types: false,
             jsx_tags_hoist_no_declaration: false,
             operators_say_nothing_of_their_operands: false,
+            functions_given_to_jsx_are_not_assumed_called: false,
+            calls_in_branches_show_no_function_called: false,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,

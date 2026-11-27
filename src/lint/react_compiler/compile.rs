@@ -70,6 +70,8 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
         fixture_modules_have_no_types: is_oxlint,
         jsx_tags_hoist_no_declaration: is_oxlint,
         operators_say_nothing_of_their_operands: is_oxlint,
+        functions_given_to_jsx_are_not_assumed_called: is_oxlint,
+        calls_in_branches_show_no_function_called: is_oxlint,
         validate_no_set_state_in_render: true,
         validate_no_set_state_in_effects: true,
         validate_no_jsx_in_try_statements: true,

@@ -19,6 +19,7 @@ use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::rc::Rc;
 
 use crate::diagnostics::CompilerDiagnostic;
+use crate::hir::dominator::{BlockSet, compute_unconditional_blocks};
 use crate::hir::environment::Environment;
 use crate::hir::visitors::{ScopeBlockInfo, ScopeBlockTraversal};
 use crate::hir::{
@@ -1137,8 +1138,23 @@ fn get_assumed_invoked_functions_impl(
         }
     }
 
+    // Not in upstream (oxc 514fb9139): the blocks whose calls count, found for the first call that is asked about.
+    let mut unconditional: Option<Option<BlockSet>> = None;
+    let mut is_call_counted = |block_id: &BlockId| {
+        if !env.config.calls_in_branches_show_no_function_called {
+            return true;
+        }
+        unconditional
+            .get_or_insert_with(|| {
+                compute_unconditional_blocks(func, env.next_block_id_counter).ok()
+            })
+            .as_ref()
+            .is_some_and(|blocks| blocks.contains(block_id))
+    };
+    let is_jsx_counted = !env.config.functions_given_to_jsx_are_not_assumed_called;
+
     // Step 2: Forward pass to analyze assumed function calls
-    for (_block_id, block) in &func.body.blocks {
+    for (block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
             match &instr.value {
@@ -1148,12 +1164,16 @@ fn get_assumed_invoked_functions_impl(
                     let maybe_hook = env.get_hook_kind_for_type(callee_ty).ok().flatten();
                     if let Some(entry) = temporaries.get(callee.identifier) {
                         // Direct calls
-                        hoistable.insert(entry.0);
+                        if is_call_counted(block_id) {
+                            hoistable.insert(entry.0);
+                        }
                     } else if maybe_hook.is_some() {
                         // Assume arguments to all hooks are safe to invoke
                         for arg in args {
                             if let PlaceOrSpread::Place(p) = arg {
-                                if let Some(entry) = temporaries.get(p.identifier) {
+                                if let Some(entry) = temporaries.get(p.identifier)
+                                    && is_call_counted(block_id)
+                                {
                                     hoistable.insert(entry.0);
                                 }
                             }
@@ -1162,7 +1182,7 @@ fn get_assumed_invoked_functions_impl(
                 }
                 InstructionValue::JsxExpression {
                     props, children, ..
-                } => {
+                } if is_jsx_counted => {
                     // Assume JSX attributes and children are safe to invoke
                     for prop in props {
                         if let crate::hir::JsxAttribute::Attribute { place, .. } = prop {
@@ -1179,7 +1199,7 @@ fn get_assumed_invoked_functions_impl(
                         }
                     }
                 }
-                InstructionValue::JsxFragment { children, .. } => {
+                InstructionValue::JsxFragment { children, .. } if is_jsx_counted => {
                     for child in children {
                         if let Some(entry) = temporaries.get(child.identifier) {
                             hoistable.insert(entry.0);

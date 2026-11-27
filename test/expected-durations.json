@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/a-file-behind-one-that-throws-runs-before-an-import-call-settles.test.ts": {
+    "default": 9000,
+    "asan": 36000
+  },
   "aot/a-package-that-a-plugin-makes-is-not-found-by-a-require-of-a-made-name.test.ts": {
     "default": 6000,
     "asan": 24000

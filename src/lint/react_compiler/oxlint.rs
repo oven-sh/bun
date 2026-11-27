@@ -1233,9 +1233,6 @@ fn todo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
     {
         let func = primary_span.and_then(|at| function_at(file, at));
         out.move_to(func.map(crate::program::diagnostic_span));
-    } else if reason.starts_with("Support member expression chains longer than ") {
-        // `todo_member_expression_chain_too_long`
-        out.relabel("This member expression chain is too long");
     } else if let Some(name) = between(
         "Logical assignment to `const` variable ",
         " is not supported",
@@ -1245,9 +1242,7 @@ fn todo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
             "Declare {name} with `let` if it may be assigned, or write a nullish/logical expression instead of a logical \
              assignment"
         ));
-        out.relabel(format!(
-            "Cannot compile logical assignment to const {name}"
-        ));
+        out.relabel(format!("Cannot compile logical assignment to const {name}"));
     } else if reason == LOCAL_FBT {
         // `local_fbt_variable`, which is passed the variable's declaration.
         out.relabel("Local variables named `fbt` are not supported");

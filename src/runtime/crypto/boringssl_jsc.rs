@@ -1,7 +1,7 @@
 //! JSC bridge for BoringSSL error formatting. Keeps `src/boringssl/` free of JSC types.
 
 use bun_boringssl_sys as boring;
-use bun_core::EncodedSlice;
+use bun_core::{CStrRef, EncodedSlice};
 use bun_jsc::{EncodedSliceJsc as _, JSGlobalObject, JSValue};
 
 /// Node's `ERR_LIB_*` → macro-prefix map from `crypto_util.cc`
@@ -41,15 +41,8 @@ fn lib_short_name(lib: u32) -> &'static str {
     }
 }
 
-/// SAFETY: `ptr` is a NUL-terminated static string returned by BoringSSL's
-/// error-string tables (or null).
-fn static_cstr<'a>(ptr: *const core::ffi::c_char) -> Option<&'a [u8]> {
-    if ptr.is_null() {
-        return None;
-    }
-    // SAFETY: see above - the pointer is a 'static NUL-terminated table entry.
-    let bytes = unsafe { core::ffi::CStr::from_ptr(ptr) }.to_bytes();
-    if bytes.is_empty() { None } else { Some(bytes) }
+fn non_empty(string: Option<CStrRef<'_>>) -> Option<&[u8]> {
+    Some(string?.to_cstr().to_bytes()).filter(|bytes| !bytes.is_empty())
 }
 
 /// `err_code` was popped off the error queue. The entries behind it belong to the same failure,
@@ -61,18 +54,7 @@ pub(crate) fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
     // ("error:0b000074:X.509 certificate routines:OPENSSL_internal:..."),
     // exactly what Node built against BoringSSL produces - no prefix.
     let mut outbuf = [0u8; 128 + 1];
-    let message_buf = &mut outbuf[..];
-
-    // SAFETY: message_buf is a valid writable buffer of message_buf.len() bytes.
-    unsafe {
-        boring::ERR_error_string_n(
-            err_code,
-            message_buf.as_mut_ptr().cast::<core::ffi::c_char>(),
-            message_buf.len(),
-        );
-    }
-
-    let error_message: &[u8] = bun_core::slice_to_nul(&outbuf[..]);
+    let error_message = boring::error_string(err_code, &mut outbuf);
     if error_message.is_empty() {
         return global
             .err(
@@ -87,21 +69,22 @@ pub(crate) fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
     // ERR_OSSL_<LIB>_<REASON> (or ERR_SSL_<REASON> for the SSL library).
     let err = EncodedSlice::utf8(error_message).to_error_instance(global);
 
-    if let Some(library) = static_cstr(boring::ERR_lib_error_string(err_code)) {
+    if let Some(library) = non_empty(boring::ERR_lib_error_string(err_code)) {
         err.put(
             global,
             b"library",
             EncodedSlice::latin1(library).to_js(global),
         );
     }
-    if let Some(function) = static_cstr(boring::ERR_func_error_string(err_code)) {
+    if let Some(function) = non_empty(boring::ERR_func_error_string(err_code)) {
         err.put(
             global,
             b"function",
             EncodedSlice::latin1(function).to_js(global),
         );
     }
-    if let Some(reason) = static_cstr(boring::ERR_reason_error_string(err_code)) {
+    // SAFETY: nothing in the block below calls `strerror`.
+    if let Some(reason) = non_empty(unsafe { boring::ERR_reason_error_string(err_code) }) {
         err.put(
             global,
             b"reason",

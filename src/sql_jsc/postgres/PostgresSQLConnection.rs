@@ -571,11 +571,14 @@ impl PostgresSQLConnection {
             return;
         }
 
-        let socket = *self.socket.get();
+        let ssl = match self.socket.get() {
+            // SAFETY: `on_close` detaches the socket, and `ssl` is used for one call.
+            Socket::SocketTls(tls) => unsafe { tls.ssl_mut() },
+            Socket::SocketTcp(_) => None,
+        };
         if let Some(callback) = self.check_server_identity_callback() {
             let hostname = self.tls_config.server_name_bytes();
-            if let Err(reason) = server_identity::check(self.global(), callback, &socket, hostname)
-            {
+            if let Err(reason) = server_identity::check(self.global(), callback, ssl, hostname) {
                 self.fail_with_js_value(reason);
                 return;
             }
@@ -583,10 +586,6 @@ impl PostgresSQLConnection {
                 return;
             }
         } else if let Some(hostname) = self.native_identity_hostname() {
-            let ssl = match &socket {
-                Socket::SocketTls(tls) => tls.ssl_mut(),
-                Socket::SocketTcp(_) => None,
-            };
             if hostname.is_empty()
                 || !ssl.is_some_and(|ssl| uws::check_server_identity(ssl, hostname))
             {
@@ -1507,7 +1506,8 @@ impl PostgresSQLConnection {
             b'R' => {
                 let body = reader.body()?;
                 let tls = match self.socket.get() {
-                    Socket::SocketTls(tls) => tls.ssl_mut(),
+                    // SAFETY: `on_close` detaches the socket, and `authenticate` only reads its certificate.
+                    Socket::SocketTls(tls) => unsafe { tls.ssl_mut() },
                     Socket::SocketTcp(_) => None,
                 };
                 let replied = self.write(|out| {

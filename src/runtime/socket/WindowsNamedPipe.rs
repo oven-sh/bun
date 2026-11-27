@@ -518,7 +518,7 @@ impl WindowsNamedPipe {
     }
 
     /// Set up the in-process SSL wrapper for `connect`/`open`. Prefers a prebuilt
-    /// `SSL_CTX` (moved into `wrapper`) so a memoised `tls.createSecureContext`
+    /// `SSL_CTX` so a memoised `tls.createSecureContext`
     /// reaches this path with its CA bundle intact; on this branch `[buntls]`
     /// returns `{secureContext}` and no longer spreads `{ca,cert,key}`, so the
     /// `SSLConfig` fallback alone would build a CTX with an empty trust store
@@ -690,9 +690,7 @@ impl WindowsNamedPipe {
     }
 
     pub(crate) fn ssl(&self) -> Option<*mut boringssl::SSL> {
-        self.wrapper_ref()
-            .and_then(|w| w.ssl.get())
-            .map(|p| p.as_ptr())
+        self.wrapper_ref().and_then(|w| w.ssl()).map(|p| p.as_ptr())
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__ssl_error", no_catch)]

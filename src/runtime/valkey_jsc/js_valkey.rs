@@ -1168,7 +1168,8 @@ impl<const SSL: bool> SocketHandler<SSL> {
             let sni = Self::configured_hostname(this);
             if !sni.is_empty()
                 && !bun_core::ip_address::is_ip_host(sni)
-                && let Some(ssl) = socket.ssl_mut()
+                // SAFETY: the socket has just opened, and `ssl` is used for one call.
+                && let Some(ssl) = unsafe { socket.ssl_mut() }
             {
                 ssl.set_servername(&bun_core::ZBox::from_bytes(sni));
             }
@@ -1316,8 +1317,9 @@ impl<const SSL: bool> SocketHandler<SSL> {
         } else {
             hostname
         };
-        let socket = Self::socket(socket);
-        let verdict = server_identity::check(&this.global_object, callback, &socket, hostname);
+        // SAFETY: the socket that reports its handshake is open, and `ssl` is used for one call.
+        let ssl = unsafe { socket.ssl_mut() };
+        let verdict = server_identity::check(&this.global_object, callback, ssl, hostname);
         // It closed this socket, and may have dialed the next.
         if !(this.dial.hold()).is_some_and(|current| core::ptr::eq(Rc::as_ptr(&current), hold)) {
             return Ok(());

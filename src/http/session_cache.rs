@@ -110,16 +110,13 @@ pub(crate) struct SessionSink {
 }
 
 /// `us_dispatch_new_session` for an HTTP client socket. Runs inside `SSL_read`/`SSL_do_handshake`.
-pub fn on_new_session(socket: &mut bun_uws::us_socket_t, session: *mut SSL_SESSION) {
-    if session.is_null() {
-        return;
-    }
+pub fn on_new_session(socket: &mut bun_uws::us_socket_t, session: &SSL_SESSION) {
     // SAFETY: `socket` is live for this call.
     let owner = unsafe { us_socket_session_sink(socket) };
     let Some(owner) = NonNull::new(owner.cast::<SessionSink>()) else {
         return;
     };
-    let session = OwnedSslSession::retain(SSL_SESSION::opaque_ref(session));
+    let session = OwnedSslSession::retain(session);
     // SAFETY: `owner` is the Box interior installed by [`install`]. Runs on
     // the HTTP thread inside `SSL_read`/`SSL_do_handshake`; nothing else
     // holds a borrow of the sink during that call.
@@ -172,20 +169,18 @@ pub(crate) fn eligible(client: &crate::HTTPClient<'_>) -> bool {
 /// `socket` must be live and `ssl` its pre-handshake `SSL*`; `ctx` must outlive `ssl`.
 pub(crate) unsafe fn install(
     socket: *mut bun_uws::us_socket_t,
-    ssl: *mut SSL,
+    ssl: &SSL,
     ctx: *const crate::HttpsContext,
     hostname: &[u8],
     port: u16,
     proxy_auth_hash: u64,
     unix_path: &[u8],
 ) {
-    debug_assert!(!ssl.is_null());
     debug_assert!(!ctx.is_null());
     // SAFETY: caller contract.
     let cache = unsafe { &(*ctx).session_cache };
     if let Some(session) = cache.take(hostname, port, proxy_auth_hash, unix_path) {
-        // SAFETY: `ssl` is live and pre-handshake; it takes its own reference.
-        unsafe { SSL_set_session(ssl, session.as_ptr()) };
+        SSL_set_session(ssl, &session);
     }
     let sink = Box::new(SessionSink {
         ctx,

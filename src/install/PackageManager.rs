@@ -14,8 +14,8 @@ use bun_collections::linear_fifo::{DynamicBuffer, StaticBuffer};
 use bun_collections::{
     ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap, index_sort,
 };
-use bun_core::ZBox;
 use bun_core::{Global, Output};
+use bun_core::{SensitiveCString, ZBox};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dot_env;
 use bun_event_loop::{self, EventLoopHandle};
@@ -973,7 +973,8 @@ mod holder {
     /// (never freed). The HTTP thread
     /// reads these asynchronously after `init()` returns, so they must outlive
     /// the local that builds them.
-    pub(super) static CA: std::sync::OnceLock<Vec<bun_core::ZBox>> = std::sync::OnceLock::new();
+    pub(super) static CA: std::sync::OnceLock<Vec<bun_core::SensitiveCString>> =
+        std::sync::OnceLock::new();
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2503,18 +2504,6 @@ pub fn init(
         }
     }
 
-    let mut ca: Vec<ZBox> = Vec::new();
-    {
-        let options = &manager.options;
-        if !options.ca.is_empty() {
-            ca = Vec::with_capacity(options.ca.len());
-            debug_assert_eq!(ca.capacity(), options.ca.len());
-            for s in options.ca.iter() {
-                ca.push(ZBox::from_bytes(s));
-            }
-        }
-    }
-
     let abs_ca_file_name = ZBox::from_bytes(manager.options.ca_file_name);
     // The path is still relative if joining it to its directory did not fit in a path buffer.
     if !abs_ca_file_name.is_empty() && !bun_paths::is_absolute(abs_ca_file_name.as_bytes()) {
@@ -2526,18 +2515,9 @@ pub fn init(
         Global::crash();
     }
 
-    // `InitOpts.ca: Vec<*const c_void>` (erased `[*:0]const u8`). The HTTP
-    // thread reads these asynchronously after `init` returns, so park the
-    // owning `ZBox`es in `holder::CA` for process lifetime (never freed)
-    // and project the pointers from there.
-    let ca_ptrs: Vec<*const c_void> = if ca.is_empty() {
-        Vec::new()
-    } else {
-        let _ = holder::CA.set(ca);
-        holder::CA
-            .get()
-            .map(|v| v.iter().map(|z| z.as_ptr().cast::<c_void>()).collect())
-            .unwrap_or_default()
+    let ca: &'static [SensitiveCString] = match &*manager.options.ca {
+        [] => &[],
+        ca => holder::CA.get_or_init(|| ca.iter().map(|s| SensitiveCString::new(s)).collect()),
     };
     // `InitOpts.abs_ca_file_name: &'static ZStr` — process-lifetime config
     // string. Park it in
@@ -2550,7 +2530,7 @@ pub fn init(
         holder::ABS_CA_FILE_NAME.get_or_init(|| abs_ca_file_name)
     };
     http::http_thread::init(&http::http_thread::InitOpts {
-        ca: ca_ptrs,
+        ca,
         abs_ca_file_name: abs_ca_file_name_static,
         on_init_error: http_thread_on_init_error,
         ..Default::default()

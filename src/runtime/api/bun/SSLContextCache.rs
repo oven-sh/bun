@@ -114,7 +114,7 @@ impl SSLContextCache {
                     // SAFETY: ctx non-null and tombstone write is serialized by this mutex;
                     // the up_ref is the +1 `from_raw` takes.
                     return unsafe {
-                        boringssl::SSL_CTX_up_ref(ctx);
+                        boringssl::SSL_CTX_up_ref(&*ctx);
                         OwnedSslCtx::from_raw(ctx)
                     };
                 }
@@ -139,7 +139,7 @@ impl SSLContextCache {
                 if !existing.is_null() {
                     // SAFETY: existing non-null; the up_ref is the +1 `from_raw` takes.
                     return unsafe {
-                        boringssl::SSL_CTX_up_ref(existing);
+                        boringssl::SSL_CTX_up_ref(&*existing);
                         OwnedSslCtx::from_raw(existing)
                     };
                 }

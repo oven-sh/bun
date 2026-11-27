@@ -3,10 +3,11 @@
 //! here is the `us_bun_socket_context_options_t` extern mirror, kept under its
 //! old name so `SSLConfig.asUSockets()` callers don't churn.
 
-use core::ffi::{c_char, c_long};
-use core::ptr;
+use core::ffi::c_long;
+use core::marker::PhantomData;
 
 use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX};
+use bun_core::{CStrRef, SensitiveCString};
 
 use crate::create_bun_socket_error_t;
 
@@ -20,7 +21,7 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     // SAFETY: POD, zero-valid — `libc::stat` is all-integer; `stat(2)` writes it.
     let mut st: libc::stat = bun_core::ffi::zeroed();
     // SAFETY: `path` is NUL-terminated (ZStr invariant).
-    let rc = unsafe { libc::stat(path.as_ptr().cast::<c_char>(), &raw mut st) };
+    let rc = unsafe { libc::stat(path.as_ptr(), &raw mut st) };
     if rc != 0 {
         return None;
     }
@@ -37,6 +38,7 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
 fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     use bun_windows_sys as fs;
     use bun_windows_sys::FILETIME;
+    use core::ptr;
     use std::os::windows::io::{AsRawHandle as _, HandleOrInvalid, OwnedHandle};
     // Spec parity: `bun.sys.stat` on Windows is libuv `uv_fs_stat`, which opens
     // via `CreateFileW` *without* `FILE_FLAG_OPEN_REPARSE_POINT` and therefore
@@ -83,22 +85,52 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     ])
 }
 
+/// An `Option<&[SensitiveCString]>` as C reads it: a nullable `const char *const *` and its count.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct CStrArray<'a> {
+    ptr: *const SensitiveCString,
+    len: usize,
+    _borrow: PhantomData<&'a [SensitiveCString]>,
+}
+
+impl<'a> From<Option<&'a [SensitiveCString]>> for CStrArray<'a> {
+    fn from(strings: Option<&'a [SensitiveCString]>) -> Self {
+        match strings {
+            Some(strings) => Self {
+                ptr: strings.as_ptr(),
+                len: strings.len(),
+                _borrow: PhantomData,
+            },
+            None => Self::default(),
+        }
+    }
+}
+
+impl<'a> CStrArray<'a> {
+    fn iter(self) -> impl Iterator<Item = CStrRef<'a>> {
+        let strings = (!self.ptr.is_null()).then(|| {
+            // SAFETY: the parts of a slice that is borrowed for `'a`.
+            unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
+        });
+        strings.unwrap_or_default().iter().map(CStrRef::from)
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct BunSocketContextOptions {
-    pub key_file_name: *const c_char,
-    pub cert_file_name: *const c_char,
-    pub passphrase: *const c_char,
-    pub dh_params_file_name: *const c_char,
-    pub ca_file_name: *const c_char,
-    pub ssl_ciphers: *const c_char,
+pub struct BunSocketContextOptions<'a> {
+    pub key_file_name: Option<CStrRef<'a>>,
+    pub cert_file_name: Option<CStrRef<'a>>,
+    pub passphrase: Option<CStrRef<'a>>,
+    pub dh_params_file_name: Option<CStrRef<'a>>,
+    pub ca_file_name: Option<CStrRef<'a>>,
+    pub ssl_ciphers: Option<CStrRef<'a>>,
     pub ssl_prefer_low_memory_usage: i32,
-    pub key: *const *const c_char,
-    pub key_count: u32,
-    pub cert: *const *const c_char,
-    pub cert_count: u32,
-    pub ca: *const *const c_char,
-    pub ca_count: u32,
+    pub allow_partial_trust_chain: i32,
+    pub key: CStrArray<'a>,
+    pub cert: CStrArray<'a>,
+    pub ca: CStrArray<'a>,
     pub secure_options: u32,
     pub ssl_min_version: i32,
     pub ssl_max_version: i32,
@@ -107,29 +139,29 @@ pub struct BunSocketContextOptions {
     pub client_renegotiation_limit: u32,
     pub client_renegotiation_window: u32,
     pub session_timeout: i32,
-    pub crl: *const *const c_char,
-    pub crl_count: u32,
-    pub allow_partial_trust_chain: i32,
-    pub sigalgs: *const c_char,
-    pub ecdh_curve: *const c_char,
+    pub crl: CStrArray<'a>,
+    pub sigalgs: Option<CStrRef<'a>>,
+    pub ecdh_curve: Option<CStrRef<'a>>,
 }
+bun_core::assert_ffi_layout!(
+    BunSocketContextOptions<'static>, 168, 8;
+    allow_partial_trust_chain @ 52, secure_options @ 104, crl @ 136,
+);
 
-impl Default for BunSocketContextOptions {
+impl Default for BunSocketContextOptions<'_> {
     fn default() -> Self {
         Self {
-            key_file_name: ptr::null(),
-            cert_file_name: ptr::null(),
-            passphrase: ptr::null(),
-            dh_params_file_name: ptr::null(),
-            ca_file_name: ptr::null(),
-            ssl_ciphers: ptr::null(),
+            key_file_name: None,
+            cert_file_name: None,
+            passphrase: None,
+            dh_params_file_name: None,
+            ca_file_name: None,
+            ssl_ciphers: None,
             ssl_prefer_low_memory_usage: 0,
-            key: ptr::null(),
-            key_count: 0,
-            cert: ptr::null(),
-            cert_count: 0,
-            ca: ptr::null(),
-            ca_count: 0,
+            allow_partial_trust_chain: 0,
+            key: CStrArray::default(),
+            cert: CStrArray::default(),
+            ca: CStrArray::default(),
             secure_options: 0,
             ssl_min_version: 0,
             ssl_max_version: 0,
@@ -138,22 +170,18 @@ impl Default for BunSocketContextOptions {
             client_renegotiation_limit: 3,
             client_renegotiation_window: 600,
             session_timeout: 0,
-            crl: ptr::null(),
-            crl_count: 0,
-            allow_partial_trust_chain: 0,
-            sigalgs: ptr::null(),
-            ecdh_curve: ptr::null(),
+            crl: CStrArray::default(),
+            sigalgs: None,
+            ecdh_curve: None,
         }
     }
 }
 
-impl BunSocketContextOptions {
+impl BunSocketContextOptions<'_> {
     /// Build a BoringSSL `SSL_CTX` from these options. The verify mode follows
     /// `request_cert`/`reject_unauthorized` only; see `us_ssl_ctx_from_options`.
     pub fn create_ssl_context(self, err: &mut create_bun_socket_error_t) -> Option<OwnedSslCtx> {
-        // SAFETY: FFI call; `self` is `#[repr(C)]` and passed by value, `err` is a valid out-param.
-        // A non-null return carries the +1 from `SSL_CTX_new`.
-        unsafe { OwnedSslCtx::from_raw(c::us_ssl_ctx_from_options(self, err)) }
+        c::us_ssl_ctx_from_options(self, err)
     }
 
     /// Sets `digest` (this struct's `digest()`) as the session id context: see `us_ssl_apply_selected_ctx`.
@@ -163,15 +191,8 @@ impl BunSocketContextOptions {
         err: &mut create_bun_socket_error_t,
     ) -> Option<OwnedSslCtx> {
         let ctx = self.create_ssl_context(err)?;
-        // SAFETY: `ctx` is live and not shared yet; the call copies `digest`
-        // (32 bytes, the session id context maximum, so it cannot fail).
-        unsafe {
-            bun_boringssl_sys::SSL_CTX_set_session_id_context(
-                ctx.as_ptr(),
-                digest.as_ptr(),
-                digest.len(),
-            );
-        }
+        // 32 bytes, the session id context maximum, so it cannot fail.
+        bun_boringssl_sys::SSL_CTX_set_session_id_context(&ctx, digest, digest.len());
         Some(ctx)
     }
 
@@ -182,32 +203,22 @@ impl BunSocketContextOptions {
     pub fn digest(&self) -> [u8; 32] {
         let mut h = Sha256::init();
 
-        let feed_z = |hp: &mut Sha256, s: *const c_char| {
+        let feed_z = |hp: &mut Sha256, s: Option<CStrRef<'_>>| {
             // Presence byte so null ≠ "" — both would otherwise feed only
             // the trailing 0. In practice "" usually fails create_ssl_context
             // and never caches, but injectivity is cheap to guarantee.
-            hp.update(&[(!s.is_null()) as u8]);
-            if !s.is_null() {
-                // SAFETY: caller-provided NUL-terminated C string.
-                hp.update(unsafe { bun_core::ffi::cstr(s) }.to_bytes());
+            hp.update(&[s.is_some() as u8]);
+            if let Some(s) = s {
+                hp.update(s.to_cstr().to_bytes());
             }
             hp.update(&[0]); // terminator so {a:"xy"} ≠ {a:"x",b:"y"}
         };
 
-        let feed_arr = |hp: &mut Sha256, arr: *const *const c_char, n: u32| {
-            hp.update(&[(!arr.is_null()) as u8]);
-            hp.update(bun_core::bytes_of(&n));
-            if !arr.is_null() {
-                // SAFETY: `arr` points to `n` (possibly null) C strings.
-                let slice = unsafe { bun_core::ffi::slice(arr, n as usize) };
-                for &s in slice {
-                    hp.update(&[(!s.is_null()) as u8]);
-                    if !s.is_null() {
-                        // SAFETY: NUL-terminated C string.
-                        hp.update(unsafe { bun_core::ffi::cstr(s) }.to_bytes());
-                    }
-                    hp.update(&[0]);
-                }
+        let feed_arr = |hp: &mut Sha256, arr: CStrArray<'_>| {
+            hp.update(&[(!arr.ptr.is_null()) as u8]);
+            hp.update(bun_core::bytes_of(&(arr.len as u32)));
+            for s in arr.iter() {
+                feed_z(hp, Some(s));
             }
             hp.update(&[0]);
         };
@@ -217,11 +228,10 @@ impl BunSocketContextOptions {
         // the file form is used (Bun-specific; node:tls always passes inline
         // bytes). On stat failure we feed zeros — `create_ssl_context` will fail
         // on the same path and the entry never reaches the cache.
-        let feed_path = |hp: &mut Sha256, s: *const c_char| {
-            hp.update(&[(!s.is_null()) as u8]);
-            if !s.is_null() {
-                // SAFETY: NUL-terminated C string.
-                let path = bun_core::ZStr::from_cstr(unsafe { bun_core::ffi::cstr(s) });
+        let feed_path = |hp: &mut Sha256, s: Option<CStrRef<'_>>| {
+            hp.update(&[s.is_some() as u8]);
+            if let Some(s) = s {
+                let path = bun_core::ZStr::from_cstr(s.to_cstr());
                 hp.update(path.as_bytes());
                 let mut meta: [i64; 3] = [0; 3];
                 if !path.as_bytes().is_empty() {
@@ -241,9 +251,9 @@ impl BunSocketContextOptions {
         feed_path(&mut h, self.ca_file_name);
         feed_z(&mut h, self.ssl_ciphers);
         h.update(bun_core::bytes_of(&self.ssl_prefer_low_memory_usage));
-        feed_arr(&mut h, self.key, self.key_count);
-        feed_arr(&mut h, self.cert, self.cert_count);
-        feed_arr(&mut h, self.ca, self.ca_count);
+        feed_arr(&mut h, self.key);
+        feed_arr(&mut h, self.cert);
+        feed_arr(&mut h, self.ca);
         h.update(bun_core::bytes_of(&self.secure_options));
         h.update(bun_core::bytes_of(&self.ssl_min_version));
         h.update(bun_core::bytes_of(&self.ssl_max_version));
@@ -252,7 +262,7 @@ impl BunSocketContextOptions {
         h.update(bun_core::bytes_of(&self.client_renegotiation_limit));
         h.update(bun_core::bytes_of(&self.client_renegotiation_window));
         h.update(bun_core::bytes_of(&self.session_timeout));
-        feed_arr(&mut h, self.crl, self.crl_count);
+        feed_arr(&mut h, self.crl);
         h.update(bun_core::bytes_of(&self.allow_partial_trust_chain));
         feed_z(&mut h, self.sigalgs);
         feed_z(&mut h, self.ecdh_curve);
@@ -264,25 +274,8 @@ impl BunSocketContextOptions {
     /// Best-effort byte count of cert/key/CA material — fed into
     /// `SecureContext.memoryCost` so the GC sees the off-heap allocation.
     pub fn approx_cert_bytes(&self) -> usize {
-        let mut n: usize = 0;
-        let sum = |arr: *const *const c_char, count: u32, n: &mut usize| {
-            if arr.is_null() {
-                return;
-            }
-            // SAFETY: `arr` points to `count` (possibly null) C strings.
-            let slice = unsafe { bun_core::ffi::slice(arr, count as usize) };
-            for &s in slice {
-                if !s.is_null() {
-                    // SAFETY: NUL-terminated C string.
-                    *n += unsafe { bun_core::ffi::cstr(s) }.to_bytes().len();
-                }
-            }
-        };
-        sum(self.key, self.key_count, &mut n);
-        sum(self.cert, self.cert_count, &mut n);
-        sum(self.ca, self.ca_count, &mut n);
-        sum(self.crl, self.crl_count, &mut n);
-        n
+        let sum = |arr: CStrArray<'_>| arr.iter().map(|s| s.to_cstr().count_bytes()).sum::<usize>();
+        sum(self.key) + sum(self.cert) + sum(self.ca) + sum(self.crl)
     }
 }
 
@@ -293,8 +286,7 @@ impl Sha256 {
     #[inline]
     fn init() -> Self {
         let mut ctx = core::mem::MaybeUninit::<bun_boringssl_sys::SHA256_CTX>::uninit();
-        // SAFETY: SHA256_Init writes the full ctx; never reads uninit bytes.
-        unsafe { bun_boringssl_sys::SHA256_Init(ctx.as_mut_ptr()) };
+        bun_boringssl_sys::SHA256_Init(&mut ctx);
         Self(ctx)
     }
     #[inline]
@@ -318,10 +310,10 @@ impl Sha256 {
 pub mod c {
     use super::*;
     unsafe extern "C" {
-        pub(crate) fn us_ssl_ctx_from_options(
+        pub(crate) safe fn us_ssl_ctx_from_options(
             options: BunSocketContextOptions,
-            err: *mut create_bun_socket_error_t,
-        ) -> *mut SSL_CTX;
+            err: &mut create_bun_socket_error_t,
+        ) -> Option<OwnedSslCtx>;
         // safe: no args; reads a process-global counter — no preconditions.
         pub safe fn us_ssl_ctx_live_count() -> c_long;
         /// Appends the certificates in the NUL-terminated PEM `content` to

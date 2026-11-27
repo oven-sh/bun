@@ -23,14 +23,15 @@ macro_rules! returns {
 
 returns! {
     0: ERR_clear_error CRYPTO_library_init ERR_load_BIO_strings OpenSSL_add_all_algorithms
-        SSL_load_error_strings SSL_get_peer_cert_chain sk_value OBJ_find_sigid_algs OBJ_obj2nid
+        SSL_load_error_strings SSL_get_peer_cert_chain OPENSSL_sk_value OBJ_find_sigid_algs OBJ_obj2nid
         X509_ALGOR_get0 X509_digest X509_get0_signature X509_get_signature_nid RSA_PSS_PARAMS_free
         d2i_RSA_PSS_PARAMS EVP_get_digestbynid EVP_blake2b256 EVP_blake2b512 EVP_md4 EVP_ripemd160
         EVP_sha1 EVP_sha224 EVP_sha384 EVP_sha3_224 EVP_sha3_256 EVP_sha3_384 EVP_sha3_512
         EVP_sha512 EVP_sha512_224 EVP_sha512_256 mi_free mi_malloc mi_realloc mi_usable_size
         highway_memmem;
-    1: SSL_library_init EVP_sha256 EVP_md5 EVP_Digest EVP_DigestInit EVP_DigestUpdate
+    1: SSL_library_init EVP_Digest EVP_DigestInit EVP_DigestUpdate
         EVP_DigestFinal EVP_MD_CTX_cleanup RAND_bytes PKCS5_PBKDF2_HMAC;
+    8: EVP_sha256 EVP_md5;
 }
 
 #[unsafe(no_mangle)]

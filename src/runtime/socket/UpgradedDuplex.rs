@@ -631,9 +631,7 @@ impl UpgradedDuplex {
     }
 
     fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
-        self.wrapper_ref()
-            .and_then(|w| w.ssl.get())
-            .map(|p| p.as_ptr())
+        self.wrapper_ref().and_then(|w| w.ssl()).map(|p| p.as_ptr())
     }
 
     #[uws_callback(export = "UpgradedDuplex__ssl_error", no_catch)]
@@ -687,7 +685,7 @@ impl UpgradedDuplex {
         // can run re-entrantly from `on_close` while a
         // `SSLWrapper::handle_traffic` frame is still on the stack with a
         // `&SSLWrapper` into the `Some` payload. Assigning `None` runs `Drop`
-        // (fine - `deinit()` nulls `ssl`/`ctx`) but then memmoves a fresh
+        // (which frees the `SSL` under that frame) and then memmoves a fresh
         // `Option::None` value over the slot, whose payload bytes are stack
         // garbage - the in-flight frame's `self.ssl` then reads junk and
         // `flush_pending_events` UAFs into BoringSSL. `deinit()` alone leaves

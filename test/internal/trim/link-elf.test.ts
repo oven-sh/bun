@@ -1,6 +1,6 @@
 import { trimExecutable } from "bun:internal-for-testing";
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { tempDir } from "harness";
+import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { tempDir, type DirectoryTree } from "harness";
 import { closeSync, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { constants } from "node:os";
 import { join } from "node:path";
@@ -47,6 +47,7 @@ import {
   tools,
   wrapped,
   type LinkedProgram,
+  type Program,
 } from "./link-elf-support.ts";
 import {
   builtinEnteringOtherObjects,
@@ -58,8 +59,6 @@ import {
   entryCalling,
   entryGuarding,
   entryPointsText,
-  exitCodeOf,
-  expectCleanRuns,
   expectLinkFailure,
   exportFeatures,
   Extra,
@@ -88,6 +87,7 @@ import {
   toyHeader,
   trimmedSpellingsOutput,
   wholeSpellingsOutput,
+  type ProcessResult,
 } from "./toy-program.ts";
 
 setDefaultTimeout(60_000);
@@ -113,6 +113,44 @@ else {
 
 compileFeatureCodeOnce();
 
+const sharedFolders: Disposable[] = [];
+afterAll(() => {
+  for (const folder of sharedFolders) folder[Symbol.dispose]();
+});
+
+/**
+ * One link for all the cases that only read it. The first case that asks starts it, and its folder stays until the
+ * file ends. A link that fails fails the case that started it and no other: a case that waited for it links anew.
+ */
+function linkedOnce(prefix: string, files: () => DirectoryTree, program?: Program) {
+  let link: Promise<LinkedProgram & { folder: string }> | undefined;
+  const linkNow = async () => {
+    const dir = tempDir(prefix, files());
+    sharedFolders.push(dir);
+    const folder = String(dir);
+    return { ...(await linked(folder, program)), folder };
+  };
+  return async () => {
+    for (let begun = link; begun !== undefined; begun = link) {
+      try {
+        return await begun;
+      } catch {
+        if (link === begun) link = undefined;
+      }
+    }
+    return await (link = linkNow());
+  };
+}
+const plainLink = linkedOnce("trim-elf", () => sources);
+
+const silentExit = (exitCode: number): ProcessResult => ({ ...cleanExit, exitCode });
+const runOf = (folder: string, name: string, args: string[] = []) => run([join(folder, name), ...args], folder);
+
+/** The whole program and the trimmed one both end with 0 and print nothing. */
+function expectSilentRuns({ programResult, trimmedResult }: LinkedProgram) {
+  expect({ program: programResult, trimmed: trimmedResult }).toEqual({ program: cleanExit, trimmed: cleanExit });
+}
+
 const mergedConstant = String.raw`
   __asm__(
     ".section .rodata.cst8,\"aM\",@progbits,8\n"
@@ -127,34 +165,33 @@ const addedSectionName = new RegExp(`^${unnamedSectionPrefix}\\d+_\\d+$`);
 describeLink("a trimmable link", () => {
   const objectsWithBoth = ["feature_code", "both", "entry", "table", "embedder", "main"];
 
-  // A compile of thousands of functions. Beside twenty others on a machine with few processors it gets a twentieth of them, and a minute is not enough.
-  test.serial(
-    "removes what only the entry point reaches, code and constants, and nothing retained",
-    async () => {
-      using dir = tempDir("trim-elf", cuttableSources);
-      const folder = String(dir);
-      const result = await linked(folder, { compilesFeatureCode: true });
-      const { featuresOf, summary } = result;
-      const removable = ["feature_code", "feature_code_0", "feature_code_1499", "feature_numbers"];
-      expect(removable.map(featuresOf)).toEqual(removable.map(() => [Extra]));
-      expectRetained(result, ["main", "retained", "Bun__abortForRemovedFeature"]);
-      expectCleanRuns(result);
-      expect(summary.removedBytes).toBeGreaterThan(100_000);
-      expect(summary.fileBytesSaved).toBeGreaterThanOrEqual(128 * 1024);
-      const sizeOf = (name: string) => statSync(join(folder, name)).size;
-      expect(sizeOf("program") - sizeOf("trimmed")).toBe(summary.fileBytesSaved);
-      expect(await exitCodeOf(folder, "trimmed", guardedArguments)).toBe(70);
-      expect(await exitCodeOf(folder, "program", guardedArguments)).toBeLessThan(64);
-    },
-    240_000,
-  );
+  // A link of thousands of functions takes three times as long as another. Their object is compiled at -O0: at -O1
+  // that compile takes longer than all the other compiles of this file together, and the object has the same
+  // sections, names and references either way.
+  test("removes what only the entry point reaches, code and constants, and nothing retained", async () => {
+    using dir = tempDir("trim-elf", cuttableSources);
+    const folder = String(dir);
+    const result = await linked(folder, { compileFlags: { feature_code: ["-O0"] } });
+    const { featuresOf, summary } = result;
+    const removable = ["feature_code", "feature_code_0", "feature_code_1499", "feature_numbers"];
+    expect(removable.map(featuresOf)).toEqual(removable.map(() => [Extra]));
+    expectRetained(result, ["main", "retained", "Bun__abortForRemovedFeature"]);
+    expectSilentRuns(result);
+    expect(summary.removedBytes).toBeGreaterThan(100_000);
+    expect(summary.fileBytesSaved).toBeGreaterThanOrEqual(128 * 1024);
+    const sizeOf = (name: string) => statSync(join(folder, name)).size;
+    expect(sizeOf("program") - sizeOf("trimmed")).toBe(summary.fileBytesSaved);
+    expect(await runOf(folder, "trimmed", guardedArguments)).toEqual(silentExit(70));
+    const guarded = await runOf(folder, "program", guardedArguments);
+    expect(guarded).toEqual(silentExit(expect.any(Number)));
+    expect(guarded.exitCode).toBeLessThan(64);
+  }, 240_000);
 
   test("retains a constant folded into an equal one of the feature", async () => {
-    using dir = tempDir("trim-elf", sources);
-    const result = await linked(String(dir));
+    const result = await plainLink();
     expect(result.addressOf("retained_table")).toBe(result.addressOf("feature_table"));
     expectRetained(result, ["retained_table"]);
-    expect(result.trimmedResult.exitCode).toBe(0);
+    expectSilentRuns(result);
   });
 
   test.each([
@@ -172,7 +209,7 @@ describeLink("a trimmable link", () => {
       `,
       "main.c": sources["main.c"]!.replace(index, "retained_table[(int)(x * 1234.5678) / 1234 & 31]"),
     });
-    expectCleanRuns(await linked(String(dir)));
+    expectSilentRuns(await linked(String(dir)));
   });
 
   test.each([
@@ -275,7 +312,7 @@ describeLink("a trimmable link", () => {
     expect(result.featuresOf("entered")).toEqual([Extra]);
     const files = [...readdirSync(folder), ...readdirSync(join(folder, "work"))];
     expect(files.filter(name => name.includes(".lto."))).toEqual([]);
-    expectCleanRuns(result);
+    expectSilentRuns(result);
   });
 
   test("takes a guard whose entry point does nothing, so that the compiler removes the call and the linker the function", async () => {
@@ -296,7 +333,7 @@ describeLink("a trimmable link", () => {
     expect(result.featuresOf("entered")).toEqual([Extra]);
     expect(() => result.featuresOf("does_nothing")).toThrow("has no symbol does_nothing");
     expectRetained(result, ["destroys"]);
-    expectCleanRuns(result);
+    expectSilentRuns(result);
   });
 
   test.skipIf(archiver === null)("relinks objects compiled from bitcode in an archive", async () => {
@@ -388,7 +425,7 @@ describeLink("a trimmable link", () => {
     const addedNames = orderedNames.filter(name => addedSectionName.test(name));
     expect(addedNames.map(result.addressOf)).toContain(jumpTable);
     expect(result.featuresAt(jumpTable)).toEqual([Extra]);
-    expectCleanRuns(result);
+    expectSilentRuns(result);
   });
 
   test("cannot write the table into an executable without the section reserved for it", async () => {
@@ -401,13 +438,13 @@ describeLink("a trimmable link", () => {
   });
 
   test("writes the five review files and lists the entry point", async () => {
-    using dir = tempDir("trim-elf", sources);
-    const folder = String(dir);
-    await linked(folder);
+    const { folder } = await plainLink();
     const reviewFileNames = ["entry-points.txt", "groups.txt", "needs.txt", "requires.txt", "retained-by.txt"];
     expect(reviewFiles(folder, "program")).toEqual(reviewFileNames);
     const lines = entryPointsText(folder, "program").split("\n");
-    expect(lines.filter(line => line.startsWith(`${Extra} Abort `))).toHaveLength(1);
+    expect(lines.filter(line => line.startsWith(`${Extra} Abort `))).toEqual([
+      expect.stringMatching(/^\S+ Abort \d+ entered \(entry\.o, \d+ bytes\) <- main \(main\.o, \d+ bytes\)$/),
+    ]);
   });
 
   test("lists an entry point with a C++ name demangled", async () => {
@@ -428,13 +465,11 @@ describeLink("a trimmable link", () => {
     expect(result.featuresOf("_ZN3toy13mangled_entryEi")).toEqual([Extra]);
     const [line] = entryPointsText(folder, "program").split("\n");
     expect(line).toMatch(/^\S+ Abort \d+ toy::mangled_entry\(int\) \(mangled\.o, \d+ bytes\) <- main \(guards\.o, /);
-    expectCleanRuns(result);
+    expectSilentRuns(result);
   });
 
   test("has an aligned table", async () => {
-    using dir = tempDir("trim-elf", sources);
-    const folder = String(dir);
-    await linked(folder);
+    const { folder } = await plainLink();
     expect(sectionOf(join(folder, "program"), ".bun_trim").address % 8).toBe(0);
   });
 
@@ -450,17 +485,15 @@ describeLink("a trimmable link", () => {
     expect(new Set(addresses).size).toBe(4);
     expect(["entered", "feature_code"].map(result.featuresOf)).toEqual([[Extra], [Extra]]);
     expectRetained(result, ["retained", "main"]);
-    expectCleanRuns(result);
+    expectSilentRuns(result);
   });
 
   test("orders the features alone when the command names no order file", async () => {
-    using dir = tempDir("trim-elf", sources);
-    const folder = String(dir);
-    const result = await linked(folder);
-    const orderedNames = readFileSync(join(folder, "work/order.txt"), "latin1").split("\n").filter(Boolean);
+    const result = await plainLink();
+    const orderedNames = readFileSync(join(result.folder, "work/order.txt"), "latin1").split("\n").filter(Boolean);
     expect(orderedNames).toContain("entered");
     expect(orderedNames).not.toContain("retained");
-    expectCleanRuns(result);
+    expectSilentRuns(result);
   });
 
   test("does not reorder a retained static function that shares its name with a removable one", async () => {
@@ -475,15 +508,15 @@ describeLink("a trimmable link", () => {
     const featuresIn = (object: string) => result.featuresAt(addressInMap(folder, object, ".text.same_name"));
     expect(featuresIn("main.o")).toBeUndefined();
     expect([[Extra], undefined]).toContainEqual(featuresIn("more.o"));
-    expectCleanRuns(result);
+    expectSilentRuns(result);
   });
 
   test("is reproducible", async () => {
     using dir = tempDir("trim-elf", sources);
     const folder = String(dir);
-    expect((await wrapped(folder)).exitCode).toBe(0);
+    expect(await wrapped(folder)).toMatchObject({ stderr: "", exitCode: 0 });
     const first = readFileSync(join(folder, "program"));
-    expect((await wrapped(folder)).exitCode).toBe(0);
+    expect(await wrapped(folder)).toMatchObject({ stderr: "", exitCode: 0 });
     expect(readFileSync(join(folder, "program")).equals(first)).toBe(true);
   });
 });
@@ -531,9 +564,9 @@ describeLink("each stub", () => {
       const objects = ["feature_code", "embedder", "spellings"];
       const linkFlags = spellingsGuardFunctions.map(name => `-Wl,--undefined=${name}`);
       const result = await linked(folder, { objects, compileFlags, linkFlags });
-      expect(result.programResult.stdout).toBe(wholeSpellingsOutput + "\n");
-      expect(result.trimmedResult.stdout).toBe(trimmedSpellingsOutput + "\n");
-      expect(await exitCodeOf(folder, "trimmed", ["abort"])).toBe(endedByTrap);
+      expect(result.programResult).toEqual({ ...cleanExit, stdout: wholeSpellingsOutput + "\n" });
+      expect(result.trimmedResult).toEqual({ ...cleanExit, stdout: trimmedSpellingsOutput + "\n" });
+      expect(await runOf(folder, "trimmed", ["abort"])).toEqual(silentExit(endedByTrap));
       const removableLines = entryPointsText(folder, "program")
         .split(foldedEntryPointsHeading)[0]!
         .trimEnd()
@@ -559,9 +592,9 @@ describeLink("each stub", () => {
       const folder = String(dir);
       const objects = ["feature_code", "embedder", "spellings"];
       const result = await linked(folder, { objects, compileFlags, linkFlags: ["-Wl,--undefined=body"] });
-      expect(result.programResult.stdout).toBe(wholeSpellingsOutput + "\n");
-      expect(result.trimmedResult.stdout).toBe(trimmedSpellingsOutput + "\n");
-      expect(await exitCodeOf(folder, "trimmed", ["abort"])).toBe(endedByTrap);
+      expect(result.programResult).toEqual({ ...cleanExit, stdout: wholeSpellingsOutput + "\n" });
+      expect(result.trimmedResult).toEqual({ ...cleanExit, stdout: trimmedSpellingsOutput + "\n" });
+      expect(await runOf(folder, "trimmed", ["abort"])).toEqual(silentExit(endedByTrap));
       const removableLines = entryPointsText(folder, "program")
         .split(foldedEntryPointsHeading)[0]!
         .trimEnd()
@@ -587,10 +620,11 @@ describeLink("each stub", () => {
         using dir = tempDir("trim-elf-stubs", rustFiles(rustSource));
         const folder = String(dir);
         const result = await inspectAndRun(folder, await wrappedRust(folder, isBitcode));
-        expect(result.programResult.stdout).toMatch(/^-?\d*[13579] -?\d*[13579],7 -?\d*[13579] false\n$/);
-        expect(result.trimmedResult.stdout).toBe("0 0,0 -2 true\n");
-        expect(await exitCodeOf(folder, "trimmed", ["a"])).toBe(endedByTrap);
-        expect(await exitCodeOf(folder, "trimmed", ["a", "b"])).toBe(endedByTrap);
+        const wholeOutput = expect.stringMatching(/^-?\d*[13579] -?\d*[13579],7 -?\d*[13579] false\n$/);
+        expect(result.programResult).toEqual({ ...cleanExit, stdout: wholeOutput });
+        expect(result.trimmedResult).toEqual({ ...cleanExit, stdout: "0 0,0 -2 true\n" });
+        expect(await runOf(folder, "trimmed", ["a"])).toEqual(silentExit(endedByTrap));
+        expect(await runOf(folder, "trimmed", ["a", "b"])).toEqual(silentExit(endedByTrap));
       },
     );
   }
@@ -627,15 +661,13 @@ pub extern "C" fn rust_bodies_without_effect(x: i32) -> i32 {
   }
 
   test("trimExecutable rejects an already trimmed executable, an unknown feature name and a missing file", async () => {
-    using dir = tempDir("trim-elf-stubs", sources);
-    const folder = String(dir);
-    await linked(folder);
-    const trim = (name: string, features: FeatureName[]) => () =>
-      trimExecutable(join(folder, name), join(folder, "again"), features);
+    const { folder } = await plainLink();
+    const refused = join(folder, "refused");
+    const trim = (name: string, features: FeatureName[]) => () => trimExecutable(join(folder, name), refused, features);
     expect(trim("trimmed", [Extra])).toThrow("(AlreadyTrimmed)");
     expect(trim("program", ["NoSuchFeature"])).toThrow(`unknown feature "NoSuchFeature"`);
-    expect(() => trimExecutable(join(folder, "absent"), join(folder, "absent-out"), [Extra])).toThrow();
-    expect(existsSync(join(folder, "absent-out"))).toBe(false);
+    expect(trim("absent", [Extra])).toThrow(/^ENOENT\b.*\/absent\b/);
+    expect(existsSync(refused)).toBe(false);
   });
 });
 
@@ -669,14 +701,11 @@ describeLink("two features", () => {
     expect(addressOf("entry_of_extra")).toBe(addressOf("entry_of_other"));
     expect(featuresOf("entry_of_extra")).toEqual(sortedByIndex(Extra, Other));
     trimExecutable(join(folder, "program"), join(folder, "without-both"), [Extra, Other]);
-    const exitCodesOf = async (name: string) => [
-      await exitCodeOf(folder, name, ["a"]),
-      await exitCodeOf(folder, name, ["a", "b"]),
-    ];
-    const whole = await exitCodesOf("program");
-    expect(whole.filter(code => code >= 64)).toEqual([]);
-    expect(await exitCodesOf("trimmed")).toEqual([70, whole[1]!]);
-    expect(await exitCodesOf("without-both")).toEqual([70, 70]);
+    const runsOf = async (name: string) => [await runOf(folder, name, ["a"]), await runOf(folder, name, ["a", "b"])];
+    const whole = await runsOf("program");
+    expect(whole.filter(({ stdout, stderr, exitCode }) => exitCode >= 64 || stdout + stderr !== "")).toEqual([]);
+    expect(await runsOf("trimmed")).toEqual([silentExit(70), whole[1]!]);
+    expect(await runsOf("without-both")).toEqual([silentExit(70), silentExit(70)]);
   });
 
   test("record a requirement when one calls the other's entry point directly", async () => {
@@ -687,13 +716,14 @@ describeLink("two features", () => {
       "main.c": guardsBoth,
     });
     const folder = String(dir);
-    const { table, featuresOf } = await linked(folder, { objects });
-    expect(table.edges).toEqual([
+    const result = await linked(folder, { objects });
+    expect(result.table.edges).toEqual([
       { from: indexOf(Extra), to: indexOf(Other), strength: "Reference", isFollowed: true },
     ]);
     const requiresText = readFileSync(join(folder, "program.trim/requires.txt"), "utf8");
     expect(requiresText).toStartWith(`${Extra} requires ${Other}: 1 references`);
-    expect(featuresOf("entry_of_other")).toEqual([Other]);
+    expect(result.featuresOf("entry_of_other")).toEqual([Other]);
+    expectSilentRuns(result);
   });
 
   test("record a guard in place of a requirement when the call is guarded", async () => {
@@ -711,7 +741,7 @@ describeLink("two features", () => {
     expect(readFileSync(join(folder, "program.trim/requires.txt"), "utf8")).toBe(
       `${Extra} enters ${Other}: aborting guard\n`,
     );
-    expect(trimmedResult.exitCode).toBe(0);
+    expect(trimmedResult).toEqual(cleanExit);
   });
 
   describe("of which JavaScript enters the first as a built-in, whose code enters the second", () => {
@@ -725,12 +755,13 @@ describeLink("two features", () => {
     test("link when the built-in declares both uses, and the table answers for the edge", async () => {
       using dir = tempDir("trim-elf-two", files);
       const builtins = [builtinUsing(spelledBuiltin, "toy.extra", Extra, Other)];
-      const { table, featuresOf } = await linked(String(dir), { objects, builtins });
-      expect(table.edges).toEqual([
+      const result = await linked(String(dir), { objects, builtins });
+      expect(result.table.edges).toEqual([
         { from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: false },
       ]);
-      expect(featuresOf("entered")).toEqual([Extra]);
-      expect(featuresOf("entry_of_other")).toEqual([Other]);
+      expect(result.featuresOf("entered")).toEqual([Extra]);
+      expect(result.featuresOf("entry_of_other")).toEqual([Other]);
+      expectSilentRuns(result);
     });
 
     test("fail the link when the built-in does not declare the second use", async () => {
@@ -749,11 +780,12 @@ describeLink("two features", () => {
       using dir = tempDir("trim-elf-two", { ...withoutMain, ...builtinEnteringOtherSources });
       const folder = String(dir);
       const both = [builtinUsing(spelledBuiltin, "toy.extra", Extra, Other)];
-      const { table, featuresOf } = await linked(folder, { objects: builtinEnteringOtherObjects, builtins: both });
-      expect(table.edges).toEqual([
+      const result = await linked(folder, { objects: builtinEnteringOtherObjects, builtins: both });
+      expect(result.table.edges).toEqual([
         { from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: false },
       ]);
-      expect(["entered_as_builtin", "entry_of_other"].map(featuresOf)).toEqual([[Extra], [Other]]);
+      expect(["entered_as_builtin", "entry_of_other"].map(result.featuresOf)).toEqual([[Extra], [Other]]);
+      expectSilentRuns(result);
       const one = [builtinUsing(spelledBuiltin, "toy.extra", Extra)];
       expectLinkFailure(
         folder,
@@ -787,7 +819,7 @@ describeLink("two features", () => {
         });
         // A program that uses both may have named the built-in, so the pointer stays where the second is forced out.
         trimExecutable(join(folder, "program"), join(folder, "forced-out"), [Other], [Extra, Other]);
-        expect(await exitCodeOf(folder, "forced-out", [])).toBe(endedByTrap);
+        expect(await runOf(folder, "forced-out")).toEqual(silentExit(endedByTrap));
         expect(readFileSync(join(folder, "program.trim", "needs.txt"), "utf8")).toStartWith(
           `toy.extra needs always ${Other}: entersOther(`,
         );
@@ -812,7 +844,7 @@ describeLink("two features", () => {
       });
       // A program that uses both may have named the built-in, so the pointer stays where the second is forced out.
       trimExecutable(join(folder, "program"), join(folder, "forced-out"), [Other], [Extra, Other]);
-      expect(await exitCodeOf(folder, "forced-out", [])).toBe(endedByTrap);
+      expect(await runOf(folder, "forced-out")).toEqual(silentExit(endedByTrap));
       expect(readFileSync(join(folder, "program.trim", "needs.txt"), "utf8")).toStartWith(
         `toy.extra needs always ${Other}: enters_other (`,
       );
@@ -860,8 +892,8 @@ describeLink("two features", () => {
     const result = await linked(folder, { objects: ["feature_code", "entry", "embedder", "first", "second"] });
     expect(result.linkOutput).toMatch(/\b1 dead guards?\b/);
     expect(result.featuresOf("feature_code")).toEqual([Extra]);
-    expectCleanRuns(result);
-    expect(await exitCodeOf(folder, "trimmed", guardedArguments)).toBe(70);
+    expectSilentRuns(result);
+    expect(await runOf(folder, "trimmed", guardedArguments)).toEqual(silentExit(70));
   });
 
   test("an entry point folded with a retained function stays, with what only it reaches", async () => {
@@ -892,7 +924,7 @@ describeLink("two features", () => {
     expectRetained(result, ["folded_entry", "folded_entry_callee"]);
     expect(result.featuresOf("feature_code_0")).toEqual([Extra]);
     expect(entryPointsText(folder, "program").split(foldedEntryPointsHeading)[1]).toContain("folded_entry");
-    expectCleanRuns(result);
+    expectSilentRuns(result);
   });
 });
 
@@ -917,7 +949,7 @@ describeLink("a table in data that holds the address of a built-in's C function"
     const result = await linked(folder, { objects, builtins });
     expect(["entered", "feature_code", "natives"].map(result.featuresOf)).toEqual([[Extra], [Extra], undefined]);
     expect(entryPointsText(folder, "program")).toMatch(/ entered \(entry\.o, \d+ bytes\) <- natives \(natives\.o, /);
-    expectCleanRuns(result);
+    expectSilentRuns(result);
   });
 });
 
@@ -1069,7 +1101,7 @@ describeLink("what the executable exports", () => {
     const { featuresOf, trimmedResult } = await linked(String(dir), { objects: objectsWithMore, linkFlags });
     expect(["exported_function", "exported_callee"].map(featuresOf)).toEqual([exportFeatures, exportFeatures]);
     expect(featuresOf("entry_of_other")).toEqual(sortedByIndex(Other, ...exportFeatures));
-    expect(trimmedResult.exitCode).toBe(0);
+    expect(trimmedResult).toEqual(cleanExit);
   });
 
   test("keeps an export without a version beside exports that have one, though only a feature's code calls it", async () => {
@@ -1102,7 +1134,7 @@ describeLink("what the executable exports", () => {
       exportFeatures,
       [Extra],
     ]);
-    expect(trimmedResult.exitCode).toBe(0);
+    expect(trimmedResult).toEqual(cleanExit);
   });
 });
 
@@ -1114,6 +1146,7 @@ describeLink("ICU's data package", () => {
     ["icudt99l/ibm-37_P100-1995.cnv", 5000],
     ["icudt99l/nothing-knows-this.bin", 33],
   ];
+  const itemNames = items.map(([path]) => path.slice(path.indexOf("/") + 1));
   const objects = ["feature_code", "entry", "embedder", "data", "main"];
   const dataFiles = (afterPackage: string) => ({
     ...sources,
@@ -1135,6 +1168,7 @@ describeLink("ICU's data package", () => {
     return features.map(indexOf).toSorted((a, b) => a - b);
   };
   const extentsOf = ({ table }: LinkedProgram) => table.icuPackages.map(({ start, end }) => ({ start, end }));
+  const linkWithoutNextName = linkedOnce("trim-elf-icu", () => dataFiles(""), { objects });
 
   test("ends at the next name in its section and lists its items by the features that read them", async () => {
     using dir = tempDir("trim-elf-icu", dataFiles(".balign 16\\n.globl dictionary\\ndictionary:\\n.zero 64\\n"));
@@ -1146,36 +1180,39 @@ describeLink("ICU's data package", () => {
     for (const { firstItem, itemCount, set } of table.icuPackages[0]!.runs) {
       featuresOfItem.fill(table.sets[set]!, firstItem, firstItem + itemCount);
     }
-    expect(featuresOfItem).toEqual(items.map(([path]) => readersOf(path.slice(path.indexOf("/") + 1))));
+    expect(featuresOfItem).toEqual(itemNames.map(readersOf));
     expect(readersOf("coll/de.res")).toEqual([indexOf("IntlCollation")]);
     expect(readersOf("nothing-knows-this.bin")).toEqual([]);
-    expect(programResult.exitCode).toBe(0);
+    expect(programResult).toEqual(cleanExit);
   });
 
   test("ends where its section ends when no name follows", async () => {
-    using dir = tempDir("trim-elf-icu", dataFiles(""));
-    const result = await linked(String(dir), { objects });
+    const result = await linkWithoutNextName();
     const start = result.addressOf("icudt99_dat");
     expect(extentsOf(result)).toEqual([{ start, end: start + packageOf(items).length }]);
   });
 
   test("loses the items of a removed feature", async () => {
-    using dir = tempDir("trim-elf-icu", dataFiles(""));
-    const folder = String(dir);
-    const { table } = await linked(folder, { objects, removed: ["IntlCollation"] });
+    const { folder, table } = await linkWithoutNextName();
+    const withoutCollation = join(folder, "without-collation");
+    const { removed } = trimExecutable(join(folder, "program"), withoutCollation, ["IntlCollation"]);
     const { start, end } = table.icuPackages[0]!;
-    const trimmed = join(folder, "trimmed");
-    const file = openElf(trimmed, "r")!;
-    const image = elfImage(trimmed, file);
+    const file = openElf(withoutCollation, "r")!;
+    const image = elfImage(withoutCollation, file);
     closeSync(file.fd);
     const names = itemsOf(image.bytes(start, end - start)!).map(({ name }) => name);
+    // An item leaves when every feature that reads it has left. `removed` also names what every trim removes.
+    const gone = removed.map(indexOf);
+    const stays = (name: string) =>
+      readersOf(name).length === 0 || readersOf(name).some(reader => !gone.includes(reader));
+    expect(names).toEqual(itemNames.filter(stays));
     expect(names).not.toContain("coll/de.res");
     expect(names).toContain("coll/root.res");
+    expect(await runOf(folder, "without-collation")).toEqual(cleanExit);
   });
 
   test("a program without it lists none", async () => {
-    using dir = tempDir("trim-elf-icu", sources);
-    const { table } = await linked(String(dir));
+    const { table } = await plainLink();
     expect(table.icuPackages).toEqual([]);
   });
 });

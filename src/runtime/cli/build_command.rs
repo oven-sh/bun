@@ -841,6 +841,19 @@ impl BuildCommand {
                     && output_files.len() == 1
                     && ctx.bundler_options.outdir.is_empty()
                 {
+                    let only = &output_files[0];
+                    if opt_transform_only && only.output_kind == options::OutputKind::Asset {
+                        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r><d>:<r> Must use <b>--outdir<r> or <b>--outfile<r> to copy {}",
+                            bun_fmt::quote(&bun_paths::Path::relative(
+                                top_level_dir,
+                                &only.src_path
+                            )),
+                        );
+                        Output::flush();
+                        exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
+                    }
                     // if --no-bundle is passed, it won't have an output dir
                     if let options::OutputFileValue::Buffer { bytes } = &output_files[0].value {
                         writer.write_all(bytes)?;

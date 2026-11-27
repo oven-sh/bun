@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, forEachLine, isLinux, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  forEachLine,
+  isLinux,
+  isRoot,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 
@@ -948,6 +958,417 @@ describe.concurrent("--no-bundle with --outdir", () => {
     expect(fs.readdirSync(String(dir)).sort()).toEqual(["a.js", "a.ts", "b.js", "b.ts"]);
     expect(await Bun.file(path.join(String(dir), "a.js")).text()).toContain('console.log("hello world!")');
     expect(await Bun.file(path.join(String(dir), "b.js")).text()).toContain('console.log("foo bar baz")');
+  });
+});
+
+// An entry point whose loader has nothing to transpile is copied: wasm, napi, sqlite, sh, and the
+// file loader that every other extension falls back to.
+describe.concurrent("--no-bundle with entry points that are copied", () => {
+  // Not valid UTF-8. The two BOM fixtures start with the bytes that a loader of text strips or decodes.
+  const wasm = Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0xff, 0xfe, 0x80]);
+  const addon = Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01]);
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+  const sqlite = Buffer.from("SQLite format 3\0");
+  const utf8Bom = Buffer.from([0xef, 0xbb, 0xbf]);
+  const utf8BomData = Buffer.concat([utf8Bom, Buffer.from("data")]);
+  const utf16BomData = Buffer.from([0xff, 0xfe, 0x5a, 0x5a]);
+
+  async function build(cwd: string, args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", ...args],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  /** Every file below `dir`, by its `/`-separated path. */
+  function readTree(dir: string): Record<string, Buffer> {
+    const entries = fs.readdirSync(dir, { recursive: true, withFileTypes: true }).filter(entry => entry.isFile());
+    return Object.fromEntries(
+      entries.map(entry => {
+        const file = path.join(entry.parentPath, entry.name);
+        return [path.relative(dir, file).replaceAll(path.sep, "/"), fs.readFileSync(file)];
+      }),
+    );
+  }
+
+  test("copies a .wasm entry point into --outdir and lists it in the summary", async () => {
+    using dir = tempDir("no-bundle-copy-wasm", { "src/x.wasm": wasm });
+
+    const { stdout, stderr, exitCode } = await build(String(dir), ["./src/x.wasm", "--outdir=dist"]);
+    expect(stderr).toBe("");
+    expect(stdout.replace(/in \d+ms/, "in {time}ms")).toBe(
+      "Transpiled file in {time}ms\n\n  x.wasm  11 bytes  (asset)\n\n",
+    );
+    expect(exitCode).toBe(0);
+
+    expect(readTree(String(dir))).toEqual({ "dist/x.wasm": wasm, "src/x.wasm": wasm });
+  });
+
+  test.each(["file", "wasm", "napi", "sqlite", "sqlite_embedded", "sh"])(
+    "copies an entry point that --loader maps to %s",
+    async loader => {
+      using dir = tempDir("no-bundle-copy-loader", { "src/x.zz": wasm });
+
+      const { stdout, stderr, exitCode } = await build(String(dir), [
+        "--loader",
+        `.zz:${loader}`,
+        "./src/x.zz",
+        "--outdir=dist",
+      ]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("x.zz  11 bytes  (asset)");
+      expect(exitCode).toBe(0);
+
+      expect(readTree(String(dir))).toEqual({ "dist/x.zz": wasm, "src/x.zz": wasm });
+    },
+  );
+
+  test("refuses an entry point that --loader maps to html, as it refuses a .html entry point", async () => {
+    using dir = tempDir("no-bundle-copy-html", { "src/x.zz": wasm });
+
+    const { stdout, stderr, exitCode } = await build(String(dir), [
+      "--loader",
+      ".zz:html",
+      "./src/x.zz",
+      "--outdir=dist",
+    ]);
+    expect(stderr).toBe("error: HTML imports are only supported when bundling\n");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+
+    expect(readTree(String(dir))).toEqual({ "src/x.zz": wasm });
+  });
+
+  test("copies every byte of each file, a BOM included", async () => {
+    const files: Record<string, Buffer> = {
+      "t.bin": utf16BomData,
+      "v.bin": utf8BomData,
+      "w.db": sqlite,
+      "x.wasm": wasm,
+      "y.node": addon,
+      "z.png": png,
+    };
+    const names = Object.keys(files);
+    using dir = tempDir("no-bundle-copy-bytes", Object.fromEntries(names.map(name => [`src/${name}`, files[name]])));
+
+    const { stdout, stderr, exitCode } = await build(String(dir), [
+      ...names.map(name => `./src/${name}`),
+      "--loader",
+      ".db:sqlite",
+      "--outdir=dist",
+    ]);
+    expect(stderr).toBe("");
+    expect(names.filter(name => !stdout.includes(name))).toEqual([]);
+    expect(exitCode).toBe(0);
+
+    expect(readTree(path.join(String(dir), "dist"))).toEqual(files);
+    expect(readTree(path.join(String(dir), "src"))).toEqual(files);
+  });
+
+  // On Windows `foo.` is another spelling of `foo`.
+  test.each(["Makefile", ".env", "a.tar.gz", ...(isWindows ? [] : ["foo."])])("keeps the name %s", async name => {
+    using dir = tempDir("no-bundle-copy-name", { [`src/${name}`]: png });
+
+    const { stdout, stderr, exitCode } = await build(String(dir), [`./src/${name}`, "--outdir=dist"]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain(`  ${name}  9 bytes  (asset)`);
+    expect(exitCode).toBe(0);
+
+    expect(readTree(String(dir))).toEqual({ [`dist/${name}`]: png, [`src/${name}`]: png });
+  });
+
+  test("writes a copied file beside the transpiled files of the same build", async () => {
+    const source = `export const a: number = 1;\n`;
+    using dir = tempDir("no-bundle-copy-mixed", { "src/a.ts": source, "src/x.wasm": wasm });
+
+    const { stdout, stderr, exitCode } = await build(String(dir), ["./src/a.ts", "./src/x.wasm", "--outdir=dist"]);
+    expect(stderr).toBe("");
+    expect(stdout.replace(/in \d+ms/, "in {time}ms")).toBe(
+      "Transpiled file in {time}ms\n\n  a.js    20 bytes  (chunk)\n  x.wasm  11 bytes  (asset)\n\n",
+    );
+    expect(exitCode).toBe(0);
+
+    expect(readTree(String(dir))).toEqual({
+      "dist/a.js": Buffer.from("export const a = 1;\n"),
+      "dist/x.wasm": wasm,
+      "src/a.ts": Buffer.from(source),
+      "src/x.wasm": wasm,
+    });
+  });
+
+  test("keeps the directories below the common root, so files of one name do not collide", async () => {
+    using dir = tempDir("no-bundle-copy-dirs", { "src/a/x.wasm": wasm, "src/b/x.wasm": png });
+
+    const { stdout, stderr, exitCode } = await build(String(dir), [
+      "./src/a/x.wasm",
+      "./src/b/x.wasm",
+      "--outdir=dist",
+    ]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("a/x.wasm");
+    expect(stdout).toContain("b/x.wasm");
+    expect(exitCode).toBe(0);
+
+    expect(readTree(path.join(String(dir), "dist"))).toEqual({ "a/x.wasm": wasm, "b/x.wasm": png });
+  });
+
+  test("creates the directories that --root implies", async () => {
+    using dir = tempDir("no-bundle-copy-root", { "src/nested/x.wasm": wasm });
+
+    const { stdout, stderr, exitCode } = await build(String(dir), ["--root=.", "./src/nested/x.wasm", "--outdir=dist"]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("src/nested/x.wasm");
+    expect(exitCode).toBe(0);
+
+    expect(readTree(path.join(String(dir), "dist"))).toEqual({ "src/nested/x.wasm": wasm });
+  });
+
+  test("does not leave --outdir for an entry point outside --root", async () => {
+    using dir = tempDir("no-bundle-copy-outside-root", { "src/a.wasm": wasm, "other/b.wasm": png });
+
+    const { stdout, stderr, exitCode } = await build(String(dir), [
+      "--root=src",
+      "./src/a.wasm",
+      "./other/b.wasm",
+      "--outdir=dist",
+    ]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("_.._/other/b.wasm");
+    expect(exitCode).toBe(0);
+
+    expect(readTree(String(dir))).toEqual({
+      "dist/_.._/other/b.wasm": png,
+      "dist/a.wasm": wasm,
+      "other/b.wasm": png,
+      "src/a.wasm": wasm,
+    });
+  });
+
+  test("fills [name], [ext] and a [hash] of the bytes in --entry-naming", async () => {
+    const withBom = Buffer.concat([utf8Bom, wasm]);
+    using dir = tempDir("no-bundle-copy-hash", { "a.wasm": wasm, "b.wasm": withBom, "c.wasm": wasm });
+
+    const { stdout, stderr, exitCode } = await build(String(dir), [
+      "./a.wasm",
+      "./b.wasm",
+      "./c.wasm",
+      "--outdir=dist",
+      "--entry-naming",
+      "[name]-[hash].[ext]",
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const written = readTree(path.join(String(dir), "dist"));
+    const names = Object.keys(written).sort();
+    expect(names).toEqual([
+      expect.stringMatching(/^a-[0-9a-z]{8}\.wasm$/),
+      expect.stringMatching(/^b-[0-9a-z]{8}\.wasm$/),
+      expect.stringMatching(/^c-[0-9a-z]{8}\.wasm$/),
+    ]);
+    expect(names.filter(name => !stdout.includes(name))).toEqual([]);
+    expect(names.map(name => written[name])).toEqual([wasm, withBom, wasm]);
+    // The hash is of the file as it is, so the BOM changes it.
+    const [a, b, c] = names.map(name => name.slice(2, -".wasm".length));
+    expect({ sameBytes: c === a, otherBytes: b === a }).toEqual({ sameBytes: true, otherBytes: false });
+  });
+
+  test.each([
+    ["browser", []],
+    ["bun", ["--target=bun"]],
+    ["node", ["--target=node"]],
+  ])("fills [target] in --entry-naming with %s", async (expected, targetArgs) => {
+    using dir = tempDir("no-bundle-copy-target", { "x.wasm": wasm });
+
+    const { stdout, stderr, exitCode } = await build(String(dir), [
+      ...targetArgs,
+      "./x.wasm",
+      "--outdir=dist",
+      "--entry-naming",
+      "[target]/[name].[ext]",
+    ]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain(`${expected}/x.wasm`);
+    expect(exitCode).toBe(0);
+
+    expect(readTree(path.join(String(dir), "dist"))).toEqual({ [`${expected}/x.wasm`]: wasm });
+  });
+
+  test("copies to the path that --outfile names", async () => {
+    using dir = tempDir("no-bundle-copy-outfile", { "src/x.wasm": wasm });
+
+    const { stdout, stderr, exitCode } = await build(String(dir), ["./src/x.wasm", "--outfile=out/renamed.wasm"]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("renamed.wasm  11 bytes  (asset)");
+    expect(exitCode).toBe(0);
+
+    expect(readTree(String(dir))).toEqual({ "out/renamed.wasm": wasm, "src/x.wasm": wasm });
+  });
+
+  test("does not copy a file without --outdir or --outfile", async () => {
+    using dir = tempDir("no-bundle-copy-no-output-path", { "x.wasm": wasm });
+
+    const { stdout, stderr, exitCode } = await build(String(dir), ["./x.wasm"]);
+    expect(stderr).toBe('error: Must use --outdir or --outfile to copy "x.wasm"\n');
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+
+    expect(readTree(String(dir))).toEqual({ "x.wasm": wasm });
+  });
+
+  test("names a copied file with --entry-naming, not with --asset-naming or --chunk-naming", async () => {
+    const source = `export const a: number = 1;\n`;
+    using dir = tempDir("no-bundle-copy-naming-flags", { "src/a.ts": source, "src/x.wasm": wasm });
+
+    const others = await build(String(dir), [
+      "./src/a.ts",
+      "./src/x.wasm",
+      "--outdir=other",
+      "--asset-naming",
+      "assets/[name]-[hash].[ext]",
+      "--chunk-naming",
+      "chunks/[name]-[hash].[ext]",
+    ]);
+    expect(others.stderr).toBe("");
+    expect(others.exitCode).toBe(0);
+    const entry = await build(String(dir), [
+      "./src/a.ts",
+      "./src/x.wasm",
+      "--outdir=entry",
+      "--entry-naming",
+      "[name].mjs",
+    ]);
+    expect(entry.stderr).toBe("");
+    expect(entry.exitCode).toBe(0);
+
+    const transpiled = Buffer.from("export const a = 1;\n");
+    expect(readTree(String(dir))).toEqual({
+      "entry/a.mjs": transpiled,
+      "entry/x.mjs": wasm,
+      "other/a.js": transpiled,
+      "other/x.wasm": wasm,
+      "src/a.ts": Buffer.from(source),
+      "src/x.wasm": wasm,
+    });
+  });
+
+  // Root can read a file of mode 000, and Windows does not have the mode.
+  test.skipIf(isWindows || isRoot)("fails the build when it cannot read the file", async () => {
+    using dir = tempDir("no-bundle-copy-unreadable", { "src/x.wasm": wasm });
+    fs.chmodSync(path.join(String(dir), "src", "x.wasm"), 0o000);
+
+    const { stdout, stderr, exitCode } = await build(String(dir), ["./src/x.wasm", "--outdir=dist"]);
+    expect(stderr).toBe('error: EACCES reading "src/x.wasm"\n');
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+
+    expect(fs.readdirSync(String(dir), { recursive: true }).sort()).toEqual(["src", path.join("src", "x.wasm")]);
+  });
+
+  test("rejects a copied file and a transpiled file that map to the same output path", async () => {
+    const files = { "src/a.js": `export const copied = 1;\n`, "src/a.ts": `export const transpiled: number = 2;\n` };
+    using dir = tempDir("no-bundle-copy-collision", files);
+
+    const { stdout, stderr, exitCode } = await build(String(dir), [
+      "--loader",
+      ".js:file",
+      "./src/a.js",
+      "./src/a.ts",
+      "--outdir=dist",
+    ]);
+    expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
+      "error: Multiple files share the same output path
+        ./a.js:
+          from input src/a.js
+          from input src/a.ts
+
+
+      note: entry naming is '[dir]/[name].[ext]', consider adding '[hash]' to make filenames unique"
+    `);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+
+    expect(readTree(String(dir))).toEqual({
+      "src/a.js": Buffer.from(files["src/a.js"]),
+      "src/a.ts": Buffer.from(files["src/a.ts"]),
+    });
+  });
+
+  /** `x.wasm` below `dir`, at an absolute path that is `bytes` bytes long. Returns its path from `dir`. */
+  function deepFile(dir: string, bytes: number): string {
+    let folder = dir;
+    const left = () => bytes - Buffer.byteLength(folder) - "/x.wasm".length;
+    // A name is at most 255 bytes long.
+    while (left() > 256) folder = path.join(folder, Buffer.alloc(200, "d").toString());
+    folder = path.join(folder, Buffer.alloc(left() - 1, "L").toString());
+    fs.mkdirSync(folder, { recursive: true });
+    const file = path.join(folder, "x.wasm");
+    fs.writeFileSync(file, wasm);
+    expect(Buffer.byteLength(file)).toBe(bytes);
+    return path.relative(dir, file).replaceAll(path.sep, "/");
+  }
+
+  // The name of a copy was made in 1024 bytes: a path of 1008 bytes or more failed. macOS has paths of up to 1023.
+  test("copies a file whose path is 1016 bytes long", async () => {
+    using dir = tempDir("no-bundle-copy-long-path", {});
+    const file = deepFile(String(dir), 1016);
+
+    const { stdout, stderr, exitCode } = await build(String(dir), [`./${file}`, "--outdir=dist"]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("x.wasm  11 bytes  (asset)");
+    expect(exitCode).toBe(0);
+
+    expect(readTree(String(dir))).toEqual({ "dist/x.wasm": wasm, [file]: wasm });
+  });
+
+  // Only Linux has paths this long.
+  test.skipIf(!isLinux)("copies a file whose path is longer than 2000 bytes", async () => {
+    using dir = tempDir("no-bundle-copy-longer-path", {});
+    const file = deepFile(String(dir), 2100);
+
+    const { stdout, stderr, exitCode } = await build(String(dir), [`./${file}`, "--outdir=dist"]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("x.wasm  11 bytes  (asset)");
+    expect(exitCode).toBe(0);
+
+    expect(readTree(String(dir))).toEqual({ "dist/x.wasm": wasm, [file]: wasm });
+  });
+
+  test.skipIf(!isLinux)("closes the files it has copied", async () => {
+    using dir = tempDir("no-bundle-copy-closes", { "src/x.wasm": wasm, "src/y.bin": png });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "--watch", "./src/x.wasm", "./src/y.bin", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const lines = forEachLine(proc.stdout);
+    // A build that fails keeps watching, so wait for whichever stream prints first.
+    const first = await Promise.race([lines.next(), forEachLine(proc.stderr).next()]);
+    expect(first.value).toStartWith("Transpiled");
+    // The build prints one row for each file after it has written them all.
+    let rows = 0;
+    while (rows < 2) {
+      const { value, done } = await lines.next();
+      expect(done).toBe(false);
+      if (value.endsWith(")")) rows++;
+    }
+    const open = fs.readdirSync(`/proc/${proc.pid}/fd`).flatMap(fd => {
+      try {
+        return fs.readlinkSync(`/proc/${proc.pid}/fd/${fd}`);
+      } catch {
+        return [];
+      }
+    });
+    expect(open.length).toBeGreaterThan(0);
+    expect(open.filter(target => /(x\.wasm|y\.bin)/.test(target))).toEqual([]);
   });
 });
 

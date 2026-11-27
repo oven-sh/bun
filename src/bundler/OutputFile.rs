@@ -98,14 +98,7 @@ pub type Index = bun_core::GenericIndex<u32, OutputFile>;
 pub type IndexOptional = bun_core::GenericIndexOptional<u32, OutputFile>;
 
 #[derive(Clone)]
-pub struct FileOperation {
-    // Owned copy so the field has a single, obvious lifetime.
-    pub pathname: Box<[u8]>,
-}
-
-#[derive(Clone)]
 pub enum Value {
-    Copy(FileOperation),
     Noop,
     Buffer { bytes: Box<[u8]> },
     Saved(SavedFile),
@@ -208,38 +201,8 @@ impl OutputFile {
                     file: bun_sys::PathOrFileDescriptor::Path(&self.dest_path),
                 })?;
             }
-            Value::Copy(value) => {
-                self.copy_to(&value.pathname, root_dir)?;
-            }
         }
         Ok(())
-    }
-
-    pub(crate) fn copy_to(&self, rel_path: &[u8], dir: Fd) -> Result<(), Error> {
-        let fd_out = bun_sys::openat(
-            dir,
-            &bun_paths::Path::from(rel_path),
-            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-            0o644,
-        )?;
-        let fd_in = bun_sys::openat(
-            Fd::cwd(),
-            &bun_paths::Path::from(&self.src_path),
-            bun_sys::O::RDONLY,
-            0,
-        )?;
-
-        #[cfg(windows)]
-        {
-            let _ = (fd_out, fd_in);
-            // use paths instead of bun.getFdPathW()
-            panic!("TODO windows");
-        }
-        #[cfg(not(windows))]
-        {
-            bun_sys::copy_file(fd_in, fd_out)?;
-            Ok(())
-        }
     }
 }
 

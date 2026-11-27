@@ -379,8 +379,8 @@ pub mod fs {
     // ── PathName / Path ──────────────────────────────────────────────────
     // CANONICAL: re-exported from `bun_paths::fs` (D090). The struct defs,
     // `init`/`is_file`/`source_dir`/etc, and `Default`/`Clone`/`Copy` derives
-    // live there; only resolver-tier methods (those needing `FilenameStore`,
-    // `bun_wyhash`, `bun_options_types`) remain here as an extension trait.
+    // live there; only resolver-tier methods (those needing `FilenameStore` or
+    // `bun_options_types`) remain here as an extension trait.
     pub use bun_paths::fs::{Path, PathName};
 
     /// `value` with the stores' lifetime, if it already points into the
@@ -1437,48 +1437,6 @@ pub mod fs {
     /// can hash mtimes/sizes without inlining the formatter.
     pub use super::fs_full::stat_hash;
     pub use super::fs_full::stat_hash::StatHash;
-
-    /// Re-export `ModKey` from the full `fs.rs` port so `linker::get_mod_key`
-    /// can hash files.
-    pub use super::fs_full::ModKey;
-    impl ModKey {
-        /// Builds a `ModKey` from an open file's stat.
-        pub fn from_file(file: &bun_sys::File) -> crate::CrateResult<Self> {
-            let stat = file.stat()?;
-
-            const NS_PER_S: i128 = 1_000_000_000;
-            // `bun_sys::Stat` is `libc::stat`.
-            // Reconstruct `mtime` (i128 ns) from `st_mtime` (sec) +
-            // `st_mtime_nsec` (ns). The `libc` crate flattens BSD/Darwin
-            // `st_mtimespec` into `st_mtime`/`st_mtime_nsec`, so the access is
-            // uniform on all `unix`.
-            #[cfg(unix)]
-            let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S + stat.st_mtime_nsec as i128;
-            #[cfg(windows)]
-            let mtime: i128 = (stat.mtim.sec as i128) * NS_PER_S + stat.mtim.nsec as i128;
-            let seconds = mtime / NS_PER_S;
-
-            // We can't detect changes if the file system zeros out the
-            // modification time
-            if seconds == 0 && NS_PER_S == 0 {
-                return Err(crate::Error::Unusable);
-            }
-
-            // Don't generate a modification key if the file is too new
-            let now = bun_core::time::nano_timestamp();
-            let now_seconds = now / NS_PER_S;
-            // `seconds > seconds` is always false — intentionally kept
-            #[allow(clippy::eq_op)]
-            if seconds > seconds || (seconds == now_seconds && mtime > now) {
-                return Err(crate::Error::Unusable);
-            }
-
-            Ok(ModKey {
-                size: stat.st_size as u64,
-                mtime,
-            })
-        }
-    }
 
     pub mod file_system {
         pub use super::{DirEntry, DirnameStore, Entry, EntryKind, FilenameStore, RealFS};

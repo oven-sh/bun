@@ -472,6 +472,13 @@ pub(crate) fn run_analysis_passes(
         crate::optimization::optimize_props_method_calls(hir, env)
     );
 
+    if env.config.async_components_render_once
+        && hir.is_async
+        && env.fn_type == ReactFunctionType::Component
+    {
+        env.config.validate_no_impure_functions_in_render = false;
+    }
+
     pass!(
         env,
         "AnalyseFunctions",

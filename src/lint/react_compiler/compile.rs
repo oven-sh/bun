@@ -60,6 +60,7 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
         validate_no_set_state_in_effects: true,
         validate_no_jsx_in_try_statements: true,
         validate_no_impure_functions_in_render: true,
+        async_components_render_once: is_oxlint,
         validate_static_components: true,
         validate_no_freezing_known_mutable_functions: true,
         validate_no_void_use_memo: true,

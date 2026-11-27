@@ -135,6 +135,9 @@ pub struct EnvironmentConfig {
     pub validate_blocklisted_imports: Option<Vec<String>>,
     pub validate_source_locations: bool,
     pub validate_no_impure_functions_in_render: bool,
+    /// For `validate_no_impure_functions_in_render`: an async component renders once, for a request, so nothing in it
+    /// is impure, nor in a function in it. An async hook is no component. Upstream reports it as in any component.
+    pub async_components_render_once: bool,
     pub validate_no_freezing_known_mutable_functions: bool,
     pub enable_assume_hooks_follow_rules_of_react: bool,
     pub enable_transitively_freeze_function_expressions: bool,
@@ -198,6 +201,7 @@ impl Default for EnvironmentConfig {
             validate_blocklisted_imports: None,
             validate_source_locations: false,
             validate_no_impure_functions_in_render: false,
+            async_components_render_once: false,
             validate_no_freezing_known_mutable_functions: false,
             enable_assume_hooks_follow_rules_of_react: true,
             enable_transitively_freeze_function_expressions: true,

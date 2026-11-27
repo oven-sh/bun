@@ -1,4 +1,4 @@
-// Whoever goes over the enumerable properties of console never sees _stdout and _stderr. Bun's own formatter shows them.
+// Whoever goes over the enumerable properties of console never sees _stdout and _stderr. Neither does Bun's own formatter, unless it is asked for the properties that are not enumerable.
 import util from "node:util";
 
 const seen = name => name === "_stdout" || name === "_stderr";

@@ -106,8 +106,6 @@ using namespace WebCore;
 
 namespace Bun {
 
-extern "C" bool has_bun_garbage_collector_flag_enabled;
-
 static JSValue constructCookieObject(VM& vm, JSObject* bunObject);
 static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject);
 static JSValue constructModuleGraphObject(VM& vm, JSObject* bunObject);

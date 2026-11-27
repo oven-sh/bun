@@ -1255,22 +1255,6 @@ impl EventLoop {
 }
 
 impl EventLoop {
-    /// # Safety
-    /// `done` must point to a live `bool`; C++ writes `true` through it from a
-    /// callback inside `tick()`, so it cannot be a Rust `&mut` (would alias).
-    pub unsafe fn tick_while_paused(&self, done: *const bool) {
-        // SAFETY: see fn contract — `done` is a live FFI bool written by C++.
-        while !unsafe { done.read_volatile() } {
-            #[cfg(not(windows))]
-            self.usockets_loop().tick();
-            #[cfg(windows)]
-            // SAFETY: `uv_loop()` is live for this loop's lifetime; JS thread.
-            unsafe {
-                (*self.uv_loop()).tick()
-            };
-        }
-    }
-
     /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
     /// `context`: as for [`run_callback`](Self::run_callback).
     /// `after_call` runs after `callback` returns and before microtasks drain.

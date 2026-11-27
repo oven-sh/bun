@@ -369,10 +369,9 @@ pub enum AddServerNameError {
 }
 bun_core::impl_tag_error!(AddServerNameError);
 
-/// Stamps one `pub fn $name<UD, H>(&mut self, p, ud, h)` per HTTP verb,
+/// Stamps one `pub fn $name<UD, H>(&mut self, p, ud, h)` per listed name,
 /// each forwarding to [`App::route`] with the matching [`RouteKind`].
-/// `connect`/`trace` are intentionally omitted — h3 exposes those only via
-/// [`App::method`].
+/// Every other verb is registered through [`App::method`].
 macro_rules! h3_route_methods {
     ($($name:ident => $kind:ident),* $(,)?) => {$(
         pub fn $name<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
@@ -506,13 +505,7 @@ impl App {
     }
 
     h3_route_methods! {
-        get     => Get,
-        post    => Post,
-        put     => Put,
-        delete  => Delete,
-        patch   => Patch,
         head    => Head,
-        options => Options,
         any     => Any,
     }
 

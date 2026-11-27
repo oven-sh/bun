@@ -533,11 +533,6 @@ impl Loop {
         };
         found
     }
-    #[inline]
-    pub fn tick(&mut self) {
-        // SAFETY: self is a live loop.
-        let _ = unsafe { uv_run(self, RunMode::Default) };
-    }
 }
 
 unsafe extern "C" fn find_active_io_handle_cb(handle: *mut uv_handle_t, found: *mut c_void) {
@@ -676,11 +671,6 @@ pub unsafe trait UvHandle: Sized {
         (self as *mut Self).cast()
     }
     #[inline]
-    fn data(&self) -> *mut c_void {
-        // SAFETY: handle prefix; `data` is at offset 0.
-        unsafe { (*self.as_handle()).data }
-    }
-    #[inline]
     fn get_data<T>(&self) -> *mut T {
         // SAFETY: handle prefix invariant.
         unsafe { uv_handle_get_data(self.as_handle()).cast() }
@@ -710,11 +700,6 @@ pub unsafe trait UvHandle: Sized {
                 >(cb)),
             );
         }
-    }
-    #[inline]
-    fn has_ref(&self) -> bool {
-        // SAFETY: handle prefix invariant.
-        unsafe { uv_has_ref(self.as_handle()) != 0 }
     }
     #[inline]
     fn ref_(&mut self) {
@@ -874,16 +859,6 @@ pub unsafe trait UvStream: UvHandle {
     fn try_write(&mut self, bufs: &[uv_buf_t]) -> ReturnCode {
         // SAFETY: stream prefix invariant.
         unsafe { uv_try_write(self.as_stream(), bufs.as_ptr(), bufs.len() as c_uint) }
-    }
-    #[inline]
-    fn is_readable(&self) -> bool {
-        // SAFETY: stream prefix invariant.
-        unsafe { uv_is_readable((self as *const Self).cast()) != 0 }
-    }
-    #[inline]
-    fn is_writable(&self) -> bool {
-        // SAFETY: stream prefix invariant.
-        unsafe { uv_is_writable((self as *const Self).cast()) != 0 }
     }
     /// High-level wrapper
     /// over `uv_read_start` that thunks Rust callbacks through a monomorphised

@@ -458,16 +458,6 @@ impl FilePoll {
             target_os = "freebsd"
         ))]
         return self.register_impl(flag, one_shot);
-        #[cfg(not(any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "macos",
-            target_os = "freebsd"
-        )))]
-        {
-            let _ = (flag, one_shot);
-            sys::Result::Ok(())
-        }
     }
 
     #[cfg(any(
@@ -722,16 +712,6 @@ impl FilePoll {
             target_os = "freebsd"
         ))]
         let result = self.unregister_impl(loop_, force_unregister);
-        #[cfg(not(any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "macos",
-            target_os = "freebsd"
-        )))]
-        let result: sys::Result<()> = {
-            let _ = force_unregister;
-            sys::Result::Ok(())
-        };
         self.deactivate(loop_);
         result
     }

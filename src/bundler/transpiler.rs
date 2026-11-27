@@ -44,7 +44,6 @@ pub struct Transpiler<'a> {
     // Bundler is an AST crate per PORTING.md, so an arena is threaded even
     // though callers usually pass `bun.default_allocator`.
     pub arena: &'a Arena,
-    pub(crate) result: options::TransformResult,
     pub resolver: Resolver<'a>,
     pub(crate) output_files: Vec<options::OutputFile>,
     pub(crate) resolve_results: Box<ResolveResults>,
@@ -163,7 +162,6 @@ impl<'a> Transpiler<'a> {
             log,
             arena,
             // Per-worker scratch — workers never read the parent's accumulated state.
-            result: options::TransformResult::default(),
             resolver,
             output_files: Vec::new(),
             resolve_results: Box::new(ResolveResults::default()),
@@ -999,17 +997,12 @@ impl<'a> Transpiler<'a> {
         // `bun_options_types` unifies the two (resolver/lib.rs:2773 note).
         let resolver_opts = resolver_bundle_options_subset(&bundle_options);
 
-        let outbase = bundle_options.output_dir.clone();
         let resolve_results = Box::new(ResolveResults::default());
 
         Ok(Transpiler {
             options: bundle_options,
             log: log_nn.as_ptr(),
             arena,
-            result: options::TransformResult {
-                outbase,
-                ..Default::default()
-            },
             resolver: Resolver::init1(log_nn, fs, resolver_opts),
             output_files: Vec::new(),
             resolve_results,
@@ -2417,12 +2410,10 @@ impl<'a> Transpiler<'a> {
 
         self.reject_duplicate_output_paths()?;
 
-        let outbase: Box<[u8]> = self.result.outbase.clone();
         let output_files: Box<[options::OutputFile]> =
             std::mem::take(&mut self.output_files).into_boxed_slice();
         // SAFETY: see above (`self.log` is the same pointer as `log`).
-        let final_result =
-            options::TransformResult::init(outbase, output_files, unsafe { &mut *self.log })?;
+        let final_result = options::TransformResult::init(output_files, unsafe { &mut *self.log })?;
         Ok(final_result)
     }
 

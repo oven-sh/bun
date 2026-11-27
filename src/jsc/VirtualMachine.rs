@@ -34,9 +34,6 @@ pub use crate::process_auto_killer as ProcessAutoKiller;
 // underlying scalar, so the `#[no_mangle]` symbol layout is unchanged for the
 // C++ side; Rust gets race-free reads.
 #[unsafe(no_mangle)]
-static has_bun_garbage_collector_flag_enabled: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
-#[unsafe(no_mangle)]
 pub static isBunTest: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
 pub(crate) static Bun__defaultRemainingRunsUntilSkipReleaseAccess: core::sync::atomic::AtomicI32 =
@@ -4076,12 +4073,8 @@ impl VirtualMachine {
             }
             if gc_level == b"1" {
                 self.aggressive_garbage_collection.set(GCLevel::Mild);
-                has_bun_garbage_collector_flag_enabled
-                    .store(true, core::sync::atomic::Ordering::Relaxed);
             } else if gc_level == b"2" {
                 self.aggressive_garbage_collection.set(GCLevel::Aggressive);
-                has_bun_garbage_collector_flag_enabled
-                    .store(true, core::sync::atomic::Ordering::Relaxed);
             }
             if let Some(value) = map.get(b"BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT") {
                 match bun_core::fmt::parse_int::<usize>(value, 10).ok() {

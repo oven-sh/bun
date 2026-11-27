@@ -6889,11 +6889,6 @@ pub mod bv2_impl {
             // across the `this.*` method calls below (each takes
             // `&mut BundleV2`), so re-borrow `this.graph` at each use site instead.
             if parse_result.external.function.is_some() {
-                let source = parse_result.value.source_index();
-                let loader: Loader = this.graph.input_files.items_loader()[source as usize];
-                // `InputFile.arena` column dropped in the Rust port;
-                // stash the finalizer regardless so plugin-owned bytes are freed.
-                let _ = loader;
                 this.finalizers
                     .push(core::mem::take(&mut parse_result.external));
             }

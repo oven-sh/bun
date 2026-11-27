@@ -12,13 +12,6 @@ pub(crate) fn node_module_paths(path: &BunString) -> Vec<BunString> {
     node_module_paths_list(path, false)
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> JSValue {
-    crate::mark_binding!();
-
-    node_module_paths_js_value(&BunString::static_("."), global, false)
-}
-
 // C++ callers pass a borrowed `const BunString*` (`Bun::toString`).
 #[unsafe(export_name = "Resolver__nodeModulePathsJSValue")]
 extern "C" fn node_module_paths_js_value(

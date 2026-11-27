@@ -38,7 +38,7 @@ pub mod kernel32 {
         LPOVERLAPPED, LPOVERLAPPED_COMPLETION_ROUTINE, OVERLAPPED, SRWLOCK, STARTUPINFOW,
         SYSTEMTIME, ULONG, ULONG_PTR,
     };
-    pub use bun_windows_sys::externs::{GetConsoleMode, GetExitCodeProcess};
+    pub use bun_windows_sys::externs::GetConsoleMode;
     pub use bun_windows_sys::kernel32::*;
     use core::ffi::c_void;
 
@@ -587,7 +587,6 @@ pub const FILE_TYPE_CHAR: DWORD = 0x0002;
 pub const FILE_TYPE_PIPE: DWORD = 0x0003;
 pub(crate) const FILE_TYPE_REMOTE: DWORD = 0x8000;
 
-pub use SetCurrentDirectoryW as SetCurrentDirectory;
 /// Each process has a single current directory made up of two parts:
 ///
 /// - A disk designator that is either a drive letter followed by a colon, or a server name and share name (\\servername\sharename)
@@ -693,9 +692,6 @@ pub fn CopyFileW(source: &WStr, dest: &WStr, fail_if_exists: bool) -> Result<(),
     // SAFETY: both are NUL-terminated.
     check(unsafe { externs::CopyFileW(path_ptr(source)?, dest, fail_if_exists.into()) })
 }
-
-/// `bun.windows.Error` — alias for `Win32Error`.
-pub type Error = Win32Error;
 
 /// `bun.windows.translateNTStatusToErrno` — thin wrapper over the canonical
 /// table in `bun_errno::windows::translate_ntstatus_to_errno`. This crate only

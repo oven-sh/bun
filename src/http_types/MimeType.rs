@@ -38,16 +38,6 @@ impl Compact {
     }
 
     pub fn to_mime_type(self) -> MimeType {
-        assert!(
-            strings::eql(
-                self.value.slice(),
-                <&'static str>::from(self.value).as_bytes(),
-            ),
-            "{} != {}. Code generation is broken.",
-            bstr::BStr::new(self.value.slice()),
-            <&'static str>::from(self.value),
-        );
-
         // `t!` wraps an unchecked `&'static str` literal and the compares are
         // runtime string equality (see the macro definition above for the caveats).
         let v = self.value;

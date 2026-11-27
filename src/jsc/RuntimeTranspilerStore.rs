@@ -440,7 +440,7 @@ fn fulfill(
     crate::mark_binding();
     let mut errorable = match result {
         Ok(resolved_source) => ErrorableResolvedSource::ok(resolved_source),
-        Err(crate::CrateError::JSError | crate::CrateError::Bundler(bun_bundler::Error::Js(_))) => {
+        Err(crate::CrateError::JSError) => {
             ErrorableResolvedSource::err(global_this.take_error(JsError::Thrown))
         }
         Err(e) => ErrorableResolvedSource::err(process_fetch_log(

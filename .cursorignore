@@ -2,5 +2,4 @@
 bench
 vendor
 *-fixture.{js,ts}
-zig-cache
 build

@@ -3981,9 +3981,7 @@ fn transpile_error_value(
         // caller re-wraps via `JSC::Exception::create`, so storing the raw
         // Exception here would double-wrap and trip
         // `ASSERT(!value.inherits<Exception>())` in JSPromise::reject.
-        crate::Error::JSError
-        | crate::Error::Js(_)
-        | crate::Error::Bundler(bun_bundler::Error::Js(_)) => {
+        crate::Error::JSError | crate::Error::Js(_) => {
             Some(global.take_error(bun_jsc::JsError::Thrown))
         }
         err => Some(bun_jsc::virtual_machine::process_fetch_log(

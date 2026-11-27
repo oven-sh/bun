@@ -60,6 +60,7 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
         logical_assignments_are_lowered: is_oxlint,
         member_chains_have_a_limit: is_oxlint,
         unreachable_code_is_reported_at_its_function: is_oxlint,
+        unsupported_statements_leave_no_instruction: is_oxlint,
         tagged_templates_are_always_called: is_oxlint,
         branches_in_try_control_reactivity: is_oxlint,
         throws_in_try_control_reactivity: is_oxlint,

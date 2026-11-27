@@ -135,6 +135,9 @@ pub struct EnvironmentConfig {
     /// Code that is not reached and has a function in it is reported at the first such function. Upstream reports it at
     /// its first instruction, which can be the declaration of a later function that the first one refers to.
     pub unreachable_code_is_reported_at_its_function: bool,
+    /// A class declaration or a `with` statement is an error and leaves no instruction. Upstream lowers an
+    /// `UnsupportedNode` for it, and its temporary takes an identifier number, which the text of an invariant shows.
+    pub unsupported_statements_leave_no_instruction: bool,
     /// A tag can make something new of the same template each time. So a tagged template is a source of reactivity, and
     /// no scope that it is in is kept, unless the signature of the tag says that it is pure. To upstream it is a call.
     pub tagged_templates_are_always_called: bool,
@@ -278,6 +281,7 @@ impl Default for EnvironmentConfig {
             logical_assignments_are_lowered: false,
             member_chains_have_a_limit: false,
             unreachable_code_is_reported_at_its_function: false,
+            unsupported_statements_leave_no_instruction: false,
             tagged_templates_are_always_called: false,
             branches_in_try_control_reactivity: false,
             throws_in_try_control_reactivity: false,

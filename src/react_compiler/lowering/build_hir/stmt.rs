@@ -1615,14 +1615,20 @@ fn lower_statement(
                 loc,
                 suggestions: None,
             })?;
-            lower_value_to_temporary(
-                builder,
-                InstructionValue::UnsupportedNode {
-                    node_type: Some("WithStatement"),
-                    original_node: None,
-                    loc,
-                },
-            )?;
+            if !builder
+                .environment()
+                .config
+                .unsupported_statements_leave_no_instruction
+            {
+                lower_value_to_temporary(
+                    builder,
+                    InstructionValue::UnsupportedNode {
+                        node_type: Some("WithStatement"),
+                        original_node: None,
+                        loc,
+                    },
+                )?;
+            }
         }
         Data::SFunction(func_decl) => {
             lower_function_declaration(builder, &func_decl.func, stmt_loc)?;
@@ -1638,14 +1644,20 @@ fn lower_statement(
                 loc,
                 suggestions: None,
             })?;
-            lower_value_to_temporary(
-                builder,
-                InstructionValue::UnsupportedNode {
-                    node_type: Some("ClassDeclaration"),
-                    original_node: None,
-                    loc,
-                },
-            )?;
+            if !builder
+                .environment()
+                .config
+                .unsupported_statements_leave_no_instruction
+            {
+                lower_value_to_temporary(
+                    builder,
+                    InstructionValue::UnsupportedNode {
+                        node_type: Some("ClassDeclaration"),
+                        original_node: None,
+                        loc,
+                    },
+                )?;
+            }
         }
         Data::SImport(_)
         | Data::SExportClause(_)

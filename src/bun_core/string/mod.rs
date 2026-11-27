@@ -138,7 +138,7 @@ unsafe extern "C" {
     fn BunString__createExternalGloballyAllocatedUTF16(bytes: *mut u16, len: usize) -> String;
 }
 
-/// `ctx` is the pointer passed into `create_external`; `buffer` is the
+/// `ctx` is the reference passed into `create_external`; `buffer` is the
 /// `[*]u8`/`[*]u16` storage; `len` is the character count.
 ///
 /// C++ signature (`BunString.cpp` `BunString__createExternal`):

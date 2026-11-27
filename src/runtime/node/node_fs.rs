@@ -1223,15 +1223,6 @@ mod _async_tasks {
     where
         Op<{ F }>: NodeFSDispatch<R, A>,
     {
-        /// Deref the raw `global_object` pointer.
-        ///
-        /// Invariant: set from a live `&JSGlobalObject` in `create()` and never
-        /// null; the JSC global outlives every task (JSC_BORROW per LIFETIMES.tsv).
-        #[inline]
-        pub(crate) fn global_object(&self) -> &JSGlobalObject {
-            self.global_object.get()
-        }
-
         /// `callback`: as for [`AsyncFSTask::create`].
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
@@ -1270,11 +1261,11 @@ mod _async_tasks {
             }
             let answer: Option<Maybe<R>> = match F {
                 NodeFSFunctionEnum::Open => {
-                    let args: &args::Open = args_as!(task, args::Open);
+                    let args = args_as!(task, args::Open);
                     refuse_open_for_write(args.path.slice(), args.flags.as_int()).map(Err)
                 }
                 NodeFSFunctionEnum::Writev => {
-                    let args: &args::Writev = args_as!(task, args::Writev);
+                    let args = args_as!(task, args::Writev);
                     args.buffers.readable().is_empty().then(|| {
                         NodeFS::default()
                             .uv_dispatch::<R, A, F>(&task.args, uv::ReturnCodeI64::ZERO)
@@ -1283,6 +1274,7 @@ mod _async_tasks {
                 _ => None,
             };
             if let Some(answer) = answer {
+                // The sentinel owns nothing, so it needs no drop.
                 let _sentinel =
                     core::mem::ManuallyDrop::new(core::mem::replace(&mut task.result, answer));
                 let value = task.completion.value();
@@ -1295,7 +1287,7 @@ mod _async_tasks {
             task.req.data = core::ptr::from_mut::<Self>(task).cast::<c_void>();
             match F {
                 NodeFSFunctionEnum::Open => {
-                    let args: &args::Open = args_as!(task, args::Open);
+                    let args = args_as!(task, args::Open);
                     let named = &args.path;
                     let path = if strings::eql_comptime(named.slice(), b"/dev/null") {
                         bun_core::zstr!("\\\\.\\NUL")
@@ -1333,7 +1325,7 @@ mod _async_tasks {
                     );
                 }
                 NodeFSFunctionEnum::Close => {
-                    let args: &args::Close = args_as!(task, args::Close);
+                    let args = args_as!(task, args::Close);
                     let fd = args.fd.uv();
                     // SAFETY: libuv async request.
                     let rc = unsafe {
@@ -1343,7 +1335,7 @@ mod _async_tasks {
                     sys::syslog!("uv close({}) = scheduled", fd);
                 }
                 NodeFSFunctionEnum::Read => {
-                    let args: &args::Read = args_as!(task, args::Read);
+                    let args = args_as!(task, args::Read);
                     let fd = args.fd.uv();
                     let buf = args.buffer.slice();
                     let off = (buf.len()).min(args.offset as usize);
@@ -1367,7 +1359,7 @@ mod _async_tasks {
                     sys::syslog!("uv read({}) = scheduled", fd);
                 }
                 NodeFSFunctionEnum::Write => {
-                    let args: &args::Write = args_as!(task, args::Write);
+                    let args = args_as!(task, args::Write);
                     let fd = args.fd.uv();
                     let buf = args.buffer.slice();
                     let off = (buf.len()).min(args.offset as usize);
@@ -1390,7 +1382,7 @@ mod _async_tasks {
                     sys::syslog!("uv write({}) = scheduled", fd);
                 }
                 NodeFSFunctionEnum::Readv => {
-                    let args: &args::Readv = args_as!(task, args::Readv);
+                    let args = args_as!(task, args::Readv);
                     let fd = args.fd.uv();
                     let bufs = args.buffers.writable();
                     let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
@@ -1418,7 +1410,7 @@ mod _async_tasks {
                     );
                 }
                 NodeFSFunctionEnum::Writev => {
-                    let args: &args::Writev = args_as!(task, args::Writev);
+                    let args = args_as!(task, args::Writev);
                     let fd = args.fd.uv();
                     let bufs = args.buffers.readable();
                     let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
@@ -1446,7 +1438,7 @@ mod _async_tasks {
                     );
                 }
                 NodeFSFunctionEnum::Statfs => {
-                    let args: &args::StatFS = args_as!(task, args::StatFS);
+                    let args = args_as!(task, args::StatFS);
                     // SAFETY (R-2): single-JS-thread `JsCell` projection; held only
                     // across the libuv enqueue (copies `path` internally).
                     let path = path_for_statfs(&args.path, unsafe {
@@ -1471,7 +1463,7 @@ mod _async_tasks {
         }
 
         fn enqueue(self: Box<Self>) {
-            self.global_object()
+            self.global_object
                 .bun_vm()
                 .event_loop()
                 .enqueue_task(bun_jsc::Task::from_boxed(self));
@@ -1481,9 +1473,6 @@ mod _async_tasks {
             // SAFETY: req.data is the box that create() released to libuv, which is done with it.
             let mut this = unsafe { bun_core::heap::take((*req).data.cast::<Self>()) };
             let mut node_fs = NodeFS::default();
-            // `req` aliases `this.req` (see create(): `task.req.data = from_mut(task)`); once
-            // `this: Box<Self>` is live, re-deriving through the raw `req` would create a
-            // second overlapping `&mut` (Stacked-Borrows UB). Go through `this.req` instead.
             this.result = NodeFS::uv_dispatch::<R, A, F>(&mut node_fs, &this.args, this.req.result);
             this.enqueue();
         }
@@ -1493,10 +1482,6 @@ mod _async_tasks {
             // SAFETY: req.data is the box that create() released to libuv, which is done with it.
             let mut this = unsafe { bun_core::heap::take((*req).data.cast::<Self>()) };
             let mut node_fs = NodeFS::default();
-            // `req` aliases `this.req`; once `this: Box<Self>` is live, re-deriving `&mut *req`
-            // would overlap it (Stacked-Borrows UB). Go through `this.req` instead — disjoint-field
-            // borrow alongside `&this.args` / `this.result =`. Hoist the result read so it isn't
-            // evaluated after `&mut this.req` is formed in the same call expression.
             let rc = this.req.result;
             this.result =
                 NodeFS::uv_dispatch_req::<R, A, F>(&mut node_fs, &this.args, &mut this.req, rc);
@@ -2078,12 +2063,12 @@ mod _async_tasks {
         pub(crate) context: bun_event_loop::ContextId,
         pub(crate) has_result: AtomicBool,
         /// What this has written where the executable holds something, for the
-        /// notes of `note_written`. A copy that fails has written some of it.
+        /// completion to note. A copy that fails has written some of it.
         written: bun_threading::Guarded<Vec<Box<[u8]>>>,
         /// Number of in-flight references to `this`. Starts at 1 for the main
         /// directory-scan task; incremented for each `SingleTask` spawned. Every
         /// holder calls `onSubtaskDone` exactly once when finished (regardless of
-        /// success or error). `runFromJSThread` — which destroys `this` — is only
+        /// success or error). The completion — which destroys `this` — is only
         /// enqueued once the count reaches zero, so subtasks still running on the
         /// thread pool never dereference a freed parent.
         pub(crate) subtask_count: AtomicUsize,
@@ -2196,7 +2181,7 @@ mod _async_tasks {
             // `self: Box<Self>` drops here (frees the owned `path_buf`).
             drop(self);
             // Must be the very last use of the parent: when the count reaches
-            // zero, runFromJSThread is enqueued and may destroy the parent.
+            // zero, the completion is enqueued and may destroy the parent.
             NewAsyncCpTask::on_subtask_done(cp_task.as_mut_ptr());
         }
     }
@@ -2336,7 +2321,7 @@ mod _async_tasks {
 
         /// May be called from any thread (the subtasks).
         /// Records the result (first caller wins). Does NOT schedule destruction —
-        /// `runFromJSThread` is only enqueued from `onSubtaskDone` once every
+        /// the completion is only enqueued from `onSubtaskDone` once every
         /// in-flight subtask has dropped its reference, so that subtasks still
         /// running on the thread pool don't dereference a freed parent.
         fn finish_concurrently(&self, result: Maybe<ret::Cp>) {
@@ -2356,7 +2341,7 @@ mod _async_tasks {
 
         /// Called exactly once by the main directory-scan task and once by each
         /// `SingleTask` when it is done touching `this`. The last caller (count
-        /// drops to zero) enqueues `runFromJSThread`, which resolves the promise
+        /// drops to zero) enqueues the completion, which reports the result
         /// and destroys `this`.
         ///
         /// Takes the pointer that `schedule_new` leaked, because the last caller reclaims the `Box`.
@@ -2449,7 +2434,7 @@ mod _async_tasks {
         /// calls "copy_single_file_sync") will be dispatched as a separate task.
         pub(crate) fn cp_async(nodefs: &mut NodeFS, this: *mut Self) {
             // The directory-scan task holds one reference in `subtask_count`
-            // (initialized to 1 in create*). Drop it on return. `runFromJSThread`
+            // (initialized to 1 in create*). Drop it on return. The completion
             // (which destroys `this`) is only enqueued once this reference and
             // every spawned SingleTask's reference have been dropped.
             // `this` is the live Box-leaked task; on_subtask_done only enqueues destruction
@@ -7520,7 +7505,7 @@ impl NodeFS {
             // `fs_t.ptr` *is* the nullable C
             // string pointer (libuv stores the realpath result directly), so
             // `ptr_as::<c_char>()` yields the value, not a pointer-to-Option.
-            let ptr: *const c_char = req.ptr_as::<c_char>();
+            let ptr = req.ptr_as::<c_char>();
             if ptr.is_null() {
                 return Err(sys::Error {
                     errno: E::ENOENT as _,

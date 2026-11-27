@@ -1170,7 +1170,7 @@ pub fn parse_f32(s: &[u8]) -> Option<f32> {
 /// use [`parse_int`] / [`parse_f64`].
 #[inline]
 pub fn parse_ascii<T: core::str::FromStr>(s: &[u8]) -> Option<T> {
-    s.as_ascii()?.as_str().parse::<T>().ok()
+    s.as_ascii()?.as_str().parse().ok()
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2771,11 +2771,9 @@ impl<'a, const LOWER: bool> Display for HexBytes<'a, LOWER> {
         } else {
             const { UPPER_HEX_TABLE.as_ascii().unwrap() }
         };
-        let mut buf = [core::ascii::Char::MIN; 2];
         for &b in self.0 {
-            buf[0] = table[(b >> 4) as usize];
-            buf[1] = table[(b & 0x0f) as usize];
-            f.write_str(buf.as_str())?;
+            let pair = [table[(b >> 4) as usize], table[(b & 0x0f) as usize]];
+            f.write_str(pair.as_str())?;
         }
         Ok(())
     }

@@ -2431,14 +2431,12 @@ pub fn init(
         subcommand,
         root_package_json_name_at_time_of_init,
     );
-    // SAFETY: just allocated, fully initialized and never freed. No call below that returns
-    // reaches it through `get()`.
+    // SAFETY: just allocated, fully initialized and never freed. Below, only calls that never
+    // return reach it through `get()`.
     let manager = unsafe { &mut *manager_ptr };
-    {
-        // So that uSockets timers / lifecycle subprocess waiters can find the mini event loop on tick.
-        let event_loop = manager.event_loop;
-        event_loop.set_as_parent_of(event_loop.r#loop());
-    }
+    // So that uSockets timers / lifecycle subprocess waiters can find the mini event loop on tick.
+    let event_loop = manager.event_loop;
+    event_loop.set_as_parent_of(event_loop.r#loop());
     {
         // make sure folder packages can find the root package without creating a new one
         let normalized =
@@ -2558,7 +2556,7 @@ pub fn init(
         ..Default::default()
     });
 
-    let timestamp_for_manifest_cache_control: u32 = 'brk: {
+    manager.timestamp_for_manifest_cache_control = 'brk: {
         if cfg!(debug_assertions) {
             if let Some(cache_control) = env.get(b"BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP") {
                 // env-var bytes are not guaranteed UTF-8; parse on bytes directly
@@ -2571,7 +2569,6 @@ pub fn init(
         (u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast")) as u32 // @truncate
     };
 
-    manager.timestamp_for_manifest_cache_control = timestamp_for_manifest_cache_control;
     Ok((manager, original_cwd_clone))
 }
 

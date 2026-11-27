@@ -703,10 +703,7 @@ fn construct_from_u8<const ENCODING: u8>(input: &[u8]) -> Vec<u8> {
         // encode latin1 into UTF16
         // return as bytes
         Encoding::Ucs2 | Encoding::Utf16le => {
-            // Each Latin-1 byte widens to one native-endian u16 code unit
-            // (`copy_latin1_into_utf16` is exactly that loop). Write the bytes
-            // directly into byte pairs so we never depend on an allocator-
-            // layout-dependent `Vec<u16> → Vec<u8>` header reinterpret.
+            // Byte pairs: a `Vec<u16>` cannot become a `Vec<u8>` without a copy.
             let pairs: Vec<[u8; 2]> = input.iter().map(|&b| u16::from(b).to_ne_bytes()).collect();
             pairs.into_flattened()
         }

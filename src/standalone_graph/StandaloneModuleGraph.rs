@@ -121,10 +121,6 @@ impl StandaloneModuleGraph {
     pub fn get_ref() -> Option<&'static StandaloneModuleGraph> {
         INSTANCE.get()
     }
-
-    pub fn set(instance: StandaloneModuleGraph) -> &'static StandaloneModuleGraph {
-        INSTANCE.get_or_init(|| instance)
-    }
 }
 
 // A runtime `suffix: &[u8]` parameter cannot be
@@ -453,10 +449,6 @@ unsafe impl Sync for StandaloneModuleGraph {}
 /// Resolver-facing trait object impl. The resolver and VM hold the graph as
 /// `&'static dyn bun_resolver::StandaloneModuleGraph` so they stay below
 /// `bun_standalone_graph` in the dep graph; this is the sole implementor.
-///
-/// The trait surface is read-only (`&self`) — the resolver only needs to
-/// answer "is `name` an embedded module?" and hand back the canonical name
-/// slice.
 impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn has_module_info(&self, name: &[u8]) -> bool {
         self.find_ref(name)
@@ -1459,11 +1451,12 @@ impl StandaloneModuleGraph {
             // SAFETY: each name/contents/sourcemap/module_info/bytecode_origin_path subrange is in-bounds
             // (serialized by `to_bytes`) and disjoint from the writable bytecode
             // subranges; section bytes are a live 'static allocation.
-            let (name, contents, sourcemap_bytes, bytecode_origin) = unsafe {
+            let (name, contents, sourcemap_bytes, module_info, bytecode_origin) = unsafe {
                 (
                     slice_to_z(raw_const, raw_len, module.name),
                     slice_to_z(raw_const, raw_len, module.contents),
                     slice_to(raw_const, raw_len, module.sourcemap),
+                    slice_to(raw_const, raw_len, module.module_info),
                     slice_to_z(raw_const, raw_len, module.bytecode_origin_path),
                 )
             };
@@ -1485,7 +1478,7 @@ impl StandaloneModuleGraph {
                     {
                         // SAFETY: section bytes are a writable 'static allocation; JSC mutates
                         // bytecode in place. Subrange is in-bounds (serialized by to_bytes) and
-                        // disjoint from every read-only subslice handed out here — no
+                        // disjoint from every read-only subslice handed out above — no
                         // `&[u8]` is ever formed over this range.
                         unsafe {
                             slice_to_mut(
@@ -1502,8 +1495,7 @@ impl StandaloneModuleGraph {
                         std::ptr::from_mut::<[u8]>(&mut [])
                     },
                     bytecode_entry_offset: linked_entry_offset.unwrap_or(0),
-                    // SAFETY: see `sourcemap_bytes` above.
-                    module_info: unsafe { slice_to(raw_const, raw_len, module.module_info) },
+                    module_info,
                     bytecode_origin_path: if module.bytecode_origin_path.length > 0 {
                         bytecode_origin.as_bytes()
                     } else {
@@ -3370,8 +3362,7 @@ pub fn to_executable(
 }
 
 impl StandaloneModuleGraph {
-    /// Loads the standalone module graph from the executable, allocates it on the heap,
-    /// sets it globally, and returns it.
+    /// Loads the embedded graph and sets it globally. `Option` is outermost so that plain `bun` tests one tag.
     pub fn from_executable() -> Option<crate::Result<&'static StandaloneModuleGraph>> {
         #[cfg(target_os = "macos")]
         let data = macho::get_data();
@@ -3419,7 +3410,8 @@ impl StandaloneModuleGraph {
         let Some(offsets) = Self::read_offsets(base, len) else {
             return Ok(None);
         };
-        let graph = from_bytes_alloc(base, len, offsets, payload_file)?;
+        let graph = Self::from_bytes(base, len, offsets, payload_file)?;
+        let graph = INSTANCE.get_or_init(|| graph);
         graph.prefetch_startup_pages();
         Ok(Some(graph))
     }
@@ -3474,10 +3466,7 @@ impl StandaloneModuleGraph {
                         } else {
                             f.bytecode
                         };
-                        [
-                            own_bytecode.cast_const(),
-                            core::ptr::from_ref(f.module_info),
-                        ]
+                        [own_bytecode.cast_const(), f.module_info]
                     })
                     .chain(linked_hot)
                     .chain(
@@ -3712,18 +3701,6 @@ fn append_bytecode_aligned(
         offset: aligned_offset as u32,
         length: bytecode.len() as u32,
     }
-}
-
-/// Allocates a StandaloneModuleGraph in the process-static `INSTANCE`,
-/// populates it from bytes, sets it globally, and returns it.
-fn from_bytes_alloc(
-    raw_ptr: *mut u8,
-    raw_len: usize,
-    offsets: Offsets,
-    payload_file: Option<ImageFile>,
-) -> crate::Result<&'static StandaloneModuleGraph> {
-    let graph = StandaloneModuleGraph::from_bytes(raw_ptr, raw_len, offsets, payload_file)?;
-    Ok(StandaloneModuleGraph::set(graph))
 }
 
 /// Source map serialization in the bundler is specially designed to be

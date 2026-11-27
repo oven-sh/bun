@@ -15,7 +15,7 @@ use crate::Error;
 
 /// PHC / modular-crypt strings are 7-bit ASCII by spec; the third-party
 /// `argon2`/`bcrypt` crates take `&str`, so view-cast after the cheap
-/// `is_ascii` check (no full UTF-8 walk).
+/// `as_ascii` check (no full UTF-8 walk).
 #[inline]
 fn phc_ascii_str(s: &[u8]) -> Result<&str, Error> {
     let Some(ascii) = s.as_ascii() else {

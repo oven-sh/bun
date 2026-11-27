@@ -1676,13 +1676,12 @@ impl VirtualMachine {
         self.event_loop().wakeup();
     }
 
-    pub fn on_quiet_unhandled_rejection_handler_capture_value(
+    pub(crate) fn on_quiet_unhandled_rejection_handler(
         this: &VirtualMachine,
         _: &JSGlobalObject,
-        value: JSValue,
+        _: JSValue,
     ) {
         this.unhandled_error_counter.update(|n| n + 1);
-        value.ensure_still_alive();
     }
 
     pub fn unhandled_rejection_scope(&self) -> UnhandledRejectionScope {
@@ -7230,8 +7229,6 @@ impl VirtualMachine {
         // singleton, not via this trait object.
         let _ = self.standalone_module_graph?;
         let hooks = runtime_hooks()?;
-        // JS-thread call; hook mutates only per-`File` lazy caches under the
-        // file's own lock.
         let map = (hooks.load_standalone_sourcemap)(path)?;
 
         (self.source_mappings).put_parsed(path, std::sync::Arc::clone(&map));

@@ -1127,7 +1127,7 @@ mod vm_loader_ctx {
                 match (*(*this).transpiler.as_ptr()).resolver.read_dir_info(dir) {
                     Ok(Some(dir_info)) => {
                         dir_info
-                            .package_json()
+                            .package_json
                             .or(dir_info.enclosing_package_json)
                     }
                     _ => None,
@@ -2333,7 +2333,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             (*transpiler).resolver.read_dir_info(source.path.name().dir)
                         } {
                             Ok(Some(dir_info)) => {
-                                dir_info.package_json().or(dir_info.enclosing_package_json)
+                                dir_info.package_json.or(dir_info.enclosing_package_json)
                             }
                             _ => None,
                         };
@@ -2464,7 +2464,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             // stable cache slot.
                             match unsafe { (*transpiler).resolver.read_dir_info(dir) } {
                                 Ok(Some(dir_info)) => dir_info
-                                    .package_json()
+                                    .package_json
                                     .or(dir_info.enclosing_package_json)
                                     .map_or(module_type, |p| p.module_type),
                                 _ => module_type,
@@ -3363,7 +3363,7 @@ fn package_json_of<'a>(
     }
     // SAFETY: `read_dir_info` is re-entrant on the JS thread.
     match unsafe { (*jsc_vm.transpiler.as_ptr()).resolver.read_dir_info(dir) } {
-        Ok(Some(dir_info)) => dir_info.package_json().or(dir_info.enclosing_package_json),
+        Ok(Some(dir_info)) => dir_info.package_json.or(dir_info.enclosing_package_json),
         _ => None,
     }
 }

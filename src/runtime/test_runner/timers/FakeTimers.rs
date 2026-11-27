@@ -1391,14 +1391,14 @@ fn loop_limit_error(global: &JSGlobalObject, limit: u32) -> JsResult<JSValue> {
 // JS Functions
 // ===
 
-const NOT_ACTIVE: core::fmt::Arguments<'static> =
+const NOT_ACTIVE_MESSAGE: core::fmt::Arguments<'static> =
     format_args!("Fake timers are not active. Call useFakeTimers() first.");
 
 fn error_unless_fake_timers(global: &JSGlobalObject) -> JsResult<()> {
     if is_active() {
         return Ok(());
     }
-    Err(global.throw(NOT_ACTIVE))
+    Err(global.throw(NOT_ACTIVE_MESSAGE))
 }
 
 fn error_if_reading_globals(global: &JSGlobalObject) -> JsResult<()> {
@@ -1760,7 +1760,7 @@ pub(crate) fn set_timer_tick_mode(
 
 pub(crate) fn get_timer_count<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, usize> {
     if !is_active() {
-        return Err(heap.error(NOT_ACTIVE));
+        return Err(heap.error(NOT_ACTIVE_MESSAGE));
     }
 
     Ok(timer_all().fake_timers.count())

@@ -1932,8 +1932,7 @@ impl FetchTasklet {
         self.native_response.set(Some(response));
         // Response-owned listener so abort still errors the body after this tasklet detaches its own.
         if let Some(signal) = self.abort_signal() {
-            // SAFETY: the response was made above, and this is the only call.
-            unsafe { Response::attach_abort_signal(&wrapper, &global_this, signal, self.context) };
+            Response::attach_abort_signal(&wrapper, &global_this, signal, self.context);
         }
         response_js
     }

@@ -284,14 +284,7 @@ impl ShellSubprocess {
             StdioKind::Stderr => &mut self.stderr,
             StdioKind::Stdin => unreachable!("stdin closes through on_stdin_state"),
         };
-        if let Readable::Pipe(pipe) = core::mem::replace(out, Readable::Ignore) {
-            *out = if pipe.state.get() == PipeReaderState::Done {
-                Readable::Buffer
-            } else {
-                Readable::Ignore
-            };
-            drop(pipe); // deref
-        }
+        *out = Readable::Ignore;
     }
 
     /// Tear down a subprocess whose stdin writer start() failed. Ends the child, marks pending pipe
@@ -314,8 +307,8 @@ impl ShellSubprocess {
         {
             // SAFETY: `this` was created via `heap::alloc` in `spawn` and is
             // uniquely owned here; reclaim and tear down.
-            let mut subproc = unsafe { bun_core::heap::take(this) };
-            for r in [&mut subproc.stdout, &mut subproc.stderr] {
+            let subproc = unsafe { bun_core::heap::take(this) };
+            for r in [&subproc.stdout, &subproc.stderr] {
                 if let Readable::Pipe(pipe) = r {
                     // `start()` failed before any reader callback registered.
                     debug_assert_eq!(Rc::strong_count(pipe), 1);
@@ -804,7 +797,6 @@ pub(crate) enum Readable {
     Inherit,
     Ignore,
     Closed,
-    Buffer,
 }
 
 impl Readable {
@@ -1061,8 +1053,9 @@ impl<'a> SpawnArgs<'a> {
 // PipeReader
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PipeReaderState {
+#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
+enum PipeReaderState {
     Pending,
     Done,
     Err,
@@ -1070,9 +1063,9 @@ pub enum PipeReaderState {
 
 pub(crate) struct PipeReader {
     pub(crate) reader: BufferedReader,
-    pub(crate) process: Cell<Option<*mut ShellSubprocess>>,
+    process: Cell<Option<*mut ShellSubprocess>>,
     pub(crate) event_loop: EventLoopHandle,
-    pub(crate) state: Cell<PipeReaderState>,
+    state: Cell<PipeReaderState>,
     /// The read error, until `take_captured_error` takes it.
     err: Cell<Option<Box<SystemError>>>,
     #[cfg(not(windows))]
@@ -1421,10 +1414,6 @@ impl PipeReader {
     /// drained before `on_close_io` drops the `Readable::Pipe` Rc.
     fn finish_after_state_set(guard: &Rc<Self>) {
         let me = rc_as_mut_ptr(guard);
-        // Snapshot `interp` *before* the Cmd call: `try_signal_done_to_cmd`
-        // → `Cmd::buffered_output_close` → `close_io` may overwrite the
-        // `Readable::Pipe` slot, and the trampoline must not re-read `*me`.
-        let interp = guard.interp;
         // SAFETY: see `rc_as_mut_ptr` + `try_signal_done_to_cmd` contract —
         // raw `*mut`, no `&mut PipeReader` protector across the Cmd re-entry.
         let y = unsafe { Self::try_signal_done_to_cmd(me) };
@@ -1437,7 +1426,7 @@ impl PipeReader {
             // SAFETY: see `rc_as_mut_ptr`; raw access, no borrow held.
             unsafe { (*me).buffered_output = BufferedOutput::default() };
         }
-        Self::run_yield_with(interp, y);
+        Self::run_yield_with(guard.interp, y);
         if let Some(process) = guard.process.get() {
             // SAFETY: `process` is the heap-allocated `ShellSubprocess` (stable
             // address), freed only by `Cmd::deinit` after every PipeReader has
@@ -1514,6 +1503,7 @@ impl PipeReader {
     }
 
     fn take_captured_error(&mut self) -> Option<SystemError> {
+        // The write error counts only if the state is not `Err` yet.
         if let Some(e) = self.captured_writer.err.take()
             && self.state.replace(PipeReaderState::Err) != PipeReaderState::Err
         {
@@ -1587,15 +1577,4 @@ unsafe extern "C" {
     // `_PATH_DEFPATH` string literal emitted from C; immutable, load-time
     // initialized, never null. Reading the pointer value has no precondition.
     pub(crate) safe static BUN_DEFAULT_PATH_FOR_SPAWN: *const c_char;
-}
-
-// IntoStaticStr for PipeReaderState (used in logs as the variant name).
-impl From<PipeReaderState> for &'static str {
-    fn from(s: PipeReaderState) -> &'static str {
-        match s {
-            PipeReaderState::Pending => "pending",
-            PipeReaderState::Done => "done",
-            PipeReaderState::Err => "err",
-        }
-    }
 }

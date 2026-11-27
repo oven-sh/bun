@@ -14,6 +14,8 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use crate::webcore::jsc::{
     self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_core as bun;
 use bun_core::Output;
 use bun_core::{EncodedSlice, String as BunString, Utf8Bytes, WTFStringImplExt as _, strings};
 use bun_http_types::MimeType::MimeType;
@@ -2195,17 +2197,18 @@ impl BlobExt for Blob {
                     }
                 }
 
+                // SAFETY: `Clone` copies into a new JSC allocation; `buf` is only read.
+                let buf = unsafe { &*buf };
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 {
                     // If we can use a copy-on-write clone of the buffer, do so.
                     if let Some(store) = self.store.get() {
                         if let store::Data::Bytes(bytes) = &store.data {
                             let store_bytes = bytes.slice();
-                            if let Some(byte_offset) =
-                                buf.addr().checked_sub(store_bytes.as_ptr().addr())
-                                && byte_offset + buf_len <= store_bytes.len()
-                            {
+                            if bun::is_slice_in_buffer(buf, store_bytes) {
                                 if let Some(memfd) = bytes.memfd() {
+                                    let byte_offset =
+                                        buf.as_ptr().addr() - store_bytes.as_ptr().addr();
                                     let result =
                                         jsc::ArrayBuffer::to_array_buffer_from_shared_memfd(
                                             memfd.native() as i64,
@@ -2230,8 +2233,7 @@ impl BlobExt for Blob {
                         }
                     }
                 }
-                // SAFETY: `Clone` copies into a new JSC allocation; `buf` is only read.
-                jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(global, unsafe { &*buf })
+                jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(global, buf)
             }
             Lifetime::Transfer => {
                 if self.store().is_some_and(|s| !s.has_one_ref()) {

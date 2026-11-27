@@ -882,7 +882,7 @@ impl WriteReq {
         let rc = unsafe {
             (*req)
                 .req
-                .write(pipe.as_ptr().cast(), &(*req).buf, req, WriteReq::on_write)
+                .write(pipe.as_stream(), &(*req).buf, req, WriteReq::on_write)
         };
         if let Some(err) = rc.to_error(bun_sys::Tag::write) {
             scoped_log!(Chrome, "uv_write failed: {}", err);

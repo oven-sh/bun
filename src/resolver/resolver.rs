@@ -172,19 +172,10 @@ use bun_core::scoped::SetForScope;
 // (re-exported from `bun_ast`; see `result.rs`).
 use bun_ast::SideEffects;
 
-// ── Process-lifetime arenas for DirInfo-cached parses ─────────────────────
-// The DirInfo cache (`DirInfo::hash_map_instance()`) is a true process-lifetime
-// singleton; entries hold `&'static PackageJSON` / `&'static TSConfigJSON` and
-// borrow `&'static [u8]` source bytes.
-
-/// Intern a parsed `PackageJSON` into the process-lifetime DirInfo arena.
+/// Leaks `pkg`: the DirInfo cache holds it for the life of the process.
 fn intern_package_json(pkg: PackageJSON) -> &'static PackageJSON {
-    // Keeps each `PackageJSON` reachable for LSAN.
-    static ARENA: std::sync::LazyLock<bun_threading::Guarded<Vec<&'static PackageJSON>>> =
-        std::sync::LazyLock::new(Default::default);
-    let mut guard = ARENA.lock();
     let pkg = Box::leak(Box::new(pkg));
-    guard.push(pkg);
+    bun_core::asan::ignore_object(core::ptr::from_ref(pkg).cast());
     pkg
 }
 
@@ -1903,7 +1894,7 @@ impl<'a> Resolver<'a> {
 
             // Probe the listing in one `entries_mutex` critical section: a
             // concurrent resolver at a newer generation rewrites this `DirEntry`'s
-            // map in place under that lock. The entry pointer stays valid after
+            // map in place under that lock. The entry stays valid after
             // unlock (EntryStore-owned).
             if let Some(query) = dir.get_entry(self.generation, name.filename) {
                 let symlink_path = query.entry().symlink(self.rfs_ref(), self.store_fd);
@@ -2390,7 +2381,7 @@ impl<'a> Resolver<'a> {
             let dirname = bun_paths::dirname(abs_path).unwrap_or(abs_path);
             if let Ok(Some(import_dir_info_outer)) = self.dir_info_cached(dirname) {
                 if let Some(import_dir_info) = import_dir_info_outer.get_enclosing_browser_scope() {
-                    let pkg = import_dir_info.package_json().unwrap();
+                    let pkg = import_dir_info.package_json.unwrap();
                     if let Some(remap) = self
                         .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
                             &import_dir_info,
@@ -2532,7 +2523,7 @@ impl<'a> Resolver<'a> {
         if self.care_about_browser_field {
             // Support remapping one package path to another via the "browser" field
             if let Some(browser_scope) = source_dir_info.get_enclosing_browser_scope() {
-                if let Some(package_json) = browser_scope.package_json() {
+                if let Some(package_json) = browser_scope.package_json {
                     if let Some(remapped) = self
                         .check_browser_map::<{ BrowserMapPathKind::PackagePath }>(
                             &browser_scope,
@@ -2841,7 +2832,7 @@ impl<'a> Resolver<'a> {
 
         // Check for subpath imports: https://nodejs.org/api/packages.html#subpath-imports
         if let Some(_dir_info_package_json) = dir_info_package_json {
-            let package_json = _dir_info_package_json.package_json().unwrap();
+            let package_json = _dir_info_package_json.package_json.unwrap();
 
             if import_path.starts_with(b"#")
                 && written_in != WrittenIn::ImportsField
@@ -2931,7 +2922,7 @@ impl<'a> Resolver<'a> {
                                 _ => this.opts.extension_order.kind(kind, true),
                             };
 
-                            if let Some(package_json) = pkg_dir_info.package_json() {
+                            if let Some(package_json) = pkg_dir_info.package_json {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
                                     // NOTE: keeping a single
@@ -3084,7 +3075,7 @@ impl<'a> Resolver<'a> {
 
             // The walk ended at a package in the global cache, which has no parent directory info.
             // Any `node_modules` seen on the way came in its tarball, so auto-install stays on.
-            if dir_info.package_json().is_some_and(|package_json| {
+            if dir_info.package_json.is_some_and(|package_json| {
                 package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID
             }) {
                 any_node_modules_folder = false;
@@ -3284,10 +3275,8 @@ impl<'a> Resolver<'a> {
                         listing_dir =
                             core::iter::successors(dir.get_parent(), |up| up.get_parent()).find(
                                 |up| {
-                                    up.package_json_for_dependencies.map(core::ptr::from_ref)
-                                        != dir
-                                            .package_json_for_dependencies
-                                            .map(core::ptr::from_ref)
+                                    up.package_json_for_dependencies
+                                        .is_none_or(|it| !core::ptr::eq(it, package_json))
                                 },
                             );
                     }
@@ -3434,7 +3423,7 @@ impl<'a> Resolver<'a> {
                     Ok(dir_info_to_use_) => {
                         if let Some(pkg_dir_info) = dir_info_to_use_ {
                             let abs_package_path = pkg_dir_info.abs_path;
-                            if let Some(package_json) = pkg_dir_info.package_json() {
+                            if let Some(package_json) = pkg_dir_info.package_json {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
                                     // NOTE: reshaped for borrowck — see identical note above.
@@ -3898,7 +3887,7 @@ impl<'a> Resolver<'a> {
                 // One `entries_mutex` critical section for the probe and the
                 // listing fd: a concurrent resolver at a newer generation
                 // rewrites the `DirEntry` in place under that lock. The entry
-                // pointer stays valid after unlock (EntryStore-owned).
+                // stays valid after unlock (EntryStore-owned).
                 let looked_up = {
                     let _entries_lock = self.rfs_ref().entries_mutex.lock_guard();
                     resolved_dir_info
@@ -4000,7 +3989,7 @@ impl<'a> Resolver<'a> {
                         )
                     })
                     .as_bytes();
-                let module_type = if let Some(pkg) = resolved_dir_info.package_json() {
+                let module_type = if let Some(pkg) = resolved_dir_info.package_json {
                     pkg.module_type
                 } else {
                     options::ModuleType::Unknown
@@ -4015,7 +4004,7 @@ impl<'a> Resolver<'a> {
                     file_fd: entry_query.entry().cache().fd,
                     dir_info: Some(resolved_dir_info),
                     is_node_module: true,
-                    package_json: Some(resolved_dir_info.package_json().unwrap_or(package_json)),
+                    package_json: Some(resolved_dir_info.package_json.unwrap_or(package_json)),
                     module_type,
                     ..Default::default()
                 };
@@ -4147,7 +4136,7 @@ impl<'a> Resolver<'a> {
             return false;
         };
         let abs_path: &[u8] = abs_path.as_bytes();
-        let module_type = if let Some(pkg) = resolved_dir_info.package_json() {
+        let module_type = if let Some(pkg) = resolved_dir_info.package_json {
             pkg.module_type
         } else {
             options::ModuleType::Unknown
@@ -4162,7 +4151,7 @@ impl<'a> Resolver<'a> {
             file_fd: query.entry().cache().fd,
             dir_info: Some(resolved_dir_info),
             is_node_module: true,
-            package_json: Some(resolved_dir_info.package_json().unwrap_or(package_json)),
+            package_json: Some(resolved_dir_info.package_json.unwrap_or(package_json)),
             module_type,
             ..Default::default()
         };
@@ -4304,7 +4293,6 @@ impl<'a> Resolver<'a> {
         };
         let Some(pkg) = pkg else { return Ok(None) };
 
-        // NOTE: the DirInfo cache holds `&'static` refs.
         Ok(Some(intern_package_json(pkg)))
     }
 
@@ -5016,7 +5004,7 @@ impl<'a> Resolver<'a> {
         global_cache: GlobalCache,
         out: &mut MatchResult,
     ) -> MatchStatus {
-        let package_json = dir_info.package_json().unwrap();
+        let package_json = dir_info.package_json.unwrap();
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Looking for {} in \"imports\" map in {}",
@@ -5113,7 +5101,7 @@ impl<'a> Resolver<'a> {
         dir_info: &DirInfo::DirInfo,
         input_path_: &[u8],
     ) -> Option<&'static [u8]> {
-        let package_json = dir_info.package_json()?;
+        let package_json = dir_info.package_json?;
         let browser_map = &package_json.browser_map;
 
         if browser_map.count() == 0 {
@@ -5226,7 +5214,7 @@ impl<'a> Resolver<'a> {
         if this.care_about_browser_field {
             // Potentially remap using the "browser" field
             if let Some(browser_scope) = dir_info.get_enclosing_browser_scope() {
-                if let Some(browser_json) = browser_scope.package_json() {
+                if let Some(browser_json) = browser_scope.package_json {
                     if let Some(remap) = this
                         .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
                             &browser_scope,
@@ -5266,7 +5254,7 @@ impl<'a> Resolver<'a> {
         let field_abs_path: &[u8] = field_abs_path;
         // Is this a file?
         if let Some(result) = this.load_as_file(field_abs_path, extension_order) {
-            if let Some(package_json) = dir_info.package_json() {
+            if let Some(package_json) = dir_info.package_json {
                 *out = MatchResult {
                     path_pair: PathPair {
                         primary: Fs::Path::init(result.path),
@@ -5401,7 +5389,7 @@ impl<'a> Resolver<'a> {
                         .add_note_fmt(format_args!("Found file: \"{}\"", bstr::BStr::new(out_buf)));
                 }
 
-                if let Some(package_json) = dir_info.package_json() {
+                if let Some(package_json) = dir_info.package_json {
                     *out = MatchResult {
                         path_pair: PathPair {
                             primary: Path::init(out_buf),
@@ -5464,7 +5452,7 @@ impl<'a> Resolver<'a> {
             if let Some(browser_scope) = dir_info.get_enclosing_browser_scope() {
                 const FIELD_REL_PATH: &[u8] = b"index";
 
-                if let Some(browser_json) = browser_scope.package_json() {
+                if let Some(browser_json) = browser_scope.package_json {
                     let index_paths = [path, FIELD_REL_PATH];
                     let Some(index_abs_path) = abs_path_in(bufs!(remap_path), &index_paths) else {
                         return MatchStatus::NotFound;
@@ -5553,7 +5541,7 @@ impl<'a> Resolver<'a> {
                     if let Ok(Some(package_dir_info)) = self.dir_info_cached(
                         &file.path[0..node_modules_folder_offset + package_name_length as usize],
                     ) {
-                        if let Some(package_json) = package_dir_info.package_json() {
+                        if let Some(package_json) = package_dir_info.package_json {
                             *out = MatchResult {
                                 path_pair: PathPair {
                                     primary: Path::init(file.path),
@@ -5613,7 +5601,7 @@ impl<'a> Resolver<'a> {
         let mut package_json: Option<&'static PackageJSON> = None;
 
         // Try using the main field(s) from "package.json"
-        if let Some(pkg_json) = dir_info.package_json() {
+        if let Some(pkg_json) = dir_info.package_json {
             package_json = Some(pkg_json);
             if pkg_json.main_fields.count() > 0 {
                 let main_field_values = &pkg_json.main_fields;
@@ -6139,14 +6127,14 @@ impl<'a> Resolver<'a> {
             info.package_json_for_browser_field = parent_.package_json_for_browser_field;
             info.enclosing_tsconfig_json = parent_.enclosing_tsconfig_json;
 
-            if let Some(parent_package_json) = parent_.package_json() {
+            if let Some(parent_package_json) = parent_.package_json {
                 // https://github.com/oven-sh/bun/issues/229
                 if !parent_package_json.name.is_empty() || self.care_about_bin_folder {
                     info.enclosing_package_json = Some(parent_package_json);
                 }
 
                 if parent_package_json.lists_dependencies() {
-                    info.package_json_for_dependencies = parent_.package_json;
+                    info.package_json_for_dependencies = Some(parent_package_json);
                 }
             }
 
@@ -6263,7 +6251,7 @@ impl<'a> Resolver<'a> {
                         .flatten()
                     };
 
-                    if let Some(pkg) = info.package_json() {
+                    if let Some(pkg) = info.package_json {
                         if pkg.browser_map.count() > 0 {
                             info.enclosing_browser_scope = result.index;
                             info.package_json_for_browser_field = Some(pkg);
@@ -6274,7 +6262,7 @@ impl<'a> Resolver<'a> {
                         }
 
                         if pkg.lists_dependencies() {
-                            info.package_json_for_dependencies = info.package_json;
+                            info.package_json_for_dependencies = Some(pkg);
                         }
 
                         if let Some(logs) = self.debug_logs.as_mut() {
@@ -6289,7 +6277,7 @@ impl<'a> Resolver<'a> {
         }
 
         info.package_json_for_module_type = info
-            .package_json()
+            .package_json
             .or_else(|| parent.and_then(|parent_| parent_.package_json_for_module_type));
 
         // Record if this directory has a tsconfig.json or jsconfig.json file
@@ -6496,7 +6484,7 @@ impl<'a> Resolver<'a> {
         let mut package = None;
         let mut next = self.read_dir_info_ignore_error(directory);
         while let Some(info) = next.filter(|info| !info.is_node_modules()) {
-            if let Some(manifest) = info.package_json() {
+            if let Some(manifest) = info.package_json {
                 manifests.push(manifest);
                 let speaks_for_package = manifest.exports.is_some() || names_aot(manifest);
                 if package.is_none() && speaks_for_package {

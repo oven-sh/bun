@@ -51,10 +51,6 @@ impl VM {
         Lock { vm: self }
     }
 
-    // Note: `JSC__VM__deferGC` was removed from bindings.cpp in the
-    // WebKit-bump that introduced `JSC::DeferGC` RAII. Callers should use
-    // `DeferGC` on the C++ side instead.
-
     pub fn report_extra_memory(&self, size: usize) {
         crate::mark_binding!();
         JSC__VM__reportExtraMemory(self, size)

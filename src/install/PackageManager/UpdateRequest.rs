@@ -66,14 +66,11 @@ pub struct UpdateRequestIndex(
     >,
 );
 
-/// Park CLI-lifetime bytes in a process-lifetime static so LSan sees them as
-/// reachable. `UpdateRequest::name`/`version_buf` store raw `&'static`/
+/// Leaks `b`. `UpdateRequest::name`/`version_buf` store raw `&'static`/
 /// `RawSlice` views because they may later be repointed at lockfile buffers.
 fn anchor_cli_bytes(b: Box<[u8]>) -> &'static [u8] {
-    static ANCHOR: bun_threading::Guarded<Vec<&[u8]>> = bun_threading::Guarded::new(Vec::new());
-    let bytes: &'static [u8] = Box::leak(b);
-    ANCHOR.lock().push(bytes);
-    bytes
+    bun_core::asan::ignore_object(b.as_ptr().cast());
+    Box::leak(b)
 }
 
 impl UpdateRequest {

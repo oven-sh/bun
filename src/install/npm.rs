@@ -910,12 +910,7 @@ pub struct PackageVersion {
     // Splitting this into it's own array ends up increasing the final size a little bit.
     pub(crate) integrity: Integrity,
 
-    // Explicit padding so this struct has no implicit (uninitialized) padding
-    // bytes — `Serializer::write` reinterprets the whole slice as `&[u8]`,
-    // and reading uninitialized padding as `u8` is UB. With explicit `[u8; N]`
-    // fields, `Default` zero-fills them and every byte of the struct is
-    // initialized. Layout (size=248, align=8) is unchanged; see the
-    // `offset_of!` asserts below and `padding_checker.rs` for the contract.
+    // Explicit, because `impl_no_uninit!` below rejects implicit padding.
     pub(crate) _padding_after_integrity: [u8; 3],
 
     /// "dependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#dependencies)
@@ -1035,49 +1030,6 @@ const _: () = assert!(
      bump PackageManifest::Serializer::VERSION if intentional",
 );
 
-// Compile-time proof that the explicit `_padding_*` fields above leave no
-// implicit padding gaps in `PackageVersion` (so `&[PackageVersion] as &[u8]`
-// in `Serializer::write` reads only initialized bytes). See `padding_checker.rs`.
-const _: () = {
-    use core::mem::{offset_of, size_of};
-    // gap between `integrity` (size 65, align 1) and `dependencies` (align 4 → 68)
-    assert!(
-        offset_of!(PackageVersion, _padding_after_integrity)
-            == offset_of!(PackageVersion, integrity) + size_of::<Integrity>()
-    );
-    assert!(
-        offset_of!(PackageVersion, dependencies)
-            == offset_of!(PackageVersion, _padding_after_integrity) + 3
-    );
-    // gap between `non_optional_peer_dependencies_start` (u32, ends at 180) and `man_dir` (align 8 → 184)
-    assert!(
-        offset_of!(PackageVersion, _padding_before_man_dir)
-            == offset_of!(PackageVersion, non_optional_peer_dependencies_start) + size_of::<u32>()
-    );
-    assert!(
-        offset_of!(PackageVersion, man_dir)
-            == offset_of!(PackageVersion, _padding_before_man_dir) + 4
-    );
-    // `deprecated` (size 8, align 1) fills 216..224 between `tarball_url` and `unpacked_size`
-    assert!(
-        offset_of!(PackageVersion, deprecated)
-            == offset_of!(PackageVersion, tarball_url) + size_of::<ExternalString>()
-    );
-    assert!(
-        offset_of!(PackageVersion, unpacked_size)
-            == offset_of!(PackageVersion, deprecated) + size_of::<SemverString>()
-    );
-    // gap between `has_install_script` (ends at 238) and `publish_timestamp_ms` (align 8 → 240)
-    assert!(
-        offset_of!(PackageVersion, _padding_tail)
-            == offset_of!(PackageVersion, has_install_script) + size_of::<bool>()
-    );
-    assert!(
-        offset_of!(PackageVersion, publish_timestamp_ms)
-            == offset_of!(PackageVersion, _padding_tail) + 2
-    );
-};
-
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
@@ -1180,14 +1132,7 @@ pub mod package_manifest {
             array: &[T],
             pos: &mut u64,
         ) -> Result<(), Error> {
-            Self::write_array_bytes::<W, T>(writer, bun_core::slice_as_bytes(array), pos)
-        }
-
-        fn write_array_bytes<W: bun_io::Write, T>(
-            writer: &mut W,
-            bytes: &[u8],
-            pos: &mut u64,
-        ) -> Result<(), Error> {
+            let bytes = bun_core::slice_as_bytes(array);
             if bytes.is_empty() {
                 writer.write_int_le::<u64>(0)?;
                 *pos += 8;

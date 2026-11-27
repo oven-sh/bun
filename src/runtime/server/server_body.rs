@@ -23,8 +23,7 @@ use crate::webcore::{
     self as WebCore, AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response, request,
 };
 use ::bstr::BStr;
-use bun_collections::HashMap;
-use bun_collections::hive_array::{Fallback, HiveSlot};
+use bun_collections::{HashMap, HiveArrayFallback, HiveSlot};
 use bun_core::scoped::ScopedFlag as _;
 use bun_core::{EncodedSlice, String as BunString, StringView, Utf8Bytes, strings};
 use bun_core::{Output, fmt as bun_fmt};
@@ -87,13 +86,14 @@ trait RequestCtx: super::any_request_context::CtxKind + Sized {
     type Server;
     type Req: ReqLike;
     const IS_MUX: bool;
-    fn pool(server: &Self::Server) -> *const Fallback<Self, REQUEST_CONTEXT_POOL_CAPACITY>;
+    fn pool(server: &Self::Server)
+    -> *const HiveArrayFallback<Self, REQUEST_CONTEXT_POOL_CAPACITY>;
 }
 impl<const SSL: bool, const DBG: bool> RequestCtx for ServerRequestContext<SSL, DBG> {
     type Server = NewServer<SSL, DBG>;
     type Req = uws_sys::Request;
     const IS_MUX: bool = false;
-    fn pool(server: &Self::Server) -> *const Fallback<Self, REQUEST_CONTEXT_POOL_CAPACITY> {
+    fn pool(server: &Self::Server) -> *const super::RequestPool<SSL, DBG, false> {
         server.request_pool.as_const_ptr()
     }
 }
@@ -101,7 +101,7 @@ impl<const SSL: bool, const DBG: bool> RequestCtx for ServerMuxRequestContext<SS
     type Server = NewServer<SSL, DBG>;
     type Req = uws_sys::h3::Request;
     const IS_MUX: bool = true;
-    fn pool(server: &Self::Server) -> *const Fallback<Self, REQUEST_CONTEXT_POOL_CAPACITY> {
+    fn pool(server: &Self::Server) -> *const super::RequestPool<SSL, DBG, true> {
         server.mux_request_pool.get()
     }
 }
@@ -2442,7 +2442,7 @@ where
         // Resolve once, reuse for both `has_request_body()` and the forward to
         // `Ctx::create`.
         let method = method.or_else(|| http::Method::which(ReqLike::method(req)));
-        let method_or_get = method.unwrap_or(http::Method::GET);
+        let resolved_method = method.unwrap_or(http::Method::GET);
 
         let request_body_length: Option<usize> = 'request_body_length: {
             if method.unwrap_or(http::Method::OPTIONS).has_request_body() {
@@ -2493,9 +2493,9 @@ where
         );
         // SAFETY: `init()` or `listen()` set it before the app could dispatch, and the VM keeps its pools.
         let slot = unsafe { &*pool }.claim();
-        let ctx_slot = Ctx::create_in(slot, self, req, any_resp, method_or_get).as_ptr();
+        let ctx_slot = Ctx::create_in(slot, self, req, any_resp, resolved_method);
         // SAFETY: ctx_slot was just initialized by create_in.
-        let ctx = unsafe { &*ctx_slot };
+        let ctx = unsafe { ctx_slot.as_ref() };
         let dispatch = ctx.dispatch();
 
         self.vm()
@@ -2591,7 +2591,7 @@ where
                 // we don't waste memory
                 if let Some(body) = ctx.request_body_mut() {
                     *body = BodyValue::Locked(crate::webcore::body::PendingValue {
-                        task: Some(NonNull::new(ctx_slot).unwrap().cast::<c_void>()),
+                        task: Some(ctx_slot.cast::<c_void>()),
                         global: self.global_this,
                         on_start_buffering: Some(Ctx::on_start_buffering_callback),
                         on_start_streaming: Some(Ctx::on_start_streaming_request_body_callback),
@@ -2599,7 +2599,7 @@ where
                             Ctx::on_request_body_readable_stream_available,
                         ),
                         producer: crate::webcore::streams::SourceHandle::ServerRequestBody(
-                            AnyRequestContext::init(ctx_slot),
+                            AnyRequestContext::init(ctx_slot.as_ptr()),
                         ),
                         ..Default::default()
                     });

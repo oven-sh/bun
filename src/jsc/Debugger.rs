@@ -415,8 +415,7 @@ impl Debugger {
             .unwrap_or_else(|_| panic!("Failed to create Debugger VM"));
         vm.event_loop().ensure_waker();
 
-        let _api_lock = vm.global().vm().get_api_lock();
-        Debugger::start(init)
+        vm.run_with_api_lock(|| Debugger::start(init))
     }
 
     /// Runs under the API lock on the debugger thread. Publishes the

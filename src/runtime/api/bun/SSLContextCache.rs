@@ -69,7 +69,7 @@ pub(crate) struct Entry {
     /// Nulled by `bun_ssl_ctx_cache_on_free` when BoringSSL drops the last
     /// ref. Tombstoned entries are reclaimed on the next `get_or_create` for
     /// the same digest, or by the periodic compact.
-    pub ctx: Cell<*mut boringssl::SSL_CTX>,
+    ctx: Cell<*mut boringssl::SSL_CTX>,
     /// BACKREF: the cache outlives every `Entry` it allocates (Drop clears
     /// ex_data first so the `CRYPTO_EX_free` callback never sees a dangling
     /// owner).

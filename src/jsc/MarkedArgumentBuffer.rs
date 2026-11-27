@@ -23,8 +23,7 @@ unsafe extern "C" {
         end: usize,
     ) -> JSValue;
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `f`
-    // (never dereferenced as Rust data) — same contract as
-    // `JSC__JSGlobalObject__queueMicrotaskCallback`.
+    // (never dereferenced as Rust data).
     safe fn MarkedArgumentBuffer__run(
         ctx: *mut c_void,
         f: extern "C" fn(ctx: *mut c_void, args: *mut c_void),

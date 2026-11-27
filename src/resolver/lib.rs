@@ -673,7 +673,7 @@ pub mod fs {
         /// listing fd, in one `entries_mutex` critical section. A
         /// stale-generation re-read rewrites the slot's `DirEntry` (and frees
         /// the old map's buckets) in place under that lock, so the map must
-        /// not be walked after unlock; the returned entry pointer is
+        /// not be walked after unlock; the returned entry is
         /// EntryStore-owned and stays valid. The caller must NOT already hold
         /// `entries_mutex` (it is non-recursive).
         pub(crate) fn lookup(&self, query: &[u8]) -> (Option<crate::fs_full::EntryLookup>, Fd) {

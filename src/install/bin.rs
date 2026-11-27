@@ -427,7 +427,7 @@ pub use bun_semver::StringBuilder;
 /// By [`Tag`]: nothing, one `String`, two, or an `ExternalStringList` in place of the first.
 #[repr(C, align(4))]
 #[derive(Clone, Copy)]
-pub struct Value([String; 2]);
+pub(crate) struct Value([String; 2]);
 bun_core::impl_no_uninit!(Value);
 
 impl Value {

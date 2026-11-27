@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 #![warn(unused_must_use)]
 
 pub mod error;
@@ -121,9 +122,6 @@ impl Router {
 
 pub const BANNED_DIRS: [&[u8]; 1] = [b"node_modules"];
 
-// TODO(b2-blocked): bun_collections::MultiArrayElement derive — proc-macro not
-// yet landed, so MultiArrayList can't expose per-field column
-// accessors. Hand-rolled SoA struct until the derive exists.
 #[derive(Default)]
 struct RouteIndexList {
     route: Vec<Route>,
@@ -478,7 +476,7 @@ impl<'a> RouteLoader<'a> {
     ) {
         let fs = self.fs;
 
-        // Snapshot the cached `DirEntry`'s entry pointers under `entries_mutex`:
+        // Snapshot the cached `DirEntry`'s entries under `entries_mutex`:
         // another thread (e.g. the bundler's resolver) rewrites this map in place
         // under that lock, so iterating it live would walk freed buckets.
         let entries: Vec<&Fs::Entry> = {
@@ -1033,7 +1031,7 @@ pub mod pattern {
             let mut kind = Tag::Static;
             let end = (input.len() - 1) as u32;
             while (offset as u32) < end {
-                let pattern: Pattern<'_> = match Pattern::init_unhashed(input, offset) {
+                let pattern = match Pattern::init_unhashed(input, offset) {
                     Ok(p) => p,
                     Err(err) => {
                         let source = bun_ast::Source::init_empty_file(input);

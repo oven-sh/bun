@@ -2,7 +2,7 @@ use core::cell::Cell;
 use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
 
-use bun_collections::hive_array::HiveSlot;
+use bun_collections::HiveSlot;
 use bun_core::String as BunString;
 use bun_http_types::Method::Method;
 use bun_jsc::bindgen::{JsLocal, JsScope};
@@ -42,7 +42,7 @@ pub(crate) type ResponseStream<const SSL_ENABLED: bool> =
 /// It costs about 655,632 bytes.
 // Capacity 0 when heap-breakdown is enabled routes every allocation through
 // the fallback heap path.
-pub(crate) const REQUEST_CONTEXT_POOL_CAPACITY: usize = if bun_alloc::heap_breakdown::ENABLED {
+pub(super) const REQUEST_CONTEXT_POOL_CAPACITY: usize = if bun_alloc::heap_breakdown::ENABLED {
     0
 } else {
     2048

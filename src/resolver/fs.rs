@@ -462,7 +462,7 @@ impl DirEntry {
             // owned by this thread (`append_uninit` bumped the index under the
             // store's inner mutex). Every field is written exactly once below
             // before the cell is observed via `&Entry`.
-            let written = unsafe {
+            unsafe {
                 use core::ptr::addr_of_mut;
                 let p = (*slot).as_mut_ptr();
                 // name_slice only lives for the duration of the iteration.
@@ -498,11 +498,10 @@ impl DirEntry {
                     fd: Fd::INVALID,
                 }));
                 addr_of_mut!((*p).abs_path).write(OnceLock::new());
-                p
-            };
-            // SAFETY: `written` is an initialized `EntryStore` slot (never freed, moved or handed
-            // out again); only its interior-mutable fields are written from here on.
-            unsafe { &*written }
+                // SAFETY: the slot is initialized and never freed, moved or handed out again;
+                // only its interior-mutable fields are written from here on.
+                &*p
+            }
         };
 
         // PERF: the

@@ -1,4 +1,4 @@
-use core::cell::Cell;
+use core::cell::{Cell, OnceCell};
 use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
@@ -182,7 +182,7 @@ impl bun_jsc::JsClass for Response {
 /// Every JS-facing member takes `&Response` (not
 /// `&mut Response`) so re-entrant JS calls cannot stack two `&mut` to the same
 /// instance. Fields the members mutate are therefore wrapped in `Cell` (Copy
-/// scalars, `abort_listener`) or `JsCell` (non-Copy `body`/`init`/`url`/`js_ref`). Both are
+/// scalars) or `JsCell` (non-Copy `body`/`init`/`url`/`js_ref`). Both are
 /// `#[repr(transparent)]`, so `#[repr(C)]` field layout is unchanged.
 #[repr(C)]
 #[derive(bun_ptr::CellRefCounted)]
@@ -206,7 +206,7 @@ pub(crate) struct Response {
     reported_estimated_size: Cell<usize>,
 
     /// Fetch's `AbortSignal` listener; survives `FetchTasklet` teardown so a fully-buffered body is still errored.
-    abort_listener: Cell<Option<bun_ptr::AliasableBox<BodyAbortListener>>>,
+    abort_listener: OnceCell<bun_ptr::AliasableBox<BodyAbortListener>>,
 }
 
 impl Default for Response {
@@ -220,7 +220,7 @@ impl Default for Response {
             weak_ptr_data: WeakPtrData::EMPTY,
             js_ref: JsCell::new(JsRef::empty()),
             reported_estimated_size: Cell::new(0),
-            abort_listener: Cell::new(None),
+            abort_listener: OnceCell::new(),
         }
     }
 }
@@ -465,9 +465,7 @@ impl Response {
     }
 
     /// Install a [`BodyAbortListener`] so abort reaches this body after `FetchTasklet` has detached.
-    ///
-    /// SAFETY: `this` has no listener yet. One that is replaced is freed, and could be running.
-    pub(crate) unsafe fn attach_abort_signal(
+    pub(crate) fn attach_abort_signal(
         this: &bun_jsc::WrapperGuard<'_, Self>,
         global: &JSGlobalObject,
         signal: &AbortSignal,
@@ -482,7 +480,7 @@ impl Response {
         });
         // SAFETY: on the heap until it drops.
         unsafe { bun_jsc::AbortHandle::follow_owner(listener.as_ptr(), signal.ref_()) };
-        this.abort_listener.set(Some(listener));
+        let _ = this.abort_listener.set(listener);
     }
 
     #[inline]

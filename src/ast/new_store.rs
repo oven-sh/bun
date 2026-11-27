@@ -458,12 +458,14 @@ mod tests {
         let store = Store::init();
         // SAFETY: `init` returns the only pointer to a live store.
         let borrowed = unsafe { &mut *store };
-        for _ in 0..2 {
-            for _ in 0..=2 * BLOCK_SIZE / size_of::<S::Import>() {
-                let _ = Store::append(borrowed, S::Import::default());
-            }
+        let [first, second] = [(); 2].map(|()| {
+            let slots: Vec<_> = (0..=2 * BLOCK_SIZE / size_of::<S::Import>())
+                .map(|_| Store::append(borrowed, S::Import::default()))
+                .collect();
             Store::reset(borrowed);
-        }
+            slots
+        });
+        assert_eq!(first, second);
         // SAFETY: from `init`, and not used again.
         unsafe { Store::destroy(store) };
     }

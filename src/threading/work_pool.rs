@@ -181,7 +181,7 @@ impl WorkPool {
             }
         }
 
-        // Not `schedule_new`: with `get()` in between, the store of the default callback stays.
+        // `schedule_new` calls `get()` between the two stores to `task.callback`, so both would stay.
         let batch = Batch::from_owned(Box::new(TaskType {
             task: Task::default(),
             context,

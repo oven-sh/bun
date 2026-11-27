@@ -1298,10 +1298,7 @@ impl EventLoop {
         if self.forever_timer.get().is_none() {
             let mut t = uws::Timer::create(loop_);
             // SAFETY: t is a fresh non-null timer handle
-            unsafe {
-                t.as_mut()
-                    .set(Some(noop_forever_timer), 1000 * 60 * 4, 1000 * 60 * 4)
-            };
+            unsafe { t.as_mut() }.set(Some(noop_forever_timer), 1000 * 60 * 4, 1000 * 60 * 4);
             self.forever_timer.set(Some(t));
         }
     }

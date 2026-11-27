@@ -1455,8 +1455,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     /// and `tail.prev` (`None` is the null niche) are already bit-zero in that
     /// storage, so the only required write is `mutex` (`std::sync::Mutex` is
     /// not guaranteed all-zeros-init, unlike the previous `parking_lot::RawMutex`)
-    /// and that field leads the
-    /// `#[repr(C)]` layout, so every startup write stays within page 0 of the
+    /// and it leads the `#[repr(C)]` layout, so that write stays within page 0 of the
     /// singleton mapping (see the layout note on [`BSSList`]). `backing_buf`
     /// and `tail.data` are intentionally left uninitialized; only `[0..used]`
     /// is read.
@@ -1465,9 +1464,6 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         // all-zeros `*mut Self`.
         unsafe { addr_of_mut!((*slot).mutex).write(Mutex::new()) };
     }
-
-    // Singleton teardown belongs to the `bss_list!` singleton wrapper;
-    // Drop only frees the heap-allocated head chain.
 
     /// Reserve an overflow slot and return its uninitialized storage. Mutex is
     /// held by the caller (`append_uninit`). Cold path — only hit after the

@@ -463,7 +463,7 @@ void us_loop_run(struct us_loop_t *loop) {
        * the poll. Unref'd: it bounds the poll, it does not keep the loop alive.
        * Counted from after the sweep, hence the second uv_update_time(). */
       if (!loop->idle_sweep_timer) {
-        loop->idle_sweep_timer = us_create_timer(loop, 1, 0);
+        loop->idle_sweep_timer = us_create_timer(loop, 1);
       }
       uv_update_time(loop->uv_loop);
       us_timer_set(loop->idle_sweep_timer, idle_sweep_again_cb, (int) run_again_ms, 0);
@@ -516,10 +516,9 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop,
 }
 
 // timer
-struct us_timer_t *us_create_timer(struct us_loop_t *loop, int fallthrough,
-                                   unsigned int ext_size) {
+struct us_timer_t *us_create_timer(struct us_loop_t *loop, int fallthrough) {
   struct us_internal_callback_t *cb = us_xcalloc(
-      1, sizeof(struct us_internal_callback_t) + sizeof(uv_timer_t) + ext_size);
+      1, sizeof(struct us_internal_callback_t) + sizeof(uv_timer_t));
 
   cb->loop = loop;
   cb->cb_expects_the_loop = 0; // never read?

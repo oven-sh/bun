@@ -149,8 +149,7 @@ impl<const CAPACITY: usize> HiveBitSetIter<CAPACITY> {
 /// The pointers are intended to be stable
 /// Sorta related to https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2021/p0447r15.html
 ///
-/// All slot operations take `&self` and each slot is an `UnsafeCell` — slot
-/// pointers come from `UnsafeCell::get()` and so survive `&self` reborrows of
+/// All slot operations take `&self`: each slot is an `UnsafeCell`, so its pointer survives `&self` reborrows of
 /// the pool (the `bumpalo` / `typed-arena` shape). `HiveArray` is `!Sync`.
 pub struct HiveArray<T, const CAPACITY: usize> {
     buffer: [UnsafeCell<MaybeUninit<T>>; CAPACITY],

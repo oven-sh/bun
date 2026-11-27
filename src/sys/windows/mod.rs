@@ -2003,18 +2003,13 @@ pub fn move_opened_file_at(
 
     debug_assert!(!new_file_name.contains(&(b'/' as u16))); // Call moveOpenedFileAtLoose
 
-    // The FileName tail here is UTF-16, so the correct cap is
-    // `PATH_MAX_WIDE * 2` bytes — sizing against the UTF-8 worst case
-    // (PATH_MAX_WIDE*3+1, ≈98 KB) would just waste ~32 KB of stack on a
-    // function called from already-deep install/bundler call chains. Any
-    // `new_file_name.len() <= PATH_MAX_WIDE` still fits.
-    const STRUCT_BUF_LEN: usize =
+    const MAX_STRUCT_LEN: usize =
         size_of::<win32::FILE_RENAME_INFORMATION_EX>() + (bun_paths::PATH_MAX_WIDE * 2 - 1);
     type RenameInfo = win32::FILE_RENAME_INFORMATION_EX<{ bun_paths::PATH_MAX_WIDE }>;
-    const _: () = assert!(STRUCT_BUF_LEN <= size_of::<RenameInfo>());
+    const _: () = assert!(MAX_STRUCT_LEN <= size_of::<RenameInfo>());
 
     let struct_len = size_of::<win32::FILE_RENAME_INFORMATION_EX>() - 1 + new_file_name.len() * 2;
-    if struct_len > STRUCT_BUF_LEN {
+    if struct_len > MAX_STRUCT_LEN {
         return bun_sys::Result::errno(E::NAMETOOLONG, bun_sys::Tag::NtSetInformationFile);
     }
 

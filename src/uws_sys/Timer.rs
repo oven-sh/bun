@@ -1,4 +1,3 @@
-use core::ffi::c_uint;
 use core::ptr::NonNull;
 
 use crate::Loop;
@@ -10,7 +9,7 @@ bun_opaque::opaque_ffi! { pub struct Timer; }
 
 impl Timer {
     pub fn create(loop_: &'static Loop) -> NonNull<Timer> {
-        let t = us_create_timer(loop_, 0, 0);
+        let t = us_create_timer(loop_, 0);
         NonNull::new(t).unwrap_or_else(|| {
             panic!(
                 "us_create_timer: returned null: {}",
@@ -31,11 +30,7 @@ impl Timer {
 }
 
 unsafe extern "C" {
-    pub(crate) safe fn us_create_timer(
-        loop_: &Loop,
-        fallthrough: i32,
-        ext_size: c_uint,
-    ) -> *mut Timer;
+    pub(crate) safe fn us_create_timer(loop_: &Loop, fallthrough: i32) -> *mut Timer;
     pub(crate) fn us_timer_close(timer: *mut Timer, fallthrough: i32);
     pub(crate) safe fn us_timer_set(
         timer: &mut Timer,

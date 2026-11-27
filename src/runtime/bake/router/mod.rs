@@ -593,9 +593,7 @@ impl FrameworkRouter {
                     }
                 }
             }
-            let mut it = zig_order.iter();
-            'outer: while let Some(entry) = it.next() {
-                let file = *entry.1;
+            'outer: for &file in zig_order.values() {
                 let base = file.base();
                 // Note: reshaped for borrowck — fetch type fields fresh each iteration.
                 match file.kind(&fs_ref.fs, false) {

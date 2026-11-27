@@ -172,12 +172,6 @@ impl DirInfo {
         self.flags.contains(Flags::InsideNodeModules)
     }
 
-    /// Read-only view of `package_json`.
-    #[inline]
-    pub fn package_json(&self) -> Option<&'static PackageJSON> {
-        self.package_json
-    }
-
     pub(crate) fn get_file_descriptor(&self) -> Fd {
         if FeatureFlags::STORE_FILE_DESCRIPTORS {
             // Scalar field read; see `get_entries_const` for the contract.
@@ -206,9 +200,7 @@ impl DirInfo {
     /// concurrent resolver with a newer generation rewrites the `DirEntry` in
     /// place under that lock ([`RealFS::entries_at_locked`](fs::RealFS::entries_at_locked)
     /// drops the old `data` map's buckets), so probing the map after the lock
-    /// is released can walk freed buckets. The returned lookup wraps a
-    /// pointer into the process-lifetime `EntryStore`, which stays valid after
-    /// the lock is dropped.
+    /// is released can walk freed buckets.
     pub(crate) fn get_entry(
         &self,
         generation: Generation,

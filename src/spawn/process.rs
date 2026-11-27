@@ -1884,7 +1884,7 @@ mod spawn_process_body {
             pending_alloc: Option<Box<[u8]>>,
             pub(crate) pipe: uv::Owned<uv::Pipe>,
             pub(crate) err: bun_sys::E,
-            pub(crate) context: *const SyncWindowsProcess,
+            context: *const SyncWindowsProcess,
             pub(crate) tag: OutFd,
         }
 
@@ -1989,9 +1989,7 @@ mod spawn_process_body {
                 } else {
                     this.err
                 };
-                // SAFETY: `context` is the live `SyncWindowsProcess` that owns
-                // this reader (set in `spawn_windows_with_pipes`); the callback
-                // is non-reentrant field writes only.
+                // SAFETY: `context` is the local of `spawn_windows_with_pipes`, which waits for this call.
                 unsafe { &*this.context }.on_reader_done(this.tag, this.chunks, err);
             }
 
@@ -2028,16 +2026,16 @@ mod spawn_process_body {
 
         #[cfg(windows)]
         pub struct SyncWindowsProcess {
-            pub(crate) stderr: Cell<Vec<Box<[u8]>>>,
-            pub(crate) stdout: Cell<Vec<Box<[u8]>>>,
-            pub(crate) err: Cell<bun_sys::E>,
-            pub(crate) waiting_count: Cell<u8>,
-            pub(crate) status: OnceCell<Status>,
+            stderr: Cell<Vec<Box<[u8]>>>,
+            stdout: Cell<Vec<Box<[u8]>>>,
+            err: Cell<bun_sys::E>,
+            waiting_count: Cell<u8>,
+            status: OnceCell<Status>,
         }
 
         #[cfg(windows)]
         impl SyncWindowsProcess {
-            pub fn on_process_exit(&self, status: Status) {
+            pub(crate) fn on_process_exit(&self, status: Status) {
                 let _ = self.status.set(status);
                 self.waiting_count.update(|count| count - 1);
             }

@@ -795,7 +795,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // Resolve once, reuse for both `has_request_body()` here and the
         // forward to `RequestContext::create` below.
         let method = method.or_else(|| bun_http_types::Method::Method::which(req.method()));
-        let method_or_get = method.unwrap_or(bun_http_types::Method::Method::GET);
+        let resolved_method = method.unwrap_or(bun_http_types::Method::Method::GET);
 
         let request_body_length: Option<usize> = 'len: {
             if method
@@ -844,7 +844,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self,
             std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
             any_response_from::<SSL>(resp),
-            method_or_get,
+            resolved_method,
         )
         .as_ptr();
         // SAFETY: `create()` just made it, and it holds its base ref.

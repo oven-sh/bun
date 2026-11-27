@@ -18,7 +18,7 @@ struct PolledStatusBlock {
     Status: AtomicUsize,
     Information: usize,
 }
-bun_opaque::assert_ffi_layout!(PolledStatusBlock = IO_STATUS_BLOCK; Status, Information);
+bun_core::assert_ffi_layout!(PolledStatusBlock = IO_STATUS_BLOCK; Status, Information);
 
 /// Returns when the request that `start` makes on `handle` has ended. It names no event, APC routine or context, so no completion port hears of it.
 pub(crate) fn complete(

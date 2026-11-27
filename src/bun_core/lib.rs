@@ -1638,6 +1638,15 @@ pub(crate) mod strings_impl {
         EncodeIntoResult { read, written }
     }
 
+    /// [`copy_utf16_into_utf8`]: the text it wrote to `buf` and the units it read.
+    #[inline]
+    pub(crate) fn copy_utf16_into_str<'a>(buf: &'a mut [u8], utf16: &[u16]) -> (&'a str, usize) {
+        let EncodeIntoResult { read, written } = copy_utf16_into_utf8(buf, utf16);
+        // SAFETY: simdutf's output for valid UTF-16, or whole scalar values from the scalar loop (U+FFFD for a lone surrogate).
+        let text = unsafe { core::str::from_utf8_unchecked(&buf[..written]) };
+        (text, read)
+    }
+
     /// Port of `copyLatin1IntoUTF8` — encode Latin-1 into a fixed-size UTF-8 buffer.
     #[inline]
     pub fn copy_latin1_into_utf8(buf: &mut [u8], latin1: &[u8]) -> EncodeIntoResult {
@@ -1660,6 +1669,15 @@ pub(crate) mod strings_impl {
             }
         }
         copy_latin1_into_utf8_stop_on_non_ascii::<false>(buf, latin1)
+    }
+
+    /// [`copy_latin1_into_utf8`]: the text it wrote to `buf` and the bytes it read.
+    #[inline]
+    pub(crate) fn copy_latin1_into_str<'a>(buf: &'a mut [u8], latin1: &[u8]) -> (&'a str, usize) {
+        let EncodeIntoResult { read, written } = copy_latin1_into_utf8(buf, latin1);
+        // SAFETY: every path writes an ASCII byte as itself and any other byte as its two-byte UTF-8 sequence.
+        let text = unsafe { core::str::from_utf8_unchecked(&buf[..written]) };
+        (text, read)
     }
 
     /// Copies at most 16 bytes with two loads and two stores that overlap. Writes nothing and

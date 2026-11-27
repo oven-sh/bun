@@ -570,7 +570,7 @@ fn traverse_optional_block(
     env: &Environment,
     ctx: &mut OptionalTraversalContext,
     outer_alternate: Option<BlockId>,
-) -> Option<IdentifierId> {
+) -> Option<(IdentifierId, BlockId)> {
     if !env.has_stack() {
         return None;
     }
@@ -588,6 +588,10 @@ fn traverse_optional_block(
     };
 
     let maybe_test_block = func.body.blocks.get(&test_block_id)?;
+    // The block of `test_terminal`.
+    let mut guard_block_id = test_block_id;
+    // Not in upstream (oxc e751a6a4b): the guard of the inner chain, unmarked until what follows it is matched.
+    let mut inner_guard = None;
 
     let (test_terminal, base_object) = match &maybe_test_block.terminal {
         Terminal::Branch { .. } => {
@@ -667,7 +671,13 @@ fn traverse_optional_block(
             };
             let inner_optional_result =
                 traverse_optional_block(maybe_test_block, func, env, ctx, inner_alternate);
-            let inner_optional_id = inner_optional_result?;
+            let (inner_optional_id, inner_guard_block_id) = inner_optional_result?;
+            guard_block_id = *inner_fallthrough;
+            if !is_optional && env.config.optional_chains_keep_their_guards {
+                ctx.processed_instrs_in_optional
+                    .remove(&ProcessedInstr::Terminal(inner_guard_block_id));
+                inner_guard = Some(inner_guard_block_id);
+            }
 
             // Check that inner optional is part of the same chain
             let test_ident = match &test_block.terminal {
@@ -731,6 +741,10 @@ fn traverse_optional_block(
         loc: match_result.property_load_loc,
     };
 
+    if let Some(inner_guard) = inner_guard {
+        ctx.processed_instrs_in_optional
+            .insert(ProcessedInstr::Terminal(inner_guard));
+    }
     ctx.processed_instrs_in_optional
         .insert(ProcessedInstr::Instruction(
             match_result.store_local_lvalue_id,
@@ -785,7 +799,7 @@ fn traverse_optional_block(
     ctx.temporaries_read_in_optional
         .insert(match_result.property_id, load);
 
-    Some(match_result.consequent_id)
+    Some((match_result.consequent_id, guard_block_id))
 }
 
 // =============================================================================
@@ -1739,7 +1753,26 @@ impl ReactiveScopeDependencyTreeHIR {
         }
     }
 
-    fn add_dependency(&mut self, dep: ReactiveScopeDependency, _env: &Environment) {
+    fn add_dependency(&mut self, dep: ReactiveScopeDependency, env: &Environment) {
+        // Not in upstream (oxc e751a6a4b): what cannot be read early ends before its last optional link, so the
+        // dependency is the guard of that link and not its result, which can be `undefined` either way.
+        let mut path_len = dep.path.len();
+        if env.config.optional_chains_keep_their_guards {
+            let hoistable_root = self.hoistable_roots.get(dep.identifier);
+            let mut hoistable_ptr: Option<&HoistableNode> = hoistable_root.map(|(n, _)| n);
+            for (index, entry) in dep.path.iter().enumerate() {
+                let is_non_null = hoistable_ptr
+                    .is_some_and(|node| node.access_type == HoistableAccessType::NonNull);
+                if !is_non_null && !entry.optional {
+                    let last_optional = (dep.path.iter().take(index)).rposition(|it| it.optional);
+                    path_len = last_optional.unwrap_or(index);
+                    break;
+                }
+                hoistable_ptr =
+                    hoistable_ptr.and_then(|h| h.properties.get(&entry.property).map(|e| &e.node));
+            }
+        }
+
         let root = self.dep_roots.entry(dep.identifier).or_insert_with(|| {
             (
                 DependencyNode {
@@ -1755,7 +1788,7 @@ impl ReactiveScopeDependencyTreeHIR {
         let hoistable_cursor_root = self.hoistable_roots.get(dep.identifier);
         let mut hoistable_ptr: Option<&HoistableNode> = hoistable_cursor_root.map(|(n, _)| n);
 
-        for entry in &dep.path {
+        for entry in dep.path.iter().take(path_len) {
             let next_hoistable: Option<&HoistableNode>;
             let access_type: PropertyAccessType;
 
@@ -1828,15 +1861,24 @@ fn collect_minimal_deps_in_subtree(
         return;
     }
 
-    if is_dependency_access(node.access_type) {
+    let is_dependency = is_dependency_access(node.access_type);
+    if is_dependency {
         results.push(ReactiveScopeDependency {
             identifier: root_id,
             reactive,
             path: AstAlloc::vec_from_slice(path),
             loc: node.loc,
         });
-    } else {
+    }
+    // Not in upstream (oxc e751a6a4b): an optional prefix is `undefined` if its guard is, or if the property is. What
+    // follows it without `?.` throws only then, so the prefix does not stand for that dependency.
+    let keeps_continuations =
+        env.config.optional_chains_keep_their_guards && path.iter().any(|entry| entry.optional);
+    if !is_dependency || keeps_continuations {
         for (child_name, child_entry) in &node.properties {
+            if is_dependency && is_optional_access(child_entry.node.access_type) {
+                continue;
+            }
             let mut new_path = path.to_vec();
             new_path.push(DependencyPathEntry {
                 property: child_name.clone(),

@@ -176,6 +176,11 @@ pub struct EnvironmentConfig {
     /// For `propagate_scope_dependencies_hir`: a call in a branch or in a loop does not show that a function is called
     /// during render, be it the function that is called or one given to a hook there. To upstream any call shows it.
     pub calls_in_branches_show_no_function_called: bool,
+    /// For `propagate_scope_dependencies_hir`: what follows an optional link without `?.`, as `.b` in `x?.a.b`, is a
+    /// dependency beside `x?.a`. If it cannot be read early, or is a call or a computed load, the dependency is the
+    /// guard of the last optional link: `x.a.b` for `x.a.b?.c.d`. Upstream lets `x?.a` stand for all of it, and a
+    /// scope that kept `undefined` for an `x` that was nullish does not run again to throw.
+    pub optional_chains_keep_their_guards: bool,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
@@ -256,6 +261,7 @@ impl Default for EnvironmentConfig {
             operators_say_nothing_of_their_operands: false,
             functions_given_to_jsx_are_not_assumed_called: false,
             calls_in_branches_show_no_function_called: false,
+            optional_chains_keep_their_guards: false,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,

@@ -88,7 +88,8 @@ impl<S: System, R> Client<S, R> {
         config.timeout = timeout.map(|timeout| timeout.max(MIN_TIMEOUT));
         let mut servers = Servers::default();
         servers.replace(core::mem::take(&mut config.servers).into_iter());
-        let seed = (0..4).fold(0, |seed, _| seed << 16 | u64::from(system.random()));
+        let seed = (0..4).try_fold(0, |seed, _| Some(seed << 16 | u64::from(system.random()?)));
+        let seed = seed.unwrap_or_else(|| system.now().as_nanos() as u64);
         Self {
             system,
             config,

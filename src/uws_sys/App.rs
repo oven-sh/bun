@@ -49,10 +49,7 @@ use bun_ptr::{AnyRefCounted, RefPtr};
 
 /// Opaque handle to a uWS::TemplatedApp<SSL>. Always used via `*mut App<SSL>`.
 #[repr(C)]
-pub struct App<const SSL: bool> {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+pub struct App<const SSL: bool>(uws_app_s);
 
 /// Stamps one `pub fn $name(&mut self, pattern, handler, user_data)` per HTTP
 /// verb. Bodies are byte-identical modulo the C symbol — see `uws_app_get` &co
@@ -116,14 +113,10 @@ impl<const SSL: bool> Drop for OwnedApp<SSL> {
 impl<const SSL: bool> App<SSL> {
     const SSL_FLAG: i32 = SSL as i32;
 
-    /// `&mut uws_app_s` view of self for `safe fn` shims. Both types are
-    /// `#[repr(C)]` opaque ZSTs with `UnsafeCell<[u8; 0]>`, so the cast is a
-    /// no-op and the reference is ABI-identical to a non-null pointer.
+    /// `&mut uws_app_s` view of self for `safe fn` shims.
     #[inline]
     fn as_raw(&mut self) -> &mut uws_app_s {
-        // SAFETY: `App<SSL>` and `uws_app_s` are layout-identical opaque ZSTs
-        // over the same C++ object; the borrow reborrows `&mut self`.
-        unsafe { &mut *std::ptr::from_mut::<Self>(self).cast::<uws_app_s>() }
+        &mut self.0
     }
 
     pub fn close(&mut self) {

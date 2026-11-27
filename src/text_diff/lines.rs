@@ -5,13 +5,15 @@
 
 use core::ops::Range;
 
+use bun_core::strings::CodeUnits;
+
 use crate::Hunk;
-use crate::tokens::{LONG_LINE, Split, Unit, for_each_line_end};
+use crate::tokens::{LONG_LINE, Split, Unit, as_slice, as_slices, for_each_line_end, is_same};
 
 const UNKNOWN: u32 = u32::MAX;
 
-pub(crate) struct Lines<'a, T> {
-    text: &'a [T],
+pub(crate) struct Lines<'a> {
+    text: CodeUnits<'a>,
     /// The units and the lines between the common head and the common tail.
     units: usize,
     count: usize,
@@ -19,8 +21,8 @@ pub(crate) struct Lines<'a, T> {
     starts: Vec<u32>,
 }
 
-impl<'a, T: Unit> Lines<'a, T> {
-    pub(crate) fn new(text: &'a [T], changed: Range<usize>) -> Self {
+impl<'a> Lines<'a> {
+    pub(crate) fn new<T: Unit>(text: &'a [T], changed: Range<usize>) -> Self {
         // Finding long lines is as fast as counting them.
         let (mut starts, mut at) = (Vec::with_capacity(16), changed.start);
         starts.push(at as u32);
@@ -32,7 +34,7 @@ impl<'a, T: Unit> Lines<'a, T> {
         // With room for the first lines of the tail.
         starts.resize(count + 4, UNKNOWN);
         Self {
-            text,
+            text: T::units(text),
             units: changed.len(),
             count,
             starts,
@@ -48,12 +50,12 @@ impl<'a, T: Unit> Lines<'a, T> {
 
     /// The start of `line` is known. After this, so is its end.
     #[inline]
-    fn get(&mut self, line: usize) -> &'a [T] {
-        let start = self.starts[line] as usize;
+    fn get(&mut self, line: usize) -> Range<usize> {
+        let (text, start) = (self.text, self.starts[line] as usize);
         if self.starts[line + 1] == UNKNOWN {
-            self.set_start(line + 1, Split::Lines.end(self.text, start));
+            self.set_start(line + 1, as_slice!(text => Split::Lines.end(text, start)));
         }
-        &self.text[start..self.starts[line + 1] as usize]
+        start..self.starts[line + 1] as usize
     }
 
     /// Finds the starts of all lines before the common tail.
@@ -62,12 +64,13 @@ impl<'a, T: Unit> Lines<'a, T> {
         let known = starts.take_while(|&&start| start != UNKNOWN).count();
         let from = self.starts[known - 1] as usize;
         let to = self.starts[0] as usize + self.units;
-        let mut rest = self.starts[known..].iter_mut();
-        for_each_line_end(&self.text[from..to], |end| {
+        let (text, mut rest) = (self.text, self.starts[known..].iter_mut());
+        let found = |end| {
             if let Some(start) = rest.next() {
                 *start = (from + end) as u32;
             }
-        });
+        };
+        as_slice!(text => for_each_line_end(&text[from..to], found));
         self.starts[self.count] = to as u32;
     }
 
@@ -94,9 +97,9 @@ const UNITS_PER_STEP: usize = 64;
 
 /// How many lines are equal from `x` and `y` on. After this, the ends of the first lines that differ are known.
 #[inline(never)]
-fn equal_lines<T: Unit>(
-    a: &mut Lines<'_, T>,
-    b: &mut Lines<'_, T>,
+fn equal_lines(
+    a: &mut Lines<'_>,
+    b: &mut Lines<'_>,
     x: usize,
     y: usize,
     work: &mut usize,
@@ -106,12 +109,14 @@ fn equal_lines<T: Unit>(
         return 0;
     }
     *work += COMPARE_COST + in_a.len() / UNITS_PER_STEP;
-    if in_a != in_b {
-        return 0;
-    }
-    let (from_a, from_b) = (a.starts[x + 1] as usize, b.starts[y + 1] as usize);
-    let same = Split::Lines.common_head(&a.text[from_a..], &b.text[from_b..]);
-    let run = 1 + Split::Lines.count(&a.text[from_a..from_a + same]);
+    let (text_a, text_b, from_a, from_b) = (a.text, b.text, in_a.end, in_b.end);
+    let (same, run) = as_slices!(text_a, text_b => {
+        if !is_same(&text_a[in_a], &text_b[in_b]) {
+            return 0;
+        }
+        let same = Split::Lines.common_head(&text_a[from_a..], &text_b[from_b..]);
+        (same, 1 + Split::Lines.count(&text_a[from_a..from_a + same]))
+    });
     a.set_start(x + run, from_a + same);
     b.set_start(y + run, from_b + same);
     let compared = same + a.get(x + run).len().min(b.get(y + run).len());
@@ -122,9 +127,9 @@ fn equal_lines<T: Unit>(
 /// One round on one side of the goal, from the outside in. A point is a line of `along`, and adding `shift` gives the
 /// line of `across`. Returns how far one more edit gets on the goal, or 0 if this side has no diagonal yet.
 #[inline(always)]
-fn side<T: Unit>(
-    along: &mut Lines<'_, T>,
-    across: &mut Lines<'_, T>,
+fn side(
+    along: &mut Lines<'_>,
+    across: &mut Lines<'_>,
     before: &[u32],
     now: &mut [u32],
     mut shift: isize,
@@ -155,11 +160,7 @@ pub(crate) enum Followed {
 }
 
 /// The hunks count lines from the end of the common head.
-pub(crate) fn follow<T: Unit>(
-    a: &mut Lines<'_, T>,
-    b: &mut Lines<'_, T>,
-    max_edits: usize,
-) -> Followed {
+pub(crate) fn follow(a: &mut Lines<'_>, b: &mut Lines<'_>, max_edits: usize) -> Followed {
     let (n, m) = (a.count, b.count);
     // If most of these differ, finding that out takes longer than numbering them.
     if (9..=32).contains(&(n + m)) {

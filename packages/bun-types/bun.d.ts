@@ -6145,8 +6145,9 @@ declare module "bun" {
     function lines(oldText: string, newText: string, options?: LinesOptions): Change[] | undefined;
 
     /**
-     * Compare two strings word by word. A token is a word of Latin letters, digits and `_`,
-     * a run of spaces, a line ending, or any other single character.
+     * Compare two strings word by word. A token is a word of letters, digits and `_`, a run of spaces,
+     * a line ending, or any other single character. In scripts without spaces between words,
+     * like Chinese, Japanese and Thai, each character is a token.
      *
      * @returns The changes, or `undefined` if there are more than `maxEditLength` edits
      */

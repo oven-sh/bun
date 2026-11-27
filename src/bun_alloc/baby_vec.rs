@@ -95,13 +95,10 @@ impl<'a, T> BabyVec<'a, T> {
         unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len as usize) }
     }
 
-    /// # Safety
-    /// `new_len <= capacity()`, and `[old_len, new_len)` must be initialized
-    /// when growing.
+    /// `clear()` without dropping the elements.
     #[inline]
-    pub unsafe fn set_len(&mut self, new_len: usize) {
-        debug_assert!(new_len <= self.cap as usize);
-        self.len = new_len as u32;
+    pub fn forget_elements(&mut self) {
+        self.len = 0;
     }
 
     #[inline]

@@ -699,16 +699,17 @@ impl JoinableRegion {
     /// # Safety
     /// `region` is valid: the caller started the region, or `state` counts it.
     unsafe fn ask_idle_threads(self: &Arc<JoinableRegion>, own: usize) {
-        use bun_threading::thread_pool::{Batch, Node, Task};
+        use bun_threading::thread_pool::{Batch, Task};
         #[repr(C)]
         struct Helper {
             task: Task,
             region: Arc<JoinableRegion>,
         }
-        unsafe fn help(task: *mut Task) {
-            // SAFETY: the first field of a `Helper` allocated below, which is queued once.
-            let helper = unsafe { bun_core::heap::take(task.cast::<Helper>()) };
-            helper.region.help();
+        bun_threading::intrusive_work_task!(Helper, task);
+        impl bun_threading::OwnedTask for Helper {
+            fn run(self: Box<Self>) {
+                self.region.help();
+            }
         }
         if self.helpers_left.load(Ordering::Relaxed) == 0 {
             return;
@@ -731,13 +732,10 @@ impl JoinableRegion {
         }
         let mut batch = Batch::default();
         for _ in 0..helpers {
-            let task = Task {
-                node: Node::default(),
-                callback: help,
-            };
-            let region = Arc::clone(self);
-            let helper = bun_core::heap::into_raw(Box::new(Helper { task, region }));
-            batch.push(Batch::from(helper.cast::<Task>()));
+            batch.push(Batch::from_owned(Box::new(Helper {
+                task: Task::default(),
+                region: Arc::clone(self),
+            })));
         }
         pool.schedule_all_at_once(batch);
     }

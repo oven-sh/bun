@@ -8,11 +8,26 @@ const maxEditLength = limit.optional;
 const context = limit.default(3);
 
 const off = b.bool.default(false);
-const forText = { maxEditLength, ignoreCase: off } as const;
-const forLines = { ...forText, ignoreWhitespace: off, stripTrailingCr: off } as const;
+/** An option of the package `diff` that changes the result. It is refused unless it is falsy. */
+const refused = b.bool.loose.default(false);
+const forAll = {
+  maxEditLength,
+  timeout: refused,
+  callback: refused,
+  comparator: refused,
+  oneChangePerToken: refused,
+} as const;
+const forText = { ...forAll, ignoreCase: off } as const;
+const forLines = {
+  ...forText,
+  ignoreWhitespace: off,
+  stripTrailingCr: off,
+  newlineIsToken: refused,
+  ignoreNewlineAtEof: refused,
+} as const;
 
-export const Options = b.dictionary({ maxEditLength }, { reportedAs: "options" });
-export const TextOptions = b.dictionary(forText, { reportedAs: "options" });
+export const Options = b.dictionary({ ...forAll, ignoreCase: refused }, { reportedAs: "options" });
+export const TextOptions = b.dictionary({ ...forText, intlSegmenter: refused }, { reportedAs: "options" });
 export const LinesOptions = b.dictionary(forLines, { reportedAs: "options" });
 export const HunksOptions = b.dictionary({ context, ...forLines }, { reportedAs: "options" });
 export const PatchOptions = b.dictionary(
@@ -21,10 +36,17 @@ export const PatchOptions = b.dictionary(
     newFileName: b.string.utf8.optional,
     oldHeader: b.string.optional,
     newHeader: b.string.optional,
+    headerOptions: refused,
     context,
     ...forLines,
   },
   { reportedAs: "options" },
+);
+
+/** `patches.reduce(applyPatch, source)` passes an index here. */
+export const ApplyOptions = b.dictionary(
+  { fuzzFactor: refused, compareLine: refused, autoConvertLineEndings: b.bool.loose.nullable.default(true) },
+  { reportedAs: "options", nonObjectAsEmpty: true, allowArray: true },
 );
 
 export const Change = b.dictionary({ value: b.string, added: b.bool, removed: b.bool, count: b.usize });
@@ -86,7 +108,7 @@ export const diff = b.namespace({
   createPatch: { args: { ...texts, options: PatchOptions.default({}) }, returns: b.string.optional, ...throws },
   parsePatch: { args: { patch: b.string }, returns: b.array(FilePatch), ...throws },
   applyPatch: {
-    args: { source: b.string, patch: PatchToApply },
+    args: { source: b.string, patch: PatchToApply, options: ApplyOptions.default({}) },
     expected: { patch: "patch must be a string, a file from parsePatch() or an array of hunks" },
     returns: b.string,
     ...throws,

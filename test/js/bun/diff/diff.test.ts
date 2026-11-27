@@ -1,6 +1,6 @@
 import { diff } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
 
 // Unless a test says otherwise, what is expected is what the package `diff` 9.0.0 returns.
 
@@ -137,6 +137,15 @@ describe("words", () => {
     ["each punctuation mark", "f(a);", "f(a));", [["=", "f(a)", 4], ["+", ")", 1], ["=", ";", 1]]],
     ["Latin letters with diacritics", "naïve_1 x", "naïve_1 ḁ\u00ad", [["=", "naïve_1 ", 2], ["-", "x", 1], ["+", "ḁ\u00ad", 1]]],
     ["× and ˇ are not letters", "a×bˇc", "a×bˇd", [["=", "a×bˇ", 4], ["-", "c", 1], ["+", "d", 1]]],
+    ["µ is a letter", "5µs", "5ms", [["-", "5µs", 1], ["+", "5ms", 1]]],
+    ["Cyrillic", "привет мир", "привет друг", [["=", "привет ", 2], ["-", "мир", 1], ["+", "друг", 1]]],
+    ["Arabic, with its comma", "قط، كلب", "قطة، كلب", [["-", "قط", 1], ["+", "قطة", 1], ["=", "، كلب", 3]]],
+    ["Persian, with a non-joiner", "می\u200cروم", "می\u200cرود", [["-", "می\u200cروم", 1], ["+", "می\u200cرود", 1]]],
+    ["Devanagari, with its marks", "नमस्ते।", "नमस्कार।", [["-", "नमस्ते", 1], ["+", "नमस्कार", 1], ["=", "।", 1]]],
+    ["Hangul", "안녕 세계", "안녕 세상", [["=", "안녕 ", 2], ["-", "세계", 1], ["+", "세상", 1]]],
+    ["Hangul after Latin", "Bun을", "Node을", [["-", "Bun", 1], ["+", "Node", 1], ["=", "을", 1]]],
+    ["a combining accent", "cafe\u0301s", "cafe\u0301", [["-", "cafe\u0301s", 1], ["+", "cafe\u0301", 1]]],
+    ["each Thai character", "กข", "กค", [["=", "ก", 1], ["-", "ข", 1], ["+", "ค", 1]]],
     ["each CJK character", "世界", "世间", [["=", "世", 1], ["-", "界", 1], ["+", "间", 1]]],
     ["a surrogate pair", "a😀", "a😁", [["=", "a", 1], ["-", "😀", 1], ["+", "😁", 1]]],
     ["the spaces of \\s", "a\u00a0\ufeff\u2028b", "a\u0085b", [["=", "a", 1], ["-", "\u00a0\ufeff\u2028", 1], ["+", "\u0085", 1], ["=", "b", 1]]],
@@ -161,13 +170,22 @@ test("words and chars count the tokens of long texts", () => {
   }
 });
 
-test("words splits code units as the regular expression of diff does", () => {
-  const word = String.raw`a-zA-Z0-9_\u{AD}\u{C0}-\u{D6}\u{D8}-\u{F6}\u{F8}-\u{2C6}\u{2C8}-\u{2D7}\u{2DE}-\u{2FF}\u{1E00}-\u{1EFF}`;
-  const token = new RegExp(String.raw`(\r?\n)|[${word}]+|[^\S\n\r]+|[^${word}]`, "ug");
+test("words splits every code unit", () => {
+  const scripts = ["Han", "Hiragana", "Katakana", "Yi", "Thai", "Lao", "Myanmar", "Khmer"]
+    .concat("Tai_Le", "New_Tai_Lue", "Tai_Tham", "Tai_Viet")
+    .map(script => String.raw`\p{sc=${script}}`);
+  const hangul = String.raw`\u1100-\u11FF\u3130-\u318F\uA960-\uA97F\uAC00-\uD7FF\uFFA0-\uFFDC`;
+  const others = String.raw`\xB7\u02C7\u02D8-\u02DD\u0387\u20D0-\u20FF\u3000-\u312F\u31A0-\u31BF\uA9E0-\uA9FF\uFE00-\uFE0F\uFF61-\uFF9F`;
+  const word = String.raw`[[\p{ID_Continue}\xAD\u0100-\u02FF\u200C\u200D]--[${scripts.join("")}${hangul}${others}\u{10000}-\u{10FFFF}]]`;
+  const token = new RegExp(String.raw`(\r?\n)|${word}+|[${hangul}]+|[^\S\n\r]+|[^${word}]`, "vg");
+  // Newer than the table of identifiers.
+  const isNew = /[\u088F\u0897\u0C5C\u0CDC\u1ACF-\u1AEB\u1C89\u1C8A\uA7CB-\uA7DC\uA7F1]/v;
   const wrong: number[] = [];
-  const step = (unit: number) => (unit > 0x3100 && unit < 0xd700 ? 0x100 : isDebug && unit > 0x300 ? 0x61 : 1);
+  const step = (unit: number) =>
+    (unit > 0x3400 && unit < 0xa400) || (unit > 0xac00 && unit < 0xd700) ? 0x100 : isDebug && unit > 0x300 ? 0x61 : 1;
   for (let unit = 0; unit <= 0xffff; unit += step(unit)) {
     const c = String.fromCharCode(unit);
+    if (isNew.test(c)) continue;
     // Each neighbor comes a different number of times, so the count tells which one it is joined to.
     const text = ["a" + c, " " + c, c + "\n", "\ud83d" + c, c + "\ude00"].map((it, i) => (it + ".").repeat(i + 1));
     for (const part of [text.slice(0, 3).join(""), text.join("")]) {
@@ -498,8 +516,8 @@ describe("options that ignore a difference", () => {
     ["lines", { ignoreCase }, "\ud800Σ", "\ud801σ", [["-", "\ud800Σ", 1], ["+", "\ud801σ", 1]]],
     ["lines", { ignoreCase }, "a \n", "A\n", [["-", "a \n", 1], ["+", "A\n", 1]]],
     ["words", { ignoreCase }, "The Fox", "the dog", [["=", "the ", 2], ["-", "Fox", 1], ["+", "dog", 1]]],
-    // The Kelvin sign is not part of a word, and `k` is.
-    ["words", { ignoreCase }, "\u212a \u212aa", "k ka", [["=", "k ", 2], ["-", "\u212aa", 2], ["+", "ka", 1]]],
+    ["words", { ignoreCase }, "\u212a \u212aa", "k ka", [["=", "k ka", 3]]],
+    ["words", { ignoreCase }, "ΟΔΟΣ Мир", "οδος дом", [["=", "οδος ", 2], ["-", "Мир", 1], ["+", "дом", 1]]],
     ["chars", { ignoreCase }, "aBc", "AbD", [["=", "Ab", 2], ["-", "c", 1], ["+", "D", 1]]],
     ["chars", { ignoreCase }, "ΑΣ𐐀İ", "ασ𐐨i", [["=", "ασ𐐨", 3], ["-", "İ", 1], ["+", "i", 1]]],
     ["lines", { ignoreWhitespace }, "a\n b\nc\n", "\ta \r\nb\nd\n", [["=", "\ta \r\nb\n", 2], ["-", "c\n", 1], ["+", "d\n", 1]]],
@@ -558,6 +576,94 @@ describe("options that ignore a difference", () => {
       expect(shape(changes)).toEqual(shape(diff.lines(a.join(""), b.join(""))));
       expect(changes.map(it => (it.removed ? "" : it.value)).join("")).toBe(y);
     }
+  });
+});
+
+describe("a Latin-1 text and a UTF-16 text", () => {
+  // The same characters, two bytes each.
+  const wide = (text: string) => Buffer.from(text, "utf16le").toString("utf16le");
+  const narrow = (text: string) => Buffer.from(text, "latin1").toString("latin1");
+  // A text is copied if it is shorter than this, or than 32 units for each token that changed.
+  const head = repeat("-", 2 ** 20) + "\n";
+  const ways: [string, (a: string, b: string) => unknown][] = [
+    ["lines", diff.lines],
+    ["words", diff.words],
+    ["chars", diff.chars],
+    ["hunks", diff.hunks],
+    ["createPatch", (a, b) => diff.createPatch(a, b, { oldFileName: "a", newHeader: "世" })],
+    ["ignoreCase", (a, b) => [diff.lines, diff.words, diff.chars].map(fn => fn(a, b, { ignoreCase: true }))],
+    ["ignoreWhitespace", (a, b) => diff.lines(a, b, { ignoreWhitespace: true })],
+  ];
+
+  test.each(ways)("%s: the same result as for two UTF-16 texts", (_, fn) => {
+    const next = random(1);
+    // U+0161 has the low byte of "a", and U+6161 the bytes of "aa". The last three are Latin-1 in lower case.
+    const others = ["世", "😀", "\ud83d", "\ude00", "\u0161", "\u6161", "\u010a", "Σ", "\u212a", "\u212b", "\u0178"];
+    for (let i = 0; i < (isDebug ? 14 : 150); i++) {
+      const long = repeat("e", [0, 7, 8, 63, 64, 65, 200][i % 7]);
+      const token = () => long + ["a", "aa", "A", "k", "å", "ÿ", " "][next(7)] + ["\n", "\n", " ", ""][next(4)];
+      const tokens = Array.from({ length: next(i % 5 ? 12 : 80) }, token);
+      const changed = tokens.map(it => [token(), "", others[next(others.length)] + it][next(12)] ?? it);
+      const first = i % (isDebug ? 13 : 4) ? "" : head;
+      const [a, b] = [narrow(first + tokens.join("")), wide(first + changed.join(""))];
+      expect([fn(a, b), fn(b, a)]).toEqual([fn(wide(a), b), fn(b, wide(a))]);
+    }
+  });
+
+  test("lines that are made to collide", () => {
+    const count = isDebug ? 3000 : 50_000;
+    const end = Buffer.from(colliding.slice(1), "latin1").toString("utf16le") + "abc";
+    const hash = (i: number) => Bun.hash.wyhash(Buffer.from(`${1_000_000 + i}${end}\n`, "utf16le"));
+    expect(hash(1)).toBe(hash(2));
+    const [a, b] = [numbered(count, i => i), numbered(count, i => `${1_000_000 + (i >> 1)}${end}\n${i}`)].map(
+      text => repeat(head, isDebug ? 1 : 5) + text,
+    );
+    expect([edits(diff.lines(a, b)), edits(diff.lines(b, a))]).toEqual([count, count]);
+  });
+
+  // The table has 512 slots here and tries 64 for a line. ignoreWhitespace always uses it, without the newline.
+  test("Latin-1 lines that all want the same slot of the table", () => {
+    const lines: string[] = [];
+    for (let i = 0; lines.length < 80; i++)
+      if ((Bun.hash.wyhash(Buffer.from(`${i}`, "utf16le")) & 0x1ffn) === 0n) lines.push(`${i}\n`);
+    const moved = (at: number) => [head, ...lines.slice(at), "世\n", ...lines.slice(0, at)].join("");
+    const options = { ignoreWhitespace: true };
+    expect(edits(diff.lines(head + lines.join(""), moved(20), options))).toBe(41);
+    expect(edits(diff.lines(moved(60), head + lines.join(""), options))).toBe(41);
+  });
+
+  // 16 MB of Latin-1 in lines of 1,024 characters. All that is allocated before the call stays alive, so the peak is
+  // the current use, and a UTF-16 copy would add 32 MB to it. VmHWM, because maxRSS starts at the peak of the parent.
+  test.concurrent.skipIf(!isLinux || isDebug).each([
+    ["lines, one edit", "diff.lines(a, b)", 8192],
+    ["lines, the other way round", "diff.lines(b, a)", 8192],
+    ["lines, edits all over", "diff.lines(a, b)", 100],
+    ["lines, all changed", "diff.lines(b, a)", 1],
+    ["words", "diff.words(a, b)", 8192],
+    ["chars", "diff.chars(a, b)", 8192],
+    ["hunks", "diff.hunks(a, b, { context: 0 })", 100],
+    ["createPatch", "diff.createPatch(a, b, { context: 0 })", 100],
+    ["createPatch, only the header is UTF-16", "diff.createPatch(a, a, { oldFileName: 'a', oldHeader: '世' })", 1],
+    ["ignoreCase", "diff.lines(a, b, { ignoreCase: true })", 8192],
+    ["ignoreWhitespace", "diff.lines(a, b, { ignoreWhitespace: true })", 100],
+  ])("the Latin-1 text is not copied: %s", async (_, call, every) => {
+    const script = `
+      const { diff } = Bun;
+      const peak = () => /VmHWM:\\s*(\\d+)/.exec(require("fs").readFileSync("/proc/self/status", "utf8"))[1] / 1024;
+      const narrow = Buffer.alloc(16 * 1024 * 1024, Buffer.alloc(1023, "ab ").toString() + "\\n");
+      for (let line = 0; line < 16384; line++) narrow.write(String(line), line * 1024);
+      const a = narrow.toString("latin1");
+      const wide = Buffer.from(a, "utf16le");
+      for (let line = 16384 - ${every}; line > 0; line -= ${every}) wide.writeUInt16LE(0x4e16, line * 2048 + 20);
+      const b = wide.toString("utf16le");
+      const before = peak();
+      globalThis.alive = [${call}, narrow, wide, a, b];
+      console.log(peak() - before);
+    `;
+    await using child = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+    const [megabytes, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+    expect(parseFloat(megabytes)).toBeLessThan(isASAN ? 24 : 16);
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -1196,6 +1302,23 @@ describe("applyPatch", () => {
     );
   });
 
+  test("a trimmed CRLF patch that ends with a hunk of one line", () => {
+    expect(diff.applyPatch("a\r\nc\r\n", "@@ -1 +1 @@\n-a\r\n+x\r\n@@ -2,0 +3 @@\n+b")).toBe("x\r\nc\r\nb\r\n");
+  });
+
+  test("a trimmed patch whose last hunk alone has CRLF", () => {
+    expect(diff.applyPatch("a\nc\r\n", "@@ -1 +1 @@\n-a\n+x\n@@ -2 +2 @@\n-c\r\n+b")).toBe("x\nb\r\n");
+  });
+
+  test("as the callback of reduce()", () => {
+    const patches = [diff.createPatch("a\n", "b\n"), diff.createPatch("b\n", "c\n")];
+    expect(patches.reduce(diff.applyPatch, "a\n")).toBe("c\n");
+  });
+
+  test.each([[[]], [{ autoConvertLineEndings: null }]])("options: %j", options => {
+    expect((diff.applyPatch as Function)("a\r\n", [replace(1)], options)).toBe("b\r\n");
+  });
+
   test("a parsed file", () => {
     expect(diff.applyPatch("a\n", diff.parsePatch("--- f\n+++ f\n@@ -1 +1 @@\n-a\n+b\n")[0])).toBe("b\n");
   });
@@ -1253,6 +1376,29 @@ describe("applyPatch", () => {
       });
       expect(diff.applyPatch(a, hunks)).toBe(b);
     }
+  });
+});
+
+const forAll = { timeout: 100, callback() {}, comparator() {}, oneChangePerToken: true };
+const forLines = { ...forAll, newlineIsToken: true, ignoreNewlineAtEof: true };
+describe.each([
+  ["lines", "", forLines],
+  ["hunks", "", forLines],
+  ["createPatch", "", { ...forLines, headerOptions: {} }],
+  ["words", "", { ...forAll, intlSegmenter: {} }],
+  ["chars", "", forAll],
+  ["arrays", [], { ...forAll, ignoreCase: true }],
+  ["applyPatch", "", { fuzzFactor: 1, compareLine() {}, autoConvertLineEndings: false }],
+] as const)("%s", (name, input, options) => {
+  const call = (options: object) => (diff[name] as Function)(input, input, options);
+  test.each(Object.entries(options))("refuses %s of diff", (option, value) => {
+    expect(() => call({ [option]: value })).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_VALUE",
+        message: `The property 'options.${option}' is not supported`,
+      }),
+    );
+    expect(call({ [option]: !value })).toEqual(call({}));
   });
 });
 

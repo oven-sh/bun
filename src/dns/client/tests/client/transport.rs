@@ -69,6 +69,37 @@ fn ids_on_a_socket_differ() {
 }
 
 #[test]
+fn no_random_numbers() {
+    for mut setup in [one_server(), over_tcp(), resolv_conf("options rotate")] {
+        setup.world.has_no_randoms = true;
+        let mut test = setup.start();
+        assert_eq!(test.resolve(RecordType::A, "a.test"), ["ECONNREFUSED"]);
+        assert!(test.is_idle() && test.sent().is_empty());
+
+        test.world().has_no_randoms = false;
+        let query = test.ask("b.test");
+        test.world().has_no_randoms = true;
+        assert_eq!(test.resolve(RecordType::A, "c.test"), ["3: ECONNREFUSED"]);
+        assert_eq!(test.deliver(&query, &good(&query)), ["2: 1.1.1.1/60"]);
+        assert!(test.is_idle());
+    }
+}
+
+#[test]
+fn random_numbers_run_out() {
+    let mut test = one_server().start();
+    test.ask("a.test");
+    test.world().has_no_randoms = true;
+    test.world().randoms.push_back(8);
+    assert_eq!(test.wait(2000), NOTHING);
+    assert_eq!(test.sent_one().id(), 8);
+    assert_eq!(test.resolve(RecordType::A, "b.test"), ["2: ECONNREFUSED"]);
+    assert_eq!(test.wait(3999), NOTHING);
+    assert_eq!(test.wait(1), ["ECONNREFUSED"]);
+    assert!(test.is_idle());
+}
+
+#[test]
 fn half_of_the_ids_fill_a_socket() {
     for setup in [one_server(), over_tcp()] {
         let mut test = setup.timeout(5000).start();

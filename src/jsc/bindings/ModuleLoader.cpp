@@ -626,13 +626,6 @@ extern "C" void Bun__onFulfillAsyncModule(
     // instead of each round-tripping through the embedder.
 
     if (res->result.value.isCommonJSModule) {
-        auto* record = graph ? nullptr : Bun::recordOfRequiredFile(globalObject, specifier->toWTFString(BunString::ZeroCopy));
-        if (scope.exception()) [[unlikely]] {
-            promise->rejectWithCaughtException(vm, scope);
-            return;
-        }
-        if (record) [[unlikely]]
-            return promise->fulfill(vm, record);
         auto created = Bun::createCommonJSModule(globalObject, graph, specifierValue, res->result.value);
         EXCEPTION_ASSERT(created.has_value() == !scope.exception());
         if (created.has_value()) {
@@ -1423,9 +1416,6 @@ static JSValue fetchESMSourceCode(
     }
 
     if (res->success && res->result.value.isCommonJSModule) {
-        auto* record = graph ? nullptr : Bun::recordOfRequiredFile(globalObject, specifier->toWTFString(BunString::ZeroCopy));
-        if (record || scope.exception()) [[unlikely]]
-            RELEASE_AND_RETURN(scope, rejectOrResolve(record));
         auto provider = commonJSProviderOfPluginContents(globalObject, specifier->toWTFString(BunString::ZeroCopy), typeAttribute, pluginContents, res->result.value);
         auto created = provider
             ? Bun::createCommonJSModule(globalObject, graph, specifierJS, provider.releaseNonNull(), res->result.value.tag == ResolvedSourceTagPackageJSONTypeModule)

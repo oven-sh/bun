@@ -135,8 +135,6 @@ bool requireCacheListsCompiledFiles();
 bool isLibraryModuleInRequireCache(Zig::GlobalObject*, const WTF::String& key);
 bool isEvaluatedCompiledFile(Zig::GlobalObject*, const WTF::String& key);
 JSC::JSValue compiledRequireCacheEntry(Zig::GlobalObject*, const WTF::String& key);
-// The record of a file that a require() has loaded, where an import of it has got CommonJS text: the text is dropped, as createCommonJSModule() drops it for an entry of the require map.
-JSC::AbstractModuleRecord* recordOfRequiredFile(Zig::GlobalObject*, const WTF::String& key);
 bool isRecordOfCompiledModule(JSC::AbstractModuleRecord*);
 // For a file of the program or its stand-in in the loader. forEachEvaluatedCompiledFile() follows the order of an uncompiled run.
 bool isRecordOfCompiledFile(JSC::AbstractModuleRecord*);

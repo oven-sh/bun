@@ -206,7 +206,7 @@ pub(crate) struct Converter<'a, 'x> {
     /// a default.
     is_target: bool,
     /// True in what oxc's lowering doesn't read: a class, a getter or setter, the operand of `yield`, a `catch`
-    /// parameter.
+    /// parameter, a `with` statement.
     is_unread: bool,
     lone_surrogate_keys: Vec<Span>,
     stack: bun_core::StackCheck,
@@ -484,7 +484,7 @@ impl<'a> Converter<'a, '_> {
         match expr.symbol() {
             Some(symbol) => self.ref_of_symbol(symbol),
             None => {
-                if name.is("arguments") && self.flavor == Flavor::Oxlint {
+                if name.is("arguments") && self.flavor == Flavor::Oxlint && !self.is_unread {
                     self.recorded.push(Recorded::ImplicitArguments(expr.span()));
                 }
                 self.ref_of_name(Named::Global, name)
@@ -1936,8 +1936,8 @@ impl<'a> Converter<'a, '_> {
             ),
             StmtKind::With { object, body } => JsStmt::alloc(
                 S::With {
-                    value: self.expr(object)?,
-                    body: self.stmt(body)?,
+                    value: self.unread(|this| this.expr(object))?,
+                    body: self.unread(|this| this.stmt(body))?,
                     body_loc: loc,
                 },
                 loc,

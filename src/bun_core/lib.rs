@@ -1544,7 +1544,7 @@ pub(crate) mod strings_impl {
                 utf8_len += input.utf8_len();
                 Part::Latin1(input)
             } else {
-                let input = WithUtf8Len::utf16(part.utf16());
+                let input = WithUtf8Len::utf16_with_replacement(part.utf16());
                 utf8_len += input.utf8_len();
                 Part::Utf16(input)
             });

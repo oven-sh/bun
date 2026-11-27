@@ -310,7 +310,7 @@ describe("heapStats() mimalloc integration", () => {
     },
   );
 
-  // Linux only: reads RssAnon from /proc. Not ASAN: malloc is not mimalloc there.
+  // Linux only: reads /proc/self/smaps_rollup, as RssAnon is inexact on some kernels. Not ASAN: malloc is not mimalloc there.
   test.concurrent.skipIf(!isLinux || isASAN)(
     "the scratch of fs.readFileSync is resident only where it was written",
     async () => {
@@ -322,10 +322,10 @@ describe("heapStats() mimalloc integration", () => {
         const fs = require("fs");
         const page = Buffer.alloc(4096);
         const anonymous = () => {
-          const fd = fs.openSync("/proc/self/status", "r");
+          const fd = fs.openSync("/proc/self/smaps_rollup", "r");
           const status = page.latin1Slice(0, fs.readSync(fd, page));
           fs.closeSync(fd);
-          return Number(/^RssAnon:\\s+(\\d+) kB/m.exec(status)[1]);
+          return Number(/^Anonymous:\\s+(\\d+) kB/m.exec(status)[1]);
         };
         // Leaves free blocks of the scratch's size that were used and given back: a zeroed allocation writes all of one.
         let buffers = Array.from({ length: 48 }, () => new Uint8Array(256 * 1024).fill(1));
@@ -334,10 +334,10 @@ describe("heapStats() mimalloc integration", () => {
         buffers = null;
         Bun.gc(true);
         const deadline = performance.now() + 3000;
-        while (full - anonymous() < 256 * 36 && performance.now() < deadline) await Bun.sleep(20);
-        const before = anonymous();
+        let before;
+        while (full - (before = anonymous()) < 256 * 36 && performance.now() < deadline) await Bun.sleep(20);
         fs.readFileSync("/proc/self/status");
-        console.log(anonymous() - before);
+        console.log(JSON.stringify({ purged: full - before, added: anonymous() - before }));
         `,
         ],
         env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1", MIMALLOC_PURGE_HOLES_LARGE_FLOOR: "0" },
@@ -345,8 +345,10 @@ describe("heapStats() mimalloc integration", () => {
         stderr: "inherit",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toMatch(/^-?\d+\n$/);
-      expect(Number(stdout)).toBeLessThan(128);
+      expect(stdout).toMatch(/^\{.*\}\n$/);
+      const { purged, added } = JSON.parse(stdout);
+      expect(purged).toBeGreaterThanOrEqual(256 * 36);
+      expect(added).toBeLessThan(128);
       expect(exitCode).toBe(0);
     },
   );

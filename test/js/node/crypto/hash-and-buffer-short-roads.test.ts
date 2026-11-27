@@ -143,6 +143,7 @@ describe("createHash", () => {
 
   test("update() makes no Buffer of a string that is not ASCII", () => {
     const texts = [Buffer.alloc(10_000, "é").toString(), Buffer.alloc(15_000, "你").toString()];
+    texts.push(texts[1] + "\ud83d");
     const hash = createHash("sha256");
     Bun.gc(true);
     const before = heapStats().objectTypeCounts.Uint8Array ?? 0;

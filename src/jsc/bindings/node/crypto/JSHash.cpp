@@ -162,8 +162,8 @@ void JSHashPrototype::finishCreation(JSC::VM& vm)
     Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
-// Takes the UTF-8 of `text` piece by piece, and leaves in `text` what starts with the piece that has an unpaired surrogate.
-static bool updateWithUTF8(JSHash& hash, StringView& text)
+// Piece by piece on the stack: nothing can throw once a piece is in the hash.
+static bool updateWithUTF8(JSHash& hash, StringView text)
 {
     constexpr size_t maximumUnits = 4096;
     std::array<char, 3 * maximumUnits> bytes;
@@ -176,9 +176,12 @@ static bool updateWithUTF8(JSHash& hash, StringView& text)
             if (units < text.length() && U16_IS_LEAD(text.span16()[units - 1]))
                 units--;
             auto result = simdutf::convert_utf16le_to_utf8_with_errors(text.span16().data(), units, bytes.data());
-            if (result.error != simdutf::error_code::SUCCESS)
-                return true;
             written = result.count;
+            if (result.error != simdutf::error_code::SUCCESS) {
+                std::array<char16_t, maximumUnits> wellFormed;
+                simdutf::to_well_formed_utf16le(text.span16().data(), units, wellFormed.data());
+                written = simdutf::convert_valid_utf16le_to_utf8(wellFormed.data(), units, bytes.data());
+            }
         }
         if (!hash.update(byteCast<uint8_t>(std::span { bytes }.first(written))))
             return false;
@@ -239,17 +242,14 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
             return JSValue::encode(hashWrapper);
         }
 
-        StringView rest = inputView;
         if (encoding == WebCore::BufferEncodingType::utf8) {
-            if (!updateWithUTF8(*hash, rest)) {
+            if (!updateWithUTF8(*hash, inputView)) {
                 return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
             }
-            if (rest.isEmpty()) {
-                return JSValue::encode(hashWrapper);
-            }
+            return JSValue::encode(hashWrapper);
         }
 
-        JSValue converted = JSValue::decode(WebCore::constructFromEncoding(globalObject, rest, encoding));
+        JSValue converted = JSValue::decode(WebCore::constructFromEncoding(globalObject, inputView, encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
         auto* convertedView = dynamicDowncast<JSC::JSArrayBufferView>(converted);

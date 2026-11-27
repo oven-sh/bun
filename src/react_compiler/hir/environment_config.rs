@@ -176,9 +176,10 @@ pub struct EnvironmentConfig {
     /// `shared-runtime` and the other modules of upstream's test fixtures have no types: what is imported from one is
     /// as from any module. Upstream's test runner gives them types, which `default_module_type_provider` has.
     pub fixture_modules_have_no_types: bool,
-    /// The tag of a JSX element is no reference that hoists a function declaration, unless the element is in a nested
-    /// function: `<Foo />` before `function Foo() {}` in the same function reads `Foo` before it is defined. Bun's
-    /// lowering hoists the declaration for it, as for `Foo()`.
+    /// For what a block declares before the statement that refers to it: the tag of a JSX element is no such
+    /// reference, in a nested function either, so `<Foo />` before `function Foo() {}` reads `Foo` before it is
+    /// defined. And the early declaration is where the first such reference is. So it is upstream. Bun's lowering
+    /// takes a tag for a reference, as `Foo()` is one, and has the early declaration at the declared name.
     pub jsx_tags_hoist_no_declaration: bool,
     /// For `infer_types`: an arithmetic or relational operator says nothing of the type of its operands, so `x` in
     /// `x - 1` can still be an object that is written to elsewhere. To upstream both operands are primitives wherever

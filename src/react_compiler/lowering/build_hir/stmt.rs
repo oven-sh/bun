@@ -135,23 +135,23 @@ fn lower_block_statement_inner(
         refs.last_decl.insert(target, decl_i);
         refs.has_functions |= kind == InstructionKind::HoistedFunction;
     }
-    let mut hoist: SmallVec<[(usize, Ref, ast::Loc, InstructionKind); 4]> = SmallVec::new();
+    let mut hoist: SmallVec<[Hoist; 4]> = SmallVec::new();
     'outer: for (i, stmt) in body.iter().enumerate() {
         refs.seen.clear();
         if let Data::SLocal(local) = &stmt.data {
             for d in local.decls.iter() {
+                refs_in_binding(builder, &d.binding, false, &mut |r, loc, in_function| {
+                    refs.see(builder, i, r, loc, in_function, true);
+                });
                 if let Some(value) = &d.value {
-                    refs_in_expr(builder, value, false, &mut |r, in_function| {
-                        refs.see(builder, i, r, in_function, false);
+                    refs_in_expr(builder, value, false, &mut |r, loc, in_function| {
+                        refs.see(builder, i, r, loc, in_function, false);
                     });
                 }
-                refs_in_binding(builder, &d.binding, false, &mut |r, in_function| {
-                    refs.see(builder, i, r, in_function, true);
-                });
             }
         } else {
-            refs_in_stmt(builder, stmt, false, &mut |r, in_function| {
-                refs.see(builder, i, r, in_function, false);
+            refs_in_stmt(builder, stmt, false, &mut |r, loc, in_function| {
+                refs.see(builder, i, r, loc, in_function, false);
             });
         }
         if refs.seen.is_empty() {
@@ -162,16 +162,24 @@ fn lower_block_statement_inner(
             let (decl_i, target, loc, kind) = decls[k];
             let seen = refs.seen.get(&target).copied().unwrap_or_default();
             let seen = match decl_i.cmp(&i) {
-                std::cmp::Ordering::Greater => seen.elsewhere.max(seen.in_pattern),
+                std::cmp::Ordering::Greater => seen.anywhere,
                 // Self-reference: only the initializer expressions of this
                 // statement count (the binding pattern itself is the def).
-                std::cmp::Ordering::Equal => seen.elsewhere,
-                std::cmp::Ordering::Less => None,
+                std::cmp::Ordering::Equal => seen.outside_patterns,
+                std::cmp::Ordering::Less => FirstRefs::default(),
             };
-            if seen
-                .is_some_and(|in_function| in_function || kind == InstructionKind::HoistedFunction)
-            {
-                hoist.push((i, target, loc, kind));
+            let first_ref = match kind {
+                InstructionKind::HoistedFunction => seen.first,
+                _ => seen.first_in_function,
+            };
+            if let Some(first_ref) = first_ref {
+                hoist.push(Hoist {
+                    before: i,
+                    target,
+                    name_loc: loc,
+                    first_ref,
+                    kind,
+                });
                 decls.swap_remove(k);
                 if decls.is_empty() {
                     break 'outer;
@@ -184,8 +192,8 @@ fn lower_block_statement_inner(
 
     let mut h = 0;
     for (i, body_stmt) in body.iter().enumerate() {
-        while h < hoist.len() && hoist[h].0 == i {
-            let (_, target, loc, kind) = hoist[h];
+        while let Some(&hoisted) = hoist.get(h).filter(|it| it.before == i) {
+            let Hoist { target, kind, .. } = hoisted;
             h += 1;
             if builder
                 .environment()
@@ -193,21 +201,25 @@ fn lower_block_statement_inner(
             {
                 continue;
             }
-            let id_loc = convert_loc(loc);
+            let id_loc = convert_loc(hoisted.name_loc);
             if let VariableBinding::Identifier { identifier, .. } =
                 builder.resolve_identifier(target, id_loc)?
             {
+                let loc = match builder.environment().config.jsx_tags_hoist_no_declaration {
+                    true => convert_loc(hoisted.first_ref),
+                    false => id_loc,
+                };
                 let place = Place {
                     identifier,
                     effect: Effect::Unknown,
                     reactive: false,
-                    loc: id_loc,
+                    loc,
                 };
                 lower_value_to_temporary(
                     builder,
                     InstructionValue::DeclareContext {
                         lvalue: LValue { kind, place },
-                        loc: id_loc,
+                        loc,
                     },
                 )?;
                 builder.add_context_identifier(target);
@@ -251,19 +263,47 @@ fn collect_binding_refs(env: &Environment, binding: &Binding, f: &mut impl FnMut
 fn catch_param_referenced_in_nested_fn(builder: &HirBuilder, target: Ref, body: &[Stmt]) -> bool {
     let mut found = false;
     for s in body {
-        refs_in_stmt(builder, s, false, &mut |r, in_function| {
+        refs_in_stmt(builder, s, false, &mut |r, _, in_function| {
             found |= in_function && builder.resolve_ref(r) == target;
         });
     }
     found
 }
 
-/// How one statement refers to a binding. `Some(true)`: inside a function in that statement.
+/// A binding that is declared before the statement at `before`, which refers to it, rather than where its
+/// declaration is.
+#[derive(Clone, Copy)]
+struct Hoist {
+    before: usize,
+    target: Ref,
+    name_loc: ast::Loc,
+    /// Of those of the statement that declare it early.
+    first_ref: ast::Loc,
+    kind: InstructionKind,
+}
+
+/// Where one statement first refers to a binding.
+#[derive(Default, Clone, Copy)]
+struct FirstRefs {
+    first: Option<ast::Loc>,
+    first_in_function: Option<ast::Loc>,
+}
+
+impl FirstRefs {
+    fn see(&mut self, loc: ast::Loc, in_function: bool) {
+        self.first = self.first.or(Some(loc));
+        if in_function {
+            self.first_in_function = self.first_in_function.or(Some(loc));
+        }
+    }
+}
+
+/// How one statement refers to a binding.
 #[derive(Default, Clone, Copy)]
 struct SeenRef {
-    /// In the patterns of a declaration: a default value, a computed key.
-    in_pattern: Option<bool>,
-    elsewhere: Option<bool>,
+    anywhere: FirstRefs,
+    /// Not in the patterns of a declaration: a default value, a computed key.
+    outside_patterns: FirstRefs,
 }
 
 /// What one statement of a block refers to, of the block's own bindings that are not declared before it.
@@ -281,6 +321,7 @@ impl ForwardRefs {
         builder: &HirBuilder,
         at: usize,
         r: Ref,
+        loc: ast::Loc,
         in_function: bool,
         in_pattern: bool,
     ) {
@@ -290,18 +331,18 @@ impl ForwardRefs {
         let target = builder.resolve_ref(r);
         if self.last_decl.get(&target).is_some_and(|&decl| decl >= at) {
             let seen = self.seen.entry(target).or_default();
-            let seen = match in_pattern {
-                true => &mut seen.in_pattern,
-                false => &mut seen.elsewhere,
-            };
-            *seen = (*seen).max(Some(in_function));
+            seen.anywhere.see(loc, in_function);
+            if !in_pattern {
+                seen.outside_patterns.see(loc, in_function);
+            }
         }
     }
 }
 
-type OnRef<'a> = &'a mut dyn FnMut(Ref, bool);
+type OnRef<'a> = &'a mut dyn FnMut(Ref, ast::Loc, bool);
 
-/// Calls `on_ref` for each identifier in the statement, with whether it is inside a function.
+/// Calls `on_ref` for each identifier in the statement, in the order of the source, with where it is and whether it is
+/// inside a function.
 fn refs_in_stmt(builder: &HirBuilder, stmt: &Stmt, in_function: bool, on_ref: OnRef) {
     if !builder.environment().has_stack() {
         return;
@@ -316,10 +357,10 @@ fn refs_in_stmt(builder: &HirBuilder, stmt: &Stmt, in_function: bool, on_ref: On
         Data::SExpr(e) => refs_in_expr(builder, &e.value, in_function, on_ref),
         Data::SLocal(l) => {
             for d in l.decls.iter() {
+                refs_in_binding(builder, &d.binding, in_function, on_ref);
                 if let Some(v) = &d.value {
                     refs_in_expr(builder, v, in_function, on_ref);
                 }
-                refs_in_binding(builder, &d.binding, in_function, on_ref);
             }
         }
         Data::SReturn(r) => {
@@ -429,10 +470,10 @@ fn refs_in_binding(builder: &HirBuilder, binding: &Binding, in_function: bool, o
 
 fn refs_in_args_and_body(builder: &HirBuilder, args: &[G::Arg], body: &[Stmt], on_ref: OnRef) {
     for a in args {
+        refs_in_binding(builder, &a.binding, true, on_ref);
         if let Some(d) = &a.default {
             refs_in_expr(builder, d, true, on_ref);
         }
-        refs_in_binding(builder, &a.binding, true, on_ref);
     }
     for s in body {
         refs_in_stmt(builder, s, true, on_ref);
@@ -487,8 +528,8 @@ fn refs_in_expr(builder: &HirBuilder, e: &Expr, in_function: bool, on_ref: OnRef
         }
     };
     match &e.data {
-        ExprData::EIdentifier(id) => on_ref(id.ref_, in_function),
-        ExprData::EImportIdentifier(id) => on_ref(id.ref_, in_function),
+        ExprData::EIdentifier(id) => on_ref(id.ref_, e.loc, in_function),
+        ExprData::EImportIdentifier(id) => on_ref(id.ref_, e.loc, in_function),
         ExprData::EBinary(b) => {
             refs_in_expr(builder, &b.left, in_function, on_ref);
             refs_in_expr(builder, &b.right, in_function, on_ref);
@@ -514,7 +555,12 @@ fn refs_in_expr(builder: &HirBuilder, e: &Expr, in_function: bool, on_ref: OnRef
         }
         ExprData::ECall(c) => {
             refs_in_expr(builder, &c.target, in_function, on_ref);
-            exprs(&c.args, on_ref);
+            // A JSX element is a call by now, and its tag the first argument.
+            let is_tag_unseen =
+                c.was_jsx_element && builder.environment().config.jsx_tags_hoist_no_declaration;
+            let args: &[Expr] = &c.args;
+            let seen = args.get(usize::from(is_tag_unseen)..).unwrap_or_default();
+            exprs(seen, on_ref);
         }
         ExprData::ENew(n) => {
             refs_in_expr(builder, &n.target, in_function, on_ref);
@@ -539,9 +585,7 @@ fn refs_in_expr(builder: &HirBuilder, e: &Expr, in_function: bool, on_ref: OnRef
             }
         }
         ExprData::EJsxElement(j) => {
-            let is_seen =
-                in_function || !builder.environment().config.jsx_tags_hoist_no_declaration;
-            if let Some(tag) = j.tag.as_ref().filter(|_| is_seen) {
+            if let Some(tag) = &j.tag {
                 refs_in_expr(builder, tag, in_function, on_ref);
             }
             for p in j.properties.iter() {

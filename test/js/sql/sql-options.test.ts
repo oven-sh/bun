@@ -53,6 +53,8 @@ describe("the query of a postgres:// URL", () => {
         "&sslnegotiation=postgres&sslcompression=0&gssencmode=disable",
       { hostname: "uh", sslMode: 0 },
     ],
+    ["uselibpqcompat=true", { hostname: "uh", sslMode: 0 }],
+    ["uselibpqcompat=true&sslmode=require", { sslMode: 2 }],
   ])("?%s is for the client and is not sent to the server", (query, expected) => {
     expect(optionsOf(`postgres://uu:up@uh:1/ud?${query}`)).toMatchObject({ ...expected, query: "" });
   });
@@ -78,6 +80,7 @@ describe("the query of a postgres:// URL", () => {
     "ssl_min_protocol_version=TLSv1.3",
     "hostaddr=10.0.0.1",
     "service=prod",
+    "uselibpqcompat=false",
   ])("?%s restricts the connection in a way Bun cannot, and is not dropped", query => {
     expect(optionsOf(`postgres://uh/ud?${query}`).query).toBe(query.replace("=", "\0") + "\0");
   });

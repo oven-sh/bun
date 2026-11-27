@@ -11854,6 +11854,7 @@ CREATE TABLE ${table_name} (
         await using sql = postgres(
           process.env.DATABASE_URL +
             "?connect_timeout=10&max=1&channel_binding=prefer&target_session_attrs=any&keepalives=1&gssencmode=disable" +
+            "&uselibpqcompat=true" +
             "&application_name=bun_url_keys",
         );
         expect(await sql`select current_setting('application_name') as name`).toEqual([{ name: "bun_url_keys" }]);

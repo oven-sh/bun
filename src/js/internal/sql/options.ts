@@ -515,8 +515,8 @@ const LIBPQ_TLS_OPTIONS = {
   sslpassword: "passphrase",
 } as const;
 
-// Keywords that tune libpq itself. A server refuses them as startup parameters.
-function isLibpqClientKeyword(key: string, value: string): boolean {
+// Keywords that only configure the client. A server refuses them as startup parameters.
+function isClientOnlyKeyword(key: string, value: string): boolean {
   switch (key) {
     case "keepalives":
     case "keepalives_idle":
@@ -531,6 +531,10 @@ function isLibpqClientKeyword(key: string, value: string): boolean {
       return true;
     case "gssencmode":
       return value !== "require";
+    // node-postgres: "true" gives `sslmode` the meaning it has in libpq, as in Bun. Every other value
+    // makes `sslmode=require` verify the certificate.
+    case "uselibpqcompat":
+      return value === "true";
     default:
       return false;
   }
@@ -570,7 +574,7 @@ function readUrlQuery(url: URL, isPostgres: boolean, parameters: Record<string, 
       const tls = $isObject(query.tls) ? query.tls : (query.tls = { __proto__: null } as unknown as TLSOptions);
       if (lowerKey === "sslrootcert" && value === "system") tls.rejectUnauthorized = true;
       else tls[option] = value;
-    } else if (!isPostgres || !isLibpqClientKeyword(lowerKey, value)) {
+    } else if (!isPostgres || !isClientOnlyKeyword(lowerKey, value)) {
       setStartupParameter(parameters, `options.${key}`, key, queryObject[key]);
     }
   }

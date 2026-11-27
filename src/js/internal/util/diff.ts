@@ -1,7 +1,9 @@
 const { validateString } = require("internal/validators");
 
-const StringPrototypeSplit: (this: string, separator: string) => string[] = String.prototype.split;
-const diffArrays = Bun.diff.arrays;
+const diffNumbers: (actual: Uint32Array, expected: Uint32Array) => number[] = $bindgen(
+  "node_util_binding.bind.ts",
+  "diffNumbers",
+);
 
 function validateInput(value, name) {
   if (!$isJSArray(value)) {
@@ -13,8 +15,6 @@ function validateInput(value, name) {
 
 // About four times what `nativeDiff` takes.
 const STEPS_PER_ITEM = 32;
-// `Bun.diff.arrays` throws for more.
-const MAX_NATIVE_LENGTH = 2 ** 28;
 
 // Myers' algorithm as in Node's lib/internal/assert/myers_diff.js, so that ties come out in the same order.
 // Node copies every diagonal at every level. A level here leaves out diagonals that no shortest path can still use:
@@ -29,7 +29,6 @@ function myersDiff(actual, expected) {
   let low = 0;
   let high = 0;
   let stepsLeft = STEPS_PER_ITEM * (actualLength + expectedLength + 1);
-  if (actualLength > MAX_NATIVE_LENGTH || expectedLength > MAX_NATIVE_LENGTH) stepsLeft = Infinity;
 
   search: while ((stepsLeft -= (high - low) / 2 + 1) >= 0) {
     const current = new Int32Array((high - low) / 2 + 1);
@@ -70,19 +69,31 @@ function myersDiff(actual, expected) {
     low = nextLow;
     high = nextHigh;
   }
-  return nativeDiff(actual, expected);
+  return nativeDiff(actual, actualLength, expected, expectedLength);
 }
 
-// `Bun.diff` breaks ties in the same way. It is slower to start, and neither its time nor its memory is quadratic.
-function nativeDiff(actual, expected) {
+// Breaks ties in the same way. It is slower to start, and neither its time nor its memory is quadratic.
+function nativeDiff(actual, actualLength: number, expected, expectedLength: number) {
+  const known = new $Map<string, number>();
+  const number = (items, length: number) => {
+    const numbers = new Uint32Array(length);
+    for (let i = 0; i < length; i++) {
+      const item = items[i];
+      let id = known.$get(item);
+      if (id === undefined) known.$set(item, (id = known.$size));
+      numbers[i] = id;
+    }
+    return numbers;
+  };
+  const hunks = diffNumbers(number(actual, actualLength), number(expected, expectedLength));
   const result: [number, string][] = [];
-  const items = (value): string[] => ($isJSArray(value) ? value : StringPrototypeSplit.$call(value, ""));
-  const changes = diffArrays(items(actual), items(expected));
-  for (let change = 0; change < changes.length; change++) {
-    const { value, added, removed } = changes[change];
-    const kind = removed ? 1 : added ? -1 : 0;
-    for (let i = 0; i < value.length; i++) result.push([kind, value[i]]);
+  let y = 0;
+  for (let i = 0; i < hunks.length; i += 4) {
+    while (y < hunks[i + 2]) result.push([0, expected[y++]]);
+    for (let x = hunks[i]; x < hunks[i + 1]; x++) result.push([1, actual[x]]);
+    while (y < hunks[i + 3]) result.push([-1, expected[y++]]);
   }
+  while (y < expectedLength) result.push([0, expected[y++]]);
   return result;
 }
 

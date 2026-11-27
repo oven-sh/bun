@@ -349,15 +349,24 @@ pub(crate) fn run_task(
                 update.run();
             }
         ),
-        task_tag::AsyncCpTask => boxed_arm!(
-            task,
+        task_tag::AsyncCpTask => in_features!(
             [NodeFs],
-            |copy: crate::node::fs::AsyncCpTask| -> JsResult<()> { copy.run_from_js_thread() }
+            (
+                copy: Box<crate::node::fs::AsyncCpTask> =
+                    boxed!(task, crate::node::fs::AsyncCpTask),
+                global: &JSGlobalObject = global,
+            ) -> JsResult<()> {
+                copy.run_from_js_thread(global)
+            }
         )?,
+        // With no result the linker folds this arm with the mini loop's callback, and `--trim` keeps the shell.
         task_tag::ShellAsyncCpTask => boxed_arm!(
             task,
             [Shell],
-            |copy: crate::node::fs::ShellAsyncCpTask| -> JsResult<()> { copy.run_from_js_thread() }
+            |copy: crate::node::fs::ShellAsyncCpTask| -> JsResult<()> {
+                copy.report_to_shell();
+                Ok(())
+            }
         )?,
         task_tag::StatWatcherHop => counted_arm!(
             task,
@@ -386,21 +395,17 @@ pub(crate) fn run_task(
                 unsafe { bun_bundler::parse_task::on_complete(result) };
             })
         }
-        task_tag::FetchTaskletRequestDrain => {
-            feature_arm!(
-                [Fetch],
-                |drain: crate::webcore::fetch::FetchTaskletRequestDrain| {
-                    // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
-                    let tasklet = unsafe { bun_ptr::RefPtr::from_raw(drain.cast()) };
-                    FetchTasklet::resume_request_data_stream(&tasklet);
-                }
-            )
-        }
-        task_tag::FetchTaskletTrace => feature_arm!(
+        task_tag::FetchTaskletRequestDrain => counted_arm!(
+            task,
             [Fetch],
-            |trace: crate::webcore::fetch::FetchTaskletTrace| -> JsResult<()> {
-                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
-                let tasklet = unsafe { bun_ptr::RefPtr::from_raw(trace.cast()) };
+            |tasklet: crate::webcore::fetch::FetchTaskletRequestDrain| {
+                FetchTasklet::resume_request_data_stream(&tasklet);
+            }
+        ),
+        task_tag::FetchTaskletTrace => counted_arm!(
+            task,
+            [Fetch],
+            |tasklet: crate::webcore::fetch::FetchTaskletTrace| -> JsResult<()> {
                 FetchTasklet::on_trace_events(&tasklet)
             }
         )?,
@@ -419,7 +424,7 @@ pub(crate) fn run_task(
         task_tag::DnsErrorDeferred => boxed_arm!(
             task,
             [Dns],
-            |error: crate::dns_jsc::cares_jsc::ErrorDeferredTask| -> JsResult<()> { error.run() }
+            |error: crate::dns_jsc::answer_jsc::ErrorDeferredTask| -> JsResult<()> { error.run() }
         )?,
         task_tag::HandledPromise => {
             boxed!(task, bun_jsc::virtual_machine_exports::HandledPromiseTask).run();
@@ -661,7 +666,7 @@ pub(crate) fn run_task(
                 global: &JSGlobalObject = global,
                 vm: &VirtualMachine = vm,
             ) {
-                vm.transpiler_store.run_from_js_thread(el, global, vm.into());
+                vm.transpiler_store.run_from_js_thread(el, global, vm);
             }
         ),
 
@@ -691,13 +696,10 @@ pub(crate) fn run_task(
         for_each_fs_uv_op!(__fs_pat) => {
             macro_rules! __fs_run {
                 ($($tag:ident $ty:ident;)*) => { match task.tag() {
-                    $(task_tag::$tag => feature_arm!([NodeFs], |request: fs_async::$ty| -> JsResult<()> {
-                        // SAFETY: §Dispatch — tag identifies pointee. The task frees itself, so it takes the raw pointer.
-                        unsafe { fs_async::$ty::run_from_js_thread(request) }?;
-                        Ok(())
+                    $(task_tag::$tag => boxed_arm!(task, [NodeFs], |request: fs_async::$ty| -> JsResult<()> {
+                        request.run_from_js_thread()
                     })?,)*
-                    // SAFETY: outer arm guard proves one of the table tags matched.
-                    _ => unsafe { core::hint::unreachable_unchecked() },
+                    _ => unreachable!(),
                 }};
             }
             for_each_fs_uv_op!(__fs_run);
@@ -947,13 +949,16 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             [Dns],
             (
                 resolver: *mut DNSResolver = owner.ptr().cast::<DNSResolver>(),
-                fd: i32 = event.fd.native(),
-                readable: bool = event.flags.contains(PollFlag::Readable),
-                writable: bool = event.flags.contains(PollFlag::Writable),
+                socket: usize = bun_dns::os::socket_id(event.fd),
+                events: bun_dns_client::Events = bun_dns_client::Events {
+                    readable: !event.flags.is_disjoint(PollFlag::Readable | PollFlag::Eof | PollFlag::Hup),
+                    writable: event.flags.contains(PollFlag::Writable),
+                    failed: event.flags.contains(PollFlag::Eof),
+                },
             ) {
                 // SAFETY: tag set with this pointee type at `OwnedFilePoll::new`.
                 let resolver = unsafe { RefPtr::init_ref(resolver) };
-                resolver.on_dns_poll(fd, readable, writable);
+                resolver.on_dns_poll(socket, events);
             }
         ),
         #[cfg(target_os = "macos")]
@@ -1312,9 +1317,9 @@ pub(crate) unsafe fn fire_timer(
             }
         }
         EventLoopTimerTag::DNSResolver => {
-            feature_timer_arm!([Dns], DNSResolver, event_loop_timer, |c, now, vm| {
+            feature_timer_arm!([Dns], DNSResolver, event_loop_timer, |c, _now, vm| {
                 if let Some(resolver) = (*c).timer_ref.take() {
-                    resolver.check_timeouts(now, vm)
+                    resolver.check_timeouts(vm)
                 }
             })
         }
@@ -1621,10 +1626,10 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release_boxed_in!([Bundler], BundleV2ParseTaskResult)
         }
         task_tag::FetchTaskletRequestDrain => {
-            release_in!([Fetch], crate::webcore::fetch::FetchTaskletRequestDrain)
+            release_counted_in!([Fetch], crate::webcore::fetch::FetchTaskletRequestDrain)
         }
         task_tag::FetchTaskletTrace => {
-            release_in!([Fetch], crate::webcore::fetch::FetchTaskletTrace)
+            release_counted_in!([Fetch], crate::webcore::fetch::FetchTaskletTrace)
         }
         task_tag::HTMLRewriterBackgroundPull => {
             release_counted_in!(
@@ -1636,7 +1641,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release_boxed_in!([Test], crate::test_runner::bun_test::RunTestsTask)
         }
         task_tag::DnsErrorDeferred => {
-            release_boxed_in!([Dns], crate::dns_jsc::cares_jsc::ErrorDeferredTask)
+            release_boxed_in!([Dns], crate::dns_jsc::answer_jsc::ErrorDeferredTask)
         }
         task_tag::HandledPromise => {
             boxed!(task, bun_jsc::virtual_machine_exports::HandledPromiseTask).release_unrun()
@@ -1792,9 +1797,8 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             {
                 macro_rules! __fs_release {
                     ($($tag:ident $ty:ident;)*) => { match task.tag() {
-                        $(task_tag::$tag => release_in!([NodeFs], fs_async::$ty),)*
-                        // SAFETY: the outer arm proves one of the table tags matched.
-                        _ => unsafe { core::hint::unreachable_unchecked() },
+                        $(task_tag::$tag => release_boxed_in!([NodeFs], fs_async::$ty),)*
+                        _ => unreachable!(),
                     }};
                 }
                 for_each_fs_uv_op!(__fs_release);

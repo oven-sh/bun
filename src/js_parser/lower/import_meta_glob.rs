@@ -28,6 +28,11 @@ pub struct ImportMetaGlobHost {
 }
 
 impl ImportMetaGlobHost {
+    pub const WITHOUT_ALIASES: Self = Self {
+        resolver: std::ptr::null_mut(),
+        resolve_alias: |_, _, _| None,
+    };
+
     /// # Safety
     /// `resolve_alias` must be safe to call with `resolver` for as long as the parse runs.
     pub unsafe fn new(resolver: *mut (), resolve_alias: ResolveAlias) -> Self {
@@ -38,7 +43,7 @@ impl ImportMetaGlobHost {
     }
 
     fn resolve_alias(self, importer_dir: &[u8], glob: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
-        // SAFETY: the contract of `new`.
+        // SAFETY: the contract of `new`. The function of `WITHOUT_ALIASES` is safe.
         unsafe { (self.resolve_alias)(self.resolver, importer_dir, glob) }
     }
 }

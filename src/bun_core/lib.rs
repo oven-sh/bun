@@ -1,4 +1,4 @@
-#![feature(adt_const_params, allocator_ext)]
+#![feature(adt_const_params, allocator_ext, ascii_char)]
 #![feature(core_io, core_io_borrowed_buf, vec_split_at_spare)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
 #![feature(freeze)] // `impl_field_parent!`'s `shared` arm rejects `Freeze` children at compile time
@@ -585,7 +585,7 @@ pub const unsafe fn container_of<P, F>(field: *const F, offset: usize) -> *mut P
 /// Recover a typed `&mut T` from a C-callback's opaque user-data pointer.
 ///
 /// This is the canonical spelling for the ubiquitous trampoline pattern where
-/// a C library (c-ares, uWS, libuv, lol-html, BoringSSL, …) round-
+/// a C library (uWS, libuv, lol-html, BoringSSL, …) round-
 /// trips a Rust object through a `void *user_data` slot and hands it back to
 /// an `extern "C" fn` thunk. Earlier ports open-coded this as
 /// `unsafe { &mut *ctx.cast::<T>() }` at every site; centralising it here
@@ -804,13 +804,7 @@ pub unsafe trait IntrusiveField<F>: Sized {
     const OFFSET: usize;
 
     /// Project `&mut self` → `&mut self.<field>`.
-    #[inline(always)]
-    fn field_mut(&mut self) -> &mut F {
-        // SAFETY: `OFFSET` is `offset_of!(Self, <field>)` per impl contract;
-        // `&mut self` covers the whole `Self`, so the field reborrow is in-bounds
-        // and uniquely borrowed for the returned lifetime.
-        unsafe { &mut *core::ptr::from_mut(self).byte_add(Self::OFFSET).cast::<F>() }
-    }
+    fn field_mut(&mut self) -> &mut F;
 
     /// `*mut Self` → `*mut self.<field>`.
     ///
@@ -836,7 +830,7 @@ pub unsafe trait IntrusiveField<F>: Sized {
     }
 }
 
-/// Stamp `unsafe impl IntrusiveField<$F> for $T { const OFFSET = offset_of!($T, $field); }`.
+/// Stamp `unsafe impl IntrusiveField<$F> for $T` over the field `$field`.
 ///
 /// ```ignore
 /// bun_core::intrusive_field!(ShellCpTask, task: ShellTask);
@@ -850,12 +844,14 @@ macro_rules! intrusive_field {
     ([$($gen:tt)*] $T:ty, $field:ident : $F:ty) => {
         unsafe impl<$($gen)*> $crate::IntrusiveField<$F> for $T {
             const OFFSET: usize = ::core::mem::offset_of!($T, $field);
+            #[inline(always)]
+            fn field_mut(&mut self) -> &mut $F {
+                &mut self.$field
+            }
         }
     };
     ($T:ty, $field:ident : $F:ty) => {
-        unsafe impl $crate::IntrusiveField<$F> for $T {
-            const OFFSET: usize = ::core::mem::offset_of!($T, $field);
-        }
+        $crate::intrusive_field!([] $T, $field: $F);
     };
 }
 
@@ -2110,6 +2106,7 @@ pub(crate) mod strings_impl {
         fn index_of_unit(s: &[Self], unit: Self) -> Option<usize>;
         fn last_index_of_unit(s: &[Self], unit: Self) -> Option<usize>;
     }
+    #[derive(Clone, Copy)]
     pub enum CodeUnits<'a> {
         U8(&'a [u8]),
         U16(&'a [u16]),

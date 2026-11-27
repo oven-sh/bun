@@ -1733,7 +1733,9 @@ impl<'a> Installer<'a> {
                             };
                             backend = self.set_backend(match err.get_errno() {
                                 sys::Errno::EXDEV => InstallMethod::Copyfile,
-                                sys::Errno::EOPNOTSUPP => InstallMethod::Hardlink,
+                                sys::Errno::ENOTSUP | sys::Errno::EOPNOTSUPP => {
+                                    InstallMethod::Hardlink
+                                }
                                 _ => break 'backend Err(err),
                             });
                             continue 'backend;
@@ -2898,14 +2900,14 @@ pub(crate) fn remove_link(path: &ZStr) -> sys::Result<()> {
     sys::unlink(path)
 }
 
-/// EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks.
+/// EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks. ENOTSUP: nor does exFAT.
 /// Only the link itself can say that. A `mkdir` or the walk of the package fails with the same
 /// errnos, and a copy does not avoid those.
 fn needs_copy(hardlink_err: &sys::Error) -> bool {
     hardlink_err.syscall == sys::Tag::link
         && matches!(
             hardlink_err.get_errno(),
-            sys::Errno::EXDEV | sys::Errno::EACCES | sys::Errno::EPERM
+            sys::Errno::EXDEV | sys::Errno::EACCES | sys::Errno::EPERM | sys::Errno::ENOTSUP
         )
 }
 

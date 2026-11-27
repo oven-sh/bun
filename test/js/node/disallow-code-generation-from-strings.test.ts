@@ -28,6 +28,15 @@ const files = {
     try { evaluated = eval("1 + 1"); } catch (e) { evaluated = e.constructor.name; }
     parentPort.postMessage({ evaluated, execArgv: process.execArgv });
   `,
+  "vm-worker.mjs": `
+    import vm from "node:vm";
+    import { parentPort } from "node:worker_threads";
+    let ran = false;
+    const module = new vm.SyntheticModule([], () => { ran = true; });
+    await module.link(() => {});
+    const gave = await module.evaluate({ timeout: 60000 }).then(() => "evaluated", e => e.constructor.name + ": " + e.message);
+    parentPort.postMessage([gave, ran, module.status]);
+  `,
   "empty.mjs": `export {};`,
   "made.foo": `module.exports = "unused";`,
   "graph.mjs": `
@@ -148,6 +157,26 @@ const files = {
       importDataOfJSON: async () => (await import("data:application/json,2", { with: { type: "json" } })).default,
       requireBuiltin: () => typeof require("node:fs").readFileSync,
     };
+    // What evaluate() gave, whether the module's function ran, and the module's status afterwards.
+    const evaluate = async (how, options) => {
+      let ran = false;
+      const module = new vm.SyntheticModule([], () => { ran = true; }, options);
+      await module.link(() => {});
+      const native = module[Object.getOwnPropertySymbols(module).find(symbol => symbol.description === "kNative")];
+      return [(await attempt(() => how(module, native))) ?? "evaluated", ran, module.status];
+    };
+    const vmModuleEvaluate = {
+      noOptions: () => evaluate(module => module.evaluate()),
+      optionsOff: () => evaluate(module => module.evaluate({ timeout: undefined, breakOnSigint: false })),
+      timeout: () => evaluate(module => module.evaluate({ timeout: 60000 })),
+      timeoutInContext: () => evaluate(module => module.evaluate({ timeout: 60000 }), { context: vm.createContext({}) }),
+      timeoutInWorker: () => message(() => new NodeWorker(here("./vm-worker.mjs"), { execArgv: [] })),
+      timeoutOnNative: () => evaluate((_, native) => native.evaluate(60000, false)),
+      timeoutOnceEvaluated: () => evaluate(async module => { await module.evaluate(); return module.evaluate({ timeout: 60000 }); },
+        { context: vm.createContext({}, { microtaskMode: "afterEvaluate" }) }),
+      breakOnSigint: () => evaluate(module => module.evaluate({ breakOnSigint: true })),
+      breakOnSigintOnNative: () => evaluate((_, native) => native.evaluate(-1, true)),
+    };
     const workers = {
       worker: () => message(() => new NodeWorker(here("./worker.mjs"))),
       workerEmptyExecArgv: () => message(() => new NodeWorker(here("./worker.mjs"), { execArgv: [] })),
@@ -173,6 +202,7 @@ const files = {
       evalAndFunction: await run(evalAndFunction),
       everythingElse: await run(everythingElse),
       notScriptFromAString: await run(notScriptFromAString),
+      vmModuleEvaluate: await run(vmModuleEvaluate),
       workers: await run(workers),
       graph: await attempt(graph),
     };
@@ -251,6 +281,25 @@ const notScriptFromAString = {
   importDataOfJSON: 2,
   requireBuiltin: "function",
 };
+// =strict refuses the options that stop a module part-way. The module does not run and stays as it was.
+const refusedOption = (option: string, received: unknown) =>
+  `TypeError: The property 'options.${option}' cannot be used with ${strict}. Received ${received}`;
+const vmModuleEvaluate = (isStrict: boolean) => {
+  const evaluated = ["evaluated", true, "evaluated"];
+  const timeout = isStrict ? [refusedOption("timeout", 60000), false, "linked"] : evaluated;
+  const breakOnSigint = isStrict ? [refusedOption("breakOnSigint", true), false, "linked"] : evaluated;
+  return {
+    noOptions: evaluated,
+    optionsOff: evaluated,
+    timeout,
+    timeoutInContext: timeout,
+    timeoutInWorker: timeout,
+    timeoutOnNative: timeout,
+    timeoutOnceEvaluated: isStrict ? [refusedOption("timeout", 60000), true, "evaluated"] : evaluated,
+    breakOnSigint,
+    breakOnSigintOnNative: breakOnSigint,
+  };
+};
 // What a Worker evaluates, and the process.execArgv it sees.
 const workers = (evaluated: unknown, inherited: string[], own: (given: string[]) => string[]) => ({
   worker: { evaluated, execArgv: inherited },
@@ -278,6 +327,7 @@ describe.concurrent.skipIf(builtStrict)("--disallow-code-generation-from-strings
       evalAndFunction,
       everythingElse,
       notScriptFromAString,
+      vmModuleEvaluate: vmModuleEvaluate(false),
       workers: workers(2, [], given => given),
       graph: graph(2, 2),
     });
@@ -291,6 +341,7 @@ describe.concurrent.skipIf(builtStrict)("--disallow-code-generation-from-strings
       evalAndFunction: all(Object.keys(evalAndFunction), refused),
       everythingElse,
       notScriptFromAString,
+      vmModuleEvaluate: vmModuleEvaluate(false),
       // As in Node.js, a Worker given an execArgv reports that one.
       workers: workers("EvalError", [flag], given => given),
       graph: graph("EvalError", "EvalError"),
@@ -305,6 +356,7 @@ describe.concurrent.skipIf(builtStrict)("--disallow-code-generation-from-strings
       evalAndFunction: all(Object.keys(evalAndFunction), refused),
       everythingElse: all(Object.keys(everythingElse), refused),
       notScriptFromAString,
+      vmModuleEvaluate: vmModuleEvaluate(true),
       workers: workers("EvalError", [strict], given => [...given, strict]),
       graph: graph("EvalError", "EvalError"),
     });
@@ -543,6 +595,7 @@ describe.concurrent.skipIf(!builtStrict)("a build with =strict as a constant", (
       evalAndFunction: all(Object.keys(evalAndFunction), refused),
       everythingElse: all(Object.keys(everythingElse), refused),
       notScriptFromAString,
+      vmModuleEvaluate: vmModuleEvaluate(true),
       workers: workers("EvalError", [...args], given => given),
       graph: graph("EvalError", "EvalError"),
     });
@@ -582,6 +635,7 @@ describe.concurrent("=strict runs static code only", () => {
     // Every source that must not run records itself in globalThis.ran if it does.
     "refused-routes.ts": `
       import fs from "node:fs";
+      import vm from "node:vm";
       const dir = process.argv[2];
       const recordRun = name => '(globalThis.ran ??= []).push("' + name + '");';
       const write = (name, source = recordRun(name)) => { fs.writeFileSync(dir + "/" + name, source); return dir + "/" + name; };
@@ -592,6 +646,11 @@ describe.concurrent("=strict runs static code only", () => {
       });
 
       const routes = {
+        vmModuleTimeout: async () => {
+          const module = new vm.SyntheticModule([], () => { (globalThis.ran ??= []).push("vmModuleTimeout"); });
+          await module.link(() => {});
+          return module.evaluate({ timeout: 60000 });
+        },
         pluginOnLoadJSON: () => {
           Bun.plugin({ name: "json", setup(build) {
             build.onLoad({ filter: /\\.plugin-json$/ }, () => ({ contents: recordRun("pluginOnLoadJSON"), loader: "json" }));
@@ -727,6 +786,7 @@ describe.concurrent("=strict runs static code only", () => {
 
   const refusedMacro = `Macros cannot be used with ${strict}`;
   const refusedWhereverTheProgramIsStored = {
+    vmModuleTimeout: refusedOption("timeout", 60000),
     pluginOnLoadJSON: refused,
     pluginOnLoadImports: refused,
     macroExportName: "BuildMessage: " + refusedMacro,

@@ -426,6 +426,9 @@ impl WrappedSink for NetworkSink {
     fn as_non_null(wrapped: &NetworkSinkWrapperRef) -> NonNull<Self> {
         wrapped.0.as_non_null()
     }
+    fn enter_wrapped(wrapped: &mut NetworkSinkWrapperRef) -> &Self {
+        &wrapped.0
+    }
 }
 
 impl JsSinkType for NetworkSink {

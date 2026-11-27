@@ -21,7 +21,9 @@ import {
   linkByHand,
   linked,
   linkSkipReason,
-  recordRelocationKinds,
+  perMachine,
+  readMachO,
+  relocationKinds,
   sortedByIndex,
   sources,
   statisticOf,
@@ -51,6 +53,7 @@ import {
   mixingFunction,
   Other,
   plainSpellingsSource,
+  repositoryRoot,
   reviewFiles,
   run,
   rustSource,
@@ -363,7 +366,7 @@ describeEachMachine("Mach-O $name", machine => {
       const { featuresOf, programResult, trimmedResult } = await linked(machine, folder, {
         objects: ["feature_code", "external", "guards", "embedder", "main"],
       });
-      expect(recordRelocationKinds(readFileSync(join(folder, "guards.o")))).toEqual(["section", "symbol"]);
+      expect(relocationKinds(readFileSync(join(folder, "guards.o")), "__bun_entries")).toEqual(["section", "symbol"]);
       expect(["static_entry", "external_entry", "call_entries"].map(featuresOf)).toEqual([[Extra], [Extra], undefined]);
       expectCleanRuns({ programResult, trimmedResult });
       if (machine.canRun) expect(await exitCodeOf(folder, "trimmed", guardedArguments)).toBe(70);
@@ -431,11 +434,11 @@ describeEachMachine("Mach-O $name", machine => {
     });
   });
 
-  describe("a symbol at the end of its section, with no bytes of its own", () => {
+  describe("a symbol at the end of its section or atom, with no bytes of its own", () => {
     test.each([
-      ["a label", ""],
-      ["an alternative entry", ".alt_entry _table_end\n"],
-    ])("is outside the graph, and the link succeeds: %s", async (_, directive) => {
+      ["a label is outside the graph", "", 1],
+      ["an alternative entry is a name of the bytes in front of it", ".alt_entry _table_end\n", 0],
+    ])("does not fail the link: %s", async (_, directive, symbolsOutsideGraph) => {
       using dir = tempDir("trim-macho-end", {
         ...sources,
         "end_label.S": `.section __DATA,__toy_table\n.globl _table, _table_end\n.p2align 3\n_table:\n.quad 1, 2\n.byte 3\n${directive}_table_end:\n.subsections_via_symbols\n`,
@@ -454,8 +457,452 @@ describeEachMachine("Mach-O $name", machine => {
         objects,
       });
       expect(addressOf("table_end") - addressOf("table")).toBe(17);
-      expect(statisticOf(linkOutput, "symbolsOutsideGraph")).toBeGreaterThanOrEqual(1);
+      expect(statisticOf(linkOutput, "symbolsOutsideGraph")).toBe(symbolsOutsideGraph);
       expect(["table", "entered"].map(featuresOf)).toEqual([undefined, [Extra]]);
+      expectCleanRuns({ programResult, trimmedResult });
+    });
+
+    const subsections = ".subsections_via_symbols\n";
+    const withArchive = (bytes: number) => ({
+      ...sources,
+      "archive.S": readFileSync(join(repositoryRoot, "src/builtin_sources/archive.S"), "utf8"),
+      "builtin_sources.bin": Buffer.alloc(bytes, "a").toString(),
+    });
+    const [archiveStart, archiveEnd] = ["bun_builtin_sources_start", "bun_builtin_sources_end"];
+    const addressInMap = (map: string, name: string) => {
+      const lines = readFileSync(map, "latin1").split("\n");
+      const line = lines.find(line => line.startsWith("0x") && line.endsWith(`] ${name}`));
+      if (line === undefined) throw new Error(`${map} does not list ${name}`);
+      return parseInt(line, 16);
+    };
+    const readGraph = (link: Awaited<ReturnType<typeof linkByHand>>, compiledFromBitcode: string[] = []) => {
+      const { executable, map, exportedSymbols } = link;
+      const { graph, failures, remarks } = readMachOGraph(executable, map, compiledFromBitcode, exportedSymbols);
+      const successorsOf = (node: number) =>
+        graph.successors.subarray(graph.successorStart[node]!, graph.successorStart[node + 1]!);
+      const written = graph.section.flatMap((_, node) => (graph.object[node]!.endsWith(".o") ? [node] : []));
+      return {
+        failures,
+        remarks,
+        aliases: [...graph.aliases.values()].flat().map(([, name]) => name),
+        roots: written.filter(node => graph.isRoot[node] !== 0).map(node => graph.section[node]),
+        references: Object.fromEntries(
+          written.map(node => [graph.section[node], Array.from(successorsOf(node), next => graph.section[next])]),
+        ),
+      };
+    };
+    const readGraphWithBitcode = async (folder: string, objects: string[]) => {
+      const compiled = join(folder, "compiled");
+      const link = await linkByHand(machine, folder, objects, {
+        compileFlags: { bitcode: ["-flto=thin"] },
+        linkFlags: [`-Wl,-object_path_lto,${compiled}`],
+      });
+      return readGraph(
+        link,
+        readdirSync(compiled).flatMap(name => (name.endsWith(".o") ? [join(compiled, name)] : [])),
+      );
+    };
+    const soundGraph = { failures: [], remarks: [], aliases: [], roots: ["_main"] };
+
+    describe.each([
+      { neighbour: "a string", name: "literal string: words behind the end", value: `"words behind the end"` },
+      { neighbour: "a constant", name: "_retained_table", value: "retained_table" },
+    ])("with $neighbour at its address", ({ name, value }) => {
+      const tableIn = (section: string, end: string, tail = "") =>
+        `.section ${section}\n.globl _${archiveStart}, _${archiveEnd}\n.p2align 4\n_${archiveStart}:\n.incbin "builtin_sources.bin"\n${end}_${archiveEnd}:\n${tail}`;
+      const strippedAtom = (name: string, directive = ".globl") =>
+        `.globl ${name}\n${directive} ${name}\n${name}:\n.quad 1\n${subsections}`;
+      const weakLabel = ".globl _weak_label\n.weak_definition _weak_label\n_weak_label:\n";
+
+      test.each([
+        { title: "names the bytes in front of it in archive.S", reached: [`_${archiveStart}`] },
+        {
+          title: "names the bytes in front of it as an alternative entry",
+          assembly: tableIn("__TEXT,__const", `.alt_entry _${archiveEnd}\n`, subsections),
+          reached: [`_${archiveStart}`],
+        },
+        {
+          title: "names the bytes in front of it as an alternative entry where its input starts another atom",
+          assembly: tableIn("__TEXT,__const", `.alt_entry _${archiveEnd}\n`, strippedAtom("_listed_behind")),
+          reached: [`_${archiveStart}`],
+        },
+        {
+          title: "names the bytes in front of it as an alternative entry where its input starts a weak atom",
+          assembly: tableIn(
+            "__TEXT,__const",
+            `.alt_entry _${archiveEnd}\n`,
+            strippedAtom("_a_weak", ".weak_definition"),
+          ),
+          reached: [`_${archiveStart}`],
+        },
+        {
+          title: "names the bytes in front of it as an alternative entry in a section that ends in a weak one",
+          assembly: tableIn(
+            "__TEXT,__const",
+            `.alt_entry _${archiveEnd}\n`,
+            strippedAtom("_listed_behind") + weakLabel,
+          ),
+          reached: [`_${archiveStart}`],
+        },
+        {
+          title: "names the bytes in front of it where its input has a weak one in the empty section behind",
+          assembly: tableIn("__TEXT,__const", "", `.section __TEXT,__toy_table\n${weakLabel}`),
+          reached: [`_${archiveStart}`],
+        },
+        {
+          title: "retains the bytes in front of it where it is marked no_dead_strip",
+          assembly: tableIn("__TEXT,__const", `.no_dead_strip _${archiveEnd}\n`),
+          reached: [`_${archiveStart}`],
+          roots: ["_main", `_${archiveStart}`],
+        },
+        {
+          title: "names nothing where the linker may part it from the bytes in front of it",
+          assembly: tableIn("__TEXT,__const", "", subsections),
+          reached: [],
+        },
+        {
+          title: "names and retains nothing in an empty section, as the first link has for the trim table",
+          assembly: tableIn("__TEXT,__toy_table", `.section __TEXT,__const\n.no_dead_strip _${archiveEnd}\n`),
+          reached: [],
+        },
+      ])("$title", async ({ assembly, reached, roots = ["_main"] }) => {
+        using dir = tempDir("trim-macho-end", {
+          ...withArchive(32),
+          ...(assembly === undefined ? {} : { "archive.S": assembly }),
+          "reader.c": `extern const char ${archiveEnd}[]; int reads_end(int x) { return ${archiveEnd}[-x]; }`,
+          "main.c": `
+            extern const char ${archiveStart}[], retained_table[62];
+            int reads_end(int);
+            int main(int argc, char **argv) { return ${archiveStart}[argc] + reads_end(argc) + ${value}[argc]; }
+          `,
+        });
+        const link = await linkByHand(machine, String(dir), ["archive", "table", "reader", "main"]);
+        expect(addressInMap(link.map, `_${archiveEnd}`)).toBe(addressInMap(link.map, name));
+        expect(readGraph(link)).toEqual({
+          ...soundGraph,
+          roots,
+          references: {
+            _main: ["_reads_end", `_${archiveStart}`, name],
+            _reads_end: reached,
+            [`_${archiveStart}`]: [],
+            [name]: [],
+          },
+        });
+      });
+    });
+
+    const readerOf = (label: string) =>
+      `.text\n.globl _reads_end\n.p2align 2\n_reads_end:${perMachine(`adrp x0, ${label}@PAGE\nadd x0, x0, ${label}@PAGEOFF`, `leaq ${label}(%rip), %rax`)}ret\n`;
+    const mainCallingReader = `long reads_end(void); int main(int argc, char **argv) { return reads_end() + "words of main"[argc]; }`;
+    const referencesOfMain = {
+      _main: ["_reads_end", "literal string: words of main"],
+      "literal string: words of main": [],
+    };
+
+    test.each([
+      { input: "without subsections", tail: "", references: { _reads_end: ["_table"], _table: [] } },
+      { input: "with subsections", tail: subsections, references: { _reads_end: [] } },
+    ])(
+      "is followed under a private name, which the map leaves out, in an input $input",
+      async ({ tail, references }) => {
+        using dir = tempDir("trim-macho-end", {
+          ...sources,
+          "reader.S": `.section __TEXT,__const\n_table:\n.quad 1, 2\nl_table_end:\n${readerOf("l_table_end")}${tail}`,
+          "main.c": mainCallingReader,
+        });
+        const link = await linkByHand(machine, String(dir), ["main", "reader"]);
+        expect(() => addressInMap(link.map, "l_table_end")).toThrow("does not list");
+        expect(readGraph(link)).toEqual({ ...soundGraph, references: { ...referencesOfMain, ...references } });
+      },
+    );
+
+    test("does not stand under a local name for the external name of another input", async () => {
+      using dir = tempDir("trim-macho-end", {
+        ...sources,
+        "reader.S": `.section __TEXT,__const\n_table:\n.quad 1, 2\n_retained_table:\n${readerOf("_retained_table")}`,
+        "main.c": `extern const char retained_table[62]; long reads_end(void); int main(int argc, char **argv) { return reads_end() + retained_table[argc]; }`,
+      });
+      expect(readGraph(await linkByHand(machine, String(dir), ["main", "reader", "table"]))).toEqual({
+        ...soundGraph,
+        references: {
+          _main: ["_reads_end", "_retained_table"],
+          _reads_end: ["_table"],
+          _table: [],
+          _retained_table: [],
+        },
+      });
+    });
+
+    // The symbol table has the local names first, then the external ones in the order of the alphabet.
+    test.each([
+      {
+        title: "ends the atom in front where it is listed first",
+        declarations: ".globl _then\n",
+        references: { _reads_end: ["_table"], _table: [] },
+        aliases: [],
+      },
+      {
+        title: "is a name of the atom behind where it is listed last",
+        declarations: ".globl _table_end\n",
+        references: { _reads_end: ["_table_end"], _table_end: [] },
+        aliases: ["_then"],
+      },
+      {
+        title: "is a name of the atom behind where it is weak",
+        declarations: ".globl _table_end, _then\n.weak_definition _table_end\n",
+        references: { _reads_end: ["_table_end"], _table_end: [] },
+        aliases: ["_then"],
+      },
+      {
+        title: "is a name of the atom behind where that is marked weak and not external",
+        declarations: ".weak_definition _then\n.no_dead_strip _table\n",
+        references: { _reads_end: ["_table_end"], _table: [], _table_end: [] },
+        aliases: ["_then"],
+        roots: ["_main", "_table"],
+      },
+      {
+        title: "is a name of the atom behind where nothing is in front",
+        declarations: ".globl _then\n",
+        front: "",
+        references: { _reads_end: ["_then"], _then: [] },
+        aliases: ["_table_end"],
+      },
+      {
+        title: "is a name of the bytes behind in an input without subsections",
+        declarations: ".globl _then\n",
+        tail: "",
+        references: { _reads_end: ["_then"], _table: ["_then"], _then: ["_table"] },
+        aliases: ["_table_end"],
+      },
+    ])(
+      "as an alternative entry at the address of another name $title",
+      async ({ title, declarations, front = "_table:\n.quad 1, 2\n", tail = subsections, references, ...expected }) => {
+        using dir = tempDir("trim-macho-end", {
+          ...sources,
+          "reader.S": `.section __TEXT,__const\n${declarations}${front}.alt_entry _table_end\n_table_end:\n_then:\n.quad 3\n${readerOf("_table_end")}${tail}`,
+          "main.c": mainCallingReader,
+        });
+        expect(readGraph(await linkByHand(machine, String(dir), ["main", "reader"]))).toEqual({
+          ...soundGraph,
+          ...expected,
+          references: { ...referencesOfMain, ...references },
+        });
+      },
+    );
+
+    test("is known in the assembly of an input of bitcode, under whose name the map lists it", async () => {
+      using dir = tempDir("trim-macho-end", {
+        ...sources,
+        "reader.c": `extern const char table_end[]; long reads_end(void) { return table_end[-1]; }`,
+        "bitcode.c": `__asm__(${asCStrings(`.section __TEXT,__const\n.globl _table, _table_end\n.p2align 2\n_table:\n.quad 1, 2\n.alt_entry _table_end\n_table_end:\n.text\n`)});`,
+        "main.c": mainCallingReader,
+        "compiled/.keep": "",
+      });
+      const graph = await readGraphWithBitcode(String(dir), ["main", "reader", "bitcode"]);
+      const map = join(String(dir), "hand.map");
+      expect(addressInMap(map, "_table_end")).toBe(addressInMap(map, "compact unwind info"));
+      expect(graph).toEqual({
+        ...soundGraph,
+        references: { ...referencesOfMain, _reads_end: ["_table"], _table: [] },
+      });
+    });
+
+    // The arm64 assembler names the start of every section and writes no relocation of code against a section.
+    test.skipIf(machine.isArm64).each([
+      { neighbour: "a string", section: "__TEXT,__cstring", text: `.cstring\nl_stripped: .asciz "stripped words"` },
+      {
+        neighbour: "a constant",
+        section: "__TEXT,__toy_table",
+        text: `.section __TEXT,__toy_table\n_stripped: .byte 1`,
+      },
+    ])(
+      "is not $neighbour behind it in its input where a relocation has only its address",
+      async ({ section, text }) => {
+        using dir = tempDir("trim-macho-end", {
+          ...sources,
+          "reader.S": `.section __TEXT,__const\n.quad 1, 2\nL_table_end:\n${text}\n${readerOf("L_table_end")}${subsections}`,
+          "main.c": mainCallingReader,
+        });
+        const link = await linkByHand(machine, String(dir), ["main", "reader"]);
+        const object = readFileSync(join(String(dir), "reader.o"));
+        expect(relocationKinds(object, "__text")).toEqual(["section"]);
+        const [table, behind] = ["__TEXT,__const", section].map(readMachO(object).section);
+        expect(table!.address + table!.size).toBe(behind!.address);
+        expect(readGraph(link)).toEqual({ ...soundGraph, references: { ...referencesOfMain, _reads_end: [] } });
+      },
+    );
+
+    const mainReadingTable = `extern const long table[2]; long reads_end(void); int main(int argc, char **argv) { return reads_end() + table[argc]; }`;
+    const tableEndingIn = (labels: string) =>
+      `.section __TEXT,__const\n.globl _table, _replaced\n.weak_definition _replaced\n.p2align 2\n_table:\n.quad 1, 2\n${labels}_replaced:\n`;
+
+    describe.each([
+      { input: "without subsections", tail: "", isOneAtom: true },
+      { input: "with subsections", tail: subsections, isOneAtom: false },
+    ])("names what the linker selected for a weak name, in an input $input,", ({ tail, isOneAtom }) => {
+      test.each([
+        { title: "as that name", label: "_replaced" },
+        { title: "as a local name beside it", label: "_beside", aliases: ["_beside"] },
+        { title: "as a private name beside it", label: "l_beside" },
+      ])("$title", async ({ label, aliases = [] }) => {
+        using dir = tempDir("trim-macho-end", {
+          ...sources,
+          "reader.S": `${tableEndingIn(label === "_replaced" ? "" : `${label}:\n`)}${readerOf(label)}${tail}`,
+          "strong.c": `const long replaced[2] = { 3, 4 };`,
+          "main.c": mainReadingTable,
+        });
+        expect(readGraph(await linkByHand(machine, String(dir), ["main", "strong", "reader"]))).toEqual({
+          ...soundGraph,
+          aliases,
+          references: {
+            _main: ["_reads_end", "_table"],
+            _reads_end: ["_replaced"],
+            _table: isOneAtom ? ["_replaced"] : [],
+            _replaced: isOneAtom && aliases.length > 0 ? ["_table"] : [],
+          },
+        });
+      });
+    });
+
+    test("names the bytes in front of it, not those in front of the weak one that it replaces", async () => {
+      using dir = tempDir("trim-macho-end", {
+        ...sources,
+        "weak.S": tableEndingIn(""),
+        "strong.S": `.section __TEXT,__const\n.globl _selected, _replaced\n.p2align 2\n_selected:\n.quad 3, 4\n_replaced:\n`,
+        "reader.c": `extern const char replaced[]; long reads_end(void) { return replaced[-1]; }`,
+        "main.c": mainReadingTable,
+      });
+      expect(readGraph(await linkByHand(machine, String(dir), ["main", "reader", "weak", "strong"]))).toEqual({
+        ...soundGraph,
+        references: {
+          _main: ["_reads_end", "_table"],
+          _reads_end: ["_selected"],
+          _table: ["_selected"],
+          _selected: [],
+        },
+      });
+    });
+
+    test("does not hide the second name of bytes in an input of bitcode that replaces it", async () => {
+      using dir = tempDir("trim-macho-end", {
+        ...sources,
+        "weak.S": tableEndingIn(""),
+        "bitcode.c": `__asm__(${asCStrings(`.section __TEXT,__const\n.globl _replaced, _selected\n.p2align 2\n_replaced:\n_selected:\n.quad 3, 4\n.text\n`)});`,
+        "reader.c": `extern const char replaced[]; long reads_end(void) { return replaced[0]; }`,
+        "main.c": mainReadingTable,
+        "compiled/.keep": "",
+      });
+      const { references } = await readGraphWithBitcode(String(dir), ["main", "reader", "weak", "bitcode"]);
+      expect(references._reads_end).toEqual(["_selected"]);
+    });
+
+    test("fails the link where the map has no name for the bytes in front of it", async () => {
+      using dir = tempDir("trim-macho-end", {
+        ...sources,
+        "reader.S": `.section __TEXT,__const\n.globl _table\n.weak_definition _table\n_table:\n.quad 1, 2\n.alt_entry _table_end\n_table_end:\n${readerOf("_table_end")}${subsections}`,
+        "strong.c": `const long table[2] = { 3, 4 };`,
+        "main.c": mainReadingTable,
+      });
+      const { failures } = readGraph(await linkByHand(machine, String(dir), ["main", "reader", "strong"]));
+      expect(failures).toEqual([
+        {
+          kind: "UnresolvedReference",
+          object: join(String(dir), "reader.o"),
+          section: expect.stringMatching(/_reads_end$/),
+          target: "_table_end",
+        },
+      ]);
+    });
+
+    test("keeps the code in front of it alive where it is marked no_dead_strip", async () => {
+      using dir = tempDir("trim-macho-end", {
+        ...sources,
+        "code.S": `.text\n.globl _code, _code_end\n.no_dead_strip _code_end\n.p2align 4\n_code:\nret\n.p2align 4\n_code_end:\n`,
+        "main.c": `int main(void) { return 0; }`,
+      });
+      const link = await linkByHand(machine, String(dir), ["code", "main"]);
+      expect(addressInMap(link.map, "_code_end")).toBe(addressInMap(link.map, "_main"));
+      const { graph } = readMachOGraph(link.executable, link.map, [], link.exportedSymbols);
+      expect(graph.section.filter((_, node) => graph.isLiveWithoutReference[node] !== 0)).toEqual(["_code"]);
+    });
+
+    // Hidden, or x86-64 subtracts a slot of the global offset table, which `linked()` takes for a pointer that dangles.
+    const moreReading = (first: string, end: string) => `
+      __attribute__((visibility("hidden"))) extern const char ${first}[], ${end}[];
+      int more(int x) { return ${first}[x & 3] + (int)(${end} - ${first}); }
+    `;
+
+    test("leaves the archive of built-in sources removable with a retained constant right behind it", async () => {
+      using dir = tempDir("trim-macho-end", {
+        ...withArchive(8192),
+        "entry.c": entryCalling("more"),
+        "more.c": moreReading(archiveStart, archiveEnd),
+      });
+      const { addressOf, featuresAt, programResult, trimmedResult } = await linked(machine, String(dir), {
+        objects: ["feature_code", "entry", "more", "archive", "table", "embedder", "main"],
+      });
+      const end = addressOf(archiveEnd);
+      expect([addressOf(archiveStart) + 8192, addressOf("retained_table")]).toEqual([end, end]);
+      expect([end - 8192, end - 1, end].map(featuresAt)).toEqual([[Extra], [Extra], undefined]);
+      expectCleanRuns({ programResult, trimmedResult });
+    });
+
+    test("keeps the bytes in front of it for retained code that has no other name for them", async () => {
+      using dir = tempDir("trim-macho-end", {
+        ...withArchive(8193),
+        "entry.c": entryCalling("more"),
+        "more.c": moreReading(archiveStart, archiveEnd),
+        "main.c": `
+          ${start}
+          extern const char ${archiveEnd}[];
+          int main(int argc, char **argv) { return argc > 5 ? GUARDED(Extra, entered, argc) : ${archiveEnd}[-argc] == 'a' ? 0 : 1; }
+        `,
+      });
+      const folder = String(dir);
+      const { featuresOf, programResult, trimmedResult } = await linked(machine, folder, {
+        objects: ["feature_code", "entry", "more", "archive", "embedder", "main"],
+      });
+      const map = join(folder, "work/first.map");
+      expect(addressInMap(map, "_Bun__removableFeatureState") - addressInMap(map, `_${archiveEnd}`)).toBe(7);
+      expect([archiveStart, "more"].map(featuresOf)).toEqual([undefined, [Extra]]);
+      expectCleanRuns({ programResult, trimmedResult });
+    });
+
+    test("does not fail the link with the strings right behind it", async () => {
+      using dir = tempDir("trim-macho-end", {
+        ...sources,
+        "entry.c": entryCalling("more"),
+        "more.c": moreReading("unit", "unit_end"),
+        "unit.S": `.section __TEXT,__jsc_wasm,regular,pure_instructions\n.globl _unit, _unit_end\n.p2align 4\n_unit:\nret\n.p2align 4\n_unit_end:\n`,
+        "main.c": `${start} int main(int argc, char **argv) { return argc > 5 ? GUARDED(Extra, entered, argc) : "words of main"[argc] - 'o'; }`,
+      });
+      const folder = String(dir);
+      const { featuresOf, programResult, trimmedResult } = await linked(machine, folder, {
+        objects: ["feature_code", "entry", "more", "unit", "embedder", "main"],
+      });
+      const map = join(folder, "work/first.map");
+      expect(addressInMap(map, "_unit_end")).toBe(addressInMap(map, "literal string: words of main"));
+      expect(featuresOf("unit")).toEqual([Extra]);
+      expectCleanRuns({ programResult, trimmedResult });
+    });
+
+    test("is no second name of the entry point right behind it", async () => {
+      using dir = tempDir("trim-macho-end", {
+        ...sources,
+        "code.S": `.text\n.globl _code, _code_end\n.p2align 4\n_code:\nret\n.p2align 4\n_code_end:\n`,
+        "main.c": `
+          ${start}
+          extern const char code[], code_end[];
+          int main(int argc, char **argv) { return argc > 5 ? GUARDED(Extra, entered, argc) : code_end - code == 16 ? 0 : 1; }
+        `,
+      });
+      const folder = String(dir);
+      const { featuresOf, programResult, trimmedResult } = await linked(machine, folder, {
+        objects: ["feature_code", "code", "entry", "embedder", "main"],
+      });
+      const map = join(folder, "work/first.map");
+      expect(addressInMap(map, "_code_end")).toBe(addressInMap(map, "_entered"));
+      expect(["code", "entered", "feature_code"].map(featuresOf)).toEqual([undefined, [Extra], [Extra]]);
       expectCleanRuns({ programResult, trimmedResult });
     });
   });

@@ -654,17 +654,12 @@ pub mod posix_spawn {
     pub fn wait4(
         pid: pid_t,
         flags: u32,
-        usage: Option<&mut process::Rusage>,
+        mut usage: Option<&mut process::Rusage>,
     ) -> sys::Result<WaitPidResult> {
         type PidStatus = c_int;
         let mut status: PidStatus = 0;
-        // Convert the `Option<&mut Rusage>` once to a raw pointer (which is
-        // Copy) so the retry loop can pass it on every iteration.
-        let usage_ptr: *mut system::rusage = match usage {
-            Some(u) => std::ptr::from_mut::<process::Rusage>(u).cast(),
-            None => ptr::null_mut(),
-        };
         loop {
+            let usage_ptr = usage.as_deref_mut().map_or(ptr::null_mut(), ptr::from_mut);
             // SAFETY: status is a valid out-pointer; usage_ptr is either null or a valid *mut Rusage
             let rc = unsafe {
                 system::wait4(
@@ -676,11 +671,11 @@ pub mod posix_spawn {
             };
             match errno(rc) {
                 Errno::SUCCESS => {
-                    if rc > 0 && !usage_ptr.is_null() {
-                        // SAFETY: the kernel has filled what `usage_ptr` points to.
-                        let highest = unsafe { (*usage_ptr).ru_maxrss };
+                    if rc > 0
+                        && let Some(usage) = usage
+                    {
                         LARGEST_REAPED_CHILD.fetch_max(
-                            u64::try_from(highest).unwrap_or(0),
+                            u64::try_from(usage.ru_maxrss).unwrap_or(0),
                             core::sync::atomic::Ordering::Relaxed,
                         );
                     }

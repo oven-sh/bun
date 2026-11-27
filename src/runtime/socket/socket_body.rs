@@ -30,7 +30,6 @@ use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
 use crate::node::{BlobOrStringOrBuffer, StringObjects, StringOrBuffer};
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl_sys as boringssl_sys;
-use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::String as BunString;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys as sys;
@@ -1073,13 +1072,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         // matching `node:dns` — never collapsed into ECONNREFUSED. On that
         // path `errno` carries the same (possibly negative) getaddrinfo code
         // as `dns_error`, so it is only treated as an errno in the else arm.
-        let dns_err = c_ares::Error::init_eai(dns_error).filter(|_| dns_error != 0);
+        let dns_err = bun_dns::getaddrinfo_error(dns_error).filter(|_| dns_error != 0);
         let err = if let Some(dns_err) = dns_err {
             let hostname: &[u8] = match self.connection.get() {
                 Some(super::listener::UnixOrHost::Host { host, .. }) => host,
                 _ => b"",
             };
-            crate::dns_jsc::cares_jsc::system_error_with_syscall_and_hostname(
+            crate::dns_jsc::answer_jsc::system_error_with_syscall_and_hostname(
                 dns_err,
                 b"getaddrinfo",
                 hostname,
@@ -1884,28 +1883,12 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `session_buffer` fault rule simulates the allocation throwing: that
     /// failure needs JSC heap exhaustion, so it is unreachable from a test
     /// without injection.
-    fn create_dispatch_buffer(global: &JSGlobalObject, len: usize) -> JsResult<JSValue> {
+    fn create_dispatch_buffer(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
         #[cfg(socket_fault_injection)]
-        {
-            let mut out: isize = 0;
-            let mut clamp: c_int = 0;
-            // Deliberately skips `US_FAULT_CHECK`'s `us_fault_armed` fast-path
-            // load: session/keylog dispatch is a few calls per connection, not
-            // a per-packet hot path, so the unarmed-case lock is fine.
-            // SAFETY: `out`/`clamp` are valid for the duration of the call.
-            if unsafe {
-                bun_uws_sys::fault_inject::us_fault_hit(
-                    bun_uws_sys::fault_inject::SESSION_BUFFER,
-                    -1,
-                    &mut out,
-                    &mut clamp,
-                )
-            } != 0
-            {
-                return Err(global.throw_out_of_memory());
-            }
+        if bun_uws_sys::fault_inject::fails(bun_uws_sys::fault_inject::SESSION_BUFFER) {
+            return Err(global.throw_out_of_memory());
         }
-        JSValue::create_buffer_from_length(global, len)
+        jsc::ArrayBuffer::create_buffer(global, bytes)
     }
 
     /// A new resumable TLS session arrived (the peer's NewSessionTicket was
@@ -1937,14 +1920,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
         let global = handlers.global_object;
         let this_value = self.get_this_value(&global);
-        let buffer = Self::create_dispatch_buffer(&global, session.len())?;
-        if let Some(ab) = buffer.as_array_buffer(&global) {
-            // SAFETY: `ab.ptr` points to a freshly-created `session.len()`-byte
-            // JS buffer kept alive on the stack; `session` is valid for its length.
-            unsafe {
-                core::ptr::copy_nonoverlapping(session.as_ptr(), ab.ptr, session.len());
-            }
-        }
+        let buffer = Self::create_dispatch_buffer(&global, session)?;
         let result = match callback.call(&global, this_value, &[this_value, buffer]) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
@@ -1979,14 +1955,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
         let global = handlers.global_object;
         let this_value = self.get_this_value(&global);
-        let buffer = Self::create_dispatch_buffer(&global, line.len())?;
-        if let Some(ab) = buffer.as_array_buffer(&global) {
-            // SAFETY: `ab.ptr` points to a freshly-created `line.len()`-byte
-            // JS buffer kept alive on the stack; `line` is valid for its length.
-            unsafe {
-                core::ptr::copy_nonoverlapping(line.as_ptr(), ab.ptr, line.len());
-            }
-        }
+        let buffer = Self::create_dispatch_buffer(&global, line)?;
         let result = match callback.call(&global, this_value, &[this_value, buffer]) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
@@ -3342,13 +3311,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
         let group = groups.bun_connect_group::<true>(loop_);
         // SAFETY: `raw_socket` is the live `*mut us_socket_t` extracted from
-        // `InternalSocket::Connected` above; `owned_ssl_ctx` is the +1 ref
-        // taken from SecureContext/ssl_ctx_cache and never null here.
+        // `InternalSocket::Connected` above.
         let new_raw: NonNull<uws::us_socket_t> = match unsafe {
             (*raw_socket).adopt_tls(
                 group,
                 uws::SocketKind::BunSocketTls,
-                &mut *(tls.owned_ssl_ctx.get().as_ref().unwrap().as_ptr()),
+                tls.owned_ssl_ctx.get().as_ref().unwrap(),
                 sni,
                 !is_server,
                 adopt_request_cert,
@@ -4408,6 +4376,7 @@ pub(crate) mod testing_apis {
                 Syscall::PollStart => fi::POLL_START,
                 Syscall::SessionBuffer => fi::SESSION_BUFFER,
                 Syscall::SslWrite => fi::SSL_WRITE,
+                Syscall::ByteStreamBuffer => fi::BYTE_STREAM_BUFFER,
             };
 
             let action: c_int = match rule.action {
@@ -4469,19 +4438,21 @@ pub(crate) mod testing_apis {
                 )));
             }
 
-            // ssl_loop_buffer/session_buffer are allocations, not socket
+            // The buffers are allocations, not socket
             // operations: their hooks pass fd = -1, so a rule pinned to a
             // descriptor would arm and then silently never fire.
             let target_fd = rule.fd.unwrap_or(-1);
-            if (syscall == fi::SSL_LOOP_BUFFER || syscall == fi::SESSION_BUFFER) && target_fd != -1
+            let buffer = match syscall {
+                fi::SSL_LOOP_BUFFER => Some("ssl_loop_buffer"),
+                fi::SESSION_BUFFER => Some("session_buffer"),
+                fi::BYTE_STREAM_BUFFER => Some("byte_stream_buffer"),
+                _ => None,
+            };
+            if let Some(buffer) = buffer
+                && target_fd != -1
             {
                 return Err(global.throw(format_args!(
-                    "rule.fd is not supported for syscall \"{}\"",
-                    if syscall == fi::SSL_LOOP_BUFFER {
-                        "ssl_loop_buffer"
-                    } else {
-                        "session_buffer"
-                    }
+                    "rule.fd is not supported for syscall \"{buffer}\""
                 )));
             }
 

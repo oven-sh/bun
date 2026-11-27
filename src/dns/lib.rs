@@ -1,10 +1,12 @@
 #![warn(unused_must_use)]
 
 use core::ffi::c_int;
+use core::net::SocketAddr;
 use core::ptr::{self, NonNull};
-use std::io::Write as _;
 
+use bun_core::ip_address::IpText;
 use bun_core::{String as BunString, ZStr};
+use bun_dns_client::Error;
 // `bun_wyhash` exports `Wyhash11` (iterative init/update/final_ surface).
 // Hash is in-memory dedupe only — algorithm identity is not load-bearing.
 use bun_wyhash::Wyhash11 as Wyhash;
@@ -16,19 +18,25 @@ use bun_wyhash::Wyhash11 as Wyhash;
 mod sock {
     pub use libc::addrinfo;
     pub(crate) use libc::{
-        AF_INET, AF_INET6, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, freeaddrinfo,
-        getaddrinfo,
+        AF_INET, AF_INET6, IPPROTO_TCP, IPPROTO_UDP, SO_RCVBUF, SOCK_DGRAM, SOCK_STREAM,
+        SOL_SOCKET, TCP_NODELAY, freeaddrinfo, getaddrinfo, getnameinfo,
     };
+    #[cfg(target_os = "freebsd")]
+    pub(crate) use libc::{IPPROTO_IPV6, IPV6_V6ONLY};
 }
 #[cfg(windows)]
 mod sock {
     pub use bun_windows_sys::ws2_32::addrinfo;
     pub(crate) use bun_windows_sys::ws2_32::{
-        AF_INET, AF_INET6, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, freeaddrinfo,
-        getaddrinfo,
+        AF_INET, AF_INET6, IPPROTO_IPV6, IPPROTO_TCP, IPPROTO_UDP, IPV6_V6ONLY, SO_RANDOMIZE_PORT,
+        SO_RCVBUF, SOCK_DGRAM, SOCK_STREAM, SOL_SOCKET, TCP_NODELAY, freeaddrinfo, getaddrinfo,
+        getnameinfo,
     };
 }
 
+pub mod os;
+
+pub use bun_dns_client::Family;
 pub use sock::addrinfo;
 
 #[cfg(not(windows))]
@@ -118,6 +126,75 @@ impl<'a> Iterator for Addresses<'a> {
     }
 }
 
+#[cfg(unix)]
+mod eai {
+    use core::ffi::c_int;
+    pub(crate) use libc::{EAI_AGAIN as AGAIN, EAI_FAIL as FAIL, EAI_NONAME as NONAME};
+
+    // `libc` lacks these.
+    pub(crate) const ADDRFAMILY: c_int = if cfg!(target_os = "linux") { -9 } else { 1 };
+    pub(crate) const NODATA: c_int = if cfg!(target_os = "linux") { -5 } else { 7 };
+    #[cfg(target_env = "gnu")]
+    pub(crate) const IDN_ENCODE: c_int = -105;
+}
+#[cfg(windows)]
+mod eai {
+    pub(crate) use bun_sys::windows::libuv::{
+        UV_EAI_AGAIN as AGAIN, UV_EAI_FAIL as FAIL, UV_EAI_NONAME as NONAME,
+    };
+}
+
+/// `status` is an `EAI_*`, or 0.
+#[cfg(unix)]
+pub fn getaddrinfo_error(status: c_int) -> Option<Error> {
+    Some(match status {
+        0 => return None,
+        // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
+        eai::NODATA | eai::NONAME => Error::ENOTFOUND,
+        eai::ADDRFAMILY | libc::EAI_FAMILY => Error::EBADFAMILY,
+        eai::AGAIN => Error::EAI_AGAIN,
+        eai::FAIL => Error::EBADRESP,
+        #[cfg(target_env = "gnu")]
+        eai::IDN_ENCODE => Error::EBADSTR,
+        libc::EAI_BADFLAGS => Error::EBADFLAGS,
+        libc::EAI_MEMORY => Error::ENOMEM,
+        libc::EAI_SERVICE => Error::ESERVICE,
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        libc::EAI_SOCKTYPE => Error::ECONNREFUSED,
+        libc::EAI_SYSTEM => Error::ESERVFAIL,
+        _ => Error::ENOTIMP,
+    })
+}
+
+/// `status` is a `UV_EAI_*`, or 0.
+#[cfg(windows)]
+pub fn getaddrinfo_error(status: c_int) -> Option<Error> {
+    use bun_sys::windows::libuv;
+    Some(match status {
+        0 => return None,
+        eai::AGAIN => Error::EAI_AGAIN,
+        libuv::UV_EAI_ADDRFAMILY | libuv::UV_EAI_FAMILY => Error::EBADFAMILY,
+        libuv::UV_EAI_BADFLAGS => Error::EBADFLAGS,
+        libuv::UV_EAI_BADHINTS => Error::EBADHINTS,
+        libuv::UV_EAI_CANCELED => Error::ECANCELLED,
+        libuv::UV_EAI_MEMORY | libuv::UV_EAI_OVERFLOW => Error::ENOMEM,
+        libuv::UV_EAI_PROTOCOL => Error::EBADQUERY,
+        libuv::UV_EAI_SERVICE => Error::ESERVICE,
+        libuv::UV_EAI_SOCKTYPE => Error::ECONNREFUSED,
+        _ => Error::ENOTFOUND,
+    })
+}
+
+/// What [`getaddrinfo_error`] takes for the `EAI_*` called `name`.
+pub fn getaddrinfo_status_by_name(name: &[u8]) -> Option<c_int> {
+    match name {
+        b"EAI_AGAIN" => Some(eai::AGAIN),
+        b"EAI_FAIL" => Some(eai::FAIL),
+        b"EAI_NONAME" => Some(eai::NONAME),
+        _ => None,
+    }
+}
+
 #[cfg(windows)]
 pub const AI_V4MAPPED: c_int = 2048;
 #[cfg(not(windows))]
@@ -141,17 +218,6 @@ pub struct GetAddrInfo {
 }
 
 impl GetAddrInfo {
-    pub fn to_cares(&self) -> bun_cares_sys::c_ares_draft::AddrInfo_hints {
-        let mut hints: bun_cares_sys::c_ares_draft::AddrInfo_hints = bun_core::ffi::zeroed();
-
-        hints.ai_family = self.options.family.to_libc();
-        hints.ai_socktype = self.options.socktype.to_libc();
-        hints.ai_protocol = self.options.protocol.to_libc();
-        hints.ai_flags = self.options.flags;
-
-        hints
-    }
-
     pub fn hash(&self) -> u64 {
         let mut hasher = Wyhash::init(0);
         hasher.update(&self.port.to_ne_bytes());
@@ -204,7 +270,11 @@ impl Options {
 
         let mut hints: sock::addrinfo = bun_core::ffi::zeroed();
 
-        hints.ai_family = self.family.to_libc();
+        hints.ai_family = match self.family {
+            Family::Unspecified => 0,
+            Family::Inet => sock::AF_INET,
+            Family::Inet6 => sock::AF_INET6,
+        };
         hints.ai_socktype = self.socktype.to_libc();
         hints.ai_protocol = self.protocol.to_libc();
         hints.ai_flags = self.flags;
@@ -236,14 +306,6 @@ pub enum OptionsFromJsError {
     InvalidFlags,
 }
 
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Family {
-    Unspecified,
-    Inet,
-    Inet6,
-}
-
 bun_core::comptime_string_map! {
     pub static FAMILY_MAP: Family = {
         b"IPv4" => Family::Inet,
@@ -252,16 +314,6 @@ bun_core::comptime_string_map! {
         b"ipv6" => Family::Inet6,
         b"any"  => Family::Unspecified,
     };
-}
-
-impl Family {
-    pub(crate) fn to_libc(self) -> i32 {
-        match self {
-            Family::Unspecified => 0,
-            Family::Inet => sock::AF_INET,
-            Family::Inet6 => sock::AF_INET6,
-        }
-    }
 }
 
 #[repr(u8)]
@@ -342,9 +394,7 @@ impl Backend {
         Backend::System
     }
 
-    // Android: c-ares can't discover nameservers (no /etc/resolv.conf,
-    // no JNI for ares_library_init_android). bionic getaddrinfo proxies
-    // through netd which knows the real resolvers.
+    // Android: the nameservers are known to netd, which bionic's getaddrinfo asks.
     #[cfg(all(not(any(target_os = "macos", windows)), target_os = "android"))]
     pub const fn default() -> Backend {
         Backend::System
@@ -360,7 +410,7 @@ pub type Address = bun_sys::net::Address;
 
 pub struct GetAddrInfoResult {
     pub address: Address,
-    pub ttl: i32,
+    pub ttl: u32,
 }
 
 pub type ResultList = Vec<GetAddrInfoResult>;
@@ -375,45 +425,17 @@ impl GetAddrInfoResult {
 }
 
 pub fn address_to_string(address: &Address) -> BunString {
-    // Reshaped — bun_sys::net::Address exposes family()/as_in4()/
-    // as_in6() rather than .in/.in6/.un union views.
-    match address.family() {
-        sock::AF_INET => {
-            let v4 = address.as_in4().unwrap(); // family() just checked
-            let bytes: [u8; 4] = v4.addr.to_ne_bytes();
-            BunString::create_format(format_args!(
-                "{}.{}.{}.{}",
-                bytes[0], bytes[1], bytes[2], bytes[3]
-            ))
+    #[cfg(unix)]
+    if let Some(un) = address.as_un() {
+        return BunString::clone_latin1(bun_core::slice_as_bytes(&un.sun_path));
+    }
+    match address.to_socket_addr() {
+        Some(SocketAddr::V6(v6)) if v6.scope_id() != 0 => {
+            let ip = IpText::new((*v6.ip()).into());
+            BunString::create_format(format_args!("{ip}%{}", v6.scope_id()))
         }
-        sock::AF_INET6 => {
-            let v6 = address.as_in6().unwrap(); // family() just checked
-            // Render the bare address directly via ares_inet_ntop, then
-            // re-append the `%scope_id` suffix for nonzero scope (e.g. fe80::
-            // link-local from getaddrinfo) — ntop only sees the 16 raw addr
-            // bytes and cannot emit it itself.
-            let mut buf = [0u8; 64]; // >= INET6_ADDRSTRLEN (46) + "%4294967295" (11)
-            let n = match bun_cares_sys::ntop(&v6.addr, &mut buf) {
-                Some(s) => s.len(),
-                None => return BunString::EMPTY,
-            };
-            let len = if v6.scope_id != 0 {
-                let mut cursor = &mut buf[n..];
-                let before = cursor.len();
-                // 64 - 46 = 18 > len("%4294967295") = 11, cannot truncate.
-                let _ = write!(cursor, "%{}", v6.scope_id);
-                n + (before - cursor.len())
-            } else {
-                n
-            };
-            BunString::clone_latin1(&buf[..len])
-        }
-        #[cfg(unix)]
-        libc::AF_UNIX => {
-            let un = address.as_un().unwrap(); // family() just checked
-            BunString::clone_latin1(bun_core::slice_as_bytes(&un.sun_path))
-        }
-        _ => BunString::EMPTY,
+        Some(address) => BunString::clone_latin1(&IpText::new(address.ip())),
+        None => BunString::EMPTY,
     }
 }
 
@@ -464,11 +486,9 @@ impl Order {
 }
 
 /// A numeric address, or a host name within the RFC 1035 limits made of the bytes
-/// c-ares allows in one (`ares_is_hostnamech`) or of non-ASCII bytes (UTF-8 mDNS names).
+/// `bun_dns_client` allows in one or of non-ASCII bytes (UTF-8 mDNS names).
 pub fn is_valid_hostname(name: &[u8]) -> bool {
-    fn is_hostname_byte(b: u8) -> bool {
-        b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'/' | b'*') || !b.is_ascii()
-    }
+    let is_hostname_byte = |b: u8| bun_dns_client::is_hostname_byte(b) || !b.is_ascii();
     if name.is_empty() || bun_core::strings::contains_char(name, 0) {
         return false;
     }

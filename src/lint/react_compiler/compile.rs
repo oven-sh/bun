@@ -53,8 +53,7 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
         tagged_templates_are_always_called: is_oxlint,
         react_is_known_by_its_module: false,
         dependencies_are_sorted_by_bytes: is_oxlint,
-        // For a callback that reads `x.current`, `preserve-manual-memoization` accepts `[x]` alone in oxlint since
-        // 1.91, and `[x.current]` alone in the plugin. Without a config of either, it accepts what the build compiles.
+        // For a callback that reads `x.current`, oxlint 1.91 accepts `[x]` alone, and the plugin `[x.current]` alone.
         nested_function_dependencies: match (is_oxlint, has_no_foreign_config) {
             (true, _) => NestedFunctionDependencies::BeforeCurrent,
             (false, true) => NestedFunctionDependencies::BeforeCurrentUnlessListed,

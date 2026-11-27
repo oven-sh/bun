@@ -1860,8 +1860,7 @@ struct DependencyCollectionContext<'a> {
     temporaries: &'a IdMap<IdentifierId, ReactiveScopeDependency>,
     processed_instrs_in_optional: &'a HashSet<ProcessedInstr>,
     inner_fn_context: Option<EvaluationOrder>,
-    /// For `NestedFunctionDependencies::BeforeCurrentUnlessListed`: what the `useMemo` and `useCallback` calls that
-    /// are visited list with a `.current` in it, each with the `manual_memo_id` of its call.
+    /// For `BeforeCurrentUnlessListed`: the paths with `.current` that the memo calls being visited list, by their id.
     listed_through_current: Vec<(u32, ManualMemoDependency)>,
 }
 
@@ -2110,8 +2109,7 @@ impl<'a> DependencyCollectionContext<'a> {
             && self.inner_fn_context.is_some()
             && let Some(index) = dep.path.iter().position(is_current)
         {
-            // Not in upstream (oxc-project/oxc#27423): with `target = forwardedRef ?? ownRef`, the guard of
-            // `() => onTag(target.current.tagName)` read `target.current.tagName` during render, where it is null.
+            // Not in upstream (oxc-project/oxc#27423): the guard of `() => f(x.current.y)` read `x.current.y` in render.
             let end = index.max(self.listed_length(&dep, env));
             let mut dep = dep;
             dep.path.truncate(end);

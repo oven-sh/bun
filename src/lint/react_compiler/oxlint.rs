@@ -742,8 +742,7 @@ fn inferred_dependency(call: Call, help: &str) -> Option<Span> {
 }
 
 /// With the path `a`, `b`, returns the `variable.a.b` read from `variable` and the span of the `b`. With an empty path,
-/// returns the longest member chain read from `variable` and its span. In `variable.a.b()` that's `variable.a`, which
-/// the method is called on.
+/// returns the longest member chain read from `variable` and its span.
 fn read_of<'a>(variable: Expr<'a>, path: &[&[u8]]) -> Option<(Expr<'a>, Span)> {
     let (mut read, mut property_span) = (variable, None);
     for name in path {
@@ -754,6 +753,7 @@ fn read_of<'a>(variable: Expr<'a>, path: &[&[u8]]) -> Option<(Expr<'a>, Span)> {
         return Some((read, property_span));
     }
     while let Some(member) = enclosing_member(read) {
+        // In `variable.a.b()` the chain is `variable.a`, as in oxc.
         let is_called = member.parent().as_expr().and_then(|it| it.as_call());
         if is_called.is_some_and(|call| call.callee() == member) {
             break;

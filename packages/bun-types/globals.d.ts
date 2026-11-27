@@ -1661,7 +1661,7 @@ interface Uint8Array {
   /**
    * Convert the Uint8Array to a base64 encoded string
    */
-  toBase64(options?: { alphabet?: "base64" | "base64url"; omitPadding?: boolean }): string;
+  toBase64(options?: { alphabet?: "base64" | "base64url" | undefined; omitPadding?: boolean | undefined }): string;
 
   /**
    * Set the contents of the Uint8Array from a base64 encoded string
@@ -1671,8 +1671,8 @@ interface Uint8Array {
   setFromBase64(
     base64: string,
     options?: {
-      alphabet?: "base64" | "base64url";
-      lastChunkHandling?: "loose" | "strict" | "stop-before-partial";
+      alphabet?: "base64" | "base64url" | undefined;
+      lastChunkHandling?: "loose" | "strict" | "stop-before-partial" | undefined;
     },
   ): {
     /**
@@ -1719,8 +1719,8 @@ interface Uint8ArrayConstructor {
   fromBase64(
     base64: string,
     options?: {
-      alphabet?: "base64" | "base64url";
-      lastChunkHandling?: "loose" | "strict" | "stop-before-partial";
+      alphabet?: "base64" | "base64url" | undefined;
+      lastChunkHandling?: "loose" | "strict" | "stop-before-partial" | undefined;
     },
   ): Uint8Array<ArrayBuffer>;
 

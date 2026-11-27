@@ -1425,8 +1425,8 @@ impl<'a> Converter<'a, '_> {
                 if op.is_none() {
                     self.later_keys_first(from, after_target);
                 }
-                // No lowering supports these, and none looks inside them.
-                if is_logical {
+                // Upstream's lowering doesn't support these, and doesn't look inside them. oxc's lowers both sides.
+                if is_logical && self.flavor != Flavor::Oxlint {
                     self.recorded.truncate(recorded);
                 }
                 let op = assign_op(op);

@@ -99,15 +99,7 @@ pub struct DirInfo {
     // A pointer to the enclosing dirInfo with a valid "browser" field in
     // package.json. We need this to remap paths after they have been resolved.
     pub(crate) enclosing_browser_scope: Index,
-    // lifetime — `&'static` borrows below are ARENA-backed (the
-    // resolver-owned PackageJSON/TSConfigJSON caches outlive every DirInfo).
-    // Read-only fields (`package_json_for_browser_field`,
-    // `enclosing_tsconfig_json`) are `Option<&'static T>`.
-    // Fields with write sites are `Option<NonNull<T>>` so
-    // mut-provenance from the allocation site is preserved through to the
-    // write/drop sites (a `*const→*mut` cast there would be UB under Stacked
-    // Borrows). Read sites use the `.package_json()` / `.tsconfig_json()` /
-    // `.package_json_for_dependencies()` accessors.
+    // The `&'static` manifests below are leaked boxes.
     pub(crate) package_json_for_browser_field: Option<&'static PackageJSON>,
     pub(crate) enclosing_tsconfig_json: Option<&'static TSConfigJSON>,
 
@@ -115,8 +107,6 @@ pub struct DirInfo {
     /// it's the deepest one in the hierarchy with a "name" field
     /// or, if using `bun run`, the name field is optional
     /// https://github.com/oven-sh/bun/issues/229
-    // No write site exists in any caller — kept `Option<&'static>` for
-    // ergonomics. If a write is ever added, retype to `Option<NonNull<_>>`.
     pub enclosing_package_json: Option<&'static PackageJSON>,
 
     /// The nearest package.json in this directory or above it, with or without
@@ -127,20 +117,15 @@ pub struct DirInfo {
     /// skips a nameless package.json.
     pub package_json_for_module_type: Option<&'static PackageJSON>,
 
-    // `NonNull` (not `&'static`) so `enqueue_dependency_to_resolve` can write
-    // `package_manager_package_id` back through it without a const→mut
-    // provenance cast. Read via `.package_json_for_dependencies()`.
-    pub(crate) package_json_for_dependencies: Option<NonNull<PackageJSON>>,
+    pub(crate) package_json_for_dependencies: Option<&'static PackageJSON>,
 
     // lifetime — slice into BSS-backed path storage; never individually freed
     pub abs_path: &'static [u8],
     pub(crate) entries: Index,
     /// Is there a "package.json" file?
-    // `NonNull` (not `&'static`) preserves mut-provenance. Read via `.package_json()`.
-    pub package_json: Option<NonNull<PackageJSON>>,
+    pub package_json: Option<&'static PackageJSON>,
     /// Is there a "tsconfig.json" file in this directory or a parent directory?
-    // `NonNull` (not `&'static`) preserves mut-provenance. Read via `.tsconfig_json()`.
-    pub(crate) tsconfig_json: Option<NonNull<TSConfigJSON>>,
+    pub(crate) tsconfig_json: Option<&'static TSConfigJSON>,
     /// If non-empty, this is the real absolute path resolving any symlinks
     // lifetime — slice into BSS-backed path storage; never individually freed
     pub abs_real_path: &'static [u8],
@@ -168,20 +153,6 @@ impl Default for DirInfo {
     }
 }
 
-/// Dereference an arena-interned `NonNull<T>` to `&'static T`.
-///
-/// Single deref site for the three `Option<NonNull<_>>` read accessors on
-/// [`DirInfo`] (`package_json` / `package_json_for_dependencies` /
-/// `tsconfig_json`). The pointee is interned in the resolver's process-lifetime
-/// PackageJSON / TSConfigJSON arena (see `intern_package_json` / the tsconfig
-/// merge loop); never freed for the life of the process.
-#[inline]
-fn arena_ref<T>(p: NonNull<T>) -> &'static T {
-    // SAFETY: ARENA — see fn doc; pointee is process-lifetime, never freed
-    // while a `DirInfo` reader is live.
-    unsafe { &*p.as_ptr() }
-}
-
 impl DirInfo {
     /// Is there a "node_modules" subdirectory?
     #[inline]
@@ -199,28 +170,6 @@ impl DirInfo {
     #[inline]
     pub(crate) fn is_inside_node_modules(&self) -> bool {
         self.flags.contains(Flags::InsideNodeModules)
-    }
-
-    /// Read-only view of `package_json`. The field stores `NonNull` to preserve
-    /// mut-provenance; callers that only read go through here.
-    #[inline]
-    pub fn package_json(&self) -> Option<&'static PackageJSON> {
-        self.package_json.map(arena_ref)
-    }
-
-    /// Read-only view of `package_json_for_dependencies`. The field stores
-    /// `NonNull` to preserve mut-provenance for the write in
-    /// `enqueue_dependency_to_resolve`;
-    /// callers that only read go through here.
-    #[inline]
-    pub(crate) fn package_json_for_dependencies(&self) -> Option<&'static PackageJSON> {
-        self.package_json_for_dependencies.map(arena_ref)
-    }
-
-    /// Read-only view of `tsconfig_json`. See `package_json()`.
-    #[inline]
-    pub fn tsconfig_json(&self) -> Option<&'static TSConfigJSON> {
-        self.tsconfig_json.map(arena_ref)
     }
 
     pub(crate) fn get_file_descriptor(&self) -> Fd {
@@ -251,9 +200,7 @@ impl DirInfo {
     /// concurrent resolver with a newer generation rewrites the `DirEntry` in
     /// place under that lock ([`RealFS::entries_at_locked`](fs::RealFS::entries_at_locked)
     /// drops the old `data` map's buckets), so probing the map after the lock
-    /// is released can walk freed buckets. The returned lookup wraps a raw
-    /// pointer into the process-lifetime `EntryStore`, which stays valid after
-    /// the lock is dropped.
+    /// is released can walk freed buckets.
     pub(crate) fn get_entry(
         &self,
         generation: Generation,

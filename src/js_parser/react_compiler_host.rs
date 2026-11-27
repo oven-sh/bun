@@ -9,6 +9,7 @@ use bun_collections::VecExt;
 
 use crate::JSXImport;
 use crate::p::P;
+use crate::parser::UsedAs;
 
 /// What [`P::enter_react_compiler_candidate`] decided about a function.
 #[derive(Clone, Copy)]
@@ -71,9 +72,6 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     }
     fn source(&self) -> &[u8] {
         &self.p.source.contents
-    }
-    fn arena(&self) -> &bun_alloc::Arena {
-        self.p.arena
     }
 
     fn ref_name(&self, ref_: js_ast::Ref) -> &[u8] {
@@ -182,6 +180,19 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
 
     fn record_usage(&mut self, ref_: js_ast::Ref) {
         self.p.record_usage(ref_);
+    }
+
+    fn record_import_property_use(&mut self, target: &js_ast::Expr, name: &[u8]) -> bool {
+        self.p
+            .record_import_property_use(target, name, UsedAs::Value)
+    }
+
+    fn record_import_property_call(&mut self, import: js_ast::Ref, name: &[u8]) {
+        if let Some(reads) = self.p.import_symbol_property_uses.get_ptr_mut(&import)
+            && let Some(read) = reads.get_mut(name)
+        {
+            read.is_call_target = true;
+        }
     }
 
     fn add_import_record(&mut self, path: &[u8], kind: js_ast::ImportKind) -> (u32, js_ast::Ref) {

@@ -1647,7 +1647,7 @@ impl WindowsNamedPipeListeningContext {
 
         // Heap-allocate at the final address so libuv can
         // store a pointer back into `uv_pipe`.
-        let owned = bun_ptr::AliasableBox::new(WindowsNamedPipeListeningContext {
+        let mut owned = bun_ptr::AliasableBox::new(WindowsNamedPipeListeningContext {
             uv_pipe: bun_core::ffi::zeroed(),
             listener: NonNull::new(listener).map(bun_ptr::BackRef::from),
             global_this: GlobalRef::from(global_this),
@@ -1656,10 +1656,8 @@ impl WindowsNamedPipeListeningContext {
         });
         let this = owned.as_ptr();
 
-        // SAFETY: `this` was just allocated above; `&mut uv_pipe` is scoped to
-        // this call.
-        let init_result = unsafe { (*this).uv_pipe.init((*this).vm.uv_loop().cast(), false) };
-        if init_result.is_err() {
+        let loop_ = owned.vm.uv_loop();
+        if owned.uv_pipe.init(loop_, false).is_err() {
             return Err(ListenPipeError::Other(crate::Error::FailedToInitPipe));
         }
         let pipe = ListeningPipe(owned.into_non_null());

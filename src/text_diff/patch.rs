@@ -9,11 +9,13 @@ use core::ops::Range;
 use std::io::Write as _;
 
 use bun_core::strings::{
-    contains_char, is_js_line_terminator, is_js_whitespace, to_utf16_alloc_for_real,
+    CodeUnits, contains_char, is_js_line_terminator, is_js_whitespace, to_utf16_alloc_for_real,
 };
 use bun_core::{UnwrapOrOom as _, slice_as_bytes};
 
-use crate::tokens::{Edit, Split, Unit, count_newlines, for_each_line_end, is, line_start};
+use crate::tokens::{
+    Edit, Split, Unit, as_slice, count_newlines, for_each_line_end, is, line_start,
+};
 
 /// A start is the first line of the range, from 1. If the range is empty, it is the line after it.
 pub struct PatchHunk<Line> {
@@ -32,71 +34,63 @@ fn extend_ascii<T: Unit>(out: &mut Vec<T>, ascii: &[u8]) {
 
 pub const NO_NEWLINE: &[u8] = b"\\ No newline at end of file";
 
-pub enum Line<'a, T> {
-    /// ` `, `-` or `+`, and the line without its `\n`.
-    Text(u8, &'a [T]),
+pub enum Line {
+    /// ` `, `-` or `+`, and the place of the line without its `\n`: in the old text for `-`, else in the new one.
+    Text(u8, Range<usize>),
     NoNewline,
 }
 
-impl<T: Unit> Line<'_, T> {
-    fn write(&self, out: &mut Vec<T>) {
-        match *self {
-            Line::Text(operation, text) => {
-                out.push(T::from_u8(operation));
-                out.extend_from_slice(text);
-            }
-            Line::NoNewline => extend_ascii(out, NO_NEWLINE),
-        }
+fn push_line<T: Unit>(lines: &mut Vec<Line>, operation: u8, text: &[T], line: Range<usize>) {
+    if is(text[..line.end].last(), b'\n') {
+        lines.push(Line::Text(operation, line.start..line.end - 1));
+    } else {
+        lines.extend([Line::Text(operation, line), Line::NoNewline]);
     }
 }
 
-fn push_line<'a, T: Unit>(lines: &mut Vec<Line<'a, T>>, operation: u8, line: &'a [T]) {
-    match line.strip_suffix(&[T::from_u8(b'\n')]) {
-        Some(line) => lines.push(Line::Text(operation, line)),
-        None => lines.extend([Line::Text(operation, line), Line::NoNewline]),
-    }
-}
-
-/// `text` has `count` lines.
-fn push_lines<'a, T: Unit>(
-    lines: &mut Vec<Line<'a, T>>,
+/// `text[range]` has `count` lines.
+fn push_lines<T: Unit>(
+    lines: &mut Vec<Line>,
     operation: u8,
-    mut text: &'a [T],
+    text: &[T],
+    range: Range<usize>,
     count: usize,
 ) {
+    let (from, mut at) = (range.start, range.start);
     // One pass over the text is faster than a search for each line only if there are many.
     if count > 16 {
-        let mut at = 0;
-        for_each_line_end(text, |end| {
-            lines.push(Line::Text(operation, &text[at..end - 1]));
-            at = end;
+        for_each_line_end(&text[range.clone()], |end| {
+            lines.push(Line::Text(operation, at..from + end - 1));
+            at = from + end;
         });
-        text = &text[at..];
     } else {
         for _ in 1..count {
-            let line;
-            (line, text) = text.split_at(Split::Lines.end(text, 0));
-            push_line(lines, operation, line);
+            let end = Split::Lines.end(text, at);
+            push_line(lines, operation, text, at..end);
+            at = end;
         }
     }
-    if !text.is_empty() {
-        push_line(lines, operation, text);
+    if at < range.end {
+        push_line(lines, operation, text, at..range.end);
     }
 }
 
 /// `edits` are by [`Split::Lines`]. The lines that are kept are those of `b`.
-pub fn hunks<'a, T: Unit>(
-    a: &'a [T],
-    b: &'a [T],
+pub fn hunks<'a>(
+    a: CodeUnits<'a>,
+    b: CodeUnits<'a>,
     edits: &'a [Edit],
     context: usize,
-) -> impl Iterator<Item = PatchHunk<Line<'a, T>>> {
+) -> impl Iterator<Item = PatchHunk<Line>> {
     let reach = context.saturating_mul(2);
     let groups = edits.chunk_by(move |one, next| next.tokens.a_lo - one.tokens.a_hi <= reach);
     groups.map(move |group| {
         let first = &group[0];
         let before = context.min(first.tokens.a_lo);
-        let mut at = (0..before).fold(first.units.b_lo, |at, _| line_start(b, at - 1));
+        let mut at = (0..before).fold(
+            first.units.b_lo,
+            |at, _| as_slice!(b => line_start(b, at - 1)),
+        );
         let (start_a, start_b) = (first.tokens.a_lo - before, first.tokens.b_lo - before);
         let last = &group[group.len() - 1];
         let inserted: usize = group.iter().map(|edit| edit.tokens.inserted()).sum();
@@ -105,18 +99,20 @@ pub fn hunks<'a, T: Unit>(
             Vec::with_capacity(last.tokens.a_hi - start_a + inserted + context.min(8) + 2);
         let mut line = start_a;
         for &Edit { units, tokens } in group {
-            let (deleted, inserted) = (&a[units.a_lo..units.a_hi], &b[units.b_lo..units.b_hi]);
-            push_lines(&mut lines, b' ', &b[at..units.b_lo], tokens.a_lo - line);
-            push_lines(&mut lines, b'-', deleted, tokens.deleted());
-            push_lines(&mut lines, b'+', inserted, tokens.inserted());
+            let mut push = |operation, text, range, count| {
+                as_slice!(text => push_lines(&mut lines, operation, text, range, count));
+            };
+            push(b' ', b, at..units.b_lo, tokens.a_lo - line);
+            push(b'-', a, units.a_lo..units.a_hi, tokens.deleted());
+            push(b'+', b, units.b_lo..units.b_hi, tokens.inserted());
             (at, line) = (units.b_hi, tokens.a_hi);
         }
         let mut after = 0;
-        while after < context && at < b.len() {
+        as_slice!(b => while after < context && at < b.len() {
             let end = Split::Lines.end(b, at);
-            push_line(&mut lines, b' ', &b[at..end]);
+            push_line(&mut lines, b' ', b, at..end);
             (at, after) = (end, after + 1);
-        }
+        });
         PatchHunk {
             old_start: start_a + 1,
             old_lines: last.tokens.a_hi - start_a + after,
@@ -139,7 +135,12 @@ pub fn write_file_header<T: Unit>(out: &mut Vec<T>, marker: &[u8], name: &[u8], 
     out.push(T::from_u8(b'\n'));
 }
 
-pub fn write_hunk<T: Unit>(out: &mut Vec<T>, hunk: &PatchHunk<Line<'_, T>>) {
+/// `write_text` appends the text of a [`Line::Text`].
+pub fn write_hunk<T: Unit>(
+    out: &mut Vec<T>,
+    hunk: PatchHunk<Line>,
+    write_text: impl Fn(&mut Vec<T>, u8, Range<usize>),
+) {
     let range = |start: usize, lines: usize| {
         core::fmt::from_fn(move |f| match lines {
             // An empty range names the line before it.
@@ -154,8 +155,14 @@ pub fn write_hunk<T: Unit>(out: &mut Vec<T>, hunk: &PatchHunk<Line<'_, T>>) {
         range(hunk.new_start, hunk.new_lines),
     );
     extend_ascii(out, header.as_bytes());
-    for line in &hunk.lines {
-        line.write(out);
+    for line in hunk.lines {
+        match line {
+            Line::Text(operation, range) => {
+                out.push(T::from_u8(operation));
+                write_text(out, operation, range);
+            }
+            Line::NoNewline => extend_ascii(out, NO_NEWLINE),
+        }
         out.push(T::from_u8(b'\n'));
     }
 }

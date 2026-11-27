@@ -180,9 +180,6 @@ pub mod package_manager {
     #[allow(non_snake_case)]
     pub mod Options {
         pub use crate::package_manager_real::package_manager_options::*;
-        // `open_global_dir` lives in PackageManagerOptions.rs; re-export so
-        // `Options::open_global_dir` resolves.
-        pub use crate::package_manager_real::package_manager_options::open_global_dir;
     }
 
     /// Re-export the file-backed workspace package.json cache.

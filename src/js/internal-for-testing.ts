@@ -1220,6 +1220,7 @@ export const readTrimTable = (path: string): import("../../scripts/build/trim/ta
   return table;
 };
 
+// An input of code generation: the build writes the rows of $written, $writer and $warning in aot_builtin_syntax.rs from this function (#48355).
 /** What members of prototypes, of classes and of literals answer under names that only the modules of the runtime can write: `$isOpen`, `$exchange` and `$isPrepared` are read and written by these modules alone, `$written`, `$writer` and `$warning` by native code too. One line a question. */
 export function membersUnderNamesOfTheRuntime(tag: string): string[] {
   const lines: string[] = [];

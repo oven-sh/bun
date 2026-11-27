@@ -39,14 +39,6 @@ typedef struct EncodedSlice {
     size_t len;
 } EncodedSlice;
 
-#ifndef __cplusplus
-typedef uint8_t BunStringTag;
-typedef union BunStringImpl {
-    EncodedSlice encoded;
-    void* wtf;
-} BunStringImpl;
-
-#else
 namespace WTF {
 class StringImpl;
 class String;
@@ -83,7 +75,6 @@ enum class UWSResponseKind : int32_t {
     H2 = 2,
     H3 = 3,
 };
-#endif
 
 typedef struct BunString {
     BunStringTag tag;

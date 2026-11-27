@@ -13,13 +13,6 @@ unsafe extern "C" {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InvalidDate;
 
-impl core::fmt::Display for InvalidDate {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("InvalidDate")
-    }
-}
-impl core::error::Error for InvalidDate {}
-
 /// JS `Date.parse(buf)` with no VM, except that a date-time with no time zone reads as UTC.
 pub fn parse_date(buf: &[u8]) -> Result<f64, InvalidDate> {
     if buf.is_empty() {

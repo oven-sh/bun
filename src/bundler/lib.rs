@@ -267,8 +267,6 @@ pub use bundle_v2::BundleV2;
 /// See `chunk` module.
 pub use chunk::Chunk;
 pub use defines::{Define, DefineDataExt, DefineExt};
-/// See `linker` module.
-pub use linker::Linker;
 /// See `linker_context_mod` module.
 pub(crate) use linker_context_mod::LinkerContext;
 /// See `linker_graph` module.
@@ -276,8 +274,6 @@ pub use linker_graph::LinkerGraph;
 /// `EntryPoint::Kind` is an inherent associated type on the struct (not a
 /// sibling module — that would collide with this re-export).
 pub use linker_graph::entry_point::EntryPoint;
-/// See `options_impl`.
-pub use options_impl::BundleOptions;
 pub use output_file::OutputFile;
 /// See `parse_task` module.
 pub use parse_task::ParseTask;

@@ -144,9 +144,6 @@ const fn default_help(category: ErrorCategory) -> &'static str {
         ErrorCategory::Todo | ErrorCategory::UnsupportedSyntax | ErrorCategory::Syntax => {
             "Rewrite the highlighted code using syntax supported by React Compiler"
         }
-        ErrorCategory::Suppression => {
-            "Remove the suppression and address the reported React rule violation"
-        }
         _ => "Rewrite the highlighted code to follow the Rules of React",
     }
 }
@@ -229,10 +226,10 @@ fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Rendered {
         ErrorCategory::Todo => todo(file, finding, &mut out),
         ErrorCategory::Syntax => syntax(file, finding, &mut out),
         ErrorCategory::UnsupportedSyntax => unsupported_syntax(finding, &mut out),
-        ErrorCategory::Suppression => suppression(finding, &mut out),
         ErrorCategory::IncompatibleLibrary => incompatible_library(file, &mut out),
         ErrorCategory::Config
         | ErrorCategory::Gating
+        | ErrorCategory::Suppression
         | ErrorCategory::EffectDependencies
         | ErrorCategory::FBT => {}
     }
@@ -1269,16 +1266,4 @@ fn unsupported_syntax(finding: &Finding, out: &mut Rendered) {
         }
         _ => {}
     }
-}
-
-/// `suppression`. The compiler's text becomes the note.
-fn suppression(finding: &Finding, out: &mut Rendered) {
-    out.say(
-        "React rule suppression prevents optimization",
-        default_help(ErrorCategory::Suppression),
-    );
-    out.note = Cow::Owned(match &finding.description {
-        Some(description) => format!("{}. {description}", finding.reason),
-        None => finding.reason.clone(),
-    });
 }

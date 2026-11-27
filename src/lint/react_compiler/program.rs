@@ -15,10 +15,7 @@
 
 use crate::compile::{Compiler, Flavor};
 use crate::finding::Finding;
-use crate::suppression::{
-    ProgramSuppressions, find_program_suppressions, remove_flow_suppressed,
-    suppressions_to_diagnostics,
-};
+use crate::suppression::remove_flow_suppressed;
 use bun_core::strings;
 use bun_lint::ast::{
     Call, Chain, Class, Expr, ExprKind, ExprTag, File, Flags, FnBody, FnKind, Func, Ident, Jsx,
@@ -30,14 +27,6 @@ use bun_react_compiler::Categories;
 use bun_react_compiler::diagnostics::ErrorCategory;
 use bun_react_compiler::environment::is_hook_name;
 use bun_react_compiler::hir::ReactFunctionType;
-
-/// oxlint's `eslint_suppression_rules`: the compiler's defaults, plus oxlint's names for the same rules.
-const ESLINT_SUPPRESSION_RULES: [&str; 4] = [
-    "react-hooks/exhaustive-deps",
-    "react-hooks/rules-of-hooks",
-    "react/exhaustive-deps",
-    "react/rules-of-hooks",
-];
 
 /// Directives that opt a function into memoization
 const OPT_IN_DIRECTIVES: [&str; 2] = ["use forget", "use memo"];
@@ -629,7 +618,6 @@ fn handle_error(
 struct ProgramContext<'a> {
     flavor: Flavor,
     compiler: Compiler<'a>,
-    suppressions: ProgramSuppressions<'a>,
     diagnostics: Vec<Finding>,
 }
 
@@ -638,15 +626,6 @@ fn try_compile_function<'a>(
     source: &CompileSource<'a>,
     context: &mut ProgramContext<'a>,
 ) -> Result<(), Vec<Finding>> {
-    // Check for suppressions that affect this function before entering the pipeline.
-    let span = source.fn_node.estree_span();
-    let affecting = context
-        .suppressions
-        .filter_suppressions_that_affect_function(span.start, span.end);
-    if !affecting.is_empty() {
-        return Err(suppressions_to_diagnostics(&affecting));
-    }
-
     context
         .compiler
         .compile_fn(source.fn_node, source.fn_type, &mut context.diagnostics)
@@ -1305,12 +1284,6 @@ pub(crate) fn compile_program<'a>(
     let mut context = ProgramContext {
         flavor,
         compiler: Compiler::new(file, flavor, wanted),
-        // The plugin validates hooks and memoization dependencies itself, and in that mode the compiler doesn't look
-        // for suppression comments.
-        suppressions: match flavor {
-            Flavor::Oxlint => find_program_suppressions(file, &ESLINT_SUPPRESSION_RULES),
-            Flavor::Eslint => ProgramSuppressions::default(),
-        },
         diagnostics: Vec::new(),
     };
     for source in &queue {

@@ -19,16 +19,17 @@ use bun_ast::{
     OptionalChain, Range, Ref, S, Stmt as JsStmt, StoreSlice, StoreStr, Symbol as JsSymbol,
     SymbolKind, flags,
 };
-use bun_lint::ast::walk::{Visitor, walk_node};
+use bun_lint::ast::walk::{Visitor, walk, walk_node};
 use bun_lint::ast::{
     BinOp, Call, Chain, Class, Expr, ExprKind, ExprTag, File, Flags, FnBody, FnKind, Func, Ident,
     Jsx, Key, KeyKind, List, Member, MemberKind, Name, Node, Param, Pat, PatKind, Prop, PropKind,
-    Stmt, StmtKind, Template, UnOp, VarDecl, VarKind,
+    Stmt, StmtKind, Template, TypeKind, UnOp, VarDecl, VarKind,
 };
-use bun_lint::semantic::{Declaration, Reference, Symbol};
+use bun_lint::semantic::{Declaration, Reference, Symbol, hashbrown_table_order};
 use bun_lint::span::Span;
 use bun_react_compiler::hir::VariableBinding;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxBuildHasher, FxHashMap};
+use std::hash::BuildHasher;
 
 /// Why a function couldn't be converted.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -233,6 +234,10 @@ pub(crate) struct Converter<'a, 'x> {
     /// parameter, a `with` statement.
     is_unread: bool,
     lone_surrogate_keys: Vec<Span>,
+    /// The names of the plain `catch` parameters whose blocks the code being converted is in, within its function.
+    catch_names: Vec<Name<'a>>,
+    /// What [`Self::parameter_of_var`] found, by function and name.
+    parameters_of_vars: FxHashMap<(Func<'a>, Name<'a>), Option<Symbol<'a>>>,
     /// The members of the chains being converted, outermost first. A chain is converted in a loop, so its length is
     /// not limited by the stack.
     links: Vec<Link<'a>>,
@@ -276,6 +281,8 @@ pub(crate) fn convert<'a>(
         is_target: false,
         is_unread: false,
         lone_surrogate_keys: Vec::new(),
+        catch_names: Vec::new(),
+        parameters_of_vars: FxHashMap::default(),
         links: Vec::new(),
         stack,
     };
@@ -641,11 +648,13 @@ impl<'a> Converter<'a, '_> {
         self.inlined = None;
         let is_after_inlined_call = std::mem::take(&mut self.is_after_inlined_call);
         let try_depth = std::mem::take(&mut self.try_depth);
+        let catch_names = std::mem::take(&mut self.catch_names);
         let (args, has_rest, first) = self.args(func)?;
         let (body, is_expression) = self.body(func, loc, first)?;
         self.body = outer;
         self.is_after_inlined_call = is_after_inlined_call;
         self.try_depth = try_depth;
+        self.catch_names = catch_names;
         Ok((args, has_rest, body, is_expression))
     }
 
@@ -814,7 +823,10 @@ impl<'a> Converter<'a, '_> {
                         Some(symbol) if this.is_global_to_oxc(symbol) => {
                             this.new_symbol(name.bytes(), SymbolKind::Other, false)
                         }
-                        symbol => this.declared(symbol, name),
+                        symbol => match this.redeclared_parameter(pat, name) {
+                            Some(parameter) => this.ref_of_symbol(parameter),
+                            None => this.declared(symbol, name),
+                        },
                     };
                     Binding::alloc(this.arena, B::Identifier { r#ref }, loc)
                 }
@@ -1807,12 +1819,19 @@ impl<'a> Converter<'a, '_> {
         let (Some(symbol), PatKind::Ident(name)) = (pat.symbol(), pat.kind()) else {
             return binding;
         };
-        let captures = captures_of(symbol, stmt, redeclared_from(handler, name));
+        let redeclared_from = redeclared_from(handler, name);
+        let captures = captures_of(symbol, stmt, redeclared_from);
+        // The `var` then has the parameter's own binding, and Bun's lowering declares nothing early after it either.
+        let is_redeclared = redeclared_from != u32::MAX
+            && !captures.has_some_in_class
+            && (Node::Stmt(stmt).enclosing_function())
+                .is_some_and(|function| self.parameter_of_var(function, name) == Some(symbol));
+        let is_captured = captures.first.is_some() || (is_redeclared && captures.has_later);
         match captures.first {
             // Both compilers fail on a parameter that a nested function refers to. If something assigns to it, oxc's
-            // reports the parameter, and so does Bun's if the block starts by reading it. If not, oxc's reports the
-            // first such reference, and upstream's the parameter.
-            Some(_) if is_reassigned(symbol) => {
+            // reports the parameter, or the `var` that declares it again, and so does Bun's if the block starts by
+            // reading it. If not, oxc's reports the first such reference, and upstream's the parameter.
+            _ if is_captured && is_reassigned(symbol) => {
                 let loc = self.loc(pat.span());
                 let value = JsExpr::init_identifier(self.ref_of_symbol(symbol), loc);
                 let read = S::SExpr {
@@ -1822,13 +1841,49 @@ impl<'a> Converter<'a, '_> {
                 first.push(JsStmt::alloc(read, loc));
             }
             Some(captured) => binding.loc = self.loc(captured),
+            None if is_redeclared => {}
             // Bun's compiler would take those references for the parameter's.
-            None if captures.has_others => {
+            None if captures.has_later || captures.has_some_in_class => {
                 binding = self.destructure_in_body(binding, SymbolKind::CatchIdentifier, first);
             }
             None => {}
         }
         binding
+    }
+
+    /// The `catch` parameter that `pat` declares for oxc's lowering in place of a variable of its own. `pat` binds
+    /// `name`.
+    fn redeclared_parameter(&mut self, pat: Pat<'a>, name: Name<'a>) -> Option<Symbol<'a>> {
+        if !self.catch_names.contains(&name) {
+            return None;
+        }
+        let function = Node::VarDecl(var_of(pat)?).enclosing_function()?;
+        self.parameter_of_var(function, name)
+    }
+
+    /// The `catch` parameter in `function` that a `var` named `name` declares for oxc's lowering, if the `var` is in
+    /// the block of a `catch` with a plain parameter of that name. oxc's semantic has no symbol of its own for such a
+    /// `var`. So the lowering looks the name up in the scopes of `function`, nested ones too, and takes the first
+    /// that binds it, in the order of a hash table of the scopes' numbers. `None` if that one isn't of a `catch` of
+    /// `function` itself: the `var` then declares a variable that nothing in the block refers to.
+    fn parameter_of_var(&mut self, function: Func<'a>, name: Name<'a>) -> Option<Symbol<'a>> {
+        if let Some(&known) = self.parameters_of_vars.get(&(function, name)) {
+            return known;
+        }
+        let mut scopes = ScopesOfOxc {
+            function,
+            name,
+            next: 1,
+            depth: 0,
+            open: Vec::new(),
+            first: None,
+            last: None,
+            bindings: Vec::new(),
+        };
+        walk(self.file, &mut scopes);
+        let parameter = scopes.first_binding();
+        self.parameters_of_vars.insert((function, name), parameter);
+        parameter
     }
 
     fn label(&mut self, stmt: Stmt<'a>) -> Option<LocRef> {
@@ -2109,14 +2164,23 @@ impl<'a> Converter<'a, '_> {
                             });
                         }
                         self.block_ends();
+                        let body_loc = self.loc(handler.span());
+                        let outer_names = self.catch_names.len();
+                        if self.flavor == Flavor::Oxlint
+                            && let Some(PatKind::Ident(name)) = param.map(|it| it.pat().kind())
+                        {
+                            self.catch_names.push(name);
+                        }
+                        let body = match handler.as_block() {
+                            Some(statements) => self.stmts_after(first, statements),
+                            None => Ok(leak(first)),
+                        };
+                        self.catch_names.truncate(outer_names);
                         Some(Catch {
                             loc,
                             binding,
-                            body_loc: self.loc(handler.span()),
-                            body: match handler.as_block() {
-                                Some(statements) => self.stmts_after(first, statements)?,
-                                None => leak(first),
-                            },
+                            body_loc,
+                            body: body?,
                         })
                     }
                     None => None,
@@ -2207,8 +2271,10 @@ fn is_assigned(pat: Pat<'_>) -> bool {
 struct Captures {
     /// The first that oxc's compiler takes for a reference to the parameter.
     first: Option<Span>,
-    /// True if there are some that it doesn't.
-    has_others: bool,
+    /// True if there are some after a `var` of the block has declared the parameter again.
+    has_later: bool,
+    /// True if there are some in a class, which oxc's compiler doesn't look into.
+    has_some_in_class: bool,
 }
 
 /// `redeclared_from`: where in the `catch` block oxc's lowering starts to take the parameter for declared.
@@ -2216,7 +2282,8 @@ fn captures_of<'a>(symbol: Symbol<'a>, stmt: Stmt<'a>, redeclared_from: u32) -> 
     let enclosing_fn_span = Node::Stmt(stmt).enclosing_function().map(Func::span);
     let mut captures = Captures {
         first: None,
-        has_others: false,
+        has_later: false,
+        has_some_in_class: false,
     };
     for reference in symbol.references() {
         let node = reference.node();
@@ -2224,11 +2291,12 @@ fn captures_of<'a>(symbol: Symbol<'a>, stmt: Stmt<'a>, redeclared_from: u32) -> 
             continue;
         }
         let span = reference.span();
-        // oxc's compiler doesn't look into a class.
         let is_in_class =
             (node.enclosing_class()).is_some_and(|class| stmt.span().contains(class.span()));
-        if is_in_class || span.start >= redeclared_from {
-            captures.has_others = true;
+        if is_in_class {
+            captures.has_some_in_class = true;
+        } else if span.start >= redeclared_from {
+            captures.has_later = true;
         } else {
             captures.first = Some(captures.first.map_or(span, |first| first.min(span)));
         }
@@ -2236,9 +2304,9 @@ fn captures_of<'a>(symbol: Symbol<'a>, stmt: Stmt<'a>, redeclared_from: u32) -> 
     captures
 }
 
-/// Where the first `var` that's a statement of `block` and declares `name` ends, or `u32::MAX`. oxc's semantic gives
-/// such a `var` the symbol of the parameter of that name, and its lowering hoists no binding for a function that comes
-/// after the statement that declares it.
+/// Where the first `var` that's a statement of `block` and declares `name` ends, or `u32::MAX`. For oxc's semantic
+/// the name in such a `var` is the parameter of that name, and its lowering hoists no binding for a function that
+/// comes after the statement that declares it.
 fn redeclared_from<'a>(block: Stmt<'a>, name: Name<'a>) -> u32 {
     let declares_name = |decl: VarDecl<'a>| {
         let mut is_declared = false;
@@ -2255,6 +2323,250 @@ fn redeclared_from<'a>(block: Stmt<'a>, name: Name<'a>) -> u32 {
         }
     }
     u32::MAX
+}
+
+/// The `var` declaration whose pattern `pat` is in.
+fn var_of<'a>(pat: Pat<'a>) -> Option<VarDecl<'a>> {
+    let mut node = pat.parent();
+    loop {
+        node = match node {
+            Node::VarDecl(declaration) => {
+                let is_var = matches!(declaration.var_kind(), VarKind::Var)
+                    && !is_catch_parameter(declaration);
+                return is_var.then_some(declaration);
+            }
+            Node::Pat(_) | Node::PatProp(_) | Node::PatElem(_) => node.parent(),
+            _ => return None,
+        };
+    }
+}
+
+fn is_catch_parameter(declaration: VarDecl<'_>) -> bool {
+    matches!(declaration.parent(), Node::Stmt(it) if matches!(it.kind(), StmtKind::Try { .. }))
+}
+
+/// A scope of oxc's semantic that the walk of [`ScopesOfOxc`] is in.
+struct OpenScope {
+    /// How deep in the tree the node that it belongs to is.
+    depth: u32,
+    /// Where in the source oxc's semantic makes it: after a class's decorators, a `switch`'s discriminant, a `with`'s
+    /// object and a conditional type's checked type, which are in the scope around it.
+    from: u32,
+    /// Set once the walk has come that far.
+    number: Option<u32>,
+    is_function: bool,
+    /// True for the scope of a class expression that has the name.
+    binds_name: bool,
+}
+
+/// Numbers the scopes of a file the way oxc's semantic does, in the order in which it makes them, up to the last one
+/// of `function`. Finds the scopes of `function` that bind `name`.
+struct ScopesOfOxc<'a> {
+    function: Func<'a>,
+    name: Name<'a>,
+    /// The number of the next scope. The file's own is 0.
+    next: u32,
+    /// How deep in the tree the walk is.
+    depth: u32,
+    open: Vec<OpenScope>,
+    /// The number of the scope of `function`, which is the first of its scopes.
+    first: Option<u32>,
+    /// The number of the last scope in `function`.
+    last: Option<u32>,
+    /// Each scope of `function` that binds `name`, with the symbol if that's a plain parameter of a `catch` of
+    /// `function` itself.
+    bindings: Vec<(u32, Option<Symbol<'a>>)>,
+}
+
+impl<'a> ScopesOfOxc<'a> {
+    fn is_in_function(&self) -> bool {
+        self.first.is_some() && self.last.is_none()
+    }
+
+    fn opens(&mut self, from: u32, is_function: bool, binds_name: bool) {
+        self.open.push(OpenScope {
+            depth: self.depth,
+            from,
+            number: None,
+            is_function,
+            binds_name,
+        });
+    }
+
+    /// Numbers the open scopes that oxc's semantic makes up to `position`.
+    fn number_until(&mut self, position: u32) {
+        let is_in_function = self.is_in_function();
+        for scope in &mut self.open {
+            if scope.number.is_none() && scope.from <= position {
+                scope.number = Some(self.next);
+                if scope.binds_name && is_in_function {
+                    self.bindings.push((self.next, None));
+                }
+                self.next += 1;
+            }
+        }
+    }
+
+    /// The number of the innermost scope, or of the innermost one of a function.
+    fn innermost(&self, of_function: bool) -> Option<u32> {
+        (self.open.iter().rev())
+            .filter(|it| it.is_function || !of_function)
+            .find_map(|it| it.number)
+    }
+
+    fn binds(&mut self, scope: Option<u32>, symbol: Option<Symbol<'a>>) {
+        if let Some(scope) = scope
+            && self.is_in_function()
+            && self.first.is_some_and(|first| first <= scope)
+        {
+            self.bindings.push((scope, symbol));
+        }
+    }
+
+    fn is_named(&self, pat: Pat<'a>) -> bool {
+        let mut is_named = false;
+        pat.for_each_binding(&mut |it| is_named |= it.as_ident() == Some(self.name));
+        is_named
+    }
+
+    /// The parameter of a `catch` of the function, if that's what the first scope that binds the name binds, in the
+    /// order of oxc's `FxHashSet` of the numbers of the function's scopes.
+    fn first_binding(&self) -> Option<Symbol<'a>> {
+        let (first, last) = (self.first?, self.last?);
+        let hashes: Vec<u32> = (first..=last)
+            .map(|number| FxBuildHasher.hash_one(number) as u32)
+            .collect();
+        let symbol_of = |at: &u32| {
+            let number = first.checked_add(*at)?;
+            (self.bindings.iter()).find_map(|it| (it.0 == number).then_some(it.1))
+        };
+        (hashbrown_table_order(&hashes, 0).iter())
+            .find_map(symbol_of)
+            .flatten()
+    }
+}
+
+impl<'a> Visitor<'a> for ScopesOfOxc<'a> {
+    fn enter(&mut self, node: Node<'a>) {
+        self.depth += 1;
+        if self.last.is_some() {
+            return;
+        }
+        let start = node.span().start;
+        self.number_until(start);
+        match node {
+            Node::Func(func) if func.kind() != FnKind::IndexSignature => {
+                let is_named = func.name().is_some_and(|it| it.name() == self.name);
+                if is_named && func.kind() == FnKind::Decl {
+                    let around = self.innermost(false);
+                    self.binds(around, None);
+                }
+                self.opens(start, true, false);
+                self.number_until(start);
+                let own = self.innermost(true);
+                if func == self.function {
+                    self.first = own;
+                }
+                if is_named && func.kind() == FnKind::Expr {
+                    self.binds(own, None);
+                }
+            }
+            Node::Class(class) => {
+                let is_named = class.name().is_some_and(|it| it.name() == self.name);
+                let is_declaration = matches!(class.owner(), Node::Stmt(_));
+                if is_named && is_declaration {
+                    let around = self.innermost(false);
+                    self.binds(around, None);
+                }
+                self.opens(
+                    class.keyword_span().start,
+                    false,
+                    is_named && !is_declaration,
+                );
+                self.number_until(start);
+            }
+            Node::Stmt(stmt) => {
+                match stmt.kind() {
+                    StmtKind::Block(_)
+                    | StmtKind::For { .. }
+                    | StmtKind::ForIn { .. }
+                    | StmtKind::ForOf { .. }
+                    | StmtKind::Interface(_)
+                    | StmtKind::TypeAlias(_)
+                    | StmtKind::Enum(_) => self.opens(start, false, false),
+                    // One for each name of `namespace A.B`.
+                    StmtKind::Module(module) => {
+                        let mut part = Some(module);
+                        while let Some(it) = part {
+                            self.opens(start, false, false);
+                            part = it.nested();
+                        }
+                    }
+                    StmtKind::Switch { expr, .. } => self.opens(expr.span().end, false, false),
+                    StmtKind::With { object, .. } => self.opens(object.span().end, false, false),
+                    // The `catch` clause. Its block has a scope of its own.
+                    StmtKind::Try {
+                        handler: Some(handler),
+                        ..
+                    } => {
+                        let clause = stmt.catch_clause_span().unwrap_or_else(|| handler.span());
+                        self.opens(clause.start, false, false);
+                    }
+                    _ => {}
+                }
+                self.number_until(start);
+            }
+            Node::Type(ty) => {
+                match ty.kind() {
+                    TypeKind::Mapped(_) => self.opens(start, false, false),
+                    TypeKind::Cond { check, .. } => self.opens(check.span().end, false, false),
+                    _ => {}
+                }
+                self.number_until(start);
+            }
+            Node::VarDecl(declaration) if self.is_named(declaration.pat()) => {
+                let pat = declaration.pat();
+                let (scope, symbol) = if is_catch_parameter(declaration) {
+                    let is_of_function = self.innermost(true) == self.first;
+                    let is_plain = pat.as_ident().is_some() && is_of_function;
+                    (self.innermost(false), pat.symbol().filter(|_| is_plain))
+                } else {
+                    let is_var = matches!(declaration.var_kind(), VarKind::Var);
+                    (self.innermost(is_var), None)
+                };
+                self.binds(scope, symbol);
+            }
+            Node::Param(param) if self.is_named(param.pat()) => {
+                // A parameter of a function type or of a signature is bound too.
+                let is_bound = (param.func()).is_some_and(|it| it.kind() != FnKind::IndexSignature);
+                if is_bound {
+                    let scope = self.innermost(true);
+                    self.binds(scope, None);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn exit(&mut self, _: Node<'a>) {
+        while self.open.last().is_some_and(|it| it.depth == self.depth) {
+            let Some(scope) = self.open.pop() else {
+                break;
+            };
+            // Nothing came after where oxc's semantic makes it.
+            let number = scope.number.unwrap_or(self.next);
+            if scope.number.is_none() {
+                if scope.binds_name && self.is_in_function() {
+                    self.bindings.push((number, None));
+                }
+                self.next += 1;
+            }
+            if self.first == Some(number) && self.last.is_none() {
+                self.last = Some(self.next - 1);
+            }
+        }
+        self.depth = self.depth.saturating_sub(1);
+    }
 }
 
 /// True if an assignment or an update writes to the variable. oxc's compiler doesn't count a `for-in` or `for-of` that

@@ -318,8 +318,41 @@ fn catch_param_referenced_in_nested_fn(builder: &HirBuilder, target: Ref, body: 
         refs_in_stmt(builder, s, false, &mut |r, _, in_function| {
             found |= in_function && builder.resolve_ref(r) == target;
         });
+        // Not in upstream (oxc): a statement of the block that declares the parameter again, as a `var` of its name
+        // does where oxc's lowering takes the two for one binding, ends what can declare it early.
+        if found || declares(builder, s, target) {
+            break;
+        }
     }
     found
+}
+
+/// True if `stmt` is a declaration with `target` in its pattern.
+fn declares(builder: &HirBuilder, stmt: &Stmt, target: Ref) -> bool {
+    let Data::SLocal(local) = &stmt.data else {
+        return false;
+    };
+    let mut found = false;
+    for d in local.decls.iter() {
+        collect_binding_refs(builder.environment(), &d.binding, &mut |r, _| {
+            found |= builder.resolve_ref(r) == target;
+        });
+    }
+    found
+}
+
+/// Not in upstream (oxc): true if `binding` is that of a `var` and is the parameter of a `catch`. The `var` is in the
+/// block of the `catch` and has the parameter's name. oxc's semantic has no symbol of its own for such a declaration,
+/// so its lowering never takes what it declares for a context variable.
+fn is_var_of_catch_parameter(builder: &HirBuilder, kind: s::Kind, binding: &Binding) -> bool {
+    let (s::Kind::KVar, b::B::BIdentifier(id)) = (kind, binding.data) else {
+        return false;
+    };
+    let declared = builder.resolve_ref(id.r#ref);
+    declared.is_symbol()
+        && (builder.host().symbols())
+            .get(declared.inner_index() as usize)
+            .is_some_and(|it| matches!(it.kind, ast::SymbolKind::CatchIdentifier))
 }
 
 /// A binding that is declared before the statement at `before`, which refers to it, rather than where its
@@ -884,8 +917,32 @@ fn lower_statement(
             };
             for declarator in var_decl.decls.iter() {
                 let stmt_loc = convert_loc(stmt.loc);
+                let redeclares_parameter =
+                    is_var_of_catch_parameter(builder, var_decl.kind, &declarator.binding);
                 if let Some(init) = &declarator.value {
                     let value = lower_expression_to_temporary(builder, init)?;
+                    if let b::B::BIdentifier(id) = declarator.binding.data
+                        && redeclares_parameter
+                        && builder.is_context_identifier(id.r#ref)
+                    {
+                        let id_loc = convert_loc(declarator.binding.loc);
+                        if let Some(IdentifierForAssignment::Place(place)) =
+                            lower_identifier_for_assignment(
+                                builder, stmt_loc, id_loc, kind, id.r#ref,
+                            )?
+                        {
+                            lower_value_to_temporary(
+                                builder,
+                                InstructionValue::StoreLocal {
+                                    lvalue: LValue { place, kind },
+                                    value,
+                                    type_annotation: None,
+                                    loc: stmt_loc,
+                                },
+                            )?;
+                        }
+                        continue;
+                    }
                     let assign_style = match declarator.binding.data {
                         b::B::BObject(_) | b::B::BArray(_) => AssignmentStyle::Destructure,
                         _ => AssignmentStyle::Assignment,
@@ -913,7 +970,7 @@ fn lower_statement(
                                 reactive: false,
                                 loc: id_loc,
                             };
-                            if builder.is_context_identifier(id.r#ref) {
+                            if builder.is_context_identifier(id.r#ref) && !redeclares_parameter {
                                 if kind == InstructionKind::Const {
                                     builder.record_error(CompilerErrorDetail {
                                         reason: "Expect `const` declaration not to be reassigned"

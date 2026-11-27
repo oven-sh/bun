@@ -412,7 +412,7 @@ impl Parser<'_> {
                         while sp > text_start && content[sp - 1] == b' ' {
                             sp -= 1;
                         }
-                        // Alt text stays flat: no renderer writes a line break in it.
+                        // Not in alt text: React would drop a `br` there and join the words.
                         let is_forced =
                             self.flags.hard_soft_breaks && self.image_nesting_level == 0;
                         if emit_end - sp >= 2 || is_forced {

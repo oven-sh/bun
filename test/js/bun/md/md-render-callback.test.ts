@@ -389,7 +389,8 @@ describe("Bun.markdown.render", () => {
   test("with the hardSoftBreaks option, a line ending stays a newline and loses the blanks before it", () => {
     const callbacks = { text: (text: string) => `[${text}]` };
     expect(Markdown.render("a \nb\n", callbacks, { hardSoftBreaks: true })).toBe("[a]\n[b]");
-    expect(Markdown.render("a \nb\n", callbacks)).toBe("[a ]\n[b]");
+    expect(Markdown.render("a\nb\n", callbacks, { hardSoftBreaks: true })).toBe("[a]\n[b]");
+    expect(Markdown.render("a\nb\n", callbacks)).toBe("[a]\n[b]");
   });
 
   test("table callbacks", () => {

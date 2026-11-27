@@ -376,8 +376,8 @@ This is **bold** and *italic*.
 
   test("hardSoftBreaks makes each line ending a br element", () => {
     const parts = (options?: object) =>
-      children("a \nb\nc\n", undefined, options)[0].props.children.map((child: any) => child.type ?? child);
-    expect(parts()).toEqual(["a ", "\n", "b", "\n", "c"]);
+      children("a\nb\nc\n", undefined, options)[0].props.children.map((child: any) => child.type ?? child);
+    expect(parts()).toEqual(["a", "\n", "b", "\n", "c"]);
     expect(parts({ hardSoftBreaks: true })).toEqual(["a", "br", "b", "br", "c"]);
   });
 

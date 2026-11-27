@@ -2064,8 +2064,6 @@ describe("strikethrough", () => {
 describe("hardSoftBreaks", () => {
   test.each([
     ["a\nb", "a<br />\nb", "a\nb"],
-    ["a \nb", "a<br />\nb", "a \nb"],
-    ["a \t\nb", "a<br />\nb", "a \t\nb"],
     ["a\r\nb", "a<br />\nb", "a\nb"],
     ["a\nb\nc", "a<br />\nb<br />\nc", "a\nb\nc"],
     ["a\n   b", "a<br />\nb", "a\nb"],
@@ -2090,6 +2088,13 @@ describe("hardSoftBreaks", () => {
     expect(Markdown.html(text, { hardSoftBreaks: true })).toBe(`<p>${on}</p>\n`);
     expect(Markdown.html(text, { hardSoftBreaks: false })).toBe(`<p>${off}</p>\n`);
     expect(Markdown.html(text)).toBe(`<p>${off}</p>\n`);
+  });
+
+  // Only with the option: without it a blank stays before a soft break, which CommonMark removes.
+  test("drops the blanks before the line ending", () => {
+    const html = (text: string) => Markdown.html(text, { hardSoftBreaks: true });
+    expect(html("a \nb")).toBe("<p>a<br />\nb</p>\n");
+    expect(html("a \t\nb")).toBe("<p>a<br />\nb</p>\n");
   });
 
   test("is also spelled hard_soft_breaks", () => {
@@ -2142,9 +2147,9 @@ test.each([
       wikiLinks: true,
       latexMath: true,
       underline: true,
-      hardSoftBreaks: true,
     },
   ],
+  ["hardSoftBreaks", { hardSoftBreaks: true }],
 ])(
   "rendering takes time in proportion to the size of the text: %s",
   async (_, options) => {

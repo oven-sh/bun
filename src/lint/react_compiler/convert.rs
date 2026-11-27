@@ -394,6 +394,16 @@ impl<'a> Converter<'a, '_> {
         converted
     }
 
+    /// Converts with `then` what oxc's lowering never comes to, and drops what it would have recorded there.
+    fn unlowered<T>(&mut self, then: impl FnOnce(&mut Self) -> Converts<T>) -> Converts<T> {
+        let recorded = self.recorded.len();
+        let body = std::mem::replace(&mut self.body, Body::Nested);
+        let converted = self.unread(then);
+        self.body = body;
+        self.recorded.truncate(recorded);
+        converted
+    }
+
     // ───────────────────────────── symbols ─────────────────────────────
 
     fn new_symbol(&mut self, name: &[u8], kind: SymbolKind, is_outside: bool) -> Ref {
@@ -1893,7 +1903,12 @@ impl<'a> Converter<'a, '_> {
         })
     }
 
-    fn local(&mut self, decls: List<'a, VarDecl<'a>>, loc: Loc) -> Converts<JsStmt> {
+    fn local(
+        &mut self,
+        decls: List<'a, VarDecl<'a>>,
+        is_export: bool,
+        loc: Loc,
+    ) -> Converts<JsStmt> {
         let kind = match decls.first().map(VarDecl::var_kind) {
             Some(VarKind::Var) | None => S::Kind::KVar,
             Some(VarKind::Let) => S::Kind::KLet,
@@ -1918,10 +1933,39 @@ impl<'a> Converter<'a, '_> {
             S::Local {
                 kind,
                 decls: converted,
+                is_export,
                 ..S::Local::default()
             },
             loc,
         ))
+    }
+
+    /// What oxc's lowering has for `stmt`, a declaration after `export`: an `export` statement, of which it lowers
+    /// nothing. What the declaration binds and refers to stays, as oxc's semantic has it.
+    fn exported(&mut self, stmt: Stmt<'a>, is_ambient: bool, loc: Loc) -> Converts<JsStmt> {
+        // oxc's statement starts at the `export`, after the decorators.
+        let loc = stmt.export_span().map_or(loc, |span| self.loc(span));
+        Ok(match stmt.kind() {
+            StmtKind::Var(decls) if !is_ambient => {
+                self.unlowered(|this| this.local(decls, true, loc))?
+            }
+            StmtKind::Fn(func) if func.has_body() => {
+                let mut func = self.unlowered(|this| this.function(func))?;
+                func.flags |= flags::Function::IsExport;
+                JsStmt::alloc(S::Function { func }, loc)
+            }
+            StmtKind::Class(class) => {
+                let class = self.unlowered(|this| this.class(class))?;
+                JsStmt::alloc(
+                    S::Class {
+                        class,
+                        is_export: true,
+                    },
+                    loc,
+                )
+            }
+            _ => JsStmt::alloc(S::ExportClause::default(), loc),
+        })
     }
 
     pub(crate) fn stmt(&mut self, stmt: Stmt<'a>) -> Converts<JsStmt> {
@@ -1934,7 +1978,26 @@ impl<'a> Converter<'a, '_> {
             let value = StoreStr::new(value);
             return Ok(JsStmt::alloc(S::Directive { value }, loc));
         }
-        Ok(match stmt.kind() {
+        let kind = stmt.kind();
+        // The modifiers that oxc's lowering goes by. Only TypeScript has them in a function.
+        let modifiers = match kind {
+            StmtKind::Var(_)
+            | StmtKind::Fn(_)
+            | StmtKind::Class(_)
+            | StmtKind::Interface(_)
+            | StmtKind::TypeAlias(_)
+            | StmtKind::Enum(_)
+            | StmtKind::ImportEquals(_)
+                if self.flavor == Flavor::Oxlint && !self.file.is_javascript() =>
+            {
+                stmt.flags()
+            }
+            _ => Flags::empty(),
+        };
+        if modifiers.contains(Flags::EXPORT) {
+            return self.exported(stmt, modifiers.contains(Flags::AMBIENT), loc);
+        }
+        Ok(match kind {
             StmtKind::Empty => JsStmt::alloc(S::Empty {}, loc),
             StmtKind::Debugger => JsStmt::alloc(S::Debugger {}, loc),
             StmtKind::Expr(value) => JsStmt::alloc(
@@ -1945,14 +2008,10 @@ impl<'a> Converter<'a, '_> {
                 loc,
             ),
             // oxc's lowering drops what's declared with `declare`.
-            StmtKind::Var(_)
-                if self.flavor == Flavor::Oxlint
-                    && !self.file.is_javascript()
-                    && stmt.flags().contains(Flags::AMBIENT) =>
-            {
+            StmtKind::Var(_) if modifiers.contains(Flags::AMBIENT) => {
                 JsStmt::alloc(S::TypeScript::default(), loc)
             }
-            StmtKind::Var(decls) => self.local(decls, loc)?,
+            StmtKind::Var(decls) => self.local(decls, false, loc)?,
             StmtKind::Fn(func) if func.has_body() => JsStmt::alloc(
                 S::Function {
                     func: self.function(func)?,
@@ -2243,6 +2302,14 @@ impl<'a> Converter<'a, '_> {
                     },
                     loc,
                 )
+            }
+            // oxc's lowering skips these, as it does a type.
+            StmtKind::ImportEquals(_)
+            | StmtKind::ExportAssign(_)
+            | StmtKind::ExportAsNamespace(_)
+                if self.flavor == Flavor::Oxlint =>
+            {
+                JsStmt::alloc(S::TypeScript::default(), loc)
             }
             // None of these can appear in a function. The compiler reports that for an `ExportClause`.
             StmtKind::Import(_)

@@ -103,6 +103,11 @@ fn lower_block_statement_inner(
     // it is the binding of a `var`.
     let mut decls: SmallVec<[(usize, Ref, ast::Loc, InstructionKind, bool); 8]> = SmallVec::new();
     for (i, stmt) in body.iter().enumerate() {
+        // Not in upstream (oxc): an `export` statement declares nothing of what it binds.
+        let declared_at = match is_exported_declaration(builder, stmt) {
+            true => usize::MAX,
+            false => i,
+        };
         match &stmt.data {
             Data::SLocal(local) if !matches!(local.kind, s::Kind::KVar) => {
                 let kind = match local.kind {
@@ -112,14 +117,14 @@ fn lower_block_statement_inner(
                 };
                 for d in local.decls.iter() {
                     collect_binding_refs(builder.environment(), &d.binding, &mut |r, loc| {
-                        decls.push((i, builder.resolve_ref(r), loc, kind, false));
+                        decls.push((declared_at, builder.resolve_ref(r), loc, kind, false));
                     });
                 }
             }
             Data::SFunction(f) => {
                 if let Some(name) = f.func.name {
                     decls.push((
-                        i,
+                        declared_at,
                         builder.resolve_ref(name.ref_),
                         name.loc,
                         InstructionKind::HoistedFunction,
@@ -130,7 +135,7 @@ fn lower_block_statement_inner(
             _ => {
                 if let Some(params) = vars_of {
                     let declared_at = match &stmt.data {
-                        Data::SLocal(_) => i,
+                        Data::SLocal(_) => declared_at,
                         _ => usize::MAX,
                     };
                     vars_in_stmt(builder, stmt, &mut |r, loc, has_name_of_catch_parameter| {
@@ -221,6 +226,14 @@ fn lower_block_statement_inner(
     let mut hoist: SmallVec<[Hoist; 4]> = SmallVec::new();
     'outer: for (i, stmt) in body.iter().enumerate() {
         refs.seen.clear();
+        // The name of a function in an `export` statement is a reference to the function, as upstream has the name
+        // of one that no function declaration of the block declares.
+        if let Data::SFunction(f) = &stmt.data
+            && let Some(name) = f.func.name
+            && is_exported_declaration(builder, stmt)
+        {
+            refs.see(builder, i, name.ref_, name.loc, false, false);
+        }
         if let Data::SLocal(local) = &stmt.data {
             for d in local.decls.iter() {
                 refs_in_binding(builder, &d.binding, false, &mut |r, loc, in_function| {
@@ -374,6 +387,51 @@ fn declares(builder: &HirBuilder, stmt: &Stmt, target: Ref) -> bool {
         });
     }
     found
+}
+
+/// `EnvironmentConfig::exported_declarations_are_export_statements`: true if `stmt` is a declaration after `export`.
+fn is_exported_declaration(builder: &HirBuilder, stmt: &Stmt) -> bool {
+    builder
+        .environment()
+        .config
+        .exported_declarations_are_export_statements
+        && match &stmt.data {
+            Data::SLocal(local) => local.is_export,
+            Data::SFunction(f) => f.func.flags.contains(ast::flags::Function::IsExport),
+            Data::SClass(class) => class.is_export,
+            _ => false,
+        }
+}
+
+/// An `import` or an `export` in a function, which is of the kind `node_type`.
+fn lower_module_syntax(
+    builder: &mut HirBuilder,
+    stmt_loc: ast::Loc,
+    node_type: &'static str,
+) -> Result<(), CompilerDiagnostic> {
+    let loc = convert_loc(stmt_loc);
+    builder.record_error(CompilerErrorDetail {
+        category: ErrorCategory::Syntax,
+        reason: "JavaScript `import` and `export` statements may only appear at the top level of a module".to_string(),
+        description: None,
+        loc,
+        suggestions: None,
+    })?;
+    if !builder
+        .environment()
+        .config
+        .unsupported_statements_leave_no_instruction
+    {
+        lower_value_to_temporary(
+            builder,
+            InstructionValue::UnsupportedNode {
+                node_type: Some(node_type),
+                original_node: None,
+                loc,
+            },
+        )?;
+    }
+    Ok(())
 }
 
 /// Not in upstream (oxc): true if `binding` is that of a `var` and is the parameter of a `catch`. The `var` is in the
@@ -860,6 +918,9 @@ fn lower_statement(
         return Err(crate::lowering::nested_too_deeply());
     }
     let stmt_loc = stmt.loc;
+    if is_exported_declaration(builder, stmt) {
+        return lower_module_syntax(builder, stmt_loc, "ExportNamedDeclaration");
+    }
     match stmt.data {
         Data::SEmpty(_) => {
             // no-op
@@ -2008,28 +2069,13 @@ fn lower_statement(
         | Data::SExportFrom(_)
         | Data::SExportStar(_)
         | Data::SExportEquals(_) => {
-            let loc = convert_loc(stmt_loc);
             let node_type_name = match stmt.data {
                 Data::SImport(_) => "ImportDeclaration",
                 Data::SExportDefault(_) => "ExportDefaultDeclaration",
                 Data::SExportStar(_) => "ExportAllDeclaration",
                 _ => "ExportNamedDeclaration",
             };
-            builder.record_error(CompilerErrorDetail {
-                category: ErrorCategory::Syntax,
-                reason: "JavaScript `import` and `export` statements may only appear at the top level of a module".to_string(),
-                description: None,
-                loc,
-                suggestions: None,
-            })?;
-            lower_value_to_temporary(
-                builder,
-                InstructionValue::UnsupportedNode {
-                    node_type: Some(node_type_name),
-                    original_node: None,
-                    loc,
-                },
-            )?;
+            lower_module_syntax(builder, stmt_loc, node_type_name)?;
         }
         Data::SEnum(_) => {
             let loc = convert_loc(stmt_loc);

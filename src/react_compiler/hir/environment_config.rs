@@ -140,9 +140,17 @@ pub struct EnvironmentConfig {
     /// Code that is not reached and has a function in it is reported at the first such function. Upstream reports it at
     /// its first instruction, which can be the declaration of a later function that the first one refers to.
     pub unreachable_code_is_reported_at_its_function: bool,
-    /// A class declaration or a `with` statement is an error and leaves no instruction. Upstream lowers an
-    /// `UnsupportedNode` for it, and its temporary takes an identifier number, which the text of an invariant shows.
+    /// A class declaration, a `with` statement, or an `import` or `export` in a function is an error and leaves no
+    /// instruction. Upstream lowers an `UnsupportedNode` for it, and its temporary takes an identifier number, which
+    /// the text of an invariant shows.
     pub unsupported_statements_leave_no_instruction: bool,
+    /// A declaration after `export` in a function is an `export` statement, as `export { a }` there is: an error, and
+    /// nothing of it is lowered. What it binds is a binding of its block that no statement declares. A function is
+    /// declared early where it is exported, if nothing before refers to it, and a variable before the first statement
+    /// with a function that refers to it. What else reads it fails: "Expected value kind to be initialized". That is
+    /// oxc, whose parser takes such a declaration in TypeScript. Upstream's parser and Bun's take none, and the tree
+    /// of `bun lint` has the declaration, with the flag that it is exported.
+    pub exported_declarations_are_export_statements: bool,
     /// A tag can make something new of the same template each time. So a tagged template is a source of reactivity, and
     /// no scope that it is in is kept, unless the signature of the tag says that it is pure. To upstream it is a call.
     pub tagged_templates_are_always_called: bool,
@@ -314,6 +322,7 @@ impl Default for EnvironmentConfig {
             member_chains_have_a_limit: false,
             unreachable_code_is_reported_at_its_function: false,
             unsupported_statements_leave_no_instruction: false,
+            exported_declarations_are_export_statements: false,
             tagged_templates_are_always_called: false,
             branches_in_try_control_reactivity: false,
             throws_in_try_control_reactivity: false,

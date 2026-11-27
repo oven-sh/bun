@@ -70,13 +70,10 @@ pub struct UpdateRequestIndex(
 /// reachable. `UpdateRequest::name`/`version_buf` store raw `&'static`/
 /// `RawSlice` views because they may later be repointed at lockfile buffers.
 fn anchor_cli_bytes(b: Box<[u8]>) -> &'static [u8] {
-    static ANCHOR: bun_threading::Guarded<Vec<Box<[u8]>>> = bun_threading::Guarded::new(Vec::new());
-    let ptr: *const [u8] = &raw const *b;
-    ANCHOR.lock().push(b);
-    // SAFETY: `b`'s heap allocation is owned by `ANCHOR` for the rest of the
-    // process. `Box<[u8]>` is a fat pointer; pushing it into the Vec moves
-    // only the pointer, not the heap data.
-    unsafe { &*ptr }
+    static ANCHOR: bun_threading::Guarded<Vec<&[u8]>> = bun_threading::Guarded::new(Vec::new());
+    let bytes: &'static [u8] = Box::leak(b);
+    ANCHOR.lock().push(bytes);
+    bytes
 }
 
 impl UpdateRequest {

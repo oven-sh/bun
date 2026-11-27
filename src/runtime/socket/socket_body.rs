@@ -3325,13 +3325,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
         let group = groups.bun_connect_group::<true>(loop_);
         // SAFETY: `raw_socket` is the live `*mut us_socket_t` extracted from
-        // `InternalSocket::Connected` above; `owned_ssl_ctx` is the +1 ref
-        // taken from SecureContext/ssl_ctx_cache and never null here.
+        // `InternalSocket::Connected` above.
         let new_raw: NonNull<uws::us_socket_t> = match unsafe {
             (*raw_socket).adopt_tls(
                 group,
                 uws::SocketKind::BunSocketTls,
-                &mut *(tls.owned_ssl_ctx.get().as_ref().unwrap().as_ptr()),
+                tls.owned_ssl_ctx.get().as_ref().unwrap(),
                 sni,
                 !is_server,
                 adopt_request_cert,

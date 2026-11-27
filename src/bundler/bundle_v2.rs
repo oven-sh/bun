@@ -6644,8 +6644,7 @@ pub mod bv2_impl {
             if let Some(i) = answered {
                 if last_error.is_some() && self.dev_server.is_some() {
                     // The dev server links failed files too, and skips a file that has no parts.
-                    // SAFETY: truncating to len 0 never exposes uninitialized elements.
-                    unsafe { self.graph.ast.items_parts_mut()[idx].set_len(0) };
+                    self.graph.ast.items_parts_mut()[idx].forget_elements();
                 }
                 let made = import_records.as_slice()[i].source_index;
                 if declined && scheduled > 0 && made.is_valid() {
@@ -6797,12 +6796,12 @@ pub mod bv2_impl {
                 for (importer, range) in waited {
                     let importer_path = self.graph.input_files.items_source()[importer].path.text;
                     let importer_graph = self.graph.ast.items_target()[importer].bake_graph();
-                    // SAFETY: the log lives in the dev server, disjoint from `self.graph`.
-                    let log: &mut bun_ast::Log = unsafe {
-                        bun_ptr::detach_lifetime_mut(
-                            self.log_for_resolution_failures(importer_path, importer_graph),
-                        )
-                    };
+                    let log = Self::log_for_resolution_failures_impl(
+                        &mut self.dev_server,
+                        &mut self.transpiler,
+                        importer_path,
+                        importer_graph,
+                    );
                     log.add_range_error_fmt(
                         Some(&self.graph.input_files.items_source()[importer]),
                         range,

@@ -40,8 +40,7 @@ pub struct Bin {
     pub tag: Tag,
     pub(crate) _padding_tag: [u8; 3],
 
-    // Written to disk byte for byte. `Value::init_*` sets every byte, but a `Value { .. }` literal
-    // doesn't.
+    // Written to disk byte for byte.
     pub(crate) value: Value,
 }
 
@@ -58,24 +57,21 @@ impl Bin {
         extern_strings: &[ExternalString],
         builder: &mut B,
     ) -> u32 {
-        // SAFETY: tag determines the active union field
-        unsafe {
-            match self.tag {
-                Tag::File => builder.count(self.value.file.slice(buf)),
-                Tag::NamedFile => {
-                    builder.count(self.value.named_file[0].slice(buf));
-                    builder.count(self.value.named_file[1].slice(buf));
-                }
-                Tag::Dir => builder.count(self.value.dir.slice(buf)),
-                Tag::Map => {
-                    let list = self.value.map.get(extern_strings);
-                    for extern_string in list {
-                        builder.count(extern_string.slice(buf));
-                    }
-                    return list.len() as u32; // @truncate
-                }
-                _ => {}
+        match self.tag {
+            Tag::File => builder.count(self.file().slice(buf)),
+            Tag::NamedFile => {
+                builder.count(self.named_file()[0].slice(buf));
+                builder.count(self.named_file()[1].slice(buf));
             }
+            Tag::Dir => builder.count(self.dir().slice(buf)),
+            Tag::Map => {
+                let list = self.map().get(extern_strings);
+                for extern_string in list {
+                    builder.count(extern_string.slice(buf));
+                }
+                return list.len() as u32; // @truncate
+            }
+            _ => {}
         }
 
         0
@@ -93,45 +89,42 @@ impl Bin {
             return false;
         }
 
-        // SAFETY: tag was just checked to match the active union field
-        unsafe {
-            match l.tag {
-                Tag::None => true,
-                Tag::File => l.value.file.eql(r.value.file, l_buf, r_buf),
-                Tag::Dir => l.value.dir.eql(r.value.dir, l_buf, r_buf),
-                Tag::NamedFile => {
-                    l.value.named_file[0].eql(r.value.named_file[0], l_buf, r_buf)
-                        && l.value.named_file[1].eql(r.value.named_file[1], l_buf, r_buf)
+        match l.tag {
+            Tag::None => true,
+            Tag::File => l.file().eql(*r.file(), l_buf, r_buf),
+            Tag::Dir => l.dir().eql(*r.dir(), l_buf, r_buf),
+            Tag::NamedFile => {
+                l.named_file()[0].eql(r.named_file()[0], l_buf, r_buf)
+                    && l.named_file()[1].eql(r.named_file()[1], l_buf, r_buf)
+            }
+            Tag::Map => {
+                let l_list = l.map().get(l_extern_strings);
+                let r_list = r.map().get(r_extern_strings);
+                if l_list.len() != r_list.len() {
+                    return false;
                 }
-                Tag::Map => {
-                    let l_list = l.value.map.get(l_extern_strings);
-                    let r_list = r.value.map.get(r_extern_strings);
-                    if l_list.len() != r_list.len() {
-                        return false;
-                    }
 
-                    // assuming these maps are small without duplicate keys
-                    let mut i: usize = 0;
-                    'outer: while i < l_list.len() {
-                        let mut j: usize = 0;
-                        while j < r_list.len() {
-                            if l_list[i].hash == r_list[j].hash {
-                                if l_list[i + 1].hash != r_list[j + 1].hash {
-                                    return false;
-                                }
-
-                                i += 2;
-                                continue 'outer;
+                // assuming these maps are small without duplicate keys
+                let mut i: usize = 0;
+                'outer: while i < l_list.len() {
+                    let mut j: usize = 0;
+                    while j < r_list.len() {
+                        if l_list[i].hash == r_list[j].hash {
+                            if l_list[i + 1].hash != r_list[j + 1].hash {
+                                return false;
                             }
-                            j += 2;
-                        }
 
-                        // not found
-                        return false;
+                            i += 2;
+                            continue 'outer;
+                        }
+                        j += 2;
                     }
 
-                    true
+                    // not found
+                    return false;
                 }
+
+                true
             }
         }
     }
@@ -149,41 +142,36 @@ impl Bin {
         extern_strings_slice: &mut [ExternalString],
         builder: &mut B,
     ) -> Bin {
-        // SAFETY: tag determines the active union field
-        unsafe {
-            match self.tag {
-                Tag::None => Bin::init(),
-                Tag::File => Bin::new(
-                    Tag::File,
-                    Value::init_file(builder.append_string(self.value.file.slice(buf))),
-                ),
-                Tag::NamedFile => Bin::new(
-                    Tag::NamedFile,
-                    Value::init_named_file([
-                        builder.append_string(self.value.named_file[0].slice(buf)),
-                        builder.append_string(self.value.named_file[1].slice(buf)),
-                    ]),
-                ),
-                Tag::Dir => Bin::new(
-                    Tag::Dir,
-                    Value::init_dir(builder.append_string(self.value.dir.slice(buf))),
-                ),
-                Tag::Map => {
-                    for (i, extern_string) in
-                        self.value.map.get(prev_external_strings).iter().enumerate()
-                    {
-                        extern_strings_slice[i] =
-                            builder.append_external_string(extern_string.slice(buf));
-                    }
-
-                    Bin::new(
-                        Tag::Map,
-                        Value::init_map(ExternalStringList::new(
-                            extern_strings_slice_off,
-                            extern_strings_slice.len() as u32,
-                        )),
-                    )
+        match self.tag {
+            Tag::None => Bin::init(),
+            Tag::File => Bin::new(
+                Tag::File,
+                Value::init_file(builder.append_string(self.file().slice(buf))),
+            ),
+            Tag::NamedFile => Bin::new(
+                Tag::NamedFile,
+                Value::init_named_file([
+                    builder.append_string(self.named_file()[0].slice(buf)),
+                    builder.append_string(self.named_file()[1].slice(buf)),
+                ]),
+            ),
+            Tag::Dir => Bin::new(
+                Tag::Dir,
+                Value::init_dir(builder.append_string(self.dir().slice(buf))),
+            ),
+            Tag::Map => {
+                for (i, extern_string) in self.map().get(prev_external_strings).iter().enumerate() {
+                    extern_strings_slice[i] =
+                        builder.append_external_string(extern_string.slice(buf));
                 }
+
+                Bin::new(
+                    Tag::Map,
+                    Value::init_map(ExternalStringList::new(
+                        extern_strings_slice_off,
+                        extern_strings_slice.len() as u32,
+                    )),
+                )
             }
         }
     }
@@ -284,123 +272,104 @@ impl Bin {
         write_indent: fn(&mut W, &mut u32) -> fmt::Result,
     ) -> fmt::Result {
         debug_assert!(self.tag != Tag::None);
-        // SAFETY: tag determines the active union field
-        unsafe {
-            if STYLE == ToJsonStyle::SingleLine {
-                match self.tag {
-                    Tag::None => {}
-                    Tag::File => {
-                        write!(
-                            writer,
-                            "{}",
-                            self.value.file.fmt_json(buf, Default::default())
-                        )?;
-                    }
-                    Tag::NamedFile => {
-                        writer.write_char('{')?;
-                        write!(
-                            writer,
-                            " {}: {} ",
-                            self.value.named_file[0].fmt_json(buf, Default::default()),
-                            self.value.named_file[1].fmt_json(buf, Default::default()),
-                        )?;
-                        writer.write_char('}')?;
-                    }
-                    Tag::Dir => {
-                        write!(
-                            writer,
-                            "{}",
-                            self.value.dir.fmt_json(buf, Default::default())
-                        )?;
-                    }
-                    Tag::Map => {
-                        writer.write_char('{')?;
-                        let list = self.value.map.get(extern_strings);
-                        let mut first = true;
-                        let mut i: usize = 0;
-                        while i < list.len() {
-                            if !first {
-                                writer.write_char(',')?;
-                            }
-                            first = false;
-                            write!(
-                                writer,
-                                " {}: {}",
-                                list[i].value.fmt_json(buf, Default::default()),
-                                list[i + 1].value.fmt_json(buf, Default::default()),
-                            )?;
-                            i += 2;
-                        }
-                        writer.write_str(" }")?;
-                    }
-                }
-
-                return Ok(());
-            }
-
-            let indent = indent.unwrap();
-
+        if STYLE == ToJsonStyle::SingleLine {
             match self.tag {
                 Tag::None => {}
                 Tag::File => {
-                    write!(
-                        writer,
-                        "{}",
-                        self.value.file.fmt_json(buf, Default::default())
-                    )?;
+                    write!(writer, "{}", self.file().fmt_json(buf, Default::default()))?;
                 }
                 Tag::NamedFile => {
-                    writer.write_str("{\n")?;
-                    *indent += 1;
-                    write_indent(writer, indent)?;
-                    writeln!(
+                    writer.write_char('{')?;
+                    write!(
                         writer,
-                        "{}: {},",
-                        self.value.named_file[0].fmt_json(buf, Default::default()),
-                        self.value.named_file[1].fmt_json(buf, Default::default()),
+                        " {}: {} ",
+                        self.named_file()[0].fmt_json(buf, Default::default()),
+                        self.named_file()[1].fmt_json(buf, Default::default()),
                     )?;
-                    *indent -= 1;
-                    write_indent(writer, indent)?;
                     writer.write_char('}')?;
                 }
                 Tag::Dir => {
-                    write!(
-                        writer,
-                        "{}",
-                        self.value.dir.fmt_json(buf, Default::default())
-                    )?;
+                    write!(writer, "{}", self.dir().fmt_json(buf, Default::default()))?;
                 }
                 Tag::Map => {
                     writer.write_char('{')?;
-                    *indent += 1;
-
-                    let list = self.value.map.get(extern_strings);
-                    let mut any = false;
+                    let list = self.map().get(extern_strings);
+                    let mut first = true;
                     let mut i: usize = 0;
                     while i < list.len() {
-                        if !any {
-                            any = true;
-                            writer.write_char('\n')?;
+                        if !first {
+                            writer.write_char(',')?;
                         }
-                        write_indent(writer, indent)?;
-                        writeln!(
+                        first = false;
+                        write!(
                             writer,
-                            "{}: {},",
+                            " {}: {}",
                             list[i].value.fmt_json(buf, Default::default()),
                             list[i + 1].value.fmt_json(buf, Default::default()),
                         )?;
                         i += 2;
                     }
-                    if !any {
-                        writer.write_char('}')?;
-                        *indent -= 1;
-                        return Ok(());
-                    }
-
-                    *indent -= 1;
-                    write_indent(writer, indent)?;
-                    writer.write_char('}')?;
+                    writer.write_str(" }")?;
                 }
+            }
+
+            return Ok(());
+        }
+
+        let indent = indent.unwrap();
+
+        match self.tag {
+            Tag::None => {}
+            Tag::File => {
+                write!(writer, "{}", self.file().fmt_json(buf, Default::default()))?;
+            }
+            Tag::NamedFile => {
+                writer.write_str("{\n")?;
+                *indent += 1;
+                write_indent(writer, indent)?;
+                writeln!(
+                    writer,
+                    "{}: {},",
+                    self.named_file()[0].fmt_json(buf, Default::default()),
+                    self.named_file()[1].fmt_json(buf, Default::default()),
+                )?;
+                *indent -= 1;
+                write_indent(writer, indent)?;
+                writer.write_char('}')?;
+            }
+            Tag::Dir => {
+                write!(writer, "{}", self.dir().fmt_json(buf, Default::default()))?;
+            }
+            Tag::Map => {
+                writer.write_char('{')?;
+                *indent += 1;
+
+                let list = self.map().get(extern_strings);
+                let mut any = false;
+                let mut i: usize = 0;
+                while i < list.len() {
+                    if !any {
+                        any = true;
+                        writer.write_char('\n')?;
+                    }
+                    write_indent(writer, indent)?;
+                    writeln!(
+                        writer,
+                        "{}: {},",
+                        list[i].value.fmt_json(buf, Default::default()),
+                        list[i + 1].value.fmt_json(buf, Default::default()),
+                    )?;
+                    i += 2;
+                }
+                if !any {
+                    writer.write_char('}')?;
+                    *indent -= 1;
+                    return Ok(());
+                }
+
+                *indent -= 1;
+                write_indent(writer, indent)?;
+                writer.write_char('}')?;
             }
         }
         Ok(())
@@ -418,14 +387,28 @@ impl Bin {
         }
     }
 
-    // ── Tag-checked union accessors ────────────────────────────────────────
-    // `Value` is a `Copy` POD union; reading the wrong variant is well-defined garbage.
-    bun_core::extern_union_accessors! {
-        tag: tag as Tag, value: value;
-        File      => file: String;
-        NamedFile => named_file: [String; 2];
-        Dir       => dir: String;
-        Map       => map: ExternalStringList;
+    #[inline]
+    pub(crate) fn file(&self) -> &String {
+        debug_assert!(self.tag == Tag::File);
+        &self.value.0[0]
+    }
+
+    #[inline]
+    pub(crate) fn named_file(&self) -> &[String; 2] {
+        debug_assert!(self.tag == Tag::NamedFile);
+        &self.value.0
+    }
+
+    #[inline]
+    pub(crate) fn dir(&self) -> &String {
+        debug_assert!(self.tag == Tag::Dir);
+        &self.value.0[0]
+    }
+
+    #[inline]
+    pub(crate) fn map(&self) -> &ExternalStringList {
+        debug_assert!(self.tag == Tag::Map);
+        &bun_core::cast_slice(core::slice::from_ref(&self.value))[0]
     }
 }
 
@@ -441,72 +424,33 @@ pub enum ToJsonStyle {
 // `bin_real::StringBuilder` paths still resolve.
 pub use bun_semver::StringBuilder;
 
-#[repr(C)]
+/// By [`Tag`]: nothing, one `String`, two, or an `ExternalStringList` in place of the first.
+#[repr(C, align(4))]
 #[derive(Clone, Copy)]
-pub union Value {
-    /// no "bin", or empty "bin"
-    pub none: (),
-
-    /// "bin" is a string
-    /// ```json
-    /// "bin": "./bin/foo",
-    /// ```
-    pub(crate) file: String,
-
-    // Single-entry map
-    ///```json
-    /// "bin": {
-    ///     "babel": "./cli.js",
-    /// }
-    ///```
-    pub(crate) named_file: [String; 2],
-
-    /// "bin" is a directory
-    ///```json
-    /// "dirs": {
-    ///     "bin": "./bin",
-    /// }
-    ///```
-    pub(crate) dir: String,
-    // "bin" is a map
-    ///```json
-    /// "bin": {
-    ///     "babel": "./cli.js",
-    ///     "babel-cli": "./cli.js",
-    /// }
-    ///```
-    pub(crate) map: ExternalStringList,
-}
-bun_core::impl_zeroable!(Value);
+pub struct Value([String; 2]);
+bun_core::impl_no_uninit!(Value);
 
 impl Value {
-    /// To avoid undefined memory between union values, we must zero initialize the union first.
     #[inline]
     pub(crate) fn init_none() -> Value {
-        bun_core::ffi::zeroed()
+        Value([String::EMPTY; 2])
     }
     #[inline]
     pub(crate) fn init_file(file: String) -> Value {
-        let mut v = Self::init_none();
-        v.file = file;
-        v
+        Value([file, String::EMPTY])
     }
     #[inline]
     pub(crate) fn init_named_file(named_file: [String; 2]) -> Value {
-        let mut v = Self::init_none();
-        v.named_file = named_file;
-        v
+        Value(named_file)
     }
     #[inline]
     pub(crate) fn init_dir(dir: String) -> Value {
-        let mut v = Self::init_none();
-        v.dir = dir;
-        v
+        Value([dir, String::EMPTY])
     }
     #[inline]
     pub(crate) fn init_map(map: ExternalStringList) -> Value {
         let mut v = Self::init_none();
-        v.map = map;
+        v.0[0].bytes.copy_from_slice(bun_core::bytes_of(&map));
         v
     }
 }

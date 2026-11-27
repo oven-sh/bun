@@ -976,6 +976,8 @@ pub struct PackageVersion {
     pub(crate) publish_timestamp_ms: f64,
 }
 
+bun_core::impl_no_uninit!(PackageVersion);
+
 impl Default for PackageVersion {
     fn default() -> Self {
         Self {
@@ -1253,16 +1255,7 @@ pub mod package_manifest {
             Self::write_array(writer, &this.versions, &mut pos)?;
             Self::write_array(writer, &this.external_strings, &mut pos)?;
             Self::write_array(writer, &this.external_strings_for_versions, &mut pos)?;
-            // SAFETY: the asserts at `PackageVersion` rule out padding. `impl_no_uninit!`
-            // rejects it for `bin::Value`, a union whose arms differ in size;
-            // `Value::init_*` sets every byte.
-            let package_versions = unsafe {
-                core::slice::from_raw_parts(
-                    this.package_versions.as_ptr().cast::<u8>(),
-                    core::mem::size_of_val::<[PackageVersion]>(&this.package_versions),
-                )
-            };
-            Self::write_array_bytes::<W, PackageVersion>(writer, package_versions, &mut pos)?;
+            Self::write_array(writer, &this.package_versions, &mut pos)?;
             Self::write_array(writer, &this.extern_strings_bin_entries, &mut pos)?;
             Self::write_array(writer, &this.bundled_deps_buf, &mut pos)?;
 

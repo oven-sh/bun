@@ -577,12 +577,17 @@ declare module "bun" {
       max_lifetime?: number | undefined;
 
       /**
-       * Maximum time in seconds a query, `sql.begin()` or `sql.reserve()`
-       * waits for a connection of the pool. A caller that waits longer
-       * rejects with `ERR_POSTGRES_QUEUE_TIMEOUT` or `ERR_MYSQL_QUEUE_TIMEOUT`
-       * and its query is not sent. The pool and its connections stay as they
-       * are. The wait for a connection that is still being established counts.
-       * Does not limit how long a query runs.
+       * Maximum time in seconds a caller waits for a connection of the pool.
+       * A query, `sql.begin()`, `sql.reserve()` or `sql.connect()` that waits
+       * longer rejects with `ERR_POSTGRES_QUEUE_TIMEOUT` or
+       * `ERR_MYSQL_QUEUE_TIMEOUT`, and its query is not sent. The pool and
+       * its connections stay as they are. The wait for a connection that is
+       * still being established counts.
+       *
+       * Does not limit a caller that has a connection: a query that runs, and
+       * a query that Bun sends on a connection that already runs other
+       * queries. `sql.begin()` and `sql.reserve()` need an idle connection,
+       * so on a pool that queries keep busy they are the callers that wait.
        * @default 0 (no limit)
        */
       queueTimeout?: number | undefined;

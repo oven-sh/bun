@@ -732,6 +732,7 @@ After `.execute()`, Bun does report the failure when:
 - It cannot connect: nothing listens, the login fails or the connection times out.
 - The pool was already closed.
 - The time of `close({ timeout })`, with a timeout above 0, runs out while the query waits for a connection.
+- The query waits longer than `queueTimeout` for a connection.
 - You call `.cancel()` while the query waits for a connection.
 - It cannot build the query or read the file of `sql.file()`.
 - The adapter is SQLite and the query runs outside a transaction.
@@ -922,7 +923,7 @@ You can configure the connection manually by passing options to the `SQL` constr
 | `idleTimeout`             | `0` (off)                 | Seconds a connection can sit unused before Bun closes it                                                          |
 | `maxLifetime`             | `0` (off)                 | Seconds after which Bun replaces a connection                                                                     |
 | `connectionTimeout`       | `30`                      | Seconds to wait for a new connection                                                                              |
-| `queueTimeout`            | `0` (off)                 | Seconds a query, `begin()` or `reserve()` waits for a connection of the [pool](#timeouts)                         |
+| `queueTimeout`            | `0` (off)                 | Seconds a caller waits for a connection of the [pool](#timeouts) before it rejects                                |
 | `prepare`                 | `true`                    | PostgreSQL. Use named [prepared statements](#prepared-statements)                                                 |
 | `bigint`                  | `false`                   | Return large integers as [`BigInt`](#bigint-instead-of-strings)                                                   |
 | `connection`              |                           | PostgreSQL. Startup parameters, such as `{ application_name: "api", search_path: "app" }`                         |
@@ -1428,23 +1429,35 @@ globalThis.subscription = await sql.listen("orders", handleOrder);
 
 `idleTimeout` and `maxLifetime` never interrupt work. A running query, a `begin()` transaction and a reserved connection keep their connection. A connection past `maxLifetime` finishes what it has, takes no new queries, and then closes.
 
-By default a caller waits for a connection without a limit. When every connection is reserved, in a transaction, or busy, `queueTimeout` limits that wait for a query, `sql.begin()`, `sql.reserve()` and `sql.connect()`:
+By default a caller waits for a connection without a limit. `queueTimeout` limits every wait for a connection of the pool. It does not limit a caller that has a connection.
 
 ```ts
 const sql = new SQL({ max: 10, queueTimeout: 5 });
 
 try {
-  await sql`SELECT * FROM users`;
+  await sql.begin(async tx => {
+    await tx`UPDATE accounts SET balance = balance - 10 WHERE id = ${id}`;
+  });
 } catch (err) {
   if (err.code === "ERR_POSTGRES_QUEUE_TIMEOUT") {
-    // No connection was free for 5 seconds. Bun did not send the query.
+    // No connection was idle for 5 seconds. Bun did not start the transaction.
   }
 }
 ```
 
-- The pool and its connections stay as they are, and Bun serves the next caller as before.
-- `queueTimeout` does not limit a query that runs. Use the `statement_timeout` of PostgreSQL or the `max_execution_time` of MySQL for that.
-- The wait for a connection that Bun is still opening counts. With a `queueTimeout` below `connectionTimeout`, the first query to a server that does not answer rejects with `ERR_POSTGRES_QUEUE_TIMEOUT`.
+Which callers wait follows from how the [pool](#connection-pooling) shares its connections today:
+
+- `sql.begin()` and `sql.reserve()` need a connection of their own. They wait while every connection is reserved, in a transaction, or runs a query.
+- A query shares a connection with other queries. While all `max` connections are open and none is reserved, a query gets a connection at once, however many queries already run. It does not wait, so `queueTimeout` does not apply to it.
+- A query waits when some connections are reserved, in a `begin()` transaction or not open yet, and the other connections have their share of the queries. It also waits behind a `begin()` or `reserve()` that waits for the same connection.
+- `sql.connect()` waits only while the pool has no open connection.
+
+A pool that queries keep busy therefore rejects `begin()` and `reserve()`, and not the queries.
+
+- Bun does not send the query of a caller that times out. The pool and its connections stay as they are, and Bun serves the next caller as before.
+- `queueTimeout` does not limit a query that runs. Use `statement_timeout` on PostgreSQL, `max_execution_time` on MySQL (milliseconds, `SELECT` only) or `max_statement_time` on MariaDB (seconds) for that.
+- The wait for a connection that Bun is still opening counts. With a `queueTimeout` below `connectionTimeout`, the callers of a server that does not answer reject with `ERR_POSTGRES_QUEUE_TIMEOUT` and not with the error of the connection attempt. When an attempt has failed and no connection has opened since, that failure is the `cause` of the error.
+- Bun reports the error of a query that you only [started with `.execute()`](#unhandled-rejections) and that has no handler, like a failure to connect.
 - A caller that waits keeps the process alive until it gets a connection or its `queueTimeout` ends.
 - SQLite has no pool and ignores the option.
 
@@ -1702,7 +1715,7 @@ Some errors are not `SQLError`s. A certificate that fails verification is a plai
 | `ERR_POSTGRES_CONNECTION_REFUSED` | Connection was refused because nothing is listening at the address. Fails immediately and is not retried                                                                                                                                                                               |
 | `ERR_POSTGRES_CONNECTION_TIMEOUT` | Failed to establish connection within timeout period                                                                                                                                                                                                                                   |
 | `ERR_POSTGRES_IDLE_TIMEOUT`       | Connection closed due to inactivity. Reported to `onclose`                                                                                                                                                                                                                             |
-| `ERR_POSTGRES_QUEUE_TIMEOUT`      | A query, `begin()` or `reserve()` waited longer than `queueTimeout` for a connection of the pool. The query was not sent                                                                                                                                                               |
+| `ERR_POSTGRES_QUEUE_TIMEOUT`      | A caller waited longer than `queueTimeout` for a connection of the pool. Its query was not sent                                                                                                                                                                                        |
 | `ERR_POSTGRES_LIFETIME_TIMEOUT`   | Connection exceeded maximum lifetime. Reported to `onclose`                                                                                                                                                                                                                            |
 | `ERR_POSTGRES_TLS_NOT_AVAILABLE`  | The SSL mode requires TLS and the server does not support it                                                                                                                                                                                                                           |
 | `ERR_POSTGRES_TLS_UPGRADE_FAILED` | Failed to upgrade connection to SSL/TLS                                                                                                                                                                                                                                                |
@@ -1790,7 +1803,7 @@ MySQL and MariaDB errors are `SQL.MySQLError`s.
 | `ERR_MYSQL_CONNECTION_TIMEOUT` | Failed to establish connection within timeout period                                                   |
 | `ERR_MYSQL_IDLE_TIMEOUT`       | Connection closed due to inactivity. Reported to `onclose`                                             |
 | `ERR_MYSQL_LIFETIME_TIMEOUT`   | Connection exceeded maximum lifetime. Reported to `onclose`                                            |
-| `ERR_MYSQL_QUEUE_TIMEOUT`      | A caller waited longer than `queueTimeout` for a connection of the pool. The query was not sent        |
+| `ERR_MYSQL_QUEUE_TIMEOUT`      | A caller waited longer than `queueTimeout` for a connection of the pool. Its query was not sent        |
 
 | Authentication Errors                        | Description                                                                                          |
 | -------------------------------------------- | ---------------------------------------------------------------------------------------------------- |

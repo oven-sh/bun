@@ -1532,6 +1532,7 @@ describe.each(scripted)("$adapter, scripted server", script => {
         code: QUEUE_TIMEOUT,
         message: "Waited more than 0.01 seconds for a connection",
       });
+      expect((error as Error).cause).toBeUndefined();
       // The reservation is still the caller's, and the pool's one connection serves whoever comes next.
       expect(await outcome(holder.unsafe("select 1").simple())).toBe("resolved");
       expect(await outcome(holder.reserve())).toBe(QUEUE_TIMEOUT);
@@ -1549,6 +1550,43 @@ describe.each(scripted)("$adapter, scripted server", script => {
       expect(sql.options.queueTimeout).toBe(10);
       const waiting = [sql.connect(), sql.unsafe("select 1")].map(outcome);
       expect(await Promise.all(waiting)).toEqual([QUEUE_TIMEOUT, QUEUE_TIMEOUT]);
+    });
+
+    test.concurrent("the failure of the last dial is the cause, until a connection opens", async () => {
+      let answerWith: (socket: net.Socket) => void = socket => socket.destroy();
+      // While it accepts and closes, Bun dials again for as long as connectionTimeout.
+      await using server = await serverOf(socket => answerWith(socket));
+      await using sql = new SQL({ url: url(server.port), max: 1, queueTimeout: 0.01 });
+      expect(sql.options.queueTimeout).toBe(10);
+      let error: any;
+      // The first caller can run out of time before the first dial has failed.
+      do error = await sql.connect().catch(err => err);
+      while (error.code === QUEUE_TIMEOUT && error.cause === undefined);
+      expect(error).toMatchObject({ code: QUEUE_TIMEOUT, cause: { code: prefix + "CONNECTION_FAILED" } });
+      expect(Object.keys(error)).not.toContain("cause");
+
+      answerWith = serving;
+      await warm(sql);
+      const holder = await sql.reserve();
+      error = await sql.reserve().catch(err => err);
+      expect(error.code).toBe(QUEUE_TIMEOUT);
+      expect(error.cause).toBeUndefined();
+      holder.release();
+    });
+
+    test.concurrent("a query that gets a connection that is busy does not wait, and is not limited", async () => {
+      await using server = await serverOf(ready);
+      const sql = new SQL({ url: url(server.port), max: 1, queueTimeout: 0.01 });
+      await using _ = unanswered(sql);
+      expect(sql.options.queueTimeout).toBe(10);
+      await warm(sql);
+      const queries = [1, 2].map(() => sql.unsafe("select 1").simple().execute());
+      expect(queries.map(query => query.active)).toEqual([true, true]);
+      const settled = queries.map(outcome);
+      // A caller that does wait runs out of time, and the queries are as they were.
+      expect(await outcome(sql.reserve())).toBe(QUEUE_TIMEOUT);
+      expect(await unlessPending(Promise.race(settled), nextTurn())).toBe("pending");
+      expect(queries.map(query => query.active)).toEqual([true, true]);
     });
 
     test.concurrent("the callers behind one that gives up are served", async () => {
@@ -1632,10 +1670,28 @@ describe.each(scripted)("$adapter, scripted server", script => {
         controller.abort(new Error("aborted"));
         result["and give up"] = [await code(cancelled), await code(aborted), timers()];
 
+        const three = [query(), query(), query()];
+        three[1].cancel();
+        result["3 queries wait and the one in the middle gives up"] = [await code(three[1]), timers()];
+        three[0].cancel();
+        result["then the first one"] = [await code(three[0]), timers()];
+        holder.release();
+        result["and the last one is served"] = [await code(three[2]), timers()];
+
+        holder = await sql.reserve();
         waiting = Array.from({ length: 10 }, query).map(code);
         result["10 queries wait for a pool"] = timers();
         await sql.close({ timeout: 0 });
         result["that is closed at once"] = [...new Set(await Promise.all(waiting)), timers()];
+
+        // A caller that no longer waits when the pool has dialed for it gets no timer.
+        const dialed = (password) => new Bun.SQL(process.env.SQL_URL, { max: 1, queueTimeout: 3600, password });
+        const closed = dialed(() => (closed.close({ timeout: 0 }), ""));
+        result["the password function closes the pool"] = [await code(closed.unsafe("select 1")), timers()];
+        const abort = new AbortController();
+        const unasked = dialed(() => (abort.abort(new Error("aborted")), ""));
+        result["the password function aborts the reserve()"] = [await code(unasked.reserve({ signal: abort.signal })), timers()];
+        await unasked.close({ timeout: 0 });
         console.log(JSON.stringify(result));
         `,
       );
@@ -1647,9 +1703,40 @@ describe.each(scripted)("$adapter, scripted server", script => {
         "and is served": 0,
         "a query and a reserve({ signal }) wait": 2,
         "and give up": [prefix + "QUERY_CANCELLED", "aborted", 0],
+        "3 queries wait and the one in the middle gives up": [prefix + "QUERY_CANCELLED", 2],
+        "then the first one": [prefix + "QUERY_CANCELLED", 1],
+        "and the last one is served": ["resolved", 0],
         "10 queries wait for a pool": 10,
         "that is closed at once": [prefix + "CONNECTION_CLOSED", 0],
+        "the password function closes the pool": [prefix + "CONNECTION_CLOSED", 0],
+        "the password function aborts the reserve()": ["aborted", 0],
       });
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a query that is served past a reservation that waits gets no timer", async () => {
+      await using server = await serverOf(ready);
+      const { stdout, stderr, exitCode } = await run(
+        server.port,
+        `
+        const { heapStats } = require("bun:jsc");
+        const sql = new Bun.SQL(process.env.SQL_URL, { max: 2, queueTimeout: 3600 });
+        const both = await Promise.all([sql.reserve(), sql.reserve()]);
+        both.forEach(reserved => reserved.release());
+        const armed = () => heapStats().protectedObjectTypeCounts.Timeout ?? 0;
+        const before = armed();
+        // The server answers none: each has one of the two connections.
+        const busy = [1, 2].map(() => sql.unsafe("select 1").simple().execute());
+        const reservation = sql.reserve();
+        const past = sql.unsafe("select 2").simple().execute();
+        const result = { active: [...busy, past].map(query => query.active), timers: armed() - before };
+        for (const pending of [...busy, past, reservation]) pending.catch(() => {});
+        await sql.close({ timeout: 0 });
+        console.log(JSON.stringify({ ...result, closed: armed() - before }));
+        `,
+      );
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ active: [true, true, true], timers: 1, closed: 0 });
       expect(exitCode).toBe(0);
     });
 
@@ -1669,6 +1756,22 @@ describe.each(scripted)("$adapter, scripted server", script => {
       expect(stderr).toBe("");
       expect(stdout).toBe(QUEUE_TIMEOUT + "\n");
       expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("the failure of a query that is only started is reported, like a failure to connect", async () => {
+      await using server = await serverOf(serving);
+      const { stdout, stderr, exitCode } = await run(
+        server.port,
+        `
+        const sql = new Bun.SQL(process.env.SQL_URL, { max: 1, queueTimeout: 0.01 });
+        while (await sql.connect().then(() => false, () => true));
+        globalThis.holder = await sql.reserve();
+        sql.unsafe("select 1").simple().execute();
+        `,
+      );
+      expect(stderr).toContain(QUEUE_TIMEOUT);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
     });
   });
 

@@ -13092,7 +13092,7 @@
   },
   "catch phis": {
    "exit": 1,
-   "files": 3,
+   "files": 13,
    "diagnostics": {
     "callbacks.jsx": [
      {
@@ -13211,6 +13211,699 @@
        }
       ],
       "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "var-after-a-capture.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> e$8 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 9,
+         "length": 1,
+         "line": 12,
+         "offset": 209
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "var-assigned-in-a-function.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> e$8 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 9,
+         "length": 1,
+         "line": 8,
+         "offset": 151
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "var-assigned.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> e$8 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 9,
+         "length": 1,
+         "line": 8,
+         "offset": 140
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "var-before-an-effect.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> e$8 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 9,
+         "length": 1,
+         "line": 9,
+         "offset": 169
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "var-captured.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "mutate? e$42 was already defined",
+      "labels": [
+       {
+        "label": "Expected variable not to be defined prior to declaration",
+        "span": {
+         "column": 9,
+         "length": 1,
+         "line": 8,
+         "offset": 140
+        }
+       }
+      ],
+      "message": "Expected variable not to be defined prior to declaration",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "var-in-a-declaration.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "mutate? e$42 was already defined",
+      "labels": [
+       {
+        "label": "Expected variable not to be defined prior to declaration",
+        "span": {
+         "column": 9,
+         "length": 1,
+         "line": 8,
+         "offset": 146
+        }
+       }
+      ],
+      "message": "Expected variable not to be defined prior to declaration",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "var-of-another-name.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> e$10 is referenced as a context variable, but was previously referenced as a local variable",
+      "labels": [
+       {
+        "label": "this is local",
+        "span": {
+         "column": 21,
+         "length": 1,
+         "line": 9,
+         "offset": 172
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "var-read.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "mutate? e$36 was already defined",
+      "labels": [
+       {
+        "label": "Expected variable not to be defined prior to declaration",
+        "span": {
+         "column": 9,
+         "length": 1,
+         "line": 8,
+         "offset": 136
+        }
+       }
+      ],
+      "message": "Expected variable not to be defined prior to declaration",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "var-scopes.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> e$8 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 5,
+         "length": 10,
+         "line": 218,
+         "offset": 2583
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "mutate? e$36 was already defined",
+      "labels": [
+       {
+        "label": "Expected variable not to be defined prior to declaration",
+        "span": {
+         "column": 11,
+         "length": 1,
+         "line": 181,
+         "offset": 2057
+        }
+       }
+      ],
+      "message": "Expected variable not to be defined prior to declaration",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "mutate? e$36 was already defined",
+      "labels": [
+       {
+        "label": "Expected variable not to be defined prior to declaration",
+        "span": {
+         "column": 9,
+         "length": 1,
+         "line": 8,
+         "offset": 145
+        }
+       }
+      ],
+      "message": "Expected variable not to be defined prior to declaration",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "mutate? e$37 was already defined",
+      "labels": [
+       {
+        "label": "Expected variable not to be defined prior to declaration",
+        "span": {
+         "column": 9,
+         "length": 1,
+         "line": 206,
+         "offset": 2412
+        }
+       }
+      ],
+      "message": "Expected variable not to be defined prior to declaration",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "mutate? e$41[18:23] was already defined",
+      "labels": [
+       {
+        "label": "Expected variable not to be defined prior to declaration",
+        "span": {
+         "column": 11,
+         "length": 1,
+         "line": 194,
+         "offset": 2247
+        }
+       }
+      ],
+      "message": "Expected variable not to be defined prior to declaration",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "mutate? e$44 was already defined",
+      "labels": [
+       {
+        "label": "Expected variable not to be defined prior to declaration",
+        "span": {
+         "column": 11,
+         "length": 1,
+         "line": 299,
+         "offset": 3859
+        }
+       }
+      ],
+      "message": "Expected variable not to be defined prior to declaration",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "mutate? e$60 was already defined",
+      "labels": [
+       {
+        "label": "Expected variable not to be defined prior to declaration",
+        "span": {
+         "column": 9,
+         "length": 1,
+         "line": 82,
+         "offset": 1020
+        }
+       }
+      ],
+      "message": "Expected variable not to be defined prior to declaration",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 9,
+         "line": 111,
+         "offset": 1323
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 9,
+         "line": 140,
+         "offset": 1611
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 9,
+         "line": 172,
+         "offset": 1921
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 9,
+         "line": 235,
+         "offset": 2854
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 9,
+         "line": 247,
+         "offset": 3053
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 9,
+         "line": 25,
+         "offset": 367
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 9,
+         "line": 262,
+         "offset": 3276
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 9,
+         "line": 275,
+         "offset": 3480
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 9,
+         "line": 290,
+         "offset": 3700
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 9,
+         "line": 42,
+         "offset": 575
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 9,
+         "line": 62,
+         "offset": 805
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 5,
+         "length": 10,
+         "line": 231,
+         "offset": 2789
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 5,
+         "length": 18,
+         "line": 243,
+         "offset": 2980
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 5,
+         "length": 6,
+         "line": 108,
+         "offset": 1285
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 5,
+         "length": 6,
+         "line": 137,
+         "offset": 1573
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 5,
+         "length": 6,
+         "line": 169,
+         "offset": 1883
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 5,
+         "length": 6,
+         "line": 22,
+         "offset": 329
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 5,
+         "length": 6,
+         "line": 270,
+         "offset": 3408
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 5,
+         "length": 6,
+         "line": 283,
+         "offset": 3606
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 5,
+         "length": 6,
+         "line": 39,
+         "offset": 537
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 5,
+         "length": 6,
+         "line": 59,
+         "offset": 767
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 7,
+         "length": 6,
+         "line": 258,
+         "offset": 3230
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "var-with-another.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "mutate? e$48 was already defined",
+      "labels": [
+       {
+        "label": "Expected variable not to be defined prior to declaration",
+        "span": {
+         "column": 9,
+         "length": 1,
+         "line": 8,
+         "offset": 143
+        }
+       }
+      ],
+      "message": "Expected variable not to be defined prior to declaration",
       "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
       "severity": "error"
      }

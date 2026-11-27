@@ -3090,6 +3090,453 @@ export function useCaptured(load) {
   }
 }
 `,
+  // A `var` in the block of a `catch` that has the name of its parameter. oxc's semantic has no symbol of its own for
+  // the `var`, and its lowering takes the first scope of the function that binds the name, in the order of a hash
+  // table of the numbers of the function's scopes. So the `var` declares the parameter again in some functions and a
+  // variable that nothing reads in others: `var-scopes.jsx`.
+  "var-captured.jsx": `import { useRef } from "react";
+
+export function Captured(props) {
+  const r = useRef(null);
+  try {
+    props.f();
+  } catch (e) {
+    var e;
+    const f = () => e;
+    log(f);
+  }
+  return <div>{r.current}</div>;
+}
+`,
+  "var-read.jsx": `import { useRef } from "react";
+
+export function Read(props) {
+  const r = useRef(null);
+  try {
+    props.f();
+  } catch (e) {
+    var e;
+    log(e);
+  }
+  return <div>{r.current}</div>;
+}
+`,
+  "var-in-a-declaration.jsx": `import { useRef } from "react";
+
+export function InADeclaration(props) {
+  const r = useRef(null);
+  try {
+    props.f();
+  } catch (e) {
+    var e;
+    function h() {
+      return e;
+    }
+    log(h);
+  }
+  return <div>{r.current}</div>;
+}
+`,
+  "var-with-another.jsx": `import { useRef } from "react";
+
+export function WithAnother(props) {
+  const r = useRef(null);
+  try {
+    props.f();
+  } catch (e) {
+    var e, q;
+    const f = () => e + q;
+    log(f);
+  }
+  return <div>{r.current}</div>;
+}
+`,
+  "var-assigned.jsx": `import { useRef } from "react";
+
+export function Assigned(props) {
+  const r = useRef(null);
+  try {
+    props.f();
+  } catch (e) {
+    var e;
+    e = 2;
+    const f = () => e;
+    log(f);
+  }
+  return <div>{r.current}</div>;
+}
+`,
+  "var-assigned-in-a-function.jsx": `import { useRef } from "react";
+
+export function AssignedInAFunction(props) {
+  const r = useRef(null);
+  try {
+    props.f();
+  } catch (e) {
+    var e;
+    const f = () => {
+      e = 3;
+    };
+    log(f);
+  }
+  return <div>{r.current}</div>;
+}
+`,
+  "var-after-a-capture.jsx": `import { useEffect, useRef } from "react";
+
+export function AfterACapture(props) {
+  const r = useRef(null);
+  try {
+    props.f();
+  } catch (e) {
+    log(e);
+    function h() {
+      return e;
+    }
+    var e;
+    useEffect(() => {
+      e = 2;
+    });
+  }
+  return <div>{r.current}</div>;
+}
+`,
+  "var-before-an-effect.jsx": `import { useEffect, useRef } from "react";
+
+export function BeforeAnEffect(props) {
+  const r = useRef(null);
+  try {
+    props.f();
+  } catch (e) {
+    log(e);
+    var e;
+    useEffect(() => {
+      e = 2;
+    });
+  }
+  return <div>{r.current}</div>;
+}
+`,
+  "var-of-another-name.jsx": `import { useRef } from "react";
+
+export function OfAnotherName(props) {
+  const r = useRef(null);
+  try {
+    props.f();
+  } catch (e) {
+    var q = 1;
+    const f = () => e + q;
+    log(f);
+  }
+  return <div>{r.current}</div>;
+}
+`,
+  "var-scopes.jsx": `import { useRef } from "react";
+
+export function AfterNoBlocks(props) {
+  const r = useRef(null);
+  try {
+    props.f();
+  } catch (e) {
+    var e;
+    log(e);
+  }
+  return <div>{r.current}</div>;
+}
+
+export function AfterOneBlocks(props) {
+  const r = useRef(null);
+  {
+    log(0);
+  }
+  try {
+    props.f();
+  } catch (e) {
+    var e;
+    log(e);
+  }
+  return <div>{r.current}</div>;
+}
+
+export function AfterTwoBlocks(props) {
+  const r = useRef(null);
+  {
+    log(0);
+  }
+  {
+    log(1);
+  }
+  try {
+    props.f();
+  } catch (e) {
+    var e;
+    log(e);
+  }
+  return <div>{r.current}</div>;
+}
+
+export function AfterThreeBlocks(props) {
+  const r = useRef(null);
+  {
+    log(0);
+  }
+  {
+    log(1);
+  }
+  {
+    log(2);
+  }
+  try {
+    props.f();
+  } catch (e) {
+    var e;
+    log(e);
+  }
+  return <div>{r.current}</div>;
+}
+
+export function AfterFourBlocks(props) {
+  const r = useRef(null);
+  {
+    log(0);
+  }
+  {
+    log(1);
+  }
+  {
+    log(2);
+  }
+  {
+    log(3);
+  }
+  try {
+    props.f();
+  } catch (e) {
+    var e;
+    log(e);
+  }
+  return <div>{r.current}</div>;
+}
+
+export function AfterFiveBlocks(props) {
+  const r = useRef(null);
+  {
+    log(0);
+  }
+  {
+    log(1);
+  }
+  {
+    log(2);
+  }
+  {
+    log(3);
+  }
+  {
+    log(4);
+  }
+  try {
+    props.f();
+  } catch (e) {
+    var e;
+    log(e);
+  }
+  return <div>{r.current}</div>;
+}
+
+export function AfterSixBlocks(props) {
+  const r = useRef(null);
+  {
+    log(0);
+  }
+  {
+    log(1);
+  }
+  {
+    log(2);
+  }
+  {
+    log(3);
+  }
+  {
+    log(4);
+  }
+  {
+    log(5);
+  }
+  try {
+    props.f();
+  } catch (e) {
+    var e;
+    log(e);
+  }
+  return <div>{r.current}</div>;
+}
+
+export function AfterSevenBlocks(props) {
+  const r = useRef(null);
+  {
+    log(0);
+  }
+  {
+    log(1);
+  }
+  {
+    log(2);
+  }
+  {
+    log(3);
+  }
+  {
+    log(4);
+  }
+  {
+    log(5);
+  }
+  {
+    log(6);
+  }
+  try {
+    props.f();
+  } catch (e) {
+    var e;
+    log(e);
+  }
+  return <div>{r.current}</div>;
+}
+
+export function InABlock(props) {
+  const r = useRef(null);
+  try {
+    props.f();
+  } catch (e) {
+    {
+      var e;
+    }
+    log(e);
+  }
+  return <div>{r.current}</div>;
+}
+
+export function InABranch(props) {
+  const r = useRef(null);
+  try {
+    props.f();
+  } catch (e) {
+    if (props.c) {
+      var e;
+    }
+    log(e);
+  }
+  return <div>{r.current}</div>;
+}
+
+export function Twice(props) {
+  const r = useRef(null);
+  try {
+    props.f();
+  } catch (e) {
+    var e;
+    var e;
+    log(e);
+  }
+  return <div>{r.current}</div>;
+}
+
+export function WithAValue(props) {
+  const r = useRef(null);
+  try {
+    props.f();
+  } catch (e) {
+    var e = 1;
+    e = 2;
+    const f = () => e;
+    log(f);
+  }
+  return <div>{r.current}</div>;
+}
+
+export function WithAValueOnly(props) {
+  const r = useRef(null);
+  try {
+    props.f();
+  } catch (e) {
+    var e = 1;
+    const f = () => e;
+    log(f);
+  }
+  return <div>{r.current}</div>;
+}
+
+export function InAPattern(props) {
+  const r = useRef(null);
+  try {
+    props.f();
+  } catch (e) {
+    var [e] = props.x;
+    const f = () => e;
+    log(f);
+  }
+  return <div>{r.current}</div>;
+}
+
+export function InAnInnerCatch(props) {
+  const r = useRef(null);
+  try {
+    props.f();
+  } catch (e) {
+    try {
+      props.g();
+    } catch (e) {
+      var e;
+      log(e);
+    }
+  }
+  return <div>{r.current}</div>;
+}
+
+export function BesideAParameter(props) {
+  const r = useRef(null);
+  try {
+    props.f();
+  } catch (e) {
+    var e;
+    log(e);
+    const g = e => e;
+    log(g);
+  }
+  return <div>{r.current}</div>;
+}
+
+export function BesideALet(props) {
+  const r = useRef(null);
+  try {
+    props.f();
+  } catch (e) {
+    var e;
+    log(e);
+    if (props.c) {
+      let e = 1;
+      log(e);
+    }
+  }
+  return <div>{r.current}</div>;
+}
+
+export function InACallback(props) {
+  const r = useRef(null);
+  const g = () => {
+    try {
+      props.f();
+    } catch (e) {
+      var e;
+      log(e);
+    }
+  };
+  g();
+  return <div>{r.current}</div>;
+}
+`,
 };
 
 /**

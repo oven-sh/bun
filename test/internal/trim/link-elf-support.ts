@@ -72,7 +72,6 @@ export const cxx = ["-x", "c++", "-fno-exceptions", "-fno-rtti"];
 export interface Program {
   objects?: string[];
   compileFlags?: Record<string, string[]>;
-  compilesFeatureCode?: boolean;
   linkFlags?: string[];
   archived?: string[];
   inputs?: string[];
@@ -135,7 +134,7 @@ export async function compileObjects(
 export async function wrapped(folder: string, program: Program = {}) {
   const { objects = defaultObjects, compileFlags = {}, linkFlags = [], archived = [], inputs = [] } = program;
   const { minimums, builtins } = program;
-  const compilesFeatureCode = program.compilesFeatureCode ?? compileFlags.feature_code !== undefined;
+  const compilesFeatureCode = compileFlags.feature_code !== undefined;
   const pathOf = (name: string) => objectPath(folder, name, compilesFeatureCode);
   await compileObjects(folder, objects, compileFlags, compilesFeatureCode);
   if (archived.length > 0) {

@@ -2552,8 +2552,7 @@ impl<'a> Parser<'a> {
             parts.append(&mut after);
         }
 
-        // Pop the module scope to apply the "ContainsDirectEval" rules
-        // p.popScope();
+        // esbuild pops the module scope here to pin it under a direct eval. `to_ast` does that, with its own rule for a bundle.
 
         #[cfg(not(target_arch = "wasm32"))]
         if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {

@@ -186,6 +186,179 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     run: { file: "/importer.js", stdout: "2 2" },
   });
+  // `bun build --no-bundle` prints a file on its own, so a direct eval anywhere
+  // in it can read every top-level name by its spelling: `var outerX = 41;
+  // eval("outerX + 1")` printed as `var e = 41; eval("outerX + 1")` throws a
+  // ReferenceError. The three files differ in how the parser classifies them.
+  for (const [kind, source] of Object.entries({
+    CommonJS: `module.exports = 1;\nvar outerX = 41;\nconsole.log("via-eval", eval("outerX + 1"));`,
+    ESM: `var outerX = 41;\nconsole.log("via-eval", eval("outerX + 1"));\nexport {};`,
+    NoModuleSyntax: `var outerX = 41;\nconsole.log("via-eval", eval("outerX + 1"));`,
+  })) {
+    itBundled(`minify/NoBundleDirectEvalKeepsTopLevelNames${kind}`, {
+      files: {
+        "/entry.js": source,
+      },
+      bundling: false,
+      minifyIdentifiers: true,
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain("var outerX = 41;");
+      },
+      run: { stdout: "via-eval 42" },
+    });
+  }
+  // Every kind of top-level declaration, import bindings included, read by a
+  // direct eval inside a function. The first eval runs before the declarations.
+  // `siblingFunction` has no direct eval, so the names of its own scope are
+  // still minified. The two targets print through different printers.
+  for (const target of ["browser", "bun"] as const) {
+    itBundled(`minify/NoBundleDirectEvalKeepsEveryKindOfTopLevelName/${target}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import fromDefault, { fromNamed as fromAlias } from "./imported.js";
+          import * as fromNamespace from "./imported.js";
+          console.log(eval("hoistedFunction()"));
+          var topVar = "var";
+          let topLet = "let";
+          const topConst = "const";
+          function hoistedFunction() { return "hoisted"; }
+          class TopClass { static value = "class"; }
+          function siblingFunction(firstParameter, secondParameter) {
+            var siblingLocal = firstParameter + secondParameter;
+            return siblingLocal;
+          }
+          function read(code) {
+            var readLocal = "local";
+            return eval(code);
+          }
+          console.log(read("[topVar, topLet, topConst, TopClass.value, readLocal, fromDefault, fromAlias, fromNamespace.fromNamed, siblingFunction('a', 'b')].join()"));
+        `,
+        "/imported.js": `export const fromNamed = "named"; export default "default";`,
+      },
+      bundling: false,
+      minifyIdentifiers: true,
+      target,
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        const kept = [
+          `import fromDefault, { fromNamed as fromAlias } from "./imported.js";`,
+          `import * as fromNamespace from "./imported.js";`,
+          `var topVar = "var";`,
+          `let topLet = "let";`,
+          `const topConst = "const";`,
+          `function hoistedFunction() {`,
+          `class TopClass {`,
+          `function read(code) {`,
+          `var readLocal = "local";`,
+        ];
+        expect(kept.filter(declaration => !output.includes(declaration))).toEqual([]);
+        expect(output).toMatch(
+          /function siblingFunction\(([\w$]), ([\w$])\) \{\s+var ([\w$]) = \1 \+ \2;\s+return \3;\s+\}/,
+        );
+      },
+      run: { stdout: "hoisted\nvar,let,const,class,local,default,named,named,ab" },
+    });
+  }
+  // A sloppy block-level function is also a `var` of the enclosing function or
+  // module scope, and the minifier gives the two a name each. The `var` is the
+  // top-level name. The second block has its own direct eval, so its function
+  // and its `var` are one symbol.
+  itBundled("minify/NoBundleDirectEvalKeepsSloppyBlockFunction", {
+    files: {
+      "/entry.js": /* js */ `
+        module.exports = {};
+        { function blockFunction() { return "block"; } }
+        { function blockFunctionBesideEval() { return "beside"; } eval("1"); }
+        console.log(eval("blockFunction() + blockFunctionBesideEval()"));
+      `,
+    },
+    bundling: false,
+    minifyIdentifiers: true,
+    run: { stdout: "blockbeside" },
+  });
+  // The kept names are reserved. `first` and `second` cannot take one of the
+  // 54 one-character names, or `sum` reads its parameter where it wants a
+  // top-level variable.
+  itBundled("minify/NoBundleDirectEvalTopLevelNameNotReusedByLocal", {
+    files: {
+      "/entry.js": [
+        ...singleCharNames.map((n, i) => `var ${n} = ${i};`),
+        `function sum(first, second) { return first + second + ${singleCharNames.join(" + ")}; }`,
+        `console.log(eval("${singleCharNames.join(" + ")}"), sum(1000, 2000));`,
+      ].join("\n"),
+    },
+    bundling: false,
+    minifyIdentifiers: true,
+    run: { stdout: "1431 4431" },
+  });
+  // An indirect eval runs in the global scope and reads no name of the file,
+  // so the top-level names are minified as in a file with no eval.
+  itBundled("minify/NoBundleIndirectEvalStillRenamesTopLevelNames", {
+    files: {
+      "/entry.js": /* js */ `
+        var topVar = 1;
+        function topFunction(parameter) { return parameter + topVar; }
+        console.log((0, eval)("typeof topVar"), globalThis.eval("typeof topFunction"), eval?.("1 + 1"), topFunction(1));
+      `,
+    },
+    bundling: false,
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatch(/^var ([\w$]) = 1;\nfunction [\w$]\(([\w$])\) \{\s+return \2 \+ \1;\s+\}/);
+    },
+    run: { stdout: "undefined undefined 2 2" },
+  });
+  // A parameter and a body declaration of the same name are one variable, and
+  // the body declaration is the symbol that gets the name. A direct eval in
+  // the parameter list is in the parameter scope only, so that name was not
+  // kept: `function f(param, other = eval("param + 1")) { var param }` printed
+  // as `function f(a, other = eval("param + 1")) { var a }`, and as `param2`
+  // in a bundle that is not minified.
+  for (const [mode, options] of Object.entries({
+    NoBundleMinified: { bundling: false, minifyIdentifiers: true },
+    Bundled: { format: "cjs" },
+    BundledMinified: { format: "cjs", minifyIdentifiers: true },
+  } satisfies Record<string, Partial<BundlerTestInput>>)) {
+    itBundled(`minify/DirectEvalKeepsParameterDeclaredAgainInBody${mode}`, {
+      files: {
+        "/entry.js": /* js */ `
+          function redeclared(param, other = eval("param + 1")) { var param; return other; }
+          function destructured({ field }, other = eval("field + 1")) { var field; return other; }
+          function shadowedByFunction(callee, other = eval("typeof callee")) { function callee() {} return other; }
+          const arrow = (param, other = eval("param + 1")) => { var param; return other; };
+          console.log(redeclared(1), destructured({ field: 2 }), shadowedByFunction(3), arrow(4));
+        `,
+      },
+      ...options,
+      run: { stdout: "2 3 number 5" },
+    });
+  }
+  // A block `var` links to the top-level name that it declares again. In a
+  // flat ESM bundle that name is not kept, so two files that each declare
+  // `shared` this way still get a variable each.
+  itBundled("minify/DirectEvalInBlockLeavesFlatEsmTopLevelNameRenameable", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import { readB } from "./b.mjs";
+        var shared = "a-value";
+        {
+          var shared;
+          eval("0");
+        }
+        console.log("a sees", shared, "| b sees", readB());
+      `,
+      "/b.mjs": /* js */ `
+        var shared = "b-value";
+        {
+          var shared;
+          eval("0");
+        }
+        export function readB() { return shared; }
+      `,
+    },
+    format: "esm",
+    run: { stdout: "a sees a-value | b sees b-value" },
+  });
   itBundled("minify/DefaultExportOfNamedExpressionAcrossChunks", {
     files: {
       "/a.js": /* js */ `
@@ -2114,3 +2287,86 @@ test.each(["transformSync", "transform"] as const)(
     expect(output).toBe("export var t = 1;\nvar t = 2;\nexport function read() {\n  return t;\n}\n");
   },
 );
+
+// A direct eval can read every top-level name of a file that is printed on its
+// own, import bindings included, so those names are kept. `sibling` has no
+// direct eval, so the names of its own scope are still minified. The second
+// file only has an indirect eval, which reads no name of the file.
+test.each(["transformSync", "transform"] as const)(
+  "minify.identifiers: %s keeps the top-level names that a direct eval can read",
+  async method => {
+    const transpiler = new Bun.Transpiler({ loader: "js", minify: { identifiers: true } } as any);
+    expect(
+      await transpiler[method](
+        [
+          `import fromDefault, { fromNamed as fromAlias } from "./imported.js";`,
+          `import * as fromNamespace from "./imported.js";`,
+          `var topVar = 1;`,
+          `function sibling(parameter) { var siblingLocal = parameter + topVar; return siblingLocal; }`,
+          `function read(code) { var readLocal = 2; return eval(code); }`,
+          `console.log(read("[topVar, readLocal, fromDefault, fromAlias, fromNamespace.fromNamed, sibling(1)].join()"));`,
+        ].join("\n"),
+      ),
+    ).toBe(
+      [
+        `import fromDefault, { fromNamed as fromAlias } from "./imported.js";`,
+        `import * as fromNamespace from "./imported.js";`,
+        `var topVar = 1;`,
+        `function sibling(a) {`,
+        `  var o = a + topVar;`,
+        `  return o;`,
+        `}`,
+        `function read(code) {`,
+        `  var readLocal = 2;`,
+        `  return eval(code);`,
+        `}`,
+        `console.log(read("[topVar, readLocal, fromDefault, fromAlias, fromNamespace.fromNamed, sibling(1)].join()"));`,
+        ``,
+      ].join("\n"),
+    );
+    expect(
+      await transpiler[method](
+        `var topVar = 1;\nfunction sibling(parameter) { return parameter + topVar; }\nconsole.log((0, eval)("typeof topVar"), sibling(1));\n`,
+      ),
+    ).toBe(`var n = 1;\nfunction r(o) {\n  return o + n;\n}\nconsole.log((0, eval)("typeof topVar"), r(1));\n`);
+  },
+);
+
+// The direct eval is in the parameter list and the body declares the parameter
+// again, so the symbol that gets the name is in a scope with no direct eval.
+test.each(["transformSync", "transform"] as const)(
+  "minify.identifiers: %s keeps a parameter that a direct eval reads and the body declares again",
+  async method => {
+    const output = await new Bun.Transpiler({ loader: "js", minify: { identifiers: true } } as any)[method](
+      `function f(param, other = eval("param + 1")) { var param; return other; }\nconsole.log(f(1));\n`,
+    );
+    expect(output).toBe(
+      `function f(param, other = eval("param + 1")) {\n  var param;\n  return other;\n}\nconsole.log(f(1));\n`,
+    );
+  },
+);
+
+// A TypeScript enum and a namespace are top-level names that a direct eval can read.
+test("minify.identifiers keeps a top-level enum and namespace that a direct eval can read", () => {
+  const transpiler = new Bun.Transpiler({ loader: "ts", minify: { identifiers: true } } as any);
+  expect(
+    transpiler.transformSync(
+      `enum Color { Red, Green }\nnamespace Shapes { export const sides = 4; }\nconst label: string = "x";\nconsole.log(eval("Color.Green + Shapes.sides + label"));\n`,
+    ),
+  ).toBe(
+    [
+      `var Color;`,
+      `((e) => {`,
+      `  e[e["Red"] = 0] = "Red";`,
+      `  e[e["Green"] = 1] = "Green";`,
+      `})(Color ||= {});`,
+      `var Shapes;`,
+      `((s) => {`,
+      `  s.sides = 4;`,
+      `})(Shapes ||= {});`,
+      `const label = "x";`,
+      `console.log(eval("Color.Green + Shapes.sides + label"));`,
+      ``,
+    ].join("\n"),
+  );
+});

@@ -646,8 +646,7 @@ struct Locals {
     members: Vec<u32>,
     /// 0 if the module's scope is the only one.
     nesting: u32,
-    /// Exports, which are the module's interface, and what direct eval reads by name. The parser only sees to that in
-    /// nested scopes.
+    /// Exports, which are the module's interface.
     pinned: Vec<u32>,
 }
 
@@ -655,10 +654,7 @@ impl Locals {
     fn take_from(ast: &mut bun_ast::Ast<'_>) -> Locals {
         let (scopes, members, nesting) = flatten(&ast.module_scope);
         let exports = ast.named_exports.values().iter();
-        let mut pinned: Vec<u32> = exports.map(|export| export.ref_.inner_index()).collect();
-        if ast.module_scope.contains_direct_eval {
-            pinned.extend((ast.module_scope.members.values()).map(|it| it.ref_.inner_index()));
-        }
+        let pinned: Vec<u32> = exports.map(|export| export.ref_.inner_index()).collect();
         Locals {
             pinned,
             profiles: super::pm_diff_profile::profiles(ast, ast.symbols.len()),

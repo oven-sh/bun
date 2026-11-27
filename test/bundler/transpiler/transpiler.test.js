@@ -6943,6 +6943,15 @@ describe("same-target destructuring with an unstable target", () => {
     expect(plain.transformSync("var o = M; var a = Math.cos, b = Math.sin; eval(s); console.log(a, b);")).toBe(
       "var o = M;\nvar { cos: a, sin: b } = Math;\neval(s);\nconsole.log(a, b);\n",
     );
+    // A direct eval can read an import binding by its name too, so a file
+    // that is printed on its own keeps that name like every other top-level
+    // name, and the binding counts as reachable.
+    expect(
+      plain.transformSync('import * as ns from "./foo.js"; var a = ns.foo, b = ns.bar; eval(s); console.log(a, b);'),
+    ).toBe('import * as ns from "./foo.js";\nvar a = ns.foo, b = ns.bar;\neval(s);\nconsole.log(a, b);\n');
+    expect(plain.transformSync('import * as ns from "./foo.js"; var a = ns.foo, b = ns.bar; console.log(a, b);')).toBe(
+      'import * as ns from "./foo.js";\nvar { foo: a, bar: b } = ns;\nconsole.log(a, b);\n',
+    );
   });
 
   it("keeps the reads of a parameter when a sloppy function uses arguments", () => {

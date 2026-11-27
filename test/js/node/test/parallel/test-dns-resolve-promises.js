@@ -1,9 +1,14 @@
+// Flags: --expose-internals
 'use strict';
 const common = require('../common');
 const assert = require('assert');
+const { internalBinding } = require('internal/test/binding');
+const cares = internalBinding('cares_wrap');
+const { UV_EPERM } = internalBinding('uv');
 const dnsPromises = require('dns').promises;
 
-Bun.dns.resolve = (hostname, rrtype) => Promise.reject({code: 'EPERM', syscall: 'query' + rrtype[0].toUpperCase() + rrtype.substr(1), hostname});
+// Stub cares to force an error so we can test DNS error code path.
+cares.ChannelWrap.prototype.queryA = () => UV_EPERM;
 
 assert.rejects(
   dnsPromises.resolve('example.org'),

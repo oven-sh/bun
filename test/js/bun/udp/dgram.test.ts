@@ -1,5 +1,6 @@
 import { describe, expect, jest, test } from "bun:test";
-import { createSocket } from "dgram";
+import { createSocket, type Socket, type SocketOptions } from "dgram";
+import { once } from "node:events";
 import { Worker } from "node:worker_threads";
 
 import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isWindows } from "harness";
@@ -495,6 +496,55 @@ test("connect() with a custom lookup that yields a name that cannot be a hostnam
     message: `getaddrinfo ENOTFOUND ${hostname}`,
     connected: false,
   });
+});
+
+describe.each([
+  ["the default lookup", {}],
+  ["a custom lookup", { lookup: (address, _family, callback) => process.nextTick(callback, null, address, 4) }],
+] as [string, Partial<SocketOptions>][])("an invalid address throws, with %s", (_, options) => {
+  test.each([
+    ["bind(port, address)", false, (socket, address, _port, cb) => socket.bind(0, address, cb)],
+    ["bind(options)", false, (socket, address, _port, cb) => socket.bind({ address }, cb)],
+    ["connect() before bind()", false, (socket, address, port, cb) => socket.connect(port, address, cb)],
+    ["connect() after bind()", true, (socket, address, port, cb) => socket.connect(port, address, cb)],
+    ["send() before bind()", false, (socket, address, port, cb) => socket.send("x", port, address, cb)],
+    ["send() after bind()", true, (socket, address, port, cb) => socket.send("x", port, address, cb)],
+  ] as [string, boolean, (socket: Socket, address: string, port: number, cb: () => void) => void][])(
+    "%s",
+    async (_, isBound, call) => {
+      await using receiver = createSocket("udp4");
+      await once(receiver.bind(0, "127.0.0.1"), "listening");
+      const { port } = receiver.address();
+      await using socket = createSocket({ type: "udp4", ...options });
+      if (isBound) await once(socket.bind(0, "127.0.0.1"), "listening");
+
+      const callback = jest.fn();
+      for (const address of ["\0", "a\0b"]) {
+        expect(() => call(socket, address, port, callback)).toThrow(
+          expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE", message: expect.stringContaining("'address'") }),
+        );
+      }
+
+      socket.connect(port, "127.0.0.1");
+      await once(socket, "connect");
+      socket.send("y");
+      expect(String((await once(receiver, "message"))[0])).toBe("y");
+      expect(callback).not.toHaveBeenCalled();
+    },
+  );
+});
+
+test("bind() binds once if reading options.address binds", async () => {
+  await using socket = createSocket("udp4");
+  const listening = once(socket, "listening");
+  const options = {
+    get address() {
+      socket.bind(0, "127.0.0.1");
+      return "127.0.0.1";
+    },
+  };
+  expect(() => socket.bind(options)).toThrow(expect.objectContaining({ code: "ERR_SOCKET_ALREADY_BOUND" }));
+  await listening;
 });
 
 // Every send callback must fire with (null, byteLength) — never (null, 0) or

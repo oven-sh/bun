@@ -1694,12 +1694,13 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
               ? `\n\n\`\`\`terminal\n${cases.map(({ name, message }) => `✗ ${name}\n${message}`).join("\n\n")}\n\`\`\`\n\n`
               : "";
             const unlisted = !isKnownFlakyTest(title);
+            const url = getFileUrl(title);
             reportAnnotationToBuildkite({
               context: unlisted ? "flaky-new" : "flaky",
               label: title,
               style: "warning",
               priority: unlisted ? 4 : 3,
-              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - ${reason} <i>(in the parallel batch on ${getBuildLabel()}; passed alone)</i>${unlisted ? " <b>(not in test/flaky-tests.txt)</b>" : ""}</summary>${detail}</details>`,
+              content: `<details><summary><a${url === undefined ? "" : ` href="${url}"`}><code>${title}</code></a> - ${reason} <i>(in the parallel batch on ${getBuildLabel()}; passed alone)</i>${unlisted ? " <b>(not in test/flaky-tests.txt)</b>" : ""}</summary>${detail}</details>`,
             });
           }
         }

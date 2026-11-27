@@ -11,9 +11,9 @@ use hashbrown::{HashTable, hash_table};
 
 use crate::client::{Client, Outcome, Purpose, Step};
 use crate::message::{self, Message, Question, Received, RecordType};
-use crate::servers::{Server, ServerId, ServerSet};
+use crate::servers::{Alternate, Server, ServerId, ServerSet};
 use crate::system::{Events, Socket, SocketError, SocketId, System, Transport};
-use crate::{Error, HashMap};
+use crate::{Error, HashMap, HashSet};
 
 pub(crate) const MIN_TIMEOUT: Duration = Duration::from_millis(250);
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -28,6 +28,8 @@ const CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const REPEAT_DELAY: Duration = Duration::from_millis(10);
 /// In a row and for each server, whatever the number of tries.
 const MAX_FAILURES_BEFORE_TIMEOUT: usize = 64;
+/// An error response sends a query to another server until it has had this many tries for each. `RES_DFLRETRY` of glibc.
+const RCODE_FAILOVER_ROUNDS: usize = 2;
 /// One new query in this many is also sent to a server that failed.
 const PROBE_ODDS: u16 = 10;
 /// Replies that have not come after one do not all come at once.
@@ -75,14 +77,17 @@ pub(crate) struct Query<R> {
     failures_since_timeout: usize,
     /// Since then. A socket that fails counts once for all its tries, unlike a timeout.
     avoided: ServerSet,
+    rcode_error_from: ServerSet,
+    /// How often it went to another server after an error response.
+    rcode_failovers: usize,
     last_error: Error,
 }
 
 impl<R> Query<R> {
-    /// Those for which a try that failed is as far as it goes.
-    fn let_go(&mut self, error: Error) -> impl Iterator<Item = Step<R>> {
-        let have_enough = self.waiting.extract_if(.., |purpose| match purpose {
-            Purpose::Addresses(lookup, RecordType::AAAA) => lookup.can_do_without_ipv6(),
+    /// The lookups that need not wait for another try.
+    fn finish_without_ipv6(&mut self, error: Error) -> impl Iterator<Item = Step<R>> {
+        let have_enough = self.waiting.extract_if(.., move |purpose| match purpose {
+            Purpose::Addresses(lookup, RecordType::AAAA) => lookup.can_do_without_ipv6(error),
             _ => false,
         });
         have_enough.map(move |purpose| Step::Finish(purpose, Err(error)))
@@ -132,6 +137,8 @@ struct Connection<T> {
     /// `None` until it is watched.
     watches_writable: Option<bool>,
     tries: HashMap<MessageId, Try>,
+    /// The ids of the tries over UDP that [`Connections::forget`] removed. Their replies can still come.
+    abandoned_ids: HashSet<MessageId>,
     /// It should take no more tries.
     is_retired: bool,
     /// A timeout of this try, or of an older one, does not tell against it.
@@ -192,6 +199,7 @@ impl<T: Socket> Connection<T> {
             peer,
             watches_writable: None,
             tries: HashMap::default(),
+            abandoned_ids: HashSet::default(),
             is_retired: false,
             cleared_up_to: 0,
             room: S::DATAGRAMS_HELD,
@@ -206,7 +214,8 @@ impl<T: Socket> Connection<T> {
     }
 
     fn can_take_more(&self) -> bool {
-        self.tries.len() < MAX_TRIES_PER_SOCKET && self.output.len() < LONG_OUTPUT_LEN
+        self.tries.len() + self.abandoned_ids.len() < MAX_TRIES_PER_SOCKET
+            && self.output.len() < LONG_OUTPUT_LEN
     }
 
     /// In place of a new one, which there is not. Finding that out can take long.
@@ -346,13 +355,19 @@ impl<T> Connections<T> {
         ((connection.server, connection.transport) == (to, Transport::Tcp)).then_some(connection)
     }
 
-    fn forget(&mut self, question: &Question, places: impl IntoIterator<Item = Place>) {
-        for (socket, id) in places {
+    fn forget(&mut self, question: &Question, places: &[Place]) {
+        for &(socket, id) in places {
             if let Some(connection) = self.open.get_mut(&socket)
                 && let Entry::Occupied(entry) = connection.tries.entry(id)
                 && entry.get().question.is(question)
             {
-                self.deadlines.remove(&entry.remove().deadline);
+                let deadline = entry.remove().deadline;
+                self.deadlines.remove(&deadline);
+                connection.unsent.remove(&deadline.1);
+                if connection.transport == Transport::Udp {
+                    connection.abandoned_ids.insert(id);
+                }
+                self.recent_ids.insert(id);
                 self.idle.push(socket);
             }
         }
@@ -382,13 +397,25 @@ impl<S: System, R> Client<S, R> {
     }
 
     pub(crate) fn join_or_send(&mut self, question: Question, purpose: Purpose<R>) {
+        let does_rcode_failover = matches!(purpose, Purpose::Addresses(..));
         // One that has failed waits longer and gives up sooner.
-        let matches =
-            |query: &Query<R>| query.failed_tries == 0 && query.question.matches(question.bytes());
+        let matches = |query: &Query<R>| {
+            let max_failed_tries = if does_rcode_failover {
+                query.rcode_failovers
+            } else {
+                0
+            };
+            query.failed_tries <= max_failed_tries && query.question.matches(question.bytes())
+        };
         let hash = |query: &Query<R>| query.question.hash;
         match self.queries.entry(question.hash, matches, hash) {
             hash_table::Entry::Occupied(entry) => {
                 let query = entry.into_mut();
+                if let Purpose::Addresses(lookup, kind) = &purpose
+                    && query.rcode_failovers > 0
+                {
+                    lookup.record_rcode_failover(*kind, &query.question);
+                }
                 query.waiting.push(purpose);
                 let last_try = query.last_try;
                 return self.repeat(last_try);
@@ -403,6 +430,8 @@ impl<S: System, R> Client<S, R> {
                 failed_tries: 0,
                 failures_since_timeout: 0,
                 avoided: ServerSet::default(),
+                rcode_error_from: ServerSet::default(),
+                rcode_failovers: 0,
                 last_error: Error::ETIMEOUT,
             }),
         };
@@ -484,8 +513,12 @@ impl<S: System, R> Client<S, R> {
         let (server, transport) = match (&mut query, probed) {
             (Some(query), _) => {
                 let random = self.config.rotate.then(|| self.system.random()).flatten();
-                let out_of_turn = query.last_error == Error::ECONNREFUSED;
-                let server = self.servers.choose(random, &mut query.avoided, out_of_turn);
+                let alternate = match query.last_error {
+                    Error::ETIMEOUT | Error::EBADRESP => Alternate::Equal,
+                    Error::ECONNREFUSED => Alternate::Similar,
+                    _ => Alternate::Any,
+                };
+                let server = self.servers.choose(random, &mut query.avoided, alternate);
                 (server, query.transport)
             }
             (None, Some((server, transport))) => (self.servers.get(server), transport),
@@ -562,7 +595,7 @@ impl<S: System, R> Client<S, R> {
                     self.steps.push_back(end);
                     return Ok(());
                 };
-                if !connection.tries.contains_key(&id) {
+                if !connection.tries.contains_key(&id) && !connection.abandoned_ids.contains(&id) {
                     break id;
                 }
             },
@@ -610,13 +643,16 @@ impl<S: System, R> Client<S, R> {
         let Ok(entry) = self.queries.find_entry(question.hash, is_it) else {
             return;
         };
-        let (query, _) = entry.remove();
+        let (mut query, _) = entry.remove();
         if !query.late_tries.is_empty() {
-            let places = query.late_tries.into_iter().chain(query.last_try);
-            self.connections.forget(question, places);
+            query.late_tries.extend(query.last_try);
+            self.connections.forget(question, &query.late_tries);
         }
-        if let Ok(message) = outcome {
-            self.cache.insert(question, message, self.now);
+        // `resolve` gets the error response of the first server, so it must not find this in the cache.
+        if let Ok(message) = outcome
+            && query.rcode_failovers == 0
+        {
+            self.cache.insert(question, message, self.now, &self.system);
         }
         for purpose in query.waiting {
             self.finish(purpose, outcome.clone());
@@ -640,10 +676,10 @@ impl<S: System, R> Client<S, R> {
         query.last_error = error;
         query.failed_tries += 1;
         (query.failures_since_timeout, query.avoided) = match error {
-            Error::ETIMEOUT => Default::default(),
+            Error::ETIMEOUT => (0, query.rcode_error_from),
             _ => (query.failures_since_timeout + 1, query.avoided),
         };
-        self.steps.extend(query.let_go(error));
+        self.steps.extend(query.finish_without_ipv6(error));
         if !query.waiting.is_empty()
             && query.failed_tries < self.servers.len() * self.tries
             && query.failures_since_timeout < self.servers.len() * MAX_FAILURES_BEFORE_TIMEOUT
@@ -654,7 +690,62 @@ impl<S: System, R> Client<S, R> {
             }
             self.send(question, None);
         } else {
+            self.needs_reload |= matches!(error, Error::ETIMEOUT | Error::ECONNREFUSED);
             self.end(&question, &Err(error));
+        }
+    }
+
+    /// After an error response, `lookup` asks another server as `getaddrinfo` does. The others get `response`, as with the `ARES_FLAG_NOCHECKRESP` of Node.js. Returns whether the query goes on.
+    fn try_rcode_failover(
+        &mut self,
+        question: &Question,
+        response: &Message,
+        from: ServerId,
+        state: State,
+    ) -> bool {
+        let (Some(error), Some(query), Some(server)) = (
+            response.rcode_error(),
+            find(&mut self.queries, question),
+            self.servers.get(from),
+        ) else {
+            return false;
+        };
+        query.rcode_error_from.insert(server);
+        query.avoided.insert(server);
+        if self
+            .servers
+            .iter()
+            .all(|it| query.rcode_error_from.contains(it))
+            || query.failed_tries + 1 >= self.servers.len() * RCODE_FAILOVER_ROUNDS
+            || !(query.waiting.iter()).any(|it| matches!(it, Purpose::Addresses(..)))
+        {
+            return false;
+        }
+        query.rcode_failovers += 1;
+        let others = query.waiting.extract_if(.., |it| match it {
+            Purpose::Addresses(lookup, kind) => {
+                lookup.record_rcode_failover(*kind, question);
+                false
+            }
+            _ => true,
+        });
+        (self.steps).extend(others.map(|it| Step::Finish(it, Ok(response.clone()))));
+        // Otherwise another try is outstanding.
+        if state != State::Late {
+            (self.steps).push_back(Step::Retry(question.clone(), Some(error)));
+        }
+        true
+    }
+
+    pub(crate) fn stop_waiting_for_ipv6(&mut self, question: &Question) {
+        let Some(query) = find(&mut self.queries, question) else {
+            return;
+        };
+        let (error, last_try) = (query.last_error, query.last_try);
+        self.steps.extend(query.finish_without_ipv6(error));
+        if query.waiting.is_empty() {
+            self.connections.forget(question, last_try.as_slice());
+            self.end(question, &Err(error));
         }
     }
 
@@ -709,7 +800,7 @@ impl<S: System, R> Client<S, R> {
 
     pub(crate) fn leave_removed_servers(&mut self) {
         for query in &mut self.queries {
-            query.avoided = ServerSet::default();
+            (query.avoided, query.rcode_error_from) = Default::default();
         }
         let open = &mut self.connections.open;
         let left = open.extract_if(|_, connection| self.servers.get(connection.server).is_none());
@@ -781,7 +872,8 @@ impl<S: System, R> Client<S, R> {
         }
         let mut query = find(&mut self.queries, &it.question);
         if let Some(query) = &mut query {
-            self.steps.extend(query.let_go(Error::ETIMEOUT));
+            self.steps
+                .extend(query.finish_without_ipv6(Error::ETIMEOUT));
         }
         if let Some(query) = &mut query
             && let State::OnTime { overtime_until } = it.state
@@ -869,9 +961,12 @@ impl<S: System, R> Client<S, R> {
                 let is_from_peer = sender.is_some_and(|it| (it.ip(), it.port()) == (ip, port));
                 if !is_from_peer || !self.receive(connection, &buffer) {
                     let recent_ids = &self.connections.recent_ids;
-                    let is_ours =
-                        |id| recent_ids.contains(id) || connection.tries.contains_key(&id);
-                    let cost = usize::from(!message::id_of(&buffer).is_some_and(is_ours));
+                    let account_for = |id| {
+                        connection.abandoned_ids.remove(&id)
+                            || recent_ids.contains(id)
+                            || connection.tries.contains_key(&id)
+                    };
+                    let cost = usize::from(!message::id_of(&buffer).is_some_and(account_for));
                     connection.strays_left =
                         (connection.strays_left.checked_sub(cost)).ok_or(Failed)?;
                     strays += 1;
@@ -950,15 +1045,19 @@ impl<S: System, R> Client<S, R> {
                     let until = self.now.saturating_add(REFUSAL_MEMORY);
                     (self.servers).change(connection.server, |it| it.refuses_until = until);
                 }
-                let took = message.is_resolved().then_some(took);
+                self.needs_reload = is_refusal;
+                let took = message.rcode_error().is_none().then_some(took);
                 self.servers.answered(connection.server, took, self.now);
+                if self.try_rcode_failover(&question, &message, connection.server, state) {
+                    return true;
+                }
                 if state != State::Late {
                     self.steps.push_back(Step::End(question, Ok(message)));
                     return true;
                 }
                 // What becomes of the last try no longer counts.
                 let last_try = find(&mut self.queries, &question).and_then(|it| it.last_try);
-                self.connections.forget(&question, last_try);
+                self.connections.forget(&question, last_try.as_slice());
                 self.steps.push_front(Step::End(question, Ok(message)));
             }
             Received::Truncated => {

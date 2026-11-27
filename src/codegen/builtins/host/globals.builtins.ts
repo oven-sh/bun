@@ -1427,6 +1427,7 @@ const queriesOfDNS = [
   "resolvePtr",
   "resolveSoa",
   "resolveSrv",
+  "resolveTlsa",
   "resolveTxt",
   "reverse",
 ];

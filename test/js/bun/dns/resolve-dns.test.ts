@@ -263,7 +263,6 @@ describe("dns", () => {
 
     test("triple with missing port (undefined) should not crash", () => {
       // undefined port coerces to 0, which is a valid int32
-      // @ts-expect-error
       expect(() => dns.setServers([[4, "8.8.8.8"]])).not.toThrow();
     });
 
@@ -286,7 +285,6 @@ describe("dns", () => {
       new TextDecoder("utf-16le").decode(new Uint8Array([...s].flatMap(c => [c.charCodeAt(0), 0])));
 
     test("lookupService() with a UTF-16 invalid address throws TypeError", () => {
-      // @ts-expect-error
       expect(() => Bun.dns.lookupService(utf16("1,2,3"), 443)).toThrow(
         `The "address" argument is invalid. Received type string ('1,2,3')`,
       );
@@ -295,7 +293,6 @@ describe("dns", () => {
     test("lookupService() with a UTF-16 valid address does not crash", async () => {
       // The reverse lookup result is environment-dependent; the assertion is
       // that the address parses (no synchronous throw) and nothing panics.
-      // @ts-expect-error
       await Bun.dns.lookupService(utf16("127.0.0.1"), 443).catch(() => {});
     });
 
@@ -309,7 +306,7 @@ describe("dns", () => {
     test("resolve() with a UTF-16 invalid record type throws TypeError", () => {
       // @ts-expect-error
       expect(() => Bun.dns.resolve("localhost", utf16("BOGUS"))).toThrow(
-        `The property "record" is invalid. Expected one of: A, AAAA, ANY, CAA, CNAME, MX, NAPTR, NS, PTR, SOA, SRV, TXT, received type string ('BOGUS')`,
+        `The property "record" is invalid. Expected one of: A, AAAA, ANY, CAA, CNAME, MX, NAPTR, NS, PTR, SOA, SRV, TLSA, TXT, received type string ('BOGUS')`,
       );
     });
   });

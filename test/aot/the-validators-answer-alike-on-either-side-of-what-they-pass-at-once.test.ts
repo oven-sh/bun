@@ -41,8 +41,9 @@ test("a list that is too short, and a list where an object is asked for", () => 
   expect(answerOf("validateObject", [], "n")).toBe("ERR_INVALID_ARG_TYPE");
 });
 
-test("one of several is found as Object.is() finds it", () => {
+test("one of several is found as Array.prototype.includes() finds it", () => {
   expect(answerOf("validateOneOf", NaN, "n", [1, NaN])).toBe(undefined);
   expect(answerOf("validateOneOf", 1, "n", [0.5 + 0.5])).toBe(undefined);
-  expect(answerOf("validateOneOf", 0, "n", [-0])).toBe("ERR_INVALID_ARG_VALUE");
+  expect(answerOf("validateOneOf", 0, "n", [-0])).toBe(undefined);
+  expect(answerOf("validateOneOf", 0, "n", ["0"])).toBe("ERR_INVALID_ARG_VALUE");
 });

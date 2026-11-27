@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ad923e4196fa9f814ff9f0491837a9cbf9070997d0570b77c2118a411a94f7d3.
+// Written against that file with the SHA-256 1d85975727192d9fc9f98c5e72eb5eb5c4e2f491424ab845526af24bf1e7ce1d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -44,7 +44,7 @@ const {
 const timers = require("internal/timers");
 const kTimeout: typeof timers.kTimeout = timers.kTimeout;
 const getTimerDuration = timers.getTimerDuration;
-const { validateFunction, validateNumber, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
+const { validateFunction, validateNumber, validatePort, validateBoolean, validateInt32, validateString, validateStringWithoutNullBytes } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
 const netSymbols = require("internal/net/symbols");
 const kArmHandshakeTimeout: typeof netSymbols.kArmHandshakeTimeout = netSymbols.kArmHandshakeTimeout;
@@ -135,6 +135,7 @@ interface ConnectOptions {
   autoSelectFamilyAttemptTimeout?: number;
   timeout?: number;
   socket?: $Node.Socket;
+  handle?: $Node.SocketOptions["handle"];
   fd?: number;
   fdIsRawSocket?: boolean;
   pauseOnConnect?: boolean;
@@ -994,6 +995,8 @@ function destroyWhenAborted(this: $Node.Socket, err?: object) {
   if (!this.destroyed) {
     // node's stream layer (addAbortSignal) destroys the socket with an AbortError (code
     // ABORT_ERR) carrying the signal's reason as `cause`, not with the raw reason itself.
+    // It also calls eos(stream), which listens to 'error'.
+    this.once("error", noop);
     this.destroy(
       $makeAbortError(undefined, { cause: (err as { target?: AbortSignal | null } | undefined)?.target?.reason }),
     );
@@ -3556,7 +3559,13 @@ function createConnection(...args: unknown[]) {
     socket.setTimeout(optionsTimeout);
   }
 
-  return socket.connect(normalized);
+  try {
+    return socket.connect(normalized);
+  } catch (error) {
+    // The caller gets no socket to destroy. A handle that it passed is still its own.
+    if (!options.handle) socket.destroy();
+    throw error;
+  }
 }
 
 function lookupAndConnect(self: $Node.Socket, options: ConnectOptions) {
@@ -3564,7 +3573,7 @@ function lookupAndConnect(self: $Node.Socket, options: ConnectOptions) {
   const host = options.host || "localhost";
   let { port, autoSelectFamilyAttemptTimeout, autoSelectFamily } = options;
 
-  validateString(host, "options.host");
+  validateStringWithoutNullBytes(host, "options.host");
 
   if (localAddress && !isIP(localAddress)) {
     throw $ERR_INVALID_IP_ADDRESS(localAddress);

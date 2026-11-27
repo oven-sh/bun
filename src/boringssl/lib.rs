@@ -6,6 +6,7 @@ use core::ffi::{c_int, c_void};
 use core::mem::MaybeUninit;
 use core::net::IpAddr;
 use core::ptr;
+use std::borrow::Cow;
 use std::cell::Cell;
 
 pub use bun_boringssl_sys as boring;
@@ -396,24 +397,36 @@ fn is_hostname(host: &[u8]) -> bool {
         .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
+/// https://github.com/nodejs/node/blob/v26.12.1/lib/tls.js#L461-L464. A name that only ends in a number (`db.1`) stays a name, unlike in Node.js.
+fn is_ipv4_shorthand(host: &[u8]) -> bool {
+    let mut labels = strings::split(unfqdn(host), b".");
+    let are_numbers = labels.by_ref().take(4).all(|label| match label {
+        [b'0', b'x' | b'X', hex @ ..] => hex.iter().all(u8::is_ascii_hexdigit),
+        _ => !label.is_empty() && label.iter().all(u8::is_ascii_digit),
+    });
+    are_numbers && labels.next().is_none()
+}
+
+/// `None` if `host` does not convert.
+pub fn idna_to_ascii(host: &[u8]) -> Option<Cow<'_, [u8]>> {
+    if strings::first_non_ascii(host).is_none() {
+        return Some(Cow::Borrowed(host));
+    }
+    let ascii = Bun__idnaToASCII(&bun_core::StringView::borrow_utf8(host));
+    (!ascii.is_dead()).then(|| Cow::Owned(ascii.to_owned_slice()))
+}
+
 pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {
     // As in Node.js, a host is an IP address only as typed, and only in the strict form of `net.isIP`.
     let typed = unfqdn(hostname);
     let mut host_ip = bun_core::ip_address::parse_strict(typed);
-    let ascii_hostname;
     // CVE-2026-48618: IDNA maps "。" to ".", so a non-ASCII host is matched on its UTS #46 form, as in `tls.checkServerIdentity`.
-    let hostname = if strings::first_non_ascii(hostname).is_some() {
-        let ascii = Bun__idnaToASCII(&bun_core::StringView::borrow_utf8(hostname));
-        if ascii.is_dead() {
-            return false;
-        }
-        ascii_hostname = ascii.to_owned_slice();
-        &ascii_hostname[..]
-    } else {
-        hostname
+    let Some(hostname) = idna_to_ascii(hostname) else {
+        return false;
     };
-    let hostname = unfqdn(hostname);
-    let host_is_dns_name = host_ip.is_none() && is_hostname(hostname);
+    let hostname = unfqdn(&hostname);
+    let host_is_dns_name =
+        host_ip.is_none() && is_hostname(hostname) && !is_ipv4_shorthand(hostname);
     if host_ip.is_none() && !host_is_dns_name {
         // `net.isIP` also takes an IPv6 address with a zone id (`fe80::1%eth0`), and a certificate names the address alone. No hostname has a `%`, so only a host that is neither pays for the search.
         host_ip = bun_core::ip_address::parse_zoned_ipv6_host(typed).map(IpAddr::V6);
@@ -715,6 +728,8 @@ pub fn write_server_identity_mismatch_reason(
     out: &mut dyn core::fmt::Write,
 ) -> core::fmt::Result {
     const NO_DNS: &str = "Cert does not contain a DNS name";
+    let is_shorthand =
+        idna_to_ascii(hostname).is_some_and(|ascii| is_ipv4_shorthand(unfqdn(&ascii)));
     let hostname = unfqdn(hostname);
     let host = HostName(hostname);
     let host_is_ip = bun_core::ip_address::is_ip_host(hostname);
@@ -733,6 +748,9 @@ pub fn write_server_identity_mismatch_reason(
             "IP: {host} is not in the cert's list: {}",
             CanonicalIpList(names.as_ref())
         );
+    }
+    if is_shorthand {
+        return out.write_str("Host is a non-canonical IP address");
     }
     if let Some(names) = &names {
         if names

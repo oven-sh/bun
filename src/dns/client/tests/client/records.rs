@@ -65,6 +65,11 @@ fn one_of_each() -> Vec<(RecordType, Vec<u8>, &'static str)> {
         ),
         (RecordType::SOA, soa(60, 5), "ns.test root.test 1 2 3 4 5"),
         (
+            RecordType::TLSA,
+            record(TLSA, 60, b"\x03\x01\x02\0\xff"),
+            r"3 1 2 \x00\xff",
+        ),
+        (
             RecordType::CAA,
             caa(128, b"issue", b"ca.test"),
             "128 issue ca.test",
@@ -78,7 +83,7 @@ fn query() {
     test.world().randoms.push_back(0xabcd);
     test.resolve(RecordType::CAA, "Ab.test");
     let header = [0xab, 0xcd, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
-    let question = *b"\x02Ab\x04test\0\x01\x01\0\x01";
+    let question = *b"\x02ab\x04test\0\x01\x01\0\x01";
     assert_eq!(test.sent_one().bytes, [&header[..], &question].concat());
 }
 
@@ -113,9 +118,10 @@ fn any() {
 #[test]
 fn data_that_ends_early() {
     for (kind, whole, _) in one_of_each() {
-        // What follows a string of TXT or the tag of CAA is optional.
+        // What follows a string of TXT, the tag of CAA or a byte of the data of TLSA is optional.
         let shortest = match kind {
             RecordType::TXT => 2,
+            RecordType::TLSA => 4,
             RecordType::CAA => 7,
             _ => whole.len() - 12,
         };
@@ -154,7 +160,7 @@ fn what_follows() {
 fn only_what_was_asked_for_is_read() {
     let empty = |kind| record(kind, 60, b"");
     let others = [
-        NS, SOA, PTR, HINFO, MX, TXT, AAAA, SRV, NAPTR, OPT, CAA, 65280,
+        NS, SOA, PTR, HINFO, MX, TXT, AAAA, SRV, NAPTR, OPT, TLSA, CAA, 65280,
     ]
     .map(empty);
     let answers = [&others[..], &[address("1.2.3.4", 60)]].concat();
@@ -176,7 +182,7 @@ fn among_other_types(missing: RecordType) -> &'static str {
     match missing {
         A | AAAA | CNAME | NS | PTR => "ENODATA",
         SOA => "EBADRESP",
-        MX | TXT | SRV | NAPTR | CAA | ANY => "",
+        MX | TXT | SRV | NAPTR | TLSA | CAA | ANY => "",
     }
 }
 
@@ -360,7 +366,7 @@ fn errors_for_javascript() {
         (ENOTIMP, 5, "DNS_ENOTIMP"),
         (EREFUSED, 6, "DNS_EREFUSED"),
         (EBADQUERY, 7, "DNS_EBADQUERY"),
-        (EBADNAME, 8, "DNS_ENOTFOUND"),
+        (EBADNAME, 8, "DNS_EBADNAME"),
         (EBADFAMILY, 9, "DNS_EBADFAMILY"),
         (EBADRESP, 10, "DNS_EBADRESP"),
         (ECONNREFUSED, 11, "DNS_ECONNREFUSED"),

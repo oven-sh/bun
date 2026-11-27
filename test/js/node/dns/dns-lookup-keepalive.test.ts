@@ -120,10 +120,10 @@ describe("a settled query does not keep the event loop alive", () => {
          Bun.dns.lookup("a.onion", { backend: "c-ares" }),
          dns.promises.resolve4("a.test"),
          dns.promises.reverse("192.0.2.1"),
-         dns.promises.lookupService("192.0.2.1", 80),
+         Bun.dns.lookupService("192.0.2.1", 80),
        ];
        return Promise.all(queries.map(query => query.catch(e => e.code)))`,
-      [[{ address: "127.0.0.1", family: 4, ttl: 0 }], "DNS_ENOTFOUND", "ENOSERVER", "ENOTFOUND", "ENOTFOUND"],
+      [[{ address: "127.0.0.1", family: 4, ttl: 0 }], "DNS_ENOTFOUND", "ENOSERVER", "ENOTFOUND", "DNS_ENOTFOUND"],
     ],
     [
       "sending a query fails the one in flight",
@@ -239,7 +239,7 @@ describe("script does not run inside the resolver's client", () => {
         ${before}
         Object.defineProperty(Array.prototype, "then", {
           get() {
-            if (!this[0]?.address) return;
+            if (this[0] !== "10.0.0.1") return;
             console.log("dispose");
             graph.dispose();
           },

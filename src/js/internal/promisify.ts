@@ -44,7 +44,7 @@ var promisify = function promisify(original: (...args: any[]) => unknown) {
             return reject(err);
           }
 
-          if (callbackArgs !== undefined) {
+          if (callbackArgs !== undefined && values.length > 1) {
             const result = {};
             for (let i = 0; i < callbackArgs.length; i++) {
               result[callbackArgs[i]] = values[i];

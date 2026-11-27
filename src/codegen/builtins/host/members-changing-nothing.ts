@@ -7,7 +7,7 @@ type Members = {
 };
 
 export const membersChangingNothing: Readonly<Record<string, Members>> = {
-  "%DNSResolver%": {
+  "%ChannelWrap%": {
     methods: {},
     getters: {},
     accessors: {},

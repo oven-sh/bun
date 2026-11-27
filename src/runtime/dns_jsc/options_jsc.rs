@@ -1,15 +1,18 @@
 //! `from_js`/`to_js` for `GetAddrInfo` and its nested option types, plus
 //! `results_to_js`. The pure types stay in `src/dns/`.
 
+use bun_jsc::bindgen::JsHeap;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 
 use bun_dns::OptionsFromJsError as FromJSError;
 use bun_dns::address_to_string;
 use bun_dns::{
-    BACKEND_LABEL, Backend, FAMILY_MAP, Family, GetAddrInfoResult as GaiResult, Options,
+    BACKEND_LABEL, Backend, FAMILY_MAP, Family, GetAddrInfoResult as GaiResult, Options, Order,
     PROTOCOL_MAP, Protocol, SOCKET_TYPE_MAP, SocketType,
 };
 
+use crate::dns_jsc::answer_jsc::{array, to_js_result};
+use crate::generated_bindgen::answer_jsc::LookupAddress;
 use crate::generated_bindgen::dns::{AddrInfoHint, LookupOptions};
 
 pub(crate) fn options_from_js(value: &LookupOptions<'_>) -> Result<Options, FromJSError> {
@@ -110,20 +113,32 @@ pub(crate) fn results_to_js(list: &[GaiResult], global: &JSGlobalObject) -> JsRe
     JSValue::create_array_from_iter(global, list.iter(), |item| result_to_js(item, global))
 }
 
+/// The addresses as strings. Unlike in Node.js, a link-local one keeps its zone id, without which it cannot be reached.
+pub(crate) fn addresses_to_js(
+    list: &[GaiResult],
+    order: Order,
+    global: &JSGlobalObject,
+) -> JsResult<JSValue> {
+    let is_first = |it: &&GaiResult| match order {
+        Order::Verbatim => true,
+        Order::Ipv4first => it.address.family() == super::netc::AF_INET as _,
+        Order::Ipv6first => it.address.family() == super::netc::AF_INET6 as _,
+    };
+    let sorted = (list.iter().filter(is_first)).chain(list.iter().filter(|it| !is_first(it)));
+    array(global, sorted, |it| {
+        address_to_string(&it.address).into_js(global)
+    })
+}
+
 pub(crate) fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResult<JSValue> {
-    let obj = JSValue::create_empty_object(global, 3);
-    let address = address_to_string(&this.address).into_js(global)?;
-    obj.put(global, b"address", address);
-    obj.put(
-        global,
-        b"family",
-        // `bun_sys::net::Address` exposes `.family() -> i32`.
-        match this.address.family() {
-            f if f == super::netc::AF_INET as _ => JSValue::js_number(4.0),
-            f if f == super::netc::AF_INET6 as _ => JSValue::js_number(6.0),
-            _ => JSValue::js_number(0.0),
+    let result = LookupAddress {
+        address: address_to_string(&this.address),
+        family: match this.address.family() {
+            f if f == super::netc::AF_INET as _ => 4,
+            f if f == super::netc::AF_INET6 as _ => 6,
+            _ => 0,
         },
-    );
-    obj.put(global, b"ttl", JSValue::js_number(f64::from(this.ttl)));
-    Ok(obj)
+        ttl: this.ttl,
+    };
+    to_js_result(result.into_js(JsHeap::from_global(global)), global)
 }

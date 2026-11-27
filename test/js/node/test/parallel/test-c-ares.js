@@ -29,6 +29,7 @@ const dnsPromises = dns.promises;
 (async function() {
   let res;
 
+  // Bun: a falsy host name is still answered as in Node.js 24 (DEP0118).
   res = await dnsPromises.lookup(null);
   assert.strictEqual(res.address, null);
   assert.strictEqual(res.family, 4);
@@ -43,6 +44,7 @@ const dnsPromises = dns.promises;
 })().then(common.mustCall());
 
 // Try resolution without hostname.
+// Bun: a falsy host name is still answered as in Node.js 24 (DEP0118).
 dns.lookup(null, common.mustSucceed((result, addressType) => {
   assert.strictEqual(result, null);
   assert.strictEqual(addressType, 4);
@@ -67,11 +69,11 @@ dns.lookup('::1', common.mustSucceed((result, addressType) => {
   const err = {
     code: 'ERR_INVALID_ARG_VALUE',
     name: 'TypeError',
-    // message: `The argument 'rrtype' is invalid. Received '${val}'`,
+    message: `The argument 'rrtype' is invalid. Received '${val}'`,
   };
 
   assert.throws(
-    () => dns.resolve('www.google.com', val, common.mustNotCall()),
+    () => dns.resolve('www.google.com', val),
     err
   );
 

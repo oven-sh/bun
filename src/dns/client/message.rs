@@ -23,6 +23,7 @@ pub enum RecordType {
     AAAA = 28,
     SRV = 33,
     NAPTR = 35,
+    TLSA = 52,
     ANY = 255,
     CAA = 257,
 }
@@ -47,10 +48,12 @@ const FLAG_RECURSION_DESIRED: u16 = 0x0100;
 const OPCODE_MASK: u16 = 0x7800;
 const RCODE_MASK: u16 = 0x000f;
 const NOERROR: u16 = 0;
+const FORMERR: u16 = 1;
 const NXDOMAIN: u16 = 3;
+const NOTIMP: u16 = 4;
 const REFUSED: u16 = 5;
 
-/// The name, the type and the class, as on the wire.
+/// The name in lower case, the type and the class, as on the wire.
 #[derive(Clone)]
 pub(crate) struct Question {
     bytes: Rc<[u8]>,
@@ -66,8 +69,9 @@ impl Question {
             return Err(Error::ENOTFOUND);
         }
         let after = [kind as u16, CLASS_IN].map(u16::to_be_bytes);
-        let bytes: Rc<[u8]> = name.iter().chain(after.as_flattened()).copied().collect();
-        let hash = bun_wyhash::hash_ascii_lowercase(seed, &bytes);
+        let name = name.iter().map(u8::to_ascii_lowercase);
+        let bytes: Rc<[u8]> = name.chain(after.as_flattened().iter().copied()).collect();
+        let hash = bun_wyhash::hash_with_seed(seed, &bytes);
         Ok(Self { bytes, kind, hash })
     }
 
@@ -271,6 +275,12 @@ pub enum Record<'a> {
         expire: u32,
         minimum: u32,
     },
+    Tlsa {
+        cert_usage: u8,
+        selector: u8,
+        matching_type: u8,
+        data: &'a [u8],
+    },
     Caa {
         flags: u8,
         tag: &'a [u8],
@@ -311,6 +321,15 @@ impl<'a> Record<'a> {
                 expire: data.u32()?,
                 minimum: data.u32()?,
             },
+            RecordType::TLSA => {
+                let [cert_usage, selector, matching_type] = data.array()?;
+                Self::Tlsa {
+                    cert_usage,
+                    selector,
+                    matching_type,
+                    data: Some(data.rest).filter(|data| !data.is_empty())?,
+                }
+            }
             RecordType::CAA => Self::Caa {
                 flags: data.array().map(u8::from_be_bytes)?,
                 tag: data.ascii().filter(|tag| !tag.is_empty())?,
@@ -322,7 +341,7 @@ impl<'a> Record<'a> {
 
     fn has_valid_names(&self) -> bool {
         match *self {
-            Self::Address(_) | Self::Txt(_) | Self::Caa { .. } => true,
+            Self::Address(_) | Self::Txt(_) | Self::Tlsa { .. } | Self::Caa { .. } => true,
             Self::Soa { mname, rname, .. } => mname.is_valid() && rname.is_valid(),
             Self::Name(name)
             | Self::Mx { exchange: name, .. }
@@ -451,9 +470,19 @@ impl Message {
         question.unwrap_or_default()
     }
 
-    /// Whether the server did the work of looking the name up.
-    pub(crate) fn is_resolved(&self) -> bool {
-        matches!(self.rcode, NOERROR | NXDOMAIN)
+    /// `Some` for an error response. NXDOMAIN is none: it answers the question (RFC 9520 §2).
+    pub(crate) fn rcode_error(&self) -> Option<Error> {
+        Some(match self.rcode {
+            NOERROR | NXDOMAIN => return None,
+            FORMERR => Error::EFORMERR,
+            NOTIMP => Error::ENOTIMP,
+            REFUSED => Error::EREFUSED,
+            _ => Error::ESERVFAIL,
+        })
+    }
+
+    pub(crate) fn has_answers(&self) -> bool {
+        self.answer_count > 0
     }
 
     pub(crate) fn is_refusal(&self) -> bool {
@@ -469,14 +498,10 @@ impl Message {
             (NOERROR, A | AAAA) if self.cname_ttl != u32::MAX => return Ok(Records(self)),
             // RFC 5321 §5.1
             (NOERROR, MX | SRV | NS | CNAME) if self.has_unusable => Error::EBADRESP,
-            (NOERROR, MX | TXT | SRV | NAPTR | ANY | CAA) => return Ok(Records(self)),
+            (NOERROR, MX | TXT | SRV | NAPTR | TLSA | ANY | CAA) => return Ok(Records(self)),
             (NOERROR, SOA) => Error::EBADRESP,
             (NOERROR, _) => Error::ENODATA,
-            (1, _) => Error::EFORMERR,
-            (NXDOMAIN, _) => Error::ENOTFOUND,
-            (4, _) => Error::ENOTIMP,
-            (REFUSED, _) => Error::EREFUSED,
-            _ => Error::ESERVFAIL,
+            _ => self.rcode_error().unwrap_or(Error::ENOTFOUND),
         })
     }
 }
@@ -499,7 +524,7 @@ impl Records {
         self.0.asked
     }
 
-    pub fn of(&self, kind: RecordType) -> impl Iterator<Item = Record<'_>> + Clone {
+    pub fn of(&self, kind: RecordType) -> impl Iterator<Item = Record<'_>> {
         let records = self.resources(kind);
         records
             .filter_map(move |(ttl, data)| Record::read(kind, ttl, data))
@@ -507,13 +532,13 @@ impl Records {
     }
 
     /// In reply to A or AAAA.
-    pub(crate) fn addresses(&self) -> impl Iterator<Item = Address> {
+    pub fn addresses(&self) -> impl Iterator<Item = Address> {
         let records = self.resources(self.asked());
         records.filter_map(|(ttl, data)| Address::read(self.asked(), ttl, data.rest))
     }
 
     /// A record holds no longer than the aliases that lead to it.
-    fn resources(&self, kind: RecordType) -> impl Iterator<Item = (u32, Reader<'_>)> + Clone {
+    fn resources(&self, kind: RecordType) -> impl Iterator<Item = (u32, Reader<'_>)> {
         let message = &self.0;
         let mut reader = Reader::new(&message.bytes, message.answers_at);
         let count = if message.answer_types & kind.bit() != 0 {

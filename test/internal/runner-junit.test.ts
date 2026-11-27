@@ -98,7 +98,7 @@ describe("parseJunitFileSuites", () => {
   });
 });
 
-test("parseJunitFileSuites reads the report bun test --parallel --reporter=junit writes", async () => {
+test.concurrent("parseJunitFileSuites reads the report bun test --parallel --reporter=junit writes", async () => {
   using dir = tempDir("runner-junit", {
     "test/describes.test.ts": `
       import { describe, expect, test } from "bun:test";
@@ -155,4 +155,51 @@ test("parseJunitFileSuites reads the report bun test --parallel --reporter=junit
     },
   });
   expect(exitCode).toBe(1);
+});
+
+test.concurrent("getFileUrl gives no link unless it knows the repository and the commit", async () => {
+  const commit = "56310be9617b826f862c985eae95ae823d95f097";
+  const repository = (path: string, head: string) => ({
+    [`${path}.git/HEAD`]: `${head}\n`,
+    [`${path}.git/objects/.keep`]: "",
+    [`${path}.git/refs/.keep`]: "",
+  });
+  using dir = tempDir("runner-file-url", {
+    ...repository("", "ref: refs/heads/main"),
+    // As scripts/vendor-checkout.ts leaves it: at a commit, without a remote.
+    ...repository("vendor/suite/", commit),
+    "vendor/suite/test/a.test.ts": "",
+  });
+
+  const buildkite = Bun.pathToFileURL(join(import.meta.dir, "..", "..", "scripts", "buildkite.ts")).href;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { getFileUrl } from ${JSON.stringify(buildkite)};
+      console.log(getFileUrl("vendor/suite/test/a.test.ts", 1));
+      const [url, commit] = ["https://github.com/oven-sh/bun.git", "${commit}"];
+      for (const [BUILDKITE_REPO, BUILDKITE_COMMIT] of [["", commit], [url, ""], [url, commit]]) {
+        Object.assign(process.env, { BUILDKITE_REPO, BUILDKITE_COMMIT });
+        console.log(getFileUrl("test/a.test.ts", 1));
+      }`,
+    ],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      BUILDKITE: "true",
+      GITHUB_SERVER_URL: undefined,
+      GIT_DIR: undefined,
+      GIT_COMMON_DIR: undefined,
+      GIT_WORK_TREE: undefined,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: `undefined\nundefined\nundefined\nhttps://github.com/oven-sh/bun/blob/${commit}/test/a.test.ts#L1\n`,
+    stderr: "",
+    exitCode: 0,
+  });
 });

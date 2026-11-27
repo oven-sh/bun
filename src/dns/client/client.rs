@@ -7,11 +7,14 @@ use crate::Error;
 use crate::cache::Cache;
 use crate::config::{Config, port_or_default};
 use crate::hosts::Hosts;
-use crate::lookup::{AddressLookup, NameLookup};
+use crate::lookup::{AddressLookup, NameLookup, answer_without_query};
 use crate::message::{Address, Message, Question, RecordType, Records};
 use crate::servers::{ServerId, Servers};
 use crate::system::{Events, SocketId, System, Transport};
 use crate::transport::{Connections, MIN_TIMEOUT, Queries};
+
+/// The least time between reloads once the system names a server: reading the configuration can take long.
+const RELOAD_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy)]
 pub struct Options {
@@ -63,6 +66,12 @@ pub(crate) enum Step<R> {
 pub struct Client<S: System, R> {
     pub(crate) system: S,
     pub(crate) config: Config,
+    /// Until [`set_servers`](Self::set_servers).
+    uses_system_servers: bool,
+    /// The last query timed out or was refused. The machine may have moved to another network.
+    pub(crate) needs_reload: bool,
+    reload_at: Duration,
+    timeout_option: Option<Duration>,
     pub(crate) max_timeout: Option<Duration>,
     pub(crate) tries: usize,
     pub(crate) servers: Servers,
@@ -81,11 +90,15 @@ pub struct Client<S: System, R> {
     answers: Answers<R>,
 }
 
+fn load_config(system: &mut impl System, timeout: Option<Duration>) -> Config {
+    let mut config = Config::load(system);
+    config.timeout = timeout.or(config.timeout).map(|it| it.max(MIN_TIMEOUT));
+    config
+}
+
 impl<S: System, R> Client<S, R> {
     pub fn new(mut system: S, options: Options) -> Self {
-        let mut config = Config::load(&mut system);
-        let timeout = options.timeout.or(config.timeout);
-        config.timeout = timeout.map(|timeout| timeout.max(MIN_TIMEOUT));
+        let mut config = load_config(&mut system, options.timeout);
         let mut servers = Servers::default();
         servers.replace(core::mem::take(&mut config.servers).into_iter());
         let seed = (0..4).try_fold(0, |seed, _| Some(seed << 16 | u64::from(system.random()?)));
@@ -93,6 +106,10 @@ impl<S: System, R> Client<S, R> {
         Self {
             system,
             config,
+            uses_system_servers: true,
+            needs_reload: false,
+            reload_at: Duration::ZERO,
+            timeout_option: options.timeout,
             max_timeout: options.max_timeout,
             tries: options.tries as usize,
             servers,
@@ -119,9 +136,17 @@ impl<S: System, R> Client<S, R> {
         self.servers.iter().map(|server| server.address)
     }
 
+    /// Whether [`lookup`](Self::lookup) may send a query, and neither the system nor [`set_servers`](Self::set_servers) named a server.
+    pub fn uses_default_server_for(&self, host: &[u8]) -> bool {
+        self.uses_system_servers
+            && !self.config.has_nameserver
+            && answer_without_query(host).is_none()
+    }
+
     /// Port 0 is the default one.
     #[must_use]
     pub fn set_servers(&mut self, servers: &[(IpAddr, u16)]) -> Answers<R> {
+        self.uses_system_servers = false;
         self.call(|this| {
             let address = |&(ip, port)| SocketAddr::new(ip, port_or_default(port));
             this.servers.replace(servers.iter().map(address));
@@ -133,6 +158,7 @@ impl<S: System, R> Client<S, R> {
 
     /// What new sockets of the family of `ip` are bound to.
     pub fn set_local_ip(&mut self, ip: IpAddr) {
+        self.cache = Cache::default();
         match ip {
             IpAddr::V4(ip) => self.local_v4 = Some(ip).filter(|ip| !ip.is_unspecified()),
             IpAddr::V6(ip) => self.local_v6 = Some(ip).filter(|ip| !ip.is_unspecified()),
@@ -142,7 +168,7 @@ impl<S: System, R> Client<S, R> {
     /// Asks for `name` as it is: no hosts file, no search list.
     #[must_use]
     pub fn resolve(&mut self, kind: RecordType, name: &[u8], request: R) -> Answers<R> {
-        self.call(|this| this.ask(name, kind, Purpose::Records(request)))
+        self.start_request(|this| this.ask(name, kind, Purpose::Records(request)))
     }
 
     #[must_use]
@@ -173,7 +199,41 @@ impl<S: System, R> Client<S, R> {
         self.call(|this| this.fail_all(Error::EDESTRUCTION))
     }
 
-    pub(crate) fn call(&mut self, start: impl FnOnce(&mut Self)) -> Answers<R> {
+    /// As [`call`](Self::call), after a reload if one is due.
+    pub(crate) fn start_request(&mut self, start: impl FnOnce(&mut Self)) -> Answers<R> {
+        self.call(|this| {
+            if this.needs_reload && this.uses_system_servers && this.reload_at <= this.now {
+                this.reload();
+            }
+            start(this);
+        })
+    }
+
+    /// https://github.com/nodejs/node/blob/v26.12.1/src/cares_wrap.cc#L985-L1040, for any servers and without ending outstanding queries.
+    #[cold]
+    fn reload(&mut self) {
+        self.needs_reload = false;
+        let mut config = load_config(&mut self.system, self.timeout_option);
+        match (config.has_nameserver, self.config.has_nameserver) {
+            (true, _) => {
+                let servers = core::mem::take(&mut config.servers);
+                if self.servers.replace(servers.into_iter()) {
+                    self.cache = Cache::default();
+                }
+                self.leave_removed_servers();
+                self.config = config;
+            }
+            // There may have been no file descriptor to read it with.
+            (false, true) => {}
+            (false, false) => {
+                self.config = config;
+                return;
+            }
+        }
+        self.reload_at = self.now.saturating_add(RELOAD_INTERVAL);
+    }
+
+    fn call(&mut self, start: impl FnOnce(&mut Self)) -> Answers<R> {
         self.now = self.system.now();
         start(self);
         self.take_steps();
@@ -198,7 +258,7 @@ impl<S: System, R> Client<S, R> {
 
     pub(crate) fn ask(&mut self, name: &[u8], kind: RecordType, purpose: Purpose<R>) {
         let outcome = match Question::new(name, kind, self.seed) {
-            Ok(question) => match self.cache.get(&question, self.now) {
+            Ok(question) => match self.cache.get(&question, self.now, &self.system) {
                 Some(message) => Ok(message),
                 None => return self.join_or_send(question, purpose),
             },

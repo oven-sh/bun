@@ -309,6 +309,12 @@ fn show_record(record: Record<'_>) -> String {
             let [mname, rname] = [mname, rname].map(show_name);
             format!("{mname} {rname} {serial} {refresh} {retry} {expire} {minimum}")
         }
+        Record::Tlsa {
+            cert_usage,
+            selector,
+            matching_type,
+            data,
+        } => format!("{cert_usage} {selector} {matching_type} {}", show(data)),
         Record::Caa { flags, tag, value } => format!("{flags} {} {}", show(tag), show(value)),
     }
 }
@@ -318,7 +324,7 @@ fn show_records(records: &Records) -> Vec<String> {
     if records.asked() != ANY {
         return records.of(records.asked()).map(show_record).collect();
     }
-    let kinds = [A, AAAA, CNAME, MX, NS, TXT, SRV, PTR, NAPTR, SOA, CAA];
+    let kinds = [A, AAAA, CNAME, MX, NS, TXT, SRV, PTR, NAPTR, SOA, TLSA, CAA];
     let of = |kind| records.of(kind).map(move |it| (kind, show_record(it)));
     let all = kinds.into_iter().flat_map(of);
     all.map(|(kind, it)| format!("{kind:?} {it}")).collect()

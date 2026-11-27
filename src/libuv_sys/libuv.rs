@@ -2786,6 +2786,7 @@ unsafe extern "C" {
         hints: *const c_void,
     ) -> ReturnCode;
     pub fn uv_freeaddrinfo(ai: *mut c_void);
+    pub safe fn uv__getaddrinfo_translate_error(sys_err: c_int) -> c_int;
 
     // process
     pub fn uv_spawn(

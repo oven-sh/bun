@@ -1,14 +1,18 @@
-// Flags: --dns-result-order=verbatim
+// Flags: --expose-internals --dns-result-order=verbatim
 'use strict';
 const common = require('../common');
 const assert = require('assert');
+const { internalBinding } = require('internal/test/binding');
+const cares = internalBinding('cares_wrap');
 const { promisify } = require('util');
 
-const originalLookup = Bun.dns.lookup;
+// Test that --dns-result-order=verbatim works as expected.
+
+const originalGetaddrinfo = cares.getaddrinfo;
 const calls = [];
-Bun.dns.lookup = common.mustCallAtLeast((...args) => {
+cares.getaddrinfo = common.mustCallAtLeast((...args) => {
   calls.push(args);
-  return originalLookup(...args);
+  originalGetaddrinfo(...args);
 }, 1);
 
 const dns = require('dns');
@@ -24,32 +28,32 @@ function allowFailed(fn) {
 
 (async () => {
   let callsLength = 0;
-  const checkParameter = (expected) => {
+  const checkParameter = common.mustCallAtLeast((expected) => {
     assert.strictEqual(calls.length, callsLength + 1);
-    const { order } = calls[callsLength][1];
+    const order = calls[callsLength][4];
     assert.strictEqual(order, expected);
     callsLength += 1;
-  };
+  });
 
   await allowFailed(promisify(dns.lookup)('example.org'));
-  checkParameter("verbatim");
+  checkParameter(cares.DNS_ORDER_VERBATIM);
 
   await allowFailed(dnsPromises.lookup('example.org'));
-  checkParameter("verbatim");
+  checkParameter(cares.DNS_ORDER_VERBATIM);
 
   await allowFailed(promisify(dns.lookup)('example.org', {}));
-  checkParameter("verbatim");
+  checkParameter(cares.DNS_ORDER_VERBATIM);
 
   await allowFailed(dnsPromises.lookup('example.org', {}));
-  checkParameter("verbatim");
+  checkParameter(cares.DNS_ORDER_VERBATIM);
 
   await allowFailed(
     promisify(dns.lookup)('example.org', { order: 'ipv4first' })
   );
-  checkParameter("ipv4first");
+  checkParameter(cares.DNS_ORDER_IPV4_FIRST);
 
   await allowFailed(
     promisify(dns.lookup)('example.org', { order: 'ipv6first' })
   );
-  checkParameter("ipv6first");
+  checkParameter(cares.DNS_ORDER_IPV6_FIRST);
 })().then(common.mustCall());

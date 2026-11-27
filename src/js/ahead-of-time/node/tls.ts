@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tls.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 7052e2ce4a4e5e04d92be50664a7cc26145a8b0aa79fe87d6fa7f772f861905a.
+// Written against that file with the SHA-256 fa089157ebe043a5247a2c3b23b2aedcd535461dfbe5775947bb6b1f9e180107.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:tls"
@@ -535,6 +535,9 @@ function checkServerIdentity(hostname: string, cert: $Node.PeerCertificate) {
     const ip = canonicalizeIP(hostname);
     valid = ip !== undefined && ArrayPrototypeIncludes.$call(ips, ip);
     if (!valid) reason = `IP: ${hostname} is not in the cert's list: ` + ArrayPrototypeJoin.$call(ips, ", ");
+  } else if (RegExpPrototypeExec.$call(/^(?:(?:\d+|0x[\da-f]*)(?:\.|$)){1,4}$/i, hostnameASCIIWithoutFQDN) !== null) {
+    // https://github.com/nodejs/node/blob/v26.12.1/lib/tls.js#L461-L464. A name that only ends in a number ("db.1") stays a name, unlike in Node.js.
+    reason = "Host is a non-canonical IP address";
   } else {
     const hasDnsNames = dnsNames.length > 0;
     if (hasDnsNames || subject?.CN) {
@@ -1671,7 +1674,13 @@ function connect(...args: unknown[]) {
   }
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1795
   if (!options.socket) tlssock.once("connect", onConnectStart);
-  return tlssock.connect(normal);
+  try {
+    return tlssock.connect(normal);
+  } catch (error) {
+    // The caller gets no socket to destroy. A handle that it passed is still its own.
+    if (!options.handle) tlssock.destroy();
+    throw error;
+  }
 }
 
 // The engine sends the ClientHello when the listeners of 'connect' have run. An end() of theirs must not get ahead of it.

@@ -6,10 +6,10 @@ use std::rc::Rc;
 
 use bun_core::{ip_address, strings};
 
-use crate::client::{Answers, Client, Outcome, Purpose, Reply};
+use crate::client::{Answer, Answers, Client, Outcome, Purpose, Reply};
 use crate::config::{Config, Source, WHITESPACE, lines};
 use crate::hosts::Table;
-use crate::message::{Address, Message, Record, RecordType};
+use crate::message::{Address, Message, Question, Record, RecordType};
 use crate::system::{System, Variable};
 use crate::{Error, name, sort};
 
@@ -40,18 +40,29 @@ pub(crate) struct AddressLookup<R> {
     /// The names to ask for, last first.
     candidates: Vec<Box<[u8]>>,
     had_no_data: bool,
-    /// The first that was passed over. It leaves open whether there is an address.
-    refusal: Option<Error>,
+    /// The first that the search passed over. It leaves open whether there is an address.
+    rcode_error: Option<Error>,
     found: Cell<Vec<Address>>,
     has_ipv4: Cell<bool>,
     /// Of the query that finished first.
     other_error: Cell<Option<Error>>,
+    ipv4_had_rcode_failover: Cell<bool>,
+    /// The question for AAAA, once its query went to another server.
+    ipv6_rcode_failover: Cell<Option<Question>>,
 }
 
 impl<R> AddressLookup<R> {
-    /// While AAAA is being asked for. It is not worth waiting for then.
-    pub(crate) fn can_do_without_ipv6(&self) -> bool {
-        self.has_ipv4.get() || self.other_error.get() == Some(Error::ENOTFOUND)
+    /// Whether another try for AAAA is not worth waiting for after one ended with `error`.
+    pub(crate) fn can_do_without_ipv6(&self, error: Error) -> bool {
+        (self.has_ipv4.get() || self.other_error.get() == Some(Error::ENOTFOUND))
+            && !(self.ipv4_had_rcode_failover.get() && is_rcode_error(error))
+    }
+
+    pub(crate) fn record_rcode_failover(&self, kind: RecordType, question: &Question) {
+        match kind {
+            RecordType::A => self.ipv4_had_rcode_failover.set(true),
+            _ => self.ipv6_rcode_failover.set(Some(question.clone())),
+        }
     }
 
     fn candidate(&self) -> &[u8] {
@@ -67,10 +78,20 @@ pub(crate) struct NameLookup<R> {
     sources: &'static [Source],
 }
 
-/// The server was there, and says nothing about the name.
-fn is_refusal(error: Error) -> bool {
+/// Whether [`Message::rcode_error`] returns it.
+fn is_rcode_error(error: Error) -> bool {
     use Error::*;
     matches!(error, ESERVFAIL | EREFUSED | ENOTIMP | EFORMERR)
+}
+
+/// An address is its own answer, whatever its family. One in a short form, such as `127.1`, has none.
+pub(crate) fn answer_without_query(host: &[u8]) -> Option<Answer> {
+    if let Some(ip) = ip_address::parse_strict(host) {
+        return Some(Ok(Reply::Addresses(vec![Address { ip, ttl: 0 }])));
+    }
+    let is_not_found = name::encode(host, &mut [0; name::MAX_LEN]).is_some_and(name::is_onion)
+        || ip_address::to_ip_address(host).is_some();
+    is_not_found.then_some(Err(Error::ENOTFOUND))
 }
 
 /// hostname(7)
@@ -134,18 +155,12 @@ impl<S: System, R> Client<S, R> {
         self.hosts.current(&self.config.hosts_path, &self.system)
     }
 
-    /// Best first. An address is its own answer, whatever its family. One in a short form, such as `127.1`, has none.
+    /// Best first.
     #[must_use]
     pub fn lookup(&mut self, host: &[u8], family: Family, request: R) -> Answers<R> {
-        self.call(|this| {
-            if let Some(ip) = ip_address::parse_strict(host) {
-                let address = Address { ip, ttl: 0 };
-                return this.answer(request, Ok(Reply::Addresses(vec![address])));
-            }
-            if name::encode(host, &mut [0; name::MAX_LEN]).is_some_and(name::is_onion)
-                || ip_address::to_ip_address(host).is_some()
-            {
-                return this.answer(request, Err(Error::ENOTFOUND));
+        self.start_request(|this| {
+            if let Some(answer) = answer_without_query(host) {
+                return this.answer(request, answer);
             }
             let alias = host_alias(host, &this.system);
             let lookup = AddressLookup {
@@ -155,10 +170,12 @@ impl<S: System, R> Client<S, R> {
                 sources: this.config.sources,
                 candidates: alias.map_or_else(|| search_list(host, &this.config), |it| vec![it]),
                 had_no_data: false,
-                refusal: None,
+                rcode_error: None,
                 found: Cell::default(),
                 has_ipv4: Cell::default(),
                 other_error: Cell::default(),
+                ipv4_had_rcode_failover: Cell::default(),
+                ipv6_rcode_failover: Cell::default(),
             };
             this.look_for_addresses(lookup, Error::ENOTFOUND);
         })
@@ -216,6 +233,12 @@ impl<S: System, R> Client<S, R> {
         }
         let error = records.err().unwrap_or(Error::ENODATA);
         let other_error = lookup.other_error.replace(Some(error));
+        // As if this reply had come before the error response to AAAA, which then gets no other try.
+        if let Some(question) = lookup.ipv6_rcode_failover.take()
+            && !lookup.ipv4_had_rcode_failover.get()
+        {
+            self.stop_waiting_for_ipv6(&question);
+        }
 
         let Some(mut lookup) = Rc::into_inner(lookup) else {
             return;
@@ -232,11 +255,11 @@ impl<S: System, R> Client<S, R> {
             (RecordType::A, a, aaaa) | (_, aaaa, a) => {
                 lookup.had_no_data |= a == Error::ENODATA || aaaa == Error::ENODATA;
                 match (a, aaaa) {
-                    (none @ Error::ENODATA, refusal)
-                    | (refusal, none @ (Error::ENOTFOUND | Error::ENODATA))
-                        if is_refusal(refusal) =>
+                    (none @ Error::ENODATA, rcode_error)
+                    | (rcode_error, none @ (Error::ENOTFOUND | Error::ENODATA))
+                        if is_rcode_error(rcode_error) =>
                     {
-                        lookup.refusal.get_or_insert(refusal);
+                        lookup.rcode_error.get_or_insert(rcode_error);
                         none
                     }
                     (Error::ENODATA, error) | (error, _) => error,
@@ -254,8 +277,9 @@ impl<S: System, R> Client<S, R> {
         }
         lookup.candidates.pop();
         lookup.other_error.set(None);
+        lookup.ipv4_had_rcode_failover.set(false);
         let no_data = lookup.had_no_data.then_some(Error::ENODATA);
-        let error = lookup.refusal.or(no_data).unwrap_or(error);
+        let error = lookup.rcode_error.or(no_data).unwrap_or(error);
         self.look_for_addresses(lookup, error);
     }
 
@@ -271,18 +295,19 @@ impl<S: System, R> Client<S, R> {
     }
 
     fn lookup_names(&mut self, ip: IpAddr, port: Option<u16>, request: R) -> Answers<R> {
-        let sources = self.config.sources;
-        self.call(|this| {
-            this.look_for_names(NameLookup {
+        self.start_request(|this| {
+            let lookup = NameLookup {
                 request,
                 ip,
                 port,
-                sources,
-            });
+                sources: this.config.sources,
+            };
+            this.look_for_names(lookup, Error::ENOTFOUND);
         })
     }
 
-    fn look_for_names(&mut self, mut lookup: NameLookup<R>) {
+    /// `error` is the answer if there is nowhere left to look.
+    fn look_for_names(&mut self, mut lookup: NameLookup<R>, error: Error) {
         while let &[source, ref rest @ ..] = lookup.sources {
             lookup.sources = rest;
             if source == Source::Dns {
@@ -298,16 +323,20 @@ impl<S: System, R> Client<S, R> {
                 return self.answer(lookup.request, Ok(reply));
             }
         }
-        self.answer(lookup.request, Err(Error::ENOTFOUND));
+        self.answer(lookup.request, Err(error));
     }
 
     pub(crate) fn got_names(&mut self, lookup: NameLookup<R>, outcome: Outcome) {
+        let has_answers = outcome.as_ref().is_ok_and(Message::has_answers);
         let records = match outcome.and_then(Message::into_records) {
             Ok(records) => records,
             Err(error @ (Error::ECANCELLED | Error::EDESTRUCTION)) => {
                 return self.answer(lookup.request, Err(error));
             }
-            Err(_) => return self.look_for_names(lookup),
+            Err(error @ Error::ENODATA) if has_answers => {
+                return self.look_for_names(lookup, error);
+            }
+            Err(_) => return self.look_for_names(lookup, Error::ENOTFOUND),
         };
         let mut text = Vec::new();
         let hosts = records
@@ -326,7 +355,7 @@ impl<S: System, R> Client<S, R> {
         };
         match reply {
             Some(reply) => self.answer(lookup.request, Ok(reply)),
-            None => self.look_for_names(lookup),
+            None => self.look_for_names(lookup, Error::ENOTFOUND),
         }
     }
 }

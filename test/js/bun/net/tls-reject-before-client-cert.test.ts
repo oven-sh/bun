@@ -1047,11 +1047,11 @@ describe("a client that accepts a bad chain still completes the handshake", () =
   });
 });
 
-// A host in IP shorthand is a name for these clients, as it is for
+// A host in IP shorthand is no address for these clients, as it is none for
 // tls.checkServerIdentity(). The native check asked ares_inet_pton, which reads
 // "0x7f000001" and "127.0.0.1/32" as 127.0.0.1, an address in the harness
 // certificate.
-describe("a rejecting client takes a host in IP shorthand for a name", () => {
+describe("a rejecting client takes a host in IP shorthand for no address", () => {
   const pinned = { ca: trustedCA };
   const certificate = new X509Certificate(serverCert).toLegacyObject();
   const mismatch = (host: string) => {
@@ -1060,7 +1060,7 @@ describe("a rejecting client takes a host in IP shorthand for a name", () => {
   };
 
   // "1.2.3.4" is an address, and it is not in the certificate.
-  test.each(["0x7f000001", "127.000.000.001", "127.0.0.1/32", "127.1", "::1/64", "1.2.3.4"])(
+  test.each(["0x7f000001", "127.000.000.001", "127.0.0.1/32", "127.1", "127.1...", "127\u30021", "::1/64", "1.2.3.4"])(
     "Bun.connect under %j",
     async serverName => {
       await using srv = await mtlsServer({});

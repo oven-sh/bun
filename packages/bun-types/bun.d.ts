@@ -2591,14 +2591,14 @@ declare module "bun" {
          * situations, but it lacks support for mDNS (`*.local`,
          * `*.localhost` domains) along with some other advanced features. If
          * you run into issues using `c-ares`, try `system`. If the
-         * hostname ends with `.local` or `.localhost`, Bun automatically
-         * uses `system` instead of `c-ares`.
+         * hostname ends with `.local` or `.localhost`, or the system's
+         * configuration names no name server, Bun automatically uses
+         * `system` instead of `c-ares`.
          *
          * [`getaddrinfo`](https://man7.org/linux/man-pages/man3/getaddrinfo.3.html)
          * is the POSIX standard function for blocking DNS resolution. Bun runs
-         * it in Bun's thread pool, which is limited to `cpus / 2`, so many
-         * concurrent DNS lookups can pause other concurrent IO until the
-         * lookups finish.
+         * it on a limited number of threads of its own, so slow lookups can
+         * hold up other lookups, but not other I/O.
          *
          * On macOS, `"getaddrinfo"` shouldn't be necessary because
          * `"system"` uses the same API underneath (except non-blocking).
@@ -2609,6 +2609,126 @@ declare module "bun" {
         backend?: "libc" | "c-ares" | "system" | "getaddrinfo";
       },
     ): Promise<DNSLookup[]>;
+
+    interface TlsaRecord {
+      certUsage: number;
+      selector: number;
+      match: number;
+      data: ArrayBuffer;
+    }
+
+    /** What {@link dns.resolve} returns for each record type */
+    interface Records {
+      A: import("node:dns").RecordWithTtl[];
+      AAAA: import("node:dns").RecordWithTtl[];
+      ANY: Array<import("node:dns").AnyRecord | (TlsaRecord & { type: "TLSA" })>;
+      CAA: import("node:dns").CaaRecord[];
+      CNAME: string[];
+      MX: import("node:dns").MxRecord[];
+      NAPTR: import("node:dns").NaptrRecord[];
+      NS: string[];
+      PTR: string[];
+      SOA: import("node:dns").SoaRecord;
+      SRV: import("node:dns").SrvRecord[];
+      TLSA: TlsaRecord[];
+      /** The strings of each record, decoded as UTF-8 */
+      TXT: string[][];
+    }
+
+    /**
+     * Ask the name servers for the records of `hostname`
+     *
+     * The `code` of an error is that of `node:dns` with `DNS_` in front, such as `"DNS_ENOTFOUND"`.
+     *
+     * @param hostname The name to ask for
+     * @param rrtype The record type. Default is `"A"`.
+     *
+     * @example
+     * ```js
+     * import { dns } from 'bun';
+     * console.log(await dns.resolve('example.com', 'MX'));
+     * // [{ exchange: "mail.example.com", priority: 10 }]
+     * ```
+     */
+    function resolve<Type extends keyof Records = "A">(hostname: string, rrtype?: Type): Promise<Records[Type]>;
+
+    /**
+     * Ask the name servers for all records of `hostname`. Many servers answer with some of them or none.
+     * See {@link dns.resolve}.
+     */
+    function resolveAny(hostname: string): Promise<Records["ANY"]>;
+    /**
+     * Ask the name servers for the `CAA` records of `hostname`. See {@link dns.resolve}.
+     */
+    function resolveCaa(hostname: string): Promise<Records["CAA"]>;
+    /**
+     * Ask the name servers for the `CNAME` record of `hostname`. See {@link dns.resolve}.
+     */
+    function resolveCname(hostname: string): Promise<Records["CNAME"]>;
+    /**
+     * Ask the name servers for the `MX` records of `hostname`. See {@link dns.resolve}.
+     */
+    function resolveMx(hostname: string): Promise<Records["MX"]>;
+    /**
+     * Ask the name servers for the `NAPTR` records of `hostname`. See {@link dns.resolve}.
+     */
+    function resolveNaptr(hostname: string): Promise<Records["NAPTR"]>;
+    /**
+     * Ask the name servers for the `NS` records of `hostname`. See {@link dns.resolve}.
+     */
+    function resolveNs(hostname: string): Promise<Records["NS"]>;
+    /**
+     * Ask the name servers for the `PTR` records of `hostname`. See {@link dns.resolve}.
+     */
+    function resolvePtr(hostname: string): Promise<Records["PTR"]>;
+    /**
+     * Ask the name servers for the `SOA` record of `hostname`. See {@link dns.resolve}.
+     */
+    function resolveSoa(hostname: string): Promise<Records["SOA"]>;
+    /**
+     * Ask the name servers for the `SRV` records of `hostname`. See {@link dns.resolve}.
+     */
+    function resolveSrv(hostname: string): Promise<Records["SRV"]>;
+    /**
+     * Ask the name servers for the `TLSA` records of `hostname`. See {@link dns.resolve}.
+     */
+    function resolveTlsa(hostname: string): Promise<Records["TLSA"]>;
+    /**
+     * Ask the name servers for the `TXT` records of `hostname`. See {@link dns.resolve}.
+     */
+    function resolveTxt(hostname: string): Promise<Records["TXT"]>;
+
+    /**
+     * Look up the host names of an IPv4 or IPv6 address
+     */
+    function reverse(ip: string): Promise<string[]>;
+
+    /**
+     * Look up the host name of an address and the service name of a port, without blocking a thread
+     *
+     * @example
+     * ```js
+     * import { dns } from 'bun';
+     * console.log(await dns.lookupService('127.0.0.1', 22)); // ["localhost", "ssh"]
+     * ```
+     */
+    function lookupService(address: string, port: number): Promise<[hostname: string, service: string | undefined]>;
+
+    /**
+     * The name servers in use, such as `"1.1.1.1"` or `"[::1]:5353"`. `node:dns` uses the same ones.
+     */
+    function getServers(): string[];
+
+    /**
+     * Replace the name servers, for `node:dns` too
+     *
+     * @example
+     * ```js
+     * import { dns } from 'bun';
+     * dns.setServers([[4, '1.1.1.1', 53], [6, '2606:4700:4700::1111', 53]]);
+     * ```
+     */
+    function setServers(servers: ReadonlyArray<[family: 4 | 6, address: string, port?: number]>): void;
 
     /**
      * **Experimental API**

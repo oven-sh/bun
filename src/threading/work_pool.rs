@@ -165,6 +165,11 @@ impl WorkPool {
     }
 
     pub fn go<C: Send + 'static>(context: C, function: fn(C)) -> Result<(), bun_alloc::AllocError> {
+        Self::go_in(Self::get(), context, function);
+        Ok(())
+    }
+
+    pub fn go_in<C: Send + 'static>(pool: &'static ThreadPool, context: C, function: fn(C)) {
         // PERF: `function` is stored as a runtime field rather than
         // monomorphized into the callback — profile if it shows up on a hot path.
         #[repr(C)]
@@ -181,13 +186,10 @@ impl WorkPool {
             }
         }
 
-        // `schedule_new` calls `get()` between the two stores to `task.callback`, so both would stay.
-        let batch = Batch::from_owned(Box::new(TaskType {
+        pool.schedule(Batch::from_owned(Box::new(TaskType {
             task: Task::default(),
             context,
             function,
-        }));
-        Self::get().schedule(batch);
-        Ok(())
+        })));
     }
 }

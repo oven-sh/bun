@@ -25,7 +25,7 @@ dns.prefetch("bun.com", 443);
 
 `Bun.dns.lookup()` accepts a `backend` option that selects the resolver implementation:
 
-- `"c-ares"`: Bun's own asynchronous resolver, which is named after the [c-ares](https://c-ares.org/) library that it is modeled on. It reads `/etc/resolv.conf` directly, so it does not consult NSS modules such as `systemd-resolved`. This backend is the default for `Bun.dns.lookup()` on Linux.
+- `"c-ares"`: Bun's own asynchronous resolver, which is named after the [c-ares](https://c-ares.org/) library that it is modeled on. It reads `/etc/resolv.conf` directly, so it does not consult NSS modules such as `systemd-resolved`. If a name server refuses or fails a query, Bun asks the next one. Bun sends names under `.local` and `.localhost` to `"system"`. It does the same for other names if `/etc/resolv.conf` has no `nameserver` line and you have not called `setServers()`. This backend is the default for `Bun.dns.lookup()` on Linux.
 - `"system"`: the platform's own resolver (the non-blocking system API on macOS, `getaddrinfo` on a thread pool everywhere else). This backend is the default on macOS, Windows, and Android.
 - `"getaddrinfo"` (alias `"libc"`): the POSIX `getaddrinfo(3)` function on a thread pool.
 
@@ -35,7 +35,26 @@ import { dns } from "bun";
 const [{ address }] = await dns.lookup("example.com", { backend: "system" });
 ```
 
-`node:dns.lookup()` always uses the `"system"` backend to match Node.js, whose `dns.lookup()` is documented as calling `getaddrinfo(3)`. The `node:dns.resolve*()` functions use Bun's own resolver where Node.js uses c-ares.
+`node:dns.lookup()` always uses the `"system"` backend to match Node.js, whose `dns.lookup()` is documented as calling `getaddrinfo(3)`. `node:dns.lookupService()` calls `getnameinfo(3)` and returns an international name in its ASCII form. The `node:dns.resolve*()` functions use Bun's own resolver where Node.js uses c-ares.
+
+## Resolving records
+
+`Bun.dns.resolve()` asks the name servers for one type of record: `A` (the default), `AAAA`, `ANY`, `CAA`, `CNAME`, `MX`, `NAPTR`, `NS`, `PTR`, `SOA`, `SRV`, `TLSA` or `TXT`. Each type except `A` and `AAAA` also has its own function, such as `resolveMx()`.
+
+```ts
+import { dns } from "bun";
+
+await dns.resolve("example.com"); // => [{ address: "192.0.2.1", ttl: 300 }]
+await dns.resolveMx("example.com"); // => [{ exchange: "mail.example.com", priority: 10 }]
+await dns.reverse("192.0.2.1"); // => ["example.com"]
+```
+
+These functions share their name servers with `node:dns`. Their results differ:
+
+- Addresses always come with their `ttl`.
+- Text is decoded as UTF-8. `node:dns` returns one character for each byte of a `TXT` or `CAA` record.
+- Only a query for `ANY` adds `type` to a record.
+- The `code` of an error starts with `DNS_`, as in `DNS_ENOTFOUND`.
 
 ## DNS caching in Bun
 

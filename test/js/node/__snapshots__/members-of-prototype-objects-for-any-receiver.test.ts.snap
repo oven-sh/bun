@@ -3815,266 +3815,146 @@ node:dgram.Socket.prototype [Symbol.asyncDispose]("a", 1)
 `;
 
 exports[`members of the prototype objects of node:dns 1`] = `
-"node:dns.Resolver.prototype cancel()
-  throws TypeError: Cannot access invalid private field <- every object, a number, a string
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
-node:dns.Resolver.prototype cancel("a", 1)
-  throws TypeError: Cannot access invalid private field <- every object, a number, a string
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
-node:dns.Resolver.prototype getServers()
-  object Array <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.Resolver.prototype getServers("a", 1)
-  object Array <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.Resolver.prototype resolve()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "rrtype" argument must be of type string. Received undefined <- every receiver
-node:dns.Resolver.prototype resolve("a", 1)
-  throws TypeError ERR_INVALID_ARG_TYPE: The "rrtype" argument must be of type string. Received type number (1) <- every receiver
+"node:dns.Resolver.prototype resolveAny()
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
+node:dns.Resolver.prototype resolveAny("a", 1)
+  throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type number (1) <- every receiver
 node:dns.Resolver.prototype resolve4()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "hostname" argument must be of type string. Received undefined <- every receiver
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
 node:dns.Resolver.prototype resolve4("a", 1)
   throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type number (1) <- every receiver
 node:dns.Resolver.prototype resolve6()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "hostname" argument must be of type string. Received undefined <- every receiver
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
 node:dns.Resolver.prototype resolve6("a", 1)
   throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type number (1) <- every receiver
-node:dns.Resolver.prototype resolveAny()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "hostname" argument must be of type string. Received undefined <- every receiver
-node:dns.Resolver.prototype resolveAny("a", 1)
+node:dns.Resolver.prototype resolveCaa()
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
+node:dns.Resolver.prototype resolveCaa("a", 1)
   throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type number (1) <- every receiver
 node:dns.Resolver.prototype resolveCname()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "hostname" argument must be of type string. Received undefined <- every receiver
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
 node:dns.Resolver.prototype resolveCname("a", 1)
   throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type number (1) <- every receiver
 node:dns.Resolver.prototype resolveMx()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "hostname" argument must be of type string. Received undefined <- every receiver
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
 node:dns.Resolver.prototype resolveMx("a", 1)
   throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type number (1) <- every receiver
-node:dns.Resolver.prototype resolveNaptr()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "hostname" argument must be of type string. Received undefined <- every receiver
-node:dns.Resolver.prototype resolveNaptr("a", 1)
-  throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type number (1) <- every receiver
 node:dns.Resolver.prototype resolveNs()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "hostname" argument must be of type string. Received undefined <- every receiver
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
 node:dns.Resolver.prototype resolveNs("a", 1)
   throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type number (1) <- every receiver
-node:dns.Resolver.prototype resolvePtr()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "hostname" argument must be of type string. Received undefined <- every receiver
-node:dns.Resolver.prototype resolvePtr("a", 1)
-  throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type number (1) <- every receiver
-node:dns.Resolver.prototype resolveSrv()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "hostname" argument must be of type string. Received undefined <- every receiver
-node:dns.Resolver.prototype resolveSrv("a", 1)
-  throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type number (1) <- every receiver
-node:dns.Resolver.prototype resolveCaa()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received undefined <- every receiver
-node:dns.Resolver.prototype resolveCaa("a", 1)
+node:dns.Resolver.prototype resolveTlsa()
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
+node:dns.Resolver.prototype resolveTlsa("a", 1)
   throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type number (1) <- every receiver
 node:dns.Resolver.prototype resolveTxt()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received undefined <- every receiver
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
 node:dns.Resolver.prototype resolveTxt("a", 1)
   throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type number (1) <- every receiver
+node:dns.Resolver.prototype resolveSrv()
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
+node:dns.Resolver.prototype resolveSrv("a", 1)
+  throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type number (1) <- every receiver
+node:dns.Resolver.prototype resolvePtr()
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
+node:dns.Resolver.prototype resolvePtr("a", 1)
+  throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type number (1) <- every receiver
+node:dns.Resolver.prototype resolveNaptr()
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
+node:dns.Resolver.prototype resolveNaptr("a", 1)
+  throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type number (1) <- every receiver
 node:dns.Resolver.prototype resolveSoa()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received undefined <- every receiver
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
 node:dns.Resolver.prototype resolveSoa("a", 1)
   throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type number (1) <- every receiver
 node:dns.Resolver.prototype reverse()
   throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
 node:dns.Resolver.prototype reverse("a", 1)
   throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type number (1) <- every receiver
-node:dns.Resolver.prototype setLocalAddress()
+node:dns.Resolver.prototype resolve()
+  throws TypeError ERR_INVALID_ARG_TYPE: The "rrtype" argument must be of type string. Received undefined <- every receiver
+node:dns.Resolver.prototype resolve("a", 1)
+  throws TypeError ERR_INVALID_ARG_TYPE: The "rrtype" argument must be of type string. Received type number (1) <- every receiver
+node:dns.Resolver.prototype, 1 above cancel()
+  throws TypeError: undefined is not an object <- every object, a number, a string, undefined
+  throws TypeError: null is not an object <- null
+node:dns.Resolver.prototype, 1 above cancel("a", 1)
+  throws TypeError: undefined is not an object <- every object, a number, a string, undefined
+  throws TypeError: null is not an object <- null
+node:dns.Resolver.prototype, 1 above getServers()
+  throws TypeError: undefined is not an object <- every object, a number, a string, undefined
+  throws TypeError: null is not an object <- null
+node:dns.Resolver.prototype, 1 above getServers("a", 1)
+  throws TypeError: undefined is not an object <- every object, a number, a string, undefined
+  throws TypeError: null is not an object <- null
+node:dns.Resolver.prototype, 1 above setServers()
+  throws TypeError ERR_INVALID_ARG_TYPE: The "servers" argument must be an instance of Array. Received undefined <- every receiver
+node:dns.Resolver.prototype, 1 above setServers("a", 1)
+  throws TypeError ERR_INVALID_ARG_TYPE: The "servers" argument must be an instance of Array. Received type string ('a') <- every receiver
+node:dns.Resolver.prototype, 1 above setLocalAddress()
   throws TypeError ERR_INVALID_ARG_TYPE: The "ipv4" argument must be of type string. Received undefined <- every receiver
-node:dns.Resolver.prototype setLocalAddress("a", 1)
+node:dns.Resolver.prototype, 1 above setLocalAddress("a", 1)
   throws TypeError ERR_INVALID_ARG_TYPE: The "ipv6" argument must be of type string. Received type number (1) <- every receiver
-node:dns.Resolver.prototype setServers()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "servers" argument must be an instance of Array. Received undefined <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.Resolver.prototype setServers("a", 1)
-  throws TypeError ERR_INVALID_ARG_TYPE: The "servers" argument must be an instance of Array. Received type string ('a') <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype cancel()
-  throws TypeError: Cannot access invalid private field <- every object, a number, a string
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
-node:dns.promises.Resolver.prototype cancel("a", 1)
-  throws TypeError: Cannot access invalid private field <- every object, a number, a string
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
-node:dns.promises.Resolver.prototype getServers()
-  object Array <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype getServers("a", 1)
-  object Array <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype resolve()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype resolve("a", 1)
-  object Promise <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype resolve4()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype resolve4("a", 1)
-  object Promise <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype resolve6()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype resolve6("a", 1)
-  object Promise <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
 node:dns.promises.Resolver.prototype resolveAny()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "hostname" argument must be of type string. Received undefined <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
 node:dns.promises.Resolver.prototype resolveAny("a", 1)
-  object Promise <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype resolveCname()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "hostname" argument must be of type string. Received undefined <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype resolveCname("a", 1)
-  object Promise <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype resolveMx()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "hostname" argument must be of type string. Received undefined <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype resolveMx("a", 1)
-  object Promise <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype resolveNaptr()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "hostname" argument must be of type string. Received undefined <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype resolveNaptr("a", 1)
-  object Promise <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype resolveNs()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "hostname" argument must be of type string. Received undefined <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype resolveNs("a", 1)
-  object Promise <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype resolvePtr()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "hostname" argument must be of type string. Received undefined <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype resolvePtr("a", 1)
-  object Promise <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype resolveSoa()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "hostname" argument must be of type string. Received undefined <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype resolveSoa("a", 1)
-  object Promise <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype resolveSrv()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "hostname" argument must be of type string. Received undefined <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype resolveSrv("a", 1)
-  object Promise <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
+  object Promise <- every receiver
+node:dns.promises.Resolver.prototype resolve4()
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
+node:dns.promises.Resolver.prototype resolve4("a", 1)
+  object Promise <- every receiver
+node:dns.promises.Resolver.prototype resolve6()
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
+node:dns.promises.Resolver.prototype resolve6("a", 1)
+  object Promise <- every receiver
 node:dns.promises.Resolver.prototype resolveCaa()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "hostname" argument must be of type string. Received undefined <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
 node:dns.promises.Resolver.prototype resolveCaa("a", 1)
-  object Promise <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
+  object Promise <- every receiver
+node:dns.promises.Resolver.prototype resolveCname()
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
+node:dns.promises.Resolver.prototype resolveCname("a", 1)
+  object Promise <- every receiver
+node:dns.promises.Resolver.prototype resolveMx()
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
+node:dns.promises.Resolver.prototype resolveMx("a", 1)
+  object Promise <- every receiver
+node:dns.promises.Resolver.prototype resolveNs()
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
+node:dns.promises.Resolver.prototype resolveNs("a", 1)
+  object Promise <- every receiver
+node:dns.promises.Resolver.prototype resolveTlsa()
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
+node:dns.promises.Resolver.prototype resolveTlsa("a", 1)
+  object Promise <- every receiver
 node:dns.promises.Resolver.prototype resolveTxt()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "hostname" argument must be of type string. Received undefined <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
 node:dns.promises.Resolver.prototype resolveTxt("a", 1)
-  object Promise <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
+  object Promise <- every receiver
+node:dns.promises.Resolver.prototype resolveSrv()
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
+node:dns.promises.Resolver.prototype resolveSrv("a", 1)
+  object Promise <- every receiver
+node:dns.promises.Resolver.prototype resolvePtr()
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
+node:dns.promises.Resolver.prototype resolvePtr("a", 1)
+  object Promise <- every receiver
+node:dns.promises.Resolver.prototype resolveNaptr()
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
+node:dns.promises.Resolver.prototype resolveNaptr("a", 1)
+  object Promise <- every receiver
+node:dns.promises.Resolver.prototype resolveSoa()
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
+node:dns.promises.Resolver.prototype resolveSoa("a", 1)
+  object Promise <- every receiver
 node:dns.promises.Resolver.prototype reverse()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
 node:dns.promises.Resolver.prototype reverse("a", 1)
-  object Promise <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype setLocalAddress()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "ipv4" argument must be of type string. Received undefined <- every receiver
-node:dns.promises.Resolver.prototype setLocalAddress("a", 1)
-  throws TypeError ERR_INVALID_ARG_TYPE: The "ipv6" argument must be of type string. Received type number (1) <- every receiver
-node:dns.promises.Resolver.prototype setServers()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "servers" argument must be an instance of Array. Received undefined <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
-node:dns.promises.Resolver.prototype setServers("a", 1)
-  throws TypeError ERR_INVALID_ARG_TYPE: The "servers" argument must be an instance of Array. Received type string ('a') <- every object, undefined
-  throws TypeError: 7 is not an Object. <- a number
-  throws TypeError: "text" is not an Object. <- a string
-  throws TypeError: null is not an Object. <- null
+  object Promise <- every receiver
+node:dns.promises.Resolver.prototype resolve()
+  throws TypeError ERR_INVALID_ARG_TYPE: The "name" argument must be of type string. Received undefined <- every receiver
+node:dns.promises.Resolver.prototype resolve("a", 1)
+  throws TypeError ERR_INVALID_ARG_TYPE: The "rrtype" argument must be of type string. Received type number (1) <- every receiver
 "
 `;
 

@@ -90,6 +90,22 @@ assert(existing.length > 0);
   });
 }
 
+{
+  // Out-of-range ports, which should throw a clean error.
+  const invalidPorts = [2 ** 16, 2 ** 32, 2 ** 64];
+  invalidPorts.forEach((port) => {
+    assert.throws(
+      () => {
+        dns.setServers([`1.2.3.4:${port}`]);
+      },
+      {
+        name: 'RangeError',
+        code: 'ERR_SOCKET_BAD_PORT'
+      }
+    );
+  });
+}
+
 const goog = [
   '8.8.8.8',
   '8.8.4.4',
@@ -136,6 +152,10 @@ const portsExpected = [
 dns.setServers(ports);
 assert.deepStrictEqual(dns.getServers(), portsExpected);
 
+// Port 0 means "use the default port" for c-ares.
+dns.setServers(['4.4.4.4:0', '[2001:4860:4860::8888]:0']);
+assert.deepStrictEqual(dns.getServers(), ['4.4.4.4', '2001:4860:4860::8888']);
+
 dns.setServers([]);
 assert.deepStrictEqual(dns.getServers(), []);
 
@@ -143,7 +163,8 @@ assert.deepStrictEqual(dns.getServers(), []);
   const errObj = {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: /The "rrtype" argument must be of type string\. Received( an instance of Array|: \[\]|: "object")$/
+    message: 'The "rrtype" argument must be of type string. ' +
+             'Received an instance of Array'
   };
   assert.throws(() => {
     dns.resolve('example.com', [], common.mustNotCall());
@@ -156,7 +177,8 @@ assert.deepStrictEqual(dns.getServers(), []);
   const errObj = {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: /The "(host)?name" argument must be of type string\. Received:? undefined$/
+    message: 'The "name" argument must be of type string. ' +
+             'Received undefined'
   };
   assert.throws(() => {
     dnsPromises.resolve();
@@ -168,7 +190,7 @@ assert.deepStrictEqual(dns.getServers(), []);
   const errorReg = {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: /^The "hostname" argument must be of type string\. Received:? .*|^Expected hostname to be a string/
+    message: /^The "hostname" argument must be of type string\. Received .*/
   };
 
   assert.throws(() => dns.lookup({}, common.mustNotCall()), errorReg);
@@ -191,16 +213,14 @@ assert.deepStrictEqual(dns.getServers(), []);
 
 // dns.lookup should accept falsey values
 {
-  const checkCallback = (err, address, family) => {
-    assert.ifError(err);
-    assert.strictEqual(address, null);
-    assert.strictEqual(family, 4);
-  };
-
   ['', null, undefined, 0, NaN].forEach(async (value) => {
+    // Bun: a falsy host name is still answered as in Node.js 24 (DEP0118).
     const res = await dnsPromises.lookup(value);
     assert.deepStrictEqual(res, { address: null, family: 4 });
-    dns.lookup(value, common.mustCall(checkCallback));
+    dns.lookup(value, common.mustSucceed((address, family) => {
+      assert.strictEqual(address, null);
+      assert.strictEqual(family, 4);
+    }));
   });
 }
 
@@ -216,7 +236,7 @@ assert.deepStrictEqual(dns.getServers(), []);
   const err = {
     code: 'ERR_INVALID_ARG_VALUE',
     name: 'TypeError',
-    message: /The (argument 'hints'|"hints" option) is invalid\. Received:? \d+/
+    message: /The argument 'hints' is invalid\. Received \d+/
   };
 
   assert.throws(() => {
@@ -245,6 +265,7 @@ assert.throws(() => dns.lookup('', {
   name: 'TypeError'
 });
 
+// Bun: a falsy host name is still answered as in Node.js 24 (DEP0118).
 dns.lookup('', { family: 4, hints: 0 }, common.mustCall());
 
 dns.lookup('', {
@@ -311,7 +332,7 @@ dns.lookup('', {
   const err = {
     code: 'ERR_INVALID_ARG_VALUE',
     name: 'TypeError',
-    message: /The (argument 'address'|"address" argument) is invalid\. Received/
+    message: `The argument 'address' is invalid. Received '${invalidAddress}'`
   };
 
   assert.throws(() => {
@@ -323,7 +344,25 @@ dns.lookup('', {
   }, err);
 }
 
-const portErr = (port) => {
+{
+  const invalidAddress = Buffer.from('127.0.0.1');
+  const err = {
+    code: 'ERR_INVALID_ARG_TYPE',
+    name: 'TypeError',
+    message: 'The "address" argument must be of type string. ' +
+    'Received an instance of Buffer'
+  };
+
+  assert.throws(() => {
+    dnsPromises.lookupService(invalidAddress, 0);
+  }, err);
+
+  assert.throws(() => {
+    dns.lookupService(invalidAddress, 0, common.mustNotCall());
+  }, err);
+}
+
+[null, undefined, 65538, 'test', NaN, Infinity, Symbol(), 0n, true, false, '', () => {}, {}].forEach((port) => {
   const err = {
     code: 'ERR_SOCKET_BAD_PORT',
     name: 'RangeError'
@@ -336,8 +375,7 @@ const portErr = (port) => {
   assert.throws(() => {
     dns.lookupService('0.0.0.0', port, common.mustNotCall());
   }, err);
-};
-[null, undefined, 65538, 'test', NaN, Infinity, Symbol(), 0n, true, false, '', () => {}, {}].forEach(portErr);
+});
 
 assert.throws(() => {
   dns.lookupService('0.0.0.0', 80, null);
@@ -347,34 +385,34 @@ assert.throws(() => {
 });
 
 {
-  dns.resolveMx('foo.onion', function(err) {
+  dns.resolveMx('foo.onion', common.mustCall((err) => {
     assert.strictEqual(err.code, 'ENOTFOUND');
     assert.strictEqual(err.syscall, 'queryMx');
     assert.strictEqual(err.hostname, 'foo.onion');
     assert.strictEqual(err.message, 'queryMx ENOTFOUND foo.onion');
-  });
+  }));
 }
 
 {
   const cases = [
-    // { method: 'resolveAny',
-    //   answers: [
-    //     { type: 'A', address: '1.2.3.4', ttl: 0 },
-    //     { type: 'AAAA', address: '::42', ttl: 0 },
-    //     { type: 'MX', priority: 42, exchange: 'foobar.com', ttl: 0 },
-    //     { type: 'NS', value: 'foobar.org', ttl: 0 },
-    //     { type: 'PTR', value: 'baz.org', ttl: 0 },
-    //     {
-    //       type: 'SOA',
-    //       nsname: 'ns1.example.com',
-    //       hostmaster: 'admin.example.com',
-    //       serial: 3210987654,
-    //       refresh: 900,
-    //       retry: 900,
-    //       expire: 1800,
-    //       minttl: 3333333333
-    //     },
-    //   ] },
+    { method: 'resolveAny',
+      answers: [
+        { type: 'A', address: '1.2.3.4', ttl: 0 },
+        { type: 'AAAA', address: '::42', ttl: 0 },
+        { type: 'MX', priority: 42, exchange: 'foobar.com', ttl: 0 },
+        { type: 'NS', value: 'foobar.org', ttl: 0 },
+        { type: 'PTR', value: 'baz.org', ttl: 0 },
+        {
+          type: 'SOA',
+          nsname: 'ns1.example.com',
+          hostmaster: 'admin.example.com',
+          serial: 3210987654,
+          refresh: 900,
+          retry: 900,
+          expire: 1800,
+          minttl: 3333333333
+        },
+      ] },
 
     { method: 'resolve4',
       options: { ttl: true },
@@ -401,7 +439,7 @@ assert.throws(() => {
 
   const server = dgram.createSocket('udp4');
 
-  server.on('message', common.mustCallAtLeast((msg, { address, port }) => {
+  server.on('message', common.mustCall((msg, { address, port }) => {
     const parsed = dnstools.parseDNSPacket(msg);
     const domain = parsed.questions[0].domain;
     assert.strictEqual(domain, 'example.org');
@@ -413,7 +451,7 @@ assert.throws(() => {
         (answer) => Object.assign({ domain }, answer)
       ),
     }), port, address);
-  }, cases.length * 2 - 1));
+  }, cases.length * 2));
 
   server.bind(0, common.mustCall(() => {
     const address = server.address();
@@ -450,7 +488,7 @@ assert.throws(() => {
 
       validateResults(await dnsPromises[method]('example.org', options));
 
-      dns[method]('example.org', ...(options? [options] : []), common.mustSucceed((res) => {
+      dns[method]('example.org', options, common.mustSucceed((res) => {
         validateResults(res);
         cases.shift();
         nextCase();

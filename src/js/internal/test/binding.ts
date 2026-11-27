@@ -99,9 +99,7 @@ function internalBinding(name: string) {
     case "util":
       return { isInsideNodeModules };
     case "cares_wrap":
-      // Only the pure IP-normalizer the vendored tls/dns tests reach for; the
-      // resolver surface lives in node:dns.
-      return { canonicalizeIP: require("bun:internal-for-testing").canonicalizeIP };
+      return require("internal/dns").cares;
     // The icu-era binding node exposed until nodejs/node#55156; vendored
     // tests like test-icu-punycode still consume it.
     case "icu": {

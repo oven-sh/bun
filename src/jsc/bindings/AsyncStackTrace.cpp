@@ -223,9 +223,24 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
     }
 }
 
-extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue errorValue, JSC::JSPromise* promise)
+static bool setAsyncStackFrames(JSC::JSGlobalObject* globalObject, JSC::ErrorInstance* instance, JSC::JSPromise* promise)
 {
     auto& vm = JSC::getVM(globalObject);
+    size_t limit = globalObject->stackTraceLimit().value_or(10);
+    if (!limit)
+        return false;
+
+    WTF::Vector<JSC::StackFrame> frames;
+    collectAsyncStackFramesFromPromise(vm, instance, promise, frames, limit);
+    if (frames.isEmpty())
+        return false;
+
+    instance->setStackFrames(vm, WTF::move(frames));
+    return true;
+}
+
+extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue errorValue, JSC::JSPromise* promise)
+{
     auto* instance = dynamicDowncast<JSC::ErrorInstance>(JSC::JSValue::decode(errorValue));
     if (!instance || !promise)
         return;
@@ -240,14 +255,11 @@ extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObje
     if (auto* existing = instance->stackTrace(); existing && !existing->isEmpty())
         return;
 
-    size_t limit = globalObject->stackTraceLimit().value_or(10);
-    if (!limit)
-        return;
+    setAsyncStackFrames(globalObject, instance, promise);
+}
 
-    WTF::Vector<JSC::StackFrame> frames;
-    collectAsyncStackFramesFromPromise(vm, instance, promise, frames, limit);
-    if (frames.isEmpty())
-        return;
-
-    instance->setStackFrames(vm, WTF::move(frames));
+extern "C" bool Bun__preferAsyncStackFromPromise(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue errorValue, JSC::JSPromise* promise)
+{
+    auto* instance = dynamicDowncast<JSC::ErrorInstance>(JSC::JSValue::decode(errorValue));
+    return instance && !instance->hasMaterializedErrorInfo() && setAsyncStackFrames(globalObject, instance, promise);
 }

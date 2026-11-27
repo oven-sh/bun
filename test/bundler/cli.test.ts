@@ -1234,7 +1234,7 @@ describe.concurrent("diagnostic markup", () => {
 });
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
-test.skipIf(!isLinux || !cc)("bun build works without getrandom() and /dev/urandom", async () => {
+test.concurrent.skipIf(!isLinux || !cc)("bun build works without getrandom() and /dev/urandom", async () => {
   using dir = tempDir("build-no-getrandom", {
     "index.js": `console.log(1);`,
     "shim.c": `

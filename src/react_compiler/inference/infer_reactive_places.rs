@@ -13,14 +13,20 @@
 //! 3. `use` operator (can access context)
 //! 4. Mutation with reactive operands
 //! 5. Conditional assignment based on reactive control flow
+//!
+//! Control in `try` and outer control: https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License).
 
+use crate::collections::IdBitSet;
 use crate::diagnostics::CompilerDiagnostic;
-use crate::hir::dominator::post_dominator_frontiers;
+use crate::hir::dominator::{
+    PostDominatorFrontiers, normal_flow_post_dominator_frontiers, post_dominator_frontiers,
+};
 use crate::hir::environment::Environment;
 use crate::hir::object_shape::HookKind;
 use crate::hir::visitors;
 use crate::hir::{
-    BlockId, Effect, FunctionId, HirFunction, IdentifierId, InstructionValue, Place, Terminal, Type,
+    BasicBlock, BlockId, Effect, FunctionId, HirFunction, IdentifierId, InstructionValue, Place,
+    Terminal, Type,
 };
 
 use crate::utils::DisjointSet;
@@ -50,19 +56,27 @@ pub(crate) fn infer_reactive_places(
     }
 
     // Compute control dominators
-    let post_dominators =
-        crate::hir::dominator::compute_post_dominator_tree(func, env.next_block_id().0, false)?;
+    let exit = env.next_block_id().0;
+    let post_dominators = crate::hir::dominator::compute_post_dominator_tree(func, exit, false)?;
 
     // The post-dominator frontier (and thus the set of control-test identifiers
     // per block) is a function of the CFG only, so compute it once here instead
     // of inside the fixpoint loop.
-    let frontiers = post_dominator_frontiers(func, &post_dominators)?;
+    let all = post_dominator_frontiers(func, &post_dominators)?;
+    let has_catch = (env.config.branches_in_try_control_reactivity
+        || env.config.throws_in_try_control_reactivity)
+        && func.body.blocks.values().any(may_throw_to_a_catch);
+    let normal_flow = match has_catch && env.config.branches_in_try_control_reactivity {
+        true => Some(normal_flow_post_dominator_frontiers(func, exit)?),
+        false => None,
+    };
+    let frontiers = Frontiers { all, normal_flow };
     let mut control_tests = ControlTests::new(env.next_block_id_counter as usize);
     for &block_id in func.body.blocks.keys() {
         let tests = &mut control_tests.tests;
         let start = tests.len() as u32;
-        for frontier_block_id in frontiers.get(block_id).into_iter().flatten() {
-            let control_block = func.body.blocks.get(frontier_block_id).unwrap();
+        for frontier_block_id in frontiers.of(block_id) {
+            let control_block = func.body.blocks.get(&frontier_block_id).unwrap();
             match &control_block.terminal {
                 Terminal::If { test, .. } | Terminal::Branch { test, .. } => {
                     tests.push(test.identifier);
@@ -80,12 +94,14 @@ pub(crate) fn infer_reactive_places(
         }
         control_tests.of_block[block_id.0 as usize] = (start, tests.len() as u32);
     }
+    control_tests.indirect = IndirectControl::new(func, env, frontiers, has_catch);
 
     // Fixpoint iteration — compute reactive set
     let mut is_settled = false;
     loop {
         reactive_map.start_round();
         stable_sidemap.start_round();
+        control_tests.start_round(&mut reactive_map);
         for (block_id, block) in &func.body.blocks {
             let has_reactive_control = control_tests.any_is_reactive(*block_id, &mut reactive_map);
 
@@ -440,6 +456,7 @@ struct ControlTests {
     tests: Vec<IdentifierId>,
     /// Indexed by `BlockId.0`: from where to where in `tests`.
     of_block: Vec<(u32, u32)>,
+    indirect: Option<IndirectControl>,
 }
 
 impl ControlTests {
@@ -447,15 +464,232 @@ impl ControlTests {
         ControlTests {
             tests: Vec::new(),
             of_block: vec![(0, 0); block_count],
+            indirect: None,
         }
     }
 
     #[inline]
-    fn any_is_reactive(&self, block_id: BlockId, reactive_map: &mut ReactivityMap) -> bool {
+    fn any_is_reactive(&mut self, block_id: BlockId, reactive_map: &mut ReactivityMap) -> bool {
         let (start, end) = self.of_block[block_id.0 as usize];
         self.tests[start as usize..end as usize]
             .iter()
             .any(|&id| reactive_map.is_reactive(id))
+            || (self.indirect.as_mut()).is_some_and(|indirect| {
+                indirect.any_is_reactive(block_id, &self.tests, &self.of_block, reactive_map)
+            })
+    }
+
+    #[inline]
+    fn start_round(&mut self, reactive_map: &mut ReactivityMap) {
+        if let Some(indirect) = &mut self.indirect {
+            (indirect.throwing).update(&self.tests, &self.of_block, reactive_map);
+        }
+    }
+}
+
+// =============================================================================
+// Control in `try` and outer control (from oxc, not in ControlDominators.ts)
+// =============================================================================
+
+fn may_throw_to_a_catch(block: &BasicBlock) -> bool {
+    matches!(
+        block.terminal,
+        Terminal::MaybeThrow {
+            handler: Some(_),
+            ..
+        }
+    )
+}
+
+/// The post-dominator frontier of each block, and that over normal control flow for
+/// `branches_in_try_control_reactivity` if the function has a `catch`.
+struct Frontiers {
+    all: PostDominatorFrontiers,
+    normal_flow: Option<PostDominatorFrontiers>,
+}
+
+impl Frontiers {
+    /// A block that is in both frontiers comes twice.
+    fn of(&self, block_id: BlockId) -> impl Iterator<Item = BlockId> + '_ {
+        let normal_flow = self.normal_flow.as_ref().and_then(|it| it.get(block_id));
+        (self.all.get(block_id).into_iter())
+            .chain(normal_flow)
+            .flatten()
+            .copied()
+    }
+}
+
+/// What decides a block beyond the tests of the terminals in its frontier: the blocks in it that may throw, and what
+/// decides the blocks in it. In `if (a) { x = 1; if (b) return; }` the frontier of the store has `if (b)` alone, which
+/// runs only if `a`.
+struct IndirectControl {
+    frontiers: Frontiers,
+    /// Empty without `throws_in_try_control_reactivity`.
+    throwing: ThrowingBlocks,
+    /// `outer_branches_control_reactivity`, and some block in a frontier has a frontier of its own.
+    follows_outer_branches: bool,
+    /// Indexed by `BlockId.0`: the last walk that has come to the block.
+    seen_in: Vec<u32>,
+    walk: u32,
+    pending: Vec<BlockId>,
+}
+
+impl IndirectControl {
+    /// `None` if nothing but the tests decides a block of the function.
+    fn new(
+        func: &HirFunction,
+        env: &Environment,
+        frontiers: Frontiers,
+        has_catch: bool,
+    ) -> Option<Self> {
+        let has_throwing = has_catch && env.config.throws_in_try_control_reactivity;
+        let follows_outer_branches = env.config.outer_branches_control_reactivity
+            && func.body.blocks.keys().any(|&block_id| {
+                (frontiers.of(block_id)).any(|control| frontiers.of(control).next().is_some())
+            });
+        if !has_throwing && !follows_outer_branches {
+            return None;
+        }
+        let block_count = env.next_block_id_counter as usize;
+        let throwing = match has_throwing {
+            true => ThrowingBlocks::new(func, env, block_count, &frontiers),
+            false => ThrowingBlocks::default(),
+        };
+        Some(IndirectControl {
+            frontiers,
+            throwing,
+            follows_outer_branches,
+            seen_in: vec![0; block_count],
+            walk: 0,
+            pending: Vec::new(),
+        })
+    }
+
+    /// After the tests of `of_block[block_id]`, which the caller has found not to be reactive.
+    fn any_is_reactive(
+        &mut self,
+        block_id: BlockId,
+        tests: &[IdentifierId],
+        of_block: &[(u32, u32)],
+        reactive_map: &mut ReactivityMap,
+    ) -> bool {
+        if !self.follows_outer_branches {
+            let mut controls = self.frontiers.of(block_id);
+            return controls.any(|control| self.throwing.reactive.contains(control));
+        }
+        if self.walk == u32::MAX {
+            self.seen_in.fill(0);
+            self.walk = 0;
+        }
+        self.walk += 1;
+        self.pending.clear();
+        self.pending.push(block_id);
+        while let Some(block_id) = self.pending.pop() {
+            for control in self.frontiers.of(block_id) {
+                if std::mem::replace(&mut self.seen_in[control.0 as usize], self.walk) == self.walk
+                {
+                    continue;
+                }
+                let (start, end) = of_block[control.0 as usize];
+                if self.throwing.reactive.contains(control)
+                    || tests[start as usize..end as usize]
+                        .iter()
+                        .any(|&id| reactive_map.is_reactive(id))
+                {
+                    return true;
+                }
+                self.pending.push(control);
+            }
+        }
+        false
+    }
+}
+
+/// The blocks that may throw to a `catch`, and which of them a reactive value decides.
+///
+/// Such a block decides whether the rest of the `try` runs or the `catch` does, so it controls the blocks whose
+/// frontier it is in, as a branch does. Whether it throws depends on the values that it reads, and on whether it runs
+/// at all, which the blocks in its own frontier decide.
+#[derive(Default)]
+struct ThrowingBlocks {
+    /// Each with from where to where in `reads` the operands of its instructions are.
+    blocks: Vec<(BlockId, u32, u32)>,
+    reads: Vec<IdentifierId>,
+    /// Each throwing block with a throwing block that has it in its frontier, sorted.
+    dependents: Vec<(BlockId, BlockId)>,
+    /// As of the last `update`.
+    reactive: IdBitSet<BlockId>,
+}
+
+impl ThrowingBlocks {
+    fn new(
+        func: &HirFunction,
+        env: &Environment,
+        block_count: usize,
+        frontiers: &Frontiers,
+    ) -> Self {
+        let mut blocks = Vec::new();
+        let mut reads = Vec::new();
+        let mut is_throwing: IdBitSet<BlockId> = IdBitSet::with_ids(block_count);
+        for block in func.body.blocks.values() {
+            if !may_throw_to_a_catch(block) {
+                continue;
+            }
+            let start = reads.len() as u32;
+            for instr_id in &block.instructions {
+                let value = &func.instructions[instr_id.0 as usize].value;
+                reads.extend(visitors::operands(value, &env.functions).map(|it| it.identifier));
+            }
+            blocks.push((block.id, start, reads.len() as u32));
+            is_throwing.insert(block.id);
+        }
+
+        let mut dependents = Vec::new();
+        for &(block_id, ..) in &blocks {
+            let controls = (frontiers.of(block_id)).filter(|&it| is_throwing.contains(it));
+            dependents.extend(controls.map(|control| (control, block_id)));
+        }
+        dependents.sort_unstable();
+
+        ThrowingBlocks {
+            blocks,
+            reads,
+            dependents,
+            reactive: IdBitSet::with_ids(block_count),
+        }
+    }
+
+    /// Adds the blocks that read a reactive value or that a reactive test decides, and the blocks that they decide in
+    /// turn. What a round marks reactive after this is found by the next round, which those marks force.
+    fn update(
+        &mut self,
+        tests: &[IdentifierId],
+        of_block: &[(u32, u32)],
+        reactive_map: &mut ReactivityMap,
+    ) {
+        let mut pending = Vec::new();
+        for &(block_id, start, end) in &self.blocks {
+            let (tests_start, tests_end) = of_block[block_id.0 as usize];
+            if !self.reactive.contains(block_id)
+                && (self.reads[start as usize..end as usize].iter())
+                    .chain(&tests[tests_start as usize..tests_end as usize])
+                    .any(|&id| reactive_map.is_reactive(id))
+            {
+                self.reactive.insert(block_id);
+                pending.push(block_id);
+            }
+        }
+        while let Some(block_id) = pending.pop() {
+            let start = self
+                .dependents
+                .partition_point(|&(control, _)| control < block_id);
+            let dependents = self.dependents[start..].iter();
+            for &(_, dependent) in dependents.take_while(|&&(control, _)| control == block_id) {
+                if self.reactive.insert(dependent) {
+                    pending.push(dependent);
+                }
+            }
+        }
     }
 }
 

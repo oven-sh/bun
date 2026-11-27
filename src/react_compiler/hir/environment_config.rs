@@ -124,6 +124,16 @@ pub struct EnvironmentConfig {
     /// A tag can make something new of the same template each time. So a tagged template is a source of reactivity, and
     /// no scope that it is in is kept, unless the signature of the tag says that it is pure. To upstream it is a call.
     pub tagged_templates_are_always_called: bool,
+    /// For `infer_reactive_places`: what a branch in a `try` block assigns is reactive if what the branch tests is. To
+    /// upstream the edge from each store to the `catch` hides the branch, and what is assigned is constant.
+    pub branches_in_try_control_reactivity: bool,
+    /// For `infer_reactive_places`: a block that may throw to a `catch` decides what follows it and what the `catch`
+    /// assigns, as a branch does, if it reads a reactive value or something reactive decides it. To upstream a throw
+    /// decides nothing.
+    pub throws_in_try_control_reactivity: bool,
+    /// For `infer_reactive_places`: what decides a branch decides what the branch decides. To upstream only `b` decides
+    /// `x` in `if (a) { x = 1; if (b) return; }`.
+    pub outer_branches_control_reactivity: bool,
     /// The `finally` block of a `try` is lowered after the rest of it, and so is the `try` block that has no `catch`:
     /// the function is not compiled, and the rules see what the blocks use. Upstream lowers neither.
     pub finally_blocks_are_lowered: bool,
@@ -205,6 +215,9 @@ impl Default for EnvironmentConfig {
             captured_targets_with_keys_force_temporaries: false,
             unreachable_code_is_reported_at_its_function: false,
             tagged_templates_are_always_called: false,
+            branches_in_try_control_reactivity: false,
+            throws_in_try_control_reactivity: false,
+            outer_branches_control_reactivity: false,
             finally_blocks_are_lowered: false,
             pruned_throw_edges_are_removed_from_phis: false,
             react_is_known_by_its_module: true,

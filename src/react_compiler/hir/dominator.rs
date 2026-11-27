@@ -8,6 +8,7 @@
 //! Port of Dominator.ts and ComputeUnconditionalBlocks.ts.
 //! Uses the Cooper/Harvey/Kennedy algorithm from
 //! https://www.cs.rice.edu/~keith/Embed/dom.pdf
+//! Normal control flow: https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License).
 
 use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
 
@@ -161,10 +162,29 @@ pub fn compute_post_dominator_tree(
     next_block_id_counter: u32,
     include_throws_as_exit_node: bool,
 ) -> Result<PostDominator, CompilerDiagnostic> {
+    post_dominator_tree(
+        func,
+        next_block_id_counter,
+        include_throws_as_exit_node,
+        true,
+    )
+}
+
+fn post_dominator_tree(
+    func: &HirFunction,
+    next_block_id_counter: u32,
+    include_throws_as_exit_node: bool,
+    include_exception_edges: bool,
+) -> Result<PostDominator, CompilerDiagnostic> {
     let exit = BlockId(next_block_id_counter);
     let ids = func.body.blocks.keys().as_slice();
     let range = BlockRange::of(ids);
-    let graph = build_reverse_graph(func, range, include_throws_as_exit_node);
+    let graph = build_reverse_graph(
+        func,
+        range,
+        include_throws_as_exit_node,
+        include_exception_edges,
+    );
     let doms = compute_immediate_dominators(&graph)?;
 
     // When include_throws_as_exit_node is false, nodes that flow into a throw
@@ -186,14 +206,21 @@ pub fn compute_post_dominator_tree(
     Ok(PostDominator { exit, range, nodes })
 }
 
+/// Whether `from` goes to `to` only if it throws.
+fn is_exception_edge(from: &Terminal, to: BlockId) -> bool {
+    matches!(from, Terminal::MaybeThrow { continuation, .. } if *continuation != to)
+}
+
 /// Build the reverse graph from the HIR function.
 ///
-/// Reverses all edges and adds a synthetic exit node that receives edges from
-/// return (and optionally throw) terminals. The result is put into RPO order.
+/// Reverses all edges (optionally except those to an exception handler) and adds
+/// a synthetic exit node that receives edges from return (and optionally throw)
+/// terminals. The result is put into RPO order.
 fn build_reverse_graph(
     func: &HirFunction,
     range: BlockRange,
     include_throws_as_exit_node: bool,
+    include_exception_edges: bool,
 ) -> Graph {
     let ids = func.body.blocks.keys().as_slice();
     let blocks = func.body.blocks.values().as_slice();
@@ -222,6 +249,11 @@ fn build_reverse_graph(
             match successors.next() {
                 Some(successor) => {
                     let successor = places[(successor.0 - range.first) as usize] as usize;
+                    if !include_exception_edges
+                        && is_exception_edge(&blocks[successor].terminal, ids[*place])
+                    {
+                        continue;
+                    }
                     if !std::mem::replace(&mut visited[successor], true) {
                         stack.push((successor, blocks[successor].preds.iter()));
                     }
@@ -253,6 +285,9 @@ fn build_reverse_graph(
             preds.push(0);
         }
         for successor in each_terminal_successor(&block.terminal) {
+            if !include_exception_edges && is_exception_edge(&block.terminal, successor) {
+                continue;
+            }
             match range.index(successor).map(|index| nodes[index]) {
                 None | Some(NONE) => {}
                 Some(node) => preds.push(node),
@@ -344,6 +379,26 @@ pub fn post_dominator_frontiers(
     func: &HirFunction,
     post_dominators: &PostDominator,
 ) -> Result<PostDominatorFrontiers, CompilerDiagnostic> {
+    frontiers_of(func, post_dominators, true)
+}
+
+/// The post-dominator frontiers over normal control flow: without the edge from each `MaybeThrow`
+/// to its handler. With that edge a block in a `try` is in the frontier of what follows it, and a
+/// terminal that branches before it is not.
+pub fn normal_flow_post_dominator_frontiers(
+    func: &HirFunction,
+    next_block_id_counter: u32,
+) -> Result<PostDominatorFrontiers, CompilerDiagnostic> {
+    let post_dominators = post_dominator_tree(func, next_block_id_counter, false, false)?;
+    frontiers_of(func, &post_dominators, false)
+}
+
+/// `post_dominators` are over the same edges.
+fn frontiers_of(
+    func: &HirFunction,
+    post_dominators: &PostDominator,
+    include_exception_edges: bool,
+) -> Result<PostDominatorFrontiers, CompilerDiagnostic> {
     let range = post_dominators.range;
     let index_of = |id: BlockId| (id.0 - range.first) as usize;
 
@@ -351,6 +406,12 @@ pub fn post_dominator_frontiers(
     for (&block_id, block) in &func.body.blocks {
         for &pred in &block.preds {
             post_dominators.get(pred)?;
+            if !include_exception_edges
+                && (func.body.blocks.get(&pred))
+                    .is_some_and(|pred| is_exception_edge(&pred.terminal, block_id))
+            {
+                continue;
+            }
             edges.push((index_of(pred), block_id));
         }
     }

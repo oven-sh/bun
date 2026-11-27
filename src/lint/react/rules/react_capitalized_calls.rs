@@ -1,6 +1,6 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use bun_lint_oxlint::regex_flags::option_regex;
 use bun_lint_react_compiler::{EnvOptions, ErrorCategory, Flavor, rule};
 use std::sync::Arc;
 
@@ -80,7 +80,7 @@ impl<const RULE: usize> Rule for CompilerRule<RULE> {
         // oxlint's `CapitalizedCallsConfig`
         let options = options.object(0);
         let allow = options.strings("allow");
-        let pattern = options.str("allowPattern").and_then(option_regex);
+        let pattern = options.str("allowPattern").and_then(allow_pattern);
         let env_options = (!allow.is_empty() || pattern.is_some()).then(|| {
             Arc::new(EnvOptions {
                 capitalized_calls_allow: allow.into_iter().map(str::to_owned).collect(),
@@ -105,5 +105,628 @@ impl<const RULE: usize> Rule for CompilerRule<RULE> {
             Flavor::Oxlint => rule::report(cx, Self::CATEGORY),
             Flavor::Eslint => rule::report_as_eslint(cx, Self::CATEGORY),
         }
+    }
+}
+
+/// Compiles `allowPattern`, which oxlint compiles with Rust's `regex` crate. `None` if JavaScript has no equivalent.
+fn allow_pattern(pattern: &str) -> Option<Regex> {
+    let mut parser = RustPattern {
+        pattern,
+        offset: 0,
+        modes: Modes {
+            ignore_case: false,
+            multi_line: false,
+            dot_all: false,
+            crlf: false,
+            ignore_whitespace: false,
+            unicode: true,
+        },
+    };
+    let mut javascript = String::new();
+    parser.alternatives(&mut javascript, 0)?;
+    // A `)` without its `(` ends it early.
+    if !parser.rest().is_empty() {
+        return None;
+    }
+    Regex::new(&javascript, "v").ok()
+}
+
+/// The crate's flags, except `U`: greediness changes which match is found, not whether there is one.
+#[derive(Copy, Clone)]
+struct Modes {
+    ignore_case: bool,
+    multi_line: bool,
+    dot_all: bool,
+    crlf: bool,
+    ignore_whitespace: bool,
+    unicode: bool,
+}
+
+enum Escape {
+    Literal(char),
+    /// `\d`, `\pL`: a JavaScript class.
+    Class(String),
+    /// `\b`: a JavaScript assertion.
+    Assertion(String),
+}
+
+/// Rewrites a pattern of the `regex` crate as a JavaScript pattern for the `v` flag, with `regex-syntax` 0.8's parser.
+struct RustPattern<'p> {
+    pattern: &'p str,
+    offset: usize,
+    modes: Modes,
+}
+
+/// `regex-syntax` rejects more groups and classes inside each other.
+const NEST_LIMIT: u32 = 250;
+
+/// What the classes `\d`, `\s` and `\w` have by Unicode, and with `(?-u)`.
+const DIGIT: [&str; 2] = [r"\p{Nd}", "0-9"];
+const SPACE: [&str; 2] = [r"\p{White_Space}", r"\t\n\v\f\r\x20"];
+const WORD: [&str; 2] = [
+    r"\p{Alphabetic}\p{M}\p{Nd}\p{Pc}\p{Join_Control}",
+    "0-9A-Za-z_",
+];
+
+/// Adds `c` as itself, for inside a class and outside.
+fn push_literal(out: &mut String, c: char) {
+    match c.is_ascii_alphanumeric() {
+        true => out.push(c),
+        false => out.push_str(&format!("\\u{{{:X}}}", u32::from(c))),
+    }
+}
+
+/// `\p{name}` as JavaScript spells it, which wants the case and the `_` that the crate ignores. `None` if it has none.
+fn unicode_class(name: &str, is_negated: bool) -> Option<String> {
+    let bytes = name.as_bytes();
+    let (separator, is_negated) = match strings::index_of(bytes, b"!=") {
+        Some(at) => (Some((at, at + 2)), !is_negated),
+        None => (
+            strings::index_of_any(bytes, b":=").map(|at| (at, at + 1)),
+            is_negated,
+        ),
+    };
+    let (property, value) = match separator {
+        Some((start, end)) => (name.get(..start), name.get(end..)?),
+        None => (None, name),
+    };
+    let is_separator = |c: char| c.is_whitespace() || matches!(c, '_' | '-');
+    let property = property.map(|it| {
+        let letters = it.chars().filter(|&c| !is_separator(c));
+        letters.map(|c| c.to_ascii_lowercase()).collect::<String>()
+    });
+    // Alone it's a general category or a binary property, and then a script.
+    let properties: &[&str] = match property.as_deref() {
+        None => &["", "sc="],
+        Some("gc" | "generalcategory") => &["gc="],
+        Some("sc" | "script") => &["sc="],
+        Some("scx" | "scriptextensions") => &["scx="],
+        Some(_) => return None,
+    };
+    let compact: String = value.chars().filter(|c| !c.is_whitespace()).collect();
+    let mut capitalized = String::new();
+    let mut is_word_start = true;
+    for c in value.chars() {
+        if is_separator(c) {
+            is_word_start = true;
+            continue;
+        }
+        if is_word_start && !capitalized.is_empty() {
+            capitalized.push('_');
+        }
+        capitalized.push(match is_word_start {
+            true => c.to_ascii_uppercase(),
+            false => c.to_ascii_lowercase(),
+        });
+        is_word_start = false;
+    }
+    let (upper, lower) = (compact.to_ascii_uppercase(), compact.to_ascii_lowercase());
+    let spellings = [&compact, &capitalized, &upper, &lower];
+    let (property, value) = properties
+        .iter()
+        .flat_map(|property| spellings.iter().map(move |value| (property, value)))
+        .find(|(property, value)| Regex::new(&format!("\\p{{{property}{value}}}"), "u").is_ok())?;
+    let escape = if is_negated { 'P' } else { 'p' };
+    Some(format!("\\{escape}{{{property}{value}}}"))
+}
+
+/// The items before a class's operator, and after it. JavaScript has `&&` and `--` between classes only, and no `~~`.
+fn set_operation(operands: Option<&(String, char)>, right: &str) -> Option<String> {
+    let Some((left, operator)) = operands else {
+        return Some(right.to_owned());
+    };
+    // Each `~~` doubles the text, and the engine takes 2^20 characters.
+    if left.len() + right.len() > 1 << 20 {
+        return None;
+    }
+    Some(match operator {
+        '&' => format!("[{left}]&&[{right}]"),
+        '-' => format!("[{left}]--[{right}]"),
+        _ => format!("[[{left}][{right}]]--[[{left}]&&[{right}]]"),
+    })
+}
+
+impl<'p> RustPattern<'p> {
+    fn rest(&self) -> &'p str {
+        self.pattern.get(self.offset..).unwrap_or_default()
+    }
+
+    fn char(&self) -> Option<char> {
+        self.rest().chars().next()
+    }
+
+    fn peek(&self) -> Option<char> {
+        self.rest().chars().nth(1)
+    }
+
+    fn bump(&mut self) {
+        self.offset += self.char().map_or(0, char::len_utf8);
+    }
+
+    fn bump_if(&mut self, prefix: &str) -> bool {
+        let has_prefix = self.rest().starts_with(prefix);
+        if has_prefix {
+            self.offset += prefix.len();
+        }
+        has_prefix
+    }
+
+    /// With `(?x)`, skips blanks and comments.
+    fn bump_space(&mut self) {
+        if !self.modes.ignore_whitespace {
+            return;
+        }
+        while let Some(c) = self.char() {
+            if c.is_whitespace() {
+                self.bump();
+            } else if c == '#' {
+                let rest = self.rest().as_bytes();
+                self.offset += match strings::index_of_char_usize(rest, b'\n') {
+                    Some(at) => at + 1,
+                    None => rest.len(),
+                };
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Returns the character it stops at.
+    fn bump_and_bump_space(&mut self) -> Option<char> {
+        self.bump();
+        self.bump_space();
+        self.char()
+    }
+
+    fn peek_space(&self) -> Option<char> {
+        if !self.modes.ignore_whitespace {
+            return self.peek();
+        }
+        let mut is_in_comment = false;
+        // Any non-space character inside a comment ends the search, as in upstream.
+        self.rest().chars().skip(1).find(|&c| {
+            if c.is_whitespace() {
+                return false;
+            }
+            if !is_in_comment && c == '#' {
+                is_in_comment = true;
+                return false;
+            }
+            if is_in_comment && c == '\n' {
+                is_in_comment = false;
+                return false;
+            }
+            true
+        })
+    }
+
+    /// Adds `atom`, which matches one character, with the case sensitivity that's set here.
+    fn push_matcher(&self, out: &mut String, atom: &str) {
+        if !self.modes.ignore_case {
+            out.push_str(atom);
+            return;
+        }
+        if !self.modes.unicode {
+            // JavaScript also takes `ſ` for `s` and the Kelvin sign for `k`.
+            out.push_str(r"(?![\u017F\u212A])");
+        }
+        out.push_str("(?i:");
+        out.push_str(atom);
+        out.push(')');
+    }
+
+    fn perl_class(&self, [by_unicode, by_ascii]: [&str; 2], is_negated: bool) -> String {
+        let negation = if is_negated { "^" } else { "" };
+        let items = match self.modes.unicode {
+            true => by_unicode,
+            false => by_ascii,
+        };
+        format!("[{negation}{items}]")
+    }
+
+    /// The alternatives of a group, up to its `)`, or of the pattern.
+    fn alternatives(&mut self, out: &mut String, depth: u32) -> Option<()> {
+        // Where the item starts that a repetition operator repeats.
+        let mut repeated = None;
+        loop {
+            self.bump_space();
+            let start = out.len();
+            match self.char() {
+                None | Some(')') => return Some(()),
+                Some('(') => repeated = self.group(out, depth)?.then_some(start),
+                Some('|') => {
+                    self.bump();
+                    out.push('|');
+                    repeated = None;
+                }
+                Some('[') => {
+                    let class = self.class(depth)?;
+                    self.push_matcher(out, &class);
+                    repeated = Some(start);
+                }
+                Some(operator @ ('?' | '*' | '+' | '{')) => {
+                    // In a group, because JavaScript repeats neither an assertion nor a repetition.
+                    out.insert_str(repeated?, "(?:");
+                    out.push(')');
+                    if operator == '{' {
+                        self.counted_repetition(out)?;
+                    } else {
+                        out.push(operator);
+                        self.bump();
+                        self.bump_if("?");
+                    }
+                }
+                Some(_) => {
+                    self.primitive(out)?;
+                    repeated = Some(start);
+                }
+            }
+        }
+    }
+
+    /// At `(`. Returns whether it's a group, and not flags for what follows.
+    fn group(&mut self, out: &mut String, depth: u32) -> Option<bool> {
+        self.bump();
+        self.bump_space();
+        let lookarounds = ["?=", "?!", "?<=", "?<!"];
+        if lookarounds.iter().any(|it| self.rest().starts_with(it)) {
+            return None;
+        }
+        let mut modes = self.modes;
+        if self.bump_if("?P<") || self.bump_if("?<") {
+            // No group captures, because nothing can refer to one.
+            self.offset += strings::index_of_char_usize(self.rest().as_bytes(), b'>')? + 1;
+        } else if self.bump_if("?") {
+            modes = self.flags()?;
+            if self.char() == Some(')') {
+                self.bump();
+                self.modes = modes;
+                return Some(false);
+            }
+            self.bump();
+        }
+        if depth >= NEST_LIMIT {
+            return None;
+        }
+        let outer_modes = std::mem::replace(&mut self.modes, modes);
+        out.push_str("(?:");
+        self.alternatives(out, depth + 1)?;
+        if !self.bump_if(")") {
+            return None;
+        }
+        out.push(')');
+        self.modes = outer_modes;
+        Some(true)
+    }
+
+    /// The modes with the flags that end at `:` or `)`.
+    fn flags(&mut self) -> Option<Modes> {
+        let mut modes = self.modes;
+        let mut is_on = true;
+        loop {
+            match self.char()? {
+                ':' | ')' => return Some(modes),
+                '-' => is_on = false,
+                'i' => modes.ignore_case = is_on,
+                'm' => modes.multi_line = is_on,
+                's' => modes.dot_all = is_on,
+                'R' => modes.crlf = is_on,
+                'x' => modes.ignore_whitespace = is_on,
+                'u' => modes.unicode = is_on,
+                'U' => {}
+                _ => return None,
+            }
+            self.bump();
+        }
+    }
+
+    /// At `{`.
+    fn counted_repetition(&mut self, out: &mut String) -> Option<()> {
+        self.bump_and_bump_space()?;
+        out.push_str(&format!("{{{}", self.decimal()?));
+        if self.char()? == ',' {
+            out.push(',');
+            if self.bump_and_bump_space()? != '}' {
+                out.push_str(&self.decimal()?.to_string());
+            }
+        }
+        if !self.bump_if("}") {
+            return None;
+        }
+        out.push('}');
+        self.bump_space();
+        self.bump_if("?");
+        Some(())
+    }
+
+    fn decimal(&mut self) -> Option<u32> {
+        let mut digits = String::new();
+        while self.char().is_some_and(char::is_whitespace) {
+            self.bump();
+        }
+        while let Some(digit) = self.char().filter(char::is_ascii_digit) {
+            digits.push(digit);
+            self.bump_and_bump_space();
+        }
+        while self.char().is_some_and(char::is_whitespace) {
+            self.bump_and_bump_space();
+        }
+        digits.parse().ok()
+    }
+
+    fn primitive(&mut self, out: &mut String) -> Option<()> {
+        let c = self.char()?;
+        if c == '\\' {
+            match self.escape()? {
+                Escape::Literal(c) => self.push_literal_matcher(out, c),
+                Escape::Class(class) => self.push_matcher(out, &class),
+                Escape::Assertion(assertion) => out.push_str(&assertion),
+            }
+            return Some(());
+        }
+        self.bump();
+        let (multi_line, crlf) = (self.modes.multi_line, self.modes.crlf);
+        // The pattern has no `m` flag in JavaScript, so there `^` and `$` are the ends of the text.
+        match c {
+            '.' => out.push_str(match (self.modes.dot_all, crlf) {
+                (true, _) => r"[\s\S]",
+                (false, false) => r"[^\n]",
+                (false, true) => r"[^\n\r]",
+            }),
+            '^' => out.push_str(match (multi_line, crlf) {
+                (false, _) => "^",
+                (true, false) => r"(?<![^\n])",
+                (true, true) => r"(?:(?<![^\n])|(?<=\r)(?!\n))",
+            }),
+            '$' => out.push_str(match (multi_line, crlf) {
+                (false, _) => "$",
+                (true, false) => r"(?![^\n])",
+                (true, true) => r"(?:(?![^\r])|(?=\n)(?<!\r))",
+            }),
+            _ => self.push_literal_matcher(out, c),
+        }
+        Some(())
+    }
+
+    fn push_literal_matcher(&self, out: &mut String, c: char) {
+        let mut literal = String::new();
+        push_literal(&mut literal, c);
+        // With `(?-u)` only ASCII letters fold.
+        match self.modes.unicode || c.is_ascii() {
+            true => self.push_matcher(out, &literal),
+            false => out.push_str(&literal),
+        }
+    }
+
+    /// At `\`.
+    fn escape(&mut self) -> Option<Escape> {
+        self.bump();
+        let c = self.char()?;
+        match c {
+            'x' | 'u' | 'U' => return self.hex().map(Escape::Literal),
+            'p' | 'P' => return self.unicode_class(c == 'P').map(Escape::Class),
+            _ => {}
+        }
+        self.bump();
+        Some(match c {
+            'd' | 'D' => Escape::Class(self.perl_class(DIGIT, c == 'D')),
+            's' | 'S' => Escape::Class(self.perl_class(SPACE, c == 'S')),
+            'w' | 'W' => Escape::Class(self.perl_class(WORD, c == 'W')),
+            'a' => Escape::Literal('\x07'),
+            'f' => Escape::Literal('\x0C'),
+            't' => Escape::Literal('\t'),
+            'n' => Escape::Literal('\n'),
+            'r' => Escape::Literal('\r'),
+            'v' => Escape::Literal('\x0B'),
+            'A' => Escape::Assertion("^".to_owned()),
+            'z' => Escape::Assertion("$".to_owned()),
+            'b' | 'B' | '<' | '>' => {
+                let name = match c {
+                    'b' if self.char() == Some('{') => self.special_word_boundary()?,
+                    _ => c.to_string(),
+                };
+                Escape::Assertion(self.word_boundary(&name)?)
+            }
+            _ if c.is_ascii() && !c.is_ascii_alphanumeric() => Escape::Literal(c),
+            _ => return None,
+        })
+    }
+
+    /// At the `{` after `\b`. Returns the name in `\b{name}`, or `b` if the `{` is a repetition's.
+    fn special_word_boundary(&mut self) -> Option<String> {
+        let is_name_char = |c: char| c.is_ascii_alphabetic() || c == '-';
+        let start = self.offset;
+        if !is_name_char(self.bump_and_bump_space()?) {
+            self.offset = start;
+            return Some("b".to_owned());
+        }
+        let mut name = String::new();
+        while let Some(c) = self.char().filter(|&c| is_name_char(c)) {
+            name.push(c);
+            self.bump_and_bump_space();
+        }
+        self.bump_if("}").then_some(name)
+    }
+
+    fn word_boundary(&self, name: &str) -> Option<String> {
+        let word = self.perl_class(WORD, false);
+        Some(match name {
+            "b" => format!("(?:(?<={word})(?!{word})|(?<!{word})(?={word}))"),
+            "B" => format!("(?:(?<={word})(?={word})|(?<!{word})(?!{word}))"),
+            "<" | "start" => format!("(?<!{word})(?={word})"),
+            ">" | "end" => format!("(?<={word})(?!{word})"),
+            "start-half" => format!("(?<!{word})"),
+            "end-half" => format!("(?!{word})"),
+            _ => return None,
+        })
+    }
+
+    /// At the `x` of `\x41` and `\x{41}`, and the same for `\u0041` and `\U00000041`.
+    fn hex(&mut self) -> Option<char> {
+        let length = match self.char()? {
+            'x' => 2,
+            'u' => 4,
+            _ => 8,
+        };
+        let mut digits = String::new();
+        if self.bump_and_bump_space()? == '{' {
+            loop {
+                match self.bump_and_bump_space()? {
+                    '}' => break,
+                    digit if digit.is_ascii_hexdigit() => digits.push(digit),
+                    _ => return None,
+                }
+            }
+        } else {
+            for at in 0..length {
+                if at > 0 {
+                    self.bump_and_bump_space()?;
+                }
+                digits.push(self.char().filter(char::is_ascii_hexdigit)?);
+            }
+        }
+        self.bump_and_bump_space();
+        u32::from_str_radix(&digits, 16)
+            .ok()
+            .and_then(char::from_u32)
+    }
+
+    /// At the `p` of `\pL` and `\p{Greek}`.
+    fn unicode_class(&mut self, is_negated: bool) -> Option<String> {
+        let letter = self.bump_and_bump_space()?;
+        if letter != '{' {
+            self.bump_and_bump_space();
+            return unicode_class(letter.encode_utf8(&mut [0; 4]), is_negated);
+        }
+        let start = self.offset + 1;
+        while self.bump_and_bump_space()? != '}' {}
+        let name = self.pattern.get(start..self.offset)?;
+        self.bump();
+        unicode_class(name, is_negated)
+    }
+
+    /// At `[`. Returns the class as a JavaScript class.
+    fn class(&mut self, depth: u32) -> Option<String> {
+        if depth >= NEST_LIMIT {
+            return None;
+        }
+        let mut first = self.bump_and_bump_space()?;
+        let is_negated = first == '^';
+        if is_negated {
+            first = self.bump_and_bump_space()?;
+        }
+        let mut union = String::new();
+        // A `]` here is itself, and so is every `-`.
+        if first == ']' {
+            push_literal(&mut union, ']');
+            self.bump_and_bump_space()?;
+        }
+        while first != ']' && self.char()? == '-' {
+            push_literal(&mut union, '-');
+            self.bump_and_bump_space()?;
+        }
+        let mut operands = None;
+        loop {
+            self.bump_space();
+            match self.char()? {
+                '[' => match self.ascii_class() {
+                    Some(class) => union.push_str(&class),
+                    None => union.push_str(&self.class(depth + 1)?),
+                },
+                ']' => break,
+                operator @ ('&' | '-' | '~') if self.peek() == Some(operator) => {
+                    self.bump();
+                    self.bump();
+                    operands = Some((set_operation(operands.as_ref(), &union)?, operator));
+                    union.clear();
+                }
+                _ => self.class_range(&mut union)?,
+            }
+        }
+        self.bump();
+        let negation = if is_negated { "^" } else { "" };
+        let items = set_operation(operands.as_ref(), &union)?;
+        Some(format!("[{negation}{items}]"))
+    }
+
+    fn class_range(&mut self, union: &mut String) -> Option<()> {
+        let first = self.class_item()?;
+        self.bump_space();
+        if self.char()? != '-' || matches!(self.peek_space(), Some(']' | '-')) {
+            match first {
+                Escape::Literal(c) => push_literal(union, c),
+                Escape::Class(class) => union.push_str(&class),
+                Escape::Assertion(_) => return None,
+            }
+            return Some(());
+        }
+        self.bump_and_bump_space()?;
+        let (Escape::Literal(start), Escape::Literal(end)) = (first, self.class_item()?) else {
+            return None;
+        };
+        push_literal(union, start);
+        union.push('-');
+        push_literal(union, end);
+        Some(())
+    }
+
+    fn class_item(&mut self) -> Option<Escape> {
+        match self.char()? {
+            '\\' => self.escape(),
+            c => {
+                self.bump();
+                Some(Escape::Literal(c))
+            }
+        }
+    }
+
+    /// At a `[` inside a class. Returns `[:alpha:]` and the like as a JavaScript class.
+    fn ascii_class(&mut self) -> Option<String> {
+        let rest = self.rest().strip_prefix("[:")?;
+        let (negation, rest) = match rest.strip_prefix('^') {
+            Some(rest) => ("^", rest),
+            None => ("", rest),
+        };
+        let name = rest.get(..strings::index_of_char_usize(rest.as_bytes(), b':')?)?;
+        let after = rest.get(name.len()..)?.strip_prefix(":]")?;
+        let items = match name {
+            "alnum" => "0-9A-Za-z",
+            "alpha" => "A-Za-z",
+            "ascii" => r"\x00-\x7F",
+            "blank" => r"\t\x20",
+            "cntrl" => r"\x00-\x1F\x7F",
+            "digit" => "0-9",
+            "graph" => r"\x21-\x7E",
+            "lower" => "a-z",
+            "print" => r"\x20-\x7E",
+            "punct" => r"\x21-\x2F\x3A-\x40\x5B-\x60\x7B-\x7E",
+            "space" => r"\t\n\v\f\r\x20",
+            "upper" => "A-Z",
+            "word" => "0-9A-Za-z_",
+            "xdigit" => "0-9A-Fa-f",
+            _ => return None,
+        };
+        self.offset = self.pattern.len() - after.len();
+        Some(format!("[{negation}{items}]"))
     }
 }

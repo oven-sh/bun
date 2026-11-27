@@ -45,6 +45,8 @@ rule's suite comes into the bundle when the rule here passes all of it. Some of 
 
 `oxlint/` has the tests of the rules that are ports of the rules in oxlint's own plugins (`unicorn`, `oxc`, `react`, `jsx-a11y`,
 `nextjs`, `import`, `promise`, ..): the cases in oxlint's sources, each with what the **executable of oxlint 1.87.0** reports for it.
+The 22 React Compiler rules of `react` (`RULES` in `../oracle/react-compiler/shared.ts`) are the cases and the executable of
+**oxlint 1.95.0**, which is the release that `bun lint` follows for them.
 See `extract-oxlint.ts`. They differ from the others in this:
 
 - A case is linted with an `.oxlintrc.json`: only that rule, the plugins in `plugins`, and what is in `oxlintrc` (`settings`, `env`,
@@ -142,6 +144,16 @@ to `more/reviews`, or to record it with other versions:
 bun sync.ts --extract more/reviews/ /tmp/more              # /tmp/more/more/reviews/<plugin>/<rule>.json
 node extra-cases.ts ..                                     # its first lines say how: writes <directory>/<plugin>/<rule>.json
 bun sync.ts --more reviews <directory>
+```
+
+`sync.ts --oxlint` replaces all of `oxlint/`. To record only some of its rules again, as the React Compiler rules were with
+oxlint 1.95.0, write them over what the bundle has:
+
+```sh
+bun sync.ts --extract oxlint /tmp/x                        # /tmp/x/oxlint, /tmp/x/oxlint-import-project
+mv /tmp/x/oxlint-import-project /tmp/x/oxlint/import-project
+bun extract-oxlint.ts --oxc <oxc at the tag> --oxlint <oxlint> --out /tmp/x/oxlint react/refs react/purity ..
+bun sync.ts --oxlint /tmp/x/oxlint
 ```
 
 The extractors take rule names to redo only those, `--jobs N`, `--out <dir>` and `--report <dir>`. After bumping

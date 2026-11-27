@@ -34,6 +34,10 @@
     "version": "1.87.0",
     "commit": "2bd08ebe8f36fcf1954a675ffdeb4c6d0129f609"
   },
+  "oxlint, for the React Compiler rules": {
+    "version": "1.95.0",
+    "commit": "846e62abbbf7c646844a4b8729210dbe2317f5c7"
+  },
   "tsgolint": {
     "commit": "24b18b48c47b7ae0d84e21a0e974575026e27908"
   },

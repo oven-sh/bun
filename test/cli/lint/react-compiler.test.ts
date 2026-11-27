@@ -664,6 +664,24 @@ ${chain}
       "refs-and-invariant": [["react(invariant)", 1, 26]],
     });
   });
+
+  test("a function with a `using` or an `await using` declaration is compiled, and the resource is a `const`", async () => {
+    const diagnostics = await matches("using declarations");
+    // The last of each is in a function that has a `const` instead.
+    expect(linesOf(diagnostics["using.ts"], "refs")).toEqual([6, 13, 19, 25]);
+    expect(linesOf(diagnostics["await-using.ts"], "refs")).toEqual([6, 13]);
+    // Where the resource is assigned to.
+    expect(linesOf(diagnostics["using.tsx"], "syntax")).toEqual([42]);
+    expect(linesOf(diagnostics["captured.tsx"], "syntax")).toEqual([42, 44]);
+  });
+
+  test("a write to a value is reported when the value is also an operand of an operator", async () => {
+    const diagnostics = await matches("operator operands");
+    // The ones that aren't reported are after `x++` and in a hook.
+    expect(linesOf(diagnostics["operands.jsx"], "immutability")).toEqual([
+      6, 13, 20, 27, 34, 41, 48, 56, 57, 64, 80, 86, 94, 102, 110, 119, 128, 136, 148,
+    ]);
+  });
 });
 
 describe.concurrent("bun lint: how a diagnostic's labels, help and note are printed", () => {

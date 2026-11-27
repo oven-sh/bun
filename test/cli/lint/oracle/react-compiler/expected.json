@@ -13957,6 +13957,1231 @@
      }
     ]
    }
+  },
+  "using declarations": {
+   "exit": 1,
+   "files": 8,
+   "diagnostics": {
+    "await-using.ts": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 15,
+         "length": 11,
+         "line": 13,
+         "offset": 315
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 15,
+         "length": 11,
+         "line": 6,
+         "offset": 152
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "await-using.tsx": [
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value used previously in JSX is not allowed. Consider moving the modification before the JSX",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 8,
+         "line": 23,
+         "offset": 598
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 11,
+         "line": 12,
+         "offset": 311
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 11,
+         "line": 6,
+         "offset": 154
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "captured.tsx": [
+     {
+      "code": "react(exhaustive-effect-dependencies)",
+      "help": "Missing dependencies can cause an effect to fire less often than it should",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 6,
+         "length": 2,
+         "line": 27,
+         "offset": 792
+        }
+       },
+       {
+        "label": "Missing dependency `props.a`",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 26,
+         "offset": 778
+        }
+       },
+       {
+        "label": "Missing dependency `resource`",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 26,
+         "offset": 761
+        }
+       }
+      ],
+      "message": "Found missing effect dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value used previously in JSX is not allowed. Consider moving the modification before the JSX",
+      "labels": [
+       {
+        "label": "`resource` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 34,
+         "offset": 921
+        }
+       },
+       {
+        "label": "`resource` originates here",
+        "span": {
+         "column": 9,
+         "length": 8,
+         "line": 32,
+         "offset": 867
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `resource` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `resource`",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 26,
+         "offset": 761
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `resource` after render",
+        "span": {
+         "column": 13,
+         "length": 7,
+         "line": 25,
+         "offset": 749
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(memo-dependencies)",
+      "help": "Missing dependencies can cause a value to update less often than it should, resulting in stale UI",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 47,
+         "length": 2,
+         "line": 13,
+         "offset": 435
+        }
+       },
+       {
+        "label": "Missing dependency `resource.value`",
+        "span": {
+         "column": 31,
+         "length": 14,
+         "line": 13,
+         "offset": 419
+        }
+       }
+      ],
+      "message": "Found missing memoization dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(memo-dependencies)",
+      "help": "Missing dependencies can cause a value to update less often than it should, resulting in stale UI",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 55,
+         "length": 2,
+         "line": 12,
+         "offset": 384
+        }
+       },
+       {
+        "label": "Missing dependency `resource`",
+        "span": {
+         "column": 37,
+         "length": 8,
+         "line": 12,
+         "offset": 366
+        }
+       }
+      ],
+      "message": "Found missing memoization dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 37,
+         "length": 11,
+         "line": 53,
+         "offset": 1394
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 37,
+         "length": 11,
+         "line": 7,
+         "offset": 236
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(syntax)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 31,
+         "line": 42,
+         "offset": 1067
+        }
+       }
+      ],
+      "message": "Expected `const` declaration not to be reassigned",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(syntax)",
+      "help": "`resource` is declared as const",
+      "labels": [
+       {
+        "label": "Cannot reassign `resource`",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 44,
+         "offset": 1127
+        }
+       },
+       {
+        "label": "`resource` is declared here",
+        "span": {
+         "column": 9,
+         "length": 8,
+         "line": 42,
+         "offset": 1073
+        }
+       }
+      ],
+      "message": "Cannot reassign a `const` variable",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "loops.tsx": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 11,
+         "line": 16,
+         "offset": 357
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 11,
+         "line": 24,
+         "offset": 541
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 11,
+         "line": 32,
+         "offset": 717
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 11,
+         "line": 41,
+         "offset": 910
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 11,
+         "line": 8,
+         "offset": 172
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 11,
+         "line": 13,
+         "offset": 264
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle for-await loops",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "nested.tsx": [
+     {
+      "code": "react(exhaustive-effect-dependencies)",
+      "help": "Missing dependencies can cause an effect to fire less often than it should",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 6,
+         "length": 2,
+         "line": 53,
+         "offset": 1154
+        }
+       },
+       {
+        "label": "Missing dependency `props.a`",
+        "span": {
+         "column": 27,
+         "length": 7,
+         "line": 51,
+         "offset": 1119
+        }
+       }
+      ],
+      "message": "Found missing effect dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 11,
+         "line": 18,
+         "offset": 377
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 11,
+         "line": 27,
+         "offset": 549
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 11,
+         "line": 54,
+         "offset": 1174
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 11,
+         "line": 9,
+         "offset": 182
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 37,
+         "length": 11,
+         "line": 36,
+         "offset": 757
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 37,
+         "length": 11,
+         "line": 45,
+         "offset": 986
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "This function accesses a ref value",
+        "span": {
+         "column": 16,
+         "length": 4,
+         "line": 63,
+         "offset": 1382
+        }
+       },
+       {
+        "label": "The ref is accessed here",
+        "span": {
+         "column": 12,
+         "length": 11,
+         "line": 61,
+         "offset": 1332
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "not-a-declaration.jsx": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 11,
+         "line": 7,
+         "offset": 153
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "using.ts": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 10,
+         "length": 11,
+         "line": 13,
+         "offset": 285
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 10,
+         "length": 11,
+         "line": 19,
+         "offset": 435
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 15,
+         "length": 11,
+         "line": 25,
+         "offset": 586
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 15,
+         "length": 11,
+         "line": 6,
+         "offset": 140
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "using.tsx": [
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 8,
+         "line": 36,
+         "offset": 866
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value used previously in JSX is not allowed. Consider moving the modification before the JSX",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 8,
+         "line": 30,
+         "offset": 750
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(purity)",
+      "help": "`Math.random` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 25,
+         "length": 13,
+         "line": 16,
+         "offset": 410
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 11,
+         "line": 12,
+         "offset": 331
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 11,
+         "line": 49,
+         "offset": 1146
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 11,
+         "line": 6,
+         "offset": 152
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 3,
+         "length": 8,
+         "line": 23,
+         "offset": 579
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(syntax)",
+      "help": "`resource` is declared as const",
+      "labels": [
+       {
+        "label": "Cannot reassign `resource`",
+        "span": {
+         "column": 3,
+         "length": 8,
+         "line": 42,
+         "offset": 999
+        }
+       },
+       {
+        "label": "`resource` is declared here",
+        "span": {
+         "column": 9,
+         "length": 8,
+         "line": 41,
+         "offset": 971
+        }
+       }
+      ],
+      "message": "Cannot reassign a `const` variable",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ]
+   }
+  },
+  "operator operands": {
+   "exit": 1,
+   "files": 1,
+   "diagnostics": {
+    "operands.jsx": [
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`x` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 1,
+         "line": 110,
+         "offset": 1847
+        }
+       },
+       {
+        "label": "`x` originates here",
+        "span": {
+         "column": 9,
+         "length": 1,
+         "line": 107,
+         "offset": 1785
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`x` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 1,
+         "line": 119,
+         "offset": 1995
+        }
+       },
+       {
+        "label": "`x` originates here",
+        "span": {
+         "column": 9,
+         "length": 1,
+         "line": 116,
+         "offset": 1927
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`x` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 1,
+         "line": 128,
+         "offset": 2165
+        }
+       },
+       {
+        "label": "`x` originates here",
+        "span": {
+         "column": 9,
+         "length": 1,
+         "line": 125,
+         "offset": 2099
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 1,
+         "line": 13,
+         "offset": 238
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 1,
+         "line": 148,
+         "offset": 2469
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 1,
+         "line": 20,
+         "offset": 355
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 1,
+         "line": 27,
+         "offset": 468
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 1,
+         "line": 34,
+         "offset": 584
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 1,
+         "line": 41,
+         "offset": 699
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 1,
+         "line": 48,
+         "offset": 813
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 1,
+         "line": 56,
+         "offset": 951
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 1,
+         "line": 57,
+         "offset": 962
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 1,
+         "line": 6,
+         "offset": 126
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 1,
+         "line": 64,
+         "offset": 1074
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 1,
+         "line": 80,
+         "offset": 1321
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 1,
+         "line": 86,
+         "offset": 1424
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 5,
+         "line": 136,
+         "offset": 2275
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value returned from 'useState()', which should not be modified directly. Use the setter function to update instead",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 1,
+         "line": 94,
+         "offset": 1555
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value used previously in JSX is not allowed. Consider moving the modification before the JSX",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 1,
+         "line": 102,
+         "offset": 1711
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     }
+    ]
+   }
   }
  },
  "eslint": {

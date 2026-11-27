@@ -4145,6 +4145,466 @@ export function InAMemo({ x }) {
 `,
 };
 
+/**
+ * `using` and `await using`. oxlint 1.87 reported nothing in a function with one of them, unless it was the variable
+ * of a `for`-`of` loop.
+ */
+const usingDeclarations: Files = {
+  ".oxlintrc.json": rc(),
+  "using.ts": `import { useRef } from "react";
+
+export function useResource(props) {
+  const ref = useRef(0);
+  using handle = props.open();
+  const bad = ref.current;
+  return bad + handle.value;
+}
+
+export function useBefore(props) {
+  using handle = props.open();
+  const ref = useRef(0);
+  return ref.current + handle.value;
+}
+
+export function useTwo(props) {
+  const ref = useRef(0);
+  using first = props.open(), second = props.open();
+  return ref.current + first.value + second.value;
+}
+
+export function useControl(props) {
+  const ref = useRef(0);
+  const handle = props.open();
+  const bad = ref.current;
+  return bad + handle.value;
+}
+`,
+  "using.tsx": `import { useRef, useState } from "react";
+
+export function Component(props) {
+  using resource = open(props.a);
+  const ref = useRef(0);
+  return <div>{ref.current}{resource.value}</div>;
+}
+
+export function Typed(props: { a: string }) {
+  using resource: Disposable = open(props.a);
+  const ref = useRef<number>(0);
+  return <div>{ref.current}</div>;
+}
+
+export function Impure(props) {
+  using resource = open(Math.random());
+  return <div>{resource.value}</div>;
+}
+
+export function SetsState(props) {
+  const [state, setState] = useState(0);
+  using resource = open(props.a);
+  setState(1);
+  return <div>{state}{resource.value}</div>;
+}
+
+export function Mutated(props) {
+  using resource = open(props.a);
+  const element = <div>{resource}</div>;
+  resource.value = 1;
+  return element;
+}
+
+export function MutatesProps(props) {
+  using resource = props.resource;
+  resource.value = 1;
+  return <div>{resource.value}</div>;
+}
+
+export function Reassigned(props) {
+  using resource = open(props.a);
+  resource = null;
+  return <div>{resource}</div>;
+}
+
+export function Null(props) {
+  using resource = null;
+  const ref = useRef(0);
+  return <div>{ref.current}{resource}</div>;
+}
+`,
+  "await-using.ts": `import { useRef } from "react";
+
+export async function useResource(props) {
+  const ref = useRef(0);
+  await using handle = props.open();
+  const bad = ref.current;
+  return bad + handle.value;
+}
+
+export async function useControl(props) {
+  const ref = useRef(0);
+  const handle = await props.open();
+  const bad = ref.current;
+  return bad + handle.value;
+}
+`,
+  "await-using.tsx": `import { useRef } from "react";
+
+export async function Component(props) {
+  await using resource = open(props.a);
+  const ref = useRef(0);
+  return <div>{ref.current}{resource.value}</div>;
+}
+
+export const Arrow = async props => {
+  await using resource = open(props.a);
+  const ref = useRef(0);
+  return <div>{ref.current}{resource.value}</div>;
+};
+
+export async function Impure(props) {
+  await using resource = open(Math.random());
+  return <div>{resource.value}</div>;
+}
+
+export async function Mutated(props) {
+  await using resource = open(props.a);
+  const element = <div>{resource}</div>;
+  resource.value = 1;
+  return element;
+}
+`,
+  "captured.tsx": `import { useCallback, useEffect, useMemo, useRef } from "react";
+
+export function Handler(props) {
+  using resource = open(props.a);
+  const ref = useRef(0);
+  const onClick = () => resource.close();
+  return <button onClick={onClick}>{ref.current}</button>;
+}
+
+export function Memoized(props) {
+  using resource = open(props.a);
+  const onClick = useCallback(() => resource.close(), []);
+  const value = useMemo(() => resource.value, []);
+  return <button onClick={onClick}>{value}</button>;
+}
+
+export function Listed(props) {
+  using resource = open(props.a);
+  const onClick = useCallback(() => resource.close(), [resource]);
+  return <button onClick={onClick} />;
+}
+
+export function Effect(props) {
+  using resource = open(props.a);
+  useEffect(() => {
+    resource.value = props.a;
+  }, []);
+  return <div />;
+}
+
+export function MutatedInRender(props) {
+  using resource = open(props.a);
+  const write = () => {
+    resource.value = 1;
+  };
+  const element = <div>{resource}</div>;
+  write();
+  return element;
+}
+
+export function ReassignedInCallback(props) {
+  using resource = open(props.a);
+  const reset = () => {
+    resource = null;
+  };
+  return <button onClick={reset}>{resource.value}</button>;
+}
+
+export async function Awaited(props) {
+  await using resource = open(props.a);
+  const ref = useRef(0);
+  const onClick = () => resource.close();
+  return <button onClick={onClick}>{ref.current}</button>;
+}
+`,
+  "nested.tsx": `import { useEffect, useRef } from "react";
+
+export function InABlock(props) {
+  const ref = useRef(0);
+  {
+    using resource = open(props.a);
+    resource.use();
+  }
+  return <div>{ref.current}</div>;
+}
+
+export function InABranch(props) {
+  const ref = useRef(0);
+  if (props.a) {
+    using resource = open(props.a);
+    return <div>{resource.value}</div>;
+  }
+  return <div>{ref.current}</div>;
+}
+
+export function InATry(props) {
+  const ref = useRef(0);
+  try {
+    using resource = open(props.a);
+    resource.use();
+  } catch {}
+  return <div>{ref.current}</div>;
+}
+
+export function InACallback(props) {
+  const ref = useRef(0);
+  const onClick = () => {
+    using resource = open(props.a);
+    resource.use();
+  };
+  return <button onClick={onClick}>{ref.current}</button>;
+}
+
+export function InAnAsyncCallback(props) {
+  const ref = useRef(0);
+  const onClick = async () => {
+    await using resource = open(props.a);
+    resource.use();
+  };
+  return <button onClick={onClick}>{ref.current}</button>;
+}
+
+export function InAnEffect(props) {
+  const ref = useRef(0);
+  useEffect(() => {
+    using resource = open(props.a);
+    resource.use();
+  }, []);
+  return <div>{ref.current}</div>;
+}
+
+export function RefInACallback(props) {
+  const ref = useRef(0);
+  const read = () => {
+    using resource = open(props.a);
+    return ref.current + resource.value;
+  };
+  return <div>{read()}</div>;
+}
+`,
+  "loops.tsx": `import { useRef } from "react";
+
+export function ForOf(props) {
+  const ref = useRef(0);
+  for (using resource of props.resources) {
+    resource.use();
+  }
+  return <div>{ref.current}</div>;
+}
+
+export async function ForAwaitOf(props) {
+  const ref = useRef(0);
+  for await (await using resource of props.resources) {
+    resource.use();
+  }
+  return <div>{ref.current}</div>;
+}
+
+export async function ForOfAwaitUsing(props) {
+  const ref = useRef(0);
+  for (await using resource of props.resources) {
+    resource.use();
+  }
+  return <div>{ref.current}</div>;
+}
+
+export function For(props) {
+  const ref = useRef(0);
+  for (using resource = open(props.a); resource.more(); ) {
+    resource.use();
+  }
+  return <div>{ref.current}</div>;
+}
+
+export function InALoopBody(props) {
+  const ref = useRef(0);
+  for (const item of props.items) {
+    using resource = open(item);
+    resource.use();
+  }
+  return <div>{ref.current}</div>;
+}
+`,
+  "not-a-declaration.jsx": `import { useRef } from "react";
+
+export function Identifier(props) {
+  const ref = useRef(0);
+  const using = props.using;
+  using.value;
+  return <div>{ref.current}{using}</div>;
+}
+`,
+};
+
+/**
+ * Writes to a value that's also an operand of an operator. oxlint 1.87 only reported the ones at lines 34, 48, 64, 102
+ * and 148.
+ */
+const operatorOperands: Files = {
+  ".oxlintrc.json": rc(),
+  "operands.jsx": `import { useEffect, useState } from "react";
+
+export function Subtract(props) {
+  const x = props.value;
+  const y = x - 1;
+  x.a = 2;
+  return <div>{y}</div>;
+}
+
+export function Add(props) {
+  const x = props.value;
+  const y = x + 1;
+  x.a = 2;
+  return <div>{y}</div>;
+}
+
+export function Multiply(props) {
+  const x = props.value;
+  const y = 2 * x;
+  x.a = 2;
+  return <div>{y}</div>;
+}
+
+export function Less(props) {
+  const x = props.value;
+  const y = x < 1;
+  x.a = 2;
+  return <div>{y}</div>;
+}
+
+export function Equal(props) {
+  const x = props.value;
+  const y = x === 1;
+  x.a = 2;
+  return <div>{y}</div>;
+}
+
+export function Shift(props) {
+  const x = props.value;
+  const y = x >> 1;
+  x.a = 2;
+  return <div>{y}</div>;
+}
+
+export function In(props) {
+  const x = props.value;
+  const y = "a" in x;
+  x.a = 2;
+  return <div>{y}</div>;
+}
+
+export function Both(props) {
+  const x = props.value;
+  const z = props.other;
+  const y = x - z;
+  x.a = 2;
+  z.a = 2;
+  return <div>{y}</div>;
+}
+
+export function Negate(props) {
+  const x = props.value;
+  const y = -x;
+  x.a = 2;
+  return <div>{y}</div>;
+}
+
+export function Update(props) {
+  let x = props.value;
+  const before = x;
+  x++;
+  before.a = 2;
+  return <div>{x}</div>;
+}
+
+export function Compound(props) {
+  const x = props.value;
+  let y = 1;
+  y -= x;
+  x.a = 2;
+  return <div>{y}</div>;
+}
+
+export function AfterTheWrite(props) {
+  const x = props.value;
+  x.a = 2;
+  const y = x - 1;
+  return <div>{y}</div>;
+}
+
+export function State() {
+  const [x] = useState({});
+  const y = x - 1;
+  x.a = 2;
+  return <div>{y}</div>;
+}
+
+export function Local(props) {
+  const x = makeObject(props.a);
+  const y = x - 1;
+  const element = <div>{x}</div>;
+  x.a = 2;
+  return element;
+}
+
+export function InAnEffect(props) {
+  const x = props.value;
+  useEffect(() => {
+    const y = x - 1;
+    x.a = y;
+  });
+  return <div />;
+}
+
+export function InAHandler(props) {
+  const x = props.value;
+  const onClick = () => {
+    const y = x - 1;
+    x.a = y;
+  };
+  return <button onClick={onClick} />;
+}
+
+export function CalledInRender(props) {
+  const x = props.value;
+  const write = () => {
+    const y = x - 1;
+    x.a = y;
+  };
+  write();
+  return <div />;
+}
+
+export function Parameter({ value }) {
+  const y = value - 1;
+  value.a = 2;
+  return <div>{y}</div>;
+}
+
+export function useSubtract(value) {
+  const y = value - 1;
+  value.a = 2;
+  return y;
+}
+
+export function NoOperator(props) {
+  const x = props.value;
+  x.a = 2;
+  return <div>{x}</div>;
+}
+`,
+};
+
 const ownNameOfTheComponent = `import { memo, useRef } from "react";
 
 export default memo(function Tree({ items }) {
@@ -4551,6 +5011,8 @@ function Component(props) {
   "captured functions": capturedFunctions,
   "optional dependencies": optionalDependencies,
   "late passes": latePasses,
+  "using declarations": usingDeclarations,
+  "operator operands": operatorOperands,
 };
 
 type RawDiagnostic = { filename?: string; url?: string; [key: string]: unknown };

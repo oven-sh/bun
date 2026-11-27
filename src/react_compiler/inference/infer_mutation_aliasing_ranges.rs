@@ -14,7 +14,7 @@
 //!   vars, aliasing between params/context-vars/return-value)
 //! - The legacy `Effect` to store on each Place
 
-use crate::collections::{FxHashSet as HashSet, IdBitSet, IdMap};
+use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet, IdBitSet, IdMap};
 
 use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
 use crate::hir::environment::Environment;
@@ -24,9 +24,9 @@ use crate::hir::visitors::{
     for_each_terminal_operand_mut,
 };
 use crate::hir::{
-    AliasingEffect, BlockId, Effect, EvaluationOrder, FunctionId, HirFunction, Identifier,
-    IdentifierId, InstructionValue, MutationReason, Place, SourceLocation, is_jsx_type,
-    is_primitive_type,
+    AliasingEffect, BlockId, DeclarationId, Effect, EvaluationOrder, FunctionId, HirFunction,
+    Identifier, IdentifierId, InstructionValue, MutationReason, Place, SourceLocation, Type,
+    is_jsx_type, is_primitive_type,
 };
 
 // =============================================================================
@@ -188,6 +188,10 @@ struct Node {
     value: NodeValue,
     /// The last walk that came here and the kind that it came with: see [`AliasingState::arrival`].
     arrival: u32,
+    /// The last walk of a mutation that came here and can call the value. Zero: none has, and the
+    /// value is not called. A walk that cannot call came by a function that has captured the value
+    /// and does not call it: `EnvironmentConfig::capturing_a_function_is_not_calling_it`.
+    called_in: u32,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -202,6 +206,7 @@ struct QueueEntry {
     transitive: bool,
     direction: Direction,
     kind: MutationKind,
+    may_call: bool,
 }
 
 struct AliasingState {
@@ -214,6 +219,8 @@ struct AliasingState {
     serials: u32,
     walks: u32,
     queue: Vec<QueueEntry>,
+    /// What [`directly_called_declarations`] is for the functions that were asked about.
+    called_declarations: HashMap<FunctionId, HashSet<DeclarationId>>,
     /// Whether a transitive walk that no index holds back goes along every edge both ways,
     /// however it came to the node: there is no phi, and each edge is still in the lists of both
     /// its ends.
@@ -230,6 +237,7 @@ impl AliasingState {
             serials: 0,
             walks: 0,
             queue: Vec::new(),
+            called_declarations: HashMap::default(),
             is_symmetric: true,
         }
     }
@@ -253,6 +261,7 @@ impl AliasingState {
             mutation_reason: None,
             value,
             arrival: 0,
+            called_in: 0,
         };
         let node_of = self.node_of.entry(id);
         if *node_of == 0 {
@@ -380,7 +389,7 @@ impl AliasingState {
                 continue;
             }
             node.arrival = arrival;
-            if node.transitive.is_some() || node.local.is_some() {
+            if node.called_in != 0 {
                 continue;
             }
             match node.value {
@@ -415,22 +424,27 @@ impl AliasingState {
             return;
         };
         self.walks += 1;
+        let walk = self.walks;
+        let only_calls_call = env.config.capturing_a_function_is_not_calling_it;
         let mut queue = std::mem::take(&mut self.queue);
         queue.push(QueueEntry {
             place: start,
             transitive,
             direction: Direction::Backwards,
             kind: start_kind,
+            may_call: true,
         });
 
         while let Some(entry) = queue.pop() {
             let arrival = self.arrival(entry.kind);
             let conditional_arrival = self.arrival(MutationKind::Conditional);
             let node = &mut self.nodes[entry.place as usize];
-            if node.arrival >= arrival || matches!(node.value, NodeValue::Missing) {
+            let has_arrived =
+                node.arrival >= arrival && (node.called_in == walk || !entry.may_call);
+            if has_arrived || matches!(node.value, NodeValue::Missing) {
                 continue;
             }
-            node.arrival = arrival;
+            node.arrival = node.arrival.max(arrival);
 
             if node.mutation_reason.is_none() {
                 node.mutation_reason = reason.clone();
@@ -442,12 +456,18 @@ impl AliasingState {
                 ident.mutable_range.end = EvaluationOrder(ident.mutable_range.end.0.max(end_val.0));
             }
 
-            if let NodeValue::Function { function_id } = &node.value {
-                if node.transitive.is_none() && node.local.is_none() {
-                    if should_record_errors {
-                        append_function_errors(env, *function_id);
-                    }
+            let capturing_function = match node.value {
+                NodeValue::Function { function_id } => Some(function_id),
+                _ => None,
+            };
+            if entry.may_call {
+                if let Some(function_id) = capturing_function
+                    && node.called_in == 0
+                    && should_record_errors
+                {
+                    append_function_errors(env, function_id);
                 }
+                node.called_in = walk;
             }
 
             let info = if entry.transitive {
@@ -477,7 +497,8 @@ impl AliasingState {
             // A node that the walk has come to with the kind is passed over when its turn comes.
             let nodes = &self.nodes;
             let mut push = |entry: QueueEntry, arrival: u32| {
-                if nodes[entry.place as usize].arrival < arrival {
+                let node = &nodes[entry.place as usize];
+                if node.arrival < arrival || (entry.may_call && node.called_in != walk) {
                     queue.push(entry);
                 }
             };
@@ -499,6 +520,7 @@ impl AliasingState {
                         transitive: entry.transitive,
                         direction: Direction::Forwards,
                         kind,
+                        may_call: entry.may_call,
                     },
                     arrival,
                 );
@@ -514,6 +536,7 @@ impl AliasingState {
                         transitive: true,
                         direction: Direction::Backwards,
                         kind: entry.kind,
+                        may_call: entry.may_call,
                     },
                     arrival,
                 );
@@ -531,6 +554,7 @@ impl AliasingState {
                             transitive: entry.transitive,
                             direction: Direction::Backwards,
                             kind: entry.kind,
+                            may_call: entry.may_call,
                         },
                         arrival,
                     );
@@ -546,6 +570,7 @@ impl AliasingState {
                             transitive: entry.transitive,
                             direction: Direction::Backwards,
                             kind: MutationKind::Conditional,
+                            may_call: entry.may_call,
                         },
                         conditional_arrival,
                     );
@@ -558,12 +583,33 @@ impl AliasingState {
                     if capture.index >= index {
                         continue;
                     }
+                    let may_call = entry.may_call
+                        && (!only_calls_call || {
+                            let captured = nodes[capture.node as usize].id;
+                            let captured = &env.identifiers[captured.0 as usize];
+                            let is_function = matches!(
+                                env.types[captured.type_.0 as usize],
+                                Type::Function { .. }
+                            );
+                            !is_function
+                                || match capturing_function {
+                                    Some(function_id) => self
+                                        .called_declarations
+                                        .entry(function_id)
+                                        .or_insert_with(|| {
+                                            directly_called_declarations(env, function_id)
+                                        })
+                                        .contains(&captured.declaration_id),
+                                    None => false,
+                                }
+                        });
                     push(
                         QueueEntry {
                             place: capture.node,
                             transitive: entry.transitive,
                             direction: Direction::Backwards,
                             kind: entry.kind,
+                            may_call,
                         },
                         arrival,
                     );
@@ -612,6 +658,31 @@ fn start_range_at(ident: &mut Identifier, eval_order: EvaluationOrder) {
         ident.mutable_range.end =
             EvaluationOrder((eval_order.0 + 1).max(ident.mutable_range.end.0));
     }
+}
+
+/// The declarations that the function calls itself, not in a function in it. A callee is the
+/// temporary that a load of the variable makes.
+fn directly_called_declarations(
+    env: &Environment,
+    function_id: FunctionId,
+) -> HashSet<DeclarationId> {
+    let instructions = &env.functions[function_id.0 as usize].instructions;
+    let mut loaded: HashMap<IdentifierId, IdentifierId> = HashMap::default();
+    for instr in instructions {
+        if let InstructionValue::LoadLocal { place, .. }
+        | InstructionValue::LoadContext { place, .. } = &instr.value
+        {
+            loaded.insert(instr.lvalue.identifier, place.identifier);
+        }
+    }
+    let mut called = HashSet::default();
+    for instr in instructions {
+        if let InstructionValue::CallExpression { callee, .. } = &instr.value {
+            let callee = loaded.get(&callee.identifier).unwrap_or(&callee.identifier);
+            called.insert(env.identifiers[callee.0 as usize].declaration_id);
+        }
+    }
+    called
 }
 
 // =============================================================================

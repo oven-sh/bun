@@ -96,6 +96,10 @@ pub struct EnvironmentConfig {
     /// An effect on a variable is reported where it is. Upstream puts the first effect of a kind on a variable for
     /// all the later ones, so that each write to a captured variable is reported at the first.
     pub effects_keep_their_place: bool,
+    /// A function that is mutated calls, of the functions that it has captured, only those that it calls itself: a
+    /// `map` callback that makes `() => save(item)` for `onClick` does not call `save`. To upstream it calls them all,
+    /// and what `save` does is done during render.
+    pub capturing_a_function_is_not_calling_it: bool,
     /// JSX that is a default, or in one, can be evaluated earlier if its operands can: the parser has made a call of
     /// it. Upstream does not compile such a function.
     pub jsx_can_be_reordered: bool,
@@ -182,6 +186,7 @@ impl Default for EnvironmentConfig {
             ref_typed_properties_are_refs_of_their_own: false,
             nullish_test_before_ref_init_is_a_guard: false,
             effects_keep_their_place: false,
+            capturing_a_function_is_not_calling_it: false,
             jsx_can_be_reordered: true,
             arguments_of_no_alias_methods_escape: true,
             flat_map_and_for_each_have_aliasing_signatures: false,

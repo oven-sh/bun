@@ -1666,11 +1666,14 @@ interface Uint8Array {
   /**
    * Set the contents of the Uint8Array from a base64 encoded string
    * @param base64 The base64 encoded string to decode into the array
-   * @param offset Optional starting index to begin setting the decoded bytes (default: 0)
+   * @param options Options for decoding the base64 string
    */
   setFromBase64(
     base64: string,
-    offset?: number,
+    options?: {
+      alphabet?: "base64" | "base64url";
+      lastChunkHandling?: "loose" | "strict" | "stop-before-partial";
+    },
   ): {
     /**
      * The number of bytes read from the base64 string

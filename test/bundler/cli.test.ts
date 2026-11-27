@@ -4,12 +4,12 @@ import {
   bunExe,
   forEachLine,
   isLinux,
-  isRoot,
   isWindows,
   normalizeBunSnapshot,
   substDrive,
   tempDir,
   tmpdirSync,
+  unprivilegedSpawnOptions,
 } from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
@@ -975,13 +975,14 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
   const utf16BomData = Buffer.from([0xff, 0xfe, 0x5a, 0x5a]);
 
   /** The time in the summary becomes `{time}`. */
-  async function build(cwd: string, args: string[]) {
+  async function build(cwd: string, args: string[], user: { uid?: number; gid?: number } = {}) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--no-bundle", ...args],
       env: bunEnv,
       cwd,
       stdout: "pipe",
       stderr: "pipe",
+      ...user,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout: stdout.replace(/in \d+ms/, "in {time}ms"), stderr, exitCode };
@@ -1380,22 +1381,24 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
     },
   );
 
-  // Root can write a file of mode 444, and Windows does not have the mode.
-  test.skipIf(isWindows || isRoot)("accepts a read-only file whose output path is the file itself", async () => {
+  // Windows does not have the mode.
+  test.skipIf(isWindows)("accepts a read-only file whose output path is the file itself", async () => {
     using dir = tempDir("no-bundle-copy-read-only", { "x.wasm": wasm });
     fs.chmodSync(path.join(String(dir), "x.wasm"), 0o444);
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
 
-    expect(await build(String(dir), ["./x.wasm", "--outdir", "."])).toEqual(wrote(["x.wasm", 11]));
+    expect(await build(String(dir), ["./x.wasm", "--outdir", "."], unprivileged)).toEqual(wrote(["x.wasm", 11]));
 
     expect(readTree(String(dir))).toEqual({ "x.wasm": wasm });
   });
 
-  // Root can read a file of mode 000, and Windows does not have the mode.
-  test.skipIf(isWindows || isRoot)("fails the build when it cannot read the file", async () => {
+  // Windows does not have the mode.
+  test.skipIf(isWindows)("fails the build when it cannot read the file", async () => {
     using dir = tempDir("no-bundle-copy-unreadable", { "src/x.wasm": wasm });
     fs.chmodSync(path.join(String(dir), "src", "x.wasm"), 0o000);
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
 
-    expect(await build(String(dir), ["./src/x.wasm", "--outdir=dist"])).toEqual({
+    expect(await build(String(dir), ["./src/x.wasm", "--outdir=dist"], unprivileged)).toEqual({
       stdout: "",
       stderr: 'error: EACCES reading "src/x.wasm"\n',
       exitCode: 1,

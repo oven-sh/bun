@@ -3682,6 +3682,386 @@ export function Attribute() {
 `,
 };
 
+type Folded = { holds: string[]; fails: string[]; unknown: string[] };
+/** What constant propagation makes of each test: `true`, `false`, or nothing. */
+export const foldedTests: Record<string, Folded> = {
+  "bigint-tests.jsx": {
+    holds: [
+      "1n",
+      "!0n",
+      "!0x0n",
+      "1n === 1n",
+      "0x10n === 16n",
+      "1_000n === 1000n",
+      "0b11n == 3n",
+      "0o17n == 15n",
+      "1n != 2n",
+      "1n !== 2n",
+      "1n !== 1",
+      "1n !== null",
+      '`${1n}` === "1"',
+      '`${0x10n}px` === "16px"',
+      "`${0n}`",
+      "123456789012345678901234567890n === 123456789012345678901234567890n",
+      "0x18ee90ff6c373e0ee4e3f0ad2n === 123456789012345678901234567890n",
+    ],
+    fails: [
+      "0n",
+      "0x0n",
+      "0b0n",
+      "0o0n",
+      "!1n",
+      "1n === 2n",
+      "1n !== 1n",
+      "1n != 1n",
+      "1n === 1",
+      '1n === "1"',
+      "1n === null",
+      "0n === false",
+      '`${1n}` === "1n"',
+      "123456789012345678901234567890n === 123456789012345678901234567891n",
+    ],
+    unknown: [
+      "1n == null",
+      "null == 0n",
+      "1n != null",
+      "0n == undefined",
+      "1n == 1",
+      "1 == 1n",
+      "1n != 1",
+      '1n == "1"',
+      "0n == false",
+      "true == 1n",
+      "1n === undefined",
+      "-1n",
+      "1n + 1n",
+      "1n - 1n",
+      "2n * 2n",
+      "2n ** 2n",
+      "1n < 2n",
+      "1n >= 1n",
+      "1n | 1n",
+      'typeof 1n === "bigint"',
+      "-0n === 0n",
+    ],
+  },
+  "surrogate-tests.jsx": {
+    holds: [
+      '"\\uD800"',
+      '"\\uD800" === "\\uD800"',
+      '"\\uD800" == "\\uD800"',
+      '"\\uD800" !== "\\uDC00"',
+      '"\\uD800" != 1',
+      '"\\uD83D\\uDE00".length === 2',
+      '"\\uD83D\\uDE00" + "a" === "\\u{1F600}a"',
+      '`\\uD83D\\uDE00` === "\\u{1F600}"',
+      '`${"\\uD83D\\uDE00"}`.length === 2',
+      '"\\u{1F600}".length === 2',
+    ],
+    fails: [
+      '!"\\uD800"',
+      '"\\uD800" === "\\uDC00"',
+      '"\\uD800" == 1',
+      '1 == "\\uDC00"',
+      '"\\uD800" === "\\uFFFD"',
+      '"\\uD800" == null',
+    ],
+    unknown: [
+      '"\\uD800".length',
+      '"\\uD800".length === 1',
+      '"a\\uDC00b".length === 3',
+      '"\\uD800" + "a"',
+      '"a" + "\\uDC00"',
+      '"\\uD83D" + "\\uDE00"',
+      '("\\uD800" + "").length',
+      "`\\uD800`",
+      "`\\uD800`.length",
+      '`a${"\\uD800"}b`',
+      "`\\uD800${1}`",
+      "`${1}\\uDC00`",
+      '`${"a"}\\uD800${"b"}`',
+      '`${"\\uD83D"}${"\\uDE00"}`',
+      "`\\uD83D${1}\\uDE00`",
+      "`\\u{D800}`",
+    ],
+  },
+};
+
+/**
+ * For each test a component that calls a hook if the test holds, which is reported unless the test is folded, and one
+ * that sets state if it holds, which is reported if the test is folded to true. The hook of test `i` is on line
+ * `11 * i + 4` and the state on line `11 * i + 10`.
+ */
+const tested = ({ holds, fails, unknown }: Folded) =>
+  `import { useState } from "react";\n${[...holds, ...fails, ...unknown]
+    .map(
+      (test, i) => `
+export function Hook${i}() {
+  if (${test}) useState(0);
+  return <div />;
+}
+
+export function State${i}() {
+  const [state, setState] = useState(0);
+  if (${test}) setState(1);
+  return <div>{state}</div>;
+}
+`,
+    )
+    .join("")}`;
+
+/** oxc folds a `bigint` by its value, and no string with half of a surrogate pair into another or into its length. */
+const foldedConstants: Files = {
+  ".oxlintrc.json": rc(),
+  "bigint-tests.jsx": tested(foldedTests["bigint-tests.jsx"]),
+  "surrogate-tests.jsx": tested(foldedTests["surrogate-tests.jsx"]),
+  "bigints.jsx": `import { useEffect, useMemo, useRef, useState } from "react";
+
+export function NotZero() {
+  const ref = useRef(null);
+  const one = 1n;
+  if (one) {
+    return <div />;
+  }
+  return <div>{ref.current}</div>;
+}
+
+export function Zero() {
+  const ref = useRef(null);
+  const zero = 0x0n;
+  if (zero) {
+    return <div />;
+  }
+  return <div>{ref.current}</div>;
+}
+
+export function Nullish() {
+  const ref = useRef(null);
+  if (1n == null) {
+    return <div>{ref.current}</div>;
+  }
+  return null;
+}
+
+export function NullishAndBound() {
+  const zero = 0n;
+  if (zero == null) {
+    useEffect(() => {});
+  }
+  return <div />;
+}
+
+export function Same() {
+  const ref = useRef(null);
+  if (0x10n === 16n) {
+    return null;
+  }
+  return <div>{ref.current}</div>;
+}
+
+export function TheSameOnEachPath({ on }) {
+  let size = 1n;
+  if (on) {
+    size = 0x1n;
+  }
+  if (size) {
+    useEffect(() => {});
+  }
+  return <div />;
+}
+
+export function AnotherOnOnePath({ on }) {
+  let size = 1n;
+  if (on) {
+    size = 2n;
+  }
+  if (size) {
+    useEffect(() => {});
+  }
+  return <div />;
+}
+
+export function ANumberOnOnePath({ on }) {
+  let size = 1n;
+  if (on) {
+    size = 1;
+  }
+  if (size) {
+    useEffect(() => {});
+  }
+  return <div />;
+}
+
+export function Incremented() {
+  let count = 0n;
+  count++;
+  if (count) {
+    useEffect(() => {});
+  }
+  return <div />;
+}
+
+export function PrefixDecremented() {
+  let count = 1n;
+  if (--count) {
+    useEffect(() => {});
+  }
+  return <div />;
+}
+
+export function Negative() {
+  const [state, setState] = useState(0);
+  const less = -1n;
+  if (less) {
+    setState(1);
+  }
+  return <div>{state}</div>;
+}
+
+export function Not() {
+  const [state, setState] = useState(0);
+  const zero = 0n;
+  if (!zero) {
+    setState(1);
+  }
+  return <div>{state}</div>;
+}
+
+export function InATemplate() {
+  const [state, setState] = useState(0);
+  const big = 0x10n;
+  const text = \`\${big}px\`;
+  if (text === "16px" && text.length === 4) {
+    setState(1);
+  }
+  return <div>{state}</div>;
+}
+
+export function InACallback() {
+  const ref = useRef(null);
+  const one = 1n;
+  const read = () => {
+    if (one === 1n) {
+      return null;
+    }
+    return ref.current;
+  };
+  return <div>{read()}</div>;
+}
+
+export function Dependency({ a }) {
+  const big = 10n;
+  const listed = useMemo(() => [a], [a, big]);
+  const used = useMemo(() => [a, big], [a]);
+  useEffect(() => {
+    console.log(big);
+  }, []);
+  return <div>{listed}{used}</div>;
+}
+
+export function Key({ items }) {
+  const ref = useRef(null);
+  const first = items[0n];
+  items[1n] = first;
+  return <div a={-1n} b={typeof first === "bigint" ? ref.current : 0} />;
+}
+
+export function KeyOfARef() {
+  const ref = useRef(null);
+  const key = 0n;
+  return <div>{ref[key]}{ref[0n]}</div>;
+}
+`,
+  "surrogates.jsx": `import { useEffect, useRef, useState } from "react";
+
+export function Length() {
+  const half = "\\uD800";
+  if (half.length === 1) {
+    useState(0);
+  }
+  return <div />;
+}
+
+export function LengthOfAPair() {
+  const [state, setState] = useState(0);
+  const pair = "\\uD83D\\uDE00";
+  if (pair.length === 2) {
+    setState(1);
+  }
+  return <div>{state}</div>;
+}
+
+export function Concatenated() {
+  const text = "\\uD800" + "a";
+  if (text === "x") {
+    useState(0);
+  }
+  return <div />;
+}
+
+export function HalvesConcatenated() {
+  const ref = useRef(null);
+  const lead = "\\uD83D";
+  const trail = "\\uDE00";
+  if (lead + trail) {
+    return <div />;
+  }
+  return <div>{ref.current}</div>;
+}
+
+export function InATemplate() {
+  const text = \`a\${"\\uD800"}b\`;
+  if (text) {
+    useState(0);
+  }
+  return <div />;
+}
+
+export function InAQuasi({ on }) {
+  const ref = useRef(null);
+  const text = \`\\uDC00\`;
+  if (text) {
+    return <div />;
+  }
+  return <div>{ref.current}</div>;
+}
+
+export function TruthyAndEqual() {
+  const half = "\\uD800";
+  if (half) {
+    useState(0);
+  }
+  if (half == "\\uD800") {
+    useEffect(() => {});
+  }
+  return <div />;
+}
+
+export function TheSameOnEachPath({ on }) {
+  let half = "\\uD800";
+  if (on) {
+    half = "\\u{D800}";
+  }
+  if (half) {
+    useEffect(() => {});
+  }
+  return <div />;
+}
+
+export function InACallback() {
+  const ref = useRef(null);
+  const half = "\\uDC00";
+  const read = () => {
+    if (half.length) {
+      return null;
+    }
+    return ref.current;
+  };
+  return <div>{read()}</div>;
+}
+`,
+};
+
 /** A component that reads a ref during render, and `props` followed by `members`. */
 const chained = (
   members: string,
@@ -5806,6 +6186,7 @@ function Component(props) {
   "try finally": tryFinally,
   "unreachable catch": unreachableCatch,
   "lone surrogates": loneSurrogates,
+  "folded constants": foldedConstants,
   "member chains": memberChains,
   "ref types": refTypes,
   "ref hints": refHints,

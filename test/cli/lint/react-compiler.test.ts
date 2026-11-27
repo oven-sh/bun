@@ -13,6 +13,7 @@ import {
   eslintConfig,
   eslintSmall,
   type Files,
+  foldedTests,
   long,
   rc,
   small,
@@ -594,6 +595,32 @@ ${chain}
     const diagnostics = await matches("lone surrogates");
     expect(linesOf(diagnostics["keys.jsx"], "todo")).toEqual([2, 6, 9, 12, 15, 21, 27, 36, 46, 50, 54, 59]);
     expect(rulesIn({ it: diagnostics["values.jsx"] })).toEqual(["react(refs)"]);
+  });
+
+  test("a bigint is folded by its value, and a string with half of a surrogate pair isn't joined or measured", async () => {
+    const diagnostics = await matches("folded constants");
+    for (const [path, { holds, fails, unknown }] of Object.entries(foldedTests)) {
+      const tests = [...holds, ...fails, ...unknown];
+      const testsAt = (rule: string, first: number) =>
+        linesOf(diagnostics[path], rule).map(line => tests[(line - first) / 11]);
+      // A hook in a branch is reported unless the test of the branch is folded.
+      expect([path, testsAt("hooks", 4)]).toEqual([path, unknown]);
+      // A `setState` in a branch is reported if the test is folded to true.
+      expect([path, testsAt("set-state-in-render", 10)]).toEqual([path, holds]);
+    }
+    const lines = (path: string) => ({
+      refs: linesOf(diagnostics[path], "refs"),
+      hooks: linesOf(diagnostics[path], "hooks"),
+      state: linesOf(diagnostics[path], "set-state-in-render"),
+    });
+    // A ref is read after a branch that isn't always taken, a hook is called in one that isn't folded, and state is set
+    // in one that always is.
+    expect(lines("bigints.jsx")).toEqual({
+      refs: [18, 24, 149, 155, 155],
+      hooks: [32, 62, 73, 82, 90],
+      state: [108, 118],
+    });
+    expect(lines("surrogates.jsx")).toEqual({ refs: [35, 52, 86], hooks: [6, 23, 41], state: [15] });
   });
 
   test(

@@ -12553,6 +12553,1541 @@
     ]
    }
   },
+  "folded constants": {
+   "exit": 1,
+   "files": 4,
+   "diagnostics": {
+    "bigint-tests.jsx": [
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 12,
+         "length": 8,
+         "line": 466,
+         "offset": 9199
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 16,
+         "length": 8,
+         "line": 389,
+         "offset": 7732
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 16,
+         "length": 8,
+         "line": 400,
+         "offset": 7937
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 16,
+         "length": 8,
+         "line": 411,
+         "offset": 8142
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 16,
+         "length": 8,
+         "line": 477,
+         "offset": 9400
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 16,
+         "length": 8,
+         "line": 488,
+         "offset": 9605
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 16,
+         "length": 8,
+         "line": 499,
+         "offset": 9810
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 16,
+         "length": 8,
+         "line": 521,
+         "offset": 10222
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 16,
+         "length": 8,
+         "line": 543,
+         "offset": 10634
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 17,
+         "length": 8,
+         "line": 510,
+         "offset": 10016
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 17,
+         "length": 8,
+         "line": 532,
+         "offset": 10428
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 18,
+         "length": 8,
+         "line": 422,
+         "offset": 8349
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 19,
+         "length": 8,
+         "line": 345,
+         "offset": 6881
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 19,
+         "length": 8,
+         "line": 356,
+         "offset": 7092
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 19,
+         "length": 8,
+         "line": 367,
+         "offset": 7303
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 19,
+         "length": 8,
+         "line": 444,
+         "offset": 8772
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 19,
+         "length": 8,
+         "line": 565,
+         "offset": 11077
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 20,
+         "length": 8,
+         "line": 433,
+         "offset": 8560
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 24,
+         "length": 8,
+         "line": 378,
+         "offset": 7519
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 25,
+         "length": 8,
+         "line": 455,
+         "offset": 8989
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 31,
+         "length": 8,
+         "line": 554,
+         "offset": 10854
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 11,
+         "length": 8,
+         "line": 10,
+         "offset": 183
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 12,
+         "length": 8,
+         "line": 21,
+         "offset": 378
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 14,
+         "length": 8,
+         "line": 32,
+         "offset": 577
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 16,
+         "length": 8,
+         "line": 164,
+         "offset": 3139
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 17,
+         "length": 8,
+         "line": 120,
+         "offset": 2263
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 17,
+         "length": 8,
+         "line": 98,
+         "offset": 1849
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 18,
+         "length": 8,
+         "line": 109,
+         "offset": 2056
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 18,
+         "length": 8,
+         "line": 43,
+         "offset": 784
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 20,
+         "length": 8,
+         "line": 131,
+         "offset": 2476
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 20,
+         "length": 8,
+         "line": 76,
+         "offset": 1431
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 21,
+         "length": 8,
+         "line": 87,
+         "offset": 1644
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 22,
+         "length": 8,
+         "line": 54,
+         "offset": 999
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 24,
+         "length": 8,
+         "line": 142,
+         "offset": 2697
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 25,
+         "length": 8,
+         "line": 65,
+         "offset": 1220
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 32,
+         "length": 8,
+         "line": 153,
+         "offset": 2934
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 73,
+         "length": 8,
+         "line": 186,
+         "offset": 3783
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 76,
+         "length": 8,
+         "line": 175,
+         "offset": 3464
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     }
+    ],
+    "bigints.jsx": [
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 5,
+         "length": 9,
+         "line": 32,
+         "offset": 578
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 5,
+         "length": 9,
+         "line": 62,
+         "offset": 1026
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 5,
+         "length": 9,
+         "line": 73,
+         "offset": 1180
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 5,
+         "length": 9,
+         "line": 82,
+         "offset": 1306
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 5,
+         "length": 9,
+         "line": 90,
+         "offset": 1429
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 5,
+         "line": 148,
+         "offset": 2542
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 11,
+         "line": 18,
+         "offset": 339
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 8,
+         "line": 155,
+         "offset": 2729
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 18,
+         "length": 11,
+         "line": 24,
+         "offset": 455
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 26,
+         "length": 7,
+         "line": 155,
+         "offset": 2739
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 54,
+         "length": 11,
+         "line": 149,
+         "offset": 2614
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 108,
+         "offset": 1735
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 118,
+         "offset": 1955
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     }
+    ],
+    "surrogate-tests.jsx": [
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 17,
+         "length": 8,
+         "line": 257,
+         "offset": 5359
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 19,
+         "length": 8,
+         "line": 345,
+         "offset": 7137
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 21,
+         "length": 8,
+         "line": 290,
+         "offset": 6012
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 21,
+         "length": 8,
+         "line": 301,
+         "offset": 6227
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 23,
+         "length": 8,
+         "line": 213,
+         "offset": 4463
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 23,
+         "length": 8,
+         "line": 224,
+         "offset": 4682
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 24,
+         "length": 8,
+         "line": 180,
+         "offset": 3773
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 24,
+         "length": 8,
+         "line": 268,
+         "offset": 5573
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 24,
+         "length": 8,
+         "line": 279,
+         "offset": 5794
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 27,
+         "length": 8,
+         "line": 334,
+         "offset": 6918
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 28,
+         "length": 8,
+         "line": 235,
+         "offset": 4906
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 29,
+         "length": 8,
+         "line": 312,
+         "offset": 6450
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 30,
+         "length": 8,
+         "line": 191,
+         "offset": 4000
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 31,
+         "length": 8,
+         "line": 246,
+         "offset": 5138
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 32,
+         "length": 8,
+         "line": 202,
+         "offset": 4235
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 33,
+         "length": 8,
+         "line": 323,
+         "offset": 6685
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 17,
+         "length": 8,
+         "line": 10,
+         "offset": 195
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 22,
+         "length": 8,
+         "line": 54,
+         "offset": 1101
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 29,
+         "length": 8,
+         "line": 32,
+         "offset": 655
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 30,
+         "length": 8,
+         "line": 21,
+         "offset": 426
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 30,
+         "length": 8,
+         "line": 43,
+         "offset": 886
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 33,
+         "length": 8,
+         "line": 109,
+         "offset": 2346
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 36,
+         "length": 8,
+         "line": 65,
+         "offset": 1344
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 39,
+         "length": 8,
+         "line": 87,
+         "offset": 1856
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 41,
+         "length": 8,
+         "line": 98,
+         "offset": 2109
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 46,
+         "length": 8,
+         "line": 76,
+         "offset": 1607
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     }
+    ],
+    "surrogates.jsx": [
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 23,
+         "offset": 451
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 41,
+         "offset": 773
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 6,
+         "offset": 137
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 11,
+         "line": 35,
+         "offset": 668
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 11,
+         "line": 52,
+         "offset": 952
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "This function accesses a ref value",
+        "span": {
+         "column": 16,
+         "length": 4,
+         "line": 86,
+         "offset": 1516
+        }
+       },
+       {
+        "label": "The ref is accessed here",
+        "span": {
+         "column": 12,
+         "length": 11,
+         "line": 84,
+         "offset": 1483
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 15,
+         "offset": 312
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     }
+    ]
+   }
+  },
   "member chains": {
    "exit": 1,
    "files": 16,

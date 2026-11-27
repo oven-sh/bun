@@ -46,8 +46,12 @@ async function namesIn(path: string) {
     const start = Math.max(0, end - pieceSize);
     // A piece reaches into the one that was read before it, so a name that lies across both is whole in it.
     const length = Math.min(end - start + overlap, size - start);
-    const { bytesRead } = await file.read(piece, 0, length, start);
-    if (bytesRead !== length) throw new Error(`read ${bytesRead} of ${length} bytes at ${start} of ${path}`);
+    // A read may return fewer bytes than were asked for. It returns none only at the end of the file.
+    for (let filled = 0; filled < length;) {
+      const { bytesRead } = await file.read(piece, filled, length - filled, start + filled);
+      if (bytesRead === 0) throw new Error(`${path} ends at ${start + filled}, in front of its ${size} bytes`);
+      filled += bytesRead;
+    }
     const seen = piece.subarray(0, length);
     for (const name of missing) if (seen.includes(name)) missing.delete(name);
     end = start;
@@ -237,6 +241,19 @@ const ways: Record<string, { held: string[]; prints: string | RegExp; files: Rec
       "quietFolder/quietBystander.ts": "export const quiet = (n: number) => n + 1;\n",
       "seenFolder/seenSubject.ts":
         'const made = Buffer.from("c2VlblN1YmplY3Q=", "base64").toString();\nexport const ask = () => import("./nothing-" + made).catch((e: any) => e.message);\n',
+    },
+  },
+  // require() hands over a module whose awaits all wait for settled promises. No message is made, and the program prints the module.
+  "no-message-of-a-require-of-a-module-whose-awaits-are-settled": {
+    held: ["seenFolder", "seenSubject"],
+    prints: "2 Module {\n  waited: 1,\n}\n",
+    files: {
+      "main.ts":
+        'import { quiet } from "./quietFolder/quietBystander";\nimport { ask } from "./seenFolder/seenSubject";\nconsole.log(quiet(1), ask());\n',
+      "quietFolder/quietBystander.ts": "export const quiet = (n: number) => n + 1;\n",
+      "seenFolder/awaits.mjs": "export const waited = await Promise.resolve(1);\n",
+      "seenFolder/seenSubject.ts":
+        'export const ask = () => { try { return require("./awaits.mjs"); } catch (e: any) { return e.name + ": " + e.message; } };\n',
     },
   },
   "nobody-reads-anything": {

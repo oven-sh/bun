@@ -263,7 +263,7 @@ fn make_checker<'s>(
     checker_session: &'s SessionSlot,
     files: &'s Files<'s>,
     inputs: &ProgramInputs,
-) -> &'s UnsafeCell<Program<'s>> {
+) -> &'s mut UnsafeCell<Program<'s>> {
     let program = Program::with_inputs(checker_session.session(), files, inputs);
     UnsafeCell::from_mut(session.arena().alloc(program))
 }

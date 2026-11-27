@@ -25,7 +25,7 @@ use bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 use bun_resolver::Resolver;
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
-use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
+use bun_resolver::package_json::PackageJSON;
 use bun_sys::{self, Dir, Fd, File, OpenDirOptions};
 use bun_threading::Guarded;
 use bun_threading::thread_pool::Batch;
@@ -247,11 +247,10 @@ impl RuntimeTranspilerStore {
         &self,
         event_loop: &EventLoop,
         global: &JSGlobalObject,
-        vm: NonNull<VirtualMachine>,
+        vm: &VirtualMachine,
     ) {
         let batch = self.queue.pop_batch();
-        // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
-        let jsc_vm = unsafe { (*vm.as_ptr()).jsc_vm() };
+        let jsc_vm = vm.jsc_vm();
         let mut iter = batch.iterator();
         let mut job = iter.next();
         let mut first = true;
@@ -268,7 +267,7 @@ impl RuntimeTranspilerStore {
             let current = job;
             job = iter.next();
             // SAFETY: a live job popped from the intrusive queue, which `iter` has moved past.
-            let fulfilled = unsafe { (*current).run_from_js_thread() };
+            let fulfilled = unsafe { (*current).run_from_js_thread(vm) };
             if let Err(err) = fulfilled {
                 if crate::task::report_error_or_terminate(global, err).is_err() {
                     self.requeue(job, &mut iter);
@@ -380,7 +379,7 @@ impl RuntimeTranspilerStore {
         }
         self.jobs_scheduled.update(|n| n + 1);
         // SAFETY: job fully initialized above
-        unsafe { (*job).schedule() };
+        unsafe { (*job).schedule(vm) };
         promise.cast::<c_void>()
     }
 }
@@ -524,15 +523,13 @@ impl TranspilerJob {
         ticket.post(ConcurrentTask::create_from(transpiler_store.cast_mut()));
     }
 
-    fn run_from_js_thread(&mut self) -> JsResult<()> {
-        // SAFETY: the VM outlives the job, and this is its thread.
-        let vm = unsafe { &*self.vm };
+    fn run_from_js_thread(&mut self, vm: &VirtualMachine) -> JsResult<()> {
         if self.deferred_macros.take()
             && self.test_isolation_generation == vm.test_isolation_generation.get()
         {
             self.parse_error = None;
             self.macro_thread = Some(vm.macro_thread());
-            self.schedule();
+            self.schedule(vm);
             return Ok(());
         }
         vm.transpiler_store.jobs_completed.update(|n| n + 1);
@@ -566,7 +563,7 @@ impl TranspilerJob {
             }
         };
 
-        // SAFETY: `self` came from this store and is not used again.
+        // SAFETY: `self` came from the store of this thread's only VM and is not used again.
         unsafe {
             vm.transpiler_store
                 .store
@@ -588,9 +585,7 @@ impl TranspilerJob {
         )
     }
 
-    fn schedule(&mut self) {
-        // SAFETY: JS thread; the VM owns the store this slot lives in.
-        let vm = unsafe { &*self.vm };
+    fn schedule(&mut self, vm: &VirtualMachine) {
         self.ticket = Some(vm.ticket());
         match self.macro_thread.clone() {
             Some(thread) => {
@@ -699,19 +694,6 @@ impl TranspilerJob {
         // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
         let is_node_override = strings::has_prefix_comptime(specifier, node_fallbacks::IMPORT_PATH);
 
-        // SAFETY: leaf scalar field read on `*vm`; see `vm` note above.
-        let macro_remappings =
-            if !unsafe { (*vm).has_any_macro_remappings.get() } || is_node_override {
-                MacroRemap::default()
-            } else {
-                // The inner maps have only a fallible `clone()`.
-                let mut m = MacroRemap::default();
-                for (k, v) in transpiler.options.macro_remap.iter() {
-                    m.insert(k, bun_core::handle_oom(v.clone()));
-                }
-                m
-            };
-
         // Only
         // initialised on the `is_node_override` branch and only read through
         // `parse_options.virtual_source`.
@@ -738,7 +720,7 @@ impl TranspilerJob {
             dirname_fd: Fd::INVALID,
             file_descriptor: None,
             opened_file: Some(&mut input_file),
-            macro_remappings,
+            macro_remappings: Default::default(),
             macros: Macros::run_on_or_defer(this.macro_thread.as_ref(), &this.deferred_macros),
             jsx: transpiler.options.jsx.clone(),
             emit_decorator_metadata: transpiler.options.emit_decorator_metadata,

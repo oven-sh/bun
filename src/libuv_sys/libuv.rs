@@ -539,11 +539,6 @@ impl Loop {
         };
         found
     }
-    #[inline]
-    pub fn tick(&mut self) {
-        // SAFETY: self is a live loop.
-        let _ = unsafe { uv_run(self, RunMode::Default) };
-    }
 }
 
 unsafe extern "C" fn find_active_io_handle_cb(handle: *mut uv_handle_t, found: *mut c_void) {
@@ -1586,8 +1581,7 @@ pub struct uv_idle_t {
 impl uv_idle_t {
     #[inline]
     pub fn init(&mut self, loop_: *mut Loop) {
-        // SAFETY: `self` is `#[repr(C)]` POD; all-zero is valid.
-        unsafe { ptr::write_bytes(self, 0, 1) };
+        *self = bun_core::ffi::zeroed();
         // SAFETY: self is a valid `uv_idle_t`-sized allocation.
         if unsafe { uv_idle_init(loop_, self) } != 0 {
             panic!("internal error: uv_idle_init failed");
@@ -1687,7 +1681,7 @@ pub struct uv_stdio_container_t {
     pub data: uv_stdio_container_data,
 }
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct uv_process_options_t {
     pub exit_cb: uv_exit_cb,
     pub file: *const c_char,
@@ -1994,7 +1988,7 @@ impl fs_t {
         }
     }
     #[inline]
-    pub unsafe fn ptr_as<T>(&self) -> *const T {
+    pub fn ptr_as<T>(&self) -> *const T {
         self.assert_initialized();
         self.ptr.cast::<T>()
     }
@@ -2356,6 +2350,7 @@ impl fmt::Display for ReturnCode {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ReturnCodeI64(pub(crate) i64);
 impl ReturnCodeI64 {
+    pub const ZERO: ReturnCodeI64 = ReturnCodeI64(0);
     #[inline]
     pub const fn int(self) -> i64 {
         self.0

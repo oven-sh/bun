@@ -581,7 +581,7 @@ impl bun_watcher::WatcherContext for HotReloader {
                                         // Probe `.data` under `entries_mutex`; a
                                         // resolver at a newer generation rewrites
                                         // the map in place under that lock. The
-                                        // entry pointer stays valid after unlock
+                                        // entry stays valid after unlock
                                         // (EntryStore-owned).
                                         let looked_up = {
                                             let _entries_lock = rfs.entries_mutex.lock_guard();

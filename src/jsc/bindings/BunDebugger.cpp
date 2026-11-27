@@ -23,8 +23,6 @@
 #include "InspectorBunFrontendDevServerAgent.h"
 #include "InspectorHTTPServerAgent.h"
 
-extern "C" void Bun__tickWhilePaused(bool*);
-
 namespace Bun {
 using namespace JSC;
 using namespace WebCore;
@@ -587,7 +585,6 @@ extern "C" unsigned int Bun__createJSDebugger(Zig::GlobalObject* globalObject)
 
     return static_cast<unsigned int>(globalObject->scriptExecutionContext()->identifier());
 }
-extern "C" void Bun__tickWhilePaused(bool*);
 
 extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, bool pauseOnStart)
 {

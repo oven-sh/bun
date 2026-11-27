@@ -376,11 +376,9 @@ pub fn expand_globs_without_bundler(
     file: &ComponentFile<'_>,
     define: Option<&Define>,
 ) -> Vec<ExpandedImportMetaGlob> {
-    // SAFETY: the function reads neither the pointer nor the slices.
-    let host = unsafe { ImportMetaGlobHost::new(std::ptr::null_mut(), |_, _, _| None) };
     let mut expanded = Vec::new();
     record_import_meta_globs(&mut expanded, || {
-        parse_without_bundler(file, define, Some(host))
+        parse_without_bundler(file, define, Some(ImportMetaGlobHost::WITHOUT_ALIASES))
     });
     expanded
 }

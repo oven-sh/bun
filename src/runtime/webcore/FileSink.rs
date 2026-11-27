@@ -1172,6 +1172,9 @@ impl crate::webcore::sink::WrappedSink for FileSink {
     fn as_non_null(wrapped: &WrapperRef) -> NonNull<Self> {
         wrapped.0.as_non_null()
     }
+    fn enter_wrapped(wrapped: &mut WrapperRef) -> &Self {
+        &wrapped.0
+    }
 }
 
 impl crate::webcore::sink::JsSinkType for FileSink {

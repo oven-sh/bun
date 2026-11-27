@@ -1368,7 +1368,7 @@ fn on_unhandled_rejection(
 ) {
     // Prevent recursion
     vm.on_unhandled_rejection
-        .set(VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value);
+        .set(VirtualMachine::on_quiet_unhandled_rejection_handler);
 
     // The stop was already requested (terminate(), or the worker's own exit):
     // whatever rejects or throws from here on is a consequence of stopping —

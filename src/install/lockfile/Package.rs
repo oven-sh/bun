@@ -3459,7 +3459,7 @@ pub mod serializer {
                     })?;
                 }
             } else {
-                // SAFETY: these fields have explicit padding, and `bin::Value::init_*` sets every byte.
+                // SAFETY: these fields have explicit padding.
                 let bytes = unsafe { list.column_bytes(field as usize) };
                 bun_output::scoped_log!(
                     Lockfile,

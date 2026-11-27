@@ -1,6 +1,5 @@
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 
-use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JsResult};
 
 bun_opaque::opaque_ffi! {
@@ -49,18 +48,4 @@ unsafe extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
     // SAFETY: C++ passes the reference its JSVMClientData holds.
     let handle = unsafe { crate::VmHandle::borrow_ref(r) };
     matches!(handle.post(task), crate::Posted::Queued)
-}
-
-/// # Safety
-/// `paused` must point to a live `bool`; C++ writes `true` through it from a
-/// callback inside `tick()`.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__tickWhilePaused(paused: *mut bool) {
-    crate::mark_binding!();
-    // SAFETY: see fn contract.
-    unsafe {
-        VirtualMachine::get()
-            .event_loop()
-            .tick_while_paused(paused.cast_const());
-    }
 }

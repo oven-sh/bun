@@ -2431,21 +2431,17 @@ pub fn init(
         subcommand,
         root_package_json_name_at_time_of_init,
     );
-    // The per-field placement above fully initialized the singleton; the
-    // `&mut PackageManager` validity invariant now holds.
-    {
-        // SAFETY: singleton fully initialized; main thread, no workers yet.
-        let manager = unsafe { &mut *manager_ptr };
-        // So that uSockets timers / lifecycle subprocess waiters can find the mini event loop on tick.
-        let event_loop = manager.event_loop;
-        event_loop.set_as_parent_of(event_loop.r#loop());
-    }
+    // SAFETY: just allocated, fully initialized and never freed. Below, only calls that never
+    // return reach it through `get()`.
+    let manager = unsafe { &mut *manager_ptr };
+    // So that uSockets timers / lifecycle subprocess waiters can find the mini event loop on tick.
+    let event_loop = manager.event_loop;
+    event_loop.set_as_parent_of(event_loop.r#loop());
     {
         // make sure folder packages can find the root package without creating a new one
         let normalized =
             bun_paths::Path::join(&[root_package_json_path.as_bytes()]).into_portable();
-        // SAFETY: singleton fully initialized; main thread, no workers yet.
-        unsafe { &mut *manager_ptr }.folders.put(
+        manager.folders.put(
             FolderResolutionKey::new(FolderResolutionKind::Folder, &normalized),
             FolderResolutionEntry {
                 abs_path: normalized.as_bytes().into(),
@@ -2455,8 +2451,6 @@ pub fn init(
     }
 
     {
-        // SAFETY: as above; scoped reborrow for the options/manifest-cache block.
-        let manager = unsafe { &mut *manager_ptr };
         // `options.load` applies BUN_CONFIG_MAX_HTTP_REQUESTS on top of this default.
         http::async_http::MAX_SIMULTANEOUS_REQUESTS.store(
             if env.has_http_proxy() {
@@ -2509,16 +2503,9 @@ pub fn init(
         }
     }
 
-    // Singleton fully initialized; main thread, no workers yet. Wrapped once as
-    // `ParentRef` so the two read-only `options` projections below go through
-    // safe `Deref` instead of per-site raw deref. Safe `From<NonNull>`
-    // construction — `manager_ptr` is the live singleton address.
-    let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
-        NonNull::new(manager_ptr).expect("manager singleton non-null"),
-    );
     let mut ca: Vec<ZBox> = Vec::new();
     {
-        let options = &mgr_ref.options;
+        let options = &manager.options;
         if !options.ca.is_empty() {
             ca = Vec::with_capacity(options.ca.len());
             debug_assert_eq!(ca.capacity(), options.ca.len());
@@ -2528,7 +2515,7 @@ pub fn init(
         }
     }
 
-    let abs_ca_file_name = ZBox::from_bytes(mgr_ref.options.ca_file_name);
+    let abs_ca_file_name = ZBox::from_bytes(manager.options.ca_file_name);
     // The path is still relative if joining it to its directory did not fit in a path buffer.
     if !abs_ca_file_name.is_empty() && !bun_paths::is_absolute(abs_ca_file_name.as_bytes()) {
         Output::err(
@@ -2569,7 +2556,7 @@ pub fn init(
         ..Default::default()
     });
 
-    let timestamp_for_manifest_cache_control: u32 = 'brk: {
+    manager.timestamp_for_manifest_cache_control = 'brk: {
         if cfg!(debug_assertions) {
             if let Some(cache_control) = env.get(b"BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP") {
                 // env-var bytes are not guaranteed UTF-8; parse on bytes directly
@@ -2582,10 +2569,6 @@ pub fn init(
         (u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast")) as u32 // @truncate
     };
 
-    // SAFETY: fully initialized and never freed. `init()` gets here once per process, so this is
-    // the only `&'static mut`.
-    let manager = unsafe { &mut *manager_ptr };
-    manager.timestamp_for_manifest_cache_control = timestamp_for_manifest_cache_control;
     Ok((manager, original_cwd_clone))
 }
 

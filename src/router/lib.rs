@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 #![warn(unused_must_use)]
 
 pub mod error;
@@ -9,7 +10,6 @@ pub use error::{Error, Result};
 // It does not handle the framework parts of rendering pages.
 // All it does is resolve URL paths to the appropriate entry point and parse URL params/query.
 use core::cmp::Ordering;
-use core::ptr::NonNull;
 use std::borrow::Cow;
 
 use bun_collections::{ArrayHashMap, StringHashMap};
@@ -122,25 +122,10 @@ impl Router {
 
 pub const BANNED_DIRS: [&[u8]; 1] = [b"node_modules"];
 
-struct RouteIndex {
-    route: Box<Route>,
-    name: &'static [u8],
-    match_name: &'static [u8],
-    filepath: &'static [u8],
-}
-
-// TODO(b2-blocked): bun_collections::MultiArrayElement derive — proc-macro not
-// yet landed, so MultiArrayList<RouteIndex> can't expose per-field column
-// accessors. Hand-rolled SoA struct until the derive exists.
 #[derive(Default)]
 struct RouteIndexList {
-    // The `Box` is load-bearing: `Routes::index` / `Routes::static_` hold
-    // `NonNull<Route>` / `*const Route` into the box interiors; unboxing
-    // would dangle them on `Vec` realloc.
-    #[expect(clippy::vec_box)]
-    route: Vec<Box<Route>>,
+    route: Vec<Route>,
     name: Vec<&'static [u8]>,
-    match_name: Vec<&'static [u8]>,
     filepath: Vec<&'static [u8]>,
 }
 
@@ -148,31 +133,25 @@ impl RouteIndexList {
     pub(crate) fn set_capacity(&mut self, cap: usize) -> Result<(), CoreError> {
         self.route.reserve_exact(cap);
         self.name.reserve_exact(cap);
-        self.match_name.reserve_exact(cap);
         self.filepath.reserve_exact(cap);
         Ok(())
     }
-    fn push(&mut self, item: RouteIndex) {
-        self.route.push(item.route);
-        self.name.push(item.name);
-        self.match_name.push(item.match_name);
-        self.filepath.push(item.filepath);
+    fn push(&mut self, route: Route) {
+        self.route.push(route);
+        self.name.push(route.name);
+        self.filepath.push(route.abs_path.as_bytes());
     }
     #[inline]
     pub(crate) fn len(&self) -> usize {
         self.route.len()
     }
     #[inline]
-    pub(crate) fn items_route(&self) -> &[Box<Route>] {
+    pub(crate) fn items_route(&self) -> &[Route] {
         &self.route
     }
     #[inline]
     pub(crate) fn items_name(&self) -> &[&'static [u8]] {
         &self.name
-    }
-    #[inline]
-    pub(crate) fn items_match_name(&self) -> &[&'static [u8]] {
-        &self.match_name
     }
     #[inline]
     pub(crate) fn items_filepath(&self) -> &[&'static [u8]] {
@@ -193,13 +172,10 @@ pub struct Routes {
     /// `"dashboard"`
     /// `"profiles"`
     /// this is a fast path?
-    pub(crate) static_: StringHashMap<*const Route>,
+    pub(crate) static_: StringHashMap<Route>,
 
     /// Corresponds to "index.js" on the filesystem.
-    /// A raw pointer co-owned with `list` (points into a `Box<Route>` owned by
-    /// `list.route`). Stored as `NonNull` (not `&'a Route`) so `Routes` claims
-    /// no borrow it doesn't actually take; matches `static_` above.
-    pub(crate) index: Option<NonNull<Route>>,
+    pub(crate) index: Option<Route>,
 }
 
 impl Default for Routes {
@@ -257,9 +233,7 @@ impl Routes {
         let _ = redirect;
 
         if path.is_empty() {
-            if let Some(index_ptr) = self.index {
-                // SAFETY: points into a Box<Route> owned by self.list; valid for &self.
-                let index = unsafe { index_ptr.as_ref() };
+            if let Some(index) = &self.index {
                 return Some(Match {
                     name: index.name,
                     pathname: url_path.pathname,
@@ -271,10 +245,7 @@ impl Routes {
             return None;
         }
 
-        if let Some(route_ptr) = self.match_(path, params) {
-            // SAFETY: pointers from static_/dynamic alias Box<Route> stored in
-            // self.list, which outlives self.
-            let route = unsafe { &*route_ptr };
+        if let Some(route) = self.match_(path, params) {
             return Some(Match {
                 name: route.name,
                 pathname: url_path.pathname,
@@ -290,20 +261,13 @@ impl Routes {
         &self,
         path: &'p [u8],
         params: &mut route_param::List<'p>,
-    ) -> Option<*const Route> {
+    ) -> Option<&Route> {
         // its cleaned, so now we search the big list of strings
         let start = self.dynamic_start?;
         let end = start + self.dynamic_len;
-        let dynamic = &self.list.items_route()[start..end];
-        let dynamic_names = &self.list.items_name()[start..end];
-        let dynamic_match_names = &self.list.items_match_name()[start..end];
-        for ((case_sensitive_name, name), route) in dynamic_names
-            .iter()
-            .zip(dynamic_match_names.iter())
-            .zip(dynamic.iter())
-        {
-            if Pattern::match_::<true>(path, &case_sensitive_name[1..], name, params) {
-                return Some(&raw const **route);
+        for route in &self.list.items_route()[start..end] {
+            if Pattern::match_::<true>(path, &route.name[1..], &route.match_name, params) {
+                return Some(route);
             }
             // A failed match can leave params behind.
             params.clear();
@@ -316,16 +280,15 @@ impl Routes {
         &self,
         pathname_: &'p [u8],
         params: &mut route_param::List<'p>,
-    ) -> Option<*const Route> {
+    ) -> Option<&Route> {
         let pathname = strings::trim_left(pathname_, b"/");
 
         if pathname.is_empty() {
-            return self.index.map(|p| p.as_ptr().cast_const());
+            return self.index.as_ref();
         }
 
         self.static_
             .get(pathname)
-            .copied()
             .or_else(|| self.match_dynamic(pathname, params))
     }
 }
@@ -338,14 +301,9 @@ struct RouteLoader<'a> {
 
     dedupe_dynamic: ArrayHashMap<u32, &'static [u8]>,
     log: &'a mut bun_ast::Log,
-    // NOTE: raw NonNull (not &'a Route) because it points into self.all_routes
-    // (self-referential); `Routes` co-owns it with `list`.
-    index: Option<NonNull<Route>>,
-    static_list: StringHashMap<*const Route>,
-    // `Box` is load-bearing: `index` / `static_list` above hold raw pointers
-    // into the box interiors; unboxing would dangle them on `Vec` realloc.
-    #[expect(clippy::vec_box)]
-    all_routes: Vec<Box<Route>>,
+    index: Option<Route>,
+    static_list: StringHashMap<Route>,
+    all_routes: Vec<Route>,
 }
 
 impl<'a> RouteLoader<'a> {
@@ -354,17 +312,8 @@ impl<'a> RouteLoader<'a> {
 
         // /index.js
         if route.full_hash == INDEX_ROUTE_HASH {
-            // Derived from a `&mut`, not a `&*` downgrade: `NonNull::from(&T)`
-            // yields a frozen tag. Today `index` is only read through (`match_`
-            // takes `as_ref()`), so the old spelling was not live UB, but it was
-            // one write away from it. The static arm below needs no such change:
-            // `&raw const *box` forms no reference at all. Parking the `Box`
-            // before deriving is belt-and-braces.
-            self.all_routes.push(Box::new(route));
-            let parked = self.all_routes.last_mut().expect("just pushed");
-            // Box contents have a stable address; never removed from
-            // `all_routes` until consumed by `load_all`.
-            self.index = Some(NonNull::from(&mut **parked));
+            self.all_routes.push(route);
+            self.index = Some(route);
             return;
         }
 
@@ -378,15 +327,11 @@ impl<'a> RouteLoader<'a> {
                     format_args!(
                         "Route \"{}\" is already defined by {}",
                         bstr::BStr::new(route.name),
-                        // SAFETY: *existing aliases a Box<Route> in self.all_routes
-                        bstr::BStr::new(unsafe { &**existing }.abs_path.as_bytes()),
+                        bstr::BStr::new(existing.abs_path.as_bytes()),
                     ),
                 );
                 return;
             }
-
-            let new_route = Box::new(route);
-            let new_route_ptr: *const Route = &raw const *new_route;
 
             // Handle static routes with uppercase characters by ensuring exact case still matches
             // Longer-term:
@@ -395,17 +340,16 @@ impl<'a> RouteLoader<'a> {
             // - But the default should be case-insensitive matching
             // This hack is below the engineering quality bar I'm happy with.
             // It will cause unexpected behavior.
-            if new_route.has_uppercase {
-                if let Some(existing) = self.static_list.get(&new_route.name[1..]) {
-                    let source = bun_ast::Source::init_empty_file(new_route.abs_path.as_bytes());
+            if route.has_uppercase {
+                if let Some(existing) = self.static_list.get(&route.name[1..]) {
+                    let source = bun_ast::Source::init_empty_file(route.abs_path.as_bytes());
                     self.log.add_error_fmt(
                         Some(&source),
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Route \"{}\" is already defined by {}",
-                            bstr::BStr::new(new_route.name),
-                            // SAFETY: *existing aliases a Box<Route> in self.all_routes
-                            bstr::BStr::new(unsafe { &**existing }.abs_path.as_bytes()),
+                            bstr::BStr::new(route.name),
+                            bstr::BStr::new(existing.abs_path.as_bytes()),
                         ),
                     );
 
@@ -413,12 +357,12 @@ impl<'a> RouteLoader<'a> {
                 }
 
                 self.static_list
-                    .put_assume_capacity(&new_route.name[1..], new_route_ptr);
+                    .put_assume_capacity(&route.name[1..], route);
             }
 
             self.static_list
-                .put_assume_capacity(new_route.match_name.as_bytes(), new_route_ptr);
-            self.all_routes.push(new_route);
+                .put_assume_capacity(route.match_name.as_bytes(), route);
+            self.all_routes.push(route);
 
             return;
         }
@@ -444,10 +388,7 @@ impl<'a> RouteLoader<'a> {
             }
         }
 
-        {
-            let new_route = Box::new(route);
-            self.all_routes.push(new_route);
-        }
+        self.all_routes.push(route);
     }
 
     fn load_all<R: ResolverLike>(
@@ -484,9 +425,7 @@ impl<'a> RouteLoader<'a> {
             };
         }
 
-        index_sort::sort_slice_unstable_by(&mut this.all_routes, |a, b| {
-            sorter::sort_by_name_cmp(a, b)
-        });
+        index_sort::sort_slice_unstable_by(&mut this.all_routes, sorter::sort_by_name_cmp);
 
         let mut route_list = RouteIndexList::default();
         route_list
@@ -496,7 +435,7 @@ impl<'a> RouteLoader<'a> {
         let mut dynamic_start: Option<usize> = None;
         let mut index_id: Option<usize> = None;
 
-        for (i, route) in this.all_routes.into_iter().enumerate() {
+        for (i, &route) in this.all_routes.iter().enumerate() {
             if (route.kind as u8) > (pattern::Tag::Static as u8) && dynamic_start.is_none() {
                 dynamic_start = Some(i);
             }
@@ -505,13 +444,7 @@ impl<'a> RouteLoader<'a> {
                 index_id = Some(i);
             }
 
-            let (filepath, match_name) = (route.abs_path.as_bytes(), route.match_name.as_bytes());
-            route_list.push(RouteIndex {
-                name: route.name,
-                filepath,
-                match_name,
-                route,
-            });
+            route_list.push(route);
         }
 
         let mut dynamic_len: usize = 0;
@@ -531,8 +464,6 @@ impl<'a> RouteLoader<'a> {
             dynamic_start,
             dynamic_len,
             static_: this.static_list,
-            // Points into a Box<Route> now owned by `route_list`; co-owned raw
-            // pointer.
             index: this.index,
         }
     }
@@ -545,10 +476,10 @@ impl<'a> RouteLoader<'a> {
     ) {
         let fs = self.fs;
 
-        // Snapshot the cached `DirEntry`'s entry pointers under `entries_mutex`:
+        // Snapshot the cached `DirEntry`'s entries under `entries_mutex`:
         // another thread (e.g. the bundler's resolver) rewrites this map in place
         // under that lock, so iterating it live would walk freed buckets.
-        let entry_ptrs: Vec<*mut Fs::Entry> = {
+        let entries: Vec<&Fs::Entry> = {
             let _entries_lock = fs.fs.entries_mutex.lock_guard();
             match root_dir_info.get_entries_const() {
                 Some(entries) => entries.data.values().copied().collect(),
@@ -557,9 +488,7 @@ impl<'a> RouteLoader<'a> {
         };
         // NOTE: the guard is dropped before this loop on purpose — the
         // `read_dir_info_ignore_error` recursion below re-acquires `entries_mutex`.
-        'outer: for entry_ptr in entry_ptrs {
-            // SAFETY: EntryStore-owned, valid for process lifetime.
-            let entry: &Fs::Entry = unsafe { &*entry_ptr };
+        'outer: for entry in entries {
             if entry.base()[0] == b'.' {
                 continue 'outer;
             }
@@ -660,10 +589,10 @@ impl TinyPtr {
 // On Windows we need to normalize this path to have forward slashes.
 // The normalized path is interned into `DirnameStore` (process-lifetime arena), so
 // `abs_path` is uniformly an `Interned` over `'static` bytes on every
-// platform — keeping `RouteIndexList.filepath: &'static [u8]` sound and
-// avoiding the borrow-then-move at `RouteLoader::load_all`.
+// platform — keeping `RouteIndexList.filepath: &'static [u8]` sound.
 pub type AbsPath = Interned;
 
+#[derive(Clone, Copy)]
 pub struct Route {
     /// Public display name for the route.
     /// "/", "/index" is "/"
@@ -969,12 +898,12 @@ pub mod pattern {
     type RoutePathInt = u16;
 
     #[derive(Clone, Copy)]
-    pub struct Pattern {
-        pub(crate) value: Value,
+    pub struct Pattern<'a> {
+        pub(crate) value: Value<'a>,
         pub(crate) len: RoutePathInt,
     }
 
-    impl Pattern {
+    impl Pattern<'_> {
         /// Match a filesystem route pattern to a URL path.
         pub(crate) fn match_<'a, const ALLOW_OPTIONAL_CATCH_ALL: bool>(
             // `path` must be lowercased and have no leading slash
@@ -1102,7 +1031,7 @@ pub mod pattern {
             let mut kind = Tag::Static;
             let end = (input.len() - 1) as u32;
             while (offset as u32) < end {
-                let pattern: Pattern = match Pattern::init_unhashed(input, offset) {
+                let pattern = match Pattern::init_unhashed(input, offset) {
                     Ok(p) => p,
                     Err(err) => {
                         let source = bun_ast::Source::init_empty_file(input);
@@ -1174,7 +1103,7 @@ pub mod pattern {
         pub(crate) fn init(
             input: &[u8],
             offset_: RoutePathInt,
-        ) -> Result<Pattern, PatternParseError> {
+        ) -> Result<Pattern<'_>, PatternParseError> {
             Self::init_maybe_hash::<true>(input, offset_)
         }
 
@@ -1185,7 +1114,7 @@ pub mod pattern {
         pub(crate) fn init_unhashed(
             input: &[u8],
             offset_: RoutePathInt,
-        ) -> Result<Pattern, PatternParseError> {
+        ) -> Result<Pattern<'_>, PatternParseError> {
             Self::init_maybe_hash::<false>(input, offset_)
         }
 
@@ -1193,7 +1122,7 @@ pub mod pattern {
         fn init_maybe_hash<const DO_HASH: bool>(
             input: &[u8],
             offset_: RoutePathInt,
-        ) -> Result<Pattern, PatternParseError> {
+        ) -> Result<Pattern<'_>, PatternParseError> {
             let init_hashed_string = if DO_HASH {
                 HashedString::init
             } else {
@@ -1368,8 +1297,8 @@ pub mod pattern {
 
     #[derive(Clone, Copy, bun_core::EnumTag)]
     #[enum_tag(existing = Tag)]
-    pub enum Value {
-        Static(HashedString),
+    pub enum Value<'a> {
+        Static(HashedString<'a>),
         Dynamic(TinyPtr),
         CatchAll(TinyPtr),
         OptionalCatchAll(TinyPtr),

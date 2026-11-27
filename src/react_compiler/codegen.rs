@@ -112,6 +112,8 @@ pub(crate) struct Codegen<'h> {
     well_known: [Option<Ref>; WellKnown::COUNT],
     name_to_ref: HashMap<StoreStr, Ref>,
     label_to_ref: IdMap<BlockId, Ref>,
+    /// The temporaries holding an import that were printed once, which is the use `LoadGlobal` recorded.
+    printed_imports: HashSet<DeclarationId>,
 }
 
 impl<'h> Codegen<'h> {
@@ -123,6 +125,7 @@ impl<'h> Codegen<'h> {
             well_known: [None; WellKnown::COUNT],
             name_to_ref: HashMap::default(),
             label_to_ref: IdMap::new(),
+            printed_imports: HashSet::default(),
         }
     }
 
@@ -1946,6 +1949,7 @@ fn codegen_base_instruction_value(
                     loc,
                 ));
             }
+            note_call_target(cx, callee_expr);
             let call_expr = Expr::init(
                 E::Call {
                     kind: *bun_kind,
@@ -1967,6 +1971,7 @@ fn codegen_base_instruction_value(
             if !matches!(member_expr.data, ExprData::EDot(_) | ExprData::EIndex(_)) {
                 return Err(method_call_property_err(property.loc, member_expr));
             }
+            note_call_target(cx, member_expr);
             let arguments = codegen_arguments(cx, args)?;
             let call_expr = Expr::init(
                 E::Call {
@@ -2019,7 +2024,21 @@ fn codegen_base_instruction_value(
             object, property, ..
         } => {
             let obj = codegen_place_to_expression(cx, object)?;
-            Ok(property_access_expr(obj, property, loc, None))
+            let access = property_access_expr(obj, property, loc, None);
+            // As the visit pass does, so that the linker can bind `X.name` to the export of a namespace.
+            if let ExprData::EDot(mut dot) = access.data
+                && let ExprData::EImportIdentifier(_) = obj.data
+                && cx
+                    .env
+                    .import_property_targets
+                    .contains(&cx.env.identifiers[object.identifier.0 as usize].declaration_id)
+            {
+                dot.is_import_property_use = cx
+                    .cg
+                    .host
+                    .record_import_property_use(&obj, dot.name.slice());
+            }
+            Ok(access)
         }
         InstructionValue::PropertyStore {
             object,
@@ -2236,6 +2255,7 @@ fn codegen_base_instruction_value(
             ..
         } => {
             let tag_expr = codegen_place_to_expression(cx, tag)?;
+            note_call_target(cx, tag_expr);
             Ok(Expr::init(
                 E::Template {
                     tag: Some(E::TemplateTag {
@@ -3057,8 +3077,14 @@ fn codegen_object_pattern(
 fn codegen_place_to_expression(cx: &mut Context, place: &Place) -> Result<Expr, CompilerError> {
     let ident = &cx.env.identifiers[place.identifier.0 as usize];
     if let Some(tmp) = cx.temp.get(ident.declaration_id) {
-        if let Some(val) = tmp {
-            return Ok(*val);
+        if let Some(val) = *tmp {
+            // `X.n += 1` prints `X` twice, so it is two uses.
+            if let ExprData::EImportIdentifier(import) = val.data
+                && !cx.cg.printed_imports.insert(ident.declaration_id)
+            {
+                cx.cg.host.record_usage(import.ref_);
+            }
+            return Ok(val);
         }
     }
     if ident.name.is_none() && !cx.temp.contains_key(ident.declaration_id) {
@@ -3072,6 +3098,18 @@ fn codegen_place_to_expression(cx: &mut Context, place: &Place) -> Result<Expr, 
     }
     let (r, _ident_loc) = convert_identifier(cx, place.identifier)?;
     Ok(Expr::init_identifier(r, convert_loc(place.loc)))
+}
+
+/// `X.name` is about to be printed as the target of a call: the linker decides whether it keeps `X` as `this`.
+fn note_call_target(cx: &mut Context, target: Expr) {
+    if let ExprData::EDot(dot) = target.data
+        && dot.is_import_property_use
+        && let ExprData::EImportIdentifier(import) = dot.target.data
+    {
+        cx.cg
+            .host
+            .record_import_property_call(import.ref_, dot.name.slice());
+    }
 }
 
 fn convert_identifier(

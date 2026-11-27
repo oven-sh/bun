@@ -237,10 +237,38 @@ describe("the check for weak references that LLVM miscompiles on arm64", () => {
       1,
       ["0x14000300c loads from 0x140003028"],
     ],
+    [
+      "a function, behind what looks like a load of a pair into the register",
+      [
+        adrpX1.thisPage,
+        0xa9000440 /* stp x0, x1, [x2] */,
+        0x6d400440 /* ldp d0, d1, [x2] */,
+        0xa9400c40 /* ldp x0, x3, [x2] */,
+        0xc8230440 /* stxp w3, x0, x1, [x2] */,
+        0xf9400440 /* ldr x0, [x2, #8] */,
+        0x8b430440 /* add x0, x2, x3, lsr #1 */,
+        ldrX1,
+      ],
+      1,
+      ["0x14000301c loads from 0x140003028"],
+    ],
     ["what the register holds next", [adrpX1.thisPage, 0xaa0003e1 /* mov x1, x0 */, ldrX1], 0, []],
     ["nothing", [adrpX1.thisPage, 0x9100a021 /* add x1, x1, #0x28 */], 0, []],
   ])("a load from %s", (_, instructions, pointerLoads, fromCode) => {
     expect(arm64PointerLoads(image(instructions))).toEqual({ pointerLoads, fromCode });
+  });
+
+  test.each([
+    ["ldp x0, x1, [x2]", 0xa9400440],
+    ["ldp x0, x1, [x2, #16]!", 0xa9c10440],
+    ["ldp x0, x1, [x2], #16", 0xa8c10440],
+    ["ldp w0, w1, [x2]", 0x29400440],
+    ["ldnp x0, x1, [x2]", 0xa8400440],
+    ["ldpsw x0, x1, [x2]", 0x69400440],
+    ["ldxp x0, x1, [x2]", 0xc87f0440],
+    ["ldaxp x0, x1, [x2]", 0xc87f8440],
+  ])("a load from what %s puts in its second register", (_, pair) => {
+    expect(arm64PointerLoads(image([adrpX1.thisPage, pair, ldrX1]))).toEqual({ pointerLoads: 0, fromCode: [] });
   });
 
   test.each(["\n", "\r\n"])("a reference to a variable, with lines that end in %j", end => {

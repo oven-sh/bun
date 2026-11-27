@@ -142,6 +142,11 @@ fn lower_jsx_member_expression(
             )?
         }
     };
+    if expr.is_import_property_use {
+        builder
+            .environment_mut()
+            .note_import_property_target(&object);
+    }
     let value = InstructionValue::PropertyLoad {
         object,
         property: PropertyLiteral::String(StoreStr::new(expr.name.slice())),

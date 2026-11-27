@@ -277,25 +277,15 @@ impl Entry {
     }
 }
 
-// `entry` is a RAW `*mut Entry`. A safe
-// `&self → &mut Entry` accessor would let two `get()` calls produce coexisting
-// aliased `&mut Entry` (PORTING.md §Forbidden).
 pub struct EntryLookup {
-    pub(crate) entry: *mut Entry,
+    entry: &'static Entry,
 }
 
 impl EntryLookup {
     /// Shared borrow of the looked-up `Entry`.
-    ///
-    /// # Safety (encapsulated)
-    /// `self.entry` is a slot in the process-lifetime `EntryStore` BSSList
-    /// singleton (see `dir_entry::EntryStore`); never freed. `cache` is
-    /// behind `Cell` and `abs_path` behind `OnceLock`, so the interior writes through
-    /// `set_cache*()` / `abs_path_or_fill()` do not alias this `&Entry`.
     #[inline(always)]
     pub fn entry(&self) -> &'static Entry {
-        // SAFETY: ARENA — EntryStore-owned slot; see fn doc.
-        unsafe { &*self.entry }
+        self.entry
     }
 }
 
@@ -304,8 +294,8 @@ impl EntryLookup {
 pub mod dir_entry {
     use super::{Entry, EntryStoreBacking};
 
-    /// Lowercased-basename → entry-pointer map backing `DirEntry::data`.
-    pub(crate) type EntryMap = bun_collections::StringHashMap<*mut Entry>;
+    /// Lowercased-basename → entry map backing `DirEntry::data`.
+    pub(crate) type EntryMap = bun_collections::StringHashMap<&'static Entry>;
 
     /// Process-wide append-only store that owns all `Entry` allocations.
     /// ZST handle resolving to the `entry_store_backing()` singleton.
@@ -434,14 +424,12 @@ impl DirEntry {
         };
         let name_hash = self.data.hash_key(name_lc);
 
-        let stored: *mut Entry = 'brk: {
+        let stored: &'static Entry = 'brk: {
             if let Some(map) = prev_map {
                 // `data` keys are the lowercased basenames, so an exact match on
                 // `name_lc` is the case-insensitive match — and reuses
                 // `name_hash` instead of re-hashing.
-                if let Some(&existing_ptr) = map.get_hashed(name_hash, name_lc) {
-                    // SAFETY: EntryStore-owned pointer, valid for lifetime of store
-                    let existing = unsafe { &*existing_ptr };
+                if let Some(&existing) = map.get_hashed(name_hash, name_lc) {
                     let _guard = existing.mutex.lock_guard();
                     // `dir` stays: `self` has the `dir` of the `DirEntry` that owns `map`.
 
@@ -462,7 +450,7 @@ impl DirEntry {
                             || Some(existing.cache().kind) != found_kind,
                         Ordering::Release,
                     );
-                    break 'brk existing_ptr;
+                    break 'brk existing;
                 }
             }
 
@@ -473,7 +461,7 @@ impl DirEntry {
             // SAFETY: `slot` is a freshly-reserved uninit cell exclusively
             // owned by this thread (`append_uninit` bumped the index under the
             // store's inner mutex). Every field is written exactly once below
-            // before the cell is observed via `*mut Entry`.
+            // before the cell is observed via `&Entry`.
             unsafe {
                 use core::ptr::addr_of_mut;
                 let p = (*slot).as_mut_ptr();
@@ -510,7 +498,9 @@ impl DirEntry {
                     fd: Fd::INVALID,
                 }));
                 addr_of_mut!((*p).abs_path).write(OnceLock::new());
-                p
+                // SAFETY: the slot is initialized and never freed, moved or handed out again;
+                // only its interior-mutable fields are written from here on.
+                &*p
             }
         };
 
@@ -520,18 +510,13 @@ impl DirEntry {
         // (≤31B names) or into the process-static `FilenameStore`; the `Entry`
         // itself lives in the process-lifetime `EntryStore` BSSList, so in
         // both cases the bytes are address-stable for the life of the process.
-        // Widen to `'static` and store the slice directly.
-        // SAFETY: `stored` is an `EntryStore` slot (never freed, never moved);
-        // `base_lowercase_` is never mutated after construction. Shared, because
-        // `key` can point into the entry.
-        let stored_ref: &'static Entry = unsafe { &*stored };
-        let key = stored_ref.base_lowercase();
-        // `(*stored).base_lowercase()` equals `name_lc` byte-for-byte (a fresh
+        let key = stored.base_lowercase();
+        // `stored.base_lowercase()` equals `name_lc` byte-for-byte (a fresh
         // entry interned `name_lc`; a recycled one matched it exactly above), so
         // `name_hash` is its hash too — insert without re-hashing.
         self.data.put_static_key_hashed(name_hash, key, stored)?;
 
-        Ok(Some(stored_ref))
+        Ok(Some(stored))
     }
 
     /// Debug-only contract check: every `.data` probe must run under
@@ -564,16 +549,16 @@ impl DirEntry {
         let mut scratch_lookup_buffer = bun_paths::path_buffer_pool::get();
 
         let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
-        let &result_ptr = self.data.get(query)?;
-        Some(EntryLookup { entry: result_ptr })
+        let &entry = self.data.get(query)?;
+        Some(EntryLookup { entry })
     }
 
     /// Looks up a cached entry by name. Takes a `&'static [u8]` that is
     /// already lowercase, so no per-call lowercasing buffer is needed.
     pub(crate) fn get_comptime_query(&self, query_lower: &'static [u8]) -> Option<EntryLookup> {
         Self::debug_assert_entries_mutex_held();
-        let &result_ptr = self.data.get(query_lower)?;
-        Some(EntryLookup { entry: result_ptr })
+        let &entry = self.data.get(query_lower)?;
+        Some(EntryLookup { entry })
     }
 
     /// True if a cached entry exists for the given already-lowercase name.

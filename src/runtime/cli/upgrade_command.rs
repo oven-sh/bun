@@ -1,9 +1,7 @@
 use bun_collections::VecExt;
-use core::ffi::c_char;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
-use bun_core::Global::SyncCStr;
 use bun_core::MutableString;
 use bun_core::{self, Environment, Global, Output, Progress, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
@@ -150,23 +148,18 @@ impl Version {
     }
 }
 
+const GITHUB_URL_Z: &str = const_format::concatcp!(
+    "https://github.com/oven-sh/bun/releases/download/bun-v",
+    Global::package_json_version,
+    "/",
+    Version::ZIP_FILENAME,
+    "\0"
+);
 // Exported C symbol — null-terminated
 // Moved out of `impl Version` — Rust impl blocks cannot hold `static` items.
-// `*const c_char` is `!Sync`, so wrap in the `#[repr(transparent)]` `SyncCStr` newtype
-// (same pattern as `Bun__userAgent` in bun_core::Global) so the C++ side still sees a
-// single `const char*`-sized symbol.
+// A `const char*` to C++: a reference to an array is one pointer wide.
 #[unsafe(no_mangle)]
-static Bun__githubURL: SyncCStr = SyncCStr(
-    const_format::concatcp!(
-        "https://github.com/oven-sh/bun/releases/download/bun-v",
-        Global::package_json_version,
-        "/",
-        Version::ZIP_FILENAME,
-        "\0"
-    )
-    .as_ptr()
-    .cast::<c_char>(),
-);
+static Bun__githubURL: &[u8; GITHUB_URL_Z.len()] = GITHUB_URL_Z.as_bytes().as_array().unwrap();
 
 // ──────────────────────────────────────────────────────────────────────────
 

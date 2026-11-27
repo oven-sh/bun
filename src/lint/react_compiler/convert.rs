@@ -1296,7 +1296,11 @@ impl<'a> Converter<'a, '_> {
             Some(VarKind::Var) | None => S::Kind::KVar,
             Some(VarKind::Let) => S::Kind::KLet,
             Some(VarKind::Const) => S::Kind::KConst,
-            Some(VarKind::Using | VarKind::AwaitUsing) => return Err(ConvertError::Using),
+            Some(VarKind::Using | VarKind::AwaitUsing) => match self.flavor {
+                // oxc 514fb9139: the rules see the function as if the resource were a `const`.
+                Flavor::Oxlint => S::Kind::KConst,
+                Flavor::Eslint => return Err(ConvertError::Using),
+            },
         };
         let mut converted: G::DeclList = AstAlloc::vec_with_capacity(decls.len());
         for decl in decls {

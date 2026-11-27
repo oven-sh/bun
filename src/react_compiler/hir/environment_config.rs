@@ -102,6 +102,11 @@ pub struct EnvironmentConfig {
     /// What is passed to a method of a mutable array escapes by the array, also for `map`, `filter` and the like, whose
     /// signatures say that they keep none of their arguments. To upstream nothing escapes so.
     pub arguments_of_no_alias_methods_escape: bool,
+    /// `flatMap` and `forEach` of an array say, as `map` does, that they call their callback with an item of the array
+    /// and what becomes of its result. The methods of arrays, sets and maps that take a callback or store a value have
+    /// a name, and so have the constructors of the collections. Upstream says this of `map` only, knows no `forEach`
+    /// of an array, and names none. The shapes are those of `globals::OXLINT_BASE`.
+    pub flat_map_and_for_each_have_aliasing_signatures: bool,
     /// `({ k: a, b } = o)` where a function captures `a` goes through temporaries, as `[a, b] = o` does. Upstream
     /// assigns `b` at once and `a` not, and fails: "Expected consistent kind for destructuring". So do both for `{ a, b }`.
     pub captured_targets_with_keys_force_temporaries: bool,
@@ -176,6 +181,7 @@ impl Default for EnvironmentConfig {
             effects_keep_their_place: false,
             jsx_can_be_reordered: true,
             arguments_of_no_alias_methods_escape: true,
+            flat_map_and_for_each_have_aliasing_signatures: false,
             captured_targets_with_keys_force_temporaries: false,
             unreachable_code_is_reported_at_its_function: false,
             tagged_templates_are_always_called: false,

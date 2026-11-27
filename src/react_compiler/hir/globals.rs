@@ -14,6 +14,7 @@ use std::sync::LazyLock;
 
 use crate::hir::Effect;
 use crate::hir::Type;
+use crate::hir::environment_config::EnvironmentConfig;
 use crate::hir::object_shape::*;
 use crate::hir::type_config::AliasingEffectConfig;
 use crate::hir::type_config::AliasingSignatureConfig;
@@ -28,8 +29,8 @@ use crate::hir::type_config::ValueReason;
 /// In the Rust port, both map to our `Type` enum.
 pub type Global = Type;
 
-// Length-dispatched name → index into `BASE.globals`. Values live in a
-// `LazyLock<Box<[Global]>>` because `Type` is not const-constructible.
+// Length-dispatched name → index into `BaseRegistries::globals`, the same for `BASE` and `OXLINT_BASE`. Values live
+// in a `LazyLock<Box<[Global]>>` because `Type` is not const-constructible.
 bun_core::comptime_string_map! {
     static BASE_GLOBAL_INDEX: usize = {
         // React APIs
@@ -105,13 +106,13 @@ bun_core::comptime_string_map! {
 /// Registry mapping global names to their types.
 ///
 /// Supports two modes:
-/// - **Builder mode** (`base=false`): wraps a single HashMap, used during
+/// - **Builder mode** (`base=None`): wraps a single HashMap, used during
 ///   `build_default_globals` to construct the static base.
-/// - **Overlay mode** (`base=true`): lookups check the extras HashMap first,
-///   then fall back to the static `BASE_GLOBAL_INDEX` / `BASE.globals` table.
+/// - **Overlay mode** (`base=Some`): lookups check the extras HashMap first,
+///   then fall back to the static `BASE_GLOBAL_INDEX` / `BaseRegistries::globals` table.
 ///   Inserts go into extras.
 pub struct GlobalRegistry {
-    base: bool,
+    base: Option<&'static BaseRegistries>,
     entries: HashMap<Cow<'static, str>, Global>,
 }
 
@@ -119,15 +120,15 @@ impl GlobalRegistry {
     /// Create an empty builder-mode registry.
     pub fn new() -> Self {
         Self {
-            base: false,
+            base: None,
             entries: HashMap::default(),
         }
     }
 
-    /// Create an overlay-mode registry backed by the static base.
-    pub fn with_base() -> Self {
+    /// Create an overlay-mode registry backed by the static base that `config` asks for.
+    pub fn with_base(config: &EnvironmentConfig) -> Self {
         Self {
-            base: true,
+            base: Some(base_registries(config)),
             entries: HashMap::default(),
         }
     }
@@ -136,10 +137,7 @@ impl GlobalRegistry {
         if let Some(v) = self.entries.get(key) {
             return Some(v);
         }
-        if self.base {
-            return lookup_base_global(key);
-        }
-        None
+        self.base.and_then(|base| base.global(key))
     }
 
     pub fn insert(&mut self, key: impl Into<Cow<'static, str>>, value: Global) {
@@ -148,14 +146,14 @@ impl GlobalRegistry {
 
     pub fn contains_key(&self, key: &str) -> bool {
         self.entries.contains_key(key)
-            || (self.base && BASE_GLOBAL_INDEX.contains_key(key.as_bytes()))
+            || (self.base.is_some() && BASE_GLOBAL_INDEX.contains_key(key.as_bytes()))
     }
 
     /// Consume the registry and return the inner HashMap.
     /// Only valid in builder mode (no base).
     pub fn into_inner(self) -> HashMap<Cow<'static, str>, Global> {
         debug_assert!(
-            !self.base,
+            self.base.is_none(),
             "into_inner() called on overlay-mode GlobalRegistry"
         );
         self.entries
@@ -171,9 +169,28 @@ struct BaseRegistries {
     globals: Box<[Global]>,
 }
 
-static BASE: LazyLock<BaseRegistries> = LazyLock::new(|| {
+impl BaseRegistries {
+    fn global(&self, name: &str) -> Option<&Global> {
+        BASE_GLOBAL_INDEX
+            .get(name.as_bytes())
+            .and_then(|&i| self.globals.get(i))
+    }
+}
+
+static BASE: LazyLock<BaseRegistries> = LazyLock::new(|| build_base_registries(false));
+
+/// `BASE` with oxlint's signatures on it, for `EnvironmentConfig::flat_map_and_for_each_have_aliasing_signatures`.
+/// Nothing builds it in a process that never sets that.
+static OXLINT_BASE: LazyLock<BaseRegistries> = LazyLock::new(|| build_base_registries(true));
+
+#[cold]
+#[inline(never)]
+fn build_base_registries(with_oxlint_signatures: bool) -> BaseRegistries {
     let mut shapes = build_builtin_shapes();
     let mut globals_map = build_default_globals(&mut shapes).into_inner();
+    if with_oxlint_signatures {
+        install_oxlint_signatures(&mut shapes, &globals_map);
+    }
     debug_assert_eq!(
         globals_map.len(),
         BASE_GLOBAL_INDEX.len(),
@@ -193,18 +210,18 @@ static BASE: LazyLock<BaseRegistries> = LazyLock::new(|| {
         shapes: shapes.into_inner(),
         globals: globals.into_boxed_slice(),
     }
-});
-
-/// Get a reference to the static base shapes registry.
-pub fn base_shapes() -> &'static HashMap<&'static str, ObjectShape> {
-    &BASE.shapes
 }
 
-/// Look up a global by name in the static base table.
-pub fn lookup_base_global(name: &str) -> Option<&'static Global> {
-    BASE_GLOBAL_INDEX
-        .get(name.as_bytes())
-        .map(|&i| &BASE.globals[i])
+fn base_registries(config: &EnvironmentConfig) -> &'static BaseRegistries {
+    match config.flat_map_and_for_each_have_aliasing_signatures {
+        true => LazyLock::force(&OXLINT_BASE),
+        false => LazyLock::force(&BASE),
+    }
+}
+
+/// Get a reference to the static base shapes registry that `config` asks for.
+pub fn base_shapes(config: &EnvironmentConfig) -> &'static HashMap<&'static str, ObjectShape> {
+    &base_registries(config).shapes
 }
 
 // =============================================================================
@@ -427,6 +444,56 @@ fn pure_primitive_fn(shapes: &mut ShapeRegistry) -> Type {
     )
 }
 
+/// What `map` of an array does with its callback. This is oxc's `ARRAY_MAP_ALIASING`, which `flatMap` has too under
+/// `EnvironmentConfig::flat_map_and_for_each_have_aliasing_signatures`.
+#[cold]
+#[inline(never)]
+fn array_map_aliasing() -> AliasingSignatureConfig {
+    AliasingSignatureConfig {
+        receiver: "@receiver",
+        params: vec!["@callback"],
+        rest: None,
+        returns: "@returns",
+        temporaries: vec!["@item", "@callbackReturn", "@thisArg"],
+        effects: vec![
+            // Map creates a new mutable array
+            AliasingEffectConfig::Create {
+                into: "@returns",
+                value: ValueKind::Mutable,
+                reason: ValueReason::KnownReturnSignature,
+            },
+            // The first arg to the callback is an item extracted from the receiver array
+            AliasingEffectConfig::CreateFrom {
+                from: "@receiver",
+                into: "@item",
+            },
+            // The undefined this for the callback
+            AliasingEffectConfig::Create {
+                into: "@thisArg",
+                value: ValueKind::Primitive,
+                reason: ValueReason::KnownReturnSignature,
+            },
+            // Calls the callback, returning the result into a temporary
+            AliasingEffectConfig::Apply {
+                receiver: "@thisArg",
+                function: "@callback",
+                mutates_function: false,
+                args: vec![
+                    ApplyArgConfig::Place("@item"),
+                    ApplyArgConfig::Hole {},
+                    ApplyArgConfig::Place("@receiver"),
+                ],
+                into: "@callbackReturn",
+            },
+            // Captures the result of the callback into the return array
+            AliasingEffectConfig::Capture {
+                from: "@callbackReturn",
+                into: "@returns",
+            },
+        ],
+    }
+}
+
 #[cold]
 #[inline(never)]
 fn build_array_shape(shapes: &mut ShapeRegistry) {
@@ -500,49 +567,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             return_value_kind: ValueKind::Mutable,
             no_alias: true,
             mutable_only_if_operands_are_mutable: true,
-            aliasing: Some(AliasingSignatureConfig {
-                receiver: "@receiver",
-                params: vec!["@callback"],
-                rest: None,
-                returns: "@returns",
-                temporaries: vec!["@item", "@callbackReturn", "@thisArg"],
-                effects: vec![
-                    // Map creates a new mutable array
-                    AliasingEffectConfig::Create {
-                        into: "@returns",
-                        value: ValueKind::Mutable,
-                        reason: ValueReason::KnownReturnSignature,
-                    },
-                    // The first arg to the callback is an item extracted from the receiver array
-                    AliasingEffectConfig::CreateFrom {
-                        from: "@receiver",
-                        into: "@item",
-                    },
-                    // The undefined this for the callback
-                    AliasingEffectConfig::Create {
-                        into: "@thisArg",
-                        value: ValueKind::Primitive,
-                        reason: ValueReason::KnownReturnSignature,
-                    },
-                    // Calls the callback, returning the result into a temporary
-                    AliasingEffectConfig::Apply {
-                        receiver: "@thisArg",
-                        function: "@callback",
-                        mutates_function: false,
-                        args: vec![
-                            ApplyArgConfig::Place("@item"),
-                            ApplyArgConfig::Hole {},
-                            ApplyArgConfig::Place("@receiver"),
-                        ],
-                        into: "@callbackReturn",
-                    },
-                    // Captures the result of the callback into the return array
-                    AliasingEffectConfig::Capture {
-                        from: "@callbackReturn",
-                        into: "@returns",
-                    },
-                ],
-            }),
+            aliasing: Some(array_map_aliasing()),
             ..Default::default()
         },
         None,
@@ -2432,4 +2457,144 @@ fn build_typed_globals(
     globals.insert("_jsx", jsx_fn);
 
     typed_globals
+}
+
+// =============================================================================
+// oxlint's signatures, which upstream does not have. Only `OXLINT_BASE` has them.
+// =============================================================================
+
+/// oxc's `ARRAY_FOREACH_ALIASING`: the callback is called as `map` calls it, and nothing of it is in what is returned.
+#[cold]
+#[inline(never)]
+fn array_for_each_aliasing() -> AliasingSignatureConfig {
+    let mut aliasing = array_map_aliasing();
+    aliasing.effects.retain(|effect| {
+        !matches!(
+            effect,
+            AliasingEffectConfig::Create {
+                into: "@returns",
+                ..
+            } | AliasingEffectConfig::Capture {
+                into: "@returns",
+                ..
+            }
+        )
+    });
+    aliasing.effects.push(AliasingEffectConfig::Create {
+        into: "@returns",
+        value: ValueKind::Primitive,
+        reason: ValueReason::KnownReturnSignature,
+    });
+    aliasing
+}
+
+/// oxc's `canonical_name` of the methods that take a callback or store a value: shape, method, name. `forEach` of an
+/// array gets its name where it is made.
+const OXLINT_METHOD_NAMES: &[(&str, &str, &str)] = &[
+    (BUILT_IN_ARRAY_ID, "map", "Array.map"),
+    (BUILT_IN_ARRAY_ID, "flatMap", "Array.flatMap"),
+    (BUILT_IN_ARRAY_ID, "filter", "Array.filter"),
+    (BUILT_IN_ARRAY_ID, "every", "Array.every"),
+    (BUILT_IN_ARRAY_ID, "some", "Array.some"),
+    (BUILT_IN_ARRAY_ID, "find", "Array.find"),
+    (BUILT_IN_ARRAY_ID, "findIndex", "Array.findIndex"),
+    (BUILT_IN_SET_ID, "add", "Set.add"),
+    (BUILT_IN_SET_ID, "clear", "Set.clear"),
+    (BUILT_IN_SET_ID, "forEach", "Set.forEach"),
+    (BUILT_IN_MAP_ID, "set", "Map.set"),
+    (BUILT_IN_MAP_ID, "clear", "Map.clear"),
+    (BUILT_IN_MAP_ID, "forEach", "Map.forEach"),
+    (BUILT_IN_MIXED_READONLY_ID, "map", "Array.map"),
+    (BUILT_IN_MIXED_READONLY_ID, "flatMap", "Array.flatMap"),
+    (BUILT_IN_MIXED_READONLY_ID, "filter", "Array.filter"),
+    (BUILT_IN_MIXED_READONLY_ID, "every", "Array.every"),
+    (BUILT_IN_MIXED_READONLY_ID, "some", "Array.some"),
+    (BUILT_IN_MIXED_READONLY_ID, "find", "Array.find"),
+    (BUILT_IN_MIXED_READONLY_ID, "findIndex", "Array.findIndex"),
+];
+
+/// The constructors that oxc names as their global.
+const OXLINT_NAMED_CONSTRUCTORS: &[&str] = &["Map", "Set", "WeakMap", "WeakSet"];
+
+/// What oxc 1.95 has on the built-in shapes and upstream doesn't (oxc 8612f43be). For a mutable array and for a
+/// readonly one: `map` and `flatMap` have `array_map_aliasing`, and there is a `forEach`. The methods and constructors
+/// that oxc's check of writes to captured variables knows have a `canonical_name`.
+#[cold]
+#[inline(never)]
+fn install_oxlint_signatures(
+    shapes: &mut ShapeRegistry,
+    globals: &HashMap<Cow<'static, str>, Global>,
+) {
+    for array in [BUILT_IN_ARRAY_ID, BUILT_IN_MIXED_READONLY_ID] {
+        let for_each = add_function(
+            shapes,
+            Vec::new(),
+            FunctionSignatureBuilder {
+                canonical_name: Some("Array.forEach"),
+                rest_param: Some(Effect::ConditionallyMutate),
+                callee_effect: Effect::ConditionallyMutate,
+                return_type: Type::Primitive,
+                return_value_kind: ValueKind::Primitive,
+                no_alias: true,
+                aliasing: Some(array_for_each_aliasing()),
+                ..Default::default()
+            },
+            None,
+            false,
+        );
+        edit_built_in_shape(shapes, Some(array), |shape| {
+            shape.properties.insert("forEach", for_each);
+            Some(())
+        });
+        for method in ["map", "flatMap"] {
+            let id = method_shape_id(shapes, array, method);
+            edit_built_in_shape(shapes, id, |shape| {
+                shape.function_type.as_mut()?.aliasing = Some(array_map_aliasing());
+                Some(())
+            });
+        }
+    }
+    for &(object, method, name) in OXLINT_METHOD_NAMES {
+        let id = method_shape_id(shapes, object, method);
+        edit_built_in_shape(shapes, id, |shape| {
+            shape.function_type.as_mut()?.canonical_name = Some(name);
+            Some(())
+        });
+    }
+    for &name in OXLINT_NAMED_CONSTRUCTORS {
+        let id = function_shape_id(globals.get(name));
+        edit_built_in_shape(shapes, id, |shape| {
+            shape.function_type.as_mut()?.canonical_name = Some(name);
+            Some(())
+        });
+    }
+}
+
+fn function_shape_id(function: Option<&Type>) -> Option<&'static str> {
+    match function {
+        Some(Type::Function { shape_id, .. }) => *shape_id,
+        _ => None,
+    }
+}
+
+fn method_shape_id(shapes: &ShapeRegistry, object: &str, method: &str) -> Option<&'static str> {
+    function_shape_id(shapes.get(object)?.properties.get(method))
+}
+
+/// Changes a shape that the builders above registered. `None`, as `id` or from `edit`, is a shape that they don't
+/// register as `install_oxlint_signatures` expects.
+fn edit_built_in_shape(
+    shapes: &mut ShapeRegistry,
+    id: Option<&'static str>,
+    edit: impl FnOnce(&mut ObjectShape) -> Option<()>,
+) {
+    let edited = id.and_then(|id| {
+        let mut shape = shapes.get(id)?.clone();
+        edit(&mut shape)?;
+        Some((id, shape))
+    });
+    match edited {
+        Some((id, shape)) => shapes.insert(id, shape),
+        None => panic!("install_oxlint_signatures() is out of sync with the built-in shape {id:?}"),
+    }
 }

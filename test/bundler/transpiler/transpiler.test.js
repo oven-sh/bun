@@ -3196,6 +3196,70 @@ console.log(<div {...obj} key="after" />);`),
       expect(imports.filter(({ path }) => path === "react")).toHaveLength(1);
       expect(imports).toHaveLength(2);
     });
+
+    describe("leading hashbang", () => {
+      const body = 'import x from "./y";\nconsole.log(x);\n';
+      const expected = [{ kind: "import-statement", path: "./y" }];
+
+      it.each(["ts", "tsx", "js", "jsx"])("is skipped with the %s loader", loader => {
+        const t = new Bun.Transpiler({ loader });
+        const source = "#!/usr/bin/env bun\n" + body;
+        expect(t.scanImports(source)).toEqual(expected);
+        expect(t.scanImports(Buffer.from(source))).toEqual(expected);
+        expect(t.scan(source).imports).toEqual(expected);
+      });
+
+      it.each([
+        ["LF", "\n"],
+        ["CRLF", "\r\n"],
+        ["U+2028", "\u2028"],
+        ["U+2029", "\u2029"],
+      ])("ends at %s", (_, terminator) => {
+        expect(transpiler.scanImports("#!/usr/bin/env bun" + terminator + body, "ts")).toEqual(expected);
+        expect(transpiler.scanImports("#!/usr/bin/env bun" + terminator + body, "js")).toEqual(expected);
+      });
+
+      it("is skipped when nothing follows it", () => {
+        for (const source of ["#!/usr/bin/env bun", "#!/usr/bin/env bun\n", "#!/usr/bin/env bun\n\n  \t\n"]) {
+          expect(transpiler.scanImports(source, "ts")).toEqual([]);
+          expect(transpiler.scanImports(source, "js")).toEqual([]);
+        }
+      });
+
+      it("is skipped before a // @bun pragma", () => {
+        const source = "#!/usr/bin/env bun\n// @bun\n" + body;
+        expect(transpiler.scanImports(source, "ts")).toEqual(expected);
+        expect(transpiler.scanImports(source, "js")).toEqual(expected);
+      });
+
+      it("is skipped with trimUnusedImports", () => {
+        const t = new Bun.Transpiler({ loader: "ts", trimUnusedImports: true });
+        const source = '#!/usr/bin/env bun\nimport x from "./y";\nimport unused from "./z";\nconsole.log(x);\n';
+        expect(t.scanImports(source)).toEqual(expected);
+      });
+
+      it("does not leak into the next scan on the same transpiler", () => {
+        const t = new Bun.Transpiler({ loader: "ts" });
+        expect(t.scanImports('import a from "./a";\nconsole.log(a);\n')).toEqual([
+          { kind: "import-statement", path: "./a" },
+        ]);
+        expect(t.scanImports("#!/usr/bin/env bun\n" + body)).toEqual(expected);
+        expect(t.scanImports('import b from "./b";\nconsole.log(b);\n')).toEqual([
+          { kind: "import-statement", path: "./b" },
+        ]);
+      });
+
+      it.each([
+        ["after a newline", "\n#!/usr/bin/env bun\n" + body],
+        ["after a space", " #!/usr/bin/env bun\n" + body],
+        ["on the second line", "#!/usr/bin/env bun\n#!/usr/bin/env bun\n" + body],
+      ])("is a syntax error %s", (_, source) => {
+        for (const loader of ["ts", "js"]) {
+          expect(() => transpiler.scanImports(source, loader)).toThrow();
+          expect(() => transpiler.scan(source, loader)).toThrow();
+        }
+      });
+    });
   });
 
   const parsed = (code, trim = true, autoExport = false, transpiler_ = transpiler) => {

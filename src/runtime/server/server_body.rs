@@ -2209,7 +2209,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             uws::AnyResponse::H2(_) | uws::AnyResponse::H3(_) => MUX,
         });
         jsc::mark_binding!();
-        // SAFETY: `this` is the live heap server registered as the callback's user data. `create` stores the raw pointer, not this borrow.
+        // SAFETY: `this` is the live heap server registered as the callback's user data.
         let server = unsafe { &*this };
 
         let method = method.or_else(|| http::Method::which(req.method()));
@@ -2240,24 +2240,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
         }
 
-        // SAFETY: the pool is the VM's and outlives the server. `create` initializes the claimed
-        // slot, and a panic inside it releases the slot without dropping its contents.
-        let ctx_ptr: *mut ServerRequestContext<SSL, DEBUG, MUX> = unsafe {
-            let slot = (*server.request_pool_for::<MUX>()).claim();
-            ServerRequestContext::<SSL, DEBUG, MUX>::create(
-                &mut *slot
-                    .addr()
-                    .as_ptr()
-                    .cast::<core::mem::MaybeUninit<ServerRequestContext<SSL, DEBUG, MUX>>>(),
-                server,
-                req.as_ptr(),
-                resp,
-                method,
-            );
-            slot.assume_init().as_ptr()
-        };
-        // SAFETY: initialized by `create`.
-        let ctx = Dispatch::new(unsafe { &*ctx_ptr });
+        // SAFETY: the pool is the VM's and outlives the server.
+        let slot = unsafe { &*server.request_pool_for::<MUX>() }.claim();
+        let ctx_ptr = ServerRequestContext::<SSL, DEBUG, MUX>::create(
+            slot,
+            server,
+            req.as_ptr(),
+            resp,
+            method.unwrap_or(http::Method::GET),
+        );
+        // SAFETY: `create` just made it, and it holds its base ref.
+        let ctx = Dispatch::new(unsafe { ctx_ptr.as_ref() });
         if let Some(upgrade_ctx) = upgrade_ctx {
             ctx.upgrade_context
                 .set(UpgradeState::Pending(bun_ptr::BackRef::new(upgrade_ctx)));
@@ -2284,7 +2277,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         let request = RefPtr::new(Request::init(
             ctx.method,
-            AnyRequestContext::init(ctx_ptr),
+            AnyRequestContext::init(ctx_ptr.as_ptr()),
             SSL,
             Some(signal),
             body_hive,
@@ -2314,7 +2307,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // SAFETY: `body_value` is the hive payload initialized above.
                 unsafe {
                     *body_value = BodyValue::Locked(crate::webcore::body::PendingValue {
-                        task: Some(NonNull::new(ctx_ptr).unwrap().cast::<c_void>()),
+                        task: Some(ctx_ptr.cast::<c_void>()),
                         global: std::ptr::from_ref(global),
                         on_start_buffering: Some(
                             ServerRequestContext::<SSL, DEBUG, MUX>::on_start_buffering_callback,
@@ -2326,7 +2319,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             ServerRequestContext::<SSL, DEBUG, MUX>::on_request_body_readable_stream_available,
                         ),
                         producer: crate::webcore::streams::SourceHandle::ServerRequestBody(
-                            AnyRequestContext::init(ctx_ptr),
+                            AnyRequestContext::init(ctx_ptr.as_ptr()),
                         ),
                         ..Default::default()
                     });
@@ -2335,7 +2328,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // uSockets does not buffer, so the handler is registered before JavaScript runs.
                 resp.on_data(
                     ServerRequestContext::<SSL, DEBUG, MUX>::on_buffered_body_chunk,
-                    ctx_ptr,
+                    ctx_ptr.as_ptr(),
                 );
             }
         }

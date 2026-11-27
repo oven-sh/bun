@@ -14,9 +14,6 @@
   "src/runtime/napi/napi_body.rs": {
     "discarded result of a call that enters script": 2
   },
-  "src/runtime/node/node_fs.rs": {
-    "discarded result of a call that enters script": 1
-  },
   "src/runtime/webcore/Request.rs": {
     "JsResult collapsed on the spot": 1
   }

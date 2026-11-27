@@ -2187,17 +2187,18 @@ impl BlobExt for Blob {
         }
         match LIFETIME {
             Lifetime::Clone => {
+                // SAFETY: `Clone` copies into a new JSC allocation; `buf` is only read.
+                let buf = unsafe { &*buf };
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 {
                     // If we can use a copy-on-write clone of the buffer, do so.
                     if let Some(store) = self.store.get() {
                         if let store::Data::Bytes(bytes) = &store.data {
                             let store_bytes = bytes.slice();
-                            // SAFETY: `Clone` arm reads only; `buf` is store-backed.
-                            if bun::is_slice_in_buffer(unsafe { &*buf }, store_bytes) {
+                            if bun::is_slice_in_buffer(buf, store_bytes) {
                                 if let Some(memfd) = bytes.memfd() {
-                                    let byte_offset = (buf.cast::<u8>() as usize)
-                                        .saturating_sub(store_bytes.as_ptr() as usize);
+                                    let byte_offset =
+                                        buf.as_ptr().addr() - store_bytes.as_ptr().addr();
                                     let result =
                                         jsc::ArrayBuffer::to_array_buffer_from_shared_memfd(
                                             memfd.native() as i64,
@@ -2222,8 +2223,7 @@ impl BlobExt for Blob {
                         }
                     }
                 }
-                // SAFETY: `Clone` copies into a new JSC allocation; `buf` is only read.
-                jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(global, unsafe { &*buf })
+                jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(global, buf)
             }
             Lifetime::Transfer => {
                 if self.store().is_some_and(|s| !s.has_one_ref()) {

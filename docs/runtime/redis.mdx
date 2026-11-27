@@ -102,8 +102,8 @@ await redis.set("user:1:name", "Alice");
 // Get a key
 const name = await redis.get("user:1:name");
 
-// Get a key as Uint8Array
-const buffer = await redis.getBuffer("user:1:name");
+// Get a key as a Buffer
+const buffer = await redis.get("user:1:name", { buffer: true });
 
 // Delete a key
 await redis.del("user:1:name");
@@ -180,7 +180,7 @@ const poppedTag = await redis.spop("tags");
 
 ### Binary Data
 
-Bun decodes replies as UTF-8. To get `Buffer`s, pass `{ buffer: true }` as the last argument of `send()` or of a method that reads stored data. In a transaction, `true` holds for the result in the reply to `EXEC`, and on `EXEC` for all results. `getBuffer()` and `dump()` need no option.
+Bun decodes replies as UTF-8. To get `Buffer`s, pass `{ buffer: true }` as the last argument of `send()` or of a method that reads stored data. In a transaction, `true` holds for the result in the reply to `EXEC`, and on `EXEC` for all results. `dump()` needs no option. `getBuffer(key)` is deprecated as of Bun 1.5: use `get(key, { buffer: true })`.
 
 ```ts redis.ts icon="/icons/typescript.svg"
 await redis.hset("images", "logo", new Uint8Array([0xff, 0xd8]));
@@ -363,7 +363,7 @@ The client automatically converts Redis responses to JavaScript values:
 - Simple strings are returned as JavaScript strings
 - Null bulk strings and null arrays are returned as `null`
 - Array responses are returned as JavaScript arrays
-- Big number responses (RESP3) are returned as `BigInt`. A payload that is not an integer literal is returned as a string. `getBuffer` returns the payload as a `Buffer`.
+- Big number responses (RESP3) are returned as `BigInt`. A payload that is not an integer literal is returned as a string.
 - Error responses throw JavaScript errors with appropriate error codes
 - Boolean responses (RESP3) are returned as JavaScript booleans
 - Map responses (RESP3) are returned as JavaScript objects

@@ -1170,13 +1170,7 @@ pub fn parse_f32(s: &[u8]) -> Option<f32> {
 /// use [`parse_int`] / [`parse_f64`].
 #[inline]
 pub fn parse_ascii<T: core::str::FromStr>(s: &[u8]) -> Option<T> {
-    if !s.is_ascii() {
-        return None;
-    }
-    // SAFETY: every byte < 0x80 ⇒ `s` is valid (ASCII ⊂ UTF-8).
-    unsafe { core::str::from_utf8_unchecked(s) }
-        .parse::<T>()
-        .ok()
+    s.as_ascii()?.as_str().parse().ok()
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2796,16 +2790,13 @@ pub struct HexBytes<'a, const LOWER: bool>(pub &'a [u8]);
 impl<'a, const LOWER: bool> Display for HexBytes<'a, LOWER> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let table = if LOWER {
-            &LOWER_HEX_TABLE
+            const { LOWER_HEX_TABLE.as_ascii().unwrap() }
         } else {
-            &UPPER_HEX_TABLE
+            const { UPPER_HEX_TABLE.as_ascii().unwrap() }
         };
-        let mut buf = [0u8; 2];
         for &b in self.0 {
-            buf[0] = table[(b >> 4) as usize];
-            buf[1] = table[(b & 0x0f) as usize];
-            // SAFETY: hex alphabet is ASCII.
-            f.write_str(unsafe { core::str::from_utf8_unchecked(&buf) })?;
+            let pair = [table[(b >> 4) as usize], table[(b & 0x0f) as usize]];
+            f.write_str(pair.as_str())?;
         }
         Ok(())
     }

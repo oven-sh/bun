@@ -66,7 +66,7 @@ impl JSValue {
         self.0
     }
     #[inline]
-    pub(crate) const fn from_raw(raw: i64) -> JSValue {
+    const fn from_raw(raw: i64) -> JSValue {
         JSValue(raw as usize, PhantomData)
     }
 

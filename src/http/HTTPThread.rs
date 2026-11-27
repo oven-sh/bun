@@ -293,19 +293,6 @@ impl HttpThread {
             })
     }
 
-    pub(crate) fn context<const IS_SSL: bool>(&mut self) -> &mut NewHttpContext<IS_SSL> {
-        // Note: const-generic dispatch over two distinct fields — `NewHttpContext<true>`
-        // and `NewHttpContext<IS_SSL>` are the same type when IS_SSL, just spelled
-        // differently. Route through a raw-pointer `.cast()` (identity).
-        if IS_SSL {
-            // SAFETY: identical type when IS_SSL == true; pointer is to a live `&mut self` field.
-            unsafe { &mut *(&raw mut self.https_context).cast::<NewHttpContext<IS_SSL>>() }
-        } else {
-            // SAFETY: identical type when IS_SSL == false; pointer is to a live `&mut self` field.
-            unsafe { &mut *(&raw mut self.http_context).cast::<NewHttpContext<IS_SSL>>() }
-        }
-    }
-
     /// One-shot lazy init of the default HTTPS context. See
     /// [`HttpThread::lazy_https_init`] for rationale. Called on the HTTP
     /// thread by `connect::<true>` and `default_ssl_ctx`; the `Option::take`
@@ -453,8 +440,9 @@ impl HttpThread {
                 client.set_custom_ssl_ctx(ctx.clone());
                 return Self::dial(https_context_mut(&ctx), client);
             }
+            return Self::dial(&mut self.https_context, client);
         }
-        Self::dial(self.context::<IS_SSL>(), client)
+        Self::dial(&mut self.http_context, client)
     }
 
     /// Open the connection for `client` on `ctx`: unix path, HTTP proxy, or direct.

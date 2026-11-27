@@ -19,6 +19,7 @@
 //! `tls.ts` SHA-256/WeakRef memo: every path that turns an `SSLConfig` into an
 //! `SSL_CTX*` goes through here, so one config = one CTX per process.
 
+use core::cell::Cell;
 use core::ffi::{c_int, c_long, c_void};
 use core::ptr;
 
@@ -70,7 +71,7 @@ pub(crate) struct Entry {
     /// Nulled by `bun_ssl_ctx_cache_on_free` when BoringSSL drops the last
     /// ref, or a listen socket that used it closes. Tombstoned entries are reclaimed on the next `get_or_create` for
     /// the same digest, or by the periodic compact.
-    pub ctx: *mut boringssl::SSL_CTX,
+    ctx: Cell<*mut boringssl::SSL_CTX>,
     /// BACKREF: the cache outlives every `Entry` it allocates (Drop clears
     /// ex_data first so the `CRYPTO_EX_free` callback never sees a dangling
     /// owner).
@@ -129,8 +130,7 @@ impl SSLContextCache {
         {
             let entries = self.entries.lock();
             if let Some(entry) = entries.map.get(&d) {
-                // SAFETY: `ctx` is only written under this mutex.
-                let ctx = unsafe { (*entry.as_ptr()).ctx };
+                let ctx = entry.ctx.get();
                 if !ctx.is_null() {
                     // SAFETY: ctx non-null and tombstone write is serialized by this mutex;
                     // the up_ref is the +1 `from_raw` takes.
@@ -155,9 +155,8 @@ impl SSLContextCache {
         let vacant = match entries.map.entry(d) {
             MapEntry::Vacant(vacant) => vacant,
             MapEntry::Occupied(occupied) => {
-                let entry = occupied.get().as_ptr();
-                // SAFETY: `ctx` is only written under this mutex.
-                let existing = unsafe { (*entry).ctx };
+                let slot = &occupied.get().ctx;
+                let existing = slot.get();
                 if !existing.is_null() {
                     // SAFETY: existing non-null; the up_ref is the +1 `from_raw` takes.
                     return unsafe {
@@ -167,15 +166,14 @@ impl SSLContextCache {
                 }
                 // Tombstone — adopt the rebuilt CTX into the existing slot.
                 if set_entry(&ctx, occupied.get()) {
-                    // SAFETY: as above.
-                    unsafe { (*entry).ctx = ctx.as_ptr() };
+                    slot.set(ctx.as_ptr());
                 }
                 return Some(ctx);
             }
         };
 
         let entry = AliasableBox::new(Entry {
-            ctx: ctx.as_ptr(),
+            ctx: Cell::new(ctx.as_ptr()),
             owner: bun_ptr::BackRef::new(self),
         });
         if !set_entry(&ctx, &entry) {
@@ -218,8 +216,7 @@ impl Entries {
     fn compact(&mut self) {
         let mut i: usize = 0;
         while i < self.map.count() {
-            // SAFETY: we hold the mutex. A null `ctx` no longer points back at the entry.
-            if unsafe { (*self.map.values()[i].as_ptr()).ctx.is_null() } {
+            if self.map.values()[i].ctx.get().is_null() {
                 self.map.swap_remove_at(i);
             } else {
                 i += 1;
@@ -254,9 +251,10 @@ pub(crate) extern "C" fn bun_ssl_ctx_cache_on_free(
     }
     // SAFETY: non-null ptr is the *Entry we stored via SSL_CTX_set_ex_data; the
     // owning cache outlives every SSL_CTX it hands out (Drop clears ex_data first).
-    let entry: &mut Entry = unsafe { bun_ptr::callback_ctx::<Entry>(ptr) };
+    // `ctx` is only read and written under the mutex.
+    let entry = unsafe { &*ptr.cast::<Entry>() };
     let _guard = entry.owner.entries.lock();
-    entry.ctx = ptr::null_mut();
+    entry.ctx.set(ptr::null_mut());
 }
 
 impl Drop for SSLContextCache {
@@ -266,13 +264,11 @@ impl Drop for SSLContextCache {
     fn drop(&mut self) {
         let entries = self.entries.lock();
         for entry in entries.map.values() {
-            // SAFETY: we hold the mutex, so a `ctx` that is not null has not been freed.
-            unsafe {
-                let ctx = (*entry.as_ptr()).ctx;
-                if !ctx.is_null() {
-                    let index = c::us_ssl_ctx_cache_ex_idx();
-                    let _ = boringssl::SSL_CTX_set_ex_data(ctx, index, ptr::null_mut());
-                }
+            let ctx = entry.ctx.get();
+            if !ctx.is_null() {
+                let index = c::us_ssl_ctx_cache_ex_idx();
+                // SAFETY: we hold the mutex, so a `ctx` that is not null has not been freed.
+                let _ = unsafe { boringssl::SSL_CTX_set_ex_data(ctx, index, ptr::null_mut()) };
             }
         }
     }

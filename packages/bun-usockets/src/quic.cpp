@@ -275,7 +275,7 @@ void us_quic_loop_process(struct us_loop_t *loop, enum us_quic_pass_point point)
 #ifdef LIBUS_USE_LIBUV
     if (min_diff >= 0) {
         if (!loop->data.quic_timer)
-            loop->data.quic_timer = us_create_timer(loop, 1, 0);
+            loop->data.quic_timer = us_create_timer(loop, 1);
         int ms = min_diff == 0 ? 1 : (min_diff + 999) / 1000;
         us_timer_set(loop->data.quic_timer, us_quic_on_timer, ms, 0);
     }

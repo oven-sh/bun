@@ -1232,3 +1232,39 @@ describe.concurrent("diagnostic markup", () => {
     expect(stderr).not.toContain("\x1b[");
   });
 });
+
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+test.skipIf(!isLinux || !cc)("bun build works without getrandom() and /dev/urandom", async () => {
+  using dir = tempDir("build-no-getrandom", {
+    "index.js": `console.log(1);`,
+    "shim.c": `
+      #define _GNU_SOURCE
+      #include <dlfcn.h>
+      #include <errno.h>
+      #include <string.h>
+      #include <unistd.h>
+      long getrandom(void) { return errno = ENOSYS, -1; }
+      static int refuse(const char *name, const char *path, int flags, int mode) {
+        if (strcmp(path, "/dev/urandom")) return ((int (*)(const char *, int, ...))dlsym(RTLD_NEXT, name))(path, flags, mode);
+        write(2, "refused\\n", 8);
+        return errno = EMFILE, -1;
+      }
+      int open(const char *path, int flags, int mode) { return refuse("open", path, flags, mode); }
+      int open64(const char *path, int flags, int mode) { return refuse("open64", path, flags, mode); }
+    `,
+  });
+  const shim = join(String(dir), "shim.so");
+  await Bun.$`${cc} -shared -fPIC -o ${shim} ${join(String(dir), "shim.c")} -ldl`.env(bunEnv).quiet();
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "index.js"],
+    env: { ...bunEnv, LD_PRELOAD: [shim, bunEnv.LD_PRELOAD].filter(Boolean).join(":") },
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "// index.js\nconsole.log(1);\n",
+    stderr: expect.stringMatching(/^(refused\n)+$/),
+    exitCode: 0,
+  });
+});

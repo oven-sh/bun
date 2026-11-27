@@ -868,8 +868,7 @@ struct WriteReq {
 
 #[cfg(windows)]
 impl WriteReq {
-    /// Safety: `pipe` is the live command pipe of the Chrome with `generation`.
-    unsafe fn submit(pipe: *mut uv::Pipe, chunk: &[u8], generation: u32) -> bool {
+    fn submit(pipe: &mut uv::Owned<uv::Pipe>, chunk: &[u8], generation: u32) -> bool {
         let mut req = Box::new(WriteReq {
             req: bun_core::ffi::zeroed::<uv::uv_write_t>(),
             buf: uv::uv_buf_t::init(b""), // re-init below, once `bytes` has stopped moving
@@ -879,11 +878,11 @@ impl WriteReq {
         req.buf = uv::uv_buf_t::init(&req.bytes);
         let owned = bun_ptr::AliasableBox::from(req);
         let req = owned.as_ptr();
-        // SAFETY: caller contract; `req` stays put until `on_write` reclaims it.
+        // SAFETY: `req` stays put until `on_write` reclaims it, and `uv::Owned` frees an open pipe only once libuv has closed it.
         let rc = unsafe {
             (*req)
                 .req
-                .write(pipe.cast(), &(*req).buf, req, WriteReq::on_write)
+                .write(pipe.as_stream(), &(*req).buf, req, WriteReq::on_write)
         };
         if let Some(err) = rc.to_error(bun_sys::Tag::write) {
             scoped_log!(Chrome, "uv_write failed: {}", err);
@@ -913,15 +912,15 @@ unsafe extern "C" fn Bun__Chrome__writePipe(data: *const u8, len: usize) {
     // SAFETY: caller contract.
     let bytes = unsafe { bun_core::ffi::slice(data, len) };
     unreaped().with_taken(|unreaped| {
-        let Some(chrome) = unreaped.last().filter(|chrome| !chrome.retired) else {
+        let Some(chrome) = unreaped.last_mut().filter(|chrome| !chrome.retired) else {
             return; // Chrome already exited; the Exited event is on its way to C++
         };
-        let pipe = (chrome.pipes.cmd.as_ref()).expect("closed when it is retired");
+        let generation = chrome.generation;
+        let pipe = (chrome.pipes.cmd.as_mut()).expect("closed when it is retired");
         scoped_log!(Chrome, "write {} bytes", len);
         for chunk in bytes.chunks(u32::MAX as usize) {
-            // SAFETY: `pipe` belongs to `chrome`.
-            if !unsafe { WriteReq::submit(pipe.as_ptr(), chunk, chrome.generation) } {
-                PipeEvent::Closed.post(chrome.generation);
+            if !WriteReq::submit(pipe, chunk, generation) {
+                PipeEvent::Closed.post(generation);
                 return;
             }
         }

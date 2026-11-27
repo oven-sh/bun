@@ -137,25 +137,11 @@ macro_rules! new_store {
                         return None;
                     }
 
-                    // it's simpler to use a pointer cast, but as a sanity check, we also
-                    // try to compute the slice. Rust will report an out of bounds
-                    // panic if the null detection logic above is wrong
-                    if cfg!(debug_assertions) {
-                        let _ = &block.buffer[block.bytes_used as usize..][..size_of::<T>()];
-                    }
-
                     block.bytes_used =
                         BlockSize::try_from(start + size_of::<T>()).unwrap();
 
-                    // SAFETY: `start` is in-bounds (checked above) and aligned for T
-                    // (align_forward above). Buffer base alignment must be >= align_of::<T>()
-                    // — guaranteed by `repr(align(16))` on Block plus the
-                    // `LARGEST_ALIGN <= 16` const assert above.
-                    Some(unsafe {
-                        NonNull::new_unchecked(
-                            block.buffer.as_mut_ptr().add(start).cast::<T>(),
-                        )
-                    })
+                    let slot = &mut block.buffer[start..start + size_of::<T>()];
+                    Some(NonNull::from(slot).cast::<T>())
                 }
 
                 /// Heap-allocate a Block without placing the (large) buffer on the stack.
@@ -180,14 +166,7 @@ macro_rules! new_store {
                     while let Some(mut block) = it {
                         #[cfg(debug_assertions)]
                         {
-                            // SAFETY: poisoning a buffer that is being freed.
-                            unsafe {
-                                ::core::ptr::write_bytes(
-                                    block.buffer.as_mut_ptr(),
-                                    0xAA,
-                                    Block::SIZE,
-                                );
-                            }
+                            block.buffer = [MaybeUninit::new(0xAA); Block::SIZE];
                         }
                         it = block.next.take();
                         drop(block);
@@ -235,14 +214,7 @@ macro_rules! new_store {
                         // singly-linked list; walk it via `&mut` reborrows.
                         let mut it: Option<&mut Block> = store.head.as_deref_mut();
                         while let Some(block) = it {
-                            // SAFETY: poisoning; buffer is MaybeUninit<u8>.
-                            unsafe {
-                                ::core::ptr::write_bytes(
-                                    block.buffer.as_mut_ptr(),
-                                    0xAA,
-                                    Block::SIZE,
-                                );
-                            }
+                            block.buffer = [MaybeUninit::new(0xAA); Block::SIZE];
                             it = block.next.as_deref_mut();
                         }
                     }
@@ -269,9 +241,7 @@ macro_rules! new_store {
                     // would otherwise pay up front (see `init()` / the `head` doc).
                     if store.current.is_null() {
                         debug_assert!(store.head.is_none());
-                        let mut first = Block::new_boxed();
-                        store.current = &raw mut *first;
-                        store.head = Some(first);
+                        store.current = &raw mut **store.head.insert(Block::new_boxed());
                     }
 
                     // SAFETY: `current` is non-null (ensured just above, or by a
@@ -284,25 +254,17 @@ macro_rules! new_store {
 
                     // The active block is full — advance to the next one,
                     // allocating it if the chain ends here.
-                    let next_block: *mut Block = match &mut current.next {
+                    let next_block: &mut Block = match &mut current.next {
                         Some(next) => {
                             next.bytes_used = 0;
-                            &raw mut **next
+                            next
                         }
-                        slot @ None => {
-                            let mut new_block = Block::new_boxed();
-                            let ptr = &raw mut *new_block;
-                            *slot = Some(new_block);
-                            ptr
-                        }
+                        slot @ None => slot.insert(Block::new_boxed()),
                     };
-                    store.current = next_block;
+                    store.current = &raw mut *next_block;
 
-                    // SAFETY: a freshly created/reset block always has room for
-                    // at least one `T` (`assert!(LARGEST_ALIGN <= 16)` plus
-                    // `BLOCK_SIZE = LARGEST_SIZE * count * 2`).
-                    Block::try_alloc::<T>(unsafe { &mut *store.current })
-                        .unwrap_or_else(|| unreachable!())
+                    // An empty block has room: `BLOCK_SIZE = LARGEST_SIZE * count * 2`.
+                    Block::try_alloc::<T>(next_block).unwrap_or_else(|| unreachable!())
                 }
 
                 #[inline]
@@ -484,4 +446,27 @@ macro_rules! thread_local_ast_store {
             }
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::S;
+    use crate::stmt::stmt_store::{BLOCK_SIZE, Store};
+
+    #[test]
+    fn appends_fill_new_blocks_and_reuse_them_after_reset() {
+        let store = Store::init();
+        // SAFETY: `init` returns the only pointer to a live store.
+        let borrowed = unsafe { &mut *store };
+        let [first, second] = [(); 2].map(|()| {
+            let slots: Vec<_> = (0..=2 * BLOCK_SIZE / size_of::<S::Import>())
+                .map(|_| Store::append(borrowed, S::Import::default()))
+                .collect();
+            Store::reset(borrowed);
+            slots
+        });
+        assert_eq!(first, second);
+        // SAFETY: from `init`, and not used again.
+        unsafe { Store::destroy(store) };
+    }
 }

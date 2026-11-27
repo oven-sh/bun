@@ -1324,7 +1324,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     ) -> JsResult<bun_ptr::AliasableBox<Self>> {
         let base_url = config.base_url_string_for_joining(None);
 
-        let owner = bun_ptr::AliasableBox::new(Self {
+        let mut owner = bun_ptr::AliasableBox::new(Self {
             ref_count: bun_ptr::RefCount::init(),
             open_ref: Cell::new(None),
             global_this: std::ptr::from_ref(global),
@@ -1364,25 +1364,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             ws_package_handler: JsCell::new(None),
             _pin: core::marker::PhantomPinned,
         });
-        let server = owner.as_ptr();
 
         // The packed `AnyServer` is a pure function of the (now-stable) heap
         // address and the const variant tag; cache it so the per-request
         // `node:http` prologue is a plain field load instead of a tag match +
         // `TaggedPtr::init`.
-        // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
-        unsafe {
-            (*server).any_server_packed = AnyServer::from(server.cast_const()).to_packed() as usize;
-        }
+        owner.any_server_packed = AnyServer::from(owner.as_ptr().cast_const()).to_packed() as usize;
 
         // The bake options (`root`, and the arena the transpilers live in) are in
-        // `(*server).config.bake` for the server's lifetime. Initialise
+        // `owner.config.bake` for the server's lifetime. Initialise
         // DevServer AFTER the server box exists so the `Options::arena` borrow
         // points into the heap-allocated config rather than the caller's
         // (since-moved) stack slot. On Err, dropping `owner` frees the
         // half-built server.
-        // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
-        unsafe { &*server }.init_dev_server()?;
+        owner.init_dev_server()?;
 
         if SSL {
             bun_analytics::features::https_server.fetch_add(1, Ordering::Relaxed);

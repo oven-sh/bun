@@ -15,6 +15,7 @@ use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU64, Ordering};
 
 use bun_core::scoped::{ScopedCell as _, ScopedFlag as _};
 use bun_io as Async;
+use bun_ptr::VecCellExt as _;
 use bun_uws as uws;
 
 use crate::js_promise::Status as PromiseStatus;
@@ -1032,8 +1033,7 @@ impl EventLoop {
 
     /// How many immediates wait for the next [`tick_immediate_tasks`](Self::tick_immediate_tasks).
     pub fn immediate_task_count(&self) -> usize {
-        // SAFETY: a read of the length.
-        unsafe { &*self.immediate_tasks.as_ptr() }.len()
+        self.immediate_tasks.len()
     }
 
     /// See [`EventLoop::yield_tasks`].
@@ -1046,8 +1046,7 @@ impl EventLoop {
     }
 
     pub(crate) fn has_yield_tasks(&self) -> bool {
-        // SAFETY: a read of the length.
-        !unsafe { &*self.yield_tasks.as_ptr() }.is_empty() || self.owes_checkpoint.get()
+        self.yield_tasks.len() > 0 || self.owes_checkpoint.get()
     }
 
     /// See [`EventLoop::outermost_tasks`]. For a task that is running, so the queue is open.
@@ -1059,8 +1058,7 @@ impl EventLoop {
     /// `auto_tick`, before it polls: last iteration's yielded tasks become
     /// runnable. Returns whether there are any, so the poll does not block.
     pub fn promote_yield_tasks(&self, is_nested: bool) -> bool {
-        // SAFETY: a read of the length.
-        if !is_nested && !unsafe { &*self.outermost_tasks.as_ptr() }.is_empty() {
+        if !is_nested && self.outermost_tasks.len() > 0 {
             // SAFETY: `extend` only allocates.
             unsafe { &mut *self.yield_tasks.as_ptr() }.extend(self.outermost_tasks.take());
         }
@@ -1285,22 +1283,6 @@ impl EventLoop {
 }
 
 impl EventLoop {
-    /// # Safety
-    /// `done` must point to a live `bool`; C++ writes `true` through it from a
-    /// callback inside `tick()`, so it cannot be a Rust `&mut` (would alias).
-    pub unsafe fn tick_while_paused(&self, done: *const bool) {
-        // SAFETY: see fn contract — `done` is a live FFI bool written by C++.
-        while !unsafe { done.read_volatile() } {
-            #[cfg(not(windows))]
-            self.usockets_loop().tick();
-            #[cfg(windows)]
-            // SAFETY: `uv_loop()` is live for this loop's lifetime; JS thread.
-            unsafe {
-                (*self.uv_loop()).tick()
-            };
-        }
-    }
-
     /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
     /// `context`: as for [`run_callback`](Self::run_callback).
     /// `after_call` runs after `callback` returns and before microtasks drain.
@@ -1343,15 +1325,9 @@ impl EventLoop {
     #[cfg(windows)]
     fn hold_forever_poll(&self, loop_: &'static uws::Loop) {
         if self.forever_timer.get().is_none() {
-            let this = core::ptr::from_ref(self)
-                .cast_mut()
-                .cast::<core::ffi::c_void>();
-            let mut t = uws::Timer::create(loop_, this);
+            let mut t = uws::Timer::create(loop_);
             // SAFETY: t is a fresh non-null timer handle
-            unsafe {
-                t.as_mut()
-                    .set(this, Some(noop_forever_timer), 1000 * 60 * 4, 1000 * 60 * 4)
-            };
+            unsafe { t.as_mut() }.set(Some(noop_forever_timer), 1000 * 60 * 4, 1000 * 60 * 4);
             self.forever_timer.set(Some(t));
         }
     }

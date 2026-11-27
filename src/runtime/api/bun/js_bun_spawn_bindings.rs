@@ -1195,10 +1195,9 @@ fn spawn_maybe_sync(
         exited_due_to_maxbuf: Cell::new(None),
     });
     let subprocess_ptr = subprocess_ref.as_ptr();
-    // SAFETY: `subprocess_ref`, and then the wrapper that takes it, outlive this borrow.
-    let subprocess = unsafe { &*subprocess_ptr };
+    let subprocess = &*subprocess_ref;
     #[cfg(windows)]
-    SubprocessT::record_stdio_pipe_ownership(subprocess_ptr);
+    subprocess_ref.record_stdio_pipe_ownership();
     let subprocess_nn = subprocess_ref.as_non_null();
 
     // Address-dependent fields, filled now that `subprocess` has a stable address.
@@ -1349,15 +1348,16 @@ fn spawn_maybe_sync(
         }
     }
 
-    let (out, _sync_wrapper) = if is_sync {
-        (JSValue::ZERO, Some(SyncWrapper(subprocess_ref)))
+    let (sync_wrapper, wrapper);
+    let (out, subprocess) = if is_sync {
+        sync_wrapper = SyncWrapper(subprocess_ref);
+        (JSValue::ZERO, &*sync_wrapper.0)
     } else {
-        let wrapper = Subprocess::js::wrap(subprocess_ref, cx.global());
+        wrapper = Subprocess::js::wrap(subprocess_ref, cx.global());
         wrapper.set_js_ref_weak();
-        let out = wrapper.to_js();
         // Immediately upgrade to strong if there's pending activity to prevent premature GC
-        subprocess.update_has_pending_activity();
-        (out, None)
+        wrapper.update_has_pending_activity();
+        (wrapper.to_js(), &*wrapper)
     };
 
     if let Some(ipc_data) = subprocess.ipc() {

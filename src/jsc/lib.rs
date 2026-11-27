@@ -131,8 +131,6 @@ pub mod common_strings;
 pub mod console_object;
 #[path = "Counters.rs"]
 pub mod counters;
-#[path = "DecodedJSValue.rs"]
-pub mod decoded_js_value;
 #[path = "DOMURL.rs"]
 pub mod dom_url;
 #[path = "EncodedSlice.rs"]
@@ -341,7 +339,6 @@ impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
 }
 
 pub use self::counters::Counters;
-pub use self::decoded_js_value::DecodedJSValue;
 pub use self::js_array::JSArray;
 pub use self::js_ref::{HasJsRef, JsCellRefExt, JsRef};
 pub use self::string_builder::StringBuilder;

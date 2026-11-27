@@ -236,7 +236,6 @@ CPP_DECL void JSC__VM__setStartupJITDeferralScale(JSC::VM* arg0, double scale);
 CPP_DECL void JSC__VM__drainMicrotasks(JSC::VM* arg0);
 CPP_DECL bool JSC__VM__executionForbidden(JSC::VM* arg0);
 CPP_DECL size_t JSC__VM__heapSize(JSC::VM* arg0);
-CPP_DECL void JSC__VM__holdAPILock(JSC::VM* arg0, void* arg1, void(* ArgFn2)(void* arg0));
 CPP_DECL bool JSC__VM__isEntered(JSC::VM* arg0);
 CPP_DECL void JSC__VM__notifyNeedTermination(JSC::VM* arg0);
 CPP_DECL void JSC__VM__releaseWeakRefs(JSC::VM* arg0);

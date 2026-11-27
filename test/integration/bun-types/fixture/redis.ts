@@ -336,6 +336,7 @@ declare const either: { buffer: boolean | undefined };
 declare const anything: any;
 declare const names: string[];
 expectType(redis.get("k", { buffer: true })).is<Promise<Bytes | null>>();
+expectType(redis.get("k", { buffer: true })).extends<ReturnType<typeof redis.getBuffer>>();
 expectType(redis.get("k", { buffer: false })).is<Promise<string | null>>();
 expectType(redis.get("k", either)).is<Promise<string | Bytes | null>>();
 expectType(redis.hgetall("k", bytes)).is<Promise<Record<string, Bytes>>>();

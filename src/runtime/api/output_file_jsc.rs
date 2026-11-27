@@ -6,27 +6,32 @@
 //! and `node::types::{PathLike, PathOrFileDescriptor}` — all `bun_runtime`
 //! types. `bun_runtime` already depends on `bun_bundler`, so there is no cycle.
 
-use bun_jsc::{JSGlobalObject, JSValue, JsClass as _};
+use core::cell::Cell;
+
+use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsClass as _};
 
 use bun_bundler::options_impl::LoaderExt as _;
 use bun_bundler::output_file::{OutputFile, Value as OutputFileValue};
 use bun_core::Output;
 use bun_http_types::MimeType::MimeType;
+use bun_ptr::RefPtr;
 
 use crate::api::js_bundler::BuildArtifact;
 use crate::node::types::{PathLike, PathOrFileDescriptor};
 use crate::webcore::Blob;
-use crate::webcore::blob::store::StoreExt as _;
-use crate::webcore::blob::{SizeType as BlobSizeType, Store as BlobStore};
+use crate::webcore::blob::store::{Bytes, Data, StoreExt as _};
+use crate::webcore::blob::{BlobContentType, SizeType as BlobSizeType, Store as BlobStore};
 
 #[inline]
-fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
-    blob.content_type
-        .set(crate::webcore::blob::BlobContentType::from_mime(&mime));
-    if let Some(store) = blob.store.get().as_ref() {
-        // SAFETY: `store` is the freshly-allocated backing store uniquely owned
-        // by `blob`; no other borrow exists yet.
-        unsafe { (*store.as_ptr()).mime_type = mime };
+fn init_blob_with_mime(bytes: Box<[u8]>, mime: MimeType, global_this: &JSGlobalObject) -> Blob {
+    Blob {
+        size: Cell::new(bytes.len() as BlobSizeType),
+        content_type: JsCell::new(BlobContentType::from_mime(&mime)),
+        store: JsCell::new((!bytes.is_empty()).then(|| {
+            let data = Data::Bytes(Bytes::init(bytes.into_vec()));
+            RefPtr::new(BlobStore::new(data, mime))
+        })),
+        ..Blob::init_empty(global_this)
     }
 }
 
@@ -102,10 +107,7 @@ impl OutputFileJsc for OutputFile {
                 .to_js(global_object)
             }
             OutputFileValue::Buffer { bytes } => {
-                let bytes_len = bytes.len();
-                let mut blob = Blob::init(bytes.into_vec(), global_object);
-                set_blob_mime(&mut blob, mime);
-                blob.size.set(bytes_len as BlobSizeType);
+                let blob = init_blob_with_mime(bytes, mime, global_object);
 
                 let path: Box<[u8]> = match owned_pathname {
                     Some(p) => Box::from(p),
@@ -159,13 +161,7 @@ impl OutputFileJsc for OutputFile {
                 )?;
                 Ok(Blob::init_with_store(file_blob, global_this))
             }
-            OutputFileValue::Buffer { bytes } => {
-                let bytes_len = bytes.len();
-                let mut blob = Blob::init(bytes.into_vec(), global_this);
-                set_blob_mime(&mut blob, mime);
-                blob.size.set(bytes_len as BlobSizeType);
-                Ok(blob)
-            }
+            OutputFileValue::Buffer { bytes } => Ok(init_blob_with_mime(bytes, mime, global_this)),
             OutputFileValue::Noop => {
                 // SAFETY: filtered out by the early-out match above.
                 unreachable!()

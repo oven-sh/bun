@@ -1124,12 +1124,10 @@ impl static_pipe_writer::Source for webcore::AnyBlob {
 /// the slots empty) instead of anyone closing them twice.
 #[cfg(windows)]
 impl Subprocess<'_> {
-    pub(crate) fn record_stdio_pipe_ownership(this: *mut Self) {
-        // SAFETY: `this` is the live boxed Subprocess (stable address).
-        let me = unsafe { &*this };
-        for item in me.stdio_pipes.get().iter() {
+    pub(crate) fn record_stdio_pipe_ownership(self: &RefPtr<Self>) {
+        for item in self.stdio_pipes.get().iter() {
             if let StdioResult::Buffer(buffer) = item {
-                buffer.set_owner(this.cast(), Self::stop_for_vm_teardown);
+                buffer.set_owner(self.as_ptr().cast(), Self::stop_for_vm_teardown);
             }
         }
     }

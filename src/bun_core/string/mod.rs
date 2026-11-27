@@ -146,7 +146,7 @@ unsafe extern "C" {
 /// `unsigned`. A `u32` here would truncate on 64-bit and (worse) shift the
 /// stack/register layout for the callee on Win64 where `size_t` ≠ `unsigned`.
 pub(crate) type ExternalStringImplFreeFunction<Ctx> =
-    extern "C" fn(ctx: Ctx, buffer: *mut core::ffi::c_void, len: usize);
+    extern "C" fn(ctx: &Ctx, buffer: *mut core::ffi::c_void, len: usize);
 
 impl String {
     pub const EMPTY: Self = Self {
@@ -307,48 +307,21 @@ impl String {
     /// borrowed (not copied). If `bytes.len() > max_length()`, `callback` is
     /// invoked immediately and a `dead` string is returned.
     ///
-    /// `Ctx` must be a pointer-sized type (raw pointer or `&T`); enforced by
-    /// the const-assert below to keep the C-ABI cast sound.
-    ///
-    /// SAFETY: the caller keeps `bytes` valid and unchanged until `callback` runs.
+    /// SAFETY: the caller keeps `bytes` valid and unchanged until `callback` runs, and `ctx` valid until it returns.
     pub unsafe fn create_external<Ctx>(
         bytes: &[u8],
-        ctx: Ctx,
+        ctx: &Ctx,
         callback: ExternalStringImplFreeFunction<Ctx>,
     ) -> Self {
         use core::ffi::c_void;
-        // `Ctx` must be a pointer-sized, pointer-aligned handle.
-        struct AssertPtrSized<C>(core::marker::PhantomData<C>);
-        impl<C> AssertPtrSized<C> {
-            const OK: () = {
-                assert!(core::mem::size_of::<C>() == core::mem::size_of::<*mut c_void>());
-                // The bit-reinterpret below reads `*mut c_void` out of a stack
-                // slot aligned for `Ctx`; rule out a `Ctx` like `[u8; 8]`
-                // (align 1) which would make that read under-aligned.
-                assert!(core::mem::align_of::<C>() >= core::mem::align_of::<*mut c_void>());
-            };
-        }
-        let () = AssertPtrSized::<Ctx>::OK;
         debug_assert!(!bytes.is_empty());
         if bytes.len() > Self::max_length() {
             callback(ctx, bytes.as_ptr().cast_mut().cast::<c_void>(), bytes.len());
             return Self::DEAD;
         }
-        // The const-assert above only checks size/alignment, so an owning
-        // pointer-sized `Ctx` (e.g.
-        // `Box<T>`) would otherwise be dropped here and later double-freed by
-        // the WTF finalizer. Ownership transfers to the external string;
-        // suppress the local drop.
-        let ctx = core::mem::ManuallyDrop::new(ctx);
-        // SAFETY: Ctx is pointer-sized and pointer-aligned (const-asserted
-        // above); read the bits as `*mut c_void`.
-        let ctx_erased: *mut c_void = unsafe {
-            core::ptr::from_ref::<Ctx>(&*ctx)
-                .cast::<*mut c_void>()
-                .read()
-        };
+        let ctx_erased = core::ptr::from_ref(ctx).cast_mut().cast::<c_void>();
         let cb_erased: Option<extern "C" fn(*mut c_void, *mut c_void, usize)> =
-            // SAFETY: same ABI; first param erased per the const-assert above.
+            // SAFETY: same ABI: `&Ctx` is a thin pointer, and C++ calls it with `ctx_erased`.
             Some(unsafe { crate::cast_fn_ptr::<
                 ExternalStringImplFreeFunction<Ctx>,
                 extern "C" fn(*mut c_void, *mut c_void, usize),

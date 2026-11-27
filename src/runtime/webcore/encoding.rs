@@ -6,7 +6,6 @@ use crate::webcore::jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_core::String as BunString;
 use bun_core::strings;
 use bun_simdutf_sys::simdutf as bun_simdutf;
-use core::mem::MaybeUninit;
 
 // `bun_core::String` exposes safe `Vec<u8>`/`Vec<u16>` → WTF::ExternalStringImpl
 // constructors; delegate so the FFI ownership-transfer invariant is enforced
@@ -706,17 +705,10 @@ fn construct_from_u8<const ENCODING: u8>(input: &[u8]) -> Vec<u8> {
         Encoding::Ucs2 | Encoding::Utf16le => {
             // Each Latin-1 byte widens to one native-endian u16 code unit
             // (`copy_latin1_into_utf16` is exactly that loop). Write the bytes
-            // directly into a `Vec<u8>` so we never depend on an allocator-
+            // directly into byte pairs so we never depend on an allocator-
             // layout-dependent `Vec<u16> → Vec<u8>` header reinterpret.
-            let out_len = input.len() * 2;
-            let mut to: Vec<u8> = Vec::with_capacity(out_len);
-            let (pairs, _) = to.spare_capacity_mut().as_chunks_mut::<2>();
-            for (out, &b) in pairs.iter_mut().zip(input) {
-                *out = u16::from(b).to_ne_bytes().map(MaybeUninit::new);
-            }
-            // SAFETY: the loop wrote one pair per input byte, i.e. all `out_len` reserved bytes.
-            unsafe { to.set_len(out_len) };
-            to
+            let pairs: Vec<[u8; 2]> = input.iter().map(|&b| u16::from(b).to_ne_bytes()).collect();
+            pairs.into_flattened()
         }
 
         Encoding::Hex => construct_from_hex(input),

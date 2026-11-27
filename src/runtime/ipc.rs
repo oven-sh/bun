@@ -469,7 +469,7 @@ mod json {
             // SAFETY: `json_data` and the flag outlive `s`, and the check below panics if anything kept a ref past `s`.
             // .dead if `json_data` exceeds max length
             let s = unsafe {
-                BunString::create_external::<&Cell<bool>>(
+                BunString::create_external(
                     json_data,
                     &was_ascii_string_freed,
                     json_ipc_data_string_free_cb,

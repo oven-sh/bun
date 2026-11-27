@@ -18,11 +18,10 @@ use crate::Error;
 /// `is_ascii` check (no full UTF-8 walk).
 #[inline]
 fn phc_ascii_str(s: &[u8]) -> Result<&str, Error> {
-    if !s.is_ascii() {
-        return Err(crate::Error::InvalidEncoding);
-    }
-    // SAFETY: every byte < 0x80 ⇒ valid UTF-8.
-    Ok(unsafe { core::str::from_utf8_unchecked(s) })
+    let Some(ascii) = s.as_ascii() else {
+        return Err(Error::InvalidEncoding);
+    };
+    Ok(ascii.as_str())
 }
 
 /// Output string encoding.

@@ -1883,12 +1883,12 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `session_buffer` fault rule simulates the allocation throwing: that
     /// failure needs JSC heap exhaustion, so it is unreachable from a test
     /// without injection.
-    fn create_dispatch_buffer(global: &JSGlobalObject, len: usize) -> JsResult<JSValue> {
+    fn create_dispatch_buffer(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
         #[cfg(socket_fault_injection)]
         if bun_uws_sys::fault_inject::fails(bun_uws_sys::fault_inject::SESSION_BUFFER) {
             return Err(global.throw_out_of_memory());
         }
-        JSValue::create_buffer_from_length(global, len)
+        jsc::ArrayBuffer::create_buffer(global, bytes)
     }
 
     /// A new resumable TLS session arrived (the peer's NewSessionTicket was
@@ -1920,14 +1920,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
         let global = handlers.global_object;
         let this_value = self.get_this_value(&global);
-        let buffer = Self::create_dispatch_buffer(&global, session.len())?;
-        if let Some(ab) = buffer.as_array_buffer(&global) {
-            // SAFETY: `ab.ptr` points to a freshly-created `session.len()`-byte
-            // JS buffer kept alive on the stack; `session` is valid for its length.
-            unsafe {
-                core::ptr::copy_nonoverlapping(session.as_ptr(), ab.ptr, session.len());
-            }
-        }
+        let buffer = Self::create_dispatch_buffer(&global, session)?;
         let result = match callback.call(&global, this_value, &[this_value, buffer]) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
@@ -1962,14 +1955,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
         let global = handlers.global_object;
         let this_value = self.get_this_value(&global);
-        let buffer = Self::create_dispatch_buffer(&global, line.len())?;
-        if let Some(ab) = buffer.as_array_buffer(&global) {
-            // SAFETY: `ab.ptr` points to a freshly-created `line.len()`-byte
-            // JS buffer kept alive on the stack; `line` is valid for its length.
-            unsafe {
-                core::ptr::copy_nonoverlapping(line.as_ptr(), ab.ptr, line.len());
-            }
-        }
+        let buffer = Self::create_dispatch_buffer(&global, line)?;
         let result = match callback.call(&global, this_value, &[this_value, buffer]) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),

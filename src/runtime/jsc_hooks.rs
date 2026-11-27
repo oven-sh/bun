@@ -2532,16 +2532,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 // `globalThis.wasmSourceBytes` so the wasi runner avoids
                 // reading the file twice.
                 if let Some(source) = args.virtual_source {
-                    // Spec — `DecodedJSValue{ .ptr = globalThis }.encode()`:
-                    // a JSGlobalObject is a JSCell, so its pointer encodes
-                    // directly as a JSValue.
-                    let global_value = bun_jsc::DecodedJSValue {
-                        u: bun_jsc::decoded_js_value::EncodedValueDescriptor {
-                            ptr: core::ptr::from_ref(global_object).cast_mut().cast(),
-                        },
-                    }
-                    .encode();
-                    global_value.put(
+                    global_object.to_js_value().put(
                         global_object,
                         b"wasmSourceBytes",
                         bun_jsc::ArrayBuffer::create_uint8_array(global_object, &source.contents)?,

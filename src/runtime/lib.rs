@@ -6,6 +6,7 @@
 #![feature(thread_local)]
 #![feature(adt_const_params)]
 #![feature(arbitrary_self_types)]
+#![feature(ascii_char)]
 #![feature(core_io_borrowed_buf, borrowed_buf_init)]
 #![feature(vec_fallible_shrink)]
 // The unit-test harness leaves out `bin_entry` (below), the root that keeps

@@ -3070,7 +3070,7 @@ fn codegen_place_to_expression(cx: &mut Context, place: &Place) -> Result<Expr, 
     let ident = &cx.env.identifiers[place.identifier.0 as usize];
     if let Some(tmp) = cx.temp.get(ident.declaration_id) {
         if let Some(val) = *tmp {
-            // `X.n += 1` prints `X` twice, and a property read takes a use away.
+            // `X.n += 1` prints `X` twice, so it is two uses.
             if let ExprData::EImportIdentifier(import) = val.data
                 && !cx.cg.printed_imports.insert(ident.declaration_id)
             {

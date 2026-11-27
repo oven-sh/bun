@@ -500,10 +500,11 @@ describe("bundler", () => {
           return typeof Parts.otherGapOfThis + alias.otherGapOfThis() + alias.otherGapOfThis?.() + alias.otherGapOfThis\`\`;
         }
         export function Assigned() {
-          useEffect(() => {});
-          try {
-            Parts.count += 1;
-          } catch {}
+          useEffect(() => {
+            try {
+              Parts.count += 1;
+            } catch {}
+          });
           return Parts.count;
         }
         console.log(Whole({ name: "a" }), Optional({ name: "b" }), ComputedThis({}), AliasedThis({}), Assigned({}));
@@ -519,7 +520,7 @@ describe("bundler", () => {
       "/node_modules/react/compiler-runtime.js": `
         exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));
       `,
-      "/node_modules/react/index.js": `exports.useEffect = () => {};`,
+      "/node_modules/react/index.js": `exports.useEffect = effect => effect();`,
       "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => type(props);`,
       "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => type(props);`,
       "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
@@ -530,45 +531,92 @@ describe("bundler", () => {
     run: { stdout: "A6 B-undefined - function--- 1" },
   });
 
-  for (const [name, write] of Object.entries({
-    Compound: "Parts.count += 1",
-    Update: "Parts.count++",
-    Delete: "delete Parts.count",
-    Optional: "console.assert(Parts?.count)",
-  })) {
-    itBundled(`react-compiler/NamespaceStaysWhereItIsNotPlainlyRead-${name}`, {
+  for (const [name, write, printed] of [
+    ["Compound", "Parts.count += 1", "exports_parts.count = exports_parts.count + 1"],
+    ["Update", "Parts.count++", "exports_parts.count = exports_parts.count + 1"],
+    ["Delete", "delete Parts.count", "delete exports_parts.count"],
+    ["Optional", "console.assert(Parts?.count)", "exports_parts?.count"],
+  ]) {
+    for (const place of ["Effect", "Render"]) {
+      itBundled(`react-compiler/NamespaceStaysWhereItIsNotPlainlyRead-${name}-${place}`, {
+        files: {
+          "/entry.jsx": /* jsx */ `
+            import { useEffect } from "react";
+            import Parts from "./parts";
+            export function Written({ name }) {
+              ${place === "Effect" ? `useEffect(() => { ${write}; });` : `useEffect(() => {}); ${write};`}
+              return <b>{name}</b>;
+            }
+            console.log(Written({ name: "a" }));
+          `,
+          "/parts/index.js": `export * from "./parts.js"; export * as default from ".";`,
+          "/parts/parts.js": `export let count = 1;`,
+          "/node_modules/react/compiler-runtime.js": `
+            exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));
+          `,
+          "/node_modules/react/index.js": `exports.useEffect = effect => effect();`,
+          "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => props.children;`,
+          "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => props.children;`,
+          "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        },
+        reactCompiler: true,
+        target: "browser",
+        backend: "api",
+        run: { stdout: "a" },
+        onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          expect(out).toContain("__export(exports_parts");
+          if (place === "Effect") {
+            expect(out).toContain(printed);
+          }
+          // The compiler gives up on a component that writes to a global in render.
+          expect(out.includes("memo_cache_sentinel")).toBe(place === "Effect" || name === "Optional");
+        },
+      });
+    }
+  }
+
+  for (const [name, lib, stdout] of [
+    [
+      "ESModule",
+      `export const GAP = "-"; export function gapOfThis() { return this?.GAP; } export function tagOfThis() { return this?.GAP; }`,
+      "undefined undefined-",
+    ],
+    [
+      "LiftedCommonJS",
+      `exports.GAP = "-"; exports.gapOfThis = function () { return this?.GAP; }; exports.tagOfThis = function () { return this?.GAP; };`,
+      "- --",
+    ],
+  ]) {
+    itBundled(`react-compiler/ThisOfCalledNamespaceMember-${name}`, {
       files: {
         "/entry.jsx": /* jsx */ `
-          import { useEffect } from "react";
-          import Parts from "./parts";
-          export function Written({ name }) {
-            useEffect(() => {});
-            ${write};
-            return <b>{name}</b>;
+          import { Lib } from "./barrel.js";
+          export function Row({ name }) {
+            return <b title={name}>{Lib.gapOfThis() + " " + Lib.tagOfThis\`\` + Lib.GAP}</b>;
           }
-          try {
-            Written({ name: "a" });
-          } catch (error) {
-            if (error instanceof ReferenceError) throw error;
-          }
-          console.log("ran");
+          console.log(Row({ name: "a" }));
         `,
-        "/parts/index.js": `export * from "./parts.js"; export * as default from ".";`,
-        "/parts/parts.js": `export const count = 1;`,
+        // Not `import * as Lib`, whose members are imports of their own.
+        "/barrel.js": `export * as Lib from "./lib.js";`,
+        "/lib.js": lib,
         "/node_modules/react/compiler-runtime.js": `
           exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));
         `,
-        "/node_modules/react/index.js": `exports.useEffect = () => {};`,
-        "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => type(props);`,
-        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => type(props);`,
+        "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => props.children;`,
+        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => props.children;`,
         "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
       },
       reactCompiler: true,
       target: "browser",
       backend: "api",
-      run: { stdout: "ran" },
+      run: { stdout },
       onAfterBundle(api) {
-        expect(api.readFile("/out.js")).toContain("__export(exports_parts");
+        const out = api.readFile("/out.js");
+        expect(out).toContain("memo_cache_sentinel");
+        // Bound to the export of an ES module, which drops `this`. A lifted CommonJS module keeps it.
+        expect(out.includes("exports_lib.gapOfThis()")).toBe(name === "LiftedCommonJS");
+        expect(out).not.toContain("exports_lib.GAP");
       },
     });
   }

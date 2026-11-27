@@ -573,28 +573,26 @@ const findsNoEvent = new Set([
 // route, not by a verdict. Every other Bun builds each of these routes alone as well, and so shows that the build finds an event for each.
 // AOT_EVERY_ROUTE_ALONE=1 | 0 asks for either anywhere. These lists are made by hand.
 const everyRouteAlone = process.env.AOT_EVERY_ROUTE_ALONE ? process.env.AOT_EVERY_ROUTE_ALONE === "1" : !isASAN;
-const reportedAlike: string[][] = everyRouteAlone
-  ? []
-  : [
-      [
-        "module require method",
-        "require of a file",
-        "require after resolve sync",
-        "import of a file",
-        "import of a data url",
-        "import of a blob url",
-        "import of an http url",
-        "require of vm under a computed name",
-        "require of an addon",
-        "bun jsc under a computed name",
-        "node test under a computed name",
-      ],
-      ["module extensions", "addon extension handler", "addon extension handler under a computed name"],
-      ["process get builtin module vm", "process get builtin module module", "builtin module vm run in new context"],
-      ["build then import", "build plugin from a file"],
-      ["module load", "module load of vm"],
-      ["module create require", "create require of vm"],
-    ];
+const reportedAlike = [
+  [
+    "module require method",
+    "require of a file",
+    "require after resolve sync",
+    "import of a file",
+    "import of a data url",
+    "import of a blob url",
+    "import of an http url",
+    "require of vm under a computed name",
+    "require of an addon",
+    "bun jsc under a computed name",
+    "node test under a computed name",
+  ],
+  ["module extensions", "addon extension handler", "addon extension handler under a computed name"],
+  ["process get builtin module vm", "process get builtin module module", "builtin module vm run in new context"],
+  ["build then import", "build plugin from a file"],
+  ["module load", "module load of vm"],
+  ["module create require", "create require of vm"],
+];
 
 /** `file`: as the build prints it. Undefined: the event lies nowhere in the program. */
 type Event = { file: string | undefined };
@@ -609,11 +607,14 @@ const all = Object.entries(routes).flatMap(([group, members]) =>
     file: `${name.replaceAll(" ", "-")}.${route.extension ?? "js"}`,
   })),
 );
-/** The routes that are files of a program of several. */
-const inCompany = [...findsNoEvent, ...reportedAlike.flat()];
-for (const name of inCompany)
-  if (!all.some(route => route.name === name) || inCompany.indexOf(name) !== inCompany.lastIndexOf(name))
+const listed = [...findsNoEvent, ...reportedAlike.flat()];
+for (const name of listed)
+  if (!all.some(route => route.name === name) || listed.indexOf(name) !== listed.lastIndexOf(name))
     throw new Error(`"${name}" is no route, or is listed twice`);
+/** The groups that are a program each with this Bun. */
+const builtInCompany: string[][] = everyRouteAlone ? [] : reportedAlike;
+/** The routes that are files of a program of several. */
+const inCompany = [...findsNoEvent, ...builtInCompany.flat()];
 const textOf = (route: Route) =>
   (route.extension === "mjs"
     ? `import { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);\n`
@@ -727,7 +728,7 @@ export function codeTheCompilerNeverSaw() {
   describe("code the compiler never saw, in a program of routes that the build reports alike", () => {
     // bun test keeps as many tests under way as --max-concurrency says, in the order of their declaration, and the first test of a program builds it. So the
     // first route of every program comes first, then the second of each: the builds run beside one another.
-    const inTurns = reportedAlike
+    const inTurns = builtInCompany
       .flatMap(names => {
         const members = names.map(name => all.find(route => route.name === name)!);
         const program = programOf(members);

@@ -215,8 +215,8 @@ console.log(JSON.stringify({ exitCode: r.exitCode }));
 // detached Cmd a second time. The child just has to stay alive long enough for
 // the (faked) EAGAIN to be plausible; the shell kills it once the Cmd finishes.
 //
-// .quiet() keeps the CapturedWriter dead so the second signal comes straight
-// from the retried register_poll's on_reader_error.
+// .quiet() leaves the CapturedWriter with no writer, so the second signal comes
+// straight from the retried register_poll's on_reader_error.
 const QUIET_CHUNK_FIXTURE = /* js */ `
 import { $ } from "bun";
 const r = await $\`sleep 5\`.quiet().nothrow();

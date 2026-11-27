@@ -89,18 +89,15 @@ export const cases: Case[] = [
   heavy(compiled("a chain of 100 properties", () => wideShapes["rc-dots.jsx"](100))),
   tooDeep("a chain of 20,000 properties", () => wideShapes["rc-dots.jsx"](20_000)),
   { ...compiled("", () => components(1_000)), name: "1,000 components", isHeavy: true },
+  // Up to oxlint 1.94, react/rule-suppression reported each comment for each component: 3,600 and 160,000 reports.
+  // oxlint 1.95 doesn't look for the comments, and compiles the components.
   {
-    ...compiled("", () => wideShapes["rc-suppressions-and-components.jsx"](60), { "react/rule-suppression": 3_600 }),
-    name: "60 comments that disable rules-of-hooks, each reported for each of 60 components",
+    ...compiled("", () => wideShapes["rc-suppressions-and-components.jsx"](60)),
+    name: "60 comments that disable rules-of-hooks and 60 components",
   },
   {
-    // 160,000 reports.
+    ...compiled("", () => wideShapes["rc-suppressions-and-components.jsx"](400)),
     name: "400 comments that disable rules-of-hooks and 400 components",
     isHeavy: true,
-    file: "a.jsx",
-    text: () => wideShapes["rc-suppressions-and-components.jsx"](400),
-    rules,
-    matches: /^a\.jsx:400:1: React rule suppression prevents optimization /m,
-    exitCode: 1,
   },
 ];

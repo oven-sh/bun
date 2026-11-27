@@ -1,4 +1,4 @@
-use crate::bun::{chain_start, compared_with, is_named_code};
+use crate::bun::{chain_start, compared_with, has_word, is_named_code, is_word};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -67,14 +67,17 @@ impl Rule for NoLegacyFetchErrorCodes {
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
-        let fetches = file.exprs_of_kind(ExprTag::Call).filter_map(Expr::callee).any(is_fetch);
-        // `Bun.S3Client` still has the old code.
-        let uses_s3 = file.mentions_any(&["S3Client", "S3Error", "S3File", "s3"]) || strings::contains(file.text(), b"s3://");
         let literals = |code: &'static str| {
             file.exprs_of_kind(ExprTag::String).filter(move |it| it.as_string().is_some_and(|it| it.is(code)))
         };
+        if literals(OLD).next().is_none() {
+            return;
+        }
+        let fetches = file.exprs_of_kind(ExprTag::Call).filter_map(Expr::callee).any(is_fetch);
+        // `Bun.S3Client` still has the old code.
+        let uses_s3 = has_word(file, &["S3Client", "S3Error", "S3File", "s3"]) || strings::contains(file.text(), b"s3://");
         // A file that has the code anywhere else, as in a type or a key, may make such errors itself.
-        let is_old = |it: &Token| matches!(it.text(), [b'"' | b'\'' | b'`', code @ .., _] | code if code == OLD.as_bytes());
+        let is_old = |it: &Token| is_word(it, &[OLD]);
         if uses_s3 && !fetches || literals(OLD).filter(|it| is_check(*it)).count() != file.tokens().filter(is_old).count() {
             return;
         }

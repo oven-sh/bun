@@ -1,4 +1,4 @@
-use crate::bun::{compared_with, is_named_code};
+use crate::bun::{compared_with, is_named_code, is_word, loads_ws};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -10,6 +10,8 @@ const CAN_BE_1005: &Message = &Message::new(
     "`close()` without a code reports 1005, not 1000. Call `close(1000)`, or accept 1005 here.",
 );
 
+const NAMES: [&str; 3] = ["WebSocket", "websocket", "WebSocketServer"];
+
 impl Rule for WebsocketCloseCode {
     const META: Meta = Meta::plugin(Plugin::Bun, "websocket-close-code", Kind::Problem);
     const ON: On = On::new().finish();
@@ -20,14 +22,15 @@ impl Rule for WebsocketCloseCode {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions_any(&["WebSocket", "websocket", "WebSocketServer"]).then_some(())
+        file.has_exprs([ExprTag::Number]).then_some(())
     }
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
         let numbers = |value: f64| file.exprs_of_kind(ExprTag::Number).filter(move |it| it.as_number() == Some(value));
         let mut checks = numbers(1000.0).filter(|it| compared_with(*it).is_some_and(is_named_code)).peekable();
-        if checks.peek().is_none() || numbers(1005.0).next().is_some() {
+        let names_a_socket = || file.tokens().any(|it| it.kind() == TokenKind::Identifier && is_word(&it, &NAMES));
+        if checks.peek().is_none() || numbers(1005.0).next().is_some() || !loads_ws(file) && !names_a_socket() {
             return;
         }
         let closes = || {

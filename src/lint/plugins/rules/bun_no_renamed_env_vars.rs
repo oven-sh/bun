@@ -1,3 +1,4 @@
+use crate::bun::has_word;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -20,7 +21,7 @@ impl Rule for NoRenamedEnvVars {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        (file.mentions(OLD) && !file.mentions(NEW)).then(Vec::new)
+        file.mentions(OLD).then(Vec::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -44,6 +45,9 @@ impl Rule for NoRenamedEnvVars {
     }
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        if cx.state.is_empty() || has_word(cx.file(), &[NEW]) {
+            return;
+        }
         for (name, _) in &cx.state {
             // All at once, because a file with the new name isn't checked again.
             cx.report(*name, RENAMED).data("old", OLD).data("new", NEW).fix(|fixer| {

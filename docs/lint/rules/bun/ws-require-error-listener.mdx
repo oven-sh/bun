@@ -14,6 +14,8 @@ deprecated: false
 
 Since Bun 1.4.4, an `error` event that nothing listens for is an uncaught exception, as with `ws` in Node.js. A refused connection ends the process.
 
+The rule only runs in files that import or require `ws` or `ws/…`. It follows an `import()` only if it's awaited.
+
 A socket that's returned, stored in an object or passed to a function isn't reported, because it can get its listener there.
 
 `bun lint --upgrade` runs this rule. See [Upgrade Bun](/lint#upgrade-bun).

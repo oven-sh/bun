@@ -1810,6 +1810,10 @@ const rules: Record<string, Case[]> = {
   "no-vitest-done-callback": [
     ...[
       [`test("a", «done» => {\n  b();\n  done();\n});`, `test("a", () => {\n  b();\n});`],
+      [
+        `test("a", «done» => Promise.resolve().then(done));`,
+        `test("a", () => new Promise<void>((resolve, reject) => { const done = (error?: unknown) => (error ? reject(error) : resolve()); Promise.resolve().then(done); }));`,
+      ],
       [`test("a", async «done» => {\n  await b();\n  done();\n});`, `test("a", async () => {\n  await b();\n});`],
       [
         `test("a", «done» => {\n  b(() => done());\n});`,
@@ -2169,17 +2173,32 @@ const rules: Record<string, Case[]> = {
     `const ws = new WebSocket(url);\nws.onclose = event => event.code === «1000»;\nws.close();`,
     `new WebSocket(url).onclose = ({ code }) => {\n  switch (code) {\n    case «1000»:\n  }\n};`,
     `Bun.serve({ websocket: { close(ws, code) {\n  expect(code).toBe(«1000»);\n} } });`,
+    `import A from "ws";\nnew A(url).on("close", code => code === «1000»);`,
+    `import type { RawData } from "ws";\nsocket.on("close", code => code === «1000»);`,
 
     `const ws = new WebSocket(url);\nws.onclose = event => event.code === 1000;\nws.close(1000);`,
     `const ws = new WebSocket(url);\nws.onclose = ({ code }) => code === 1000 || code === 1005;\nws.close();`,
     `const ws = new WebSocket(url);\nif (delay === 1000) ws.close();`,
     `if (error.code === 1000) file.close();`,
+    `if (error.code === 1000) ws.close("ws");`,
+    `log("WebSocket");\nif (error.code === 1000) file.close();`,
   ],
 
   "ws-require-error-listener": [
     `import WebSocket from "ws";\n«new WebSocket(url)»;`,
     `import { WebSocket } from "ws";\nconst ws = «new WebSocket(url)»;\nws.on("message", a);`,
     `const WebSocket = require("ws");\n«new WebSocket(url)».on("open", a);`,
+    `import WebSocket from "ws/lib/websocket";\n«new WebSocket(url)»;`,
+    `import WebSocket from "ws/wrapper.mjs";\n«new WebSocket(url)»;`,
+    `const A = require("ws/lib/websocket-server.js");\nnew A(a).on("connection", «ws» => {});`,
+    `const { default: A } = await import("ws/lib/websocket-server");\nnew A(a).on("connection", «ws» => {});`,
+    `const A = require("ws" as string);\n«new A(url)»;`,
+    `const A = import.meta.require("ws");\n«new A(url)»;`,
+    `const require = createRequire(import.meta.url);\nconst A = require("ws");\n«new A(url)»;`,
+    `const { WebSocket } = await (import("ws") as any);\n«new WebSocket(url)»;`,
+    `import WebSocket = require("ws");\n«new WebSocket(url)»;`,
+    `const { WebSocket } = await import("ws");\n«new WebSocket(url)»;`,
+    `const { default: A } = await import("ws");\nnew A.Server(a).on("connection", «ws» => {});`,
     `import { WebSocketServer } from "ws";\nconst server = new WebSocketServer(a);\nserver.on("connection", «ws» => {\n  ws.send(b);\n});`,
     `import WebSocket from "ws";\nnew WebSocket.Server(a).on("error", b).once("connection", function («ws») {});`,
 
@@ -2191,6 +2210,13 @@ const rules: Record<string, Case[]> = {
     `import { WebSocketServer } from "ws";\nnew WebSocketServer(a).on("connection", ws => {\n  clients.add(ws);\n});`,
     `import { WebSocketServer } from "ws";\nnew WebSocketServer(a).on("connection", handle);`,
     `const ws = new WebSocket(url);`,
+    `import "ws";\nconst ws = new WebSocket(url);`,
+    `import WebSocket from "./ws";\nconst ws = new WebSocket(url);`,
+    `import WebSocket from "wss";\nconst ws = new WebSocket(url);`,
+    `import WebSocket from "ws-wrapper";\nconst ws = new WebSocket(url);`,
+    `import Receiver from "ws/lib/receiver";\nconst ws = new Receiver();`,
+    `import Server from "ws/lib/websocket-server";\nconst ws = new Server();`,
+    `import type WebSocket from "ws";\nconst ws = new globalThis.WebSocket("ws");`,
   ],
 };
 
@@ -3069,6 +3095,19 @@ describe.concurrent("--upgrade", () => {
     expect(stderr).toContain("warn: Skipped what doesn't parse: src/a.js, src/b.js, src/c.js and 2 more\n");
     expect(exitCode).toBe(0);
   });
+
+  // With types, File::mentions is true for every name.
+  test.each([[[]], [["--type-aware", "--rule", "@typescript-eslint/no-floating-promises: error"]]])(
+    "finds the same with %j",
+    async args => {
+      const files = {
+        "tsconfig.json": "{}",
+        "a.ts": `env.BUN_JSC_useSharedArrayBuffer = "0";\nerror.code === "ConnectionRefused";\nerror.code === 1000;`,
+      };
+      const { stdout } = await lint(files, ["--upgrade", "-f", "json", ...args]);
+      expect(reported(stdout, "a.ts")).toEqual(["1 bun/no-renamed-env-vars", "2 bun/no-legacy-fetch-error-codes"]);
+    },
+  );
 
   test("knows require() in a module", async () => {
     const code = `import "a";\nconst { serve } = require("bun");\nserve({ tls: { ca } });`;

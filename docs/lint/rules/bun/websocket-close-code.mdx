@@ -14,7 +14,7 @@ deprecated: false
 
 Since Bun 1.4.4, both ends report `1005` after `close()` without a code, as in browsers. It used to be `1000`.
 
-The rule reports a comparison of a `code` with `1000` in a file that uses WebSockets, unless the file has `1005` too, or all of its `close()` calls have an argument.
+The rule reports a comparison of a `code` with `1000` in a file that imports `ws` or has an identifier called `WebSocket`, `WebSocketServer` or `websocket`, unless the file has `1005` too, or all of its `close()` calls have an argument.
 
 `bun lint --upgrade` runs this rule. See [Upgrade Bun](/lint#upgrade-bun).
 

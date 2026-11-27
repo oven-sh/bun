@@ -57,7 +57,10 @@ fn fix<'a>(fixer: Fixer<'a>, func: Func<'a>, done: Symbol<'a>) -> Option<Vec<Fix
     let (start, setup) = if done.references().all(|it| it.expr().is_some_and(gets_no_error)) {
         ([promise, name, b" => "].concat(), Vec::new())
     } else {
-        if file.mentions_any(&["resolve", "reject"]) || done.has_modifying_references() {
+        let is_taken = |name: &str| {
+            scope.get(name).is_some() || file.references_within(func.estree_span()).any(|it| it.name().is(name))
+        };
+        if is_taken("resolve") || is_taken("reject") || done.has_modifying_references() {
             return None;
         }
         let error: &[u8] = if file.is_javascript() { b"error" } else { b"(error?: unknown)" };

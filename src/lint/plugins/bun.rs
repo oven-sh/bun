@@ -3,7 +3,9 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::eslint_utils::{Mode, ReferenceKind, ReferenceTracker, Trace, TraceMap};
-use bun_lint_oxlint::ast_util::{get_const_variable_initializer, is_global_reference};
+use bun_lint_oxlint::ast_util::{
+    get_const_variable_initializer, is_global_reference, static_string,
+};
 
 /// True for `(function () {})()`, `new (function () {})()` and `(function () {}).call(this)`, where the body runs
 /// immediately. A generator's body doesn't.
@@ -143,6 +145,51 @@ pub(crate) fn bun_calls<'a>(
     file.exprs_of_kind(ExprTag::Call)
         .filter_map(|e| Some((e, name_of(e)?)))
         .collect()
+}
+
+/// True if `token` is one of `words`, with or without quotes.
+pub(crate) fn is_word(token: &Token, words: &[&str]) -> bool {
+    let text = match token.text() {
+        [b'"' | b'\'' | b'`', text @ .., _] | text => text,
+    };
+    words.iter().any(|it| it.as_bytes() == text)
+}
+
+/// [`File::mentions_any`], but `true` is certain too.
+pub(crate) fn has_word<'a>(file: &'a File<'a>, words: &[&str]) -> bool {
+    file.mentions_any(words) && file.tokens().any(|it| is_word(&it, words))
+}
+
+/// The `require("a")`, `import.meta.require("a")` and `import("a")` calls, each with its specifier.
+pub(crate) fn module_loads<'a>(file: &'a File<'a>) -> impl Iterator<Item = (Expr<'a>, Name<'a>)> {
+    const REQUIRE: On = On::new().calls_named(&["require"]);
+    let required = (file.mentions("require").then(|| file.calls_on(&REQUIRE)))
+        .into_iter()
+        .flatten();
+    (required.chain(file.exprs_of_kind(ExprTag::ImportCall))).filter_map(|e| {
+        let arguments = match e.kind() {
+            ExprKind::ImportCall { args } => args,
+            ExprKind::Call(call) => {
+                let callee = call.callee();
+                let name = (callee.as_ident()).or_else(|| callee.member_name().map(Ident::name));
+                name.filter(|it| it.is("require")).map(|_| call.args())?
+            }
+            _ => return None,
+        };
+        Some((e, static_string(arguments.first()?.skip_type_wrappers())?))
+    })
+}
+
+/// True if the file imports or requires `ws` or `ws/..`.
+pub(crate) fn loads_ws<'a>(file: &'a File<'a>) -> bool {
+    let is_ws = |it: Name| matches!(it.bytes(), b"ws" | [b'w', b's', b'/', ..]);
+    file.body().iter().any(|it| match it.kind() {
+        StmtKind::Import(it) => is_ws(it.spec()),
+        StmtKind::ImportEquals(it) => {
+            matches!(it.target(), ImportEqualsTarget::Require(Some(it)) if is_ws(it))
+        }
+        _ => false,
+    }) || module_loads(file).any(|it| is_ws(it.1))
 }
 
 /// `e` without type assertions, or the value of the `const` that it names.

@@ -100,6 +100,10 @@ pub struct EnvironmentConfig {
     /// `map` callback that makes `() => save(item)` for `onClick` does not call `save`. To upstream it calls them all,
     /// and what `save` does is done during render.
     pub capturing_a_function_is_not_calling_it: bool,
+    /// A function declaration has its value where its scope begins, so a frozen function that captured it earlier, as
+    /// in `useHook(() => f())` before `function f() {}`, has not read it too early. Upstream reports the declaration as
+    /// an access before it, and mostly loses the report when `PruneHoistedContexts` fails. A write to `f` is reported.
+    pub function_declarations_are_initialized_on_entry: bool,
     /// JSX that is a default, or in one, can be evaluated earlier if its operands can: the parser has made a call of
     /// it. Upstream does not compile such a function.
     pub jsx_can_be_reordered: bool,
@@ -187,6 +191,7 @@ impl Default for EnvironmentConfig {
             nullish_test_before_ref_init_is_a_guard: false,
             effects_keep_their_place: false,
             capturing_a_function_is_not_calling_it: false,
+            function_declarations_are_initialized_on_entry: false,
             jsx_can_be_reordered: true,
             arguments_of_no_alias_methods_escape: true,
             flat_map_and_for_each_have_aliasing_signatures: false,

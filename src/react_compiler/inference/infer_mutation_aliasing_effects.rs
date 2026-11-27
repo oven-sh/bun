@@ -179,6 +179,7 @@ pub(crate) fn infer_mutation_aliasing_effects(
         catch_handlers: HashMap::default(),
         is_function_expression,
         hoisted_context_declarations,
+        hoisted_function_initializer: None,
         non_mutating_spreads,
         effect_value_id_cache: HashMap::with_capacity_and_hasher(
             func.instructions.len(),
@@ -902,6 +903,9 @@ struct Context {
     catch_handlers: HashMap<BlockId, Place>,
     is_function_expression: bool,
     hoisted_context_declarations: HashMap<DeclarationId, Option<Place>>,
+    /// The hoisted function declaration that the instruction at hand initializes:
+    /// `EnvironmentConfig::function_declarations_are_initialized_on_entry`.
+    hoisted_function_initializer: Option<DeclarationId>,
     non_mutating_spreads: HashSet<IdentifierId>,
     /// Cache of ValueIds keyed by effect, ensuring stable allocation-site identity
     /// across fixpoint iterations. Mirrors TS `effectInstructionValueCache`.
@@ -1563,6 +1567,19 @@ fn apply_signature(
     // Track which values we've already initialized
     let mut initialized = Initialized::new();
 
+    context.hoisted_function_initializer = match &instr.value {
+        InstructionValue::StoreContext { lvalue, .. }
+            if env.config.function_declarations_are_initialized_on_entry
+                && lvalue.kind == InstructionKind::Function =>
+        {
+            let decl_id = env.identifiers[lvalue.place.identifier.0 as usize].declaration_id;
+            context
+                .hoisted_context_declarations
+                .contains_key(&decl_id)
+                .then_some(decl_id)
+        }
+        _ => None,
+    };
     for effect in signature {
         apply_effect(context, state, effect, &mut initialized, effects, env)?;
     }
@@ -2208,6 +2225,11 @@ fn apply_effect(
                 let decl_id = ident.declaration_id;
 
                 if mutation_kind == MutationResult::MutateFrozen
+                    && context.hoisted_function_initializer == Some(decl_id)
+                {
+                    // The `Mutate` stays, for the mutable range of the declaration.
+                    effects.extend_from_slice(std::slice::from_ref(effect));
+                } else if mutation_kind == MutationResult::MutateFrozen
                     && context.hoisted_context_declarations.contains_key(&decl_id)
                 {
                     let variable = match &ident.name {

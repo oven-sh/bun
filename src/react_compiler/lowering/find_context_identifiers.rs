@@ -136,6 +136,25 @@ impl<'a> ContextIdentifierVisitor<'a> {
         }
     }
 
+    /// Not in upstream (oxc 061becc53): `x ??= y` for a `const x`, which lowering does not store to. So it makes no
+    /// context variable of `x`, whose declaration would then be an error.
+    fn is_logical_assignment_to_constant(&self, assignment: &ast::E::Binary) -> bool {
+        let is_logical = matches!(
+            assignment.op,
+            OpCode::BinNullishCoalescingAssign
+                | OpCode::BinLogicalOrAssign
+                | OpCode::BinLogicalAndAssign
+        );
+        if !is_logical || !self.env.config.logical_assignments_are_lowered {
+            return false;
+        }
+        match &assignment.left.data {
+            Data::EIdentifier(id) => is_constant(self.host, self.resolve_ref(id.ref_)),
+            Data::EImportIdentifier(id) => is_constant(self.host, self.resolve_ref(id.ref_)),
+            _ => false,
+        }
+    }
+
     fn walk_binding_decl(&mut self, binding: &ast::Binding) {
         if !self.env.has_stack() {
             return;
@@ -397,7 +416,9 @@ impl<'a> ContextIdentifierVisitor<'a> {
             Data::EImportIdentifier(id) => self.check_captured_reference(id.ref_),
 
             Data::EBinary(b) => {
-                if !matches!(b.op.binary_assign_target(), AssignTarget::None) {
+                if !matches!(b.op.binary_assign_target(), AssignTarget::None)
+                    && !self.is_logical_assignment_to_constant(b)
+                {
                     if self.error.is_none() {
                         if let Err(error) = walk_lval_for_reassignment(self, &b.left) {
                             self.error = Some(error);
@@ -548,6 +569,12 @@ impl<'a> ContextIdentifierVisitor<'a> {
             | Data::ENameOfSymbol(_) => {}
         }
     }
+}
+
+/// Whether `resolved` was declared with `const` or `using`, in the function or outside of it.
+pub(super) fn is_constant(host: &dyn Host, resolved: Ref) -> bool {
+    let symbol = host.symbols().get(resolved.inner_index() as usize);
+    resolved.is_symbol() && symbol.is_some_and(|it| it.kind == ast::symbol::Kind::Constant)
 }
 
 /// Recursively walk an LVal pattern to find all reassignment target identifiers.

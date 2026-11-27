@@ -393,7 +393,21 @@ impl<'a> Converter<'a, '_> {
         };
         let kind = match declaration {
             _ if import.is_some() => SymbolKind::Import,
-            // The lowering only needs to know that it isn't a local.
+            // The lowering only needs to know that it isn't a local, and of `x ??= y` whether `x` is a constant.
+            Some(declaration @ Declaration::Var(_))
+                if is_outside
+                    && self.flavor == Flavor::Oxlint
+                    && !declaration.is_catch_parameter() =>
+            {
+                match declaration.node() {
+                    Some(Node::VarDecl(it))
+                        if !matches!(it.var_kind(), VarKind::Var | VarKind::Let) =>
+                    {
+                        SymbolKind::Constant
+                    }
+                    _ => SymbolKind::Other,
+                }
+            }
             _ if is_outside => SymbolKind::Other,
             Some(declaration @ Declaration::Var(_)) if declaration.is_catch_parameter() => {
                 SymbolKind::CatchIdentifier

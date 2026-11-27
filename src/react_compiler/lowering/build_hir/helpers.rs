@@ -1,9 +1,13 @@
 //! Port of build_hir.rs lines 1–662 and 4362–5509 — see mod.rs.
 
-use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory, cold_todo};
+use crate::diagnostics::{
+    CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, CompilerErrorDetail,
+    ErrorCategory, cold_todo,
+};
 use crate::hir::*;
 use bun_ast::expr::Data;
 use bun_ast::{self as ast, Expr, G, OpCode, OptionalChain, Ref};
+use smallvec::SmallVec;
 
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 
@@ -325,6 +329,14 @@ pub(super) fn lower_member_expression(
     lowered_object: Option<Place>,
 ) -> Result<LoweredMemberExpression, CompilerError> {
     let loc = convert_loc(expr.loc);
+    let lowered_object = match lowered_object {
+        None if builder.environment().config.member_chains_have_a_limit
+            && matches!(expr.data, Data::EDot(_) | Data::EIndex(_)) =>
+        {
+            Some(lower_object_of_member_chain(builder, expr)?)
+        }
+        lowered_object => lowered_object,
+    };
     match &expr.data {
         Data::EDot(d) => {
             let object = match lowered_object {
@@ -397,6 +409,72 @@ pub(super) fn lower_member_expression(
             loc,
         )),
     }
+}
+
+/// The object of the member `expr`, lowered as [`lower_member_expression`] lowers it.
+pub(super) fn lower_member_object(
+    builder: &mut HirBuilder,
+    expr: &Expr,
+) -> Result<Place, CompilerError> {
+    match builder.environment().config.member_chains_have_a_limit {
+        true => lower_object_of_member_chain(builder, expr),
+        false => lower_expression_to_temporary(builder, member_object(expr)),
+    }
+}
+
+/// Not in upstream (oxc d256e10f6): the longest chain of members that is lowered. The path of each member has that of
+/// its object in it, so the passes that follow take time and memory by the square of the length.
+const MAX_MEMBER_CHAIN_LENGTH: usize = 500;
+
+/// Not in upstream (oxc d256e10f6): the object of the member `expr`, lowered along the chain `a.b.c` that it ends and
+/// not by a call for each member of it. `expr` must be `EDot` or `EIndex`.
+fn lower_object_of_member_chain(
+    builder: &mut HirBuilder,
+    expr: &Expr,
+) -> Result<Place, CompilerError> {
+    let mut chain: SmallVec<[&Expr; 8]> = SmallVec::new();
+    let mut object = member_object(expr);
+    while let Some(next) = object_of_chained_member(builder, object) {
+        if chain.len() + 1 == MAX_MEMBER_CHAIN_LENGTH {
+            return Err(member_chain_is_too_long(convert_loc(expr.loc)));
+        }
+        chain.push(object);
+        object = next;
+    }
+    let mut place = lower_expression_to_temporary(builder, object)?;
+    for member in chain.into_iter().rev() {
+        let lowered = lower_member_expression(builder, member, Some(place))?;
+        place = lower_value_to_temporary(builder, lowered.value)?;
+    }
+    Ok(place)
+}
+
+/// The object of `expr` if `lower_expression_to_temporary` makes of `expr` what [`lower_member_expression`] does and
+/// nothing else. A `?.`, a cast and parentheses end a chain, as they do for oxc, where they are nodes of their own.
+fn object_of_chained_member<'a>(builder: &HirBuilder, expr: &'a Expr) -> Option<&'a Expr> {
+    let object = match &expr.data {
+        Data::EDot(d) if d.optional_chain.is_none() => &d.target,
+        Data::EIndex(i) if i.optional_chain.is_none() => &i.target,
+        _ => return None,
+    };
+    let is_wrapped = builder.type_cast_around(expr.loc).is_some()
+        || builder.parentheses_around(expr.loc).is_some();
+    (!is_wrapped).then_some(object)
+}
+
+#[cold]
+fn member_chain_is_too_long(loc: Option<SourceLocation>) -> CompilerError {
+    CompilerDiagnostic::new(
+        ErrorCategory::Todo,
+        format!("Support member expression chains longer than {MAX_MEMBER_CHAIN_LENGTH} members"),
+        None,
+    )
+    .with_detail(CompilerDiagnosticDetail::Error {
+        loc,
+        message: Some("This member expression chain is too long".to_string()),
+        identifier_name: None,
+    })
+    .into()
 }
 
 // =============================================================================
@@ -488,7 +566,7 @@ pub(super) fn lower_identifier_for_assignment(
 // lower_assignment
 // =============================================================================
 
-fn assignment_target_ref(target: &Expr) -> Option<Ref> {
+pub(super) fn assignment_target_ref(target: &Expr) -> Option<Ref> {
     match &target.data {
         Data::EIdentifier(id) => Some(id.ref_),
         Data::EImportIdentifier(id) => Some(id.ref_),
@@ -1185,7 +1263,7 @@ pub(super) fn lower_object_property_key(
 // Optional chains
 // =============================================================================
 
-fn member_object<'a>(expr: &'a Expr) -> &'a Expr {
+pub(super) fn member_object<'a>(expr: &'a Expr) -> &'a Expr {
     match &expr.data {
         Data::EDot(d) => &d.target,
         Data::EIndex(i) => &i.target,

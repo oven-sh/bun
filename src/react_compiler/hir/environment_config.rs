@@ -122,6 +122,13 @@ pub struct EnvironmentConfig {
     /// `({ k: a, b } = o)` where a function captures `a` goes through temporaries, as `[a, b] = o` does. Upstream
     /// assigns `b` at once and `a` not, and fails: "Expected consistent kind for destructuring". So do both for `{ a, b }`.
     pub captured_targets_with_keys_force_temporaries: bool,
+    /// `a ??= b` is lowered as `a ?? (a = b)`, and so are `||=` and `&&=`. The target is evaluated once, before the
+    /// test, and the object and the key of a member are kept in constants for the store. One to a `const` is a todo of
+    /// its own and does not reassign it. Upstream has one todo for all of them.
+    pub logical_assignments_are_lowered: bool,
+    /// A chain of members, `a.b.c`, is lowered along its length and not by a call for each member, and one of more than
+    /// 500 members is a todo. Upstream lowers each member by a call, as long as there is stack for it.
+    pub member_chains_have_a_limit: bool,
     /// Code that is not reached and has a function in it is reported at the first such function. Upstream reports it at
     /// its first instruction, which can be the declaration of a later function that the first one refers to.
     pub unreachable_code_is_reported_at_its_function: bool,
@@ -245,6 +252,8 @@ impl Default for EnvironmentConfig {
             flat_map_and_for_each_have_aliasing_signatures: false,
             captured_variables_can_be_updated: false,
             captured_targets_with_keys_force_temporaries: false,
+            logical_assignments_are_lowered: false,
+            member_chains_have_a_limit: false,
             unreachable_code_is_reported_at_its_function: false,
             tagged_templates_are_always_called: false,
             branches_in_try_control_reactivity: false,

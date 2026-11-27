@@ -9,13 +9,15 @@ use bun_ast::{self as ast, E, Expr, G, Loc, OpCode, Ref, StoreRef, symbol};
 
 use super::function::{lower_function_to_value, lower_object_method};
 use super::helpers::{
-    AssignmentStyle, MemberProperty, build_temporary_place, expression_type_name, lower_arguments,
-    lower_assignment, lower_expression_to_temporary, lower_identifier, lower_member_expression,
-    lower_object_property_key, lower_optional_call_expression, lower_optional_member_expression,
-    lower_value_to_temporary,
+    AssignmentStyle, MemberProperty, assignment_target_ref, build_temporary_place,
+    expression_type_name, lower_arguments, lower_assignment, lower_expression_to_temporary,
+    lower_identifier, lower_member_expression, lower_member_object, lower_object_property_key,
+    lower_optional_call_expression, lower_optional_member_expression, lower_value_to_temporary,
+    member_object, promote_temporary,
 };
 use super::jsx::lower_jsx_call;
 use crate::lowering::FunctionNode;
+use crate::lowering::find_context_identifiers::is_constant;
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 
 pub(crate) fn lower_expression(
@@ -391,6 +393,16 @@ fn lower_binary(
         BinAddAssign | BinSubAssign | BinMulAssign | BinDivAssign | BinRemAssign | BinPowAssign
         | BinShlAssign | BinShrAssign | BinUShrAssign | BinBitwiseOrAssign
         | BinBitwiseAndAssign | BinBitwiseXorAssign => lower_compound_assignment(builder, bin, loc),
+        BinNullishCoalescingAssign | BinLogicalOrAssign | BinLogicalAndAssign
+            if builder.environment().config.logical_assignments_are_lowered =>
+        {
+            let operator = match bin.op {
+                BinLogicalOrAssign => LogicalOperator::Or,
+                BinLogicalAndAssign => LogicalOperator::And,
+                _ => LogicalOperator::NullishCoalescing,
+            };
+            lower_logical_assignment(builder, bin, operator, loc)
+        }
         BinNullishCoalescingAssign | BinLogicalOrAssign | BinLogicalAndAssign => {
             builder.record_error(CompilerErrorDetail {
                 reason: "Logical assignment operators (||=, &&=, ??=) are not yet supported"
@@ -530,6 +542,228 @@ fn lower_logical(
         loc: place.loc,
         place,
     })
+}
+
+enum LogicalAssignmentTarget {
+    Identifier,
+    /// Nothing is stored to it: the todo is recorded.
+    Constant,
+    Member {
+        object: Place,
+        property: MemberProperty,
+    },
+}
+
+/// Not in upstream (oxc 061becc53): `a ??= b` as `a ?? (a = b)`, and so `||=` and `&&=`, in the blocks of
+/// [`lower_logical`]. The target is evaluated once, before the test.
+fn lower_logical_assignment(
+    builder: &mut HirBuilder,
+    bin: &E::Binary,
+    operator: LogicalOperator,
+    loc: Option<SourceLocation>,
+) -> Result<InstructionValue, CompilerError> {
+    let left_loc = convert_loc(bin.left.loc);
+    let (target, previous_value) = if let Some(ref_) = assignment_target_ref(&bin.left) {
+        let value = lower_identifier_reference(builder, ref_, left_loc)?;
+        let previous_value = lower_value_to_temporary(builder, value)?;
+        // A store would make a `let` of the `const`, and a reassignment of what may never be assigned.
+        let target = if is_constant(builder.host(), builder.resolve_ref(ref_)) {
+            let name = bun_core::BStr::new(builder.host().ref_name(ref_));
+            builder.record_error(CompilerErrorDetail {
+                reason: format!("Logical assignment to `const` variable `{name}` is not supported"),
+                category: ErrorCategory::Todo,
+                loc: left_loc,
+                description: None,
+                suggestions: None,
+            })?;
+            LogicalAssignmentTarget::Constant
+        } else {
+            LogicalAssignmentTarget::Identifier
+        };
+        (target, previous_value)
+    } else if matches!(bin.left.data, Data::EDot(_) | Data::EIndex(_)) {
+        let object = lower_to_constant(builder, member_object(&bin.left))?;
+        let (property, value) = match &bin.left.data {
+            Data::EIndex(i)
+                if !matches!(i.index.data, Data::ENumber(_) | Data::EPrivateIdentifier(_)) =>
+            {
+                let property = lower_to_constant(builder, &i.index)?;
+                let value = InstructionValue::ComputedLoad {
+                    object: object.clone(),
+                    property: property.clone(),
+                    loc: left_loc,
+                };
+                (MemberProperty::Computed(property), value)
+            }
+            _ => {
+                let lowered = lower_member_expression(builder, &bin.left, Some(object.clone()))?;
+                (lowered.property, lowered.value)
+            }
+        };
+        let previous_value = lower_value_to_temporary(builder, value)?;
+        let target = LogicalAssignmentTarget::Member { object, property };
+        (target, previous_value)
+    } else {
+        builder.record_error(CompilerErrorDetail {
+            reason: "Compound assignment to complex pattern is not yet supported".to_string(),
+            category: ErrorCategory::Todo,
+            loc,
+            description: None,
+            suggestions: None,
+        })?;
+        return Ok(unsupported_node("AssignmentExpression", loc));
+    };
+
+    let continuation_block = builder.reserve(builder.current_block_kind());
+    let continuation_id = continuation_block.id;
+    let test_block = builder.reserve(BlockKind::Value);
+    let test_block_id = test_block.id;
+    let place = build_temporary_place(builder, loc);
+    let previous_value_place = build_temporary_place(builder, left_loc);
+
+    let consequent_block = builder.try_enter(BlockKind::Value, |builder, _block_id| {
+        lower_value_to_temporary(
+            builder,
+            InstructionValue::StoreLocal {
+                lvalue: LValue {
+                    kind: InstructionKind::Const,
+                    place: place.clone(),
+                },
+                value: previous_value_place.clone(),
+                type_annotation: None,
+                loc: left_loc,
+            },
+        )?;
+        Ok(Terminal::Goto {
+            block: continuation_id,
+            variant: GotoVariant::Break,
+            id: EvaluationOrder(0),
+            loc: left_loc,
+        })
+    });
+
+    let alternate_block = builder.try_enter(BlockKind::Value, |builder, _block_id| {
+        let right = lower_expression_to_temporary(builder, &bin.right)?;
+        let assigned = match target {
+            LogicalAssignmentTarget::Identifier => lower_assignment(
+                builder,
+                left_loc,
+                InstructionKind::Reassign,
+                &bin.left,
+                right.clone(),
+                AssignmentStyle::Assignment,
+            )?
+            .unwrap_or(right),
+            LogicalAssignmentTarget::Constant => right,
+            LogicalAssignmentTarget::Member { object, property } => {
+                let store = match property {
+                    MemberProperty::Literal(property) => InstructionValue::PropertyStore {
+                        object,
+                        property,
+                        value: right,
+                        loc: left_loc,
+                    },
+                    MemberProperty::Computed(property) => InstructionValue::ComputedStore {
+                        object,
+                        property,
+                        value: right,
+                        loc: left_loc,
+                    },
+                };
+                lower_value_to_temporary(builder, store)?
+            }
+        };
+        lower_value_to_temporary(
+            builder,
+            InstructionValue::StoreLocal {
+                lvalue: LValue {
+                    kind: InstructionKind::Const,
+                    place: place.clone(),
+                },
+                value: assigned,
+                type_annotation: None,
+                loc,
+            },
+        )?;
+        Ok(Terminal::Goto {
+            block: continuation_id,
+            variant: GotoVariant::Break,
+            id: EvaluationOrder(0),
+            loc,
+        })
+    });
+
+    builder.terminate_with_continuation(
+        Terminal::Logical {
+            operator,
+            test: test_block_id,
+            fallthrough: continuation_id,
+            id: EvaluationOrder(0),
+            loc,
+        },
+        test_block,
+    );
+    builder.push(Instruction {
+        id: EvaluationOrder(0),
+        lvalue: previous_value_place.clone(),
+        value: InstructionValue::LoadLocal {
+            place: previous_value,
+            loc: left_loc,
+        },
+        effects: None,
+        loc: left_loc,
+    });
+    builder.terminate_with_continuation(
+        Terminal::Branch {
+            test: previous_value_place,
+            consequent: consequent_block?,
+            alternate: alternate_block?,
+            fallthrough: continuation_id,
+            id: EvaluationOrder(0),
+            loc,
+        },
+        continuation_block,
+    );
+
+    Ok(InstructionValue::LoadLocal {
+        loc: place.loc,
+        place,
+    })
+}
+
+/// Not in upstream (oxc 061becc53): `expr` in a constant, which the load and the store of `a[k] ??= b` both read.
+/// A getter that the load calls can assign `a` or `k`. A literal needs none.
+fn lower_to_constant(builder: &mut HirBuilder, expr: &Expr) -> Result<Place, CompilerError> {
+    let value = lower_expression_to_temporary(builder, expr)?;
+    let is_literal = matches!(
+        expr.data,
+        Data::EString(_) | Data::ENumber(_) | Data::EBigInt(_) | Data::EBoolean(_) | Data::ENull(_)
+    );
+    if is_literal {
+        return Ok(value);
+    }
+    let loc = convert_loc(expr.loc);
+    let constant = build_temporary_place(builder, loc);
+    promote_temporary(builder, constant.identifier);
+    lower_value_to_temporary(
+        builder,
+        InstructionValue::StoreLocal {
+            lvalue: LValue {
+                kind: InstructionKind::Const,
+                place: constant.clone(),
+            },
+            value,
+            type_annotation: None,
+            loc,
+        },
+    )?;
+    lower_value_to_temporary(
+        builder,
+        InstructionValue::LoadLocal {
+            place: constant,
+            loc,
+        },
+    )
 }
 
 fn lower_conditional(
@@ -878,7 +1112,9 @@ fn lower_compound_assignment(
         }
         Data::EDot(_) | Data::EIndex(_) => {
             let member_loc = convert_loc(bin.left.loc);
-            let lowered = lower_member_expression(builder, &bin.left, None)?;
+            // As oxc's `lower_member_expression_for_update`: a chain of members starts at the object.
+            let object = lower_expression_to_temporary(builder, member_object(&bin.left))?;
+            let lowered = lower_member_expression(builder, &bin.left, Some(object))?;
             let object = lowered.object;
             let lowered_property = lowered.property;
             let current_value = lower_value_to_temporary(builder, lowered.value)?;
@@ -1019,7 +1255,7 @@ fn lower_unary(
                         E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
                     ) =>
             {
-                let object = lower_expression_to_temporary(builder, &d.target)?;
+                let object = lower_member_object(builder, &unary.value)?;
                 Ok(InstructionValue::PropertyDelete {
                     object,
                     property: PropertyLiteral::String(d.name),
@@ -1032,7 +1268,7 @@ fn lower_unary(
                         E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
                     ) =>
             {
-                let object = lower_expression_to_temporary(builder, &i.target)?;
+                let object = lower_member_object(builder, &unary.value)?;
                 let property = lower_expression_to_temporary(builder, &i.index)?;
                 Ok(InstructionValue::ComputedDelete {
                     object,
@@ -1085,7 +1321,9 @@ fn lower_update(
                 UpdateOperator::Decrement => BinaryOperator::Subtract,
             };
             let member_loc = convert_loc(unary.value.loc);
-            let lowered = lower_member_expression(builder, &unary.value, None)?;
+            // As oxc's `lower_member_expression_for_update`: a chain of members starts at the object.
+            let object = lower_expression_to_temporary(builder, member_object(&unary.value))?;
+            let lowered = lower_member_expression(builder, &unary.value, Some(object))?;
             let object = lowered.object;
             let lowered_property = lowered.property;
             let prev_value = lower_value_to_temporary(builder, lowered.value)?;

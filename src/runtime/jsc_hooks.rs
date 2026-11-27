@@ -4158,17 +4158,23 @@ pub(crate) fn resolve_embedded_file(input_path: &[u8], extname: &[u8]) -> Option
     // users on a shared `/tmp` from colliding.
     let content_hash = bun_wyhash::hash(file_contents);
     let uid = extract_owner_uid();
+    let mut uid_buf = bun_core::fmt::ItoaBuf::new();
+    let mut hash_buf = [0u8; 16];
+    let parts: [&[u8]; 6] = [
+        b".bun-",
+        bun_core::fmt::itoa(&mut uid_buf, uid),
+        b"-",
+        bun_core::fmt::u64_hex_var_lower(&mut hash_buf, content_hash),
+        b".",
+        extname,
+    ];
+    let len: usize = parts.iter().map(|part| part.len()).sum();
     let mut canonical_name_buf = [0u8; 64];
-    let canonical_name = bun_core::fmt::buf_print_z(
-        &mut canonical_name_buf,
-        format_args!(
-            ".bun-{}-{:x}.{}",
-            uid,
-            content_hash,
-            bun_core::fmt::s(extname)
-        ),
-    )
-    .ok()?;
+    if len >= canonical_name_buf.len() {
+        return None;
+    }
+    bun_core::concat_into(&mut canonical_name_buf, &parts);
+    let canonical_name = bun_core::ZStr::nul_terminate(&mut canonical_name_buf, len);
 
     // Reuse the canonical file from a previous run if it is still ours with
     // the right size. `lstatat` so a planted symlink fails the ISREG check

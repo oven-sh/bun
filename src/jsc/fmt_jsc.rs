@@ -39,10 +39,7 @@ pub(crate) mod js_bindings {
                 );
                 write!(writer, "{}", formatter).map_err(|_| JsError::OutOfMemory)?;
             }
-            Formatter::EscapePowershell => {
-                write!(writer, "{}", fmt::escape_powershell(code))
-                    .map_err(|_| JsError::OutOfMemory)?;
-            }
+            Formatter::EscapePowershell => fmt::escape_powershell(&mut writer.list, code),
         }
 
         Ok(String::clone_utf8(buffer.list.as_slice()))

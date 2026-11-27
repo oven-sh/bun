@@ -3469,27 +3469,15 @@ impl<T: Display> Display for NullableFallback<'_, T> {
 // escapePowershell
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct EscapePowershell<'a>(pub(crate) &'a [u8]);
-
-pub fn escape_powershell(str: &[u8]) -> EscapePowershell<'_> {
-    EscapePowershell(str)
-}
-
-impl Display for EscapePowershell<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        escape_powershell_impl(self.0, f)
-    }
-}
-
-fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Result {
-    let mut remain = str;
+/// Appends `text` with a backtick before each double quote, backtick and dollar sign.
+pub fn escape_powershell(out: &mut Vec<u8>, text: &[u8]) {
+    let mut remain = text;
     while let Some(i) = crate::strings::index_of_any(remain, b"\"`$") {
-        write_bytes(writer, &remain[..i])?;
-        writer.write_str("`")?;
-        writer.write_char(remain[i] as char)?;
+        out.extend_from_slice(&remain[..i]);
+        out.extend_from_slice(&[b'`', remain[i]]);
         remain = &remain[i + 1..];
     }
-    write_bytes(writer, remain)
+    out.extend_from_slice(remain);
 }
 
 /// Escapes C0/C1 control characters, DEL, U+2028-U+202E (line separators, bidirectional overrides)

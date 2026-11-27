@@ -103,7 +103,7 @@ var __toESMCache_esm;
 var __toESM = (mod, isNodeMode, target) => {
   var canCache = mod != null && typeof mod === "object";
   if (canCache) {
-    var cache = isNodeMode ? __toESMCache_node ??= new WeakMap : __toESMCache_esm ??= new WeakMap;
+    var cache = isNodeMode ? __toESMCache_node ??= new WeakMap() : __toESMCache_esm ??= new WeakMap();
     var cached = cache.get(mod);
     if (cached)
       return cached;

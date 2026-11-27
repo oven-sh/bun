@@ -1298,6 +1298,8 @@ pub struct Options<'a> {
     pub minify_whitespace: bool,
     pub minify_identifiers: bool,
     pub minify_syntax: bool,
+    /// Print `new X()` as `new X` where `minify_whitespace` does. `bun pm diff` compares the two as one text.
+    pub omit_empty_new_parens: bool,
     pub print_dce_annotations: bool,
     /// Marks the braces of object literals in the source map, see `mark_object_brace`.
     pub code_coverage: bool,
@@ -1374,6 +1376,7 @@ impl<'a> Default for Options<'a> {
             minify_whitespace: false,
             minify_identifiers: false,
             minify_syntax: false,
+            omit_empty_new_parens: false,
             print_dce_annotations: true,
             code_coverage: false,
             inline_require_and_import_errors: true,
@@ -3367,7 +3370,16 @@ pub(crate) mod __gated_printer {
                     self.print_space();
                     self.print_expr(e.target, Level::New, ExprFlag::forbid_call());
                     let args = e.args.slice();
-                    if !args.is_empty() || level.gte(Level::Postfix) {
+                    let can_omit_parens = args.is_empty() && !level.gte(Level::Postfix);
+                    let has_written_parens = e.has_written_parens(expr.loc);
+                    let omits_parens = !has_written_parens
+                        || self.options.minify_whitespace
+                        || self.options.omit_empty_new_parens;
+                    if !can_omit_parens || !omits_parens {
+                        if can_omit_parens {
+                            // JSC reports a failed `new X()` at the `(`, and a failed `new X` at `new`.
+                            self.add_source_mapping(expr.loc);
+                        }
                         self.print(b"(");
 
                         if !args.is_empty() {
@@ -3379,7 +3391,7 @@ pub(crate) mod __gated_printer {
                             }
                         }
 
-                        if e.close_parens_loc.start > expr.loc.start {
+                        if has_written_parens {
                             self.add_source_mapping(e.close_parens_loc);
                         }
 

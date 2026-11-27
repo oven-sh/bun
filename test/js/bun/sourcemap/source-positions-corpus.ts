@@ -1042,6 +1042,7 @@ export const cases: Record<string, Case> = {
  1|try { empty.first.second; } catch (e) { caught(e, "first.second"); }
  1|try { empty.notFunction(); } catch (e) { caught(e, "notFunction"); }
  1|try { new empty.notConstructor(); } catch (e) { caught(e, "new empty"); }
+ 1|try { new empty.bare; } catch (e) { caught(e, "new empty.bare"); }
  1|try { tooEarly; let tooEarly = 1; } catch (e) { caught(e, "tooEarly"); }
  1|try { throw new RangeError("thrown"); } catch (e) { caught(e, "RangeError"); }
  1|try { null!.ofNull; } catch (e) { caught(e, "null!"); }

@@ -983,6 +983,14 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("the parentheses of a new without arguments are formatting", async () => {
+    const made = await pretty({
+      "a/made.js": "exports.made = new Map;\nexports.size = new Set().size;\n",
+      "b/made.js": "exports.made = new Map();\nexports.size = (new Set).size;\n",
+    });
+    expect(made.text).toMatch(/\nmade\.js ─+ formatting only\n/);
+  });
+
   test("a directive after a banner comment stays where it is written", async () => {
     const filler = Array.from({ length: 40 }, (_, i) => `n.p${i}=t+${i};`).join("");
     const long = (mul: number) => `module.exports=function(n,t){${filler}return n*${mul}};\n`;

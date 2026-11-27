@@ -4841,6 +4841,31 @@ describe("bundler", () => {
     },
   });
 
+  // The compiler makes the `new` expression again. Its `()` stay where the source has them.
+  itBundled("react-compiler/NewWithoutArgumentsKeepsItsParentheses", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useMemo } from "react";
+        export function Lists({ items }) {
+          const written = useMemo(() => new Map(), []);
+          const bare = useMemo(() => new Set, []);
+          const outlined = items.map(() => new Date());
+          const outlinedBare = items.map(() => new WeakSet);
+          return <p>{written.size + bare.size + outlined.length + outlinedBare.length}</p>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/\$\[\d+\]/);
+      expect(out).toContain("items.map(_temp)");
+      expect(out.match(/new \w+\(?\)?/g)).toEqual(["new Date()", "new WeakSet", "new Map()", "new Set"]);
+    },
+  });
+
   itBundled("react-compiler/SourceMapOfSwitchClauses", {
     files: {
       "/entry.jsx": /* jsx */ `

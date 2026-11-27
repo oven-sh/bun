@@ -30,8 +30,31 @@ impl FileLowering<'_, '_, '_, '_> {
         let written = self.hir[expression];
         match written.kind {
             ExprKind::Ident(_) if self.is_in_known_evaluation(expression) => written.end,
+            ExprKind::Ident(_) => self
+                .new_with_its_callee_at_new(expression)
+                .unwrap_or(written.pos),
             _ => written.pos,
         }
+    }
+
+    /// The engine reports a failed read of `A` in `new A()` at the `(`, which `bun run` maps to `new`.
+    fn new_with_its_callee_at_new(&self, callee: ExprId) -> Option<u32> {
+        let hir = self.hir;
+        let mut operand = callee;
+        while let Parent::Expr(around) = self.bound.parent_of_expr(operand) {
+            match hir[around].kind {
+                _ if hir.type_assertion_operand(around) == Some(operand) => operand = around,
+                ExprKind::New(site) => {
+                    let is_at_new = hir[site].callee == operand
+                        && hir[site].close_pos != u32::MAX
+                        && self.is_reported_at_new(around, site)
+                        && !self.is_printed_as_call(hir[site]);
+                    return is_at_new.then_some(hir[around].pos);
+                }
+                _ => break,
+            }
+        }
+        None
     }
 
     pub(in crate::lower) fn last_token_position_of(&self, expression: ExprId) -> u32 {
@@ -44,12 +67,6 @@ impl FileLowering<'_, '_, '_, '_> {
             let next = match hir[last].kind {
                 ExprKind::Dot { .. } => return hir.name_pos(last),
                 ExprKind::Index { index, .. } => index,
-                ExprKind::New(site)
-                    if self.is_printed_without_parentheses(last, site)
-                        && !self.is_printed_as_call(hir[site]) =>
-                {
-                    hir[site].callee
-                }
                 ExprKind::Call(site) | ExprKind::New(site) => match hir[site].close_pos {
                     u32::MAX => hir[site].callee,
                     close => return close,
@@ -80,8 +97,7 @@ impl FileLowering<'_, '_, '_, '_> {
             };
         }
         let reports_as_call = self.is_printed_as_call(hir[site])
-            || (hir[site].close_pos != u32::MAX
-                && !self.is_printed_without_parentheses(expression, site));
+            || (hir[site].close_pos != u32::MAX && !self.is_reported_at_new(expression, site));
         match reports_as_call {
             true => self.call_position(hir[site]),
             false => hir[expression].pos,
@@ -123,24 +139,28 @@ impl FileLowering<'_, '_, '_, '_> {
                 })
     }
 
-    /// `bun run` prints `new A()` as `new A` where nothing reads or calls the result in place.
-    fn is_printed_without_parentheses(&self, expression: ExprId, site: CallId) -> bool {
+    /// Where nothing reads or calls the result in place, `bun run` prints `new A` as it is, and maps the `(` of `new A()` to `new`. Elsewhere it prints `new A()` and the engine reports at that `(`.
+    fn is_reported_at_new(&self, expression: ExprId, site: CallId) -> bool {
         let hir = self.hir;
         if hir.ids(hir[site].args).next().is_some() || self.is_in_known_evaluation(expression) {
             return false;
         }
         let mut operand = expression;
-        while let Parent::Expr(around) = self.bound.parent_of_expr(operand) {
+        loop {
+            let around = match self.bound.parent_of_expr(operand) {
+                Parent::Expr(around) => around,
+                Parent::ClassExtends(_) => return false,
+                _ => return true,
+            };
             match hir[around].kind {
                 _ if hir.type_assertion_operand(around) == Some(operand) => operand = around,
                 ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => return obj != operand,
                 ExprKind::Call(site) | ExprKind::New(site) | ExprKind::TaggedTemplate(site) => {
                     return hir[site].callee != operand;
                 }
-                _ => break,
+                _ => return true,
             }
         }
-        true
     }
 
     /// Where a pattern reports that the value of `expression` is null or undefined: `bun run` reports at the last place that the expression can fail at.
@@ -363,15 +383,36 @@ mod tests {
     x,
   );
   new (new a.Inner)(x);
+  class Heir extends new a.Base() {}
 }
 ";
-        let texts = ["new a.Plain", "Called", "new a.Inner", "Inner"];
+        let texts = ["new a.Plain", "Called", "new a.Inner", "Inner", "Base"];
         let expected = texts.map(|text| offset_of(source, text));
         assert_eq!(reported_positions(source, Opcode::Construct), expected);
     }
 
     #[test]
-    fn bare_construction_reports_printed_form() {
+    fn call_reports_at_the_end_of_a_construction_without_arguments() {
+        let source = "export function probe(a: any, K: any) {
+  a[new K()]();
+  a[new K]();
+  a[new K(a)]();
+  a[(new K)()]();
+}
+";
+        let texts = [
+            ")]();\n  a[new K]",
+            "K]",
+            ")]();\n  a[(",
+            "K)()]",
+            ")]();\n}",
+        ];
+        let expected = texts.map(|text| offset_of(source, text));
+        assert_eq!(reported_positions(source, Opcode::Call), expected);
+    }
+
+    #[test]
+    fn construction_with_empty_parentheses_reports_at_new_where_nothing_reads_it() {
         let source = "export function probe(a: any) {
   new a.First();
   new a.Second().run;

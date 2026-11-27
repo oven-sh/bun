@@ -383,6 +383,72 @@ Ran 1 test across 1 file."
   expect(result.exitCode).toBe(0);
 });
 
+test("a new without arguments counts the lines of its callee as they ran", async () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": `
+[test]
+coverageSkipTestFiles = true
+`,
+    "lib.js": `export const written = new function () {
+  this.clear = function () {
+    this.items = [];
+  };
+}();
+export const bare = new function () {
+  this.clear = function () {
+    this.items = [];
+  };
+};
+export function pick(flag) {
+  const one = new (flag
+    ? Map
+    : Set)();
+  const other = new (flag
+    ? Map
+    : Set);
+  return [one, other];
+}
+`,
+    "lib.test.js": `
+import { test, expect } from "bun:test";
+import { written, bare, pick } from "./lib.js";
+test("makes", () => {
+  expect([typeof written.clear, typeof bare.clear, pick(true).length]).toEqual(["function", "function", 2]);
+});
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov", "--coverage-dir=out"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("1 pass");
+  const lines = readFileSync(path.join(String(dir), "out", "lcov.info"), "utf-8").match(/^DA:.*$/gm);
+  // The bodies of the two `clear` did not run. A line that has the `)` of `new` ran with the statement.
+  expect(lines).toEqual([
+    "DA:1,1",
+    "DA:2,1",
+    "DA:3,0",
+    "DA:5,1",
+    "DA:6,1",
+    "DA:7,1",
+    "DA:8,0",
+    "DA:11,1",
+    "DA:12,1",
+    "DA:13,1",
+    "DA:14,1",
+    "DA:15,1",
+    "DA:16,1",
+    "DA:17,0",
+    "DA:18,1",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
 test("coveragePathIgnorePatterns - partial coverage without nan", () => {
   using dir = tempDir("cov", {
     "bunfig.toml": `

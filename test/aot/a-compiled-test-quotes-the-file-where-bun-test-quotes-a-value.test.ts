@@ -104,9 +104,9 @@ test("a compiled test quotes the file where the transpiler of bun test has put a
   expect(plain.stdout).toContain(
     "calledWith: (void 0) is not a function. (In '(void 0)(1, 2)', '(void 0)' is undefined)",
   );
-  expect(plain.stdout).toContain("constructed: undefined is not a constructor (evaluating 'new (void 0)')");
-  expect(plain.stdout).toContain("constructedCall: null is not a constructor (evaluating 'new (lookup(null))')");
-  expect(plain.stdout).toContain("constructedNew: Map is not a constructor (evaluating 'new new Map()')");
+  expect(plain.stdout).toContain("constructed: undefined is not a constructor (evaluating 'new (void 0)()')");
+  expect(plain.stdout).toContain("constructedCall: null is not a constructor (evaluating 'new (lookup(null))()')");
+  expect(plain.stdout).toContain("constructedNew: Map is not a constructor (evaluating 'new new Map()()')");
   const lines = (output: string) => output.split("\n").filter(line => line.includes(": "));
   expect(lines(compiled.stdout)).toEqual([
     "initializer: null is not an object (evaluating 'r.value')",
@@ -126,17 +126,17 @@ test("a compiled test quotes the file where the transpiler of bun test has put a
     "taggedMember: undefined is not a function (near '...o.tag`t${1}u${`v${o}`}w`...')",
     "called: b is not a function. (In 'b()', 'b' is undefined)",
     "calledWith: b is not a function. (In 'b(1, 2)', 'b' is undefined)",
-    "constructed: undefined is not a constructor (evaluating 'new b')",
+    "constructed: undefined is not a constructor (evaluating 'new b()')",
     "constructedWith: undefined is not a constructor (evaluating 'new b(1, 2)')",
-    "constructedCall: null is not a constructor (evaluating 'new b')",
+    "constructedCall: null is not a constructor (evaluating 'new b()')",
     "constructedCallBare: null is not a constructor (evaluating 'new b')",
     "constructedCallWith: Object is not a constructor (evaluating 'new b(1)')",
-    "constructedMemberOfCall: undefined is not a constructor (evaluating 'new b.member')",
-    "constructedNew: Map is not a constructor (evaluating 'new b')",
+    "constructedMemberOfCall: undefined is not a constructor (evaluating 'new b.member()')",
+    "constructedNew: Map is not a constructor (evaluating 'new b()')",
     "constructedNewBare: Map is not a constructor (evaluating 'new b')",
     "constructedNewWith: Map is not a constructor (evaluating 'new b(2)')",
-    "constructedMemberOfNew: undefined is not a constructor (evaluating 'new b.member')",
-    "constructedMemberOfArrow: undefined is not a constructor (evaluating 'new b.member')",
+    "constructedMemberOfNew: undefined is not a constructor (evaluating 'new b.member()')",
+    "constructedMemberOfArrow: undefined is not a constructor (evaluating 'new b.member()')",
     "calledOptionalCall: b is not a function. (In 'b()', 'b' is undefined)",
     "readOfOptionalMember: undefined is not an object (evaluating 'b.deep.deeper')",
     "chosen: null is not an object (evaluating 'b.x')",

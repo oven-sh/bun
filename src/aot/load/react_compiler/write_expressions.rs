@@ -102,7 +102,11 @@ impl TreeWriter<'_, '_> {
             }
             ExprData::ENew(new) => {
                 let base = (self.write_operand(&new.target, Level::New)?, Chain::No);
-                let close = (new.close_parens_loc, new.can_be_unwrapped_if_unused);
+                let close_parens_loc = match new.has_written_parens(loc) {
+                    true => new.close_parens_loc,
+                    false => Loc::EMPTY,
+                };
+                let close = (close_parens_loc, new.can_be_unwrapped_if_unused);
                 let at = (loc, NodeShape::New);
                 let (record, range) = self.write_call_record(base, &new.args, close, at)?;
                 return Ok(self.add_expression_at(ExprKind::New(record), range));
@@ -598,6 +602,7 @@ impl TreeWriter<'_, '_> {
         let args = self.write_expression_list(arguments)?;
         let (pos, end) = self.range_of_shape(loc, shape);
         let close_pos = match close.is_empty() {
+            true if matches!(shape, NodeShape::New) && arguments.is_empty() => u32::MAX,
             true => end.saturating_sub(1).max(pos),
             false => self.range_of(close).0,
         };

@@ -174,14 +174,14 @@ describe("Bun.Transpiler", () => {
       // from becoming `a?.b = v` / `delete a?.b` / `new a?.b()`.
       ts.expectPrintedMin_("[a?.b][0] = v", "[a?.b][0] = v");
       ts.expectPrintedMin_("delete [a?.b][0]", "delete [a?.b][0]");
-      ts.expectPrintedMin_("x = new [a?.b][0]()", "x = new [a?.b][0]");
+      ts.expectPrintedMin_("x = new [a?.b][0]()", "x = new [a?.b][0]()");
       ts.expectPrintedMin_("[a?.b][0]`x`", "[a?.b][0]`x`");
 
       // Same predicate on the sibling `{f: x}.f -> x` fold: `new a?.b` /
       // `a?.b`x`` are syntax errors, so bail there too.
-      ts.expectPrintedMin_("x = new ({f: a?.b}).f()", "x = new { f: a?.b }.f");
-      ts.expectPrintedMin_("x = new ({f: a?.[b]}).f()", "x = new { f: a?.[b] }.f");
-      ts.expectPrintedMin_("x = new ({f: a?.b.c}).f()", "x = new { f: a?.b.c }.f");
+      ts.expectPrintedMin_("x = new ({f: a?.b}).f()", "x = new { f: a?.b }.f()");
+      ts.expectPrintedMin_("x = new ({f: a?.[b]}).f()", "x = new { f: a?.[b] }.f()");
+      ts.expectPrintedMin_("x = new ({f: a?.b.c}).f()", "x = new { f: a?.b.c }.f()");
       ts.expectPrintedMin_("({f: a?.b}).f`x`", "({ f: a?.b }).f`x`");
       ts.expectPrintedMin_("x = ({f: a?.b}).f", "x = { f: a?.b }.f");
 
@@ -190,7 +190,7 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_("x = [a.b][0].c", "x = a.b.c");
       ts.expectPrintedMin_("x = [(a?.b)][0]", "x = [a?.b][0]");
       ts.expectPrintedMin_("x = ({f: y}).f", "x = y");
-      ts.expectPrintedMin_("x = new ({f: C}).f()", "x = new C");
+      ts.expectPrintedMin_("x = new ({f: C}).f()", "x = new C()");
     });
     it("bails out or strips `this` when the index is a call/assignment target", () => {
       // `[obj.m][0]()` calls through a Reference into the temporary array,
@@ -958,7 +958,7 @@ describe("Bun.Transpiler", () => {
       // context and strips one ">" from ">>" before the outer closer sees it.
       exp("f<Array<number>>();", "f();\n");
       exp("f<Array<Array<number>>>();", "f();\n");
-      exp("new f<Array<number>>();", "new f;\n");
+      exp("new f<Array<number>>();", "new f();\n");
       exp("const g = f<Array<number>>;", "const g = f;\n");
 
       // A bare ">" followed by "=" on the next token still commits.
@@ -1782,7 +1782,7 @@ function foo() {}
       // Basic non-null assertion with new operator on nested class
       exp(
         "const obj = { a: class Abc {} }; const instance = new obj!.a();",
-        "const obj = { a: class Abc {\n} };\nconst instance = new obj.a",
+        "const obj = { a: class Abc {\n} };\nconst instance = new obj.a()",
       );
 
       // with constructor
@@ -1794,19 +1794,19 @@ function foo() {}
       // Non-null assertion with new operator on nested property
       exp(
         "const obj = { nested: { Class: class NestedClass {} } }; const instance = new obj!.nested.Class();",
-        "const obj = { nested: { Class: class NestedClass {\n} } };\nconst instance = new obj.nested.Class",
+        "const obj = { nested: { Class: class NestedClass {\n} } };\nconst instance = new obj.nested.Class()",
       );
 
       // Multiple non-null assertions in new expression
       exp(
         "const obj = { a: { b: class DeepClass {} } }; const instance = new obj!.a!.b();",
-        "const obj = { a: { b: class DeepClass {\n} } };\nconst instance = new obj.a.b",
+        "const obj = { a: { b: class DeepClass {\n} } };\nconst instance = new obj.a.b()",
       );
 
       // Non-null assertion with new operator and method call
       exp(
         "const obj = { getClass() { return class MyClass {}; } }; const C = obj!.getClass(); const instance = new C();",
-        "const obj = { getClass() {\n  return class MyClass {\n  };\n} };\nconst C = obj.getClass();\nconst instance = new C",
+        "const obj = { getClass() {\n  return class MyClass {\n  };\n} };\nconst C = obj.getClass();\nconst instance = new C()",
       );
     });
 
@@ -1968,7 +1968,7 @@ class Test extends Bar {
         'import { type Foo, Bar } from "./x";\nclass Foo {}\nconsole.log(Bar);',
         'import { Bar } from "./x";\n\nclass Foo {\n}\nconsole.log(Bar);\n',
       );
-      exp('import { Foo } from "./x";\ndeclare class Foo {}\nnew Foo();', 'import { Foo } from "./x";\nnew Foo;\n');
+      exp('import { Foo } from "./x";\ndeclare class Foo {}\nnew Foo();', 'import { Foo } from "./x";\nnew Foo();\n');
       exp('import { foo } from "./x";\nfunction foo(): void;', 'import { foo } from "./x";\n');
 
       const trimming = new Bun.Transpiler({ loader: "ts", trimUnusedImports: true });
@@ -6402,6 +6402,72 @@ describe("minifyWhitespace keeps the space before keyword operators", () => {
 
   it("between a numeric literal and 'in'", () => {
     expect(minifier.transformSync("1 in y")).toBe("1 in y;");
+  });
+});
+
+describe("the parentheses of a `new` without arguments", () => {
+  const printer = new Bun.Transpiler({ loader: "js" });
+  const minifier = new Bun.Transpiler({ loader: "js", minifyWhitespace: true });
+
+  it.each([
+    ["new x()", "new x();\n"],
+    ["new x.y()", "new x.y();\n"],
+    ["new x ( )", "new x();\n"],
+    ["new (x())()", "new (x())();\n"],
+    ["new (x + x)()", "new (x + x)();\n"],
+    ["new (foo().bar)()", "new (foo()).bar();\n"],
+    ["new (import('foo').bar)()", 'new (import("foo")).bar();\n'],
+    ["new x() + y", "new x() + y;\n"],
+    ["new x() ** 2", "new x() ** 2;\n"],
+    ["f(new x(), [new x()])", "f(new x(), [new x()]);\n"],
+    ["a = /* @__PURE__ */ new x()", "a = new x();\n"],
+    ["a = () => new Date()", "a = () => new Date();\n"],
+    ["a = function () { return new Map(); }", "a = function() {\n  return new Map();\n};\n"],
+  ])("are printed where the source has them: %s", (code, out) => {
+    expect(printer.transformSync(code)).toBe(out);
+  });
+
+  it.each([
+    ["new x", "new x;\n"],
+    ["new x.y", "new x.y;\n"],
+    ["new (x)", "new x;\n"],
+    ["new (x())", "new (x());\n"],
+    ["new (x + x)", "new (x + x);\n"],
+    ["new (foo().bar)", "new (foo()).bar;\n"],
+    ["f(new x, [new x])", "f(new x, [new x]);\n"],
+    ["a = () => new Date", "a = () => new Date;\n"],
+  ])("are not added where the source has none: %s", (code, out) => {
+    expect(printer.transformSync(code)).toBe(out);
+  });
+
+  it.each([
+    ["new x().y", "new x().y;\n"],
+    ["(new x).y", "new x().y;\n"],
+    ["new x()[y]", "new x()[y];\n"],
+    ["(new x)()", "new x()();\n"],
+    ["new (new x)", "new new x();\n"],
+    ["new (new x())()", "new new x()();\n"],
+  ])("are printed where the result is read or called in place: %s", (code, out) => {
+    expect(printer.transformSync(code)).toBe(out);
+  });
+
+  it.each([
+    ["new x", "new x;"],
+    ["new x()", "new x;"],
+    ["new x.y()", "new x.y;"],
+    ["(new x).y", "new x().y;"],
+    ["new x().y", "new x().y;"],
+    ["new x() + y", "new x+y;"],
+    ["new x() ** 2", "new x**2;"],
+    ["(new x)()", "new x()();"],
+    ["new (new x())()", "new new x();"],
+    ["f(new x, new x())", "f(new x,new x);"],
+  ])("are left out under minifyWhitespace where nothing reads the result in place: %s", (code, out) => {
+    expect(minifier.transformSync(code)).toBe(out);
+  });
+
+  it("are in the text of a function of a file that Bun runs", () => {
+    expect(String(() => new Date())).toBe("() => new Date()");
   });
 });
 

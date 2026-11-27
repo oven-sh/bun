@@ -3885,11 +3885,12 @@ impl<'a> Transfer<'_, 'a, '_> {
                     bun_core::strings::index_of_char_usize(&text[next as usize..], b'\n')
                         .map_or(text.len(), |length| next as usize + length)
                         as u32;
-                let is_at_a_token = |entry: &&(u32, u32, u32)| {
-                    !javascript
-                        .get(entry.2 as usize)
-                        .is_some_and(u8::is_ascii_whitespace)
-                };
+                // The printer maps the `(` of `new C()` to `new`, which can be on a line above.
+                let is_at_a_token =
+                    |entry: &&(u32, u32, u32)| match javascript.get(entry.2 as usize) {
+                        Some(b'(') => module.syntax.word(entry.1) != b"new",
+                        byte => !byte.is_some_and(u8::is_ascii_whitespace),
+                    };
                 let on_the_line = by_original[from..]
                     .iter()
                     .take_while(|entry| entry.0 == index as u32 && entry.1 < end_of_line)

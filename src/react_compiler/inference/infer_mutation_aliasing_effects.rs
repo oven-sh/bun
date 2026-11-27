@@ -2402,7 +2402,9 @@ fn compute_signature_for_instruction(
                 into: lvalue.clone(),
             });
         }
-        InstructionValue::NewExpression { callee, args, loc } => {
+        InstructionValue::NewExpression {
+            callee, args, loc, ..
+        } => {
             let sig = get_function_call_signature(env, callee.identifier)
                 .ok()
                 .flatten();

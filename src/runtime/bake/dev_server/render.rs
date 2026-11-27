@@ -377,7 +377,8 @@ impl DevServer {
                 input_file_sources[import_index].path.pretty
             } else {
                 // Find the in-graph import.
-                let Some(file) = self.graphs.client.bundled_files.get(import.path.text) else {
+                let key = import.path.key_for_incremental_graph();
+                let Some(file) = self.graphs.client.bundled_files.get(key) else {
                     continue;
                 };
                 if !matches!(file.content, incremental_graph::Content::Js(_)) {

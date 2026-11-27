@@ -17,7 +17,7 @@ pub(crate) type EntryIndex = bun_core::GenericIndex<u32, AssetsMarker>;
 
 #[derive(Default)]
 pub(crate) struct Assets {
-    /// Keys are absolute paths. `StringArrayHashMap` stores owned `Box<[u8]>`
+    /// Keys are the client graph's keys. `StringArrayHashMap` stores owned `Box<[u8]>`
     /// keys.
     pub(crate) path_map: StringArrayHashMap<EntryIndex>,
     /// Content-addressable store. Multiple paths can point to the same content

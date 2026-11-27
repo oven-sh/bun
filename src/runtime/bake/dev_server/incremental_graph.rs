@@ -1055,15 +1055,25 @@ impl Graphs {
         Self: AsMut<IncrementalGraph<SIDE>>,
     {
         let file = &mut self.as_mut().bundled_files.values_mut()[index.get() as usize];
+        let failed = file.failed;
         match file.content {
             Content::Unknown => {
                 file.kind = FileKind::Css;
                 file.content = Content::CssChild;
             }
             Content::CssChild => {}
+            // The chunk of a failed root is gone. An `@import` needs none, so the root is a child again.
+            Content::CssRoot(_) if failed => {
+                debug_assert!(matches!(SIDE, Side::Client));
+                if self.needs_css_chunk(index.get() as usize) {
+                    return;
+                }
+                self.as_mut().bundled_files.values_mut()[index.get() as usize].content =
+                    Content::CssChild;
+            }
             _ => return,
         }
-        if !file.failed {
+        if !failed {
             return;
         }
         let failed_in_this_bundle = |failure: &SerializedFailure| {
@@ -1085,6 +1095,25 @@ impl Graphs {
         if let Some(kv) = self.bundling_failures.fetch_swap_remove(&owner) {
             self.incremental_result.failures_removed.push(kv.1);
         }
+    }
+
+    /// True if an html file, a script or a server file imports this stylesheet: it is then a css root.
+    #[cold]
+    fn needs_css_chunk(&self, index: usize) -> bool {
+        let mut it = self.client.edge_lists[index].first_dep;
+        while let Some(edge_index) = it {
+            let edge = self.client.edges[edge_index.get() as usize];
+            if self.client.bundled_files.values()[edge.dependency.get() as usize].kind
+                != FileKind::Css
+            {
+                return true;
+            }
+            it = edge.next_dependency;
+        }
+        let key = &self.client.bundled_files.keys()[index];
+        self.server
+            .get_file_index(key)
+            .is_some_and(|i| self.server.edge_lists[i.get() as usize].first_dep.is_some())
     }
 
     // ────────────────────────────────────────────────────────────────────────

@@ -259,7 +259,7 @@ impl DevServer {
     ) -> crate::Result<()> {
         let _g = self.graph_safety_lock.guard();
         let _ = self.replace_asset_path(
-            path.text,
+            path.key_for_incremental_graph(),
             contents,
             &MimeType::by_extension(path.name().ext_without_leading_dot()),
             content_hash,

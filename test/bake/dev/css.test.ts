@@ -810,6 +810,125 @@ devTest("css import before create project relative", {
     await dev.fetch("/").expect.toContain("HELLO");
   },
 });
+// One bundle makes one module for a stylesheet. The html file that resolves the stylesheet first makes the
+// module. The other html files of the bundle find the module by its path, and their import records keep the
+// path as written. The stylesheets: a plugin module, a plugin module that the plugin renames, and a file.
+const sharedStylesheets = ["same.css", "alias.css", "./file.css"];
+const pagesOfSharedStylesheets = sharedStylesheets.flatMap((href, n) =>
+  [0, 1].map(page => ({ name: `page-${n}-${page}`, href })),
+);
+devTest("html files of one bundle keep the build error of the stylesheet that they share", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./virtual-modules.ts"]
+    `,
+    // The import "broken-loads" is a script that prints how many times the plugin loaded each broken stylesheet.
+    "virtual-modules.ts": `
+      import path from "node:path";
+      const brokenLoads = {};
+      const loadsOf = name => name + "=" + (brokenLoads[name] ?? 0);
+      export default {
+        name: "virtual-modules",
+        setup(build) {
+          build.onResolve({ filter: /^same\\./ }, args => ({ path: args.path, namespace: "virtual" }));
+          build.onResolve({ filter: /^alias\\./ }, args => ({ path: args.path.replace("alias", "other"), namespace: "virtual" }));
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, async args => {
+            const contents = await Bun.file(path.join(import.meta.dir, "virtual-stylesheet.txt")).text();
+            if (contents.includes("}}")) brokenLoads[args.path] = (brokenLoads[args.path] ?? 0) + 1;
+            return { contents, loader: "css" };
+          });
+          build.onResolve({ filter: /^broken-loads$/ }, args => ({ path: args.path, namespace: "broken-loads" }));
+          build.onLoad({ filter: /.*/, namespace: "broken-loads" }, () => ({
+            contents: "console.log(" + JSON.stringify("broken loads: " + loadsOf("same.css") + " " + loadsOf("other.css")) + ");",
+            loader: "ts",
+          }));
+        },
+      };
+    `,
+    "virtual-stylesheet.txt": `h1 { color: red; }`,
+    "file.css": `h1 { color: red; }`,
+    "broken-loads.html": emptyHtmlFile({ scripts: ["./broken-loads.ts"] }),
+    "broken-loads.ts": `import "broken-loads";`,
+    ...Object.fromEntries(
+      pagesOfSharedStylesheets.map(({ name, href }) => [`${name}.html`, emptyHtmlFile({ styles: [href] })]),
+    ),
+  },
+  async test(dev) {
+    // The status of each page, and whether the page links a stylesheet.
+    const load = async () => {
+      const pages: Record<string, { status: number; link: boolean }> = {};
+      for (const { name } of pagesOfSharedStylesheets) {
+        const page = await dev.fetch(`/${name}`);
+        pages[name] = { status: page.status, link: (await page.text()).includes(`<link rel="stylesheet"`) };
+      }
+      return pages;
+    };
+    const all = (page: { status: number; link: boolean }) =>
+      Object.fromEntries(pagesOfSharedStylesheets.map(({ name }) => [name, page]));
+    expect(await load()).toEqual(all({ status: 200, link: true }));
+    {
+      // One bundle builds the six html files, and each stylesheet has a syntax error in it.
+      await using batch = await dev.batchChanges({ errors: null });
+      await Bun.write(dev.join("virtual-stylesheet.txt"), `h1 { color: red; }}`);
+      await dev.write("file.css", `h1 { color: red; }}`);
+      for (const { name } of pagesOfSharedStylesheets) await dev.writeNoChanges(`${name}.html`);
+    }
+    const html = await dev.fetch("/broken-loads").text();
+    const script = await dev.fetch(html.match(/\/_bun\/client\/[^"]+\.js/)![0]).text();
+    expect(script).toContain("broken loads: same.css=1 other.css=1");
+    // previously: five of the six pages answered 200, with no stylesheet or with the stylesheet of the earlier build
+    expect([await load(), await load()]).toEqual([
+      all({ status: 500, link: false }),
+      all({ status: 500, link: false }),
+    ]);
+    // Each page has its edge to the stylesheet, so each page gets the stylesheet once it builds.
+    await Bun.write(dev.join("virtual-stylesheet.txt"), `h1 { color: blue; }`);
+    await dev.write("file.css", `h1 { color: blue; }`, { errors: null });
+    expect(await load()).toEqual(all({ status: 200, link: true }));
+  },
+});
+// The dev server makes the stylesheets of a plugin whose name has "tailwind" in it entry points of every bundle,
+// so the html file always finds the module of its stylesheet. The plugin has the shape of bun-plugin-tailwind.
+devTest("stylesheet of a tailwind plugin keeps its build error and is back after the repair", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./tailwind-like.ts"]
+    `,
+    "tailwind-like.ts": `
+      export default {
+        name: "tailwind-like",
+        setup(build) {
+          build.onLoad({ filter: /\\.css$/ }, async args => ({
+            contents: "/*! tailwindcss */\\n" + (await Bun.file(args.path).text()),
+            loader: "css",
+          }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ styles: ["./styles.css"] }),
+    "styles.css": `h1 { width: 1px; }`,
+  },
+  async test(dev) {
+    // The status of the page, and the stylesheet that the page links.
+    const load = async () => {
+      const page = await dev.fetch("/");
+      const href = (await page.text()).match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)?.[1];
+      return { status: page.status, stylesheet: href ? await dev.fetch(href).text() : null };
+    };
+    // The dev server takes a stylesheet for a tailwind file when the start of its output has "tailwind" in it.
+    expect(await load()).toEqual({ status: 200, stylesheet: expect.stringContaining("tailwindcss") });
+    await dev.write("styles.css", `h1 { width: 1px; }}`, { errors: null });
+    // previously: the second load answered 200, and the page had no stylesheet from here on
+    expect([await load(), await load()]).toEqual([
+      { status: 500, stylesheet: null },
+      { status: 500, stylesheet: null },
+    ]);
+    await dev.write("styles.css", `h1 { width: 2px; }`, { errors: null });
+    expect(await load()).toEqual({ status: 200, stylesheet: expect.stringContaining("2px") });
+  },
+});
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

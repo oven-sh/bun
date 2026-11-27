@@ -572,7 +572,10 @@ const findsNoEvent = new Set([
 // Only a Bun with a sanitizer builds them in company. There a build takes several times as long, and what a sanitizer finds it finds by the code that runs over a
 // route, not by a verdict. Every other Bun builds each of these routes alone as well, and so shows that the build finds an event for each.
 // AOT_EVERY_ROUTE_ALONE=1 | 0 asks for either anywhere. These lists are made by hand.
-const everyRouteAlone = process.env.AOT_EVERY_ROUTE_ALONE ? process.env.AOT_EVERY_ROUTE_ALONE === "1" : !isASAN;
+const asked = process.env.AOT_EVERY_ROUTE_ALONE || undefined;
+if (asked !== undefined && asked !== "1" && asked !== "0")
+  throw new Error(`AOT_EVERY_ROUTE_ALONE is 1 or 0, not ${JSON.stringify(asked)}`);
+const everyRouteAlone = asked === undefined ? !isASAN : asked === "1";
 const reportedAlike = [
   [
     "module require method",

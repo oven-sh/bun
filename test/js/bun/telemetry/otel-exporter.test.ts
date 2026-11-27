@@ -1473,6 +1473,23 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(c.spans().map(s => s.name)).toEqual(["s"]);
   });
 
+  test.skipIf(isWindows).each(["missing", "index.js/below"])(
+    "process.execve(%j) leaves the retries to the program that goes on",
+    async path => {
+      using c = collector(n => (n < 2 ? new Response(null, { status: 503 }) : undefined));
+      const result = await run(
+        `Bun.otel.start({ endpoint: process.env.URL });
+         Bun.otel.span("s", () => {});
+         try { process.execve(${JSON.stringify(path)}, ["x"], {}); } catch (e) { console.log(e.code); }
+         await Bun.otel.forceFlush();
+         console.log(Bun.otel.stats().spansExported);`,
+        { URL: c.url, NODE_NO_WARNINGS: "1" },
+      );
+      const code = path === "missing" ? "ENOENT" : "ENOTDIR";
+      expect(result).toEqual({ stdout: code + "\n1\n", stderr: "", exitCode: 0 });
+    },
+  );
+
   test("bun test --isolate: a file's function exporter gets what the file has left", async () => {
     const file = (name: string) =>
       `import { test } from "bun:test";

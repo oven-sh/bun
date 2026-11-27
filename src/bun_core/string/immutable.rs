@@ -1870,8 +1870,7 @@ impl core::fmt::Display for QuoteEscapeFormat<'_> {
             self.flags.str_encoding,
         )
         .map_err(|_| core::fmt::Error)?;
-        // SAFETY: write_pre_quoted_string emits UTF-8 (escapes + ASCII + WTF-8).
-        f.write_str(unsafe { core::str::from_utf8_unchecked(&buf) })
+        crate::fmt::write_lossy(f, &buf)
     }
 }
 

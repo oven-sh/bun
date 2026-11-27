@@ -3459,17 +3459,8 @@ impl<T: Display> Display for EscapeControlCharsMultiline<T> {
 pub(crate) struct EscapeControlCharsWriter<'a>(pub(crate) &'a mut dyn fmt::Write, pub(crate) bool);
 
 impl fmt::Write for EscapeControlCharsWriter<'_> {
-    /// `Raw` and `write_bytes` pass unvalidated bytes as a `str`, so `s` is validated here before
-    /// it is decoded. Invalid UTF-8 is written as U+FFFD.
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        s.as_bytes().utf8_chunks().try_for_each(|chunk| {
-            self.write_valid(chunk.valid())?;
-            if chunk.invalid().is_empty() {
-                Ok(())
-            } else {
-                self.0.write_char(char::REPLACEMENT_CHARACTER)
-            }
-        })
+        self.write_valid(s)
     }
 }
 

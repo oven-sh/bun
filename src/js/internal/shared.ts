@@ -241,7 +241,9 @@ function withMembers<T extends object, M extends object>(options: T, members: M)
     const keys = $Object.$getOwnPropertyNames(object);
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
-      if (!$Object.$getOwnPropertyDescriptor(result, key) && $Object.$getOwnPropertyDescriptor(object, key)?.get) {
+      if ($Object.$getOwnPropertyDescriptor(result, key)) continue;
+      const descriptor = $Object.$getOwnPropertyDescriptor(object, key);
+      if (descriptor && $getByIdDirect(descriptor, "get")) {
         $Object.$defineProperty(result, key, { __proto__: null, get: () => options[key] } as PropertyDescriptor);
       }
     }

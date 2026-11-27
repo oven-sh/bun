@@ -1979,13 +1979,17 @@ describe("client TLS options", () => {
     it("wraps the `tls` option without the functions of `Object` that a program replaced", async () => {
       using server = await serve(agent1);
       class Options {
+        #ca = ca1;
         checkServerIdentity = () => undefined;
+        rejectUnauthorized = true;
         get ca() {
-          return ca1;
+          return this.#ca;
         }
       }
       const tls = new Options();
-      const names = ["getOwnPropertyNames", "defineProperty"];
+      // No module loads while the functions are replaced.
+      expect(await dial(server.url, { tls })).toEqual(anonymous);
+      const names = ["getOwnPropertyNames", "getOwnPropertyDescriptor", "defineProperty"];
       const originals = names.map(name => Object[name]);
       const called = new Set<string>();
       let outcome;
@@ -1996,8 +2000,13 @@ describe("client TLS options", () => {
             return originals[i](object, ...rest);
           };
         });
+        originals[2](Object.prototype, "get", {
+          configurable: true,
+          get: () => void called.add("Object.prototype.get"),
+        });
         outcome = dial(server.url, { tls });
       } finally {
+        delete (Object.prototype as any).get;
         names.forEach((name, i) => (Object[name] = originals[i]));
       }
       expect({ called: [...called], outcome: await outcome }).toEqual({ called: [], outcome: anonymous });

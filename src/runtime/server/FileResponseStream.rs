@@ -95,7 +95,7 @@ bitflags::bitflags! {
 /// The descriptor that a response is read from. Closed off this thread, where the close that releases a file can block.
 pub(crate) struct StreamFd {
     file: MaybeOwnedFile,
-    /// A duplicate, while the descriptor it was made from is open for certain: no code of its owner has run since. The file then stays open without the duplicate, which is closed on this thread.
+    /// A duplicate whose original is open for certain, so its close on this thread does not release the file.
     original_is_open: bool,
 }
 
@@ -107,12 +107,10 @@ impl StreamFd {
         }
     }
 
-    /// Bun's own duplicate of the descriptor of a `Bun.file(fd)`. The caller can close the number while the response is sent, and the kernel then gives the number to the next file that is opened.
-    ///
-    /// Out of line: the eight `RequestContext` monomorphizations share one copy.
-    #[inline(never)]
+    /// Bun's own duplicate of a `Bun.file(fd)` descriptor, which the caller can close while the response is sent.
+    #[inline(never)] // one copy for the eight `RequestContext` monomorphizations
     pub(crate) fn duplicate_of(fd: Fd, file_type: FileType) -> sys::Result<Self> {
-        // libuv takes a pipe or a tty over and closes it with its handle, and the tty of fd 0 is one handle for the whole process.
+        // libuv closes a pipe or a tty with its handle, and shares one handle for the tty of fd 0.
         if cfg!(windows) && (file_type != FileType::File || fd.stdio_tag().is_some()) {
             return Ok(Self::borrowed(fd));
         }
@@ -124,7 +122,7 @@ impl StreamFd {
         let file = File::from_fd(duplicate).make_lib_uv_owned_for_syscall(sys::Tag::dup)?;
         Ok(Self {
             file: file.into(),
-            // Only a regular file: the reader's poll on any other kind goes before the descriptor does.
+            // The reader's poll on any other kind of file goes first.
             original_is_open: cfg!(unix) && file_type == FileType::File,
         })
     }
@@ -133,7 +131,7 @@ impl StreamFd {
         self.file.fd()
     }
 
-    /// Before code of the original's owner runs, or without any of it.
+    /// Call it before code of the original's owner can run.
     fn close_while_original_is_open(&mut self) {
         if core::mem::take(&mut self.original_is_open) {
             drop(core::mem::take(&mut self.file));
@@ -322,7 +320,7 @@ impl FileResponseStream {
         self.fd.get().get()
     }
 
-    /// When code of the owner of the descriptor that ours is a duplicate of can run: at the end of `start()` at the latest.
+    /// From the end of `start()` at the latest.
     fn original_can_close(&self) {
         self.fd.with_mut(|fd| fd.original_is_open = false);
     }
@@ -351,9 +349,9 @@ impl FileResponseStream {
     }
 
     fn deliver(&self, resp: AnyResponse, end: StreamEnd) {
-        // The owner can run JS (the microtasks, an `abort` listener, the `error` handler), and that can close the original.
+        // The owner runs JS, which can close the original.
         if matches!(end, StreamEnd::Abort) {
-            // The reader can be inside a read loop on the number, so `Drop` closes it.
+            // The reader can be inside a read loop on the number.
             self.original_can_close();
         } else if self.fd.get().original_is_open {
             // The reader holds the same number.

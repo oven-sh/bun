@@ -1522,21 +1522,23 @@ describe.each(scripted)("$adapter, scripted server", script => {
       await using sql = new SQL({ url: url(server.port), max: 1, queueTimeout: 0.01 });
       expect(sql.options.queueTimeout).toBe(10);
       await warm(sql);
-      const holder = await sql.reserve();
-      const error = await call(sql).then(
-        () => null,
-        (err: unknown) => err,
-      );
-      expect(error).toBeInstanceOf(SQL.SQLError);
-      expect(error).toMatchObject({
-        code: QUEUE_TIMEOUT,
-        message: "Waited more than 0.01 seconds for a connection",
-      });
-      expect((error as Error).cause).toBeUndefined();
-      // The reservation is still the caller's, and the pool's one connection serves whoever comes next.
-      expect(await outcome(holder.unsafe("select 1").simple())).toBe("resolved");
-      expect(await outcome(holder.reserve())).toBe(QUEUE_TIMEOUT);
-      holder.release();
+      {
+        using holder = await sql.reserve();
+        const error = await call(sql).then(
+          () => null,
+          (err: unknown) => err,
+        );
+        expect(error).toBeInstanceOf(SQL.SQLError);
+        expect(error).toMatchObject({
+          code: QUEUE_TIMEOUT,
+          message: "Waited more than 0.01 seconds for a connection",
+        });
+        expect((error as Error).cause).toBeUndefined();
+        // The reservation is still the caller's.
+        expect(await outcome(holder.unsafe("select 1").simple())).toBe("resolved");
+        expect(await outcome(holder.reserve())).toBe(QUEUE_TIMEOUT);
+      }
+      // The pool's one connection serves whoever comes next.
       expect(await outcome(sql.unsafe("select 1").simple())).toBe("resolved");
       expect(await outcome(sql.reserve().then(reserved => reserved.release()))).toBe("resolved");
       expect(server.sockets.length).toBe(1);
@@ -1567,11 +1569,10 @@ describe.each(scripted)("$adapter, scripted server", script => {
 
       answerWith = serving;
       await warm(sql);
-      const holder = await sql.reserve();
+      using _ = await sql.reserve();
       error = await sql.reserve().catch(err => err);
       expect(error.code).toBe(QUEUE_TIMEOUT);
       expect(error.cause).toBeUndefined();
-      holder.release();
     });
 
     test.concurrent("a query that gets a connection that is busy does not wait, and is not limited", async () => {
@@ -1612,11 +1613,13 @@ describe.each(scripted)("$adapter, scripted server", script => {
       const sql = new SQL({ url: url(server.port), max: 1, queueTimeout: 0.01 });
       expect(sql.options.queueTimeout).toBe(10);
       await warm(sql);
-      const holder = await sql.reserve();
-      const waiting = outcome(sql.unsafe("select 1").simple());
-      const closing = outcome(sql.close());
-      expect(await waiting).toBe(QUEUE_TIMEOUT);
-      holder.release();
+      let closing: PromiseLike<string>;
+      {
+        using _ = await sql.reserve();
+        const waiting = outcome(sql.unsafe("select 1").simple());
+        closing = outcome(sql.close());
+        expect(await waiting).toBe(QUEUE_TIMEOUT);
+      }
       expect(await closing).toBe("resolved");
     });
 
@@ -1624,12 +1627,14 @@ describe.each(scripted)("$adapter, scripted server", script => {
       await using server = await serverOf(serving);
       await using sql = new SQL({ url: url(server.port), max: 1, queueTimeout: 2 ** 31 });
       expect(sql.options.queueTimeout).toBe(2 ** 31 * 1000);
-      const holder = await sql.reserve();
-      const waiting = outcome(sql.unsafe("select 1").simple());
-      // Timers fire in the order of their deadlines: this one is armed later and for longer than 1 ms.
-      const later = new Promise(resolve => setTimeout(resolve, 10));
-      expect(await unlessPending(waiting, later)).toBe("pending");
-      holder.release();
+      let waiting: PromiseLike<string>;
+      {
+        using _ = await sql.reserve();
+        waiting = outcome(sql.unsafe("select 1").simple());
+        // Timers fire in the order of their deadlines: this one is armed later and for longer than 1 ms.
+        const later = new Promise(resolve => setTimeout(resolve, 10));
+        expect(await unlessPending(waiting, later)).toBe("pending");
+      }
       expect(await waiting).toBe("resolved");
     });
 

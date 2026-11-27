@@ -17,6 +17,7 @@ const { describeAddress } = require("internal/sql/options");
 const AsyncContextFrame = require("internal/async_context_frame");
 const { isStoppedModuleGraphRunning } = require("internal/shared");
 const monotonicNowMs: () => number = $bindgen("Timer.bind.ts", "monotonicNowMs");
+const ObjectDefineProperty = Object.defineProperty;
 /// how many times `bun --hot` has reloaded the program, -1 without --hot
 const hotReloadGeneration: () => number = $bindgen("jsc_hooks.bind.ts", "hotReloadGeneration");
 
@@ -75,15 +76,13 @@ type OnConnected = (err: Error | null, connection: any) => void;
 /// In the pool's queue: a caller that wants a connection for itself, or a query that has a timer. A query
 /// without one is queued as its bare callback.
 class Waiter {
-  // `declare`: a field that the class defines costs each begin() and reserve() more than an assignment.
-  declare onConnected: OnConnected;
-  declare reserved: boolean;
+  onConnected: OnConnected;
+  reserved: boolean;
   /// Of `queueTimeout`. What takes the caller out of the queue clears it.
-  declare timer: ReturnType<typeof setTimeout> | undefined;
+  timer: ReturnType<typeof setTimeout> | undefined = undefined;
   constructor(onConnected: OnConnected, reserved: boolean) {
     this.onConnected = onConnected;
     this.reserved = reserved;
-    this.timer = undefined;
   }
 }
 
@@ -1047,7 +1046,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     const error = self.error("QUEUE_TIMEOUT", `Waited more than ${self.#queueTimeout / 1000} seconds for a connection`);
     const cause = self.dialError;
     if (cause !== null) {
-      Object.defineProperty(error, "cause", { __proto__: null, value: cause, writable: true, configurable: true });
+      ObjectDefineProperty(error, "cause", { __proto__: null, value: cause, writable: true, configurable: true });
     }
     if (self.cancelConnect(onConnected)) {
       onConnected(error, null);

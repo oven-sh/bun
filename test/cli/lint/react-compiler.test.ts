@@ -780,6 +780,34 @@ ${chain}
     expect(diagnostics["other-imports.jsx"]).toBeUndefined();
     expect(linesOf(diagnostics["real-modules.jsx"], "incompatible-library")).toEqual([7, 12, 17]);
   });
+
+  test("a function that's given to JSX, or called in a branch or a loop, isn't assumed to be called during render", async () => {
+    const diagnostics = await matches("assumed calls");
+    /** The lines of the dependency lists for which `dependency` is inferred. */
+    const inferred = (path: string, dependency: string) =>
+      (diagnostics[path] as (Found & { help?: string })[])
+        .filter(it => it.help?.includes(`The inferred dependency was \`${dependency}\`,`))
+        .map(it => it.labels[0].span.line)
+        .sort((a, b) => a - b);
+    expect({
+      "object": inferred("given-to-jsx.jsx", "object"),
+      "user": inferred("given-to-jsx.jsx", "user"),
+      // The callback is also called, or given to a hook, in the component's body.
+      "object.a.b": inferred("given-to-jsx.jsx", "object.a.b"),
+    }).toEqual({
+      "object": [6, 11, 16, 21, 26, 31, 44, 45],
+      "user": [39],
+      "object.a.b": [50, 56],
+    });
+    expect({
+      "object": inferred("calls-in-branches.jsx", "object"),
+      // The call is outside of a branch, or the hook returns the callback.
+      "object.a.b": inferred("calls-in-branches.jsx", "object.a.b"),
+    }).toEqual({
+      "object": [4, 12, 23, 29, 35, 41, 49, 59, 71, 82, 91, 99, 108, 117],
+      "object.a.b": [128, 134, 143, 149],
+    });
+  });
 });
 
 describe.concurrent("bun lint: how a diagnostic's labels, help and note are printed", () => {

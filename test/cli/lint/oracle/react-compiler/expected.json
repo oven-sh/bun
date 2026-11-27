@@ -18025,6 +18025,835 @@
      }
     ]
    }
+  },
+  "assumed calls": {
+   "exit": 1,
+   "files": 2,
+   "diagnostics": {
+    "calls-in-branches.jsx": [
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 3,
+         "length": 9,
+         "line": 103,
+         "offset": 2534
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 5,
+         "length": 9,
+         "line": 93,
+         "offset": 2296
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object.a.b`, but the source dependencies were [object?.a?.b]. Inferred different dependency than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 128,
+         "offset": 3176
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 47,
+         "length": 1,
+         "line": 128,
+         "offset": 3173
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object.a.b`, but the source dependencies were [object?.a?.b]. Inferred different dependency than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 134,
+         "offset": 3341
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 47,
+         "length": 1,
+         "line": 134,
+         "offset": 3338
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object.a.b`, but the source dependencies were [object?.a?.b]. Inferred different dependency than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 143,
+         "offset": 3553
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 47,
+         "length": 1,
+         "line": 143,
+         "offset": 3550
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object.a.b`, but the source dependencies were [object?.a?.b]. Inferred different dependency than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 149,
+         "offset": 3731
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 47,
+         "length": 1,
+         "line": 149,
+         "offset": 3728
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.a?.b]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 108,
+         "offset": 2708
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 38,
+         "length": 10,
+         "line": 108,
+         "offset": 2696
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.a?.b]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 117,
+         "offset": 2933
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 38,
+         "length": 10,
+         "line": 117,
+         "offset": 2921
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.a?.b]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 12,
+         "offset": 331
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 38,
+         "length": 10,
+         "line": 12,
+         "offset": 319
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.a?.b]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 23,
+         "offset": 580
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 38,
+         "length": 10,
+         "line": 23,
+         "offset": 568
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.a?.b]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 29,
+         "offset": 779
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 38,
+         "length": 10,
+         "line": 29,
+         "offset": 767
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.a?.b]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 35,
+         "offset": 975
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 38,
+         "length": 10,
+         "line": 35,
+         "offset": 963
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.a?.b]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 4,
+         "offset": 149
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 38,
+         "length": 10,
+         "line": 4,
+         "offset": 137
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.a?.b]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 41,
+         "offset": 1162
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 38,
+         "length": 10,
+         "line": 41,
+         "offset": 1150
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.a?.b]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 49,
+         "offset": 1359
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 38,
+         "length": 10,
+         "line": 49,
+         "offset": 1347
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.a?.b]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 59,
+         "offset": 1582
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 38,
+         "length": 10,
+         "line": 59,
+         "offset": 1570
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.a?.b]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 71,
+         "offset": 1805
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 38,
+         "length": 10,
+         "line": 71,
+         "offset": 1793
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.a?.b]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 82,
+         "offset": 2049
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 38,
+         "length": 10,
+         "line": 82,
+         "offset": 2037
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.a?.b]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 91,
+         "offset": 2256
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 38,
+         "length": 10,
+         "line": 91,
+         "offset": 2244
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.a?.b]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 99,
+         "offset": 2475
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 38,
+         "length": 10,
+         "line": 99,
+         "offset": 2463
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     }
+    ],
+    "given-to-jsx.jsx": [
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object.a.b`, but the source dependencies were [object?.a?.b]. Inferred different dependency than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 50,
+         "offset": 1517
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 47,
+         "length": 1,
+         "line": 50,
+         "offset": 1514
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object.a.b`, but the source dependencies were [object?.a?.b]. Inferred different dependency than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 56,
+         "offset": 1709
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 47,
+         "length": 1,
+         "line": 56,
+         "offset": 1706
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.a?.b]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 47,
+         "length": 14,
+         "line": 44,
+         "offset": 1290
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 35,
+         "length": 10,
+         "line": 44,
+         "offset": 1278
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.a?.b]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 11,
+         "offset": 318
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 38,
+         "length": 10,
+         "line": 11,
+         "offset": 306
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.a?.b]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 16,
+         "offset": 466
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 38,
+         "length": 10,
+         "line": 16,
+         "offset": 454
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.a?.b]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 21,
+         "offset": 603
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 38,
+         "length": 10,
+         "line": 21,
+         "offset": 591
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.a?.b]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 14,
+         "line": 26,
+         "offset": 764
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 38,
+         "length": 10,
+         "line": 26,
+         "offset": 752
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.a?.b]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 14,
+         "line": 6,
+         "offset": 176
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 17,
+         "length": 10,
+         "line": 5,
+         "offset": 158
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.c?.d]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 48,
+         "length": 14,
+         "line": 45,
+         "offset": 1354
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 36,
+         "length": 10,
+         "line": 45,
+         "offset": 1342
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `object`, but the source dependencies were [object?.x?.y]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 70,
+         "length": 14,
+         "line": 31,
+         "offset": 929
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 54,
+         "length": 10,
+         "line": 31,
+         "offset": 913
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `user`, but the source dependencies were [user?.profile?.age]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 20,
+         "line": 39,
+         "offset": 1128
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 12,
+         "length": 16,
+         "line": 38,
+         "offset": 1104
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     }
+    ]
+   }
   }
  },
  "eslint": {

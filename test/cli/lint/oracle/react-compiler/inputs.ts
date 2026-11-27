@@ -5786,6 +5786,248 @@ export function Virtual(props) {
 `,
 };
 
+/**
+ * Callbacks that read `object.a.b` and list `object?.a?.b`. Where the callback is assumed to be called during render,
+ * what it reads can be read early and the inferred dependency is `object.a.b`. Where it isn't, it is `object`.
+ * oxlint 1.90 assumed the call of a function that's given to JSX, and oxlint 1.93 assumed it from a call in a branch.
+ */
+const assumedCalls: Files = {
+  ".oxlintrc.json": rc(),
+  // From `AlsoCalled` on, the callback is called or given to a hook in the component's body, or the list is right.
+  // Spread props never showed a call.
+  "given-to-jsx.jsx": `import { useCallback, useEffect, useMemo, useState } from "react";
+
+export function Prop({ object }) {
+  const callback = useCallback(() => {
+    console.log(object.a.b);
+  }, [object?.a?.b]);
+  return <div onClick={callback} />;
+}
+
+export function Child({ object }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  return <div>{callback}</div>;
+}
+
+export function ChildOfAFragment({ object }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  return <>{callback}</>;
+}
+
+export function SpreadProps({ object }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  return <div {...{ onClick: callback }} />;
+}
+
+export function PropOfAComponent({ object }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  return <Inner render={callback} />;
+}
+
+export function InAMemo({ object }) {
+  const element = useMemo(() => <Inner render={() => object.x.y} />, [object?.x?.y]);
+  return <div>{element}</div>;
+}
+
+export function SetsState({ user }) {
+  const [age, setAge] = useState(0);
+  const onClick = useCallback(() => {
+    setAge(user.profile.age);
+  }, [user?.profile?.age]);
+  return <button onClick={onClick}>{age}</button>;
+}
+
+export function TwoProps({ object }) {
+  const first = useCallback(() => object.a.b, [object?.a?.b]);
+  const second = useCallback(() => object.c.d, [object?.c?.d]);
+  return <div onClick={first} onKeyDown={second} />;
+}
+
+export function AlsoCalled({ object }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  const value = callback();
+  return <div onClick={callback}>{value}</div>;
+}
+
+export function AlsoGivenToAHook({ object }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  useEffect(callback, [callback]);
+  return <div onClick={callback} />;
+}
+
+export function ListedAsItIsRead({ object }) {
+  const callback = useCallback(() => {
+    console.log(object.a.b);
+  }, [object.a.b]);
+  return <div onClick={callback} />;
+}
+
+export function ListedWhole({ object, condition }) {
+  const dependency = condition ? object.a.b : null;
+  const callback = useCallback(() => {
+    console.log(object.a.b, dependency);
+  }, [object, dependency]);
+  return <div onClick={callback} />;
+}
+`,
+  // From `useCalled` on, the callback is called or given to a hook outside of a branch, or is what the hook returns.
+  "calls-in-branches.jsx": `import { useCallback, useEffect } from "react";
+
+export function useInAnIf({ object, condition }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  if (condition) {
+    callback();
+  }
+  return [callback];
+}
+
+export function useInAnElse({ object, condition }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  let result = null;
+  if (condition) {
+    result = 1;
+  } else {
+    result = callback();
+  }
+  return [callback, result];
+}
+
+export function useInATernary({ object, condition }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  const result = condition ? callback() : null;
+  return [callback, result];
+}
+
+export function useAfterAnd({ object, condition }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  const result = condition && callback();
+  return [callback, result];
+}
+
+export function useAfterNullish({ object, fallback }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  const result = fallback ?? callback();
+  return [callback, result];
+}
+
+export function useInALoop({ object, items }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  for (const item of items) {
+    callback(item);
+  }
+  return [callback];
+}
+
+export function useInAWhileLoop({ object, count }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  let index = 0;
+  while (index < count) {
+    callback(index);
+    index += 1;
+  }
+  return [callback];
+}
+
+export function useInASwitch({ object, kind }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  switch (kind) {
+    case "a":
+      callback();
+      break;
+    default:
+      break;
+  }
+  return [callback];
+}
+
+export function useInATry({ object }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  let result = null;
+  try {
+    result = callback();
+  } catch {
+    result = null;
+  }
+  return [callback, result];
+}
+
+export function useAfterAReturn({ object, condition }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  if (condition) {
+    return null;
+  }
+  callback();
+  return [callback];
+}
+
+export function useGivenToAHookInAnIf({ object, condition }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  if (condition) {
+    useEffect(callback, [callback]);
+  }
+  return [callback];
+}
+
+export function useGivenToAHookAfterAReturn({ object, condition }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  if (condition) {
+    return null;
+  }
+  useEffect(callback, [callback]);
+  return [callback];
+}
+
+export function useCalledInACallbackInAnIf({ object, condition }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  const outer = () => callback();
+  if (condition) {
+    outer();
+  }
+  return [callback];
+}
+
+export function useCalledInBothBranches({ object, condition }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  let result = null;
+  if (condition) {
+    result = callback();
+  } else {
+    result = callback();
+  }
+  return [callback, result];
+}
+
+export function useCalled({ object }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  callback();
+  return [callback];
+}
+
+export function useCalledBeforeAnIf({ object, condition }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  const result = callback();
+  if (condition) {
+    callback();
+  }
+  return [callback, result];
+}
+
+export function useGivenToAHook({ object }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  useEffect(callback, [callback]);
+  return [callback];
+}
+
+export function useReturned({ object, condition }) {
+  const callback = useCallback(() => object.a.b, [object?.a?.b]);
+  if (condition) {
+    callback();
+  }
+  return callback;
+}
+`,
+};
+
 const ownNameOfTheComponent = `import { memo, useRef } from "react";
 
 export default memo(function Tree({ items }) {
@@ -6199,6 +6441,7 @@ function Component(props) {
   "control reactivity": controlReactivity,
   "jsx tags": jsxTags,
   "fixture modules": fixtureModules,
+  "assumed calls": assumedCalls,
 };
 
 type RawDiagnostic = { filename?: string; url?: string; [key: string]: unknown };

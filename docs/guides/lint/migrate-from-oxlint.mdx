@@ -4,7 +4,7 @@ sidebarTitle: Migrate from oxlint
 mode: center
 ---
 
-`bun lint` reads your `.oxlintrc.json` and reports the same problems as oxlint 1.87. In most projects you only change the command.
+`bun lint` reads your `.oxlintrc.json` and reports the same problems as oxlint 1.87, or as oxlint 1.95 for the [React Compiler rules](#differences-from-oxlint). In most projects you only change the command.
 
 ```json package.json icon="file-json"
 {
@@ -140,9 +140,12 @@ If the project also has an ESLint config, Bun uses the oxlint config. Pick the o
 
 ## Differences from oxlint
 
-If `bun lint` and oxlint 1.87 disagree about a rule, that's a bug. [Open an issue](https://github.com/oven-sh/bun/issues). These differences are intentional:
+If `bun lint` and the oxlint version that a rule follows disagree about it, that's a bug. [Open an issue](https://github.com/oven-sh/bun/issues). These differences are intentional:
 
-- **The rules are oxlint 1.87's**, whatever version you had installed.
+- **The rules are oxlint 1.87's**, whatever version you had installed. The React Compiler rules are the exception.
+- **The React Compiler rules are oxlint 1.95's.** Those are the `react/*` rules that run the compiler, such as `react/immutability`, `react/refs`, `react/purity` and `react/preserve-manual-memoization`. If your project used an older oxlint, reports of these rules appear and disappear: a disable comment or an `oxlint-suppressions.json` entry for one of them can become unused, and code that was quiet can need one. Two of the changes since oxlint 1.87 are easy to notice:
+  - They skip a file that has no component or hook at its top level. A file whose components are all declared inside another function (a `test()` callback, for example), wrapped in `memo()` or `forwardRef()`, or lower-case functions with a `"use memo"` directive gets no report from them.
+  - A comment that disables `react-hooks/rules-of-hooks` or `react-hooks/exhaustive-deps` no longer makes [`react/rule-suppression`](/lint/rules/react/rule-suppression) report, and the function it's in is checked like any other.
 - **No `jsdoc/*` or `vue/*` rules.** If you turn one on by name, the run exits with code `2`. If you only list the plugin, you get a note. To run `eslint-plugin-jsdoc` or `eslint-plugin-vue` instead, add it to [`jsPlugins`](/lint/plugins) under another name, as in oxlint: `{ "name": "jsdoc-js", "specifier": "eslint-plugin-jsdoc" }`.
 - **An unknown rule doesn't stop the run.** oxlint rejects the config. Bun runs the other rules, then exits with code `2`. `--allow-unsupported` turns that into a warning.
 - **Output is sorted** by file and line. oxlint prints files as its threads finish.

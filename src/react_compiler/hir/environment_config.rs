@@ -158,6 +158,10 @@ pub struct EnvironmentConfig {
     /// `shared-runtime` and the other modules of upstream's test fixtures have no types: what is imported from one is
     /// as from any module. Upstream's test runner gives them types, which `default_module_type_provider` has.
     pub fixture_modules_have_no_types: bool,
+    /// The tag of a JSX element is no reference that hoists a function declaration, unless the element is in a nested
+    /// function: `<Foo />` before `function Foo() {}` in the same function reads `Foo` before it is defined. Bun's
+    /// lowering hoists the declaration for it, as for `Foo()`.
+    pub jsx_tags_hoist_no_declaration: bool,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
@@ -233,6 +237,7 @@ impl Default for EnvironmentConfig {
             callback_dependencies_end_before_current: false,
             unwanted_throws_are_not_looked_for: false,
             fixture_modules_have_no_types: false,
+            jsx_tags_hoist_no_declaration: false,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,

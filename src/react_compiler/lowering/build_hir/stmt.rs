@@ -539,7 +539,9 @@ fn refs_in_expr(builder: &HirBuilder, e: &Expr, in_function: bool, on_ref: OnRef
             }
         }
         ExprData::EJsxElement(j) => {
-            if let Some(tag) = &j.tag {
+            let is_seen =
+                in_function || !builder.environment().config.jsx_tags_hoist_no_declaration;
+            if let Some(tag) = j.tag.as_ref().filter(|_| is_seen) {
                 refs_in_expr(builder, tag, in_function, on_ref);
             }
             for p in j.properties.iter() {

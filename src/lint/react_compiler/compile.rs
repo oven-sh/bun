@@ -67,6 +67,7 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
         callback_dependencies_end_before_current: is_oxlint,
         unwanted_throws_are_not_looked_for: is_oxlint,
         fixture_modules_have_no_types: is_oxlint,
+        jsx_tags_hoist_no_declaration: is_oxlint,
         validate_no_set_state_in_render: true,
         validate_no_set_state_in_effects: true,
         validate_no_jsx_in_try_statements: true,

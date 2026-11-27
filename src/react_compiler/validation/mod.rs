@@ -32,6 +32,8 @@
     reason = "ported verbatim from facebook/react upstream; not maintained for Rust idioms"
 )]
 
+mod async_callable_contexts;
+pub(crate) mod validate_captured_reassignments;
 pub mod validate_context_variable_lvalues;
 pub mod validate_exhaustive_dependencies;
 pub mod validate_hooks_usage;
@@ -47,6 +49,7 @@ pub mod validate_preserved_manual_memoization;
 pub(crate) mod validate_static_components;
 pub(crate) mod validate_use_memo;
 
+pub(crate) use validate_captured_reassignments::validate_captured_reassignments;
 pub(crate) use validate_context_variable_lvalues::validate_context_variable_lvalues;
 pub(crate) use validate_exhaustive_dependencies::validate_exhaustive_dependencies;
 pub(crate) use validate_hooks_usage::validate_hooks_usage;

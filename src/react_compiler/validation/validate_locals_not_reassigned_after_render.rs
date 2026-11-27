@@ -66,7 +66,7 @@ pub(crate) fn validate_locals_not_reassigned_after_render(
 
 /// Format a variable name for error messages. Uses the named identifier if
 /// available, otherwise falls back to "variable".
-fn format_variable_name(place: &Place, identifiers: &[Identifier]) -> String {
+pub(super) fn format_variable_name(place: &Place, identifiers: &[Identifier]) -> String {
     let identifier = &identifiers[place.identifier.0 as usize];
     match &identifier.name {
         Some(IdentifierName::Named(name)) => format!("`{}`", bun_core::BStr::new(name.slice())),

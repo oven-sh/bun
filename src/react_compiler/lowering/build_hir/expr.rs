@@ -1161,7 +1161,13 @@ fn lower_update_identifier(
     operation: UpdateOperator,
     loc: Option<SourceLocation>,
 ) -> Result<InstructionValue, CompilerError> {
-    if builder.is_context_identifier(ref_) {
+    let is_context = builder.is_context_identifier(ref_);
+    if is_context
+        && !builder
+            .environment()
+            .config
+            .captured_variables_can_be_updated
+    {
         builder.record_error(CompilerErrorDetail {
             category: ErrorCategory::Todo,
             reason: "(BuildHIR::lowerExpression) Handle UpdateExpression to variables captured within lambdas.".to_string(),
@@ -1206,21 +1212,32 @@ fn lower_update_identifier(
 
     let value = lower_identifier(builder, ref_, ident_loc)?;
 
-    if prefix {
-        Ok(InstructionValue::PrefixUpdateLocal {
+    Ok(match (prefix, is_context) {
+        (true, true) => InstructionValue::PrefixUpdateContext {
             lvalue: lvalue_place,
             operation,
             value,
             loc,
-        })
-    } else {
-        Ok(InstructionValue::PostfixUpdateLocal {
+        },
+        (true, false) => InstructionValue::PrefixUpdateLocal {
             lvalue: lvalue_place,
             operation,
             value,
             loc,
-        })
-    }
+        },
+        (false, true) => InstructionValue::PostfixUpdateContext {
+            lvalue: lvalue_place,
+            operation,
+            value,
+            loc,
+        },
+        (false, false) => InstructionValue::PostfixUpdateLocal {
+            lvalue: lvalue_place,
+            operation,
+            value,
+            loc,
+        },
+    })
 }
 
 fn lower_template(

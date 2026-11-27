@@ -528,7 +528,10 @@ pub(crate) fn run_analysis_passes(
         pass!(
             env,
             "ValidateLocalsNotReassignedAfterRender",
-            crate::validation::validate_locals_not_reassigned_after_render(hir, env)
+            match env.config.captured_variables_can_be_updated {
+                true => crate::validation::validate_captured_reassignments(hir, env),
+                false => crate::validation::validate_locals_not_reassigned_after_render(hir, env),
+            }
         );
 
         if env.config.validate_ref_access_during_render {

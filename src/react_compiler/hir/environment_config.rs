@@ -115,6 +115,10 @@ pub struct EnvironmentConfig {
     /// a name, and so have the constructors of the collections. Upstream says this of `map` only, knows no `forEach`
     /// of an array, and names none. The shapes are those of `globals::OXLINT_BASE`.
     pub flat_map_and_for_each_have_aliasing_signatures: bool,
+    /// `x++` and `--x` of a variable that a function captures are lowered. Upstream has a todo for them. What is
+    /// reassigned after render is found by `validate_captured_reassignments`, which follows the values that a captured
+    /// variable holds, and what an async function reads of them, rather than by upstream's pass.
+    pub captured_variables_can_be_updated: bool,
     /// `({ k: a, b } = o)` where a function captures `a` goes through temporaries, as `[a, b] = o` does. Upstream
     /// assigns `b` at once and `a` not, and fails: "Expected consistent kind for destructuring". So do both for `{ a, b }`.
     pub captured_targets_with_keys_force_temporaries: bool,
@@ -228,6 +232,7 @@ impl Default for EnvironmentConfig {
             jsx_can_be_reordered: true,
             arguments_of_no_alias_methods_escape: true,
             flat_map_and_for_each_have_aliasing_signatures: false,
+            captured_variables_can_be_updated: false,
             captured_targets_with_keys_force_temporaries: false,
             unreachable_code_is_reported_at_its_function: false,
             tagged_templates_are_always_called: false,

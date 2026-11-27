@@ -741,6 +741,41 @@ describe("fs.watch", () => {
     ]);
   });
 
+  // macOS reports the watched path itself through FSEvents. The event type is
+  // "change" or "rename" depending on how FSEvents coalesces the flags, so
+  // accept either and check the basename.
+  async function collectWatchSelfEvent(target: string, act: () => void) {
+    const { promise, resolve, reject } = Promise.withResolvers<[string, string | null]>();
+    const watcher = fs.watch(target, (eventType, filename) => resolve([eventType, filename]));
+    watcher.once("error", reject);
+    try {
+      // Let FSEvents settle so the directory's creation isn't replayed.
+      await Bun.sleep(500);
+      act();
+      return await promise;
+    } finally {
+      watcher.close();
+    }
+  }
+
+  test.skipIf(!isMacOS)("macOS: removing the watched directory reports its basename", async () => {
+    using dir = tempDir("fs-watch-rmdir-self-macos", { "sub": {} });
+    const target = path.join(String(dir), "sub");
+    const [eventType, filename] = await collectWatchSelfEvent(target, () => fs.rmdirSync(target));
+    expect(["change", "rename"]).toContain(eventType);
+    expect(filename).toBe("sub");
+  });
+
+  test.skipIf(!isMacOS)("macOS: renaming the watched directory away reports its basename", async () => {
+    using dir = tempDir("fs-watch-mv-self-macos", { "sub": {} });
+    const target = path.join(String(dir), "sub");
+    const [eventType, filename] = await collectWatchSelfEvent(target, () =>
+      fs.renameSync(target, path.join(String(dir), "moved")),
+    );
+    expect(["change", "rename"]).toContain(eventType);
+    expect(filename).toBe("sub");
+  });
+
   // Past fs.inotify.max_queued_events the kernel drops events and queues one
   // IN_Q_OVERFLOW; Bun reports it as ('change', null) on every watcher sharing
   // the inotify fd, the same shape node uses for overflow on Windows.

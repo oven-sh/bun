@@ -473,12 +473,18 @@ impl FSEventsLoop {
                 if !(watcher_path.len() == 1 && watcher_path[0] == b'/') {
                     path = &path[watcher_path.len()..];
 
-                    // Ignore events with path equal to directory itself
-                    if path.len() <= 1 && !is_file {
-                        continue;
-                    }
-
                     if path.is_empty() {
+                        // A directory's own creation or modification is not a
+                        // change to report. Only report it being removed or
+                        // renamed.
+                        if !is_file
+                            && (flags
+                                & (K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_REMOVED
+                                    | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_RENAMED))
+                                == 0
+                        {
+                            continue;
+                        }
                         // Since we're using fsevents to watch the file itself watcher_path == path, and we now need to get the basename of the file back
                         let basename = bun_core::strings::last_index_of_char(watcher_path, b'/')
                             .unwrap_or(watcher_path.len());

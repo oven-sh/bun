@@ -3630,16 +3630,15 @@ static constexpr PrivateFunction privateFunctions[] = {
     { BuiltinName::k_makeAbortError, 1, jsFunctionMakeAbortError },
 };
 
-// Private native functions that putDirectNativeFunction installs, which gives them the name "anonymous".
-// error.stack shows that name: a stack taken while a module loads has the frame of requireCommonJS or of requireNativeModule.
-// requireNativeModule loads a module that Bun has built in ("node:fs"), never a .node addon, so a profile has another name for it.
-// macro(name, length, function, name in a CPU profile)
+// putDirectNativeFunction names these "anonymous", and error.stack shows that name. The last column is the name in a CPU profile.
+
 // clang-format off
 #define FOR_EACH_ANONYMOUS_PRIVATE_FUNCTION(macro) \
     macro(createUninitializedArrayBuffer, 1, functionCreateUninitializedArrayBuffer, "createUninitializedArrayBuffer") \
     macro(resolveSync, 1, functionImportMeta__resolveSyncPrivate, "resolveSync") \
     macro(createInternalModuleById, 1, InternalModuleRegistry::jsCreateInternalModuleById, "createInternalModuleById") \
     macro(requireCommonJS, 5, Bun::jsFunctionRequireCommonJS, "requireCommonJS") \
+    /* It loads a module that Bun has built in ("node:fs"), never a .node addon. */ \
     macro(requireNativeModule, 1, Bun::jsFunctionRequireNativeModule, "requireBuiltinModule") \
     macro(createCommonJSModule, 2, Bun::jsFunctionCreateCommonJSModule, "createCommonJSModule") \
     macro(evaluateCommonJSModule, 2, Bun::jsFunctionEvaluateCommonJSModule, "evaluateCommonJSModule") \
@@ -3652,9 +3651,6 @@ String profileNameOfPrivateFunction(JSC::VM& vm, JSC::TaggedNativeFunction funct
     if (function == JSC::toTagged(nativeFunction))                             \
         return MAKE_STATIC_STRING_IMPL(profileName);
     FOR_EACH_ANONYMOUS_PRIVATE_FUNCTION(RETURN_PROFILE_NAME_IF_SAME)
-    // JSSQLStatementPrototype installs these two.
-    RETURN_PROFILE_NAME_IF_SAME(setColumnNameTransform, 1, WebCore::jsSQLStatementSetColumnNameTransformFunction, "setColumnNameTransform")
-    RETURN_PROFILE_NAME_IF_SAME(runTail, 1, WebCore::jsSQLStatementRunTailFunction, "runTail")
 #undef RETURN_PROFILE_NAME_IF_SAME
 
     for (auto& entry : privateFunctions) {

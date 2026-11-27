@@ -19,6 +19,10 @@ describe.skipIf(!hasPrebuild)("@datadog/pprof", () => {
         },
         trustedDependencies: ["@datadog/pprof"],
       }),
+      "loaded.js": /* js */ `
+        const start = Date.now();
+        while (Date.now() - start < 300) {}
+      `,
       "index.js": /* js */ `
         const { time } = require("@datadog/pprof");
 
@@ -35,6 +39,7 @@ describe.skipIf(!hasPrebuild)("@datadog/pprof", () => {
 
         time.start({ intervalMicros: 1000, durationMillis: 60000 });
         hotLoop();
+        require("./loaded.js");
         const profile = time.stop();
 
         const strings = profile.stringTable.strings;
@@ -44,6 +49,8 @@ describe.skipIf(!hasPrebuild)("@datadog/pprof", () => {
           functionCount: profile.function.length,
           stringCount: strings.length,
           hasHotLoop: strings.includes("hotLoop"),
+          // The native function that loads a CommonJS module has no name of its own. The profiler names its frame.
+          hasRequireCommonJS: strings.includes("requireCommonJS"),
           period: Number(profile.period),
         };
         process.stdout.write(JSON.stringify(summary) + "\\n");
@@ -86,6 +93,7 @@ describe.skipIf(!hasPrebuild)("@datadog/pprof", () => {
       functionCount: expect.any(Number),
       stringCount: expect.any(Number),
       hasHotLoop: true,
+      hasRequireCommonJS: true,
       period: expect.any(Number),
     });
     expect(summary.sampleCount).toBeGreaterThan(0);

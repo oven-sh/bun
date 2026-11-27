@@ -459,9 +459,9 @@ describe.concurrent("--cpu-prof", () => {
     expect(mdContent).toContain("# CPU Profile");
   });
 
-  // Builtin JavaScript calls these native functions by a private name ($requireCommonJS). The functions themselves have
-  // the name "anonymous" or no name, which is what error.stack shows.
-  describe("names the private native functions", () => {
+  // Builtin JavaScript calls these native functions by a private name ($requireCommonJS), or gets them as an argument.
+  // For JavaScriptCore they have the name "anonymous" or no name, which is what error.stack shows.
+  describe("names the native functions that only builtin JavaScript calls", () => {
     const busy = `const end = performance.now() + 500; while (performance.now() < end) {}`;
     const nativeFrame = (functionName: string) => ({
       functionName,
@@ -483,9 +483,20 @@ describe.concurrent("--cpu-prof", () => {
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       const nodes: any[] = JSON.parse(readFileSync(join(String(dir), "p.cpuprofile"), "utf-8")).nodes;
+      const parentOf = new Map<number, any>();
+      for (const node of nodes) for (const child of node.children ?? []) parentOf.set(child, node);
       const markdown = readFileSync(join(String(dir), "p.md"), "utf-8");
-      return { stdout, exitCode, nodes, markdown, [Symbol.dispose]: () => dir[Symbol.dispose]() };
+      return {
+        stdout,
+        exitCode,
+        nodes,
+        parent: (node: any) => parentOf.get(node?.id),
+        hasNativeRow: (name: string) => markdown.includes(`| \`${name}\` | \`[native code]\` |`),
+        [Symbol.dispose]: () => dir[Symbol.dispose](),
+      };
     }
+    const distinct = (values: unknown[]) =>
+      [...new Set(values.map(value => JSON.stringify(value)))].map(v => JSON.parse(v));
 
     test("requireCommonJS, between require() and the module it loads", async () => {
       using result = await profileOf(
@@ -495,24 +506,21 @@ describe.concurrent("--cpu-prof", () => {
         },
         "main.cjs",
       );
-      const { nodes } = result;
-      const parentOf = new Map<number, any>();
-      for (const node of nodes) for (const child of node.children ?? []) parentOf.set(child, node);
-      const loaded = nodes.filter(node => node.callFrame.url.endsWith("/loaded.cjs"));
+      const { parent } = result;
+      const loaded = result.nodes.filter(node => node.callFrame.url.endsWith("/loaded.cjs"));
       expect({
-        loader: [...new Set(loaded.map(node => JSON.stringify(parentOf.get(node.id)?.callFrame)))].map(f =>
-          JSON.parse(f),
-        ),
-        callerOfLoader: [
-          ...new Set(loaded.map(node => parentOf.get(parentOf.get(node.id)?.id)?.callFrame.functionName)),
-        ],
-        markdown: result.markdown.includes("| `requireCommonJS` | `[native code]` |"),
+        loader: distinct(loaded.map(node => parent(node)?.callFrame)),
+        callerOfLoader: distinct(loaded.map(node => parent(parent(node))?.callFrame.functionName)),
+        // A native function that has a name of its own keeps it.
+        callerOfRequire: distinct(loaded.map(node => parent(parent(parent(node)))?.callFrame)),
+        markdown: ["requireCommonJS", "bound require"].filter(result.hasNativeRow),
         // The name is for profiles only.
         stdout: result.stdout,
       }).toEqual({
         loader: [nativeFrame("requireCommonJS")],
         callerOfLoader: ["require"],
-        markdown: true,
+        callerOfRequire: [nativeFrame("bound require")],
+        markdown: ["requireCommonJS", "bound require"],
         stdout: "    at anonymous (unknown)\n",
       });
       expect(result.exitCode).toBe(0);
@@ -520,9 +528,15 @@ describe.concurrent("--cpu-prof", () => {
 
     test.each([
       // A row of the table of private functions, in ZigGlobalObject.cpp.
-      ["esmLoadSync", "main.cjs", { "main.cjs": `require("./loaded.mjs");`, "loaded.mjs": `${busy}\nexport {};` }],
+      [
+        "esmLoadSync",
+        nativeFrame("bound require"),
+        "main.cjs",
+        { "main.cjs": `require("./loaded.mjs");`, "loaded.mjs": `${busy}\nexport {};` },
+      ],
       [
         "resolveSync",
+        nativeFrame("bound resolve"),
         "main.cjs",
         {
           "main.cjs": `
@@ -537,6 +551,7 @@ describe.concurrent("--cpu-prof", () => {
       // A private function of a bun:sqlite statement. It runs every statement of the string after the first.
       [
         "runTail",
+        undefined,
         "main.mjs",
         {
           "main.mjs": `
@@ -550,12 +565,43 @@ describe.concurrent("--cpu-prof", () => {
             await sql.close();`,
         },
       ],
-    ])("%s", async (name, entry, files) => {
+      // What process.nextTick() runs the promise jobs with, between two callbacks. Node.js has the same name for it.
+      [
+        "runMicrotasks",
+        undefined,
+        "main.cjs",
+        {
+          "main.cjs": `
+            const end = performance.now() + 500;
+            function spin() {
+              let x = 0;
+              for (let i = 0; i < 1e5; i++) x += Math.sqrt(i);
+              return x;
+            }
+            function tick() {
+              Promise.resolve().then(spin);
+              if (performance.now() < end) setImmediate(() => process.nextTick(tick));
+            }
+            process.nextTick(tick);`,
+        },
+      ],
+    ])("%s", async (name, nativeAncestor, entry, files) => {
       using result = await profileOf(files, entry);
+      const named = result.nodes.filter(node => node.callFrame.functionName === name);
+      const nativeAncestors = named.map(node => {
+        for (let ancestor = result.parent(node); ancestor; ancestor = result.parent(ancestor))
+          if (ancestor.callFrame.scriptId === "0" && ancestor.callFrame.functionName !== "(root)")
+            return ancestor.callFrame;
+      });
       expect({
-        callFrame: result.nodes.find(node => node.callFrame.functionName === name)?.callFrame,
-        markdown: result.markdown.includes(`| \`${name}\` | \`[native code]\` |`),
-      }).toEqual({ callFrame: nativeFrame(name), markdown: true });
+        callFrames: distinct(named.map(node => node.callFrame)),
+        nativeAncestors: nativeAncestor && distinct(nativeAncestors),
+        markdown: result.hasNativeRow(name),
+      }).toEqual({
+        callFrames: [nativeFrame(name)],
+        nativeAncestors: nativeAncestor && [nativeAncestor],
+        markdown: true,
+      });
       expect(result.exitCode).toBe(0);
     });
   });

@@ -10242,6 +10242,16 @@ declare module "bun" {
      * ```
      */
     placeholder(as?: "dataurl"): Promise<string>;
+    /**
+     * Run the pipeline and return the uncompressed 8-bit pixels, row-major with
+     * no row padding. `channels` is 1 (BT.709 luma), 3 (RGB) or 4 (RGBA,
+     * default). `width` and `height` are set once the promise settles.
+     *
+     * ```ts
+     * const grey = await Bun.file("a.png").image().resize(9, 8).raw({ channels: 1 });
+     * ```
+     */
+    raw(options?: { channels?: 1 | 3 | 4 }): Promise<Uint8Array>;
     /** Run the pipeline and return a `Blob` with the matching `type`. */
     blob(): Promise<Blob>;
     /** Run the pipeline and return base64-encoded output. */

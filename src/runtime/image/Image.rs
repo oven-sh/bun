@@ -985,6 +985,40 @@ impl Image {
         )
     }
 
+    /// `.raw({ channels })`: resolves the decoded, transformed pixels as an
+    /// uncompressed `Uint8Array`. `channels` is 1 (BT.709 luma), 3 (RGB) or
+    /// 4 (RGBA, the default). `width` and `height` are set once it settles.
+    pub(crate) fn raw<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+        options: JsLocal<'a>,
+    ) -> JsResult<JSValue> {
+        let global = cx.global();
+        let options = options.to_js();
+        let mut channels: u8 = 4;
+        if options.is_object() {
+            if let Some(v) = options.get(global, "channels")? {
+                if !v.is_undefined() {
+                    let n = if v.is_number() { v.as_number() } else { f64::NAN };
+                    if n == 1.0 || n == 3.0 || n == 4.0 {
+                        channels = n as u8;
+                    } else {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "Image.raw(): channels must be 1, 3 or 4"
+                        )));
+                    }
+                }
+            }
+        }
+        self.schedule(
+            &cx.js_thread(),
+            this_value.to_js(),
+            Kind::Raw(channels),
+            Deliver::Uint8Array,
+        )
+    }
+
     /// `.placeholder()` — ThumbHash-rendered ≤32px PNG `data:` URL. ~28 chars
     /// of hash → ~400-700 bytes of `data:image/png;base64,…` ready for `<img
     /// src>` / Next's `blurDataURL`. Runs entirely on the work pool; the
@@ -1461,6 +1495,9 @@ pub(crate) enum Kind {
     /// hash itself never crosses the JS boundary unless we add an
     /// `as: "hash"` option later.
     Placeholder,
+    /// `.raw({ channels })`: decode, pipeline, then uncompressed 8-bit pixels
+    /// (1 = BT.709 luma, 3 = RGB, 4 = RGBA), row-major, no padding.
+    Raw(u8),
 }
 
 pub(crate) enum TaskResult {
@@ -1649,6 +1686,32 @@ impl PipelineTask {
 
         if let Err(e) = self.apply_pipeline(&mut decoded) {
             self.result = TaskResult::Err(e);
+            return;
+        }
+
+        if let Kind::Raw(channels) = self.kind {
+            let px = &decoded.rgba;
+            let raw: Vec<u8> = match channels {
+                1 => px
+                    .chunks_exact(4)
+                    .map(|p| {
+                        ((2126 * u32::from(p[0]) + 7152 * u32::from(p[1]) + 722 * u32::from(p[2])
+                            + 5000)
+                            / 10000) as u8
+                    })
+                    .collect(),
+                3 => px
+                    .chunks_exact(4)
+                    .flat_map(|p| [p[0], p[1], p[2]])
+                    .collect(),
+                _ => px.to_vec(),
+            };
+            self.result = TaskResult::Encoded {
+                out: codecs::Encoded::from_owned(raw),
+                format: src_format,
+                w: decoded.width,
+                h: decoded.height,
+            };
             return;
         }
 

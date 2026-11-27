@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 a0e2a825e8f33b8bbbf8e99ec88171c15fc49cb62a07e8d2329131b02b690eb1.
+// Written against that file with the SHA-256 f1a8c87c6cd7126090f353e175c99316c63f8eaa62070e90628eb9af3842d7e5.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -156,7 +156,7 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     if (stream_reachedEof) return;
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
-    source.updateRef(forceUnref ? false : true);
+    source?.updateRef?.(forceUnref ? false : true);
     source?.setFlowing?.(true);
 
     if (needsInternalReadRefresh) {

@@ -141,9 +141,10 @@ an index into a table of ranges, so that what is reported has an end, and
 
 Any `bun_ast` node the port cannot lower (bundler-only synthetics: `ESpecial`,
 `EInlinedEnum`, `ERequireMain`, …) returns a `CompilerError` from `lower()`
-with category `Unsupported`. `program.rs` catches that per-function, leaves the
-original `G::Fn` untouched, and logs a `CompileSkip` event — exactly what
-upstream does for its own unsupported cases.
+with category `Unsupported`. `program.rs` catches that per-function and leaves the
+original `G::Fn` untouched. The port has no logger (see the header of
+`pipeline.rs`), so upstream's `CompileSkip` event has no counterpart here: a
+debug build writes a `react_compiler` scoped log.
 
 A function that is nested more deeply than the thread has the stack for bails out the same way, with the
 Todo "Support functions of this size". Every function of the compiler that calls itself along the nesting

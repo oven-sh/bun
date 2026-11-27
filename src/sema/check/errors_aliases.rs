@@ -22,14 +22,12 @@ use crate::content_mapper::{extension_rewrite, rewrite_extension, should_rewrite
 use crate::program::{TypeOnlyDeclaration, source_file_may_be_emitted};
 use crate::resolve::{
     ModuleKind, Options, ScriptTarget, file_extension_is, get_relative_path_from_directory,
-    is_declaration_file_name, path_is_relative, try_extract_ts_extension,
+    is_declaration_file_name, parent_directory, path_is_relative, try_extract_ts_extension,
 };
 use crate::util::SharedSort;
 use crate::verify::relative_from_file;
 use bun_collections::ArrayHashMap;
 use bun_core::strings;
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 use std::sync::Arc;
 
 pub(super) type AliasDeclarations = ArrayHashMap<Decl, Sym>;
@@ -1381,7 +1379,7 @@ impl Checker<'_, '_> {
 /// project that references another one or is referenced does.
 fn common_source_directory(options: &Options) -> &[u8] {
     match &options.root_dir[..] {
-        b"" => dirname::<Posix>(&options.config_path),
+        b"" => parent_directory(&options.config_path),
         root_dir => root_dir,
     }
 }

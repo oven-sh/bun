@@ -7,7 +7,7 @@ use bun_ast::{E, Expr};
 use bun_collections::{StringHashMap, index_sort};
 use bun_core::fmt::TerminalHyperlink;
 use bun_core::strings;
-use bun_core::{Global, Output};
+use bun_core::{Global, Output, ZStr};
 use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::package_manager::options::Do;
@@ -28,7 +28,7 @@ use bun_install::{
     PackageManager, WorkspacePackageJsonCacheEntry, resolution,
 };
 use bun_install_types::DependencyGroup;
-use bun_paths::{self as path, PathBuffer};
+use bun_paths::Path;
 use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, SlicedString};
 
@@ -187,29 +187,14 @@ impl Drop for MouseTracking {
 }
 
 impl UpdateInteractiveCommand {
-    fn build_package_json_path<'b>(
-        root_dir: &'b [u8],
-        workspace_path: &[u8],
-        path_buf: &'b mut PathBuffer,
-    ) -> &'b [u8] {
-        if !workspace_path.is_empty() {
-            path::resolve_path::join_abs_string_buf::<path::platform::Auto>(
-                root_dir,
-                path_buf,
-                &[workspace_path, b"package.json"],
-            )
-        } else {
-            path::resolve_path::join_abs_string_buf::<path::platform::Auto>(
-                root_dir,
-                path_buf,
-                &[b"package.json"],
-            )
-        }
+    fn build_package_json_path(workspace_path: &[u8]) -> Path {
+        let root_dir = FileSystem::get().top_level_dir();
+        Path::resolve(&[root_dir, workspace_path, b"package.json"])
     }
 
     fn save_package_json(
         package_json: &mut WorkspacePackageJsonCacheEntry,
-        package_json_path: &[u8],
+        package_json_path: &ZStr,
         log: &mut bun_ast::Log,
     ) -> crate::Result<()> {
         // The install reads this cache entry, not the file.
@@ -218,14 +203,17 @@ impl UpdateInteractiveCommand {
             return Err(err.into());
         }
 
-        let mut path_zbuf = bun_paths::path_buffer_pool::get();
-        let path_z = path::resolve_path::z(package_json_path, &mut path_zbuf);
-        if let Err(err) =
-            bun_sys::File::write_file(bun_sys::Fd::cwd(), path_z, &package_json.source.contents)
-        {
+        if let Err(err) = bun_sys::File::write_file(
+            bun_sys::Fd::cwd(),
+            package_json_path,
+            &package_json.source.contents,
+        ) {
             Output::err_generic(
                 "Failed to write package.json at {s}: {s}",
-                (BStr::new(package_json_path), BStr::new(err.name())),
+                (
+                    BStr::new(package_json_path.as_bytes()),
+                    BStr::new(err.name()),
+                ),
             );
             return Err(err.into());
         }
@@ -321,10 +309,7 @@ impl UpdateInteractiveCommand {
         let bump = crate::cli::cli_arena();
 
         for (workspace_path, workspace_update_idxs) in workspace_groups.iter() {
-            let root_dir = FileSystem::get().top_level_dir();
-            let mut path_buf = bun_paths::path_buffer_pool::get();
-            let package_json_path =
-                Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
+            let package_json_path = &Self::build_package_json_path(workspace_path);
 
             let log = manager.log_mut();
             let Some(package_json) = Self::load_package_json(manager, package_json_path, log)
@@ -382,9 +367,7 @@ impl UpdateInteractiveCommand {
         manager: &mut PackageManager,
         catalog_updates: &StringHashMap<(Box<[u8]>, bool)>,
     ) -> crate::Result<()> {
-        let root_dir = FileSystem::get().top_level_dir();
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let package_json_path = Self::build_package_json_path(root_dir, b"", &mut path_buf);
+        let package_json_path = &Self::build_package_json_path(b"");
 
         let log = manager.log_mut();
         let Some(package_json) = Self::load_package_json(manager, package_json_path, log) else {

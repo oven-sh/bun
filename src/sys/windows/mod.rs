@@ -138,7 +138,6 @@ pub use bun_windows_sys::BOOLEAN;
 pub use bun_windows_sys::CHAR;
 pub use bun_windows_sys::DWORD;
 pub use bun_windows_sys::LPVOID;
-pub use bun_windows_sys::MAX_PATH;
 pub use bun_windows_sys::PATH_MAX_WIDE;
 pub use bun_windows_sys::WORD;
 /// `PVOID` (winnt.h) — alias of `LPVOID`. Keep the alias so existing
@@ -238,12 +237,10 @@ pub(crate) fn filetime_to_timespec(filetime: i64) -> bun_libuv_sys::uv_timespec_
 
 const INVALID_FILE_ATTRIBUTES: u32 = u32::MAX;
 
-pub const NT_OBJECT_PREFIX: [u16; 4] = [b'\\' as u16, b'?' as u16, b'?' as u16, b'\\' as u16];
 pub(crate) const LONG_PATH_PREFIX: [u16; 4] =
     [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
 
 pub(crate) const NT_OBJECT_PREFIX_U8: [u8; 4] = *b"\\??\\";
-pub const LONG_PATH_PREFIX_U8: [u8; 4] = *b"\\\\?\\";
 
 pub use bun_paths::PathBuffer;
 pub use bun_paths::WPathBuffer;
@@ -402,6 +399,14 @@ fn check_len(rc: DWORD, capacity: usize) -> Result<usize, Win32Error> {
     }
 }
 
+/// kernel32 can report a path that is too long as missing.
+pub(crate) fn path_ptr(path: &WStr) -> Result<*const u16, Win32Error> {
+    if path.len() >= bun_paths::PATH_MAX_WIDE {
+        return Err(Win32Error::FILENAME_EXCED_RANGE);
+    }
+    Ok(path.as_ptr())
+}
+
 /// Manual-reset, not signalled, and without a name.
 pub fn CreateEventW() -> Result<OwnedHandle, Win32Error> {
     // SAFETY: both pointers are optional.
@@ -419,7 +424,7 @@ pub fn CreateFileW(
     // SAFETY: `file_name` is NUL-terminated; the result is a new handle or `INVALID_HANDLE_VALUE`.
     let handle = unsafe {
         HandleOrInvalid::from_raw_handle(externs::CreateFileW(
-            file_name.as_ptr(),
+            path_ptr(file_name)?,
             desired_access,
             share_mode,
             ptr::null_mut(),
@@ -457,7 +462,7 @@ pub fn CreateNamedPipeW(
 
 pub fn MoveFileExW(from: &WStr, to: &WStr, flags: DWORD) -> Result<(), Win32Error> {
     // SAFETY: both are NUL-terminated.
-    check(unsafe { kernel32::MoveFileExW(from.as_ptr(), to.as_ptr(), flags) })
+    check(unsafe { kernel32::MoveFileExW(path_ptr(from)?, path_ptr(to)?, flags) })
 }
 
 pub fn SetEndOfFile(file: HANDLE) -> Result<(), Win32Error> {
@@ -540,7 +545,7 @@ pub fn GetFileInformationByHandle(file: HANDLE) -> Result<BY_HANDLE_FILE_INFORMA
 
 pub fn GetFileAttributesW(file_name: &WStr) -> Result<DWORD, Win32Error> {
     // SAFETY: `file_name` is NUL-terminated.
-    match unsafe { externs::GetFileAttributesW(file_name.as_ptr()) } {
+    match unsafe { externs::GetFileAttributesW(path_ptr(file_name)?) } {
         INVALID_FILE_ATTRIBUTES => Err(Win32Error::get()),
         attributes => Ok(attributes),
     }
@@ -663,8 +668,8 @@ pub fn CreateHardLinkW(new_file_name: &WStr, existing_file_name: &WStr) -> Resul
     // SAFETY: both are NUL-terminated; null security attributes.
     let result = check(unsafe {
         CreateHardLinkW_raw(
-            new_file_name.as_ptr(),
-            existing_file_name.as_ptr(),
+            path_ptr(new_file_name)?,
+            path_ptr(existing_file_name)?,
             ptr::null_mut(),
         )
     });
@@ -683,10 +688,10 @@ pub fn CopyFileW(source: &WStr, dest: &WStr, fail_if_exists: bool) -> Result<(),
     static EMPTY_DEST: [u16; 2] = [0, 0];
     let dest = match dest.first() {
         None | Some(0) => EMPTY_DEST[1..].as_ptr(),
-        Some(_) => dest.as_ptr(),
+        Some(_) => path_ptr(dest)?,
     };
     // SAFETY: both are NUL-terminated.
-    check(unsafe { externs::CopyFileW(source.as_ptr(), dest, fail_if_exists.into()) })
+    check(unsafe { externs::CopyFileW(path_ptr(source)?, dest, fail_if_exists.into()) })
 }
 
 /// `bun.windows.Error` — alias for `Win32Error`.
@@ -909,8 +914,8 @@ pub fn CreateDirectoryExW(
     // SAFETY: both are NUL-terminated; null security attributes.
     check(unsafe {
         externs::CreateDirectoryExW(
-            template_directory.as_ptr(),
-            new_directory.as_ptr(),
+            path_ptr(template_directory)?,
+            path_ptr(new_directory)?,
             ptr::null_mut(),
         )
     })
@@ -1244,9 +1249,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
     };
 
     let opened = NtCreateFile(
-        options
-            .dir
-            .filter(|_| !bun_paths::is_absolute_windows_wtf16(sub_path_w)),
+        options.dir.filter(|_| !bun_paths::is_absolute(sub_path_w)),
         object_name,
         NtCreateFileOptions {
             access_mask: windows::SYNCHRONIZE | windows::DELETE,
@@ -1586,19 +1589,12 @@ pub mod rescle {
 
         // Allocate UTF-16 strings (global mimalloc; allocator param dropped)
 
-        // Icon is a path, so use toWPathNormalized with proper buffer handling
-        let mut icon_buf = bun_paths::w_path_buffer_pool::get();
-        let icon_w: Option<&bun_core::WStr> = if let Some(i) = icon {
-            let path_w = bun_paths::string_paths::to_w_path_normalized(&mut icon_buf, i);
-            // toWPathNormalized returns a slice into icon_buf, need to null-terminate it
-            let len = path_w.len();
-            let buf_u16 = icon_buf.as_mut_slice();
-            buf_u16[len] = 0;
-            // SAFETY: buf_u16[len] == 0 written above; pointer + len form a valid NUL-terminated wide slice
-            Some(bun_core::WStr::from_buf(&buf_u16[..], len))
-        } else {
-            None
-        };
+        let icon_path = icon.map(|icon| {
+            let mut path = bun_paths::OSPath::from(bun_paths::without_trailing_sep(icon));
+            bun_paths::to_native_in_place(path.as_mut_slice());
+            path
+        });
+        let icon_w: Option<&bun_core::WStr> = icon_path.as_deref();
 
         let title_w = title
             .map(|t| bun_core::strings::to_utf16_alloc_for_real(t, false, true))
@@ -2045,7 +2041,7 @@ pub fn move_opened_file_at(
             rename_info,
             win32::FILE_RENAME_INFORMATION_EX {
                 Flags: flags,
-                RootDirectory: if bun_paths::is_absolute_windows_wtf16(new_file_name) {
+                RootDirectory: if bun_paths::is_absolute(new_file_name) {
                     ptr::null_mut()
                 } else {
                     new_dir_fd.native()

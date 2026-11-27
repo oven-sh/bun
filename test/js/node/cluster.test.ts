@@ -11,7 +11,10 @@ import {
   tempDirWithFiles,
   tls as tlsCerts,
 } from "harness";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import net from "node:net";
+import { text } from "node:stream/consumers";
 
 test.concurrent("cloneable and transferable equals", async () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -449,6 +452,46 @@ if (cluster.isPrimary) {
   const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
   expect(stdout).toContain("policy is SCHED_NONE: true");
   expect(stdout).toContain("listening workers: 2 distinct ports: 1");
+});
+
+// Every worker is woken for every connection. On Windows one that lost the race could wait inside accept().
+test("SCHED_NONE: the workers that do not get a connection go on running", async () => {
+  using dir = tempDir("cluster-shared-accept", {
+    "main.js": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+const { once } = require("node:events");
+
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+
+if (cluster.isPrimary) {
+  (async () => {
+    const workers = Array.from({ length: 2 }, () => cluster.fork());
+    const [[{ port }]] = await Promise.all(workers.map(worker => once(worker, "listening")));
+    for (let round = 0; round < 300; round++) {
+      const client = net.connect(port, "127.0.0.1");
+      await once(client, "connect");
+      const expected = client.localAddress + ":" + client.localPort;
+      const [seen] = await once(client, "data");
+      if (String(seen) !== expected) throw new Error(seen + " is not " + expected);
+      client.destroy();
+      await Promise.all(workers.map(worker => (worker.send("ping"), once(worker, "message"))));
+    }
+    console.log("done");
+    cluster.disconnect();
+  })();
+} else {
+  process.on("message", () => process.send("pong"));
+  net.createServer(socket => {
+    socket.on("error", () => {});
+    socket.end(socket.remoteAddress + ":" + socket.remotePort);
+  }).listen(0, "127.0.0.1");
+}
+`,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "main.js"], cwd: String(dir), env: bunEnv, stderr: "inherit" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "done", exitCode: 0 });
 });
 
 test("SCHED_NONE: close() releases the shared handle so the worker can re-listen on the same port", async () => {
@@ -1530,5 +1573,72 @@ test.concurrent("require('cluster') does not throw when NODE_UNIQUE_ID is set af
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr }).toEqual({ stdout: "loaded\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+// The test writes the wire format of a POSIX socket to the channel. Windows frames what goes through its pipe.
+test.concurrent.skipIf(isWindows)("the channel closes while a worker replays the messages it queued", async () => {
+  using dir = tempDir("cluster-close-in-replay", {
+    "empty.js": "",
+    "index.js": `
+      process.on("message", () => {
+        process.on("internalMessage", ({ act }) => {
+          console.log(act);
+          if (act !== "second") return;
+          const { promise, resolve } = Promise.withResolvers();
+          process.once("disconnect", resolve);
+          // Bun.build() runs the event loop until the setup() of a plugin has settled.
+          Bun.build({ entrypoints: ["./empty.js"], plugins: [{ name: "wait", setup: () => promise }] });
+        });
+        require("node:cluster");
+        console.log("replayed");
+      });
+    `,
+  });
+  const proc = spawn(bunExe(), ["index.js"], {
+    env: { ...bunEnv, NODE_CHANNEL_FD: "3", NODE_CHANNEL_SERIALIZATION_MODE: "json", NODE_UNIQUE_ID: "1" },
+    cwd: String(dir),
+    stdio: ["ignore", "pipe", "pipe", "pipe"],
+  });
+  try {
+    const channel = proc.stdio[3] as net.Socket;
+    // ECONNRESET if the worker crashes, which its output says better.
+    channel.on("error", () => {}).resume();
+    channel.write('\x02{"act":"disconnect"}\n\x02{"act":"second"}\n\x02{"act":"third"}\n"load node:cluster"\n');
+    const [stdout, stderr, exit] = await Promise.all([text(proc.stdout!), text(proc.stderr!), once(proc, "exit")]);
+    expect({ stdout, stderr }).toEqual({ stdout: "disconnect\nsecond\nreplayed\n", stderr: "" });
+    expect(exit).toEqual([0, null]);
+  } finally {
+    proc.kill();
+  }
+});
+
+test.concurrent("a Worker thread that sets up node:cluster does not take the messages of its process", async () => {
+  using dir = tempDir("cluster-in-worker-thread", {
+    "index.js": `
+      const { Worker, isMainThread } = require("node:worker_threads");
+      const cluster = require("node:cluster");
+      if (!isMainThread) {
+        cluster._setupWorker();
+      } else if (cluster.isPrimary) {
+        const worker = cluster.fork();
+        worker.on("listening", () => worker.disconnect());
+        worker.on("exit", (code, signal) => console.log("exit", code, signal));
+      } else {
+        new Worker(__filename, { env: { ...process.env, NODE_UNIQUE_ID: "1" } }).on("exit", () => {
+          require("node:net").createServer().listen(0, "127.0.0.1", () => console.log("listening"));
+        });
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--no-orphans", "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "listening\nexit 0 null\n", stderr: "" });
   expect(exitCode).toBe(0);
 });

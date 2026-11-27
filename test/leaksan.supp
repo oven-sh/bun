@@ -80,7 +80,6 @@ leak:getaddrinfo
 leak:JSC::intlSegmenterAvailableLocales
 leak:URL__getHref
 leak:runtime.dns_jsc.dns.Resolver.globalLookupService
-leak:URL__host
 leak:runtime.node.node_os.version
 leak:runtime.node.node_os.release
 leak:JSC::stringProtoFuncReplaceUsingRegExp
@@ -91,7 +90,7 @@ leak:WebCore__DOMURL__fileSystemPath
 leak:runtime.node.node_fs_watcher.FSWatcher.Arguments.fromJS
 leak:jsc.web_worker.create
 leak:JSC::intlCollatorAvailableLocales
-leak:Bun__Bindgen__CaresJsc__canonicalizeIP
+leak:Bun__Bindgen__AnswerJsc__canonicalizeIP
 leak:dlopen
 leak:Bun::evaluateCommonJSModuleOnce
 leak:fse_run_loop

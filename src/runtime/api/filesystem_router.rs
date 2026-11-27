@@ -1,13 +1,13 @@
 //! `Bun.FileSystemRouter` / `MatchedRoute` — Next.js-style file router.
 
-use bun_paths::strings;
+use bun_core::strings;
 
 use bun_ast as Log;
 use bun_core::{Utf8Bytes, WTFString};
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper, to_js};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult, LogJsc};
-use bun_paths::{self as path, MAX_PATH_BYTES};
+use bun_paths::{self as path};
 use bun_ptr::BackRef;
 
 use bun_http_types::URLPath;
@@ -75,9 +75,7 @@ fn load_router(
         )
     };
     if load == Load::FromDisk {
-        FileSystemRouter::bust_dir_cache_recursive(
-            strings::paths::without_trailing_slash_windows_path(&config.dir),
-        );
+        FileSystemRouter::bust_dir_cache_recursive(path::without_trailing_sep(&config.dir));
     }
 
     let root_dir_info = match transpiler.with_mut(|t| t.resolver.read_dir_info(&config.dir)) {
@@ -107,23 +105,8 @@ fn load_router(
 }
 
 impl FileSystemRouter {
-    fn bust_dir_cache_recursive(input_path: &[u8]) {
+    fn bust_dir_cache_recursive(path: &[u8]) {
         let vm = VirtualMachine::get();
-        #[cfg(not(windows))]
-        let path = input_path;
-        #[cfg(windows)]
-        let path;
-        #[cfg(windows)]
-        let normalized: Vec<u8>;
-        #[cfg(windows)]
-        {
-            // Note: `with_borrow_mut` can't hand back a slice that outlives
-            // the closure, so copy out (cold reload path).
-            normalized = WIN32_NORMALIZE_BUF
-                .with_borrow_mut(|buf| vm.fs().normalize_buf(&mut buf[..], input_path).to_vec());
-            path = normalized.as_slice();
-        }
-
         let root_dir_info = match vm.transpiler.with_mut(|t| t.resolver.read_dir_info(path)) {
             Ok(v) => v,
             Err(_) => return,
@@ -157,15 +140,12 @@ impl FileSystemRouter {
                                 continue 'outer;
                             }
                         }
-                        let abs_parts: [&[u8]; 2] = [entry.dir, entry.base()];
-                        // `abs()` writes into a thread-local buffer; copy out
-                        // before recursing (recursion overwrites it).
-                        let full_path = vm.fs().abs(&abs_parts).to_vec();
-                        let _ = vm.transpiler.with_mut(|t| {
-                            t.resolver.bust_dir_cache(
-                                strings::paths::without_trailing_slash_windows_path(&full_path),
-                            )
-                        });
+                        let Some(full_path) = entry.build_abs_path() else {
+                            continue 'outer;
+                        };
+                        let _ = vm
+                            .transpiler
+                            .with_mut(|t| t.resolver.bust_dir_cache(&full_path));
                         Self::bust_dir_cache_recursive(&full_path);
                     }
                 }
@@ -197,24 +177,10 @@ impl FileSystemRouter {
         let global = cx.global();
         Valid::no_null_bytes(options.dir, "dir", "a string", global)?;
 
-        let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
-        let mut root_dir_path = global.bun_vm().top_level_dir();
-        if !(options.dir.is_empty() || options.dir == b".") {
-            // An absolute path is joined too: a route's name is cut from the resolver's normalized spelling.
-            let Some(joined) =
-                path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-                    Fs::FileSystem::get().top_level_dir(),
-                    &mut out_buf,
-                    &[options.dir],
-                )
-            else {
-                return Err(cx.heap.error(format_args!(
-                    "Unable to find directory: {}",
-                    bstr::BStr::new(options.dir)
-                )));
-            };
-            root_dir_path = joined;
-        }
+        // An absolute path is normalized too: a route's name is cut from the resolver's spelling.
+        let mut resolved = path::Path::resolve(&[global.bun_vm().top_level_dir(), options.dir]);
+        resolved.copy_trailing_sep_from(options.dir);
+        let root_dir_path: &[u8] = &resolved;
 
         let mut extensions: Vec<Box<[u8]>> = options
             .file_extensions
@@ -227,9 +193,10 @@ impl FileSystemRouter {
             extensions = DEFAULT_EXTENSIONS.iter().map(|s| Box::from(*s)).collect();
         }
 
+        let mut dir_with_trailing_sep = path::Path::from(root_dir_path);
+        dir_with_trailing_sep.push_trailing_sep();
         let config = RouteConfig {
-            // Ends with the native separator (`\` on Windows).
-            dir: strings::paths::clone_normalizing_separators(root_dir_path).into_boxed_slice(),
+            dir: dir_with_trailing_sep.as_bytes().into(),
             extensions: extensions.into(),
         };
         let Some((mut router, root_dir_info)) = load_router(global, config, Load::Cached)? else {
@@ -514,14 +481,7 @@ impl MatchedRoute {
                 .as_ref()
                 .map_or(b"", |prefix| prefix.latin1_slice()),
             &mut src,
-            path::Platform::Posix,
         );
         src
     }
-}
-
-#[cfg(windows)]
-thread_local! {
-    static WIN32_NORMALIZE_BUF: core::cell::RefCell<Box<[u8; MAX_PATH_BYTES * 2]>> =
-        core::cell::RefCell::new(bun_core::boxed_zeroed());
 }

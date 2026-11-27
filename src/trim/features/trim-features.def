@@ -159,7 +159,7 @@ trim-feature sockets : Sockets
 
 trim-feature dns : Dns
   about "`Bun.dns` and `node:dns`. Without it, `fetch()`, `Bun.connect()` and `node:net` still resolve host names, but `node:net` doesn't emit `lookup` and `node:dgram` only takes IP addresses."
-  saves 0.3 0.3
+  saves 0.1 0.1
 
 trim-feature http2 : NodeHttp2 ServeHttp2
   about "`node:http2`, and HTTP/2 and HTTP/3 in `Bun.serve()`."
@@ -273,6 +273,10 @@ trim-feature glob : Glob
 
 trim-feature semver : Semver
   about "`Bun.semver`."
+  saves 0.0 0.0
+
+trim-feature diff : Diff
+  about "`Bun.diff`."
   saves 0.0 0.0
 
 trim-feature color : Color

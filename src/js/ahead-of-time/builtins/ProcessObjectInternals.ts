@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 34b28730976f3729b1f08385ac19a7f622a31d5c76459e81ae77e00f2e40eba8.
+// Written against that file with the SHA-256 a0e2a825e8f33b8bbbf8e99ec88171c15fc49cb62a07e8d2329131b02b690eb1.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -204,9 +204,8 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
 
   stream.fd = fd;
 
-  // The descriptor belongs to the process: reading resumes after 'end' (see the
-  // 'resume' handler) and children inherit it. Destroying stdin, which the
-  // 'end' handler below does, must not close it.
+  // The descriptor belongs to the process and children inherit it. Destroying
+  // stdin, which the 'end' handler below does, must not close it.
   stream._destroy = function (this: StdinStream, err: Error | null, cb: $Node.ErrorCallback) {
     cb(err);
   };
@@ -311,6 +310,8 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
 
   stream.on("resume", () => {
     if (stream.isPaused()) return; // fake resume
+    // After EOF, _undestroy() would clear `ended` and 'end' would never be emitted.
+    if (stream_reachedEof) return;
     $debug('on("resume");');
     own();
     stream._undestroy();
@@ -724,6 +725,7 @@ export function createOnWarning(
     // process.stderr.write, not console.error: under an inspector Session console.* emits
     // Runtime.consoleAPICalled, and a throwing listener there is surfaced via emitWarning,
     // so console.error would re-enter and loop. writeWarning reads process.stderr per call, as Node does.
+    // The global console of a compiled program publishes nothing to node:diagnostics_channel, so this does not either.
     // A compiled program may write without making the stream, whose modules put the operators of node:stream on Readable.prototype.
     if (IS_COMPILED_AHEAD_OF_TIME && !redirectPath) require("internal/streams/load_all").rest?.();
     const wroteInPlaceOfStream = writeWarning(message + "\n", redirectPath);
@@ -758,7 +760,6 @@ export function createOnWarning(
     }
     const detail = warning.detail;
     if (typeof detail === "string") msg += `\n${detail}`;
-    writeOut(msg);
     if (!trace && !traceWarningHelperShown) {
       traceWarningHelperShown = true;
       const argv0: unknown = processObject.argv0 || "node";
@@ -779,8 +780,9 @@ export function createOnWarning(
             : $bindgen("node_path.bind.ts", "basenamePosix")
         )(argv0 as string);
       }
-      writeOut(`(Use \`${program} --trace-warnings ...\` to show where the warning was created)`);
+      msg += `\n(Use \`${program} --trace-warnings ...\` to show where the warning was created)`;
     }
+    writeOut(msg);
   };
 }
 

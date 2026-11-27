@@ -51,7 +51,7 @@ test("under bun test --aot, matchers that compare deeply answer for typed object
   using expectedDir = tempDir("test-aot-deep-equality", files);
   using actualDir = tempDir("test-aot-deep-equality", files);
   const [expected, actual] = await Promise.all([rowsOf(String(expectedDir), false), rowsOf(String(actualDir), true)]);
-  expect(expected.rows.length).toBe(88);
+  expect(expected.rows.length).toBe(95);
   expect(actual).toEqual(expected);
   expect(actual.exitCode).toBe(0);
 });

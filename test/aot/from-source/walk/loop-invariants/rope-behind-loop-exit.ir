@@ -1,5 +1,5 @@
 # A rope was flattened before every loop that reads its characters, also where the loop leaves before its first read.
-# f1: an element decides, which the preheader cannot know: the string may stay a rope, and the first read resolves it. f2: a relation over values that enter the loop decides: it is tested in front.
+# f1: an element decides, which the preheader cannot know: nothing is flattened in front, and the first read resolves the string. f2: a relation over values that enter the loop decides: it is tested in front.
 # f3 reads first: nothing is tested but the loop's own bound. f4: the iteration stores before it reads, and whoever catches an error for lack of memory sees the store: what stands in front resolves without throwing, and a version runs where the string is flat.
 # -- source: rope-behind-loop-exit.ts
 # function find(s: string, mark: number): number { const marks = new Uint8Array(16); marks[mark] = 1; for (let i = 0; i < s.length; i++) { if (marks[i]) return i; if (s.charCodeAt(i) === 58) return -i; } return -1; }
@@ -12,7 +12,11 @@
 # -- end of source
 # RUN: walk f1 f2 f3 f4 mechanisms=all-Inlining
 # CHECK-LABEL: code f1:Body
-# CHECK: = FlattenString {{*}} [mayStayRope]
+# CHECK-NOT: FlattenString
+# CHECK: = OpenString
+# CHECK-NOT: FlattenString
+# CHECK: isLoopHead=true:
+# CHECK: = GetStringCodeUnit {{*}} traits=[mayThrow,
 # CHECK-LABEL: code f2:Body
 # CHECK-NOT: mayStayRope
 # CHECK: [[begins]]: boolean @Boolean = Less

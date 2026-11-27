@@ -142,6 +142,16 @@ describe.concurrent("bun lint", () => {
     expect(exitCode).toBe(1);
   });
 
+  test("a pattern can be longer than a path", async () => {
+    const names = Array.from({ length: 300 }, (_, index) => `some/dir/file${index}.js`);
+    const { stdout, exitCode } = await lint(
+      { ".eslintrc.json": `{ "root": true, "rules": { "no-debugger": "error" } }`, "a.js": "debugger;\n" },
+      [`{a.js,${names.join()}}`],
+    );
+    expect(stdout).toContain("no-debugger");
+    expect(exitCode).toBe(1);
+  });
+
   test("prints nothing on stdout and exits with 0 if there are no problems", async () => {
     const { raw, stderr, exitCode } = await lint({ "eslint.config.js": basic, "a.js": "export const a = 1;\n" }, []);
     expect(raw).toBe("");

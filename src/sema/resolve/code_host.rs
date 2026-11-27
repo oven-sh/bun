@@ -11,9 +11,8 @@ use crate::hir_from_data::HostValue;
 use crate::json::Json;
 use crate::module_format::{DeclaredModuleType, ModuleFormat};
 use crate::program::{HostLoader, HostModuleId};
+use crate::resolve::{join_unrooted, normalize_slashes, parent_directory};
 use crate::session::Arena;
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::{dirname, join_spill};
 use std::any::Any;
 use std::borrow::Cow;
 
@@ -50,7 +49,7 @@ pub trait CodeHost: Host {
 
     /// True if `entry`, from the "sideEffects" list of the manifest in `directory`, names `path`.
     fn names_file_with_side_effects(&self, directory: &[u8], entry: &[u8], path: &[u8]) -> bool {
-        join_spill::<Posix>(&mut Vec::new(), &[directory, entry]) == path
+        join_unrooted(directory, &normalize_slashes(entry)) == path
     }
 
     fn leaves_packages_outside(&self) -> bool {
@@ -123,7 +122,7 @@ pub trait CodeHost: Host {
     }
 
     fn directory_of<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
-        Cow::Borrowed(dirname::<Posix>(path))
+        Cow::Borrowed(parent_directory(path))
     }
 
     fn is_given_in_memory(&self, _path: &[u8]) -> bool {

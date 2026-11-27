@@ -1,11 +1,11 @@
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
-    Binding, BindingInitializer, Decl, InitialState, Parent, ScopeId, StoreKind, SymbolId,
+    Binding, BindingInitializer, Decl, FnOwner, InitialState, Parent, ScopeId, StoreKind, SymbolId,
 };
 use bun_sema::check::aot::{FunctionRef, ObjectMemberKind};
 use bun_sema::hir::{
-    self, BinOp, Call, Chain, ExprId, ExprKind, FnBody, FnId, FnKind, MemberKey, NodeData, PatKind,
-    PropKey, PropKind, StmtId, StmtKind, UnOp,
+    self, BinOp, Call, Chain, ExprId, ExprKind, FnBody, FnId, FnKind, MemberId, MemberKey,
+    NodeData, PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp,
 };
 use bun_sema::program::FileId;
 use smallvec::SmallVec;
@@ -30,6 +30,7 @@ use crate::known_helpers::{
     resolve_reference,
 };
 use crate::load::sources::parsed_source;
+use crate::modules::parent_of_pattern;
 
 #[derive(Copy, Clone)]
 pub(in crate::lower) struct PrivateStateAccess {
@@ -302,7 +303,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return Some(lowered);
         }
         let callee = resolve_callee(&resolve_input(self.file), self.file.file, site.callee)?;
-        if !is_lowered(self.file, callee.file) {
+        if !is_lowered(self.file, callee.file) || self.may_be_never_made(&callee) {
             return None;
         }
         let helper = callee.helper(helpers)?;
@@ -447,8 +448,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         function: FnId,
         slow_path: BlockId,
     ) {
-        let function = reference_function(self.file, home, function);
-        let is_closure = self.builder.is_closure_of(function, value);
+        // No value is a closure of a function that is never made, and nothing defines it to be named.
+        let is_closure = match is_left_out(self.file, home, function) {
+            true => self.builder.boolean(false),
+            false => {
+                let function = reference_function(self.file, home, function);
+                self.builder.is_closure_of(function, value)
+            }
+        };
         self.emit_guard(is_closure, slow_path);
     }
 
@@ -466,6 +473,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let value = self.lower_expression(path);
         self.guard_builtin(value, builtin, slow_path);
         value
+    }
+
+    /// What holds from the start may be left out where every call of it is lowered in place.
+    fn may_be_never_made(&self, callee: &KnownCallee) -> bool {
+        let is_certain = !callee.needs_guard() && callee.holds_from_the_start;
+        let (file, mut functions) = (&*self.file, callee.functions.iter());
+        !is_certain && functions.any(|held| is_left_out(file, callee.file, held.closure))
     }
 
     fn guard_callee(&mut self, lowered: &LoweredCall, callee: &KnownCallee, held: HeldFunction) {
@@ -1247,7 +1261,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let kind = helper_call.access(state.kind);
         let kind = kind.expect("a supported helper call has an access kind");
         let callee = &helper_call.callee;
-        if !is_lowered(self.file, callee.file) {
+        if !is_lowered(self.file, callee.file) || self.may_be_never_made(callee) {
             return None;
         }
         let lowered = self.lower_call_operands(call, site);
@@ -1796,6 +1810,80 @@ impl FileLowering<'_, '_, '_, '_> {
 
 fn is_lowered(file: &FileLowering<'_, '_, '_, '_>, home: FileId) -> bool {
     file.inputs.files[home.idx()].is_some()
+}
+
+/// It is never made: it stands in a file, a function or a declaration that the executable leaves out.
+pub(in crate::lower) fn is_left_out(
+    file: &FileLowering<'_, '_, '_, '_>,
+    home: FileId,
+    function: FnId,
+) -> bool {
+    if !is_lowered(file, home) {
+        return true;
+    }
+    let functions = file.inputs.library_functions;
+    let declarations = functions.left_out_declarations();
+    let bound = file.queries.files().bound(home);
+    let hir = file.queries.files().hir(home);
+    let is_in_left_out_class = |member: MemberId| {
+        let class = bound.member_class(member);
+        class.is_some_and(|class| declarations.is_class_left_out(home, class))
+    };
+    let is_node_left_out = |node: Parent| match node {
+        Parent::FnBody(function) => {
+            matches!(bound.fns[function.idx()].owner, FnOwner::Member(member) if is_in_left_out_class(member))
+                || functions.is_left_out(FunctionRef {
+                    file: home,
+                    function,
+                })
+        }
+        Parent::MemberInit(member) => is_in_left_out_class(member),
+        Parent::ClassExtends(class) => {
+            declarations.is_class_left_out(home, class)
+                && !declarations.is_heritage_check_kept(home, class)
+        }
+        Parent::MemberKey(member) => {
+            is_in_left_out_class(member) && !declarations.is_key_conversion_kept(home, member)
+        }
+        Parent::Stmt(statement) => declarations.is_statement_left_out(home, statement),
+        Parent::VarInit(declarator) => declarations.is_declarator_left_out(home, declarator),
+        _ => false,
+    };
+    let step_outward = |&node: &Parent| match node {
+        Parent::Expr(expression) => Some(bound.parent_of_expr(expression)),
+        Parent::Prop(property) | Parent::PropKey(property) | Parent::MethodKey(property) => {
+            let literal = bound.prop_owner[property.idx()].some()?;
+            Some(bound.parent_of_expr(literal))
+        }
+        Parent::PatPropDefault(property) | Parent::PatKey(property) => {
+            Some(parent_of_pattern(bound, hir[property].value))
+        }
+        Parent::PatElemDefault(element) => Some(parent_of_pattern(bound, hir[element].pat)),
+        // A check that is kept of a left-out class is still evaluated.
+        Parent::ClassExtends(class) if !declarations.is_heritage_check_kept(home, class) => {
+            Some(bound.class_owner[class.idx()].to_parent())
+        }
+        Parent::MemberKey(member) if !declarations.is_key_conversion_kept(home, member) => {
+            let class = bound.member_class(member)?;
+            Some(bound.class_owner[class.idx()].to_parent())
+        }
+        Parent::Stmt(statement) => Some(bound.parent_of_stmt(statement)),
+        Parent::VarInit(declarator) => Some(Parent::Stmt(bound.var_stmt[declarator.idx()])),
+        Parent::Case(case) => Some(Parent::Stmt(bound.case_stmt[case.idx()])),
+        Parent::FnBody(function) => match bound.fns[function.idx()].owner {
+            FnOwner::Expr(written) => Some(bound.parent_of_expr(written)),
+            FnOwner::Stmt(statement) => Some(bound.parent_of_stmt(statement)),
+            FnOwner::None | FnOwner::Member(_) | FnOwner::Type(_) => None,
+        },
+        _ => None,
+    };
+    // A path ends at a parameter, an initializer of a field or a decorator. It goes on at the function that encloses those.
+    let mut around = core::iter::successors(Some(function), |&inner| {
+        bound.fns[inner.idx()].enclosing.some()
+    });
+    around.any(|from| {
+        core::iter::successors(Some(Parent::FnBody(from)), step_outward).any(is_node_left_out)
+    })
 }
 
 fn is_plain_call(file: &FileLowering<'_, '_, '_, '_>, site: Call) -> bool {

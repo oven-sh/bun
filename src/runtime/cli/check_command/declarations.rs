@@ -2,11 +2,9 @@ use std::collections::BTreeMap;
 
 use bstr::BStr;
 use bun_bundler::options::TypeChecked;
-use bun_paths::platform::Auto;
-use bun_paths::resolve_path::join_abs_string;
 use bun_sema::check::Checker;
 use bun_sema::program::{FileId, change_to_declaration_extension};
-use bun_sema_driver::host::{Provided, from_native, to_native};
+use bun_sema_driver::host::{Provided, check_entry_point_dirs, from_native, to_native};
 use bun_sema_driver::typed_files::{ModuleTypes, tsconfig_of_package};
 use bun_sema_driver::{Category, PlanOptions, Report, Request, ScriptKind, format};
 use bun_threading::Guarded;
@@ -104,6 +102,9 @@ fn emit_declarations(
     if paths.is_empty() {
         return true;
     }
+    if !check_entry_point_dirs(cwd, &paths, log) {
+        return false;
+    }
     let entry_paths = paths;
     let paths = Paths::EntryPoints(Entries {
         paths: &entry_paths,
@@ -134,8 +135,8 @@ fn emit_declarations(
     };
     let has_configuration = tsconfig.is_some()
         || entry_paths.iter().any(|path| {
-            let path = join_abs_string::<Auto>(cwd, &[path]);
-            tsconfig_of_package(&from_native(path)).is_some()
+            let path = bun_paths::Path::resolve(&[cwd, path]);
+            tsconfig_of_package(&from_native(&path)).is_some()
         });
     let flags = [&b"--declaration"[..], b"--declarationMap", b"false"];
     let libs = if has_configuration {
@@ -187,7 +188,7 @@ fn emit_declarations(
 
 pub(super) fn bundler_path(path: &[u8]) -> Vec<u8> {
     let mut path = to_native(path).to_vec();
-    bun_paths::resolve_path::posix_to_platform_in_place::<u8>(&mut path);
+    bun_paths::to_native_in_place::<u8>(&mut path);
     path
 }
 

@@ -1733,6 +1733,37 @@ describe.concurrent("gzip trailer", () => {
     },
   );
 
+  // The header may end with the low half of its own CRC32.
+  const withHeaderCrc = (tgz: Buffer, xor: number) => {
+    const header = changed(tgz.subarray(0, 10), 3, (b, i) => (b[i] |= 2));
+    const crc = Buffer.alloc(2);
+    crc.writeUInt16LE((Bun.hash.crc32(header) & 0xffff) ^ xor);
+    return Buffer.concat([header, crc, tgz.subarray(10)]);
+  };
+  test.each(paths)("a header CRC is checked (%s)", async path => {
+    const results = await Promise.all([
+      install(path, withHeaderCrc(good, 0)),
+      install(path, withHeaderCrc(good, 1)),
+      install(path, Buffer.concat([member1, withHeaderCrc(member2, 1)])),
+    ]);
+    const refused = {
+      error:
+        path === "streaming"
+          ? expect.stringMatching(/^error: Fail extracting tarball for "stream-pkg": gzip header mismatch/)
+          : "error: Fail extracting tarball from stream-pkg",
+      streamed: false,
+      installed: false,
+      cached: 0,
+      tmp: [".keep"],
+      exitCode: 1,
+    };
+    expect(results).toEqual([
+      { error: undefined, streamed: path === "streaming", installed: true, cached: 1, tmp: [".keep"], exitCode: 0 },
+      refused,
+      refused,
+    ]);
+  });
+
   // A gzip file is one or more members. Every path reads them all, and ignores other bytes after the last.
   const continued: [string, Buffer][] = [
     ["a second member", Buffer.concat([member1, member2])],

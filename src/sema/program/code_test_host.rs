@@ -7,7 +7,7 @@ use crate::hir_from_data::{DataModule, DataModuleTree, DataValue, HostValue, mod
 use crate::resolve::{
     CodeHost, CodeImportKind, CodeOptions, CodeParseRequest, CodeRead, CodeRequest, FinishedFile,
     HostPayload, HostResolution, LoaderRequest, MacroRequest, ParsedCode, ParsedFile,
-    TransformRequest, TreeChange, is_declaration_file_name,
+    TransformRequest, TreeChange, is_declaration_file_name, parent_directory,
 };
 use bun_threading::io_thread_pool;
 use std::sync::Once;
@@ -203,7 +203,7 @@ impl Host for StatementsHost {
     fn is_dir(&self, path: &[u8]) -> bool {
         let is_same = |directory: &[u8]| is_same_path(directory, path, self.is_case_sensitive);
         let mut directories =
-            (self.files.iter()).flat_map(|file| ancestors(dirname::<Posix>(file.0.as_bytes())));
+            (self.files.iter()).flat_map(|file| ancestors(parent_directory(file.0.as_bytes())));
         directories.any(is_same)
     }
 

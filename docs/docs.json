@@ -168,6 +168,7 @@
               "/runtime/hashing",
               "/runtime/glob",
               "/runtime/semver",
+              "/runtime/diff",
               "/runtime/color",
               "/runtime/utils"
             ]

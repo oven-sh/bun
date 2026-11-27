@@ -26,14 +26,12 @@ use crate::resolve::{
     get_declaration_file_extension, get_relative_path_from_directory, get_root_length,
     has_ts_implementation_extension, inside, is_declaration_file_name, is_relative,
     is_rooted_disk_path, join, known_extension, node_module_path_parts, object_kind,
-    path_is_relative, paths_of_types_versions, remove_file_extension,
+    parent_directory, path_is_relative, paths_of_types_versions, remove_file_extension,
 };
 use crate::util::SharedSort;
 use crate::verify::relative_from_file;
 use bstr::ByteSlice;
 use bun_core::strings;
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::{dirname, relative_normalized};
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::ops::ControlFlow;
@@ -3136,7 +3134,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                         _ => files.declaration_file_path(file),
                     };
                     let output_file_path = files.declaration_file_path(self.file());
-                    let output_file_path = dirname::<Posix>(&output_file_path);
+                    let output_file_path = parent_directory(&output_file_path);
                     // `GetRelativePathToDirectoryOrUrl`
                     name = get_relative_path_from_directory(
                         output_file_path,
@@ -6517,7 +6515,7 @@ impl<'p, 's> Checker<'p, 's> {
                     ]
                     .iter()
                     .any(|extension| {
-                        let directory = dirname::<Posix>(source_file_name);
+                        let directory = parent_directory(source_file_name);
                         files.by_path.contains(&[directory, *extension].concat())
                     }) =>
                 {
@@ -6777,7 +6775,7 @@ impl<'p, 's> Checker<'p, 's> {
                     known_extension(path),
                     b".mts" | b".d.mts" | b".mjs" | b".cts" | b".d.cts" | b".cjs"
                 )
-                && is_same_path(dirname::<Posix>(path), &main_export)
+                && is_same_path(parent_directory(path), &main_export)
                 && remove_file_extension(get_base_file_name(path)) == b"index";
         ControlFlow::Continue((is_main, module_file_to_try))
     }
@@ -6800,7 +6798,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `exports` only helps an importing file that finds the package in a `node_modules` above it.
         if !contains_path(
             &path[..top_level_node_modules.max(get_root_length(path))],
-            dirname::<Posix>(files.module(importing).file_name()),
+            parent_directory(files.module(importing).file_name()),
             files.is_case_sensitive,
         ) {
             return Vec::new();
@@ -6861,7 +6859,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Vec<(Vec<u8>, bool)> {
         let links = self.files().linked_directories;
         let mut paths = Vec::new();
-        let mut directory = dirname::<Posix>(real);
+        let mut directory = parent_directory(real);
         while !links.is_empty() && !directory.is_empty() && directory != b"/" {
             let mut to_here = links.iter().filter(|link| link.0 == directory).peekable();
             if to_here.peek().is_some() {
@@ -6882,7 +6880,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
             }
-            directory = dirname::<Posix>(directory);
+            directory = parent_directory(directory);
         }
         paths
     }
@@ -6898,7 +6896,7 @@ impl<'p, 's> Checker<'p, 's> {
         target_mode: ResolutionMode,
         prefers_js: bool,
     ) -> Vec<u8> {
-        let from = dirname::<Posix>(self.files().module(importing).file_name());
+        let from = parent_directory(self.files().module(importing).file_name());
         // The number of directory levels from the importing file up to the directory that contains `path`.
         let distance = |path: &[u8]| {
             let (mut directory, mut up) = (from, 0);
@@ -6908,7 +6906,7 @@ impl<'p, 's> Checker<'p, 's> {
                     .strip_prefix(directory)
                     .is_some_and(|rest| rest.starts_with(b"/"))
             {
-                directory = dirname::<Posix>(directory);
+                directory = parent_directory(directory);
                 up += 1;
             }
             up
@@ -7027,7 +7025,7 @@ impl<'p, 's> Checker<'p, 's> {
         if paths_only && options.paths.is_empty() {
             return Vec::new();
         }
-        let source_directory = dirname::<Posix>(files.module(importing).file_name());
+        let source_directory = parent_directory(files.module(importing).file_name());
         let mut relative_path = self.try_get_module_name_from_root_dirs(
             module_file_name,
             source_directory,
@@ -7093,7 +7091,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !path_is_relative(&maybe_non_relative) {
             let project_directory = match options.config_path.as_slice() {
                 b"" => options.base_dir.as_slice(),
-                config_path => dirname::<Posix>(config_path),
+                config_path => parent_directory(config_path),
             };
             let is_internal =
                 |path: &[u8]| contains_path(project_directory, path, files.is_case_sensitive);
@@ -7144,7 +7142,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let known_directories = [target_directory, self.package_json_directory(importing)];
         let package_root = node_module_path_parts(path).map(|parts| parts.2);
-        ancestors(dirname::<Posix>(path))
+        ancestors(parent_directory(path))
             .find(|&directory| {
                 known_directories.contains(&directory)
                     || package_root == Some(directory.len())
@@ -7161,21 +7159,20 @@ impl<'p, 's> Checker<'p, 's> {
         allowed_endings: &[Ending],
     ) -> Vec<u8> {
         let root_dirs = &self.files().options.root_dirs;
-        // `getPathsRelativeToRootDirs`, each with a `/` before it.
+        let relative = |from: &[u8], to: &[u8]| get_relative_path_from_directory(from, to, true);
+        // `getPathsRelativeToRootDirs`
         let relative_to_root_dirs = |path: &[u8]| -> Vec<Vec<u8>> {
             root_dirs
                 .iter()
-                .map(|root_dir| [b"/", relative_normalized::<Posix, true>(root_dir, path)].concat())
-                .filter(|relative| !relative.starts_with(b"/.."))
+                .map(|root_dir| relative(root_dir, path))
+                .filter(|it| !it.starts_with(b"..") && get_root_length(it) == 0)
                 .collect()
         };
         let target_paths = relative_to_root_dirs(module_file_name);
         let mut shortest: Option<Vec<u8>> = None;
         for source_path in relative_to_root_dirs(source_directory) {
             for target_path in &target_paths {
-                let candidate = ensure_path_is_non_module_name(
-                    relative_normalized::<Posix, true>(&source_path, target_path).to_vec(),
-                );
+                let candidate = ensure_path_is_non_module_name(relative(&source_path, target_path));
                 let separators = strings::count_char(&candidate, b'/');
                 if shortest
                     .as_ref()
@@ -7204,8 +7201,7 @@ impl<'p, 's> Checker<'p, 's> {
         for (key, values) in paths {
             for pattern_text in values {
                 let normalized = join(base_directory, pattern_text);
-                let pattern =
-                    relative_normalized::<Posix, true>(base_directory, &normalized).to_vec();
+                let pattern = get_relative_path_from_directory(base_directory, &normalized, true);
                 let mut candidates: Vec<Vec<u8>> = allowed_endings
                     .iter()
                     .map(|&ending| self.process_ending(relative_to_base_url, file_name, &[ending]))

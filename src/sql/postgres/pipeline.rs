@@ -419,9 +419,10 @@ impl<R, E, C> Pipeline<R, E, C> {
         Ok((!head.is_rejected()).then_some(head))
     }
 
-    pub fn on_result(&mut self) -> Result<(), AnyPostgresError> {
-        self.head_mut()?.stage = Stage::Answered;
-        Ok(())
+    pub fn on_result(&mut self) -> Result<&R, AnyPostgresError> {
+        let head = self.head_mut()?;
+        head.stage = Stage::Answered;
+        Ok(&head.request)
     }
 
     pub fn on_parse_complete(&mut self) -> Result<(), AnyPostgresError> {

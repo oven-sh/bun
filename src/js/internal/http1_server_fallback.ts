@@ -1,9 +1,13 @@
 // JS HTTP/1 server path over an arbitrary Duplex with a JS stand-in for NodeHTTPResponse.
 // Used by http2's `allowHTTP1` ALPN fallback and http's `server.emit("connection", socket)`.
 // See https://github.com/nodejs/node/blob/main/lib/_http_server.js connectionListener.
-const { STATUS_CODES, kPendingCallbacks } = require("internal/http");
+const { STATUS_CODES, NodeHTTPHeaderState, headerStateSymbol, kPendingCallbacks } = require("internal/http");
 const { SafeSet } = require("internal/primordials");
 const AsyncContextFrame = require("internal/async_context_frame");
+const { builtinChannel } = require("internal/shared");
+
+const onRequestStartChannel = builtinChannel("http.server.request.start");
+const onResponseFinishChannel = builtinChannel("http.server.response.finish");
 
 const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
@@ -14,6 +18,8 @@ const reportError = globalThis.reportError;
 function rethrowUncaught(err) {
   throw err;
 }
+
+function ignoreError() {}
 
 // Node fails the write callbacks that a destroyed socket still holds before it emits 'close' (Writable's errorBuffer).
 function failPendingWriteCallbacks(res, err) {
@@ -219,10 +225,11 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
   }
 
   const handle = {
-    // NodeHTTPResponseFlags.socket_closed, like the native getter: end() and write() stop at it.
+    // NodeHTTPResponseFlags.socket_closed, like the native getter: end() and write() stop at it. And dispatch_threw_while_queued.
     get flags() {
-      return this.aborted || socket.destroyed ? 1 : 0;
+      return (this.aborted || socket.destroyed ? 1 : 0) | (this.hasNoResponse ? 1 << 9 : 0);
     },
+    hasNoResponse: false,
     ended: false,
     // True once the bytes end() wrote have left the socket, like the native handle's.
     finished: false,
@@ -361,6 +368,7 @@ function connectionListenerHTTP1(server, socket, options) {
   const { kHandle: kHttp1ResponseHandle, kHeaderSource, http1ServerPipeline } = require("internal/http");
   // Populated by node:_http_server, which the require("node:http") above loads.
   const {
+    holdPipelinedTurn,
     queuePipelinedResponse,
     advanceResponsePipeline,
     abortQueuedPipelinedResponses,
@@ -432,6 +440,16 @@ function connectionListenerHTTP1(server, socket, options) {
     upgrade,
     shouldKeepAlive,
   ) {
+    // The async context that one request enters ends before the next request of the chunk.
+    const frame = AsyncContextFrame.current();
+    try {
+      return dispatchHttp1Request(versionMajor, versionMinor, rawHeaders, methodNum, url, upgrade, shouldKeepAlive);
+    } finally {
+      AsyncContextFrame.exchange(frame);
+    }
+  };
+
+  function dispatchHttp1Request(versionMajor, versionMinor, rawHeaders, methodNum, url, upgrade, shouldKeepAlive) {
     if (rawHeaders === undefined) {
       rawHeaders = flushedHeaders;
       flushedHeaders = [];
@@ -481,13 +499,6 @@ function connectionListenerHTTP1(server, socket, options) {
       if (!socket._paused && socket.readable) socket.resume();
     };
 
-    const res = new ServerResponseClass(req);
-    // The native dispatcher seeds these from the server; renderNativeHeaders
-    // reads them to decide the Keep-Alive auto-header bits, so the fallback
-    // path must carry them too or keep-alive responses lose their timeout line.
-    res._keepAliveTimeout = keepAliveTimeout;
-    const { maxRequestsPerSocket } = server;
-    res._maxRequestsPerSocket = maxRequestsPerSocket;
     const handle = createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout);
     handle.onfinished = function () {
       socket[kHttp1ActiveRequests] = Math.max(0, (socket[kHttp1ActiveRequests] || 1) - 1);
@@ -495,19 +506,35 @@ function connectionListenerHTTP1(server, socket, options) {
         socket.end();
       }
     };
-    handle.onflushed = function () {
-      finishDrainedResponse(res);
-    };
-    res[kHttp1ResponseHandle] = handle;
     // Node's parserOnIncoming outgoing queue: pipelined requests parse while
     // the previous response is still assigned (its 'finish' detach is a tick
     // away), so queue this response instead of letting assignSocket throw
     // ERR_HTTP_SOCKET_ASSIGNED.
-    if (socket._httpMessage) {
-      queuePipelinedResponse(socket, res, versionMajor < 1 || versionMinor < 1);
-    } else {
-      res.assignSocket(socket);
+    const isPipelined = !!socket._httpMessage;
+    if (isPipelined) holdPipelinedTurn(socket, handle);
+    let res;
+    try {
+      res = new ServerResponseClass(req, { [kHttp1ResponseHandle]: handle });
+    } catch (error) {
+      handle.hasNoResponse = true;
+      throw error;
     }
+    // The native dispatcher seeds these from the server; renderNativeHeaders
+    // reads them to decide the Keep-Alive auto-header bits, so the fallback
+    // path must carry them too or keep-alive responses lose their timeout line.
+    res._keepAliveTimeout = keepAliveTimeout;
+    const { maxRequestsPerSocket } = server;
+    res._maxRequestsPerSocket = maxRequestsPerSocket;
+    handle.onflushed = function () {
+      finishDrainedResponse(res);
+    };
+    // A subclass may not hand its options on.
+    res[kHttp1ResponseHandle] = handle;
+    if (isPipelined) queuePipelinedResponse(socket, res, versionMajor < 1 || versionMinor < 1);
+    if (onRequestStartChannel.hasSubscribers) {
+      onRequestStartChannel.publish({ request: req, response: res, socket, server });
+    }
+    if (!isPipelined) res.assignSocket(socket);
     // node's resOnFinish: release the socket once the response completes,
     // then either end the connection (a response that advertised Connection:
     // close must not be followed by another one - the close path aborts the
@@ -515,6 +542,9 @@ function connectionListenerHTTP1(server, socket, options) {
     // response, replaying whatever it buffered.
     res.on("finish", function onFallbackResponseFinish() {
       const finishedReq = this.req;
+      if (onResponseFinishChannel.hasSubscribers) {
+        onResponseFinishChannel.publish({ request: finishedReq, response: this, socket, server });
+      }
       if (!finishedReq._consuming && !finishedReq._readableState.resumeScheduled) finishedReq._dump();
       this.detachSocket(socket);
       // `_last`: onHttp1SocketEnd saw the client's FIN while this response owned the socket.
@@ -532,6 +562,12 @@ function connectionListenerHTTP1(server, socket, options) {
     // Node's parserOnIncoming read gate: stop reading once the connection's
     // outgoing side is backed up, so pipelined requests cannot flood it.
     maybePauseFallbackReads(socket);
+
+    if (versionMajor === 1 && versionMinor === 1 && server.requireHostHeader && req.headers.host === undefined) {
+      res.writeHead(400, { Connection: "close" });
+      res.end();
+      return 0;
+    }
 
     // Like Node's parserOnIncoming: upgrades (handed off above) are not counted, and the socket is never closed here.
     if (
@@ -571,7 +607,7 @@ function connectionListenerHTTP1(server, socket, options) {
     }
     server.emit("request", req, res);
     return 0;
-  };
+  }
   parser[kOnBody] = function onHttp1Body(chunk) {
     if (req && !req._dumped) req.push(chunk);
   };
@@ -592,9 +628,12 @@ function connectionListenerHTTP1(server, socket, options) {
     // Match Node's http _connectionListener: attach err.rawPacket and, when no
     // 'clientError' listener is present, write the same raw error response
     // Node's socketOnError does before destroying.
+    socket.removeListener("error", onHttp1SocketErrorListener);
+    if (socket.listenerCount("error", ignoreError) === 0) socket.on("error", ignoreError);
     prepareError(err, parser, rawPacket);
     if (!server.emit("clientError", err, socket)) {
-      if (socket.writable && !socket.destroyed) {
+      const isResponding = socket._httpMessage?.[headerStateSymbol] === NodeHTTPHeaderState.sent;
+      if (socket.writable && !socket.destroyed && !isResponding) {
         const code = err?.code;
         socket.write(
           code === "HPE_HEADER_OVERFLOW"

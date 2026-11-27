@@ -4,8 +4,7 @@ use crate::response::Response;
 /// Response types that can drive a `BodyReaderMixin`: must support registering
 /// data/abort callbacks and converting to `AnyResponse`.
 ///
-/// Only `Response<SSL>` is wired today (DevServer's only consumer is HTTP/1.x);
-/// `h3::Response` can be added once its callback signatures are unified.
+/// Only `Response<SSL>` is wired today (DevServer's only consumer is HTTP/1.x).
 pub trait BodyResponse: Sized + 'static {
     fn on_data<U, H>(&mut self, handler: H, ctx: *mut U)
     where

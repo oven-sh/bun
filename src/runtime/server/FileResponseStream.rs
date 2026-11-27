@@ -16,7 +16,7 @@ use bun_io::pipe_reader::ReaderFlags;
 use bun_io::{BufferedReader, FileType, IoEvent, Owner, PollTag, ReadResult, ReadState};
 use bun_jsc::JsCell;
 use bun_ptr::RefPtr;
-use bun_sys::{self as sys, Fd, File};
+use bun_sys::{self as sys, Fd, File, MaybeOwnedFile};
 use bun_uws::{AnyResponse, WriteResult};
 
 use crate::server::jsc::VirtualMachine;
@@ -92,33 +92,32 @@ bitflags::bitflags! {
     }
 }
 
-/// The descriptor that a response is read from.
-pub(crate) enum StreamFd {
-    /// Closed off this thread.
-    Owned(Fd),
-    Borrowed(Fd),
-}
+/// The descriptor that a response is read from. Closed off this thread.
+pub(crate) struct StreamFd(MaybeOwnedFile);
 
 impl StreamFd {
+    pub(crate) fn borrowed(fd: Fd) -> Self {
+        Self(MaybeOwnedFile::Borrowed(fd))
+    }
+
     pub(crate) fn get(&self) -> Fd {
-        let (Self::Owned(fd) | Self::Borrowed(fd)) = *self;
-        fd
+        self.0.fd()
     }
 }
 
 impl From<File> for StreamFd {
     fn from(file: File) -> Self {
-        Self::Owned(file.into_raw())
+        Self(file.into())
     }
 }
 
 impl Drop for StreamFd {
     fn drop(&mut self) {
-        if let Self::Owned(fd) = *self {
+        if let MaybeOwnedFile::Owned(file) = core::mem::take(&mut self.0) {
             #[cfg(windows)]
-            Closer::close(fd, bun_sys::windows::libuv::Loop::get());
+            Closer::close(file, bun_sys::windows::libuv::Loop::get());
             #[cfg(not(windows))]
-            Closer::close(fd, ());
+            Closer::close(file, ());
         }
     }
 }
@@ -244,7 +243,6 @@ impl FileResponseStream {
         // BufferedReader path
         let reader = &this_ref.reader;
         reader.update_flags(|f| {
-            f.remove(ReaderFlags::CLOSE_HANDLE); // `self.fd` closes it
             f.set(ReaderFlags::POLLABLE, opts.pollable);
             f.set(ReaderFlags::NONBLOCKING, opts.file_type != FileType::File);
             #[cfg(unix)]
@@ -256,7 +254,8 @@ impl FileResponseStream {
         // SAFETY: `owner` points to the heap allocation that holds this reader.
         unsafe { reader.set_owner(owner) };
 
-        let (event_loop, fd) = (this_ref.event_loop, this_ref.fd.get());
+        let event_loop = this_ref.event_loop;
+        let fd = MaybeOwnedFile::Borrowed(this_ref.fd.get());
         let start_result = if opts.offset > 0 {
             reader.start_file_offset(event_loop, fd, opts.pollable, opts.offset as usize)
         } else {

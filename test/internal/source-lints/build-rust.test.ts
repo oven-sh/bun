@@ -172,36 +172,34 @@ describe("CPU baseline", () => {
   /** The rustflags that choose the ISA the build assumes. */
   function cpuFlags(cfg: Config): string[] {
     const rustflags = cargoBuildInvocation(cfg).env.CARGO_ENCODED_RUSTFLAGS!.split("\x1f");
-    return rustflags.filter(
-      flag =>
-        flag.startsWith("-Ctarget-cpu=") || flag.startsWith("-Ctarget-feature=") || flag.startsWith("-Ztune-cpu="),
-    );
+    return rustflags.filter(flag => /^-(Ctarget-cpu|Ctarget-feature|Ztune-cpu|Zllvm-target-feature)=/.test(flag));
   }
 
-  test("arm64 linux and freebsd assume armv8-a+crc tuned for Ampere, windows armv8-a+crc generic, like the C++ side", () => {
-    // flags.ts: `-march=armv8-a+crc -mtune=ampere1`. Naming a CPU instead
+  test("arm64 linux, freebsd and windows assume armv8-a+crc with generic tuning, like the C++ side", () => {
+    // flags.ts: `-march=armv8-a+crc`. Naming a CPU instead
     // (this used to be `-Ctarget-cpu=cortex-a72`) also assumes that CPU's
     // aes/sha2/pmuv3, which the C++ side doesn't, and gives every Rust
     // function a different feature set from every C++ function, which LLVM's
     // inliner treats as incompatible under cross-language LTO.
-    const expected = ["-Ctarget-cpu=generic", "-Ctarget-feature=+crc", "-Ztune-cpu=ampere1"];
+    const expected = ["-Ctarget-cpu=generic", "-Ctarget-feature=+crc"];
 
     const linuxGnu = resolve({ os: "linux", arch: "aarch64", abi: "gnu", linuxSysroot: "/fake" });
     expect(cpuFlags(linuxGnu)).toEqual(expected);
     expect(cpuFlags(withAbi(linuxGnu, "musl"))).toEqual(expected);
     expect(cpuFlags(resolve({ os: "freebsd", arch: "aarch64", freebsdSysroot: "/fake" }))).toEqual(expected);
-    // clang-cl spells it `/clang:-march=...`; no -mtune there (Windows-on-ARM
-    // is Snapdragon, generic tuning like MSVC/Chromium/Rust).
-    expect(cpuFlags(resolve({ os: "windows", arch: "aarch64", winsysroot: "/fake" }))).toEqual([
-      "-Ctarget-cpu=generic",
-      "-Ctarget-feature=+crc",
-    ]);
+    // clang-cl spells it `/clang:-march=...`.
+    expect(cpuFlags(resolve({ os: "windows", arch: "aarch64", winsysroot: "/fake" }))).toEqual(expected);
   });
 
-  test("arm64 android assumes armv8-a+crc tuned for Cortex-A78, like the C++ side", () => {
+  test("arm64 android assumes armv8-a+crc tuned for Cortex-A78 and avoids the Cortex-A53 erratum, like the C++ side", () => {
     const android = withAbi(resolve({ os: "linux", arch: "aarch64", abi: "gnu", linuxSysroot: "/fake" }), "android");
     expect(cargoBuildInvocation(android).triple).toBe("aarch64-linux-android");
-    expect(cpuFlags(android)).toEqual(["-Ctarget-cpu=generic", "-Ctarget-feature=+crc", "-Ztune-cpu=cortex-a78"]);
+    expect(cpuFlags(android)).toEqual([
+      "-Ctarget-cpu=generic",
+      "-Ctarget-feature=+crc",
+      "-Ztune-cpu=cortex-a78",
+      "-Zllvm-target-feature=+fix-cortex-a53-835769",
+    ]);
   });
 
   test("darwin arm64 and x64 name the C++ side's CPU model directly", () => {

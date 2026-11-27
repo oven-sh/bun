@@ -8723,6 +8723,29 @@ try {
       expect(files).toEqual({ "chain/a.tsx": jsx, "circle/a.tsx": jsx });
     });
 
+    test("prettier-plugin-organize-imports: a backslash separates in `extends`", async () => {
+      const jsx = `import React from "react";\nexport const a = <div />;\n`;
+      const { files } = await format(
+        {
+          ".prettierrc": `{ "plugins": ["prettier-plugin-organize-imports"] }`,
+          "base.json": `{ "compilerOptions": { "jsx": "react" } }`,
+          "relative/a.tsx": jsx,
+          "relative/tsconfig.json": JSON.stringify({ extends: "..\\base.json" }),
+          "rooted/a.tsx": jsx,
+        },
+        [],
+        {
+          reads: ["relative/a.tsx", "rooted/a.tsx"],
+          before: dir =>
+            writeFileSync(
+              join(dir, "rooted", "tsconfig.json"),
+              JSON.stringify({ extends: join(dir, "base.json").replaceAll("/", "\\") }),
+            ),
+        },
+      );
+      expect(files).toEqual({ "relative/a.tsx": jsx, "rooted/a.tsx": jsx });
+    });
+
     test("reads .editorconfig unless --no-editorconfig is passed", async () => {
       const files = {
         ".editorconfig": "root = true\n[*]\nindent_style = space\nindent_size = 4\n[*.ts]\nindent_style = tab\n",

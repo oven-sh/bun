@@ -29,6 +29,7 @@ use bun_lint::json::{self, Notation};
 use bun_lint::linter::config::{glob_error, strings_of};
 use bun_lint::linter::write_json;
 use bun_lint::options::Json;
+use bun_paths::portable::from_portable_rooted;
 use bun_sema::util::FxHashMap;
 use bun_threading::Guarded;
 use std::borrow::Cow;
@@ -982,6 +983,7 @@ fn read_tsconfig(path: &[u8], settings: &mut Settings) {
         let Some(name) = name.as_str() else {
             continue;
         };
+        let name: &[u8] = &bun_sys::converted_spelling(name, from_portable_rooted);
         let directory = paths::dirname(&last.path);
         let candidates = |base: Vec<u8>| {
             [

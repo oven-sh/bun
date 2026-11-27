@@ -23,6 +23,7 @@ use self::ambient_patterns::{AmbientPattern, PatternAugmentation};
 pub use self::ambient_patterns::{ImportAttribute, ImportAttributes, ModuleAttribute};
 pub use self::code_file::byte_range_of_node;
 pub use self::code_graph::*;
+pub use self::code_imports::may_name_type_at_run_time;
 pub use self::code_load::CompileInputs;
 pub use self::retire::{ModuleCell, ReadingTask, ReadingWithoutKeeping};
 pub(crate) use self::retire::{forget_blocks_of, free_after_tasks};
@@ -45,7 +46,7 @@ use crate::resolve::{
     ScriptKind, ScriptTarget, Tracer, ancestors, contains_path, displayed_path,
     file_extension_is_one_of, file_path, format_by_extension, get_base_file_name,
     get_lib_file_name, has_ts_implementation_extension, inside, is_javascript, is_javascript_file,
-    is_refused_network_path, is_relative, is_same_path, join, path_is_relative,
+    is_refused_network_path, is_relative, is_same_path, join, parent_directory, path_is_relative,
     remove_file_extension, run_with_current_helpers, supported_extensions, to_file_name_lower_case,
     to_path, to_path_in, typescript_path,
 };
@@ -62,8 +63,6 @@ use bun_core::file_steps::{self, FileStep};
 use bun_core::strings;
 use bun_paths::fs::Path;
 use bun_paths::path_buffer_pool;
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 use bun_threading::Guarded;
 use smallvec::SmallVec;
 use std::borrow::Cow;
@@ -2386,7 +2385,7 @@ impl PackageJsonInfoCache {
     /// `loadSourceFileMetaData`: looks for the scope of a file before anything in the file is
     /// resolved, and logs nothing.
     fn load_source_file_meta_data(&mut self, host: &dyn Host, file_name: &[u8]) {
-        for dir in ancestors(dirname::<Posix>(file_name)) {
+        for dir in ancestors(parent_directory(file_name)) {
             if !self.with_scope.insert(dir.to_vec()) {
                 break;
             }
@@ -4344,7 +4343,7 @@ fn reference_problem(options: &Options, code: u32, path: &[u8]) -> Problem {
 /// `resolveTripleslashPathReference`: the path that the `/// <reference path>` with the value
 /// `reference_text` in the file at `from` refers to.
 fn referenced_path(reference_text: &[u8], from: &[u8]) -> Vec<u8> {
-    join(dirname::<Posix>(from), reference_text)
+    join(parent_directory(from), reference_text)
 }
 
 /// `resolveTripleslashPathReference`: the file that a `/// <reference path>` in `from` resolves to,
@@ -5682,7 +5681,7 @@ fn implied_format_reason(
         return None;
     }
     // `loadSourceFileMetaData`, which `parseTask.load` doesn't call for a library.
-    let scope = ancestors(dirname::<Posix>(module.file_name()))
+    let scope = ancestors(parent_directory(module.file_name()))
         .filter(|_| !module.is_lib)
         .find_map(|dir| Some((resolver.package_json(dir)?, dir)))
         .map(|(json, dir)| (join(dir, b"package.json"), json));
@@ -5728,7 +5727,7 @@ pub(crate) fn source_file_may_be_emitted(
     }
     // `GetCommonSourceDirectory`, if `rootDir` or the configuration file determines it.
     let common = match options.root_dir.as_slice() {
-        b"" => dirname::<Posix>(&options.config_path),
+        b"" => parent_directory(&options.config_path),
         root_dir => root_dir,
     };
     // `GetSourceFilePathInNewDirWorker`: a JSON file outside that directory would overwrite itself.
@@ -5922,7 +5921,7 @@ fn output_path_errors(
         let specified = if !options.root_dir.is_empty() {
             options.root_dir.as_slice()
         } else if !options.config_path.is_empty() {
-            dirname::<Posix>(&options.config_path)
+            parent_directory(&options.config_path)
         } else {
             b""
         };
@@ -5957,7 +5956,7 @@ fn output_path_errors(
             common_directory_of(&paths, &options.current_directory, is_case_sensitive)
         && !is_same_path(
             &computed,
-            dirname::<Posix>(&options.config_path),
+            parent_directory(&options.config_path),
             is_case_sensitive,
         )
     {
@@ -8477,7 +8476,7 @@ impl<'s> Files<'s> {
             {
                 return None;
             }
-            let stem = join(dirname::<Posix>(path), text);
+            let stem = join(parent_directory(path), text);
             let for_tsx: &'static [u8] = if options.jsx == JsxEmit::Preserve {
                 b".jsx"
             } else {

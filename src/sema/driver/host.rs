@@ -9,9 +9,7 @@ use bun_core::strings::{
     BOM, contains, contains_char, is_valid_utf8, last_index_of_char, rsplit_once_char,
     split_once_char, without_trailing_slash,
 };
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::{dirname, windows_volume_name_len, z};
-use bun_paths::{basename_posix, path_buffer_pool};
+use bun_paths::{Path, path_buffer_pool};
 use bun_sema::atom::Interner;
 use bun_sema::content_mapper::Processes;
 pub use bun_sema::content_mapper::{Call, CallError, Connection, Mapper, Transport};
@@ -19,8 +17,9 @@ use bun_sema::hir;
 pub use bun_sema::json::Json;
 use bun_sema::resolve::{
     CachedConfig, FileStamp, Host, ModuleDetection, ParseOptions, Paths, ScriptKind, ancestors,
-    case_insensitive_hash, inside, is_declaration_file_name, is_plainly_normalized, is_same_path,
-    join, root_length, to_file_name_lower_case, to_path, typescript_path,
+    basename, case_insensitive_hash, inside, is_declaration_file_name, is_plainly_normalized,
+    is_same_path, join, parent_directory, root_length, to_file_name_lower_case, to_path,
+    typescript_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::util::SharedSort;
@@ -68,8 +67,7 @@ fn to_syscall_path(path: &[u8]) -> Option<&[u8]> {
 
 /// Opening a named pipe waits for a writer, and some devices never end.
 pub fn is_regular_file(path: &[u8]) -> bool {
-    let mut buffer = path_buffer_pool::get();
-    let stat = to_syscall_path(path).and_then(|it| bun_sys::stat(z(it, &mut buffer)).ok());
+    let stat = to_syscall_path(path).and_then(|it| bun_sys::stat(&Path::from(it)).ok());
     stat.is_some_and(|it| bun_sys::is_regular_file(it.st_mode as bun_sys::Mode))
 }
 
@@ -94,7 +92,11 @@ pub fn from_native(path: &[u8]) -> Vec<u8> {
 fn from_native_with_separators(path: &[u8]) -> Vec<u8> {
     let path = match !cfg!(windows) && is_plainly_normalized(path) {
         true => path.to_vec(),
-        false => join(b"/", bun_paths::string_paths::without_nt_prefix(path)),
+        false => {
+            let mut path = bun_paths::Path::from(path);
+            path.strip_nt_prefix();
+            join(b"/", &path)
+        }
     };
     // A POSIX path's root is `/`, even if its first name looks like a drive or a URL. See `root_length`.
     match !cfg!(windows) && root_length(&path) > 1 && !path.starts_with(b"//") {
@@ -115,6 +117,39 @@ fn name_with_backslash(path: &[u8]) -> Option<(&[u8], &[u8])> {
 pub fn is_below_backslash(path: &[u8]) -> bool {
     let directory = &path[..last_index_of_char(path, b'/').unwrap_or(0)];
     !cfg!(windows) && contains_char(directory, b'\\')
+}
+
+/// Logs an error and returns false if an entry point (or `cwd`, if there are none) is in or is a directory with a `\` in its name.
+pub fn check_entry_point_dirs(
+    cwd: &[u8],
+    entry_points: &[Vec<u8>],
+    log: &mut bun_ast::Log,
+) -> bool {
+    let cwd_itself = [Vec::new()];
+    let paths = if entry_points.is_empty() {
+        &cwd_itself[..]
+    } else {
+        entry_points
+    };
+    for path in paths {
+        let path = Path::resolve(&[cwd, path]);
+        // Where there is no such directory, the checker is right to read the `\` as a separator.
+        let is_unreadable = |dir: &[u8]| {
+            name_with_backslash(dir).is_some() && is_directory(Fd::cwd(), dir).unwrap_or_default()
+        };
+        if bun_paths::ancestors(&path).any(is_unreadable) {
+            log.add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "The type checker cannot read a path that has a backslash in a directory's name: {}",
+                    bstr::BStr::new(path.as_bytes())
+                ),
+            );
+            return false;
+        }
+    }
+    true
 }
 
 /// Converts a command-line path, which is relative to `cwd`. Where `/` is the file system root, a path that begins with
@@ -455,8 +490,7 @@ fn read_file(directory: Fd, name: &[u8], buffer: &mut Vec<u8>) -> Option<Vec<u8>
 
 #[cfg(unix)]
 fn stamp_on_disk(path: &[u8]) -> Option<FileStamp> {
-    let mut buffer = path_buffer_pool::get();
-    let stat = bun_sys::stat(z(to_syscall_path(path)?, &mut buffer)).ok()?;
+    let stat = bun_sys::stat(&Path::from(to_syscall_path(path)?)).ok()?;
     Some(FileStamp {
         device: stat.st_dev as u64,
         inode: stat.st_ino as u64,
@@ -520,7 +554,7 @@ fn split(path: &[u8]) -> Split<'_> {
             name: &path[separator + 1..],
         };
     }
-    let parent = dirname::<Posix>(path);
+    let parent = parent_directory(path);
     // `parent` only ends with a separator when it was cut out of a root.
     if parent.ends_with(b"/") && path.len() <= root_length(path) {
         return Split {
@@ -530,7 +564,7 @@ fn split(path: &[u8]) -> Split<'_> {
     }
     Split {
         parent,
-        name: basename_posix(path),
+        name: basename(path),
     }
 }
 
@@ -538,8 +572,7 @@ fn split(path: &[u8]) -> Split<'_> {
 /// doesn't exist or is neither. `FileExists` and `GetAccessibleEntries` only accept regular files, because reading a
 /// FIFO or a device can block forever.
 fn is_directory(directory: Fd, path: &[u8]) -> Option<bool> {
-    let mut buffer = path_buffer_pool::get();
-    let path = z(path, &mut buffer);
+    let path = &Path::from(path);
     if cfg!(windows) {
         return Some(bun_sys::exists_at_type(directory, path).ok()? == ExistsAtType::Directory);
     }
@@ -653,10 +686,11 @@ impl Disk {
     /// True if the entries of `path` are queried from the system every time. That's the case for the roots, which
     /// aren't directories on Windows. Neither is a server, and `C:` means the working directory on that drive.
     fn is_never_listed(path: &[u8]) -> bool {
-        // `(length, 0)`: a drive, or a server without a share.
+        // A drive, or a server without a share.
         let is_volume = |path: &[u8]| {
             let native = to_native(path);
-            windows_volume_name_len(native) == (native.len(), 0)
+            bun_paths::volume(native) == native
+                && bun_core::strings::tokenize_any(native, b"/\\").count() == 1
         };
         path.is_empty() || cfg!(windows) && (path == b"/" || is_volume(path))
     }
@@ -779,8 +813,8 @@ impl Disk {
         let Some(native) = to_syscall_path(&rooted) else {
             return path.to_vec();
         };
-        let (mut name, mut real) = (path_buffer_pool::get(), path_buffer_pool::get());
-        bun_sys::realpath(z(native, &mut name), &mut real)
+        let mut real = path_buffer_pool::get();
+        bun_sys::realpath(&Path::from(native), &mut real)
             .map_or_else(|_| path.to_vec(), from_native)
     }
 

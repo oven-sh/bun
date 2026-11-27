@@ -279,6 +279,15 @@ fn cli_arena() -> &'static bun_alloc::Arena {
     unsafe { (*CLI_ARENA.get()).assume_init_ref() }
 }
 
+/// The executable's directory if the working directory is gone, like Node's `Environment::GetCwd`.
+pub(crate) fn getcwd_or_exe_dir(buf: &mut bun_paths::PathBuffer) -> &[u8] {
+    if let Ok(cwd) = bun_core::getcwd(buf) {
+        return cwd;
+    }
+    let exe_dir = (bun_core::self_exe_path().ok()).and_then(|exe| bun_paths::dirname(exe));
+    exe_dir.unwrap_or(if cfg!(windows) { b"C:\\" } else { b"/" })
+}
+
 /// Dupe `s` into the process-lifetime CLI arena. Replaces ad-hoc
 /// `s.to_vec().into_boxed_slice()` leaks at CLI sites. Main-thread only
 /// (see [`cli_arena`]).
@@ -671,34 +680,8 @@ pub(crate) mod command {
         if first == b'-' {
             return false;
         }
-        if arg == b"." || arg == b".." {
-            return true;
-        }
-        // Unix relative/absolute path prefixes.
-        if first == b'/' || arg.starts_with(b"./") || arg.starts_with(b"../") {
-            return true;
-        }
-        #[cfg(windows)]
-        {
-            if first == b'\\' || arg.starts_with(b".\\") || arg.starts_with(b"..\\") {
-                return true;
-            }
-            // Drive-letter root: `C:\…` / `C:/…`.
-            if arg.len() >= 3
-                && first.is_ascii_alphabetic()
-                && arg[1] == b':'
-                && (arg[2] == b'\\' || arg[2] == b'/')
-            {
-                return true;
-            }
-        }
-        // Has a `.` in the basename — `foo.js`, `dir/foo.ts`, `.dotfile`, …
-        // (no subcommand keyword contains a `.`).
-        let basename = match strings::last_index_of_any(arg, b"/\\") {
-            Some(i) => &arg[i + 1..],
-            None => arg,
-        };
-        strings::contains_char(basename, b'.')
+        // No subcommand keyword contains a `.`.
+        !bun_paths::is_package_path(arg) || strings::contains_char(bun_paths::basename(arg), b'.')
     }
 
     /// `#[inline(never)]`: argv→`Tag` classification, called once from

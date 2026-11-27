@@ -22,6 +22,10 @@ export function require(this: JSCommonJSModule, _id: string) {
 $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: JSCommonJSModule, originalId: string, options?: { paths?: string[] }) {
+  // Set while the `module.require` tracing channel has subscribers. It calls this function again, with itself as the third argument.
+  const trace = $requireMap.$traceRequire;
+  if (trace !== undefined && $argument(2) !== trace) return trace(this, originalId, options);
+
   // `filename` can be a user getter, so read it once, before the module is added to the require map.
   const parentFilename = this?.filename;
   const id = $resolveSync(originalId, parentFilename, false, false, options ? options.paths : undefined, this, options);

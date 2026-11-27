@@ -271,7 +271,7 @@ fn finish_migration(
     if let Some(path) = crate::lockfile_real::join_top_level_dir(&[b"package.json"])
         && let crate::GetJsonResult::Entry(root) = manager
             .workspace_package_json_cache
-            .get_with_path(log, path.slice(), Default::default())
+            .get_with_path(log, &path, Default::default())
     {
         bun_core::handle_oom(crate::lockfile_real::package::append_patched_dependencies(
             lockfile,

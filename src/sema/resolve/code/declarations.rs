@@ -1,5 +1,6 @@
 use super::manifest::ExportsEntry;
 use super::*;
+use crate::resolve::parent_directory;
 
 const DECLARATION_EXTENSIONS: [(&[u8], &[&[u8]]); 3] = [
     (b".js", &[b".d.ts"]),
@@ -22,7 +23,7 @@ impl<'h> Resolver<'h> {
             candidates.find(|candidate| self.is_file(candidate))
         };
         let found = find_file(stem).or_else(|| {
-            let manifest = self.nearest_code_manifest(dirname::<Posix>(path))?;
+            let manifest = self.nearest_code_manifest(parent_directory(path))?;
             let relative = stem.strip_prefix(manifest.directory)?;
             let relative = [b".", relative].concat();
             let mut folders = find_declaration_folders(manifest.exports.as_ref()?);

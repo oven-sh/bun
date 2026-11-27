@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMapExt, GetOrPutResult, StringSet};
 use bun_core::{self, Output};
-use bun_core::{CStringList, ZStr, strings};
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
+use bun_core::{CStringList, strings};
+use bun_paths::{self, Path};
 use bun_sys;
 use bun_url::URL;
 use bun_which::which;
@@ -226,30 +226,20 @@ impl Loader {
         self.get_node_env() == Some(b"test")
     }
 
-    pub fn get_node_path<'b>(
-        &mut self,
-        fs: &bun_paths::fs::FileSystem,
-        buf: &'b mut PathBuffer,
-    ) -> Option<&'b ZStr> {
+    pub fn get_node_path(&mut self, fs: &bun_paths::fs::FileSystem) -> Option<Path> {
         // Check NODE or npm_node_execpath env var, but only use it if the file actually exists.
         if let Some(node) = self
             .get(b"NODE")
             .or_else(|| self.get(b"npm_node_execpath"))
-            .filter(|n| !n.is_empty() && n.len() < MAX_PATH_BYTES)
+            .filter(|n| !n.is_empty())
         {
-            buf[..node.len()].copy_from_slice(node);
-            let node = ZStr::nul_terminate(buf, node.len());
-            if bun_sys::is_executable_file_path(node) {
+            let node = Path::from(node);
+            if bun_sys::is_executable_file_path(&node) {
                 return Some(node);
             }
         }
 
-        let path = self.get(b"PATH")?;
-        if let Some(node) = which(buf, path, fs.top_level_dir(), b"node") {
-            return Some(node);
-        }
-
-        None
+        which(self.get(b"PATH")?, fs.top_level_dir(), b"node")
     }
 
     pub fn is_ci(&self) -> bool {
@@ -413,14 +403,11 @@ impl Loader {
     fn load_ccache_path_impl(&mut self, fs: &bun_paths::fs::FileSystem) -> Result<(), AllocError> {
         // if they have ccache installed, put it in env variable `CMAKE_CXX_COMPILER_LAUNCHER` so
         // cmake can use it to hopefully speed things up
-        let mut buf = bun_paths::path_buffer_pool::get();
         let path = match self.get(b"PATH") {
             Some(p) => p,
             None => return Ok(()),
         };
-        // borrowck — `path` borrows `self.map`; `which` writes into `buf` and
-        // returns a borrow of `buf`. Copy the result before mutating `self.map`.
-        let ccache_path: Box<[u8]> = which(&mut buf, path, fs.top_level_dir(), b"ccache")
+        let ccache_path: Box<[u8]> = which(path, fs.top_level_dir(), b"ccache")
             .map(|z| Box::<[u8]>::from(z.as_bytes()))
             .unwrap_or_default();
 
@@ -453,8 +440,6 @@ impl Loader {
         fs: &bun_paths::fs::FileSystem,
         override_node: &[u8],
     ) -> crate::Result<bool> {
-        let mut buf = bun_paths::path_buffer_pool::get();
-
         let node_path_to_use: Box<[u8]> = if !override_node.is_empty() {
             Box::from(override_node)
         } else {
@@ -466,7 +451,7 @@ impl Loader {
             if let Some(c) = cached {
                 c
             } else {
-                let Some(node) = self.get_node_path(fs, &mut buf) else {
+                let Some(node) = self.get_node_path(fs) else {
                     return Ok(false);
                 };
                 Box::from(node.as_bytes())

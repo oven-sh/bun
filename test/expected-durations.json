@@ -16,6 +16,18 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/the-build-warns-where-the-options-of-a-require-may-name-a-type-that-it-cannot-read.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/the-console-and-the-loader-of-an-executable-publish-to-no-diagnostics-channel.test.ts": {
+    "default": 3000,
+    "asan": 12000
+  },
+  "aot/a-folder-lists-an-imported-file-at-the-name-of-an-entry-point.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-path-leads-to-its-file-where-the-sources-are-gone.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -31,6 +43,10 @@
   "aot/library-loads.test.ts": {
     "default": 60000,
     "asan": 240000
+  },
+  "aot/hardened-icu.test.ts": {
+    "default": 2000,
+    "asan": 8000
   },
   "aot/hardened-zstd.test.ts": {
     "default": 2000,

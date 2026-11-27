@@ -9,8 +9,11 @@ import {
   zstdDecompressSync,
 } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, libcPathForDlopen, rss } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, libcPathForDlopen, rss, tls } from "harness";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
+import http2 from "node:http2";
+import type { AddressInfo } from "node:net";
 import zlib from "node:zlib";
 import path from "path";
 
@@ -360,7 +363,11 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
 
   // Runs `script` in a child whose native allocations above the cap fail. `inputs` arrive in the
   // child as Buffers in a `inputs` object; the script prints a JSON object, which is returned.
-  async function runCapped(inputs: Record<string, Uint8Array>, script: string): Promise<unknown> {
+  async function runCapped(
+    inputs: Record<string, Uint8Array>,
+    script: string,
+    stdin?: ReadableStream,
+  ): Promise<unknown> {
     const inputsBase64 = Object.fromEntries(
       Object.entries(inputs).map(([name, bytes]) => [name, Buffer.from(bytes).toString("base64")]),
     );
@@ -392,6 +399,7 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
           .filter(Boolean)
           .join(":"),
       },
+      stdin,
       stdout: "pipe",
       // ASAN logs a warning for every refused allocation; drained, not asserted on.
       stderr: "pipe",
@@ -539,6 +547,85 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
       "zstd-large-window-truncated": fetchOutOfMemory,
       afterwards: "still works",
     });
+  });
+
+  it.concurrent("response bodies without a length", async () => {
+    const results = await runCapped(
+      { zstd: zstdCompressSync(Buffer.alloc(11 * MiB)) },
+      /* js */ `
+        import { once } from "node:events";
+        import { createServer } from "node:net";
+        const plain = Buffer.alloc(11 * 1024 * 1024);
+        const server = createServer(socket =>
+          socket.on("error", () => {}).once("data", request => {
+            const isPlain = request.includes("/plain");
+            const status = request.includes("/error") ? "500 Error" : "200 OK";
+            socket.write("HTTP/1.1 " + status + "\\r\\n" + (isPlain ? "" : "Content-Encoding: zstd\\r\\n") + "\\r\\n");
+            if (isPlain) socket.write(plain);
+            else socket.end(inputs.zstd);
+          }),
+        );
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const endpoint = "http://127.0.0.1:" + server.address().port;
+        const s3 = new Bun.S3Client({ accessKeyId: "t", secretAccessKey: "t", endpoint, bucket: "b" });
+        results.plain = await (await fetch(endpoint + "/plain")).bytes().then(bytes => bytes.length, e => e.code);
+        results.zstd = await (await fetch(endpoint + "/zstd")).bytes().then(bytes => bytes.length, e => e.code);
+        results.s3 = await s3.file("zstd").bytes().then(bytes => bytes.length, e => e.code);
+        results.s3Error = await s3.file("error").stream().getReader().read().catch(e => e.code);
+        for (const [name, stream] of [
+          ["plainStream", (await fetch(endpoint + "/plain")).body],
+          ["zstdStream", (await fetch(endpoint + "/zstd")).body],
+          ["s3Stream", s3.file("zstd").stream()],
+        ]) {
+          results[name] = await stream.bytes().then(bytes => bytes.length, describeError);
+        }
+        server.close();
+      `,
+    );
+    expect(results).toEqual({
+      plain: "OutOfMemory",
+      zstd: "OutOfMemory",
+      s3: "OutOfMemory",
+      s3Error: "OutOfMemory",
+      plainStream: outOfMemory,
+      zstdStream: outOfMemory,
+      s3Stream: outOfMemory,
+    });
+  });
+
+  it.concurrent.each([
+    ["identity", () => Buffer.alloc(11 * MiB)],
+    ["gzip", () => zlib.gzipSync(Buffer.alloc(11 * MiB), { level: 0 })],
+  ])("a response body whose stream starts after the allocation failed (%s)", async (encoding, wire) => {
+    const [go, closed] = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    const server = http2.createSecureServer({ ...tls, maxSessionMemory: 64 });
+    server.on("stream", async (stream: http2.ServerHttp2Stream, headers) => {
+      stream.on("error", () => {}).respond({ ":status": 200, "content-encoding": encoding });
+      if (headers[":path"] === "/go") return go.resolve();
+      stream.on("close", closed.resolve);
+      await go.promise;
+      stream.write(wire());
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const results = await runCapped(
+        {},
+        /* js */ `
+          import { readFileSync } from "node:fs";
+          const url = "https://127.0.0.1:${(server.address() as AddressInfo).port}";
+          const opts = { protocol: "http2", tls: { rejectUnauthorized: false } };
+          const res = await fetch(url, opts);
+          await fetch(url + "/go", opts);
+          // Blocks until the client has given up, so nothing it reports is looked at before the stream starts.
+          readFileSync(0);
+          results.read = await res.body.pipeTo(new WritableStream()).catch(e => e.code);
+        `,
+        new ReadableStream({ start: controller => void closed.promise.then(() => controller.close()) }),
+      );
+      expect(results).toEqual({ read: "OutOfMemory" });
+    } finally {
+      server.close();
+    }
   });
 
   it.concurrent("DecompressionStream", async () => {

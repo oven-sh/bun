@@ -28,9 +28,7 @@ use bun_sema_driver::host::{
 };
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
-use bun_spawn::{
-    Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage, SpawnOptions, Status, Stdio,
-};
+use bun_spawn::{ProcessExit, ProcessExitKind, ProcessHandle, SpawnOptions, Status, Stdio};
 use bun_threading::Guarded;
 
 /// A program, as the threads that call it see it.
@@ -302,11 +300,10 @@ impl Child {
     ) -> Result<bun_spawn::SpawnProcessResult, Vec<u8>> {
         let directory = to_native(&program.directory);
         let name = program.argv.first().map_or(&b""[..], |it| &it[..]);
-        let mut buffer = bun_paths::path_buffer_pool::get();
         let search_path = bun_core::env_var::PATH.get().unwrap_or_default();
-        let found = bun_which::which_for_spawn(&mut buffer, search_path, directory, name);
+        let found = bun_which::which_for_spawn(search_path, directory, name);
         // A mapper that asks for `node` also runs where only Bun is installed.
-        let found = match found {
+        let found = match found.as_deref() {
             None if name == b"node" => bun_core::self_exe_path().ok(),
             found => found,
         };
@@ -316,9 +313,8 @@ impl Child {
                 let not_found = b"\": executable file not found in ";
                 return Err([b"exec: \"", name, not_found, variable].concat());
             }
-            let path =
-                bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(directory, name);
-            let why: &[u8] = match bun_sys::exists(path) {
+            let path = bun_paths::Path::resolve(&[directory, name]);
+            let why: &[u8] = match bun_sys::exists(&path) {
                 true => b": permission denied",
                 false => b": no such file or directory",
             };
@@ -364,8 +360,6 @@ impl Child {
     ) -> AliasableBox<Child> {
         let (stdin, stdout) = (spawned.stdin.take(), spawned.stdout.take());
         let process = spawned.to_process_handle(event_loop);
-        // The exit handler runs under `watch_or_reap` and `on_exit`, so they don't go through the child's handle.
-        let watched = process.this_ptr();
         let child = AliasableBox::new(Child {
             program,
             event_loop,
@@ -384,13 +378,12 @@ impl Child {
             child.stdout.set_owner(reader);
         }
         let started = child.start_pipes(stdin, stdout);
+        let process = child.process.as_ref().expect("set above");
         // SAFETY: as above. The child's handle on the process is dropped before the child is.
-        watched.set_exit_handler(unsafe { ProcessExit::new(ProcessExitKind::ContentMapper, this) });
-        if let Err(error) = Process::watch_or_reap(watched)
-            && !watched.has_exited()
-        {
-            let rusage = bun_core::ffi::zeroed::<Rusage>();
-            Process::on_exit(watched, Status::Err(error), &rusage);
+        process.set_exit_handler(unsafe { ProcessExit::new(ProcessExitKind::ContentMapper, this) });
+        let mut rusage = bun_core::ffi::zeroed();
+        if let Some(exit) = process.watch_or_exit(&mut rusage) {
+            exit.dispatch(&rusage);
         }
         if let Err(error) = started {
             let detail = [b"pipe: ", error.name()].concat();
@@ -415,14 +408,11 @@ impl Child {
         let _ = bun_sys::set_nonblocking(stdin.fd());
         let _ = bun_sys::set_nonblocking(stdout.fd());
         let event_loop = self.event_loop.as_event_loop_ctx();
-        self.stdin.start(self, event_loop, stdin.fd(), true)?;
-        // The writer closes it from now on.
-        let _ = stdin.into_raw();
+        self.stdin.start(self, event_loop, stdin, true)?;
         self.stdin.set_poll_flag(FilePollFlag::Socket);
         self.stdout
             .update_flags(|flags| flags.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET));
-        // The reader takes its descriptor, whether or not it can wait for it.
-        match self.stdout.start(event_loop, stdout.into_raw(), true)? {
+        match self.stdout.start(event_loop, stdout.into(), true)? {
             ReadResult::Err(error) => Err(error),
             ReadResult::Pending | ReadResult::Done => Ok(()),
         }

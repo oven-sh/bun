@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use bun_paths::resolve_path::basename;
+use bun_paths::basename;
 use bun_sema::atom::{Interner, known};
 use bun_sema::bind::{BindOptions, RuntimeBindOptions};
 use bun_sema::file_analysis::{FileInputs, analyze_file};

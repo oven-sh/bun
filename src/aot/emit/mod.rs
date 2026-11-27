@@ -17,16 +17,13 @@ use crate::statistics::{Stage, StepClock};
 
 pub struct ProgramBytes {
     storage: Vec<u64>,
-    size_in_bytes: usize,
     external_bodies: Option<ExternalBodies>,
 }
 
 impl ProgramBytes {
-    fn new(storage: Vec<u64>, size_in_bytes: usize) -> ProgramBytes {
-        assert!(size_in_bytes <= size_of_val(&*storage));
+    fn new(storage: Vec<u64>) -> ProgramBytes {
         ProgramBytes {
             storage,
-            size_in_bytes,
             external_bodies: None,
         }
     }
@@ -37,19 +34,15 @@ impl ProgramBytes {
 
     pub fn size_with_external_bodies(&self) -> usize {
         let bodies = self.external_bodies.as_ref();
-        self.size_in_bytes + bodies.map_or(0, ExternalBodies::size_in_bytes)
+        self.as_slice().len() + bodies.map_or(0, ExternalBodies::size_in_bytes)
     }
 
     pub fn free_bytes(&mut self) {
         self.storage = Vec::new();
-        self.size_in_bytes = 0;
     }
 
     pub fn as_slice(&self) -> &[u8] {
-        let first_byte = self.storage.as_ptr().cast::<u8>();
-        // SAFETY: `storage` holds at least `size_in_bytes` bytes, every byte of a `u64` is
-        // initialized, and a byte is aligned anywhere.
-        unsafe { std::slice::from_raw_parts(first_byte, self.size_in_bytes) }
+        bun_core::slice_as_bytes(&self.storage)
     }
 }
 

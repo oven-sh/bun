@@ -578,11 +578,7 @@ impl<'s, T> Fixed<'s, T> {
     }
 
     fn owning(list: ArenaBox<'s, [T]>) -> Self {
-        // SAFETY: a box is never null.
-        Fixed::new(
-            unsafe { NonNull::new_unchecked(list.into_raw()) },
-            FixedOwner::Arena,
-        )
+        Fixed::new(list.into_non_null(), FixedOwner::Arena)
     }
 
     #[inline]
@@ -653,7 +649,7 @@ impl<'s> ListBlock<'s> {
         let mut words = Box::<[u128], _>::new_uninit_slice_in(size / ListBlock::ALIGNMENT, arena);
         crate::util::prefault(&mut words);
         ListBlock {
-            first: ArenaBox::from_box(words).into_raw().cast(),
+            first: ArenaBox::from_box(words).into_non_null().as_ptr().cast(),
             size,
             used: 0,
             chunk: std::ptr::null_mut(),

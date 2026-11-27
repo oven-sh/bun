@@ -1528,14 +1528,29 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `checkCallExpression`: `getResolvedSignature(node)`, then `getReturnTypeOfSignature(signature)`.
+    /// Inlined, because a chain of functions without return types recurses through it at each level.
+    #[inline(always)]
     pub(super) fn resolved_call_with_return(&mut self, file: FileId, call: ExprId) -> ResolvedCall {
         let resolved = self.resolved_signature(file, call);
-        // Only a call that was assigned its signature while it's in progress has no return type yet. It hides the resolutions
-        // below it (`resolution_start`), so `on_reentry` may not see that this path is a cycle. It only counts as one if the
-        // errors of a call on the path are being reported: the functions of valid programs lead back to calls too, with the
-        // same result wherever they were entered.
-        if resolved.ret == TypeId::UNRESOLVED
-            && let Some(at) = self.find_resolved_meanwhile(file, call)
+        // Only a call that was assigned its signature while it's in progress has no return type yet.
+        if resolved.ret == TypeId::UNRESOLVED {
+            return self.return_of_call_in_progress(file, call, resolved);
+        }
+        resolved
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn return_of_call_in_progress(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        resolved: ResolvedCall,
+    ) -> ResolvedCall {
+        // The call hides the resolutions below it (`resolution_start`), so `on_reentry` may not see that this path is a cycle. It
+        // only counts as one if the errors of a call on the path are being reported: the functions of valid programs lead back
+        // to calls too, with the same result wherever they were entered.
+        if let Some(at) = self.find_resolved_meanwhile(file, call)
             && self.resolved_meanwhile[at..].iter().any(|it| it.is_report)
         {
             let height = self.resolved_meanwhile[at].height;

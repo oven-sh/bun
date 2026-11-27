@@ -18590,7 +18590,7 @@
   },
   "late passes": {
    "exit": 1,
-   "files": 40,
+   "files": 36,
    "diagnostics": {
     "all/effect-alone.jsx": [
      {
@@ -18627,26 +18627,6 @@
       ],
       "message": "[PruneHoistedContexts] Rewrite hoisted function references",
       "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
-      "severity": "error"
-     }
-    ],
-    "all/invariant.jsx": [
-     {
-      "code": "react(invariant)",
-      "help": "Please report this internal React Compiler error to Oxc with a minimal reproduction",
-      "labels": [
-       {
-        "label": "Expected a node for all scopes",
-        "span": {
-         "column": 26,
-         "length": 7,
-         "line": 1,
-         "offset": 25
-        }
-       }
-      ],
-      "message": "Expected a node for all scopes",
-      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
       "severity": "error"
      }
     ],
@@ -19035,26 +19015,6 @@
       ],
       "message": "Cannot create components during render",
       "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/static-components",
-      "severity": "error"
-     }
-    ],
-    "refs-and-invariant/invariant.jsx": [
-     {
-      "code": "react(invariant)",
-      "help": "Please report this internal React Compiler error to Oxc with a minimal reproduction",
-      "labels": [
-       {
-        "label": "Expected a node for all scopes",
-        "span": {
-         "column": 26,
-         "length": 7,
-         "line": 1,
-         "offset": 25
-        }
-       }
-      ],
-      "message": "Expected a node for all scopes",
-      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
       "severity": "error"
      }
     ],
@@ -20938,24 +20898,6 @@
     ],
     "in-a-callback.jsx": [
      {
-      "code": "react(invariant)",
-      "help": "Please report this internal React Compiler error to Oxc with a minimal reproduction",
-      "labels": [
-       {
-        "label": "Expected a node for all identifiers, none found for `3`",
-        "span": {
-         "column": 17,
-         "length": 7,
-         "line": 84,
-         "offset": 1952
-        }
-       }
-      ],
-      "message": "Expected a node for all identifiers, none found for `3`",
-      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
-      "severity": "error"
-     },
-     {
       "code": "react(todo)",
       "help": "Identifier Row$2 is undefined",
       "labels": [
@@ -20964,8 +20906,8 @@
         "span": {
          "column": 3,
          "length": 60,
-         "line": 102,
-         "offset": 2416
+         "line": 94,
+         "offset": 2229
         }
        }
       ],

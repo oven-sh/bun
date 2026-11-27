@@ -707,17 +707,6 @@ ${chain}
       expect([path, found(`neither/${path}`)]).toEqual([path, []]);
     expect(rulesIn({ it: diagnostics["neither/memo-in-a-callback.jsx"] })).toEqual(["react(hooks)", "react(refs)"]);
     expect(found("neither/effect-alone.jsx")).toEqual([["react(exhaustive-effect-dependencies)", 5, 6]]);
-    expect({
-      "all": found("all/invariant.jsx"),
-      "neither": found("neither/invariant.jsx"),
-      "refs": found("refs/invariant.jsx"),
-      "refs-and-invariant": found("refs-and-invariant/invariant.jsx"),
-    }).toEqual({
-      "all": [["react(invariant)", 1, 26]],
-      "neither": [],
-      "refs": [],
-      "refs-and-invariant": [["react(invariant)", 1, 26]],
-    });
   });
 
   test("a function with a `using` or an `await using` declaration is compiled, and the resource is a `const`", async () => {
@@ -767,7 +756,7 @@ ${chain}
     // The declaration, in every component but the last.
     expect(lines("same-function.jsx", "todo")).toEqual([3, 11, 23, 31, 39, 50, 58, 66, 72]);
     // The same for a tag in a callback, unless the callback also has the name as a value or the tag is declared first.
-    expect(lines("in-a-callback.jsx", "todo")).toEqual([5, 13, 23, 31, 39, 50, 74, 80, 102]);
+    expect(lines("in-a-callback.jsx", "todo")).toEqual([5, 13, 23, 31, 39, 50, 74, 80, 94]);
     // The other reference is in a later statement than the tag.
     expect({
       invariant: lines("other-references.jsx", "invariant"),

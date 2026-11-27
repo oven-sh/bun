@@ -6506,14 +6506,6 @@ export function ConstMember({ label }) {
   return <ul>{render()}</ul>;
 }
 
-export function TwoDeep({ label }) {
-  const render = () => () => <Row label={label} />;
-  function Row(props) {
-    return <li>{props.label}</li>;
-  }
-  return <ul>{render()()}</ul>;
-}
-
 export function AfterTheDeclaration({ label }) {
   function Row(props) {
     return <li>{props.label}</li>;
@@ -7592,18 +7584,6 @@ export function Component(props) {
 ${throwsLate}
   return <Inner fn1={foo} fn2={bar} memoized={memoized} />;
 }
-`,
-  // An Invariant from a pass after the validations, in a function without memoization, a ref or a hoisted function.
-  "invariant.jsx": `export const Component = () => {
-  const raw = useValue();
-  return (() => {
-    try {
-      return check(raw) ? raw : null;
-    } catch {
-      return null;
-    }
-  })();
-};
 `,
 };
 

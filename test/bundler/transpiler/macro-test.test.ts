@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, forEachLine, tempDir } from "harness";
+import { bunEnv, bunExe, forEachLine, isLinux, tempDir } from "harness";
 import { existsSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -17,7 +17,7 @@ import defaultMacro, {
 
 import * as macros from "./macro.ts" with { type: "macro" };
 
-async function bun(args: string[], files: Record<string, string>, env: Record<string, string> = {}) {
+async function bun(args: string[], files: Record<string, string>, env: Record<string, string | undefined> = {}) {
   using dir = tempDir("macro-run", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
@@ -710,6 +710,34 @@ describe.concurrent("the thread that runs macros", () => {
     });
   });
 
+  test("each Bun.build() loads the modules of a macro with its own conditions, loader and drop", async () => {
+    const files = {
+      "node_modules/pkg/package.json": `{ "name": "pkg", "exports": { "custom": "./custom.js", "default": "./default.js" } }`,
+      "node_modules/pkg/custom.js": `export default "custom";`,
+      "node_modules/pkg/default.js": `export default "default";`,
+      "data.txt": `[1]`,
+      "m.ts": `
+        import condition from "pkg";
+        import data from "./data.txt";
+        export function read() {
+          let calls = 0;
+          console.assert(++calls);
+          return [condition, typeof data, calls].join();
+        }
+      `,
+      "calls.ts": calls("read"),
+      "index.ts": `
+        for (const options of [{}, { conditions: ["custom"] }, { loader: { ".txt": "json" } }, { drop: ["console"] }, {}]) {
+          const { outputs } = await Bun.build({ entrypoints: ["calls.ts"], ...options });
+          console.log((await outputs[0].text()).match(/value = "(.*)";/)[1]);
+        }
+      `,
+    };
+    expect(await bun(["index.ts"], files, twoThreads)).toEqual(
+      ok("default,string,1", "custom,string,1", "default,object,1", "default,string,0", "default,string,1"),
+    );
+  });
+
   test("each Bun.build() runs the macro that is on disk, with its own define", async () => {
     const files = {
       "calls.ts": calls("version"),
@@ -892,9 +920,45 @@ describe.concurrent("the thread that runs macros", () => {
         import { transformSync } from "./helpers.ts";
         const sandbox = new Proxy({}, { ownKeys: () => (console.log("ownKeys"), []) });
         process.env = runInContext("globalThis", createContext(sandbox));
-        console.log(transformSync());
+        try {
+          transformSync();
+        } catch (error) {
+          console.log(error.message);
+        }
       `;
-      expect(await bun(["index.ts"], { ...files, "index.ts": program })).toEqual(ok(`[null,null,null]`));
+      expect(await bun(["index.ts"], { ...files, "index.ts": program })).toEqual(
+        ok("Macros cannot run because process.env could not be read"),
+      );
+    });
+
+    test.each([
+      [`new (class extends Map { A = "own" })()`, `["own",null,null]`],
+      [`new (class extends Date { A = "own" })()`, `["own",null,null]`],
+      [`Array.from({ length: 20 }).reduce(env => Object.create(env), process.env)`, `["a",null,null]`],
+    ])("can be %s", async (value, expected) => {
+      const program = `process.env = ${value};\nconsole.log(require("./read.ts").value);`;
+      expect(await bun(["index.ts"], { ...files, "index.ts": program }, { A: "a" })).toEqual(ok(expected));
+    });
+
+    test("fails the macros of a build if it cannot be read, and nothing else", async () => {
+      // The getter of an unset TZ asks the prototype, and a Proxy throws when the stack is used up.
+      const program = `
+        Object.setPrototypeOf(process.env, new Proxy({}, {}));
+        for (const entrypoint of ["plain.ts", "read.ts"]) {
+          let build;
+          (function recurse() {
+            try {
+              recurse();
+            } catch {}
+            build ??= Bun.build({ entrypoints: [entrypoint], throw: false });
+          })();
+          const { success, logs } = await build;
+          console.log(success, logs.map(log => log.message).join());
+        }
+      `;
+      expect(await bun(["index.ts"], { ...files, "plain.ts": "", "index.ts": program }, { TZ: undefined })).toEqual(
+        ok("true ", "false Macros cannot run because process.env could not be read"),
+      );
     });
 
     test("has the .env files of the program", async () => {
@@ -941,18 +1005,127 @@ describe.concurrent("the thread that runs macros", () => {
     expect(result).toEqual(ok(code, code));
   });
 
-  test.each([`require("./calls.ts")`, `await import("./calls.ts")`])(
-    "process.cwd() follows process.chdir() in a macro after %s",
-    async load => {
-      const result = await bun(["index.ts"], {
-        "m.ts": `export const enter = () => process.chdir(import.meta.dir + "/inner");`,
-        "calls.ts": calls("enter"),
-        "inner/.keep": "",
-        "index.ts": `import { basename } from "node:path";\nprocess.cwd();\n${load};\nconsole.log(basename(process.cwd()));`,
+  test.each([
+    `require("./calls.ts")`,
+    `await import("./calls.ts")`,
+    `await Bun.build({ entrypoints: ["calls.ts"] })`,
+    `await new Bun.Transpiler().transform(await Bun.file("calls.ts").text())`,
+  ])("process.cwd() follows process.chdir() in a macro after %s", async load => {
+    const result = await bun(["index.ts"], {
+      "m.ts": `export const enter = () => process.chdir(import.meta.dir + "/inner");`,
+      "calls.ts": calls("enter"),
+      "inner/.keep": "",
+      "index.ts": `import { basename } from "node:path";\nprocess.cwd();\n${load};\nconsole.log(basename(process.cwd()));`,
+    });
+    expect(result).toEqual(ok("inner"));
+  });
+
+  test.each([
+    ["bun run", ["calls.ts"]],
+    ["require()", ["-e", `require("./calls.ts")`]],
+    ["bun build", ["build", "--no-bundle", "calls.ts"]],
+  ])("loads files of an unknown type as scripts: %s", async (_, args) => {
+    const result = await bun(args, {
+      "a.macro": `
+        import { b } from "./b.macro";
+        import file from "./file.unknown" with { type: "file" };
+        export const a = (): string => b() + file.slice(-12);
+      `,
+      "b.macro": `export const b = () => "b ";`,
+      "file.unknown": `throw new Error("ran");`,
+      "calls.ts": `
+        import { a } from "./a.macro" with { type: "macro" };
+        import { b } from "./b.macro" with { type: "macro" };
+        console.log(a(), b());
+      `,
+    });
+    expect(result).toEqual(ok(expect.stringMatching(/b file\.unknown(", "| )b/)));
+  });
+
+  test.each(["--isolate", "--isolate=modules"])("%s undoes process.chdir() in a macro", async flag => {
+    const result = await bun(["test", flag, "./a.test.ts", "./b.test.ts"], {
+      "m.ts": `export const enter = () => process.chdir(import.meta.dir + "/inner");\nexport const cwd = () => process.cwd();`,
+      "inner/.keep": "",
+      "a.test.ts": `import { cwd, enter } from "./m.ts" with { type: "macro" };\nenter();\nconsole.log(cwd() === process.cwd());`,
+      "b.test.ts": `import { cwd } from "./m.ts" with { type: "macro" };\nconsole.log(cwd() === import.meta.dir, process.cwd() === import.meta.dir);`,
+    });
+    expect(result).toMatchObject({ lines: [expect.stringContaining("bun test"), "true", "true true"], exitCode: 0 });
+  });
+
+  describe("the imports of an entry point that calls a macro", () => {
+    const imports = `import { one } from "./macros/m.ts" with { type: "macro" };\n`;
+    const macro = { "macros/m.ts": `export const one = () => 1;` };
+
+    test("are located in the error if a node: module does not exist", async () => {
+      const program = `${imports}import missing from "node:missing";\nconsole.log(missing, one());`;
+      expect(await bun(["index.ts"], { ...macro, "index.ts": program })).toMatchObject({
+        stderr: expect.stringMatching(/Could not resolve: "node:missing"[^]*index\.ts:2:21/),
+        exitCode: 1,
       });
-      expect(result).toEqual(ok("inner"));
-    },
-  );
+    });
+
+    test("reach require() as they are written", async () => {
+      const program = `${imports}
+        require("module").prototype.require = id => console.log(id);
+        require("fs");
+        module.exports = one();
+      `;
+      expect(await bun(["index.js"], { ...macro, "index.js": program })).toEqual(ok("fs"));
+    });
+
+    test("fail if the package.json of the macro is malformed", async () => {
+      const files = { ...macro, "macros/package.json": `{ "name":`, "index.ts": `${imports}console.log(one());` };
+      expect(await bun(["index.ts"], files)).toMatchObject({
+        lines: [""],
+        stderr: expect.stringContaining("Unexpected end of file"),
+        exitCode: 1,
+      });
+    });
+  });
+
+  // A directory is first tried as a file, with each of the extensions.
+  describe("resolving a macro while the program goes on", () => {
+    test.each(["calls.ts", "imports.ts"])("is not affected by require.extensions: %s", async entry => {
+      const result = await bun(["--preload=./preload.ts", entry], {
+        "preload.ts": `
+          require.extensions[".first"] = () => {};
+          const channel = new BroadcastChannel("macro");
+          channel.onmessage = () => {
+            require.extensions[".second"] = () => {};
+            channel.postMessage("registered");
+            channel.close();
+          };
+        `,
+        "macros/index.ts": `
+          export function ask() {
+            const { promise, resolve } = Promise.withResolvers();
+            const channel = new BroadcastChannel("macro");
+            channel.onmessage = event => resolve(event.data);
+            channel.postMessage("waiting");
+            return promise;
+          }
+          export const one = () => 1;
+        `,
+        "calls.ts": `import { ask, one } from "./macros" with { type: "macro" };\nconsole.log(ask(), one());`,
+        "imports.ts": `import "./calls.ts";`,
+      });
+      expect(result).toEqual(ok("registered 1"));
+    });
+
+    test("is not affected by transformSync() of the transpiler that runs transform()", async () => {
+      const result = await bun(["index.ts"], {
+        "macros/index.ts": `export const one = () => 1;`,
+        "index.ts": `
+          const transpiler = new Bun.Transpiler({ logLevel: "verbose" });
+          const text = ${JSON.stringify(calls("one", "./macros"))};
+          transpiler.transformSync(text);
+          const promise = transpiler.transform(text);
+          console.log(transpiler.transformSync(text) === (await promise));
+        `,
+      });
+      expect(result).toEqual(ok("true"));
+    });
+  });
 
   describe("the context argument of transformSync()", () => {
     const files = {
@@ -1066,6 +1239,21 @@ describe.concurrent("the thread that runs macros", () => {
         signalCode: null,
       });
     });
+  });
+
+  test.skipIf(!isLinux)("fails if only the program has a child that the waiter thread watches", async () => {
+    const files = {
+      "m.ts": `export const never = () => new Promise(() => {});`,
+      "calls.ts": calls("never"),
+      "index.ts": `
+        const child = Bun.spawn({ cmd: [process.execPath, "-e", "process.stdin.resume()"], stdin: "pipe" });
+        await import("./calls.ts").catch(error => console.log(error.message));
+        child.stdin.end();
+      `,
+    };
+    expect(await bun(["index.ts"], files, { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" })).toEqual(
+      ok(expect.stringContaining("This macro never finished")),
+    );
   });
 
   test("fails if nothing can settle the top-level await of the module of a macro", async () => {

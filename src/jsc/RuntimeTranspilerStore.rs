@@ -2,7 +2,7 @@
 
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::ptr::{self, NonNull};
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_alloc::Arena;
@@ -10,8 +10,10 @@ use bun_ast::ASTMemoryAllocator;
 use bun_ast::Loader;
 use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::analyze_transpiled_module;
-use bun_bundler::options::ModuleType;
-use bun_bundler::transpiler::{AlreadyBundled, MacroThread, Macros, ParseOptions, Transpiler};
+use bun_bundler::options::{BundleOptions, ImportPathFormat, ModuleType};
+use bun_bundler::transpiler::{
+    AlreadyBundled, MacroThread, Macros, ParseOptions, Transpiler, TranspilerAlias,
+};
 use bun_collections::HiveArrayFallback;
 use bun_core::{MutableString, String, strings};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
@@ -20,6 +22,7 @@ use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter};
 use bun_paths;
 use bun_ptr::BackRef;
 use bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
+use bun_resolver::Resolver;
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
 use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
@@ -355,7 +358,9 @@ impl RuntimeTranspilerStore {
                 is_test_entry_point: (calls_macros.as_ref())
                     .is_some_and(|file| file.is_test_entry_point),
                 imports_vitest: false,
+                stands_in_for_js_thread: calls_macros.is_some(),
                 macro_thread: calls_macros.map(|_| vm.macro_thread()),
+                macro_resolver: None,
                 deferred_macros: Cell::new(false),
                 parse_error: None,
                 work_task: WorkPoolTask {
@@ -421,8 +426,11 @@ pub struct TranspilerJob {
     module_type: ModuleType,
     is_test_entry_point: bool,
     imports_vitest: bool,
+    /// See [`CallsMacros`].
+    stands_in_for_js_thread: bool,
     /// Once the file is known to call macros.
     macro_thread: Option<MacroThread>,
+    macro_resolver: Option<Box<Resolver<'static>>>,
     deferred_macros: Cell<bool>,
     pub(crate) log: bun_ast::Log,
     pub(crate) parse_error: Option<crate::CrateError>,
@@ -582,9 +590,13 @@ impl TranspilerJob {
 
     fn schedule(&mut self) {
         // SAFETY: JS thread; the VM owns the store this slot lives in.
-        self.ticket = Some(unsafe { (*self.vm).ticket() });
+        let vm = unsafe { &*self.vm };
+        self.ticket = Some(vm.ticket());
         match self.macro_thread.clone() {
-            Some(thread) => (thread.waiting_pool()).schedule(Batch::from(&raw mut self.work_task)),
+            Some(thread) => {
+                self.macro_resolver = Some(Box::new(vm.transpiler.get().resolver.snapshot()));
+                (thread.waiting_pool()).schedule(Batch::from(&raw mut self.work_task));
+            }
             None => WorkPool::schedule(&raw mut self.work_task),
         }
     }
@@ -671,16 +683,11 @@ impl TranspilerJob {
             src.append_to(dst);
         });
 
-        // The whole Transpiler is copied by value here.
-        // `Transpiler<'static>` is not `Clone`; we do
-        // a bytewise copy. SAFETY: `vm.transpiler` is read via
-        // a raw pointer; every internal raw pointer in the copy
-        // still targets memory owned by `vm.transpiler` (resolver caches, define, env) which
-        // outlives this stack frame; `vm.transpiler` is not concurrently mutated.
-        // The by-value copy must not be deinitialized; `ManuallyDrop` suppresses Drop so owned
-        // fields aren't double-freed against `vm.transpiler`.
-        let mut transpiler_storage =
-            core::mem::ManuallyDrop::new(unsafe { ptr::read((*vm).transpiler.as_ptr()) });
+        // SAFETY: the VM outlives this frame. Its thread only frees what resolving an import path reads, which macros alone do here.
+        let mut transpiler_storage = unsafe { TranspilerAlias::of((*vm).transpiler.as_ptr()) };
+        if let Some(resolver) = this.macro_resolver.take() {
+            transpiler_storage.set_resolver(*resolver);
+        }
         let transpiler: &mut Transpiler<'_> = &mut transpiler_storage;
         transpiler.set_arena(&arena);
         transpiler.set_log(&raw mut *log_clone_guard.1);
@@ -796,6 +803,10 @@ impl TranspilerJob {
             this.parse_error = Some(crate::CrateError::ParseError);
             return;
         };
+        if this.stands_in_for_js_thread && transpiler.log().errors > 0 {
+            this.parse_error = Some(crate::CrateError::ParseError);
+            return;
+        }
 
         if this.is_test_entry_point {
             let records = parse_result.ast.import_records.as_slice();
@@ -861,34 +872,20 @@ impl TranspilerJob {
             return;
         }
 
-        for import_record in parse_result.ast.import_records.as_mut_slice() {
-            let import_record: &mut ImportRecord = import_record;
-
-            if let Some(replacement) = HardcodedAlias::get(
-                import_record.path.text,
-                transpiler.options.target,
-                HardcodedAliasCfg {
-                    rewrite_jest_for_tests: transpiler.options.rewrite_jest_for_tests,
-                },
-            ) {
-                // The `module.import` tracing channel publishes it as it is written.
-                if replacement.node_builtin && import_record.kind == bun_ast::ImportKind::Dynamic {
-                    continue;
-                }
-                import_record.path.text = replacement.path.as_bytes();
-                import_record.tag = replacement.tag;
-                import_record
-                    .flags
-                    .insert(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
-                continue;
-            }
-
-            if let Some(builtin) = HardcodedAlias::bun_prefixed_builtin(import_record.path.text) {
-                import_record.path = bun_paths::fs::Path::init(builtin);
-                import_record
-                    .flags
-                    .insert(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
-            }
+        if !this.stands_in_for_js_thread {
+            alias_builtin_modules(
+                parse_result.ast.import_records.as_mut_slice(),
+                &transpiler.options,
+            );
+        } else if let Err(err) = transpiler.linker.link::<false, true>(
+            &transpiler.options,
+            &path,
+            &mut parse_result,
+            &bun_url::URL::default(),
+            ImportPathFormat::AbsolutePath,
+        ) {
+            this.parse_error = Some(err.into());
+            return;
         }
 
         let is_on_work_pool = this.macro_thread.is_none();
@@ -997,5 +994,35 @@ impl TranspilerJob {
         // the thread-local AST heap pointer), `mi_heap_destroy`ing every parse
         // / AST allocation made by this call. Nothing references them past
         // this point — `source_code` above is a fresh WTF::String copy.
+    }
+}
+
+fn alias_builtin_modules(import_records: &mut [ImportRecord], options: &BundleOptions<'_>) {
+    for import_record in import_records {
+        if let Some(replacement) = HardcodedAlias::get(
+            import_record.path.text,
+            options.target,
+            HardcodedAliasCfg {
+                rewrite_jest_for_tests: options.rewrite_jest_for_tests,
+            },
+        ) {
+            // The `module.import` tracing channel publishes it as it is written.
+            if replacement.node_builtin && import_record.kind == bun_ast::ImportKind::Dynamic {
+                continue;
+            }
+            import_record.path.text = replacement.path.as_bytes();
+            import_record.tag = replacement.tag;
+            import_record
+                .flags
+                .insert(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+            continue;
+        }
+
+        if let Some(builtin) = HardcodedAlias::bun_prefixed_builtin(import_record.path.text) {
+            import_record.path = bun_paths::fs::Path::init(builtin);
+            import_record
+                .flags
+                .insert(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+        }
     }
 }

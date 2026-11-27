@@ -1877,10 +1877,8 @@ impl EString {
 }
 
 // ── EString surface ────────────────────────────────────────────────────────
-// Ordering / equality / const-literal / rope-mutation helpers.
+// Ordering / equality / rope-mutation helpers.
 impl EString {
-    pub const EMPTY: EString = EString::from_static(b"");
-
     pub fn is_identifier(&mut self, bump: &Bump) -> bool {
         if !self.is_utf8() {
             return crate::lexer_tables::is_identifier_utf16(self.slice16());

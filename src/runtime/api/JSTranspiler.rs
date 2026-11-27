@@ -17,7 +17,7 @@ use bun_ast::Expr;
 use bun_ast::Loader;
 use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::options::{self, PackagesOption, SourceMapOption};
-use bun_bundler::transpiler::{MacroThread, Macros, ParseOptions, ParseResult};
+use bun_bundler::transpiler::{MacroThread, Macros, ParseOptions, ParseResult, TranspilerAlias};
 use bun_bundler::{self as Transpiler};
 use bun_js_parser::lexer as JSLexer;
 use bun_js_parser::parser::Runtime;
@@ -598,7 +598,7 @@ impl Config {
 pub(crate) struct TransformTask {
     pub input_code: ThreadIsolated<StringOrBuffer<'static>>,
     pub output_code: BunString,
-    pub transpiler: core::mem::ManuallyDrop<Transpiler::Transpiler<'static>>,
+    pub transpiler: TranspilerAlias<'static>,
     pub log: bun_ast::Log,
     pub err: Option<Error>,
     pub macro_map: MacroMap,
@@ -631,6 +631,8 @@ impl jsc::JobContext for TransformTask {
         if this.deferred_macros.take() {
             this.log.reset();
             this.err = None;
+            let resolver = this.transpiler.resolver.snapshot();
+            this.transpiler.set_resolver(resolver);
             let thread = this.macro_thread.insert(cx.vm().macro_thread()).clone();
             jsc::Job::<TransformTask>::schedule_on(thread.waiting_pool(), cx, this, js);
             return Ok(());
@@ -654,11 +656,8 @@ impl TransformTask {
         let mut log = bun_ast::Log::init();
         log.level = config.log.level;
 
-        // SAFETY: `ManuallyDrop` keeps this bitwise copy from freeing what the
-        // wrapper owns; `run` re-aims its log pointer.
-        let transpiler_copy = core::mem::ManuallyDrop::new(unsafe {
-            core::ptr::read(transpiler.transpiler.as_ptr())
-        });
+        // SAFETY: `TransformJs` keeps the wrapper alive, whose options do not change. `run` re-aims the log pointer.
+        let transpiler_copy = unsafe { TranspilerAlias::of(transpiler.transpiler.as_ptr()) };
 
         let task = TransformTask {
             input_code,

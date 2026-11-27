@@ -204,10 +204,10 @@ struct Seed {
 }
 
 impl Shared {
-    fn new(owner: Option<&VirtualMachine>, is_build: bool, seed: Seed) -> Arc<Shared> {
+    fn new(owner: Option<&VirtualMachine>, is_build: bool, seed: Seed) -> Shared {
         let outer = owner.and_then(|vm| vm.macro_host.as_deref());
         let depth = outer.map_or(0, |host| host.shared.depth + 1);
-        Arc::new(Shared {
+        Shared {
             owner: owner.map(VirtualMachine::handle),
             is_build,
             refusal: refusal(depth),
@@ -218,7 +218,7 @@ impl Shared {
                 thread: None,
                 exit_code: None,
             }),
-        })
+        }
     }
 
     fn start(self: &Arc<Self>, build_options: &dyn Fn() -> VmOptions) -> Result<(), Failure> {
@@ -325,11 +325,22 @@ pub struct MacroHost(Arc<Shared>);
 
 impl MacroHost {
     pub fn of(thread: &MacroThread) -> &MacroHost {
-        thread.host(|| MacroHost(Shared::new(None, true, Seed::default())))
+        thread.host(|| MacroHost(Arc::new(Shared::new(None, true, Seed::default()))))
     }
 
     pub fn refusal(&self) -> Option<&'static str> {
         self.0.refusal
+    }
+
+    #[cold]
+    fn without_env() -> MacroThread {
+        let thread = MacroThread::default();
+        thread.host(|| {
+            let mut shared = Shared::new(None, true, Seed::default());
+            shared.refusal = Some("Macros cannot run because process.env could not be read");
+            MacroHost(Arc::new(shared))
+        });
+        thread
     }
 
     /// Sleeps until the macro has returned and its promises have settled.
@@ -414,7 +425,7 @@ struct Program {
 
 impl OwnedHosts {
     fn add(&self, vm: &VirtualMachine, seed: Seed) -> MacroThread {
-        let shared = Shared::new(Some(vm), seed.options.is_none(), seed);
+        let shared = Arc::new(Shared::new(Some(vm), seed.options.is_none(), seed));
         if !vm.script_allowed() {
             shared.stop();
         }
@@ -511,7 +522,10 @@ impl VirtualMachine {
                 thread: hosts.add(self, Seed::of(self, Some(options), Vec::new())),
             }
         });
-        let edits = env_edits_since(self.global(), &program.env);
+        let Some(edits) = env_edits_since(self.global(), &program.env) else {
+            hosts.program.set(Some(program));
+            return MacroHost::without_env();
+        };
         if !edits.is_empty() {
             edit_env_map(&mut program.env, &edits);
             MacroHost::of(&program.thread).0.send(Event::Env(edits));
@@ -523,15 +537,16 @@ impl VirtualMachine {
 
     /// For one bundle.
     pub fn macro_thread_for_build(&self) -> MacroThread {
-        let edits = env_edits_since(self.global(), &self.env_loader().map);
-        self.macro_hosts.add(self, Seed::of(self, None, edits))
+        match env_edits_since(self.global(), &self.env_loader().map) {
+            Some(edits) => self.macro_hosts.add(self, Seed::of(self, None, edits)),
+            None => MacroHost::without_env(),
+        }
     }
 
     /// After a parse that ran macros for this VM. `Err`: script is being terminated.
     pub fn did_run_macros(&self) -> JsResult<()> {
         self.macro_hosts.exit_if_asked(self);
         let global = self.global();
-        cpp::Bun__MacroHost__forgetWorkingDirectory(global);
         if global.vm().is_entered()
             && (global.has_pending_termination_exception() || !self.script_allowed())
         {
@@ -559,16 +574,24 @@ impl VirtualMachine {
 
 type VisitEnvVar = extern "C" fn(*mut c_void, &bun_core::String, &bun_core::String);
 
+#[repr(u8)]
+#[expect(dead_code, reason = "made in C++")]
+enum EnvListing {
+    Listed,
+    NotMade,
+    Failed,
+}
+
 unsafe extern "C" {
     fn Bun__MacroHost__forEachEnvVar(
         global: &JSGlobalObject,
         context: *mut c_void,
         visit: VisitEnvVar,
-    ) -> bool;
+    ) -> EnvListing;
 }
 
-/// What makes `base` equal to `process.env`. Runs no script.
-fn env_edits_since(global: &JSGlobalObject, base: &Map) -> Vec<EnvEdit> {
+/// What makes `base` equal to `process.env`, unless that cannot be read. Runs no script.
+fn env_edits_since(global: &JSGlobalObject, base: &Map) -> Option<Vec<EnvEdit>> {
     struct Diff<'a> {
         base: &'a Map,
         seen: AutoBitSet,
@@ -597,8 +620,10 @@ fn env_edits_since(global: &JSGlobalObject, base: &Map) -> Vec<EnvEdit> {
         edits: Vec::new(),
     };
     // SAFETY: `visit` is only called during the call.
-    if !unsafe { Bun__MacroHost__forEachEnvVar(global, (&raw mut diff).cast(), visit) } {
-        return Vec::new();
+    match unsafe { Bun__MacroHost__forEachEnvVar(global, (&raw mut diff).cast(), visit) } {
+        EnvListing::Listed => {}
+        EnvListing::NotMade => return Some(Vec::new()),
+        EnvListing::Failed => return None,
     }
     for (index, name) in names.iter().enumerate() {
         if !diff.seen.is_set(index) {
@@ -608,7 +633,7 @@ fn env_edits_since(global: &JSGlobalObject, base: &Map) -> Vec<EnvEdit> {
             });
         }
     }
-    diff.edits
+    Some(diff.edits)
 }
 
 fn edit_env_map(map: &mut Map, edits: &[EnvEdit]) {
@@ -890,7 +915,6 @@ impl HostThread {
     fn start_call(&self, vm: &VirtualMachine, sleeper: Sleeper) -> JsResult<()> {
         self.wake_answered();
         self.hold_owner(true);
-        cpp::Bun__MacroHost__forgetWorkingDirectory(vm.global());
         let module = self.import(vm.global(), &sleeper.0.specifier);
         let invocation = Invocation {
             sleeper,

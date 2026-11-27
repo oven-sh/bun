@@ -2855,6 +2855,7 @@ impl TestCommand {
                 .set_time_zone(&EncodedSlice::from_bytes(tz_name));
         }
         let _ = vm.test_isolation_state.time_zone.set(Box::from(tz_name));
+        (vm.test_isolation_state.cwd).set(Some(bun_core::top_level_dir()));
         if vm.test_isolation_enabled.get() {
             let _ = vm.test_isolation_state.proxy_env.set(
                 bun_jsc::rare_data::ProxyEnvSnapshot::capture(&vm.env_loader().map),

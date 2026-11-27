@@ -418,7 +418,8 @@ pub struct VirtualMachine {
 
 #[derive(Default)]
 pub struct TestIsolationState {
-    pub saved_cwd: JsCell<Option<Box<[u8]>>>,
+    /// The working directory at startup, restored after every file.
+    pub cwd: Cell<Option<&'static [u8]>>,
     /// The time zone the test runner applied at startup (`TZ`, default
     /// `Etc/UTC`). Empty means no override (local time). With `--isolate`, re-applied
     /// after every file so a `process.env.TZ` write stays with the file that made it.
@@ -1573,11 +1574,6 @@ impl VirtualMachine {
 
     /// Unlike `is_event_loop_alive`, also counts unref'd handles and timers, since they can still run JS.
     pub fn has_work_left(&self) -> bool {
-        // Must be read before the queues: the waiter thread posts a child's exit, then stops counting the child.
-        #[cfg(unix)]
-        if bun_spawn::process::WaiterThread::is_watching() {
-            return true;
-        }
         if self.has_queued_work_excluding_immediates() || self.has_immediates() {
             return true;
         }
@@ -5170,8 +5166,11 @@ impl VirtualMachine {
     #[unsafe(export_name = "Bun__VM__isTestEntryPoint")]
     pub extern "C" fn is_test_entry_point(&self, key: &bun_core::String) -> bool {
         self.is_main_module(key)
-            || (self.is_in_preload.get()
-                && self.preload_hash.get() == bun_watcher::Watcher::get_hash(&key.to_utf8()))
+            || (self.is_in_preload.get() && self.is_current_preload(&key.to_utf8()))
+    }
+
+    pub fn is_current_preload(&self, path: &[u8]) -> bool {
+        self.is_in_preload.get() && self.preload_hash.get() == bun_watcher::Watcher::get_hash(path)
     }
 
     #[unsafe(export_name = "Bun__VM__isRunningVitestEntry")]
@@ -5430,8 +5429,10 @@ impl VirtualMachine {
 
         self.macro_hosts.stop_for_next_test_file(shares_global);
 
-        if let Some(cwd) = self.test_isolation_state.saved_cwd.take() {
-            let _ = self.set_process_cwd(&bun_paths::Path::from(&cwd));
+        if let Some(cwd) = self.test_isolation_state.cwd.get()
+            && bun_paths::strip_prefix(bun_core::top_level_dir(), cwd) != Some(b"")
+        {
+            let _ = self.set_process_cwd(&bun_paths::Path::from(cwd));
         }
 
         let _ = self.event_loop().drain_microtasks();

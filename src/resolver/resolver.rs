@@ -537,6 +537,11 @@ impl Drop for ResolverLogScope {
 }
 
 impl<'a> Resolver<'a> {
+    /// [`Self::for_worker`] with the options that this one has now.
+    pub fn snapshot(&self) -> Resolver<'a> {
+        Resolver::for_worker(self, self.log, self.opts.clone())
+    }
+
     /// Per-worker constructor — replaces the bundler's prior bitwise
     /// copy-from-`from` for the resolver
     /// portion. Every `Copy` / raw-pointer field is copied from `from`; the

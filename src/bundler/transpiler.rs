@@ -3,6 +3,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 
 use core::cell::OnceCell;
+use core::mem::ManuallyDrop;
 
 use bun_alloc::Arena;
 use bun_collections::HashMap;
@@ -52,6 +53,56 @@ pub struct Transpiler<'a> {
     pub linker: crate::linker::Linker,
     // Raw ptr — the global `DotEnv::Loader` singleton.
     pub env: *mut dot_env::Loader,
+}
+
+/// A bitwise copy, for another thread, of a transpiler that stays in use.
+pub struct TranspilerAlias<'a> {
+    transpiler: ManuallyDrop<Transpiler<'a>>,
+    owns_resolver: bool,
+}
+
+impl<'a> TranspilerAlias<'a> {
+    /// # Safety
+    /// What the copy reads of `original` is not freed meanwhile, and nothing that `original` owns is replaced or grown through the copy.
+    pub unsafe fn of(original: *const Transpiler<'a>) -> Self {
+        // SAFETY: the caller's contract. The copy is never dropped.
+        let mut transpiler = ManuallyDrop::new(unsafe { original.read() });
+        let _of_the_original = ManuallyDrop::new(transpiler.resolver.debug_logs.take());
+        TranspilerAlias {
+            transpiler,
+            owns_resolver: false,
+        }
+    }
+
+    /// Before the copy resolves an import path, which reads options that can change.
+    pub fn set_resolver(&mut self, resolver: Resolver<'a>) {
+        let previous = core::mem::replace(&mut self.transpiler.resolver, resolver);
+        if !core::mem::replace(&mut self.owns_resolver, true) {
+            let _of_the_original = ManuallyDrop::new(previous);
+        }
+    }
+}
+
+impl<'a> core::ops::Deref for TranspilerAlias<'a> {
+    type Target = Transpiler<'a>;
+    fn deref(&self) -> &Transpiler<'a> {
+        &self.transpiler
+    }
+}
+
+impl core::ops::DerefMut for TranspilerAlias<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.transpiler
+    }
+}
+
+impl Drop for TranspilerAlias<'_> {
+    fn drop(&mut self) {
+        if self.owns_resolver {
+            // SAFETY: moved in by `set_resolver`, and nothing else drops a field of `transpiler`.
+            unsafe { core::ptr::drop_in_place(&raw mut self.transpiler.resolver) };
+        }
+    }
 }
 
 impl<'a> Transpiler<'a> {

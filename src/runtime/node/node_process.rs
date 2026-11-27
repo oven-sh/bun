@@ -615,11 +615,6 @@ mod _impl {
         match vm.set_process_cwd(on_disk) {
             bun_sys::Result::Ok(()) => {
                 bun_core::set_working_directory_in_executable(None);
-                if vm.test_isolation_enabled.get() {
-                    vm.test_isolation_state.saved_cwd.with_mut(|saved| {
-                        saved.get_or_insert(prev_cwd);
-                    });
-                }
                 bun_string_jsc::create_utf8_for_js(
                     global_object,
                     bun_paths::without_trailing_sep(vm.top_level_dir()),

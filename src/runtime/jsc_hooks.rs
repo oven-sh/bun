@@ -1792,14 +1792,6 @@ fn is_input_static(vm: &VirtualMachine, args: &TranspileArgs<'_>) -> bool {
     }
 }
 
-/// Whether `path` is the entry point, and whether it is the preload that is being loaded.
-fn is_main_or_preload(jsc_vm: &VirtualMachine, path: &[u8], hash: u32) -> (bool, bool) {
-    (
-        jsc_vm.main_hash.get() == hash && jsc_vm.main() == Some(path),
-        jsc_vm.is_in_preload.get() && jsc_vm.preload_hash.get() == hash,
-    )
-}
-
 /// The body of [`transpile_with`], which says whether the result is static code.
 fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
     jsc_vm: &VirtualMachine,
@@ -1859,7 +1851,8 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
             bun_ast::Stmt::data_store_reset();
 
             let hash = bun_watcher::Watcher::get_hash(path.text);
-            let (is_main, is_preload) = is_main_or_preload(jsc_vm, path.text, hash);
+            let is_main = jsc_vm.main() == Some(path.text);
+            let is_preload = jsc_vm.is_current_preload(path.text);
 
             // ── Arena take/give-back ────────────────────────────────────────
             // Reuse the per-VM arena when free; allocate a
@@ -3394,9 +3387,7 @@ fn get_loader_and_virtual_source<'a>(
         .or_else(|| suffix.map(options::ImportSuffix::loader))
         .or(loader);
 
-    let is_main = jsc_vm.main() == Some(specifier)
-        || (jsc_vm.is_in_preload.get()
-            && jsc_vm.preload_hash.get() == bun_watcher::Watcher::get_hash(specifier));
+    let is_main = jsc_vm.main() == Some(specifier) || jsc_vm.is_current_preload(specifier);
 
     // package.json sniff for `.js`/`.ts` module-type.
     let is_js_like = loader.map(|l| l.is_java_script_like()).unwrap_or(true);
@@ -3932,6 +3923,10 @@ fn transpile_file<const DATA_ONLY: bool>(
                 // extension is treated as a JS file.
                 break 'loader Loader::Ts;
             }
+            // Any file can turn out to be the one that a macro is imported from.
+            if jsc_vm.is_macro_host() {
+                break 'loader Loader::Tsx;
+            }
             // For ESM, Bun treats unknown extensions as the file loader.
             Loader::File
         } else {
@@ -3980,14 +3975,13 @@ fn transpile_file<const DATA_ONLY: bool>(
     let mut result = transpile_with::<DATA_ONLY>(jsc_vm, &args, Macros::Defer(&deferred));
     if !DATA_ONLY && deferred.get() {
         if can_transpile_async {
-            let hash = bun_watcher::Watcher::get_hash(lr.path.text);
-            let (is_main, is_preload) = is_main_or_preload(jsc_vm, lr.path.text, hash);
+            let is_main = jsc_vm.main() == Some(lr.path.text);
             if is_main {
                 jsc_vm.has_loaded.set(true);
             }
             let file = CallsMacros {
                 module_type,
-                is_test_entry_point: (is_main || is_preload)
+                is_test_entry_point: (is_main || jsc_vm.is_current_preload(lr.path.text))
                     && jsc_vm.transpiler.get().options.rewrite_jest_for_tests,
             };
             return transpile_async(synchronous_loader, Some(file));

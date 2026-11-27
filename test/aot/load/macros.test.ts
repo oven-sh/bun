@@ -232,6 +232,31 @@ describe.concurrent("compile/aot/load/macros", () => {
   }
 
   test(
+    "in a build that the program runs, a macro has the object that the program assigned to process.env",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-load-macros", {
+          "tsconfig.json": tsconfig(),
+          "read.ts": `export const read = () => process.env.ASSIGNED;`,
+          "calls.ts": `import { read } from "./read.ts" with { type: "macro" };\nexport default read();`,
+          "main.ts": `// @ts-ignore
+process.env = { ASSIGNED: "by the program" };
+// @ts-ignore
+const { outputs } = await Bun.build({ entrypoints: ["calls.ts"], minify: true });
+console.log((await outputs[0].text()).split('"')[1]);
+`,
+        });
+        const folder = String(dir);
+        const program = join(folder, exe("program"));
+        const flags = ["--compile", "--aot", "--aot-allow-code-from-disk"];
+        expect(
+          await buildAndRun([bunExe(), "build", ...flags, "main.ts", "--outfile", program], program, folder),
+        ).toEqual({ stdout: "by the program\n", stderr: "", exitCode: 0, signal: null });
+      }),
+    600_000,
+  );
+
+  test(
     "is refused by name, and nothing is written: in a component file, built by Bun.build()",
     () =>
       slot(async () => {

@@ -3276,6 +3276,29 @@ describe("no JS entry after a worker's termination has been thrown", () => {
   }
 });
 
+test.concurrent("process.cwd() in a Worker follows process.chdir() on the main thread", async () => {
+  using dir = tempDir("worker-follows-chdir", {
+    "inner/.keep": "",
+    "run.cjs": /* js */ `
+      const { Worker, isMainThread, parentPort } = require("node:worker_threads");
+      if (isMainThread) {
+        const worker = new Worker(__filename);
+        worker.once("message", () => {
+          process.chdir("inner");
+          worker.postMessage("moved");
+        });
+      } else {
+        process.cwd();
+        parentPort.once("message", () => console.log(require("node:path").basename(process.cwd())));
+        parentPort.postMessage("read");
+      }
+    `,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "run.cjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "inner\n", stderr: "", exitCode: 0 });
+});
+
 test("the main thread never reads a torn cwd while a Web Worker calls process.chdir()", async () => {
   using dir = tempDir("worker-chdir-cwd-readers", {
     "x/.keep": "",

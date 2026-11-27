@@ -2507,6 +2507,32 @@ static NEVER_INLINE bool hasPropertyBelowObjectPrototype(JSGlobalObject* globalO
     return false;
 }
 
+// Like Jest's `getObjectKeys`: the keys that the sample of expect.objectContaining() owns. Returns false if it listed the keys of the prototypes too.
+// A sample that owns a private field keeps them: `bun test --aot` matches the private fields of the whole prototype chain of a sample or of none of it.
+static NEVER_INLINE bool listOwnKeysOfSample(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* sample, PropertyNameArrayBuilder& keys)
+{
+    sample->methodTable()->getOwnPropertyNames(sample, globalObject, keys, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, false);
+    bool ownsPrivateField = false;
+    for (const auto& key : keys)
+        ownsPrivateField |= key.isPrivateName();
+#if ENABLE(AOT)
+    if (!ownsPrivateField && globalObject->vm().aotState().someClassHasPrivateNames) [[unlikely]] {
+        ownsPrivateField = JSC::AOT::PropertyWalk::hasOwnPrivateField(globalObject, sample);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+#endif
+    if (!ownsPrivateField)
+        return true;
+    JSValue prototype = sample->getPrototype(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (prototype.isObject()) {
+        asObject(prototype)->getPropertyNames(globalObject, keys, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return false;
+}
+
 /**
  * @brief `Bun.deepMatch(a, b)`
  */
@@ -2620,8 +2646,23 @@ bool Bun__deepMatch(
     }
 
     PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
-    subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(throwScope, false);
+    bool objIsArray;
+    bool takesOwnKeys = false;
+    if (enableAsymmetricMatchers && isMatchingObjectContaining) {
+        // In Jest and Vitest, expect.objectContaining() takes the keys that its sample owns. They disagree on a received array.
+        objIsArray = isArray(globalObject, objValue);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        if (objIsArray)
+            subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
+        else
+            takesOwnKeys = listOwnKeysOfSample(globalObject, throwScope, subsetObj, subsetProps);
+        RETURN_IF_EXCEPTION(throwScope, false);
+    } else {
+        subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        objIsArray = isArray(globalObject, objValue);
+        RETURN_IF_EXCEPTION(throwScope, false);
+    }
 
     // TODO: add fast paths for:
     // - two "simple" objects (using ->forEachProperty in both)
@@ -2629,8 +2670,6 @@ bool Bun__deepMatch(
     // similar to what is done in deepEquals (canPerformFastPropertyEnumerationForIterationBun)
 
     // arrays should match exactly
-    bool objIsArray = isArray(globalObject, objValue);
-    RETURN_IF_EXCEPTION(throwScope, false);
     bool subsetIsArray = objIsArray && isArray(globalObject, subsetValue);
     RETURN_IF_EXCEPTION(throwScope, false);
     if (subsetIsArray) {
@@ -2746,7 +2785,7 @@ bool Bun__deepMatch(
 
 #if ENABLE(AOT)
     // No list shows the private fields that compiled classes laid. The engine hands over what each holds, beside what the same field of the other object holds.
-    if (vm.aotState().someClassHasPrivateNames) [[unlikely]] {
+    if (vm.aotState().someClassHasPrivateNames && !takesOwnKeys) [[unlikely]] {
         bool matched = JSC::AOT::PropertyWalk::matchPrivateFieldsOfCompiledClasses(globalObject, obj, subsetObj, [&](JSValue prop, JSValue subsetProp) -> bool {
             return matchesPrivateFieldOfCompiledClass<enableAsymmetricMatchers>(globalObject, throwScope, state, isMatchingObjectContaining, prop, subsetProp);
         });

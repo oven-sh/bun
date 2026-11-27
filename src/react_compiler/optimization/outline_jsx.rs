@@ -470,6 +470,7 @@ fn emit_outlined_fn(
 
     let outlined_fn = HirFunction {
         id: None,
+        self_binding: None,
         name_hint: None,
         fn_type: ReactFunctionType::Other,
         params: hir_vec![ParamPattern::Place(props_obj)],

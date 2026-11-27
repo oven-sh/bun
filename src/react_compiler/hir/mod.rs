@@ -200,6 +200,9 @@ impl std::fmt::Display for FloatValue {
 pub struct HirFunction {
     pub loc: Option<SourceLocation>,
     pub id: Option<StoreStr>,
+    /// Not in upstream (oxc e3c6c4e73): the name that a function expression has in its own scope, which has its
+    /// value on entry as a parameter has. Only lowering with `function_expressions_define_their_own_name` sets it.
+    pub self_binding: Option<Place>,
     pub name_hint: Option<StoreStr>,
     pub fn_type: ReactFunctionType,
     pub params: HirVec<ParamPattern>,

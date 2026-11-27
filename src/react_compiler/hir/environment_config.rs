@@ -104,6 +104,11 @@ pub struct EnvironmentConfig {
     /// in `useHook(() => f())` before `function f() {}`, has not read it too early. Upstream reports the declaration as
     /// an access before it, and mostly loses the report when `PruneHoistedContexts` fails. A write to `f` is reported.
     pub function_declarations_are_initialized_on_entry: bool,
+    /// The name that a function expression has in its own scope has the function for its value on entry, as a
+    /// parameter has its argument: `HirFunction::self_binding`. The function does not capture it, and a write to it is
+    /// a reassignment. Upstream has a variable for it that nothing defines, and fails where it is read: "Expected
+    /// value kind to be initialized".
+    pub function_expressions_define_their_own_name: bool,
     /// JSX that is a default, or in one, can be evaluated earlier if its operands can: the parser has made a call of
     /// it. Upstream does not compile such a function.
     pub jsx_can_be_reordered: bool,
@@ -273,6 +278,7 @@ impl Default for EnvironmentConfig {
             effects_keep_their_place: false,
             capturing_a_function_is_not_calling_it: false,
             function_declarations_are_initialized_on_entry: false,
+            function_expressions_define_their_own_name: false,
             jsx_can_be_reordered: true,
             arguments_of_no_alias_methods_escape: true,
             flat_map_and_for_each_have_aliasing_signatures: false,

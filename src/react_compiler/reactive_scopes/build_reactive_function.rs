@@ -40,6 +40,7 @@ pub(crate) fn build_reactive_function(
     Ok(ReactiveFunction {
         loc: hir.loc,
         id: hir.id.map(|s| bun_core::BStr::new(s.slice()).to_string()),
+        self_binding: hir.self_binding.clone(),
         name_hint: hir
             .name_hint
             .map(|s| bun_core::BStr::new(s.slice()).to_string()),

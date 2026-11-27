@@ -760,6 +760,12 @@ pub(crate) fn infer_mutation_aliasing_ranges(
 
     let should_record_errors = !is_function_expression && env.enable_validations();
 
+    // Not in upstream (oxc e3c6c4e73): the name that a function expression has in its own scope is a node, and no
+    // effect of the function as a parameter or a context variable is.
+    if let Some(self_binding) = &func.self_binding {
+        state.create(self_binding.identifier, NodeValue::Object);
+    }
+
     // Create nodes for params, context vars, and return
     for param in &func.params {
         state.create(param.place().identifier, NodeValue::Object);

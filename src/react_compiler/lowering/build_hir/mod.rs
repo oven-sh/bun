@@ -153,6 +153,22 @@ pub(super) fn lower_inner<'h>(
     builder.push_scope(func.args_loc());
     builder.push_scope(func.body().loc);
 
+    // Not in upstream (oxc e3c6c4e73): the name that a function expression has in its own scope is bound on entry.
+    // The function does not capture it.
+    let own_name = match func {
+        FunctionNode::Function(f)
+            if (builder.environment().config).function_expressions_define_their_own_name =>
+        {
+            f.name
+                .filter(|name| host.is_own_name_of_function_expression(name.ref_))
+        }
+        _ => None,
+    };
+    let mut context_map = context_map;
+    if let Some(name) = own_name {
+        context_map.shift_remove(&name.ref_);
+    }
+
     // Build context places from the captured refs
     let mut context: HirVec<Place> = AstAlloc::vec();
     for (&ref_, ctx_loc) in &context_map {
@@ -165,6 +181,20 @@ pub(super) fn lower_inner<'h>(
         });
     }
     builder.set_context(context_map);
+
+    let self_binding = match own_name {
+        Some(name) => {
+            let loc = convert_loc(name.loc);
+            let identifier = builder.resolve_binding_with_loc(name.ref_, loc)?;
+            Some(Place {
+                identifier,
+                effect: Effect::Unknown,
+                reactive: false,
+                loc,
+            })
+        }
+        None => None,
+    };
 
     // Process parameters
     let mut hir_params: HirVec<ParamPattern> = AstAlloc::vec();
@@ -316,6 +346,7 @@ pub(super) fn lower_inner<'h>(
         HirFunction {
             loc,
             id,
+            self_binding,
             name_hint: None,
             fn_type: if is_top_level {
                 env.fn_type

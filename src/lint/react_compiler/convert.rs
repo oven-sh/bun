@@ -55,6 +55,8 @@ pub(crate) struct Converted {
     pub(crate) symbols: Vec<JsSymbol>,
     /// For each of `symbols`: true if it's bound outside the function, or not bound at all.
     pub(crate) is_outside: Vec<bool>,
+    /// [`Host::is_own_name_of_function_expression`](bun_react_compiler::Host::is_own_name_of_function_expression)
+    pub(crate) own_names: Vec<Ref>,
     pub(crate) import_bindings: Vec<(Ref, VariableBinding)>,
     /// The tag of `<>`.
     pub(crate) fragment: Ref,
@@ -183,6 +185,7 @@ pub(crate) struct Converter<'a, 'x> {
     spans: Vec<Span>,
     symbols: Vec<JsSymbol>,
     is_outside: Vec<bool>,
+    own_names: Vec<Ref>,
     import_bindings: Vec<(Ref, VariableBinding)>,
     by_symbol: FxHashMap<usize, Ref>,
     by_name: FxHashMap<(Named, Name<'a>), Ref>,
@@ -231,6 +234,7 @@ pub(crate) fn convert<'a>(
         spans: Vec::with_capacity(256),
         symbols: Vec::with_capacity(32),
         is_outside: Vec::with_capacity(32),
+        own_names: Vec::new(),
         import_bindings: Vec::new(),
         by_symbol: FxHashMap::default(),
         by_name: FxHashMap::default(),
@@ -282,6 +286,7 @@ pub(crate) fn convert<'a>(
         spans: converter.spans,
         symbols: converter.symbols,
         is_outside: converter.is_outside,
+        own_names: converter.own_names,
         import_bindings: converter.import_bindings,
         fragment: converter.fragment,
         recorded: converter.recorded,
@@ -402,8 +407,7 @@ impl<'a> Converter<'a, '_> {
             return global;
         }
         let declaration = symbol.declarations().next();
-        let is_outside = !self.root.contains(symbol.scope().span())
-            || matches!(declaration, Some(Declaration::Fn(func)) if self.treats_own_name_as_outer(func));
+        let is_outside = !self.root.contains(symbol.scope().span());
         let name = StoreStr::new(symbol.name().bytes());
         let import = match declaration {
             Some(Declaration::ImportDefault(import)) => Some(VariableBinding::ImportDefault {
@@ -624,29 +628,45 @@ impl<'a> Converter<'a, '_> {
     }
 
     /// Upstream's compiler fails on a function expression that refers to itself by name. oxc's
-    /// doesn't: it treats the name like one from outside.
-    fn treats_own_name_as_outer(&self, func: Func<'a>) -> bool {
+    /// doesn't: the name is a variable that the function has on entry.
+    fn defines_own_name(&self, func: Func<'a>) -> bool {
         self.flavor == Flavor::Oxlint && func.kind() == FnKind::Expr
     }
 
-    /// The function being compiled keeps its name, because the name determines what kind of
-    /// function it is.
-    fn drops_own_name(&self, func: Func<'a>) -> bool {
-        self.treats_own_name_as_outer(func) && func.estree_span() != self.root
+    /// The `name` of a function expression whose body is converted, with the `Loc` of the name. It's a variable if
+    /// the body referred to it. Otherwise only the function being compiled keeps its name, because the name
+    /// determines what kind of function it is.
+    fn own_name(&mut self, func: Func<'a>, name: Ident<'a>, loc: Loc) -> Option<LocRef> {
+        let symbol = func.symbol();
+        let referred_to = symbol.and_then(|it| self.by_symbol.get(&it.key()).copied());
+        let ref_ = match referred_to {
+            Some(ref_) => {
+                self.own_names.push(ref_);
+                ref_
+            }
+            None if func.estree_span() == self.root => self.declared(symbol, name.name()),
+            None => return None,
+        };
+        Some(LocRef { loc, ref_ })
     }
 
     fn function(&mut self, func: Func<'a>) -> Converts<G::Fn> {
         self.nested(|this| {
             let loc = this.loc(func.estree_span());
-            let name = match func.name() {
-                Some(_) if this.drops_own_name(func) => None,
-                Some(name) => Some(LocRef {
-                    loc: this.loc(name.span()),
+            let defines_own_name = this.defines_own_name(func);
+            let name = func.name().map(|name| (name, this.loc(name.span())));
+            let declared = match name {
+                Some((name, loc)) if !defines_own_name => Some(LocRef {
+                    loc,
                     ref_: this.declared(func.symbol(), name.name()),
                 }),
-                None => None,
+                _ => None,
             };
             let (args, has_rest, body, _) = this.args_and_body(func, loc)?;
+            let name = match name {
+                Some((name, loc)) if defines_own_name => this.own_name(func, name, loc),
+                _ => declared,
+            };
             let mut flags = flags::FUNCTION_NONE;
             if func.is_async() {
                 flags |= flags::Function::IsAsync;

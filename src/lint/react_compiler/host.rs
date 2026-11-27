@@ -50,6 +50,9 @@ impl Host for LintHost<'_> {
         let all = &self.converted.non_null_chains;
         all.binary_search_by_key(&link.start, |it| it.start).is_ok()
     }
+    fn is_own_name_of_function_expression(&self, ref_: Ref) -> bool {
+        self.converted.own_names.contains(&ref_)
+    }
     fn is_module_level(&self, ref_: Ref) -> bool {
         let is_outside = self.converted.is_outside.get(ref_.inner_index() as usize);
         is_outside.copied().unwrap_or(true)

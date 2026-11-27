@@ -661,6 +661,10 @@ fn enter_ssa_impl(
                 )
                 .into());
             }
+            // Not in upstream (oxc e3c6c4e73).
+            if let Some(place) = &mut func.self_binding {
+                place.identifier = builder.define_place(place, env)?;
+            }
             for param in &mut func.params {
                 let place = param.place_mut();
                 place.identifier = builder.define_place(place, env)?;
@@ -738,6 +742,11 @@ fn enter_ssa_impl(
                 let mut inner_func =
                     std::mem::replace(&mut env.functions[fid.0 as usize], placeholder_function());
 
+                // Not in upstream (oxc e3c6c4e73).
+                if let Some(place) = &mut inner_func.self_binding {
+                    place.identifier = builder.define_place(place, env)?;
+                }
+
                 // Map inner function params
                 for param in &mut inner_func.params {
                     let place = param.place_mut();
@@ -803,6 +812,7 @@ pub(crate) fn placeholder_function() -> HirFunction {
     HirFunction {
         loc: None,
         id: None,
+        self_binding: None,
         name_hint: None,
         fn_type: ReactFunctionType::Other,
         params: hir_vec![],

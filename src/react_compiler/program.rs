@@ -101,6 +101,12 @@ pub trait Host {
         false
     }
 
+    /// Whether `ref_` is the name that a function expression has in its own scope, and the function refers to it.
+    /// For a tree that has a symbol of its own for that name.
+    fn is_own_name_of_function_expression(&self, _ref: Ref) -> bool {
+        false
+    }
+
     /// Whether `ref_` is bound outside the function being compiled.
     fn is_module_level(&self, ref_: Ref) -> bool {
         self.symbols()

@@ -51,6 +51,7 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
         effects_keep_their_place: is_oxlint,
         capturing_a_function_is_not_calling_it: is_oxlint,
         function_declarations_are_initialized_on_entry: is_oxlint,
+        function_expressions_define_their_own_name: is_oxlint,
         jsx_can_be_reordered: false,
         arguments_of_no_alias_methods_escape: false,
         flat_map_and_for_each_have_aliasing_signatures: is_oxlint,

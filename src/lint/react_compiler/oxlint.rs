@@ -373,6 +373,18 @@ fn declaration_of<'a>(file: &'a File<'a>, span: Span) -> Option<Span> {
     reference.symbol()?.declarations().next()?.name_span()
 }
 
+/// Where the value of the variable read at `span` originates for oxc's `validate_hooks_usage`: where the variable is
+/// declared. The name that a function expression has in its own scope has its value from no declaration.
+fn origin_of<'a>(file: &'a File<'a>, span: Span) -> Option<Span> {
+    let reference = file
+        .reference_at(span.start)
+        .filter(|it| it.span() == span)?;
+    match reference.symbol()?.declarations().next()? {
+        Declaration::Fn(func) if func.kind() == bun_lint::ast::FnKind::Expr => None,
+        declaration => declaration.name_span(),
+    }
+}
+
 /// Where the variable called `` `name` `` in the scope at the start of `span` is declared. The text at `span` can be
 /// another name for the same value, or more than a name.
 fn declaration_named<'a>(file: &'a File<'a>, span: Span, name: &str) -> Option<Span> {
@@ -565,7 +577,7 @@ fn hooks<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
             "Call a statically known Hook instead of selecting a Hook dynamically",
         );
         out.relabel("This Hook may change between renders");
-        let origin = out.primary_span().and_then(|at| declaration_of(file, at));
+        let origin = out.primary_span().and_then(|at| origin_of(file, at));
         out.also(origin, "This dynamic Hook value originates here");
     } else if reason.starts_with("Hooks must be called at the top level") {
         // `hook_in_function_expression`

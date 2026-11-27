@@ -61,6 +61,10 @@ pub(crate) fn prune_non_escaping_scopes(
     // First build up a map of which instructions are involved in creating which values,
     // and which values are returned.
     let mut state = CollectState::new();
+    // Not in upstream (oxc 2cac66f3f).
+    if let Some(place) = &func.self_binding {
+        state.declare(env.identifiers[place.identifier.0 as usize].declaration_id);
+    }
     for param in &func.params {
         let place = param.place();
         let identifier = &env.identifiers[place.identifier.0 as usize];

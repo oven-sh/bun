@@ -28,6 +28,8 @@ use crate::hir::{
 pub struct ReactiveFunction {
     pub loc: Option<SourceLocation>,
     pub id: Option<String>,
+    /// Not in upstream (oxc e3c6c4e73): [`crate::hir::HirFunction::self_binding`].
+    pub self_binding: Option<Place>,
     pub name_hint: Option<String>,
     pub params: Vec<ParamPattern>,
     pub generator: bool,

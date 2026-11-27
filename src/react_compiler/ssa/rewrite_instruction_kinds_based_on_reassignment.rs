@@ -151,6 +151,13 @@ pub(crate) fn rewrite_instruction_kinds_based_on_reassignment(
         }
     }
 
+    // Not in upstream (oxc e3c6c4e73): a store to the name that a function expression has in its own scope is a
+    // reassignment.
+    if let Some(place) = &func.self_binding {
+        let ident = &env.identifiers[place.identifier.0 as usize];
+        declarations.insert(ident.declaration_id, DeclarationLoc::ParamOrContext);
+    }
+
     // Process all blocks
     for block in func.body.blocks.values() {
         let block_kind = block.kind;

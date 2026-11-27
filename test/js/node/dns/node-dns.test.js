@@ -2430,6 +2430,30 @@ test("an error has a stack if nothing awaits it", async () => {
   );
 });
 
+test.concurrent.each([
+  ["a..b", `lookup(host, callback)`],
+  ["localhost", `lookup(host, callback)`],
+  ["localhost", `lookup(host, { all: true }, callback)`],
+  ["127.0.0.1", `lookupService(host, 22, callback)`],
+  ["a..b", `resolve4(host, callback)`],
+])("%s: what the callback of %s throws is reported in its async context and printed in full", async (host, call) => {
+  const script = `
+    const [host, storage] = ["${host}", new async_hooks.AsyncLocalStorage()];
+    process.on("uncaughtExceptionMonitor", () => console.log(storage.getStore()));
+    function callback() {
+      throw Object.assign(new Error(this.hostname, { cause: new Error("why") }), { code: "E_THROWN" });
+    }
+    storage.run("store", () => dns.${call});
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, printed: stderr.match(/(?<=^ *)(error|code): .*/gm), exitCode }).toEqual({
+    stdout: "store\n",
+    printed: [`error: ${host}`, 'code: "E_THROWN"', "error: why"],
+    exitCode: 1,
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/37320
 test("errno is libuv's for the system's resolver, and undefined for a query", async () => {
   const resolver = new dns_promises.Resolver();

@@ -1,7 +1,7 @@
 // What "node:dns" and "node:dns/promises" share.
 // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/dns/utils.js
 const { isIP } = require("internal/net/isIP");
-const { hasObserver, startPerf, stopPerf } = require("internal/shared");
+const { hasObserver, reportUncaughtException, startPerf, stopPerf } = require("internal/shared");
 const {
   validateArray,
   validateBoolean,
@@ -364,6 +364,22 @@ function onresolve(this: QueryReqWrap, err: string | number, result: unknown) {
   if (this[kPerfHooksContext]) stopObserving(this, { result });
 }
 
+// As guardCallback(), but it keeps `this`. What unwinds to native code is reported outside of the async context, and printed without its properties.
+function guardCompletion(complete: ReqWrap["oncomplete"]) {
+  return function oncomplete(this: ReqWrap, err: unknown, result: unknown, second: unknown) {
+    try {
+      complete.$call(this, err, result, second);
+    } catch (thrown) {
+      reportUncaughtException(thrown);
+    }
+  };
+}
+
+const completeLookup = guardCompletion(onlookup);
+const completeLookupAll = guardCompletion(onlookupall);
+const completeLookupService = guardCompletion(onlookupservice);
+const completeQuery = guardCompletion(onresolve);
+
 // These three throw a DNSException if the binding does not start the request.
 
 function startLookup(hostname: string, options: LookupOptions, callback: Callback, promise?: Promise<unknown>) {
@@ -372,7 +388,7 @@ function startLookup(hostname: string, options: LookupOptions, callback: Callbac
   req.callback = callback;
   req.family = family;
   req.hostname = hostname;
-  req.oncomplete = options.all ? onlookupall : onlookup;
+  req.oncomplete = options.all ? completeLookupAll : completeLookup;
   if (promise) setPromise(req, promise);
 
   const order =
@@ -396,7 +412,7 @@ function startLookupService(address: string, port: number, callback: Callback, p
   req.callback = callback;
   req.hostname = address;
   req.port = port;
-  req.oncomplete = onlookupservice;
+  req.oncomplete = completeLookupService;
   if (promise) setPromise(req, promise);
 
   const err = cares.getnameinfo(req, address, port);
@@ -419,7 +435,7 @@ function startQuery(
   req.bindingName = bindingName;
   req.callback = callback;
   req.hostname = hostname;
-  req.oncomplete = onresolve;
+  req.oncomplete = completeQuery;
   req.ttl = ttl;
   if (promise) setPromise(req, promise);
 

@@ -182,7 +182,7 @@ impl bun_jsc::JsClass for Response {
 /// Every JS-facing member takes `&Response` (not
 /// `&mut Response`) so re-entrant JS calls cannot stack two `&mut` to the same
 /// instance. Fields the members mutate are therefore wrapped in `Cell` (Copy
-/// scalars) or `JsCell` (non-Copy `body`/`init`/`url`/`js_ref`). Both are
+/// scalars, `abort_listener`) or `JsCell` (non-Copy `body`/`init`/`url`/`js_ref`). Both are
 /// `#[repr(transparent)]`, so `#[repr(C)]` field layout is unchanged.
 #[repr(C)]
 #[derive(bun_ptr::CellRefCounted)]
@@ -206,7 +206,7 @@ pub(crate) struct Response {
     reported_estimated_size: Cell<usize>,
 
     /// Fetch's `AbortSignal` listener; survives `FetchTasklet` teardown so a fully-buffered body is still errored.
-    abort_listener: JsCell<Option<bun_ptr::AliasableBox<BodyAbortListener>>>,
+    abort_listener: Cell<Option<bun_ptr::AliasableBox<BodyAbortListener>>>,
 }
 
 impl Default for Response {
@@ -220,7 +220,7 @@ impl Default for Response {
             weak_ptr_data: WeakPtrData::EMPTY,
             js_ref: JsCell::new(JsRef::empty()),
             reported_estimated_size: Cell::new(0),
-            abort_listener: JsCell::new(None),
+            abort_listener: Cell::new(None),
         }
     }
 }
@@ -466,24 +466,23 @@ impl Response {
 
     /// Install a [`BodyAbortListener`] so abort reaches this body after `FetchTasklet` has detached.
     ///
-    /// SAFETY: `this` must be a live heap `Response` (stored as the listener's [`ParentRef`]).
+    /// SAFETY: `this` has no listener yet. One that is replaced is freed, and could be running.
     pub(crate) unsafe fn attach_abort_signal(
-        this: *mut Response,
+        this: &bun_jsc::WrapperGuard<'_, Self>,
         global: &JSGlobalObject,
         signal: &AbortSignal,
         context: bun_jsc::ContextId,
     ) {
         let listener = bun_ptr::AliasableBox::new(BodyAbortListener {
             abort_handle: bun_jsc::AbortHandle::for_owner::<BodyAbortListener>(),
-            // SAFETY: caller contract; `this` is live and owns the box.
-            response: unsafe { bun_ptr::ParentRef::from_raw_mut(this) },
+            // SAFETY: the pointer that the wrapper holds, to the `Response` that owns the box.
+            response: unsafe { bun_ptr::ParentRef::from_raw_mut(this.as_ptr()) },
             global: GlobalRef::new(global),
             context,
         });
         // SAFETY: on the heap until it drops.
         unsafe { bun_jsc::AbortHandle::follow_owner(listener.as_ptr(), signal.ref_()) };
-        // SAFETY: caller contract; `this` is live.
-        unsafe { (*this).abort_listener.set(Some(listener)) };
+        this.abort_listener.set(Some(listener));
     }
 
     #[inline]

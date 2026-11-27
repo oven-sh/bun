@@ -296,7 +296,7 @@ impl<T, const CAPACITY: usize> Drop for HiveArray<T, CAPACITY> {
                 self.used.unset(index);
                 // SAFETY: `claim()` hands out a `HiveSlot<'_>` that borrows the pool
                 // (its Drop unsets the bit if never written). Whoever forgets the token
-                // instead (`write`, `assume_init`, `ManuallyDrop`) has written the slot. So by the
+                // instead (`write`, `ManuallyDrop`) has written the slot. So by the
                 // time `&mut self` is obtainable every `used` slot is fully initialized.
                 unsafe { core::ptr::drop_in_place(slot) };
                 asan::poison(slot.cast(), size_of::<T>());
@@ -320,8 +320,7 @@ impl<T, const CAPACITY: usize> Drop for HiveArray<T, CAPACITY> {
 ///
 /// `HiveSlot` encodes the invariant **"a `used` slot is always fully
 /// initialized"** in the type system: you cannot obtain the stable
-/// initialized `*mut T` without going through [`write`](Self::write) (or the
-/// `unsafe` [`assume_init`](Self::assume_init) escape hatch). If the token is
+/// initialized `*mut T` without going through [`write`](Self::write). If the token is
 /// dropped (early return, `?`, panic) the slot is released **without** running
 /// `T::drop` — it was never written.
 ///
@@ -352,19 +351,6 @@ impl<'h, T, const CAPACITY: usize> HiveSlot<'h, T, CAPACITY> {
         // the `UnsafeCell` tag alive for callers holding sibling slot pointers.
         unsafe { p.as_ptr().write(value) };
         p
-    }
-
-    /// Caller has fully initialized the slot by writing through
-    /// [`addr`](Self::addr). Consumes the token.
-    ///
-    /// # Safety
-    /// Every field of `T` must be initialized, including padding-adjacent
-    /// niches (enum discriminants, `NonNull`, `Box`, `&`). Calling this on a
-    /// partially-written slot is the exact UB this type exists to prevent.
-    #[inline]
-    pub unsafe fn assume_init(self) -> NonNull<T> {
-        let this = ManuallyDrop::new(self);
-        this.slot.cast::<T>()
     }
 }
 

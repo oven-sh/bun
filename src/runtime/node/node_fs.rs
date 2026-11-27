@@ -18,10 +18,7 @@ use bun_io::JsKeepAlive;
 use bun_jsc::AbortSignal;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    ArrayBuffer, EventLoopHandle, JSGlobalObject, JSValue, JsResult, PinnedArrayBuffer,
-    StringJsc as _,
-};
+use bun_jsc::{ArrayBuffer, JSGlobalObject, JSValue, JsResult, PinnedArrayBuffer, StringJsc as _};
 use bun_paths::{self as paths, OSPath, OSPathChar, OSPathSliceZ, Path};
 use bun_sys::FdExt as _;
 use bun_sys::{self as sys, E, Fd as FD, Maybe, Mode, SystemErrno};
@@ -2060,8 +2057,6 @@ mod _async_tasks {
     pub(crate) struct NewAsyncCpTask<const IS_SHELL: bool> {
         pub(crate) promise: JSPromiseStrong,
         pub args: ThreadIsolated<args::Cp<'static>>,
-        /// Owning-thread uses (global object).
-        pub(crate) evtloop: EventLoopHandle,
         /// How the last subtask's thread delivers the completion (moved out
         /// by it: the loop may free `self` once the completion is queued). For
         /// a JS loop this is the ticket its VM waits for — the arguments may
@@ -2069,7 +2064,7 @@ mod _async_tasks {
         pub(crate) poster: core::cell::Cell<Option<bun_jsc::ConcurrentPoster>>,
         pub task: WorkPoolTask,
         /// Written from any workpool thread (first `finish_concurrently` caller wins via
-        /// `has_result` CAS); read on the JS thread in `run_from_js_thread`. Wrapped in
+        /// `has_result` CAS); read in `run_from_js_thread` or `report_to_shell`. Wrapped in
         /// `Cell` so concurrent subtasks can hold `&Self` and `.set()` without aliased
         /// `&mut`. Cross-thread soundness is provided by the `has_result` CAS (single
         /// writer) + `subtask_count` AcqRel fence (happens-before for the JS-thread
@@ -2083,7 +2078,7 @@ mod _async_tasks {
         pub(crate) context: bun_event_loop::ContextId,
         pub(crate) has_result: AtomicBool,
         /// What this has written where the executable holds something, for the
-        /// notes of `run_from_js_thread`. A copy that fails has written some of it.
+        /// notes of `note_written`. A copy that fails has written some of it.
         written: bun_threading::Guarded<Vec<Box<[u8]>>>,
         /// Number of in-flight references to `this`. Starts at 1 for the main
         /// directory-scan task; incremented for each `SingleTask` spawned. Every
@@ -2256,7 +2251,7 @@ mod _async_tasks {
         }
 
         /// `fs.cp` / `fs.promises.cp` (JS thread): a promise, an async-stack
-        /// tracker, and this VM's loop.
+        /// tracker, and a ticket for this VM's loop.
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
             _binding: &Binding,
@@ -2270,7 +2265,6 @@ mod _async_tasks {
             Self::schedule_new(
                 promise,
                 cp_args,
-                EventLoopHandle::init(vm.event_loop_ptr()),
                 bun_jsc::ConcurrentPoster::Js(vm.ticket()),
                 tracker,
                 cx.context().id(),
@@ -2280,7 +2274,7 @@ mod _async_tasks {
         }
 
         /// The shell's `cp` builtin, from its pool task (any thread): no VM or
-        /// global is touched — the loop and poster are the ones the shell task
+        /// global is touched — the poster is the one the shell task
         /// already captured on its own thread.
         pub(crate) fn create_for_shell(
             cp_args: ThreadIsolated<args::Cp<'static>>,
@@ -2290,7 +2284,6 @@ mod _async_tasks {
             Self::schedule_new(
                 JSPromiseStrong::default(),
                 cp_args,
-                shelltask.task.event_loop,
                 poster,
                 AsyncTaskTracker { id: 0 },
                 // As `ShellCpTask`, which is waiting for this.
@@ -2302,7 +2295,6 @@ mod _async_tasks {
         fn schedule_new(
             promise: JSPromiseStrong,
             cp_args: ThreadIsolated<args::Cp<'static>>,
-            evtloop: EventLoopHandle,
             poster: bun_jsc::ConcurrentPoster,
             tracker: AsyncTaskTracker,
             context: bun_event_loop::ContextId,
@@ -2317,7 +2309,6 @@ mod _async_tasks {
                 // Sentinel — overwritten by `finish_concurrently` (gated by the
                 // `has_result` CAS) before any read on the JS thread.
                 result: core::cell::Cell::new(Ok(())),
-                evtloop,
                 poster: core::cell::Cell::new(Some(poster)),
                 task: work_pool_task(Self::work_pool_callback),
                 _keep_alive: if IS_SHELL {
@@ -2393,39 +2384,39 @@ mod _async_tasks {
                 .poster
                 .take()
                 .expect("fs.cp in flight holds its poster");
-            if poster.is_js() {
+            // Only the shell's task can have a mini loop.
+            if !IS_SHELL || poster.is_js() {
                 poster.post_js(ConcurrentTask::ConcurrentTask::create_boxed(this));
             } else {
                 let at = AnyTaskWithExtraContext::from_callback_auto_deinit(this, |task, _| {
-                    let _ = task.run_from_js_thread(); // TODO: properly propagate exception upwards
+                    task.report_to_shell();
                 });
                 // `from_callback_auto_deinit` heap-allocates; never null.
                 poster.post_mini(core::ptr::NonNull::new(at).expect("heap task"));
             }
         }
 
-        pub(crate) fn run_from_js_thread(mut self: Box<Self>) -> JsResult<()> {
+        fn note_written(&mut self) {
             for path in self.written.get_mut().drain(..) {
                 note_opened_for_write(&path, true);
             }
-            if IS_SHELL {
-                // Move the result out — `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap
-                // `Ok(())` placeholder.
-                let result = core::mem::replace(self.result.get_mut(), Ok(()));
-                let src = core::mem::take(&mut self.args.src);
-                let dest = core::mem::take(&mut self.args.dest);
-                let shelltask = self.shelltask.take().expect("IS_SHELL ⇒ shelltask");
-                shelltask.cp_on_finish(src, dest, result);
-                return Ok(());
-            }
-            let go_ptr = self.evtloop.global_object();
-            if go_ptr.is_null() {
-                panic!(
-                    "No global object, this indicates a bug in Bun. Please file a GitHub issue."
-                );
-            }
-            // SAFETY: non-null erased *mut JSGlobalObject from the JS event loop vtable.
-            let global_object: &JSGlobalObject = unsafe { &*go_ptr.cast::<JSGlobalObject>() };
+        }
+
+        pub(crate) fn report_to_shell(mut self: Box<Self>) {
+            self.note_written();
+            let result = core::mem::replace(self.result.get_mut(), Ok(()));
+            let src = core::mem::take(&mut self.args.src);
+            let dest = core::mem::take(&mut self.args.dest);
+            let shelltask = self.shelltask.take().expect("IS_SHELL ⇒ shelltask");
+            shelltask.cp_on_finish(src, dest, result);
+            drop(self);
+        }
+
+        pub(crate) fn run_from_js_thread(
+            mut self: Box<Self>,
+            global_object: &JSGlobalObject,
+        ) -> JsResult<()> {
+            self.note_written();
             let success = (*self.result.get_mut()).is_ok();
             let promise_value = self.promise.value();
             let promise = self.promise.get();

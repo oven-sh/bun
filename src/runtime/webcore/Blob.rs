@@ -14,8 +14,6 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use crate::webcore::jsc::{
     self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_core as bun;
 use bun_core::Output;
 use bun_core::{EncodedSlice, String as BunString, Utf8Bytes, WTFStringImplExt as _, strings};
 use bun_http_types::MimeType::MimeType;
@@ -2203,11 +2201,11 @@ impl BlobExt for Blob {
                     if let Some(store) = self.store.get() {
                         if let store::Data::Bytes(bytes) = &store.data {
                             let store_bytes = bytes.slice();
-                            // SAFETY: `Clone` arm reads only; `buf` is store-backed.
-                            if bun::is_slice_in_buffer(unsafe { &*buf }, store_bytes) {
+                            if let Some(byte_offset) =
+                                buf.addr().checked_sub(store_bytes.as_ptr().addr())
+                                && byte_offset + buf_len <= store_bytes.len()
+                            {
                                 if let Some(memfd) = bytes.memfd() {
-                                    let byte_offset = (buf.cast::<u8>() as usize)
-                                        .saturating_sub(store_bytes.as_ptr() as usize);
                                     let result =
                                         jsc::ArrayBuffer::to_array_buffer_from_shared_memfd(
                                             memfd.native() as i64,

@@ -133,8 +133,7 @@ pub(super) fn pack_words(before: &[u32], words: &[u32], scratch: &mut Vec<u8>) -
 
 fn bytes_of(words: &[u32]) -> &[u8] {
     const { assert!(cfg!(target_endian = "little")) };
-    // SAFETY: every byte of a `u32` is a byte, and the slice is that long.
-    unsafe { core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), words.len() * 4) }
+    bun_core::slice_as_bytes(words)
 }
 
 pub(super) fn unpacked_count(packed: &[u32]) -> usize {

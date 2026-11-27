@@ -1382,10 +1382,8 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
 #[repr(C)]
 pub struct BSSList<ValueType, const COUNT: usize /* = _COUNT * 2 */> {
     pub(crate) mutex: Mutex,
-    // LIFETIMES.tsv: dual semantics — points at sibling `tail` OR a heap alloc.
-    // Kept as a raw NonNull: self-referential when `head == &self.tail`, so a safe
-    // borrow cannot express it.
-    pub(crate) head: Option<NonNull<BSSListOverflowBlock<ValueType>>>,
+    // The newest heap block; `None` while overflow still goes into the inline `tail`.
+    pub(crate) head: Option<Box<BSSListOverflowBlock<ValueType>>>,
     pub(crate) used: u32,
     pub(crate) tail: BSSListOverflowBlock<ValueType>,
     // Only `[0..used]` is initialized.
@@ -1453,11 +1451,11 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     ///
     /// SAFETY: `slot` must point to writable, properly-aligned, **all-zeros**
     /// storage of `size_of::<Self>()` bytes that lives for `'static` — i.e. it
-    /// came from [`bss_heap_init`] / [`bss_lazy_bytes`]. `used`, `tail.used`,
+    /// came from [`bss_heap_init`] / [`bss_lazy_bytes`]. `used`, `head`, `tail.used`,
     /// and `tail.prev` (`None` is the null niche) are already bit-zero in that
-    /// storage, so the only required writes are `mutex` (`std::sync::Mutex` is
+    /// storage, so the only required write is `mutex` (`std::sync::Mutex` is
     /// not guaranteed all-zeros-init, unlike the previous `parking_lot::RawMutex`)
-    /// and the non-zero self-referential `head = &tail`. Both fields lead the
+    /// and that field leads the
     /// `#[repr(C)]` layout, so every startup write stays within page 0 of the
     /// singleton mapping (see the layout note on [`BSSList`]). `backing_buf`
     /// and `tail.data` are intentionally left uninitialized; only `[0..used]`
@@ -1465,12 +1463,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     pub unsafe fn init_at(slot: *mut Self) {
         // SAFETY: caller contract — `slot` is a valid, exclusive, aligned,
         // all-zeros `*mut Self`.
-        unsafe {
-            addr_of_mut!((*slot).mutex).write(Mutex::new());
-            // Self-referential `head = &tail`; raw NonNull.
-            let tail_ptr = addr_of_mut!((*slot).tail);
-            addr_of_mut!((*slot).head).write(Some(NonNull::new_unchecked(tail_ptr)));
-        }
+        unsafe { addr_of_mut!((*slot).mutex).write(Mutex::new()) };
     }
 
     // Singleton teardown belongs to the `bss_list!` singleton wrapper;
@@ -1484,15 +1477,10 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         &mut self,
     ) -> core::result::Result<*mut MaybeUninit<ValueType>, AllocError> {
         self.used += 1;
-        // SAFETY: head is always non-null after init_at() (points at self.tail or heap block).
-        let mut head_ptr = self.head.unwrap();
+        let mut head = self.head.as_deref_mut().unwrap_or(&mut self.tail);
         // Check capacity first, allocate the new block if
         // needed, then reserve exactly one slot. Safe under `self.mutex`.
-        // SAFETY: `head_ptr` is a valid exclusive ref (mutex held).
-        let head_full = unsafe {
-            (*head_ptr.as_ptr()).used.load(Ordering::Acquire) as usize >= BSS_LIST_CHUNK_SIZE
-        };
-        if head_full {
+        if head.used.load(Ordering::Acquire) as usize >= BSS_LIST_CHUNK_SIZE {
             let mut new_block: Box<core::mem::MaybeUninit<BSSListOverflowBlock<ValueType>>> =
                 Box::new_uninit();
             // SAFETY: `as_mut_ptr()` is a valid, exclusive, aligned `*mut`; zero() initializes
@@ -1500,23 +1488,11 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
             unsafe { BSSListOverflowBlock::zero(new_block.as_mut_ptr()) };
             // SAFETY: all non-`MaybeUninit` fields are now initialized.
             let mut new_block = unsafe { new_block.assume_init() };
-            // Preserve the chain (`new_block.prev` = old head). The inline `self.tail`
-            // is not Boxed, so represent it as `prev = None`; heap heads were
-            // `Box::into_raw`'d by an earlier call here and are reclaimed as `Box`.
-            let tail_ptr: *const BSSListOverflowBlock<ValueType> = core::ptr::addr_of!(self.tail);
-            new_block.prev = if core::ptr::eq(head_ptr.as_ptr().cast_const(), tail_ptr) {
-                None
-            } else {
-                // SAFETY: the previous head was `Box::into_raw`'d by an earlier
-                // `append_overflow_uninit` and is exclusively owned via `self.head`.
-                Some(unsafe { Box::from_raw(head_ptr.as_ptr()) })
-            };
-            head_ptr = Box::into_non_null(new_block);
-            self.head = Some(head_ptr);
+            // The full block stays allocated: its slots are still in use.
+            new_block.prev = self.head.take();
+            head = self.head.insert(new_block);
         }
-        // SAFETY: `head_ptr` is the (possibly freshly-allocated) head block with
-        // free capacity; no other alias exists (mutex held).
-        unsafe { (*head_ptr.as_ptr()).append_uninit() }
+        head.append_uninit()
     }
 
     /// Reserve a slot and return its uninitialized storage. Caller MUST
@@ -1561,25 +1537,6 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     }
 }
 
-impl<ValueType, const COUNT: usize> Drop for BSSList<ValueType, COUNT> {
-    fn drop(&mut self) {
-        // Free the heap-allocated head chain.
-        // The inline `self.tail` is not Boxed and must not be Box-dropped; the
-        // `prev: Option<Box<..>>` chain stops at `None` before reaching it
-        // (see `append_overflow_uninit`). Singleton teardown belongs to the
-        // `bss_list!` singleton wrapper, not here.
-        if let Some(head) = self.head.take() {
-            let tail_ptr: *const BSSListOverflowBlock<ValueType> = core::ptr::addr_of!(self.tail);
-            if !core::ptr::eq(head.as_ptr().cast_const(), tail_ptr) {
-                // SAFETY: `head` was `Box::into_raw`'d by `append_overflow_uninit` and is
-                // exclusively owned by this struct. Dropping the Box recursively
-                // drops `prev`, freeing the whole heap chain.
-                drop(unsafe { Box::from_raw(head.as_ptr()) });
-            }
-        }
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // BSSStringList<_COUNT, _ITEM_LENGTH>
 // ──────────────────────────────────────────────────────────────────────────
@@ -1616,6 +1573,8 @@ struct EmptyType {
     len: usize,
 }
 
+struct LowerCase<'a>(&'a [u8]);
+
 /// Byte sources accepted by the `append*` methods.
 pub trait BSSAppendable {
     /// Total byte length (excluding sentinel).
@@ -1629,6 +1588,14 @@ impl BSSAppendable for EmptyType {
         self.len
     }
     fn copy_into(&self, _dst: &mut [u8]) {}
+}
+impl BSSAppendable for LowerCase<'_> {
+    fn total_len(&self) -> usize {
+        self.0.len()
+    }
+    fn copy_into(&self, dst: &mut [u8]) {
+        copy_lowercase(self.0, dst);
+    }
 }
 impl BSSAppendable for &[u8] {
     fn total_len(&self) -> usize {
@@ -1815,48 +1782,13 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 
     /// Append `value` lowercased ASCII-wise.
     ///
-    /// The previous port routed the lowercase scratch through a
-    /// `thread_local! { RefCell<Box<[u8; 4096]>> }`, which (a) heap-allocs 4 KiB
-    /// on first use per thread and (b) pays a `RefCell` flag check per call.
-    /// Filenames are overwhelmingly <256 bytes, so a stack scratch suffices for
-    /// the hot path; longer inputs (rare — full paths) fall through to a
-    /// one-shot heap temp. No TLS, no Box-on-first-use, no `RefCell`.
-    ///
     /// SAFETY: see [`append`].
     pub unsafe fn append_lower_case<'a>(
         this: *mut Self,
         value: &[u8],
     ) -> core::result::Result<&'a [u8], AllocError> {
-        // SAFETY: see `append`.
-        let _guard = unsafe { (*this).mutex.lock() };
-
-        // `do_append` only reads `slice` via `BSSAppendable::copy_into` (copies
-        // into `self.backing_buf` / a fresh heap alloc) and returns raw parts
-        // pointing at that owned storage, not at `slice` — so the scratch
-        // buffer's borrow does not escape.
-        let (ptr, len) = if value.len() <= 256 {
-            let mut scratch = [0u8; 256];
-            // SAFETY: inner mutex held ⇒ this thread has exclusive access.
-            unsafe {
-                (*this).do_append(&crate::copy_lowercase(value, &mut scratch[..value.len()]))?
-            }
-        } else {
-            // Slow path: input >256 bytes (rare). Use a one-shot heap temp via
-            // mimalloc directly (PORTING.md forbids `Vec` in hot allocators).
-            let p = mimalloc::mi_malloc(value.len()).cast::<u8>();
-            if p.is_null() {
-                return Err(AllocError);
-            }
-            // SAFETY: `p` is a fresh allocation of `value.len()` bytes; sole owner.
-            let tmp = unsafe { core::slice::from_raw_parts_mut(p, value.len()) };
-            // SAFETY: inner mutex held ⇒ this thread has exclusive access.
-            let r = unsafe { (*this).do_append(&crate::copy_lowercase(value, tmp)) };
-            // SAFETY: `p` was allocated by `mi_malloc` above.
-            unsafe { mimalloc::mi_free(p.cast()) };
-            r?
-        };
-        // SAFETY: see `append`.
-        Ok(unsafe { core::slice::from_raw_parts(ptr, len) })
+        // SAFETY: forwarded — see `append`.
+        unsafe { Self::append(this, &LowerCase(value)) }
     }
 
     /// Returns `(ptr, len)` of the freshly-appended payload (excluding the trailing NUL),

@@ -6203,17 +6203,17 @@ pub mod bv2_impl {
                                 // This information cannot be queried while printing because a lock wouldn't get held.
                                 import_record.path.text = path.text;
                                 import_record.path.namespace = b"file";
-                                import_record.path.pretty = self
-                                    .arena()
-                                    .alloc_str(&format!(
+                                import_record.path.pretty = self.arena().alloc_slice_copy(
+                                    format!(
                                         "{}/{}{}",
                                         bake_types::ASSET_PREFIX,
                                         bun_core::fmt::bytes_to_hex_lower_string(
                                             &hash.to_ne_bytes()
                                         ),
                                         bstr::BStr::new(bun_paths::extension(path.text)),
-                                    ))
-                                    .as_bytes();
+                                    )
+                                    .as_bytes(),
+                                );
                                 import_record.path.is_disabled = false;
                             } else {
                                 import_record.path.text = path.text;
@@ -6687,17 +6687,17 @@ pub mod bv2_impl {
             );
             js_parser_options.bundle = true;
 
-            let unique_key: &[u8] = self
-                .arena()
-                .alloc_str(&format!(
+            let unique_key: &[u8] = self.arena().alloc_slice_copy(
+                format!(
                     "{}",
                     chunk::UniqueKey {
                         prefix: self.unique_key,
                         kind: chunk::QueryKind::HtmlImport,
                         index: self.graph.html_imports.len() as u32,
                     },
-                ))
-                .as_bytes();
+                )
+                .as_bytes(),
+            );
 
             // Extract raw pointers so the `&mut self` borrow from
             // `transpiler_for_target` doesn't overlap `self.arena()` below.

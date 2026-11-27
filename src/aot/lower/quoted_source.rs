@@ -1001,7 +1001,7 @@ impl Printer<'_, '_, '_, '_, '_> {
                     ..Around::default()
                 };
                 self.expression(site.callee, Level::New, callee);
-                if !site.args.is_empty() || level >= Level::Postfix {
+                if site.close_pos != u32::MAX || !site.args.is_empty() || level >= Level::Postfix {
                     self.text.push(b'(');
                     self.list(hir.ids(site.args));
                     self.text.push(b')');

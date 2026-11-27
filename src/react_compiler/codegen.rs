@@ -1970,13 +1970,19 @@ fn codegen_base_instruction_value(
             );
             Ok(maybe_wrap_hook_call(cx, call_expr, property.identifier))
         }
-        InstructionValue::NewExpression { callee, args, .. } => {
+        InstructionValue::NewExpression {
+            callee,
+            args,
+            close_parens_loc,
+            ..
+        } => {
             let callee_expr = codegen_place_to_expression(cx, callee)?;
             let arguments = codegen_arguments(cx, args)?;
             Ok(Expr::init(
                 E::New {
                     target: callee_expr,
                     args: arguments,
+                    close_parens_loc: *close_parens_loc,
                     ..Default::default()
                 },
                 loc,

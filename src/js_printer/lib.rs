@@ -3367,7 +3367,13 @@ pub(crate) mod __gated_printer {
                     self.print_space();
                     self.print_expr(e.target, Level::New, ExprFlag::forbid_call());
                     let args = e.args.slice();
-                    if !args.is_empty() || level.gte(Level::Postfix) {
+                    let can_omit_parens = args.is_empty() && !level.gte(Level::Postfix);
+                    let has_written_parens = e.has_written_parens(expr.loc);
+                    if !can_omit_parens || (has_written_parens && !self.options.minify_whitespace) {
+                        if can_omit_parens {
+                            // JSC reports a failed `new X()` at the `(`, and a failed `new X` at `new`.
+                            self.add_source_mapping(expr.loc);
+                        }
                         self.print(b"(");
 
                         if !args.is_empty() {
@@ -3379,7 +3385,7 @@ pub(crate) mod __gated_printer {
                             }
                         }
 
-                        if e.close_parens_loc.start > expr.loc.start {
+                        if has_written_parens {
                             self.add_source_mapping(e.close_parens_loc);
                         }
 

@@ -737,7 +737,10 @@ export function pick(names: string[], most = few): string {
     expect(typedFile(dir)).toContain("let found = none;");
   });
 
-  test("a cast of a call of new that is printed without parentheses", async () => {
+  test.each([
+    [[], "new Map<string, number[]>() as Counts", "new Map<string, number[]> as Counts"],
+    [["--minify-whitespace"], "new Map<string, number[]> as Counts", "new Map<string, number[]> as Counts"],
+  ])("a cast of a call of new without arguments %j", async (flags, written, bare) => {
     using dir = tempDir(
       "library-typed-file-bare-new",
       library({
@@ -749,12 +752,42 @@ export function counts(): Counts {
   made.total = 0;
   return made;
 }
+export function countsWithoutParentheses(): Counts {
+  const bare = new Map<string, number[]> as Counts;
+  bare.total = 0;
+  return bare;
+}
+`,
+      }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", ...flags);
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    const code = typedFile(dir).replace(/ ?= ?/g, " = ");
+    expect(code).toContain("const made = " + written);
+    expect(code).toContain("const bare = " + bare);
+  });
+
+  test("a directive above a call of new without arguments is written once", async () => {
+    using dir = tempDir(
+      "library-typed-file-directive-above-new",
+      library({
+        "src/index.ts": `export function make(): unknown {
+  // @ts-ignore
+  const made: string = new class {
+    size = 1;
+  }();
+  return made;
+}
 `,
       }),
     );
     const built = await bun(String(dir), "compile", "--library", "src/index.ts");
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(typedFile(dir)).toContain("new Map<string, number[]> as Counts");
+    expect(typedFile(dir)).toContain(`  // @ts-ignore
+  const made: string = new class {
+    size = 1;
+  }();
+`);
   });
 
   test("an entry point that is a script is not met twice when the .aot.ts files are type checked", async () => {

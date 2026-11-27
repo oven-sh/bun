@@ -684,6 +684,8 @@ pub enum InstructionValue {
     NewExpression {
         callee: Place,
         args: HirVec<PlaceOrSpread>,
+        /// Where the source has the `)`. The printer leaves out `()` that the source does not have.
+        close_parens_loc: bun_ast::Loc,
         loc: Option<SourceLocation>,
     },
     CallExpression {

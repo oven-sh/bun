@@ -44,12 +44,6 @@ impl FileLowering<'_, '_, '_, '_> {
             let next = match hir[last].kind {
                 ExprKind::Dot { .. } => return hir.name_pos(last),
                 ExprKind::Index { index, .. } => index,
-                ExprKind::New(site)
-                    if self.is_printed_without_parentheses(last, site)
-                        && !self.is_printed_as_call(hir[site]) =>
-                {
-                    hir[site].callee
-                }
                 ExprKind::Call(site) | ExprKind::New(site) => match hir[site].close_pos {
                     u32::MAX => hir[site].callee,
                     close => return close,
@@ -81,7 +75,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         let reports_as_call = self.is_printed_as_call(hir[site])
             || (hir[site].close_pos != u32::MAX
-                && !self.is_printed_without_parentheses(expression, site));
+                && !self.has_parentheses_mapped_to_new(expression, site));
         match reports_as_call {
             true => self.call_position(hir[site]),
             false => hir[expression].pos,
@@ -123,8 +117,8 @@ impl FileLowering<'_, '_, '_, '_> {
                 })
     }
 
-    /// `bun run` prints `new A()` as `new A` where nothing reads or calls the result in place.
-    fn is_printed_without_parentheses(&self, expression: ExprId, site: CallId) -> bool {
+    /// `bun run` maps the `(` of `new A()` to `new` where nothing reads or calls the result in place.
+    fn has_parentheses_mapped_to_new(&self, expression: ExprId, site: CallId) -> bool {
         let hir = self.hir;
         if hir.ids(hir[site].args).next().is_some() || self.is_in_known_evaluation(expression) {
             return false;
@@ -371,7 +365,27 @@ mod tests {
     }
 
     #[test]
-    fn bare_construction_reports_printed_form() {
+    fn call_reports_at_the_end_of_a_construction_without_arguments() {
+        let source = "export function probe(a: any, K: any) {
+  a[new K()]();
+  a[new K]();
+  a[new K(a)]();
+  a[(new K)()]();
+}
+";
+        let texts = [
+            ")]();\n  a[new K]",
+            "K]",
+            ")]();\n  a[(",
+            "K)()]",
+            ")]();\n}",
+        ];
+        let expected = texts.map(|text| offset_of(source, text));
+        assert_eq!(reported_positions(source, Opcode::Call), expected);
+    }
+
+    #[test]
+    fn construction_with_empty_parentheses_reports_at_new_where_nothing_reads_it() {
         let source = "export function probe(a: any) {
   new a.First();
   new a.Second().run;

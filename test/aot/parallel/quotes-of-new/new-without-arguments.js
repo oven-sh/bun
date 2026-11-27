@@ -1,0 +1,32 @@
+// A `new` without arguments is quoted with the parentheses that the source has, and so is what is called or read after it.
+const unseen = (0, eval)("(x) => x");
+const o = unseen({ p: {} }), a = unseen({});
+class K {}
+const t = (f) => { try { f(); console.log("no error"); } catch (e) { console.log(JSON.stringify(e.message)); } };
+t(() => new o.x());
+t(() => new o.x);
+t(() => new o.p.q());
+t(() => new o.p.q);
+t(() => { new o.x(); });
+t(() => { new o.x; });
+t(() => -new o.x());
+t(() => -new o.x);
+t(() => [new o.x(), new o.y]);
+t(() => [new o.x, new o.y()]);
+t(() => a[new K()]());
+t(() => a[new K]());
+t(() => a[new K(a)]());
+t(() => a[(new K)()]());
+t(() => (o.x || new K())());
+t(() => (o.x || new K)());
+t(() => (o.x ? o : new K())());
+t(() => (o.x ? o : new K)());
+t(() => a[new K()].c);
+t(() => a[new K].c);
+t(() => new K().c());
+t(() => (new K).c());
+t(() => new (new K)());
+t(() => new (new K()));
+t(() => new (new K));
+t(() => new o.x().y);
+t(() => (new o.x).y);

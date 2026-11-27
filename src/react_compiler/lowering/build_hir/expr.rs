@@ -193,7 +193,12 @@ pub(crate) fn lower_expression(
         Data::ENew(new_expr) => {
             let callee = lower_expression_to_temporary(builder, &new_expr.target)?;
             let args = AstAlloc::vec_from_iter(lower_arguments(builder, &new_expr.args)?);
-            Ok(InstructionValue::NewExpression { callee, args, loc })
+            Ok(InstructionValue::NewExpression {
+                callee,
+                args,
+                close_parens_loc: new_expr.close_parens_loc,
+                loc,
+            })
         }
         Data::ETemplate(tmpl) => lower_template(builder, tmpl, loc),
         Data::EAwait(await_expr) => {

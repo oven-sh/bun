@@ -59,4 +59,39 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler: hooks called early",
       }),
     600_000,
   );
+
+  // The compiler makes each `new` expression again, and the build quotes it as the transpiler of bun test prints it.
+  test(
+    "a message quotes the parentheses of new that the source has",
+    () =>
+      slot(async () => {
+        using project = tempDir("aot-react-compiler-quotes-of-new", {
+          ...standIn,
+          "rows.jsx": `export function Written({ x }) {\n  const make = () => new x.Missing();\n  return [make()];\n}
+export function Bare({ x }) {\n  const make = () => new x.Missing;\n  return [make()];\n}
+export function CalledAfterWritten({ x }) {\n  const call = () => x[new x.Klass()]();\n  return [call()];\n}
+export function CalledAfterBare({ x }) {\n  const call = () => x[new x.Klass]();\n  return [call()];\n}\n`,
+          "rows.test.js": `import { test } from "bun:test";\nimport * as rows from "./rows.jsx";
+test("rows", () => {\n  const x = { Klass: class Klass {} };
+  for (const name in rows) {\n    try {\n      rows[name]({ x });\n    } catch (error) {\n      console.log("told:", name, error.message);\n    }\n  }\n});\n`,
+        });
+        const run = async (flags: string[]) => {
+          const command = [bunExe(), "test", ...flags, "--react-compiler", "./rows.test.js"];
+          const { stdout, exitCode } = await spawned(command, String(project), bunEnv);
+          return { told: stdout.match(/^told: .*$/gm), exitCode };
+        };
+        const plain = await run([]);
+        expect(plain).toEqual({
+          told: [
+            "told: Bare undefined is not a constructor (evaluating 'new x.Missing')",
+            "told: CalledAfterBare x[new x.Klass] is not a function. (In 'x[new x.Klass]()', 'x[new x.Klass]' is undefined)",
+            "told: CalledAfterWritten x[new x.Klass()] is not a function. (In 'x[new x.Klass()]()', 'x[new x.Klass()]' is undefined)",
+            "told: Written undefined is not a constructor (evaluating 'new x.Missing()')",
+          ],
+          exitCode: 0,
+        });
+        expect(await run(["--aot"])).toEqual(plain);
+      }),
+    600_000,
+  );
 });

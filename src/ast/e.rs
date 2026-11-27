@@ -222,6 +222,13 @@ pub struct New {
 
     pub close_parens_loc: crate::Loc,
 }
+impl New {
+    /// False for `new X`, and for a `new` that a pass made. `loc` is the loc of the expression.
+    #[inline]
+    pub fn has_written_parens(&self, loc: crate::Loc) -> bool {
+        self.close_parens_loc.start > loc.start
+    }
+}
 impl Default for New {
     fn default() -> Self {
         Self {

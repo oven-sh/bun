@@ -2076,6 +2076,16 @@ impl<'a> DependencyCollectionContext<'a> {
                 path: hir_vec![],
                 loc: dep.loc,
             }
+        } else if env.config.callback_dependencies_end_before_current
+            && self.inner_fn_context.is_some()
+            && let Some(index) = dep.path.iter().position(
+                |entry| matches!(&entry.property, PropertyLiteral::String(s) if s == b"current"),
+            )
+        {
+            // Not in upstream (oxc 2c9c4dd8b).
+            let mut dep = dep;
+            dep.path.truncate(index);
+            dep
         } else {
             dep
         };

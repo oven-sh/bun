@@ -1,3 +1,4 @@
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { Hmac, createHmac, createSecretKey } from "crypto";
 import { PassThrough } from "stream";
@@ -450,5 +451,60 @@ describe("crypto.Hmac", () => {
     expect(createHmac("sha256", buf).update("foo").digest()).toEqual(
       createHmac("sha256", keyObject).update("foo").digest(),
     );
+  });
+});
+
+describe("Hmac#update(string)", () => {
+  const times = (text: string, count: number) => Buffer.alloc(Buffer.byteLength(text) * count, text).toString();
+
+  test("a string is digested as its UTF-8 bytes, also in pieces", () => {
+    const texts = ["", "hello", "café", "你好", "😀", times("x", 10_000), times("é", 4096), times("é", 10_000)];
+    for (const offset of [0, 4094, 4095, 4096, 4097, 8191]) {
+      for (const piece of ["😀", "\ud83d", "\ude00", "\ud83d\ud83d\ude00", "\ude00\ud83d"]) {
+        texts.push(times("你", offset) + piece, times("你", offset) + piece + times("x", 5000));
+      }
+    }
+    for (const name of ["sha256", "sha512"]) {
+      expect(texts.map(text => createHmac(name, "key").update(text).digest("hex"))).toEqual(
+        texts.map(text => createHmac(name, "key").update(new TextEncoder().encode(text)).digest("hex")),
+      );
+    }
+  });
+
+  test("the encoding can be named, and kinds of input mixed", async () => {
+    const digest = (data: any) => createHmac("sha256", "key").update(data).digest("hex");
+    for (const text of ["hello", "café", "你好"]) {
+      const expected = digest(new TextEncoder().encode(text));
+      for (const encoding of ["utf8", "utf-8", "UTF8"] as any[]) {
+        expect(createHmac("sha256", "key").update(text, encoding).digest("hex")).toBe(expected);
+      }
+      const stream = createHmac("sha256", "key");
+      stream.end(text);
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      expect(Buffer.concat(chunks).toString("hex")).toBe(expected);
+    }
+    const mixed = createHmac("sha256", "key").update("a").update("é").update("你").update(Uint8Array.of(0x21));
+    expect(mixed.update("é".repeat(5000)).digest("hex")).toBe(
+      digest(new TextEncoder().encode("aé你!" + "é".repeat(5000))),
+    );
+  });
+
+  test("the other encodings still say their own bytes", () => {
+    const digest = (data: any, encoding?: any) => createHmac("sha256", "key").update(data, encoding).digest("hex");
+    expect(digest("68656c6c6f", "hex")).toBe(digest("hello"));
+    expect(digest("aGVsbG8=", "base64")).toBe(digest("hello"));
+    expect(digest("café", "latin1")).toBe(digest(Uint8Array.of(0x63, 0x61, 0x66, 0xe9)));
+    expect(digest("é", "utf16le")).toBe(digest(Uint8Array.of(0xe9, 0)));
+  });
+
+  test("update() makes no Buffer of a string", () => {
+    const texts = [times("x", 10_000), times("é", 10_000), times("你", 5_000)];
+    texts.push(texts[2] + "\ud83d");
+    const hmac = createHmac("sha256", "key");
+    Bun.gc(true);
+    const before = heapStats().objectTypeCounts.Uint8Array ?? 0;
+    for (let i = 0; i < 100; i++) for (const text of texts) hmac.update(text);
+    expect((heapStats().objectTypeCounts.Uint8Array ?? 0) - before).toBeLessThan(10);
   });
 });

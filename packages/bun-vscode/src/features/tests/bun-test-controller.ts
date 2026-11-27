@@ -291,6 +291,10 @@ export class BunTestController implements vscode.Disposable {
     return { bunCommand, testArgs };
   }
 
+  private getTestTargetArgs(files: Set<string>, useWorkspaceRoot: boolean): string[] {
+    return useWorkspaceRoot ? ["."] : [...files];
+  }
+
   private async discoverTests(
     testItem?: vscode.TestItem | false,
     filePath?: string,
@@ -698,15 +702,17 @@ export class BunTestController implements vscode.Disposable {
 
     const { bunCommand, testArgs } = this.getBunExecutionConfig();
 
-    let args = [...testArgs, ...allFiles];
+    const useWorkspaceRoot = !isIndividualTestRun && tests.length === this.testController.items.size;
+    const targetArgs = this.getTestTargetArgs(allFiles, useWorkspaceRoot);
+    let args = [...testArgs, ...targetArgs];
     let printedArgs = `\x1b[34;1m>\x1b[0m \x1b[34;1m${bunCommand} ${testArgs.join(" ")}\x1b[2m`;
 
-    for (const file of allFiles) {
-      const f = path.relative(this.workspaceFolder.uri.fsPath, file) || file;
+    for (const target of targetArgs) {
+      const f = target === "." ? target : path.relative(this.workspaceFolder.uri.fsPath, target) || target;
       if (f.includes(" ")) {
-        printedArgs += ` ".${path.sep}${f}"`;
+        printedArgs += ` "${f === "." ? f : `.${path.sep}${f}`}"`;
       } else {
-        printedArgs += ` .${path.sep}${f}`;
+        printedArgs += f === "." ? " ." : ` .${path.sep}${f}`;
       }
     }
 
@@ -1481,6 +1487,7 @@ export class BunTestController implements vscode.Disposable {
       isTestFile: this.isTestFile.bind(this),
       customFilePattern: this.customFilePattern.bind(this),
       getBunExecutionConfig: this.getBunExecutionConfig.bind(this),
+      getTestTargetArgs: this.getTestTargetArgs.bind(this),
 
       findTestByPath: this.findTestByPath.bind(this),
       findTestByName: this.findTestByName.bind(this),

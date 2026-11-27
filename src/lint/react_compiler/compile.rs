@@ -55,6 +55,7 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
         arguments_of_no_alias_methods_escape: false,
         flat_map_and_for_each_have_aliasing_signatures: is_oxlint,
         captured_variables_can_be_updated: is_oxlint,
+        member_updates_go_through_a_local: is_oxlint,
         captured_targets_with_keys_force_temporaries: is_oxlint,
         logical_assignments_are_lowered: is_oxlint,
         member_chains_have_a_limit: is_oxlint,

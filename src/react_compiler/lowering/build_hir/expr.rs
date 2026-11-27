@@ -752,20 +752,7 @@ fn lower_to_constant(builder: &mut HirBuilder, expr: &Expr) -> Result<Place, Com
         return Ok(value);
     }
     let loc = convert_loc(expr.loc);
-    let constant = build_temporary_place(builder, loc);
-    promote_temporary(builder, constant.identifier);
-    lower_value_to_temporary(
-        builder,
-        InstructionValue::StoreLocal {
-            lvalue: LValue {
-                kind: InstructionKind::Const,
-                place: constant.clone(),
-            },
-            value,
-            type_annotation: None,
-            loc,
-        },
-    )?;
+    let constant = bind_temporary(builder, InstructionKind::Const, value, loc)?;
     lower_value_to_temporary(
         builder,
         InstructionValue::LoadLocal {
@@ -773,6 +760,30 @@ fn lower_to_constant(builder: &mut HirBuilder, expr: &Expr) -> Result<Place, Com
             loc,
         },
     )
+}
+
+/// Not in upstream (oxc fe3a41582): `value` in a promoted temporary, which is declared here.
+fn bind_temporary(
+    builder: &mut HirBuilder,
+    kind: InstructionKind,
+    value: Place,
+    loc: Option<SourceLocation>,
+) -> Result<Place, CompilerError> {
+    let binding = build_temporary_place(builder, loc);
+    promote_temporary(builder, binding.identifier);
+    lower_value_to_temporary(
+        builder,
+        InstructionValue::StoreLocal {
+            lvalue: LValue {
+                kind,
+                place: binding.clone(),
+            },
+            value,
+            type_annotation: None,
+            loc,
+        },
+    )?;
+    Ok(binding)
 }
 
 fn lower_conditional(
@@ -1325,10 +1336,6 @@ fn lower_update(
     };
     match &unary.value.data {
         Data::EDot(_) | Data::EIndex(_) => {
-            let binary_op = match operation {
-                UpdateOperator::Increment => BinaryOperator::Add,
-                UpdateOperator::Decrement => BinaryOperator::Subtract,
-            };
             let member_loc = convert_loc(unary.value.loc);
             // As oxc's `lower_member_expression_for_update`: a chain of members starts at the object.
             let object = lower_expression_to_temporary(builder, member_object(&unary.value))?;
@@ -1337,22 +1344,64 @@ fn lower_update(
             let lowered_property = lowered.property;
             let prev_value = lower_value_to_temporary(builder, lowered.value)?;
 
-            let one = lower_value_to_temporary(
-                builder,
-                InstructionValue::Primitive {
-                    value: PrimitiveValue::Number(FloatValue::new(1.0)),
-                    loc: None,
-                },
-            )?;
-            let updated = lower_value_to_temporary(
-                builder,
-                InstructionValue::BinaryExpression {
-                    operator: binary_op,
-                    left: prev_value.clone(),
-                    right: one,
-                    loc: member_loc,
-                },
-            )?;
+            let through_a_local = builder
+                .environment()
+                .config
+                .member_updates_go_through_a_local;
+            let (updated, value_of_update) = if through_a_local {
+                // Not in upstream (oxc fe3a41582)
+                let local = bind_temporary(
+                    builder,
+                    InstructionKind::Let,
+                    prev_value.clone(),
+                    member_loc,
+                )?;
+                let update = match prefix {
+                    true => InstructionValue::PrefixUpdateLocal {
+                        lvalue: local.clone(),
+                        operation,
+                        value: local.clone(),
+                        loc,
+                    },
+                    false => InstructionValue::PostfixUpdateLocal {
+                        lvalue: local.clone(),
+                        operation,
+                        value: local.clone(),
+                        loc,
+                    },
+                };
+                let update = lower_value_to_temporary(builder, update)?;
+                let value_of_update = bind_temporary(builder, InstructionKind::Const, update, loc)?;
+                let updated = lower_value_to_temporary(
+                    builder,
+                    InstructionValue::LoadLocal {
+                        place: local,
+                        loc: member_loc,
+                    },
+                )?;
+                (updated, Some(value_of_update))
+            } else {
+                let one = lower_value_to_temporary(
+                    builder,
+                    InstructionValue::Primitive {
+                        value: PrimitiveValue::Number(FloatValue::new(1.0)),
+                        loc: None,
+                    },
+                )?;
+                let updated = lower_value_to_temporary(
+                    builder,
+                    InstructionValue::BinaryExpression {
+                        operator: match operation {
+                            UpdateOperator::Increment => BinaryOperator::Add,
+                            UpdateOperator::Decrement => BinaryOperator::Subtract,
+                        },
+                        left: prev_value.clone(),
+                        right: one,
+                        loc: member_loc,
+                    },
+                )?;
+                (updated, None)
+            };
 
             let new_value_place = match lowered_property {
                 MemberProperty::Literal(prop_literal) => lower_value_to_temporary(
@@ -1375,7 +1424,11 @@ fn lower_update(
                 )?,
             };
 
-            let result_place = if prefix { new_value_place } else { prev_value };
+            let result_place = match value_of_update {
+                Some(value_of_update) => value_of_update,
+                None if prefix => new_value_place,
+                None => prev_value,
+            };
             Ok(InstructionValue::LoadLocal {
                 loc: result_place.loc,
                 place: result_place,

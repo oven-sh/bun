@@ -119,6 +119,9 @@ pub struct EnvironmentConfig {
     /// reassigned after render is found by `validate_captured_reassignments`, which follows the values that a captured
     /// variable holds, and what an async function reads of them, rather than by upstream's pass.
     pub captured_variables_can_be_updated: bool,
+    /// `a.b++` and `--a[k]` update a copy of the member in a local and store the copy, and their value is a constant
+    /// of its own. Upstream stores `a.b + 1`, and the value is what was loaded or what was stored.
+    pub member_updates_go_through_a_local: bool,
     /// `({ k: a, b } = o)` where a function captures `a` goes through temporaries, as `[a, b] = o` does. Upstream
     /// assigns `b` at once and `a` not, and fails: "Expected consistent kind for destructuring". So do both for `{ a, b }`.
     pub captured_targets_with_keys_force_temporaries: bool,
@@ -259,6 +262,7 @@ impl Default for EnvironmentConfig {
             arguments_of_no_alias_methods_escape: true,
             flat_map_and_for_each_have_aliasing_signatures: false,
             captured_variables_can_be_updated: false,
+            member_updates_go_through_a_local: false,
             captured_targets_with_keys_force_temporaries: false,
             logical_assignments_are_lowered: false,
             member_chains_have_a_limit: false,

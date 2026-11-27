@@ -2167,6 +2167,7 @@ pub(crate) mod js_bundler {
             plugin: &Plugin,
             plugins: JSValue,
             bunfig_folder: JSValue,
+            sourcemap: JSValue,
         ) -> JSValue;
     }
 
@@ -2237,6 +2238,7 @@ pub(crate) mod js_bundler {
             &self,
             plugins: JSValue,
             bunfig_folder: JSValue,
+            sourcemap: JSValue,
         ) -> JSValue;
     }
 
@@ -2317,9 +2319,10 @@ pub(crate) mod js_bundler {
             &self,
             plugins: JSValue,
             bunfig_folder: JSValue,
+            sourcemap: JSValue,
         ) -> JSValue {
             jsc::mark_binding();
-            JSBundlerPlugin__loadAndResolvePluginsForServe(self, plugins, bunfig_folder)
+            JSBundlerPlugin__loadAndResolvePluginsForServe(self, plugins, bunfig_folder, sourcemap)
         }
     }
 

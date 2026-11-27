@@ -45,6 +45,7 @@ pub enum CommonStringsForRust {
     FetchOptionTls = 30,
     FetchOptionUnix = 31,
     FetchOptionVerbose = 32,
+    None = 33,
 }
 
 unsafe extern "C" {
@@ -170,5 +171,10 @@ impl<'a> CommonStrings<'a> {
     #[inline]
     pub fn write(self) -> JSValue {
         CommonStringsForRust::Write.to_js(self.global_object)
+    }
+    /// `"none"`
+    #[inline]
+    pub fn none(self) -> JSValue {
+        CommonStringsForRust::None.to_js(self.global_object)
     }
 }

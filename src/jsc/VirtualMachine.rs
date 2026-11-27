@@ -5743,7 +5743,7 @@ impl VirtualMachine {
                 );
             }
             // Note: `JSValue::for_each` takes a C-ABI fn
-            // pointer + erased ctx, so thread the captures through a struct.
+            // pointer + ctx, so thread the captures through a struct.
             struct AggCtx<'c, 'a> {
                 formatter: &'c mut crate::console_object::Formatter<'a>,
                 writer: &'c mut dyn bun_io::Write,
@@ -5755,11 +5755,9 @@ impl VirtualMachine {
             extern "C" fn agg_iter(
                 _vm: *mut crate::VM,
                 _global: &JSGlobalObject,
-                ctx: *mut c_void,
+                ctx: &mut AggCtx<'_, '_>,
                 next_value: JSValue,
             ) {
-                // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
-                let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_, '_>>(ctx) };
                 let vm = VirtualMachine::get();
                 let depth = ctx.formatter.depth.saturating_add(1);
                 let mut deeper = SetForScope::new(&mut *ctx.formatter, |f| &mut f.depth, depth);
@@ -5811,10 +5809,7 @@ impl VirtualMachine {
                 allow_side_effects,
                 printed_member: false,
             };
-            if errors
-                .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)
-                .is_err()
-            {
+            if errors.for_each(global_ref, &mut ctx, agg_iter).is_err() {
                 global_ref.clear_exception();
             }
             if ctx.printed_member || members_past_cap {

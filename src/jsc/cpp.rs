@@ -12,7 +12,7 @@
 //! return-sentinel/exception-state biconditional, and converts to
 //! [`JsResult`](crate::JsResult). `nothrow` functions are re-exported as raw `extern "C"`.
 //!
-//! Generated wrappers use raw-pointer parameter types verbatim from the C++ signature
+//! Without `[[ZIG_NONNULL]]`, raw-pointer parameter types come verbatim from the C++ signature
 //! (`*mut JSGlobalObject`, `*const u8`, …) so they compose with whatever Rust-side
 //! newtype the caller has in hand; the per-type ergonomic shims live next to the
 //! type (`JSValue::get`, `JSPromise::resolve`, …) and delegate here.

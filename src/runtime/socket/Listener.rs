@@ -6,7 +6,7 @@ use core::mem::size_of;
 use std::rc::Rc;
 
 use bun_boringssl_sys as boring_sys;
-use bun_core::{EncodedSlice, String as BunString};
+use bun_core::{CStrRef, EncodedSlice, String as BunString};
 use bun_io::JsKeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
@@ -270,10 +270,8 @@ impl Listener {
                 }
                 .into_js_wrapper(cx.global());
                 let js_value = this_value.to_js();
-                let this: *mut Listener = this_value.payload_ptr().as_ptr();
-                // SAFETY: the payload of `this_value`; every field touched below
-                // is `Cell`/`JsCell` or `&self`, so a shared borrow suffices.
-                let this_ref = unsafe { &*this };
+                let this_ref = this_value.guard();
+                let this: *mut Listener = this_ref.as_ptr();
                 // TODO: server_name is not supported on named pipes, I belive its , lets wait for
                 // someone to ask for it
 
@@ -390,10 +388,8 @@ impl Listener {
         }
         .into_js_wrapper(cx.global());
         let js_value = this_value.to_js();
-        let this: *mut Listener = this_value.payload_ptr().as_ptr();
-        // SAFETY: the payload of `this_value`; every field touched through this
-        // borrow is `Cell`/`JsCell` or `&self`.
-        let this_ref = unsafe { &*this };
+        let this_ref = this_value.guard();
+        let this: *mut Listener = this_ref.as_ptr();
         this_ref
             .group
             .init(uws::Loop::get(), None, this.cast::<c_void>());
@@ -1706,12 +1702,11 @@ impl WindowsNamedPipeListeningContext {
 /// socket. Only the fd-adopt path registers this, not the duplex wrap.
 ///
 /// # Safety
-/// `socket` is the live us_socket_t processing this ClientHello and `hostname`
-/// is NUL-terminated for the call. JS-thread only.
+/// `socket` is the live us_socket_t processing this ClientHello. JS-thread only.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn us_dispatch_socket_server_name(
     socket: *mut uws_sys::us_socket_t,
-    hostname: *const core::ffi::c_char,
+    hostname: CStrRef<'_>,
     abort_handshake: Option<&mut core::ffi::c_int>,
 ) -> *mut uws_sys::SslCtx {
     dispatch_server_name(socket, hostname, abort_handshake).cast()
@@ -1765,11 +1760,10 @@ fn decode_sni_result(
 /// `handle.resumeSNI(...)` -> `us_socket_sni_resolve()`.
 ///
 /// # Safety
-/// `socket` is the live us_socket_t processing this ClientHello and `hostname`
-/// is NUL-terminated for the call. JS-thread only.
+/// `socket` is the live us_socket_t processing this ClientHello. JS-thread only.
 extern "C" fn us_dispatch_server_name(
     _ls: *mut uws_sys::ListenSocket,
-    hostname: *const core::ffi::c_char,
+    hostname: CStrRef<'_>,
     abort_handshake: Option<&mut core::ffi::c_int>,
     socket: *mut c_void,
 ) -> *mut c_void {
@@ -1778,11 +1772,11 @@ extern "C" fn us_dispatch_server_name(
 
 fn dispatch_server_name(
     socket: *mut uws_sys::us_socket_t,
-    hostname: *const core::ffi::c_char,
+    hostname: CStrRef<'_>,
     abort_handshake: Option<&mut core::ffi::c_int>,
 ) -> *mut c_void {
     jsc::mark_binding!();
-    if socket.is_null() || hostname.is_null() {
+    if socket.is_null() {
         return core::ptr::null_mut();
     }
     let s_ref = uws_sys::us_socket_t::opaque_mut(socket);
@@ -1817,10 +1811,8 @@ fn dispatch_server_name(
         None => TLSSocket::data_get_cached(socket_handle),
     }
     .unwrap_or(JSValue::UNDEFINED);
-    // SAFETY: `hostname` is NUL-terminated per the fn contract.
-    let name = unsafe { core::ffi::CStr::from_ptr(hostname) };
     // Peer-supplied SNI bytes, decoded as Latin-1 like Node's `OneByteString`.
-    let js_name = EncodedSlice::latin1(name.to_bytes()).to_js(&global);
+    let js_name = EncodedSlice::latin1(hostname.to_cstr().to_bytes()).to_js(&global);
     let result = match callback.call(&global, this_value, &[this_value, js_name, socket_handle]) {
         Ok(v) => v,
         Err(err) => global.take_exception(err),

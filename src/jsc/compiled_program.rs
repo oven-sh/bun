@@ -2,9 +2,9 @@ use core::sync::atomic::Ordering;
 use std::collections::BTreeSet;
 
 use bun_aot::ir::generated::{AdmittedCode, ImageVerdict};
-#[cfg(bun_locked_environment)]
-use bun_core::ZBox;
 use bun_core::ffi::FfiSlice;
+#[cfg(bun_locked_environment)]
+use bun_core::{CStrRef, ZBox};
 use bun_exe_format::identity::{HostDescription, IdentityError, find_process_identity};
 use bun_options_types::standalone_path::is_bun_standalone_file_path;
 use bun_resolver::StandaloneModuleGraph;
@@ -74,8 +74,8 @@ unsafe extern "C" {
         context: *mut core::ffi::c_void,
         each: unsafe extern "C" fn(*mut core::ffi::c_void, Bytes, bool),
     );
-    fn Bun__AOT__noteFirstLoadInEarlierProcess(
-        vm: *mut crate::VM,
+    safe fn Bun__AOT__noteFirstLoadInEarlierProcess(
+        global: &JSGlobalObject,
         path: FfiSlice<'_>,
         was_synchronous: bool,
     );
@@ -103,9 +103,9 @@ unsafe extern "C" {
 #[cfg(bun_locked_environment)]
 unsafe extern "C" {
     /// ZigGlobalObject.cpp
-    fn Bun__isOptionThatCompiledCodeDoesNotTake(entry: *const core::ffi::c_char) -> bool;
+    safe fn Bun__isOptionThatCompiledCodeDoesNotTake(entry: CStrRef<'_>) -> bool;
     /// mimalloc, compiled with MI_GETENV_ALLOWED (scripts/build/deps/mimalloc.ts)
-    fn mi_is_read_from_environment(name_in_lower_case: *const core::ffi::c_char) -> bool;
+    safe fn mi_is_read_from_environment(name_in_lower_case: CStrRef<'_>) -> bool;
 }
 
 /// The program that this thread runs.
@@ -548,14 +548,7 @@ pub fn note_first_load_in_earlier_process(
     if compiled_program().is_none() {
         return;
     }
-    // SAFETY: the VM is that of this thread, and `path` outlives the call, which copies it.
-    unsafe {
-        Bun__AOT__noteFirstLoadInEarlierProcess(
-            global.vm_ptr(),
-            FfiSlice::new(path),
-            was_synchronous,
-        )
-    };
+    Bun__AOT__noteFirstLoadInEarlierProcess(global, FfiSlice::new(path), was_synchronous);
 }
 
 /// `path` names JavaScript, TypeScript, WebAssembly or a native addon that is not compiled into the executable.
@@ -908,12 +901,9 @@ fn is_never_read(entry: &core::ffi::CStr, name: &[u8]) -> bool {
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"mimalloc_"))
     {
         let name = ZBox::from_vec(name.to_ascii_lowercase());
-        // SAFETY: `name` ends with a NUL and outlives the call.
-        return !unsafe { mi_is_read_from_environment(name.as_ptr()) };
+        return !mi_is_read_from_environment(name.as_zstr().into());
     }
-    // SAFETY: `entry` ends with a NUL and outlives the call.
-    bun_core::is_never_read(name)
-        || unsafe { Bun__isOptionThatCompiledCodeDoesNotTake(entry.as_ptr()) }
+    bun_core::is_never_read(name) || Bun__isOptionThatCompiledCodeDoesNotTake(entry.into())
 }
 
 #[cfg(bun_locked_environment)]

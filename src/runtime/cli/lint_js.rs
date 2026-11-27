@@ -117,14 +117,6 @@ impl Drop for CallGuard<'_> {
 }
 
 unsafe extern "C" {
-    fn Bun__REPL__evaluate(
-        global: *const JSGlobalObject,
-        source: *const u8,
-        source_len: usize,
-        filename: *const u8,
-        filename_len: usize,
-        exception: *mut JSValue,
-    ) -> JSValue;
     /// src/jsc/bindings/LintNodes.cpp
     safe fn Bun__Lint__nodeFunctions(global: &JSGlobalObject) -> JSValue;
     /// src/jsc/bindings/LintHost.cpp. Drops every span that native code holds.
@@ -230,18 +222,7 @@ fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
     source.extend_from_slice(b"\n})");
     let name = b"bun-lint-plugins.js";
     let mut exception = JSValue::UNDEFINED;
-    // SAFETY: `global` belongs to this thread's VM, whose lock is held, and the slices and `exception` outlive the
-    // call.
-    let program = unsafe {
-        Bun__REPL__evaluate(
-            global,
-            source.as_ptr(),
-            source.len(),
-            name.as_ptr(),
-            name.len(),
-            &raw mut exception,
-        )
-    };
+    let program = bun_jsc::cpp::Bun__REPL__evaluate(global, &source, name, &mut exception);
     if !exception.is_undefined() {
         return Err(message_of(global, exception));
     }

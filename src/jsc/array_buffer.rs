@@ -76,17 +76,6 @@ unsafe extern "C" {
         len: usize,
         out: &mut *mut u8,
     ) -> JSValue;
-    fn Bun__createUint8ArrayForCopy(
-        global: *const JSGlobalObject,
-        ptr: *const c_void,
-        len: usize,
-        buffer: bool,
-    ) -> JSValue;
-    fn Bun__createArrayBufferForCopy(
-        global: *const JSGlobalObject,
-        ptr: *const c_void,
-        len: usize,
-    ) -> JSValue;
     fn JSArrayBuffer__fromDefaultAllocator(
         global: *const JSGlobalObject,
         ptr: *mut u8,
@@ -271,36 +260,20 @@ impl ArrayBuffer {
     pub fn create<const KIND: JSType>(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
         crate::mark_binding!();
         match KIND {
-            // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes
-            // ptr/len come from a live slice, copied by callee.
-            JSType::Uint8Array => crate::host_fn::from_js_host_call(global, || unsafe {
-                Bun__createUint8ArrayForCopy(global, bytes.as_ptr().cast(), bytes.len(), false)
-            }),
-            // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes
-            // ptr/len come from a live slice, copied by callee.
-            JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || unsafe {
-                Bun__createArrayBufferForCopy(global, bytes.as_ptr().cast(), bytes.len())
-            }),
+            JSType::Uint8Array => crate::cpp::Bun__createUint8ArrayForCopy(global, bytes, false),
+            JSType::ArrayBuffer => crate::cpp::Bun__createArrayBufferForCopy(global, bytes),
             _ => panic!("ArrayBuffer::create: KIND not implemented"),
         }
     }
 
     pub fn create_buffer(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
         crate::mark_binding!();
-        // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes ptr/len
-        // come from a live slice, copied by callee.
-        crate::host_fn::from_js_host_call(global, || unsafe {
-            Bun__createUint8ArrayForCopy(global, bytes.as_ptr().cast(), bytes.len(), true)
-        })
+        crate::cpp::Bun__createUint8ArrayForCopy(global, bytes, true)
     }
 
     pub fn create_uint8_array(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
         crate::mark_binding!();
-        // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes ptr/len
-        // come from a live slice, copied by callee.
-        crate::host_fn::from_js_host_call(global, || unsafe {
-            Bun__createUint8ArrayForCopy(global, bytes.as_ptr().cast(), bytes.len(), false)
-        })
+        crate::cpp::Bun__createUint8ArrayForCopy(global, bytes, false)
     }
 
     pub fn alloc<'a, const KIND: JSType>(

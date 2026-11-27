@@ -1036,8 +1036,7 @@ impl Request {
                             // value, even if `cloneThis` returns null — so a later arg can't
                             // repopulate headers from a different source.
                             let h = headers.clone_this(cx.global())?;
-                            // SAFETY: clone_this returns a +1 ref FetchHeaders.
-                            req.headers.set(h.map(|p| unsafe { HeadersRef::adopt(p) }));
+                            req.headers.set(h);
                             fields.insert(Fields::Headers);
                         }
                     }

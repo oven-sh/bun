@@ -1,7 +1,7 @@
 //! DNS resolver — JSC bindings.
 
 use core::cell::Cell;
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_int, c_void};
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use core::ptr;
@@ -177,8 +177,8 @@ pub(crate) mod lib_uv_backend {
                 this.vm().uv_loop(),
                 request.cast(),
                 Some(on_raw_libuv_complete),
-                host.as_ptr().cast::<c_char>(),
-                port_z.as_ptr().cast::<c_char>(),
+                host.as_ptr(),
+                port_z.as_ptr(),
                 hints
                     .as_ref()
                     .map_or(ptr::null(), |h| (h as *const AddrInfo).cast()),
@@ -1515,16 +1515,15 @@ pub(crate) mod internal {
         prefetch(loop_.cast::<Loop>(), host, port);
     }
 
-    /// Writes a ref to `request`, for `Bun__addrinfo_freeRequest`. SAFETY: `loop_` is live; `host` is null or NUL-terminated.
+    /// Writes a ref to `request`, for `Bun__addrinfo_freeRequest`. SAFETY: `loop_` is live.
     #[unsafe(no_mangle)]
     unsafe extern "C" fn Bun__addrinfo_get(
         loop_: *mut Loop,
-        host: *const c_char,
+        host: Option<bun_core::CStrRef<'_>>,
         port: u16,
         request: &mut MaybeUninit<*const Request>,
     ) -> c_int {
-        // SAFETY: caller passes NUL-terminated string.
-        let host = (!host.is_null()).then(|| unsafe { bun_core::ffi::cstr(host) }.to_bytes());
+        let host = host.map(|host| host.to_cstr().to_bytes());
         let mut is_cache_hit = false;
         let req = getaddrinfo(loop_, host, port, Some(&mut is_cache_hit)).unwrap();
         request.write(Arc::into_raw(req));

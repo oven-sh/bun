@@ -11,7 +11,7 @@ pub trait BodyResponse: Sized + 'static {
         H: Fn(*mut U, &mut Self, &[u8], bool) + Copy + 'static;
     fn on_aborted<U, H>(&mut self, handler: H, ctx: *mut U)
     where
-        H: Fn(*mut U, &mut Self) + Copy + 'static;
+        H: Fn(*mut U, AnyResponse) + Copy + 'static;
     fn to_any(&mut self) -> AnyResponse;
 }
 
@@ -26,7 +26,7 @@ impl<const SSL: bool> BodyResponse for Response<SSL> {
     #[inline]
     fn on_aborted<U, H>(&mut self, handler: H, ctx: *mut U)
     where
-        H: Fn(*mut U, &mut Self) + Copy + 'static,
+        H: Fn(*mut U, AnyResponse) + Copy + 'static,
     {
         Response::<SSL>::on_aborted(self, handler, ctx)
     }
@@ -56,7 +56,7 @@ impl<H: BodyReaderHandler> BodyReaderMixin<H> {
             body: Vec::new(),
         }));
         resp.on_data(Self::on_data::<R>, this);
-        resp.on_aborted(Self::on_aborted::<R>, this);
+        resp.on_aborted(Self::on_aborted, this);
     }
 
     fn on_data<R: BodyResponse>(this: *mut Self, r: &mut R, chunk: &[u8], last: bool) {
@@ -79,7 +79,7 @@ impl<H: BodyReaderHandler> BodyReaderMixin<H> {
         }
     }
 
-    fn on_aborted<R>(this: *mut Self, _r: &mut R) {
+    fn on_aborted(this: *mut Self, _: AnyResponse) {
         // SAFETY: the box from `read_body`; no callback follows an abort.
         unsafe { bun_core::heap::destroy(this) };
     }

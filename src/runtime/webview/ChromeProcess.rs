@@ -18,7 +18,7 @@
 //! and the write path can share it.
 //! Windows (no inheritable sockets): two uv_pipe()s driven here instead, see [`PipeEvent`] and `Bun__Chrome__writePipe`.
 
-use core::ffi::{CStr, c_char};
+use core::ffi::CStr;
 #[cfg(windows)]
 use core::sync::atomic::AtomicU32;
 use core::sync::atomic::{AtomicI32, Ordering};
@@ -136,14 +136,12 @@ extern "C" fn Bun__Chrome__retire() {
 /// Returns the parent's socketpair fd (POSIX, owned by usockets from then on), 0 (Windows), or -1 on failure.
 ///
 /// # Safety
-/// `user_data_dir` and `path` must each be null or point to a valid
-/// NUL-terminated string. `extra_argv` must be null or point to
-/// `extra_argv_len` valid NUL-terminated string pointers.
+/// `extra_argv` must be null or point to `extra_argv_len` valid NUL-terminated string pointers.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__Chrome__ensure(
     global: &JSGlobalObject,
-    user_data_dir: *const c_char,   // ?[*:0]const u8
-    path: *const c_char,            // ?[*:0]const u8
+    user_data_dir: Option<CStrRef<'_>>,
+    path: Option<CStrRef<'_>>,
     extra_argv: *const CStrRef<'_>, // ?[*]const [*:0]const u8
     extra_argv_len: u32,
     stdout_inherit: bool,
@@ -161,22 +159,10 @@ unsafe extern "C" fn Bun__Chrome__ensure(
             unsafe { core::slice::from_raw_parts(extra_argv, extra_argv_len as usize) }
         };
         let vm = global.bun_vm();
-        let user_data_dir = if user_data_dir.is_null() {
-            None
-        } else {
-            // SAFETY: caller passes a valid NUL-terminated string when non-null; null is handled above.
-            Some(unsafe { bun_core::ffi::cstr(user_data_dir) })
-        };
-        let path = if path.is_null() {
-            None
-        } else {
-            // SAFETY: caller passes a valid NUL-terminated string when non-null; null is handled above.
-            Some(unsafe { bun_core::ffi::cstr(path) })
-        };
         match spawn(
             vm,
-            user_data_dir,
-            path,
+            user_data_dir.map(CStrRef::to_cstr),
+            path.map(CStrRef::to_cstr),
             extra,
             stdout_inherit,
             stderr_inherit,

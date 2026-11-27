@@ -1227,6 +1227,14 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
         }
     }
 
+    /// As [`JsLocal::as_class_ref`], for an object whose class is known.
+    pub fn guard(self) -> WrapperGuard<'a, T> {
+        const { assert!(T::SHARED_THIS) };
+        // SAFETY: a `JsWrapper` is only used from a frame that holds its cell, which holds the payload.
+        // No member takes `&mut self`.
+        unsafe { WrapperGuard::from_parts(self.to_js(), self.payload_ptr()) }
+    }
+
     /// # Safety
     /// Nothing can reach the payload mutably for `'a`, and the caller's frame holds the cell.
     #[doc(hidden)]

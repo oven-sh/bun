@@ -5,7 +5,6 @@
 
 use crate::ComptimeStringMapExt as _;
 use core::cell::{Cell, RefCell};
-use core::ffi::c_void;
 use core::mem::ManuallyDrop;
 
 use crate as jsc;
@@ -992,11 +991,9 @@ impl<'a> TablePrinter<'a> {
                 extern "C" fn callback<const C: bool>(
                     _: *mut jsc::VM,
                     _: &JSGlobalObject,
-                    ctx: *mut c_void,
+                    ctx: &mut Ctx<'_, '_>,
                     value: JSValue,
                 ) {
-                    // SAFETY: ctx points to the stack `Ctx` above.
-                    let ctx = unsafe { bun_ptr::callback_ctx::<Ctx<'_, '_>>(ctx) };
                     // Once a cell failed, a JS exception may be pending (or
                     // the VM terminating); don't re-enter user code for the
                     // remaining elements.
@@ -1014,11 +1011,7 @@ impl<'a> TablePrinter<'a> {
                     }
                     ctx.idx += 1;
                 }
-                tabular_data.for_each_with_context(
-                    global_object,
-                    (&raw mut ctx).cast::<c_void>(),
-                    callback::<ENABLE_ANSI_COLORS>,
-                )?;
+                tabular_data.for_each(global_object, &mut ctx, callback::<ENABLE_ANSI_COLORS>)?;
                 if let Some(err) = ctx.err {
                     return Err(err);
                 }
@@ -2740,14 +2733,9 @@ pub mod formatter {
         pub(crate) extern "C" fn for_each(
             _: *mut jsc::VM,
             global_object: &JSGlobalObject,
-            ctx: *mut c_void,
+            this: &mut Self,
             next_value: JSValue,
         ) {
-            // SAFETY: ctx points to the stack-allocated `Self` passed by the caller via the C forEach callback.
-            let Some(ctx) = (unsafe { ctx.cast::<Self>().as_mut() }) else {
-                return;
-            };
-            let this = ctx;
             if this.formatter.failed {
                 return;
             }
@@ -2837,13 +2825,9 @@ pub mod formatter {
         pub(crate) extern "C" fn for_each(
             _: *mut jsc::VM,
             global_object: &JSGlobalObject,
-            ctx: *mut c_void,
+            this: &mut Self,
             next_value: JSValue,
         ) {
-            // SAFETY: ctx points to the stack-allocated `Self` passed by the caller via the C forEach callback.
-            let Some(this) = (unsafe { ctx.cast::<Self>().as_mut() }) else {
-                return;
-            };
             if this.formatter.failed {
                 return;
             }
@@ -3098,17 +3082,12 @@ pub mod formatter {
 
         pub(crate) extern "C" fn for_each(
             global_this: &JSGlobalObject,
-            ctx_ptr: *mut c_void,
+            ctx: &mut Self,
             key: &EncodedSlice,
             value: JSValue,
             is_symbol: bool,
             is_private_symbol: bool,
         ) {
-            // SAFETY: ctx_ptr points to the stack-allocated `Self` passed by the caller via the C forEach callback.
-            let Some(ctx) = (unsafe { ctx_ptr.cast::<Self>().as_mut() }) else {
-                return;
-            };
-
             let Some(tag) =
                 Self::for_each_prelude(ctx, global_this, key, value, is_symbol, is_private_symbol)
             else {
@@ -4447,7 +4426,7 @@ pub mod formatter {
                     };
                     value.for_each_property_non_indexed(
                         global_this,
-                        (&raw mut iter).cast::<c_void>(),
+                        &mut iter,
                         PropertyIteratorCtx::<C>::for_each,
                     )?;
                     if self.failed {
@@ -4582,7 +4561,7 @@ pub mod formatter {
                     };
                     value.for_each(
                         global_this,
-                        (&raw mut iter).cast::<c_void>(),
+                        &mut iter,
                         MapIteratorCtx::<C, false, true>::for_each,
                     )?;
                     let count = iter.count;
@@ -4600,7 +4579,7 @@ pub mod formatter {
                     };
                     value.for_each(
                         global_this,
-                        (&raw mut iter).cast::<c_void>(),
+                        &mut iter,
                         MapIteratorCtx::<C, false, false>::for_each,
                     )?;
                     if iter.formatter.failed {
@@ -4644,7 +4623,7 @@ pub mod formatter {
                     };
                     value.for_each(
                         global_this,
-                        (&raw mut iter).cast::<c_void>(),
+                        &mut iter,
                         MapIteratorCtx::<C, true, true>::for_each,
                     )?;
                     let count = iter.count;
@@ -4663,7 +4642,7 @@ pub mod formatter {
                     };
                     value.for_each(
                         global_this,
-                        (&raw mut iter).cast::<c_void>(),
+                        &mut iter,
                         MapIteratorCtx::<C, true, false>::for_each,
                     )?;
                     let count = iter.count;
@@ -4729,11 +4708,7 @@ pub mod formatter {
                         writer: writer_,
                         is_first: true,
                     };
-                    value.for_each(
-                        global_this,
-                        (&raw mut iter).cast::<c_void>(),
-                        SetIteratorCtx::<C, true>::for_each,
-                    )?;
+                    value.for_each(global_this, &mut iter, SetIteratorCtx::<C, true>::for_each)?;
                     let is_first = iter.is_first;
                     if iter.formatter.failed {
                         return Ok(());
@@ -4747,11 +4722,7 @@ pub mod formatter {
                         writer: writer_,
                         is_first: true,
                     };
-                    value.for_each(
-                        global_this,
-                        (&raw mut iter).cast::<c_void>(),
-                        SetIteratorCtx::<C, false>::for_each,
-                    )?;
+                    value.for_each(global_this, &mut iter, SetIteratorCtx::<C, false>::for_each)?;
                     if iter.formatter.failed {
                         return Ok(());
                     }
@@ -5346,19 +5317,19 @@ pub mod formatter {
             if ordered_properties {
                 value.for_each_property_ordered(
                     global_this,
-                    (&raw mut iter).cast::<c_void>(),
+                    &mut iter,
                     PropertyIteratorCtx::<C>::for_each,
                 )?;
             } else if call_own_getters {
                 value.for_each_property_calling_own_getters(
                     global_this,
-                    (&raw mut iter).cast::<c_void>(),
+                    &mut iter,
                     PropertyIteratorCtx::<C>::for_each,
                 )?;
             } else {
                 value.for_each_property(
                     global_this,
-                    (&raw mut iter).cast::<c_void>(),
+                    &mut iter,
                     PropertyIteratorCtx::<C>::for_each,
                 )?;
             }

@@ -43,13 +43,13 @@ To run manually:
 
 ### Parameters
 
-- **[[ZIG_NONNULL]]** - Mark pointer parameters as non-nullable:
+- **[[ZIG_NONNULL]]** - Mark a pointer that is never null and is not kept after the call: to one value, or to as many as the `size_t` after it:
   ```cpp
-  [[ZIG_EXPORT(nothrow)]] void process([[ZIG_NONNULL]] JSGlobalObject* globalThis,
-                                        [[ZIG_NONNULL]] JSValue* values,
+  [[ZIG_EXPORT(nothrow)]] void process(JSC::JSGlobalObject* globalThis,
+                                        [[ZIG_NONNULL]] JSC::EncodedJSValue* values,
                                         size_t count) { ... }
   ```
-  Generates: `pub extern fn process(globalThis: *jsc.JSGlobalObject, values: [*]const jsc.JSValue) void;`
+  Generates: `pub fn process(globalThis: &JSGlobalObject, values: &mut [JSValue])`
 
 */
 
@@ -388,7 +388,7 @@ type ExportTag = "check_slow" | "zero_is_throw" | "false_is_throw" | "null_is_th
 // `JSGlobalObject__hasException` ctor asserts.
 //
 // Parameter and return types are emitted as raw C-ABI Rust types (pointers stay
-// `*mut`/`*const`, no `&T` upgrade) so the wrappers compose with whatever
+// `*mut`/`*const` unless `[[ZIG_NONNULL]]`) so the wrappers compose with whatever
 // newtypes the per-type ergonomic shims (`JSValue::get`, `JSPromise::resolve`,
 // …) hold; those shims forward into `crate::cpp::*`.
 
@@ -595,14 +595,15 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
   const rawParams = fn.parameters.map(p => `${rustIdent(p.name)}: ${generateRustType(p.type, null)}`).join(", ");
   rustRaw.push(`    pub fn ${fn.name}(${rawParams})${ret === "()" ? "" : ` -> ${ret}`};`);
 
-  // Compute wrapper parameter list: opaque-ZST handle pointers become `&T`;
+  // Compute wrapper parameter list: opaque-ZST handle and `[[ZIG_NONNULL]]` pointers become references;
   // everything else passes through verbatim. The wrapper is `pub fn` (safe)
   // iff no raw pointer survives — otherwise the caller is still responsible
   // for the pointer's validity invariants and the wrapper stays `unsafe fn`.
   let needsUnsafe = false;
   const wrapParams: string[] = [];
   const callArgs: string[] = [];
-  for (const p of fn.parameters) {
+  for (let i = 0; i < fn.parameters.length; i++) {
+    const p = fn.parameters[i];
     const ident = rustIdent(p.name);
     const handle = opaqueHandleRustType(p.type);
     if (handle) {
@@ -612,6 +613,16 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
           ? `core::ptr::from_ref(${ident})`
           : `core::ptr::from_ref(${ident}).cast_mut()`,
       );
+    } else if (p.type.type === "pointer" && p.type.isNonNull) {
+      const { child, isConst, isMany, position } = p.type;
+      const isBytes = isMany && child.type === "named" && (child.name === "void" || child.name === "char");
+      const pointee = isBytes ? "u8" : generateRustType(child, p.type);
+      if (pointee === "core::ffi::c_void") appendError(position, "ZIG_NONNULL needs a type from rustSharedTypes");
+      if (!isMany && ["u8", "i8", "u16", "core::ffi::c_char"].includes(pointee))
+        appendError(position, "ZIG_NONNULL on characters needs a size_t after it");
+      wrapParams.push(`${ident}: ${isConst ? "&" : "&mut "}${isMany ? `[${pointee}]` : pointee}`);
+      callArgs.push(isMany ? `${ident}.${isConst ? "as_ptr" : "as_mut_ptr"}().cast(), ${ident}.len()` : ident);
+      if (isMany) i++;
     } else if (p.type.type === "pointer" || p.type.type === "fn") {
       needsUnsafe = true;
       wrapParams.push(`${ident}: ${generateRustType(p.type, null)}`);
@@ -626,7 +637,7 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
   const callArgsStr = callArgs.join(", ");
 
   if (fn.tag === "nothrow") {
-    // No scope needed. If every param is by-value or `&OpaqueHandle`, emit a
+    // No scope needed. If every param is by-value or a reference, emit a
     // safe `pub fn`; otherwise the raw extern is already an `unsafe fn` with
     // the right signature, so re-export it directly.
     if (needsUnsafe) {
@@ -636,7 +647,7 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
         RUST_ALLOW,
         `#[inline]`,
         `pub fn ${fn.name}(${wrapParamsStr})${ret === "()" ? "" : ` -> ${ret}`} {`,
-        `    // SAFETY: \`[[ZIG_EXPORT(nothrow)]]\` extern; ref args are opaque-ZST handles valid for the call.`,
+        `    // SAFETY: \`[[ZIG_EXPORT(nothrow)]]\` extern; ref args are valid for the call.`,
         `    unsafe { raw::${fn.name}(${callArgsStr}) }`,
         `}`,
       );
@@ -677,7 +688,7 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
       `#[inline]`,
       `pub ${safeKw}fn ${fn.name}(${wrapParamsStr}) -> crate::JsResult<${ret}> {`,
       `    crate::top_scope!(__scope, ${gname});`,
-      `    // SAFETY: \`[[ZIG_EXPORT(check_slow)]]\` extern; ref args are opaque-ZST handles valid for the call;`,
+      `    // SAFETY: \`[[ZIG_EXPORT(check_slow)]]\` extern; ref args are valid for the call;`,
       `    // any raw-pointer args are forwarded under the wrapper's own \`unsafe fn\` contract.`,
       `    let __r = unsafe { raw::${fn.name}(${callArgsStr}) };`,
       `    __scope.return_if_exception()?;`,
@@ -714,7 +725,7 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
     `#[inline]`,
     `pub ${safeKw}fn ${fn.name}(${wrapParamsStr}) -> crate::JsResult<${okType}> {`,
     `    crate::validation_scope!(__scope, ${gname});`,
-    `    // SAFETY: \`[[ZIG_EXPORT(${fn.tag})]]\` extern; ref args are opaque-ZST handles valid for the call;`,
+    `    // SAFETY: \`[[ZIG_EXPORT(${fn.tag})]]\` extern; ref args are valid for the call;`,
     `    // any raw-pointer args are forwarded under the wrapper's own \`unsafe fn\` contract.`,
     `    let __v = unsafe { raw::${fn.name}(${callArgsStr}) };`,
     `    __scope.assert_exception_presence_matches(${errCond});`,

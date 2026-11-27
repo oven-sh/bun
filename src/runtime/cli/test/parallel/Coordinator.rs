@@ -93,7 +93,7 @@ impl ChildrenOfWorkers {
             field.and_then(|field| bun_core::fmt::parse_int::<i64>(field, 10).ok())
         };
         let read = |pid: &[u8], file: &[u8]| {
-            let path = [b"/proc/", pid, b"/", file].concat();
+            let path = bun_paths::Path::from_parts(&[b"/proc", pid, file]);
             bun_sys::File::read_from(bun_sys::Fd::cwd(), &path).ok()
         };
         let mut iterator = bun_sys::dir_iterator::iterate(processes.fd());
@@ -262,7 +262,7 @@ impl<'a> Coordinator<'a> {
             for (idx, running_ms) in &running {
                 bun_core::pretty_errorln!(
                     "  {} <d>({}s)<r>",
-                    bstr::BStr::new(self.rel_path(*idx)),
+                    bstr::BStr::new(self.rel_path(*idx).as_bytes()),
                     running_ms / 1000
                 );
             }
@@ -270,7 +270,10 @@ impl<'a> Coordinator<'a> {
             if not_started > 0 {
                 bun_core::pretty_errorln!("{} file(s) had not started:", not_started);
                 for idx in self.schedule.queued() {
-                    bun_core::pretty_errorln!("  {}", bstr::BStr::new(self.rel_path(idx)));
+                    bun_core::pretty_errorln!(
+                        "  {}",
+                        bstr::BStr::new(self.rel_path(idx).as_bytes())
+                    );
                 }
             }
             Output::flush();
@@ -377,8 +380,8 @@ impl<'a> Coordinator<'a> {
         }
     }
 
-    fn rel_path(&self, file_idx: usize) -> &[u8] {
-        bun_paths::resolve_path::relative(
+    fn rel_path(&self, file_idx: usize) -> bun_paths::Path {
+        bun_paths::Path::relative(
             bun_paths::fs::FileSystem::instance().top_level_dir(),
             self.schedule.path(file_idx),
         )
@@ -400,7 +403,7 @@ impl<'a> Coordinator<'a> {
             header,
             "\n{}{}:\n",
             bstr::BStr::new(file_prefix),
-            bstr::BStr::new(self.rel_path(file_idx))
+            bstr::BStr::new(self.rel_path(file_idx).as_bytes())
         );
         let _ = Output::error_writer().write_all(&header);
     }
@@ -676,7 +679,7 @@ impl<'a> Coordinator<'a> {
     fn print_unfinished(&self, file_idx: usize, why: core::fmt::Arguments<'_>) {
         bun_core::pretty_error!(
             "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
-            bstr::BStr::new(self.rel_path(file_idx)),
+            bstr::BStr::new(self.rel_path(file_idx).as_bytes()),
             why,
         );
     }
@@ -710,7 +713,8 @@ impl<'a> Coordinator<'a> {
         );
         let sweep_reason = match phase {
             Phase::Running { file, .. } => {
-                let path = bstr::BStr::new(self.rel_path(file));
+                let path = self.rel_path(file);
+                let path = bstr::BStr::new(path.as_bytes());
                 bun_core::pretty_error!("while running <b>{}<r>", path);
                 "aborted: worker panicked"
             }

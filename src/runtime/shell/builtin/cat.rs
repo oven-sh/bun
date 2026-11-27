@@ -69,7 +69,10 @@ impl Cat {
             return Builtin::done(interp, cmd, 0);
         };
         match shell_openat(Builtin::cwd(interp, cmd), path, bun_sys::O::RDONLY, 0) {
-            Ok(fd) => Self::read(interp, cmd, &IOReader::init(fd, interp.event_loop), idx + 1),
+            Ok(fd) => {
+                let reader = IOReader::init(bun_sys::File::from_fd(fd), interp.event_loop);
+                Self::read(interp, cmd, &reader, idx + 1)
+            }
             Err(e) => Builtin::finish(interp, cmd, IoKind::Stderr, &Kind::Cat.task_error(&e), 1),
         }
     }

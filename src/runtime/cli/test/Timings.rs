@@ -149,12 +149,9 @@ impl Timings {
     }
 
     fn key_for(abs_path: &[u8]) -> Vec<u8> {
-        let rel = bun_paths::resolve_path::relative(FileSystem::get().top_level_dir(), abs_path);
-        let mut key = rel.to_vec();
-        if cfg!(windows) {
-            bun_paths::resolve_path::platform_to_posix_in_place(&mut key[..]);
-        }
-        key
+        bun_paths::Path::relative(FileSystem::get().top_level_dir(), abs_path)
+            .into_portable()
+            .to_vec()
     }
 
     /// Recorded duration for a test file, if the table has one.
@@ -317,15 +314,14 @@ impl Timings {
 
         let mut tmp: Vec<u8> = self.path.to_vec();
         let _ = write!(&mut tmp, ".{}.tmp", std::process::id());
-        let tmp_z = bun_core::ZBox::from_vec(tmp);
+        let tmp_z = bun_sys::UnlinkOnDrop::new(Fd::cwd(), bun_core::ZBox::from_vec(tmp));
         let dest_z = bun_core::ZBox::from_bytes(&self.path);
         let flags =
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC;
         let result = File::make_open(tmp_z.as_bytes(), flags, 0o666)
             .and_then(|f| f.write_all(&out))
-            .and_then(|()| bun_sys::renameat(Fd::cwd(), &tmp_z, Fd::cwd(), &dest_z));
+            .and_then(|()| tmp_z.rename_to(Fd::cwd(), &dest_z));
         if let Err(err) = result {
-            let _ = bun_sys::unlinkat(Fd::cwd(), &tmp_z);
             Output::err(
                 crate::Error::WriteFailed,
                 "Failed to write --timings file {}\n{}",

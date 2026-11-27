@@ -7,7 +7,7 @@ const js = { capability: "js", throws: true } as const;
 export const MySQLQuery = b.class({
   rustPath: "crate::mysql::js_my_sql_query::JSMySQLQuery",
   refCounted: true,
-  finalize: true,
+  thisValue: "this_value",
   estimatedSize: true,
   /** As for MySQLConnection. */
   types: [table.viewType("$Bindgen.MySQLQuery")],

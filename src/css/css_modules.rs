@@ -35,9 +35,8 @@ impl<'a> CssModule<'a> {
                     if let Some(root) = project_root {
                         if bun_paths::is_absolute(root) {
                             alloced = true;
-                            break 'source bump.alloc_slice_copy(
-                                bun_paths::resolve_path::relative(root, path.as_ref()),
-                            );
+                            let relative = bun_paths::Path::relative(root, path.as_ref());
+                            break 'source bump.alloc_slice_copy(&relative);
                         }
                     }
                     break 'source path.as_ref();

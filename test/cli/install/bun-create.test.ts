@@ -871,6 +871,45 @@ describe.concurrent("template given as a path", () => {
     expect(exitCode).toBe(1);
   });
 
+  it.each([".\\templates", "<dir>\\templates"])("finds a template in BUN_CREATE_DIR=%s", async value => {
+    using dir = tempDir("create-dir-backslash", { "templates/tmpl/index.js": "hi" });
+    const root = String(dir);
+
+    const { err, exitCode } = await create(root, ["tmpl", "out", "--no-git", "--no-install"], {
+      BUN_CREATE_DIR: value.replace("<dir>", () => root),
+      BUN_CONFIG_REGISTRY: "http://127.0.0.1:1/",
+    });
+
+    expect(err).not.toContain("error:");
+    expect(await tree(join(root, "out"))).toEqual(await tree(join(root, "templates", "tmpl")));
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    ["./group\\tmpl", "bun-create/group/tmpl", ""],
+    ["<dir>/bun-create\\group\\tmpl", "bun-create/group/tmpl", ""],
+    ...(isPosix
+      ? [
+          ["./group\\tmpl", "bun-create/group\\tmpl", ""],
+          ["group\\tmpl", "home/.bun-create/group/tmpl", ".bun-create/group\\tmpl"],
+          ["\\<dir>/tmpl", "tmpl", ""],
+        ]
+      : []),
+  ])("finds the template %s in %s", async (name, folder, planted) => {
+    using dir = tempDir("create-name-backslash", {
+      [`${folder}/index.js`]: "hi",
+      ...(planted ? { [`${planted}/planted.js`]: "" } : {}),
+    });
+    const root = String(dir);
+
+    const args = [name.replace("<dir>", () => root).replace("\\/", "\\"), "o\\ut", "--no-git", "--no-install"];
+    const { err, exitCode } = await create(root, args, { GITHUB_API_DOMAIN: "127.0.0.1:1", HOME: join(root, "home") });
+
+    expect(err).not.toContain("error:");
+    expect(await tree(join(root, "o", "ut"))).toEqual({ "index.js": "hi" });
+    expect(exitCode).toBe(0);
+  });
+
   // A path on Windows holds more than a command line.
   it.skipIf(!isPosix).each(["", "a/", "a@", "@a/", "./"])(
     "refuses a template name longer than a path: %p and 5000 bytes",

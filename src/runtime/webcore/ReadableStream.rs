@@ -844,9 +844,7 @@ pub struct NewSource<C: SourceContext> {
     /// [`JsRef::upgrade`]d to `Strong` in [`Self::increment_count`] while a
     /// native I/O ref is held (FileReader `io_ref`), and
     /// [`JsRef::downgrade`]d back to `Weak` in [`Self::decrement_count`] when
-    /// only the wrapper's own ref remains. [`Self::finalize`] flips it to
-    /// `Finalized` so [`Self::on_close`] reads `None` instead of a
-    /// dead-but-unswept cell.
+    /// only the wrapper's own ref remains.
     pub this_jsvalue: JsCell<jsc::JsRef>,
     /// The producer's native ref does not root the wrapper ([`Self::unroot_wrapper`]).
     pub wrapper_unrooted: Cell<bool>,
@@ -915,7 +913,9 @@ macro_rules! source_context_codegen {
             source: ::bun_ptr::RefPtr<$crate::webcore::readable_stream::NewSource<Self>>,
             global: &$crate::webcore::jsc::JSGlobalObject,
         ) -> ::bun_jsc::WrapperGuard<'_, $crate::webcore::readable_stream::NewSource<Self>> {
-            $crate::generated_bindgen::readable_stream::$gen::wrap(source, global)
+            let source = $crate::generated_bindgen::readable_stream::$gen::wrap(source, global);
+            source.set_js_ref_weak();
+            source
         }
         #[inline]
         fn js_pending_promise_set_cached(
@@ -1165,7 +1165,6 @@ impl<C: SourceContext> NewSource<C> {
         cx: &'a bun_jsc::JsThread<'_>,
     ) -> jsc::WrapperGuard<'a, Self> {
         let this = C::js_wrap(this, cx.global());
-        this.this_jsvalue.set(jsc::JsRef::init_weak(this.to_js()));
         if let Some(context) = cx.vm().as_context_that_stops_early(cx.context()) {
             // SAFETY: the wrapper just made owns this heap allocation; the handle leaves its
             // context when this is dropped.
@@ -1267,7 +1266,6 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn finalize(&self) {
-        self.this_jsvalue.with_mut(|r| r.finalize());
         // The wrapper's ref, released after this, keeps the count > 0 across the refs this drops.
         if self.ref_count.get() > 1 {
             self.context.wrapper_finalized();

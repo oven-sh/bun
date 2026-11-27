@@ -1,5 +1,5 @@
 import { RedisClient } from "bun";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { isIPv6, isWindows, tls as localhostTls, tempDir } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -345,4 +345,140 @@ describe("RedisClient tls.serverName", () => {
       expect(servernames).toEqual(["agent1"]);
     });
   });
+});
+
+describe("RedisClient tls.checkServerIdentity", () => {
+  const agent1 = { key: serverKey, cert: serverCert };
+  const refusal = () => Object.assign(new Error("refused"), { code: "PIN" });
+
+  // `localhost` is dialed on both families. Only one may answer, or the first connection can be the one that is dropped.
+  const withIPv4Server = <T>(fn: (port: number, server: tls.Server) => Promise<T>) =>
+    withServer(agent1, fn, "127.0.0.1");
+
+  /** Resolves with the bytes the server read from its first connection, once that has closed. */
+  function bytesOfFirstConnection(server: tls.Server): Promise<number> {
+    let bytes = 0;
+    server.once("secureConnection", socket => socket.on("data", chunk => (bytes += chunk.length)));
+    return once(server, "connection").then(
+      ([socket]) => new Promise(resolve => socket.once("close", () => resolve(bytes))),
+    );
+  }
+
+  test.each<[string, () => any, string]>([
+    ["returns undefined", () => undefined, "PONG"],
+    ["returns an Error", refusal, "PIN"],
+    ["is async", async () => undefined, "ERR_INVALID_RETURN_VALUE"],
+  ])("replaces the name check when it %s", async (_, verdict, expected) => {
+    await withIPv4Server(async (port, server) => {
+      const bytes = bytesOfFirstConnection(server);
+      const calls: string[][] = [];
+      const checkServerIdentity = (hostname: string, cert: tls.PeerCertificate) => {
+        calls.push([hostname, cert.subject.CN as string]);
+        return verdict();
+      };
+      expect(await ping(`rediss://localhost:${port}`, { ca, checkServerIdentity })).toBe(expected);
+      expect({ calls, sent: (await bytes) > 0 }).toEqual({
+        calls: [["localhost", "agent1"]],
+        sent: expected === "PONG",
+      });
+    });
+  });
+
+  test.each<[unknown]>([[new Error("thrown")], ["text"], [undefined]])(
+    "throws %p: connect(), the command and onclose get it",
+    async thrown => {
+      await withServer(agent1, async port => {
+        const checkServerIdentity = () => {
+          throw thrown;
+        };
+        const client = new RedisClient(`rediss://localhost:${port}`, { tls: { ca, checkServerIdentity } });
+        const onclose = mock((_: unknown) => {});
+        client.onclose = onclose;
+        const settled = await Promise.allSettled([client.connect(), client.ping()]);
+        const rejected = { status: "rejected", reason: thrown };
+        expect({ settled, closes: onclose.mock.calls }).toStrictEqual({
+          settled: [rejected, rejected],
+          closes: [[thrown]],
+        });
+      });
+    },
+  );
+
+  test.skipIf(isWindows)("gets localhost as the name of a unix socket", async () => {
+    await withUnixServer(agent1, async socketPath => {
+      const checkServerIdentity = mock((_: string) => undefined);
+      expect(await ping(`redis+tls+unix://${socketPath}`, { ca, checkServerIdentity })).toBe("PONG");
+      expect(checkServerIdentity.mock.calls.map(([hostname]) => hostname)).toEqual(["localhost"]);
+    });
+  });
+
+  test.each<[string, Bun.TLSOptions, string]>([
+    ["it is the only option and the chain does not verify", {}, "UNABLE_TO_VERIFY_LEAF_SIGNATURE"],
+    ["rejectUnauthorized is false", { ca, rejectUnauthorized: false }, "PONG"],
+  ])("is not called when %s", async (_, options, expected) => {
+    await withServer(agent1, async port => {
+      const checkServerIdentity = mock(refusal);
+      expect(await ping(`rediss://localhost:${port}`, { ...options, checkServerIdentity })).toBe(expected);
+      expect(checkServerIdentity).not.toHaveBeenCalled();
+    });
+  });
+
+  test.each<[any]>([[{}], ["text"], [false]])("is %p: the constructor throws", checkServerIdentity => {
+    expect(() => new RedisClient("rediss://localhost", { tls: { ca, checkServerIdentity } })).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining("tls.checkServerIdentity"),
+      }),
+    );
+  });
+
+  test.each<[any]>([[undefined], [null]])("is %p: the name check stays", async checkServerIdentity => {
+    await withServer(agent1, async port => {
+      expect(await ping(`rediss://localhost:${port}`, { ca, checkServerIdentity })).toBe(
+        "ERR_TLS_CERT_ALTNAME_INVALID",
+      );
+    });
+  });
+
+  test("is called for every connection, also of a duplicate", async () => {
+    await withServer(agent1, async port => {
+      const checkServerIdentity = mock(() => undefined);
+      const client = new RedisClient(`rediss://localhost:${port}`, { tls: { ca, checkServerIdentity } });
+      await client.connect();
+      client.close();
+      await client.connect();
+      Bun.gc(true);
+      (await client.duplicate()).close();
+      client.close();
+      expect(checkServerIdentity).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  test.each<[string, () => any]>([
+    ["accepts", () => undefined],
+    ["refuses", refusal],
+  ])(
+    "closes the client, connects again and %s: the verdict is not applied to the next connection",
+    async (_, first) => {
+      await withIPv4Server(async (port, server) => {
+        const bytes = bytesOfFirstConnection(server);
+        let second: Promise<unknown> | undefined;
+        const checkServerIdentity = mock(() => {
+          if (second) return;
+          client.close();
+          second = client.connect();
+          return first();
+        });
+        const client = new RedisClient(`rediss://localhost:${port}`, { tls: { ca, checkServerIdentity } });
+        try {
+          await expect(client.connect()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
+          expect(await second).toBe("OK");
+          expect(checkServerIdentity).toHaveBeenCalledTimes(2);
+          expect(await bytes).toBe(0);
+        } finally {
+          client.close();
+        }
+      });
+    },
+  );
 });

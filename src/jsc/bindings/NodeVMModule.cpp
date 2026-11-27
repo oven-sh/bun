@@ -1,5 +1,6 @@
 #include "NodeVMModule.h"
 #include "BunClientData.h"
+#include "CodeGenerationFromStrings.h"
 #include "NodeVMSourceTextModule.h"
 #include "NodeVMSyntheticModule.h"
 
@@ -78,6 +79,17 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // With "=strict" only a SyntheticModule gets here, so what these options would stop part-way is the program's own code.
+    if ((timeout || breakOnSigint) && isCodeGenerationFromStringsStrictByFlags()) [[unlikely]] {
+        constexpr auto reason = "cannot be used with --disallow-code-generation-from-strings=strict"_s;
+        if (timeout)
+            ERR::INVALID_ARG_VALUE(scope, globalObject, "options.timeout"_s, jsNumber(timeout), reason);
+        else
+            ERR::INVALID_ARG_VALUE(scope, globalObject, "options.breakOnSigint"_s, jsBoolean(true), reason);
+        return {};
+    }
+
     std::optional<Seconds> timeoutSeconds = timeout ? std::optional { Seconds::fromMilliseconds(timeout) } : std::nullopt;
 
     reconcileEvaluationState(vm);

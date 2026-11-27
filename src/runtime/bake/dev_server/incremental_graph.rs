@@ -1546,12 +1546,12 @@ impl Graphs {
         let _ = log.print(bun_core::Output::error_writer());
 
         let failure = {
-            let mut buf = bun_paths::path_buffer_pool::get();
+            let mut buf = bun_paths::Path::new();
             let key = match SIDE {
                 Side::Server => &self.server.bundled_files.keys()[idx],
                 Side::Client => &self.client.bundled_files.keys()[idx],
             };
-            let owner_display_name = relative_path(&self.root, &mut *buf, key);
+            let owner_display_name = relative_path(&self.root, &mut buf, key);
             SerializedFailure::init_from_log(
                 match SIDE {
                     Side::Server => serialized_failure::Owner::Server(FileIndex::init(idx as u32)),
@@ -1787,12 +1787,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             ChunkKind::InitialResponse => {
                 end_list.extend_from_slice(b"}, {\n  main: ");
                 if !options.initial_response_entry_point.is_empty() {
-                    let mut buf = bun_paths::path_buffer_pool::get();
-                    let rel = relative_path(
-                        options.root,
-                        &mut *buf,
-                        options.initial_response_entry_point,
-                    );
+                    let mut buf = bun_paths::Path::new();
+                    let rel =
+                        relative_path(options.root, &mut buf, options.initial_response_entry_point);
                     bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
                         rel,
                         &mut end_list,
@@ -1821,9 +1818,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
                 if !options.react_refresh_entry_point.is_empty() {
                     end_list.extend_from_slice(b",\n  refresh: ");
-                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let mut buf = bun_paths::Path::new();
                     let rel =
-                        relative_path(options.root, &mut *buf, options.react_refresh_entry_point);
+                        relative_path(options.root, &mut buf, options.react_refresh_entry_point);
                     bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
                         rel,
                         &mut end_list,
@@ -1831,8 +1828,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
                 if let Some(files) = options.route_page_files {
                     let write_id = |end_list: &mut Vec<u8>, abs: &[u8]| -> crate::Result<()> {
-                        let mut buf = bun_paths::path_buffer_pool::get();
-                        let rel = relative_path(options.root, &mut *buf, abs);
+                        let mut buf = bun_paths::Path::new();
+                        let rel = relative_path(options.root, &mut buf, abs);
                         bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
                             rel, end_list,
                         )?;

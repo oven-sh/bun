@@ -22,7 +22,7 @@ import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
-import { jscPrograms, linuxIcuRoot, webkitEngineSources } from "./deps/webkit.ts";
+import { jscPrograms, webkitEngineSources } from "./deps/webkit.ts";
 import { assert } from "./error.ts";
 import {
   bunIncludes,
@@ -32,6 +32,7 @@ import {
   extraFlagsFor,
   linkDepends,
   linkerMapOutputs,
+  usesIcuOfLinuxSystem,
   versionScriptPaths,
 } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
@@ -77,7 +78,7 @@ function systemLibs(cfg: Config): string[] {
     // Linux local WebKit: link system ICU (prebuilt bundles its own).
     // Assumes system ICU is in default lib paths — true on most distros.
     // Android: no system ICU; the local WebKit build must bundle it.
-    if (cfg.webkit === "local" && cfg.abi !== "android" && linuxIcuRoot(cfg) === undefined) {
+    if (usesIcuOfLinuxSystem(cfg)) {
       libs.push("-licudata", "-licui18n", "-licuuc");
     }
   }
@@ -109,6 +110,8 @@ function systemLibs(cfg: Config): string[] {
       "userenv.lib",
       "dbghelp.lib",
       "crypt32.lib",
+      "advapi32.lib",
+      "iphlpapi.lib",
       "wsock32.lib", // ws2_32 + wsock32 — wsock32 has TransmitFile (sendfile equiv)
       "ws2_32.lib",
       "delayimp.lib", // required for /delayload: in release
@@ -513,9 +516,11 @@ function emitJscPrograms(
       from.flatMap(d => d.objects),
     );
     if (program.name === "testaot") objects.push(...aotNativeTestObjects);
+    // What -moutline-atomics calls is in no library of MSVC's.
+    const rustCrates = [...(program.rustCrates ?? []), ...(cfg.windows && cfg.arm64 ? ["compiler_builtins"] : [])];
     const exe = link(n, cfg, program.name, [...objects, ...builtinTableObjects, ...depLink.eager], {
       lazyObjects: depLink.lazy,
-      libs: [...(program.libs ?? []), ...rust.rlibsFor(program.rustCrates ?? []), ...from.flatMap(d => d.libs)],
+      libs: [...(program.libs ?? []), ...rust.rlibsFor(rustCrates), ...from.flatMap(d => d.libs)],
       flags: [...computeTargetLinkFlags(cfg), ...program.ldflags, ...systemLibs(cfg)],
     });
     // The file is `<name>[.exe]` at the build root, so `ninja <name>` already
@@ -790,7 +795,7 @@ function emitDuplicateSymbolCheck(
   const objdump = cfg.windows ? cfg.objdump! : undefined;
   // The report is always written; $out is the stamp, written only on success.
   n.rule("duplicate_symbols", {
-    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --elapsed --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)}${binaryChecksWarnOnly(cfg) ? " --warn-only" : ""} duplicates ${q(nm)} $out.rsp ${q(report)}${objdump !== undefined ? ` ${q(objdump)}` : ""}`,
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --elapsed --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)}${binaryChecksWarnOnly(cfg) ? " --warn-only" : ""} duplicates ${q(nm)} $out.rsp ${q(report)}${objdump !== undefined ? ` ${q(objdump)} ${cfg.arch}` : ""}`,
     description: `check ${exeName} link inputs for duplicate definitions`,
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",

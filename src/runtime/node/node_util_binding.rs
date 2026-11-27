@@ -79,6 +79,16 @@ pub(crate) fn extracted_split_new_lines_fast_path_strings_only(
     }
 }
 
+/// The numbers count from 0 without gaps.
+pub(crate) fn diff_numbers(actual: &[u8], expected: &[u8]) -> Vec<i32> {
+    let [a, b] =
+        [actual, expected].map(|it| bun_core::vec_from_bytes::<u32>(it).unwrap_or_default());
+    let distinct = a.iter().chain(&b).max().map_or(0, |&max| max as usize + 1);
+    let hunks = bun_text_diff::tokens::diff_ids(&a, &b, distinct, usize::MAX).unwrap_or_default();
+    let ends = |h: bun_text_diff::Hunk| [h.a_lo, h.a_hi, h.b_lo, h.b_hi].map(|end| end as i32);
+    hunks.into_iter().flat_map(ends).collect()
+}
+
 fn split<T: Copy + PartialEq + From<u8>>(
     buffer: &[T],
     clone: impl Fn(&[T]) -> BunString,

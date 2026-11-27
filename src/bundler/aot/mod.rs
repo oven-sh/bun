@@ -26,7 +26,6 @@ use bun_aot::report::SourceTexts;
 use bun_aot::statistics::{Stage, Statistics};
 use bun_ast::Log;
 use bun_options_types::aot_options::AotOptions;
-use bun_paths::string_paths::without_trailing_slash_windows_path;
 use bun_resolver::package_names::{
     BuildPaths, FurtherPackageName, PackageName, PathAlias, add_hidden_names, add_written_names,
 };
@@ -184,12 +183,12 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
     }
 
     let working_directory = crate::bun_fs::FileSystem::get().top_level_dir();
-    let working_directory = without_trailing_slash_windows_path(working_directory);
+    let working_directory = bun_paths::without_trailing_sep(working_directory);
     let assets_by_absolute_paths = assets
         .iter()
         .map(|asset| {
             let path = paths::absolute_path(working_directory, asset);
-            without_trailing_slash_windows_path(&path).to_vec()
+            bun_paths::without_trailing_sep(&path).to_vec()
         })
         .collect();
     // `options::root_directory` widens a root that nobody wrote to the assets below the working directory.

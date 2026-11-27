@@ -1,4 +1,5 @@
 use core::ffi::{c_char, c_int, c_uint, c_ushort, c_void};
+use core::ptr::NonNull;
 
 use bun_core::ZStr;
 
@@ -15,6 +16,26 @@ bun_opaque::opaque_ffi! {
     pub struct Socket;
 }
 
+/// Closed on drop, which runs its close callback.
+pub struct OwnedSocket(NonNull<Socket>);
+
+impl OwnedSocket {
+    pub fn as_ptr(&self) -> *mut Socket {
+        self.0.as_ptr()
+    }
+
+    /// For the close callback: the loop closes a socket that has failed.
+    pub fn into_raw(self) -> *mut Socket {
+        core::mem::ManuallyDrop::new(self).as_ptr()
+    }
+}
+
+impl Drop for OwnedSocket {
+    fn drop(&mut self) {
+        us_udp_socket_close(Socket::opaque_mut(self.as_ptr()))
+    }
+}
+
 impl Socket {
     pub fn create(
         loop_: &'static Loop,
@@ -27,10 +48,10 @@ impl Socket {
         options: c_int,
         err: Option<&mut c_int>,
         user_data: *mut c_void,
-    ) -> *mut Socket {
+    ) -> Option<OwnedSocket> {
         // SAFETY: thin wrapper over us_create_udp_socket; all pointer args are
         // forwarded as-is from the caller, who upholds uSockets' contract.
-        unsafe {
+        let socket = unsafe {
             us_create_udp_socket(
                 loop_,
                 data_cb,
@@ -46,7 +67,8 @@ impl Socket {
                 },
                 user_data,
             )
-        }
+        };
+        NonNull::new(socket).map(OwnedSocket)
     }
 
     /// Adopts an already created (and usually bound) UDP socket descriptor
@@ -61,7 +83,7 @@ impl Socket {
         shared: bool,
         err: Option<&mut c_int>,
         user_data: *mut c_void,
-    ) -> *mut Socket {
+    ) -> Option<OwnedSocket> {
         #[cfg(not(windows))]
         let fd_native: LIBUS_SOCKET_DESCRIPTOR = fd;
         #[cfg(windows)]
@@ -69,7 +91,7 @@ impl Socket {
         // SAFETY: thin wrapper over us_create_udp_socket_from_fd; all pointer
         // args are forwarded as-is from the caller, who upholds uSockets'
         // contract.
-        unsafe {
+        let socket = unsafe {
             us_create_udp_socket_from_fd(
                 loop_,
                 data_cb,
@@ -81,7 +103,8 @@ impl Socket {
                 err.map_or(core::ptr::null_mut(), core::ptr::from_mut),
                 user_data,
             )
-        }
+        };
+        NonNull::new(socket).map(OwnedSocket)
     }
 
     pub fn send(
@@ -120,10 +143,6 @@ impl Socket {
     pub fn remote_ip(&mut self, buf: *mut u8, length: &mut i32) {
         // SAFETY: buf must point to at least *length bytes; thin FFI passthrough.
         unsafe { us_udp_socket_remote_ip(self, buf, length) }
-    }
-
-    pub fn close(&mut self) {
-        us_udp_socket_close(self)
     }
 
     pub fn connect(&mut self, hostname: &ZStr, port: c_uint) -> c_int {

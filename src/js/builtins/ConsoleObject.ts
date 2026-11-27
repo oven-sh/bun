@@ -149,7 +149,14 @@ export function createConsoleConstructor(console: Console) {
   const { isMapIterator, isSetIterator } = require("node:util/types");
 
   const { validateObject, validateInteger, validateArray, validateOneOf } = require("internal/validators");
+  const { builtinChannel } = require("internal/shared");
   const kMaxGroupIndentation = 1000;
+
+  const onLog = builtinChannel("console.log");
+  const onInfo = builtinChannel("console.info");
+  const onDebug = builtinChannel("console.debug");
+  const onWarn = builtinChannel("console.warn");
+  const onError = builtinChannel("console.error");
 
   const StringPrototypeIncludes = String.prototype.includes;
   const RegExpPrototypeSymbolReplace: (this: RegExp, string: string, replaceValue: string) => string =
@@ -612,10 +619,27 @@ export function createConsoleConstructor(console: Console) {
 
   const consoleMethods = {
     log(this: ConsoleInstance, ...args: unknown[]) {
+      if (onLog.hasSubscribers) onLog.publish(args);
+      this[kWriteToConsole](kUseStdout, this[kFormatForStdout](args));
+    },
+
+    info(this: ConsoleInstance, ...args: unknown[]) {
+      if (onInfo.hasSubscribers) onInfo.publish(args);
+      this[kWriteToConsole](kUseStdout, this[kFormatForStdout](args));
+    },
+
+    debug(this: ConsoleInstance, ...args: unknown[]) {
+      if (onDebug.hasSubscribers) onDebug.publish(args);
       this[kWriteToConsole](kUseStdout, this[kFormatForStdout](args));
     },
 
     warn(this: ConsoleInstance, ...args: unknown[]) {
+      if (onWarn.hasSubscribers) onWarn.publish(args);
+      this[kWriteToConsole](kUseStderr, this[kFormatForStderr](args));
+    },
+
+    error(this: ConsoleInstance, ...args: unknown[]) {
+      if (onError.hasSubscribers) onError.publish(args);
       this[kWriteToConsole](kUseStderr, this[kFormatForStderr](args));
     },
 
@@ -659,17 +683,16 @@ export function createConsoleConstructor(console: Console) {
     },
 
     trace: function trace(this: ConsoleInstance, ...args: unknown[]) {
-      const err: Error = {
-        name: "Trace",
-        message: this[kFormatForStderr](args),
-      };
+      const err = new Error(this[kFormatForStderr](args));
+      err.name = "Trace";
       Error.captureStackTrace(err, trace);
       this.error(err.stack);
     },
 
     assert(this: ConsoleInstance, expression: unknown, ...args: unknown[]) {
       if (!expression) {
-        args[0] = `Assertion failed${args.length === 0 ? "" : `: ${args[0]}`}`;
+        if (typeof args[0] === "string") args[0] = `Assertion failed: ${args[0]}`;
+        else ArrayPrototypeUnshift.$call(args, "Assertion failed");
         // The arguments will be formatted in warn() again
         this.warn.$apply(this, args);
       }
@@ -850,10 +873,7 @@ export function createConsoleConstructor(console: Console) {
 
   for (const method of Reflect.ownKeys(consoleMethods)) Console.prototype[method] = consoleMethods[method];
 
-  Console.prototype.debug = Console.prototype.log;
-  Console.prototype.info = Console.prototype.log;
   Console.prototype.dirxml = Console.prototype.log;
-  Console.prototype.error = Console.prototype.warn;
   Console.prototype.groupCollapsed = Console.prototype.group;
 
   return Console;

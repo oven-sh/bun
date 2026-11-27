@@ -38,7 +38,6 @@ use crate::html_scanner::scan_import_records;
 use crate::options::{self, Loader};
 use crate::transpiler::{MacroJSCtx, Transpiler};
 use crate::{ContentHasher, UseDirective, perf, target_from_hashbang};
-use bun_resolver::cache::SourceFd;
 use bun_resolver::fs::{ByteOrderMark, PathResolverExt as _};
 use bun_resolver::{self as _resolver, Resolver};
 
@@ -120,7 +119,7 @@ pub struct Result<'a> {
     pub(crate) task: AnyTaskWithExtraContext,
     pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>,
     pub(crate) value: ResultValue<'a>,
-    pub(crate) file_to_watch: Option<SourceFd>,
+    pub(crate) file_to_watch: Option<bun_sys::MaybeOwnedFile>,
     /// This is used for native onBeforeParsePlugins to store
     /// a function pointer and context pointer to free the
     /// returned source code by the plugin. After `value`, which may borrow it.
@@ -1603,7 +1602,7 @@ pub mod parse_worker {
         // the parent via offset_of; a `&mut` here would (a) shrink provenance to
         // the inner field and (b) alias with any `&`/`&mut` to the wrapper.
         result: *mut OnBeforeParseResult,
-        original_file: Option<SourceFd>,
+        original_file: Option<bun_sys::MaybeOwnedFile>,
     }
 
     #[repr(C)]
@@ -2566,7 +2565,9 @@ pub mod parse_worker {
         debug_assert!(this.source_index.is_valid()); // forgot to set source_index
 
         let mut file_to_watch = match this.contents_or_fd {
-            ContentsOrFd::Fd { file, .. } => file.unwrap_valid().map(SourceFd::Borrowed),
+            ContentsOrFd::Fd { file, .. } => {
+                file.unwrap_valid().map(bun_sys::MaybeOwnedFile::Borrowed)
+            }
             ContentsOrFd::Contents(_) => None,
         };
 

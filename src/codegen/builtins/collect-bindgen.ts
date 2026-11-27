@@ -36,6 +36,7 @@ import {
   symbolDescription,
   type Builtin,
   type ClassMember,
+  type Construction,
   type NamespaceDefinition,
   type OverloadDispatch,
   type ValueKind,
@@ -175,6 +176,8 @@ function getKindType(kind: Kind): b.TableType {
       return b.bigint;
     case "string":
       return b.string;
+    case "symbol":
+      return b.symbol;
     case "stringObject":
       return b.instance("String");
     case "array":
@@ -199,7 +202,15 @@ export function dispatchOfBindgen(
   dispatchWithin = (signature: Signature): DispatchDeclaration => ({ signature: fn.signatures.indexOf(signature) }),
 ): DispatchDeclaration {
   const converted = new Map<OverloadDispatch, DispatchDeclaration>();
-  const convertNode = ({ argument, byKind }: Exclude<OverloadDispatch, Signature>): DispatchDeclaration => {
+  const convertNode = (node: Exclude<OverloadDispatch, Signature>): DispatchDeclaration => {
+    if ("passed" in node) {
+      const branches = [
+        { tested: b.notPassed.spec, then: convert(node.notPassed) },
+        { tested: typeOfKind("other"), then: convert(node.passed) },
+      ];
+      return { argument: node.argument, branches };
+    }
+    const { argument, byKind } = node;
     const groups = Array.from(
       Map.groupBy(byKind, ([, target]) => target),
       ([target, entries]) => ({ target, kinds: entries.map(([kind]) => kind) }),
@@ -866,14 +877,13 @@ function pathOfClass(
 const pathOfConstructorBinding = (type: ClassType): BuiltinPath =>
   pathOfNativeBinding("Bindgen", `${type.origin!.stem}.bind.ts`, type.name);
 
-function collectConstruction(type: ClassType): DeclaredField | undefined {
-  const { construct, name } = type;
-  if (construct === null) return undefined;
+function collectConstruction(type: ClassType, construction: Construction): DeclaredField {
   if (type.illegalConstructor)
-    return { ...createField(construct, null, b.never.spec, true), capability: "heap", throws: true };
-  const instance = b.instance(name);
-  // A constructor that makes the object itself can keep it.
-  return createField(construct, null, (type.passStructure ? instance : instance.fresh).spec, true);
+    return { ...createField(construction, null, b.never.spec, true), capability: "heap", throws: true };
+  const instance = b.instance(type.name);
+  const field = createField(construction, null, (construction.isFresh ? instance.fresh : instance).spec, true);
+  const isLongest = type.constructions.every(({ args }) => args.length <= construction.args.length);
+  return isLongest ? field : { ...field, args: { ...field.args, $next: b.notPassed } };
 }
 
 function collectClass(type: ClassType, joins: Joins): Declaration[] {
@@ -892,7 +902,7 @@ function collectClass(type: ClassType, joins: Joins): Declaration[] {
       ? `globalObject->m_bindgenAdditions.m_classes[${cpp}::classIndex].getConcurrently()`
       : undefined,
     hasConstructor: construct !== null,
-    construct: collectConstruction(type),
+    construct: type.constructions.map(construction => collectConstruction(type, construction)),
     prototypeListsAllMembers: true,
   });
   const byName = (left: ClassMember, right: ClassMember) => compareBytes(left.name, right.name);
@@ -909,7 +919,10 @@ function collectClass(type: ClassType, joins: Joins): Declaration[] {
       : []),
     ...setMemberParts(
       declared.map(declaration => (declaration.declares === "Class" ? { ...declaration, name } : declaration)),
-      { length: construct === null ? null : (construct.length ?? construct.requiredCount) },
+      {
+        length: construct?.length ?? null,
+        dispatches: construct === null ? [] : [{ mode: "Construct", root: dispatchOfBindgen(construct) }],
+      },
     ),
     ...(prototypeBase === null ? [] : b.inherits(joinPath([path, "prototype"]), prototypeBase)),
     // setup${name}ClassStructure() in bindgen-emit.ts puts these on the prototype beside the members of the schema, and nothing else.

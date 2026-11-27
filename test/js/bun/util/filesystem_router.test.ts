@@ -2,7 +2,7 @@ import { FileSystemRouter } from "bun";
 import { heapStats } from "bun:jsc";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {
@@ -702,6 +702,16 @@ it("src is relative to dir when no origin is given", () => {
   }
 });
 
+it.skipIf(isWindows)("src of a link to a file outside of dir", () => {
+  using dir = tempDir("fsr-src-outside", { "other/a.tsx": "export default 1;", "pages/.keep": "" });
+  fs.symlinkSync("../other/a.tsx", `${dir}/pages/a.tsx`);
+  const src = (origin?: string) =>
+    new Bun.FileSystemRouter({ dir: `${dir}/pages`, style: "nextjs", origin }).match("/a")!.src;
+
+  expect(src("https://example.com")).toBe(`https://example.com/abs:${dir}/other/a.tsx`);
+  expect(src()).toBe("../other/a.tsx");
+});
+
 // The 0xFF byte is not valid UTF-8, so the JS string gets U+FFFD in its place.
 it.skipIf(isWindows || isMacOS)("src replaces invalid UTF-8 in the route path with U+FFFD", () => {
   using dir = tempDir("fsr-src-byte-ff", {});
@@ -1318,4 +1328,21 @@ it(".query and .params support names that look like array indices", () => {
   const params = router.match("/hello")!.params;
   expect(params).toEqual({ 0: "hello" });
   expect(params[0]).toBe("hello");
+});
+
+it.skipIf(isWindows)("a backslash is part of a name", async () => {
+  using dir = tempDir("fs-router-backslash", {
+    "outside.js": "",
+    "pa\\ges": { "index.js": "", "a\\..": { "b.js": "" }, "c\\..\\..\\outside.js": "" },
+    "main.js": String.raw`
+      const router = new Bun.FileSystemRouter({ dir: "./pa\\ges", style: "nextjs" });
+      router.reload();
+      for (const [route, file] of Object.entries(router.routes).sort()) console.log(route, file.replace(__dirname, ""));
+    `,
+  });
+  expect(await bunRun(path.join(String(dir), "main.js"))).toSpawn(
+    ["/ /pa\\ges/index.js", "/a\\../b /pa\\ges/a\\../b.js", "/c\\..\\..\\outside /pa\\ges/c\\..\\..\\outside.js"].join(
+      "\n",
+    ),
+  );
 });

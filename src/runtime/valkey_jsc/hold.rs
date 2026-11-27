@@ -40,9 +40,9 @@ pub(crate) struct Hold {
 }
 
 impl Hold {
-    pub(crate) fn new(client: &JSValkeyClient, object: Object<'_>) -> Self {
+    pub(crate) fn new(client: &RefPtr<JSValkeyClient>, object: Object<'_>) -> Self {
         Self {
-            client: client.ref_guard(),
+            client: client.clone(),
             object: Strong::create(object.0, &client.global_object),
         }
     }

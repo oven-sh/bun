@@ -489,11 +489,11 @@ impl Interpreter {
         let stdin_fd_res = if bun_core::output::stdio::is_stdin_null() {
             #[cfg(unix)]
             {
-                bun_sys::open(bun_core::zstr!("/dev/null"), bun_sys::O::RDONLY, 0)
+                File::open(bun_core::zstr!("/dev/null"), bun_sys::O::RDONLY, 0)
             }
             #[cfg(windows)]
             {
-                bun_sys::open(bun_core::zstr!("NUL"), bun_sys::O::RDONLY, 0)
+                File::open(bun_core::zstr!("NUL"), bun_sys::O::RDONLY, 0)
             }
         } else {
             shell_dup(Fd::stdin())
@@ -1097,39 +1097,29 @@ impl Interpreter {
 
         // ── dup stdout ─────────────────────────────────────────────────────
         log!("Duping stdout");
-        let stdout = File::from_fd(if bun_core::output::stdio::is_stdout_null() {
+        let stdout = if bun_core::output::stdio::is_stdout_null() {
             open_null_device()?
         } else {
             shell_dup(Fd::stdout())?
-        });
+        };
 
         // ── dup stderr ─────────────────────────────────────────────────────
         log!("Duping stderr");
-        let stderr_fd = if bun_core::output::stdio::is_stderr_null() {
+        let stderr = if bun_core::output::stdio::is_stderr_null() {
             open_null_device()?
         } else {
             shell_dup(Fd::stderr())?
         };
 
-        let stdout_fd = stdout.into_raw();
-        let stdout_writer = IOWriter::init(
-            stdout_fd,
-            crate::shell::io_writer::Flags {
-                pollable: is_pollable(stdout_fd),
+        let [stdout_writer, stderr_writer] = [stdout, stderr].map(|file| {
+            let flags = crate::shell::io_writer::Flags {
+                pollable: is_pollable(file.fd()),
                 ..Default::default()
-            },
-            event_loop,
-        );
-        stdout_writer.set_interp(self);
-        let stderr_writer = IOWriter::init(
-            stderr_fd,
-            crate::shell::io_writer::Flags {
-                pollable: is_pollable(stderr_fd),
-                ..Default::default()
-            },
-            event_loop,
-        );
-        stderr_writer.set_interp(self);
+            };
+            let writer = IOWriter::init(file, flags, event_loop);
+            writer.set_interp(self);
+            writer
+        });
 
         // On the JS event loop, hook captured buffers so the JS
         // `Bun.$` API can read stdout/stderr after completion. The mini path
@@ -1735,17 +1725,8 @@ impl ShellExecEnv {
     /// `cd -`.
     #[inline]
     pub(crate) fn change_prev_cwd(&mut self) -> bun_sys::Result<()> {
-        // Note: reshaped for borrowck — `prev_cwd()` borrows `self`, so
-        // copy into a stack buffer before the `&mut self` call. Bounded by the
-        // ENAMETOOLONG check inside `change_cwd_impl` (same 4 KiB).
-        // Use a `[4096]u8` buffer on every platform; do NOT use
-        // `bun_paths::PathBuffer` here — on Windows that is ~96 KiB of
-        // zero-filled stack, and `change_cwd_impl` stacks another on top.
-        let mut buf = [0u8; 4096];
-        let prev = self.prev_cwd();
-        let n = prev.len();
-        buf[..n].copy_from_slice(prev);
-        self.change_cwd_impl(&buf[..n], false)
+        let prev = bun_paths::Path::from(self.prev_cwd());
+        self.change_cwd_impl(&prev, false)
     }
 
     /// Thin `in_init = false` wrapper. Accepts the un-terminated slice and
@@ -1764,58 +1745,27 @@ impl ShellExecEnv {
         new_cwd_: &[u8],
         in_init: bool,
     ) -> bun_sys::Result<()> {
-        let is_abs = bun_paths::is_absolute(new_cwd_);
-
-        // Bounds-check against a `[4096]u8` buffer on *every* platform. Do NOT
-        // use `bun_paths::PathBuffer` here: on Windows that is `MAX_PATH_BYTES
-        // = 32767*3+1` ≈ 96 KiB of zero-filled stack per `cd`, and the
-        // `>= buf.len()` check would change the ENAMETOOLONG bound.
-        let mut buf = [0u8; 4096];
-        let required_len = if is_abs {
-            new_cwd_.len()
-        } else {
-            self.cwd().len() + 1 + new_cwd_.len()
+        let new_cwd = match bun_paths::is_absolute(new_cwd_) {
+            true => bun_paths::Path::from(new_cwd_),
+            false => {
+                let mut resolved = bun_paths::Path::join(&[self.cwd(), new_cwd_]);
+                resolved.truncate(bun_paths::without_trailing_sep(&resolved).len());
+                // `shell_get_path` can put `/a` and `\a` on different drives.
+                match bun_paths::root(self.cwd()) {
+                    b"/" => resolved.into_portable(),
+                    _ => resolved,
+                }
+            }
         };
-        if required_len >= buf.len() {
-            return Err(bun_sys::Error::from_code_int(
-                bun_sys::E::ENAMETOOLONG as _,
+        // The same limit on every platform.
+        const MAX_CWD_BYTES: usize = 4096;
+        if new_cwd.len() >= MAX_CWD_BYTES {
+            return Err(bun_sys::Error::from_code(
+                bun_sys::E::ENAMETOOLONG,
                 bun_sys::Tag::chdir,
             ));
         }
-
-        // Build NUL-terminated `new_cwd` in `buf`.
-        let new_cwd_len: usize = if is_abs {
-            buf[..new_cwd_.len()].copy_from_slice(new_cwd_);
-            new_cwd_.len()
-        } else {
-            // `join_z_buf` normalizes `.`/`..` so the stored `$PWD`/`$OLDPWD`
-            // strings reflect the resolved path (not `<cwd>/..`).
-            // Note: reshaped for borrowck — capture only the joined length
-            // so the borrow on `buf` is released before stripping below.
-            let mut n = {
-                let existing_cwd = self.cwd();
-                bun_paths::resolve_path::join_z_buf::<bun_paths::platform::Auto>(
-                    &mut buf[..],
-                    &[existing_cwd, new_cwd_],
-                )
-                .as_bytes()
-                .len()
-            };
-            // remove trailing separator (Windows checks `\\` first then falls
-            // through to `/`; POSIX only `/`).
-            #[cfg(windows)]
-            if n > 1 && buf[n - 1] == b'\\' {
-                n -= 1;
-            } else if n > 1 && buf[n - 1] == b'/' {
-                n -= 1;
-            }
-            #[cfg(not(windows))]
-            if n > 1 && buf[n - 1] == b'/' {
-                n -= 1;
-            }
-            n
-        };
-        let new_cwd_z = bun_core::ZStr::nul_terminate(&mut buf, new_cwd_len);
+        let new_cwd_z: &bun_core::ZStr = &new_cwd;
 
         self.cwd_fd = OwnedFd(shell_openat(
             self.cwd_fd.fd(),
@@ -1918,15 +1868,15 @@ pub(crate) use crate::shell::states::assigns::AssignCtx;
 /// start so we have *something* to dup into the shell's root IO. Must be
 /// writable: `setup_io_before_run` installs the result as the stdout/stderr
 /// `IOWriter` target (and `init` uses it for stdin), so `RDWR` covers both.
-fn open_null_device() -> bun_sys::Result<Fd> {
+fn open_null_device() -> bun_sys::Result<File> {
     #[cfg(unix)]
     {
-        bun_sys::open(bun_core::zstr!("/dev/null"), bun_sys::O::RDWR, 0)
+        File::open(bun_core::zstr!("/dev/null"), bun_sys::O::RDWR, 0)
     }
     #[cfg(windows)]
     {
         // Windows NUL is bidirectional regardless of the open flags.
-        bun_sys::open(bun_core::zstr!("nul"), bun_sys::O::RDWR, 0)
+        File::open(bun_core::zstr!("nul"), bun_sys::O::RDWR, 0)
     }
 }
 
@@ -2004,17 +1954,8 @@ impl Drop for OwnedFd {
 /// to a libuv-owned fd via `make_lib_uv_owned_for_syscall` so
 /// the IOWriter/IOReader uv-based async write/read paths receive a uv fd
 /// instead of a raw NT handle.
-pub(crate) fn shell_dup(fd: Fd) -> bun_sys::Result<Fd> {
-    #[cfg(windows)]
-    {
-        bun_sys::File::from_fd(bun_sys::dup(fd)?)
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::dup)
-            .map(bun_sys::File::into_raw)
-    }
-    #[cfg(not(windows))]
-    {
-        bun_sys::dup(fd)
-    }
+pub(crate) fn shell_dup(fd: Fd) -> bun_sys::Result<File> {
+    File::from_fd(bun_sys::dup(fd)?).make_lib_uv_owned_for_syscall(bun_sys::Tag::dup)
 }
 
 /// Joins `parts` into an owned, normalized path. Fails with `ENAMETOOLONG` if the result is
@@ -2023,13 +1964,11 @@ pub(crate) fn shell_join_path(
     syscall: bun_sys::Tag,
     parts: &[&[u8]],
 ) -> bun_sys::Result<bun_core::ZBox> {
-    let mut spill = Vec::new();
-    let joined =
-        bun_paths::resolve_path::join_spill::<bun_paths::platform::Auto>(&mut spill, parts);
+    let joined = bun_paths::Path::join(parts);
     if joined.len() >= bun_paths::MAX_PATH_BYTES {
-        return Err(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, syscall).with_path(joined));
+        return Err(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, syscall).with_path(&joined));
     }
-    Ok(bun_core::ZBox::from_bytes(joined))
+    Ok(joined.to_zbox())
 }
 
 /// Resolves a builtin's path `operand` against the shell's `cwd`.
@@ -2038,7 +1977,7 @@ pub(crate) fn shell_resolve_operand(
     cwd: &[u8],
     operand: &[u8],
 ) -> bun_sys::Result<bun_core::ZBox> {
-    if bun_paths::Platform::AUTO.is_absolute(operand) {
+    if bun_paths::is_absolute(operand) {
         shell_join_path(syscall, &[operand])
     } else {
         shell_join_path(syscall, &[cwd, operand])
@@ -2049,53 +1988,39 @@ pub(crate) fn shell_resolve_operand(
 /// `dirfd`'s drive root, `/dev/null` maps to `NUL`, and relative paths are
 /// joined against `dirfd`'s real path. Returns a NUL-terminated slice that
 /// either borrows `buf` or is `to` itself. Fails with `ENAMETOOLONG` (tagged
-/// with `syscall` and `to`) if the rewritten path is too long for `buf`.
+/// with `syscall` and `to`) if the rewritten path is too long.
 #[cfg(windows)]
 fn shell_get_path<'a>(
     dirfd: Fd,
     to: &'a bun_core::ZStr,
-    buf: &'a mut bun_paths::PathBuffer,
+    buf: &'a mut bun_paths::Path,
     syscall: bun_sys::Tag,
 ) -> bun_sys::Result<&'a bun_core::ZStr> {
     if to.as_bytes() == b"/dev/null" {
         return Ok(crate::shell::shell_body::WINDOWS_DEV_NULL);
     }
-    let name_too_long =
-        || bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, syscall).with_path(to.as_bytes());
-    if bun_paths::Platform::Posix.is_absolute(to.as_bytes()) {
-        let source_root_len = {
-            let dirpath = bun_sys::get_fd_path(dirfd, buf).map_err(|e| e.with_fd(dirfd))?;
-            bun_paths::resolve_path::windows_filesystem_root(dirpath).len()
-        };
-        // `dirpath` already occupies `buf[0..]` and the root is its prefix, so
-        // no copy is needed. Splice `to[1..]` after the root.
-        let to_tail = &to.as_bytes()[1..];
-        let end = source_root_len + to_tail.len();
-        if end >= buf.len() {
-            return Err(name_too_long());
-        }
-        buf[source_root_len..end].copy_from_slice(to_tail);
-        return Ok(bun_core::ZStr::nul_terminate(buf, end));
-    }
-    if bun_paths::Platform::Windows.is_absolute(to.as_bytes()) {
+    if bun_paths::is_fully_qualified(to) && !to.starts_with(b"/") {
         return Ok(to);
     }
-    // Relative path. Join outside `buf` because `join_z_buf` doesn't bounds-check,
-    // then copy the normalized result into `buf` if there's room.
-    let mut spill = Vec::new();
-    let joined = {
-        let dirpath = bun_sys::get_fd_path(dirfd, buf).map_err(|e| e.with_fd(dirfd))?;
-        bun_paths::resolve_path::join_spill::<bun_paths::platform::Auto>(
-            &mut spill,
-            &[dirpath, to.as_bytes()],
-        )
+    let mut dir_buf = bun_paths::path_buffer_pool::get();
+    let dirpath = |buf| bun_sys::get_fd_path(dirfd, buf).map_err(|e| e.with_fd(dirfd));
+    let base: &[u8] = match to.first() {
+        // On the current drive, as for `cp`, `mkdir` and `touch`.
+        Some(b'\\') => b"",
+        Some(b'/') => bun_paths::volume(dirpath(&mut dir_buf)?),
+        _ => dirpath(&mut dir_buf)?,
     };
-    let len = joined.len();
-    if len >= buf.len() {
-        return Err(name_too_long());
-    }
-    buf[..len].copy_from_slice(joined);
-    Ok(bun_core::ZStr::nul_terminate(buf, len))
+    let mut path = bun_paths::Path::join(&[base, to.as_bytes()]);
+    path.add_current_drive();
+    *buf = path.check_len().map_err(|_| {
+        bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, syscall).with_path(to.as_bytes())
+    })?;
+    Ok(buf)
+}
+
+/// On Windows `//a/b` is below the root of the drive for `shell_get_path`, and a share for the system.
+pub(crate) fn names_two_files(path: &[u8]) -> bool {
+    cfg!(windows) && path.starts_with(b"/") && bun_paths::is_fully_qualified(path)
 }
 
 /// Windows: rewrite the path via `shell_get_path` then `bun_sys::stat`, tagging
@@ -2105,7 +2030,7 @@ fn shell_get_path<'a>(
 pub(crate) fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<bun_sys::Stat> {
     #[cfg(windows)]
     {
-        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut buf = bun_paths::Path::new();
         let p = shell_get_path(dir, path_, &mut buf, bun_sys::Tag::fstatat)?;
         return bun_sys::stat(p).map_err(|e| e.with_path(path_.as_bytes()));
     }
@@ -2119,7 +2044,7 @@ pub(crate) fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<b
 pub(crate) fn shell_lstatat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<bun_sys::Stat> {
     #[cfg(windows)]
     {
-        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut buf = bun_paths::Path::new();
         let p = shell_get_path(dir, path_, &mut buf, bun_sys::Tag::fstatat)?;
         return bun_sys::lstat(p).map_err(|e| e.with_path(path_.as_bytes()));
     }
@@ -2143,8 +2068,8 @@ pub(crate) fn shell_openat(
     #[cfg(windows)]
     {
         if flags & bun_sys::O::DIRECTORY != 0 {
-            if bun_paths::Platform::Posix.is_absolute(path.as_bytes()) {
-                let mut buf = bun_paths::path_buffer_pool::get();
+            if bun_paths::has_leading_sep(path.as_bytes()) {
+                let mut buf = bun_paths::Path::new();
                 let p = shell_get_path(dir, path, &mut buf, bun_sys::Tag::open)?;
                 return bun_sys::open_dir_at_windows_a(
                     dir,
@@ -2174,7 +2099,7 @@ pub(crate) fn shell_openat(
             .make_lib_uv_owned_for_syscall(bun_sys::Tag::open)
             .map(bun_sys::File::into_raw);
         }
-        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut buf = bun_paths::Path::new();
         let p = shell_get_path(dir, path, &mut buf, bun_sys::Tag::open)?;
         // No `makeLibUVOwnedForSyscall` here: `bun_sys::open` on Windows
         // routes through `sys_uv` and already yields a uv-owned fd.
@@ -2572,7 +2497,7 @@ pub(crate) fn create_shell_interpreter<'a>(
     }
     // SAFETY: the payload of `this_value`.
     let interp = unsafe { this_value.payload_ptr().as_ref() };
-    interp.this_value.set(JsRef::init_weak(js_value));
+    this_value.set_js_ref_weak();
     interp.keep_alive.ref_(global.bun_vm().loop_ctx());
     bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);
     Ok(this_value)

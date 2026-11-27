@@ -475,9 +475,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
             // referrer.children.indexOf(moduleObject) === -1 && referrer.children.push(moduleObject)
             returnValue = referrer->m_childrenValue.get();
         } else {
-            WTF::Locker locker { referrer->cellLock() };
-            referrer->m_children.append(WriteBarrier<Unknown>());
-            referrer->m_children.last().set(vm, referrer, moduleObject);
+            referrer->addChild(vm, moduleObject);
         }
     }
 
@@ -824,43 +822,8 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
     }
 
     if (!mod->m_childrenValue) {
-        MarkedArgumentBuffer children;
-        children.ensureCapacity(mod->m_children.size());
-
-        // Deduplicate children while preserving insertion order.
-        JSCommonJSModule* last = nullptr;
-        int n = -1;
-        for (WriteBarrier<Unknown> childBarrier : mod->m_children) {
-            JSCommonJSModule* child = uncheckedDowncast<JSCommonJSModule>(childBarrier.get());
-            // Check the last module since duplicate imports, if any, will
-            // probably be adjacent. Then just do a linear scan.
-            if (last == child) [[unlikely]]
-                continue;
-            int i = 0;
-            while (i < n) {
-                if (children.at(i).asCell() == child) [[unlikely]]
-                    goto next;
-                i += 1;
-            }
-            children.append(child);
-            last = child;
-            n += 1;
-        next:
-            {
-            }
-        }
-
-        // Construct the array
-        JSArray* array = JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), children);
+        mod->createChildrenArray(globalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
-        mod->m_childrenValue.set(globalObject->vm(), mod, array);
-
-        {
-            WTF::Locker locker { mod->cellLock() };
-            mod->m_children.clear();
-        }
-
-        return JSValue::encode(array);
     }
 
     return JSValue::encode(mod->m_childrenValue.get());
@@ -1221,6 +1184,33 @@ JSCommonJSModule* JSCommonJSModule::create(
     auto& vm = JSC::getVM(globalObject);
     auto* requireMapKey = JSC::jsStringWithCache(vm, key);
     return JSCommonJSModule::create(globalObject, requireMapKey, exportsObject, hasEvaluated, parent);
+}
+
+void JSCommonJSModule::addChild(JSC::VM& vm, JSCommonJSModule* child)
+{
+    // The search takes no lock: only the JS thread writes m_children, and the GC marker thread only reads it.
+    JSValue value = child;
+    if (child->hasBeenAddedAsChild && m_children.reverseFindIf([&](auto& listed) { return listed.get() == value; }) != WTF::notFound)
+        return;
+    child->hasBeenAddedAsChild = true;
+    WTF::Locker locker { cellLock() };
+    m_children.append(WriteBarrier<Unknown>());
+    m_children.last().set(vm, this, child);
+}
+
+void JSCommonJSModule::createChildrenArray(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    MarkedArgumentBuffer children;
+    children.ensureCapacity(m_children.size());
+    for (auto& child : m_children)
+        children.append(child.get());
+    JSArray* list = JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), children);
+    RETURN_IF_EXCEPTION(scope, void());
+    m_childrenValue.set(vm, this, list);
+    WTF::Locker locker { cellLock() };
+    m_children.clear();
 }
 
 size_t JSCommonJSModule::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
@@ -1903,12 +1893,19 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 if (entry) {
                     if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
                         if (!moduleObject->hasEvaluated) {
-                            evaluateCommonJSModuleOnce(
-                                vm,
-                                globalObject,
-                                moduleObject,
-                                moduleObject->m_dirname.get(),
-                                moduleObject->m_filename.get());
+                            if (JSObject* hook = globalObject->diagnosticsHook(DiagnosticsHook::ModuleRequire); hook && !moduleObject->sourceCode.isNull()) [[unlikely]] {
+                                MarkedArgumentBuffer arguments;
+                                arguments.append(moduleObject);
+                                arguments.append(moduleObject->m_filename.get());
+                                JSC::call(globalObject, hook, JSC::getCallData(hook), jsUndefined(), arguments);
+                            } else {
+                                evaluateCommonJSModuleOnce(
+                                    vm,
+                                    globalObject,
+                                    moduleObject,
+                                    moduleObject->m_dirname.get(),
+                                    moduleObject->m_filename.get());
+                            }
                             if (auto exception = scope.exception()) {
                                 if (vm.hasPendingTerminationException()) [[unlikely]]
                                     return nullptr;

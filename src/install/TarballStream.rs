@@ -19,7 +19,6 @@ use bun_collections::VecExt;
 #[cfg(windows)]
 use bun_core::strings;
 use bun_core::{self, Output, env_var, fmt as bun_fmt};
-use bun_paths::resolve_path::{self, platform};
 use bun_paths::{self, OSPathChar, OSPathSliceZ};
 #[cfg(windows)]
 use bun_sys::Dir;
@@ -583,62 +582,25 @@ impl Extraction {
         // Strip the leading `package/` (or `<repo>-<sha>/` for GitHub) and
         // normalise. Same transformation as Archiver.extractToDir so both
         // paths produce identical on-disk layouts.
-        let mut tokenizer = pathname[..]
-            .split(|c| *c == ('/' as OSPathChar))
-            .filter(|s| !s.is_empty());
-        if tokenizer.next().is_none() {
+        let Some(rest) = bun_archive::skip_path_components(pathname, 1) else {
             return Ok(());
-        }
-        // tokenizeScalar.rest() — need byte offset of remainder, not just
-        // iterator. `split().filter()` loses that, so use a manual
-        // index-of-first-'/' + skip-leading-'/' instead. The result is fed
-        // straight to `normalize_buf_t` (which takes `&[OSPathChar]`, not a
-        // NUL-terminated slice) so there is no need to reconstruct an
-        // `OSPathSliceZ` suffix view here.
-        let rest: &[OSPathChar] = tokenize_rest_after_first(pathname);
-
-        let mut norm_buf = bun_paths::os_path_buffer_pool::get();
-        let normalized = if self.npm_mode {
-            bun_archive::normalize_npm_entry_path(entry, &mut norm_buf[..])?
-        } else {
-            (rest.len() < norm_buf.len()).then(|| {
-                resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(rest, &mut norm_buf[..])
-            })
         };
-        let Some(path) = normalized else {
+        let destination = if self.npm_mode {
+            bun_archive::npm_entry_destination(entry)?
+        } else {
+            bun_archive::unrooted_entry_destination(rest)
+        };
+        let Some(path) = destination else {
             bun_core::warn!(
                 "Skipping entry with a path longer than the maximum path length: {}\n",
                 bun_fmt::EscapeControlChars(bun_fmt::fmt_os_path(rest, Default::default())),
             );
             return Ok(());
         };
-        if path.is_empty() || (path.len() == 1 && path[0] == ('.' as OSPathChar)) {
+        if path.is_empty() {
             return Ok(());
         }
-        // `normalize_buf_t` collapses interior `..` but leaves a leading `..`
-        // on a relative input. Reject those so `openat(dest_fd, ...)` can
-        // never escape the temp extraction root. `Archiver.extractToDir`
-        // sees the same normalised path; this check is belt-and-braces on
-        // top of the integrity gate.
-        if path.len() >= 2
-            && path[0] == ('.' as OSPathChar)
-            && path[1] == ('.' as OSPathChar)
-            && (path.len() == 2 || path[2] == bun_paths::SEP as OSPathChar)
-        {
-            return Ok(());
-        }
-        #[cfg(windows)]
-        {
-            if self.npm_mode {
-                apply_windows_npm_path_escapes(path);
-            }
-            if bun_archive::starts_elsewhere_on_windows(path) {
-                return Ok(());
-            }
-        }
-
-        let norm_len = path.len();
-        let path: OSPathZ = OSPathSliceZ::nul_terminate(&mut norm_buf, norm_len);
+        let path: OSPathZ = &path;
         let path_slice: &[OSPathChar] = &path[..];
         let dest = self.dest.as_ref().unwrap().fd();
 
@@ -904,10 +866,10 @@ fn open_output_file(
             Ok(fd) => Ok(fd),
             Err(e) => match e.get_errno() {
                 bun_sys::E::EPERM | bun_sys::E::ENOENT => 'brk: {
-                    let Some(dir) = bun_paths::Dirname::dirname::<u16>(path_slice) else {
+                    let Some(dir) = bun_paths::dirname(path_slice) else {
                         return Err(e.to_zig_err().into());
                     };
-                    let _ = bun_sys::make_path::make_path::<u16>(Dir::borrow(&dest_fd), dir);
+                    let _ = bun_sys::make_path::make_path(Dir::borrow(&dest_fd), dir);
                     break 'brk bun_sys::openat_windows(dest_fd, path, flags, 0)
                         .map_err(|e| e.to_zig_err().into());
                 }
@@ -937,7 +899,7 @@ fn open_output_file(
 fn make_directory(entry: &tar::Entry, dest_fd: Fd, path: OSPathZ, path_slice: &[OSPathChar]) {
     #[cfg(windows)]
     {
-        let _ = bun_sys::make_path::make_path::<u16>(Dir::borrow(&dest_fd), &path[..]);
+        let _ = bun_sys::make_path::make_path(Dir::borrow(&dest_fd), &path[..]);
         let _ = (entry, path_slice);
     }
     #[cfg(not(windows))]
@@ -960,43 +922,6 @@ fn make_directory(entry: &tar::Entry, dest_fd: Fd, path: OSPathZ, path_slice: &[
             },
         }
     }
-}
-
-#[cfg(windows)]
-fn apply_windows_npm_path_escapes(path: &mut [OSPathChar]) {
-    // Same transformation as Archiver.extractToDir: encode characters
-    // Windows rejects in filenames into the 0xf000 private-use range so
-    // the extraction round-trips with node-tar.
-    for ch in path.iter_mut() {
-        match *ch {
-            c if c == ('|' as OSPathChar)
-                || c == ('<' as OSPathChar)
-                || c == ('>' as OSPathChar)
-                || c == ('?' as OSPathChar)
-                || c == (':' as OSPathChar) =>
-            {
-                *ch += 0xf000;
-            }
-            _ => {}
-        }
-    }
-}
-
-// Skips any leading `/` delimiters, then returns everything after the first
-// path component, so for `"package/index.js"` the result is `"index.js"`
-// (no leading `/`).
-fn tokenize_rest_after_first(s: &[OSPathChar]) -> &[OSPathChar] {
-    let mut i = 0;
-    while i < s.len() && s[i] == ('/' as OSPathChar) {
-        i += 1;
-    }
-    while i < s.len() && s[i] != ('/' as OSPathChar) {
-        i += 1;
-    }
-    while i < s.len() && s[i] == ('/' as OSPathChar) {
-        i += 1;
-    }
-    &s[i..]
 }
 
 use crate::package_manager_task::{Job, Status as TaskStatus, Task};

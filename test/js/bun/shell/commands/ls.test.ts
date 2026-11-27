@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { isLinux, isPosix, isRoot, tempDir, tempDirWithFiles } from "harness";
+import { isLinux, isPosix, isRoot, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { chmodSync } from "node:fs";
 import { join } from "node:path";
 import { createTestBuilder } from "../util";
@@ -13,6 +13,13 @@ $.nothrow();
 
 beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);
+});
+
+test.skipIf(!isWindows)("a file below a device path is not a directory", async () => {
+  using dir = tempDir("ls-device-path", { "a.txt": "" });
+  const file = `\\\\.\\${dir}\\a.txt`;
+  expect(await $`ls ${file}`.text()).toBe(`${file}\n`);
+  expect((await $`cd ${file}`.quiet()).stderr.toString()).toBe(`cd: not a directory: ${file}\n`);
 });
 
 const BUN = process.argv0;

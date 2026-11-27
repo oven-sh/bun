@@ -3,7 +3,9 @@ use super::search::{is_in_node_modules, join_unrooted};
 use super::*;
 use crate::atom::{Atom, Interner};
 use crate::hir::JsxPragmas;
+use crate::resolve::{basename, parent_directory};
 use bun_core::identifier::is_identifier;
+use bun_paths::portable::from_portable_specifier;
 use std::sync::OnceLock;
 
 const MAX_EXTENDED_CONFIGS: usize = 64;
@@ -180,7 +182,8 @@ impl JsxFields {
             is_development: emit.and_then(|emit| emit.1),
             factory: identifiers(b"jsxFactory"),
             fragment: identifiers(b"jsxFragmentFactory"),
-            import_source: string_entry(options, b"jsxImportSource").map(<[u8]>::to_vec),
+            import_source: string_entry(options, b"jsxImportSource")
+                .map(|text| from_portable_specifier(text).into_owned()),
         }
     }
 
@@ -221,7 +224,7 @@ struct ParsedConfig {
 
 impl ParsedConfig {
     fn parse(path: &[u8], json: &Json) -> ParsedConfig {
-        let config_dir = dirname::<Posix>(path);
+        let config_dir = parent_directory(path);
         let extends = string_entry(json, b"extends")
             .filter(|text| !text.is_empty() && !is_in_node_modules(config_dir))
             .map(|text| join(config_dir, text));
@@ -296,7 +299,7 @@ impl<'h> Resolver<'h> {
         is_javascript: impl FnOnce() -> bool,
     ) -> &'h TranspileSettings {
         match self.is_aot_source_of_dependency(path, is_javascript) {
-            true => self.aot_package_settings(dirname::<Posix>(path)),
+            true => self.aot_package_settings(parent_directory(path)),
             false => self.configured_transpile_settings(path),
         }
     }
@@ -343,7 +346,7 @@ impl<'h> Resolver<'h> {
             return known;
         }
         let stated = ancestors(directory)
-            .take_while(|&ancestor| strings::basename_posix(ancestor) != b"node_modules")
+            .take_while(|&ancestor| basename(ancestor) != b"node_modules")
             .map(|ancestor| inside(ancestor, b"package.json"))
             .filter(|path| self.is_file(path))
             .find_map(|path| self.read_config(&path).filter(|it| it.has_compiler_options));

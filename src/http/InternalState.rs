@@ -3,7 +3,10 @@ use bun_core::MutableString;
 use bun_core::Output;
 use bun_http1::{ChunkedDecoder, ResponseParser};
 
-use crate::{CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata};
+use crate::{
+    CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata,
+    UnfinishedStream,
+};
 
 bun_core::define_scoped_log!(log, HTTPInternalState, hidden);
 
@@ -78,6 +81,8 @@ pub struct InternalState<'a> {
 pub struct InternalStateFlags {
     pub(crate) allow_keepalive: bool,
     pub(crate) received_last_chunk: bool,
+    /// The body counts as received, but the transport ended abnormally.
+    pub(crate) was_cut_short: bool,
     pub(crate) is_redirect_pending: bool,
     pub(crate) is_libdeflate_fast_path_disabled: bool,
     pub(crate) resend_request_body_on_redirect: bool,
@@ -100,6 +105,10 @@ pub struct InternalStateFlags {
     pub(crate) decompress_output_pending: bool,
     /// See [`crate::HTTPClientResult::left_transport`].
     pub(crate) left_transport: bool,
+    /// See [`crate::request_trace::Event::Redirect`].
+    pub(crate) is_waiting_for_headers: bool,
+    pub(crate) traced_head: bool,
+    pub(crate) traced_body: bool,
 }
 
 impl InternalStateFlags {
@@ -108,6 +117,7 @@ impl InternalStateFlags {
         Self {
             allow_keepalive: true,
             received_last_chunk: false,
+            was_cut_short: false,
             is_redirect_pending: false,
             is_libdeflate_fast_path_disabled: false,
             resend_request_body_on_redirect: false,
@@ -116,6 +126,9 @@ impl InternalStateFlags {
             body_compressed: false,
             decompress_output_pending: false,
             left_transport: false,
+            is_waiting_for_headers: false,
+            traced_head: false,
+            traced_body: false,
         }
     }
 }
@@ -240,24 +253,31 @@ impl<'a> InternalState<'a> {
         self.content_length.is_none() && self.response_stage == HTTPStage::Body
     }
 
+    /// The transport has no more bytes for this body.
+    pub(crate) fn end_body(&mut self, end: TransportEnd) {
+        if !core::mem::replace(&mut self.flags.received_last_chunk, true) {
+            // A chunked body only gets here from inside its trailer section.
+            self.flags.was_cut_short = self.is_chunked_encoding()
+                || (self.content_length.is_none() && end == TransportEnd::Failed);
+        }
+    }
+
     pub(crate) fn decompress_bytes(
         &mut self,
         buffer: &[u8],
         is_final_chunk: bool,
         max_output: usize,
+        unfinished: UnfinishedStream,
     ) -> Result<usize, Error> {
+        debug_assert!(self.compressed_body.list.is_empty());
         // A response that declared a Content-Encoding but sent zero body bytes
         // (e.g. an empty chunked gzip response) has nothing to decompress.
         // Running the decompressor anyway makes it report a truncated stream
         // (ZlibError); Node treats this as an empty body.
         if buffer.is_empty() && self.total_body_received == 0 {
-            self.compressed_body.reset();
             return Ok(0);
         }
 
-        // `self.compressed_body.reset()` must run on every exit. scopeguard would
-        // hold &mut self.compressed_body across the body and conflict with &mut self.decompressor,
-        // so each early-return below calls it explicitly.
         let mut still_needs_to_decompress = true;
         let mut consumed = buffer.len();
 
@@ -340,7 +360,6 @@ impl<'a> InternalState<'a> {
                         .try_reserve_exact(result.written)
                         .is_err()
                     {
-                        self.compressed_body.reset();
                         return Err(bun_alloc::AllocError.into());
                     }
                     self.decoded_body
@@ -362,7 +381,6 @@ impl<'a> InternalState<'a> {
                     .decoded_body
                     .grow_by((min as usize).max(32).min(max_output))
                 {
-                    self.compressed_body.reset();
                     return Err(err.into());
                 }
             }
@@ -374,23 +392,28 @@ impl<'a> InternalState<'a> {
                 &mut self.decoded_body,
                 max_output,
                 is_done,
+                unfinished,
             ) {
                 Ok(n) => consumed = n,
                 Err(err) => {
-                    if is_done || err != crate::Error::ShortRead {
+                    if err != crate::Error::ShortRead {
                         bun_core::pretty_errorln!(
                             "<r><red>Decompression error: {}<r>",
                             bstr::BStr::new(err.name()),
                         );
                         Output::flush();
-                        self.compressed_body.reset();
                         return Err(err);
                     }
                 }
             }
+            if self.flags.was_cut_short
+                && self.decoded_body.list.len() < max_output
+                && self.decompressor.is_mid_stream()
+            {
+                return Err(Error::ConnectionClosed);
+            }
         }
 
-        self.compressed_body.reset();
         Ok(consumed)
     }
 
@@ -399,6 +422,7 @@ impl<'a> InternalState<'a> {
         &mut self,
         is_final_chunk: bool,
         max_output: usize,
+        unfinished: UnfinishedStream,
     ) -> Result<bool, Error> {
         if self.flags.is_redirect_pending {
             return Ok(false);
@@ -408,8 +432,13 @@ impl<'a> InternalState<'a> {
             // `decompress_bytes` takes `&mut self`, so the bytes move out first.
             let mut buffer = core::mem::take(&mut self.compressed_body.list);
             let start = self.compressed_body_consumed;
-            let consumed =
-                start + self.decompress_bytes(&buffer[start..], is_final_chunk, max_output)?;
+            let consumed = start
+                + self.decompress_bytes(
+                    &buffer[start..],
+                    is_final_chunk,
+                    max_output,
+                    unfinished,
+                )?;
             let held = buffer.len() - consumed;
             // A decoder can hold output with no input left (brotli copy command, zstd flush).
             self.flags.decompress_output_pending = self.decoded_body.list.len() >= max_output
@@ -427,6 +456,12 @@ impl<'a> InternalState<'a> {
 
         Ok(!self.decoded_body.list.is_empty())
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TransportEnd {
+    Clean,
+    Failed,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

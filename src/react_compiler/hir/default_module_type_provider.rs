@@ -33,6 +33,17 @@ fn primitive_fn(positional_params: Vec<Effect>, rest_param: Effect) -> TypeConfi
     })
 }
 
+/// Whether upstream's test runner is what gives the module its types, and no compiler that is shipped does.
+pub fn is_fixture_module(module_name: &str) -> bool {
+    matches!(
+        module_name,
+        "shared-runtime"
+            | "ReactCompilerTest"
+            | "ReactCompilerKnownIncompatibleTest"
+            | "useDefaultExportNotTypedAsHook"
+    )
+}
+
 /// Returns type configuration for known third-party modules that are
 /// incompatible with memoization. Ported from TS `defaultModuleTypeProvider`.
 ///

@@ -6,7 +6,7 @@ use crate::diagnostics::CompilerError;
 use crate::diagnostics::CompilerErrorDetail;
 use crate::diagnostics::ErrorCategory;
 
-use crate::hir::default_module_type_provider::default_module_type_provider;
+use crate::hir::default_module_type_provider::{default_module_type_provider, is_fixture_module};
 use crate::hir::environment_config::EnvironmentConfig;
 use crate::hir::globals::Global;
 use crate::hir::globals::GlobalRegistry;
@@ -689,7 +689,13 @@ impl Environment {
                     .find(|(k, _)| k.as_bytes() == module_name.slice())
                     .map(|(_, v)| v.clone())
             })
-            .or_else(|| module_str.and_then(default_module_type_provider));
+            .or_else(|| {
+                module_str
+                    .filter(|name| {
+                        !(self.config.fixture_modules_have_no_types && is_fixture_module(name))
+                    })
+                    .and_then(default_module_type_provider)
+            });
 
         let module_type = module_config.map(|config| {
             let mut type_errors: Vec<String> = Vec::new();

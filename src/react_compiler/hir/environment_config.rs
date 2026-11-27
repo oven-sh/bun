@@ -155,6 +155,9 @@ pub struct EnvironmentConfig {
     /// for that or for its own call of an effect hook. What the rest would throw then drops nothing that is recorded.
     /// Upstream runs all of it, and what a pass throws is all that is said of the function.
     pub unwanted_throws_are_not_looked_for: bool,
+    /// `shared-runtime` and the other modules of upstream's test fixtures have no types: what is imported from one is
+    /// as from any module. Upstream's test runner gives them types, which `default_module_type_provider` has.
+    pub fixture_modules_have_no_types: bool,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
@@ -229,6 +232,7 @@ impl Default for EnvironmentConfig {
             dependencies_are_sorted_by_bytes: false,
             callback_dependencies_end_before_current: false,
             unwanted_throws_are_not_looked_for: false,
+            fixture_modules_have_no_types: false,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,

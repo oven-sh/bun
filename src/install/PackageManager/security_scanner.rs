@@ -773,7 +773,9 @@ pub struct SecurityScanSubprocess<'a> {
 
 bun_spawn::link_impl_ProcessExit! {
     SecurityScan for SecurityScanSubprocess<'static> => |this| {
-        on_process_exit(status, rusage) => (*this).on_process_exit(status, rusage),
+        on_process_exit(status, rusage) => bun_removable_features::removable_body_behind_value!(Install, {
+            (*this).on_process_exit(status, rusage)
+        }),
     }
 }
 

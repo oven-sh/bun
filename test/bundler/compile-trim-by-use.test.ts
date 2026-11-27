@@ -1,10 +1,12 @@
 // What `bun build --compile --aot --trim` keeps and removes for a handful of programs and build options. trim-by-use/ has a program for each part of Bun.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isWindows } from "harness";
-import { readFileSync } from "node:fs";
+import { bunEnv, bunExe, isGlibc, isLinux, isMacOS, isWindows } from "harness";
+import { chmodSync, readFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import { unsupported } from "../aot/harness/compiler";
 import { run } from "../aot/harness/run";
-import { sharedBuilds, sizeOf, type Build } from "../aot/harness/shared-builds";
+import { inTurn, sharedBuilds, sizeOf, type Build } from "../aot/harness/shared-builds";
+import { copyWithoutDebugInformation } from "../aot/harness/without-debug-information";
 import { readRemovedFeatures } from "../aot/trimmed-against-whole/removed-features";
 import {
   atLeastOnLinux,
@@ -199,8 +201,67 @@ const files = {
       console.log(JSON.stringify(transpiler.scan(source)));
     }
   `,
+  "removes-a-job.ts": `
+    await Bun.cron.remove("no-such-job");
+    console.log("removed");
+  `,
+  // In the place of crontab: it prints no table and takes any.
+  "bin/crontab": "#!/bin/sh\nexit 0\n",
+  "drives-a-browser.ts": `
+    const [path, script] = process.argv.slice(2);
+    const WebView: any = Bun.WebView;
+    const backend = { type: "chrome", url: false, path, argv: [script], stderr: "inherit" };
+    const first = new WebView({ backend, width: 100, height: 100 });
+    await first.navigate("http://fake/1");
+    await first.evaluate("__fake_exit(3)").catch(() => {});
+    // No browser starts before the exit of the last one is reported.
+    let second: any;
+    while (!second) {
+      try {
+        second = new WebView({ backend, width: 100, height: 100 });
+      } catch (error) {
+        if (!/Failed to spawn Chrome/.test((error as Error).message)) throw error;
+        await Bun.sleep(1);
+      }
+    }
+    await second.navigate("http://fake/2");
+    console.log(await second.evaluate("'started after the first ended'"));
+    second.close();
+  `,
+  // A program that starts a process keeps what waits for a child, as the commands of bun exec need it too.
+  "spawns.ts": `console.log(Bun.spawnSync(["echo", "from a child"]).stdout.toString());`,
+  "scripts/package.json": `{ "scripts": { "greet": "echo from a script" } }`,
+  "builds-with-the-command-line.ts": `
+    await Bun.build({
+      entrypoints: [process.env.FOLDER + "/spawns.ts"],
+      compile: {
+        outfile: process.env.FOLDER + "/with-the-command-line",
+        ...(process.env.EXECUTABLE_PATH && { executablePath: process.env.EXECUTABLE_PATH }),
+        aot: true,
+        autoloadPackageJson: true,
+        trim: { allow: ["run"], remove: ["shell"] },
+      },
+    });
+  `,
   ...Object.fromEntries(Object.entries(features).map(([name, feature]) => [`uses-${name}.ts`, feature.program])),
 };
+// Stands in for Chrome: test/js/bun/webview/webview-chrome-pipe.test.ts.
+const fakeBrowser = join(import.meta.dir, "..", "js", "bun", "webview", "fake-chrome-fixture.ts");
+
+// A text of each of the three that start a process of their own kind, as Linux has them.
+const textsOfStarters: Record<string, string> = {
+  "the shell": "usage: rm [-f | -i] [-dIPRrvWx] file ...",
+  "Bun.WebView": "Chrome killed by signal ",
+  "Bun.cron": "crontab not found in PATH",
+};
+const startersIn = (file: Buffer) => Object.keys(textsOfStarters).filter(name => file.includes(textsOfStarters[name]!));
+let startersInBun: string[] | undefined;
+/** The starters that left a text in the executable. Bun itself has a text of each. */
+function startersWithTextIn(path: string) {
+  expect((startersInBun ??= startersIn(readFileSync(bunExe())))).toEqual(Object.keys(textsOfStarters));
+  return startersIn(readFileSync(path));
+}
+const textsAreMeasured = isGlibc && process.arch === "x64";
 
 (!canTrim || unsupported ? describe.skip : describe.concurrent)(
   "--compile --aot --trim removes what the program doesn't use",
@@ -437,6 +498,55 @@ const files = {
 
     test("a server that never names bun:test has none of it, whatever names it reads off values nobody knows", async () => {
       expect(removedFrom(await trimmed("serves-values-nobody-knows.ts"))).toContain(featureNamed("Test"));
+    });
+
+    // What hears a child end, and what reads and writes its pipes, is removed with the feature that starts the child. Each of these programs
+    // waits for a child of its own kind, and has the texts of no other kind.
+    test.skipIf(!isLinux)("a program that edits the crontab hears each run of crontab end", async () => {
+      chmodSync(join(folder, "bin", "crontab"), 0o755);
+      const built = await trimmed("removes-a-job.ts");
+      const withStandIn = { ...env, PATH: join(folder, "bin") + delimiter + env.PATH };
+      expect(await run([built.executable], folder, withStandIn)).toEqual({
+        stdout: "removed\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      if (textsAreMeasured) expect(startersWithTextIn(built.file)).toEqual(["Bun.cron"]);
+    });
+
+    test("a program that drives a browser hears it end, and starts the next one", async () => {
+      const built = await trimmed("drives-a-browser.ts");
+      expect(await started(built, bunExe(), fakeBrowser)).toEqual({
+        stdout: "started after the first ended\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      if (textsAreMeasured) expect(startersWithTextIn(built.file)).toEqual(["Bun.WebView"]);
+    });
+
+    test("the command line of an executable without Bun.$ runs scripts in the shell", async () => {
+      const builder = await inTurn(() =>
+        run([bunExe(), "builds-with-the-command-line.ts"], folder, {
+          ...env,
+          EXECUTABLE_PATH: copyWithoutDebugInformation,
+        }),
+      );
+      expect({ stderr: builder.stderr, exitCode: builder.exitCode }).toEqual({ stderr: builder.stderr, exitCode: 0 });
+      const executable = join(folder, "with-the-command-line");
+      const asBun = { ...env, BUN_BE_BUN: "1" };
+      const prints = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
+      // A program that ends, the shell's own echo that writes to a pipe, and a substitution that reads from one.
+      expect(await run([executable, "exec", `'${bunExe()}' --version`], folder, asBun)).toEqual(
+        prints(Bun.version + "\n"),
+      );
+      expect(await run([executable, "exec", "echo from exec"], folder, asBun)).toEqual(prints("from exec\n"));
+      expect(await run([executable, "exec", `echo $('${bunExe()}' --version)`], folder, asBun)).toEqual(
+        prints(Bun.version + "\n"),
+      );
+      expect(
+        await run([executable, "run", "--silent", "--shell=bun", "greet"], join(folder, "scripts"), asBun),
+      ).toEqual(prints("from a script\n"));
+      if (textsAreMeasured) expect(startersWithTextIn(executable)).toEqual(["the shell"]);
     });
 
     test("a native library leaves none of its texts in the file when its features are removed", async () => {

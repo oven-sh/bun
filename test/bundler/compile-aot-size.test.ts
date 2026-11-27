@@ -55,6 +55,18 @@ const formatterStrings = ["dayPeriod/format/abbreviated", "CurrencyPlurals", "cu
 // `bun scripts/build/trim/why.ts <retained.txt> '[Mm]ock'` names the way.
 const mockStrings = ["the mock call", "deferMock, asks again", "setMock, none", "the loader fetches it"];
 
+// What the shell's own rm, mv and seq print for arguments that they can't read.
+const shellStrings = [
+  "usage: rm [-f | -i] [-dIPRrvWx] file ...",
+  "usage: mv [-f | -i | -n] [-hv] source target",
+  "usage: seq [-w] [-f format]",
+];
+const startsAProcess = `
+  const { promise, resolve } = Promise.withResolvers<number | null>();
+  const child = Bun.spawn(["/bin/echo", "from a child"], { stdout: "pipe", onExit: (_, exitCode) => resolve(exitCode) });
+  console.log(await new Response(child.stdout).text(), await promise);
+`;
+
 const madeByIntl: Record<string, string> = {
   "Intl.Collator": `new Intl.Collator("en-US").compare("a", "b")`,
   "Intl.DateTimeFormat": `new Intl.DateTimeFormat("en-US", { timeZone: "UTC" }).formatRange(0, 86400000 * 40)`,
@@ -162,6 +174,22 @@ describe.skipIf(!canTrim)("bun build --compile --aot", () => {
     expect(sharedBytes).toBeLessThan(16_384);
   });
 
+  // All that starts a process reports its exit through one function of bun_spawn, which calls the exit handler of each kind of child.
+  // A handler that lacks the mark of its feature stays in every program that starts a process, and the shell's interpreter is behind one.
+  test("what starts a process keeps no exit handler of another", () => {
+    const starters = ["Shell", "Cron", "WebView", "BunSpawn"].map(
+      name => model.features.find(each => each.name === featureNamed(name))!.index,
+    );
+    const table = readTrimTable(bunExe());
+    let sharedBytes = 0;
+    for (const { start, end, set } of table.ranges) {
+      const users = table.sets[set]!;
+      if (starters.every(starter => users.includes(starter))) sharedBytes += end - start;
+    }
+    console.log("the shell, Bun.cron, Bun.WebView and Bun.spawn share", sharedBytes, "bytes");
+    expect(sharedBytes).toBeLessThan(65_536);
+  });
+
   test.skipIf(!isGlibc || process.arch !== "x64")("every range of code of a page or more can be cut", () => {
     const onlyFilled = readTrimTable(bunExe()).ranges.filter(each => each.isCode && !each.canBeCut);
     expect(onlyFilled.filter(each => each.end - each.start >= 4096)).toEqual([]);
@@ -207,6 +235,23 @@ describe.skipIf(!canTrim)("bun build --compile --aot", () => {
         const bun = readFileSync(bunExe());
         expect(mockStrings.filter(each => bun.includes(each))).toEqual(mockStrings);
         expect(mockStrings.filter(each => executable.includes(each))).toEqual([]);
+      },
+      600_000,
+    );
+
+    test.skipIf(!isGlibc || process.arch !== "x64" || flags.length === 0)(
+      "a program that starts a process contains no strings from the shell",
+      async () => {
+        using dir = tempDirForAotBuilds("compile-aot-size", { "program.ts": startsAProcess });
+        const program = await build(String(dir), "program");
+        expect(await spawned([program], String(dir), bunEnv)).toMatchObject({
+          stdout: "from a child\n 0\n",
+          exitCode: 0,
+        });
+        const executable = readFileSync(program);
+        const bun = readFileSync(bunExe());
+        expect(shellStrings.filter(each => bun.includes(each))).toEqual(shellStrings);
+        expect(shellStrings.filter(each => executable.includes(each))).toEqual([]);
       },
       600_000,
     );

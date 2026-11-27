@@ -886,29 +886,25 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             WindowsNamedPipe,
             |this, _, event| this.on_writer_io(event)
         ),
-        PollTag::ShellIoReader => {
-            io_arm!([Shell], clone_rc, ShellIoReader, |this, _, event| {
-                this.on_io(event)
-            })
-        }
-        PollTag::ShellPipeReader => {
-            io_arm!([Shell], clone_rc, ShellPipeReader, |this, _, event| {
-                this.read(Some(event))
-            })
-        }
-        #[cfg(not(windows))]
-        PollTag::ShellIoWriter => {
-            io_arm!([Shell], clone_rc, ShellIoWriter, |this, _, event| {
-                this.on_io(event)
-            })
-        }
-        // Every write completes here, also those of `bun run` and `bun exec`.
-        #[cfg(windows)]
-        PollTag::ShellIoWriter => {
-            io_arm!([Shell, Tools], clone_rc, ShellIoWriter, |this, _, event| {
-                this.on_io(event)
-            })
-        }
+        // `bun run`, `bun exec`, `bun create` and the package manager run their scripts in the shell too.
+        PollTag::ShellIoReader => io_arm!(
+            [Shell, Tools, Install, Create],
+            clone_rc,
+            ShellIoReader,
+            |this, _, event| this.on_io(event)
+        ),
+        PollTag::ShellPipeReader => io_arm!(
+            [Shell, Tools, Install, Create],
+            clone_rc,
+            ShellPipeReader,
+            |this, _, event| this.read(Some(event))
+        ),
+        PollTag::ShellIoWriter => io_arm!(
+            [Shell, Tools, Install, Create],
+            clone_rc,
+            ShellIoWriter,
+            |this, _, event| this.on_io(event)
+        ),
 
         // Neither JS nor a nested tick runs under these.
         PollTag::FilterRunHandle => io_arm!(

@@ -3087,6 +3087,14 @@ export default db;
             });
         }
 
+        // Only a JS chunk is served as JS source. Any other embedded file (an asset
+        // imported `with { type: "file" }`, a `.wasm`, a client-side chunk) is left to
+        // `Bun__transpileFile`, which reads it from the graph as a virtual source and
+        // applies the loader its path gets on disk (#44095).
+        if !file.loader.is_java_script_like() {
+            return None;
+        }
+
         // SAFETY: `file.module_info` is a live subrange of the embedded section (set in `Graph::from_bytes`).
         let module_info = unsafe { &*file.module_info };
         let module_info_strings: &'static [u8] = bun_standalone_graph::Graph::get_ref()
@@ -3355,6 +3363,8 @@ fn get_loader_and_virtual_source<'a>(
             graph
                 .find_at_source_path(path.text)
                 .or_else(|| graph.find_asset_under_root(path.text))
+                // An embedded file the builtin-module probe declined (it serves only JS chunks): its bytes come from the graph, never from the disk.
+                .or_else(|| graph.find_ref(path.text))
         })
     {
         // An executable compiled in place serves an embedded file that is no longer on disk, on every load of the module.

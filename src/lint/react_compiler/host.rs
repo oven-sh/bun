@@ -46,6 +46,10 @@ impl Host for LintHost<'_> {
     fn is_tagged_template(&self, call: Loc) -> bool {
         self.converted.tagged_templates.contains(&call)
     }
+    fn is_non_null_asserted(&self, link: Loc) -> bool {
+        let all = &self.converted.non_null_chains;
+        all.binary_search_by_key(&link.start, |it| it.start).is_ok()
+    }
     fn is_module_level(&self, ref_: Ref) -> bool {
         let is_outside = self.converted.is_outside.get(ref_.inner_index() as usize);
         is_outside.copied().unwrap_or(true)

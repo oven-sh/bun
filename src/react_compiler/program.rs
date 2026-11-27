@@ -85,6 +85,12 @@ pub trait Host {
         false
     }
 
+    /// Whether the link of an optional chain at `link` is the operand of a `!` in the source. The parser drops the
+    /// `!`. For a tree that has a node for it, where what is in one is a chain of its own.
+    fn is_non_null_asserted(&self, _link: Loc) -> bool {
+        false
+    }
+
     /// The namespace import that `item` is a member of. The parser makes an import of its own of `ns.member`.
     fn namespace_of_import_item(&self, _item: Ref) -> Option<Ref> {
         None

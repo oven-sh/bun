@@ -70,6 +70,8 @@ pub(crate) struct Converted {
     pub(crate) clock_reads: Vec<Span>,
     /// [`Host::is_tagged_template`](bun_react_compiler::Host::is_tagged_template)
     pub(crate) tagged_templates: Vec<Loc>,
+    /// [`Host::is_non_null_asserted`](bun_react_compiler::Host::is_non_null_asserted)
+    pub(crate) non_null_chains: Vec<Loc>,
     /// Each string key with a lone surrogate that the tree has no key for, in the order in which oxc's lowering would
     /// come to them. It gives up on the function at the first that it lowers, and Bun's records a `Todo` at each.
     pub(crate) lone_surrogate_keys: Vec<Span>,
@@ -193,6 +195,7 @@ pub(crate) struct Converter<'a, 'x> {
     wrapped_defaults: Vec<WrappedDefault>,
     clock_reads: Vec<Span>,
     tagged_templates: Vec<Loc>,
+    non_null_chains: Vec<Loc>,
     body: Body,
     /// The function that oxc's compiler inlines into the compiled one, from when its call is converted until it is.
     inlined: Option<Span>,
@@ -240,6 +243,7 @@ pub(crate) fn convert<'a>(
         wrapped_defaults: Vec::new(),
         clock_reads: Vec::new(),
         tagged_templates: Vec::new(),
+        non_null_chains: Vec::new(),
         body: Body::Nested,
         inlined: None,
         is_after_inlined_call: false,
@@ -267,6 +271,8 @@ pub(crate) fn convert<'a>(
     parentheses.reverse();
     bun_lint::utils::sort::sort_by_key(&mut parentheses, |it| it.0.start);
     parentheses.dedup_by_key(|it| it.0.start);
+    let mut non_null_chains = converter.non_null_chains;
+    bun_lint::utils::sort::sort_by_key(&mut non_null_chains, |it| it.start);
     Ok(Converted {
         root,
         casts,
@@ -281,6 +287,7 @@ pub(crate) fn convert<'a>(
         recorded: converter.recorded,
         clock_reads: converter.clock_reads,
         tagged_templates: converter.tagged_templates,
+        non_null_chains,
         lone_surrogate_keys: converter.lone_surrogate_keys,
     })
 }
@@ -1198,7 +1205,15 @@ impl<'a> Converter<'a, '_> {
         if let ExprKind::NonNull(inner) | ExprKind::Instantiation { expr: inner, .. } = expr.kind()
         {
             self.is_target = is_target;
-            return self.expr(inner);
+            let converted = self.expr(inner)?;
+            // oxc's tree has a node for the `!`, and its lowering makes a chain of its own of what is in one.
+            if self.flavor == Flavor::Oxlint
+                && expr.tag() == ExprTag::NonNull
+                && inner.chain() != Chain::No
+            {
+                self.non_null_chains.push(converted.loc);
+            }
+            return Ok(converted);
         }
         if let ExprKind::As { expr: inner, .. }
         | ExprKind::Satisfies { expr: inner, .. }

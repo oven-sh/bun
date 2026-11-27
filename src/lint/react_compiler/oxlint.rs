@@ -15,7 +15,7 @@
 use crate::finding::{Detail, Finding};
 use bun_core::strings;
 use bun_lint::ast::{
-    BinOp, Call, Expr, ExprKind, ExprTag, File, Func, Name, Node, Param, StmtKind,
+    BinOp, Call, Chain, Expr, ExprKind, ExprTag, File, Func, Name, Node, Param, StmtKind,
 };
 use bun_lint::semantic::Declaration;
 use bun_lint::span::Span;
@@ -739,7 +739,11 @@ fn inferred_dependency(call: Call, help: &str) -> Option<Span> {
 }
 
 /// With the path `a`, `b`, returns the `variable.a.b` read from `variable` and the span of the `b`. With an empty path,
-/// returns the longest member chain read from `variable` and its span.
+/// returns the longest member chain read from `variable`, and the span of what the compiler reads from the variable
+/// first there. That's the chain, unless a link of an optional chain without a `?.` isn't a property of the link
+/// before it for the compiler: a call, a computed name, or anything after a `!`. The compiler then tests what the link
+/// before it reads from, which is the guard that oxc's `traverse_optional_block` keeps: the `x` in `x?.a!.b`, the
+/// `x?.a` in `x?.a.b()`.
 fn read_of<'a>(variable: Expr<'a>, path: &[&[u8]]) -> Option<(Expr<'a>, Span)> {
     let (mut read, mut property_span) = (variable, None);
     for name in path {
@@ -749,10 +753,63 @@ fn read_of<'a>(variable: Expr<'a>, path: &[&[u8]]) -> Option<(Expr<'a>, Span)> {
     if let Some(property_span) = property_span {
         return Some((read, property_span));
     }
+    // `is_plain`: no link so far is part of an optional chain. `is_path`: `read` is a link of an optional chain, and a
+    // property of the variable for the compiler.
+    let (mut is_plain, mut is_path) = (true, false);
+    let mut guard = None;
     while let Some(member) = enclosing_member(read) {
+        let is_apart = read.is_parenthesized() || object_of(member) != Some(read);
+        let chain = member.chain();
+        if chain == Chain::Continue && is_path && is_apart && guard.is_none() {
+            guard = guarded_by(read);
+        }
+        is_path = match chain {
+            Chain::No => false,
+            Chain::Start if is_plain => true,
+            Chain::Start | Chain::Continue => is_path && !is_apart,
+        };
+        is_plain &= chain == Chain::No;
         read = member;
     }
-    Some((read, read.span()))
+    if guard.is_none() && is_path && is_continued_by_no_property(read) {
+        guard = guarded_by(read);
+    }
+    Some((read, guard.map_or_else(|| read.span(), Expr::span)))
+}
+
+/// What `member` reads from, as written: with its `!`.
+fn object_of(member: Expr) -> Option<Expr> {
+    match member.kind() {
+        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => Some(obj),
+        _ => None,
+    }
+}
+
+/// What `member` reads from, without its `!`.
+fn guarded_by(member: Expr) -> Option<Expr> {
+    let mut object = object_of(member)?;
+    while let ExprKind::NonNull(inner) = object.kind() {
+        object = inner;
+    }
+    Some(object)
+}
+
+/// True if what reads from `read`, possibly as `read!`, is a link of its optional chain without a `?.` that
+/// [`enclosing_member`] doesn't return: a call, or a member with a computed name.
+fn is_continued_by_no_property(mut read: Expr) -> bool {
+    loop {
+        let Some(parent) = read.parent().as_expr() else {
+            return false;
+        };
+        match parent.kind() {
+            ExprKind::NonNull(_) => read = parent,
+            ExprKind::Call(call) => {
+                return call.callee() == read && call.chain() == Chain::Continue;
+            }
+            ExprKind::Index { obj, chain, .. } => return obj == read && chain == Chain::Continue,
+            _ => return false,
+        }
+    }
 }
 
 /// True if `read` is in a reactive scope of a `useMemo` callback, as far as the syntax can tell: it's part of an

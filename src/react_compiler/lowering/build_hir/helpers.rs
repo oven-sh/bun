@@ -1280,6 +1280,12 @@ fn optional_chain_of(expr: &Expr) -> Option<OptionalChain> {
     }
 }
 
+/// True if `expr`, which a link of an optional chain reads from, is lowered as a chain of its own: it is in a `!` or
+/// in parentheses in a tree that has a node for them, as upstream's has for the `!`.
+fn is_chain_of_its_own(builder: &HirBuilder, expr: &Expr) -> bool {
+    builder.host().is_non_null_asserted(expr.loc) || builder.parentheses_around(expr.loc).is_some()
+}
+
 pub(super) fn lower_optional_member_expression(
     builder: &mut HirBuilder,
     expr: &Expr,
@@ -1342,13 +1348,15 @@ fn lower_optional_member_expression_impl(
     let mut object: Option<Place> = None;
     let test_block = builder.try_enter(BlockKind::Value, |builder, _block_id| {
         let obj_expr = member_object(expr);
-        match (&obj_expr.data, optional_chain_of(obj_expr)) {
-            (Data::EDot(_) | Data::EIndex(_), Some(_)) => {
+        let is_same_chain =
+            optional_chain_of(obj_expr).is_some() && !is_chain_of_its_own(builder, obj_expr);
+        match &obj_expr.data {
+            Data::EDot(_) | Data::EIndex(_) if is_same_chain => {
                 let (_obj, value) =
                     lower_optional_member_expression_impl(builder, obj_expr, Some(alternate))?;
                 object = Some(value);
             }
-            (Data::ECall(_), Some(_)) => {
+            Data::ECall(_) if is_same_chain => {
                 let value =
                     lower_optional_call_expression_impl(builder, obj_expr, Some(alternate))?;
                 let value_place = lower_value_to_temporary(builder, value)?;
@@ -1477,15 +1485,17 @@ fn lower_optional_call_expression_impl(
 
     let test_block = builder.try_enter(BlockKind::Value, |builder, _block_id| {
         let callee = &call.target;
+        // oxc's lowering looks through a `!` for the member that is called, and not through parentheses.
+        let is_parenthesized = builder.parentheses_around(callee.loc).is_some();
         match (&callee.data, optional_chain_of(callee)) {
-            (Data::ECall(_), Some(_)) => {
+            (Data::ECall(_), Some(_)) if !is_chain_of_its_own(builder, callee) => {
                 let value = lower_optional_call_expression_impl(builder, callee, Some(alternate))?;
                 let value_place = lower_value_to_temporary(builder, value)?;
                 callee_info = Some(CalleeInfo::CallExpression {
                     callee: value_place,
                 });
             }
-            (Data::EDot(_) | Data::EIndex(_), Some(_)) => {
+            (Data::EDot(_) | Data::EIndex(_), Some(_)) if !is_parenthesized => {
                 let (obj, value) =
                     lower_optional_member_expression_impl(builder, callee, Some(alternate))?;
                 callee_info = Some(CalleeInfo::MethodCall {

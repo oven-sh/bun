@@ -77,6 +77,8 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
         functions_given_to_jsx_are_not_assumed_called: is_oxlint,
         calls_in_branches_show_no_function_called: is_oxlint,
         optional_chains_keep_their_guards: is_oxlint,
+        bigint_literals_are_primitives: is_oxlint,
+        lone_surrogates_are_not_folded: is_oxlint,
         validate_no_set_state_in_render: true,
         validate_no_set_state_in_effects: true,
         validate_no_jsx_in_try_statements: true,

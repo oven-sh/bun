@@ -35,9 +35,10 @@ use crate::hir::environment::Environment;
 use crate::hir::{
     BinaryOperator, BlockKind, FloatValue, FunctionId, GotoVariant, HirFunction, IdentifierId,
     Instruction, InstructionValue, NonLocalBinding, Phi, Place, PrimitiveValue, PropertyLiteral,
-    SourceLocation, Terminal, UnaryOperator, UpdateOperator,
+    SourceLocation, TemplateQuasi, Terminal, UnaryOperator, UpdateOperator,
 };
 use crate::ssa::enter_ssa::placeholder_function;
+use bun_core::strings;
 
 use crate::optimization::merge_consecutive_blocks::merge_consecutive_blocks;
 
@@ -326,7 +327,8 @@ fn evaluate_instruction(
                     PrimitiveValue::Null
                     | PrimitiveValue::Undefined
                     | PrimitiveValue::Boolean(_)
-                    | PrimitiveValue::String(_) => {}
+                    | PrimitiveValue::String(_)
+                    | PrimitiveValue::BigInt(_) => {}
                 }
             }
             None
@@ -369,7 +371,8 @@ fn evaluate_instruction(
                     PrimitiveValue::Null
                     | PrimitiveValue::Undefined
                     | PrimitiveValue::Boolean(_)
-                    | PrimitiveValue::String(_) => {}
+                    | PrimitiveValue::String(_)
+                    | PrimitiveValue::BigInt(_) => {}
                 }
             }
             None
@@ -503,7 +506,12 @@ fn evaluate_instruction(
                 Some(Constant::Primitive { value: rhs, .. }),
             ) = (lhs_value, rhs_value)
             {
-                let result = evaluate_binary_op(*operator, lhs, rhs);
+                let result = evaluate_binary_op(
+                    *operator,
+                    lhs,
+                    rhs,
+                    env.config.lone_surrogates_are_not_folded,
+                );
                 if let Some(ref prim) = result {
                     let loc = *loc;
                     instr.value = InstructionValue::Primitive {
@@ -531,6 +539,9 @@ fn evaluate_instruction(
             {
                 if let PropertyLiteral::String(prop_name) = property {
                     if prop_name.slice() == b"length" {
+                        if env.config.lone_surrogates_are_not_folded && has_lone_surrogate(s) {
+                            return None;
+                        }
                         // Use UTF-16 code unit count to match JS .length semantics
                         let len = s.len_utf16() as f64;
                         let loc = *loc;
@@ -553,11 +564,15 @@ fn evaluate_instruction(
             quasis,
             loc,
         } => {
+            let is_joined = |text: &[u8]| {
+                !env.config.lone_surrogates_are_not_folded || !strings::wtf8_has_surrogate(text)
+            };
+            let cooked_of = |q: &TemplateQuasi| q.cooked.filter(|text| is_joined(text.slice()));
             if subexprs.is_empty() {
                 // No subexpressions: join all cooked quasis
                 let mut result: Vec<u8> = Vec::new();
                 for q in quasis {
-                    match q.cooked {
+                    match cooked_of(q) {
                         Some(cooked) => result.extend_from_slice(cooked.slice()),
                         None => return None,
                     }
@@ -575,7 +590,7 @@ fn evaluate_instruction(
                 return None;
             }
 
-            if quasis.iter().any(|q| q.cooked.is_none()) {
+            if quasis.iter().any(|q| cooked_of(q).is_none()) {
                 return None;
             }
 
@@ -603,9 +618,10 @@ fn evaluate_instruction(
                         ))
                     }
                     PrimitiveValue::String(s) => match s.as_bytes() {
-                        Some(b) => result.extend_from_slice(b),
-                        None => return None,
+                        Some(b) if is_joined(b) => result.extend_from_slice(b),
+                        _ => return None,
                     },
+                    PrimitiveValue::BigInt(value) => result.extend_from_slice(value.slice()),
                     // TS rejects undefined subexpression values
                     PrimitiveValue::Undefined => return None,
                 };
@@ -817,6 +833,14 @@ fn is_reserved_word(s: &[u8]) -> bool {
     )
 }
 
+/// Whether `s` has half of a surrogate pair: oxc's `JSStr::as_str` is `None`.
+fn has_lone_surrogate(s: &JsString) -> bool {
+    match s.as_bytes() {
+        Some(bytes) => strings::wtf8_has_surrogate(bytes),
+        None => char::decode_utf16(s.estring().slice16().iter().copied()).any(|unit| unit.is_err()),
+    }
+}
+
 fn push_units(out: &mut Vec<u16>, s: &bun_ast::E::EString) {
     if s.is_utf16 {
         out.extend_from_slice(s.slice16());
@@ -853,6 +877,7 @@ fn is_truthy(value: &PrimitiveValue) -> bool {
             v != 0.0 && !v.is_nan()
         }
         PrimitiveValue::String(s) => !s.is_empty(),
+        PrimitiveValue::BigInt(value) => value.slice() != b"0" && !value.is_empty(),
     }
 }
 
@@ -864,12 +889,19 @@ fn evaluate_binary_op(
     operator: BinaryOperator,
     lhs: &PrimitiveValue,
     rhs: &PrimitiveValue,
+    lone_surrogates_are_not_folded: bool,
 ) -> Option<PrimitiveValue> {
     match operator {
         BinaryOperator::Add => match (lhs, rhs) {
             (PrimitiveValue::Number(l), PrimitiveValue::Number(r)) => Some(PrimitiveValue::Number(
                 FloatValue::new(l.value() + r.value()),
             )),
+            (PrimitiveValue::String(l), PrimitiveValue::String(r))
+                if lone_surrogates_are_not_folded
+                    && (has_lone_surrogate(l) || has_lone_surrogate(r)) =>
+            {
+                None
+            }
             (PrimitiveValue::String(l), PrimitiveValue::String(r)) => {
                 match (l.as_bytes(), r.as_bytes()) {
                     (Some(lb), Some(rb)) => {
@@ -989,8 +1021,10 @@ fn evaluate_binary_op(
         },
         BinaryOperator::StrictEqual => Some(PrimitiveValue::Boolean(js_strict_equal(lhs, rhs))),
         BinaryOperator::StrictNotEqual => Some(PrimitiveValue::Boolean(!js_strict_equal(lhs, rhs))),
-        BinaryOperator::Equal => Some(PrimitiveValue::Boolean(js_abstract_equal(lhs, rhs))),
-        BinaryOperator::NotEqual => Some(PrimitiveValue::Boolean(!js_abstract_equal(lhs, rhs))),
+        BinaryOperator::Equal => js_abstract_equal(lhs, rhs).map(PrimitiveValue::Boolean),
+        BinaryOperator::NotEqual => {
+            js_abstract_equal(lhs, rhs).map(|equal| PrimitiveValue::Boolean(!equal))
+        }
         BinaryOperator::In | BinaryOperator::InstanceOf => None,
     }
 }
@@ -1014,6 +1048,7 @@ fn js_strict_equal(lhs: &PrimitiveValue, rhs: &PrimitiveValue) -> bool {
             av == bv
         }
         (PrimitiveValue::String(a), PrimitiveValue::String(b)) => a == b,
+        (PrimitiveValue::BigInt(a), PrimitiveValue::BigInt(b)) => a == b,
         // Different types => false
         _ => false,
     }
@@ -1059,8 +1094,9 @@ fn js_to_number(s: &[u8]) -> f64 {
     trimmed.parse::<f64>().unwrap_or(f64::NAN)
 }
 
-fn js_abstract_equal(lhs: &PrimitiveValue, rhs: &PrimitiveValue) -> bool {
-    match (lhs, rhs) {
+/// `None` for a `bigint` and a value of another kind, which is not folded.
+fn js_abstract_equal(lhs: &PrimitiveValue, rhs: &PrimitiveValue) -> Option<bool> {
+    Some(match (lhs, rhs) {
         (PrimitiveValue::Null, PrimitiveValue::Null) => true,
         (PrimitiveValue::Undefined, PrimitiveValue::Undefined) => true,
         (PrimitiveValue::Null, PrimitiveValue::Undefined)
@@ -1069,12 +1105,11 @@ fn js_abstract_equal(lhs: &PrimitiveValue, rhs: &PrimitiveValue) -> bool {
         (PrimitiveValue::Number(a), PrimitiveValue::Number(b)) => {
             let av = a.value();
             let bv = b.value();
-            if av.is_nan() || bv.is_nan() {
-                return false;
-            }
-            av == bv
+            !av.is_nan() && !bv.is_nan() && av == bv
         }
         (PrimitiveValue::String(a), PrimitiveValue::String(b)) => a == b,
+        (PrimitiveValue::BigInt(a), PrimitiveValue::BigInt(b)) => a == b,
+        (PrimitiveValue::BigInt(_), _) | (_, PrimitiveValue::BigInt(_)) => return None,
         // Cross-type coercions for primitives
         (PrimitiveValue::Number(n), PrimitiveValue::String(s))
         | (PrimitiveValue::String(s), PrimitiveValue::Number(n)) => {
@@ -1090,15 +1125,15 @@ fn js_abstract_equal(lhs: &PrimitiveValue, rhs: &PrimitiveValue) -> bool {
         }
         (PrimitiveValue::Boolean(b), other) => {
             let num = if *b { 1.0 } else { 0.0 };
-            js_abstract_equal(&PrimitiveValue::Number(FloatValue::new(num)), other)
+            return js_abstract_equal(&PrimitiveValue::Number(FloatValue::new(num)), other);
         }
         (other, PrimitiveValue::Boolean(b)) => {
             let num = if *b { 1.0 } else { 0.0 };
-            js_abstract_equal(other, &PrimitiveValue::Number(FloatValue::new(num)))
+            return js_abstract_equal(other, &PrimitiveValue::Number(FloatValue::new(num)));
         }
         // null/undefined vs number/string => false
         _ => false,
-    }
+    })
 }
 
 // =============================================================================

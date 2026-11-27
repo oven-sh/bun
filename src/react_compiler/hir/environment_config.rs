@@ -197,6 +197,12 @@ pub struct EnvironmentConfig {
     /// guard of the last optional link: `x.a.b` for `x.a.b?.c.d`. Upstream lets `x?.a` stand for all of it, and a
     /// scope that kept `undefined` for an `x` that was nullish does not run again to throw.
     pub optional_chains_keep_their_guards: bool,
+    /// `1n` is a primitive, with its value in decimal. `constant_propagation` knows whether one is zero and whether
+    /// two are equal, and does not fold `==` of one and a value of another kind, as `1n == null`. Upstream has a todo.
+    pub bigint_literals_are_primitives: bool,
+    /// For `constant_propagation`: a string with half of a surrogate pair has no known length, and is not joined with
+    /// another, by `+` or in a template. To upstream it is a string as any other.
+    pub lone_surrogates_are_not_folded: bool,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
@@ -289,6 +295,8 @@ impl Default for EnvironmentConfig {
             functions_given_to_jsx_are_not_assumed_called: false,
             calls_in_branches_show_no_function_called: false,
             optional_chains_keep_their_guards: false,
+            bigint_literals_are_primitives: false,
+            lone_surrogates_are_not_folded: false,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,

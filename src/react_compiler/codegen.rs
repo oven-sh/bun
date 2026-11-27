@@ -3420,6 +3420,7 @@ fn codegen_primitive_value(cx: &mut Context, value: &PrimitiveValue, loc: Loc) -
             data: ExprData::EString(s.as_estring()),
             loc,
         },
+        PrimitiveValue::BigInt(value) => Expr::init(E::BigInt { value: *value }, loc),
         PrimitiveValue::Null => Expr::init(E::Null {}, loc),
         PrimitiveValue::Undefined => Expr::init(E::Undefined {}, loc),
     }

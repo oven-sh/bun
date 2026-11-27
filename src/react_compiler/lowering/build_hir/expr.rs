@@ -318,6 +318,12 @@ pub(crate) fn lower_expression(
             })?;
             Ok(unsupported_node("JSXElement", loc))
         }
+        Data::EBigInt(lit) if builder.environment().config.bigint_literals_are_primitives => {
+            Ok(InstructionValue::Primitive {
+                value: PrimitiveValue::BigInt(lit.value),
+                loc,
+            })
+        }
         Data::EBigInt(_) => {
             builder.record_error(CompilerErrorDetail {
                 category: ErrorCategory::Todo,

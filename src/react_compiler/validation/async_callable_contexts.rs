@@ -2101,6 +2101,7 @@ impl CallableState {
                 let key = match value {
                     PrimitiveValue::String(value) => string_key(value),
                     PrimitiveValue::Number(value) => Some(value.to_string()),
+                    PrimitiveValue::BigInt(value) => Some(name_key(value)),
                     PrimitiveValue::Boolean(value) => Some(value.to_string()),
                     PrimitiveValue::Null => Some("null".to_string()),
                     PrimitiveValue::Undefined => Some("undefined".to_string()),

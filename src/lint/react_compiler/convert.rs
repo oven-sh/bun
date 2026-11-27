@@ -1230,10 +1230,6 @@ impl<'a> Converter<'a, '_> {
             ExprKind::False => JsExpr::init(E::Boolean { value: false }, loc),
             ExprKind::Number(value) => JsExpr::init(E::Number::new(value), loc),
             ExprKind::String(value) => JsExpr::init(E::EString::init(value.bytes()), loc),
-            // oxc's lowering supports them. The compiler treats all primitives alike, so a number will do.
-            ExprKind::BigInt(_) if self.flavor == Flavor::Oxlint => {
-                JsExpr::init(E::Number::new(0.0), loc)
-            }
             ExprKind::BigInt(value) => JsExpr::init(
                 E::BigInt {
                     value: StoreStr::new(value.bytes()),

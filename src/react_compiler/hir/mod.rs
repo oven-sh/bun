@@ -939,6 +939,9 @@ pub enum PrimitiveValue {
     Boolean(bool),
     Number(FloatValue),
     String(crate::diagnostics::JsString),
+    /// Not in upstream (oxc e7d24c8d6): the value in decimal, as the linter's tree has it. Only lowering with
+    /// `bigint_literals_are_primitives` makes one.
+    BigInt(StoreStr),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,6 +1,8 @@
 import { SQL } from "bun";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
+import { once } from "node:events";
+import net from "node:net";
 
 declare module "bun" {
   namespace SQL {
@@ -1662,6 +1664,75 @@ describe("SQL adapter environment variable precedence", () => {
       expect(() => tlsOf({ checkServerIdentity: "localhost" })).toThrow(
         expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
       );
+    });
+  });
+
+  describe("the error of a refused connection", () => {
+    // Without a host, the port is free on both address families.
+    async function closedPort() {
+      const reserved = net.createServer().listen(0);
+      await once(reserved, "listening");
+      const { port } = reserved.address() as net.AddressInfo;
+      await new Promise(closed => reserved.close(closed));
+      return port;
+    }
+
+    test("names the address, and why it is the default one", async () => {
+      const port = await closedPort();
+      const mysql = { adapter: "mysql" } as const;
+      // A label over 63 bytes is refused without asking the network.
+      const secret = Buffer.alloc(64, "s").toString();
+      const rows: { env?: Record<string, string>; url?: string; options?: SQL.Options; to: string }[] = [
+        { to: `localhost:${port} (DATABASE_URL is not set)` },
+        { options: mysql, to: `localhost:${port} (DATABASE_URL is not set)` },
+        { options: { url: undefined }, to: `localhost:${port} (DATABASE_URL is not set)` },
+        { options: { url: "" }, to: `localhost:${port} (the URL is empty)` },
+        { options: { hostname: "" }, to: `localhost:${port} (the host name is empty)` },
+        { env: { PGHOST: "" }, options: { host: "" }, to: `localhost:${port} (the host name is empty)` },
+        { env: { DATABASE_URL: "" }, to: `localhost:${port} (DATABASE_URL is empty)` },
+        { env: { DATABASE_URL: "", PGURL: "" }, to: `localhost:${port} (DATABASE_URL is empty)` },
+        { env: { PGURL: "" }, to: `localhost:${port} (PGURL is empty)` },
+        { env: { MYSQL_URL: "" }, to: `localhost:${port} (MYSQL_URL is empty)` },
+        { env: { PGURL: "" }, options: mysql, to: `localhost:${port} (DATABASE_URL is not set)` },
+        { env: { PGHOST: "" }, to: `localhost:${port} (PGHOST is empty)` },
+        { env: { PG_HOST: "" }, to: `localhost:${port} (PG_HOST is empty)` },
+        { env: { PGHOST: "" }, options: mysql, to: `localhost:${port} (DATABASE_URL is not set)` },
+        { env: { MYSQL_HOST: "" }, options: mysql, to: `localhost:${port} (MYSQL_HOST is empty)` },
+        { env: { DATABASE_URL: "postgres://h/d" }, options: mysql, to: `localhost:${port} (MYSQL_URL is not set)` },
+        { env: { DATABASE_URL: "postgres://h/d" }, url: "", to: `localhost:${port} (the URL is empty)` },
+        { env: { DATABASE_URL: "", PGURL: "postgres://user:pw@localhost/d" }, to: `localhost:${port}` },
+        { env: { DATABASE_URL: "", PGHOST: "localhost" }, to: `localhost:${port}` },
+        { env: { DATABASE_URL: "" }, options: { hostname: "localhost" }, to: `localhost:${port}` },
+        { env: { DATABASE_URL: "postgres:///d" }, to: `localhost:${port}` },
+        { url: "mysql://user:pw@127.0.0.1/d", to: `127.0.0.1:${port}` },
+        { options: { hostname: `postgres://user:${secret}@h.com/d` }, to: `[REDACTED]:${port}` },
+        { options: { hostname: `${secret}.com=` }, to: `[REDACTED]:${port}` },
+        { options: { ...mysql, hostname: `user:${secret}@h.com` }, to: `[REDACTED]:${port}` },
+        { url: `postgres://user%3A${secret}%40h.com/d`, to: `[REDACTED]:${port}` },
+        { url: `Host=h;Password=${secret}.com`, to: `[REDACTED]:${port}` },
+      ];
+      const refused = rows.map(async row => {
+        Object.assign(process.env, row.env);
+        await using sql = new SQL(row.url!, { ...row.options, port, max: 1 } as SQL.Options);
+        for (const name in row.env) delete process.env[name];
+        return { ...row, to: await sql.connect().catch(error => error.message) };
+      });
+      expect(await Promise.all(refused)).toEqual(rows.map(row => ({ ...row, to: `Failed to connect to ${row.to}` })));
+    });
+
+    test("is the same for listen()", async () => {
+      const port = await closedPort();
+      await using sql = new SQL({ port });
+      const error = await sql.listen("channel", () => {}).catch(error => error);
+      expect(error.message).toBe(`Failed to connect to localhost:${port} (DATABASE_URL is not set)`);
+    });
+
+    test("keeps its address when it comes out of the password function of another client", async () => {
+      const port = await closedPort();
+      await using vault = new SQL({ hostname: "127.0.0.1", port });
+      await using sql = new SQL({ password: () => vault.connect().then(() => "") });
+      const error = await sql.connect().catch(error => error);
+      expect(error.message).toBe(`Failed to connect to 127.0.0.1:${port}`);
     });
   });
 });

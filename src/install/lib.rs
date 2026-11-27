@@ -1,5 +1,6 @@
 #![allow(nonstandard_style)]
 #![feature(adt_const_params)]
+#![feature(arbitrary_self_types)]
 #![feature(core_io_borrowed_buf)]
 #![cfg_attr(windows, feature(core_io))]
 

@@ -67,6 +67,7 @@ struct node_module;
 #include "BunMarkdownTagStrings.h"
 #include "BunGlobalScope.h"
 #include "RejectedPromiseQueue.h"
+#include "DiagnosticsHook.h"
 #include <js_native_api.h>
 #include <node_api.h>
 #include "Bindgen/AdditionsToGlobalObject.h"
@@ -360,6 +361,11 @@ public:
         return m_nativeModuleDefaults[static_cast<size_t>(slot)];
     }
 
+    using DiagnosticsHooksArray = std::array<WriteBarrier<JSObject>, static_cast<size_t>(Bun::DiagnosticsHook::Count)>;
+    // Null while nobody is subscribed.
+    JSObject* diagnosticsHook(Bun::DiagnosticsHook hook) const { return m_diagnosticsHooks[static_cast<size_t>(hook)].get(); }
+    void setDiagnosticsHook(Bun::DiagnosticsHook hook, JSObject* function) { m_diagnosticsHooks[static_cast<size_t>(hook)].setMayBeNull(vm(), this, function); }
+
     // Macro for doing something with each member of GlobalObject that has to be visited by the
     // garbage collector. To use, define a macro taking three arguments (visibility, type, and
     // name), pass it to FOR_EACH_GLOBALOBJECT_GC_MEMBER, and then undefine your macro:
@@ -418,6 +424,7 @@ public:
     /* WriteBarrier<Unknown> m_JSBunDebuggerValue; */                                                        \
     V(private, ThenablesArray, m_thenables)                                                                  \
     V(private, NativeModuleDefaultsArray, m_nativeModuleDefaults)                                            \
+    V(private, DiagnosticsHooksArray, m_diagnosticsHooks)                                                    \
                                                                                                              \
     /* Error.prepareStackTrace */                                                                            \
     V(public, WriteBarrier<JSC::Unknown>, m_errorConstructorPrepareStackTraceValue)                          \
@@ -666,6 +673,7 @@ public:
 
 private:
     void addBuiltinGlobals(JSC::VM&);
+    static JSC::JSPromise* importModuleWithLoader(GlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters>&&, const JSC::SourceOrigin&);
 
     friend class WebCore::JSBuiltinInternalFunctions;
     JSC::WriteBarrier<JSC::Structure> m_domStructures[static_cast<size_t>(WebCore::DOMStructureSlot::Count)];

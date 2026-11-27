@@ -1323,3 +1323,8 @@ test.skipIf(isWindows)("closes a directory that got the number of a closed stand
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "nested/file.txt 0\n", stderr: "", exitCode: 0 });
 });
+
+test.skipIf(!isWindows)("./* from the root gives absolute paths below the root", () => {
+  const entries = [...new Glob("./*").scanSync({ cwd: "/", absolute: true, onlyFiles: false })];
+  expect(new Set(entries.map(entry => path.dirname(entry)))).toEqual(new Set([path.sep]));
+});

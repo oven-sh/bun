@@ -1,9 +1,7 @@
 use bun_collections::VecExt;
-use core::ffi::c_char;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
-use bun_core::Global::SyncCStr;
 use bun_core::MutableString;
 use bun_core::{self, Environment, Global, Output, Progress, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
@@ -150,23 +148,18 @@ impl Version {
     }
 }
 
+const GITHUB_URL_Z: &str = const_format::concatcp!(
+    "https://github.com/oven-sh/bun/releases/download/bun-v",
+    Global::package_json_version,
+    "/",
+    Version::ZIP_FILENAME,
+    "\0"
+);
 // Exported C symbol — null-terminated
 // Moved out of `impl Version` — Rust impl blocks cannot hold `static` items.
-// `*const c_char` is `!Sync`, so wrap in the `#[repr(transparent)]` `SyncCStr` newtype
-// (same pattern as `Bun__userAgent` in bun_core::Global) so the C++ side still sees a
-// single `const char*`-sized symbol.
+// A `const char*` to C++: a reference to an array is one pointer wide.
 #[unsafe(no_mangle)]
-static Bun__githubURL: SyncCStr = SyncCStr(
-    const_format::concatcp!(
-        "https://github.com/oven-sh/bun/releases/download/bun-v",
-        Global::package_json_version,
-        "/",
-        Version::ZIP_FILENAME,
-        "\0"
-    )
-    .as_ptr()
-    .cast::<c_char>(),
-);
+static Bun__githubURL: &[u8; GITHUB_URL_Z.len()] = GITHUB_URL_Z.as_bytes().as_array().unwrap();
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -521,18 +514,19 @@ impl UpgradeCommand {
             }
         }
 
-        if let Err(err) = Self::_exec(ctx) {
+        let exit_code = Self::_exec(ctx).unwrap_or_else(|err| {
             bun_core::pretty_errorln!(
                 "<r>Bun upgrade failed with error: <red><b>{}<r>\n\n<cyan>Please upgrade manually<r>:\n  <b>{}<r>\n\n",
                 err.name(),
                 Self::MANUAL_UPGRADE_COMMAND
             );
-            Global::exit(1);
-        }
-        Ok(())
+            1
+        });
+        Global::exit(exit_code);
     }
 
-    fn _exec(ctx: Command::Context) -> crate::Result<()> {
+    /// Returns the exit code.
+    fn _exec(ctx: Command::Context) -> crate::Result<u32> {
         HTTP::http_thread::init(&Default::default());
 
         fs::FileSystem::init(None)?;
@@ -564,7 +558,7 @@ impl UpgradeCommand {
                 use_profile,
             )?
             else {
-                return Ok(());
+                return Ok(0);
             };
 
             refresher.end();
@@ -751,8 +745,9 @@ impl UpgradeCommand {
                 Self::EXE_SUBPATH.as_bytes()
             };
 
-            let zip_file = match save_dir.open_file(
-                tmpname.as_bytes(),
+            let zip_file = match sys::Tmpfile::open(
+                &save_dir,
+                tmpname,
                 sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
                 0o644,
             ) {
@@ -766,22 +761,16 @@ impl UpgradeCommand {
                 }
             };
 
-            {
-                if let Err(err) = zip_file.write_all(bytes) {
-                    let _ = sys::unlinkat(&save_dir, tmpname);
-                    bun_core::pretty_errorln!(
-                        "<r><red>error:<r> Failed to write to temp file {}",
-                        bstr::BStr::new(err.name())
-                    );
-                    Global::exit(1);
-                }
-                drop(zip_file);
+            if let Err(err) = zip_file.file.write_all(bytes) {
+                bun_core::pretty_errorln!(
+                    "<r><red>error:<r> Failed to write to temp file {}",
+                    bstr::BStr::new(err.name())
+                );
+                return Ok(1);
             }
 
             {
-                scopeguard::defer! {
-                    let _ = sys::unlinkat(&save_dir, tmpname);
-                }
+                let tmpname = zip_file.close();
 
                 #[cfg(unix)]
                 {
@@ -790,11 +779,10 @@ impl UpgradeCommand {
                         filesystem.top_level_dir(),
                         b"unzip",
                     ) else {
-                        let _ = sys::unlinkat(&save_dir, tmpname);
                         bun_core::pretty_errorln!(
                             "<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work."
                         );
-                        Global::exit(1);
+                        return Ok(1);
                     };
 
                     // We could just embed libz2
@@ -815,20 +803,18 @@ impl UpgradeCommand {
                     }) {
                         Ok(Ok(r)) => r,
                         Ok(Err(err)) => {
-                            let _ = sys::unlinkat(&save_dir, tmpname);
                             bun_core::pretty_errorln!(
                                 "<r><red>error:<r> Failed to spawn unzip due to {}.",
                                 bstr::BStr::new(err.name())
                             );
-                            Global::exit(1);
+                            return Ok(1);
                         }
                         Err(err) => {
-                            let _ = sys::unlinkat(&save_dir, tmpname);
                             bun_core::pretty_errorln!(
                                 "<r><red>error:<r> Failed to spawn unzip due to {}.",
                                 err.name()
                             );
-                            Global::exit(1);
+                            return Ok(1);
                         }
                     };
 
@@ -839,13 +825,11 @@ impl UpgradeCommand {
                                 "<r><red>Unzip failed<r> (exit code: {})",
                                 e.code
                             );
-                            let _ = sys::unlinkat(&save_dir, tmpname);
-                            Global::exit(1);
+                            return Ok(1);
                         }
                         other => {
                             bun_core::pretty_errorln!("<r><red>Unzip failed<r> ({})", other);
-                            let _ = sys::unlinkat(&save_dir, tmpname);
-                            Global::exit(1);
+                            return Ok(1);
                         }
                     }
                 }
@@ -880,7 +864,7 @@ impl UpgradeCommand {
                                     "<r><red>error:<r> Failed to unzip {} due to PowerShell not being installed.",
                                     bstr::BStr::new(tmpname.as_bytes())
                                 );
-                                Global::exit(1);
+                                return Ok(1);
                             }
                             hardcoded_system_powershell
                         }
@@ -913,7 +897,7 @@ impl UpgradeCommand {
                                 bstr::BStr::new(tmpname.as_bytes()),
                                 err.name()
                             );
-                            Global::exit(1);
+                            return Ok(1);
                         }
                     };
                     if let Err(err) = spawn_res {
@@ -922,10 +906,11 @@ impl UpgradeCommand {
                             bstr::BStr::new(tmpname.as_bytes()),
                             bstr::BStr::new(err.name())
                         );
-                        Global::exit(1);
+                        return Ok(1);
                     }
                 }
             }
+            let unpacked = sys::DeleteTreeOnDrop::new(&save_dir_, version_name_z);
             {
                 let verify_argv: [&[u8]; 2] = [
                     exe,
@@ -959,10 +944,6 @@ impl UpgradeCommand {
                         Err(core_err) => core_err.name().as_bytes(),
                     };
 
-                    scopeguard::defer! {
-                        let _ = save_dir_.delete_tree(&version_name);
-                    }
-
                     // The spawn path may report a missing file as either
                     // `FileNotFound` or `ENOENT`; accept both.
                     if err_name == b"FileNotFound" || err_name == b"ENOENT" {
@@ -978,7 +959,7 @@ impl UpgradeCommand {
                             bun_core::pretty_errorln!(
                                 "<r><red>error<r><d>:<r> 'bun upgrade' is unsupported on systems without ld\n\nYou are likely on an immutable system such as NixOS, where dynamic\nlibraries are stored in a global cache.\n\nPlease use your system's package manager to properly upgrade bun.\n"
                             );
-                            Global::exit(1);
+                            return Ok(1);
                         }
                     }
 
@@ -986,11 +967,10 @@ impl UpgradeCommand {
                         "<r><red>error<r><d>:<r> Failed to verify Bun (code: {})<r>",
                         bstr::BStr::new(err_name)
                     );
-                    Global::exit(1);
+                    return Ok(1);
                 };
 
                 if !result.status.is_ok() {
-                    let _ = save_dir_.delete_tree(&version_name);
                     let exit_code: u32 = match &result.status {
                         Status::Exited(e) => u32::from(e.code),
                         Status::Signaled(sig) => 128 + u32::from(*sig),
@@ -1000,7 +980,7 @@ impl UpgradeCommand {
                         "<r><red>error<r><d>:<r> failed to verify Bun<r> (exit code: {})",
                         exit_code
                     );
-                    Global::exit(1);
+                    return Ok(1);
                 }
 
                 // It should run successfully
@@ -1018,14 +998,12 @@ impl UpgradeCommand {
 
                     let trimmed = bun_core::trim(version_string, b" \n\r\t");
                     if trimmed != version_name.as_slice() {
-                        let _ = save_dir_.delete_tree(&version_name);
-
                         bun_core::pretty_errorln!(
                             "<r><red>error<r>: The downloaded version of Bun (<red>{}<r>) doesn't match the expected version (<b>{}<r>)<r>. Cancelled upgrade",
                             bstr::BStr::new(&version_string[..version_string.len().min(512)]),
                             bstr::BStr::new(&version_name)
                         );
-                        Global::exit(1);
+                        return Ok(1);
                     }
                 }
             }
@@ -1049,12 +1027,11 @@ impl UpgradeCommand {
             let target_dir_it = match sys::Dir::open(target_dirname) {
                 Ok(d) => d,
                 Err(err) => {
-                    let _ = save_dir_.delete_tree(&version_name);
                     bun_core::pretty_errorln!(
                         "<r><red>error:<r> Failed to open Bun's install directory {}",
                         bstr::BStr::new(err.name())
                     );
-                    Global::exit(1);
+                    return Ok(1);
                 }
             };
             let target_dir: sys::Dir = target_dir_it;
@@ -1066,26 +1043,24 @@ impl UpgradeCommand {
                 let target_stat = match sys::fstatat(&target_dir, target_filename) {
                     Ok(s) => s,
                     Err(err) => {
-                        let _ = save_dir_.delete_tree(&version_name);
                         bun_core::pretty_errorln!(
                             "<r><red>error:<r> {} while trying to stat target {} ",
                             bstr::BStr::new(err.name()),
                             bstr::BStr::new(target_filename.as_bytes())
                         );
-                        Global::exit(1);
+                        return Ok(1);
                     }
                 };
 
                 let dest_stat = match sys::fstatat(&save_dir, exe_z) {
                     Ok(s) => s,
                     Err(err) => {
-                        let _ = save_dir_.delete_tree(&version_name);
                         bun_core::pretty_errorln!(
                             "<r><red>error:<r> {} while trying to stat source {}",
                             bstr::BStr::new(err.name()),
                             bstr::BStr::new(exe)
                         );
-                        Global::exit(1);
+                        return Ok(1);
                     }
                 };
 
@@ -1099,12 +1074,11 @@ impl UpgradeCommand {
                         {
                             Ok(n) => &input_buf[..n],
                             Err(err) => {
-                                let _ = save_dir_.delete_tree(&version_name);
                                 bun_core::pretty_errorln!(
                                     "<r><red>error:<r> Failed to read target bun {}",
                                     bstr::BStr::new(err.name())
                                 );
-                                Global::exit(1);
+                                return Ok(1);
                             }
                         },
                     );
@@ -1116,22 +1090,20 @@ impl UpgradeCommand {
                         {
                             Ok(n) => &input_buf[..n],
                             Err(err) => {
-                                let _ = save_dir_.delete_tree(&version_name);
                                 bun_core::pretty_errorln!(
                                     "<r><red>error:<r> Failed to read source bun {}",
                                     bstr::BStr::new(err.name())
                                 );
-                                Global::exit(1);
+                                return Ok(1);
                             }
                         },
                     );
 
                     if target_hash == source_hash {
-                        let _ = save_dir_.delete_tree(&version_name);
                         bun_core::pretty_errorln!(
                             "<r><green>Congrats!<r> You're already on the latest <b>canary<r><green> build of Bun\n\nTo downgrade to the latest stable release, run <b><cyan>bun upgrade --stable<r>\n"
                         );
-                        Global::exit(0);
+                        return Ok(0);
                     }
                 }
             }
@@ -1161,22 +1133,17 @@ impl UpgradeCommand {
                         destination_executable_z,
                         outdated_filename.as_deref().unwrap(),
                     ) {
-                        let _ = save_dir_.delete_tree(&version_name);
                         bun_core::pretty_errorln!(
                             "<r><red>error:<r> Failed to rename current executable {}",
                             bstr::BStr::new(err.name())
                         );
-                        Global::exit(1);
+                        return Ok(1);
                     }
                 }
 
                 if let Err(err) =
                     sys::move_file_z(save_dir.fd(), exe_z, target_dir.fd(), target_filename)
                 {
-                    scopeguard::defer! {
-                        let _ = save_dir_.delete_tree(&version_name);
-                    }
-
                     #[cfg(windows)]
                     {
                         // Attempt to restore the old executable. If this fails, the user will be left without a working copy of bun.
@@ -1197,7 +1164,7 @@ impl UpgradeCommand {
                                 "Failed to restore the working copy of Bun. The installation is now corrupt.\n\nPlease reinstall Bun manually with the following command:\n   {}\n",
                                 (Self::MANUAL_UPGRADE_COMMAND,),
                             );
-                            Global::exit(1);
+                            return Ok(1);
                         }
                     }
 
@@ -1209,9 +1176,12 @@ impl UpgradeCommand {
                             Self::MANUAL_UPGRADE_COMMAND,
                         ),
                     );
-                    Global::exit(1);
+                    return Ok(1);
                 }
             }
+
+            // It can hold the old executable now, which a running `bun --watch` restarts from.
+            unpacked.keep();
 
             // Ensure completions are up to date.
             {
@@ -1273,7 +1243,7 @@ impl UpgradeCommand {
             }
         }
 
-        Ok(())
+        Ok(0)
     }
 }
 

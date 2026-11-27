@@ -10,7 +10,7 @@ use crate::shared::query_ctor_args;
 use bun_core::strings;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSArray, JsCell};
-use bun_ptr::{AsCtxPtr, BackRef, RefPtr};
+use bun_ptr::{BackRef, RefPtr};
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
 use bun_sql::mysql::protocol::column_definition41::ColumnDefinition41;
 use bun_sql::mysql::protocol::prepared_statement::{Execute, set_statement_id};
@@ -100,13 +100,6 @@ impl State {
 }
 
 impl JSMySQLQuery {
-    /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
-    #[inline]
-    pub(crate) fn ref_guard(&self) -> RefPtr<Self> {
-        // SAFETY: `self` is the live heap allocation.
-        unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
-    }
-
     // The generator counts the struct itself.
     pub(crate) fn estimated_size(&self) -> usize {
         0
@@ -146,15 +139,13 @@ impl JSMySQLQuery {
     }
 
     pub fn do_run(
-        &self,
+        self: &RefPtr<Self>,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         connection: &MySQLConnection,
         query: JsLocal<'_>,
     ) -> JsResult<()> {
         debug!("doRun");
-        let _guard = self.ref_guard();
-
         let global_object = cx.global();
         let query = query.to_js();
         if !query.is_object() {
@@ -177,7 +168,7 @@ impl JSMySQLQuery {
         js::target_set_cached(this_value.to_js(), global_object, query);
         // Until it ends: the wrapper holds the target, the parameters and the rows.
         self.this_value.with_mut(|v| v.upgrade(global_object));
-        connection.enqueue_request(self.ref_guard());
+        connection.enqueue_request(self.clone());
         Ok(())
     }
 
@@ -258,10 +249,9 @@ impl JSMySQLQuery {
         }
     }
 
-    pub(crate) fn resolve(&self, result: &MySQLQueryResult) {
-        let _guard = self.ref_guard();
+    pub(crate) fn resolve(self: RefPtr<Self>, result: &MySQLQueryResult) {
         let is_last_result = result.is_last_result;
-        let _downgrade = is_last_result.then(|| DowngradeOnDrop(self));
+        let _downgrade = is_last_result.then(|| DowngradeOnDrop(&self));
         // Rejected here; `result()` below has nothing to deliver and ends it at its last result.
         let reject = |err| {
             self.reject_when(
@@ -317,22 +307,21 @@ impl JSMySQLQuery {
     pub(crate) fn mark_as_failed(&self) {
         // Attention: we cannot touch JS here
         // If you need to touch JS, you wanna to use reject or reject_with_js_value instead
-        let _guard = self.ref_guard();
         if self.this_value.get().is_not_empty() {
             self.this_value.with_mut(|v| v.downgrade());
         }
         self.state.set(State::Done);
     }
 
-    pub(crate) fn reject(&self, err: AnyMySQLError::Error) {
-        self.reject_with_js_value(self.error_to_js(err));
+    pub(crate) fn reject(self: RefPtr<Self>, err: AnyMySQLError::Error) {
+        self.reject_when(State::fail, self.error_to_js(err));
     }
 
-    pub(crate) fn reject_undecodable_row(&self, err: AnyMySQLError::Error) {
+    pub(crate) fn reject_undecodable_row(self: RefPtr<Self>, err: AnyMySQLError::Error) {
         self.reject_when(State::discard_response, self.error_to_js(err));
     }
 
-    pub(crate) fn reject_with_js_value(&self, err: JSValue) {
+    pub(crate) fn reject_with_js_value(self: RefPtr<Self>, err: JSValue) {
         self.reject_when(State::fail, err);
     }
 
@@ -348,8 +337,6 @@ impl JSMySQLQuery {
     /// `transition` moves the query to its rejected state, and returns whether
     /// a rejection is still to be delivered to JS.
     fn reject_when(&self, transition: fn(&mut State) -> bool, err: JSValue) {
-        let _guard = self.ref_guard();
-
         if !self.state.with_mut(transition) {
             return;
         }

@@ -27,7 +27,7 @@
 
 use bun_collections::VecExt;
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
-use bun_jsc::{JsCell, JsCellRefExt as _, JsRef};
+use bun_jsc::{HasJsRef as _, JsCell, JsCellRefExt as _, JsRef};
 use bun_ptr::AliasableBox;
 use core::cell::Cell;
 use core::fmt;
@@ -1750,7 +1750,11 @@ impl ShellExecEnv {
             false => {
                 let mut resolved = bun_paths::Path::join(&[self.cwd(), new_cwd_]);
                 resolved.truncate(bun_paths::without_trailing_sep(&resolved).len());
-                resolved
+                // `shell_get_path` can put `/a` and `\a` on different drives.
+                match bun_paths::root(self.cwd()) {
+                    b"/" => resolved.into_portable(),
+                    _ => resolved,
+                }
             }
         };
         // The same limit on every platform.
@@ -1999,16 +2003,24 @@ fn shell_get_path<'a>(
         return Ok(to);
     }
     let mut dir_buf = bun_paths::path_buffer_pool::get();
-    let dirpath = bun_sys::get_fd_path(dirfd, &mut dir_buf).map_err(|e| e.with_fd(dirfd))?;
-    let base = match bun_paths::has_leading_sep(to) {
-        true => bun_paths::volume(dirpath),
-        false => dirpath,
+    let dirpath = |buf| bun_sys::get_fd_path(dirfd, buf).map_err(|e| e.with_fd(dirfd));
+    let base: &[u8] = match to.first() {
+        // On the current drive, as for `cp`, `mkdir` and `touch`.
+        Some(b'\\') => b"",
+        Some(b'/') => bun_paths::volume(dirpath(&mut dir_buf)?),
+        _ => dirpath(&mut dir_buf)?,
     };
-    let path = bun_paths::Path::join(&[base, to.as_bytes()]);
+    let mut path = bun_paths::Path::join(&[base, to.as_bytes()]);
+    path.add_current_drive();
     *buf = path.check_len().map_err(|_| {
         bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, syscall).with_path(to.as_bytes())
     })?;
     Ok(buf)
+}
+
+/// On Windows `//a/b` is below the root of the drive for `shell_get_path`, and a share for the system.
+pub(crate) fn names_two_files(path: &[u8]) -> bool {
+    cfg!(windows) && path.starts_with(b"/") && bun_paths::is_fully_qualified(path)
 }
 
 /// Windows: rewrite the path via `shell_get_path` then `bun_sys::stat`, tagging
@@ -2483,8 +2495,7 @@ pub(crate) fn create_shell_interpreter<'a>(
     if let Some(jsobjs) = parsed_shell_script::js::jsobjs_get_cached(parsed_shell_script_js) {
         js::jsobjs_set_cached(js_value, global, jsobjs);
     }
-    // SAFETY: the payload of `this_value`.
-    let interp = unsafe { this_value.payload_ptr().as_ref() };
+    let interp = Interpreter::wrapped_by(this_value);
     this_value.set_js_ref_weak();
     interp.keep_alive.ref_(global.bun_vm().loop_ctx());
     bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);

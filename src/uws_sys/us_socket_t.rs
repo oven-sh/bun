@@ -1,5 +1,6 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::PhantomData;
+use core::net::{IpAddr, SocketAddr};
 use core::ptr::{self, NonNull};
 
 use bun_boringssl_sys::OwnedSslCtx;
@@ -109,6 +110,11 @@ impl us_socket_t {
     }
 
     pub fn close(&mut self, code: CloseCode) {
+        self.close_with_reason(code, ptr::null_mut());
+    }
+
+    /// `on_close` gets `reason`.
+    pub(crate) fn close_with_reason(&mut self, code: CloseCode, reason: *mut c_void) {
         bun_core::scoped_log!(
             uws,
             "us_socket_close({:p}, {})",
@@ -117,7 +123,7 @@ impl us_socket_t {
         );
         unsafe {
             // SAFETY: self is a live us_socket_t
-            let _ = c::us_socket_close(self, code, ptr::null_mut());
+            let _ = c::us_socket_close(self, code, reason);
         }
     }
 
@@ -203,6 +209,26 @@ impl us_socket_t {
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).expect("int cast")])
+    }
+
+    /// One `getsockname()`. `None` when it fails or the address is no IP address.
+    pub(crate) fn local_endpoint(&self) -> Option<SocketAddr> {
+        self.endpoint(c::us_get_local_address_info)
+    }
+
+    /// One `getpeername()`. `None` when it fails or the address is no IP address.
+    pub(crate) fn remote_endpoint(&self) -> Option<SocketAddr> {
+        self.endpoint(c::us_get_remote_address_info)
+    }
+
+    fn endpoint(&self, get_address_info: c::GetAddressInfo) -> Option<SocketAddr> {
+        let (mut ip, mut port) = ([0; 16], 0);
+        let ip = match get_address_info(&mut ip, self, &mut ptr::null(), &mut port, &mut 0) {
+            4 => IpAddr::from(*ip.first_chunk::<4>()?),
+            16 => IpAddr::from(ip),
+            _ => return None,
+        };
+        Some(SocketAddr::new(ip, u16::try_from(port).ok()?))
     }
 
     pub(crate) fn set_timeout(&mut self, seconds: u32) {
@@ -300,7 +326,7 @@ impl us_socket_t {
         &mut self,
         g: &SocketGroup,
         k: SocketKind,
-        ssl_ctx: &mut SslCtx,
+        ssl_ctx: &OwnedSslCtx,
         sni: Option<&core::ffi::CStr>,
         is_client: bool,
         request_cert: bool,
@@ -315,7 +341,7 @@ impl us_socket_t {
                 self,
                 g,
                 k as u8,
-                ssl_ctx,
+                ssl_ctx.as_ptr(),
                 sni.map_or(ptr::null(), |s| s.as_ptr()),
                 is_client as i32,
                 request_cert as i32,
@@ -523,6 +549,14 @@ impl us_socket_t {
 mod c {
     use super::*;
 
+    pub(super) type GetAddressInfo = extern "C" fn(
+        &mut [u8; 16],
+        &us_socket_t,
+        &mut *const c_char,
+        &mut c_int,
+        &mut c_int,
+    ) -> c_uint;
+
     // Every C-side decl takes `us_socket_r` (= `us_socket_t* nonnull_arg`), so
     // mirror that here — passing null is UB and the typed methods above never do.
     // `us_socket_t` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>`, so `&us_socket_t`
@@ -547,6 +581,21 @@ mod c {
             buf: *mut u8,
             length: *mut i32,
         );
+        // Both write an `in_addr` or an `in6_addr` to `buf`.
+        pub(super) safe fn us_get_remote_address_info(
+            buf: &mut [u8; 16],
+            s: &us_socket_t,
+            dest: &mut *const c_char,
+            port: &mut c_int,
+            is_ipv6: &mut c_int,
+        ) -> c_uint;
+        pub(super) safe fn us_get_local_address_info(
+            buf: &mut [u8; 16],
+            s: &us_socket_t,
+            dest: &mut *const c_char,
+            port: &mut c_int,
+            is_ipv6: &mut c_int,
+        ) -> c_uint;
         pub(super) safe fn us_socket_timeout(s: &mut us_socket_t, seconds: c_uint);
         pub(super) safe fn us_socket_long_timeout(s: &mut us_socket_t, minutes: c_uint);
         pub(super) safe fn us_socket_nodelay(s: &mut us_socket_t, enable: c_int);

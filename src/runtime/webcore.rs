@@ -380,8 +380,8 @@ impl SinkHandle {
                 unsafe { p.get_mut() }.end_from_stream(err)
             }),
             SinkHandle::S3Upload(p) => removable_body!(S3Client, Abort, {
-                if let Some(sink) = p.ref_guard() {
-                    s3::multipart::NetworkSink::end_from_stream(&sink, err)
+                if let Some(sink) = p.self_ref() {
+                    sink.end_from_stream(err)
                 }
             }),
             SinkHandle::FileSink(p) => p.ref_guard().end_from_stream(err),

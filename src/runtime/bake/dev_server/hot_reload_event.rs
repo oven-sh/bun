@@ -145,7 +145,7 @@ impl HotReloadEvent {
             dev.publish(
                 HmrTopic::TestingWatchSynchronization,
                 &[MessageId::TestingWatchSynchronization.char(), 1],
-                bun_uws::Opcode::BINARY,
+                bun_uws::Opcode::Binary,
             );
             return;
         }
@@ -241,7 +241,7 @@ impl PendingReloadEvent {
                 dev.publish(
                     HmrTopic::TestingWatchSynchronization,
                     &[MessageId::TestingWatchSynchronization.char(), 1],
-                    bun_uws::Opcode::BINARY,
+                    bun_uws::Opcode::Binary,
                 );
                 return;
             }

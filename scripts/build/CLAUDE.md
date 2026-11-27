@@ -48,7 +48,7 @@ rule cc
   depfile = $out.d
   deps = gcc
 
-build obj/src/foo.c.o: cc ../../src/foo.c | deps/cares/libcares.a || codegen/generated.h
+build obj/src/foo.c.o: cc ../../src/foo.c | toolchain-identity/cc.txt || codegen/generated.h
   cflags = -O2 -I...
 ```
 
@@ -60,9 +60,9 @@ rule dep_fetch
   restat = 1
   pool = dep
 
-build ../../vendor/cares/.ref: dep_fetch | ../../scripts/build/fetch-cli.ts
-  name = cares
-  repo = c-ares/c-ares
+build ../../vendor/highway/.ref: dep_fetch | ../../scripts/build/fetch-cli.ts
+  name = highway
+  repo = google/highway
   commit = abc123...
 ```
 
@@ -180,7 +180,7 @@ For `mode: "full"` (the normal case):
 6. **Compile** — loop sources, `cxx()`/`cc()` per file.
 7. **Link** — `emitShims(n, cfg)` for platform workaround dylibs, then `link(n, cfg, exeName, objects, {libs, flags})`.
 8. **Post-link** — strip (release only), dsymutil (darwin release only).
-9. **Checks** — validations of the link edge (`ninja check` names them too), all static except the first: `<exe> --revision` (load-time failures; only when the host can run the target), `verify-binary.ts binary` (exported symbols vs the lists in src/, exact NEEDED/dylib/DLL set and glibc/FBSD symbol-version ceilings, forbidden imports, static-initializer allowlist, symbols that must not be defined (code that only the AoT compiler's tests call; not checked in a build with assertions), W^X / nx-stack / PIE / DllCharacteristics, debug-info shape — expectations in `binary-expectations.ts`), and `verify-binary.ts duplicates` (no symbol strongly defined by two link inputs). Only CI fails on a finding: local builds (`cfg.ci` unset), and ASan and debug builds in CI, run the two scans with `--warn-only` (`binaryChecksWarnOnly` in `bun.ts`) — same report, the step passes.
+9. **Checks** — validations of the link edge (`ninja check` names them too), all static except the first: `<exe> --revision` (load-time failures; only when the host can run the target), `verify-binary.ts binary` (exported symbols vs the lists in src/, exact NEEDED/dylib/DLL set and glibc/FBSD symbol-version ceilings, forbidden imports, static-initializer allowlist, miscompiled weak references on Windows arm64, symbols that must not be defined (code that only the AoT compiler's tests call; not checked in a build with assertions), W^X / nx-stack / PIE / DllCharacteristics, debug-info shape — expectations in `binary-expectations.ts`), and `verify-binary.ts duplicates` (no symbol strongly defined by two link inputs). Only CI fails on a finding: local builds (`cfg.ci` unset), and ASan and debug builds in CI, run the two scans with `--warn-only` (`binaryChecksWarnOnly` in `bun.ts`) — same report, the step passes.
 
 CI's `build-bun` step builds the same graph (`ci-build` profile: release, prebuilt WebKit); `build.ts` then packages and uploads the zips.
 

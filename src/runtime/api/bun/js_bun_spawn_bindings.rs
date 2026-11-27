@@ -26,7 +26,7 @@ use bun_sys::{self as sys, SignalCode};
 use crate::api::bun_process::ExtraPipe;
 #[cfg(not(windows))]
 use crate::api::bun_process::SpawnResultExt as _;
-use crate::api::bun_process::{self as spawn, Process, Rusage, SpawnOptions};
+use crate::api::bun_process::{self as spawn, Rusage, SpawnOptions};
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
 use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::api::bun_subprocess::subprocess_pipe_reader::PipeReader;
@@ -311,15 +311,18 @@ struct ReportUnwatchedExit(bun_ptr::BackRef<SubprocessT<'static>>);
 
 impl Drop for ReportUnwatchedExit {
     fn drop(&mut self) {
-        let process = self.0.process.this_ptr();
+        let process = &self.0.process;
+        let mut rusage = bun_core::ffi::zeroed::<Rusage>();
         if let Some(status) = process.status() {
             // process has already exited, we called wait4(), but we did not call onProcessExit()
-            Process::on_exit(process, status.clone(), &bun_core::ffi::zeroed::<Rusage>());
+            process.on_exit(status.clone()).dispatch(&rusage);
         } else {
             // It has exited and only wait4() is left to call, or it is running: then it is tried once more to watch
             // it, and failing that it is ended and reaped.
             // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-            Process::wait(process, false);
+            if let Some(exit) = process.wait(false, &mut rusage) {
+                exit.dispatch(&rusage);
+            }
         }
     }
 }
@@ -1159,7 +1162,7 @@ fn spawn_maybe_sync(
         // tear down unstarted `PipeReader`s (whose `deinit()` asserts
         // `isDone()`).
         stdin: JsCell::new(Writable::Ignore),
-        stdin_sink_ref: JsCell::new(None),
+        stdin_sink_ref: Cell::new(None),
         stdout: JsCell::new(Readable::Ignore),
         stderr: JsCell::new(Readable::Ignore),
         ref_count: bun_ptr::RefCount::init(),
@@ -1192,10 +1195,9 @@ fn spawn_maybe_sync(
         exited_due_to_maxbuf: Cell::new(None),
     });
     let subprocess_ptr = subprocess_ref.as_ptr();
-    // SAFETY: `subprocess_ref`, and then the wrapper that takes it, outlive this borrow.
-    let subprocess = unsafe { &*subprocess_ptr };
+    let subprocess = &*subprocess_ref;
     #[cfg(windows)]
-    SubprocessT::record_stdio_pipe_ownership(subprocess_ptr);
+    subprocess_ref.record_stdio_pipe_ownership();
     let subprocess_nn = subprocess_ref.as_non_null();
 
     // Address-dependent fields, filled now that `subprocess` has a stable address.
@@ -1248,10 +1250,9 @@ fn spawn_maybe_sync(
             drop((spawned_stdout, spawned_stderr));
             subprocess.finalize_streams();
             #[cfg(unix)]
-            let _ = Process::kill_and_reap(
-                subprocess.process.this_ptr(),
-                &mut bun_core::ffi::zeroed::<Rusage>(),
-            );
+            let _ = subprocess
+                .process
+                .kill_and_reap(&mut bun_core::ffi::zeroed::<Rusage>());
             #[cfg(windows)]
             let _ = subprocess.try_kill(SignalCode::SIGKILL);
             return Err(err);
@@ -1296,9 +1297,7 @@ fn spawn_maybe_sync(
     }
     // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse
 
-    subprocess
-        .process
-        .set_exit_handler(subprocess_ref.this_ptr());
+    subprocess.process.set_exit_owner(&subprocess_ref);
 
     promise_for_stream.ensure_still_alive();
     subprocess.update_flags(|f| {
@@ -1337,15 +1336,16 @@ fn spawn_maybe_sync(
         }
     }
 
-    let (out, _sync_wrapper) = if is_sync {
-        (JSValue::ZERO, Some(SyncWrapper(subprocess_ref)))
+    let (sync_wrapper, wrapper);
+    let (out, subprocess) = if is_sync {
+        sync_wrapper = SyncWrapper(subprocess_ref);
+        (JSValue::ZERO, &*sync_wrapper.0)
     } else {
-        let wrapper = Subprocess::js::wrap(subprocess_ref, cx.global());
+        wrapper = Subprocess::js::wrap(subprocess_ref, cx.global());
         wrapper.set_js_ref_weak();
-        let out = wrapper.to_js();
         // Immediately upgrade to strong if there's pending activity to prevent premature GC
-        subprocess.update_has_pending_activity();
-        (out, None)
+        wrapper.update_has_pending_activity();
+        (wrapper.to_js(), &*wrapper)
     };
 
     if let Some(ipc_data) = subprocess.ipc() {
@@ -1443,7 +1443,7 @@ fn spawn_maybe_sync(
             Subprocess::js::terminal_set_cached(out, cx.global(), terminal_js_value);
         }
 
-        match Process::watch(subprocess.process.this_ptr()) {
+        match subprocess.process.watch() {
             sys::Result::Ok(()) => {}
             sys::Result::Err(_) => {
                 send_exit_notification = true;
@@ -1459,9 +1459,9 @@ fn spawn_maybe_sync(
     // the writer's start() throws below, on_process_exit drains started readers.
     let pipes = [&subprocess.stdout, &subprocess.stderr].map(|out| out.get().pipe());
     for pipe in pipes.iter().flatten() {
-        PipeReader::start(pipe, !is_sync && lazy);
+        pipe.start(!is_sync && lazy);
         if is_sync || !lazy {
-            PipeReader::read_all(pipe);
+            pipe.read_all();
         }
     }
 
@@ -1523,36 +1523,37 @@ fn spawn_maybe_sync(
         return Ok(out);
     };
 
-    let process = subprocess.process.this_ptr();
+    let process = &subprocess.process;
+    let mut rusage = bun_core::ffi::zeroed::<Rusage>();
     if can_block_entire_thread_to_reduce_cpu_usage_in_fast_path {
         jsc_vm
             .counters
             .mark(jsc::counters::Field::SpawnSyncBlocking);
         let debug_timer = Output::DebugTimer::start();
-        Process::wait(process, true);
+        if let Some(exit) = process.wait(true, &mut rusage) {
+            exit.dispatch(&rusage);
+        }
         bun_output::scoped_log!(Subprocess, "spawnSync fast path took {}", debug_timer);
 
         // watchOrReap will handle the already exited case for us.
     }
 
-    if let Err(err) = Process::watch_or_reap(process) {
-        Process::on_exit(
-            process,
-            bun_spawn::Status::Err(err.clone()),
-            &bun_core::ffi::zeroed::<Rusage>(),
-        );
-        setup_err.get_or_insert(err);
+    match process.watch_or_reap(&mut rusage) {
+        Ok(None) => {}
+        Ok(Some(exit)) => exit.dispatch(&rusage),
+        Err(err) => {
+            let status = bun_spawn::Status::Err(err.clone());
+            process.on_exit(status).dispatch(&bun_core::ffi::zeroed());
+            setup_err.get_or_insert(err);
+        }
     }
 
     if let Some(err) = &setup_err {
         // Not `kill_signal`, which the child may ignore: nothing else bounds the wait.
         if subprocess.try_kill(SignalCode::SIGKILL).is_err() {
             // Nor can anything end it: give it up, as `Process::kill_and_reap` does.
-            Process::on_exit(
-                process,
-                bun_spawn::Status::Err(err.clone()),
-                &bun_core::ffi::zeroed::<Rusage>(),
-            );
+            let status = bun_spawn::Status::Err(err.clone());
+            process.on_exit(status).dispatch(&bun_core::ffi::zeroed());
         }
         subprocess.close_readable_pipes();
     }

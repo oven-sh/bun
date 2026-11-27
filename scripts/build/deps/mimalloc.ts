@@ -110,7 +110,7 @@ export const mimalloc: Dependency = {
     //            otherwise sit on the uCRT heap are pointed at mimalloc one
     //            by one instead (libuv in bun_runtime::bin_entry's
     //            use_mimalloc_in_dependencies, BoringSSL via the hooks in
-    //            boringssl.ts, c-ares via ares_library_init_mem).
+    //            boringssl.ts).
     const override = cfg.linux && !cfg.asan;
 
     const defines: Record<string, string | number | true> = {
@@ -175,6 +175,9 @@ export const mimalloc: Dependency = {
       "-fvisibility=hidden",
       "-Wno-deprecated",
       "-Wno-static-in-inline",
+      // An override needs it. It also keeps LTO from inlining mi_malloc and mi_free into their callers, which adds
+      // 3 to 4.5 MB.
+      "-fno-builtin-malloc",
       // Bare token (mi_stringify() pastes it into the banner string), so
       // it can't go through DirectBuild.defines which would quote it.
       `-DMI_CMAKE_BUILD_TYPE=${cfg.buildType.toLowerCase()}`,
@@ -190,7 +193,6 @@ export const mimalloc: Dependency = {
       cflags.push(cfg.abi === "musl" ? "-ftls-model=local-dynamic" : "-ftls-model=initial-exec");
     }
 
-    if (override) cflags.push("-fno-builtin-malloc");
     if (override || overridesDarwinAllocator(cfg)) {
       // `operator new` ends in mi_new here. Without exceptions it cannot throw: it calls this instead of returning NULL.
       // The value is a function name, and a `defines` entry would quote it.

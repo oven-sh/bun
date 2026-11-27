@@ -154,6 +154,8 @@ pub(crate) trait WrappedSink: JsSinkType {
     /// Keeps the sink alive. Dropped by `close()`, or inside a GC sweep.
     type Wrapped;
     fn as_non_null(wrapped: &Self::Wrapped) -> NonNull<Self>;
+    /// As [`enter`](JsSinkType::enter), from the handle that keeps the sink alive.
+    fn enter_wrapped(wrapped: &mut Self::Wrapped) -> Self::Entered<'_>;
 }
 
 /// A sink that a stream writes to through a [`ReadableSinkController`].
@@ -382,11 +384,10 @@ impl<T: WrappedSink> JSSink<T> {
     }
 
     pub(crate) fn close(&self, cx: &mut JsScope<'_>) -> JsResult<()> {
-        let Some(sink) = self.sink.take() else {
+        let Some(mut sink) = self.sink.take() else {
             return Ok(());
         };
-        // SAFETY: `sink` keeps it alive.
-        let ended = T::end(&mut unsafe { T::enter(T::as_non_null(&sink)) }, None);
+        let ended = T::end(&mut T::enter_wrapped(&mut sink), None);
         let result = pending_exception_or(cx.global(), ended);
         // Before `sink` drops: the subprocess clears `weak_file_sink_stdin_ptr`.
         self.notify_subprocess();

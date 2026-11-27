@@ -14,7 +14,7 @@ use bun_uws as uws;
 use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
 use crate::http_context::ActiveSocketExt;
 use crate::ssl_config::{self, SSLConfig};
-use crate::{AsyncHttp, HTTPContext, InFlightRequest, InitError, NewHttpContext, h2, h3};
+use crate::{AsyncHttp, HTTPContext, InFlightRequest, InitError, NewHttpContext, h3};
 
 // The scope registry keys on name, so the two visibilities (.hidden +
 // .visible) are split into two scope names.
@@ -295,19 +295,6 @@ impl HttpThread {
             })
     }
 
-    pub(crate) fn context<const IS_SSL: bool>(&mut self) -> &mut NewHttpContext<IS_SSL> {
-        // Note: const-generic dispatch over two distinct fields — `NewHttpContext<true>`
-        // and `NewHttpContext<IS_SSL>` are the same type when IS_SSL, just spelled
-        // differently. Route through a raw-pointer `.cast()` (identity).
-        if IS_SSL {
-            // SAFETY: identical type when IS_SSL == true; pointer is to a live `&mut self` field.
-            unsafe { &mut *(&raw mut self.https_context).cast::<NewHttpContext<IS_SSL>>() }
-        } else {
-            // SAFETY: identical type when IS_SSL == false; pointer is to a live `&mut self` field.
-            unsafe { &mut *(&raw mut self.http_context).cast::<NewHttpContext<IS_SSL>>() }
-        }
-    }
-
     /// One-shot lazy init of the default HTTPS context. See
     /// [`HttpThread::lazy_https_init`] for rationale. Called on the HTTP
     /// thread by `connect::<true>` and `default_ssl_ctx`; the `Option::take`
@@ -410,8 +397,9 @@ impl HttpThread {
 
                 return Self::dial(custom_context, client);
             }
+            return Self::dial(&mut self.https_context, client);
         }
-        Self::dial(self.context::<IS_SSL>(), client)
+        Self::dial(&mut self.http_context, client)
     }
 
     /// Open the connection for `client` on `ctx`: unix path, HTTP proxy, or direct.
@@ -489,7 +477,7 @@ impl HttpThread {
                                 HTTPContext::enter_client(socket, |c| c.close_and_abort(socket));
                             let Some(tagged) = tagged else { continue };
                             if let Some(session) = tagged.session() {
-                                h2::ClientSession::abort_by_http_id(session, http.async_http_id);
+                                session.abort_by_http_id(http.async_http_id);
                                 continue;
                             }
                             socket.close(uws::CloseKind::Failure);
@@ -499,7 +487,7 @@ impl HttpThread {
                                 HTTPContext::enter_client(socket, |c| c.close_and_abort(socket));
                             let Some(tagged) = tagged else { continue };
                             if let Some(session) = tagged.session() {
-                                h2::ClientSession::abort_by_http_id(session, http.async_http_id);
+                                session.abort_by_http_id(http.async_http_id);
                                 continue;
                             }
                             socket.close(uws::CloseKind::Failure);
@@ -553,11 +541,7 @@ impl HttpThread {
                                 client.on_request_stream_message::<true>(message, socket)
                             });
                             if let Some(session) = tagged.and_then(ActiveSocketExt::session) {
-                                h2::ClientSession::stream_body_by_http_id(
-                                    session,
-                                    write.async_http_id,
-                                    message,
-                                );
+                                session.stream_body_by_http_id(write.async_http_id, message);
                             }
                         }
                         uws::AnySocket::SocketTcp(socket) => {
@@ -568,11 +552,7 @@ impl HttpThread {
                                 client.on_request_stream_message::<false>(message, socket)
                             });
                             if let Some(session) = tagged.and_then(ActiveSocketExt::session) {
-                                h2::ClientSession::stream_body_by_http_id(
-                                    session,
-                                    write.async_http_id,
-                                    message,
-                                );
+                                session.stream_body_by_http_id(write.async_http_id, message);
                             }
                         }
                     }
@@ -662,7 +642,7 @@ impl HttpThread {
                     }
                 };
                 if let Some(session) = session {
-                    h2::ClientSession::resume_receive_by_http_id(session, id);
+                    session.resume_receive_by_http_id(id);
                 }
             } else if let Some(held) = InFlightRequest::take_held(id) {
                 held.resume_held();

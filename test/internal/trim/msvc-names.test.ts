@@ -156,6 +156,6 @@ describe.skipIf(!canDemangle)("the pattern for what serves TLS", () => {
     expect(demangle("?end@?$HttpResponse@$00@uWS@@QEAAXXZ")).toEqual(["uWS::HttpResponse<1>::end(void)"]);
     expect(matches("uWS::HttpResponse<1>::end(void)")).toBe(true);
     expect(matches(demangle("?end@?$HttpResponse@$0A@@uWS@@QEAAXXZ")[0]!)).toBe(false);
-    expect(matches(demangle("?upgrade@Toy@@YAXPEAU?$WebSocket@$00$00H@uWS@@@Z")[0]!)).toBe(true);
+    expect(matches(demangle("?upgrade@Toy@@YAXPEAU?$HttpResponseData@$00$0A@@uWS@@@Z")[0]!)).toBe(true);
   });
 });

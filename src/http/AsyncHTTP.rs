@@ -179,6 +179,7 @@ fn make_client<'a>(
         compressed_request_body: Vec::new(),
         compressed_body_len: 0,
         pool: crate::PoolOptions::default(),
+        tracing: None,
     }
 }
 
@@ -608,6 +609,12 @@ impl InFlightRequest {
         self.custom_ssl_ctx = None;
 
         let was_active = !core::mem::replace(&mut self.state.flags.left_transport, true);
+        if was_active {
+            self.trace_request_stage();
+            if self.state.fail.is_none() {
+                self.trace(|_| crate::request_trace::Event::ResponseEnd);
+            }
+        }
         if self.state.fail.is_none() && self.state.has_pending_compressed() {
             if was_active {
                 self.release_request_body();
@@ -645,7 +652,7 @@ impl InFlightRequest {
         self.compressed_request_body = Vec::new();
     }
 
-    fn hold(self) {
+    pub(crate) fn hold(self) {
         let held_bodies = &mut crate::http_thread().held_bodies;
         bun_core::handle_oom(held_bodies.put_no_clobber(self.async_http_id, self));
     }
@@ -657,6 +664,9 @@ impl InFlightRequest {
 
     /// For a request from [`Self::take_held`].
     pub(crate) fn resume_held(mut self) {
+        if self.state.flags.is_waiting_for_headers {
+            return self.resume_redirect();
+        }
         match self.pump_held_body() {
             Ok(true) => self.finish(),
             Ok(false) => self.hold(),

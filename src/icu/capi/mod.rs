@@ -5,6 +5,7 @@
 #[expect(unsafe_code)]
 mod ffi;
 
+mod ubidi;
 mod ubrk;
 mod ucal;
 mod uchar;

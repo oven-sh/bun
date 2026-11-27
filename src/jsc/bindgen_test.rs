@@ -16,7 +16,7 @@ use crate::generated_bindgen::bindgen_test::{
     js_TestSquare,
 };
 use crate::{JSGlobalObject, JSString, JSValue, JsCell, JsClass, JsRef, JsResult, WrapperGuard};
-use bun_ptr::{AsCtxPtr as _, RefPtr};
+use bun_ptr::RefPtr;
 
 // This example should be kept in sync with bindgen's documentation
 pub(crate) fn add<'a>(heap: &JsHeap<'a>, a: i32, b: i32) -> bindgen::Result<'a, i32> {
@@ -605,10 +605,9 @@ impl TestRefCounted {
         Ok(self.value.get())
     }
 
-    pub(crate) fn keep(&self, this_value: JsWrapper<'_, Self>) {
+    pub(crate) fn keep(self: &RefPtr<Self>, this_value: JsWrapper<'_, Self>) {
         this_value.set_js_ref_weak();
-        // SAFETY: `self` is live.
-        KEPT.set(Some(unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }));
+        KEPT.set(Some(self.clone()));
     }
 
     pub(crate) fn dispose(&self) {
@@ -622,8 +621,8 @@ impl TestRefCounted {
         (self.value.get() >= 0).then_some(this_value)
     }
 
-    pub(crate) fn is_same(&self, other: Option<&Self>) -> bool {
-        other.is_some_and(|other| core::ptr::eq(self, other))
+    pub(crate) fn is_same(&self, other: Option<&RefPtr<Self>>) -> bool {
+        other.is_some_and(|other| core::ptr::eq(self, other.as_ptr()))
     }
 
     pub(crate) fn kept() -> Vec<i32> {

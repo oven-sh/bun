@@ -12,7 +12,7 @@ use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
 use bun_http::{self as http, HeaderBuilder};
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
-use bun_sys::{self, Fd, File};
+use bun_sys::{self, Fd, File, Tmpfile};
 use bun_threading::ThreadPool;
 use bun_url::{OwnedURL, URL};
 use bun_wyhash::Wyhash11;
@@ -910,12 +910,7 @@ pub struct PackageVersion {
     // Splitting this into it's own array ends up increasing the final size a little bit.
     pub(crate) integrity: Integrity,
 
-    // Explicit padding so this struct has no implicit (uninitialized) padding
-    // bytes — `Serializer::write` reinterprets the whole slice as `&[u8]`,
-    // and reading uninitialized padding as `u8` is UB. With explicit `[u8; N]`
-    // fields, `Default` zero-fills them and every byte of the struct is
-    // initialized. Layout (size=248, align=8) is unchanged; see the
-    // `offset_of!` asserts below and `padding_checker.rs` for the contract.
+    // Explicit, because `impl_no_uninit!` below rejects implicit padding.
     pub(crate) _padding_after_integrity: [u8; 3],
 
     /// "dependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#dependencies)
@@ -976,6 +971,8 @@ pub struct PackageVersion {
     pub(crate) publish_timestamp_ms: f64,
 }
 
+bun_core::impl_no_uninit!(PackageVersion);
+
 impl Default for PackageVersion {
     fn default() -> Self {
         Self {
@@ -1032,49 +1029,6 @@ const _: () = assert!(
     "Npm.PackageVersion layout drifted from Zig spec (expected 248 bytes); \
      bump PackageManifest::Serializer::VERSION if intentional",
 );
-
-// Compile-time proof that the explicit `_padding_*` fields above leave no
-// implicit padding gaps in `PackageVersion` (so `&[PackageVersion] as &[u8]`
-// in `Serializer::write` reads only initialized bytes). See `padding_checker.rs`.
-const _: () = {
-    use core::mem::{offset_of, size_of};
-    // gap between `integrity` (size 65, align 1) and `dependencies` (align 4 → 68)
-    assert!(
-        offset_of!(PackageVersion, _padding_after_integrity)
-            == offset_of!(PackageVersion, integrity) + size_of::<Integrity>()
-    );
-    assert!(
-        offset_of!(PackageVersion, dependencies)
-            == offset_of!(PackageVersion, _padding_after_integrity) + 3
-    );
-    // gap between `non_optional_peer_dependencies_start` (u32, ends at 180) and `man_dir` (align 8 → 184)
-    assert!(
-        offset_of!(PackageVersion, _padding_before_man_dir)
-            == offset_of!(PackageVersion, non_optional_peer_dependencies_start) + size_of::<u32>()
-    );
-    assert!(
-        offset_of!(PackageVersion, man_dir)
-            == offset_of!(PackageVersion, _padding_before_man_dir) + 4
-    );
-    // `deprecated` (size 8, align 1) fills 216..224 between `tarball_url` and `unpacked_size`
-    assert!(
-        offset_of!(PackageVersion, deprecated)
-            == offset_of!(PackageVersion, tarball_url) + size_of::<ExternalString>()
-    );
-    assert!(
-        offset_of!(PackageVersion, unpacked_size)
-            == offset_of!(PackageVersion, deprecated) + size_of::<SemverString>()
-    );
-    // gap between `has_install_script` (ends at 238) and `publish_timestamp_ms` (align 8 → 240)
-    assert!(
-        offset_of!(PackageVersion, _padding_tail)
-            == offset_of!(PackageVersion, has_install_script) + size_of::<bool>()
-    );
-    assert!(
-        offset_of!(PackageVersion, publish_timestamp_ms)
-            == offset_of!(PackageVersion, _padding_tail) + 2
-    );
-};
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -1178,14 +1132,7 @@ pub mod package_manifest {
             array: &[T],
             pos: &mut u64,
         ) -> Result<(), Error> {
-            Self::write_array_bytes::<W, T>(writer, bun_core::slice_as_bytes(array), pos)
-        }
-
-        fn write_array_bytes<W: bun_io::Write, T>(
-            writer: &mut W,
-            bytes: &[u8],
-            pos: &mut u64,
-        ) -> Result<(), Error> {
+            let bytes = bun_core::slice_as_bytes(array);
             if bytes.is_empty() {
                 writer.write_int_le::<u64>(0)?;
                 *pos += 8;
@@ -1253,16 +1200,7 @@ pub mod package_manifest {
             Self::write_array(writer, &this.versions, &mut pos)?;
             Self::write_array(writer, &this.external_strings, &mut pos)?;
             Self::write_array(writer, &this.external_strings_for_versions, &mut pos)?;
-            // SAFETY: the asserts at `PackageVersion` rule out padding. `impl_no_uninit!`
-            // rejects it for `bin::Value`, a union whose arms differ in size;
-            // `Value::init_*` sets every byte.
-            let package_versions = unsafe {
-                core::slice::from_raw_parts(
-                    this.package_versions.as_ptr().cast::<u8>(),
-                    core::mem::size_of_val::<[PackageVersion]>(&this.package_versions),
-                )
-            };
-            Self::write_array_bytes::<W, PackageVersion>(writer, package_versions, &mut pos)?;
+            Self::write_array(writer, &this.package_versions, &mut pos)?;
             Self::write_array(writer, &this.extern_strings_bin_entries, &mut pos)?;
             Self::write_array(writer, &this.bundled_deps_buf, &mut pos)?;
 
@@ -1288,18 +1226,15 @@ pub mod package_manifest {
             // This needs many more call sites, doesn't have much impact on this location.
             #[cfg(windows)]
             let path_to_use_for_opening_file =
-                &bun_paths::Path::resolve(&[&temp_dir.path, tmp_path]);
+                bun_paths::Path::resolve(&[&temp_dir.path, tmp_path]);
             #[cfg(not(windows))]
             let path_to_use_for_opening_file = tmp_path;
-            let tmpdir = temp_dir.handle.fd();
+            let tmpdir = &temp_dir.handle;
             #[cfg(not(windows))]
             let cache_dir = temp_dir.cache.handle.fd();
 
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            let mut is_using_o_tmpfile = false;
-
             #[allow(unused_labels)]
-            let file: File = 'brk: {
+            let tmp = 'brk: {
                 let flags = bun_sys::O::WRONLY;
                 #[cfg(unix)]
                 let mask = 0o664;
@@ -1336,58 +1271,43 @@ pub mod package_manifest {
                                 warn_once();
                             }
                         }
-                        bun_sys::Result::Ok(f) => {
-                            is_using_o_tmpfile = true;
-                            break 'brk f;
+                        bun_sys::Result::Ok(file) => {
+                            file.write_all(&buffer)?;
+                            if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_ok() {
+                                return Ok(());
+                            }
+                            // Keep the entry in place the whole time: rename over it below.
+                            bun_sys::linkat_tmpfile(file.handle, tmpdir.fd(), tmp_path)?;
+                            break 'brk bun_sys::UnlinkOnDrop::new(tmpdir, tmp_path);
                         }
                     }
                 }
 
-                File::openat(
+                let tmp = Tmpfile::open(
                     tmpdir,
                     path_to_use_for_opening_file,
                     flags | bun_sys::O::CREAT | bun_sys::O::TRUNC,
                     mask,
-                )?
+                )?;
+                tmp.file.write_all(&buffer)?;
+                tmp.close()
             };
-
-            file.write_all(&buffer)?;
 
             #[cfg(windows)]
             {
                 let cache_path_abs = &bun_paths::Path::resolve(&[&temp_dir.cache.path, outpath]);
-                drop(file);
-                bun_sys::renameat(
-                    Fd::cwd(),
-                    path_to_use_for_opening_file,
-                    Fd::cwd(),
-                    cache_path_abs,
-                )?;
+                tmp.rename_to(Fd::cwd(), cache_path_abs)?;
                 return Ok(());
-            }
-
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            if is_using_o_tmpfile {
-                if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_ok() {
-                    return Ok(());
-                }
-                // Keep the entry in place the whole time: rename over it below instead of unlinking
-                // it first.
-                bun_sys::linkat_tmpfile(file.handle, tmpdir, tmp_path)?;
             }
 
             #[cfg(not(windows))]
             {
                 // Attempt #1. Rename the file.
-                let rc = bun_sys::renameat(tmpdir, tmp_path, cache_dir, outpath);
+                let rc = bun_sys::renameat(tmpdir, &tmp, cache_dir, outpath);
 
                 match &rc {
                     bun_sys::Result::Err(err) => {
                         // Fallback path: atomically swap from <tmp>/*.npm -> <cache>/*.npm, then unlink the temporary file.
-                        // If atomically swapping fails, then we should still unlink the temporary file as a courtesy.
-                        scopeguard::defer! {
-                            let _ = bun_sys::unlinkat(tmpdir, tmp_path);
-                        }
 
                         // On Darwin `Errno::EOPNOTSUPP` resolves to 102 while
                         // the kernel reports errno **45** (ENOTSUP), so match
@@ -1404,8 +1324,8 @@ pub mod package_manifest {
                         {
                             // Atomically swap the old file with the new file.
                             bun_sys::renameat2(
-                                tmpdir,
-                                tmp_path,
+                                tmpdir.fd(),
+                                &tmp,
                                 cache_dir,
                                 outpath,
                                 bun_sys::RenameMode::Exchange,
@@ -1415,7 +1335,9 @@ pub mod package_manifest {
                             return Ok(());
                         }
                     }
-                    bun_sys::Result::Ok(()) => {}
+                    bun_sys::Result::Ok(()) => {
+                        tmp.keep();
+                    }
                 }
 
                 rc?;

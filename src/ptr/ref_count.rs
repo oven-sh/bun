@@ -524,15 +524,6 @@ impl<T: AnyRefCounted> RefPtr<T> {
         }
     }
 
-    /// Take a new ref on the pointee of a [`ThisPtr`](crate::ThisPtr). Safe:
-    /// the `ThisPtr` invariant is that its pointee is live. This is the guard
-    /// to hold across a re-entrant call that may otherwise drop the last ref.
-    #[inline]
-    pub fn from_this(this: crate::ThisPtr<T>) -> Self {
-        // SAFETY: `ThisPtr::new` invariant — pointee is live.
-        unsafe { Self::init_ref(this.as_ptr()) }
-    }
-
     /// Take ownership of a ref the caller already holds on `*raw_ptr`, without
     /// incrementing. Inverse of [`into_raw`](Self::into_raw) (`Arc::from_raw`
     /// semantics).
@@ -560,22 +551,6 @@ impl<T: AnyRefCounted> RefPtr<T> {
     #[inline]
     pub fn into_non_null(self) -> NonNull<T> {
         core::mem::ManuallyDrop::new(self).0
-    }
-
-    /// A [`ThisPtr`](crate::ThisPtr) to the pointee, valid while this (or
-    /// another) ref is alive.
-    #[inline]
-    pub fn this_ptr(&self) -> crate::ThisPtr<T> {
-        // SAFETY: we own a ref, so the pointee is live.
-        unsafe { crate::ThisPtr::new(self.0.as_ptr()) }
-    }
-
-    /// [`into_raw`](Self::into_raw) for the `ThisPtr`-shaped dispatch entry
-    /// points: the callee takes over this ref.
-    #[inline]
-    pub fn into_this_ptr(self) -> crate::ThisPtr<T> {
-        // SAFETY: `into_raw` transfers our live ref; the pointee is non-null.
-        unsafe { crate::ThisPtr::new(self.into_raw()) }
     }
 
     /// The pointee's address without affecting the refcount (`Arc::as_ptr`).
@@ -830,6 +805,21 @@ mod tests {
         assert!(unsafe { (*RefCounted::get_ref_count(t)).has_one_ref() });
         // SAFETY: releasing the last ref.
         unsafe { RefCount::<Thing>::deref(t) };
+        assert_eq!(drops(), before + 1);
+    }
+
+    #[test]
+    fn ref_ptr_cloned_from_a_cell_outlives_the_cell() {
+        use crate::RefPtrCellExt as _;
+        let _serial = serial();
+        let before = drops();
+        // SAFETY: `Thing::new` gives up its one ref.
+        let cell = Cell::new(Some(unsafe { RefPtr::from_raw(Thing::new(5)) }));
+        let thing = cell.cloned().unwrap();
+        cell.set(None);
+        assert!(cell.cloned().is_none());
+        assert_eq!((*thing.payload, drops()), (5, before));
+        drop(thing);
         assert_eq!(drops(), before + 1);
     }
 

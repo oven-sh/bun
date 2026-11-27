@@ -2549,7 +2549,7 @@ declare module "bun" {
      * ## DNS resolver client
      *
      * Bun supports three DNS resolvers:
-     * - `c-ares` - Uses the c-ares library to perform DNS resolution. This is the default on Linux.
+     * - `c-ares` - Uses Bun's own asynchronous resolver, which is modeled on the c-ares library. This is the default on Linux.
      * - `system` - Uses the system's non-blocking DNS resolver API if available, falls back to `getaddrinfo`. This is the default on macOS and the same as `getaddrinfo` on Linux.
      * - `getaddrinfo` - Uses the POSIX standard `getaddrinfo` function. Causes performance issues under concurrent loads.
      *
@@ -2604,8 +2604,7 @@ declare module "bun" {
          * `"system"` uses the same API underneath (except non-blocking).
          *
          * On Windows, libuv's non-blocking DNS resolver is used by default, and
-         * when specifying backends "system", "libc", or "getaddrinfo". The c-ares
-         * backend isn't supported on Windows.
+         * when specifying backends "system", "libc", or "getaddrinfo".
          */
         backend?: "libc" | "c-ares" | "system" | "getaddrinfo";
       },
@@ -3267,6 +3266,7 @@ declare module "bun" {
       | "xml"
       | "glob"
       | "semver"
+      | "diff"
       | "color"
       | "cookie"
       | "csrf"
@@ -5998,6 +5998,239 @@ declare module "bun" {
      * Throws an error if either version is invalid.
      */
     function order(v1: StringLike, v2: StringLike): -1 | 0 | 1;
+  }
+
+  /**
+   * Compare text and arrays, and create, parse and apply unified diffs.
+   *
+   * @see https://bun.com/docs/runtime/diff
+   *
+   * @category Utilities
+   */
+  namespace diff {
+    /**
+     * A run of tokens that were kept, removed or added.
+     */
+    interface Change<T = string> {
+      /** The tokens of the run: joined for text, an array for {@link arrays}. */
+      value: T;
+      /** The run is only in the new input. */
+      added: boolean;
+      /** The run is only in the old input. */
+      removed: boolean;
+      /** The number of tokens (lines, words, characters or elements) in `value`. */
+      count: number;
+    }
+
+    interface Options {
+      /**
+       * Return `undefined` when the diff adds and removes more than this many tokens in total.
+       * An integer from 0, or `Infinity`.
+       *
+       * @default Infinity
+       */
+      maxEditLength?: number | undefined;
+    }
+
+    interface TextOptions extends Options {
+      /**
+       * Tokens match if they are equal after `toLowerCase()`. What is kept comes from the new text.
+       *
+       * @default false
+       */
+      ignoreCase?: boolean | undefined;
+    }
+
+    interface LinesOptions extends TextOptions {
+      /**
+       * Lines match if they are equal after `trim()`. What is kept comes from the new text.
+       *
+       * @default false
+       */
+      ignoreWhitespace?: boolean | undefined;
+      /**
+       * Replace each `\r\n` with `\n` in both texts first, like `diff --strip-trailing-cr`.
+       *
+       * @default false
+       */
+      stripTrailingCr?: boolean | undefined;
+    }
+
+    interface HunksOptions extends LinesOptions {
+      /**
+       * The number of unchanged lines before and after each change, like `diff -U`.
+       * An integer from 0, or `Infinity` for the whole file.
+       *
+       * @default 3
+       */
+      context?: number | undefined;
+    }
+
+    interface PatchOptions extends HunksOptions {
+      /**
+       * The name in the `---` line. Defaults to `newFileName`.
+       * Without either name, the patch has no `---` and `+++` lines.
+       */
+      oldFileName?: string | undefined;
+      /** The name in the `+++` line. Defaults to `oldFileName`. */
+      newFileName?: string | undefined;
+      /** Text after the name in the `---` line, such as a timestamp. It needs a file name and has to be one line. */
+      oldHeader?: string | undefined;
+      /** Text after the name in the `+++` line, such as a timestamp. It needs a file name and has to be one line. */
+      newHeader?: string | undefined;
+    }
+
+    /**
+     * One `@@` section of a unified diff.
+     */
+    interface Hunk {
+      /** The first line of the hunk in the old text, from 1. If `oldLines` is 0, the line after the hunk. */
+      oldStart: number;
+      /** The number of lines the hunk keeps or removes. */
+      oldLines: number;
+      /** The first line of the hunk in the new text, from 1. If `newLines` is 0, the line after the hunk. */
+      newStart: number;
+      /** The number of lines the hunk keeps or adds. */
+      newLines: number;
+      /**
+       * Each line without its `\n`, after `" "` (kept), `"-"` (removed) or `"+"` (added).
+       * `"\\ No newline at end of file"` follows a line that has no `\n`.
+       */
+      lines: string[];
+    }
+
+    /**
+     * What a patch changes in one file. A property is absent when the patch does not say.
+     */
+    interface FilePatch {
+      /** The name in an `Index:` or `diff -r` line. */
+      index?: string;
+      oldFileName?: string;
+      /** The text after the name in the `---` line. */
+      oldHeader?: string;
+      newFileName?: string;
+      /** The text after the name in the `+++` line. */
+      newHeader?: string;
+      /** The file mode before the change, in octal, like `"100644"`. Git only. */
+      oldMode?: string;
+      /** The file mode after the change, in octal, like `"100755"`. Git only. */
+      newMode?: string;
+      /** The section starts with `diff --git`. */
+      isGit?: boolean;
+      isRename?: boolean;
+      isCopy?: boolean;
+      isCreate?: boolean;
+      isDelete?: boolean;
+      /** Git reports a change to a binary file, which has no hunks. */
+      isBinary?: boolean;
+      hunks: Hunk[];
+    }
+
+    /**
+     * Compare two strings line by line. A line includes its `\n` or `\r\n`.
+     *
+     * @returns The changes, or `undefined` if there are more than `maxEditLength` edits
+     *
+     * @example
+     * ```ts
+     * Bun.diff.lines("a\nb\n", "a\nc\n");
+     * // [
+     * //   { value: "a\n", added: false, removed: false, count: 1 },
+     * //   { value: "b\n", added: false, removed: true, count: 1 },
+     * //   { value: "c\n", added: true, removed: false, count: 1 },
+     * // ]
+     * ```
+     */
+    function lines(oldText: string, newText: string, options?: LinesOptions & { maxEditLength?: undefined }): Change[];
+    function lines(oldText: string, newText: string, options?: LinesOptions): Change[] | undefined;
+
+    /**
+     * Compare two strings word by word. A token is a word of letters, digits and `_`, a run of spaces,
+     * a line ending, or any other single character. In scripts without spaces between words,
+     * like Chinese, Japanese and Thai, each character is a token.
+     *
+     * @returns The changes, or `undefined` if there are more than `maxEditLength` edits
+     */
+    function words(oldText: string, newText: string, options?: TextOptions & { maxEditLength?: undefined }): Change[];
+    function words(oldText: string, newText: string, options?: TextOptions): Change[] | undefined;
+
+    /**
+     * Compare two strings by Unicode code point.
+     *
+     * @returns The changes, or `undefined` if there are more than `maxEditLength` edits
+     */
+    function chars(oldText: string, newText: string, options?: TextOptions & { maxEditLength?: undefined }): Change[];
+    function chars(oldText: string, newText: string, options?: TextOptions): Change[] | undefined;
+
+    /**
+     * Compare two arrays element by element, with `===`.
+     *
+     * @returns The changes, or `undefined` if there are more than `maxEditLength` edits
+     */
+    function arrays<T>(
+      oldArray: readonly T[],
+      newArray: readonly T[],
+      options?: Options & { maxEditLength?: undefined },
+    ): Change<T[]>[];
+    function arrays<T>(oldArray: readonly T[], newArray: readonly T[], options?: Options): Change<T[]>[] | undefined;
+
+    /**
+     * Compare two strings line by line and group the changes into the hunks of a unified diff.
+     *
+     * @returns The hunks, or `undefined` if there are more than `maxEditLength` edits
+     */
+    function hunks(oldText: string, newText: string, options?: HunksOptions & { maxEditLength?: undefined }): Hunk[];
+    function hunks(oldText: string, newText: string, options?: HunksOptions): Hunk[] | undefined;
+
+    /**
+     * Compare two strings line by line and format the result as a unified diff, like `diff -u`.
+     *
+     * @returns The patch, `""` if the strings are equal, or `undefined` if there are more than `maxEditLength` edits
+     *
+     * @example
+     * ```ts
+     * Bun.diff.createPatch("a\nb\n", "a\nc\n", { oldFileName: "file.txt" });
+     * // --- file.txt
+     * // +++ file.txt
+     * // @@ -1,2 +1,2 @@
+     * //  a
+     * // -b
+     * // +c
+     * ```
+     */
+    function createPatch(
+      oldText: string,
+      newText: string,
+      options?: PatchOptions & { maxEditLength?: undefined },
+    ): string;
+    function createPatch(oldText: string, newText: string, options?: PatchOptions): string | undefined;
+
+    /**
+     * Parse a unified diff, as written by `diff -u`, `git diff`, `git format-patch`, `svn diff` or `hg diff`.
+     *
+     * @returns One entry for each file
+     * @throws SyntaxError if a hunk or a file header is malformed
+     */
+    function parsePatch(patch: string): FilePatch[];
+
+    /**
+     * Apply a patch for one file to `source`.
+     *
+     * The lines that a hunk keeps and removes have to match exactly. If they don't match at
+     * `oldStart`, Bun uses the nearest line where they do, within a limit on the steps of that search.
+     * If `source` only has `\r\n` line endings and the patch only has `\n`, or the reverse, the patch
+     * is converted first.
+     *
+     * @param patch A unified diff, a file from {@link parsePatch}, or hunks
+     * @returns The patched text
+     * @throws Error with the code `ERR_PATCH_DOES_NOT_APPLY` if a hunk does not match
+     * @throws SyntaxError if `patch` is not a unified diff, or is malformed
+     * @throws TypeError if `patch` changes several files, or is a binary patch from `git diff`
+     */
+    function applyPatch(
+      source: string,
+      patch: string | Pick<FilePatch, "hunks" | "isBinary"> | Pick<Hunk, "oldStart" | "lines">[],
+    ): string;
   }
 
   namespace unsafe {

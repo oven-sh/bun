@@ -1,4 +1,4 @@
-//! The part of ICU's C API that JavaScriptCore, WTF and Bun call. Derived from ICU4C 79.1 (LICENSE.md). macOS uses the system's.
+//! A part of ICU's C API (README.md). Derived from ICU4C 79.1 (LICENSE.md). macOS uses the system's.
 #![cfg(not(any(target_os = "macos", bun_system_icu)))]
 // The arguments come from JavaScript and a panic aborts the process.
 #![deny(

@@ -11,7 +11,7 @@ use crate::node::fs::{
 use crate::shell::builtin::{BadFlag, Builtin, Kind};
 use crate::shell::builtins::batch::Batch;
 use crate::shell::interpreter::{
-    EventLoopHandle, Interpreter, NodeId, ShellTask, WorkPoolTask, shell_openat,
+    EventLoopHandle, Interpreter, NodeId, ShellTask, WorkPoolTask, names_two_files, shell_openat,
 };
 use crate::shell::yield_::Yield;
 
@@ -360,6 +360,9 @@ impl ShellRmTask {
         if cfg!(windows) && path.is_empty() {
             let missing = bun_sys::Error::from_code(E::ENOENT, bun_sys::Tag::unlink);
             return self.forgive(dir_task, path, &missing).map(|()| None);
+        }
+        if names_two_files(path) {
+            return Err(bun_sys::Error::from_code(E::EINVAL, bun_sys::Tag::unlink).with_path(path));
         }
         if is_operand && let Unlinked::Done = self.remove_entry_file(dir_task, path)? {
             return Ok(None);

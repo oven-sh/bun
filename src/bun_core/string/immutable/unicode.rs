@@ -944,6 +944,7 @@ pub fn copy_utf16_into_utf8_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
         };
     }
 
+    let utf16 = crate::strings_impl::utf16_within_reach(utf16, buf);
     let buf_total = buf.len();
     let mut remaining: &mut [u8] = buf;
     let mut utf16_remaining = utf16;

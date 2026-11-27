@@ -3935,9 +3935,10 @@ pub mod bv2_impl {
                 let loaders = &*input_files.loader;
                 let targets = self.graph.ast.items_target();
                 let mut has_unusable_output_path = false;
+                let is_executable = self.transpiler.options.compile_mode.is_executable();
                 // Without an output directory the paths are only returned, so they can have any length.
-                let opens_output_paths = !self.transpiler.resolver.opts.output_dir.is_empty()
-                    || self.transpiler.options.compile_mode.is_executable();
+                let opens_output_paths =
+                    !self.transpiler.resolver.opts.output_dir.is_empty() || is_executable;
                 let mut templates: Vec<(usize, options::PathTemplate)> = Vec::new();
 
                 for reachable_source in reachable_files {
@@ -3982,6 +3983,10 @@ pub mod bv2_impl {
 
                             template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
                             template.placeholder.dir = pathname.dir.to_vec().into_boxed_slice();
+                            // In an executable `node:fs` finds `D:/a/b.txt`, and not `./b.txt`.
+                            if bun_paths::is_absolute(&relative) && !is_executable {
+                                template.resolve_dir(&self.transpiler.options.root_dir);
+                            }
                             let mut ext: &[u8] = pathname.ext;
                             if !ext.is_empty() && ext[0] == b'.' {
                                 ext = &ext[1..];
@@ -4019,7 +4024,6 @@ pub mod bv2_impl {
                     }
                 }
 
-                let is_executable = self.transpiler.options.compile_mode.is_executable();
                 // The output path of a copied file -> its output file and its module.
                 let mut copied: bun_collections::StringHashMap<(u32, usize)> = Default::default();
                 for (index, mut template) in templates {
@@ -6199,17 +6203,17 @@ pub mod bv2_impl {
                                 // This information cannot be queried while printing because a lock wouldn't get held.
                                 import_record.path.text = path.text;
                                 import_record.path.namespace = b"file";
-                                import_record.path.pretty = self
-                                    .arena()
-                                    .alloc_str(&format!(
+                                import_record.path.pretty = self.arena().alloc_slice_copy(
+                                    format!(
                                         "{}/{}{}",
                                         bake_types::ASSET_PREFIX,
                                         bun_core::fmt::bytes_to_hex_lower_string(
                                             &hash.to_ne_bytes()
                                         ),
                                         bstr::BStr::new(bun_paths::extension(path.text)),
-                                    ))
-                                    .as_bytes();
+                                    )
+                                    .as_bytes(),
+                                );
                                 import_record.path.is_disabled = false;
                             } else {
                                 import_record.path.text = path.text;
@@ -6640,8 +6644,7 @@ pub mod bv2_impl {
             if let Some(i) = answered {
                 if last_error.is_some() && self.dev_server.is_some() {
                     // The dev server links failed files too, and skips a file that has no parts.
-                    // SAFETY: truncating to len 0 never exposes uninitialized elements.
-                    unsafe { self.graph.ast.items_parts_mut()[idx].set_len(0) };
+                    self.graph.ast.items_parts_mut()[idx].forget_elements();
                 }
                 let made = import_records.as_slice()[i].source_index;
                 if declined && scheduled > 0 && made.is_valid() {
@@ -6684,17 +6687,17 @@ pub mod bv2_impl {
             );
             js_parser_options.bundle = true;
 
-            let unique_key: &[u8] = self
-                .arena()
-                .alloc_str(&format!(
+            let unique_key: &[u8] = self.arena().alloc_slice_copy(
+                format!(
                     "{}",
                     chunk::UniqueKey {
                         prefix: self.unique_key,
                         kind: chunk::QueryKind::HtmlImport,
                         index: self.graph.html_imports.len() as u32,
                     },
-                ))
-                .as_bytes();
+                )
+                .as_bytes(),
+            );
 
             // Extract raw pointers so the `&mut self` borrow from
             // `transpiler_for_target` doesn't overlap `self.arena()` below.
@@ -6793,12 +6796,12 @@ pub mod bv2_impl {
                 for (importer, range) in waited {
                     let importer_path = self.graph.input_files.items_source()[importer].path.text;
                     let importer_graph = self.graph.ast.items_target()[importer].bake_graph();
-                    // SAFETY: the log lives in the dev server, disjoint from `self.graph`.
-                    let log: &mut bun_ast::Log = unsafe {
-                        bun_ptr::detach_lifetime_mut(
-                            self.log_for_resolution_failures(importer_path, importer_graph),
-                        )
-                    };
+                    let log = Self::log_for_resolution_failures_impl(
+                        &mut self.dev_server,
+                        &mut self.transpiler,
+                        importer_path,
+                        importer_graph,
+                    );
                     log.add_range_error_fmt(
                         Some(&self.graph.input_files.items_source()[importer]),
                         range,

@@ -22,6 +22,7 @@
 #![cfg_attr(any(not(windows), debug_assertions), feature(core_intrinsics))]
 // `stopped_builds::end_build_where_allocation_fails`.
 #![feature(alloc_error_hook)]
+#![cfg_attr(windows, feature(maybe_uninit_fill))]
 #![allow(internal_features)]
 #![warn(unused_must_use)]
 #[path = "CPUFeatures.rs"]
@@ -2953,28 +2954,9 @@ mod draft {
             {
                 return;
             }
-            {
-                // `unused_capacity_slice` is `&mut [MaybeUninit<u16>]`;
-                // `from_raw_parts_mut::<u16>` over that storage would assert the
-                // bytes are already initialized (library-UB even though
-                // `convert_utf8_to_utf16_in_buffer` only writes). Zero-fill the
-                // spare slots first so the `&mut [u16]` we hand to simdutf is over
-                // initialized memory. Cold crash-reporter path — the extra memset
-                // is irrelevant.
-                let spare = cmd_line.unused_capacity_slice();
-                for slot in spare.iter_mut() {
-                    slot.write(0);
-                }
-                let cap = spare.len();
-                // SAFETY: every `MaybeUninit<u16>` in `spare` was just written
-                // above; `dst..dst+cap` is now `cap` initialized `u16`s inside one
-                // allocation.
-                let init = unsafe {
-                    core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u16>(), cap)
-                };
-                let encoded_len = strings::convert_utf8_to_utf16_in_buffer(init, url).len();
-                let _ = cmd_line.resize(cmd_line.len() + encoded_len);
-            }
+            let spare = cmd_line.unused_capacity_slice().write_filled(0);
+            let encoded_len = strings::convert_utf8_to_utf16_in_buffer(spare, url).len();
+            let _ = cmd_line.resize(cmd_line.len() + encoded_len);
             if cmd_line
                 .append_slice(bun_core::w!("/ack'|out-null}catch{}\""))
                 .is_err()

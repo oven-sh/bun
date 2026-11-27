@@ -82,6 +82,11 @@ impl<T: Copy + Default, const N: usize> ArrayVec<T, N> {
         self
     }
 
+    #[inline]
+    pub(crate) fn clear(&mut self) {
+        self.length = 0;
+    }
+
     /// Returns false if the vector is full.
     #[inline]
     pub(crate) fn push(&mut self, unit: T) -> bool {

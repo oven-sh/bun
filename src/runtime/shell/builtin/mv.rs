@@ -9,8 +9,8 @@ use crate::node::fs::{is_on_disk_at, note_moved_shell_operand, refuse_move};
 use crate::shell::ExitCode;
 use crate::shell::builtin::{BadFlag, Builtin, IoKind, Kind, State};
 use crate::shell::interpreter::{
-    Interpreter, NodeId, OwnedFd, PoolTask, ShellTask, ShellWork, shell_lstatat, shell_openat,
-    shell_statat,
+    Interpreter, NodeId, OwnedFd, PoolTask, ShellTask, ShellWork, names_two_files, shell_lstatat,
+    shell_openat, shell_statat,
 };
 use crate::shell::yield_::Yield;
 
@@ -231,6 +231,9 @@ impl ShellMvBatchedTask {
         if let Some(error) = refuse_move((src_dir, src.as_bytes()), (dst_dir, dst.as_bytes())) {
             return Err(error);
         }
+        if names_two_files(dst) {
+            return Err(bun_sys::Error::from_code(E::EINVAL, bun_sys::Tag::rename).with_path(dst));
+        }
         if no_clobber {
             if shell_lstatat(dst_dir, dst).is_ok() {
                 // `dst` stays. A missing `src` is still an error.
@@ -385,25 +388,22 @@ impl ShellMvBatchedTask {
         let mode = st.st_mode as bun_core::Mode;
         // Unlink first so a symlink-at-dest isn't followed by `O_TRUNC`; also avoids ETXTBUSY.
         let _ = bun_sys::unlinkat(dst_dir, dst);
-        let out = File::openat(
+        let out = bun_sys::Tmpfile::open(
             dst_dir,
-            dst.as_bytes(),
+            dst,
             O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC | O::NOFOLLOW,
             mode & 0o7777,
         )?;
-        let _ = bun_sys::preallocate_file(out.fd().native(), 0, st.st_size as _);
-        if let Err(e) = bun_sys::copy_file(in_.fd(), out.fd()) {
-            drop(out);
-            let _ = bun_sys::unlinkat(dst_dir, dst);
-            return Err(e);
-        }
+        let _ = bun_sys::preallocate_file(out.file.fd().native(), 0, st.st_size as _);
+        bun_sys::copy_file(in_.fd(), out.file.fd())?;
         #[cfg(unix)]
         {
             // `fchown` first: Linux clears S_ISUID/S_ISGID on chown.
-            let _ = bun_sys::fchown(out.fd(), st.st_uid as _, st.st_gid as _);
-            let _ = bun_sys::fchmod(out.fd(), mode & 0o7777);
+            let _ = bun_sys::fchown(out.file.fd(), st.st_uid as _, st.st_gid as _);
+            let _ = bun_sys::fchmod(out.file.fd(), mode & 0o7777);
         }
-        drop((in_, out));
+        out.keep();
+        drop(in_);
         bun_sys::unlinkat(src_dir, src)
     }
 

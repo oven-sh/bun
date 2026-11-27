@@ -39,10 +39,7 @@ use store::{FileExt as _, S3Ext as _, StoreExt as _};
 pub(crate) mod copy_file;
 #[cfg(not(windows))]
 #[path = "blob/fd_job.rs"]
-pub(crate) mod fd_job;
-#[cfg(not(windows))]
-#[path = "blob/io_parking.rs"]
-mod io_parking;
+mod fd_job;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[path = "blob/memfd.rs"]
 mod memfd;
@@ -1295,7 +1292,7 @@ impl BlobExt for Blob {
 
         // `pipe_stream` takes its own refs; init's +1 drops with `file_sink` on return.
         let mut readable_stream = readable_stream;
-        match webcore::FileSink::pipe_stream(&file_sink, &mut readable_stream, cx.global()) {
+        match file_sink.pipe_stream(&mut readable_stream, cx.global()) {
             Ok(promise) => Ok(promise),
             Err(err) => {
                 Ok(JSPromise::rejected_promise_with_caught_exception(cx.global(), err)?.to_js())
@@ -1431,7 +1428,7 @@ impl BlobExt for Blob {
                 sink.close_with_graph(context);
             }
 
-            return Ok(webcore::FileSink::to_js(sink, global_this));
+            return Ok(sink.to_js(global_this));
         }
 
         #[cfg(not(windows))]
@@ -1475,7 +1472,7 @@ impl BlobExt for Blob {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
 
-            Ok(webcore::FileSink::to_js(sink, global_this))
+            Ok(sink.to_js(global_this))
         }
     }
     fn get_slice_from(
@@ -1987,15 +1984,20 @@ impl BlobExt for Blob {
             }
         }
 
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(bytes_.len())
+            .map_err(|_| bun_alloc::AllocError)?;
+        bytes.extend_from_slice(bytes_);
         Ok(Self::create_with_bytes_and_allocator(
-            bytes_.to_vec(),
+            bytes,
             global_this,
             was_string,
         ))
     }
 
     fn create(bytes_: &[u8], global_this: &JSGlobalObject, was_string: bool) -> Blob {
-        Self::try_create(bytes_, global_this, was_string).expect("oom")
+        bun_core::handle_oom(Self::try_create(bytes_, global_this, was_string))
     }
 
     // dupe / dupe_with_content_type / into_js: defined once below (top-level impl); duplicates removed (E0592).
@@ -2195,17 +2197,18 @@ impl BlobExt for Blob {
                     }
                 }
 
+                // SAFETY: `Clone` copies into a new JSC allocation; `buf` is only read.
+                let buf = unsafe { &*buf };
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 {
                     // If we can use a copy-on-write clone of the buffer, do so.
                     if let Some(store) = self.store.get() {
                         if let store::Data::Bytes(bytes) = &store.data {
                             let store_bytes = bytes.slice();
-                            // SAFETY: `Clone` arm reads only; `buf` is store-backed.
-                            if bun::is_slice_in_buffer(unsafe { &*buf }, store_bytes) {
+                            if bun::is_slice_in_buffer(buf, store_bytes) {
                                 if let Some(memfd) = bytes.memfd() {
-                                    let byte_offset = (buf.cast::<u8>() as usize)
-                                        .saturating_sub(store_bytes.as_ptr() as usize);
+                                    let byte_offset =
+                                        buf.as_ptr().addr() - store_bytes.as_ptr().addr();
                                     let result =
                                         jsc::ArrayBuffer::to_array_buffer_from_shared_memfd(
                                             memfd.native() as i64,
@@ -2230,8 +2233,7 @@ impl BlobExt for Blob {
                         }
                     }
                 }
-                // SAFETY: `Clone` copies into a new JSC allocation; `buf` is only read.
-                jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(global, unsafe { &*buf })
+                jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(global, buf)
             }
             Lifetime::Transfer => {
                 if self.store().is_some_and(|s| !s.has_one_ref()) {
@@ -2504,7 +2506,7 @@ impl BlobExt for Blob {
                     // Decide up front whether processing any part (or any entry
                     // still pending on `stack`) can re-enter user JS (toString /
                     // Symbol.toPrimitive / proxy traps / getters) and detach a
-                    // borrowed buffer before `joiner.done()` copies it out. If
+                    // borrowed buffer before `joiner.move_to()` copies it out. If
                     // nothing can, typed-array parts are borrowed (`push_static`)
                     // instead of cloned, which would double peak memory for
                     // `new Blob(largeChunks)`. Non-fast arrays are conservatively
@@ -2550,13 +2552,13 @@ impl BlobExt for Blob {
                                     let buf = item.as_array_buffer(global).unwrap();
                                     if parts_can_run_js {
                                         // A later part may run user JS that detaches
-                                        // or resizes this buffer before `done()`.
+                                        // or resizes this buffer before `move_to()`.
                                         joiner.push_cloned(buf.byte_slice());
                                     } else {
                                         // SAFETY: the prescan above proved no remaining
                                         // part can run user JS, so this buffer (rooted
                                         // via `_keep`/`arg`) stays attached and valid
-                                        // until `joiner.done()` below.
+                                        // until `joiner.move_to()` below.
                                         joiner.push(unsafe {
                                             bun_ptr::detach_lifetime(buf.byte_slice())
                                         });
@@ -2574,14 +2576,14 @@ impl BlobExt for Blob {
                                         could_have_non_ascii = could_have_non_ascii
                                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
                                         // A later part may run user JS that drops the
-                                        // last ref to this Blob's Store before `done()`.
+                                        // last ref to this Blob's Store before `move_to()`.
                                         if parts_can_run_js {
                                             joiner.push_cloned(blob.shared_view());
                                         } else {
                                             // SAFETY: the prescan above proved no
                                             // remaining part can run user JS, so this
                                             // Blob (rooted via `_keep`/`arg`) keeps its
-                                            // Store alive until `joiner.done()` below.
+                                            // Store alive until `joiner.move_to()` below.
                                             joiner.push(unsafe {
                                                 bun_ptr::detach_lifetime(blob.shared_view())
                                             });
@@ -2611,7 +2613,7 @@ impl BlobExt for Blob {
                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
                         // This arm only handles entries deferred onto the walk
                         // stack; other pending entries may still run user JS and
-                        // free this Blob's Store before `done()`, so always copy.
+                        // free this Blob's Store before `move_to()`, so always copy.
                         joiner.push_cloned(blob.shared_view());
                     } else {
                         let utf8 = current.to_utf8(global)?;
@@ -2624,7 +2626,7 @@ impl BlobExt for Blob {
                     let buf = current.as_array_buffer(global).unwrap();
                     // SAFETY: this arm is only reached when the typed array is the
                     // top-level value (the walk stack is empty), so no user JS runs
-                    // between this push and `joiner.done()` below; `_keep`/`arg` keeps
+                    // between this push and `joiner.move_to()` below; `_keep`/`arg` keeps
                     // the buffer alive for that span.
                     joiner.push(unsafe { bun_ptr::detach_lifetime(buf.slice()) });
                     could_have_non_ascii = true;
@@ -2642,7 +2644,11 @@ impl BlobExt for Blob {
             };
         }
 
-        let joined: Vec<u8> = joiner.done().expect("oom").into_vec();
+        let mut joined = Vec::new();
+        joined
+            .try_reserve_exact(joiner.len)
+            .map_err(|_| jsc::JsError::OutOfMemory)?;
+        joiner.move_to(&mut joined);
 
         if !could_have_non_ascii {
             return Ok(Blob::init_with_all_ascii(joined, global, true));
@@ -3290,18 +3296,6 @@ pub(crate) fn write_format_for_size<W: core::fmt::Write, const ENABLE_ANSI_COLOR
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// mkdirIfNotExists / Retry
-// ──────────────────────────────────────────────────────────────────────────
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-#[cfg(not(windows))]
-pub(crate) enum Retry {
-    Continue,
-    Fail,
-    No,
-}
-
 /// Create the parent directories of `path`.
 #[inline(never)]
 pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
@@ -3319,29 +3313,6 @@ pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
             ..Default::default()
         })
         .map(|_| ())
-}
-
-// TODO: move this to bun_sys?
-#[inline(never)]
-#[cfg(not(windows))]
-pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
-    this: &mut T,
-    err: &bun_sys::Error,
-    path_string: &bun_core::ZStr,
-) -> Retry {
-    if err.get_errno() == bun_sys::E::ENOENT && this.mkdirp_if_not_exists() {
-        match mkdirp_parent(path_string.as_bytes()) {
-            bun_sys::Result::Ok(()) => {
-                this.set_mkdirp_if_not_exists(false);
-                return Retry::Continue;
-            }
-            bun_sys::Result::Err(_) => {
-                this.set_system_error(err.to_system_error());
-                return Retry::Fail;
-            }
-        }
-    }
-    Retry::No
 }
 
 /// Runs `create` again if the parents of `path` were missing and could be made, which clears `mkdirp`.
@@ -3377,14 +3348,6 @@ fn sys_error_with_path_like(
         }
         PathOrFileDescriptor::Fd(_) => err.clone(),
     }
-}
-
-/// Receiver trait for `mkdir_if_not_exists`.
-#[cfg(not(windows))]
-pub(crate) trait MkdirpTarget {
-    fn mkdirp_if_not_exists(&self) -> bool;
-    fn set_mkdirp_if_not_exists(&mut self, v: bool);
-    fn set_system_error(&mut self, e: bun_sys::SystemError);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4198,7 +4161,14 @@ pub(crate) fn write_file_internal(
             return destination_blob.pipe_readable_stream_to_blob(cx, readable, &options);
         }
 
-        break 'brk Blob::get::<false, false>(cx.global(), data)?;
+        break 'brk match Blob::get::<false, false>(cx.global(), data) {
+            Err(err @ jsc::JsError::OutOfMemory) => {
+                return Ok(
+                    JSPromise::rejected_promise_with_caught_exception(cx.global(), err)?.to_js(),
+                );
+            }
+            blob => blob?,
+        };
     };
 
     write_file_with_source_destination(cx, &mut source_blob, &mut destination_blob, &options)

@@ -339,7 +339,7 @@ describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected sysc
   });
 
   test("writev → zero (once) on a ≥16 KB server frame: send() reports backpressure, client receives full payload", async () => {
-    // The Bun.serve WS plain-TCP fast path (WebSocket.h send(): ≥16 KB frame,
+    // The Bun.serve WS plain-TCP fast path (WebSocket.rs send(): ≥16 KB frame,
     // nothing buffered, empty cork buffer) writes header + payload with
     // us_socket_write2 → bsd_write2, which is the writev hook; nothing else in
     // this file reaches it.

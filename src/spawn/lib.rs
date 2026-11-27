@@ -11,6 +11,8 @@
 //! (`ThreadSafeRefCount`), `bun_io` (`BufferedWriter`), `bun_event_loop`,
 //! and `bun_threading` — none of which depend back on this crate, so no cycle.
 
+#![feature(arbitrary_self_types)]
+
 // ──────────────────────────────────────────────────────────────────────────
 // Module layout
 // ──────────────────────────────────────────────────────────────────────────
@@ -80,8 +82,7 @@ pub type ProcessExitHandler = Option<ProcessExit>;
 #[cfg(windows)]
 link_impl_ProcessExit! {
     SyncWindows for process::sync::SyncWindowsProcess => |this| {
-        on_process_exit(status, _rusage) =>
-            process::sync::SyncWindowsProcess::on_process_exit(this, status),
+        on_process_exit(status, _rusage) => (*this).on_process_exit(status),
     }
 }
 #[cfg(not(windows))]

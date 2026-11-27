@@ -1,6 +1,7 @@
 use bun_http1::{ChunkedDecoder, Error, HeadOptions, ResponseParser};
 
 mod message;
+mod request;
 
 #[unsafe(no_mangle)]
 extern "Rust" fn __bun_crash_handler_out_of_memory() -> ! {

@@ -2024,6 +2024,9 @@ function rustTakeArguments(args: readonly { name: string; type: Type }[], scope:
     .toSorted((a, b) => +a.type.rustFromExternThrows - +b.type.rustFromExternThrows)
     .flatMap(arg => {
       const name = rustArgumentName(arg);
+      // The parameter outlives the call's lifetime, which the compiler cannot see.
+      if (arg.type.borrowsExtern && !isPassedByPointer(arg.type))
+        return [`let ${name} = &raw const ${name};\nlet ${name} = ${arg.type.rustFromExtern(`(*${name})`, scope)};\n`];
       const converted = arg.type.rustFromExtern(isPassedByPointer(arg.type) ? `${name}.read()` : name, scope);
       if (arg.type.rustFromExternThrows)
         return [
@@ -2121,7 +2124,7 @@ impl${lifetime} ${type.name}${lifetime} {
     /// # Safety
     /// \`value\` was just filled in by generated C++${lifetime && " for the call `heap` belongs to"} and is read once.
     #[doc(hidden)]
-    pub unsafe fn from_extern(value: &Extern${type.name}${lifetime && ", heap: &bindgen::JsHeap<'a>"}) -> Self {
+    pub unsafe fn from_extern(value: &${type.borrowsExtern ? "'a " : ""}Extern${type.name}${lifetime && ", heap: &bindgen::JsHeap<'a>"}) -> Self {
         // SAFETY: C++ initialized the alternative \`tag\` names.
         unsafe {
             match value.tag {
@@ -2294,7 +2297,7 @@ function rustForClass(type: ClassType, scope: RustScope): string {
   type Receiver = keyof typeof receiverArgument;
   const takeThis = (receiver: Receiver, passThis: boolean) => {
     if (receiver === "static") return "";
-    const wrapped = `let wrapped = bindgen::class_ref_from_extern::<${rustPath}>(*this.byte_add(${offsetOfPayload(type)}).cast(), &cx.heap);\n`;
+    const wrapped = `let wrapped = bindgen::class_ref_from_extern::<${rustPath}>(&*this.byte_add(${offsetOfPayload(type)}).cast(), &cx.heap);\n`;
     const wrapper = `let this = bindgen::JsWrapper::<${rustPath}>::from_extern(core::ptr::NonNull::new_unchecked(this), &cx.heap);\n`;
     return (refCounted ? wrapped : "") + (passThis || !refCounted ? wrapper : "");
   };

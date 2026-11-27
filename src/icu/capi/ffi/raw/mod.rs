@@ -1,5 +1,6 @@
 //! Contracts of single headers, one file each. This file has the raw-pointer helpers that they share.
 
+pub(crate) mod ubidi;
 pub(crate) mod ubrk;
 pub(crate) mod ulistformatter;
 pub(crate) mod uloc;

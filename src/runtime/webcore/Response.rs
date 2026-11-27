@@ -1,9 +1,9 @@
-use core::cell::Cell;
+use core::cell::{Cell, OnceCell};
 use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
-use bun_jsc::{AbortSignal, GlobalRef};
+use bun_jsc::{AbortSignal, GlobalRef, HasJsRef as _};
 use bun_ptr::RefPtr;
 
 use crate::webcore::jsc::{
@@ -175,7 +175,7 @@ impl bun_jsc::JsClass for Response {
         js::from_js_direct(value)
     }
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        Response::to_js(RefPtr::new(self), global)
+        RefPtr::new(self).to_js(global)
     }
 }
 
@@ -206,7 +206,7 @@ pub(crate) struct Response {
     reported_estimated_size: Cell<usize>,
 
     /// Fetch's `AbortSignal` listener; survives `FetchTasklet` teardown so a fully-buffered body is still errored.
-    abort_listener: JsCell<Option<bun_ptr::AliasableBox<BodyAbortListener>>>,
+    abort_listener: OnceCell<bun_ptr::AliasableBox<BodyAbortListener>>,
 }
 
 impl Default for Response {
@@ -220,7 +220,7 @@ impl Default for Response {
             weak_ptr_data: WeakPtrData::EMPTY,
             js_ref: JsCell::new(JsRef::empty()),
             reported_estimated_size: Cell::new(0),
-            abort_listener: JsCell::new(None),
+            abort_listener: OnceCell::new(),
         }
     }
 }
@@ -437,13 +437,21 @@ impl Response {
     }
 
     /// The wrapper adopts the ref.
-    pub(crate) fn to_js(this: RefPtr<Self>, global_object: &JSGlobalObject) -> JSValue {
-        this.calculate_estimated_byte_size();
-        let this = js::wrap(this, global_object);
+    pub(crate) fn to_js(self: RefPtr<Self>, global_object: &JSGlobalObject) -> JSValue {
+        self.wrap(global_object).to_js()
+    }
+
+    /// As `to_js`, for code that goes on to use the struct.
+    pub(crate) fn wrap(
+        self: RefPtr<Self>,
+        global_object: &JSGlobalObject,
+    ) -> bun_jsc::WrapperGuard<'_, Self> {
+        self.calculate_estimated_byte_size();
+        let this = js::wrap(self, global_object);
         this.set_js_ref_weak();
 
         this.check_body_stream_ref(global_object);
-        this.to_js()
+        this
     }
 
     #[inline]
@@ -457,25 +465,22 @@ impl Response {
     }
 
     /// Install a [`BodyAbortListener`] so abort reaches this body after `FetchTasklet` has detached.
-    ///
-    /// SAFETY: `this` must be a live heap `Response` (stored as the listener's [`ParentRef`]).
-    pub(crate) unsafe fn attach_abort_signal(
-        this: *mut Response,
+    pub(crate) fn attach_abort_signal(
+        this: &bun_jsc::WrapperGuard<'_, Self>,
         global: &JSGlobalObject,
         signal: &AbortSignal,
         context: bun_jsc::ContextId,
     ) {
         let listener = bun_ptr::AliasableBox::new(BodyAbortListener {
             abort_handle: bun_jsc::AbortHandle::for_owner::<BodyAbortListener>(),
-            // SAFETY: caller contract; `this` is live and owns the box.
-            response: unsafe { bun_ptr::ParentRef::from_raw_mut(this) },
+            // SAFETY: the pointer that the wrapper holds, to the `Response` that owns the box.
+            response: unsafe { bun_ptr::ParentRef::from_raw_mut(this.as_ptr()) },
             global: GlobalRef::new(global),
             context,
         });
         // SAFETY: on the heap until it drops.
         unsafe { bun_jsc::AbortHandle::follow_owner(listener.as_ptr(), signal.ref_()) };
-        // SAFETY: caller contract; `this` is live.
-        unsafe { (*this).abort_listener.set(Some(listener)) };
+        let _ = this.abort_listener.set(listener);
     }
 
     #[inline]
@@ -743,7 +748,7 @@ impl Response {
         self.throw_if_body_unusable(global_this)?;
         let cloned = self.clone(&cx)?;
 
-        let js_wrapper = Response::to_js(cloned, global_this);
+        let js_wrapper = cloned.to_js(global_this);
         self.sync_cloned_body_stream_caches(this_value.to_js(), js_wrapper, global_this);
         Ok(js_wrapper)
     }
@@ -810,7 +815,7 @@ impl Response {
             &StringView::ascii(json_mime.value.as_ref()),
             global_this,
         )?;
-        Ok(Response::to_js(RefPtr::new(response), global_this))
+        Ok(RefPtr::new(response).to_js(global_this))
     }
 
     /// `construct_json` on a value and the members of a literal. The value is serialized before the members are taken.
@@ -836,7 +841,7 @@ impl Response {
             &StringView::ascii(bun_http_types::MimeType::JSON.value.as_ref()),
             global_this,
         )?;
-        Ok(Response::to_js(RefPtr::new(response), global_this))
+        Ok(RefPtr::new(response).to_js(global_this))
     }
 
     #[inline(always)]
@@ -926,7 +931,7 @@ impl Response {
         // The JS string's own WTF string (no re-encode), same as `Headers.prototype.set`.
         let location = if href.is_empty() { &url_string } else { &href };
         headers.put(HTTPHeaderName::Location, location, global_this)?;
-        Ok(Response::to_js(RefPtr::new(response), global_this))
+        Ok(RefPtr::new(response).to_js(global_this))
     }
 
     pub(crate) fn error(cx: &mut JsScope<'_>) -> JSValue {
@@ -940,7 +945,7 @@ impl Response {
             ..Default::default()
         });
 
-        Response::to_js(response, global_this)
+        response.to_js(global_this)
     }
 
     pub(crate) fn constructor<'a>(
@@ -950,10 +955,9 @@ impl Response {
         init: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let response = Self::construct_into(cx.global(), body.to_js(), init.to_js())?;
-        let this = response.this_ptr();
         let this_value = structure.create(&cx.heap, response);
         this_value.set_js_ref_weak();
-        this.check_body_stream_ref(cx.global());
+        Self::wrapped_by(this_value).check_body_stream_ref(cx.global());
         Ok(this_value)
     }
 
@@ -1090,7 +1094,7 @@ impl Response {
         }
         let init = Init::from_parts(global_this, parts)?;
         let response = Self::from_body_and_init(global_this, body, init)?;
-        Ok(Response::to_js(response, global_this))
+        Ok(response.to_js(global_this))
     }
 }
 

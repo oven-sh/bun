@@ -886,16 +886,16 @@ fn list_inherited_extra_descriptors() -> Box<[bool]> {
 }
 
 #[cfg(windows)]
-fn write_to_named_file(path: &bun_core::ZStr, bytes: &[u8], bytes_after: &[u8]) -> Maybe<File> {
-    let file = File::from_fd(bun_sys::openat(
+fn write_to_named_file(bytes: &[u8], bytes_after: &[u8]) -> Maybe<bun_sys::Tmpfile<ZBox>> {
+    let program = bun_sys::Tmpfile::open(
         Fd::cwd(),
-        path,
+        temporary_path(bun_resolver::fs::RealFS::tmpdir_path()),
         O::RDWR | O::CREAT | O::EXCL,
         0o700,
-    )?);
-    file.write_all(bytes)?;
-    file.write_all(bytes_after)?;
-    Ok(file)
+    )?;
+    program.file.write_all(bytes)?;
+    program.file.write_all(bytes_after)?;
+    Ok(program)
 }
 
 #[cfg(windows)]
@@ -971,15 +971,9 @@ fn start_second_process(
         Output::flush();
         Global::exit(run_second_process(arguments, original_cwd))
     };
-    let path = temporary_path(bun_resolver::fs::RealFS::tmpdir_path());
-    let file = match write_to_named_file(&path, bytes, handover.bytes_after) {
-        Ok(file) => file,
-        Err(error) => {
-            let _ = bun_sys::unlinkat(Fd::cwd(), &path);
-            exit_write_failed(&error)
-        }
-    };
-    let handle = file.fd().native();
+    let program = write_to_named_file(bytes, handover.bytes_after)
+        .unwrap_or_else(|error| exit_write_failed(&error));
+    let handle = program.file.fd().native();
     let _ = bun_sys::windows::make_inheritable(handle);
     let descriptor_text = (handle as usize).to_string();
     let arguments = second_process_arguments(
@@ -989,8 +983,7 @@ fn start_second_process(
     );
     Output::flush();
     let exit_code = run_second_process(arguments, original_cwd);
-    drop(file);
-    let _ = bun_sys::unlinkat(Fd::cwd(), &path);
+    drop(program);
     Global::exit(exit_code)
 }
 
@@ -1013,7 +1006,7 @@ fn parse_descriptor(text: &[u8]) -> Option<Fd> {
 #[cold]
 #[inline(never)]
 pub(crate) fn use_graph_descriptor(text: &[u8]) {
-    if Graph::get().is_some() {
+    if Graph::get_ref().is_some() {
         return;
     }
     let Some(descriptor) = parse_descriptor(text) else {
@@ -1102,7 +1095,7 @@ pub(crate) const PROGRAM_FILE_FLAG: &[u8] = b"--aot-program-file=";
 #[cfg(not(bun_locked_environment))]
 #[cold]
 #[inline(never)]
-pub(crate) fn load_program_file() -> bun_standalone_graph::Result<Option<*mut Graph>> {
+pub(crate) fn load_program_file() -> bun_standalone_graph::Result<Option<&'static Graph>> {
     use bun_resolver::compiled_program::{FILE_IN_PLACE_OF_EXECUTABLE, FileInPlaceOfExecutable};
 
     if bun_core::getenv_z(bun_core::zstr!("BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING")).is_none() {

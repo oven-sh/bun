@@ -11,6 +11,7 @@ use bun_jsc::{
     JSPromise, JSValue, JsCell, JsCellRefExt as _, JsRef, JsResult, SystemError, bun_string_jsc,
 };
 
+use bun_bundler::HTMLScanner::{OutputBuffer, OutputSink};
 use bun_collections::ByteVecExt;
 use bun_collections::smallvec::SmallVec;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
@@ -35,7 +36,7 @@ use crate::webcore::streams::{
 use crate::webcore::{self, ByteStream, DrainResult, ReadableStream, Response, SinkHandle};
 use bun_core::{EncodedSlice, String as BunString};
 use bun_jsc::EncodedSliceJsc as _;
-use lol_html::errors::RewritingError;
+use lol_html::errors::{MemoryLimitExceededError, RewritingError};
 use lol_html::html_content::{self as lol, UserData as _};
 
 // Lifetime-erased so a wrapper's `DetachablePtr` can hold the unit while a [`LentUnit`] lives.
@@ -215,7 +216,7 @@ impl HTMLRewriter {
                 enable_esi_tags: false,
                 adjust_charset_on_meta_tag: false,
             },
-            bun_bundler::HTMLScanner::OutputSink::Buffer(BackRef::new(&pipe.output_buffer)),
+            OutputSink::Buffer(BackRef::new(&pipe.output_buffer)),
         ))
     }
 
@@ -280,7 +281,7 @@ impl HTMLRewriter {
 
 // ─────────────────────────── RewriterPipe ────────────────────────────────
 
-type LolRewriter = lol_html::HtmlRewriter<'static, bun_bundler::HTMLScanner::OutputSink<'static>>;
+type LolRewriter = lol_html::HtmlRewriter<'static, OutputSink<'static>>;
 
 enum State {
     Idle(Box<LolRewriter>),
@@ -382,7 +383,7 @@ pub struct RewriterPipe {
 
     output: Cell<Output>,
     /// What lol-html has emitted and `output` has not been given yet.
-    output_buffer: JsCell<Vec<u8>>,
+    output_buffer: OutputBuffer,
     /// Reaches the output body after the `Response` wrapper is swept along with the cell.
     response: JsCell<Option<RefPtr<Response>>>,
     /// Slots whose callback has run. Reused, so the array grows with the open elements only.
@@ -501,7 +502,7 @@ impl RewriterPipe {
     }
 
     fn demand(&self) -> Demand {
-        let staged = self.output_buffer.get().len() as BlobSizeType;
+        let staged = self.output_buffer.bytes.get().len() as BlobSizeType;
         let out = match self.output.get() {
             Output::Stream(out) => out,
             Output::Unread if staged > Self::HIGH_WATER_MARK => return Demand::Unobserved,
@@ -555,7 +556,7 @@ impl RewriterPipe {
             background_pull_root: JsCell::new(None),
             background_pull_armed: Cell::new(false),
             output: Cell::new(Output::Unread),
-            output_buffer: JsCell::new(Vec::new()),
+            output_buffer: OutputBuffer::default(),
             response: JsCell::new(None),
             free_end_tag_slots: JsCell::new(Vec::new()),
             pending_flush: JsCell::new(WritablePending::default()),
@@ -583,18 +584,18 @@ impl RewriterPipe {
             BunString::EMPTY,
             false,
         ));
-        let result_ref = result.this_ptr();
         this.response.set(Some(result.clone()));
 
-        result_ref.set_init(
+        result.set_init(
             original.get_method(),
             original.get_init_status_code(),
             original.get_init_status_text().clone(),
         );
 
-        result_ref.set_init_headers(headers);
+        result.set_init_headers(headers);
 
-        let response_js_value = Response::to_js(result, &this.global);
+        let result = result.wrap(&this.global);
+        let response_js_value = result.to_js();
 
         let transform = js_HTMLRewriterTransform::wrap(pipe, cx.global());
         transform.set_js_ref_weak();
@@ -606,7 +607,7 @@ impl RewriterPipe {
             js_HTMLRewriterTransform::handlers_set_cached(cell, cx.global(), handlers);
         }
 
-        result_ref.set_url(original.url().clone());
+        result.set_url(original.url().clone());
 
         let value = original.get_body_value();
         let owned_readable_stream = original.get_body_readable_stream();
@@ -618,7 +619,6 @@ impl RewriterPipe {
             return Err(cx.global().throw_value(err));
         }
 
-        response_js_value.ensure_still_alive();
         Ok(response_js_value)
     }
 
@@ -768,7 +768,7 @@ impl RewriterPipe {
 
     fn on_start_streaming(ctx: NonNull<c_void>) -> DrainResult {
         let this = BackRef::from(ctx.cast::<RewriterPipe>());
-        let list = this.output_buffer.replace(Vec::new());
+        let list = this.output_buffer.bytes.replace(Vec::new());
         if list.is_empty() {
             return DrainResult::EstimatedSize(0);
         }
@@ -991,6 +991,11 @@ impl RewriterPipe {
     /// Out of line: the frame of `drive` repeats down a chain of rewriters.
     #[inline(never)]
     fn leave_completed(&self, rewriter: Box<LolRewriter>) -> Option<Then> {
+        if self.output_buffer.is_incomplete.get() {
+            let e = RewritingError::MemoryLimitExceeded(MemoryLimitExceededError);
+            self.leave_interrupted(rewriter, e);
+            return None;
+        }
         let State::Running { then, .. } = self.state.replace(State::Done) else {
             return None;
         };
@@ -1041,6 +1046,12 @@ impl RewriterPipe {
                     rewriter,
                 });
                 self.begin_suspension();
+                if self.output_buffer.is_incomplete.get() {
+                    let message = MemoryLimitExceededError.to_string();
+                    self.fail(webcore::body::ValueError::Message(BunString::clone_utf8(
+                        message.as_bytes(),
+                    )));
+                }
             }
             (e, _) => self.on_rewriting_error(&e),
         }
@@ -1118,9 +1129,12 @@ impl RewriterPipe {
 
     fn flush_output(&self) {
         if let Output::Stream(out) = self.output.get()
-            && !self.output_buffer.get().is_empty()
+            && !self.output_buffer.bytes.get().is_empty()
         {
-            out.on_data(StreamResult::Owned(self.output_buffer.take()));
+            let chunk = StreamResult::Owned(self.output_buffer.bytes.take());
+            if out.try_on_data(chunk).is_err() {
+                self.output_buffer.is_incomplete.set(true);
+            }
         }
     }
 
@@ -1145,7 +1159,7 @@ impl RewriterPipe {
         // For a waiting `.blob()`'s content type.
         let headers = response.get_fetch_headers().map(NonNull::from);
         let body_value = response.get_body_value();
-        let bytes = self.output_buffer.replace(Vec::new());
+        let bytes = self.output_buffer.bytes.replace(Vec::new());
         let mut prev_value = core::mem::replace(
             body_value,
             webcore::body::Value::InternalBlob(webcore::InternalBlob {
@@ -1228,6 +1242,9 @@ impl RewriterPipe {
 
     #[inline(never)]
     fn begin_suspension(&self) {
+        if self.global.has_pending_termination_exception() {
+            return;
+        }
         // The context roots the cell, and queues `abandon_suspension` if it is collected with the promise.
         let Some(promise) = self.take_suspension_promise() else {
             return self.abandon_suspension();
@@ -1311,7 +1328,7 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     }
 
     fn memory_cost(&self) -> usize {
-        self.pending_input.get().capacity() + self.output_buffer.get().capacity()
+        self.pending_input.get().capacity() + self.output_buffer.bytes.get().capacity()
     }
     fn write_bytes(this: &mut Self::Entered<'_>, data: &StreamResult<'_>) -> Writable {
         this.write_copy(data.slice())
@@ -1670,6 +1687,9 @@ impl RewriterPipe {
         let Ok(Some(callback)) = callback else {
             return stopped();
         };
+        if self.output_buffer.is_incomplete.get() {
+            return Err(MemoryLimitExceededError.into());
+        }
 
         // `call` returns `undefined` without calling, as if the handler had nothing to change.
         let caller_is_listening = self.sync_only_noun.is_some();

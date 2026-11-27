@@ -73,6 +73,7 @@ mod hardcoded_module {
     pub(super) struct Alias {
         pub path: &'static [u8],
         pub tag: ImportRecordTag,
+        pub node_builtin: bool,
     }
     pub(super) fn get(name: &[u8], target: BundleTarget, opts: AliasOptions) -> Option<Alias> {
         bun_resolve_builtins::Alias::get(
@@ -85,6 +86,7 @@ mod hardcoded_module {
         .map(|a| Alias {
             path: a.path.as_bytes(),
             tag: a.tag,
+            node_builtin: a.node_builtin,
         })
     }
 }
@@ -242,6 +244,11 @@ impl Linker {
                         ) {
                             if replacement.tag == ImportRecordTag::Builtin
                                 && import_record.kind.is_common_js()
+                            {
+                                continue;
+                            }
+                            // The `module.import` tracing channel publishes it as it is written.
+                            if replacement.node_builtin && import_record.kind == ImportKind::Dynamic
                             {
                                 continue;
                             }

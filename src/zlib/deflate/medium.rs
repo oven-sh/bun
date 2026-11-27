@@ -16,9 +16,9 @@ struct Step {
 }
 
 #[inline(always)]
-fn find(matcher: &mut Matcher<'_>, position: u32, lookahead: u32) -> Step {
+fn find<const SPARES: bool>(matcher: &mut Matcher<'_>, position: u32, lookahead: u32) -> Step {
     let found = match matcher.target(position, lookahead) {
-        Some(target) => matcher.insert_and_match::<false>(target),
+        Some(target) => matcher.insert_and_match::<false, SPARES>(target),
         None => Match::NONE,
     };
     Step {
@@ -88,7 +88,7 @@ impl Deflater {
                     {
                         next
                     } else {
-                        find(&mut matcher, position, lookahead)
+                        find::<LOOKS_AHEAD>(&mut matcher, position, lookahead)
                     };
                     let may_look_at = |behind| {
                         LOOKS_AHEAD && lookahead > MIN_LOOKAHEAD && behind < slide_position
@@ -98,7 +98,7 @@ impl Deflater {
                         block.push_literal(byte(window, position));
                         position += 1;
                         if may_look_at(position) {
-                            next = find(&mut matcher, position, lookahead);
+                            next = find::<LOOKS_AHEAD>(&mut matcher, position, lookahead);
                         }
                         continue;
                     }
@@ -108,7 +108,7 @@ impl Deflater {
                     }
                     let behind = position + current.len;
                     if may_look_at(behind) {
-                        next = find(&mut matcher, behind, lookahead);
+                        next = find::<LOOKS_AHEAD>(&mut matcher, behind, lookahead);
                         if next.len >= HASHED_LEN {
                             take_over(window, &mut current, &mut next);
                         }

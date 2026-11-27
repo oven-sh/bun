@@ -1124,11 +1124,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // __sancov_gen_.1"). The copies of an inline function that ThinLTO does not
   // keep become available_externally, their module-private guards included,
   // and inlining one leaves a reference to guards that nothing defines.
-  // Android, FreeBSD: not enabled (never built that way; untested).
-  // Windows arm64: off — oven-sh/WebKit ships no bun-webkit-windows-arm64-lto
-  // (LLVM's CodeView emitter aborts on ARM64 NEON tuple registers when JSC
-  // goes through LTO), so forcing it off also keeps the fetch from 404ing.
-  if ((asan && lto) || fuzzilli || abi === "android" || freebsd || (windows && arm64)) {
+  if (asan || fuzzilli) {
     lto = false;
   }
 

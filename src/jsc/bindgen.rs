@@ -126,6 +126,15 @@ impl<'a> JsHeap<'a> {
     }
 
     #[inline]
+    pub fn create_array_of(
+        &self,
+        values: &crate::MarkedArgumentBuffer,
+        range: core::ops::Range<usize>,
+    ) -> Result<'a, JsLocal<'a, JSArray>> {
+        JsLocal::from_js_result(values.construct_array_of_range(self.global_object(), range))
+    }
+
+    #[inline]
     pub fn create_utf8_string(&self, utf8: &[u8]) -> Result<'a, JsLocal<'a, JSString>> {
         JsLocal::from_js_result(crate::bun_string_jsc::create_utf8_for_js(
             self.global_object(),
@@ -305,6 +314,12 @@ impl<'a> JsHeap<'a> {
     #[cold]
     pub fn range_error(&self, args: core::fmt::Arguments<'_>) -> Error<'a> {
         Error::unthrown(self.global_object().create_range_error_instance(args))
+    }
+
+    /// As [`error`](Self::error), a `SyntaxError`.
+    #[cold]
+    pub fn syntax_error(&self, args: core::fmt::Arguments<'_>) -> Error<'a> {
+        Error::unthrown(self.global_object().create_syntax_error_instance(args))
     }
 
     /// As [`error`](Self::error), with a `code`, which also picks the class.
@@ -745,12 +760,7 @@ impl<'a> JsLatin1<'a> {
                 .owner
                 .substrings_of_resolved(heap.global_object(), &offsets_and_lengths)
         };
-        // SAFETY: `JsLocal` is `repr(transparent)` over `JSValue`.
-        unsafe {
-            (&raw const substrings)
-                .cast::<[JsLocal<'a, JSString>; N]>()
-                .read()
-        }
+        substrings.map(JsLocal::from_raw)
     }
 
     /// `part` as a string: a [`substring`](Self::substring) if it is a slice of [`characters`](Self::characters), a copy if it lies elsewhere.
@@ -810,15 +820,15 @@ impl<'a> JsLocal<'a, BufferSource> {
 }
 
 /// # Safety
-/// `wrapped` is the `T` that a cell wraps, and something holds that cell for the call `heap` belongs to.
+/// `wrapped` is the ref that a cell holds, or a copy of it, and something holds that cell for the call `heap` belongs to.
 #[doc(hidden)]
 #[inline(always)]
-pub unsafe fn class_ref_from_extern<'a, T: crate::JsClass>(
-    wrapped: *mut c_void,
+pub unsafe fn class_ref_from_extern<'a, T: bun_ptr::AnyRefCounted>(
+    wrapped: &'a *mut c_void,
     _: &JsHeap<'a>,
-) -> &'a T {
-    // SAFETY: forwarded.
-    unsafe { &*wrapped.cast::<T>() }
+) -> &'a bun_ptr::RefPtr<T> {
+    // SAFETY: forwarded. `RefPtr` is a transparent pointer.
+    unsafe { &*core::ptr::from_ref(wrapped).cast() }
 }
 
 /// `b.bytes` with `held: "handle"`, for a function that can run JavaScript, which can detach, resize or free a buffer.

@@ -1401,16 +1401,19 @@ impl Run<'_> {
             // `--redis-preconnect` is refused at start where `--trim` removed `Bun.redis`.
             let preconnect = || -> bun_jsc::JsResult<()> {
                 bun_removable_features::removable_body!(Valkey, Abort, {
+                    use crate::valkey_jsc::js_valkey::js;
                     let Some(bun_object) = global.to_js_value().get(global, "Bun")? else {
                         return Ok(());
                     };
                     let Some(redis) = bun_object.get(global, "redis")? else {
                         return Ok(());
                     };
-                    let Some(client) = crate::valkey_jsc::js_valkey::js::from_js(&redis) else {
-                        return Ok(());
-                    };
-                    client.do_connect(global, (&client).into());
+                    if let Some(wrapper) = js::from_js(&redis)
+                        && let Some(client) = js::ref_from_js(redis)
+                    {
+                        // Not `connect()`: nobody could catch its promise.
+                        client.preconnect((&wrapper).into());
+                    }
                     Ok(())
                 })
             };
@@ -3023,10 +3026,6 @@ pub(crate) enum Filter {
 }
 
 impl RunCommand {
-    fn unlink_staged_path(path: &[u8]) {
-        let _ = sys::unlink(&paths::Path::from(path));
-    }
-
     /// Parse `contents` once with an ImageUrlCollector, download every
     /// http(s) image URL it finds to a temp file, and populate `out_map`
     /// with url → temp-path entries. Failures are silent — an image that
@@ -3113,27 +3112,18 @@ impl RunCommand {
             path.push_fmt(format_args!("bun-md-{:x}", bun_core::fast_random()));
             path.extend_from_slice(ext);
 
-            let fd = match sys::open(
-                &path,
+            let Ok(image) = sys::Tmpfile::open(
+                Fd::cwd(),
+                path,
                 sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL | sys::O::CLOEXEC | sys::O::NOFOLLOW,
                 0o600,
-            ) {
-                Ok(f) => f,
-                Err(_) => continue,
+            ) else {
+                continue;
             };
-            let ok = sys::File::from_fd(fd).write_all(bytes).is_ok();
-            if !ok {
-                Self::unlink_staged_path(&path);
+            if image.file.write_all(bytes).is_err() || out_map.try_reserve(1).is_err() {
                 continue;
             }
-            // Dupe url for the map key — `collector.urls` owns the backing
-            // bytes. Check capacity first while `path` is still
-            // borrowable for `unlink_staged_path`.
-            if out_map.try_reserve(1).is_err() {
-                Self::unlink_staged_path(&path);
-                continue;
-            }
-            out_map.put_assume_capacity(url, path.as_bytes().into());
+            out_map.put_assume_capacity(url, image.keep().as_bytes().into());
         }
     }
 
@@ -3329,11 +3319,7 @@ impl RunCommand {
                             .fs
                             .entries_mutex
                             .lock_guard();
-                        let mut iter = entries.data.iter();
-                        while let Some(entry) = iter.next() {
-                            // SAFETY: `EntryMap` stores non-null `*mut Entry` values owned by
-                            // the resolver dir-cache for the process lifetime.
-                            let value = unsafe { &**entry.1 };
+                        for &value in entries.data.values() {
                             if value.kind(&bun_resolver::fs::FileSystem::get().fs, true)
                                 == bun_resolver::fs::EntryKind::File
                             {
@@ -3370,12 +3356,7 @@ impl RunCommand {
                         .fs
                         .entries_mutex
                         .lock_guard();
-                    let mut iter = entries.data.iter();
-
-                    while let Some(entry) = iter.next() {
-                        // SAFETY: `EntryMap` stores non-null `*mut Entry` values owned by the
-                        // resolver dir-cache for the process lifetime.
-                        let value = unsafe { &**entry.1 };
+                    for &value in entries.data.values() {
                         let name = value.base();
                         if name[0] != b'.'
                             && this_transpiler

@@ -7,7 +7,7 @@
 //! Those targets live in `bun_runtime`, which depends on this crate —
 //! re-exporting them here would create a cycle. Callers reference
 //! `bun_runtime::{webcore,api,node}` directly; lower-tier consumers that
-//! constructed those types (e.g. `output_file_jsc`, `BlobArrayBuffer_deallocator`)
+//! constructed those types (e.g. `output_file_jsc`)
 //! have been moved up into `bun_runtime`, and the few that only need an opaque
 //! borrow (e.g. `DOMFormData::for_each`) are generic over the caller's `Blob`.
 
@@ -16,6 +16,7 @@
 // `Tag` is a fieldless enum, so this is the structural-match subset of the
 // feature.
 #![feature(adt_const_params)]
+#![feature(arbitrary_self_types)]
 #![feature(core_io_borrowed_buf)]
 // `#[thread_local]` for the per-JS-thread VM holder and adjacent hot
 // per-callback statics — bare `__thread`/`.tbss` instead of the
@@ -130,8 +131,6 @@ pub mod common_strings;
 pub mod console_object;
 #[path = "Counters.rs"]
 pub mod counters;
-#[path = "DecodedJSValue.rs"]
-pub mod decoded_js_value;
 #[path = "DOMURL.rs"]
 pub mod dom_url;
 #[path = "EncodedSlice.rs"]
@@ -340,7 +339,6 @@ impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
 }
 
 pub use self::counters::Counters;
-pub use self::decoded_js_value::DecodedJSValue;
 pub use self::js_array::JSArray;
 pub use self::js_ref::{HasJsRef, JsCellRefExt, JsRef};
 pub use self::string_builder::StringBuilder;
@@ -966,11 +964,6 @@ impl<'a, T, const MAPPED: bool> WrapperGuard<'a, T, MAPPED> {
     /// The pointer that the wrapper holds. After [`map`](Self::map), and for the `Blob` of a `BuildArtifact`, the address of the part.
     pub fn as_ptr(&self) -> *mut T {
         self.native.as_ptr()
-    }
-
-    /// Shadows [`bun_ptr::AsCtxPtr::as_ctx_ptr`], which is the address of `self`.
-    pub fn as_ctx_ptr(&self) -> *mut T {
-        self.as_ptr()
     }
 }
 impl<T, const MAPPED: bool> core::ops::Deref for WrapperGuard<'_, T, MAPPED> {

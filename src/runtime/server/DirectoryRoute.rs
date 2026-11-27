@@ -6,7 +6,7 @@ use core::mem::size_of;
 use bun_core::strings;
 use bun_http::Method;
 use bun_io::FileType;
-use bun_ptr::{RefPtr, ThisPtr};
+use bun_ptr::RefPtr;
 use bun_resolver::fs::StatHash;
 use bun_sys::{self, Fd, File};
 use bun_uws::{AnyRequest, AnyResponse};
@@ -97,29 +97,25 @@ impl DirectoryRoute {
         }))
     }
 
-    pub(crate) fn on_head_request(
-        this: ThisPtr<DirectoryRoute>,
-        req: AnyRequest,
-        resp: AnyResponse,
-    ) {
-        Self::on(this, req, resp, Method::HEAD);
+    pub(crate) fn on_head_request(self: RefPtr<Self>, req: AnyRequest, resp: AnyResponse) {
+        self.on(req, resp, Method::HEAD);
     }
 
-    pub(crate) fn on_request(this: ThisPtr<DirectoryRoute>, req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_request(self: RefPtr<Self>, req: AnyRequest, resp: AnyResponse) {
         let method = Method::find(req.method()).unwrap_or(Method::GET);
-        Self::on(this, req, resp, method);
+        self.on(req, resp, method);
     }
 
-    fn on(this: ThisPtr<DirectoryRoute>, mut req: AnyRequest, resp: AnyResponse, method: Method) {
-        debug_assert!(this.server.get().is_some());
-        let route = PendingRequest::new(RefPtr::from_this(this));
-        if let Some(server) = this.server.get() {
+    fn on(self: RefPtr<Self>, mut req: AnyRequest, resp: AnyResponse, method: Method) {
+        debug_assert!(self.server.get().is_some());
+        let route = PendingRequest::new(self);
+        if let Some(server) = route.server.get() {
             resp.timeout(server.config().idle_timeout);
         }
 
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let Some((rel_len, had_trailing_slash)) =
-            resolve_subpath(req.url(), &this.url_prefix, &mut path_buf.0[..])
+            resolve_subpath(req.url(), &route.url_prefix, &mut path_buf.0[..])
         else {
             bun_output::scoped_log!(DirectoryRoute, "reject {}", bstr::BStr::new(req.url()));
             write_miss(&mut req, resp);
@@ -127,7 +123,7 @@ impl DirectoryRoute {
         };
         let rel: &[u8] = &path_buf.0[..rel_len];
 
-        let (file, stat, is_index) = match this.open_subpath(rel, had_trailing_slash) {
+        let (file, stat, is_index) = match route.open_subpath(rel, had_trailing_slash) {
             Some(Subpath::File(f, s, idx)) => (f, s, idx),
             Some(Subpath::RedirectSlash) => {
                 let mut loc = bun_paths::path_buffer_pool::get();
@@ -152,7 +148,7 @@ impl DirectoryRoute {
 
         let size: u64 = u64::try_from(stat.st_size.max(0)).expect("int cast");
 
-        let (last_modified_ms, lm_buf, lm_len) = this.stat_cache_lookup(rel, &stat);
+        let (last_modified_ms, lm_buf, lm_len) = route.stat_cache_lookup(rel, &stat);
         let last_modified = (lm_len > 0).then(|| &lm_buf[..lm_len]);
 
         let mut etag_buf = [0u8; 40];
@@ -186,7 +182,7 @@ impl DirectoryRoute {
         }
         resp.write_header(b"etag", etag);
         if !matches!(resp, AnyResponse::H3(_)) {
-            if let Some(srv) = this.server.get() {
+            if let Some(srv) = route.server.get() {
                 if let Some(alt) = srv.h3_alt_svc() {
                     resp.write_header(b"alt-svc", alt);
                 }
@@ -234,7 +230,7 @@ impl DirectoryRoute {
             size
         );
 
-        let server = this.server.get().unwrap();
+        let server = route.server.get().unwrap();
         FileResponseStream::start(FileResponseStreamOptions {
             fd: file.into(),
             resp,

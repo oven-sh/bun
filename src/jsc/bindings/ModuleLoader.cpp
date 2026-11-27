@@ -588,6 +588,12 @@ static JSValue handleVirtualModuleResult(
     }
 }
 
+extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__throwIfGraphOfLoaderIsDisposed(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue moduleLoader)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    Bun::throwIfModuleGraphDisposed(globalObject, scope, Bun::moduleGraphOfLoader(globalObject, uncheckedDowncast<JSC::JSModuleLoader>(JSC::JSValue::decode(moduleLoader))));
+}
+
 extern "C" void Bun__onFulfillAsyncModule(
     Zig::GlobalObject* globalObject,
     JSC::EncodedJSValue encodedPromiseValue,

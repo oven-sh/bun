@@ -125,6 +125,8 @@ Bun runs macros on a dedicated thread, which it starts at the first macro call. 
 | `bun test --isolate`                              | After each test file                  |
 | `bun run`, `bun test`, `Bun.Transpiler`, `Worker` | When the process or the `Worker` ends |
 
+`bun test --isolate=modules` keeps the thread for all test files.
+
 Timers, servers, and other handles that a macro leaves open do not keep the process alive. File system calls that a macro starts and does not await do, until they finish. So do `fetch()` calls, except in a build, which aborts them when it ends.
 
 ### What macros share with your application

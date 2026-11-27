@@ -33,6 +33,7 @@ use bun_threading::unbounded_queue::{self, UnboundedQueue};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 use bun_watcher::Watcher;
 
+use crate::cpp::Bun__throwIfGraphOfLoaderIsDisposed;
 use crate::event_loop::{ConcurrentTask, EventLoop};
 use crate::resolved_source::PrintedAst;
 use crate::resolved_source_tag::ResolvedSourceTag;
@@ -264,10 +265,9 @@ impl RuntimeTranspilerStore {
                 }
             }
             first = false;
-            let current = job;
+            // SAFETY: `job` is a live job popped from the intrusive queue.
+            let fulfilled = unsafe { (*job).run_from_js_thread(vm) };
             job = iter.next();
-            // SAFETY: a live job popped from the intrusive queue, which `iter` has moved past.
-            let fulfilled = unsafe { (*current).run_from_js_thread(vm) };
             if let Err(err) = fulfilled {
                 if crate::task::report_error_or_terminate(global, err).is_err() {
                     self.requeue(job, &mut iter);
@@ -352,7 +352,6 @@ impl RuntimeTranspilerStore {
                 _keep_alive: JsKeepAlive::active(),
                 resolved_source,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
-                test_isolation_generation: vm.test_isolation_generation.get(),
                 module_type,
                 is_test_entry_point: (calls_macros.as_ref())
                     .is_some_and(|file| file.is_test_entry_point),
@@ -421,7 +420,6 @@ pub struct TranspilerJob {
     pub global_this: BackRef<JSGlobalObject>,
     _keep_alive: JsKeepAlive,
     pub(crate) generation_number: u32,
-    test_isolation_generation: u32,
     module_type: ModuleType,
     is_test_entry_point: bool,
     imports_vitest: bool,
@@ -525,12 +523,17 @@ impl TranspilerJob {
 
     fn run_from_js_thread(&mut self, vm: &VirtualMachine) -> JsResult<()> {
         if self.deferred_macros.take()
-            && self.test_isolation_generation == vm.test_isolation_generation.get()
+            && !(self.promise.get()).is_some_and(JSValue::is_from_retired_test_isolation_realm)
         {
-            self.parse_error = None;
-            self.macro_thread = Some(vm.macro_thread());
-            self.schedule(vm);
-            return Ok(());
+            self.parse_error = self.module_loader.get().and_then(|loader| {
+                let thrown = Bun__throwIfGraphOfLoaderIsDisposed(&self.global_this, loader).err();
+                thrown.map(|_| crate::CrateError::JSError)
+            });
+            if self.parse_error.is_none() {
+                self.macro_thread = Some(vm.macro_thread());
+                self.schedule(vm);
+                return Ok(());
+            }
         }
         vm.transpiler_store.jobs_completed.update(|n| n + 1);
         let ran_macros = self.macro_thread.is_some();
@@ -678,7 +681,7 @@ impl TranspilerJob {
             src.append_to(dst);
         });
 
-        // SAFETY: the VM outlives this frame. Its thread only frees what resolving an import path reads, which macros alone do here.
+        // SAFETY: the VM outlives this frame. Its thread frees the list of `require.extensions`, which only the resolver of macros reads.
         let mut transpiler_storage = unsafe { TranspilerAlias::of((*vm).transpiler.as_ptr()) };
         if let Some(resolver) = this.macro_resolver.take() {
             transpiler_storage.set_resolver(*resolver);
@@ -686,8 +689,6 @@ impl TranspilerJob {
         let transpiler: &mut Transpiler<'_> = &mut transpiler_storage;
         transpiler.set_arena(&arena);
         transpiler.set_log(&raw mut *log_clone_guard.1);
-        // Note: the resolver already shares opts with the parent
-        // Transpiler via raw pointer; set_arena/set_log keep them in sync.
 
         let hash = Watcher::get_hash(path.text);
 

@@ -1052,6 +1052,96 @@ describe.concurrent("the thread that runs macros", () => {
     expect(result).toMatchObject({ lines: [expect.stringContaining("bun test"), "true", "true true"], exitCode: 0 });
   });
 
+  test("is not called if the Bun.ModuleGraph is disposed during the import()", async () => {
+    const result = await bun(["index.ts"], {
+      "m.ts": `export const log = () => console.log("called");`,
+      "calls.ts": calls("log"),
+      "load.ts": `export const load = () => import("./calls.ts");`,
+      "index.ts": `
+        const graph = new Bun.ModuleGraph();
+        const imported = (await graph.import("./load.ts")).load();
+        graph.dispose();
+        console.log(await imported.catch(error => error.code));
+      `,
+    });
+    expect(result).toEqual(ok("ERR_INVALID_STATE"));
+  });
+
+  test.each([
+    ["import()", `console.log("closed"); import("./late.ts");`, "closed"],
+    ["require()", `console.log(require("./late.ts").value);`, "1"],
+  ])("--isolate keeps a late %s off the thread of the next file", async (_, statement, printed) => {
+    const result = await bun(["test", "--isolate", "./a.test.ts", "./b.test.ts"], {
+      "m.ts": `let calls = 0;\nexport const count = () => ++calls;`,
+      "late.ts": calls("count"),
+      // Takes longer to parse, so that late.ts would be the first to call.
+      "later.ts": Buffer.alloc(120_000, "void 0;\n") + calls("count"),
+      // The socket is closed while the test runner moves on, which handles no task until it is done.
+      "a.test.ts": `
+        test("a", async () => {
+          const { hostname, port } = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+          await Bun.connect({ hostname, port, socket: { data() {}, close() { ${statement} } } });
+        });
+      `,
+      "b.test.ts": `test("b", async () => console.log((await import("./later.ts")).value));`,
+    });
+    expect(result).toMatchObject({ lines: [expect.stringContaining("bun test"), printed, "1"], exitCode: 0 });
+  });
+
+  describe("a Worker that exits", () => {
+    const files = {
+      "shared.ts": `
+        export const listen = () => Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } }).port;
+        export const blockUntilClosed = (...ports) =>
+          void Bun.spawnSync([process.execPath, "client.ts", ...ports], { stderr: "inherit" });
+      `,
+      // Stays until the first connection is closed. The second one says that there is a first.
+      "client.ts": `
+        for (const port of process.argv.slice(2))
+          await Bun.connect({ hostname: "127.0.0.1", port: Number(port), socket: { data() {}, error() {} } });
+      `,
+      "index.ts": `new Worker("./outer.ts").addEventListener("close", ({ code }) => console.log(code));`,
+    };
+    const exits = `
+      const { port } = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {}, open() { process.exit(7); } } });
+    `;
+
+    test("ends a macro thread that its own Worker waits for", async () => {
+      const result = await bun(["index.ts"], {
+        ...files,
+        "inner.ts": `import { blockUntilClosed } from "./shared.ts";\nblockUntilClosed(...process.argv.slice(-2));`,
+        "outer.ts": `
+          import { listen } from "./shared.ts" with { type: "macro" };
+          ${exits}
+          new Worker("./inner.ts", { argv: [listen(), port] }).addEventListener("close", () => process.exit(1));
+        `,
+      });
+      expect(result).toEqual(ok("7"));
+    });
+
+    test("ends the Worker of a ShadowRealm that its macro thread waits for", async () => {
+      const result = await bun(["index.ts"], {
+        ...files,
+        "inner.ts": `import { listen } from "./shared.ts";\npostMessage(listen());`,
+        "m.ts": `
+          import { blockUntilClosed } from "./shared.ts";
+          export const block = () => blockUntilClosed(...process.env.PORTS.split(" "));
+        `,
+        "blocks.ts": calls("block"),
+        "outer.ts": `
+          ${exits}
+          new ShadowRealm().evaluate("report => void (new Worker('./inner.ts').onmessage = ({ data }) => report(data))")(
+            other => {
+              process.env.PORTS = other + " " + port;
+              import("./blocks.ts").finally(() => process.exit(1));
+            },
+          );
+        `,
+      });
+      expect(result).toEqual(ok("7"));
+    });
+  });
+
   describe("the imports of an entry point that calls a macro", () => {
     const imports = `import { one } from "./macros/m.ts" with { type: "macro" };\n`;
     const macro = { "macros/m.ts": `export const one = () => 1;` };

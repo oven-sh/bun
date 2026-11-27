@@ -2080,7 +2080,7 @@ impl VirtualMachine {
     /// Returns its exit code.
     ///
     /// # Safety
-    /// `this` is this thread's VM, which nothing else can reach; this thread abandons its API lock.
+    /// `this` is this thread's VM, which others only reach through its handle or a ticket; this thread abandons its API lock.
     pub unsafe fn exit_and_free(this: *mut Self) -> u8 {
         // SAFETY: fn contract.
         let vm = unsafe { &*this };
@@ -2121,15 +2121,16 @@ impl VirtualMachine {
     /// The exit handlers ran before this (`on_exit`); nothing below enters script.
     ///
     ///  A. stop — script forbidden (microtasks/modules cleared, termination
-    ///     requested), WebCore stop phase (child workers asked to terminate;
+    ///     requested), macro threads asked to stop,
+    ///     WebCore stop phase (child workers asked to terminate;
     ///     ports/channels/WebSockets closed without events; listeners stripped),
     ///     everything registered as stoppable closed natively (servers,
     ///     listeners, sockets, watchers, subprocess/pipe/tty handles, in-flight
     ///     fetch/S3/Bun.build aborted or cancelled), socket groups and the DNS
     ///     channel closed.
     ///  B. release — OS-level cron calls, memory pressure watch,
-    ///     user and GC-controller timers cancelled; macro threads and child
-    ///     workers joined; this VM's sqlite connections closed; **the wait**:
+    ///     user and GC-controller timers cancelled; child workers and macro
+    ///     threads joined; this VM's sqlite connections closed; **the wait**:
     ///     every ticket held off-thread comes back while queued work is
     ///     released without running; the handle closes; main: HTTP thread
     ///     parked; RareData's JS handles released.
@@ -2142,8 +2143,8 @@ impl VirtualMachine {
     /// Returns whether the VM can be dropped, which a worker's always can.
     ///
     /// # Safety
-    /// `self` is this thread's VM and no other thread can reach it any more
-    /// (worker: its handle unpublished); `is_shutting_down` is set and
+    /// `self` is this thread's VM and other threads only reach it through
+    /// its handle or a ticket, which end in B; `is_shutting_down` is set and
     /// the exit handlers have run.
     unsafe fn teardown(&self, kind: Teardown) -> bool {
         let hooks = runtime_hooks();
@@ -2156,6 +2157,7 @@ impl VirtualMachine {
         // 'close'/'error' handler runs after 'exit', and nothing can reopen what
         // a sweep just closed.
         self.forbid_script();
+        self.macro_hosts.stop_all();
         Zig__GlobalObject__prepareForDestruction(self.global());
         // SAFETY: fn contract.
         let sweep = || unsafe {
@@ -2206,7 +2208,7 @@ impl VirtualMachine {
         }
         self.gc_controller.disabled.set(true);
         crate::web_worker::join_child_workers(self.child_workers.take());
-        self.macro_hosts.stop_all();
+        self.macro_hosts.join_all();
         // Children have closed their own; now this VM's sqlite connections
         // checkpoint and close, before finalizers could.
         self.close_sqlite_databases_for_exit();
@@ -5380,14 +5382,6 @@ impl VirtualMachine {
             Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(self.global());
         }
 
-        self.macro_hosts.stop_for_next_test_file(shares_global);
-
-        if let Some(cwd) = self.test_isolation_state.cwd.get()
-            && bun_paths::strip_prefix(bun_core::top_level_dir(), cwd) != Some(b"")
-        {
-            let _ = self.set_process_cwd(&bun_paths::Path::from(cwd));
-        }
-
         let _ = self.event_loop().drain_microtasks();
 
         // The finished file's close handlers run, and may dial again.
@@ -5428,6 +5422,14 @@ impl VirtualMachine {
         self.close_test_file_sockets();
         debug_assert!(!self.has_test_file_sockets());
         self.test_isolation_generation.update(|n| n.wrapping_add(1));
+
+        self.macro_hosts.stop_for_next_test_file(shares_global);
+
+        if let Some(cwd) = self.test_isolation_state.cwd.get()
+            && bun_paths::strip_prefix(bun_core::top_level_dir(), cwd) != Some(b"")
+        {
+            let _ = self.set_process_cwd(&bun_paths::Path::from(cwd));
+        }
 
         // The outgoing file's JS timers would otherwise release their pins only
         // when they fire — a module-scope `setTimeout(cb, 3_600_000)` keeps a

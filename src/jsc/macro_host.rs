@@ -458,9 +458,11 @@ impl OwnedHosts {
     }
 
     pub(crate) fn stop_all(&self) {
-        let all = self.all.take();
-        all.iter().for_each(|shared| shared.stop());
-        all.iter().for_each(|shared| shared.join());
+        self.all.get().iter().for_each(|shared| shared.stop());
+    }
+
+    pub(crate) fn join_all(&self) {
+        self.all.take().iter().for_each(|shared| shared.join());
     }
 
     fn exit_if_asked(&self, vm: &VirtualMachine) {

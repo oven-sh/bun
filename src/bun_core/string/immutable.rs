@@ -2169,7 +2169,7 @@ pub fn without_prefix<'a>(input: &'a [u8], prefix: &[u8]) -> &'a [u8] {
     }
 }
 
-pub use crate::strings_impl::{CodeUnits, CodeUnitsMut, PathByte, without_trailing_slash};
+pub use crate::strings_impl::{CodeUnits, PathByte, without_trailing_slash};
 // Re-export the bun_core implementation so callers can spell
 // `strings::convert_utf16_to_utf8_in_buffer` without reaching into `unicode`.
 pub use crate::strings_impl::convert_utf16_to_utf8_in_buffer;

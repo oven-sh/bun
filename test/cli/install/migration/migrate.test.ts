@@ -618,10 +618,12 @@ test.concurrent(
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    const bunLock = await Bun.file(join(testDir, "bun.lock")).text();
+    const bunLock = await Bun.file(join(String(testDir), "bun.lock")).text();
     expect(bunLock).toContain(`"a": ["a@file:vendor/a", { "dependencies": { "b": "file:../b" } }]`);
     expect(bunLock).toContain(`"a/b": ["b@file:vendor/b", {}]`);
-    expect(await Bun.file(join(testDir, "node_modules", "a", "node_modules", "b", "package.json")).json()).toEqual({
+    expect(
+      await Bun.file(join(String(testDir), "node_modules", "a", "node_modules", "b", "package.json")).json(),
+    ).toEqual({
       name: "b",
       version: "1.0.0",
     });
@@ -1024,11 +1026,11 @@ test.concurrent("package-lock.json migration does not platform-skip a regular fi
   expect(stderr).toContain("migrated lockfile from package-lock.json");
   expect(stderr).not.toContain("InvalidNPMLockfile");
   expect(exitCode).toBe(0);
-  expect(await Bun.file(join(testDir, "node_modules", "a", "package.json")).json()).toHaveProperty("name", "a");
+  expect(await Bun.file(join(String(testDir), "node_modules", "a", "package.json")).json()).toHaveProperty("name", "a");
 
   // The migrated bun.lock matches what a fresh resolve of the same package.json writes:
   // the folder package keeps its real name and carries no os/cpu constraint.
-  expect(await Bun.file(join(testDir, "bun.lock")).text()).toContain(`"a": ["a@file:vendor/a", {}]`);
+  expect(await Bun.file(join(String(testDir), "bun.lock")).text()).toContain(`"a": ["a@file:vendor/a", {}]`);
 });
 
 test.concurrent.each([
@@ -1046,7 +1048,9 @@ test.concurrent.each([
     const first = await install(testDir);
     expect(first.stderr).toContain("migrated lockfile from package-lock.json");
     expect(first.exitCode).toBe(0);
-    expect(await Bun.file(join(testDir, "bun.lock")).text()).toContain(`"${name}": ["${name}@file:${folder}", {}]`);
+    expect(await Bun.file(join(String(testDir), "bun.lock")).text()).toContain(
+      `"${name}": ["${name}@file:${folder}", {}]`,
+    );
 
     // The second install consumes the bun.lock the migration just wrote. It must parse,
     // otherwise --frozen-lockfile is permanently broken after an npm migration.
@@ -1054,7 +1058,10 @@ test.concurrent.each([
     expect(second.stderr).not.toContain("invalid package name");
     expect(second.stderr).not.toContain("Ignoring lockfile");
     expect(second.exitCode).toBe(0);
-    expect(await Bun.file(join(testDir, "node_modules", name, "package.json")).json()).toHaveProperty("name", name);
+    expect(await Bun.file(join(String(testDir), "node_modules", name, "package.json")).json()).toHaveProperty(
+      "name",
+      name,
+    );
   },
 );
 
@@ -1107,7 +1114,7 @@ test.concurrent(
     expect(first.stderr).toContain("migrated lockfile from package-lock.json");
     expect(first.exitCode).toBe(0);
 
-    const lock = await Bun.file(join(testDir, "bun.lock")).text();
+    const lock = await Bun.file(join(String(testDir), "bun.lock")).text();
     expect(lock).toContain('"gamma/delta"');
     expect(lock).not.toContain("optionalPeers");
 
@@ -1118,7 +1125,7 @@ test.concurrent(
     // A plain re-install of the unchanged tree must not rewrite the lockfile.
     const second = await install(testDir);
     expect(second.exitCode).toBe(0);
-    expect(await Bun.file(join(testDir, "bun.lock")).text()).toBe(lock);
+    expect(await Bun.file(join(String(testDir), "bun.lock")).text()).toBe(lock);
   },
 );
 
@@ -1132,11 +1139,11 @@ test.concurrent("package-lock.json migration does not platform-skip a regular fi
     "src-a/package.json": JSON.stringify({ name: "a", version: "1.0.0", ...nonMatching }),
   });
 
-  await pack(join(testDir, "src-a"), bunEnv, "--destination", testDir);
-  expect(fs.existsSync(join(testDir, "a-1.0.0.tgz"))).toBeTrue();
+  await pack(join(String(testDir), "src-a"), bunEnv, "--destination", testDir);
+  expect(fs.existsSync(join(String(testDir), "a-1.0.0.tgz"))).toBeTrue();
 
   await Bun.write(
-    join(testDir, "package-lock.json"),
+    join(String(testDir), "package-lock.json"),
     JSON.stringify({
       name: "repro",
       lockfileVersion: 3,
@@ -1152,7 +1159,7 @@ test.concurrent("package-lock.json migration does not platform-skip a regular fi
   expect(stderr).toContain("migrated lockfile from package-lock.json");
   expect(stderr).not.toContain("InvalidNPMLockfile");
   expect(exitCode).toBe(0);
-  expect(await Bun.file(join(testDir, "node_modules", "a", "package.json")).json()).toHaveProperty("name", "a");
+  expect(await Bun.file(join(String(testDir), "node_modules", "a", "package.json")).json()).toHaveProperty("name", "a");
 });
 
 // npm records a file: link target's own dependencies but never nests them, so a target that reaches its own name resolves through the root link and the hoist tree must cut the cycle.
@@ -1186,12 +1193,12 @@ test.concurrent.each<[string, Record<string, string>, string[]]>([
   const first = await install(testDir);
   expect(first.stderr).toContain("migrated lockfile from package-lock.json");
   expect(first.exitCode).toBe(0);
-  const lock = Bun.JSONC.parse(await Bun.file(join(testDir, "bun.lock")).text()) as {
+  const lock = Bun.JSONC.parse(await Bun.file(join(String(testDir), "bun.lock")).text()) as {
     packages: Record<string, unknown>;
   };
   expect(Object.keys(lock.packages).sort()).toStrictEqual(lockPackages);
   for (const name of Object.keys(JSON.parse(files["package.json"]).dependencies)) {
-    expect(await Bun.file(join(testDir, "node_modules", name, "package.json")).json()).toStrictEqual(
+    expect(await Bun.file(join(String(testDir), "node_modules", name, "package.json")).json()).toStrictEqual(
       JSON.parse(files[`${name}/package.json`]),
     );
   }
@@ -1215,7 +1222,7 @@ test.concurrent(
     expect(stderr).toContain('Workspace dependency "foo" not found');
     expect(stderr).toContain("foo@workspace:. failed to resolve");
     expect(exitCode).toBe(1);
-    expect(fs.existsSync(join(testDir, "bun.lock"))).toBeFalse();
+    expect(fs.existsSync(join(String(testDir), "bun.lock"))).toBeFalse();
   },
 );
 
@@ -1264,7 +1271,7 @@ test.concurrent("pnpm-lock.yaml migration does not platform-skip a regular file:
   const { stderr, exitCode } = await install(testDir);
   expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
   expect(exitCode).toBe(0);
-  expect(await Bun.file(join(testDir, "node_modules", "a", "package.json")).json()).toHaveProperty("name", "a");
+  expect(await Bun.file(join(String(testDir), "node_modules", "a", "package.json")).json()).toHaveProperty("name", "a");
 });
 
 // `libc` is carried over for registry packages like `os`/`cpu` are, and like them is dropped
@@ -1346,7 +1353,7 @@ describe.each([
     expect(stderr).toContain(`migrated lockfile from ${lockfile}`);
     expect(exitCode).toBe(0);
 
-    const lines = (await Bun.file(join(testDir, "bun.lock")).text()).split("\n").map(line => line.trim());
+    const lines = (await Bun.file(join(String(testDir), "bun.lock")).text()).split("\n").map(line => line.trim());
     expect(lines.find(line => line.startsWith('"native-musl": ['))).toContain(`{ "os": "linux", "libc": "musl" }`);
     expect(lines.find(line => line.startsWith('"a": ['))).toBe('"a": ["a@file:vendor/a", {}],');
   });

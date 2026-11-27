@@ -9,7 +9,7 @@ import path from "node:path";
 describe.skipIf(!isLinux)("GitHub Issue #3657", () => {
   test("fs.watch on directory emits 'change' events for files created after watch starts", async () => {
     await using testDir = tempDir("issue-3657", {});
-    const testFile = path.join(testDir, "test.txt");
+    const testFile = path.join(String(testDir), "test.txt");
 
     const events: Array<{ eventType: string; filename: string | null }> = [];
     let resolver: () => void;
@@ -58,7 +58,7 @@ describe.skipIf(!isLinux)("GitHub Issue #3657", () => {
 
   test("fs.watch emits multiple 'change' events for repeated modifications", async () => {
     await using testDir = tempDir("issue-3657-multi", {});
-    const testFile = path.join(testDir, "multi.txt");
+    const testFile = path.join(String(testDir), "multi.txt");
 
     const events: Array<{ eventType: string; filename: string | null }> = [];
     let resolver: () => void;

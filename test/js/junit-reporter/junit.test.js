@@ -663,7 +663,7 @@ describe("junit reporter", () => {
         'test("keeps\\twhitespace\\nfine", () => {});\n',
     });
 
-    const junitPath = join(tmpDir, "junit.xml");
+    const junitPath = join(String(tmpDir), "junit.xml");
     await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
       cwd: tmpDir,
       env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
@@ -707,7 +707,7 @@ describe("junit reporter", () => {
       `,
     });
 
-    const junitPath = join(tmpDir, "junit.xml");
+    const junitPath = join(String(tmpDir), "junit.xml");
     await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
       cwd: tmpDir,
       env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
@@ -746,7 +746,7 @@ describe("junit reporter", () => {
       `,
     });
 
-    const junitPath = join(tmpDir, "junit.xml");
+    const junitPath = join(String(tmpDir), "junit.xml");
     await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
       cwd: tmpDir,
       env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
@@ -822,7 +822,7 @@ describe("junit reporter", () => {
       `,
     });
 
-    const junitPath = join(tmpDir, "junit.xml");
+    const junitPath = join(String(tmpDir), "junit.xml");
     await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
       cwd: tmpDir,
       // FORCE_COLOR so the matcher builds a coloured message, to exercise the
@@ -914,7 +914,7 @@ describe("junit reporter", () => {
       "broken.test.js": source,
     });
     const report = async extra => {
-      const junitPath = join(tmpDir, `junit${extra.join("")}.xml`);
+      const junitPath = join(String(tmpDir), `junit${extra.join("")}.xml`);
       await using proc = spawn(
         [bunExe(), "test", ...args, ...extra, "--reporter=junit", "--reporter-outfile", junitPath],
         { cwd: tmpDir, env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" }, stdout: "pipe", stderr: "pipe" },
@@ -943,7 +943,7 @@ describe("junit reporter", () => {
       "package.json": "{}",
       "a.test.js": `import { test } from "bun:test";\ntest("passes", () => {});`,
     });
-    const junitPath = join(tmpDir, "reports", "unit", "junit.xml");
+    const junitPath = join(String(tmpDir), "reports", "unit", "junit.xml");
     await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
       cwd: tmpDir,
       env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
@@ -985,7 +985,7 @@ describe("junit reporter", () => {
       `,
     });
 
-    const junitPath = join(tmpDir, "junit.xml");
+    const junitPath = join(String(tmpDir), "junit.xml");
     await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
       cwd: tmpDir,
       env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },

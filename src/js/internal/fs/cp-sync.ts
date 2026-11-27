@@ -16,13 +16,15 @@ const {
   unlinkSync,
   utimesSync,
 } = require("node:fs");
-const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
+const { dirname, isAbsolute, join, parse, sep } = require("node:path");
+const resolve = $bindgen("node_path.bind.ts", "resolveWithRealCwd");
 
 const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
 
 const ArrayPrototypeEvery = Array.prototype.every;
 const ArrayPrototypeFilter = Array.prototype.filter;
 const StringPrototypeSplit: (this: string, separator: string, limit?: number) => string[] = String.prototype.split;
+const StringPrototypeToWellFormed = String.prototype.toWellFormed;
 
 // COPYFILE_EXCL | COPYFILE_FICLONE | COPYFILE_FICLONE_FORCE
 const kMaxCopyMode = 7;
@@ -164,8 +166,12 @@ function areIdentical(srcStat: AnyStats, destStat: AnyStats) {
   return destStat.ino && destStat.dev && destStat.ino === srcStat.ino && destStat.dev === srcStat.dev;
 }
 
+// The file system gets U+FFFD in place of a lone surrogate.
 const normalizePathToArray = (path: string) =>
-  ArrayPrototypeFilter.$call(StringPrototypeSplit.$call(resolve(path), sep), Boolean);
+  ArrayPrototypeFilter.$call(
+    StringPrototypeSplit.$call(StringPrototypeToWellFormed.$call(resolve(path)), sep),
+    Boolean,
+  );
 
 // Return true if dest is a subdir of src, otherwise false.
 // It only checks the path strings.

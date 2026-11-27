@@ -30,7 +30,7 @@ function underAot<Start extends (...args: any[]) => any>(start: Start): Start {
     // ./run.ts puts words in front of a command.
     const bun = cmd.indexOf(process.execPath);
     if (bun < 0 || cmd[bun + 1] !== "test") return start.call(this, first, second);
-    const config = withoutPreload[resolve(options.cwd ?? process.cwd())];
+    const config = withoutPreload[resolve(String(options.cwd ?? process.cwd()))];
     const namesItsOwn = cmd.some(word => /^(?:-c|--config|--preload|-r)(?:=|$)/.test(word));
     cmd.splice(bun + 2, 0, "--aot", ...(config && !namesItsOwn ? [`--config=${config}`] : []));
     appendFileSync(process.env.AOT_CHILDREN_STARTED!, ".");

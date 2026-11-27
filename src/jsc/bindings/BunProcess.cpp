@@ -1064,14 +1064,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObj
     WTF::String directory = value.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     EncodedSlice str = Zig::toEncodedSlice(directory);
-    JSC::JSValue result = JSC::JSValue::decode(Bun__Process__setCwd(globalObject, &str));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto* processObject = defaultGlobalObject(globalObject)->processObject();
-    // Node clears its cwd cache on chdir (does_own_process_state.js) and lets
-    // the next process.cwd() re-query the OS - do not re-populate it here.
-    processObject->clearCachedCwd();
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
+    // Invalidates the cached cwd. As in Node (does_own_process_state.js), the next process.cwd() queries the OS.
+    RELEASE_AND_RETURN(scope, Bun__Process__setCwd(globalObject, &str));
 }
 
 // One number can have two names, e.g. SIGABRT and SIGIOT.
@@ -4934,6 +4928,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_uncaughtExceptionCaptureCallback);
     visitor.append(thisObject->m_nextTickFunction);
     visitor.append(thisObject->m_cachedCwd);
+    thisObject->m_cwdProperty.visit(visitor);
     visitor.append(thisObject->m_onWarning);
     visitor.append(thisObject->m_runsWhenProcessExits);
 
@@ -5586,6 +5581,72 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunWhenProcessExits, (JSC::JSGlobalObject * g
     return JSValue::encode(jsUndefined());
 }
 
+bool Process::isEnvReplaced(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSValue env = getDirect(vm, WebCore::builtinNames(vm).envPublicName());
+    return env ? env != globalObject->m_processEnvObject.get() : staticPropertiesReified();
+}
+
+static bool hasCopyOfEnv(Zig::GlobalObject* globalObject)
+{
+    auto* store = globalObject->scriptExecutionContext()->sharedEnvStore();
+    return store ? !store->isMainRooted() : WebCore::clientData(JSC::getVM(globalObject))->isWorkerVM();
+}
+
+extern "C" bool Bun__Process__isEnvOfProcess(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    return !globalObject->processObject()->isEnvReplaced(globalObject) && !hasCopyOfEnv(globalObject);
+}
+
+extern "C" JSC::EncodedJSValue Bun__Process__getDriveCwdFromEnv(JSC::JSGlobalObject* globalObject, uint8_t letter)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto name = Identifier::fromString(vm, makeString('=', static_cast<char>(letter), ':'));
+    JSValue env = defaultGlobalObject(globalObject)->processObject()->get(globalObject, WebCore::builtinNames(vm).envPublicName());
+    RETURN_IF_EXCEPTION(scope, {});
+    if (env.isUndefinedOrNull()) {
+        throwTypeError(globalObject, scope, makeString("Cannot read properties of "_s, env.isNull() ? "null"_s : "undefined"_s, " (reading '"_s, name.string(), "')"_s));
+        return {};
+    }
+    JSValue cwd = env.get(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(cwd);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionGetEnvUnlessOfProcess, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* processObject = globalObject->processObject();
+    if (processObject->isEnvReplaced(globalObject)) {
+        auto* getEnv = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetEnvAsStringCodeGenerator(vm), globalObject);
+        // Left out where nothing can replace process.env, which is then the placeholder of a member that was left out too.
+        if (!JSC::AOT::isFunctionDisallowed(getEnv)) {
+            JSC::MarkedArgumentBuffer args;
+            args.append(processObject);
+            args.append(callFrame->argument(0));
+            RELEASE_AND_RETURN(scope, JSValue::encode(JSC::profiledCall(globalObject, ProfilingReason::API, getEnv, JSC::getCallData(getEnv), jsUndefined(), args)));
+        }
+    }
+    if (!hasCopyOfEnv(globalObject))
+        return JSValue::encode(jsUndefined());
+
+    auto* copy = globalObject->m_processEnvObject.get();
+    if (!copy)
+        return JSValue::encode(jsNull());
+    auto name = callFrame->argument(0).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue value = copy->get(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!value.toBoolean(globalObject))
+        return JSValue::encode(jsNull());
+    RELEASE_AND_RETURN(scope, JSValue::encode(value.toStringOrNull(globalObject)));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionMakeProcessInheritFrom, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -5968,6 +6029,8 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
 #endif
 }
 
+extern "C" std::atomic<uint32_t> Bun__cwdGeneration;
+
 JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -5975,25 +6038,72 @@ JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L142-L146
     auto* processObject = defaultGlobalObject(globalObject)->processObject();
-    if (auto* cached = processObject->cachedCwd()) {
+    uint32_t generation = Bun__cwdGeneration.load(std::memory_order_acquire);
+    if (auto* cached = processObject->cachedCwd(generation)) {
         return cached;
     }
 
     auto cwd = Bun__Process__getCwd(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     JSString* cwdStr = uncheckedDowncast<JSString>(JSValue::decode(cwd));
-    processObject->setCachedCwd(vm, cwdStr);
+    processObject->setCachedCwd(vm, cwdStr, generation);
     RELEASE_AND_RETURN(scope, cwdStr);
-}
-
-extern "C" EncodedJSValue Process__getCachedCwd(JSC::JSGlobalObject* globalObject)
-{
-    return JSValue::encode(getCachedCwd(globalObject));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionCwd, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return JSValue::encode(getCachedCwd(globalObject));
+}
+
+static const Identifier& cwdName(JSC::VM& vm) { return WebCore::builtinNames(vm).cwdPublicName(); }
+
+ALWAYS_INLINE JSValue Process::cwdProperty()
+{
+    return m_cwdProperty.get(this, this, cwdName);
+}
+
+ALWAYS_INLINE bool Process::isCwdReplaced()
+{
+    JSValue cwd = cwdProperty();
+    if (!cwd)
+        return staticPropertiesReified();
+    auto* function = dynamicDowncast<JSFunction>(cwd);
+    return !function || !function->isHostFunction() || function->nativeFunction() != toTagged(Process_functionCwd);
+}
+
+extern "C" JSC::EncodedJSValue Bun__Process__cachedCwdUnlessReplaced(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (!globalObject->hasProcessObject()) [[unlikely]]
+        return {};
+    auto* processObject = globalObject->processObject();
+    if (processObject->isCwdReplaced())
+        return {};
+    return JSValue::encode(processObject->cachedCwd(Bun__cwdGeneration.load(std::memory_order_acquire)));
+}
+
+extern "C" JSC::EncodedJSValue Bun__Process__callCwd(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* processObject = defaultGlobalObject(globalObject)->processObject();
+    if (!processObject->isCwdReplaced())
+        RELEASE_AND_RETURN(scope, JSValue::encode(getCachedCwd(globalObject)));
+
+    JSValue cwd = processObject->cwdProperty();
+    // An accessor, an inherited property, or not callable.
+    if (!cwd || !cwd.isObject()) [[unlikely]] {
+        cwd = processObject->get(globalObject, cwdName(vm));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    auto callData = JSC::getCallData(cwd);
+    if (callData.type == CallData::Type::None) [[unlikely]] {
+        throwTypeError(globalObject, scope, "process.cwd is not a function"_s);
+        return {};
+    }
+    JSValue result = JSC::call(globalObject, cwd, callData, processObject, ArgList());
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(result);
 }
 
 #if !OS(WINDOWS)

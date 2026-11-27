@@ -3352,6 +3352,12 @@ describe("default 'warning' listener is registered at startup", () => {
     expect(exitCode).toBe(0);
   });
 
+  it.concurrent.each(["5", 'new String("/a/b")'])("the first warning is printed if argv0 is %s", async argv0 => {
+    const { stderr, exitCode } = await run(["-e", `process.argv0 = ${argv0}; process.emitWarning("made up");`]);
+    expect(stderr).toMatch(/^\(node:\d+\) Warning: made up\n\(Use `node --trace-warnings/);
+    expect(exitCode).toBe(0);
+  });
+
   it.concurrent("a bare process.emit('warning') with no prior emitWarning() still prints", async () => {
     const { stdout, stderr, exitCode } = await run(["-e", `process.emit("warning", new Error("bare"));`]);
     expect(stderr).toMatch(/^\(node:\d+\) Error: bare\n\(Use `.*--trace-warnings/);

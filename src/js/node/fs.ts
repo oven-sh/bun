@@ -484,7 +484,7 @@ var access = function access(path, mode, callback?) {
   mkdtempDisposableSync = function mkdtempDisposableSync(prefix, options) {
     const path = mkdtempSync(prefix, options);
     // Stash the full path in case of process.chdir()
-    const fullPath = require("node:path").resolve(path);
+    const fullPath = $bindgen("node_path.bind.ts", "resolveWithRealCwd")(path);
     function remove() {
       // force makes repeated removal a no-op; real failures (EACCES) still throw
       fs.rmSync(fullPath, { recursive: true, force: true });

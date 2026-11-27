@@ -7585,12 +7585,10 @@ impl NodeFS {
             let path = match variant {
                 RealpathVariant::Native => args.path.slice_z(inbuf),
                 RealpathVariant::Emulated => {
-                    let parts = [args.path.slice()];
-                    let len = bun_node_path::resolve_buf_len(false, &parts);
-                    let mut bufs = vec![0u8; 2 * len];
-                    let (buf, buf2) = bufs.split_at_mut(len);
-                    let resolved = bun_node_path::resolve_posix_t(&parts, buf, buf2);
-                    inbuf.set(resolved);
+                    // A copy, because another thread may be writing to a `Buffer`.
+                    inbuf.set(args.path.slice());
+                    let resolved = bun_node_path::utf8::posix::resolve([inbuf.as_bytes()]);
+                    inbuf.set(&resolved);
                     inbuf
                 }
             };

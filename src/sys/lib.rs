@@ -3128,10 +3128,12 @@ mod posix_impl {
     pub fn chdir(path: &ZStr) -> Maybe<()> {
         // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
         check_p!(unsafe { libc::chdir(path.as_ptr()) }, Tag::chdir, path);
+        bun_core::did_change_working_directory();
         Ok(())
     }
     pub fn fchdir(fd: Fd) -> Maybe<()> {
         check!(safe_libc::fchdir(fd.native()), Tag::fchdir);
+        bun_core::did_change_working_directory();
         Ok(())
     }
     pub fn umask(mode: Mode) -> Mode {
@@ -4114,7 +4116,23 @@ mod windows_impl {
                 Error::from_win32(w::Win32Error::get(), Tag::chdir).with_path(path.as_bytes())
             );
         }
+        save_working_directory_of_drive();
+        bun_core::did_change_working_directory();
         Ok(())
+    }
+    /// As `uv_chdir`: `SetCurrentDirectoryW` does not update the variable `=C:`, where `C:a` starts.
+    fn save_working_directory_of_drive() {
+        const COLON: u16 = b':' as u16;
+        let mut cwd = bun_paths::w_path_buffer_pool::get();
+        if let Ok(len) = w::GetCurrentDirectoryW(&mut cwd[..])
+            && let [letter, COLON, ..] = cwd[..len]
+        {
+            let name = [b'='.into(), letter, COLON, 0];
+            let _ = w::SetEnvironmentVariableW(
+                bun_core::WStr::from_slice_with_nul(&name),
+                Some(bun_core::WStr::from_buf(&cwd[..], len)),
+            );
+        }
     }
     pub fn fchdir(fd: Fd) -> Maybe<()> {
         let mut buf = bun_paths::path_buffer_pool::get();

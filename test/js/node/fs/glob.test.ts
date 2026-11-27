@@ -282,7 +282,7 @@ describe("fs.globSync exclude with withFileTypes", () => {
     // not process.cwd() (a relative lookup would silently skip the callback).
     const seen: string[] = [];
     const results = fs.globSync("**", {
-      cwd: dir,
+      cwd: String(dir),
       withFileTypes: true,
       exclude: (dirent: any) => {
         seen.push(dirent.name);

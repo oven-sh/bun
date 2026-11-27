@@ -1,5 +1,4 @@
-// A refusal by kind prints an object that is not plain and has no constructor as the formatter does.
-// The output is stored: plain Bun prints what such an object holds; an executable says what Node says and looks at nothing that it holds.
+// A refusal by kind names the class of an object that has no constructor, and looks at nothing that it holds.
 const shapes = [
   Object.setPrototypeOf(new Map([[1, 2]]), null),
   Object.setPrototypeOf(new Map(), Object.create(null)),
@@ -19,15 +18,3 @@ for (const shape of shapes) {
     console.log(`${error.code} ${error.message}`);
   }
 }
-/* Output:
-ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received Map {}
-ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received Map {}
-ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received Set {}
-ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received [ 1, 2 ]
-ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received {}
-ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received Uint16Array(2) [ 0, 0 ]
-ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received Promise { <resolved> }
-ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received [Object: null prototype] {}
-ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received [Object: null prototype]
-ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received an instance of Map
-*/

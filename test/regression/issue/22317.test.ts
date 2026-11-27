@@ -14,8 +14,12 @@ test("issue 22317: build with CSS file entry points mixed with JS should not cra
   });
 
   const result = await Bun.build({
-    entrypoints: [join(dir, "src/index.ts"), join(dir, "public/assets/index.css"), join(dir, "src/server.worker.ts")],
-    outdir: join(dir, "build"),
+    entrypoints: [
+      join(String(dir), "src/index.ts"),
+      join(String(dir), "public/assets/index.css"),
+      join(String(dir), "src/server.worker.ts"),
+    ],
+    outdir: join(String(dir), "build"),
   });
 
   expect(result.success).toBeTrue();

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/fs.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 391a2c740c17c25977978983b86383138f13e17050b6604e60e5d49a7aad8ea1.
+// Written against that file with the SHA-256 6952a570fac3d1006f641e7ccc0dfb109e794faa0950a7a8cd01b0c31e33f603.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:fs"
@@ -526,7 +526,7 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
   mkdtempDisposableSync = function mkdtempDisposableSync(prefix, options?) {
     const path = mkdtempSync(prefix, options);
     // Stash the full path in case of process.chdir()
-    const fullPath = require("node:path").resolve(path);
+    const fullPath = $bindgen("node_path.bind.ts", "resolveWithRealCwd")(path);
     function remove() {
       // force makes repeated removal a no-op; real failures (EACCES) still throw
       fs.rmSync(fullPath, { recursive: true, force: true });

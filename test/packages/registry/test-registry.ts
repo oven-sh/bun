@@ -28,7 +28,7 @@ export const fixturePackages = join(import.meta.dir, "..", "..", "cli", "install
  * one `BUN_INSTALL_CACHE_DIR` per test file, and the variable wins over bunfig.toml.
  */
 export function installEnv(dir: string, env: NodeJS.Dict<string> = bunEnv) {
-  return { ...env, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") };
+  return { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
 }
 
 /**

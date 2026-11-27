@@ -6,18 +6,16 @@ const taken = {
   dirname: 1,
   extname: 1,
   isAbsolute: 1,
+  matchesGlob: 2,
   normalize: 1,
   parse: 1,
   relative: 2,
+  toNamespacedPath: 1,
 } as const;
 
-function textThatCounts(converted: number[], place: number, throws: boolean) {
+function textThatCounts(converted: number[], place: number) {
   const text = new String("/a/b" + place + ".c");
-  text.toString = () => {
-    converted.push(place);
-    if (throws) throw new RangeError("the argument at " + place + " was converted");
-    return "/x/y" + place + ".z";
-  };
+  text.toString = text.valueOf = () => (converted.push(place), "/x/y" + place + ".z");
   return text as unknown as string;
 }
 
@@ -25,16 +23,37 @@ describe.each([
   ["posix", path.posix],
   ["win32", path.win32],
 ] as const)("path.%s", (_flavor, holder) => {
-  test.each(Object.entries(taken))("%s converts the %d it takes and no further argument", (name, count) => {
+  test.each(Object.entries(taken))("%s takes %d and looks at no further argument", (name, count) => {
     const converted: number[] = [];
-    const given = Array.from({ length: count + 2 }, (_, place) => textThatCounts(converted, place, place >= count));
-    (holder[name as keyof typeof taken] as (...all: string[]) => unknown)(...given);
-    expect(converted).toEqual(Array.from({ length: count }, (_, place) => place));
+    const call = holder[name as keyof typeof taken] as (...all: string[]) => unknown;
+    const given = Array.from({ length: count }, (_, place) => "/a/b" + place + ".c");
+    expect(call(...given, textThatCounts(converted, count), textThatCounts(converted, count + 1))).toEqual(
+      call(...given),
+    );
+    expect(converted).toEqual([]);
   });
 
-  test.each(["join", "resolve"] as const)("%s converts every argument", name => {
+  test.each([...Object.entries(taken).filter(([name]) => name !== "toNamespacedPath"), ["join", 4], ["resolve", 4]] as [
+    keyof typeof taken,
+    number,
+  ][])("%s rejects a String object without converting it", (name, count) => {
     const converted: number[] = [];
-    holder[name](...Array.from({ length: 4 }, (_, place) => textThatCounts(converted, place, false)));
-    expect(converted.toSorted()).toEqual([0, 1, 2, 3]);
+    for (let at = 0; at < count; at++) {
+      const given = Array.from({ length: count }, (_, place) => (place === at ? textThatCounts(converted, at) : "a"));
+      expect(() => (holder[name] as (...all: string[]) => unknown)(...given)).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: expect.stringContaining("must be of type string. Received an instance of String"),
+        }),
+      );
+    }
+    expect(converted).toEqual([]);
+  });
+
+  test("toNamespacedPath returns a String object as it is", () => {
+    const converted: number[] = [];
+    const text = textThatCounts(converted, 0);
+    expect(holder.toNamespacedPath(text)).toBe(text);
+    expect(converted).toEqual([]);
   });
 });

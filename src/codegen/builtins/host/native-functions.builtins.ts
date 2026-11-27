@@ -309,6 +309,13 @@ export default b.declarations(
     writes: externalState,
     implementation: b.hostCall,
   }),
+  b.static(cpp("BunProcess.cpp", "jsFunctionGetEnvUnlessOfProcess"), {
+    args: { name: b.string },
+    returns: b.union(b.string, b.null, b.undefined),
+    capability: "js",
+    throws: true,
+    implementation: b.hostCall,
+  }),
   // It asks what stands above `process`. Unless that is Object.prototype, or has the operand above it already, the operand goes above it: from then on whoever climbs from `process` or
   // from a native emitter comes by the operand. `process` is the object of the realm, whatever the global of that name holds. Code runs only where a program has laid a proxy above `process`.
   b.static(cpp("BunProcess.cpp", "jsFunctionMakeProcessInheritFrom"), {

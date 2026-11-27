@@ -13,9 +13,9 @@ describe.todoIf(isBroken && isWindows)("--watch works", async () => {
         "package.json": JSON.stringify({ name: "foo", version: "0.0.1" }),
       });
       await Bun.sleep(1000);
-      const tmpfile = join(tmpdir_, "tmp.js");
+      const tmpfile = join(String(tmpdir_), "tmp.js");
       const process = spawn({
-        cmd: [bunExe(), "--watch", join(tmpdir_, watchedFile)],
+        cmd: [bunExe(), "--watch", join(String(tmpdir_), watchedFile)],
         cwd: tmpdir_,
         env: bunEnv,
         stdio: ["ignore", "pipe", "inherit"],

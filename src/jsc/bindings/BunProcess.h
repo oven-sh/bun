@@ -5,6 +5,7 @@
 #include "BunBuiltinNames.h"
 #include "BunClientData.h"
 #include "JSEventEmitter.h"
+#include "OwnPropertyCache.h"
 
 namespace Zig {
 class GlobalObject;
@@ -32,6 +33,9 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSObject> m_nextTickFunction;
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L113-L116
     WriteBarrier<JSString> m_cachedCwd;
+    // Bun__cwdGeneration as of m_cachedCwd.
+    uint32_t m_cachedCwdGeneration { 0 };
+    OwnPropertyCache m_cwdProperty;
     // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
     WriteBarrier<JSObject> m_onWarning;
     // A function of the library: it hands native code what it kept for a tick. No tick runs once the process exits.
@@ -87,9 +91,18 @@ public:
     static JSValue emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObject, JSValue errorInstance);
     static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor);
 
-    JSString* cachedCwd() { return m_cachedCwd.get(); }
-    void setCachedCwd(JSC::VM& vm, JSString* cwd) { m_cachedCwd.set(vm, this, cwd); }
+    JSString* cachedCwd(uint32_t generation) { return generation == m_cachedCwdGeneration ? m_cachedCwd.get() : nullptr; }
+    void setCachedCwd(JSC::VM& vm, JSString* cwd, uint32_t generation)
+    {
+        m_cachedCwd.set(vm, this, cwd);
+        m_cachedCwdGeneration = generation;
+    }
     void clearCachedCwd() { m_cachedCwd.clear(); }
+
+    // The own property `cwd`, or the empty value if it is absent or not reified yet.
+    JSValue cwdProperty();
+    bool isCwdReplaced();
+    bool isEnvReplaced(Zig::GlobalObject*);
 
     JSValue getArgv(JSGlobalObject* globalObject);
     JSValue getExecArgv(JSGlobalObject* globalObject);
@@ -160,6 +173,9 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionRunWhenProcessExits);
 
 // node:events hands it EventEmitter.prototype, which goes above the native prototype of process.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeProcessInheritFrom);
+
+// `${process.env[name]}`. Null if the value is falsy. Undefined if process.env stands for the environment of the process.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionGetEnvUnlessOfProcess);
 
 // process.cwd() as a JSString, cached on the process object until it changes.
 JSC::JSValue getCachedCwd(JSC::JSGlobalObject*);

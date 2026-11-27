@@ -21,7 +21,7 @@ describe("--hot with many directories", () => {
       const maxCount = 3;
       for (let i = 0; i < dirCount; i++) {
         const dirName = `dir-${i.toString().padStart(4, "0")}`;
-        const dirPath = join(tmpdir, dirName);
+        const dirPath = join(String(tmpdir), dirName);
         mkdirSync(dirPath, { recursive: true });
 
         // Create an index.js in each directory
@@ -35,7 +35,7 @@ describe("--hot with many directories", () => {
       }).join("\n");
 
       writeFileSync(
-        join(tmpdir, "entry.js"),
+        join(String(tmpdir), "entry.js"),
         `
 ${imports}
 console.log('Loaded', ${dirCount}, 'directories');
@@ -71,7 +71,7 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
 
         for (let i = 0; i < dirCount; i++) {
           const dirName = `dir-${i.toString().padStart(4, "0")}`;
-          const filePath = join(tmpdir, dirName, "index.js");
+          const filePath = join(String(tmpdir), dirName, "index.js");
 
           updatePromises.push(
             Bun.write(filePath, `export const value${i} = ${i};\nexport const timestamp${i} = ${timestamp};`),
@@ -150,7 +150,7 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
       // entrypoint is added fd-less before its first transpile; dep's stored
       // fd settles on its first edited reload).
       for (let i = 1; i <= 2; i++) {
-        writeFileSync(join(dir, "lib", "dep.js"), `export const value = ${i};`);
+        writeFileSync(join(String(dir), "lib", "dep.js"), `export const value = ${i};`);
         await waitForReload(i);
       }
       const before = countFileFds();
@@ -161,7 +161,7 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
 
       const reloads = 15;
       for (let i = 3; i <= reloads + 2; i++) {
-        writeFileSync(join(dir, "lib", "dep.js"), `export const value = ${i};`);
+        writeFileSync(join(String(dir), "lib", "dep.js"), `export const value = ${i};`);
         await waitForReload(i);
       }
       const after = countFileFds();
@@ -230,7 +230,7 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
 
     await waitForLine("RELOAD 0");
     for (let i = 1; i <= edits; i++) {
-      writeFileSync(join(dir, "lib", "dep.js"), `export const value = ${i};`);
+      writeFileSync(join(String(dir), "lib", "dep.js"), `export const value = ${i};`);
       await waitForLine(`RELOAD ${i}`);
     }
     const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);

@@ -103,6 +103,7 @@ export default b.declarations(
   b.intrinsic("isFinite", "Call", builtin("isFinite")),
   b.intrinsic("min", "Call", builtin("Math.min")),
   b.intrinsic("nextOfStepsOverText", "Value", builtin("%CompilerHelpers%.nextOfStepsOverText")),
+  b.intrinsic("process", "Value", builtin("process")),
   b.intrinsic("Promise", "Value", builtin("Promise")),
   operation("rejectPromiseWithFirstResolvingFunctionCallCheck", "RejectPromise"),
   operation("resolvePromiseWithFirstResolvingFunctionCallCheck", "ResolvePromise"),

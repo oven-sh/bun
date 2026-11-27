@@ -84,10 +84,7 @@ impl PathChar for u16 {
         }
         match s {
             b"." => w!(b'.'),
-            b"/" => w!(b'/'),
-            b"\\" => w!(b'\\'),
             b".." => w!(b'.', b'.'),
-            b"./" => w!(b'.', b'/'),
             b"//" => w!(b'/', b'/'),
             b"UNC" => w!(b'U', b'N', b'C'),
             // The literal set is closed (every `T::lit` call site is one of the

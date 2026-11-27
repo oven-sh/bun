@@ -103,6 +103,8 @@ pub(crate) struct RuntimeState {
     pub(crate) browsers: crate::webview::Browsers,
     /// For `Bun.zstdDecompressSync()`.
     pub(crate) zstd_tables: JsCell<bun_zstd::SpareTables>,
+    /// For `path.matchesGlob()`.
+    pub(crate) path_glob_cache: core::cell::RefCell<bun_node_path::glob::Cache>,
     /// `bun lint`: what runs the rules of JavaScript plugins in this VM.
     pub(crate) lint: core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>>,
     /// The `uv_loop_t` that addons get for this VM. Stored inline because addons
@@ -327,6 +329,7 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
         memory_pressure_watcher: Default::default(),
         browsers: Default::default(),
         zstd_tables: JsCell::default(),
+        path_glob_cache: core::cell::RefCell::default(),
         lint: core::cell::OnceCell::new(),
         #[cfg(unix)]
         uv_loop: crate::napi::uv_posix::UvLoop::new(vm.handle()),

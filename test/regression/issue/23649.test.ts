@@ -19,7 +19,7 @@ const object = {
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", join(dir, "input.js")],
+    cmd: [bunExe(), "build", join(String(dir), "input.js")],
     env: bunEnv,
     cwd: dir,
     stdout: "pipe",
@@ -74,7 +74,7 @@ b: async function(first) {
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", join(dir, "input.js")],
+    cmd: [bunExe(), "build", join(String(dir), "input.js")],
     env: bunEnv,
     cwd: dir,
     stdout: "pipe",

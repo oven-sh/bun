@@ -1391,10 +1391,13 @@ dependencies = [
 name = "bun_node_path"
 version = "0.0.0"
 dependencies = [
+ "bun_collections",
  "bun_core",
  "bun_highway",
  "bun_paths",
  "bun_sys",
+ "bun_wyhash",
+ "thiserror",
 ]
 
 [[package]]

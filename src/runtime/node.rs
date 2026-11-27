@@ -23,6 +23,9 @@ pub(crate) use types::{
 #[path = "node/path.rs"]
 pub(crate) mod path;
 
+#[path = "node/path_ffi.rs"]
+mod path_ffi;
+
 #[path = "node/node_os.rs"]
 pub(crate) mod os;
 

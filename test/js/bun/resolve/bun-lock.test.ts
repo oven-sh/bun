@@ -23,5 +23,5 @@ test.concurrent("import bun.lock file as json", async () => {
     `,
   });
 
-  expect(await bunRun(join(dir, "index.ts"))).toSpawn();
+  expect(await bunRun(join(String(dir), "index.ts"))).toSpawn();
 });

@@ -25,13 +25,6 @@ EncodedJSValue createFunction(JSGlobalObject* globalObject, unsigned length, ASC
     return JSValue::encode(JSFunction::create(getVM(globalObject), globalObject, length, name, function, ImplementationVisibility::Public));
 }
 
-EncodedJSValue createFunctionNamedAsBound(JSGlobalObject* globalObject, unsigned length, ASCIILiteral name, NativeFunction function)
-{
-    JSFunction* result = JSFunction::create(getVM(globalObject), globalObject, length, name, function, ImplementationVisibility::Public);
-    uncheckedDowncast<NativeExecutable>(result->executable())->setIsNamedAsBound();
-    return JSValue::encode(result);
-}
-
 class BoundFunctionReplacement final : public JSFunction {
 public:
     using Base = JSFunction;

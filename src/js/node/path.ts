@@ -1,4 +1,5 @@
 // Hardcoded module "node:path"
+// https://github.com/nodejs/node/blob/v26.12.1/lib/path.js
 declare global {
   namespace $Node {
     interface ParsedPath {
@@ -9,7 +10,7 @@ declare global {
       name: string;
     }
 
-    /** `path.posix` and `path.win32`. The native functions validate their arguments themselves. */
+    /** `path.posix` and `path.win32`. */
     interface Path {
       resolve(...paths: unknown[]): string;
       normalize(path: unknown): string;
@@ -22,7 +23,7 @@ declare global {
       extname(path: unknown): string;
       format(pathObject: unknown): string;
       parse(path: unknown): ParsedPath;
-      matchesGlob(path: string, pattern: string): boolean;
+      matchesGlob(path: unknown, pattern: unknown): boolean;
       sep: "/" | "\\";
       delimiter: ":" | ";";
       win32: Path;
@@ -32,87 +33,102 @@ declare global {
   }
 }
 
-// Object lists a member from when it is first read. internal/validators, which is loaded at the first matchesGlob(), reads these three
-// when it loads: whoever imports this module finds them read, in this order.
-const { freeze: _ObjectFreeze, create: _ObjectCreate, defineProperty: _ObjectDefineProperty } = Object;
+const CHAR_DOT = 46;
+const CHAR_COLON = 58;
+const CHAR_QUESTION_MARK = 63;
+const CHAR_UPPERCASE_A = 65;
+const CHAR_UPPERCASE_Z = 90;
+const CHAR_BACKWARD_SLASH = 92;
+const CHAR_LOWERCASE_A = 97;
+const CHAR_LOWERCASE_Z = 122;
 
-const toNamespacedPathPosix = $bindgen("node_path.bind.ts", "toNamespacedPathPosix");
-const toNamespacedPathWin32 = $bindgen("node_path.bind.ts", "toNamespacedPathWin32");
-const posix = {
-  resolve: $bindgen("node_path.bind.ts", "resolvePosix"),
-  normalize: $bindgen("node_path.bind.ts", "normalizePosix"),
-  isAbsolute: $bindgen("node_path.bind.ts", "isAbsolutePosix"),
-  join: $bindgen("node_path.bind.ts", "joinPosix"),
-  relative: $bindgen("node_path.bind.ts", "relativePosix"),
-  toNamespacedPath: toNamespacedPathPosix,
-  dirname: $bindgen("node_path.bind.ts", "dirnamePosix"),
-  basename: $bindgen("node_path.bind.ts", "basenamePosix"),
-  extname: $bindgen("node_path.bind.ts", "extnamePosix"),
-  format: $bindgen("node_path.bind.ts", "formatPosix"),
-  parse: $bindgen("node_path.bind.ts", "parsePosix"),
-  sep: "/",
-  delimiter: ":",
-  win32: undefined! as $Node.Path,
-  posix: undefined! as $Node.Path,
-  _makeLong: toNamespacedPathPosix,
-  matchesGlob: undefined! as $Node.Path["matchesGlob"],
-} as $Node.Path;
+function isWindowsDeviceRoot(code: number) {
+  return (
+    (code >= CHAR_UPPERCASE_A && code <= CHAR_UPPERCASE_Z) || (code >= CHAR_LOWERCASE_A && code <= CHAR_LOWERCASE_Z)
+  );
+}
+
+function formatExt(ext: any) {
+  return ext ? `${ext[0] === "." ? "" : "."}${ext}` : "";
+}
+
+function _format(sep: string, pathObject: any) {
+  // validateObject(), without loading internal/validators.
+  if (pathObject === null || $isArray(pathObject) || typeof pathObject !== "object") {
+    throw $ERR_INVALID_ARG_TYPE("pathObject", "object", pathObject);
+  }
+  const dir = pathObject.dir || pathObject.root;
+  const base = pathObject.base || `${pathObject.name || ""}${formatExt(pathObject.ext)}`;
+  if (!dir) return base;
+  return dir === pathObject.root ? `${dir}${base}` : `${dir}${sep}${base}`;
+}
+
 const win32 = {
   resolve: $bindgen("node_path.bind.ts", "resolveWin32"),
   normalize: $bindgen("node_path.bind.ts", "normalizeWin32"),
   isAbsolute: $bindgen("node_path.bind.ts", "isAbsoluteWin32"),
   join: $bindgen("node_path.bind.ts", "joinWin32"),
   relative: $bindgen("node_path.bind.ts", "relativeWin32"),
-  toNamespacedPath: toNamespacedPathWin32,
+  toNamespacedPath(path: any) {
+    if (typeof path !== "string" || path.length === 0) return path;
+    const resolvedPath = win32.resolve(path);
+    if (resolvedPath.length <= 2) return path;
+    const text = `${resolvedPath}`;
+    const code = text.$charCodeAt(0);
+    if (code === CHAR_BACKWARD_SLASH) {
+      if (text.$charCodeAt(1) === CHAR_BACKWARD_SLASH) {
+        const next = text.$charCodeAt(2);
+        if (next !== CHAR_QUESTION_MARK && next !== CHAR_DOT) return `\\\\?\\UNC\\${text.$substr(2)}`;
+      }
+    } else if (
+      isWindowsDeviceRoot(code) &&
+      text.$charCodeAt(1) === CHAR_COLON &&
+      text.$charCodeAt(2) === CHAR_BACKWARD_SLASH
+    ) {
+      return `\\\\?\\${text}`;
+    }
+    return resolvedPath;
+  },
   dirname: $bindgen("node_path.bind.ts", "dirnameWin32"),
   basename: $bindgen("node_path.bind.ts", "basenameWin32"),
   extname: $bindgen("node_path.bind.ts", "extnameWin32"),
-  format: $bindgen("node_path.bind.ts", "formatWin32"),
+  format: _format.bind(null, "\\"),
   parse: $bindgen("node_path.bind.ts", "parseWin32"),
+  matchesGlob: $bindgen("node_path.bind.ts", "matchesGlobWin32"),
   sep: "\\",
   delimiter: ";",
   win32: undefined! as $Node.Path,
-  posix,
-  _makeLong: toNamespacedPathWin32,
-  matchesGlob: undefined! as $Node.Path["matchesGlob"],
+  posix: undefined! as $Node.Path,
+  _makeLong: undefined! as $Node.Path["_makeLong"],
 } as $Node.Path;
-posix.win32 = win32.win32 = win32;
-posix.posix = posix;
 
-type Glob = import("bun").Glob;
+const posix = {
+  resolve: $bindgen("node_path.bind.ts", "resolvePosix"),
+  normalize: $bindgen("node_path.bind.ts", "normalizePosix"),
+  isAbsolute: $bindgen("node_path.bind.ts", "isAbsolutePosix"),
+  join: $bindgen("node_path.bind.ts", "joinPosix"),
+  relative: $bindgen("node_path.bind.ts", "relativePosix"),
+  toNamespacedPath(path: any) {
+    return path;
+  },
+  dirname: $bindgen("node_path.bind.ts", "dirnamePosix"),
+  basename: $bindgen("node_path.bind.ts", "basenamePosix"),
+  extname: $bindgen("node_path.bind.ts", "extnamePosix"),
+  format: _format.bind(null, "/"),
+  parse: $bindgen("node_path.bind.ts", "parsePosix"),
+  matchesGlob: $bindgen("node_path.bind.ts", "matchesGlobPosix"),
+  sep: "/",
+  delimiter: ":",
+  win32,
+  posix: undefined! as $Node.Path,
+  _makeLong: undefined! as $Node.Path["_makeLong"],
+} as $Node.Path;
 
-// the most-recently used glob is memoized in case `matchesGlob` is called in a
-// loop with the same pattern
-let prevGlob: Glob | undefined;
-let prevPattern: string | undefined;
-function matchesGlob(isWindows: boolean, path: string, pattern: string) {
-  const { validateString } = require("internal/validators");
-  let glob: Glob;
+win32.win32 = win32;
+posix.posix = win32.posix = posix;
+win32._makeLong = win32.toNamespacedPath;
+posix._makeLong = posix.toNamespacedPath;
 
-  validateString(path, "path");
-  if (isWindows) path = path.replaceAll("\\", "/");
-
-  if (prevGlob) {
-    $assert(prevPattern !== undefined);
-    if (prevPattern === pattern) {
-      glob = prevGlob;
-    } else {
-      validateString(pattern, "pattern");
-      if (isWindows) pattern = pattern.replaceAll("\\", "/");
-      glob = prevGlob = new Bun.Glob(pattern);
-      prevPattern = pattern;
-    }
-  } else {
-    validateString(pattern, "pattern");
-    if (isWindows) pattern = pattern.replaceAll("\\", "/");
-    glob = prevGlob = new Bun.Glob(pattern);
-    prevPattern = pattern;
-  }
-
-  return glob.match(path);
-}
-
-posix.matchesGlob = matchesGlob.bind(null, false);
-win32.matchesGlob = matchesGlob.bind(null, true);
+$bindgen("node_path.bind.ts", "registerModule")(posix, win32);
 
 export default process.platform === "win32" ? win32 : posix;

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/fs/streams.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 4c73ad1978cefd870065b89eaf36d4c329a29a24f0008fcb06e721058f973a51.
+// Written against that file with the SHA-256 c33ff1d6129a891977021ab99fc767ee24f1a2d4db1f25ff43209abc2bd1c05a.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // fs.ReadStream and fs.WriteStream are lazily loaded to avoid importing 'node:stream' until required
@@ -198,7 +198,15 @@ function getValidatedPath(p: string | URL | null | undefined): string {
     if (typeof path !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
     return path;
   }
-  return require("node:path").resolve(p);
+  return p;
+}
+
+// Win32 rewrites some names ("a.", "NUL") in a relative path. Node's binding resolves it first.
+function pathToOpen(stream: FileStream) {
+  const path = stream.path;
+  return process.platform === "win32" && stream[kFs] === fs && typeof path === "string" && path !== ""
+    ? $bindgen("node_path.bind.ts", "resolveWithRealCwd")(path)
+    : path;
 }
 
 function copyObject<T extends object>(source: T): T {
@@ -411,7 +419,7 @@ function streamConstruct(this: FileStream, callback: ErrorCallback) {
       return;
     }
 
-    this[kFs].open!(this.path, this.flags, this.mode, (err, fd) => {
+    this[kFs].open!(pathToOpen(this), this.flags, this.mode, (err, fd) => {
       if (err) {
         callback(err);
       } else {
@@ -551,9 +559,7 @@ function WriteStream(
   } else if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
-    // Internal $fastPath callers (writableFromFileSink) discard .path; do not
-    // resolve it - path.resolve("") needs process.cwd(), which throws when
-    // the cwd has been deleted (Node still spawns children in that state).
+    // Internal $fastPath callers (writableFromFileSink) discard .path.
     this.path = fastPath ? (path as string | null | undefined) : getValidatedPath(path);
     const { flags, mode } = options;
     this.flags = flags === undefined ? "w" : flags;

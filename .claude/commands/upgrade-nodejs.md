@@ -33,6 +33,14 @@ Bun reports a Node.js version for compatibility with the Node.js ecosystem. This
 - `src/runtime/napi/js_native_api_types.h`
   - Update `NAPI_VERSION` define (check Node.js release notes; see `src/runtime/napi/README.md` for the header resync procedure)
 
+### 5. `node:path`
+
+- Port what changed in `lib/path.js` to `src/node_path`, `src/runtime/node/path.rs`, `src/js/node/path.ts` and `src/js/ahead-of-time/node/path.ts`
+- Port what changed in `deps/minimatch` and in `matchGlobPattern` (`lib/internal/fs/glob.js`) to `src/node_path/glob`
+- Update the version and the line numbers in the permalinks of those files
+- Run `node src/node_path/generate_unicode_tables.mjs` with the new version of Node.js
+- Run `test/js/node/path/fixtures/record.cjs` with the new version of Node.js
+
 ## Files That May Need Updates
 
 Only check these if the build fails or tests crash after updating version numbers:

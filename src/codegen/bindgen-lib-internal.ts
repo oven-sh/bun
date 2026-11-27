@@ -528,10 +528,6 @@ export abstract class Type {
   cppConvert(value: string, ctx: string): string {
     return `Bun::convertIDL<${this.idlType}>(*globalObject, ${value}, ${ctx})`;
   }
-  /** A C++ expression for what is converted in place of the argument `value`. Those of all arguments are evaluated first, in the order of the arguments. */
-  cppPrepare(value: string): string | null {
-    return null;
-  }
   /** C++ lines for once every argument is converted. They read into `target`, converted from `value`, what converting a later argument could have changed. */
   cppReadLast(target: string, value: string): string[] {
     return [];
@@ -1022,8 +1018,8 @@ export class StringType extends Type {
   }
   /** The JS string itself, a `JsLocal<'a, JSString>`: nothing is resolved, counted or copied. */
   get local(): LocalStringType {
-    assert(this.valueKinds !== "any", ".local follows b.string or b.string.allowStringObject");
-    return new LocalStringType(this.valueKinds.includes("stringObject"));
+    assert(this.valueKinds !== "any" && !this.valueKinds.includes("stringObject"), ".local follows b.string");
+    return new LocalStringType();
   }
   get nullRepresentation() {
     return "pointer" as const;
@@ -1194,19 +1190,12 @@ export class OwnedUtf8Type extends StringType {
   }
 }
 
-const cppStringOfStringObject = (value: string) => `Bun::Bindgen::stringOfStringObject(*globalObject, ${value})`;
-
 /** The `JSString` cell. */
 export class LocalStringType extends Type {
   readonly idlType = "Bun::Bindgen::IDLRawString";
   readonly tsType = "string";
-  readonly #allowStringObject: boolean;
-  constructor(allowStringObject: boolean) {
-    super();
-    this.#allowStringObject = allowStringObject;
-  }
   get valueKinds(): ValueKinds {
-    return this.#allowStringObject ? ["string", "stringObject"] : ["string"];
+    return ["string"];
   }
   get parameterType(): ParameterType {
     return stringParameterType(this.valueKinds);
@@ -1225,9 +1214,6 @@ export class LocalStringType extends Type {
   }
   get nullRepresentation() {
     return "pointer" as const;
-  }
-  cppPrepare(value: string): string | null {
-    return this.#allowStringObject ? cppStringOfStringObject(value) : null;
   }
   layout(): Layout {
     return { size: 8, align: 8 };
@@ -1642,22 +1628,16 @@ export const urlType = new (class extends LocalType {
 export class AnyType extends Type {
   readonly idlType = "Bun::Bindgen::IDLRawAny";
   readonly tsType = "any";
-  readonly #stringObjectAsString: boolean;
   readonly #orAbsent: boolean;
   readonly #declared: readonly DeclaredResult[] | null;
-  constructor(stringObjectAsString = false, orAbsent = false, declared: readonly DeclaredResult[] | null = null) {
+  constructor(orAbsent = false, declared: readonly DeclaredResult[] | null = null) {
     super();
-    this.#stringObjectAsString = stringObjectAsString;
     this.#orAbsent = orAbsent;
     this.#declared = declared;
   }
   /** This argument and every one after it. Only for the last argument. */
   get variadic(): VariadicType {
     return new VariadicType();
-  }
-  /** A `String` object arrives as what `ToString` gives for it, for a body that tells a string from anything else itself. */
-  get stringObjectAsString(): AnyType {
-    return new AnyType(true, this.#orAbsent, this.#declared);
   }
   /** For a result that the body makes itself: what it is. */
   returning(...alternatives: readonly DeclaredResult[]): AnyType {
@@ -1667,7 +1647,7 @@ export class AnyType extends Type {
       "of .returning",
     );
     for (const alternative of alternatives) if (typeof alternative === "string") parseDeclaredAlternative(alternative);
-    return new AnyType(this.#stringObjectAsString, this.#orAbsent, alternatives);
+    return new AnyType(this.#orAbsent, alternatives);
   }
   /** The words of `.returning`, if it was given words alone: what the generated C++ holds the result to. */
   get checkedResult(): readonly string[] | null {
@@ -1683,17 +1663,14 @@ export class AnyType extends Type {
   }
   /** An `Option<JsLocal<'a>>`, for an argument that a caller may leave out. */
   get orAbsent(): AnyType {
-    return new AnyType(this.#stringObjectAsString, true, this.#declared);
-  }
-  cppPrepare(value: string): string | null {
-    return this.#stringObjectAsString ? cppStringOfStringObject(value) : null;
+    return new AnyType(true, this.#declared);
   }
   get parameterType(): ParameterType {
     return { ...strictType({ type: "Anything" }), mode: this.#orAbsent ? "Optional" : "Required" };
   }
   get directForm(): DirectForm {
-    const type: TypeSpec = this.#stringObjectAsString ? stringType : { type: "Anything" };
-    return { value: this.#orAbsent ? "ValueOrEmpty" : "Value", cppType: "JSC::EncodedJSValue", type };
+    const value = this.#orAbsent ? "ValueOrEmpty" : "Value";
+    return { value, cppType: "JSC::EncodedJSValue", type: { type: "Anything" } };
   }
   get isOptional(): boolean {
     return this.#orAbsent;
@@ -1988,9 +1965,6 @@ export class OptionalType extends Type {
   get passesValue(): boolean {
     return this.inner.passesValue;
   }
-  cppPrepare(value: string): string | null {
-    return this.inner.cppPrepare(value);
-  }
   cppReadLast(target: string, value: string): string[] {
     return this.inner.cppReadLast(target, value);
   }
@@ -2206,9 +2180,6 @@ export class DefaultType extends Type {
     if (this.inner.valueKinds === "any") return "any";
     return [...this.inner.valueKinds, "undefined", ...(this.onNull ? (["null"] as const) : [])];
   }
-  cppPrepare(value: string): string | null {
-    return this.inner.cppPrepare(value);
-  }
   private cppIsAbsent(value: string): string {
     return `${value}.${this.onNull ? "isUndefinedOrNull" : "isUndefined"}()`;
   }
@@ -2245,13 +2216,10 @@ ${indent(this.inner.cppConvertInto(target, value, ctx, name, failure), 4)}
 
 /** Every argument from its position on: `&'a [T]`, where they are in the frame of the caller. */
 export class RestType extends Type {
-  readonly element: LocalStringType | AnyType;
+  readonly element: LocalStringType;
   constructor(element: Type) {
     super();
-    assert(
-      element instanceof LocalStringType || element instanceof AnyType,
-      "b.rest takes what is passed as the JS value itself: b.any or b.string.local",
-    );
+    assert(element instanceof LocalStringType, "b.rest takes b.string.local. For any value, use b.any.variadic");
     this.element = element;
   }
   get idlType(): string {
@@ -2288,8 +2256,7 @@ export class RestType extends Type {
     return `&'a [${this.element.rustType()}]`;
   }
   rustFromExtern(expr: string): string {
-    const known = this.element instanceof LocalStringType ? "bun_jsc::JSString" : "JSValue";
-    return `bindgen::rest_from_extern::<${known}>(${expr}, ${expr}_count, heap)`;
+    return `bindgen::rest_from_extern::<bun_jsc::JSString>(${expr}, ${expr}_count, heap)`;
   }
 }
 
@@ -2902,14 +2869,10 @@ export interface SignatureOptions extends SignatureColumns, EntryColumns {
   length?: number;
   /** Node's `ERR_INVALID_ARG_TYPE` for a wrong type: a list is its `(name, expected, actual)`, a string the whole message. */
   expected?: Record<string, readonly string[] | string>;
-  /** An argument named here throws what src/runtime/node/util/validators.rs does for a value of the wrong type: `The "name" property must be of type string, got number`. */
-  validatorExpects?: Record<string, string>;
   /** These arguments are converted before the others, in this order. */
   convertedFirst?: readonly string[];
   /** The JS function's `name`. Defaults to what it is exported as. */
   name?: string;
-  /** Its own `name` property says `bound join` where it prints and is traced as `join`, as a bound function does. */
-  namedAsBound?: boolean;
   replacesBoundFunction?: boolean;
 }
 
@@ -2933,12 +2896,10 @@ export class Signature {
     name: string;
     type: Type;
     expected?: readonly string[] | string;
-    validatorExpects?: string;
   }[];
   /** Indices into `args`. */
   readonly conversionOrder: readonly number[];
   readonly givenName: string | undefined;
-  readonly namedAsBound: boolean;
   readonly replacesBoundFunction: boolean;
   readonly returns: Type;
   readonly capability: Capability;
@@ -2967,10 +2928,8 @@ export class Signature {
       "cppInlineBody",
       "length",
       "expected",
-      "validatorExpects",
       "convertedFirst",
       "name",
-      "namedAsBound",
       "replacesBoundFunction",
       "mutates",
       "passThis",
@@ -2984,26 +2943,21 @@ export class Signature {
     ]);
     this.length = options.length;
     this.givenName = options.name;
-    this.namedAsBound = options.namedAsBound ?? false;
     this.replacesBoundFunction = options.replacesBoundFunction ?? false;
     this.rejects = options.rejects ?? false;
     this.requiredArguments = options.requiredArguments ?? 0;
-    const { args = {}, expected = {}, validatorExpects = {}, convertedFirst = [] } = options;
+    const { args = {}, expected = {}, convertedFirst = [] } = options;
     this.args = Object.entries(args).map(([name, type]) => ({
       name,
       type,
       expected: Object.hasOwn(expected, name) ? expected[name] : undefined,
-      validatorExpects: Object.hasOwn(validatorExpects, name) ? validatorExpects[name] : undefined,
     }));
     for (const [name, types] of Object.entries(expected)) {
       assert(name in args, `expected: ${name} is not an argument`);
       refuseExpectedOfRange(name, args[name]);
       assert(types.length > 0, `expected: ${name} expects nothing`);
-      assert(!(name in validatorExpects), `${name}: expected or validatorExpects, not both`);
     }
-    for (const name of [...Object.keys(validatorExpects), ...convertedFirst]) {
-      assert(name in args, `${name} is not an argument`);
-    }
+    for (const name of convertedFirst) assert(name in args, `${name} is not an argument`);
     assertDistinct(convertedFirst, "of convertedFirst");
     const positions = this.args.map((_, index) => index);
     const isFirst = (index: number) => convertedFirst.includes(this.args[index].name);
@@ -3267,9 +3221,6 @@ export class FunctionDefinition {
   /** The `name` of the JS function. */
   get jsName(): string {
     return this.signatures.find(signature => signature.givenName !== undefined)?.givenName ?? this.name;
-  }
-  get namedAsBound(): boolean {
-    return this.signatures.some(signature => signature.namedAsBound);
   }
   get replacesBoundFunction(): boolean {
     return this.signatures.some(signature => signature.replacesBoundFunction);

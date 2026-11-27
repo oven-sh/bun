@@ -107,7 +107,10 @@ test.concurrent("basic", async () => {
   `);
   expect(exitCode).toBe(0);
 
-  expect(tarballEntries(join(dir, "pack-basic-1.2.3.tgz"))).toEqual(["package/package.json", "package/index.js"]);
+  expect(tarballEntries(join(String(dir), "pack-basic-1.2.3.tgz"))).toEqual([
+    "package/package.json",
+    "package/index.js",
+  ]);
 });
 
 // The archive ends right after the two end-of-archive blocks. Padding it to a full 10 KiB record,
@@ -120,7 +123,7 @@ test.concurrent("the archive is not padded to a full tar record", async () => {
 
   await pack(dir, bunEnv);
 
-  const tar = gunzipSync(await file(join(dir, "pack-unpadded-1.0.0.tgz")).bytes());
+  const tar = gunzipSync(await file(join(String(dir), "pack-unpadded-1.0.0.tgz")).bytes());
   // header + data for each of the two entries, then the two end-of-archive blocks
   expect(tar.byteLength).toBe(6 * 512);
 });
@@ -158,7 +161,7 @@ test.concurrent.skipIf(isWindows).each([
 
   await pack(dir, bunEnv, ...args);
 
-  const tgz = await file(join(dir, "scope-pack-bytes-1.2.3.tgz")).bytes();
+  const tgz = await file(join(String(dir), "scope-pack-bytes-1.2.3.tgz")).bytes();
   const tar = gunzipSync(tgz);
   expect({
     gzipHeader: Buffer.from(tgz.subarray(0, 10)).toString("hex"),
@@ -215,7 +218,7 @@ test.concurrent("package.json integers stay plain digits", async () => {
   expect(err).toBe("");
   expect(exitCode).toBe(0);
 
-  const tarball = readTarball(join(dir, "pack-integers-1.0.0.tgz"));
+  const tarball = readTarball(join(String(dir), "pack-integers-1.0.0.tgz"));
   expect(entryNames(tarball)).toEqual(["package/package.json", "package/index.js"]);
   const packageJson = tarball.entries[0].contents;
   expect(packageJson).toContain('"port": 10000');
@@ -231,7 +234,7 @@ test.concurrent("in subdirectory", async () => {
     "subdir1/subdir2/index.js": "console.log(`hello ./subdir1/subdir2/index.js`);",
   });
 
-  const first = await runPack(dir, [], join(dir, "subdir1", "subdir2"));
+  const first = await runPack(dir, [], join(String(dir), "subdir1", "subdir2"));
   expect(first.err).toBe("");
   expect(first.out).toMatchInlineSnapshot(`
     "bun pack <version> (<revision>)
@@ -250,18 +253,18 @@ test.concurrent("in subdirectory", async () => {
   `);
   expect(first.exitCode).toBe(0);
 
-  const firstTarball = readTarball(join(dir, "pack-from-subdir-7.7.7.tgz"));
+  const firstTarball = readTarball(join(String(dir), "pack-from-subdir-7.7.7.tgz"));
   expect(entryNames(firstTarball)).toEqual([
     "package/package.json",
     "package/root.js",
     "package/subdir1/subdir2/index.js",
   ]);
 
-  await rm(join(dir, "pack-from-subdir-7.7.7.tgz"));
+  await rm(join(String(dir), "pack-from-subdir-7.7.7.tgz"));
 
-  const second = await runPack(dir, [], join(dir, "subdir1"));
+  const second = await runPack(dir, [], join(String(dir), "subdir1"));
   expect(second).toEqual(first);
-  expect(readTarball(join(dir, "pack-from-subdir-7.7.7.tgz"))).toEqual(firstTarball);
+  expect(readTarball(join(String(dir), "pack-from-subdir-7.7.7.tgz"))).toEqual(firstTarball);
 });
 
 // https://github.com/oven-sh/bun/issues/29273
@@ -294,7 +297,7 @@ describe.concurrent("package.json names and versions", () => {
       "nested/project/package.json": JSON.stringify({ name: "../../outside-pkg", version: "1.0.0" }),
       "nested/project/index.js": indexJs,
     });
-    const projectDir = join(dir, "nested", "project");
+    const projectDir = join(String(dir), "nested", "project");
 
     const nameResult = await runPack(dir, [], projectDir);
     expect(nameResult.err).toMatchInlineSnapshot(
@@ -313,7 +316,7 @@ describe.concurrent("package.json names and versions", () => {
 
     // no tarball was created at the location the ".." segments resolve to, nor inside the project
     expect(await sortedNames(dir)).toEqual(["nested"]);
-    expect(await sortedNames(join(dir, "nested"))).toEqual(["project"]);
+    expect(await sortedNames(join(String(dir), "nested"))).toEqual(["project"]);
     expect(await sortedNames(projectDir)).toEqual(["index.js", "package.json"]);
 
     // a normal name and version still packs into the project directory
@@ -449,7 +452,7 @@ describe.concurrent("package.json names and versions", () => {
       "Packed size: <packed size>",
     ]);
     expect(exitCode).toBe(0);
-    expect(tarballEntries(join(dir, tarball))).toEqual(["package/package.json", "package/index.js"]);
+    expect(tarballEntries(join(String(dir), tarball))).toEqual(["package/package.json", "package/index.js"]);
   });
 
   // Same as `JSON.parse`, which is how every other tool reads the package.json in the tarball.
@@ -471,7 +474,7 @@ describe.concurrent("package.json names and versions", () => {
     const { err, exitCode } = await runPack(dir, ["--quiet"]);
     expect(err).not.toContain("error:");
     expect(await sortedNames(dir)).toEqual(["a.js", "b.js", "pack-equal-keys-2.0.0.tgz", "package.json"]);
-    const tarball = readTarball(join(dir, "pack-equal-keys-2.0.0.tgz"));
+    const tarball = readTarball(join(String(dir), "pack-equal-keys-2.0.0.tgz"));
     expect(entryNames(tarball)).toEqual(["package/package.json", "package/b.js"]);
     expect(tarball.entries[0].contents).toBe(`{
   "scripts": {
@@ -531,7 +534,7 @@ describe.concurrent("flags", () => {
       "package.json": gzipPackageJson,
       "index.js": indexJs,
     });
-    const tarballPath = join(dir, "pack-gzip-test-111111.1.11111111111111.tgz");
+    const tarballPath = join(String(dir), "pack-gzip-test-111111.1.11111111111111.tgz");
 
     const stored = await runPack(dir, ["--gzip-level=0"]);
     expect(stored.err).toBe("");
@@ -577,7 +580,7 @@ describe.concurrent("flags", () => {
       "index.js": indexJs,
     });
 
-    const dest = join(dir, path);
+    const dest = join(String(dir), path);
     const { out, err, exitCode } = await runPack(dir, [`--destination=${dest}`]);
     expect(err).toBe("");
     expect(out.split("\n")).toEqual([
@@ -616,7 +619,7 @@ describe.concurrent("flags", () => {
 
     // dir + "/" + filler is `headroom` bytes short of the buffer
     const filler = Buffer.alloc(pathMax - headroom - Buffer.byteLength(String(dir)) - 1, "d").toString();
-    const dest = join(dir, filler);
+    const dest = join(String(dir), filler);
     const { out, stderr, exitCode } = await runPack(dir, [`--destination=${dest}`]);
     expect(stderr).toBe(`error: archive destination name too long: "${dest}/${name}-1.0.0.tgz"\n`);
     expect(out).toBe("bun pack <version> (<revision>)");
@@ -649,7 +652,7 @@ describe.concurrent("flags", () => {
     ]);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, filename))).toEqual(["package/package.json", "package/index.js"]);
+    expect(tarballEntries(join(String(dir), filename))).toEqual(["package/package.json", "package/index.js"]);
   });
 
   test("a backslash separates in --destination and --filename", async () => {
@@ -666,8 +669,8 @@ describe.concurrent("flags", () => {
     expect(filename.exitCode).toBe(0);
 
     expect(await sortedNames(dir)).toEqual(["de", "index.js", "package.json"]);
-    expect(await sortedNames(join(dir, "de"))).toEqual(["file.tgz", "st"]);
-    expect(await sortedNames(join(dir, "de", "st"))).toEqual(["pack-dest-test-1.1.1.tgz"]);
+    expect(await sortedNames(join(String(dir), "de"))).toEqual(["file.tgz", "st"]);
+    expect(await sortedNames(join(String(dir), "de", "st"))).toEqual(["pack-dest-test-1.1.1.tgz"]);
   });
 
   test("--filename into a directory that does not exist", async () => {
@@ -705,7 +708,7 @@ describe.concurrent("flags", () => {
       "package.json": JSON.stringify({ name: "pack-fifo", version: "1.1.1" }),
       "index.js": indexJs,
     });
-    const fifo = join(dir, "out.fifo");
+    const fifo = join(String(dir), "out.fifo");
     mkfifo(fifo);
     const reader = openSync(fifo, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
     try {
@@ -724,8 +727,8 @@ describe.concurrent("flags", () => {
       expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
 
       const packed = Buffer.alloc(16 * 1024);
-      await write(join(dir, "out.tgz"), packed.subarray(0, readSync(reader, packed)));
-      expect(tarballEntries(join(dir, "out.tgz"))).toEqual(["package/package.json", "package/index.js"]);
+      await write(join(String(dir), "out.tgz"), packed.subarray(0, readSync(reader, packed)));
+      expect(tarballEntries(join(String(dir), "out.tgz"))).toEqual(["package/package.json", "package/index.js"]);
       expect((await lstat(fifo)).isFIFO()).toBe(true);
     } finally {
       closeSync(reader);
@@ -791,7 +794,7 @@ describe.concurrent("flags", () => {
       expect(err).toContain(expectedError);
       expect(out).not.toContain(".tgz");
       expect(exitCode).toBe(1);
-      expect(await exists(join(dir, "pack-long-dest-1.0.0.tgz"))).toBeFalse();
+      expect(await exists(join(String(dir), "pack-long-dest-1.0.0.tgz"))).toBeFalse();
     });
 
     test.concurrent("is reported as an error with --dry-run", async () => {
@@ -810,8 +813,8 @@ describe.concurrent("flags", () => {
       // `<over-long name>/..` resolves back to the package directory.
       const { out } = await pack(dir, bunEnv, `--destination=${longName}/..`);
 
-      expect(out).toContain(join(dir, "pack-long-dest-1.0.0.tgz"));
-      expect(readTarball(join(dir, "pack-long-dest-1.0.0.tgz")).entries).toMatchObject([
+      expect(out).toContain(join(String(dir), "pack-long-dest-1.0.0.tgz"));
+      expect(readTarball(join(String(dir), "pack-long-dest-1.0.0.tgz")).entries).toMatchObject([
         { "pathname": "package/package.json" },
       ]);
     });
@@ -852,7 +855,7 @@ describe.concurrent("flags", () => {
     expect(ignored.exitCode).toBe(0);
     expect(await sortedNames(dir)).toEqual(["index.js", "pack-ignore-scripts-1.1.1.tgz", "package.json"]);
 
-    await rm(join(dir, "pack-ignore-scripts-1.1.1.tgz"));
+    await rm(join(String(dir), "pack-ignore-scripts-1.1.1.tgz"));
 
     // prepack, prepare and postpack run in that order; preprepare and postprepare never run
     const { out, err, exitCode } = await runPack(dir);
@@ -886,7 +889,7 @@ describe.concurrent("flags", () => {
       "prepack.txt",
       "prepare.txt",
     ]);
-    expect(tarballEntries(join(dir, "pack-ignore-scripts-1.1.1.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-ignore-scripts-1.1.1.tgz"))).toEqual([
       "package/package.json",
       "package/index.js",
       "package/prepack.txt",
@@ -906,7 +909,7 @@ describe.concurrent("flags", () => {
     expect(stdout).toBe("pack-quiet-test-1.1.1.tgz\n");
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-quiet-test-1.1.1.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-quiet-test-1.1.1.tgz"))).toEqual([
       "package/package.json",
       "package/index.js",
     ]);
@@ -923,7 +926,7 @@ describe.concurrent("flags", () => {
     expect(stdout).toBe("pack-silent-test-1.1.1.tgz\n");
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-silent-test-1.1.1.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-silent-test-1.1.1.tgz"))).toEqual([
       "package/package.json",
       "package/index.js",
     ]);
@@ -935,7 +938,7 @@ describe.concurrent("flags", () => {
       "index.js": indexJs,
     });
 
-    const dest = join(dir, "out");
+    const dest = join(String(dir), "out");
     const { stdout, err, exitCode } = await runPack(dir, ["--quiet", `--destination=${dest}`]);
     expect(err).toBe("");
     const tarballPath = join(dest, "pack-quiet-dest-test-1.1.1.tgz");
@@ -956,7 +959,7 @@ describe.concurrent("flags", () => {
     expect(stdout).toBe("pack-quiet-dry-test-1.1.1.tgz\n");
     expect(exitCode).toBe(0);
 
-    const dest = join(dir, "out");
+    const dest = join(String(dir), "out");
     const withDestination = await runPack(dir, ["--quiet", "--dry-run", `--destination=${dest}`]);
     expect(withDestination.err).toBe("");
     expect(withDestination.stdout).toBe(`${join(dest, "pack-quiet-dry-test-1.1.1.tgz")}\n`);
@@ -1183,7 +1186,7 @@ describe.skipIf(isWindows)("a failed pack leaves no tarball behind", () => {
 
     expect(err).toContain('failed to write tarball "');
     expect(await sortedNames(dir)).toEqual(["index.js", "pack-failed-1.0.0.tgz", "package.json"]);
-    expect({ exitCode, earlier: await file(join(dir, "pack-failed-1.0.0.tgz")).text() }).toEqual({
+    expect({ exitCode, earlier: await file(join(String(dir), "pack-failed-1.0.0.tgz")).text() }).toEqual({
       exitCode: 1,
       earlier: "an earlier tarball",
     });
@@ -1196,7 +1199,7 @@ describe.skipIf(isWindows)("a failed pack leaves no tarball behind", () => {
       "index.js": "module.exports = 1;",
       "unreadable.js": "module.exports = 2;",
     });
-    await chmod(join(dir, "unreadable.js"), 0o000);
+    await chmod(join(String(dir), "unreadable.js"), 0o000);
 
     const { err, exitCode } = await packExpectingFailure(dir, { fileSizeLimit: false });
 
@@ -1215,13 +1218,13 @@ describe.skipIf(isWindows)("a failed pack leaves no tarball behind", () => {
       "index.js": "module.exports = 1;",
       "target.tgz": "",
     });
-    await symlink("target.tgz", join(dir, "link.tgz"));
+    await symlink("target.tgz", join(String(dir), "link.tgz"));
 
     const { err, exitCode } = await packExpectingFailure(dir, { fileSizeLimit: true }, "--filename=link.tgz");
 
     expect(err).toContain('failed to write tarball "');
     expect(err).toContain('link.tgz"');
-    expect({ exitCode, linkIsSymlink: (await lstat(join(dir, "link.tgz"))).isSymbolicLink() }).toEqual({
+    expect({ exitCode, linkIsSymlink: (await lstat(join(String(dir), "link.tgz"))).isSymbolicLink() }).toEqual({
       exitCode: 1,
       linkIsSymlink: true,
     });
@@ -1235,12 +1238,12 @@ describe.skipIf(isWindows)("a failed pack leaves no tarball behind", () => {
       "index.js": "module.exports = 1;",
       "pack-failed-1.0.0.tgz": "an earlier tarball",
     });
-    await chmod(join(dir, "pack-failed-1.0.0.tgz"), 0o444);
+    await chmod(join(String(dir), "pack-failed-1.0.0.tgz"), 0o444);
 
     const { err, exitCode } = await packExpectingFailure(dir, { fileSizeLimit: false });
 
     expect(err).toContain('EACCES: Permission denied: failed to open tarball file destination: "');
-    expect({ exitCode, destination: await file(join(dir, "pack-failed-1.0.0.tgz")).text() }).toEqual({
+    expect({ exitCode, destination: await file(join(String(dir), "pack-failed-1.0.0.tgz")).text() }).toEqual({
       exitCode: 1,
       destination: "an earlier tarball",
     });
@@ -1254,9 +1257,9 @@ describe.skipIf(isWindows)("a failed pack leaves no tarball behind", () => {
       "unreadable.js": "module.exports = 2;",
       "artifacts/earlier.tgz": "an earlier tarball",
     });
-    await symlink(join("artifacts", "earlier.tgz"), join(dir, "latest.tgz"));
+    await symlink(join("artifacts", "earlier.tgz"), join(String(dir), "latest.tgz"));
     using unprivileged = unprivilegedSpawnOptions(String(dir));
-    await chmod(join(dir, "unreadable.js"), 0o000);
+    await chmod(join(String(dir), "unreadable.js"), 0o000);
 
     await using proc = spawn({
       cmd: [bunExe(), "pm", "pack", "--filename=latest.tgz"],
@@ -1270,7 +1273,7 @@ describe.skipIf(isWindows)("a failed pack leaves no tarball behind", () => {
     const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(err).toContain('EACCES: Permission denied: failed to open file: "unreadable.js"');
-    expect({ exitCode, earlier: await file(join(dir, "artifacts", "earlier.tgz")).text() }).toEqual({
+    expect({ exitCode, earlier: await file(join(String(dir), "artifacts", "earlier.tgz")).text() }).toEqual({
       exitCode: 1,
       earlier: "an earlier tarball",
     });
@@ -1294,27 +1297,27 @@ describe.concurrent("something already exists at the tarball's destination", () 
       "pkg/out": {},
       ...(targetExists ? { "other.txt": "as it was" } : {}),
     });
-    const tarball = join(dir, "pkg", args.length ? "out" : "", "pack-over-1.0.0.tgz");
-    await symlink(join(dir, "other.txt"), tarball, "file");
+    const tarball = join(String(dir), "pkg", args.length ? "out" : "", "pack-over-1.0.0.tgz");
+    await symlink(join(String(dir), "other.txt"), tarball, "file");
 
-    const { err, exitCode } = await runPack(join(dir, "pkg"), args);
+    const { err, exitCode } = await runPack(join(String(dir), "pkg"), args);
     expect(err).toBe("");
     expect((await lstat(tarball)).isSymbolicLink()).toBe(false);
     expect(tarballEntries(tarball)).toEqual(entries);
     expect(await sortedNames(dir)).toEqual(targetExists ? ["other.txt", "pkg"] : ["pkg"]);
-    if (targetExists) expect(await file(join(dir, "other.txt")).text()).toBe("as it was");
+    if (targetExists) expect(await file(join(String(dir), "other.txt")).text()).toBe("as it was");
     expect(exitCode).toBe(0);
   });
 
   test("a symlink that --filename points to stays a symlink", async () => {
     using dir = tempDir("pack-over-typed-link", { ...files, "pkg/artifacts/earlier.tgz": "an earlier tarball" });
-    const link = join(dir, "pkg", "latest.tgz");
+    const link = join(String(dir), "pkg", "latest.tgz");
     await symlink(join("artifacts", "earlier.tgz"), link, "file");
 
-    const { err, exitCode } = await runPack(join(dir, "pkg"), ["--filename=latest.tgz"]);
+    const { err, exitCode } = await runPack(join(String(dir), "pkg"), ["--filename=latest.tgz"]);
     expect(err).toBe("");
     expect((await lstat(link)).isSymbolicLink()).toBe(true);
-    expect(tarballEntries(join(dir, "pkg", "artifacts", "earlier.tgz"))).toEqual(entries);
+    expect(tarballEntries(join(String(dir), "pkg", "artifacts", "earlier.tgz"))).toEqual(entries);
     expect(exitCode).toBe(0);
   });
 
@@ -1322,11 +1325,11 @@ describe.concurrent("something already exists at the tarball's destination", () 
   test.serial.skipIf(isWindows)("a writable file in a read-only folder", async () => {
     using dir = tempDir("pack-over-locked", { ...files, "pkg/out/pack-over-1.0.0.tgz": "an earlier tarball" });
     using unprivileged = unprivilegedSpawnOptions(String(dir));
-    await chmod(join(dir, "pkg", "out"), 0o555);
+    await chmod(join(String(dir), "pkg", "out"), 0o555);
     try {
       await using proc = spawn({
         cmd: [bunExe(), "pm", "pack", "--quiet", "--destination=out"],
-        cwd: join(dir, "pkg"),
+        cwd: join(String(dir), "pkg"),
         stdout: "pipe",
         stderr: "pipe",
         stdin: "ignore",
@@ -1335,19 +1338,19 @@ describe.concurrent("something already exists at the tarball's destination", () 
       });
       const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(err).toBe("");
-      expect(tarballEntries(join(dir, "pkg", "out", "pack-over-1.0.0.tgz"))).toEqual(entries);
+      expect(tarballEntries(join(String(dir), "pkg", "out", "pack-over-1.0.0.tgz"))).toEqual(entries);
       expect(exitCode).toBe(0);
     } finally {
-      await chmod(join(dir, "pkg", "out"), 0o755);
+      await chmod(join(String(dir), "pkg", "out"), 0o755);
     }
   });
 
   test.skipIf(isWindows)("a file keeps its mode", async () => {
     using dir = tempDir("pack-over-mode", { ...files, "pkg/pack-over-1.0.0.tgz": "an earlier tarball" });
-    const tarball = join(dir, "pkg", "pack-over-1.0.0.tgz");
+    const tarball = join(String(dir), "pkg", "pack-over-1.0.0.tgz");
     await chmod(tarball, 0o600);
 
-    const { err, exitCode } = await runPack(join(dir, "pkg"));
+    const { err, exitCode } = await runPack(join(String(dir), "pkg"));
     expect(err).toBe("");
     expect(tarballEntries(tarball)).toEqual(entries);
     expect((await lstat(tarball)).mode & 0o777).toBe(0o600);
@@ -1376,11 +1379,11 @@ test.concurrent.each([{}, { files: ["*"] }])("leftovers of a killed pack aren't 
   while (killed.exitCode === null && (await readdir(dir)).length === before.length) {}
   killed.kill("SIGKILL");
   await killed.exited;
-  await rm(join(dir, "pack-killed-1.0.0.tgz"), { force: true });
+  await rm(join(String(dir), "pack-killed-1.0.0.tgz"), { force: true });
 
   const { err, exitCode } = await runPack(dir, ["--gzip-level=0"]);
   expect(err).toBe("");
-  expect(tarballEntries(join(dir, "pack-killed-1.0.0.tgz")).sort()).toEqual([
+  expect(tarballEntries(join(String(dir), "pack-killed-1.0.0.tgz")).sort()).toEqual([
     "package/big.bin",
     "package/index.js",
     "package/package.json",
@@ -1394,7 +1397,7 @@ test.concurrent.skipIf(!isLinux)("a file that gets shorter while it is read fail
     "package.json": JSON.stringify({ name: "pack-shorter", version: "1.0.0" }),
     "bundle.js": randomBytes(32 * 1024 * 1024),
   });
-  const bundle = realpathSync(join(dir, "bundle.js"));
+  const bundle = realpathSync(join(String(dir), "bundle.js"));
 
   await using proc = spawn({
     cmd: [bunExe(), "pm", "pack"],
@@ -1430,7 +1433,7 @@ test.concurrent("peak memory does not grow with the size of the tarball", async 
   });
 
   async function peakMemory(size: number) {
-    await truncate(join(dir, "zeroes.bin"), size);
+    await truncate(join(String(dir), "zeroes.bin"), size);
     const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
       cmd: [bunExe(), "pm", "pack", "--quiet", "--gzip-level=0"],
       cwd: String(dir),
@@ -1438,7 +1441,7 @@ test.concurrent("peak memory does not grow with the size of the tarball", async 
     expect(stderr).toBe("");
     expect(stdout).toBe("pack-memory-1.0.0.tgz\n");
     expect(exitCode).toBe(0);
-    expect(file(join(dir, "pack-memory-1.0.0.tgz")).size).toBeGreaterThan(size);
+    expect(file(join(String(dir), "pack-memory-1.0.0.tgz")).size).toBeGreaterThan(size);
     return maxRSS;
   }
 
@@ -1475,7 +1478,7 @@ test.concurrent("shasum and integrity are consistent", async () => {
   `);
   expect(first.exitCode).toBe(0);
 
-  const tarball = readTarball(join(dir, "pack-shasum-1.1.1.tgz"));
+  const tarball = readTarball(join(String(dir), "pack-shasum-1.1.1.tgz"));
   expect(entryNames(tarball)).toEqual(["package/package.json", "package/index.js"]);
   expect(first.stdout).toContain(`\nShasum: ${tarball.shasum}\n`);
   // the summary shortens the integrity to its first 13 and last 15 characters
@@ -1483,12 +1486,12 @@ test.concurrent("shasum and integrity are consistent", async () => {
     `\nIntegrity: sha512-${tarball.integrity.slice(0, 13)}[...]${tarball.integrity.slice(-15)}\n`,
   );
 
-  await rm(join(dir, "pack-shasum-1.1.1.tgz"));
+  await rm(join(String(dir), "pack-shasum-1.1.1.tgz"));
 
   // the same tree packs to the same bytes
   const second = await runPack(dir);
   expect(second).toEqual(first);
-  expect(readTarball(join(dir, "pack-shasum-1.1.1.tgz"))).toEqual(tarball);
+  expect(readTarball(join(String(dir), "pack-shasum-1.1.1.tgz"))).toEqual(tarball);
 });
 
 describe.concurrent("workspaces", () => {
@@ -1502,7 +1505,7 @@ describe.concurrent("workspaces", () => {
   test("in a workspace", async () => {
     using dir = tempDir("pack-workspace", basicWorkspace);
 
-    const { out, err, exitCode } = await runPack(dir, [], join(dir, "pkgs", "pkg1"));
+    const { out, err, exitCode } = await runPack(dir, [], join(String(dir), "pkgs", "pkg1"));
     expect(err).toBe("");
     expect(out).toMatchInlineSnapshot(`
       "bun pack <version> (<revision>)
@@ -1520,7 +1523,7 @@ describe.concurrent("workspaces", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pkgs", "pkg1", "pkg1-1.1.1.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pkgs", "pkg1", "pkg1-1.1.1.tgz"))).toEqual([
       "package/package.json",
       "package/index.js",
     ]);
@@ -1529,7 +1532,7 @@ describe.concurrent("workspaces", () => {
   test("in a workspace subdirectory", async () => {
     using dir = tempDir("pack-workspace-subdir", { ...basicWorkspace, "pkgs/pkg1/subdir": {} });
 
-    const { out, err, exitCode } = await runPack(dir, [], join(dir, "pkgs", "pkg1", "subdir"));
+    const { out, err, exitCode } = await runPack(dir, [], join(String(dir), "pkgs", "pkg1", "subdir"));
     expect(err).toBe("");
     expect(out).toMatchInlineSnapshot(`
       "bun pack <version> (<revision>)
@@ -1547,7 +1550,7 @@ describe.concurrent("workspaces", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pkgs", "pkg1", "pkg1-1.1.1.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pkgs", "pkg1", "pkg1-1.1.1.tgz"))).toEqual([
       "package/package.json",
       "package/index.js",
     ]);
@@ -1569,7 +1572,7 @@ describe.concurrent("workspaces", () => {
           },
         }),
       });
-      const pkg1Dir = join(dir, "pkgs", "pkg1");
+      const pkg1Dir = join(String(dir), "pkgs", "pkg1");
       // npm_config_local_prefix is the workspace root, as with npm.
       const memberEnv = `pkg1 1.1.1 ${join(pkg1Dir, "package.json")} ${dir}`;
       return { dir, pkg1Dir, expectedLines: [`prepack ${memberEnv}`, `postpack ${memberEnv}`] };
@@ -1636,7 +1639,7 @@ describe.concurrent("workspaces", () => {
     `);
     expect(exitCode).toBe(0);
 
-    const tarball = readTarball(join(dir, "pack-workspace-protocol-2.3.4.tgz"));
+    const tarball = readTarball(join(String(dir), "pack-workspace-protocol-2.3.4.tgz"));
     expect(entryNames(tarball)).toEqual(["package/package.json", "package/pkgs/pkg1/package.json", "package/root.js"]);
     expect(JSON.parse(tarball.entries[0].contents)).toEqual({
       name: "pack-workspace-protocol",
@@ -1699,7 +1702,7 @@ describe.concurrent("workspaces", () => {
       ]);
       expect(exitCode).toBe(0);
 
-      const tarball = readTarball(join(dir, "pack-workspace-protocol-with-lockfile-2.5.6.tgz"));
+      const tarball = readTarball(join(String(dir), "pack-workspace-protocol-with-lockfile-2.5.6.tgz"));
       expect(entryNames(tarball)).toEqual([
         "package/package.json",
         "package/pkgs/pkg1/package.json",
@@ -1732,11 +1735,11 @@ describe.concurrent("workspaces", () => {
       }),
     });
 
-    const { err, exitCode } = await runPack(dir, [], join(dir, "pkgs", "pkg1"));
+    const { err, exitCode } = await runPack(dir, [], join(String(dir), "pkgs", "pkg1"));
     expect(err).toBe("");
     expect(exitCode).toBe(0);
 
-    const tarball = readTarball(join(dir, "pkgs", "pkg1", "pkg1-1.0.0.tgz"));
+    const tarball = readTarball(join(String(dir), "pkgs", "pkg1", "pkg1-1.0.0.tgz"));
     expect(entryNames(tarball)).toEqual(["package/package.json"]);
     expect(JSON.parse(tarball.entries[0].contents)).toEqual({
       name: "pkg1",
@@ -1763,7 +1766,7 @@ describe.concurrent("workspaces", () => {
     expect(err).toBe("");
     expect(exitCode).toBe(0);
 
-    const tarball = readTarball(join(dir, "pack-workspace-protocol-no-lockfile-2.2.3.tgz"));
+    const tarball = readTarball(join(String(dir), "pack-workspace-protocol-no-lockfile-2.2.3.tgz"));
     expect(entryNames(tarball)).toEqual(["package/package.json", "package/pkgs/pkg1/package.json", "package/root.js"]);
     expect(JSON.parse(tarball.entries[0].contents)).toEqual({
       name: "pack-workspace-protocol-no-lockfile",
@@ -1778,31 +1781,31 @@ describe.concurrent("workspaces", () => {
   test("fails when no workspace with a version matches a workspace:* dependency", async () => {
     using dir = tempDir("pack-workspace-no-match", {});
     await Promise.all([
-      write(join(dir, "package.json"), JSON.stringify({ name: "root", workspaces: ["pkgs/*"] })),
-      write(join(dir, "pkgs", "unversioned", "package.json"), JSON.stringify({ name: "unversioned" })),
+      write(join(String(dir), "package.json"), JSON.stringify({ name: "root", workspaces: ["pkgs/*"] })),
+      write(join(String(dir), "pkgs", "unversioned", "package.json"), JSON.stringify({ name: "unversioned" })),
       write(
-        join(dir, "pkgs", "app1", "package.json"),
+        join(String(dir), "pkgs", "app1", "package.json"),
         JSON.stringify({ name: "app1", version: "1.0.0", dependencies: { "not-a-workspace": "workspace:*" } }),
       ),
       write(
-        join(dir, "pkgs", "app2", "package.json"),
+        join(String(dir), "pkgs", "app2", "package.json"),
         JSON.stringify({ name: "app2", version: "1.0.0", devDependencies: { "unversioned": "workspace:^" } }),
       ),
     ]);
 
-    const app1 = await packExpectError(join(dir, "pkgs", "app1"));
+    const app1 = await packExpectError(join(String(dir), "pkgs", "app1"));
     expect(app1.err).toContain('error: Failed to resolve workspace version for "not-a-workspace" in `dependencies` (');
     expect(app1.err).toContain(
       'package.json" has no workspace named "not-a-workspace", or its package.json has no version).',
     );
-    expect(await exists(join(dir, "pkgs", "app1", "app1-1.0.0.tgz"))).toBeFalse();
+    expect(await exists(join(String(dir), "pkgs", "app1", "app1-1.0.0.tgz"))).toBeFalse();
 
-    const app2 = await packExpectError(join(dir, "pkgs", "app2"));
+    const app2 = await packExpectError(join(String(dir), "pkgs", "app2"));
     expect(app2.err).toContain('error: Failed to resolve workspace version for "unversioned" in `devDependencies` (');
     expect(app2.err).toContain(
       'package.json" has no workspace named "unversioned", or its package.json has no version).',
     );
-    expect(await exists(join(dir, "pkgs", "app2", "app2-1.0.0.tgz"))).toBeFalse();
+    expect(await exists(join(String(dir), "pkgs", "app2", "app2-1.0.0.tgz"))).toBeFalse();
   });
 
   // https://github.com/oven-sh/bun/issues/20477: a release bumps versions (`bun pm version`,
@@ -1827,22 +1830,22 @@ describe.concurrent("workspaces", () => {
         peerDependenciesMeta: { react: { optional: true } },
       });
     using dir = tempDir("pack-workspace-stale-lockfile", {});
-    const coreDir = join(dir, "packages", "core");
-    const utilsDir = join(dir, "packages", "utils");
+    const coreDir = join(String(dir), "packages", "core");
+    const utilsDir = join(String(dir), "packages", "utils");
 
     await Promise.all([
-      write(join(dir, "package.json"), rootPackageJson("^18.3.1")),
+      write(join(String(dir), "package.json"), rootPackageJson("^18.3.1")),
       write(join(coreDir, "package.json"), corePackageJson("1.2.3")),
       write(join(utilsDir, "package.json"), utilsPackageJson("0.4.0")),
     ]);
     await runBunInstall(bunEnv, String(dir));
 
     await Promise.all([
-      write(join(dir, "package.json"), rootPackageJson("^19.1.0")),
+      write(join(String(dir), "package.json"), rootPackageJson("^19.1.0")),
       write(join(coreDir, "package.json"), corePackageJson("1.3.0")),
       write(join(utilsDir, "package.json"), utilsPackageJson("0.4.1")),
     ]);
-    const lockfile = await file(join(dir, "bun.lock")).text();
+    const lockfile = await file(join(String(dir), "bun.lock")).text();
     expect(lockfile).toContain('"version": "1.2.3"');
     expect(lockfile).toContain('"react": "^18.3.1"');
 
@@ -1863,7 +1866,7 @@ describe.concurrent("workspaces", () => {
     using dir = tempDir("pack-workspace-root", {});
     await Promise.all([
       write(
-        join(dir, "package.json"),
+        join(String(dir), "package.json"),
         JSON.stringify({
           name: "pack-workspace-root",
           version: "2.0.0",
@@ -1871,25 +1874,25 @@ describe.concurrent("workspaces", () => {
           dependencies: { "pkg1": "workspace:*" },
         }),
       ),
-      write(join(dir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.1.1" })),
+      write(join(String(dir), "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.1.1" })),
     ]);
     await runBunInstall(bunEnv, String(dir));
-    await write(join(dir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.2.0" }));
+    await write(join(String(dir), "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.2.0" }));
 
     await pack(dir, bunEnv);
 
-    const tarball = readTarball(join(dir, "pack-workspace-root-2.0.0.tgz"));
+    const tarball = readTarball(join(String(dir), "pack-workspace-root-2.0.0.tgz"));
     expect(JSON.parse(tarball.entries[0].contents).dependencies).toEqual({ "pkg1": "1.2.0" });
   });
 
   test("sees the versions a prepack script writes to other workspaces", async () => {
     using dir = tempDir("pack-workspace-prepack-bump", {});
-    const pkg1PackageJson = join(dir, "pkgs", "pkg1", "package.json");
+    const pkg1PackageJson = join(String(dir), "pkgs", "pkg1", "package.json");
     await Promise.all([
-      write(join(dir, "package.json"), JSON.stringify({ name: "root", workspaces: ["pkgs/*"] })),
+      write(join(String(dir), "package.json"), JSON.stringify({ name: "root", workspaces: ["pkgs/*"] })),
       write(pkg1PackageJson, JSON.stringify({ name: "pkg1", version: "1.0.0" })),
       write(
-        join(dir, "pkgs", "app", "package.json"),
+        join(String(dir), "pkgs", "app", "package.json"),
         JSON.stringify({
           name: "app",
           version: "1.0.0",
@@ -1898,15 +1901,15 @@ describe.concurrent("workspaces", () => {
         }),
       ),
       write(
-        join(dir, "pkgs", "app", "bump-pkg1.js"),
+        join(String(dir), "pkgs", "app", "bump-pkg1.js"),
         `require("fs").writeFileSync(${JSON.stringify(pkg1PackageJson)}, JSON.stringify({ name: "pkg1", version: "2.0.0" }));`,
       ),
     ]);
     await runBunInstall(bunEnv, String(dir));
 
-    await pack(join(dir, "pkgs", "app"), bunEnv);
+    await pack(join(String(dir), "pkgs", "app"), bunEnv);
 
-    const tarball = readTarball(join(dir, "pkgs", "app", "app-1.0.0.tgz"));
+    const tarball = readTarball(join(String(dir), "pkgs", "app", "app-1.0.0.tgz"));
     expect(JSON.parse(tarball.entries[0].contents).dependencies).toEqual({ "pkg1": "2.0.0" });
   });
 
@@ -1940,15 +1943,15 @@ ${">>>>>>>"} feature
     test(`packs a package without workspace specs next to ${label}`, async () => {
       using dir = tempDir("pack-bad-lockfile", {});
       await Promise.all([
-        write(join(dir, "package.json"), JSON.stringify({ name: "pack-bad-lockfile", version: "1.0.0" })),
-        write(join(dir, "index.js"), "module.exports = 1"),
-        write(join(dir, lockfile), contents),
+        write(join(String(dir), "package.json"), JSON.stringify({ name: "pack-bad-lockfile", version: "1.0.0" })),
+        write(join(String(dir), "index.js"), "module.exports = 1"),
+        write(join(String(dir), lockfile), contents),
       ]);
 
       const { err } = await pack(dir, bunEnv);
       expect(err).toBe("");
 
-      const tarball = readTarball(join(dir, "pack-bad-lockfile-1.0.0.tgz"));
+      const tarball = readTarball(join(String(dir), "pack-bad-lockfile-1.0.0.tgz"));
       expect(tarball.entries).toMatchObject([
         { "pathname": "package/package.json" },
         { "pathname": "package/index.js" },
@@ -1958,19 +1961,19 @@ ${">>>>>>>"} feature
     test(`resolves workspace:* next to ${label}`, async () => {
       using dir = tempDir("pack-workspace-bad-lockfile", {});
       await Promise.all([
-        write(join(dir, "package.json"), JSON.stringify({ name: "root", workspaces: ["pkgs/*"] })),
-        write(join(dir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.1.1" })),
+        write(join(String(dir), "package.json"), JSON.stringify({ name: "root", workspaces: ["pkgs/*"] })),
+        write(join(String(dir), "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.1.1" })),
         write(
-          join(dir, "pkgs", "app", "package.json"),
+          join(String(dir), "pkgs", "app", "package.json"),
           JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "pkg1": "workspace:*" } }),
         ),
-        write(join(dir, lockfile), contents),
+        write(join(String(dir), lockfile), contents),
       ]);
 
-      const { err } = await pack(join(dir, "pkgs", "app"), bunEnv);
+      const { err } = await pack(join(String(dir), "pkgs", "app"), bunEnv);
       expect(err).toBe("");
 
-      const tarball = readTarball(join(dir, "pkgs", "app", "app-1.0.0.tgz"));
+      const tarball = readTarball(join(String(dir), "pkgs", "app", "app-1.0.0.tgz"));
       expect(JSON.parse(tarball.entries[0].contents).dependencies).toEqual({ "pkg1": "1.1.1" });
     });
   }
@@ -1999,15 +2002,15 @@ ${">>>>>>>"} feature
       using dir = tempDir("pack-workspace-unsatisfied-range", files);
       await pack(dir, bunEnv);
 
-      const tarball = readTarball(join(dir, "root-1.0.0.tgz"));
+      const tarball = readTarball(join(String(dir), "root-1.0.0.tgz"));
       expect(JSON.parse(tarball.entries[0].contents).dependencies).toEqual({ "pkg1": "9.9.9", "pkg2": "2.0.0" });
     });
 
     test("packing a member", async () => {
       using dir = tempDir("pack-workspace-unsatisfied-range", files);
-      await pack(join(dir, "pkgs", "app"), bunEnv);
+      await pack(join(String(dir), "pkgs", "app"), bunEnv);
 
-      const tarball = readTarball(join(dir, "pkgs", "app", "app-1.0.0.tgz"));
+      const tarball = readTarball(join(String(dir), "pkgs", "app", "app-1.0.0.tgz"));
       expect(JSON.parse(tarball.entries[0].contents).dependencies).toEqual({ "pkg2": "^2.0.0" });
     });
   });
@@ -2029,17 +2032,17 @@ ${">>>>>>>"} feature
 
     test("fails a pack that has to resolve a workspace: spec, with bun install's error", async () => {
       using dir = tempDir("pack-workspace-missing-entry", files);
-      const { err } = await packExpectError(join(dir, "pkgs", "app"));
+      const { err } = await packExpectError(join(String(dir), "pkgs", "app"));
       expect(err).toContain('error: Workspace not found "pkgs/missing"');
       expect(err).toContain("package.json:1:");
-      expect(await exists(join(dir, "pkgs", "app", "app-1.0.0.tgz"))).toBeFalse();
+      expect(await exists(join(String(dir), "pkgs", "app", "app-1.0.0.tgz"))).toBeFalse();
     });
 
     test("does not affect a pack that has nothing to resolve", async () => {
       using dir = tempDir("pack-workspace-missing-entry", files);
-      const { err } = await pack(join(dir, "pkgs", "plain"), bunEnv);
+      const { err } = await pack(join(String(dir), "pkgs", "plain"), bunEnv);
       expect(err).toBe("");
-      expect(await exists(join(dir, "pkgs", "plain", "plain-1.0.0.tgz"))).toBeTrue();
+      expect(await exists(join(String(dir), "pkgs", "plain", "plain-1.0.0.tgz"))).toBeTrue();
     });
   });
 
@@ -2079,9 +2082,9 @@ ${">>>>>>>"} feature
     // every one of these is a spec `bun install` links
     await runBunInstall(bunEnv, String(dir));
 
-    await pack(join(dir, "pkgs", "ui"), bunEnv);
+    await pack(join(String(dir), "pkgs", "ui"), bunEnv);
 
-    const tarball = readTarball(join(dir, "pkgs", "ui", "acme-ui-2.0.0.tgz"));
+    const tarball = readTarball(join(String(dir), "pkgs", "ui", "acme-ui-2.0.0.tgz"));
     expect(JSON.parse(tarball.entries[0].contents)).toEqual({
       name: "@acme/ui",
       version: "2.0.0",
@@ -2108,7 +2111,7 @@ ${">>>>>>>"} feature
   test("replaces workspace: directories in the workspace root with the versions in the workspaces' package.json files", async () => {
     using dir = createDirectoryWorkspace({});
     await write(
-      join(dir, "package.json"),
+      join(String(dir), "package.json"),
       JSON.stringify({
         name: "pack-workspace-root-directories",
         version: "3.0.0",
@@ -2121,11 +2124,14 @@ ${">>>>>>>"} feature
     );
     await runBunInstall(bunEnv, String(dir));
     // bumped after the install, so bun.lock still says 0.5.0
-    await write(join(dir, "pkgs", "plain", "package.json"), JSON.stringify({ name: "plain", version: "0.6.0" }));
+    await write(
+      join(String(dir), "pkgs", "plain", "package.json"),
+      JSON.stringify({ name: "plain", version: "0.6.0" }),
+    );
 
     await pack(dir, bunEnv);
 
-    const tarball = readTarball(join(dir, "pack-workspace-root-directories-3.0.0.tgz"));
+    const tarball = readTarball(join(String(dir), "pack-workspace-root-directories-3.0.0.tgz"));
     expect(tarball.entries[0]).toMatchObject({ pathname: "package/package.json" });
     expect(JSON.parse(tarball.entries[0].contents).dependencies).toEqual({
       "core": "npm:@acme/core@1.2.3",
@@ -2140,7 +2146,7 @@ ${">>>>>>>"} feature
     using dir = tempDir("pack-workspace-bare-directory", {});
     await Promise.all([
       write(
-        join(dir, "package.json"),
+        join(String(dir), "package.json"),
         JSON.stringify({
           name: "pack-workspace-bare-directory",
           version: "3.0.0",
@@ -2148,14 +2154,14 @@ ${">>>>>>>"} feature
           dependencies: { "bare": "workspace:core", "@acme/core": "workspace:core", "plain": "workspace:0.x" },
         }),
       ),
-      write(join(dir, "core", "package.json"), JSON.stringify({ name: "@acme/core", version: "1.2.3" })),
-      write(join(dir, "plain", "package.json"), JSON.stringify({ name: "plain", version: "0.5.0" })),
+      write(join(String(dir), "core", "package.json"), JSON.stringify({ name: "@acme/core", version: "1.2.3" })),
+      write(join(String(dir), "plain", "package.json"), JSON.stringify({ name: "plain", version: "0.5.0" })),
     ]);
     await runBunInstall(bunEnv, String(dir));
 
     await pack(dir, bunEnv);
 
-    const tarball = readTarball(join(dir, "pack-workspace-bare-directory-3.0.0.tgz"));
+    const tarball = readTarball(join(String(dir), "pack-workspace-bare-directory-3.0.0.tgz"));
     expect(tarball.entries[0]).toMatchObject({ pathname: "package/package.json" });
     expect(JSON.parse(tarball.entries[0].contents).dependencies).toEqual({
       "bare": "npm:@acme/core@1.2.3",
@@ -2169,9 +2175,9 @@ ${">>>>>>>"} feature
       dependencies: { "core": "workspace:../core", "plain": "workspace:../plain" },
     });
 
-    await pack(join(dir, "pkgs", "ui"), bunEnv);
+    await pack(join(String(dir), "pkgs", "ui"), bunEnv);
 
-    const tarball = readTarball(join(dir, "pkgs", "ui", "acme-ui-2.0.0.tgz"));
+    const tarball = readTarball(join(String(dir), "pkgs", "ui", "acme-ui-2.0.0.tgz"));
     expect(JSON.parse(tarball.entries[0].contents).dependencies).toEqual({
       "core": "npm:@acme/core@1.2.3",
       "plain": "0.5.0",
@@ -2207,9 +2213,9 @@ ${">>>>>>>"} feature
     // every one of these is a spec `bun install` links
     await runBunInstall(bunEnv, String(dir));
 
-    await pack(join(dir, "pkgs", "ui"), bunEnv);
+    await pack(join(String(dir), "pkgs", "ui"), bunEnv);
 
-    const tarball = readTarball(join(dir, "pkgs", "ui", "acme-ui-2.0.0.tgz"));
+    const tarball = readTarball(join(String(dir), "pkgs", "ui", "acme-ui-2.0.0.tgz"));
     expect(JSON.parse(tarball.entries[0].contents)).toEqual({
       name: "@acme/ui",
       version: "2.0.0",
@@ -2243,19 +2249,22 @@ ${">>>>>>>"} feature
     });
     await runBunInstall(bunEnv, String(dir));
     // bumped after the install, so bun.lock still says 1.2.3
-    await write(join(dir, "pkgs", "core", "package.json"), JSON.stringify({ name: "@acme/core", version: "1.3.0" }));
+    await write(
+      join(String(dir), "pkgs", "core", "package.json"),
+      JSON.stringify({ name: "@acme/core", version: "1.3.0" }),
+    );
 
-    await pack(join(dir, "pkgs", "ui"), bunEnv);
-    const installed = readTarball(join(dir, "pkgs", "ui", "acme-ui-2.0.0.tgz"));
+    await pack(join(String(dir), "pkgs", "ui"), bunEnv);
+    const installed = readTarball(join(String(dir), "pkgs", "ui", "acme-ui-2.0.0.tgz"));
     expect(JSON.parse(installed.entries[0].contents).dependencies).toEqual({
       "core": "npm:@acme/core@1.3.0",
       "plain-caret": "npm:plain@^0.5.0",
     });
 
-    await rm(join(dir, "bun.lock"));
-    await rm(join(dir, "pkgs", "ui", "acme-ui-2.0.0.tgz"));
-    await pack(join(dir, "pkgs", "ui"), bunEnv);
-    const uninstalled = readTarball(join(dir, "pkgs", "ui", "acme-ui-2.0.0.tgz"));
+    await rm(join(String(dir), "bun.lock"));
+    await rm(join(String(dir), "pkgs", "ui", "acme-ui-2.0.0.tgz"));
+    await pack(join(String(dir), "pkgs", "ui"), bunEnv);
+    const uninstalled = readTarball(join(String(dir), "pkgs", "ui", "acme-ui-2.0.0.tgz"));
     expect(uninstalled.entries[0].contents).toBe(installed.entries[0].contents);
   });
 
@@ -2264,13 +2273,13 @@ ${">>>>>>>"} feature
       dependencies: { "core": "workspace:@acme/core@*" },
       devDependencies: { "no-version": "workspace:unversioned@^" },
     });
-    await write(join(dir, "pkgs", "unversioned", "package.json"), JSON.stringify({ name: "unversioned" }));
+    await write(join(String(dir), "pkgs", "unversioned", "package.json"), JSON.stringify({ name: "unversioned" }));
 
-    const { err } = await packExpectError(join(dir, "pkgs", "ui"));
+    const { err } = await packExpectError(join(String(dir), "pkgs", "ui"));
     expect(err).toContain(
       'error: Failed to resolve workspace version for "no-version" in `devDependencies` (workspace "unversioned" has no version in package.json).',
     );
-    expect(await exists(join(dir, "pkgs", "ui", "acme-ui-2.0.0.tgz"))).toBeFalse();
+    expect(await exists(join(String(dir), "pkgs", "ui", "acme-ui-2.0.0.tgz"))).toBeFalse();
   });
 
   const notAWorkspaceSpecs = [
@@ -2292,26 +2301,29 @@ ${">>>>>>>"} feature
         dependencies: { "plain": "workspace:../plain" },
         [group]: { [name]: spec },
       });
-      await write(join(dir, "unlisted", "package.json"), JSON.stringify({ name: "unlisted", version: "1.0.0" }));
+      await write(
+        join(String(dir), "unlisted", "package.json"),
+        JSON.stringify({ name: "unlisted", version: "1.0.0" }),
+      );
 
-      const { err } = await packExpectError(join(dir, "pkgs", "ui"));
+      const { err } = await packExpectError(join(String(dir), "pkgs", "ui"));
       expect(err).toContain(`error: Failed to resolve workspace version for "${name}" in \`${group}\` (`);
       expect(err).toContain(
         `package.json" has no workspace named "${reported}" and no workspace in the directory "${spec.slice("workspace:".length)}").`,
       );
-      expect(await exists(join(dir, "pkgs", "ui", "acme-ui-2.0.0.tgz"))).toBeFalse();
+      expect(await exists(join(String(dir), "pkgs", "ui", "acme-ui-2.0.0.tgz"))).toBeFalse();
     });
   }
 
   test("fails when the workspace in a workspace: directory has no version", async () => {
     using dir = createDirectoryWorkspace({ dependencies: { "no-version": "workspace:../unversioned" } });
-    await write(join(dir, "pkgs", "unversioned", "package.json"), JSON.stringify({ name: "unversioned" }));
+    await write(join(String(dir), "pkgs", "unversioned", "package.json"), JSON.stringify({ name: "unversioned" }));
 
-    const { err } = await packExpectError(join(dir, "pkgs", "ui"));
+    const { err } = await packExpectError(join(String(dir), "pkgs", "ui"));
     expect(err).toContain(
       'error: Failed to resolve workspace version for "no-version" in `dependencies` (workspace "unversioned" in "../unversioned" has no version in package.json).',
     );
-    expect(await exists(join(dir, "pkgs", "ui", "acme-ui-2.0.0.tgz"))).toBeFalse();
+    expect(await exists(join(String(dir), "pkgs", "ui", "acme-ui-2.0.0.tgz"))).toBeFalse();
   });
 });
 
@@ -2362,7 +2374,7 @@ tarball: \${fs.existsSync("pack-lifecycle-order-1.1.1.tgz")}\`)`;
   ]);
   expect(exitCode).toBe(0);
 
-  expect(tarballEntries(join(dir, "pack-lifecycle-order-1.1.1.tgz"))).toEqual([
+  expect(tarballEntries(join(String(dir), "pack-lifecycle-order-1.1.1.tgz"))).toEqual([
     "package/package.json",
     "package/prepack.txt",
     "package/prepare.txt",
@@ -2370,9 +2382,9 @@ tarball: \${fs.existsSync("pack-lifecycle-order-1.1.1.tgz")}\`)`;
   ]);
 
   const results = await Promise.all([
-    Bun.file(join(dir, "prepack.txt")).text(),
-    Bun.file(join(dir, "postpack.txt")).text(),
-    Bun.file(join(dir, "prepare.txt")).text(),
+    Bun.file(join(String(dir), "prepack.txt")).text(),
+    Bun.file(join(String(dir), "postpack.txt")).text(),
+    Bun.file(join(String(dir), "prepare.txt")).text(),
   ]);
 
   expect(results).toEqual([
@@ -2424,7 +2436,7 @@ describe.concurrent("lifecycle scripts run the commands in node_modules/.bin", (
       "package.json": JSON.stringify({ name: "root", version: "1.0.0", workspaces: ["pkgs/*"] }),
       "pkgs/member/package.json": JSON.stringify({ name: "member", version: "1.0.0", scripts }),
     });
-    const dirs = { root: String(dir), member: join(dir, "pkgs", "member") };
+    const dirs = { root: String(dir), member: join(String(dir), "pkgs", "member") };
     for (const owner of has) writeBinCommand(dirs[owner], "tool", `tool of the ${owner}`);
 
     const { stdout, err, exitCode } = await runPack(dirs.member, ["--dry-run"]);
@@ -2479,7 +2491,7 @@ test.concurrent("lifecycle script modifying version updates tarball filename (#1
     "package.json",
     "update-version.js",
   ]);
-  const tarball = readTarball(join(dir, "pack-version-update-2.0.0-snapshot.test.tgz"));
+  const tarball = readTarball(join(String(dir), "pack-version-update-2.0.0-snapshot.test.tgz"));
   expect(entryNames(tarball)).toEqual(["package/package.json", "package/index.js", "package/update-version.js"]);
   expect(JSON.parse(tarball.entries[0].contents)).toEqual({
     name: "pack-version-update",
@@ -2567,7 +2579,7 @@ describe.concurrent("bundledDependencies", () => {
     ]);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-bundled-4.4.4.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-bundled-4.4.4.tgz"))).toEqual([
       "package/package.json",
       "package/node_modules/dep1/package.json",
     ]);
@@ -2609,7 +2621,7 @@ describe.concurrent("bundledDependencies", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-bundled-4.4.4.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-bundled-4.4.4.tgz"))).toEqual([
       "package/package.json",
       "package/node_modules/dep1/package.json",
     ]);
@@ -2647,7 +2659,7 @@ describe.concurrent("bundledDependencies", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-bundled-4.4.4.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-bundled-4.4.4.tgz"))).toEqual([
       "package/package.json",
       "package/node_modules/@oven/bun/package.json",
     ]);
@@ -2718,7 +2730,7 @@ describe.concurrent("bundledDependencies", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-resolved-bundled-dep-5.5.5.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-resolved-bundled-dep-5.5.5.tgz"))).toEqual([
       "package/package.json",
       "package/node_modules/dep1/node_modules/dep3/package.json",
       "package/node_modules/dep1/package.json",
@@ -2772,7 +2784,7 @@ describe.concurrent("bundledDependencies", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-resolve-scoped-6.6.6.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-resolve-scoped-6.6.6.tgz"))).toEqual([
       "package/package.json",
       "package/node_modules/@scoped/dep1/node_modules/@scoped/dep3/package.json",
       "package/node_modules/@scoped/dep1/package.json",
@@ -2816,7 +2828,7 @@ describe.concurrent("bundledDependencies", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-bundled-same-name-across-scopes-1.0.0.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-bundled-same-name-across-scopes-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/node_modules/@scope/bundled/package.json",
       "package/node_modules/bundled/package.json",
@@ -2852,7 +2864,7 @@ describe.concurrent("bundledDependencies", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-bundled-dep-not-dir-4.5.6.tgz"))).toEqual(["package/package.json"]);
+    expect(tarballEntries(join(String(dir), "pack-bundled-dep-not-dir-4.5.6.tgz"))).toEqual(["package/package.json"]);
   });
 
   // No key is `name` or `@scope/name`. Without the check, each of the first eight opens a directory that exists. `\` is
@@ -2888,7 +2900,7 @@ describe.concurrent("bundledDependencies", () => {
       "pkg/node_modules/@scope/.hidden/index.js": indexJs,
       "pkg/node_modules/.bin/tool": "#!/usr/bin/env bun\n",
     });
-    const pkg = join(dir, "pkg");
+    const pkg = join(String(dir), "pkg");
 
     const { out, err, exitCode } = await runPack(pkg);
     expect(err).toBe("");
@@ -2921,7 +2933,7 @@ describe.concurrent("bundledDependencies", () => {
     expect(err).toBe("");
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-bundled-dep-capitals-1.0.0.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-bundled-dep-capitals-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/node_modules/@Scope/Name/package.json",
       "package/node_modules/JSONStream/package.json",
@@ -2952,7 +2964,7 @@ describe.concurrent("bundledDependencies", () => {
       expect(err).toBe("");
       expect(exitCode).toBe(0);
 
-      expect(tarballEntries(join(dir, "pack-bundled-dep-name-1.0.0.tgz")).sort()).toEqual(
+      expect(tarballEntries(join(String(dir), "pack-bundled-dep-name-1.0.0.tgz")).sort()).toEqual(
         [
           "package/package.json",
           `package/node_modules/${host}/package.json`,
@@ -3011,7 +3023,7 @@ describe.concurrent("bundledDependencies", () => {
     const { out, err, exitCode } = await runPack(dir);
     expect(err).toBe("");
     expect(out.split("\n").filter(line => line.startsWith("bundled "))).toEqual(["bundled dep1"]);
-    expect(tarballEntries(join(dir, "pack-bundled-absent-1.0.0.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-bundled-absent-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/node_modules/dep1/package.json",
     ]);
@@ -3033,7 +3045,7 @@ describe.concurrent("bundledDependencies", () => {
       "node_modules/z/package.json": JSON.stringify({ name: "z", version: "1.0.0" }),
       "node_modules/not-bundled/package.json": JSON.stringify({ name: "not-bundled", version: "1.0.0" }),
     });
-    const lib = join(dir, "packages", "lib");
+    const lib = join(String(dir), "packages", "lib");
 
     const { out, err, exitCode } = await runPack(lib);
     expect(err).toBe("");
@@ -3077,16 +3089,19 @@ describe.concurrent("bundledDependencies", () => {
       "node_modules/.bun/y@1.0.0/node_modules/y/package.json": JSON.stringify({ name: "y", version: "1.0.0" }),
       "node_modules/.bun/y@2.0.0/node_modules/y/package.json": JSON.stringify({ name: "y", version: "2.0.0" }),
     });
-    await symlink(join(dir, entry, name), join(dir, "node_modules", name));
-    await symlink(join(dir, "node_modules/.bun/y@1.0.0/node_modules/y"), join(dir, entry, "y"));
+    await symlink(join(String(dir), entry, name), join(String(dir), "node_modules", name));
+    await symlink(join(String(dir), "node_modules/.bun/y@1.0.0/node_modules/y"), join(String(dir), entry, "y"));
     if ("y" in own)
-      await symlink(join(dir, "node_modules/.bun/y@2.0.0/node_modules/y"), join(dir, "node_modules", "y"));
+      await symlink(
+        join(String(dir), "node_modules/.bun/y@2.0.0/node_modules/y"),
+        join(String(dir), "node_modules", "y"),
+      );
 
     const { err, exitCode } = await runPack(dir);
     expect(err).toBe("");
     expect(exitCode).toBe(0);
 
-    const tarball = readTarball(join(dir, "pack-bundled-store-1.0.0.tgz"));
+    const tarball = readTarball(join(String(dir), "pack-bundled-store-1.0.0.tgz"));
     expect(entryNames(tarball).sort()).toEqual(
       [
         "package/package.json",
@@ -3174,9 +3189,9 @@ describe.concurrent("bundledDependencies", () => {
         "vendor/not.json": notJson,
         "node_modules/@s": {},
       });
-      if (link) await symlink(link, join(dir, "vendor", "other", "package.json"), "file");
+      if (link) await symlink(link, join(String(dir), "vendor", "other", "package.json"), "file");
       // A junction on Windows. Elsewhere, "junction" is ignored and a plain symlink is created.
-      await symlink(join(dir, "vendor", "other"), join(dir, "node_modules", name), "junction");
+      await symlink(join(String(dir), "vendor", "other"), join(String(dir), "node_modules", name), "junction");
       return dir;
     }
 
@@ -3186,7 +3201,7 @@ describe.concurrent("bundledDependencies", () => {
       expect(err).toBe("");
       expect(exitCode).toBe(0);
       const prefix = `package/node_modules/${name}/`;
-      return tarballEntries(join(dir, "lib-1.0.0.tgz"))
+      return tarballEntries(join(String(dir), "lib-1.0.0.tgz"))
         .filter(entry => entry.startsWith(prefix))
         .map(entry => entry.slice(prefix.length));
     }
@@ -3312,15 +3327,19 @@ describe.concurrent("bundledDependencies", () => {
         }),
       });
       // Junctions on Windows, plain symlinks elsewhere.
-      await symlink(join(dir, "vendor", "host"), join(dir, "node_modules", "host"), "junction");
-      await symlink(join(dir, "vendor", "nested"), join(dir, "vendor", "host", "node_modules", "nested"), "junction");
-      await symlink(join(dir, "vendor", "hoisted"), join(dir, "node_modules", "hoisted"), "junction");
+      await symlink(join(String(dir), "vendor", "host"), join(String(dir), "node_modules", "host"), "junction");
+      await symlink(
+        join(String(dir), "vendor", "nested"),
+        join(String(dir), "vendor", "host", "node_modules", "nested"),
+        "junction",
+      );
+      await symlink(join(String(dir), "vendor", "hoisted"), join(String(dir), "node_modules", "hoisted"), "junction");
 
       const { err, exitCode } = await runPack(dir);
       expect(err).toBe("");
       expect(exitCode).toBe(0);
 
-      expect(tarballEntries(join(dir, "lib-1.0.0.tgz"))).toEqual([
+      expect(tarballEntries(join(String(dir), "lib-1.0.0.tgz"))).toEqual([
         "package/package.json",
         "package/index.js",
         ...kept.map(file => `package/node_modules/hoisted/${file}`),
@@ -3369,7 +3388,7 @@ describe.concurrent("bundledDependencies", () => {
         "app/index.js": indexJs,
         [folder]: { ...sources, ...ignored },
       });
-      const app = join(dir, "app");
+      const app = join(String(dir), "app");
       await runBunInstall(bunEnv, app);
 
       expect(await bundledFiles(app)).toEqual(expected);
@@ -3408,7 +3427,7 @@ describe.concurrent("bundledDependencies", () => {
     expect(err).toBe("");
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "lib-1.0.0.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "lib-1.0.0.tgz"))).toEqual([
       "package/package.json",
       ...(manifest === undefined ? [] : ["package/node_modules/dep/package.json"]),
       "package/node_modules/dep/secret.txt",
@@ -3430,7 +3449,7 @@ describe.concurrent("bundledDependencies", () => {
       "packages/app/node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
       "packages/fixture/package.json": sibling,
     });
-    const app = join(dir, "packages", "app");
+    const app = join(String(dir), "packages", "app");
 
     const { err, exitCode } = await runPack(app);
     expect(err).toBe("");
@@ -3455,9 +3474,9 @@ describe.concurrent("bundledDependencies", () => {
         }),
       });
 
-      const { err, exitCode } = await runPack(join(dir, "project"));
+      const { err, exitCode } = await runPack(join(String(dir), "project"));
       expect(err).toBe('error: bundled dependency "above" is not installed');
-      expect(await sortedNames(join(dir, "project"))).toEqual(["package.json"]);
+      expect(await sortedNames(join(String(dir), "project"))).toEqual(["package.json"]);
       expect(exitCode).toBe(1);
     });
 
@@ -3477,9 +3496,9 @@ describe.concurrent("bundledDependencies", () => {
         }),
       });
 
-      const { err, exitCode } = await runPack(join(dir, "project"));
+      const { err, exitCode } = await runPack(join(String(dir), "project"));
       expect(err).toBe("");
-      expect(tarballEntries(join(dir, "project", "project-1.0.0.tgz"))).toEqual([
+      expect(tarballEntries(join(String(dir), "project", "project-1.0.0.tgz"))).toEqual([
         "package/package.json",
         "package/node_modules/dep/package.json",
       ]);
@@ -3511,11 +3530,11 @@ describe.concurrent("bundledDependencies", () => {
         for (const [name, version] of Object.entries(dependencies)) {
           await symlink(
             join("..", "..", `${name}@${version}`, "node_modules", name),
-            join(dir, "node_modules", ".store", id, "node_modules", name),
+            join(String(dir), "node_modules", ".store", id, "node_modules", name),
           );
         }
       }
-      await symlink(join(".store", "a@1.0.0", "node_modules", "a"), join(dir, "node_modules", "a"));
+      await symlink(join(".store", "a@1.0.0", "node_modules", "a"), join(String(dir), "node_modules", "a"));
 
       await using proc = spawn({
         cmd: [bunExe(), "pm", "pack", "--dry-run"],
@@ -3567,7 +3586,7 @@ describe.concurrent("bundledDependencies", () => {
     expect(err).toBe("");
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-bundled-dep-absent-1.0.0.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-bundled-dep-absent-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/node_modules/dep1/package.json",
     ]);
@@ -3593,15 +3612,15 @@ describe.concurrent("bundledDependencies", () => {
       }),
       "node_modules/dep2/node_modules": {},
     });
-    await symlink("../../dep2", join(dir, "node_modules", "dep1", "node_modules", "dep2"));
-    await symlink("../../dep1", join(dir, "node_modules", "dep2", "node_modules", "dep1"));
+    await symlink("../../dep2", join(String(dir), "node_modules", "dep1", "node_modules", "dep2"));
+    await symlink("../../dep1", join(String(dir), "node_modules", "dep2", "node_modules", "dep1"));
 
     // From where `dep2` is in the tarball, `dep1` is found further up: it is not packed again.
     const { err, exitCode } = await runPack(dir);
     expect(err).toBe("");
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-bundled-dep-cycle-1.0.0.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-bundled-dep-cycle-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/node_modules/dep1/node_modules/dep2/package.json",
       "package/node_modules/dep1/package.json",
@@ -3620,13 +3639,13 @@ describe.concurrent("bundledDependencies", () => {
       "packages/core/package.json": JSON.stringify({ name: "@acme/core", version: "1.0.0" }),
       ".npmignore": "packages",
     });
-    await symlink("../../packages/core", join(dir, "node_modules", "@acme", "core"));
+    await symlink("../../packages/core", join(String(dir), "node_modules", "@acme", "core"));
 
     const { err, exitCode } = await runPack(dir);
     expect(err).toBe("");
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-bundled-dep-scoped-link-1.0.0.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-bundled-dep-scoped-link-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/node_modules/@acme/core/package.json",
     ]);
@@ -3666,7 +3685,7 @@ describe.concurrent("bundledDependencies", () => {
     expect(err).toBe("");
     expect(out).toContain("Bundled deps: 300\n");
     expect(exitCode).toBe(0);
-    expect(tarballEntries(join(dir, "pack-bundled-dep-emfile-1.0.0.tgz"))).toHaveLength(301);
+    expect(tarballEntries(join(String(dir), "pack-bundled-dep-emfile-1.0.0.tgz"))).toHaveLength(301);
   });
 });
 
@@ -3696,7 +3715,7 @@ describe.concurrent("files", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-files-changelog-1.1.1.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-files-changelog-1.1.1.tgz"))).toEqual([
       "package/package.json",
       "package/lib/index.js",
     ]);
@@ -3747,7 +3766,7 @@ describe.concurrent("files", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-files-default-ignores-1.1.1.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-files-default-ignores-1.1.1.tgz"))).toEqual([
       "package/package.json",
       "package/.gitignore",
       "package/.hg/store",
@@ -3787,7 +3806,7 @@ describe.concurrent("files", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-files-default-ignores-glob-1.1.1.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-files-default-ignores-glob-1.1.1.tgz"))).toEqual([
       "package/package.json",
       "package/.gitignore",
       "package/.hg/store",
@@ -3827,7 +3846,7 @@ describe.concurrent("files", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-files-changelog-1.1.2.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-files-changelog-1.1.2.tgz"))).toEqual([
       "package/package.json",
       "package/CHANGELOG",
       "package/CHANGELOG.md",
@@ -3861,7 +3880,7 @@ describe.concurrent("files", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-files-license-1.1.1.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-files-license-1.1.1.tgz"))).toEqual([
       "package/package.json",
       "package/LICENSE",
       "package/lib/index.js",
@@ -3893,7 +3912,7 @@ describe.concurrent("files", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-files-license-1.1.2.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-files-license-1.1.2.tgz"))).toEqual([
       "package/package.json",
       "package/LICENSE",
     ]);
@@ -3936,7 +3955,7 @@ describe.concurrent("files", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-files-1-1.1.1.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-files-1-1.1.1.tgz"))).toEqual([
       "package/package.json",
       "package/root.js",
       "package/subdir/anotherdir/index.js",
@@ -3971,7 +3990,10 @@ describe.concurrent("files", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-files-2-1.2.3.tgz"))).toEqual(["package/package.json", "package/index.js"]);
+    expect(tarballEntries(join(String(dir), "pack-files-2-1.2.3.tgz"))).toEqual([
+      "package/package.json",
+      "package/index.js",
+    ]);
   });
 
   test("matches './' as the root", async () => {
@@ -4006,7 +4028,7 @@ describe.concurrent("files", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-files-3-1.2.3.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-files-3-1.2.3.tgz"))).toEqual([
       "package/package.json",
       "package/dist/index.js",
       "package/src/index.ts",
@@ -4047,7 +4069,7 @@ describe.concurrent("files", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-files-4-1.2.123.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-files-4-1.2.123.tgz"))).toEqual([
       "package/package.json",
       "package/index.js",
       "package/subdir/anotherdir/index.js",
@@ -4088,7 +4110,7 @@ describe.concurrent("files", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-excluded-entries-from-files-1.0.0.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-excluded-entries-from-files-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/src/index.ts",
     ]);
@@ -4128,7 +4150,7 @@ describe.concurrent("files", () => {
 
     const { err, exitCode } = await runPack(dir);
     expect(err).toBe("");
-    expect(tarballEntries(join(dir, "pack-files-excluded-paren-1.0.0.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-files-excluded-paren-1.0.0.tgz"))).toEqual([
       "package/package.json",
       ...expected.map(name => `package/${name}`),
     ]);
@@ -4145,19 +4167,19 @@ describe.concurrent("files", () => {
     using dir = tempDir("pack-files-long-entry", {});
     await Promise.all([
       write(
-        join(dir, "package.json"),
+        join(String(dir), "package.json"),
         JSON.stringify({
           name: "pack-files-long-entry",
           version: "1.0.0",
           files: [pattern],
         }),
       ),
-      write(join(dir, "dist", "index.js"), "console.log('hello ./dist/index.js')"),
-      write(join(dir, "src", "index.js"), "console.log('hello ./src/index.js')"),
+      write(join(String(dir), "dist", "index.js"), "console.log('hello ./dist/index.js')"),
+      write(join(String(dir), "src", "index.js"), "console.log('hello ./src/index.js')"),
     ]);
 
     await pack(dir, bunEnv);
-    const tarball = readTarball(join(dir, "pack-files-long-entry-1.0.0.tgz"));
+    const tarball = readTarball(join(String(dir), "pack-files-long-entry-1.0.0.tgz"));
     expect(tarball.entries).toMatchObject([
       { "pathname": "package/package.json" },
       { "pathname": "package/dist/index.js" },
@@ -4186,7 +4208,7 @@ describe.concurrent("files", () => {
 
     const { err, exitCode } = await runPack(dir);
     expect(err).toBe("");
-    expect(tarballEntries(join(dir, "pack-files-doublestar-path-1.0.0.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-files-doublestar-path-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/a/b/build/out.js",
       "package/build/out.js",
@@ -4205,7 +4227,7 @@ describe.concurrent(".gitignore/.npmignore", () => {
       "index.js": indexJs,
       [ignoreFile]: "index.js",
     });
-    const tarballPath = join(dir, "pack-ignore-1-0.0.0.tgz");
+    const tarballPath = join(String(dir), "pack-ignore-1-0.0.0.tgz");
 
     const ignored = await runPack(dir);
     expect(ignored.err).toBe("");
@@ -4225,7 +4247,7 @@ describe.concurrent(".gitignore/.npmignore", () => {
     expect(ignored.exitCode).toBe(0);
     expect(tarballEntries(tarballPath)).toEqual(["package/package.json"]);
 
-    await Promise.all([rm(tarballPath), write(join(dir, ignoreFile), "index.js\n!index.js")]);
+    await Promise.all([rm(tarballPath), write(join(String(dir), ignoreFile), "index.js\n!index.js")]);
 
     const unignored = await runPack(dir);
     expect(unignored.err).toBe("");
@@ -4246,7 +4268,7 @@ describe.concurrent(".gitignore/.npmignore", () => {
     expect(unignored.exitCode).toBe(0);
     expect(tarballEntries(tarballPath)).toEqual(["package/package.json", "package/index.js"]);
 
-    await Promise.all([rm(tarballPath), write(join(dir, ignoreFile), "!index.js\nindex.js")]);
+    await Promise.all([rm(tarballPath), write(join(String(dir), ignoreFile), "!index.js\nindex.js")]);
 
     // the last matching pattern wins
     const ignoredAgain = await runPack(dir);
@@ -4295,7 +4317,7 @@ describe.concurrent(".gitignore/.npmignore", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-ignore-2-1.2.1.tgz"))).toEqual(["package/package.json"]);
+    expect(tarballEntries(join(String(dir), "pack-ignore-2-1.2.1.tgz"))).toEqual(["package/package.json"]);
   });
 
   test.each([".gitignore", ".npmignore"])(
@@ -4318,7 +4340,7 @@ describe.concurrent(".gitignore/.npmignore", () => {
 
       const { err, exitCode } = await runPack(dir);
       expect(err).toBe("");
-      expect(tarballEntries(join(dir, "pack-ignore-doublestar-path-1.0.0.tgz"))).toEqual([
+      expect(tarballEntries(join(String(dir), "pack-ignore-doublestar-path-1.0.0.tgz"))).toEqual([
         "package/package.json",
         "package/docs/public.md",
         "package/keep.js",
@@ -4341,7 +4363,7 @@ describe.concurrent(".gitignore/.npmignore", () => {
 
     const { err, exitCode } = await runPack(dir);
     expect(err).toBe("");
-    expect(tarballEntries(join(dir, "pack-ignore-doublestar-nested-1.0.0.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-ignore-doublestar-nested-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/config/local.json",
       "package/sub/a/config/shared.json",
@@ -4359,7 +4381,7 @@ describe.concurrent(".gitignore/.npmignore", () => {
 
     const { err, exitCode } = await runPack(dir);
     expect(err).toBe("");
-    expect(tarballEntries(join(dir, "pack-ignore-doublestar-bare-1.0.0.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-ignore-doublestar-bare-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/index.js",
     ]);
@@ -4384,7 +4406,7 @@ describe.concurrent(".gitignore/.npmignore", () => {
 
       const { err, exitCode } = await runPack(dir);
       expect(err).toBe("");
-      expect(tarballEntries(join(dir, "pack-ignore-doublestar-negated-1.0.0.tgz"))).toEqual([
+      expect(tarballEntries(join(String(dir), "pack-ignore-doublestar-negated-1.0.0.tgz"))).toEqual([
         "package/package.json",
         "package/build/keep.js",
         "package/build/readme.txt",
@@ -4409,7 +4431,7 @@ describe.concurrent(".gitignore/.npmignore", () => {
 
     const { err, exitCode } = await runPack(dir);
     expect(err).toBe("");
-    expect(tarballEntries(join(dir, "pack-ignore-trailing-space-1.0.0.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-ignore-trailing-space-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/index.js",
       "package/spaced",
@@ -4429,7 +4451,7 @@ describe.concurrent(".gitignore/.npmignore", () => {
 
     const { err, exitCode } = await runPack(dir);
     expect(err).toBe("");
-    expect(tarballEntries(join(dir, "pack-ignore-bom-1.0.0.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-ignore-bom-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/index.js",
     ]);
@@ -4447,7 +4469,9 @@ describe.concurrent(".gitignore/.npmignore", () => {
       const { err, exitCode } = await runPack(dir);
       expect(err).toBe("");
       expect(exitCode).toBe(0);
-      return tarballEntries(join(dir, "pack-ignore-negation-0.0.7.tgz")).map(entry => entry.slice("package/".length));
+      return tarballEntries(join(String(dir), "pack-ignore-negation-0.0.7.tgz")).map(entry =>
+        entry.slice("package/".length),
+      );
     }
 
     const dist = {
@@ -4534,7 +4558,7 @@ describe.concurrent(".gitignore/.npmignore", () => {
       });
       const { err, exitCode } = await runPack(dir);
       expect(err).toBe("");
-      expect(tarballEntries(join(dir, "pack-ignore-negation-files-1.0.0.tgz"))).toEqual([
+      expect(tarballEntries(join(String(dir), "pack-ignore-negation-files-1.0.0.tgz"))).toEqual([
         "package/package.json",
         "package/lib/index.js",
         "package/lib/secrets/keep.js",
@@ -4589,7 +4613,7 @@ describe.concurrent(".gitignore/.npmignore", () => {
       "packages/m/dist/index.js": indexJs,
       "packages/m/src/index.ts": indexJs,
     });
-    const member = join(dir, "packages", "m");
+    const member = join(String(dir), "packages", "m");
 
     const { err, exitCode } = await runPack(member);
     expect(err).toBe("");
@@ -4616,7 +4640,7 @@ describe.concurrent("bins", () => {
     });
 
     const { exitCode } = await runPack(dir);
-    expect(tarballEntries(join(dir, "p-1.0.0.tgz")).sort()).toEqual([...packed, "package/package.json"]);
+    expect(tarballEntries(join(String(dir), "p-1.0.0.tgz")).sort()).toEqual([...packed, "package/package.json"]);
     expect(exitCode).toBe(0);
   });
 
@@ -4635,7 +4659,7 @@ describe.concurrent("bins", () => {
 
     const { err, exitCode } = await runPack(dir);
     expect(err).toBe("");
-    expect(tarballEntries(join(dir, "pack-backslash-manifest-1.0.0.tgz")).sort()).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-backslash-manifest-1.0.0.tgz")).sort()).toEqual([
       "package/bin/x.js",
       "package/lib/a.js",
       "package/package.json",
@@ -4667,7 +4691,7 @@ describe.concurrent("bins", () => {
     `);
     expect(exitCode).toBe(0);
 
-    const tarball = readTarball(join(dir, "pack-bins-1.2.3.tgz"));
+    const tarball = readTarball(join(String(dir), "pack-bins-1.2.3.tgz"));
     expect(entryNames(tarball)).toEqual(["package/package.json", "package/bin.js"]);
     expect(tarball.entries[0].perm & 0o644).toBe(0o644);
     expect(tarball.entries[1].perm & 0o755).toBe(0o755);
@@ -4699,7 +4723,7 @@ describe.concurrent("bins", () => {
     `);
     expect(exitCode).toBe(0);
 
-    const tarball = readTarball(join(dir, "pack-bins-dir-1.2.3.tgz"));
+    const tarball = readTarball(join(String(dir), "pack-bins-dir-1.2.3.tgz"));
     expect(entryNames(tarball)).toEqual(["package/package.json", "package/bins/bin1.js", "package/bins/bin2.js"]);
     expect(tarball.entries[0].perm & 0o644).toBe(0o644);
     expect(tarball.entries[1].perm & 0o755).toBe(0o755);
@@ -4737,7 +4761,7 @@ describe.concurrent("bins", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-bins-and-files-1-2.2.2.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-bins-and-files-1-2.2.2.tgz"))).toEqual([
       "package/package.json",
       "package/bin.js",
       "package/dist/hi.js",
@@ -4777,7 +4801,7 @@ describe.concurrent("bins", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-bins-and-files-2-1.2.3.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-bins-and-files-2-1.2.3.tgz"))).toEqual([
       "package/package.json",
       "package/bins/bin.js",
       "package/bins/what/what.js",
@@ -4818,7 +4842,7 @@ describe.concurrent("bins", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-bins-and-files-2-1.2.3.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-bins-and-files-2-1.2.3.tgz"))).toEqual([
       "package/package.json",
       "package/bins/bin.js",
       "package/bins/what/what.js",
@@ -4839,19 +4863,19 @@ describe.concurrent("bins", () => {
       using dir = tempDir("pack-long-bin", {});
       await Promise.all([
         write(
-          join(dir, "package.json"),
+          join(String(dir), "package.json"),
           JSON.stringify({
             name: "pack-long-bin",
             version: "1.0.0",
             ...fields,
           }),
         ),
-        write(join(dir, "index.js"), "console.log('hello ./index.js')"),
+        write(join(String(dir), "index.js"), "console.log('hello ./index.js')"),
       ]);
 
       await pack(dir, bunEnv);
 
-      const tarball = readTarball(join(dir, "pack-long-bin-1.0.0.tgz"));
+      const tarball = readTarball(join(String(dir), "pack-long-bin-1.0.0.tgz"));
       expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }, { pathname: "package/index.js" }]);
     });
 
@@ -4859,7 +4883,7 @@ describe.concurrent("bins", () => {
       using dir = tempDir("pack-long-bin", {});
       await Promise.all([
         write(
-          join(dir, "package.json"),
+          join(String(dir), "package.json"),
           JSON.stringify({
             name: "pack-long-bin",
             version: "1.0.0",
@@ -4867,13 +4891,13 @@ describe.concurrent("bins", () => {
             bin: { long, cli: "cli.js" },
           }),
         ),
-        write(join(dir, "index.js"), "console.log('hello ./index.js')"),
-        write(join(dir, "cli.js"), `#!/usr/bin/env bun\n`),
+        write(join(String(dir), "index.js"), "console.log('hello ./index.js')"),
+        write(join(String(dir), "cli.js"), `#!/usr/bin/env bun\n`),
       ]);
 
       await pack(dir, bunEnv);
 
-      const tarball = readTarball(join(dir, "pack-long-bin-1.0.0.tgz"));
+      const tarball = readTarball(join(String(dir), "pack-long-bin-1.0.0.tgz"));
       expect(tarball.entries).toMatchObject([
         { pathname: "package/package.json" },
         { pathname: "package/cli.js" },
@@ -4887,7 +4911,7 @@ describe.concurrent("bins", () => {
     using dir = tempDir("pack-bins-not-files", {});
     await Promise.all([
       write(
-        join(dir, "package.json"),
+        join(String(dir), "package.json"),
         JSON.stringify({
           name: "pack-bins-not-files",
           version: "1.0.0",
@@ -4898,14 +4922,14 @@ describe.concurrent("bins", () => {
           },
         }),
       ),
-      write(join(dir, "index.js"), "console.log('index')"),
-      write(join(dir, "lib", "a.js"), "console.log('a')"),
-      write(join(dir, "real-bin.js"), "console.log('real bin')"),
+      write(join(String(dir), "index.js"), "console.log('index')"),
+      write(join(String(dir), "lib", "a.js"), "console.log('a')"),
+      write(join(String(dir), "real-bin.js"), "console.log('real bin')"),
     ]);
 
     await pack(dir, bunEnv);
 
-    const tarball = readTarball(join(dir, "pack-bins-not-files-1.0.0.tgz"));
+    const tarball = readTarball(join(String(dir), "pack-bins-not-files-1.0.0.tgz"));
     expect(tarball.entries.map(({ pathname }) => pathname)).toEqual([
       "package/package.json",
       "package/index.js",
@@ -4920,8 +4944,8 @@ describe.concurrent("bins", () => {
   const OUTSIDE = "console.log('outside the package')";
 
   async function writeSymlinkedBins(dir: string) {
-    const outside = join(dir, "outside");
-    const pkgDir = join(dir, "pkg");
+    const outside = join(String(dir), "outside");
+    const pkgDir = join(String(dir), "pkg");
     await Promise.all([
       write(join(outside, "secret.js"), OUTSIDE),
       write(join(outside, "nested", "inner.js"), OUTSIDE),
@@ -4989,8 +5013,8 @@ describe.concurrent("bins", () => {
 
   test('"directories.bin" that is a symlink is not packed', async () => {
     using dir = tempDir("pack-bins-dir-symlink", {});
-    const outside = join(dir, "outside");
-    const pkgDir = join(dir, "pkg");
+    const outside = join(String(dir), "outside");
+    const pkgDir = join(String(dir), "pkg");
     await Promise.all([
       write(join(outside, "bins", "a.js"), OUTSIDE),
       write(join(outside, "bins", "b.js"), OUTSIDE),
@@ -5020,7 +5044,7 @@ describe.concurrent("bins", () => {
     using dir = tempDir("pack-bins-same-file", {});
     await Promise.all([
       write(
-        join(dir, "package.json"),
+        join(String(dir), "package.json"),
         JSON.stringify({
           name: "pack-bins-same-file",
           version: "1.0.0",
@@ -5032,12 +5056,12 @@ describe.concurrent("bins", () => {
           },
         }),
       ),
-      write(join(dir, "cli.js"), "console.log('hello')"),
+      write(join(String(dir), "cli.js"), "console.log('hello')"),
     ]);
 
     const { out } = await pack(dir, bunEnv);
 
-    const tarball = readTarball(join(dir, "pack-bins-same-file-1.0.0.tgz"));
+    const tarball = readTarball(join(String(dir), "pack-bins-same-file-1.0.0.tgz"));
     expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }, { pathname: "package/cli.js" }]);
     expect(tarball.entries[1].perm & 0o111).toBe(0o111);
     expect(out).toContain("Total files: 2");
@@ -5065,7 +5089,7 @@ describe.concurrent("bins", () => {
     expect(err).toBe("");
     expect(exitCode).toBe(0);
 
-    const tarball = readTarball(join(dir, "pack-bins-dedupe-1.2.3.tgz"));
+    const tarball = readTarball(join(String(dir), "pack-bins-dedupe-1.2.3.tgz"));
     expect(entryNames(tarball)).toEqual([
       "package/package.json",
       "package/dist/minified/index.mjs",
@@ -5081,20 +5105,20 @@ describe.concurrent("bins", () => {
     using dir = tempDir("pack-bins-not-a-file", {});
     await Promise.all([
       write(
-        join(dir, "package.json"),
+        join(String(dir), "package.json"),
         JSON.stringify({
           name: "pack-bins-not-a-file",
           version: "1.0.0",
           bin,
         }),
       ),
-      write(join(dir, "cli.js"), "console.log('cli')"),
-      write(join(dir, "lib", "a.js"), "console.log('a')"),
+      write(join(String(dir), "cli.js"), "console.log('cli')"),
+      write(join(String(dir), "lib", "a.js"), "console.log('a')"),
     ]);
 
     await pack(dir, bunEnv);
 
-    const tarball = readTarball(join(dir, "pack-bins-not-a-file-1.0.0.tgz"));
+    const tarball = readTarball(join(String(dir), "pack-bins-not-a-file-1.0.0.tgz"));
     expect(
       tarball.entries.map(entry => ({ pathname: entry.pathname, executable: (entry.perm & 0o111) !== 0 })),
     ).toEqual([
@@ -5108,7 +5132,7 @@ describe.concurrent("bins", () => {
     using dir = tempDir("pack-bins-partly-ignored", {});
     await Promise.all([
       write(
-        join(dir, "package.json"),
+        join(String(dir), "package.json"),
         JSON.stringify({
           name: "pack-bins-partly-ignored",
           version: "1.0.0",
@@ -5119,13 +5143,13 @@ describe.concurrent("bins", () => {
           },
         }),
       ),
-      write(join(dir, "cli.js"), "console.log('cli')"),
-      write(join(dir, "lib", "a.js"), "console.log('a')"),
+      write(join(String(dir), "cli.js"), "console.log('cli')"),
+      write(join(String(dir), "lib", "a.js"), "console.log('a')"),
     ]);
 
     await pack(dir, bunEnv);
 
-    const tarball = readTarball(join(dir, "pack-bins-partly-ignored-1.0.0.tgz"));
+    const tarball = readTarball(join(String(dir), "pack-bins-partly-ignored-1.0.0.tgz"));
     expect(
       tarball.entries.map(entry => ({ pathname: entry.pathname, executable: (entry.perm & 0o111) !== 0 })),
     ).toEqual([
@@ -5148,7 +5172,7 @@ describe.concurrent("bins", () => {
       using dir = tempDir("pack-bins-dir-trailing-slash", {});
       await Promise.all([
         write(
-          join(dir, "package.json"),
+          join(String(dir), "package.json"),
           JSON.stringify({
             name: "pack-bins-dir-trailing-slash",
             version: "1.0.0",
@@ -5158,14 +5182,14 @@ describe.concurrent("bins", () => {
             },
           }),
         ),
-        write(join(dir, "index.js"), "console.log('index')"),
-        write(join(dir, "lib", "index.js"), "console.log('lib')"),
-        write(join(dir, "lib", "bins", "bin.js"), "console.log('bin')"),
+        write(join(String(dir), "index.js"), "console.log('index')"),
+        write(join(String(dir), "lib", "index.js"), "console.log('lib')"),
+        write(join(String(dir), "lib", "bins", "bin.js"), "console.log('bin')"),
       ]);
 
       await pack(dir, bunEnv);
 
-      const tarball = readTarball(join(dir, "pack-bins-dir-trailing-slash-1.0.0.tgz"));
+      const tarball = readTarball(join(String(dir), "pack-bins-dir-trailing-slash-1.0.0.tgz"));
       expect(tarball.entries.map(entry => entry.pathname)).toEqual(["package/package.json", ...expected]);
       const bin = tarball.entries.find(entry => entry.pathname === "package/lib/bins/bin.js");
       expect(bin.perm & 0o111).toBe(0o111);
@@ -5176,7 +5200,7 @@ describe.concurrent("bins", () => {
     using dir = tempDir("pack-bins-dir-root", {});
     await Promise.all([
       write(
-        join(dir, "package.json"),
+        join(String(dir), "package.json"),
         JSON.stringify({
           name: "pack-bins-dir-root",
           version: "1.0.0",
@@ -5185,13 +5209,13 @@ describe.concurrent("bins", () => {
           },
         }),
       ),
-      write(join(dir, "index.js"), "console.log('index')"),
-      write(join(dir, "lib", "a.js"), "console.log('a')"),
+      write(join(String(dir), "index.js"), "console.log('index')"),
+      write(join(String(dir), "lib", "a.js"), "console.log('a')"),
     ]);
 
     await pack(dir, bunEnv);
 
-    const tarball = readTarball(join(dir, "pack-bins-dir-root-1.0.0.tgz"));
+    const tarball = readTarball(join(String(dir), "pack-bins-dir-root-1.0.0.tgz"));
     expect(tarball.entries).toMatchObject([
       { pathname: "package/package.json" },
       { pathname: "package/index.js" },
@@ -5222,7 +5246,7 @@ describe.concurrent("bins", () => {
     expect(err).toBe("");
     expect(exitCode).toBe(0);
 
-    const tarball = readTarball(join(dir, "pack-bins-with-dir-1.0.0.tgz"));
+    const tarball = readTarball(join(String(dir), "pack-bins-with-dir-1.0.0.tgz"));
     expect(entryNames(tarball)).toEqual(["package/package.json", ...bins, "package/index.js"]);
     expect(tarball.entries.filter(entry => (entry.perm & 0o111) !== 0).map(entry => entry.pathname)).toEqual(bins);
   });
@@ -5252,7 +5276,7 @@ describe.concurrent("bins", () => {
 
     const { err, exitCode } = await runPack(dir);
     expect(err).toBe("");
-    expect(tarballEntries(join(dir, "pack-bins-never-packed-1.0.0.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-bins-never-packed-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/index.js",
     ]);
@@ -5276,7 +5300,7 @@ describe.concurrent("bins", () => {
       "pkg/bins/a.js": indexJs,
       "pkg/.npmrc": "registry=https://registry.example/",
     });
-    const pkg = join(dir, "pkg");
+    const pkg = join(String(dir), "pkg");
 
     const { err, exitCode } = await runPack(pkg);
     expect(err).toBe("");
@@ -5306,20 +5330,20 @@ describe.concurrent("bins", () => {
     });
     using dir = tempDir("pack-bins-absent", { a: folder(indexJs), b: folder("console.log('changed')") });
 
-    const dryRun = await runPack(join(dir, "a"), ["--dry-run"]);
+    const dryRun = await runPack(join(String(dir), "a"), ["--dry-run"]);
     expect(dryRun.err).toBe("");
     expect(dryRun.out).toContain("Total files: 2");
     expect(dryRun.exitCode).toBe(0);
 
-    const { out, err, exitCode } = await runPack(join(dir, "a"));
+    const { out, err, exitCode } = await runPack(join(String(dir), "a"));
     expect(err).toBe("");
     expect(out).toContain("Total files: 2");
     expect(exitCode).toBe(0);
-    expect(tarballEntries(join(dir, "a", "pack-bins-absent-1.0.0.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "a", "pack-bins-absent-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/index.js",
     ]);
-    await rm(join(dir, "a", "pack-bins-absent-1.0.0.tgz"));
+    await rm(join(String(dir), "a", "pack-bins-absent-1.0.0.tgz"));
 
     // `bun pm diff` reads a folder as pack would publish it.
     await using proc = spawn({
@@ -5343,7 +5367,7 @@ describe.concurrent.skipIf(isWindows)("an entry that exists but can't be opened"
   // Runs `bun ...cmd` in `cwd` while `locked` has no permission bits. Restores them so that the tree can be removed.
   async function runWithout(dir: string, locked: string, cmd: string[], cwd: string = dir) {
     using unprivileged = unprivilegedSpawnOptions(dir);
-    const path = join(dir, locked);
+    const path = join(String(dir), locked);
     const { mode } = await lstat(path);
     await chmod(path, 0o000);
     try {
@@ -5476,11 +5500,11 @@ describe.concurrent.skipIf(isWindows)("an entry that exists but can't be opened"
     };
     using dir = tempDir("pack-locked-bin", { a: folder, b: folder });
 
-    const { out, err, exitCode } = await runWithout(dir, locked, command.split(" "), join(dir, cwd));
+    const { out, err, exitCode } = await runWithout(dir, locked, command.split(" "), join(String(dir), cwd));
     expect(err).toBe(message);
     expect(out).toBe(banner);
     expect(exitCode).toBe(1);
-    expect(await tarballs(join(dir, "b"))).toEqual([]);
+    expect(await tarballs(join(String(dir), "b"))).toEqual([]);
   });
 
   test("a scope that no bundled dependency is in is not opened", async () => {
@@ -5494,7 +5518,7 @@ describe.concurrent.skipIf(isWindows)("an entry that exists but can't be opened"
     expect(err).toBe("");
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-locked-1.0.0.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-locked-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/node_modules/plain/package.json",
     ]);
@@ -5525,7 +5549,10 @@ test.concurrent("unicode", async () => {
   `);
   expect(exitCode).toBe(0);
 
-  expect(tarballEntries(join(dir, "pack-unicode-1.1.1.tgz"))).toEqual(["package/package.json", "package/äöüščří.js"]);
+  expect(tarballEntries(join(String(dir), "pack-unicode-1.1.1.tgz"))).toEqual([
+    "package/package.json",
+    "package/äöüščří.js",
+  ]);
 });
 
 // Reads the members of a .tgz without decoding their names: `readTarball` turns
@@ -5584,7 +5611,7 @@ test.concurrent.skipIf(!isLinux)("filenames that are not valid UTF-8 are stored 
   const { out } = await pack(dir, bunEnv);
   expect(out).toContain("Total files: 3");
 
-  const members = rawTarballMembers(await file(join(dir, "pack-invalid-utf8-1.0.0.tgz")).bytes());
+  const members = rawTarballMembers(await file(join(String(dir), "pack-invalid-utf8-1.0.0.tgz")).bytes());
   expect(members).toEqual([
     { names: new Set(["package/x_\xe9"]), contents: "ONE" },
     { names: new Set(["package/x_\xff"]), contents: "TWO" },
@@ -5756,9 +5783,9 @@ long syscall(long nr, ...) {
 
   beforeAll(async () => {
     shimDir = tempDir("dir-read-fault", { "shim.c": SHIM_C });
-    shim = join(shimDir, "shim.so");
+    shim = join(String(shimDir), "shim.so");
     await using compile = spawn({
-      cmd: [cc!, "-shared", "-fPIC", "-o", shim, join(shimDir, "shim.c"), "-ldl"],
+      cmd: [cc!, "-shared", "-fPIC", "-o", shim, join(String(shimDir), "shim.c"), "-ldl"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -5789,7 +5816,7 @@ long syscall(long nr, ...) {
 
   /** The environment of a bun process in which the read fails, and the reads of the directory that the process made. */
   function failDirRead(fault: Fault) {
-    const log = join(shimDir, `reads-${logs++}.log`);
+    const log = join(String(shimDir), `reads-${logs++}.log`);
     const preload = bunEnv.LD_PRELOAD;
     return {
       env: {
@@ -5877,7 +5904,7 @@ long syscall(long nr, ...) {
       ...files,
     });
     const before = await sortedNames(dir);
-    const fault = failDirRead({ dir: join(dir, subpath), read, reader });
+    const fault = failDirRead({ dir: join(String(dir), subpath), read, reader });
 
     const { out, err, exitCode } = await bun(["pm", "pack", ...args], dir, fault.env);
     // If no read failed, the library did not interpose and this row shows nothing.
@@ -5894,7 +5921,7 @@ long syscall(long nr, ...) {
       "package.json": JSON.stringify({ name: "pack-read-fails-300", version: "1.0.0" }),
       ...Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`lib/big/f${i}.js`, `${i}`])),
     });
-    const fault = failDirRead({ dir: join(dir, "lib", "big"), read: 2 });
+    const fault = failDirRead({ dir: join(String(dir), "lib", "big"), read: 2 });
 
     const { out, err, exitCode } = await bun(["pm", "pack"], dir, fault.env);
     expect(fault.reads()).toEqual({ ok: [expect.any(Number)], failed: [constants.errno.EIO] });
@@ -5912,14 +5939,14 @@ long syscall(long nr, ...) {
       "lib/index.js": index,
       "lib/gone": {},
     });
-    const fault = failDirRead({ dir: join(dir, "lib", "gone"), read: 1, errno: "removed" });
+    const fault = failDirRead({ dir: join(String(dir), "lib", "gone"), read: 1, errno: "removed" });
 
     const { out, err, exitCode } = await bun(["pm", "pack"], dir, fault.env);
     expect(fault.reads()).toEqual({ ok: [], failed: [constants.errno.ENOENT] });
     expect(err).toBe("");
     expect(out).toContain("Total files: 2");
-    expect(await sortedNames(join(dir, "lib"))).toEqual(["index.js"]);
-    expect(tarballEntries(join(dir, "pack-read-removed-1.0.0.tgz"))).toEqual([
+    expect(await sortedNames(join(String(dir), "lib"))).toEqual(["index.js"]);
+    expect(tarballEntries(join(String(dir), "pack-read-removed-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/lib/index.js",
     ]);
@@ -5935,7 +5962,7 @@ long syscall(long nr, ...) {
       }),
       "lib/index.js": index,
     });
-    const fault = failDirRead({ dir: join(dir, "lib"), read: 1 });
+    const fault = failDirRead({ dir: join(String(dir), "lib"), read: 1 });
 
     const { out, err, exitCode } = await bun(["pm", "pack"], dir, fault.env);
     expect(fault.reads().failed).toHaveLength(1);
@@ -5950,7 +5977,7 @@ long syscall(long nr, ...) {
       "package.json": JSON.stringify({ name: "pack-read-healthy", version: "1.0.0" }),
       "lib/index.js": index,
     });
-    const fault = failDirRead({ dir: join(dir, "lib") });
+    const fault = failDirRead({ dir: join(String(dir), "lib") });
 
     const { out, err, exitCode } = await bun(["pm", "pack"], dir, fault.env);
     // One read with the entries, then the end of the directory.
@@ -5958,7 +5985,7 @@ long syscall(long nr, ...) {
     expect(err).toBe("");
     expect(out).toContain("Total files: 2");
     expect(exitCode).toBe(0);
-    expect(tarballEntries(join(dir, "pack-read-healthy-1.0.0.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-read-healthy-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/lib/index.js",
     ]);
@@ -5973,13 +6000,13 @@ long syscall(long nr, ...) {
       "package.json": JSON.stringify({ name: "pack-read-not-listed", version: "1.0.0", bundledDependencies: [name] }),
       [`node_modules/${name}/package.json`]: "{}",
     });
-    const fault = failDirRead({ dir: join(dir, listed), read: 1 });
+    const fault = failDirRead({ dir: join(String(dir), listed), read: 1 });
 
     const { err, exitCode } = await bun(["pm", "pack"], dir, fault.env);
     expect(fault.reads()).toEqual({ ok: [], failed: [] });
     expect(err).toBe("");
     expect(exitCode).toBe(0);
-    expect(tarballEntries(join(dir, "pack-read-not-listed-1.0.0.tgz"))).toEqual([
+    expect(tarballEntries(join(String(dir), "pack-read-not-listed-1.0.0.tgz"))).toEqual([
       "package/package.json",
       `package/node_modules/${name}/package.json`,
     ]);
@@ -6026,7 +6053,7 @@ long syscall(long nr, ...) {
       "lib/index.js": index,
     });
     const before = await sortedNames(dir);
-    const fault = failDirRead({ dir: join(dir, subpath), read: 1, reader });
+    const fault = failDirRead({ dir: join(String(dir), subpath), read: 1, reader });
 
     const { out, err, exitCode } = await bun(["publish"], dir, fault.env);
     expect(fault.reads().failed).toHaveLength(1);
@@ -6046,7 +6073,7 @@ long syscall(long nr, ...) {
       "b/package.json": JSON.stringify({ name: "p", version: "1.0.0" }),
       "b/lib/index.js": "module.exports = 1;\n",
     });
-    const fault = failDirRead({ dir: join(dir, "a", "lib"), read: 1 });
+    const fault = failDirRead({ dir: join(String(dir), "a", "lib"), read: 1 });
 
     const { out, err, exitCode } = await bun(["pm", "diff", "./a", "./b", "--name-only"], dir, {
       ...fault.env,
@@ -6079,7 +6106,7 @@ describe.concurrent.each([
       expect(stdout + stderr).not.toMatch(unprintable);
       expect(exitCode).toBe(0);
     }
-    expect(tarballEntries(join(dir, "pack-file-name-1.0.0.tgz"))).toContain(`package/a${raw}b.js`);
+    expect(tarballEntries(join(String(dir), "pack-file-name-1.0.0.tgz"))).toContain(`package/a${raw}b.js`);
   });
 
   test("in the name of the package", async () => {

@@ -571,6 +571,24 @@ function getDefaults() {
   });
 }
 
+/** Names what `given` names now, whatever the cwd or `process.cwd` is later. Empty if that is removed, or its name is not UTF-8. */
+function toLastingPath({ fs, path }: WASIBindings, given: string) {
+  try {
+    let absolute: string;
+    try {
+      absolute = fs.realpathSync.native ? fs.realpathSync.native(given) : fs.realpathSync(given);
+    } catch {
+      // There is no /proc.
+      absolute = path.resolve(given);
+    }
+    const expected = fs.statSync(given, { bigint: true });
+    const found = fs.statSync(absolute, { bigint: true });
+    return found.dev === expected.dev && found.ino === expected.ino ? absolute : "";
+  } catch {
+    return "";
+  }
+}
+
 class WASI {
   declare lastStdin: number;
   declare sleep: ((ms: number) => void) | undefined;
@@ -641,7 +659,8 @@ class WASI {
     ]);
     const path = bindings.path;
     for (const [k, v] of Object.entries(preopens)) {
-      const real = fs.openSync(v, nodeFsConstants.O_RDONLY);
+      const given = String(v);
+      const real = fs.openSync(given, nodeFsConstants.O_RDONLY);
       const newfd = this.getUnusedFileDescriptor();
       this.FD_MAP.set(newfd, {
         real,
@@ -651,7 +670,7 @@ class WASI {
           inheriting: RIGHTS_DIRECTORY_INHERITING,
         },
         fakePath: k,
-        path: v,
+        path: toLastingPath(bindings, given),
       });
     }
     const getiovs = (iovs: number, iovsLen: number) => {

@@ -10,9 +10,12 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
+bun_collections.workspace = true
 bun_core.workspace = true
 bun_highway.workspace = true
 bun_paths.workspace = true
+bun_wyhash.workspace = true
+thiserror.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 bun_sys.workspace = true

@@ -1,7 +1,7 @@
 #![allow(non_upper_case_globals, non_snake_case)]
 
 use core::ffi::{CStr, c_char, c_int};
-use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 use const_format::{concatcp, formatcp};
 
@@ -41,6 +41,14 @@ pub fn top_level_dir() -> &'static [u8] {
     *TOP_LEVEL_DIR.read()
 }
 
+/// Invalidates the per-thread caches of `process.cwd()`, which load it before they read the directory.
+#[unsafe(no_mangle)]
+static Bun__cwdGeneration: AtomicU32 = AtomicU32::new(0);
+
+pub fn did_change_working_directory() {
+    Bun__cwdGeneration.fetch_add(1, Ordering::Release);
+}
+
 static HAS_WORKING_DIRECTORY_IN_EXECUTABLE: AtomicBool = AtomicBool::new(false);
 static WORKING_DIRECTORY_IN_EXECUTABLE: crate::RwLock<Option<&'static [u8]>> =
     crate::RwLock::new(None);
@@ -50,6 +58,7 @@ pub fn set_working_directory_in_executable(directory: Option<&'static [u8]>) {
     let mut current = WORKING_DIRECTORY_IN_EXECUTABLE.write();
     *current = directory;
     HAS_WORKING_DIRECTORY_IN_EXECUTABLE.store(directory.is_some(), Ordering::Release);
+    did_change_working_directory();
 }
 
 /// Where `process.cwd()`, `path.resolve()` and the path arguments of `node:fs` and `Bun.file()` start, if not in the system's working directory.

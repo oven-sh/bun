@@ -184,7 +184,7 @@ describe.skipIf(!isLinux)("fs.stat seccomp statx fallback", () => {
   }> = [
     {
       name: "statSync",
-      target: dir => join(dir, "file.txt"),
+      target: dir => join(String(dir), "file.txt"),
       snippet: target => `
         const fs = require("node:fs");
         const s = fs.statSync(${JSON.stringify(target)});
@@ -194,7 +194,7 @@ describe.skipIf(!isLinux)("fs.stat seccomp statx fallback", () => {
     },
     {
       name: "lstatSync",
-      target: dir => join(dir, "link.txt"),
+      target: dir => join(String(dir), "link.txt"),
       snippet: target => `
         const fs = require("node:fs");
         const s = fs.lstatSync(${JSON.stringify(target)});
@@ -205,7 +205,7 @@ describe.skipIf(!isLinux)("fs.stat seccomp statx fallback", () => {
     },
     {
       name: "fstatSync",
-      target: dir => join(dir, "file.txt"),
+      target: dir => join(String(dir), "file.txt"),
       snippet: target => `
         const fs = require("node:fs");
         const fd = fs.openSync(${JSON.stringify(target)}, "r");
@@ -231,7 +231,7 @@ describe.skipIf(!isLinux)("fs.stat seccomp statx fallback", () => {
       await using targetDir = tempDir("stat-seccomp-target", { "file.txt": "hello" });
       // symlink created here rather than via tempDirWithFiles (which only
       // supports regular files).
-      symlinkSync("file.txt", join(targetDir, "link.txt"));
+      symlinkSync("file.txt", join(String(targetDir), "link.txt"));
 
       const out = await runUnderSeccomp(helperBin, EPERM, c.snippet(c.target(targetDir)));
       if (out == null) {

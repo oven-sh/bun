@@ -99,7 +99,15 @@ function getValidatedPath(p: any) {
     if (typeof path !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
     return path;
   }
-  return require("node:path").resolve(p);
+  return p;
+}
+
+// Win32 rewrites some names ("a.", "NUL") in a relative path. Node's binding resolves it first.
+function pathToOpen(stream: FSStream) {
+  const path = stream.path;
+  return process.platform === "win32" && stream[kFs] === fs && typeof path === "string" && path !== ""
+    ? $bindgen("node_path.bind.ts", "resolveWithRealCwd")(path)
+    : path;
 }
 
 function copyObject(source) {
@@ -287,7 +295,7 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
       return;
     }
 
-    this[kFs].open(this.path, this.flags, this.mode, (err, fd) => {
+    this[kFs].open(pathToOpen(this), this.flags, this.mode, (err, fd) => {
       if (err) {
         callback(err);
       } else {
@@ -423,9 +431,7 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
   } else if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
-    // Internal $fastPath callers (writableFromFileSink) discard .path; do not
-    // resolve it - path.resolve("") needs process.cwd(), which throws when
-    // the cwd has been deleted (Node still spawns children in that state).
+    // Internal $fastPath callers (writableFromFileSink) discard .path.
     this.path = fastPath ? path : getValidatedPath(path);
     const { flags, mode } = options;
     this.flags = flags === undefined ? "w" : flags;

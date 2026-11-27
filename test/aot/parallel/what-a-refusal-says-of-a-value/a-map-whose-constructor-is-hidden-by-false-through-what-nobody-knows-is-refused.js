@@ -1,4 +1,4 @@
-// A constructor that is false counts as none: the map is printed whole, with the server that it holds.
+// A constructor that is false counts as none.
 (function () {
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("made up") });
   const map = new Map([[1, server]]);

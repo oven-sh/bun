@@ -2060,6 +2060,53 @@ describe("strikethrough", () => {
   });
 });
 
+// Each line ending in the text of a block is a hard break, and the blanks in front of it are dropped.
+describe("hardSoftBreaks", () => {
+  test.each([
+    ["a\nb", "a<br />\nb", "a\nb"],
+    ["a \nb", "a<br />\nb", "a \nb"],
+    ["a \t\nb", "a<br />\nb", "a \t\nb"],
+    ["a\r\nb", "a<br />\nb", "a\nb"],
+    ["a\nb\nc", "a<br />\nb<br />\nc", "a\nb\nc"],
+    ["a\n   b", "a<br />\nb", "a\nb"],
+    ["a\\\\\nb", "a\\<br />\nb", "a\\\nb"],
+    ["*a\nb*", "<em>a<br />\nb</em>", "<em>a\nb</em>"],
+    ["**a**\nb", "<strong>a</strong><br />\nb", "<strong>a</strong>\nb"],
+    ["[a\nb](u)", '<a href="u">a<br />\nb</a>', '<a href="u">a\nb</a>'],
+    ["a\nb  ", "a<br />\nb", "a\nb"],
+    // These are hard breaks without the option too.
+    ["a  \nb", "a<br />\nb", "a<br />\nb"],
+    ["a\\\nb", "a<br />\nb", "a<br />\nb"],
+    // A line ending in a code span, in raw HTML or in the alt text of an image is not a break.
+    ["`a\nb`", "<code>a b</code>", "<code>a b</code>"],
+    ["a <b\nc> d", "a <b\nc> d", "a <b\nc> d"],
+    ["![a\nb](u)", '<img src="u" alt="a b" />', '<img src="u" alt="a b" />'],
+    [
+      "[![a\nb](i) c\nd](u)",
+      '<a href="u"><img src="i" alt="a b" /> c<br />\nd</a>',
+      '<a href="u"><img src="i" alt="a b" /> c\nd</a>',
+    ],
+  ])("%j", (text, on, off) => {
+    expect(Markdown.html(text, { hardSoftBreaks: true })).toBe(`<p>${on}</p>\n`);
+    expect(Markdown.html(text, { hardSoftBreaks: false })).toBe(`<p>${off}</p>\n`);
+    expect(Markdown.html(text)).toBe(`<p>${off}</p>\n`);
+  });
+
+  test("is also spelled hard_soft_breaks", () => {
+    expect(Markdown.html("a\nb", { hard_soft_breaks: true } as any)).toBe("<p>a<br />\nb</p>\n");
+  });
+
+  test("applies in a heading, a list item and a block quote, and not in a code block or an HTML block", () => {
+    const html = (text: string) => Markdown.html(text, { hardSoftBreaks: true });
+    expect(html("a\nb\n===")).toBe("<h1>a<br />\nb</h1>\n");
+    expect(html("- a\n  b")).toBe("<ul>\n<li>a<br />\nb</li>\n</ul>\n");
+    expect(html("> a\nb")).toBe("<blockquote>\n<p>a<br />\nb</p>\n</blockquote>\n");
+    expect(html("a\nb\n\nc\nd")).toBe("<p>a<br />\nb</p>\n<p>c<br />\nd</p>\n");
+    expect(html("```\na\nb\n```")).toBe("<pre><code>a\nb\n</code></pre>\n");
+    expect(html("<div>\na\nb\n</div>")).toBe("<div>\na\nb\n</div>\n");
+  });
+});
+
 test("a long delimiter run uses all of its characters to open and close emphasis", () => {
   const repeated = (fill: string, count: number) => Buffer.alloc(count * fill.length, fill).toString();
   const nested = (depth: number, text: string) =>
@@ -2095,6 +2142,7 @@ test.each([
       wikiLinks: true,
       latexMath: true,
       underline: true,
+      hardSoftBreaks: true,
     },
   ],
 ])(

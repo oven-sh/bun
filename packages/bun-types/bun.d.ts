@@ -1622,7 +1622,13 @@ declare module "bun" {
       strikethrough?: boolean;
       /** Enable GFM task lists (`- [x] item`). Default: `true`. */
       tasklists?: boolean;
-      /** Treat soft line breaks as hard line breaks. Default: `false`. */
+      /**
+       * Treat soft line breaks as hard line breaks: each line ending inside a
+       * paragraph or a heading is a hard break, and the spaces and tabs before it
+       * are dropped. `html()` writes `<br />` and `react()` creates a `br` element.
+       * `render()` writes `\n` for both kinds of break, so there the option only
+       * drops those spaces and tabs. Default: `false`.
+       */
       hardSoftBreaks?: boolean;
       /** Enable wiki-style links (`[[target]]` or `[[target|label]]`). Default: `false`. */
       wikiLinks?: boolean;

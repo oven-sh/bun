@@ -311,6 +311,7 @@ pub const BLOCK_DIRECTIVE: u32 = 0x400;
 #[derive(Copy, Clone)]
 pub struct Flags {
     pub(crate) collapse_whitespace: bool,
+    pub(crate) hard_soft_breaks: bool,
     pub(crate) permissive_atx_headers: bool,
     pub(crate) permissive_url_autolinks: bool,
     pub(crate) permissive_www_autolinks: bool,

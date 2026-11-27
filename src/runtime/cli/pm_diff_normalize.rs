@@ -518,6 +518,7 @@ fn print_js<'a>(
     let symbols = bun_ast::symbol::Map::init_with_one_list(symbols);
     let print_opts = bun_js_printer::Options {
         minify_syntax: options.minify_syntax,
+        omit_empty_new_parens: true,
         require_ref: Some(ast.require_ref),
         import_meta_ref: ast.import_meta_ref,
         source_map_handler: Some(&chunk),

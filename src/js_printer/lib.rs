@@ -1298,6 +1298,8 @@ pub struct Options<'a> {
     pub minify_whitespace: bool,
     pub minify_identifiers: bool,
     pub minify_syntax: bool,
+    /// Print `new X()` as `new X` where `minify_whitespace` does. `bun pm diff` compares the two as one text.
+    pub omit_empty_new_parens: bool,
     pub print_dce_annotations: bool,
     /// Marks the braces of object literals in the source map, see `mark_object_brace`.
     pub code_coverage: bool,
@@ -1374,6 +1376,7 @@ impl<'a> Default for Options<'a> {
             minify_whitespace: false,
             minify_identifiers: false,
             minify_syntax: false,
+            omit_empty_new_parens: false,
             print_dce_annotations: true,
             code_coverage: false,
             inline_require_and_import_errors: true,
@@ -3369,7 +3372,10 @@ pub(crate) mod __gated_printer {
                     let args = e.args.slice();
                     let can_omit_parens = args.is_empty() && !level.gte(Level::Postfix);
                     let has_written_parens = e.has_written_parens(expr.loc);
-                    if !can_omit_parens || (has_written_parens && !self.options.minify_whitespace) {
+                    let omits_parens = !has_written_parens
+                        || self.options.minify_whitespace
+                        || self.options.omit_empty_new_parens;
+                    if !can_omit_parens || !omits_parens {
                         if can_omit_parens {
                             // JSC reports a failed `new X()` at the `(`, and a failed `new X` at `new`.
                             self.add_source_mapping(expr.loc);

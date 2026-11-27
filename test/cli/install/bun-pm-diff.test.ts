@@ -983,13 +983,12 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("the parentheses of a new without arguments are not formatting", async () => {
-    // The re-print keeps the `()` that a file has, and adds none.
+  test("the parentheses of a new without arguments are formatting", async () => {
     const made = await pretty({
-      "a/made.js": "exports.made = new Map;\n",
-      "b/made.js": "exports.made = new Map();\n",
+      "a/made.js": "exports.made = new Map;\nexports.size = new Set().size;\n",
+      "b/made.js": "exports.made = new Map();\nexports.size = (new Set).size;\n",
     });
-    expect(made.text).toMatch(/\nmade\.js ─+ \+1 -1\n/);
+    expect(made.text).toMatch(/\nmade\.js ─+ formatting only\n/);
   });
 
   test("a directive after a banner comment stays where it is written", async () => {

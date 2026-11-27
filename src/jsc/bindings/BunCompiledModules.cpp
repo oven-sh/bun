@@ -506,6 +506,19 @@ static std::optional<AOT::ModuleID> findDefaultForm(const String& path)
     return findModuleForPath(pathOfForm.transferToWTFString());
 }
 
+String keyForLoadPlugins(Zig::GlobalObject* globalObject, const String& key, const String& specifier)
+{
+    size_t mark = key.reverseFind('?');
+    if (mark == notFound || specifier.contains('?'))
+        return key;
+    auto form = findModuleForPath(key);
+    // Not behind an import that the form has answered.
+    if (!form || AOT::hasBeenImported(globalObject, *form))
+        return key;
+    String path = key.left(mark);
+    return AOT::hasAttributeVariant(path) && hasMatchingLoadPlugin(globalObject, path) ? path : key;
+}
+
 // The resolver ignores import attributes and finds a file in any form. A require() or an import() without a type treats it as missing, but its path can still be resolved and read.
 void throwIfOnlyTyped(Zig::GlobalObject* globalObject, const String& key, const String& specifier, const String& importer, bool isForRequire)
 {
@@ -2835,6 +2848,7 @@ const String& uncompiledImportReferrer(const String& origin) { return origin; }
 void didCreateRequire(VM&, CallFrame*, JSObject*) {}
 void didCreateRequireOfCompiledModule(JSObject*) {}
 void willResolveImport(Zig::GlobalObject*, const String&, JSValue) {}
+String keyForLoadPlugins(Zig::GlobalObject*, const String& key, const String&) { return key; }
 void throwIfOnlyTyped(Zig::GlobalObject*, const String&, const String&, const String&, bool) {}
 void didDeleteRequireCacheEntry(Zig::GlobalObject*, const String&) {}
 bool willUnmockCompiledFile(Zig::GlobalObject*, const String&, bool, bool) { return false; }

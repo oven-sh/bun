@@ -4282,6 +4282,8 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     }
     if (hasModuleMocks) [[unlikely]]
         resolved = Bun::packageImportKey(globalObject, resolved, referrerString, true);
+    if (Bun::hasCompiledModules()) [[unlikely]]
+        resolved = Bun::keyForLoadPlugins(globalObject, resolved, keyString);
     if (moduleMocksRun) [[unlikely]]
         resolved = Bun::keyOfImportWhileModuleMocksRun(globalObject, resolved, referrerString, true);
     Identifier resolvedKey = Identifier::fromString(vm, resolved);

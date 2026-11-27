@@ -4306,6 +4306,10 @@
     "default": 9000,
     "asan": 36000
   },
+  "aot/a-load-plugin-of-the-program-answers-for-a-file-of-an-unknown-kind.test.ts": {
+    "default": 9000,
+    "asan": 36000
+  },
   "aot/arguments-of-a-call-that-returns-early.test.ts": {
     "default": 1600,
     "asan": 3000,

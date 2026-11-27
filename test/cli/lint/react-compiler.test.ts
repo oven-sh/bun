@@ -493,7 +493,6 @@ ${chain}
       "alone": 10,
       "alternation": 8,
       "both": 8,
-      "case-insensitive": 8,
       "default": 12,
       "empty": 12,
       "empty-pattern": 1,

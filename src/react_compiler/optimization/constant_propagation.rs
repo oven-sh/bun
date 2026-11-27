@@ -539,7 +539,7 @@ fn evaluate_instruction(
             {
                 if let PropertyLiteral::String(prop_name) = property {
                     if prop_name.slice() == b"length" {
-                        if env.config.lone_surrogates_are_not_folded && has_lone_surrogate(s) {
+                        if env.config.lone_surrogates_are_not_folded && has_lone_surrogate(*s) {
                             return None;
                         }
                         // Use UTF-16 code unit count to match JS .length semantics
@@ -834,7 +834,7 @@ fn is_reserved_word(s: &[u8]) -> bool {
 }
 
 /// Whether `s` has half of a surrogate pair: oxc's `JSStr::as_str` is `None`.
-fn has_lone_surrogate(s: &JsString) -> bool {
+fn has_lone_surrogate(s: JsString) -> bool {
     match s.as_bytes() {
         Some(bytes) => strings::wtf8_has_surrogate(bytes),
         None => char::decode_utf16(s.estring().slice16().iter().copied()).any(|unit| unit.is_err()),
@@ -898,7 +898,7 @@ fn evaluate_binary_op(
             )),
             (PrimitiveValue::String(l), PrimitiveValue::String(r))
                 if lone_surrogates_are_not_folded
-                    && (has_lone_surrogate(l) || has_lone_surrogate(r)) =>
+                    && (has_lone_surrogate(*l) || has_lone_surrogate(*r)) =>
             {
                 None
             }

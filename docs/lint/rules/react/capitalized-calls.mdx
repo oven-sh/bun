@@ -118,41 +118,7 @@ function SaveButton({ track }) {
 
 Both options are about functions. A capitalized method such as `ui.Avatar()` is reported whatever they say.
 
-`allowPattern` is a pattern for Rust's `regex` crate, as in oxlint, not a JavaScript one. It can't have lookahead or backreferences. It can have what only that crate has, such as `(?x)` for blanks and comments, `(?P<name>..)` and `[[:upper:]]`:
-
-{/* good {"config": "oxlint", "options": [{"allowPattern": "(?x) ^ [[:upper:]] [[:lower:]]+ Event $  # a name that ends in Event"}]} */}
-```jsx
-import { ClickEvent } from "./events";
-
-function SaveButton({ track }) {
-  const event = ClickEvent("save");
-  return <button onClick={() => track(event)}>Save</button>;
-}
-```
-
-A name in `\p{..}` is read as the crate reads it. Case, spaces, `_` and `-` don't count, and neither does `is` before the name, so `\p{lu}`, `\p{IsLu}` and `\p{uppercase letter}` are all `\p{Lu}`:
-
-{/* good {"config": "oxlint", "options": [{"allowPattern": "^\\p{lu}\\p{isLower}+Event$"}]} */}
-```jsx
-import { ClickEvent } from "./events";
-
-function SaveButton({ track }) {
-  const event = ClickEvent("save");
-  return <button onClick={() => track(event)}>Save</button>;
-}
-```
-
-The crate has classes that JavaScript doesn't: `\p{Age=..}`, `\p{Grapheme_Cluster_Break=..}`, `\p{Sentence_Break=..}`, `\p{Word_Break=..}`, and binary properties such as `\p{Other_Uppercase}` and `\p{Hyphen}`. They match what they match in oxlint 1.95, which has the characters of Unicode 16:
-
-{/* good {"config": "oxlint", "options": [{"allowPattern": "^\\p{Word_Break=ALetter}+Event$"}]} */}
-```jsx
-import { ClickEvent } from "./events";
-
-function SaveButton({ track }) {
-  const event = ClickEvent("save");
-  return <button onClick={() => track(event)}>Save</button>;
-}
-```
+`allowPattern` is a JavaScript regular expression, like the patterns in the options of other rules. oxlint uses Rust's `regex` crate. A pattern that only one of the two accepts, such as `(?i)^event`, allows nothing.
 
 ## When not to use it
 

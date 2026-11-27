@@ -119,7 +119,7 @@ fn name_key(name: &StoreStr) -> String {
 }
 
 /// `None` for a string that has a lone surrogate.
-fn string_key(value: &JsString) -> Option<String> {
+fn string_key(value: JsString) -> Option<String> {
     match value.as_bytes() {
         Some(bytes) => core::str::from_utf8(bytes).ok().map(str::to_owned),
         None => String::from_utf16(value.estring().slice16()).ok(),
@@ -586,7 +586,7 @@ fn infer_capture_members(
                 value: PrimitiveValue::String(value),
                 ..
             } => {
-                if let Some(value) = string_key(value) {
+                if let Some(value) = string_key(*value) {
                     keys.insert(instruction.lvalue.identifier, value);
                 }
             }
@@ -2099,7 +2099,7 @@ impl CallableState {
             }
             InstructionValue::Primitive { value, .. } => {
                 let key = match value {
-                    PrimitiveValue::String(value) => string_key(value),
+                    PrimitiveValue::String(value) => string_key(*value),
                     PrimitiveValue::Number(value) => Some(value.to_string()),
                     PrimitiveValue::BigInt(value) => Some(name_key(value)),
                     PrimitiveValue::Boolean(value) => Some(value.to_string()),

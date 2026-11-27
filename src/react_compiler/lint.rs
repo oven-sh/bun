@@ -39,7 +39,7 @@ impl Categories {
     pub const ALL: Categories = Categories(u32::MAX);
     /// All but those that a pass throws.
     pub const RECORDED: Categories = Categories(
-        u32::MAX & !(1 << ErrorCategory::Todo as u32) & !(1 << ErrorCategory::Invariant as u32),
+        !(1 << ErrorCategory::Todo as u32) & !(1 << ErrorCategory::Invariant as u32),
     );
 
     #[must_use]

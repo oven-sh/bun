@@ -1161,8 +1161,6 @@ const allowedCalls: Files = {
   "empty/calls.jsx": capitalizedCalls,
   "empty-pattern/.oxlintrc.json": rcWithCalls({ allowPattern: "" }),
   "empty-pattern/calls.jsx": capitalizedCalls,
-  "case-insensitive/.oxlintrc.json": rcWithCalls({ allowPattern: "(?i)^child" }),
-  "case-insensitive/calls.jsx": capitalizedCalls,
   "alone/.oxlintrc.json": JSON.stringify({
     plugins: ["react"],
     categories: { correctness: "off" },

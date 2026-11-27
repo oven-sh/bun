@@ -729,6 +729,29 @@ describe("runtime timeouts are not fake timers", () => {
     }
   });
 
+  test.each([
+    ["postgres", "ERR_POSTGRES_QUEUE_TIMEOUT"],
+    ["mysql", "ERR_MYSQL_QUEUE_TIMEOUT"],
+  ])("%s queueTimeout armed under fake timers survives useRealTimers()", async (protocol, code) => {
+    using server = silentServer();
+    vi.useFakeTimers();
+    const db = new SQL({ url: `${protocol}://user:pass@127.0.0.1:${server.port}/db`, queueTimeout: 0.1, max: 1 });
+    try {
+      expect(db.options.queueTimeout).toBe(100);
+      const waiting = db`select 1`.then(
+        () => "resolved",
+        error => error.code,
+      );
+      await server.accepted;
+      const fakeTimers = vi.getTimerCount();
+      vi.useRealTimers();
+      expect(fakeTimers).toBe(0);
+      expect(await waiting).toBe(code);
+    } finally {
+      await db.close({ timeout: 0 });
+    }
+  });
+
   test("RedisClient connectionTimeout armed under fake timers survives useRealTimers()", async () => {
     using server = silentServer();
     vi.useFakeTimers();

@@ -225,6 +225,8 @@ const SERVER_OPTIONS = [
   "connect_timeout",
   "maxLifetime",
   "max_lifetime",
+  "queueTimeout",
+  "queue_timeout",
   "bigint",
   "prepare",
   "allowPublicKeyRetrieval",
@@ -477,6 +479,7 @@ interface UrlQuery {
   connectionTimeout?: string;
   idleTimeout?: string;
   maxLifetime?: string;
+  queueTimeout?: string;
   max?: string;
   prepare?: string;
   foundRows?: string;
@@ -492,6 +495,7 @@ const QUERY_OPTIONS = {
   connect_timeout: "connectionTimeout",
   idle_timeout: "idleTimeout",
   max_lifetime: "maxLifetime",
+  queue_timeout: "queueTimeout",
   max: "max",
   prepare: "prepare",
   foundrows: "foundRows",
@@ -771,6 +775,14 @@ function parseOptions(
     "options.max_lifetime",
     options.maxLifetime ?? options.max_lifetime ?? query.maxLifetime,
   );
+  const queueTimeout = secondsToMilliseconds(
+    "options.queue_timeout",
+    options.queueTimeout ?? options.queue_timeout ?? query.queueTimeout,
+  );
+  // A timer takes no longer delay.
+  if (queueTimeout !== undefined && Math.round(queueTimeout) > 2 ** 31 - 1) {
+    throw $ERR_INVALID_ARG_VALUE("options.queue_timeout", queueTimeout / 1000, "must be at most 2147483.647 seconds");
+  }
 
   const max = Number(options.max ?? query.max ?? 10);
   if (max > 2 ** 31 || max < 1 || max !== max) {
@@ -909,6 +921,10 @@ function parseOptions(
 
   if (maxLifetime !== undefined) {
     ret.maxLifetime = maxLifetime;
+  }
+
+  if (queueTimeout !== undefined) {
+    ret.queueTimeout = queueTimeout;
   }
 
   if (onconnect !== undefined) {

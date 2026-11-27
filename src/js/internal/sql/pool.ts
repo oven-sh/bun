@@ -17,6 +17,7 @@ const { describeAddress } = require("internal/sql/options");
 const AsyncContextFrame = require("internal/async_context_frame");
 const { isStoppedModuleGraphRunning } = require("internal/shared");
 const monotonicNowMs: () => number = $bindgen("Timer.bind.ts", "monotonicNowMs");
+const ObjectDefineProperty = Object.defineProperty;
 /// how many times `bun --hot` has reloaded the program, -1 without --hot
 const hotReloadGeneration: () => number = $bindgen("jsc_hooks.bind.ts", "hotReloadGeneration");
 
@@ -72,11 +73,15 @@ export type NativeCreateQuery<QueryHandle> = (
 
 type OnConnected = (err: Error | null, connection: any) => void;
 
-/// In the pool's queue: a caller that wants a connection for itself. A query is queued as its bare callback.
-class Reservation {
+/// In the pool's queue: a reservation, or a query that has a timer. Any other query is its bare callback.
+class Waiter {
   onConnected: OnConnected;
-  constructor(onConnected: OnConnected) {
+  reserved: boolean;
+  /// Of `queueTimeout`. What takes the caller out of the queue clears it.
+  timer: ReturnType<typeof setTimeout> | undefined = undefined;
+  constructor(onConnected: OnConnected, reserved: boolean) {
     this.onConnected = onConnected;
+    this.reserved = reserved;
   }
 }
 
@@ -164,6 +169,7 @@ class PooledConnection<ConnectionHandle extends NativeConnection = any> {
     }
     if (this.state === PooledConnectionState.connecting && this.#isConnectFailure(err) && this.#canKeepRetrying()) {
       const delay = Math.min(20 * 2 ** ++this.connectAttempts, 1000);
+      this.adapter.dialError = err;
       this.retryTimer = setTimeout(PooledConnection.#retryTimerFired, delay, this, err);
       return;
     }
@@ -501,7 +507,11 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   public readonly connections: PooledConnection[] = [];
   public readonly readyConnections: Set<PooledConnection> = new Set();
 
-  public queue: Array<OnConnected | Reservation> = [];
+  public queue: Array<OnConnected | Waiter> = [];
+  /// `queueTimeout` in milliseconds. 0: a caller waits without a limit.
+  #queueTimeout: number = 0;
+  /// Why the last dial failed, until a connection opens.
+  public dialError: Error | null = null;
 
   public totalQueries: number = 0;
   /// Which form of the password logged in last, see Login. undefined: none has yet.
@@ -577,6 +587,11 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     if (this.generation !== -1) {
       hotPools.add(this);
     }
+    const queueTimeout = $getByIdDirect(connectionInfo, "queueTimeout");
+    if (queueTimeout !== undefined && queueTimeout > 0) {
+      // Whole milliseconds, as a timer counts them: 1.001 s is 1000.9999999999999 ms.
+      this.#queueTimeout = Math.max(Math.round(queueTimeout), 1);
+    }
   }
 
   get closed(): boolean {
@@ -619,8 +634,12 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     const queue = this.queue;
     for (let i = 0; i < queue.length; i++) {
       const waiter = queue[i];
-      if (waiter === onConnected || (waiter as Reservation).onConnected === onConnected) {
+      if (waiter === onConnected || (waiter as Waiter).onConnected === onConnected) {
         queue.splice(i, 1);
+        const timer = typeof waiter === "function" ? undefined : waiter.timer;
+        if (timer !== undefined) {
+          clearTimeout(timer);
+        }
         // the callers behind it may have waited for it
         this.#serve();
         this.#closeIfDrained();
@@ -765,11 +784,13 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   /// Serves the oldest caller that can be served now. It is booked before it is called: it can re-enter the pool.
   #serveNext(): boolean {
     const queue = this.queue;
+    // Without a queueTimeout every query in `queue` is a bare callback.
+    const timed = this.#queueTimeout !== 0;
     let reservationsAhead = 0;
     // Behind as many reservations as there are connections nobody can be served.
     for (let i = 0; i < queue.length && reservationsAhead < this.connections.length; i++) {
       const waiter = queue[i];
-      if (typeof waiter === "function") {
+      if (typeof waiter === "function" || (timed && !waiter.reserved)) {
         // An even share of the demand over `max` connections.
         // A reservation ahead gets a dial that is on its way, or one connection has to drain for it.
         const connection = this.#leastBusy(
@@ -782,12 +803,21 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
         queue.splice(i, 1);
         connection.queryCount++;
         this.totalQueries++;
-        waiter(null, connection);
+        if (typeof waiter === "function") {
+          waiter(null, connection);
+        } else {
+          clearTimeout(waiter.timer);
+          waiter.onConnected(null, connection);
+        }
         return true;
       }
       const connection = reservationsAhead++ === 0 ? this.#leastBusy(1, 0) : null;
       if (connection !== null) {
         queue.splice(i, 1);
+        const timer = waiter.timer;
+        if (timer !== undefined) {
+          clearTimeout(timer);
+        }
         connection.flags |= PooledConnectionFlags.reserved;
         connection.queryCount++;
         this.totalQueries++;
@@ -842,6 +872,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   }
 
   connectionOpened(connection: PooledConnection) {
+    this.dialError = null;
     this.saslprep = connection.saslprep;
     this.#most = Math.max(this.#most, this.connections.length - this.#connecting());
     this.#tries = 0;
@@ -871,6 +902,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     if (!established) {
       this.#most = connections.length - this.#connecting();
       this.#refusedAt = monotonicNowMs();
+      if (!this.#tornDown) {
+        this.dialError = err;
+      }
     }
     const closeHandlers = connection.closeHandlers;
     for (const onClose of closeHandlers) {
@@ -902,7 +936,15 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     const failed = this.queue.splice(0);
     for (let i = 0; i < failed.length; i++) {
       const waiter = failed[i];
-      (typeof waiter === "function" ? waiter : waiter.onConnected)(err, null);
+      if (typeof waiter === "function") {
+        waiter(err, null);
+      } else {
+        const timer = waiter.timer;
+        if (timer !== undefined) {
+          clearTimeout(timer);
+        }
+        waiter.onConnected(err, null);
+      }
     }
   }
 
@@ -984,9 +1026,33 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       return onConnected(this.connectionClosedError(), null);
     }
     this.asked = true;
-    this.queue.push(reserved ? new Reservation(onConnected) : onConnected);
+    const queue = this.queue;
+    const waiter = reserved ? new Waiter(onConnected, true) : onConnected;
+    queue.push(waiter);
     this.#serve();
-    this.#dialForQueued();
+    if (queue.length !== 0) {
+      this.#dialForQueued();
+      const queueTimeout = this.#queueTimeout;
+      if (queueTimeout !== 0) {
+        // The caller may wait no more: it was served past a reservation, or the password function closed the pool.
+        const i = queue.lastIndexOf(waiter);
+        if (i !== -1) {
+          const timed = typeof waiter === "function" ? (queue[i] = new Waiter(onConnected, false)) : waiter;
+          timed.timer = setTimeout(BaseSQLAdapter.#queueTimerFired, queueTimeout, this, onConnected);
+        }
+      }
+    }
+  }
+
+  static #queueTimerFired(self: BaseSQLAdapter<any, any>, onConnected: OnConnected) {
+    const error = self.error("QUEUE_TIMEOUT", `Waited more than ${self.#queueTimeout / 1000} seconds for a connection`);
+    const cause = self.dialError;
+    if (cause !== null) {
+      ObjectDefineProperty(error, "cause", { __proto__: null, value: cause, writable: true, configurable: true });
+    }
+    if (self.cancelConnect(onConnected)) {
+      onConnected(error, null);
+    }
   }
 }
 

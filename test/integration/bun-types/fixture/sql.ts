@@ -169,6 +169,8 @@ new Bun.SQL({ filename: "./dev.db" });
 new Bun.SQL({ adapter: "sqlite", url: "file:dev.db", bigint: true });
 new Bun.SQL({ adapter: "mariadb", socket: "/run/mysqld/mysqld.sock", foundRows: false });
 new Bun.SQL("postgres://localhost", { onconnect: err => expectType(err).is<Error | null>() });
+new Bun.SQL({ max: 10, queueTimeout: 5 });
+new Bun.SQL("mysql://localhost", { queue_timeout: 0.5 });
 
 new Bun.SQL({ channelBinding: "require", transform: Bun.SQL.camel });
 new Bun.SQL({ filename: ":memory:", transform: Bun.SQL.toCamel });
@@ -190,6 +192,9 @@ new Bun.SQL({ transform: (name: string) => name });
 
 // @ts-expect-error
 new Bun.SQL({ channelBinding: "always" });
+
+// @ts-expect-error - SQLite has no pool
+new Bun.SQL({ adapter: "sqlite", filename: ":memory:", queueTimeout: 5 });
 
 // @ts-expect-error - the callbacks get the error only, not the connection
 new Bun.SQL({ onclose: (client: unknown, err: Error | null) => {} });

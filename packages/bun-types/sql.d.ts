@@ -577,6 +577,31 @@ declare module "bun" {
       max_lifetime?: number | undefined;
 
       /**
+       * Maximum time in seconds a caller waits for a connection of the pool.
+       * A query, `sql.begin()`, `sql.reserve()` or `sql.connect()` that waits
+       * longer rejects with `ERR_POSTGRES_QUEUE_TIMEOUT` or
+       * `ERR_MYSQL_QUEUE_TIMEOUT`, and its query is not sent. The pool and
+       * its connections stay as they are. The wait for a connection that is
+       * still being established counts.
+       *
+       * Does not limit a caller that has a connection: a query that runs, and
+       * a query that Bun sends on a connection that already runs other
+       * queries. `sql.begin()` and `sql.reserve()` need an idle connection,
+       * so on a pool that queries keep busy they are the callers that wait.
+       *
+       * At most 2147483.647 seconds, about 24.8 days.
+       * @default 0 (no limit)
+       */
+      queueTimeout?: number | undefined;
+
+      /**
+       * Maximum time in seconds to wait for a connection of the pool (alias for queueTimeout)
+       * @deprecated Prefer {@link queueTimeout}
+       * @default 0 (no limit)
+       */
+      queue_timeout?: number | undefined;
+
+      /**
        * Whether to use TLS/SSL for the connection. A string selects the
        * SSL mode (`"disable"`, `"allow"`, `"prefer"`, `"require"`, `"verify-ca"`, `"verify-full"`).
        * A `BunFile` is the CA certificate to verify the server against, the

@@ -23,7 +23,6 @@ use core::cell::Cell;
 use core::ffi::c_int;
 use core::ptr;
 use std::borrow::Cow;
-use std::io::Write as _;
 
 use bun_boringssl as boringssl;
 use bun_collections::StringSet;
@@ -1642,12 +1641,14 @@ fn build_request_body(
     match extra_headers.get(b"host") {
         Some(user_host) => write_header_line(&mut body, b"Host", user_host),
         None => {
-            let host_fmt = HostFormatter {
+            body.extend_from_slice(b"Host: ");
+            HostFormatter {
                 is_https,
                 host,
                 port: Some(port),
-            };
-            write!(&mut body, "Host: {host_fmt}\r\n").expect("infallible: in-memory write");
+            }
+            .write_to(&mut body);
+            body.extend_from_slice(b"\r\n");
         }
     }
     body.extend_from_slice(

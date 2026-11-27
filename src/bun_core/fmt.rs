@@ -1283,22 +1283,18 @@ impl HostFormatter<'_> {
         };
         crate::strings::contains_char(after_brackets, b':')
     }
-}
 
-impl Display for HostFormatter<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write_bytes(f, self.host)?;
+    pub fn write_to(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.host);
         if self.host_has_port() {
-            return Ok(());
+            return;
         }
 
-        let is_port_optional = self.port.is_none()
-            || (self.is_https && self.port == Some(443))
-            || (!self.is_https && self.port == Some(80));
-        if !is_port_optional {
-            write!(f, ":{}", self.port.unwrap())?;
+        let default_port = if self.is_https { 443 } else { 80 };
+        if let Some(port) = self.port.filter(|&port| port != default_port) {
+            out.push(b':');
+            out.extend_from_slice(itoa(&mut ItoaBuf::new(), port));
         }
-        Ok(())
     }
 }
 

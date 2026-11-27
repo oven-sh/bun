@@ -677,8 +677,10 @@ fn generate_instruction_types(
             unifier.unify(left, Type::Primitive, shapes)?;
         }
 
-        InstructionValue::PostfixUpdate { value, lvalue, .. }
-        | InstructionValue::PrefixUpdate { value, lvalue, .. } => {
+        InstructionValue::PostfixUpdateLocal { value, lvalue, .. }
+        | InstructionValue::PostfixUpdateContext { value, lvalue, .. }
+        | InstructionValue::PrefixUpdateContext { value, lvalue, .. }
+        | InstructionValue::PrefixUpdateLocal { value, lvalue, .. } => {
             let value_type = get_type(value.identifier, identifiers);
             unifier.unify(value_type, Type::Primitive, shapes)?;
             let lvalue_type = get_type(lvalue.identifier, identifiers);

@@ -2153,7 +2153,10 @@ fn codegen_base_instruction_value(
             codegen_place_to_expression(cx, iterator)
         }
         InstructionValue::NextPropertyOf { value, .. } => codegen_place_to_expression(cx, value),
-        InstructionValue::PostfixUpdate {
+        InstructionValue::PostfixUpdateLocal {
+            operation, lvalue, ..
+        }
+        | InstructionValue::PostfixUpdateContext {
             operation, lvalue, ..
         } => {
             let arg = codegen_place_to_expression(cx, lvalue)?;
@@ -2166,7 +2169,10 @@ fn codegen_base_instruction_value(
                 loc,
             ))
         }
-        InstructionValue::PrefixUpdate {
+        InstructionValue::PrefixUpdateLocal {
+            operation, lvalue, ..
+        }
+        | InstructionValue::PrefixUpdateContext {
             operation, lvalue, ..
         } => {
             let arg = codegen_place_to_expression(cx, lvalue)?;

@@ -374,14 +374,20 @@ fn evaluate_instruction(
             }
             None
         }
-        // Not in upstream: `PostfixUpdate`, `PrefixUpdate` and `StoreLocal` return
+        // Not in upstream: the update expressions and `StoreLocal` return
         // `None` instead of the constant for their own result temporary. Upstream
         // returns it, so a consumer can fold the temporary away (`-(x = 10)` to
         // `-10`). The instruction then has no lvalue and codegen prints it as a
         // statement ahead of an earlier store that is still inlined at its use:
         // `[(x = 5), -(x = 10), x++]` became `x = 10; [x = 5, -10, x++]`. The
         // assigned variable still gets its constant (#42628).
-        InstructionValue::PostfixUpdate {
+        InstructionValue::PostfixUpdateLocal {
+            lvalue,
+            operation,
+            value,
+            loc,
+        }
+        | InstructionValue::PostfixUpdateContext {
             lvalue,
             operation,
             value,
@@ -406,7 +412,13 @@ fn evaluate_instruction(
             }
             None
         }
-        InstructionValue::PrefixUpdate {
+        InstructionValue::PrefixUpdateLocal {
+            lvalue,
+            operation,
+            value,
+            loc,
+        }
+        | InstructionValue::PrefixUpdateContext {
             lvalue,
             operation,
             value,
@@ -620,7 +632,7 @@ fn evaluate_instruction(
             if let Some(constant) = read(constants, value).cloned() {
                 constants.insert(lvalue.place.identifier, constant);
             }
-            // Not in upstream: see `PostfixUpdate`.
+            // Not in upstream: see `PostfixUpdateLocal`.
             None
         }
         InstructionValue::FunctionExpression { lowered_func, .. } => {

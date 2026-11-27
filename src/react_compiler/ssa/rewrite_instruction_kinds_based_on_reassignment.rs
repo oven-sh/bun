@@ -267,8 +267,8 @@ pub(crate) fn rewrite_instruction_kinds_based_on_reassignment(
                         kind.ok_or_else(|| invariant_error("Expected at least one operand", None))?;
                     destructure_kind_locs.push((instr_id, kind));
                 }
-                InstructionValue::PostfixUpdate { lvalue, .. }
-                | InstructionValue::PrefixUpdate { lvalue, .. } => {
+                InstructionValue::PostfixUpdateLocal { lvalue, .. }
+                | InstructionValue::PrefixUpdateLocal { lvalue, .. } => {
                     let ident = &env.identifiers[lvalue.identifier.0 as usize];
                     let decl_id = ident.declaration_id;
                     let Some(existing) = declarations.get(decl_id) else {
@@ -280,6 +280,17 @@ pub(crate) fn rewrite_instruction_kinds_based_on_reassignment(
                     };
                     // A parameter or context variable is already Let.
                     if let Some(loc) = existing.instruction() {
+                        let_locs.push(loc);
+                    }
+                }
+                InstructionValue::PostfixUpdateContext { lvalue, .. }
+                | InstructionValue::PrefixUpdateContext { lvalue, .. } => {
+                    let ident = &env.identifiers[lvalue.identifier.0 as usize];
+                    // A parameter or context variable is already Let.
+                    if let Some(loc) = declarations
+                        .get(ident.declaration_id)
+                        .and_then(DeclarationLoc::instruction)
+                    {
                         let_locs.push(loc);
                     }
                 }

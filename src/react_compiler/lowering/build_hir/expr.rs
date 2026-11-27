@@ -1207,14 +1207,14 @@ fn lower_update_identifier(
     let value = lower_identifier(builder, ref_, ident_loc)?;
 
     if prefix {
-        Ok(InstructionValue::PrefixUpdate {
+        Ok(InstructionValue::PrefixUpdateLocal {
             lvalue: lvalue_place,
             operation,
             value,
             loc,
         })
     } else {
-        Ok(InstructionValue::PostfixUpdate {
+        Ok(InstructionValue::PostfixUpdateLocal {
             lvalue: lvalue_place,
             operation,
             value,

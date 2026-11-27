@@ -127,15 +127,17 @@ pub fn lvalues(instr: &Instruction) -> PlaceIter<'_> {
         InstructionValue::Destructure { lvalue, .. } => {
             PlaceIter::of_pattern([&instr.lvalue], &lvalue.pattern)
         }
-        InstructionValue::PostfixUpdate { lvalue, .. }
-        | InstructionValue::PrefixUpdate { lvalue, .. } => {
+        InstructionValue::PostfixUpdateLocal { lvalue, .. }
+        | InstructionValue::PostfixUpdateContext { lvalue, .. }
+        | InstructionValue::PrefixUpdateContext { lvalue, .. }
+        | InstructionValue::PrefixUpdateLocal { lvalue, .. } => {
             PlaceIter::new([&instr.lvalue, lvalue], Rest::None)
         }
         _ => PlaceIter::new([&instr.lvalue], Rest::None),
     }
 }
 
-/// The lvalues of DeclareLocal/StoreLocal/DeclareContext/StoreContext/Destructure/PostfixUpdate/PrefixUpdate.
+/// The lvalues of declarations, stores, destructuring, and update expressions.
 /// Equivalent to TS `eachInstructionValueLValue`.
 pub fn value_lvalues(value: &InstructionValue) -> PlaceIter<'_> {
     match value {
@@ -146,8 +148,12 @@ pub fn value_lvalues(value: &InstructionValue) -> PlaceIter<'_> {
             PlaceIter::new([&lvalue.place], Rest::None)
         }
         InstructionValue::Destructure { lvalue, .. } => PlaceIter::of_pattern([], &lvalue.pattern),
-        InstructionValue::PostfixUpdate { lvalue, .. }
-        | InstructionValue::PrefixUpdate { lvalue, .. } => PlaceIter::new([lvalue], Rest::None),
+        InstructionValue::PostfixUpdateLocal { lvalue, .. }
+        | InstructionValue::PostfixUpdateContext { lvalue, .. }
+        | InstructionValue::PrefixUpdateContext { lvalue, .. }
+        | InstructionValue::PrefixUpdateLocal { lvalue, .. } => {
+            PlaceIter::new([lvalue], Rest::None)
+        }
         // All other variants have no lvalues
         InstructionValue::LoadLocal { .. }
         | InstructionValue::LoadContext { .. }
@@ -218,8 +224,10 @@ pub fn operands<'a>(value: &'a InstructionValue, functions: &'a [HirFunction]) -
         | InstructionValue::TypeCastExpression { value, .. }
         | InstructionValue::Await { value, .. }
         | InstructionValue::NextPropertyOf { value, .. }
-        | InstructionValue::PostfixUpdate { value, .. }
-        | InstructionValue::PrefixUpdate { value, .. } => PlaceIter::new([value], Rest::None),
+        | InstructionValue::PostfixUpdateLocal { value, .. }
+        | InstructionValue::PostfixUpdateContext { value, .. }
+        | InstructionValue::PrefixUpdateContext { value, .. }
+        | InstructionValue::PrefixUpdateLocal { value, .. } => PlaceIter::new([value], Rest::None),
         InstructionValue::PropertyLoad { object, .. }
         | InstructionValue::PropertyDelete { object, .. } => PlaceIter::new([object], Rest::None),
         InstructionValue::PropertyStore { object, value, .. } => {
@@ -1147,8 +1155,10 @@ pub fn for_each_instruction_value_operand_mut(
         InstructionValue::NextPropertyOf { value: val, .. } => {
             f(val);
         }
-        InstructionValue::PostfixUpdate { value: val, .. }
-        | InstructionValue::PrefixUpdate { value: val, .. } => {
+        InstructionValue::PostfixUpdateLocal { value: val, .. }
+        | InstructionValue::PostfixUpdateContext { value: val, .. }
+        | InstructionValue::PrefixUpdateContext { value: val, .. }
+        | InstructionValue::PrefixUpdateLocal { value: val, .. } => {
             f(val);
         }
         InstructionValue::StartMemoize { deps, .. } => {
@@ -1181,7 +1191,7 @@ pub fn for_each_call_argument_mut(args: &mut [PlaceOrSpread], f: &mut impl FnMut
 }
 
 /// In-place mutation of an InstructionValue's lvalues (DeclareLocal, StoreLocal, DeclareContext,
-/// StoreContext, Destructure, PostfixUpdate, PrefixUpdate). Does NOT include the instruction's
+/// StoreContext, Destructure, and update expressions). Does NOT include the instruction's
 /// top-level lvalue — use `for_each_instruction_lvalue_mut` for that.
 pub fn for_each_instruction_value_lvalue_mut(
     value: &mut InstructionValue,
@@ -1197,8 +1207,10 @@ pub fn for_each_instruction_value_lvalue_mut(
         InstructionValue::Destructure { lvalue, .. } => {
             for_each_pattern_operand_mut(&mut lvalue.pattern, f);
         }
-        InstructionValue::PostfixUpdate { lvalue, .. }
-        | InstructionValue::PrefixUpdate { lvalue, .. } => {
+        InstructionValue::PostfixUpdateLocal { lvalue, .. }
+        | InstructionValue::PostfixUpdateContext { lvalue, .. }
+        | InstructionValue::PrefixUpdateContext { lvalue, .. }
+        | InstructionValue::PrefixUpdateLocal { lvalue, .. } => {
             f(lvalue);
         }
         _ => {}
@@ -1216,8 +1228,8 @@ pub fn for_each_instruction_lvalue_mut(instr: &mut Instruction, f: &mut impl FnM
         InstructionValue::Destructure { lvalue, .. } => {
             for_each_pattern_operand_mut(&mut lvalue.pattern, f);
         }
-        InstructionValue::PostfixUpdate { lvalue, .. }
-        | InstructionValue::PrefixUpdate { lvalue, .. } => {
+        InstructionValue::PostfixUpdateLocal { lvalue, .. }
+        | InstructionValue::PrefixUpdateLocal { lvalue, .. } => {
             f(lvalue);
         }
         _ => {}

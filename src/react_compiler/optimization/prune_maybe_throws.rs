@@ -180,8 +180,10 @@ pub(crate) fn value_may_throw(value: &InstructionValue) -> bool {
         | InstructionValue::GetIterator { .. }
         | InstructionValue::IteratorNext { .. }
         | InstructionValue::NextPropertyOf { .. }
-        | InstructionValue::PrefixUpdate { .. }
-        | InstructionValue::PostfixUpdate { .. }
+        | InstructionValue::PrefixUpdateLocal { .. }
+        | InstructionValue::PrefixUpdateContext { .. }
+        | InstructionValue::PostfixUpdateLocal { .. }
+        | InstructionValue::PostfixUpdateContext { .. }
         | InstructionValue::UnsupportedNode { .. } => true,
     }
 }

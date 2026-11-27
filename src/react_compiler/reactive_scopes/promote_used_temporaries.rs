@@ -837,8 +837,10 @@ fn instruction_effect(
         | InstructionValue::PropertyDelete { .. }
         | InstructionValue::ComputedStore { .. }
         | InstructionValue::ComputedDelete { .. }
-        | InstructionValue::PostfixUpdate { .. }
-        | InstructionValue::PrefixUpdate { .. }
+        | InstructionValue::PostfixUpdateLocal { .. }
+        | InstructionValue::PostfixUpdateContext { .. }
+        | InstructionValue::PrefixUpdateContext { .. }
+        | InstructionValue::PrefixUpdateLocal { .. }
         | InstructionValue::StoreGlobal { .. }
         // An array pattern runs an iterator, and an object pattern can run a getter.
         | InstructionValue::Destructure { .. } => Effect::Write,

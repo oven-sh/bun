@@ -2795,10 +2795,10 @@ fn compute_signature_for_instruction(
                 into: lvalue.clone(),
             });
         }
-        InstructionValue::PostfixUpdate {
+        InstructionValue::PostfixUpdateLocal {
             lvalue: pf_lvalue, ..
         }
-        | InstructionValue::PrefixUpdate {
+        | InstructionValue::PrefixUpdateLocal {
             lvalue: pf_lvalue, ..
         } => {
             effects.push(AliasingEffect::Create {
@@ -2810,6 +2810,23 @@ fn compute_signature_for_instruction(
                 into: pf_lvalue.clone(),
                 value: ValueKind::Primitive,
                 reason: ValueReason::Other,
+            });
+        }
+        // Not in upstream, which mutates `lvalue`: oxc mutates the value that was read.
+        InstructionValue::PostfixUpdateContext {
+            value: pf_value, ..
+        }
+        | InstructionValue::PrefixUpdateContext {
+            value: pf_value, ..
+        } => {
+            effects.push(AliasingEffect::Create {
+                into: lvalue.clone(),
+                value: ValueKind::Primitive,
+                reason: ValueReason::Other,
+            });
+            effects.push(AliasingEffect::Mutate {
+                value: pf_value.clone(),
+                reason: None,
             });
         }
         InstructionValue::StoreGlobal {

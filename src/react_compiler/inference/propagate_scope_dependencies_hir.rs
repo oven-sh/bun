@@ -2227,10 +2227,10 @@ fn handle_instruction(
             ctx.declare(lvalue.place.identifier, id, env);
         }
         // Not in upstream, where `a++` is not an output of its scope: a render that reuses the scope loses it.
-        InstructionValue::PrefixUpdate {
+        InstructionValue::PrefixUpdateLocal {
             value: val, lvalue, ..
         }
-        | InstructionValue::PostfixUpdate {
+        | InstructionValue::PostfixUpdateLocal {
             value: val, lvalue, ..
         } => {
             ctx.visit_operand(val, env);

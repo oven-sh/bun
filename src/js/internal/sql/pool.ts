@@ -73,8 +73,7 @@ export type NativeCreateQuery<QueryHandle> = (
 
 type OnConnected = (err: Error | null, connection: any) => void;
 
-/// In the pool's queue: a caller that wants a connection for itself, or a query that has a timer. A query
-/// without one is queued as its bare callback.
+/// In the pool's queue: a reservation, or a query that has a timer. Any other query is its bare callback.
 class Waiter {
   onConnected: OnConnected;
   reserved: boolean;

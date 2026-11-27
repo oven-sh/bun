@@ -678,3 +678,118 @@ describe.concurrent(
     });
   },
 );
+
+// With only a bunfig.toml, `react/x` is the plugin's `react-hooks/x`. It reports these inputs as it did before the
+// oxlint rules moved to oxlint 1.95, which reports them differently.
+describe.concurrent("bun lint: with no ESLint or oxlint config, the React Compiler rules don't follow oxlint", () => {
+  /** Lints with a bunfig.toml that has only `rules`. Returns the rule, location and a line of each compiler message. */
+  async function found(rules: string, files: Files, line: number) {
+    const { raw, stderr, exitCode, directories } = await lint({ "bunfig.toml": `[lint.rules]\n${rules}\n`, ...files }, [
+      "-f",
+      "json",
+    ]);
+    if (!raw.startsWith("[")) throw new Error(`No report (exit ${exitCode}): ${stderr}`);
+    const messages = Object.values(byEslintFile(JSON.parse(raw), directories)).flatMap(it => it.messages);
+    return {
+      found: messages
+        .filter(it => it.ruleId?.startsWith("react"))
+        .map(
+          it => `${it.ruleId} ${it.line}:${it.column}-${it.endLine}:${it.endColumn} ${it.message.split("\n")[line]}`,
+        ),
+      exitCode,
+    };
+  }
+
+  const calls: Files = {
+    "calls.jsx": `import { Child, GET, Item } from "./module";
+
+export function Month() {
+  const now = new Date(0);
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  return <div>{start.toString()}</div>;
+}
+
+export function Method(props) {
+  return <div>{props.api.GET()}</div>;
+}
+
+export function MixedCaseMethod(props) {
+  return <div>{props.api.Child()}</div>;
+}
+
+export function Function() {
+  return <div>{GET()}</div>;
+}
+
+export function MixedCaseFunction() {
+  return <div>{Child()}</div>;
+}
+
+export function AnotherFunction() {
+  return <div>{Item()}</div>;
+}
+`,
+  };
+  const reported = [
+    "5:26-5:78 UTC may be a component.",
+    "10:16-10:31 GET may be a component.",
+    "14:16-14:33 Child may be a component.",
+    "22:16-22:23 Child may be a component.",
+    "26:16-26:22 Item may be a component.",
+  ].map(it => `react-hooks/capitalized-calls ${it}`);
+
+  // oxlint reports neither `Date.UTC()` nor `props.api.GET()`.
+  test("a method whose name is in capitals is reported, and a function isn't", async () => {
+    const result = await found(`"react/capitalized-calls" = "error"`, calls, 2);
+    expect(result).toEqual({ found: reported, exitCode: 1 });
+  });
+
+  // They're options of oxlint's rule, where these allow `Child()` and `Item()`. The plugin's rule takes any object and
+  // doesn't read it.
+  test("`allow` and `allowPattern` of react/capitalized-calls allow nothing", async () => {
+    const options = `{ allow = ["Child"], allowPattern = "^It" }`;
+    const result = await found(`"react/capitalized-calls" = ["error", ${options}]`, calls, 2);
+    expect(result).toEqual({ found: reported, exitCode: 1 });
+  });
+
+  // oxlint reports none of them.
+  test("a shared value from react-native-reanimated is what any hook returns, and can't be written", async () => {
+    const result = await found(
+      `"react/immutability" = "error"`,
+      {
+        "shared.jsx": `import { Button, View } from "react-native";
+import { useSharedValue, withSpring } from "react-native-reanimated";
+
+export function Randomize() {
+  const progress = useSharedValue(0);
+  return <Button onPress={() => (progress.value = Math.random())} title="Randomize" />;
+}
+
+export function usePressToGrow() {
+  const width = useSharedValue(100);
+  return () => {
+    width.value = withSpring(width.value + 50);
+  };
+}
+
+export function InRender(props) {
+  const position = useSharedValue(0);
+  position.value = props.start;
+  return <View data-position={position.value} />;
+}
+`,
+      },
+      0,
+    );
+    expect(result).toEqual({
+      found: [
+        "6:27-6:65 Error: Cannot modify local variables after render completes",
+        "6:34-6:42 Error: This value cannot be modified",
+        "11:10-13:4 Error: Cannot modify local variables after render completes",
+        "12:5-12:10 Error: This value cannot be modified",
+        "18:3-18:11 Error: This value cannot be modified",
+      ].map(it => `react-hooks/immutability ${it}`),
+      exitCode: 1,
+    });
+  });
+});

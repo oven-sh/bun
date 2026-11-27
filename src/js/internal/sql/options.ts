@@ -531,8 +531,7 @@ function isClientOnlyKeyword(key: string, value: string): boolean {
       return true;
     case "gssencmode":
       return value !== "require";
-    // node-postgres: "true" gives `sslmode` the meaning it has in libpq, as in Bun. Every other value
-    // makes `sslmode=require` verify the certificate.
+    // A node-postgres key. Only "true" asks for what Bun already does: `sslmode` as in libpq.
     case "uselibpqcompat":
       return value === "true";
     default:

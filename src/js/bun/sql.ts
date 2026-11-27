@@ -1114,7 +1114,7 @@ for (let i = 0; i < defaultSQLMembers.length; i++) {
   defaultSQLObject[defaultSQLMembers[i]] = callDefaultSQL.bind(undefined, defaultSQLMembers[i]);
 }
 defineProperty(defaultSQLObject, "options", { get: defaultSQLOptions });
-defineProperty(defaultSQLObject, "stats", { get: defaultSQLStats, enumerable: true });
+defineProperty(defaultSQLObject, "stats", { __proto__: null, get: defaultSQLStats, enumerable: true });
 defineProperty(defaultSQLObject, Symbol.asyncDispose, { get: defaultSQLAsyncDispose });
 setPrototypeOf(defaultSQLObject, SQLPrototype);
 

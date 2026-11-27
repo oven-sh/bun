@@ -1708,6 +1708,28 @@ describe.concurrent("sql.stats where there is no pool", () => {
     expect(sql.stats).toBeUndefined();
   });
 
+  test("Bun.sql.stats is the same accessor, whatever Object.prototype has", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        Object.prototype.configurable = true;
+        const { get, ...rest } = Object.getOwnPropertyDescriptor(Bun.sql, "stats");
+        delete Object.prototype.configurable;
+        console.log(JSON.stringify({ get: typeof get, ...rest }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ get: "function", enumerable: true, configurable: false });
+    expect(exitCode).toBe(0);
+  });
+
   // `made`: Bun.sql.options makes the default client, as any use of Bun.sql does.
   test.each([
     ["a pool", "postgres://u@127.0.0.1:1/db", true, { connections: 0, opening: 0, idle: 0, leased: 0, waiting: 0 }],

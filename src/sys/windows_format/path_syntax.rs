@@ -36,16 +36,39 @@ pub(crate) fn len_without_trailing_sep(path: &[u16]) -> usize {
     }
 }
 
-/// Whether `nt_name` starts with a device other than a volume or a file share.
+fn is_any_of(component: &[u16], names: &[&[u8]]) -> bool {
+    names
+        .iter()
+        .any(|name| eql_case_insensitive_t(component, name))
+}
+
+/// Whether `nt_name` is a pipe, or a device that is not a drive and has no path below it.
 pub(crate) fn is_device_name(nt_name: &[u16]) -> bool {
+    const OBJECT_DIRECTORIES: &[&[u8]] = &[
+        b"Global",
+        b"GLOBALROOT",
+        b"Device",
+        b"??",
+        b"GLOBAL??",
+        b"DosDevices",
+    ];
     let Some(name) = nt_name.strip_prefix(w!("\\??\\")) else {
         return false;
     };
-    if has_prefix_case_insensitive_t(name, b"UNC\\") {
-        let share = name.split(|&unit| unit == BACKSLASH).nth(2);
-        return share.is_some_and(|share| eql_case_insensitive_t(share, b"pipe"));
+    let mut components = name
+        .split(|&unit| unit == BACKSLASH)
+        .skip_while(|component| is_any_of(component, OBJECT_DIRECTORIES));
+    let device = components.next().unwrap_or_default();
+    if let [_, COLON, ..] = device {
+        return false;
     }
-    !matches!(name, [_, COLON, ..]) && !has_prefix_case_insensitive_t(name, b"Volume{")
+    if is_any_of(device, &[b"pipe", b"NamedPipe"]) || components.clone().all(<[u16]>::is_empty) {
+        return true;
+    }
+    let is_provider = |component: &&[u16]| component.starts_with(w!(";"));
+    let share = components.skip_while(is_provider).nth(1);
+    is_any_of(device, &[b"UNC", b"Mup", b"LanmanRedirector"])
+        && share.is_some_and(|share| is_any_of(share, &[b"pipe", b"IPC$"]))
 }
 
 /// Maps the NT name of a console device to its Win32 path.
@@ -167,21 +190,44 @@ mod tests {
             "\\??\\pipe\\a",
             "\\??\\Global\\pipe\\a",
             "\\??\\NUL",
+            "\\??\\NUL\\",
+            "\\??\\global\\NUL",
+            "\\??\\Volume{0}",
+            "\\??\\UNC",
             "\\??\\unc\\s\\PIPE\\a",
+            "\\??\\UNC\\s\\ipc$\\a",
+            "\\??\\Global\\UNC\\s\\pipe\\a",
+            "\\??\\GLOBALROOT\\??\\pipe\\a",
+            "\\??\\GLOBALROOT\\GLOBAL??\\pipe\\a",
+            "\\??\\GLOBALROOT\\DosDevices\\pipe\\a",
             "\\??\\GLOBALROOT\\Device\\NamedPipe\\a",
+            "\\??\\GLOBALROOT\\Device\\Mup\\s\\pipe\\a",
+            "\\??\\GLOBALROOT\\Device\\Mup\\;LanmanRedirector\\s\\pipe\\a",
+            "\\??\\GLOBALROOT\\Device\\LanmanRedirector\\s\\pipe\\a",
+            "\\??\\GLOBALROOT\\Device\\Null",
         ] {
-            assert!(is_device_name(&to_wide(name)));
+            assert!(is_device_name(&to_wide(name)), "{name}");
         }
         for name in [
             "",
             "pipe\\a",
             "\\Device\\HarddiskVolume1\\a",
+            "\\??\\C:",
             "\\??\\C:\\pipe\\a",
             "\\??\\Volume{0}\\a",
+            "\\??\\HarddiskVolume1\\a",
+            "\\??\\HarddiskVolume1\\a\\pipe\\b",
+            "\\??\\mailslot\\a",
+            "\\??\\Global\\C:",
+            "\\??\\Global\\C:\\a",
+            "\\??\\GLOBALROOT\\??\\C:\\a",
+            "\\??\\GLOBALROOT\\SystemRoot\\a",
+            "\\??\\GLOBALROOT\\Device\\HarddiskVolume1\\pipe\\a",
+            "\\??\\GLOBALROOT\\Device\\Mup\\s\\t\\pipe",
             "\\??\\UNC\\pipe\\a",
             "\\??\\UNC\\s\\t\\pipe",
         ] {
-            assert!(!is_device_name(&to_wide(name)));
+            assert!(!is_device_name(&to_wide(name)), "{name}");
         }
     }
 

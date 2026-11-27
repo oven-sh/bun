@@ -1036,8 +1036,9 @@ pub(crate) fn may_have_react_code(file: &File, flavor: Flavor) -> bool {
         }
 }
 
-/// The plugin's `mayContainReactCode`, without which it does nothing. It only looks at top-level statements, so it
-/// misses a file whose components are all nested, wrapped in `memo()` or opted in by a directive.
+/// The plugin's `mayContainReactCode` and oxlint's port of it in `should_run_react_compiler`, without which neither
+/// does anything. It only looks at top-level statements, so it misses a file whose components are all nested, wrapped
+/// in `memo()` or opted in by a directive.
 fn may_contain_react_code<'a>(file: &'a File<'a>) -> bool {
     let is_name = |name: Name<'a>| is_component_name(name.bytes()) || is_hook_name(name.bytes());
     file.body().iter().any(|node| match node.kind() {
@@ -1271,9 +1272,7 @@ pub(crate) fn compile_program<'a>(
     }
 
     let mut search = Search::new(flavor);
-    if !may_have_functions_to_compile(file, &mut search)
-        || (flavor == Flavor::Eslint && !may_contain_react_code(file))
-    {
+    if !may_have_functions_to_compile(file, &mut search) || !may_contain_react_code(file) {
         return Vec::new();
     }
     let queue = find_functions_to_compile(file, search);

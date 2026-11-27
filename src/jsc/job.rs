@@ -222,7 +222,7 @@ pub trait OwnedJob: Sized + 'static {
     /// As [`JobContext::OUTLIVES_SCRIPT`].
     const OUTLIVES_SCRIPT: bool;
 
-    /// As [`JobContext::pool`].
+    /// As [`JobContext::pool`]. [`resume`](Self::resume) runs on the [`WorkPool`].
     fn pool() -> &'static ThreadPool {
         WorkPool::get()
     }

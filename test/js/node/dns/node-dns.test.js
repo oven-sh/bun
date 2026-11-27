@@ -2933,34 +2933,85 @@ describe.concurrent.skipIf(!isLinux || !cc)("the threads of the system's resolve
     expect(result).toEqual({ stdout: "127.0.0.1\nENOTFOUND\n", stderr: "", exitCode: 0 });
   });
 
-  test("fall back to the shared pool if none can be started", async () => {
+  const refuseThreads = `
+    #define _GNU_SOURCE
+    #include <dlfcn.h>
+    #include <errno.h>
+    #include <fcntl.h>
+    #include <pthread.h>
+    #include <string.h>
+    #include <sys/syscall.h>
+    #include <unistd.h>
+    static int main_thread_sleeps(void) {
+      char stat[64] = {0};
+      int fd = open("/proc/self/stat", O_RDONLY);
+      ssize_t length = read(fd, stat, sizeof stat - 1);
+      close(fd);
+      return length > 0 && strstr(stat, ") S ");
+    }
+    typedef int create(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
+    int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)(void *), void *arg) {
+      size_t stack = 0;
+      if (attr) pthread_attr_getstacksize(attr, &stack);
+      if (stack == ${isASAN ? 32 : 4} << 20 && !access("refuse", F_OK)) {
+        if (syscall(SYS_gettid) != getpid()) {
+          close(open("starting", O_WRONLY | O_CREAT, 0600));
+          // Not for ever: ASAN holds a lock around this call, which the main thread may need first.
+          for (int i = 0; i < 1000 && (access("joining", F_OK) || !main_thread_sleeps()); i++) usleep(1000);
+        }
+        return write(2, "refused\\n", 8) == 8 ? EAGAIN : EIO;
+      }
+      return ((create *)dlsym(RTLD_NEXT, "pthread_create"))(thread, attr, start, arg);
+    }
+  `;
+  const fillSharedPool = `
+    await Promise.all([fs.promises.readFile("shim.c"), fs.promises.readFile("shim.so")]);
+    while (countThreads("Bun Pool") < 2) await fs.promises.readFile("shim.c");
+    function countThreads(name) {
+      const names = fs.readdirSync("/proc/self/task").map(id => fs.readFileSync("/proc/self/task/" + id + "/comm", "latin1"));
+      return names.filter(comm => comm.startsWith(name)).length;
+    }
+  `;
+
+  test("fall back to the shared pool until one can be started", async () => {
     const result = await runWithShim(
+      refuseThreads,
       `
-        #define _GNU_SOURCE
-        #include <dlfcn.h>
-        #include <errno.h>
-        #include <pthread.h>
-        #include <unistd.h>
-        typedef int create(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
-        int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)(void *), void *arg) {
-          size_t stack = 0;
-          if (attr) pthread_attr_getstacksize(attr, &stack);
-          if (stack == ${isASAN ? 32 : 4} << 20 && !access("refuse", F_OK)) {
-            return write(2, "refused\\n", 8) == 8 ? EAGAIN : EIO;
-          }
-          return ((create *)dlsym(RTLD_NEXT, "pthread_create"))(thread, attr, start, arg);
-        }
-      `,
-      `
-        await Promise.all([fs.promises.readFile("shim.c"), fs.promises.readFile("shim.so")]);
-        while (fs.readdirSync("/proc/self/task").filter(isPool).length < 2) await fs.promises.readFile("shim.c");
-        function isPool(id) {
-          return fs.readFileSync("/proc/self/task/" + id + "/comm", "latin1").startsWith("Bun Pool");
-        }
+        ${fillSharedPool}
         fs.writeFileSync("refuse", "");
-        console.log((await dns.promises.lookup("localhost", 4)).address);
+        console.log((await dns.promises.lookup("localhost", 4)).address, countThreads("Bun DNS") > 0);
+        fs.unlinkSync("refuse");
+        console.log((await dns.promises.lookup("localhost", 4)).address, countThreads("Bun DNS") > 0);
       `,
     );
-    expect(result).toEqual({ stdout: "127.0.0.1\n", stderr: "refused\n", exitCode: 0 });
+    expect(result).toEqual({ stdout: "127.0.0.1 false\n127.0.0.1 true\n", stderr: "refused\n", exitCode: 0 });
+  });
+
+  test("fall back to the shared pool while another thread tries to start the first", async () => {
+    const result = await runWithShim(
+      refuseThreads,
+      `
+        ${fillSharedPool}
+        const worker = new worker_threads.Worker(
+          \`
+            import { lookup } from "node:dns/promises";
+            import { parentPort } from "node:worker_threads";
+            parentPort.once("message", async () => parentPort.postMessage(await lookup("localhost", 4)));
+            parentPort.postMessage("ready");
+          \`,
+          { eval: true },
+        );
+        await Promise.all([events.once(worker, "message"), dns.promises.lookup("127.0.0.1")]);
+        fs.writeFileSync("refuse", "");
+        let settled = false;
+        const answer = events.once(worker, "message").finally(() => (settled = true));
+        worker.postMessage("go");
+        while (!settled && !fs.existsSync("starting")) await new Promise(setImmediate);
+        fs.writeFileSync("joining", "");
+        const [here, [there]] = await Promise.all([dns.promises.lookup("localhost", 4), answer]);
+        console.log(here.address, there.address);
+      `,
+    );
+    expect(result).toEqual({ stdout: "127.0.0.1 127.0.0.1\n", stderr: "refused\nrefused\n", exitCode: 0 });
   });
 });

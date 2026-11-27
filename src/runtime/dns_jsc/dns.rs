@@ -37,7 +37,7 @@ use bun_ptr::RefPtr;
 use bun_sys::windows::libuv;
 #[cfg(not(windows))]
 use bun_sys::{self as sys};
-use bun_threading::{ThreadPool, WorkPool};
+use bun_threading::{Guarded, ThreadPool, WorkPool};
 use bun_uws::{ConnectingSocket, Loop};
 use bun_wyhash::hash as wyhash;
 
@@ -252,32 +252,48 @@ fn has_hostname_bytes(name: &[u8]) -> bool {
 }
 
 fn getaddrinfo_pool() -> &'static ThreadPool {
-    static POOL: OnceLock<ThreadPool> = OnceLock::new();
-    resolver_pool(&POOL)
+    static POOL: ResolverPool = ResolverPool::new();
+    POOL.get()
 }
 
 fn getnameinfo_pool() -> &'static ThreadPool {
-    static POOL: OnceLock<ThreadPool> = OnceLock::new();
-    resolver_pool(&POOL)
+    static POOL: ResolverPool = ResolverPool::new();
+    POOL.get()
 }
 
 /// For a call that can wait for the network for seconds while other work goes on.
-fn resolver_pool(pool: &'static OnceLock<ThreadPool>) -> &'static ThreadPool {
-    /// libuv's default number of threads.
-    const MIN_THREADS: u16 = 4;
+struct ResolverPool {
+    pool: OnceLock<ThreadPool>,
+    /// `has_workers()` also counts a thread that is being started, which the OS may refuse.
+    starting: Guarded<()>,
+}
 
-    let pool = pool.get_or_init(|| {
-        let config = bun_threading::thread_pool::Config {
-            max_threads: bun_core::get_thread_count().max(MIN_THREADS).into(),
-            ..Default::default()
-        };
-        (ThreadPool::init(config).named("Bun DNS")).without_spare_threads()
-    });
-    pool.warm(1);
-    if pool.has_workers() {
-        pool
-    } else {
-        WorkPool::get()
+impl ResolverPool {
+    const fn new() -> Self {
+        Self {
+            pool: OnceLock::new(),
+            starting: Guarded::new(()),
+        }
+    }
+
+    fn get(&'static self) -> &'static ThreadPool {
+        /// libuv's default number of threads.
+        const MIN_THREADS: u16 = 4;
+
+        let pool = self.pool.get_or_init(|| {
+            let config = bun_threading::thread_pool::Config {
+                max_threads: bun_core::get_thread_count().max(MIN_THREADS).into(),
+                ..Default::default()
+            };
+            (ThreadPool::init(config).named("Bun DNS")).without_spare_threads()
+        });
+        let _starting = self.starting.lock();
+        pool.warm(1);
+        if pool.has_workers() {
+            pool
+        } else {
+            WorkPool::get()
+        }
     }
 }
 
@@ -864,7 +880,6 @@ pub(crate) mod internal {
     use crate::generated_bindgen::dns::DNSCacheStats;
     use bun_dns::Address;
     use bun_http::H3::PendingConnect;
-    use bun_threading::Guarded;
     use core::sync::atomic::AtomicBool;
     use std::sync::{Arc, OnceLock};
 

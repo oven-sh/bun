@@ -360,3 +360,21 @@ expectType<Bun.SQL.ContextCallbackResult<unknown>>;
 declare const aSqlInstance: Bun.SQL;
 expectType(aSqlInstance.options.host).is<string | undefined>(); // property exists in postgres/mysql/mariadb options
 expectType(aSqlInstance.options.safeIntegers).is<boolean | undefined>(); // property exits in sqlite options
+
+// Only the client that owns a pool has `stats`: SQLite has none, and Bun.sql has none before its first use.
+expectType(aSqlInstance.stats).is<Bun.SQL.PoolStats | undefined>();
+expectType(sql.stats).is<Bun.SQL.PoolStats | undefined>();
+expectType(aSqlInstance.stats?.idle).is<number | undefined>();
+expectType<keyof Bun.SQL.PoolStats>().is<"connections" | "opening" | "idle" | "leased" | "waiting">();
+// @ts-expect-error - read-only
+aSqlInstance.stats = undefined;
+declare const aReservedSqlInstance: Bun.ReservedSQL;
+declare const aTransactionSqlInstance: Bun.TransactionSQL;
+declare const aSavepointSqlInstance: Bun.SavepointSQL;
+expectType(aReservedSqlInstance.stats).is<undefined>();
+expectType(aTransactionSqlInstance.stats).is<undefined>();
+expectType(aSavepointSqlInstance.stats).is<undefined>();
+// each of them is still a Bun.SQL
+expectAssignable<Bun.SQL>(aReservedSqlInstance);
+expectAssignable<Bun.SQL>(aTransactionSqlInstance);
+expectAssignable<Bun.SQL>(aSavepointSqlInstance);

@@ -1038,7 +1038,13 @@ function SQL(
     );
   }
   const options = parseOptions(stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty);
-  return makeHandle(new Client(adapterFromOptions(options), options));
+  const pool = adapterFromOptions(options);
+  const handle = makeHandle(new Client(pool, options));
+  // Only the client of a pool has it, as in the postgres package: a reservation, a transaction and SQLite have none.
+  if (pool.stats) {
+    defineProperty(handle, "stats", { __proto__: null, get: pool.stats.bind(pool), enumerable: true });
+  }
+  return handle;
 }
 
 // A builtin function has no `prototype`, and `instanceof` throws without one. A client is a function.
@@ -1066,6 +1072,11 @@ function callDefaultSQL(member: string, ...args: unknown[]) {
 
 function defaultSQLOptions() {
   return defaultSQL().options;
+}
+
+/// Reading it does not make the client: that would open the database of a SQLite URL.
+function defaultSQLStats() {
+  return lazyDefaultSQL?.stats;
 }
 
 function defaultSQLAsyncDispose() {
@@ -1102,6 +1113,7 @@ for (let i = 0; i < defaultSQLMembers.length; i++) {
   defaultSQLObject[defaultSQLMembers[i]] = callDefaultSQL.bind(undefined, defaultSQLMembers[i]);
 }
 defineProperty(defaultSQLObject, "options", { get: defaultSQLOptions });
+defineProperty(defaultSQLObject, "stats", { get: defaultSQLStats, enumerable: true });
 defineProperty(defaultSQLObject, Symbol.asyncDispose, { get: defaultSQLAsyncDispose });
 setPrototypeOf(defaultSQLObject, SQLPrototype);
 

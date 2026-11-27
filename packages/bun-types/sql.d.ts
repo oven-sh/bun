@@ -32,6 +32,9 @@ declare module "bun" {
      * queries of this client. The default is `0`.
      */
     close(options?: { timeout?: number }): Promise<void>;
+
+    /** Only the client that owns the pool has {@link SQL.stats}. */
+    readonly stats?: never;
   }
 
   type ArrayType =
@@ -159,6 +162,9 @@ declare module "bun" {
      * `signal.reason` and no connection is taken from the pool.
      */
     reserve(options?: { signal?: AbortSignal }): Promise<ReservedSQL>;
+
+    /** Only the client that owns the pool has {@link SQL.stats}. */
+    readonly stats?: never;
   }
 
   namespace SQL {
@@ -766,6 +772,37 @@ declare module "bun" {
      */
     type Options = SQLiteOptions | PostgresOrMySQLOptions;
 
+    /**
+     * What a pool is doing at the time of the read. See {@link SQL.stats}.
+     *
+     * The connection of {@link SQL.listen} is not in these counts.
+     */
+    interface PoolStats {
+      /** The open connections. */
+      connections: number;
+      /**
+       * The connections that are not open yet. This includes a connection
+       * that waits to connect again after the server closed it during the
+       * handshake.
+       */
+      opening: number;
+      /** The open connections that run no query and that no caller holds. */
+      idle: number;
+      /**
+       * The open connections that one caller holds: a reserved connection, or
+       * the connection of a transaction.
+       */
+      leased: number;
+      /**
+       * The callers that wait for a connection: queries, {@link SQL.reserve}
+       * and {@link SQL.begin}.
+       *
+       * Queries share connections. When every connection of a full pool is
+       * busy, a new query goes to one of them and this stays 0.
+       */
+      waiting: number;
+    }
+
     /** One registration made by {@link SQL.listen}. */
     interface ListenSubscription extends AsyncDisposable {
       readonly channel: string;
@@ -1192,6 +1229,25 @@ declare module "bun" {
      * prints `[REDACTED]` for the password and the TLS key.
      */
     options: Bun.__internal.DistributedMerge<SQL.Options>;
+
+    /**
+     * The counts of the connection pool, computed when you read it. Each read
+     * returns a new object.
+     *
+     * Only the client that owns a PostgreSQL or MySQL pool has it: what
+     * `new SQL()` returns, and {@link Bun.sql}. It is `undefined` on a SQLite
+     * client, on a reserved connection, on the client of a transaction or
+     * savepoint, and on `Bun.sql` until its first use creates the default
+     * client.
+     *
+     * The limit of the pool is `sql.options.max`.
+     *
+     * @example
+     * ```ts
+     * sql.stats; // { connections: 3, opening: 0, idle: 1, leased: 1, waiting: 0 }
+     * ```
+     */
+    readonly stats?: SQL.PoolStats | undefined;
 
     /**
      * Commits a distributed transaction, also known as a prepared transaction

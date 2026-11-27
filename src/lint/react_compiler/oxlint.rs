@@ -1233,6 +1233,10 @@ fn todo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
     {
         let func = primary_span.and_then(|at| function_at(file, at));
         out.move_to(func.map(crate::program::diagnostic_span));
+    } else if reason.starts_with("Support member expression chains longer than ") {
+        // `todo_member_expression_chain_too_long`. A `Todo` reaches here as a `CompilerErrorDetail`, which has no
+        // message of its own.
+        out.relabel("This member expression chain is too long");
     } else if let Some(name) = between(
         "Logical assignment to `const` variable ",
         " is not supported",

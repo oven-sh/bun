@@ -14,7 +14,8 @@
 // `--compare` doesn't write anything. It runs a command that accepts both oxlint's and ESLint's arguments on the same
 // inputs, first with oxlint's config file and then with ESLint's, and prints where its reports differ from
 // expected.json. Only add a fixture to the list if it doesn't differ from oxlint, and add it to `NOT_WITH_ESLINT` if it
-// differs from ESLint.
+// differs from ESLint. A debug or ASAN build of `bun lint` differs from oxlint in `member chains/optional-500.jsx` and
+// `optional-501.jsx`, which it hasn't the stack for. The test leaves those two out for such a build.
 
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";

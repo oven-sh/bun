@@ -78,10 +78,15 @@ const linesOf = (found: unknown[] = [], rule: string) =>
     .map(it => it.labels[0].span.line)
     .sort((a, b) => a - b);
 
-/** Lints one of the directories of inputs.ts and compares the whole report with oxlint's. Returns its diagnostics. */
-async function matches(name: keyof typeof expected.reports) {
+/**
+ * Lints one of the directories of inputs.ts and compares the whole report with oxlint's. Returns its diagnostics.
+ * The files in `apart` aren't compared: this build hasn't the stack for them.
+ */
+async function matches(name: keyof typeof expected.reports, apart: string[] = []) {
   const { diagnostics, files, exit } = await report(small[name]);
-  expect(diagnostics).toEqual(expected.reports[name].diagnostics);
+  const compared = (all: Record<string, unknown[]>) =>
+    Object.fromEntries(Object.entries(all).filter(([path]) => !apart.includes(path)));
+  expect(compared(diagnostics)).toEqual(compared(expected.reports[name].diagnostics));
   expect(files).toBe(expected.reports[name].files);
   expect(exit).toBe(expected.reports[name].exit);
   return diagnostics;
@@ -623,11 +628,23 @@ ${chain}
     expect(lines("surrogates.jsx")).toEqual({ refs: [35, 52, 86], hooks: [6, 23, 41], state: [15] });
   });
 
+  // Each `?.` of a chain is a block inside the block of the one before it, and the passes after the lowering call
+  // themselves for each. Of the stack that the compiler uses (see "code nested deeper than a normal thread's stack
+  // allows isn't compiled") a debug build has enough for about 160 of them, and says of these two that the function is
+  // nested too deeply, which oxlint doesn't say.
+  const deeperThanDebugStack = isDebug || isASAN ? ["optional-500.jsx", "optional-501.jsx"] : [];
   test(
     "a function with a chain of more than 500 members isn't compiled",
     async () => {
-      const diagnostics = await matches("member chains");
-      for (const path of ["499.jsx", "500.jsx", "computed-500.jsx", "call-at-the-end-500.jsx", "optional-501.jsx"])
+      const diagnostics = await matches("member chains", deeperThanDebugStack);
+      const compared = (paths: string[]) => paths.filter(path => !deeperThanDebugStack.includes(path));
+      for (const path of compared([
+        "499.jsx",
+        "500.jsx",
+        "computed-500.jsx",
+        "call-at-the-end-500.jsx",
+        "optional-501.jsx",
+      ]))
         expect([path, rulesIn({ it: diagnostics[path] })]).toEqual([path, ["react(refs)"]]);
       for (const path of ["501.jsx", "5000.jsx", "computed-501.jsx", "call-at-the-end-501.jsx"])
         expect([path, locationsOf(diagnostics[path])]).toEqual([path, [["react(todo)", 6, 17]]]);

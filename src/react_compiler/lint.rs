@@ -113,6 +113,8 @@ pub fn lint_function(
 ) -> Linted {
     let wants_thrown = wanted.has_thrown();
     let late_passes = match wants_thrown {
+        // oxc leaves the passes out of no function for a linter that wants what they throw.
+        true if config.unwanted_throws_are_not_looked_for => LatePasses::Always,
         false if config.unwanted_throws_are_not_looked_for => LatePasses::ForOwnMemoization,
         _ if is_more_recorded => LatePasses::Always,
         true => LatePasses::AlsoForTodos,

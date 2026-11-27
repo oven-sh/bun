@@ -632,6 +632,38 @@ ${chain}
     expect(locationsOf(diagnostics["mixed.jsx"])).toEqual([["react(preserve-manual-memoization)", 10, 6]]);
     expect(locationsOf(diagnostics["non-null.tsx"])).toEqual([["react(preserve-manual-memoization)", 9, 59]]);
   });
+
+  test("a Todo or an Invariant replaces what the other rules report only with react/todo or react/invariant enabled, or in a function with its own useMemo or useCallback", async () => {
+    const diagnostics = await matches("late passes");
+    const found = (path: string) => locationsOf(diagnostics[path] ?? []);
+    expect({
+      "all": found("all/no-memo.jsx"),
+      "neither": found("neither/no-memo.jsx"),
+      "refs": found("refs/no-memo.jsx"),
+      // The Todo isn't reported, and it still replaces the ref access.
+      "refs-and-invariant": found("refs-and-invariant/no-memo.jsx"),
+    }).toEqual({
+      "all": [["react(todo)", 6, 12]],
+      "neither": [["react(refs)", 4, 17]],
+      "refs": [["react(refs)", 4, 17]],
+      "refs-and-invariant": [],
+    });
+    for (const path of ["own-memo.jsx", "own-callback.jsx", "missing-memo-dependency.jsx"])
+      expect([path, found(`neither/${path}`)]).toEqual([path, []]);
+    expect(rulesIn({ it: diagnostics["neither/memo-in-a-callback.jsx"] })).toEqual(["react(hooks)", "react(refs)"]);
+    expect(found("neither/effect-alone.jsx")).toEqual([["react(exhaustive-effect-dependencies)", 5, 6]]);
+    expect({
+      "all": found("all/invariant.jsx"),
+      "neither": found("neither/invariant.jsx"),
+      "refs": found("refs/invariant.jsx"),
+      "refs-and-invariant": found("refs-and-invariant/invariant.jsx"),
+    }).toEqual({
+      "all": [["react(invariant)", 1, 26]],
+      "neither": [],
+      "refs": [],
+      "refs-and-invariant": [["react(invariant)", 1, 26]],
+    });
+  });
 });
 
 describe.concurrent("bun lint: how a diagnostic's labels, help and note are printed", () => {

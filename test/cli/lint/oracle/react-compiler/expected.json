@@ -13425,6 +13425,538 @@
      }
     ]
    }
+  },
+  "late passes": {
+   "exit": 1,
+   "files": 40,
+   "diagnostics": {
+    "all/effect-alone.jsx": [
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 12,
+         "length": 3,
+         "line": 7,
+         "offset": 156
+        }
+       }
+      ],
+      "message": "[PruneHoistedContexts] Rewrite hoisted function references",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "all/effect.jsx": [
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 12,
+         "length": 3,
+         "line": 9,
+         "offset": 221
+        }
+       }
+      ],
+      "message": "[PruneHoistedContexts] Rewrite hoisted function references",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "all/invariant.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "Please report this internal React Compiler error to Oxc with a minimal reproduction",
+      "labels": [
+       {
+        "label": "Expected a node for all scopes",
+        "span": {
+         "column": 26,
+         "length": 7,
+         "line": 1,
+         "offset": 25
+        }
+       }
+      ],
+      "message": "Expected a node for all scopes",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "all/memo-in-a-callback.jsx": [
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 12,
+         "length": 3,
+         "line": 10,
+         "offset": 272
+        }
+       }
+      ],
+      "message": "[PruneHoistedContexts] Rewrite hoisted function references",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "all/missing-memo-dependency.jsx": [
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 12,
+         "length": 3,
+         "line": 5,
+         "offset": 145
+        }
+       }
+      ],
+      "message": "[PruneHoistedContexts] Rewrite hoisted function references",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "all/no-memo.jsx": [
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 12,
+         "length": 3,
+         "line": 6,
+         "offset": 149
+        }
+       }
+      ],
+      "message": "[PruneHoistedContexts] Rewrite hoisted function references",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "all/own-callback.jsx": [
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 12,
+         "length": 3,
+         "line": 7,
+         "offset": 225
+        }
+       }
+      ],
+      "message": "[PruneHoistedContexts] Rewrite hoisted function references",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "all/own-memo.jsx": [
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 12,
+         "length": 3,
+         "line": 7,
+         "offset": 217
+        }
+       }
+      ],
+      "message": "[PruneHoistedContexts] Rewrite hoisted function references",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "all/static-components-with-memo.jsx": [
+     {
+      "code": "react(static-components)",
+      "help": "Components created during render will reset their state each time they are created. Declare components outside of render",
+      "labels": [
+       {
+        "label": "This component is created during render",
+        "span": {
+         "column": 11,
+         "length": 5,
+         "line": 13,
+         "offset": 249
+        }
+       },
+       {
+        "label": "The component is created during render here",
+        "span": {
+         "column": 3,
+         "length": 18,
+         "line": 3,
+         "offset": 70
+        }
+       }
+      ],
+      "message": "Cannot create components during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/static-components",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 12,
+         "length": 3,
+         "line": 8,
+         "offset": 190
+        }
+       }
+      ],
+      "message": "[PruneHoistedContexts] Rewrite hoisted function references",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "all/static-components.jsx": [
+     {
+      "code": "react(static-components)",
+      "help": "Components created during render will reset their state each time they are created. Declare components outside of render",
+      "labels": [
+       {
+        "label": "This component is created during render",
+        "span": {
+         "column": 11,
+         "length": 5,
+         "line": 11,
+         "offset": 164
+        }
+       },
+       {
+        "label": "The component is created during render here",
+        "span": {
+         "column": 3,
+         "length": 18,
+         "line": 2,
+         "offset": 32
+        }
+       }
+      ],
+      "message": "Cannot create components during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/static-components",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 12,
+         "length": 3,
+         "line": 6,
+         "offset": 105
+        }
+       }
+      ],
+      "message": "[PruneHoistedContexts] Rewrite hoisted function references",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "neither/effect-alone.jsx": [
+     {
+      "code": "react(exhaustive-effect-dependencies)",
+      "help": "Missing dependencies can cause an effect to fire less often than it should",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 6,
+         "length": 2,
+         "line": 5,
+         "offset": 121
+        }
+       },
+       {
+        "label": "Missing dependency `props.a`",
+        "span": {
+         "column": 17,
+         "length": 7,
+         "line": 4,
+         "offset": 106
+        }
+       }
+      ],
+      "message": "Found missing effect dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     }
+    ],
+    "neither/effect.jsx": [
+     {
+      "code": "react(exhaustive-effect-dependencies)",
+      "help": "Missing dependencies can cause an effect to fire less often than it should",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 6,
+         "length": 2,
+         "line": 7,
+         "offset": 186
+        }
+       },
+       {
+        "label": "Missing dependency `props.a`",
+        "span": {
+         "column": 17,
+         "length": 7,
+         "line": 6,
+         "offset": 171
+        }
+       }
+      ],
+      "message": "Found missing effect dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 17,
+         "length": 11,
+         "line": 4,
+         "offset": 122
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "neither/memo-in-a-callback.jsx": [
+     {
+      "code": "react(hooks)",
+      "help": "Cannot call useMemo within a function expression",
+      "labels": [
+       {
+        "label": "This Hook is called inside a nested function",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 6,
+         "offset": 181
+        }
+       },
+       {
+        "label": "This is the nested function",
+        "span": {
+         "column": 20,
+         "length": 7,
+         "line": 5,
+         "offset": 152
+        }
+       }
+      ],
+      "message": "Hooks must be called at the top level of a function component or custom Hook",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 17,
+         "length": 11,
+         "line": 4,
+         "offset": 120
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "neither/no-memo.jsx": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 17,
+         "length": 11,
+         "line": 4,
+         "offset": 106
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "neither/static-components-with-memo.jsx": [
+     {
+      "code": "react(static-components)",
+      "help": "Components created during render will reset their state each time they are created. Declare components outside of render",
+      "labels": [
+       {
+        "label": "This component is created during render",
+        "span": {
+         "column": 11,
+         "length": 5,
+         "line": 13,
+         "offset": 249
+        }
+       },
+       {
+        "label": "The component is created during render here",
+        "span": {
+         "column": 3,
+         "length": 18,
+         "line": 3,
+         "offset": 70
+        }
+       }
+      ],
+      "message": "Cannot create components during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/static-components",
+      "severity": "error"
+     }
+    ],
+    "neither/static-components.jsx": [
+     {
+      "code": "react(static-components)",
+      "help": "Components created during render will reset their state each time they are created. Declare components outside of render",
+      "labels": [
+       {
+        "label": "This component is created during render",
+        "span": {
+         "column": 11,
+         "length": 5,
+         "line": 11,
+         "offset": 164
+        }
+       },
+       {
+        "label": "The component is created during render here",
+        "span": {
+         "column": 3,
+         "length": 18,
+         "line": 2,
+         "offset": 32
+        }
+       }
+      ],
+      "message": "Cannot create components during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/static-components",
+      "severity": "error"
+     }
+    ],
+    "refs-and-invariant/invariant.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "Please report this internal React Compiler error to Oxc with a minimal reproduction",
+      "labels": [
+       {
+        "label": "Expected a node for all scopes",
+        "span": {
+         "column": 26,
+         "length": 7,
+         "line": 1,
+         "offset": 25
+        }
+       }
+      ],
+      "message": "Expected a node for all scopes",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "refs/effect.jsx": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 17,
+         "length": 11,
+         "line": 4,
+         "offset": 122
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "refs/memo-in-a-callback.jsx": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 17,
+         "length": 11,
+         "line": 4,
+         "offset": 120
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "refs/no-memo.jsx": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 17,
+         "length": 11,
+         "line": 4,
+         "offset": 106
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ]
+   }
   }
  },
  "eslint": {

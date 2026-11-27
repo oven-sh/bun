@@ -164,7 +164,8 @@ pub struct EnvironmentConfig {
     /// For a linter that wants neither a `Todo` nor an `Invariant`: what comes after the validations of the HIR runs
     /// only for a function that has `useMemo` or `useCallback` in its own body, and its reactivity is inferred only
     /// for that or for its own call of an effect hook. What the rest would throw then drops nothing that is recorded.
-    /// Upstream runs all of it, and what a pass throws is all that is said of the function.
+    /// For a linter that wants either, all of it runs for every function. Upstream runs all of it, and what a pass
+    /// throws is all that is said of the function.
     pub unwanted_throws_are_not_looked_for: bool,
     /// `shared-runtime` and the other modules of upstream's test fixtures have no types: what is imported from one is
     /// as from any module. Upstream's test runner gives them types, which `default_module_type_provider` has.

@@ -4167,6 +4167,130 @@ test("counts", () => {
 });
 `;
 
+/** `foo` calls `bar` before its declaration. A pass after the validations throws a Todo for it. */
+const throwsLate = `  function foo() {
+    return bar();
+  }
+  function bar() {
+    return 42;
+  }`;
+
+/**
+ * What a pass throws replaces what the validations recorded. oxlint only runs the passes after the validations with
+ * react/todo or react/invariant enabled, or for a function with `useMemo` or `useCallback` in its own body.
+ */
+const latePassFiles: Files = {
+  "no-memo.jsx": `import { useRef } from "react";
+export function Component() {
+  const ref = useRef(null);
+  const value = ref.current;
+${throwsLate}
+  return <Stringify fn1={foo} fn2={bar} value={value} />;
+}
+`,
+  "own-memo.jsx": `import { useMemo, useRef } from "react";
+export function Component(props) {
+  const ref = useRef(null);
+  const value = ref.current;
+  const memoized = useMemo(() => props.a, [props.a]);
+${throwsLate}
+  return <Stringify fn1={foo} fn2={bar} value={value} memoized={memoized} />;
+}
+`,
+  "own-callback.jsx": `import { useCallback, useRef } from "react";
+export function Component(props) {
+  const ref = useRef(null);
+  const value = ref.current;
+  const callback = useCallback(() => props.a, [props.a]);
+${throwsLate}
+  return <Stringify fn1={foo} fn2={bar} value={value} callback={callback} />;
+}
+`,
+  // The `useMemo` isn't in the component's own body.
+  "memo-in-a-callback.jsx": `import { useMemo, useRef } from "react";
+export function Component(props) {
+  const ref = useRef(null);
+  const value = ref.current;
+  const callback = () => {
+    const memoized = useMemo(() => props.a, [props.a]);
+    return memoized;
+  };
+${throwsLate}
+  return <Stringify fn1={foo} fn2={bar} value={value} callback={callback} />;
+}
+`,
+  "missing-memo-dependency.jsx": `import { useMemo } from "react";
+export function Component(props) {
+  const memoized = useMemo(() => props.a, []);
+${throwsLate}
+  return <Stringify fn1={foo} fn2={bar} memoized={memoized} />;
+}
+`,
+  // The dependencies of an effect are still checked.
+  "effect.jsx": `import { useEffect, useRef } from "react";
+export function Component(props) {
+  const ref = useRef(null);
+  const value = ref.current;
+  useEffect(() => {
+    console.log(props.a);
+  }, []);
+${throwsLate}
+  return <Stringify fn1={foo} fn2={bar} value={value} />;
+}
+`,
+  "effect-alone.jsx": `import { useEffect } from "react";
+export function Component(props) {
+  useEffect(() => {
+    console.log(props.a);
+  }, []);
+${throwsLate}
+  return <Stringify fn1={foo} fn2={bar} />;
+}
+`,
+  // react/static-components is reported apart from what's recorded, so a Todo doesn't replace it.
+  "static-components.jsx": `export function Component() {
+  function Inner() {
+    return <div />;
+  }
+${throwsLate}
+  return <Inner fn1={foo} fn2={bar} />;
+}
+`,
+  "static-components-with-memo.jsx": `import { useMemo } from "react";
+export function Component(props) {
+  function Inner() {
+    return <div />;
+  }
+  const memoized = useMemo(() => props.a, []);
+${throwsLate}
+  return <Inner fn1={foo} fn2={bar} memoized={memoized} />;
+}
+`,
+  // An Invariant from a pass after the validations, in a function without memoization, a ref or a hoisted function.
+  "invariant.jsx": `export const Component = () => {
+  const raw = useValue();
+  return (() => {
+    try {
+      return check(raw) ? raw : null;
+    } catch {
+      return null;
+    }
+  })();
+};
+`,
+};
+
+const latePasses: Files = { ".oxlintrc.json": rc([]) };
+for (const [directory, rules] of [
+  ["all", RULE_NAMES],
+  ["neither", RULE_NAMES.filter(rule => rule !== "react/todo" && rule !== "react/invariant")],
+  ["refs", ["react/refs"]],
+  ["refs-and-invariant", ["react/refs", "react/invariant"]],
+] as const) {
+  latePasses[`${directory}/.oxlintrc.json`] = rc(rules);
+  for (const [name, text] of Object.entries(latePassFiles)) latePasses[`${directory}/${name}`] = text;
+}
+
 /** The small input directories, keyed by test name. */
 export const small: Record<string, Files> = {
   comments,
@@ -4426,6 +4550,7 @@ function Component(props) {
   "ref hints": refHints,
   "captured functions": capturedFunctions,
   "optional dependencies": optionalDependencies,
+  "late passes": latePasses,
 };
 
 type RawDiagnostic = { filename?: string; url?: string; [key: string]: unknown };

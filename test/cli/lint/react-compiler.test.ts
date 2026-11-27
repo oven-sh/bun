@@ -683,6 +683,15 @@ ${chain}
     ]);
   });
 
+  test("a scope without dependencies in a useMemo callback depends on the operands of what the next scope reads", async () => {
+    const diagnostics = await matches("merged memo scopes");
+    const lines = (rule: string) => linesOf(diagnostics["merged.jsx"], rule);
+    // `Two` has one for each of its two variables. Nothing created before the operator, or no reactive operand: none.
+    expect(lines("preserve-manual-memoization")).toEqual([5, 10, 15, 21, 27, 36, 42, 42, 47]);
+    // As oxlint 1.87 had them.
+    expect(lines("memo-dependencies")).toEqual([52, 57]);
+  });
+
   test("a value is reactive if a reactive branch in a `try`, a reactive throw or an outer reactive branch decides it", async () => {
     const diagnostics = await matches("control reactivity");
     // The last function of each file has no reactive value, and isn't reported.

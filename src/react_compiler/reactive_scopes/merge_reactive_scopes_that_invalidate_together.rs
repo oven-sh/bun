@@ -9,6 +9,7 @@
 //! Corresponds to `src/ReactiveScopes/MergeReactiveScopesThatInvalidateTogether.ts`.
 
 use crate::collections::FxHashSet as HashSet;
+use smallvec::SmallVec;
 
 use crate::collections::IdMap;
 use crate::diagnostics::CompilerError;
@@ -18,6 +19,7 @@ use crate::hir::{
     ReactiveStatement, ReactiveValue, ScopeId, Type,
     environment::Environment,
     object_shape::{BUILT_IN_ARRAY_ID, BUILT_IN_FUNCTION_ID, BUILT_IN_JSX_ID, BUILT_IN_OBJECT_ID},
+    visitors::each_instruction_value_operand,
 };
 
 use crate::reactive_scopes::visitors::{
@@ -144,6 +146,8 @@ impl<'a> MergeTransform<'a> {
 
         let mut current: Option<MergedScope> = None;
         let mut merged: Vec<MergedScope> = Vec::new();
+        // Not in upstream (oxc ad5e3733c): whether the statement is between the two markers of a `useMemo` callback.
+        let mut in_manual_memo = false;
 
         let block_len = block.len();
         for i in 0..block_len {
@@ -227,6 +231,15 @@ impl<'a> MergeTransform<'a> {
                                     }
                                 }
                                 _ => {
+                                    match iv {
+                                        InstructionValue::StartMemoize { .. } => {
+                                            in_manual_memo = true;
+                                        }
+                                        InstructionValue::FinishMemoize { .. } => {
+                                            in_manual_memo = false;
+                                        }
+                                        _ => {}
+                                    }
                                     // Other instructions prevent merging
                                     if let Some(c) = current.take() {
                                         if c.to > c.from + 1 {
@@ -250,17 +263,40 @@ impl<'a> MergeTransform<'a> {
                     let next_scope_id = scope_block.scope;
                     if let Some(ref mut c) = current {
                         let current_scope_id = c.scope_id;
-                        if can_merge_scopes(
-                            current_scope_id,
-                            next_scope_id,
-                            self.env,
-                            &self.temporaries,
-                        ) && are_lvalues_last_used_by_scope(
-                            next_scope_id,
-                            &c.lvalues,
-                            &self.last_usage,
-                            self.env,
-                        ) {
+                        // Not in upstream (oxc ad5e3733c, f37f271c1).
+                        let merges_constant_scope = in_manual_memo
+                            && self
+                                .env
+                                .config
+                                .scopes_without_dependencies_in_use_memo_are_merged
+                            && can_merge_constant_scope_in_manual_memo(
+                                current_scope_id,
+                                next_scope_id,
+                                self.env,
+                            );
+                        if (merges_constant_scope
+                            || can_merge_scopes(
+                                current_scope_id,
+                                next_scope_id,
+                                self.env,
+                                &self.temporaries,
+                            ))
+                            && are_lvalues_last_used_by_scope(
+                                next_scope_id,
+                                &c.lvalues,
+                                &self.last_usage,
+                                self.env,
+                            )
+                        {
+                            if merges_constant_scope {
+                                inherit_dependencies(
+                                    current_scope_id,
+                                    next_scope_id,
+                                    self.env,
+                                    &self.temporaries,
+                                    block.get(c.to..i).unwrap_or_default(),
+                                );
+                            }
                             // Merge: extend the current scope's range
                             let next_range_end =
                                 self.env.scopes[next_scope_id.0 as usize].range.end;
@@ -491,6 +527,127 @@ fn can_merge_scopes(
     }
 
     false
+}
+
+/// Not in upstream (oxc ad5e3733c): whether a scope without dependencies can merge into the next scope of the same
+/// `useMemo` callback, which has some.
+fn can_merge_constant_scope_in_manual_memo(
+    current_id: ScopeId,
+    next_id: ScopeId,
+    env: &Environment,
+) -> bool {
+    let current = &env.scopes[current_id.0 as usize];
+    let next = &env.scopes[next_id.0 as usize];
+    current.dependencies.is_empty()
+        && current.reassignments.is_empty()
+        && !next.dependencies.is_empty()
+        && next.reassignments.is_empty()
+}
+
+/// Not in upstream (oxc f37f271c1): gives a scope without dependencies those of the next scope, which it is merged
+/// with. A dependency on what `intervening`, the statements between the two, computes becomes one on what that is
+/// computed from, reactive or not.
+fn inherit_dependencies(
+    current_id: ScopeId,
+    next_id: ScopeId,
+    env: &mut Environment,
+    temporaries: &IdMap<DeclarationId, DeclarationId>,
+    intervening: &[ReactiveStatement],
+) {
+    let current_declarations: Vec<DeclarationId> = env.scopes[current_id.0 as usize]
+        .declarations
+        .iter()
+        .map(|(_key, decl)| env.identifiers[decl.identifier.0 as usize].declaration_id)
+        .collect();
+    let mut dependencies = env.scopes[next_id.0 as usize].dependencies.clone();
+    for statement in intervening.iter().rev() {
+        let ReactiveStatement::Instruction(instruction) = statement else {
+            continue;
+        };
+        let ReactiveValue::Instruction(value) = &instruction.value else {
+            continue;
+        };
+        let lvalue = instruction
+            .lvalue
+            .as_ref()
+            .map(|place| env.identifiers[place.identifier.0 as usize].declaration_id);
+        let store_lvalue = match value {
+            InstructionValue::StoreLocal { lvalue, .. } => {
+                Some(env.identifiers[lvalue.place.identifier.0 as usize].declaration_id)
+            }
+            _ => None,
+        };
+        let mut replaced: SmallVec<[ReactiveScopeDependency; 1]> = SmallVec::new();
+        let mut index = 0;
+        while let Some(dependency) = dependencies.get(index) {
+            let declaration = env.identifiers[dependency.identifier.0 as usize].declaration_id;
+            if Some(declaration) == lvalue || Some(declaration) == store_lvalue {
+                replaced.push(dependencies.swap_remove(index));
+            } else {
+                index += 1;
+            }
+        }
+        for mut dependency in replaced {
+            match value {
+                InstructionValue::LoadLocal { place, .. }
+                | InstructionValue::StoreLocal { value: place, .. } => {
+                    dependency.identifier = place.identifier;
+                    push_dependency(&mut dependencies, dependency, env);
+                }
+                InstructionValue::PropertyLoad {
+                    object,
+                    property,
+                    loc,
+                } => {
+                    dependency.identifier = object.identifier;
+                    dependency.path.insert(
+                        0,
+                        DependencyPathEntry {
+                            property: property.clone(),
+                            optional: false,
+                            loc: *loc,
+                        },
+                    );
+                    push_dependency(&mut dependencies, dependency, env);
+                }
+                _ => {
+                    for operand in each_instruction_value_operand(value, env) {
+                        push_dependency(
+                            &mut dependencies,
+                            ReactiveScopeDependency {
+                                identifier: operand.identifier,
+                                reactive: operand.reactive,
+                                path: crate::hir_vec![],
+                                loc: operand.loc,
+                            },
+                            env,
+                        );
+                    }
+                }
+            }
+        }
+    }
+    dependencies.retain(|dep| {
+        let dep_decl = env.identifiers[dep.identifier.0 as usize].declaration_id;
+        !current_declarations
+            .iter()
+            .any(|&decl| decl == dep_decl || temporaries.get(dep_decl).copied() == Some(decl))
+    });
+    env.scopes[current_id.0 as usize].dependencies = dependencies;
+}
+
+fn push_dependency(
+    dependencies: &mut HirVec<ReactiveScopeDependency>,
+    dependency: ReactiveScopeDependency,
+    env: &Environment,
+) {
+    let declaration = env.identifiers[dependency.identifier.0 as usize].declaration_id;
+    if !dependencies.iter().any(|existing| {
+        env.identifiers[existing.identifier.0 as usize].declaration_id == declaration
+            && are_equal_paths(&existing.path, &dependency.path)
+    }) {
+        dependencies.push(dependency);
+    }
 }
 
 /// Check if a type is always invalidating (guaranteed to change when inputs change).

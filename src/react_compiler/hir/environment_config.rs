@@ -181,6 +181,11 @@ pub struct EnvironmentConfig {
     /// `x - 1` can still be an object that is written to elsewhere. To upstream both operands are primitives wherever
     /// they are used, and a write to one or a dependency on one is not seen.
     pub operators_say_nothing_of_their_operands: bool,
+    /// For `merge_reactive_scopes_that_invalidate_together`: in a `useMemo` callback a scope without dependencies is
+    /// merged into the scope after it, and depends on what that one does. What is computed between the two is replaced
+    /// by what it is computed from, reactive or not: `x` and `id` for the `x + id` between `new Map()` and the object
+    /// that holds both. Upstream keeps the two scopes apart, and the `Map` is created once.
+    pub scopes_without_dependencies_in_use_memo_are_merged: bool,
     /// For `propagate_scope_dependencies_hir`: a function that is given to JSX, as a prop or a child, is not assumed
     /// to be called, so what it reads is no dependency that is read during render. Upstream assumes the call.
     pub functions_given_to_jsx_are_not_assumed_called: bool,
@@ -280,6 +285,7 @@ impl Default for EnvironmentConfig {
             fixture_modules_have_no_types: false,
             jsx_tags_hoist_no_declaration: false,
             operators_say_nothing_of_their_operands: false,
+            scopes_without_dependencies_in_use_memo_are_merged: false,
             functions_given_to_jsx_are_not_assumed_called: false,
             calls_in_branches_show_no_function_called: false,
             optional_chains_keep_their_guards: false,

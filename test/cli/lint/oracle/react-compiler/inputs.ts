@@ -4606,6 +4606,115 @@ export function NoOperator(props) {
 };
 
 /**
+ * A `useMemo` callback that creates an object or an array and then a second one, with an operator in between whose
+ * operands are a reactive value and one that isn't. oxlint 1.95 merges the two scopes, and what the merged scope
+ * depends on is the operands themselves, so the one that isn't reactive is a dependency that isn't listed. oxlint 1.87
+ * only reported `Path` and `Computed`. From `Path` on the functions are reported as they were, or not at all.
+ */
+const mergedMemoScopes: Files = {
+  ".oxlintrc.json": rc(),
+  "merged.jsx": `import { useCallback, useMemo, useRef, useState } from "react";
+
+export function Template({ id }) {
+  const x = globalFn() + 1;
+  return useMemo(() => ({ entries: new Map(), key: \`k-\${x}-\${id}\` }), [id]);
+}
+
+export function Sum({ id }) {
+  const x = globalFn() + 1;
+  return useMemo(() => ({ entries: new Map(), key: x + id }), [id]);
+}
+
+export function Setter({ id }) {
+  const [state, setState] = useState(0);
+  const value = useMemo(() => ({ entries: new Map(), key: \`\${id}-\${setState}\` }), [id]);
+  return <div>{value}{state}</div>;
+}
+
+export function Ref({ id }) {
+  const ref = useRef(null);
+  const value = useMemo(() => [{ label: "Home" }, { label: id + ref }], [id]);
+  return <div>{value}</div>;
+}
+
+export function Less({ id }) {
+  const x = globalFn() + 1;
+  return useMemo(() => [new Set(), { small: x < id }], [id]);
+}
+
+export function Stored({ id }) {
+  const x = globalFn() + 1;
+  return useMemo(() => {
+    const entries = new Map();
+    const key = x * id;
+    return { entries, key };
+  }, [id]);
+}
+
+export function Two({ id }) {
+  const x = globalFn() + 1;
+  const y = globalFn() + 2;
+  return useMemo(() => ({ entries: new Map(), key: x + id + y }), [id]);
+}
+
+export function Three({ id }) {
+  const x = globalFn() + 1;
+  return useMemo(() => ({ first: [], second: new Set(), key: id - x }), [id]);
+}
+
+export function Path({ id }) {
+  const x = globalFn();
+  return useMemo(() => ({ entries: new Map(), key: x.a.b + id }), [id]);
+}
+
+export function Computed({ id }) {
+  const x = globalFn();
+  return useMemo(() => ({ entries: new Map(), key: x[id] }), [id]);
+}
+
+export function Listed({ id }) {
+  const x = globalFn() + 1;
+  return useMemo(() => ({ entries: new Map(), key: x + id }), [id, x]);
+}
+
+export function Negated({ id }) {
+  const x = globalFn() + 1;
+  return useMemo(() => [[], -x, id], [id]);
+}
+
+export function NoReactiveOperand() {
+  const x = globalFn() + 1;
+  return useMemo(() => [[], { key: x + 1 }], []);
+}
+
+export function NoOperator({ id }) {
+  const [state, setState] = useState(0);
+  const value = useMemo(() => ({ entries: new Map(), key: id.a.b, set: setState }), [id.a.b]);
+  return <div>{value}{state}</div>;
+}
+
+export function NothingCreatedBefore({ id }) {
+  const x = globalFn() + 1;
+  return useMemo(() => ({ key: x + id }), [id]);
+}
+
+export function CreatedAfter({ id }) {
+  const x = globalFn() + 1;
+  return useMemo(() => ({ key: x + id, entries: new Map() }), [id]);
+}
+
+export function Global({ id }) {
+  return useMemo(() => ({ entries: new Map(), key: id.a.b + GLOBAL }), [id.a.b]);
+}
+
+export function Callback({ id }) {
+  const x = globalFn() + 1;
+  return useCallback(() => ({ entries: new Map(), key: x + id }), [id]);
+}
+`,
+};
+
+/**
  * A variable whose value depends on which way a branch went, or on whether a call threw. It's read outside the
  * `useMemo` callback (`const v = value`), because a variable that the callback captures is a dependency either way.
  * oxlint 1.87 reported nothing in these files. The last function of each isn't reported: nothing in it is reactive.
@@ -5705,6 +5814,7 @@ function Component(props) {
   "late passes": latePasses,
   "using declarations": usingDeclarations,
   "operator operands": operatorOperands,
+  "merged memo scopes": mergedMemoScopes,
   "control reactivity": controlReactivity,
   "jsx tags": jsxTags,
   "fixture modules": fixtureModules,

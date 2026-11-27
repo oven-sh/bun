@@ -118,23 +118,23 @@ void BroadcastChannel::contextDestroyed()
 
 void BroadcastChannel::eventListenersDidChange()
 {
-    if (hasEventListeners(eventNames().messageEvent))
-        m_state.fetch_or(HasMessageListener, std::memory_order_acq_rel);
+    auto& names = eventNames();
+    if (hasEventListeners(names.messageEvent) || hasEventListeners(names.messageerrorEvent))
+        m_state.fetch_or(HasMessageOrMessageErrorListener, std::memory_order_acq_rel);
     else
-        m_state.fetch_and(~uint64_t(HasMessageListener), std::memory_order_acq_rel);
+        m_state.fetch_and(~uint64_t(HasMessageOrMessageErrorListener), std::memory_order_acq_rel);
 }
 
 bool BroadcastChannel::virtualHasPendingActivity() const
 {
     // Called from the GC thread; a single atomic load covers everything.
-    // Queued-but-undelivered messages are NOT counted as pending activity:
-    // the registry's posted task holds only a ThreadSafeWeakPtr (to avoid
-    // running ~BroadcastChannel on the posting thread), so a channel with
-    // no message listener is free to be collected before delivery and the
-    // task will simply no-op. This matches spec semantics — dispatchEvent
-    // with no listener is a no-op anyway.
+    // An open channel with a `message` or `messageerror` listener stays alive:
+    // https://html.spec.whatwg.org/multipage/web-messaging.html#broadcasting-to-other-browsing-contexts
+    // A message in flight is not counted. The registry's task holds only a
+    // ThreadSafeWeakPtr, and a channel with neither listener has nothing to
+    // tell script.
     uint64_t s = m_state.load(std::memory_order_acquire);
-    return !(s & Closed) && (s & HasMessageListener);
+    return !(s & Closed) && (s & HasMessageOrMessageErrorListener);
 }
 
 } // namespace WebCore

@@ -2623,11 +2623,27 @@ bool Bun__deepMatch(
 #if ENABLE(AOT)
     bool mayHavePrivateFieldsOfCompiledClasses = vm.aotState().someClassHasPrivateNames;
     JSC::AOT::PropertyWalk::ObjectsOnChain chainOfSubset;
-    if (mayHavePrivateFieldsOfCompiledClasses) [[unlikely]]
-        JSC::AOT::PropertyWalk::getPropertyNames(globalObject, subsetObj, subsetProps, DontEnumPropertiesMode::Exclude, chainOfSubset);
-    else
 #endif
-        subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
+    bool objIsArray = isArray(globalObject, objValue);
+    RETURN_IF_EXCEPTION(throwScope, false);
+    if (enableAsymmetricMatchers && isMatchingObjectContaining && !objIsArray) {
+        // In Jest and Vitest, expect.objectContaining() takes the keys that its sample owns. They disagree on a received array.
+        subsetObj->methodTable()->getOwnPropertyNames(subsetObj, globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
+#if ENABLE(AOT)
+        // The chain is the sample alone. As in PropertyWalk::getPropertyNames(), a Proxy is not on it.
+        if (mayHavePrivateFieldsOfCompiledClasses && subsetObj->type() != ProxyObjectType) [[unlikely]] {
+            chainOfSubset.objects.append(subsetObj);
+            chainOfSubset.numberBelowProxies = 1;
+        }
+#endif
+    } else {
+#if ENABLE(AOT)
+        if (mayHavePrivateFieldsOfCompiledClasses) [[unlikely]]
+            JSC::AOT::PropertyWalk::getPropertyNames(globalObject, subsetObj, subsetProps, DontEnumPropertiesMode::Exclude, chainOfSubset);
+        else
+#endif
+            subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
+    }
     RETURN_IF_EXCEPTION(throwScope, false);
 
     // TODO: add fast paths for:
@@ -2636,8 +2652,6 @@ bool Bun__deepMatch(
     // similar to what is done in deepEquals (canPerformFastPropertyEnumerationForIterationBun)
 
     // arrays should match exactly
-    bool objIsArray = isArray(globalObject, objValue);
-    RETURN_IF_EXCEPTION(throwScope, false);
     bool subsetIsArray = objIsArray && isArray(globalObject, subsetValue);
     RETURN_IF_EXCEPTION(throwScope, false);
     if (subsetIsArray) {

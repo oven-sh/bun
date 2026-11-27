@@ -5210,6 +5210,200 @@ describe("expect()", () => {
       expect(JSON.stringify(sample)).toEqual(sample_json);
     });
 
+    // Jest from 29.6.3 and Vitest from 4.0 list the enumerable keys that the sample owns. So does Bun, for a received value that is not an array.
+    // "pass": expect(received).toEqual(expect.objectContaining(sample)) passes and the same with expect.not fails. "fail": the other way round.
+    describe("ObjectContaining takes the keys that its sample owns", () => {
+      const key = Symbol("key");
+      const argumentsOf = function () {
+        return arguments;
+      };
+      const sparse = () => {
+        const array = [];
+        array[1] = 2;
+        return array;
+      };
+      const oneThenFour = () => [1, expect.any(Number), expect.any(Number), 4];
+      class Point {
+        constructor() {
+          this.x = 1;
+        }
+      }
+      /** @type {any} */ (Point.prototype).kind = "point";
+      /** @this {any} */
+      function Old(/** @type {number} */ id) {
+        this.id = id;
+      }
+      Old.prototype.save = function () {};
+      class Tagged extends Array {}
+      /** @type {any} */ (Tagged.prototype).tag = "t";
+      class Config {
+        #id = 1;
+        size = 2;
+      }
+      /** @type {any} */ (Config.prototype).mode = "default";
+      class Held {
+        #kept;
+        constructor(/** @type {number} */ kept) {
+          this.#kept = kept;
+        }
+      }
+
+      /** @type {[string, () => any, () => any, "pass" | "fail"][]} */
+      const rows = [
+        // an array as the sample
+        ["{ 0: 1 } and [1]", () => ({ 0: 1 }), () => [1], "pass"],
+        ["{ 0: 1, 1: 2 } and [1]", () => ({ 0: 1, 1: 2 }), () => [1], "pass"],
+        ["{ 0: 1, length: 1 } and [1]", () => ({ 0: 1, length: 1 }), () => [1], "pass"],
+        ["arguments and [1]", () => ANY(argumentsOf)(1), () => [1], "pass"],
+        ["a Uint8Array and [1]", () => new Uint8Array([1, 2]), () => [1], "pass"],
+        ["a Proxy of { 0: 1 } and [1]", () => new Proxy({ 0: 1 }, {}), () => [1], "pass"],
+        ["{} and []", () => ({}), () => [], "pass"],
+        ["{ x: 1 } and []", () => ({ x: 1 }), () => [], "pass"],
+        ["{ 1: 2 } and an array with a hole", () => ({ 1: 2 }), sparse, "pass"],
+        ["{ 0: undefined } and [undefined]", () => ({ 0: undefined }), () => [undefined], "pass"],
+        ["{} and [undefined]", () => ({}), () => [undefined], "fail"],
+        ["{} and [1]", () => ({}), () => [1], "fail"],
+        ["{ 1: 1 } and [1]", () => ({ 1: 1 }), () => [1], "fail"],
+        ["{ 0: 2 } and [1]", () => ({ 0: 2 }), () => [1], "fail"],
+        ["{ 0: 1 } and [1, 2]", () => ({ 0: 1 }), () => [1, 2], "fail"],
+        ["a Uint8Array and matchers in an array", () => new Uint8Array([1, 2, 3, 4]), oneThenFour, "pass"],
+        ["another Uint8Array and matchers in an array", () => new Uint8Array([1, 2, 3, 5]), oneThenFour, "fail"],
+        ["{ 0: { a: 1 } } and [{ a: 1 }]", () => ({ 0: { a: 1 } }), () => [{ a: 1 }], "pass"],
+        ["{ 0: { a: 1, b: 2 } } and [{ a: 1 }]", () => ({ 0: { a: 1, b: 2 } }), () => [{ a: 1 }], "fail"],
+        ["{ 0: 1 } and a Proxy of [1]", () => ({ 0: 1 }), () => new Proxy([1], {}), "pass"],
+        ["{} and an empty array of a class", () => ({}), () => new Tagged(), "pass"],
+        // a key that the sample inherits
+        ["{ x: 1 } and an instance whose prototype has an enumerable key", () => ({ x: 1 }), () => new Point(), "pass"],
+        ["{ x: 2 } and that instance", () => ({ x: 2 }), () => new Point(), "fail"],
+        ["{} and that instance", () => ({}), () => new Point(), "fail"],
+        [
+          "{ id: 1 } and an instance of a function with a prototype method",
+          () => ({ id: 1 }),
+          () => new (ANY(Old))(1),
+          "pass",
+        ],
+        ["{} and Object.create({ a: 1 })", () => ({}), () => Object.create({ a: 1 }), "pass"],
+        [
+          "{ 0: 1 } and an array whose prototype has an enumerable key",
+          () => ({ 0: 1 }),
+          () => Tagged.from([1]),
+          "pass",
+        ],
+        ["{} and an object that inherits a symbol key", () => ({}), () => Object.create({ [key]: 1 }), "pass"],
+        [
+          "{ [key]: 1 } and an object that owns a symbol key",
+          () => ({ [key]: 1 }),
+          () => Object.assign(Object.create({ a: 1 }), { [key]: 1 }),
+          "pass",
+        ],
+        [
+          "{} and an object that owns a symbol key",
+          () => ({}),
+          () => Object.assign(Object.create({ a: 1 }), { [key]: 1 }),
+          "fail",
+        ],
+        [
+          "{} and a key that is not enumerable",
+          () => ({}),
+          () => Object.defineProperty({}, "hidden", { value: 1 }),
+          "pass",
+        ],
+        [
+          "{} and a key that is not enumerable over an inherited one",
+          () => ({}),
+          () => Object.defineProperty(Object.create({ k: 1 }), "k", { value: 2 }),
+          "pass",
+        ],
+        // the accessors of a URL are on its prototype, so the sample has no key
+        ["{} and a URL", () => ({}), () => new URL("http://a/"), "pass"],
+        // a private field is not a key in Jest and Vitest, and the keys beside it are as above
+        [
+          "an instance with another inherited key and an instance with a private field",
+          () => Object.assign(new Config(), { mode: "fast" }),
+          () => new Config(),
+          "pass",
+        ],
+        [
+          "an instance without its prototype and an instance with a private field",
+          () => Object.setPrototypeOf(new Config(), null),
+          () => new Config(),
+          "pass",
+        ],
+        [
+          "an instance with another own key and an instance with a private field",
+          () => Object.assign(new Config(), { size: 3 }),
+          () => new Config(),
+          "fail",
+        ],
+      ];
+      if (isBun) {
+        rows.push(
+          // Jest and Vitest do not see a private field. Bun compares it.
+          ["{ size: 2 } and an instance with a private field", () => ({ size: 2 }), () => new Config(), "fail"],
+          ["an instance with another private value", () => new Held(2), () => new Held(1), "fail"],
+          ["an instance with the same private value", () => new Held(1), () => new Held(1), "pass"],
+          // For a received array Bun lists the keys of the sample through its prototypes. Jest 30 matches no array. Jest 29 and Vitest match these two.
+          ["[1] and [1]", () => [1], () => [1], "pass"],
+          ["[] and []", () => [], () => [], "pass"],
+          // Jest and Vitest throw for a function as the sample.
+          [
+            "{ a: 1 } and a function with an own key",
+            () => ({ a: 1 }),
+            () => Object.assign(function () {}, { a: 1 }),
+            "pass",
+          ],
+        );
+      }
+
+      test.each(rows)("%s", async (_, received, sample, answer) => {
+        expect({
+          contains: await outcomeOf(() => expect(received()).toEqual(expect.objectContaining(sample()))),
+          notContains: await outcomeOf(() => expect(received()).toEqual(expect.not.objectContaining(sample()))),
+        }).toEqual(
+          answer === "pass"
+            ? { contains: "passes", notContains: "fails" }
+            : { contains: "fails", notContains: "passes" },
+        );
+      });
+
+      test("each matcher gives the answer of toEqual()", async () => {
+        const contains1 = () => expect.objectContaining([1]);
+        expect({ 0: 1 }).toStrictEqual(contains1());
+        expect([{ 0: 1 }]).toContainEqual(contains1());
+        expect({ k: { 0: 1 } }).toHaveProperty("k", contains1());
+        expect({ k: { 0: 1 } }).toEqual({ k: contains1() });
+        expect({ k: { 0: 1 } }).toMatchObject({ k: contains1() });
+        expect({ k: { 0: 1 } }).toEqual(expect.objectContaining({ k: contains1() }));
+        expect({ 0: { a: 1, b: 2 } }).toEqual(expect.objectContaining([expect.objectContaining({ a: 1 })]));
+        expect([{ 0: 1 }]).toEqual(expect.arrayContaining([contains1()]));
+        expect(contains1()).toEqual({ 0: 1 });
+        expect(() => {
+          throw Object.assign(new Error("x"), { 0: 1 });
+        }).toThrow(contains1());
+        expect({ k: { 0: 2 } }).not.toMatchObject({ k: contains1() });
+        expect(contains1()).not.toEqual({ 0: 2 });
+        expect(await outcomeOf(() => expect({ 0: 1 }).not.toEqual(contains1()))).toBe("fails");
+
+        const called = jest.fn((/** @type {Uint8Array} */ bytes) => bytes);
+        called(new Uint8Array([1, 2, 3, 4]));
+        expect(called).toHaveBeenCalledWith(expect.objectContaining(oneThenFour()));
+        expect(called).toHaveReturnedWith(contains1());
+        expect(called).not.toHaveBeenCalledWith(expect.objectContaining([2]));
+        expect(called).not.toHaveBeenCalledWith(expect.not.objectContaining([1]));
+      });
+
+      test("a Proxy as the sample is not asked for its prototype", () => {
+        const sample = new Proxy({ a: 1 }, { getPrototypeOf: () => ANY(null).no });
+        expect({ a: 1 }).toEqual(expect.objectContaining(sample));
+        expect({ a: 2 }).not.toEqual(expect.objectContaining(sample));
+      });
+
+      test("toMatchObject() and Bun.deepMatch() keep their own list: an expected array needs an array", () => {
+        expect({ 0: 1 }).not.toMatchObject([1]);
+        if (isBun) expect(Bun.deepMatch([1], { 0: 1 })).toBe(false);
+      });
+    });
+
     test("ObjectNotContaining matches", () => {
       const foo = Symbol("foo");
       const bar = Symbol("bar");

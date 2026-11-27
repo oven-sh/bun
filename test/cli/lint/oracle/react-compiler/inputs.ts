@@ -6051,6 +6051,167 @@ export function TagAndValueInABranch({ label, shown }) {
   return null;
 }
 `,
+  // A `var` that a function refers to before the statement of the body that declares it, if one does. It's declared
+  // before the statement that has the function, so the function reads no variable that nothing defines. Not from
+  // `CalledInRender` to `DeclaredAsAParameter`.
+  "var.jsx": `import { useCallback, useEffect, useMemo, useRef } from "react";
+
+export function InAnArrow() {
+  const read = () => Later();
+  var Later = () => 1;
+  return <div>{read}</div>;
+}
+
+export function WithARefReadAfterIt() {
+  const read = () => Later();
+  var Later = () => 1;
+  const ref = useRef(null);
+  return (
+    <div>
+      {read}
+      {ref.current}
+    </div>
+  );
+}
+
+export function AfterTheReturn() {
+  const read = () => Later();
+  return <div>{read}</div>;
+  var Later = () => 1;
+}
+
+export function InACallback() {
+  const read = useCallback(() => Later(), []);
+  var Later = () => 1;
+  return <div>{read}</div>;
+}
+
+export function InAMemo() {
+  const value = useMemo(() => Later(), []);
+  var Later = () => 1;
+  return <div>{value}</div>;
+}
+
+export function InAnEffect() {
+  useEffect(() => {
+    Later();
+  }, []);
+  var Later = () => 1;
+  return <div />;
+}
+
+export function InAFunctionDeclaration() {
+  function read() {
+    return Later();
+  }
+  var Later = () => 1;
+  return <div>{read}</div>;
+}
+
+export function InAMethod() {
+  const object = {
+    read() {
+      return Later();
+    },
+    Later,
+  };
+  var Later = () => 1;
+  return <div>{object}</div>;
+}
+
+export function AsATagAndAValue() {
+  const render = () => () => <Later as={Later} />;
+  var Later = () => 1;
+  return <div>{render}</div>;
+}
+
+export function AsATagAndAValueWithoutAnInitializer() {
+  const render = () => () => <Later as={Later} />;
+  var Later;
+  return <div>{render}</div>;
+}
+
+export function AsATagAndInAnArray() {
+  const render = () => () => [<Later />, Later];
+  var Later = 1;
+  return <div>{render}</div>;
+}
+
+export function InAFunctionInAFunction() {
+  const read = () => () => Later;
+  var Later = () => 1;
+  return <div>{read}</div>;
+}
+
+export function AsAnAttribute() {
+  const render = () => <div title={Later} />;
+  var Later = () => 1;
+  return <div>{render}</div>;
+}
+
+export function InItsOwnInitializer() {
+  var Later = () => Later();
+  return <div>{Later}</div>;
+}
+
+export function DeclaredInALaterBlock() {
+  const read = () => Later();
+  {
+    var Later = () => 1;
+  }
+  return <div>{read}</div>;
+}
+
+export function DeclaredInAnEarlierBlock(props) {
+  if (props.enabled) {
+    var Later = () => 1;
+  }
+  const read = () => Later();
+  return <div>{read}</div>;
+}
+
+export function DeclaredByALoop({ items }) {
+  const reads = [];
+  for (var index = 0; index < items.length; index++) {
+    reads.push(() => items[index]);
+  }
+  return <div>{reads}</div>;
+}
+
+export function InANestedFunction() {
+  const make = () => {
+    const read = () => Later;
+    var Later = 1;
+    return read;
+  };
+  return <div>{make}</div>;
+}
+
+export function CalledInRender() {
+  const value = Later();
+  var Later = () => 1;
+  return <div>{value}</div>;
+}
+
+export function OnlyATag() {
+  const render = () => <Later />;
+  var Later = () => 1;
+  return <div>{render}</div>;
+}
+
+export function DeclaredTwice() {
+  var Later = () => 1;
+  const read = () => Later();
+  var Later = () => 2;
+  return <div>{read}</div>;
+}
+
+export function DeclaredAsAParameter(props) {
+  const read = () => props;
+  var props = 1;
+  return <div>{read}</div>;
+}
+`,
 };
 
 /** Calls of what upstream's test runner types as functions and hooks of `shared-runtime`, imported from `module`. */

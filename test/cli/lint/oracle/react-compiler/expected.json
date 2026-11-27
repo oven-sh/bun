@@ -20083,7 +20083,7 @@
   },
   "jsx tags": {
    "exit": 1,
-   "files": 4,
+   "files": 5,
    "diagnostics": {
     "after-a-return.jsx": [
      {
@@ -20618,6 +20618,554 @@
        }
       ],
       "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "var.jsx": [
+     {
+      "code": "react(exhaustive-effect-dependencies)",
+      "help": "Missing dependencies can cause an effect to fire less often than it should",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 6,
+         "length": 2,
+         "line": 42,
+         "offset": 822
+        }
+       },
+       {
+        "label": "Missing dependency `Later`",
+        "span": {
+         "column": 5,
+         "length": 5,
+         "line": 41,
+         "offset": 808
+        }
+       }
+      ],
+      "message": "Found missing effect dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "`Later` is read while its declaration is still being initialized. Move the access after initialization. For a recursive callback, use a named function expression or restructure the callback so it does not capture itself during initialization",
+      "labels": [
+       {
+        "label": "`Later` is read during its own initialization",
+        "span": {
+         "column": 34,
+         "length": 5,
+         "line": 28,
+         "offset": 558
+        }
+       }
+      ],
+      "message": "Cannot access variable while it is being initialized",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "`Later` is read while its declaration is still being initialized. Move the access after initialization. For a recursive callback, use a named function expression or restructure the callback so it does not capture itself during initialization",
+      "labels": [
+       {
+        "label": "`Later` is read during its own initialization",
+        "span": {
+         "column": 5,
+         "length": 5,
+         "line": 41,
+         "offset": 808
+        }
+       }
+      ],
+      "message": "Cannot access variable while it is being initialized",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> Later$5 is referenced as a context variable, but was previously referenced as a local variable",
+      "labels": [
+       {
+        "label": "this is local",
+        "span": {
+         "column": 22,
+         "length": 5,
+         "line": 113,
+         "offset": 2236
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(memo-dependencies)",
+      "help": "Missing dependencies can cause a value to update less often than it should, resulting in stale UI",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 40,
+         "length": 2,
+         "line": 34,
+         "offset": 693
+        }
+       },
+       {
+        "label": "Missing dependency `Later`",
+        "span": {
+         "column": 31,
+         "length": 5,
+         "line": 34,
+         "offset": 684
+        }
+       }
+      ],
+      "message": "Found missing memoization dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(memo-dependencies)",
+      "help": "Missing dependencies can cause a value to update less often than it should, resulting in stale UI",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 43,
+         "length": 2,
+         "line": 28,
+         "offset": 567
+        }
+       },
+       {
+        "label": "Missing dependency `Later`",
+        "span": {
+         "column": 34,
+         "length": 5,
+         "line": 28,
+         "offset": 558
+        }
+       }
+      ],
+      "message": "Found missing memoization dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 8,
+         "length": 11,
+         "line": 16,
+         "offset": 342
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier Later$0 is undefined",
+      "labels": [
+       {
+        "label": "`Later$0` is used before it is defined",
+        "span": {
+         "column": 3,
+         "length": 20,
+         "line": 136,
+         "offset": 2693
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier Later$0 is undefined",
+      "labels": [
+       {
+        "label": "`Later$0` is used before it is defined",
+        "span": {
+         "column": 3,
+         "length": 20,
+         "line": 142,
+         "offset": 2811
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 15,
+         "length": 2,
+         "line": 24,
+         "offset": 481
+        }
+       }
+      ],
+      "message": "Support functions with unreachable code that may contain hoisted declarations",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 10,
+         "line": 74,
+         "offset": 1427
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 14,
+         "line": 155,
+         "offset": 3082
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 14,
+         "line": 80,
+         "offset": 1561
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 20,
+         "line": 11,
+         "offset": 252
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 20,
+         "line": 147,
+         "offset": 2901
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 20,
+         "line": 149,
+         "offset": 2954
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 20,
+         "line": 24,
+         "offset": 469
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 20,
+         "line": 29,
+         "offset": 574
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 20,
+         "line": 35,
+         "offset": 700
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 20,
+         "line": 43,
+         "offset": 829
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 20,
+         "line": 5,
+         "offset": 128
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 20,
+         "line": 51,
+         "offset": 960
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 20,
+         "line": 62,
+         "offset": 1121
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 20,
+         "line": 68,
+         "offset": 1264
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 20,
+         "line": 86,
+         "offset": 1688
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 20,
+         "line": 92,
+         "offset": 1822
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 26,
+         "line": 97,
+         "offset": 1918
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 5,
+         "length": 14,
+         "line": 128,
+         "offset": 2563
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 5,
+         "length": 20,
+         "line": 104,
+         "offset": 2057
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 8,
+         "length": 13,
+         "line": 119,
+         "offset": 2348
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
       "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
       "severity": "error"
      }

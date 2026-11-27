@@ -94,12 +94,19 @@ struct Struct {
     has_flattened: bool,
 }
 
+/// Rows like those of [`OPTIONS`], for the rules that follow a later oxlint than that table is generated from. The
+/// React Compiler's rules follow 1.95, where the script writes this row for `react/capitalized-calls`.
+const LATER_OPTIONS: &[u8] = b"\nreact/capitalized-calls f(&Config allow:[s] allowPattern:?r)\n";
+
 /// The text after `key` and a space in the table.
 fn row(key: &[u8]) -> Option<&'static [u8]> {
-    let table = OPTIONS.as_bytes();
     let start = [b"\n", key, b" "].concat();
-    let rest = table.get(strings::index_of(table, &start)? + start.len()..)?;
-    rest.get(..strings::index_of_char_usize(rest, b'\n')?)
+    [LATER_OPTIONS, OPTIONS.as_bytes()]
+        .into_iter()
+        .find_map(|table| {
+            let rest = table.get(strings::index_of(table, &start)? + start.len()..)?;
+            rest.get(..strings::index_of_char_usize(rest, b'\n')?)
+        })
 }
 
 /// Returns `MaxLines` for `max-lines` and for `eslint/max-lines`.

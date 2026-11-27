@@ -1,13 +1,19 @@
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use bun_lint_react_compiler::{ErrorCategory, Flavor, rule};
+use bun_lint_oxlint::regex_flags::option_regex;
+use bun_lint_react_compiler::{EnvOptions, ErrorCategory, Flavor, rule};
+use std::sync::Arc;
 
 /// A React Compiler rule, which reports the diagnostics of one category. `RULE` below `RULES.len()` is oxlint's
 /// `react/..` rule for that entry of [`RULES`]. From `RULES.len()` on it's eslint-plugin-react-hooks' `react-hooks/..`
 /// rule for the same entries.
 ///
 /// The plugin's rule has one option, an object that's merged into the compiler's options. It's ignored here.
-pub struct CompilerRule<const RULE: usize = 0>;
+pub struct CompilerRule<const RULE: usize = 0> {
+    /// oxlint's `react/capitalized-calls` has the options `allow` and `allowPattern`. `None` without them, and for
+    /// every other rule.
+    env_options: Option<Arc<EnvOptions>>,
+}
 
 /// (name, category, its kind in oxlint, whether it's in the plugin's `recommended` config)
 const RULES: [(&str, ErrorCategory, Kind, bool); 26] = [
@@ -67,12 +73,31 @@ impl<const RULE: usize> Rule for CompilerRule<RULE> {
     const ON: On = On::new().finish();
     type State<'a> = ();
 
-    fn new(_: &Options) -> Self {
-        Self
+    fn new(options: &Options) -> Self {
+        if !matches!((Self::FLAVOR, Self::CATEGORY), (Flavor::Oxlint, ErrorCategory::CapitalizedCalls)) {
+            return Self { env_options: None };
+        }
+        // oxlint's `CapitalizedCallsConfig`
+        let options = options.object(0);
+        let allow = options.strings("allow");
+        let pattern = options.str("allowPattern").and_then(option_regex);
+        let env_options = (!allow.is_empty() || pattern.is_some()).then(|| {
+            Arc::new(EnvOptions {
+                capitalized_calls_allow: allow.into_iter().map(str::to_owned).collect(),
+                capitalized_calls_allow_pattern: pattern,
+            })
+        });
+        Self { env_options }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        rule::starts(file, Self::FLAVOR, Self::CATEGORY).then_some(())
+        if !rule::starts(file, Self::FLAVOR, Self::CATEGORY) {
+            return None;
+        }
+        if let Some(env_options) = &self.env_options {
+            bun_lint_react_compiler::set_env_options(file, env_options);
+        }
+        Some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

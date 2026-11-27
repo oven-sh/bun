@@ -1,5 +1,6 @@
 //! Runs one function through the compiler.
 
+use crate::EnvOptions;
 use crate::convert::{ConvertError, Converted, Recorded, Root, WrappedDefault, convert};
 use crate::finding::{Detail, Finding, Suggestion};
 use crate::host::LintHost;
@@ -15,6 +16,7 @@ use bun_react_compiler::hir::ReactFunctionType;
 use bun_react_compiler::hir::environment_config::ExhaustiveEffectDepsMode;
 use bun_react_compiler::lowering::FunctionNode;
 use bun_react_compiler::{Categories, EnvironmentConfig};
+use rustc_hash::FxHashSet;
 
 /// Which tool's rules the compiler runs for. Each tool has its own fork of the compiler and compiles different
 /// functions.
@@ -85,13 +87,40 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
     }
 }
 
+/// The capitalized functions that `options` allow to be called in the file. The compiler has no regular expressions, so
+/// the pattern becomes the names it matches. Those are among the file's references: a function that's called has one.
+fn allowed_capitalized_calls<'a>(file: &'a File<'a>, options: &EnvOptions) -> Vec<String> {
+    let mut allowed = options.capitalized_calls_allow.clone();
+    let Some(pattern) = &options.capitalized_calls_allow_pattern else {
+        return allowed;
+    };
+    let mut seen = FxHashSet::default();
+    for name in file.references().map(|it| it.name().bytes()) {
+        if name.first().is_some_and(u8::is_ascii_uppercase)
+            && seen.insert(name)
+            && pattern.test(name)
+            && let Ok(name) = std::str::from_utf8(name)
+        {
+            allowed.push(name.to_owned());
+        }
+    }
+    allowed
+}
+
 impl<'a> Compiler<'a> {
     pub(crate) fn new(file: &'a File<'a>, flavor: Flavor, wanted: Categories) -> Compiler<'a> {
+        let mut config = config_of(flavor, file.language().has_no_foreign_config);
+        if flavor == Flavor::Oxlint
+            && let Some(options) = crate::env_options(file)
+            && let Some(allowed) = &mut config.validate_no_capitalized_calls
+        {
+            allowed.extend(allowed_capitalized_calls(file, options));
+        }
         Compiler {
             file,
             flavor,
             wanted,
-            config: config_of(flavor, file.language().has_no_foreign_config),
+            config,
             arena: bun_alloc::Arena::new(),
         }
     }

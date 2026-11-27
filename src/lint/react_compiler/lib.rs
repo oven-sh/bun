@@ -27,8 +27,18 @@ pub use finding::{Detail, Finding, Suggestion};
 pub use oxlint::{Label, Rendered, render_all};
 
 use bun_lint::ast::File;
+use bun_lint::regex::Regex;
 use bun_react_compiler::Categories;
 use std::cell::{Cell, OnceCell};
+use std::sync::Arc;
+
+/// oxlint's `ReactCompilerEnvOptions`: what the options of its `react/capitalized-calls` add to the compiler's config.
+pub struct EnvOptions {
+    /// Capitalized functions that may be called.
+    pub capitalized_calls_allow: Vec<String>,
+    /// A capitalized function whose name it matches may be called too.
+    pub capitalized_calls_allow_pattern: Option<Regex>,
+}
 
 #[derive(Default)]
 struct PerFlavor {
@@ -41,6 +51,8 @@ struct PerFlavor {
 struct PerFile {
     oxlint: PerFlavor,
     eslint: PerFlavor,
+    /// For `oxlint`.
+    env_options: OnceCell<Arc<EnvOptions>>,
 }
 
 fn per_flavor<'a>(file: &'a File<'a>, flavor: Flavor) -> Option<&'a PerFlavor> {
@@ -57,6 +69,20 @@ pub fn want<'a>(file: &'a File<'a>, flavor: Flavor, category: ErrorCategory) {
     if let Some(per_flavor) = per_flavor(file, flavor) {
         (per_flavor.wanted).set(per_flavor.wanted.get().with(category));
     }
+}
+
+/// Gives the compiler the options of oxlint's `react/capitalized-calls` for the file. Like [`want`], it only has an
+/// effect before the first [`findings`] call.
+pub fn set_env_options<'a>(file: &'a File<'a>, options: &Arc<EnvOptions>) {
+    if let Some(per_file) = file.extension(PerFile::default) {
+        debug_assert!(per_file.oxlint.findings.get().is_none());
+        per_file.env_options.get_or_init(|| Arc::clone(options));
+    }
+}
+
+fn env_options<'a>(file: &'a File<'a>) -> Option<&'a EnvOptions> {
+    let per_file = file.extension(PerFile::default)?;
+    per_file.env_options.get().map(|it| &**it)
 }
 
 /// The compiler's diagnostics for the file in the [wanted](want) categories, in the compiler's

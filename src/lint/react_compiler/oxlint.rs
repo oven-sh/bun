@@ -15,12 +15,14 @@
 use crate::finding::{Detail, Finding};
 use bun_core::strings;
 use bun_lint::ast::{
-    BinOp, Call, Chain, Expr, ExprKind, ExprTag, File, Func, Name, Node, Param, StmtKind,
+    BinOp, Call, Chain, Expr, ExprKind, ExprTag, File, Func, Name, Node, Param, StmtKind, UnOp,
+    VarKind,
 };
 use bun_lint::semantic::Declaration;
 use bun_lint::span::Span;
 use bun_lint::utils::get_node_by_range_index;
 use bun_react_compiler::diagnostics::ErrorCategory;
+use bun_react_compiler::optimization::constant_propagation::is_valid_identifier;
 use rustc_hash::FxHashSet;
 use std::borrow::Cow;
 use std::fmt::Write;
@@ -485,13 +487,28 @@ fn enclosing_member(mut object: Expr) -> Option<Expr> {
         match parent.kind() {
             ExprKind::NonNull(_) => object = parent,
             ExprKind::Dot { obj, .. } if obj == object => return Some(parent),
-            ExprKind::Index { obj, index, .. }
-                if obj == object && matches!(index.tag(), ExprTag::String | ExprTag::Number) =>
-            {
+            ExprKind::Index { obj, index, .. } if obj == object && is_property_name(index) => {
                 return Some(parent);
             }
             _ => return None,
         }
+    }
+}
+
+/// True if `object[index]` loads a property for the compiler. Its constant propagation makes a property name of a
+/// number, also a negative one, and of a string that's an identifier, in quotes or in backticks.
+fn is_property_name(index: Expr) -> bool {
+    match index.kind() {
+        ExprKind::Number(_) => true,
+        ExprKind::String(value) => is_valid_identifier(value.bytes()),
+        ExprKind::Template(template) => template
+            .as_static()
+            .is_some_and(|value| is_valid_identifier(value.bytes())),
+        ExprKind::Unary {
+            op: UnOp::Minus,
+            operand,
+        } => operand.tag() == ExprTag::Number,
+        _ => false,
     }
 }
 
@@ -504,6 +521,9 @@ fn property_named(member: Expr, name: &[u8]) -> Option<Span> {
         ExprKind::Index { index, .. } => {
             let is_same = match index.kind() {
                 ExprKind::String(value) => value.bytes() == name,
+                ExprKind::Template(template) => template
+                    .as_static()
+                    .is_some_and(|value| value.bytes() == name),
                 _ => index.text() == name,
             };
             is_same.then(|| index.span())
@@ -718,7 +738,11 @@ fn preserve_manual_memo<'a>(file: &'a File<'a>, out: &mut Rendered) {
 
 /// The first place in a reactive scope of `call`'s callback where the compiler encounters the dependency named in
 /// `help`. oxc keeps that in its `ReactiveScopeDependency`. For `a.b.c` it's the span of the `c`. For a plain variable
-/// it's the whole `a.b.c` that's read from it there.
+/// it's the whole `a.b.c` that's loaded from it there: see [`read_of`].
+///
+/// A variable that the callback assigns to is a context variable, which the compiler loads by itself, so the span is
+/// the name's. `name = value` is a place too, after those in `value`, unless the variable is a constant: oxc reports
+/// that assignment and stores nothing.
 ///
 /// Only the compiler knows where the scopes are. A `useCallback` callback is entirely in one scope, the function's. A
 /// `useMemo` callback is part of the component: see [`is_in_reactive_scope`].
@@ -736,26 +760,59 @@ fn inferred_dependency(call: Call, help: &str) -> Option<Span> {
     let (func, whole) = (callback.as_fn()?, callback.span());
     let is_single_scope = called(call)?.is("useCallback");
     let symbol = callback.parent().scope().resolve_bytes(variable)?;
-    let (mut first, mut barren) = (None, Span::default());
+    let is_assigned = path.is_empty()
+        && symbol
+            .references()
+            .any(|it| it.is_write() && whole.contains(it.span()));
+    let is_constant = symbol.declarations().any(|it| match it.node() {
+        Some(Node::VarDecl(declarator)) => matches!(
+            declarator.var_kind(),
+            VarKind::Const | VarKind::Using | VarKind::AwaitUsing
+        ),
+        _ => false,
+    });
+    // What the compiler reads and the span of that, in the order in which it gets there.
+    let mut places: Vec<(Expr, Span)> = Vec::new();
+    // The value and the target of an assignment whose value isn't over yet.
+    let mut store: Option<(Span, Expr)> = None;
     for reference in symbol.references().filter(|it| whole.contains(it.span())) {
-        let Some((read, dependency_span)) = reference.expr().and_then(|it| read_of(it, &path))
-        else {
+        let Some(name) = reference.expr() else {
             continue;
         };
-        if is_single_scope || is_in_reactive_scope(read, func, &mut barren) {
-            return Some(dependency_span);
+        if let Some((value, target)) = store
+            && !value.contains(name.span())
+        {
+            places.push((target, target.span()));
+            store = None;
         }
-        first.get_or_insert(dependency_span);
+        if reference.is_write_only() {
+            if is_assigned
+                && !is_constant
+                && let Some(value) = reference.write_expr()
+            {
+                store = Some((value.span(), name));
+            }
+        } else if is_assigned {
+            places.push((name, name.span()));
+        } else {
+            places.extend(read_of(name, &path));
+        }
     }
-    first
+    places.extend(store.map(|(_, target)| (target, target.span())));
+    let mut barren = Span::default();
+    let in_scope = places
+        .iter()
+        .find(|it| is_single_scope || is_in_reactive_scope(it.0, func, &mut barren));
+    in_scope.or_else(|| places.first()).map(|it| it.1)
 }
 
 /// With the path `a`, `b`, returns the `variable.a.b` read from `variable` and the span of the `b`. With an empty path,
-/// returns the longest member chain read from `variable`, and the span of what the compiler reads from the variable
-/// first there. That's the chain, unless a link of an optional chain without a `?.` isn't a property of the link
-/// before it for the compiler: a call, a computed name, or anything after a `!`. The compiler then tests what the link
-/// before it reads from, which is the guard that oxc's `traverse_optional_block` keeps: the `x` in `x?.a!.b`, the
-/// `x?.a` in `x?.a.b()`.
+/// returns the longest member chain that's loaded from `variable`, which ends before a member that
+/// [isn't loaded](is_stored_or_called), and the span of what the compiler reads from the variable first there. That's
+/// the chain, unless a link of an optional chain without a `?.` isn't a property of the link before it for the
+/// compiler: a call, a computed name, or anything after a `!`. The compiler then tests what the link before it reads
+/// from, which is the guard that oxc's `traverse_optional_block` keeps: the `x` in `x?.a!.b`, the `x?.a` in
+/// `x?.a.b()`.
 fn read_of<'a>(variable: Expr<'a>, path: &[&[u8]]) -> Option<(Expr<'a>, Span)> {
     let (mut read, mut property_span) = (variable, None);
     for name in path {
@@ -770,6 +827,9 @@ fn read_of<'a>(variable: Expr<'a>, path: &[&[u8]]) -> Option<(Expr<'a>, Span)> {
     let (mut is_plain, mut is_path) = (true, false);
     let mut guard = None;
     while let Some(member) = enclosing_member(read) {
+        if is_stored_or_called(member) {
+            break;
+        }
         let is_apart = read.is_parenthesized() || object_of(member) != Some(read);
         let chain = member.chain();
         if chain == Chain::Continue && is_path && is_apart && guard.is_none() {
@@ -787,6 +847,45 @@ fn read_of<'a>(variable: Expr<'a>, path: &[&[u8]]) -> Option<(Expr<'a>, Span)> {
         guard = guarded_by(read);
     }
     Some((read, guard.map_or_else(|| read.span(), Expr::span)))
+}
+
+/// True if the compiler loads `member`'s object and no more: `member` is assigned to, updated or deleted, or it's the
+/// callee of a method call. An assignment or an update looks through `!`, `as` and `satisfies` around its target, as
+/// oxc's `lower_assignment_target` does. A callee in parentheses is no method, and a link of an optional chain is
+/// [`read_of`]'s.
+fn is_stored_or_called(member: Expr) -> bool {
+    if member.chain() != Chain::No {
+        return false;
+    }
+    let mut target = member;
+    loop {
+        let Some(parent) = target.parent().as_expr() else {
+            return false;
+        };
+        match parent.kind() {
+            ExprKind::NonNull(_) | ExprKind::As { .. } | ExprKind::Satisfies { .. } => {
+                target = parent;
+            }
+            ExprKind::Assign {
+                target: assigned, ..
+            } => return assigned == target,
+            ExprKind::Unary { op, operand } => {
+                return operand == target
+                    && match op {
+                        UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => true,
+                        UnOp::Delete => target == member,
+                        _ => false,
+                    };
+            }
+            ExprKind::Call(call) => {
+                return target == member
+                    && !member.is_parenthesized()
+                    && call.chain() == Chain::No
+                    && call.callee() == member;
+            }
+            _ => return false,
+        }
+    }
 }
 
 /// What `member` reads from, as written: with its `!`.

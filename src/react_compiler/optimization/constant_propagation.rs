@@ -763,7 +763,7 @@ fn read<'a>(constants: &'a Constants, place: &Place) -> Option<&'a Constant> {
 /// Check if a string is a valid JavaScript identifier.
 /// Supports Unicode identifier characters per ECMAScript spec (ID_Start / ID_Continue).
 /// Rejects JS reserved words (matching Babel's `isValidIdentifier` default behavior).
-fn is_valid_identifier(s: &[u8]) -> bool {
+pub fn is_valid_identifier(s: &[u8]) -> bool {
     use bun_core::ByteSlice;
     if s.is_empty() {
         return false;

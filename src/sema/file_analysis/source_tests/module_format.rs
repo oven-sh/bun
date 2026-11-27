@@ -2,6 +2,7 @@ mod support;
 use support::*;
 
 use ModuleFormat::{CommonJs, Esm};
+use bun_sema::file_analysis::{AnalyzedAgainFrom, analyze_file_again};
 
 const FORMATS: &[(&str, &str, ModuleFormat)] = &[
     ("a.js", r#"export {};"#, Esm),
@@ -32,6 +33,41 @@ const FORMATS: &[(&str, &str, ModuleFormat)] = &[
     ("a.js", r#"with (a) b;"#, CommonJs),
     ("a.js", r#"function f() { with (a) b; }"#, CommonJs),
     ("a.js", r#"if (false) { with (a) b; }"#, CommonJs),
+    ("a.js", r#"l: function f() {}"#, CommonJs),
+    ("a.js", r#"if (a) function f() {}"#, CommonJs),
+    ("a.js", r#"if (a) ; else function f() {}"#, CommonJs),
+    ("a.js", r#"function g() { l: function f() {} }"#, CommonJs),
+    ("a.js", r#"if (false) { l: function f() {} }"#, CommonJs),
+    ("a.mjs", r#"l: function f() {}"#, Esm),
+    ("a.js", r#"l: { function f() {} }"#, Esm),
+    ("a.js", r#"if (a) { function f() {} }"#, Esm),
+    (
+        "a.js",
+        r#"class A { m() { l: function f() {} } }"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"function g() { "use strict"; if (a) function f() {} }"#,
+        CommonJs,
+    ),
+    ("a.js", r#"{ "use strict"; l: function f() {} }"#, CommonJs),
+    ("a.js", r#"import.meta; l: function f() {}"#, Esm),
+    (
+        "a.ts",
+        r#"import type { A } from "m"; l: function f() {}"#,
+        Esm,
+    ),
+    (
+        "a.ts",
+        r#"import type A = require("m"); l: function f() {}"#,
+        Esm,
+    ),
+    (
+        "a.ts",
+        r#"declare module "m" { import a from "a"; } l: function f() {}"#,
+        Esm,
+    ),
     ("a.mjs", r#"module.exports = 1;"#, CommonJs),
     ("a.js", r#"console.log(typeof this);"#, CommonJs),
     ("a.cjs", r#"console.log(typeof this);"#, CommonJs),
@@ -1042,6 +1078,7 @@ const MACRO_CALL_FORMS: &[(&str, &str, usize)] = &[
 const BLOCK_FUNCTION: &str = "{ function f() {} } f;";
 const BLOCK_FUNCTION_MODULE: &str = "{ function module() {} } module.exports = 1;";
 const VAR_AND_FUNCTION: &str = "var f; function f() {}";
+const LABELED_FUNCTION: &str = "l: function f() {} f;";
 
 const REPEATED_ANALYSES: &[(&str, &str)] = &[
     ("a.mts", KINDS_AND_ORDER),
@@ -1050,6 +1087,8 @@ const REPEATED_ANALYSES: &[(&str, &str)] = &[
     ("a.js", BLOCK_FUNCTION_MODULE),
     ("a.js", VAR_AND_FUNCTION),
     ("a.cjs", VAR_AND_FUNCTION),
+    ("a.js", LABELED_FUNCTION),
+    ("a.mjs", LABELED_FUNCTION),
 ];
 
 const MACRO_FORMAT: &str = r#"import { flag } from "./m" with { type: "macro" }; function g() {} if (flag()) require("a");"#;
@@ -1793,12 +1832,25 @@ fn first_format_stands() {
 
 #[test]
 fn function_in_block_under_the_name_of_a_commonjs_variable_is_no_sign_of_commonjs() {
-    for (text, name) in [
-        ("{ function exports() {} } exports.a = 1;", "exports"),
-        ("exports.a = 1; { function exports() {} }", "exports"),
-        ("module.exports = 1; if (a) function module() {}", "module"),
+    for (text, name, format) in [
+        ("{ function exports() {} } exports.a = 1;", "exports", Esm),
+        ("exports.a = 1; { function exports() {} }", "exports", Esm),
+        (
+            "module.exports = 1; if (a) { function module() {} }",
+            "module",
+            Esm,
+        ),
+        // As the body of `if` the function is a sign by itself, whatever its name.
+        (
+            "module.exports = 1; if (a) function module() {}",
+            "module",
+            CommonJs,
+        ),
     ] {
         analyzed("a.js", text, |s| {
+            assert_eq!(s.analysis.module_format, format, "{text}");
+        });
+        analyzed("a.mjs", text, |s| {
             assert_eq!(s.analysis.module_format, Esm, "{text}");
         });
         analyzed("a.cjs", text, |s| {
@@ -1814,6 +1866,32 @@ fn function_in_block_under_the_name_of_a_commonjs_variable_is_no_sign_of_commonj
     let text = "{ function exports() {} } exports.a = 1; module.exports.b = 2;";
     analyzed("a.js", text, |s| {
         assert_eq!(s.analysis.module_format, CommonJs);
+    });
+}
+
+#[test]
+fn function_as_body_is_a_sign_on_a_tree_that_its_module_made_strict() {
+    with_workspace(|w| {
+        let source = Source::new("a.mjs", LABELED_FUNCTION);
+        let fold = w.fold_inputs(&Fold::NONE);
+        let first = w.analyze(&source, &fold);
+        let formats = first.analysis.module_formats;
+        assert_eq!(first.analysis.module_format, Esm);
+        assert!(first.hir.is_strict && !first.hir.is_strict_by_syntax);
+        assert_eq!(formats.get(DeclaredModuleType::Unknown), CommonJs);
+        let file = FileInputs {
+            declared_module_type: DeclaredModuleType::Esm,
+            import_meta_main: None,
+            is_library: false,
+            host_values: &[],
+            jsx: source.jsx,
+            own_name: b"a.mjs",
+        };
+        let (hir, bound, previous) = (&first.hir, &first.bound, &first.analysis);
+        let from = AnalyzedAgainFrom::ImportScan;
+        let again = analyze_file_again(hir, bound, &fold, file, previous, from, &w.atoms, w.arena);
+        let again = again.expect("the format is the same");
+        assert_eq!(again.analysis.module_formats, formats);
     });
 }
 

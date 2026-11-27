@@ -69,7 +69,7 @@ const MIRI_CRATES = [
 // their tests start other programs, call vendored C, or would take hours to interpret.
 const MIRI_UNIT_TESTS: Record<string, string[]> = {
   bun_aot: ["ir::parallel"],
-  bun_core: ["c_str_list", "scoped::tests", "util::tests"],
+  bun_core: ["c_str_list", "fmt::tests", "scoped::tests", "util::tests"],
   bun_io: ["fd_wait", "max_buf"],
 };
 

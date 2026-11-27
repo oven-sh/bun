@@ -3821,3 +3821,270 @@ fn splat_byte_all(w: &mut impl fmt::Write, byte: u8, count: usize) -> fmt::Resul
 pub fn encode_json_string(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
     js_printer::write_json_string(s, w, strings::Encoding::Utf8)
 }
+
+#[cfg(test)]
+mod tests {
+    //! `bun run rust:miri` runs these, and Miri cannot call simdutf or a highway scan that has no scalar path: `quote`, `escape_control_chars` and the JSON formatters are not here.
+    use super::*;
+
+    /// A byte that no sequence has, `a` and a lead byte with nothing after it, and a surrogate.
+    const NOT_UTF8: [&[u8]; 3] = [b"\xFF", b"a\xE2", b"\xED\xA0\x80"];
+
+    struct Utf8Only;
+
+    impl fmt::Write for Utf8Only {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            let bytes = s.as_bytes();
+            assert!(
+                core::str::from_utf8(bytes).is_ok(),
+                "{bytes:02x?} was written as a str"
+            );
+            // `count` would not decode: `Chars` counts the bytes that start a character.
+            assert_eq!(s.chars().map(char::len_utf8).sum::<usize>(), s.len());
+            Ok(())
+        }
+    }
+
+    fn writes_utf8(value: impl Display) {
+        write!(Utf8Only, "{value}").unwrap();
+    }
+
+    fn join(parts: &[&[u8]]) -> Vec<u8> {
+        parts.concat()
+    }
+
+    #[test]
+    fn fmt_slice_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(fmt_slice(&[bad, bad], ", "));
+        }
+    }
+
+    #[test]
+    fn github_action_property_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(github_action_property(&join(&[bad, b",", bad])));
+        }
+    }
+
+    #[test]
+    fn github_action_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(github_action(bad));
+            writes_utf8(github_action(&join(&[bad, b"\n", bad])));
+        }
+    }
+
+    #[test]
+    fn fmt_identifier_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(fmt_identifier(bad));
+            // After a letter the name is still in the scan that looks for the first gap.
+            writes_utf8(fmt_identifier(&join(&[b"a", bad])));
+        }
+    }
+
+    #[test]
+    fn url_formatter_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(URLFormatter {
+                hostname: Some(bad),
+                port: Some(3000),
+                ..Default::default()
+            });
+        }
+    }
+
+    #[test]
+    fn fmt_javascript_writes_utf8() {
+        for bad in NOT_UTF8 {
+            for (check_for_unhighlighted_write, redact_sensitive_information) in
+                [(false, false), (false, true), (true, true), (true, false)]
+            {
+                let options = HighlighterOptions {
+                    enable_colors: true,
+                    check_for_unhighlighted_write,
+                    redact_sensitive_information,
+                };
+                writes_utf8(fmt_javascript(bad, options));
+            }
+        }
+    }
+
+    #[test]
+    fn nullable_fallback_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(nullable_fallback(None::<u8>, bad));
+        }
+    }
+
+    #[test]
+    fn out_of_range_writes_utf8() {
+        for bad in NOT_UTF8 {
+            let options = OutOfRangeOptions {
+                field_name: bad,
+                msg: bad,
+                ..Default::default()
+            };
+            writes_utf8(out_of_range(bad, options));
+        }
+    }
+
+    #[test]
+    fn redacted_source_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(redacted_source(bad));
+        }
+    }
+
+    #[test]
+    fn encoded_slice_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(crate::EncodedSlice::from_bytes(bad));
+            writes_utf8(crate::EncodedSlice::latin1(bad));
+        }
+    }
+
+    #[test]
+    fn string_view_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(crate::StringView::from_bytes(bad));
+        }
+    }
+
+    #[test]
+    fn fmt_path_writes_utf8() {
+        let escaped = PathFormatOptions {
+            path_sep: PathSep::Posix,
+            escape_backslashes: true,
+        };
+        for bad in NOT_UTF8 {
+            writes_utf8(fmt_path(bad, PathFormatOptions::default()));
+            writes_utf8(fmt_path(&join(&[bad, b"\\", bad]), escaped));
+        }
+    }
+
+    #[test]
+    fn format_latin1_writes_utf8() {
+        for bad in NOT_UTF8 {
+            format_latin1(bad, &mut Utf8Only).unwrap();
+        }
+    }
+
+    #[test]
+    fn format_escapes_writes_utf8() {
+        for bad in NOT_UTF8 {
+            // After a character that needs no escape, the escaper asks highway where the next stop is.
+            let bad = bad.strip_prefix(b"a").unwrap_or(bad);
+            let flags = strings::QuoteEscapeFormatFlags::default();
+            writes_utf8(strings::format_escapes(bad, flags));
+        }
+    }
+
+    #[test]
+    fn redacted_npm_url_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(redacted_npm_url(bad));
+        }
+    }
+
+    #[test]
+    fn terminal_hyperlink_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(TerminalHyperlink::new(bad, bad, true));
+        }
+    }
+
+    #[test]
+    fn duration_one_decimal_picks_the_unit() {
+        for (ns, text) in [
+            (0, "0ns"),
+            (999, "999ns"),
+            (1_000, "1us"),
+            (1_500, "1.5us"),
+            (999_999, "999.9us"),
+            (1_000_000, "1ms"),
+            (1_250_000, "1.2ms"),
+            (1_000_000_000, "1s"),
+            (59_999_999_999, "59.9s"),
+            (60_000_000_000, "1m"),
+            (90_000_000_000, "1m30s"),
+            (3_661_100_000_000, "1h1m1.1s"),
+            (86_400_000_000_000, "1d"),
+            (694_800_000_000_000, "1w1d1h"),
+            (34_560_000_000_000_000, "1y5w"),
+            (u64::MAX, "584y49w23h34m33.7s"),
+        ] {
+            assert_eq!(fmt_duration_one_decimal(ns).to_string(), text);
+        }
+    }
+
+    #[test]
+    fn conn_timeout_prints_its_length() {
+        // test/js/sql expects these three messages, from a server that only CI starts.
+        for (ms, text) in [
+            (200, "Connection timeout after 200ms"),
+            (500, "Connection timeout after 500ms"),
+            (4_000, "Connection timeout after 4s"),
+        ] {
+            let message = fmt_conn_timeout(ConnTimeoutKind::Connection, ms, "");
+            assert_eq!(message.to_string(), text);
+        }
+    }
+
+    #[test]
+    fn fmt_slice_joins_with_the_delimiter() {
+        let items: [&[u8]; 3] = [b"add", "café".as_bytes(), b"--trust"];
+        for (slice, delimiter, text) in [
+            (&items[..], " ", "add café --trust"),
+            (&items[..], "", "addcafé--trust"),
+            (&items[..1], ", ", "add"),
+            (&items[..0], ", ", ""),
+        ] {
+            assert_eq!(fmt_slice(slice, delimiter).to_string(), text);
+        }
+    }
+
+    #[test]
+    fn nullable_fallback_prints_the_value_or_the_fallback() {
+        for (value, text) in [(Some(1024), "1024"), (None, "<unknown>")] {
+            assert_eq!(nullable_fallback(value, b"<unknown>").to_string(), text);
+        }
+    }
+
+    #[test]
+    fn url_formatter_prints_the_host_as_given() {
+        use URLProto::{Http, Https, Unix};
+        for (proto, hostname, port, text) in [
+            (Http, "127.0.0.1", Some(3000), "http://127.0.0.1:3000/"),
+            (Http, "example.com", Some(80), "http://example.com/"),
+            (Https, "bücher.example", None, "https://bücher.example/"),
+            (Unix, "/tmp/bun.sock", None, "unix:///tmp/bun.sock"),
+        ] {
+            let hostname = Some(hostname.as_bytes());
+            let url = URLFormatter {
+                proto,
+                hostname,
+                port,
+            };
+            assert_eq!(url.to_string(), text);
+        }
+    }
+
+    #[test]
+    fn format_latin1_writes_each_byte_as_its_character() {
+        // Short texts: from 64 bytes on the transcoder is simdutf's, which Miri cannot call.
+        let cases: [(&[u8], &str); 5] = [
+            (b"", ""),
+            (b"plain", "plain"),
+            (b"caf\xE9 cr\xE8me", "café crème"),
+            (b"\xFCber", "über"),
+            (b"\xE9\xE8\xFF", "éèÿ"),
+        ];
+        for (latin1, text) in cases {
+            let mut written = String::new();
+            format_latin1(latin1, &mut written).unwrap();
+            assert_eq!(written, text);
+        }
+    }
+}

@@ -12178,6 +12178,30 @@ describe.concurrent("what bun lint gets from the Bun process", () => {
     expect(await run(`"$(printf 'n\\377.js')"`)).toEqual(expected);
   });
 
+  // `-f unix` copies a byte that isn't UTF-8. The `file=` property prints it as U+FFFD, which is EF BF BD.
+  test.skipIf(!isLinux)("-f github prints a non-UTF-8 file name as valid UTF-8", async () => {
+    using dir = tempDir("bun-lint-process", { "eslint.config.js": basic });
+    writeFileSync(
+      Buffer.concat([Buffer.from(String(dir) + "/n"), Buffer.from([0xff]), Buffer.from(".js")]),
+      "debugger;\n",
+    );
+    expect(readdirSync(String(dir), "latin1")).toContain("n\xff.js");
+    await using proc = spawn({
+      cmd: [...command, "-f", "github", "."],
+      env,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // `.text()` would read a raw FF as U+FFFD too.
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+    expect(Buffer.from(stdout).toString("latin1")).toBe(
+      "::error file=n\xef\xbf\xbd.js,line=1,col=1,endLine=1,endColumn=10,title=no-debugger::Unexpected 'debugger' statement.\n",
+    );
+    expect(exitCode).toBe(1);
+  });
+
   // Sorted the way JavaScript compares strings: U+40000, a lone surrogate, and an invalid byte, which becomes U+FFFD.
   test.skipIf(!isLinux)("reports files whose names aren't valid UTF-8 in a consistent order", async () => {
     const kinds = ["\xF1\x80\x80\x80", "\xED\xB0\x80", "\xF0A"];

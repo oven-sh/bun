@@ -6077,11 +6077,11 @@ describe.concurrent("bytes that are not valid UTF-8 are not read as U+FFFD", () 
     };
   }
 
-  async function install(files: Record<string, string | Buffer>, ...args: string[]) {
+  async function run(cmd: string[], files: Record<string, string | Buffer>) {
     using dir = tempDir("npmrc-not-utf8", { "home/.keep": "", ...files });
     const home = join(String(dir), "home");
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "install", ...args],
+      cmd,
       cwd: String(dir),
       env: {
         ...env,
@@ -6097,6 +6097,8 @@ describe.concurrent("bytes that are not valid UTF-8 are not read as U+FFFD", () 
     const [stderr, exitCode] = await Promise.all([proc.stderr.bytes(), proc.exited]);
     return { stderr: Buffer.from(stderr).toString("latin1"), exitCode };
   }
+  const install = (files: Record<string, string | Buffer>, ...args: string[]) =>
+    run([bunExe(), "install", ...args], files);
 
   test("a tarball URL is requested as written", async () => {
     using server = rawServer();
@@ -6167,6 +6169,42 @@ describe.concurrent("bytes that are not valid UTF-8 are not read as U+FFFD", () 
     });
     expect(server.requests).toEqual([]);
     expect(stderr).toContain(`error: Failed to join registry "http://${server.host}/reg/" and package "n-`);
+    expect(exitCode).toBe(1);
+  });
+
+  // Such a name is refused where the manifest URL is joined. bun.lock needs no manifest and takes any safe folder name.
+  test.each(["1.0.0", "1.0.0-beta.1", "1.0.0+build.5", "1.0.0-beta.1+build.5"])(
+    "a name in bun.lock with an empty registry field: the tarball URL of %s is built from the registry URL",
+    async version => {
+      using server = rawServer();
+      const { exitCode } = await install({
+        "package.json": packageJson(`"n-`, bad, `":"${version}"`),
+        "bun.lock": bytes(
+          `{"lockfileVersion":1,"workspaces":{"":{"name":"app","dependencies":{"n-`,
+          bad,
+          `":"${version}"}}},"packages":{"n-`,
+          bad,
+          `":["n-`,
+          bad,
+          `@${version}","",{},""]}}`,
+        ),
+        ".npmrc": `registry=http://${server.host}/reg/\n`,
+      });
+      expect(server.requests.map(request => request.line)).toEqual([
+        `GET /reg/n-\x82A\x9bA/-/n-\x82A\x9bA-${version}.tgz HTTP/1.1`,
+      ]);
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  // A JavaScript string cannot hold these bytes, so the shell writes the argument. Windows passes arguments as UTF-16.
+  test.skipIf(isWindows)("bun pm view appends such a name to the registry URL as written", async () => {
+    using server = rawServer();
+    const { exitCode } = await run(["sh", "-c", `exec "$0" pm view "$(printf 'n-\\202A\\233A')"`, bunExe()], {
+      "package.json": packageJson(),
+      ".npmrc": `registry=http://${server.host}/reg/\n`,
+    });
+    expect(server.requests.map(request => request.line)).toEqual(["GET /reg/n-\x82A\x9bA HTTP/1.1"]);
     expect(exitCode).toBe(1);
   });
 

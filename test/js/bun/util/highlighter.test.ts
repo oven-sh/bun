@@ -19,6 +19,19 @@ test.each(["1_000", "1_000_000.123_456", "0x1_F", "0X1_F", "0b1010_0001", "1_000
   },
 );
 
+// A `/` that opens no comment, and text that is not ASCII, come out as they went in.
+test.each([
+  ["a / b", "a / b"],
+  ["x = /re/g;", "x = /re/g\x1b[0m\x1b[2m;\x1b[0m"],
+  ["1 /", "\x1b[0m\x1b[33m1\x1b[0m /"],
+  ["a /* open", "a /* open"],
+  ["café = 1", "café = \x1b[0m\x1b[33m1\x1b[0m"],
+  ["const 日本 = 2;", "\x1b[0m\x1b[35mconst\x1b[0m 日本 = \x1b[0m\x1b[33m2\x1b[0m\x1b[0m\x1b[2m;\x1b[0m"],
+  ["😀 + x\u0301", "😀 + x\u0301"],
+])("highlighter writes %p", (input, expected) => {
+  expect(highlighter(input)).toBe(expected);
+});
+
 // https://github.com/oven-sh/bun/issues/31434
 // A trailing backslash inside an unterminated `${` interpolation used to run
 // the scanner past the end of the input (OOB read / crash).

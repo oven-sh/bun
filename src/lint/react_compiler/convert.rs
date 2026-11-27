@@ -2102,7 +2102,7 @@ struct Captures {
     has_others: bool,
 }
 
-/// `redeclared_from`: where in the `catch` block the name starts to refer to a `var` of the block.
+/// `redeclared_from`: where in the `catch` block oxc's lowering starts to take the parameter for declared.
 fn captures_of<'a>(symbol: Symbol<'a>, stmt: Stmt<'a>, redeclared_from: u32) -> Captures {
     let enclosing_fn_span = Node::Stmt(stmt).enclosing_function().map(Func::span);
     let mut captures = Captures {
@@ -2127,21 +2127,22 @@ fn captures_of<'a>(symbol: Symbol<'a>, stmt: Stmt<'a>, redeclared_from: u32) -> 
     captures
 }
 
-/// Where the first `var` with a value that's a statement of `block` and declares `name` starts, or `u32::MAX`. For
-/// oxc's compiler, what comes after it in the block of a `catch` with a parameter of that name refers to the `var`.
+/// Where the first `var` that's a statement of `block` and declares `name` ends, or `u32::MAX`. oxc's semantic gives
+/// such a `var` the symbol of the parameter of that name, and its lowering hoists no binding for a function that comes
+/// after the statement that declares it.
 fn redeclared_from<'a>(block: Stmt<'a>, name: Name<'a>) -> u32 {
     let declares_name = |decl: VarDecl<'a>| {
         let mut is_declared = false;
         decl.pat().for_each_binding(&mut |pat| {
             is_declared |= matches!(pat.kind(), PatKind::Ident(it) if it == name);
         });
-        is_declared && decl.init().is_some() && matches!(decl.var_kind(), VarKind::Var)
+        is_declared && matches!(decl.var_kind(), VarKind::Var)
     };
     for statement in block.as_block().into_iter().flatten() {
         if let StmtKind::Var(decls) = statement.kind()
             && decls.iter().any(&declares_name)
         {
-            return statement.span().start;
+            return statement.span().end;
         }
     }
     u32::MAX

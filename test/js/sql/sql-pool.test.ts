@@ -1732,12 +1732,19 @@ describe.concurrent("sql.stats where there is no pool", () => {
     expect(exitCode).toBe(0);
   });
 
-  // `made`: Bun.sql.options makes the default client, as any use of Bun.sql does.
+  // `made`: Bun.sql.options makes the default client, as any use of Bun.sql does. The SQLite client opens its file
+  // when it is made, so the file tells that the reads before made none.
   test.each([
-    ["a pool", "postgres://u@127.0.0.1:1/db", true, { connections: 0, opening: 0, idle: 0, leased: 0, waiting: 0 }],
-    ["SQLite", "sqlite://app.db", true, null],
-    ["nothing that Bun.sql can open", "gopher://127.0.0.1/db", false, null],
-  ])("Bun.sql.stats does not make the default client, which has %s", async (_, url, made, after) => {
+    [
+      "a pool",
+      "postgres://u@127.0.0.1:1/db",
+      true,
+      false,
+      { connections: 0, opening: 0, idle: 0, leased: 0, waiting: 0 },
+    ],
+    ["SQLite", "sqlite://app.db", true, true, null],
+    ["nothing that Bun.sql can open", "gopher://127.0.0.1/db", false, false, null],
+  ])("Bun.sql.stats does not make the default client, which has %s", async (_, url, made, opens, after) => {
     using dir = tempDir("sql-default-stats", {});
     await using proc = Bun.spawn({
       cmd: [
@@ -1746,13 +1753,14 @@ describe.concurrent("sql.stats where there is no pool", () => {
         `
         const { existsSync } = require("node:fs");
         const read = () => [Bun.sql.stats ?? null, { ...Bun.sql }.stats ?? null];
-        const result = { keys: Object.keys(Bun.sql).includes("stats"), before: read(), opened: existsSync("app.db") };
+        const result = { keys: Object.keys(Bun.sql).includes("stats"), before: read(), opened: [existsSync("app.db")] };
         try {
           Bun.sql.options;
           result.made = true;
         } catch {
           result.made = false;
         }
+        result.opened.push(existsSync("app.db"));
         result.after = read();
         console.log(JSON.stringify(result));
         `,
@@ -1767,7 +1775,7 @@ describe.concurrent("sql.stats where there is no pool", () => {
     expect(JSON.parse(stdout)).toEqual({
       keys: true,
       before: [null, null],
-      opened: false,
+      opened: [false, opens],
       made,
       after: [after, after],
     });

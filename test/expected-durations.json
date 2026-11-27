@@ -36,10 +36,6 @@
     "default": 20000,
     "asan": 80000
   },
-  "aot/imports-that-another-load-comes-ahead-of.test.ts": {
-    "default": 5000,
-    "asan": 3000
-  },
   "aot/a-made-type-finds-its-file-behind-a-reset.test.ts": {
     "default": 3000,
     "asan": 7800

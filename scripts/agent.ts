@@ -780,6 +780,76 @@ function writeFile(filename: string, content: string, mode?: number): void {
   }
 }
 
+const agentPlistPath = "/Library/LaunchDaemons/buildkite-agent.plist";
+
+/**
+ * A Mac's nightly, as `install` writes it: the LaunchDaemon that wipes the
+ * checkouts and the temp directories and reboots the machine. `homePath` is the
+ * agent's home there and `runAsUser` the account its service runs as.
+ */
+export function nightlyPlist(homePath: string, runAsUser: string): string {
+  const agent = `'[b]uildkite-agent start'`;
+  // Longer than any timeout_in_minutes of a step that runs on a Mac (.buildkite/ci.ts).
+  const drainSeconds = 65 * 60;
+  const script = [
+    `PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`,
+    `BASE_PREFIX=$([ "$(uname -m)" = "arm64" ] && echo "/opt/homebrew" || echo "/usr/local")`,
+    // Neither the wipe nor the reboot may happen under a job, so the agent goes
+    // first. launchd would signal the service's process, which is node running
+    // this file and does not pass signals on, so the script signals the agent
+    // itself: on its first SIGTERM it takes no new job, finishes the one it
+    // runs, and exits 0, which the service's KeepAlive does not start again. A
+    // second one cancels the job, so it is sent once. The `[b]` keeps the
+    // pattern from matching this script's own command line.
+    `if pkill -TERM -f ${agent}; then`,
+    `  sleep 2`,
+    `  waited=2`,
+    `  while pgrep -f ${agent} >/dev/null && [ $waited -lt ${drainSeconds} ]; do`,
+    `    sleep 10`,
+    `    waited=$((waited + 10))`,
+    `  done`,
+    `fi`,
+    // With its service unloaded, nothing starts an agent again. One that is
+    // still there did not stop in time: SIGQUIT makes it cancel its job as
+    // `agent_stop`, which .buildkite/ci.ts retries, and exit.
+    `launchctl bootout system/buildkite-agent`,
+    `if pkill -QUIT -f ${agent}; then`,
+    `  waited=0`,
+    `  while pgrep -x buildkite-agent >/dev/null && [ $waited -lt 60 ]; do`,
+    `    sleep 5`,
+    `    waited=$((waited + 5))`,
+    `  done`,
+    `fi`,
+    // Covers both the Homebrew-agent layout (older x64 boxes) and the Library
+    // layout (`install`), and fixes ownership. Not while a job's
+    // `buildkite-agent bootstrap` is left: the reboot ends that one.
+    `if ! pgrep -x buildkite-agent >/dev/null; then`,
+    `  { rm -rf $BASE_PREFIX/{var,etc}/buildkite-agent/{builds,cache}/* ${homePath}/{builds,cache}/* /tmp/* /var/tmp/* || true; } &&`,
+    `  { chown -R ${runAsUser}:admin $BASE_PREFIX/var/buildkite-agent $BASE_PREFIX/etc/buildkite-agent || true; } &&`,
+    `  { chmod -R 755 $BASE_PREFIX/var/buildkite-agent $BASE_PREFIX/etc/buildkite-agent || true; }`,
+    `fi`,
+    // A host whose reboot does not come gets its agent back.
+    `shutdown -r now || reboot`,
+    `sleep 600`,
+    `launchctl bootstrap system ${agentPlistPath}`,
+  ].join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.buildkite.cleanup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string><string>-c</string>
+    <string><![CDATA[${script}]]></string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>27</integer></dict>
+</dict>
+</plist>
+`;
+}
+
 /** Registers the agent as a service of this machine. `--queue` is for macOS, where the queue is part of the agent's configuration file. */
 async function install(queueOption: string | undefined): Promise<void> {
   // The service is of no use without it.
@@ -888,7 +958,6 @@ async function install(queueOption: string | undefined): Promise<void> {
     ].join("\n");
     writeFile(cfgPath, cfg, 0o600);
 
-    const plistPath = "/Library/LaunchDaemons/buildkite-agent.plist";
     const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -916,35 +985,10 @@ async function install(queueOption: string | undefined): Promise<void> {
 </dict>
 </plist>
 `;
-    writeFile(plistPath, plist, 0o644);
+    writeFile(agentPlistPath, plist, 0o644);
 
-    // Matches the script already deployed on the fleet: covers both the
-    // Homebrew-agent layout (older x64 boxes) and the Library layout (this
-    // installer), fixes ownership, then reboots.
     const cleanupPlistPath = "/Library/LaunchDaemons/com.buildkite.cleanup.plist";
-    const cleanupScript =
-      `PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin; ` +
-      `BASE_PREFIX=$([ "$(uname -m)" = "arm64" ] && echo "/opt/homebrew" || echo "/usr/local"); ` +
-      `{ rm -rf $BASE_PREFIX/{var,etc}/buildkite-agent/{builds,cache}/* ${homePath}/{builds,cache}/* /tmp/* /var/tmp/* || true; } && ` +
-      `{ chown -R ${runAsUser}:admin $BASE_PREFIX/var/buildkite-agent $BASE_PREFIX/etc/buildkite-agent || true; } && ` +
-      `{ chmod -R 755 $BASE_PREFIX/var/buildkite-agent $BASE_PREFIX/etc/buildkite-agent || true; } && ` +
-      `{ shutdown -r now || reboot; }`;
-    const cleanupPlist = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>com.buildkite.cleanup</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/bin/sh</string><string>-c</string>
-    <string><![CDATA[${cleanupScript}]]></string>
-  </array>
-  <key>StartCalendarInterval</key>
-  <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>27</integer></dict>
-</dict>
-</plist>
-`;
-    writeFile(cleanupPlistPath, cleanupPlist, 0o644);
+    writeFile(cleanupPlistPath, nightlyPlist(homePath, runAsUser), 0o644);
 
     // install runs as root, so everything above is root-owned. The service
     // runs as runAsUser and needs to read the cfg (mode 0600) and write to
@@ -953,7 +997,7 @@ async function install(queueOption: string | undefined): Promise<void> {
 
     // Best-effort: replace any previously-loaded service. bootout fails if
     // not loaded, which is fine.
-    for (const p of [plistPath, cleanupPlistPath]) {
+    for (const p of [agentPlistPath, cleanupPlistPath]) {
       await run(["launchctl", "bootout", "system", p]).catch(() => {});
       await run(["launchctl", "bootstrap", "system", p]);
     }

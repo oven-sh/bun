@@ -228,6 +228,8 @@ Runs after microtasks to batch operations:
 
 The queue maintains a map of `(pointer, task_fn)` pairs and runs each task. If a task returns `true`, it remains in the queue for the next drain; if `false`, it's removed.
 
+A deferred task that is posted during the pass, or that the removal of another task moves, may wait for the next checkpoint. The loop does not block before it.
+
 ## I/O Polling Integration
 
 ### uSockets Event Loop (`epoll_kqueue.c:251-320`)

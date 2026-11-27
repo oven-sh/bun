@@ -7,6 +7,7 @@ import {
   isCI,
   isDebug,
   isLinux,
+  isWindows,
   libcPathForDlopen,
   nodeExe,
   nodeExeAtLeast,
@@ -7546,4 +7547,108 @@ it("a session over TLS whose peer reset is first seen by a write ends without a 
   } finally {
     server.close();
   }
+});
+
+// The server is a process of its own with nothing else on its event loop: once the second stream
+// has answered, the process lives only while the loop has work. The first stream waits on its
+// window, so the flush of the session corks the DATA frame of the second stream again, which posts
+// the session's deferred task while the pass that ran it is not over. Nothing else wakes the loop
+// for that frame, and nothing else keeps the process alive for it.
+// The fixture ends itself with SIGKILL. On Windows that resets the connection, and the reset can
+// discard what the client has not read yet.
+it.skipIf(isWindows)("a frame that a session corks during its flush leaves on an idle event loop", async () => {
+  const fixture = `
+    const http2 = require("node:http2");
+    // Held until the second stream answers. It never fires.
+    const untilTheAnswer = setInterval(() => {}, 2 ** 30);
+    const server = http2.createServer();
+    server.on("session", session => session.unref());
+    let streams = 0;
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      if (++streams === 1) {
+        // 65,535 bytes fill the window of the stream. The rest stays queued.
+        stream.respond({ ":status": 200 });
+        stream.write(Buffer.alloc(200000, 97));
+        return;
+      }
+      setImmediate(() => {
+        clearInterval(untilTheAnswer);
+        stream.respond({ ":status": 200 });
+        stream.end("hello");
+      });
+    });
+    // A clean exit flushes, which would send what the loop left behind.
+    process.on("beforeExit", () => process.kill(process.pid, "SIGKILL"));
+    server.listen(0, "127.0.0.1", () => {
+      server.unref();
+      console.log(JSON.stringify({ port: server.address().port }));
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    // bun test does not kill the child of a test that times out. With this, a fixture that does
+    // not exit ends when the test process does.
+    env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let stdout = "";
+  while (!stdout.includes("\n")) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error("fixture exited early: " + stdout + (await proc.stderr.text()));
+    stdout += decoder.decode(value, { stream: true });
+  }
+  const { port } = JSON.parse(stdout);
+
+  const frame = (type, flags, streamId, payload = Buffer.alloc(0)) =>
+    Buffer.concat([new http2utils.Frame(payload.length, type, flags, streamId).data, payload]);
+  const request = streamId =>
+    frame(1, 0x5, streamId, Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 0x09]), Buffer.from("localhost")]));
+  // The connection window is 2^31-1, and each stream keeps its 65,535 bytes.
+  const connectionWindow = Buffer.alloc(4);
+  connectionWindow.writeUInt32BE(0x7fffffff - 65535);
+
+  const socket = net.connect(port, "127.0.0.1");
+  socket.on("error", () => {});
+  const closed = once(socket, "close");
+  const firstIsBlocked = Promise.withResolvers();
+  const received = { 1: 0, 3: "" };
+  let endStream = false;
+  let pending = Buffer.alloc(0);
+  socket.on("data", chunk => {
+    pending = Buffer.concat([pending, chunk]);
+    while (pending.length >= 9) {
+      const length = pending.readUIntBE(0, 3);
+      if (pending.length < 9 + length) break;
+      const [type, flags] = [pending[3], pending[4]];
+      const streamId = pending.readUInt32BE(5) & 0x7fffffff;
+      const payload = pending.subarray(9, 9 + length);
+      pending = pending.subarray(9 + length);
+      if (type === 4 && (flags & 1) === 0) socket.write(frame(4, 1, 0));
+      if (type !== 0) continue;
+      if (streamId === 1 && (received[1] += length) === 65535) firstIsBlocked.resolve();
+      if (streamId === 3) {
+        received[3] += payload.toString();
+        endStream ||= (flags & 1) !== 0;
+      }
+    }
+  });
+  socket.write(
+    Buffer.concat([Buffer.from(http2utils.kClientMagic), frame(4, 0, 0), frame(8, 0, 0, connectionWindow), request(1)]),
+  );
+  await firstIsBlocked.promise;
+  socket.write(request(3));
+  await closed;
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  // Debug builds may write benign diagnostics to stderr, so it is only shown when the frame is missing.
+  expect({ body: received[3], endStream, failureDetail: received[3] === "hello" ? "" : stderr, exitCode }).toEqual({
+    body: "hello",
+    endStream: true,
+    failureDetail: "",
+    exitCode: 137,
+  });
 });

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomBytes } from "crypto";
-import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
 import http2 from "node:http2";
 import net from "node:net";
 import { join } from "node:path";
@@ -969,5 +969,97 @@ describe("Bun.serve http2 in-process", () => {
       lateWriteFailed: true,
       pendingRequests: 0,
     });
+  });
+});
+
+// Writes to open responses from a turn of the loop that is not a socket event. The sink of each
+// response flushes from a deferred task, and each flush posts the drain that sends it. The pass that
+// runs the flushes can end before that drain, or run it in place of a flush that was posted earlier.
+describe("Bun.serve http2 writes outside a socket event", () => {
+  function spawnFixture(env: Record<string, string>, ...args: string[]) {
+    return Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "serve-http2-publish-fixture.ts"), ...args],
+      // bun test does not kill the child of a concurrent test that times out. With this, a
+      // fixture that does not exit ends when the test process does.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: "1", ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  }
+
+  /** The lines that the fixture prints on stdout, parsed as JSON: one for each call. */
+  function linesOf(proc: ReturnType<typeof spawnFixture>) {
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let stdout = "";
+    return async () => {
+      while (!stdout.includes("\n")) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error("fixture exited early: " + stdout + (await proc.stderr.text()));
+        stdout += decoder.decode(value, { stream: true });
+      }
+      const line = stdout.slice(0, stdout.indexOf("\n"));
+      stdout = stdout.slice(line.length + 1);
+      return JSON.parse(line);
+    };
+  }
+
+  const dataOf = (raw: RawH2, streamId: number) =>
+    Buffer.concat(raw.frames.filter(f => f.type === T.DATA && f.streamId === streamId).map(f => f.payload)).toString();
+
+  // The server is unref'd and nothing else is on its loop: after the publish, the process lives only
+  // while the loop has work. Nothing else wakes the loop for a write that a pass left, and nothing else
+  // keeps the process alive for it.
+  // The fixture ends itself with SIGKILL. On Windows that resets the connection, and the reset can
+  // discard what the client has not read yet.
+  test.concurrent.skipIf(isWindows).each([1, 64])(
+    "one write to each open response reaches all of them when nothing else is on the loop (%d)",
+    async streams => {
+      await using proc = spawnFixture({});
+      const { port } = await linesOf(proc)();
+      const ids = Array.from({ length: streams }, (_, i) => 2 * i + 1);
+      const events = await RawH2.connect(port, false);
+      for (const id of ids) events.headers(id, baseHeaders("/events"));
+      await Promise.all(ids.map(id => events.waitFor(f => f.type === T.DATA && f.streamId === id)));
+      const publisher = await RawH2.connect(port, false);
+      publisher.headers(1, baseHeaders("/publish"));
+      await events.waitForClose();
+
+      const received = ids.map(id => dataOf(events, id));
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect({ received, stderr, exitCode }).toEqual({
+        received: ids.map(() => "openevent"),
+        stderr: "",
+        exitCode: 137,
+      });
+    },
+  );
+
+  // A server that keeps the loop alive blocks in its poll, so a write that a pass left is late and
+  // not lost. The fixture counts the publishes whose timer of 100 ms fired before the next request,
+  // and the client sends that request as soon as it has the event. The idle GC timer is off, so that
+  // it does not send a write that waits.
+  // Not concurrent: the client has to answer before that timer.
+  test("a write does not wait for a timer when the server keeps the loop alive", async () => {
+    const rounds = 16;
+    await using proc = spawnFixture({ BUN_GC_TIMER_DISABLE: "1" }, "--rounds", String(rounds));
+    const nextLine = linesOf(proc);
+    const { port } = await nextLine();
+    const events = await RawH2.connect(port, false);
+    events.headers(1, baseHeaders("/events"));
+    const publisher = await RawH2.connect(port, false);
+    // The request after the last round ends the fixture.
+    for (let round = 0; round <= rounds; round++) {
+      await events.waitFor(() => dataOf(events, 1).length === "open".length + round * "event".length);
+      publisher.headers(2 * round + 1, baseHeaders("/publish"));
+    }
+    const { timers } = await nextLine();
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ received: dataOf(events, 1), stderr, exitCode }).toEqual({
+      received: "open" + Buffer.alloc(rounds * "event".length, "event").toString(),
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(timers).toBeLessThan(rounds / 2);
   });
 });

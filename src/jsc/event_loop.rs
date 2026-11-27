@@ -79,6 +79,8 @@ pub struct EventLoop {
     /// until the queue is empty (a task that re-posts itself there never lets
     /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
     yield_tasks: Cell<Vec<Task>>,
+    /// The last checkpoint may have left `deferred_tasks` unrun. Counts as a yielded task, as `tick()` always runs a checkpoint.
+    owes_checkpoint: Cell<bool>,
 
     pub(crate) concurrent_tasks: ConcurrentQueue,
     /// See `TaskTag::is_plugin_request`: as other threads post them, and as this thread has taken them.
@@ -136,6 +138,7 @@ impl EventLoop {
             immediate_tasks: Cell::default(),
             next_immediate_tasks: Cell::default(),
             yield_tasks: Cell::default(),
+            owes_checkpoint: Cell::new(false),
             concurrent_tasks: ConcurrentQueue::default(),
             concurrent_plugin_requests: ConcurrentQueue::default(),
             plugin_requests: UnsafeCell::new(Queue::init()),
@@ -465,6 +468,9 @@ impl EventLoop {
             let _inside = vm.is_inside_deferred_task_queue.raise_for_scope();
             self.deferred_tasks.run();
         }
+
+        self.owes_checkpoint
+            .set(self.deferred_tasks.may_have_unrun_tasks());
 
         // Guard on `event_loop_handle` being set, but drain via `uws_loop()`:
         // on Windows the uSockets loop (`uws::Loop::get()`) is NOT
@@ -1028,11 +1034,12 @@ impl EventLoop {
 
     pub(crate) fn has_yield_tasks(&self) -> bool {
         // SAFETY: a read of the length.
-        !unsafe { &*self.yield_tasks.as_ptr() }.is_empty()
+        !unsafe { &*self.yield_tasks.as_ptr() }.is_empty() || self.owes_checkpoint.get()
     }
 
     /// `auto_tick`, before it polls: last iteration's yielded tasks become
     /// runnable. Returns whether there are any, so the poll does not block.
+    #[inline]
     pub fn promote_yield_tasks(&self) -> bool {
         if !self.has_yield_tasks() {
             return false;

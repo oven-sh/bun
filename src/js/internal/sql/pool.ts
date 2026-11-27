@@ -930,7 +930,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
         open++;
         if (connection.flags & PooledConnectionFlags.reserved) {
           leased++;
-        } else if (connection.queryCount === 0) {
+        } else if (connection.queryCount === 0 && !(connection.flags & PooledConnectionFlags.retiring)) {
           idle++;
         }
       }

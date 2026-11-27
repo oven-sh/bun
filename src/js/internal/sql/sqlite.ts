@@ -131,6 +131,8 @@ class SQLiteAdapter extends SQLDialect implements DatabaseAdapter<Database, Data
   public closed: boolean = false;
   /// There is one connection and plain queries always run on it, so reserve() has nothing to give.
   public readonly supportsReservedConnections = false;
+  /// There is no pool to count.
+  public readonly stats = undefined;
   readonly emptyList = "()";
   readonly namedParameters = true;
   /// A begin() has the database, and the ones that came after it wait in order. Plain queries do not wait: they join.

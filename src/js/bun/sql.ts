@@ -1041,8 +1041,9 @@ function SQL(
   const pool = adapterFromOptions(options);
   const handle = makeHandle(new Client(pool, options));
   // Only the client of a pool has it, as in the postgres package: a reservation, a transaction and SQLite have none.
-  if (pool.stats) {
-    defineProperty(handle, "stats", { __proto__: null, get: pool.stats.bind(pool), enumerable: true });
+  const { stats } = pool;
+  if (stats !== undefined) {
+    defineProperty(handle, "stats", { __proto__: null, get: stats.bind(pool), enumerable: true });
   }
   return handle;
 }

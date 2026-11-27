@@ -1546,6 +1546,61 @@ describe.each(scripted)("$adapter, scripted server", script => {
       expect(sql.stats).toEqual(stats({ connections: 2, leased: 1 }));
     });
 
+    test.concurrent("counts a query that waits for the pool to open, and none on a full pool that shares", async () => {
+      await using server = await serverOf(ready);
+      const connected = new Calls();
+      const sql = new SQL({ url: url(server.port), max: 2, onconnect: connected.hit });
+      await using _ = unanswered(sql);
+      const query = () => void outcome(sql.unsafe("select 1").simple().execute());
+
+      query();
+      expect(sql.stats).toEqual(stats({ opening: 2, waiting: 1 }));
+      await connected.reached(2);
+      // Nothing is answered: five queries share two connections, and none of them waits.
+      for (let i = 0; i < 4; i++) query();
+      expect(sql.stats).toEqual(stats({ connections: sql.options.max }));
+    });
+
+    test.concurrent("counts a query that waits because every connection is leased", async () => {
+      await using server = await serverOf(ready);
+      const sql = new SQL({ url: url(server.port), max: 2 });
+      await using _ = unanswered(sql);
+      await using _first = await sql.reserve();
+      await using _second = await sql.reserve();
+      outcome(sql.unsafe("select 1").simple().execute());
+      expect(sql.stats).toEqual(stats({ connections: 2, leased: 2, waiting: 1 }));
+    });
+
+    test.concurrent("counts the connection of a query as idle once the query has settled", async () => {
+      await using server = await serverOf(serving);
+      await using sql = new SQL({ url: url(server.port), max: 1 });
+      const query = sql.unsafe("select 1").simple().execute();
+      expect(sql.stats).toEqual(stats({ opening: 1, waiting: 1 }));
+      // The first reaction of the caller already sees it.
+      expect(await query.then(() => sql.stats)).toEqual(stats({ connections: 1, idle: 1 }));
+      await sql.unsafe("select 1").simple();
+      expect(sql.stats).toEqual(stats({ connections: 1, idle: 1 }));
+    });
+
+    test.concurrent("counts a connection that Bun closes at idleTimeout", async () => {
+      await using server = await serverOf(ready);
+      const closed = new Calls();
+      const inOnClose: SQL.PoolStats[] = [];
+      await using sql = new SQL({
+        url: url(server.port),
+        max: 1,
+        idleTimeout: 0.01,
+        onclose() {
+          inOnClose.push(sql.stats!);
+          closed.hit();
+        },
+      });
+      await sql.connect();
+      await closed.reached(1);
+      expect(inOnClose).toEqual([stats({})]);
+      expect(sql.stats).toEqual(stats({}));
+    });
+
     test.concurrent("counts the connection of a transaction as leased, until the transaction ends", async () => {
       await using server = await serverOf(serving);
       await using sql = new SQL({ url: url(server.port), max: 1 });

@@ -775,18 +775,28 @@ declare module "bun" {
     /**
      * What a pool is doing at the time of the read. See {@link SQL.stats}.
      *
-     * The connection of {@link SQL.listen} is not in these counts.
+     * All counts are 0 before the first query and after every connection has
+     * closed. The connection of {@link SQL.listen} is not in the pool, so it is
+     * not in these counts, but `onconnect` and `onclose` run for it.
      */
     interface PoolStats {
-      /** The open connections. */
+      /** The open connections. The limit is `sql.options.max`. */
       connections: number;
       /**
        * The connections that are not open yet. This includes a connection
        * that waits to connect again after the server closed it during the
        * handshake.
+       *
+       * Bun opens up to `max` connections when a caller finds no connection
+       * ready, so this can be higher than {@link PoolStats.waiting}.
        */
       opening: number;
-      /** The open connections that run no query and that no caller holds. */
+      /**
+       * The open connections that run no query and that no caller holds.
+       *
+       * The pool has no free connection when this is 0 and
+       * {@link PoolStats.connections} equals `sql.options.max`.
+       */
       idle: number;
       /**
        * The open connections that one caller holds: a reserved connection, or
@@ -797,8 +807,11 @@ declare module "bun" {
        * The callers that wait for a connection: queries, {@link SQL.reserve}
        * and {@link SQL.begin}.
        *
-       * Queries share connections. When every connection of a full pool is
-       * busy, a new query goes to one of them and this stays 0.
+       * Queries share connections, so this can be 0 while every connection is
+       * busy: read {@link PoolStats.idle} too. A query waits while no connection is
+       * open, and when the connections that take queries already run their
+       * share. A leased connection takes no query of another caller, and
+       * neither does a connection that is past `maxLifetime`.
        */
       waiting: number;
     }

@@ -1412,8 +1412,10 @@ sql.stats;
 | `waiting`     | Callers that wait for a connection: queries, `sql.reserve()` and `sql.begin()`.                                                            |
 
 - The limit of the pool is `sql.options.max`.
-- Queries share connections. When every connection of a full pool is busy, a new query goes to one of them and `waiting` stays 0. The sign of a full pool is `idle: 0` with `connections` equal to `sql.options.max`.
-- Bun starts a pool with up to `max` connections for the first caller, so `opening` can be higher than `waiting`.
+- Queries share connections, so `waiting` can be 0 while every connection is busy. Read `idle` too: the pool has no free connection when `idle` is 0 and `connections` equals `sql.options.max`.
+- A query waits while no connection is open, and when the connections that take queries already run their share. A leased connection takes no query of another caller. Neither does a connection that is past `maxLifetime` and finishes its work: Bun still counts it in `connections`, and never as `idle`.
+- Bun opens up to `max` connections when a caller finds no connection ready, so `opening` can be higher than `waiting`.
+- All counts are 0 before the first query, after every connection has closed (for example at `idleTimeout`), and after `sql.close()`.
 - The connection of [`sql.listen()`](#listen--notify-postgresql) is not in the pool, so Bun does not count it. `onconnect` and `onclose` do run for it.
 - Only the client that owns a PostgreSQL or MySQL pool has `stats`. A reserved connection, the client of a transaction or savepoint, and a SQLite client have none.
 - `Bun.sql.stats` is `undefined` until the first use of `Bun.sql` creates the default client. A read opens nothing.

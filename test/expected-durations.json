@@ -4298,6 +4298,10 @@
     "windows": 13400,
     "windows-aarch64": 16400
   },
+  "aot/a-load-plugin-of-the-program-is-asked-before-a-form-of-the-file.test.ts": {
+    "default": 9000,
+    "asan": 36000
+  },
   "aot/arguments-of-a-call-that-returns-early.test.ts": {
     "default": 1600,
     "asan": 3000,

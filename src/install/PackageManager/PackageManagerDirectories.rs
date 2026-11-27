@@ -455,7 +455,7 @@ impl CacheEntryKind {
 }
 
 // PERF: an earlier version used `core::fmt::write` over a `format_args!` of
-// `bun_fmt::s` / `hex_int_*` pieces. In Rust that is *dynamic* dispatch — every `{}` argument is a
+// byte-slice and `hex_int_*` pieces. In Rust that is *dynamic* dispatch: every `{}` argument is a
 // `&dyn Display` whose vtable lives in `.data.rel.ro`, and every
 // `core::fmt::write` call drags in `Formatter` padding/alignment machinery
 // plus a panic-format landing pad for the trailing `.expect("unreachable")`.

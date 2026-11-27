@@ -1,7 +1,5 @@
 use core::cell::RefCell;
-use core::fmt;
 
-use bun_core::fmt::s;
 use bun_core::strings;
 use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, ZStr};
@@ -81,31 +79,15 @@ impl ExtractTarball {
     }
 }
 
-pub(crate) fn build_url(
-    registry_: &[u8],
+/// Appends `<registry>/<name>/-/<name without its scope>-<version>.tgz` to `out`.
+pub fn append_url(
+    out: &mut Vec<u8>,
+    registry: &[u8],
     full_name: &[u8],
     version: Version,
     string_buf: &[u8],
-) -> Result<&'static [u8], bun_alloc::AllocError> {
-    build_url_with_printer(
-        registry_,
-        full_name,
-        version,
-        string_buf,
-        // Format directly into the store's tail; no intermediate `String`.
-        |args| FileSystem::get().dirname_store().print(args),
-    )
-}
-
-/// Generic URL builder; the closure carries its own context.
-pub fn build_url_with_printer<R, E>(
-    registry_: &[u8],
-    full_name: &[u8],
-    version: Version,
-    string_buf: &[u8],
-    mut print: impl FnMut(fmt::Arguments<'_>) -> Result<R, E>,
-) -> Result<R, E> {
-    let registry = strings::trim_right(registry_, b"/");
+) {
+    let registry = strings::trim_right(registry, b"/");
 
     let mut name = full_name;
     if name[0] == b'@' {
@@ -114,47 +96,51 @@ pub fn build_url_with_printer<R, E>(
         }
     }
 
-    // default_format = "{s}/{s}/-/"
-    // `bun_fmt::s` writes bytes straight through — registry hosts, package names
-    // and semver tags are pre-validated ASCII, so we don't need `bstr::BStr`'s
-    // Utf8Chunks scan.
-    let registry = s(registry);
-    let full_name = s(full_name);
-    let name = s(name);
+    let mut digits = [bun_fmt::ItoaBuf::new(); 3];
+    let [major, minor, patch] = &mut digits;
+    let major = bun_fmt::itoa(major, version.major);
+    let minor = bun_fmt::itoa(minor, version.minor);
+    let patch = bun_fmt::itoa(patch, version.patch);
+    let tag = version.tag;
+    let pre = tag.has_pre().then(|| tag.pre.slice(string_buf));
+    let build = tag.has_build().then(|| tag.build.slice(string_buf));
 
-    if !version.tag.has_pre() && !version.tag.has_build() {
-        print(format_args!(
-            "{registry}/{full_name}/-/{name}-{}.{}.{}.tgz",
-            version.major, version.minor, version.patch,
-        ))
-    } else if version.tag.has_pre() && version.tag.has_build() {
-        print(format_args!(
-            "{registry}/{full_name}/-/{name}-{}.{}.{}-{}+{}.tgz",
-            version.major,
-            version.minor,
-            version.patch,
-            s(version.tag.pre.slice(string_buf)),
-            s(version.tag.build.slice(string_buf)),
-        ))
-    } else if version.tag.has_pre() {
-        print(format_args!(
-            "{registry}/{full_name}/-/{name}-{}.{}.{}-{}.tgz",
-            version.major,
-            version.minor,
-            version.patch,
-            s(version.tag.pre.slice(string_buf)),
-        ))
-    } else if version.tag.has_build() {
-        print(format_args!(
-            "{registry}/{full_name}/-/{name}-{}.{}.{}+{}.tgz",
-            version.major,
-            version.minor,
-            version.patch,
-            s(version.tag.build.slice(string_buf)),
-        ))
-    } else {
-        unreachable!()
+    out.reserve(
+        registry.len()
+            + "/".len()
+            + full_name.len()
+            + "/-/".len()
+            + name.len()
+            + "-".len()
+            + major.len()
+            + ".".len()
+            + minor.len()
+            + ".".len()
+            + patch.len()
+            + pre.map_or(0, |pre| "-".len() + pre.len())
+            + build.map_or(0, |build| "+".len() + build.len())
+            + ".tgz".len(),
+    );
+    out.extend_from_slice(registry);
+    out.push(b'/');
+    out.extend_from_slice(full_name);
+    out.extend_from_slice(b"/-/");
+    out.extend_from_slice(name);
+    out.push(b'-');
+    out.extend_from_slice(major);
+    out.push(b'.');
+    out.extend_from_slice(minor);
+    out.push(b'.');
+    out.extend_from_slice(patch);
+    if let Some(pre) = pre {
+        out.push(b'-');
+        out.extend_from_slice(pre);
     }
+    if let Some(build) = build {
+        out.push(b'+');
+        out.extend_from_slice(build);
+    }
+    out.extend_from_slice(b".tgz");
 }
 
 struct TlBufs {

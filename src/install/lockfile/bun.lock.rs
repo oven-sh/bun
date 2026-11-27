@@ -2357,6 +2357,7 @@ pub(crate) fn parse_into_binary_lockfile(
             bundled_pkgs.put(pkg_path, ());
         }
 
+        let mut tarball_url: Vec<u8> = Vec::new();
         'next_pkg_key: for row in pkg_rows {
             let key_loc = row.key_loc;
             let pkg_path = row.key.slice();
@@ -2455,14 +2456,16 @@ pub(crate) fn parse_into_binary_lockfile(
                         mgr.scope_for_package_name(name_str).url.href()
                     });
                 if registry_str.is_empty() {
-                    let url = ExtractTarball::build_url(
+                    tarball_url.clear();
+                    ExtractTarball::append_url(
+                        &mut tarball_url,
                         configured_registry,
                         name.slice(lockfile.buffers.string_bytes.as_slice()),
                         res.npm().version,
                         lockfile.buffers.string_bytes.as_slice(),
-                    )?;
+                    );
 
-                    res.npm_mut().url = sbuf!(lockfile).append(url)?;
+                    res.npm_mut().url = sbuf!(lockfile).append(&tarball_url)?;
                 } else {
                     npm_url_needs_integrity =
                         !url_is_under_registry(registry_str, configured_registry)

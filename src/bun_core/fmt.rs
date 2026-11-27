@@ -720,7 +720,7 @@ impl fmt::Display for Raw<'_> {
 }
 
 // Canonical `SliceCursor` / `buf_print` / `buf_print_len` live in T0
-// `bun_alloc` so that crate can use them too; re-exported here for the
+// `bun_alloc`; re-exported here for the
 // `bun_core::fmt::` callers and extended with an `io::Write` face so the same
 // struct also serves as a fixed-buffer write sink for write-only sites.
 pub use bun_alloc::{SliceCursor, buf_print, buf_print_len};
@@ -2538,9 +2538,6 @@ pub fn format_ip<'a>(
 /// No allocation, no UTF-8 validation beyond what the formatter already did.
 #[inline]
 pub fn count(args: fmt::Arguments<'_>) -> usize {
-    // Implementation sunk to T0 so `bun_alloc` (which sits below `bun_core`)
-    // can share it; this stays as the canonical higher-tier entry point so
-    // existing `bun_core::fmt::count` / `bun_fmt::count` callers are unchanged.
     bun_alloc::fmt_count(args)
 }
 

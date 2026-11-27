@@ -962,17 +962,13 @@ fn fetch_registry_tree(
 
     let mut tarball_url: Vec<u8> = found.tarball_url(&manifest);
     if tarball_url.is_empty() {
-        tarball_url = bun_install::extract_tarball::build_url_with_printer(
+        bun_install::extract_tarball::append_url(
+            &mut tarball_url,
             scope.url.href(),
             name,
             found.version,
             &manifest.string_buf,
-            |args| -> Result<Vec<u8>, bun_alloc::AllocError> {
-                let mut v = Vec::new();
-                let _ = v.write_fmt(args);
-                Ok(v)
-            },
-        )?;
+        );
     }
     // The same serialisation `bun install` requests and keys `.npmrc` lines by.
     let (tarball_url, normalized) = match npm::registry::normalize_tarball_url(&tarball_url) {

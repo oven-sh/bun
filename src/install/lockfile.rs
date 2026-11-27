@@ -1789,10 +1789,7 @@ fn registry_tarball_url(
     buf: &[u8],
 ) -> Vec<u8> {
     let mut url = Vec::new();
-    // Writing to a `Vec` does not fail.
-    let _ = crate::extract_tarball::build_url_with_printer(registry, name, version, buf, |args| {
-        url.write_fmt(args)
-    });
+    crate::extract_tarball::append_url(&mut url, registry, name, version, buf);
     url
 }
 

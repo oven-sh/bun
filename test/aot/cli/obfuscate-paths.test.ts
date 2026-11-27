@@ -3,7 +3,7 @@
 // all four where a name that is made when the program runs may be that of any file. What a build without the flag writes holds all four.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
-import { open } from "node:fs/promises";
+import { open, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { built, slot, spawned } from "../harness/commands";
 import { buildFlags } from "../harness/flags";
@@ -22,20 +22,18 @@ async function compile(folder: string, entry: string, name: string, ...flags: st
   return join(folder, isWindows ? name + ".exe" : name);
 }
 
-/** The strings that the images of an executable store, each with a zero byte behind it. What an image only shows, such as the name of a function, is coded there: its characters do not stand in the file. */
+/** The strings that the images of an executable store. What an image only shows, such as the name of a function, is coded there: its characters do not stand in the file. */
 async function storedStrings(executable: string) {
   // The command takes no other flag, not from the environment either.
-  const { BUN_OPTIONS: _, ...plain } = env;
+  const { BUN_OPTIONS: _, ...plain } = bunEnv;
   const printed = await spawned([bunExe(), "build", "--aot-stored-strings", executable], dirname(executable), plain);
-  // What is no executable of --aot holds no image.
-  if (!printed.stdout.length && !printed.stderr.includes("holds no image"))
-    throw new Error(`no stored strings of ${executable}: ${printed.stderr}`);
+  if (printed.signal || !printed.stdout) throw new Error(`no stored strings of ${executable}: ${printed.stderr}`);
   return printed.stdout;
 }
 
 /**
- * Which of the names a file holds, in its bytes or in a string that one of its images stores. An executable is the size of Bun: it is read a piece at a time from its end, where the program lies,
- * and a name that was found is not looked for again. The stored strings are asked for where a name is still missing.
+ * Which of the names an executable holds, in its bytes or in a string that one of its images stores. It is the size of Bun, so it is read a piece at a time from its end: the program lies there,
+ * in front of the table of symbols where Bun has one. A name that was found is not looked for again, and the stored strings are asked for where a name is still missing.
  */
 async function namesIn(path: string) {
   const pieceSize = 1 << 22;
@@ -72,9 +70,12 @@ async function buildBoth(files: Record<string, string>, folder: string) {
   const entry = Object.keys(files).find(file => file.startsWith("main."))!;
   const plain = await compile(folder, entry, "reference");
   const reference = await spawned([plain], folder, env);
+  const heldByReference = await namesIn(plain);
+  // A case holds one executable at a time: each is the size of Bun. On Windows a program that has just ended may not be removed yet, and goes with its folder.
+  if (!isWindows) await rm(plain);
   const executable = await compile(folder, entry, "obfuscated", buildFlags.obfuscate);
   const obfuscated = await spawned([executable], folder, env);
-  return { reference, obfuscated, held: { reference: await namesIn(plain), obfuscated: await namesIn(executable) } };
+  return { reference, obfuscated, held: { reference: heldByReference, obfuscated: await namesIn(executable) } };
 }
 
 // `prints`: what the program prints, built with the flag or without, as `shown` gives it.
@@ -463,8 +464,7 @@ const ways: Record<string, { held: string[]; prints: string | RegExp; files: Rec
   },
   "text-that-is-evaluated-requires-through-main-module": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
-    prints:
-      /^2 subject threw Cannot load '<image>\/quietFolder\/quietBystander\.ts': this executable can't load a module from a dynamic path\./,
+    prints: "2 subject 5\n",
     files: {
       "main.cjs":
         'const { quiet } = require("./quietFolder/quietBystander");\nconst { value } = require("./seenFolder/seenSubject");\nlet found; try { found = (0, eval)("process.mainModule.require(\'./quietFolder/quietBystander\').quiet(4)"); } catch (e) { found = "threw " + e.message; }\nconsole.log(quiet(1), value, found);\n',

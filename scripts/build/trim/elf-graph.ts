@@ -26,6 +26,7 @@ interface LinkedSymbols {
 interface InputObjects {
   objects: Map<string, ElfObjectReferences | undefined>;
   defined: Map<string, string[]>;
+  stronglyDefined: Map<string, string>;
   failures: GraphFailure[];
 }
 
@@ -125,6 +126,7 @@ function readObjects(liveSections: Map<string, Set<string>>): InputObjects {
   const archives = new ArchiveCache();
   const objects = new Map<string, ElfObjectReferences | undefined>();
   const defined = new Map<string, string[]>();
+  const stronglyDefined = new Map<string, string>();
   const failures: GraphFailure[] = [];
   for (const [object, live] of liveSections) {
     if (object === "<internal>") continue;
@@ -135,19 +137,21 @@ function readObjects(liveSections: Map<string, Set<string>>): InputObjects {
       continue;
     }
     objects.set(object, read);
-    for (const [name, section] of read.definitions) {
+    for (const [name, section, isStrong] of read.definitions) {
+      if (isStrong) stronglyDefined.set(name, object + "\0" + section);
       const list = defined.get(name);
       if (list === undefined) defined.set(name, [object + "\0" + section]);
       else list.push(object + "\0" + section);
     }
   }
-  return { objects, defined, failures };
+  return { objects, defined, stronglyDefined, failures };
 }
 
 function readLinkedSymbols(
   elf: ElfFile,
   placedNodes: PlacedNodes,
   emptySections: Set<number>,
+  findEndedNode: (name: string, address: number) => number | undefined,
   executable: string,
 ): LinkedSymbols {
   const symbolTable = elf.sections.find(section => section.type === 2) ?? fail(`${executable} has no symbol table`);
@@ -165,7 +169,7 @@ function readLinkedSymbols(
     // An object without bytes, as a static of a type without fields is. What stands at its address may be the neighbour of its section, so only the
     // file that defines it says where it is.
     if (type === 1 && symbols.readBigUInt64LE(at + 16) === 0n && emptySections.has(address)) continue;
-    const node = nodeAt(placedNodes, address);
+    const node = findEndedNode(name, address) ?? nodeAt(placedNodes, address);
     if (node < 0) continue;
     if (type === 10) ifuncNodes.push(node);
     if (name.startsWith("$")) continue;
@@ -291,7 +295,7 @@ function createReading(
   };
   const { nodesBySection, liveSections } = indexSections(entries);
   const findNode = (key: string) => nodesBySection.get(key)?.[0] ?? nodesBySection.get(folded.get(key) ?? "")?.[0];
-  const { objects, defined, failures: unreadInputs } = readObjects(liveSections);
+  const { objects, defined, stronglyDefined, failures: unreadInputs } = readObjects(liveSections);
   const resolveGlobal = (name: string) => {
     for (const key of defined.get(name) ?? []) {
       const node = findNode(key);
@@ -299,7 +303,12 @@ function createReading(
     }
     return undefined;
   };
-  const symbols = readLinkedSymbols(elf, placedNodes, emptySections, executable);
+  // A label at the end of its section has the address of the neighbour, which may be what replaced a weak one.
+  const findEndedNode = (name: string, address: number) =>
+    nodesBySection
+      .get(stronglyDefined.get(name) ?? "")
+      ?.find(node => entries[node]!.address + entries[node]!.size === address);
+  const symbols = readLinkedSymbols(elf, placedNodes, emptySections, findEndedNode, executable);
   const { nodesBySymbol, ifuncNodes } = symbols;
   const connections = connect(entries.length, objects, { nodesBySection, findNode, resolveGlobal }, symbols);
   const symbolNodes = [...ifuncNodes, ...connections.unwindTableNodes];

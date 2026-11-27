@@ -268,7 +268,12 @@ function indexSymbols(
   const mergedStringFiles = new Map<number, number[]>();
   const symbolsWithoutBytes = new Set<string>();
   const namesWithoutBytes = new Set<string>();
+  // The map lists an external name of an object compiled from bitcode under the file of the bitcode.
+  const externalEndLabels = new Set<string>();
+  for (const read of objects.values())
+    for (const name of read?.externals ?? []) if (read!.endLabels.has(name)) externalEndLabels.add(name);
   for (const symbol of zeroSizeSymbols) {
+    if ((objects.get(symbol.file)?.endLabels ?? externalEndLabels).has(symbol.name)) continue;
     const node = nodeByAddress.get(symbol.address);
     if (node === undefined) {
       symbolsWithoutBytes.add(symbol.file + "\0" + symbol.name);
@@ -305,6 +310,19 @@ function indexSymbols(
     }
   }
   const lookup = createAtomLookup(nodeInFile, nodeByName, external);
+  for (const [file, read] of objects) {
+    for (const [name, atom] of read?.endLabels ?? []) {
+      if (atom === undefined) {
+        symbolsWithoutBytes.add(file + "\0" + name);
+        namesWithoutBytes.add(name);
+        continue;
+      }
+      const node = lookup.findInFile(file, atom);
+      if (node === undefined) continue;
+      nodeInFile.set(file + "\0" + name, node);
+      if (read!.externals.includes(name)) external.set(name, node);
+    }
+  }
   return { ...lookup, external, fileOfNode, aliases, mergedStringFiles, symbolsWithoutBytes, namesWithoutBytes };
 }
 

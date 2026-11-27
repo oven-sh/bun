@@ -7,6 +7,8 @@ pub use crate::compiled_program::{
     CompiledEntryPoint, CompiledProgram, ExtensionSearch, ImageFile, ModuleLookup, PackageLookup,
     compare_source_paths,
 };
+use bun_paths::Path;
+
 use crate::resolver::Resolver;
 
 /// How many regions a bytecode payload laid out by an order file has (`JSC::BytecodeLinkRegions`): heads of evaluated
@@ -59,37 +61,24 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// (`./w.ts` -> `/$bunfs/root/w.js`). Returns the graph's own name for the module, which is what the module
     /// loader keys on; `None` for anything else (bare specifiers, other absolute paths, misses).
     fn resolve(&self, source_dir: &[u8], specifier: &[u8]) -> Option<&'static [u8]> {
-        let is_relative = matches!(specifier, [b'.', s, ..] | [b'.', b'.', s, ..] if bun_paths::is_sep_native(*s));
+        let is_relative =
+            matches!(specifier, [b'.', s, ..] | [b'.', b'.', s, ..] if bun_paths::is_sep(*s));
         let is_embedded_path =
             bun_options_types::standalone_path::is_bun_standalone_file_path(specifier);
         if (!is_relative && !is_embedded_path)
-            || specifier
-                .last()
-                .is_some_and(|&c| bun_paths::is_sep_native(c))
+            || specifier.last().is_some_and(|&c| bun_paths::is_sep(c))
         {
             return None;
         }
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let path_len = if is_embedded_path {
-            if specifier.len() > buf.len() {
-                return None;
-            }
-            buf[..specifier.len()].copy_from_slice(specifier);
-            specifier.len()
-        } else {
-            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Loose>(
-                source_dir,
-                &mut buf[..],
-                &[specifier],
-            )?
-            .len()
+        let mut path = match is_embedded_path {
+            true => Path::from(specifier),
+            false => Path::resolve(&[source_dir, specifier]),
         };
-        if let Some(name) = self.find_assume_standalone_path(&buf[..path_len]) {
+        if let Some(name) = self.find_assume_standalone_path(&path) {
             return Some(name);
         }
         // Entry points are embedded under a `.js` name whatever the (case-insensitive) source extension was.
-        let extension = bun_paths::extension(&buf[..path_len]);
-        let extension_len = extension.len();
+        let extension = bun_paths::extension(&path);
         let is_source_extension = extension.is_empty()
             || [
                 b"ts".as_slice(),
@@ -105,12 +94,8 @@ pub trait StandaloneModuleGraph: Send + Sync {
         if !is_source_extension {
             return None;
         }
-        let stem_len = path_len - extension_len;
-        if stem_len + 3 > buf.len() {
-            return None;
-        }
-        buf[stem_len..stem_len + 3].copy_from_slice(b".js");
-        self.find_assume_standalone_path(&buf[..stem_len + 3])
+        path.set_extension(b".js");
+        self.find_assume_standalone_path(&path)
     }
     /// The name of the file that an executable compiled in place holds for `path`, an absolute path that the disk no longer has.
     fn file_at_source_path(&self, _path: &[u8]) -> Option<&'static [u8]> {
@@ -168,23 +153,17 @@ pub trait StandaloneModuleGraph: Send + Sync {
         // `require(__dirname + "/data.json")`: the path is that of the machine that built the program, a second name for a file that
         // `--asset` gave the executable. So is `createRequire(__filename)("./data.json")`. The disk wins where it has the path.
         let file = file.or_else(|| {
-            use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
             let program = self.compiled_program().filter(|_| !is_left_to_program)?;
             let public_root = self.base_public_path_with_default_suffix();
-            let mut buffer = bun_paths::path_buffer_pool::get();
             let on_build_machine = match bun_paths::is_absolute(specifier) {
-                true => specifier,
+                true => Path::from(specifier),
                 false if crate::compiled_program::is_relative_specifier(specifier) => {
-                    join_abs_string_buf_checked::<platform::Auto>(
-                        source_dir,
-                        &mut buffer[..],
-                        &[specifier],
-                    )?
+                    crate::resolve_keeping_sep(&[source_dir, specifier])
                 }
                 false => return None,
             };
-            let path = program.public_path_of_source(public_root, on_build_machine)?;
-            if bun_sys::exists(on_build_machine) || program.holds_module_at(&path) {
+            let path = program.public_path_of_source(public_root, &on_build_machine)?;
+            if bun_sys::exists_z(&on_build_machine) || program.holds_module_at(&path) {
                 return None;
             }
             let file = find_among_files(public_root, &path)?;

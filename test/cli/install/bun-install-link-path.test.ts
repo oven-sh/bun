@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, lstatSync, readFileSync, realpathSync, statSync } from "fs";
+import { chmodSync, existsSync, lstatSync, readFileSync, realpathSync, statSync, symlinkSync } from "fs";
 import { rm } from "fs/promises";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";
@@ -129,6 +129,26 @@ describe.each(["hoisted", "isolated"])("link:<path> (%s)", linker => {
       expectLinkTo(memberDependency(root, "local"), join(vendor, "with-manifest"));
       expect(readFileSync(join(nodeModules, "no-manifest", "index.js"), "utf8")).toContain("without");
     }
+  });
+
+  // On POSIX a `\` is part of a name. The hoisted linker links to the real path of the directory.
+  test.skipIf(isWindows).concurrent("links to a directory whose real path has a backslash", async () => {
+    using dir = tempDir("link-path-backslash", {
+      ...bunfig,
+      "project/package.json": pkg("root", { dependencies: { dep: "link:../dep-link" } }),
+      "real\\dir/dep/package.json": pkg("dep"),
+      "real\\dir/dep/index.js": "module.exports = 'dep';",
+    });
+    const root = String(dir);
+    symlinkSync(join(root, "real\\dir", "dep"), join(root, "dep-link"));
+
+    const { err, exitCode } = await bun(root, ["install"]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    const link = join(root, "project", "node_modules", "dep");
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    // The kernel resolves it.
+    expect(readFileSync(join(link, "index.js"), "utf8")).toBe("module.exports = 'dep';");
   });
 
   test.concurrent.each([

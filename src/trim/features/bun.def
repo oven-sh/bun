@@ -60,6 +60,8 @@ feature Archive "Bun.Archive"
 
 feature Semver "Bun.semver"
 
+feature Diff "Bun.diff"
+
 feature Ansi "Bun.sliceAnsi and Bun.wrapAnsi"
 
 feature EscapeHtml "Bun.escapeHTML"
@@ -145,8 +147,8 @@ feature ChildProcess "child process support"
 feature Sockets "Bun.listen, Bun.connect and node:net"
 
 feature Dns "Bun.dns and node:dns"
-  minimum 100000 elf
-  minimum 100000 macho
+  minimum 40000 elf
+  minimum 40000 macho
 
 feature BunUtilities "Bun.stripANSI, Bun.mmap, Bun.which, Bun.indexOfLine, Bun.sleep, Bun.sleepSync, Bun.gc, Bun.shrink, Bun.allocUnsafe, Bun.nanoseconds, Bun.peek and Bun.concatArrayBuffers"
 
@@ -175,7 +177,7 @@ feature Http3 "HTTP/3 in Bun.serve and fetch"
   cxx-function H3 (^|\s)uWS::H3\w*::
 
 feature TlsSockets "TLS sockets and servers"
-  cxx-function uWS uWS::(TemplatedApp|HttpContext|HttpContextData|HttpResponse|HttpResponseData|AsyncSocket|WebSocket|WebSocketContext|WebSocketContextData)<(?:true|1)[,>]
+  cxx-function uWS uWS::(TemplatedApp|HttpContext|HttpContextData|HttpResponse|HttpResponseData|AsyncSocket)<(?:true|1)[,>]
 
 feature X509 "crypto.X509Certificate and crypto.KeyObject"
 

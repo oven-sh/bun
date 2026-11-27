@@ -438,11 +438,7 @@ pub fn is_entry_point_beside_thread(path: &[u8]) -> bool {
 
 // On Windows the path of a compiled module has backslashes, and the resolver joins the path of a file of the executable with forward slashes.
 fn with_separators_of_image(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
-    if cfg!(windows) && bun_core::strings::contains_char(path, b'/') {
-        let to_backslash = |&byte: &u8| if byte == b'/' { b'\\' } else { byte };
-        return path.iter().map(to_backslash).collect();
-    }
-    path.into()
+    bun_paths::to_native(path)
 }
 
 fn may_hold_module_path_starting_with(start: &[u8]) -> bool {

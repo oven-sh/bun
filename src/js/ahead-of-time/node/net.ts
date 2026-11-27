@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 d6861dbd59c52394231c89ff7bae0bcff81e31756f79b40db9ee7cee0562b4a5.
+// Written against that file with the SHA-256 ad923e4196fa9f814ff9f0491837a9cbf9070997d0570b77c2118a411a94f7d3.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -39,6 +39,7 @@ const {
   startPerf,
   stopPerf,
   isStoppedModuleGraphRunning,
+  builtinChannel,
 } = require("internal/shared");
 const timers = require("internal/timers");
 const kTimeout: typeof timers.kTimeout = timers.kTimeout;
@@ -651,6 +652,13 @@ const kUpgradeServerTLS: typeof netSymbols.kUpgradeServerTLS = netSymbols.kUpgra
 const kReinitializeHandle = Symbol("kReinitializeHandle");
 
 const kRealListen = Symbol("kRealListen");
+
+const clientSocketChannel = builtinChannel("net.client.socket");
+const serverSocketChannel = builtinChannel("net.server.socket");
+const listenStartChannel = builtinChannel("tracing:net.server.listen:asyncStart");
+const listenEndChannel = builtinChannel("tracing:net.server.listen:asyncEnd");
+const listenErrorChannel = builtinChannel("tracing:net.server.listen:error");
+
 const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
@@ -2044,6 +2052,7 @@ function onconnection(this: ListenerHandle, err: number, clientHandle: $Node.Soc
   } catch (e) {
     reportError(e);
   }
+  if (serverSocketChannel.hasSubscribers) serverSocketChannel.publish({ socket: _socket });
   if (!pauseOnConnect && !isTLS) {
     _socket.read(0);
   }
@@ -2707,6 +2716,10 @@ Socket.prototype.connect = function connect(this: $Node.Socket, ...args) {
     let connection = this[ksocket];
     let upgradeDuplex = false;
     let { port, host, path, socket, rejectUnauthorized, checkServerIdentity, session, fd, pauseOnConnect } = options;
+    // Node takes over a descriptor or another socket without connect().
+    if (clientSocketChannel.hasSubscribers && fd == null && !socket && !connection) {
+      clientSocketChannel.publish({ socket: this });
+    }
     // A session over a transport the caller handed in has no connection of its own to dial again.
     if (!socket && this[kupgraded] && !this.destroyed) {
       const ex = new ExceptionWithHostPort(uv().UV_EISCONN, "connect", path || host || "localhost", port);
@@ -4347,180 +4360,155 @@ Server.prototype.getConnections = function getConnections(
 };
 
 Server.prototype.listen = function listen(this: $Node.NetServer, port, hostname, onListen) {
-  const argsLength = arguments.length;
-  if (typeof port === "string") {
-    const numPort = Number(port);
-    if (!Number.isNaN(numPort)) port = numPort;
-  }
-  let backlog;
-  let path;
-  let exclusive = false;
-  let reusePort = false;
-  let ipv6Only = false;
-  let readableAll = false;
-  let writableAll = false;
-  let fd;
-  //port is actually path
-  if (typeof port === "string") {
-    if (Number.isSafeInteger(hostname)) {
-      if (hostname > 0) {
-        //hostname is backlog
-        backlog = hostname;
-      }
-    } else if (typeof hostname === "function") {
-      //hostname is callback
-      onListen = hostname;
-    }
-
-    path = port;
-    hostname = undefined;
-    port = undefined;
-  } else {
-    if (typeof hostname === "number") {
-      backlog = hostname;
-      hostname = undefined;
-    } else if (typeof hostname === "function") {
-      onListen = hostname;
-      hostname = undefined;
-    } else if (typeof hostname === "string" && typeof onListen === "number") {
-      backlog = onListen;
-      onListen = argsLength > 3 ? arguments[3] : undefined;
-    }
-
-    if (typeof port === "function") {
-      onListen = port;
-      port = 0;
-    } else if (port !== null && typeof port === "object") {
-      const options = port;
-      addServerAbortSignalOption(this, options);
-
-      hostname = options.host;
-      exclusive = options.exclusive;
-      path = options.path;
-      port = options.port;
-      ipv6Only = options.ipv6Only;
-      // NOTE: options.allowHalfOpen for a server is consumed by the Server
-      // constructor (it shapes accepted sockets' Duplex behavior); the native
-      // listen always uses allowHalfOpen: true.
-      reusePort = options.reusePort;
-      backlog = options.backlog;
-      // For a unix-socket listen, readableAll/writableAll chmod the socket file
-      // in kRealListen; threaded through as locals (not stashed on the instance).
-      readableAll = options.readableAll;
-      writableAll = options.writableAll;
-
-      const optionsFd = options.fd;
-      if (typeof optionsFd === "number" && optionsFd >= 0) {
-        fd = optionsFd;
-        port = 0;
-      }
-
-      const isLinux = process.platform === "linux" || process.platform === "android";
-
-      // Match Node's listen() option normalization + validation.
-      // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L2145
-      if ((port === undefined && "port" in options) || port === null) {
-        port = 0;
-      }
-
-      if (typeof port === "number" || typeof port === "string") {
-        // validatePort coerces "0" -> 0 and throws ERR_SOCKET_BAD_PORT for
-        // out-of-range/non-numeric values; a valid port takes precedence over path.
-        validatePort(port, "options.port");
-        port = +port | 0;
-        // A valid port takes precedence over `path` (Node listens on TCP when both are given).
-        path = undefined;
-      } else if (isPipeName(path)) {
-        const isAbstractPath = path.startsWith("\0");
-        if (isLinux && isAbstractPath && (options.writableAll || options.readableAll)) {
-          const message = `The argument 'options' can not set readableAll or writableAll to true when path is abstract unix socket. Received ${JSON.stringify(options)}`;
-
-          const error = new TypeError(message);
-          error.code = "ERR_INVALID_ARG_VALUE";
-          throw error;
-        }
-
-        hostname = path;
-        port = undefined;
-      } else if (!("port" in options) && !("path" in options)) {
-        let message = 'The argument \'options\' must have the property "port" or "path"';
-        try {
-          message = `${message}. Received ${JSON.stringify(options)}`;
-        } catch {}
-
-        const error = new TypeError(message);
-        error.code = "ERR_INVALID_ARG_VALUE";
-        throw error;
-      } else {
-        let message = "The argument 'options' is invalid";
-        try {
-          message = `${message}. Received ${JSON.stringify(options)}`;
-        } catch {}
-
-        const error = new TypeError(message);
-        error.code = "ERR_INVALID_ARG_VALUE";
-        throw error;
-      }
-
-      // port <number>
-      // host <string>
-      // path <string> Will be ignored if port is specified. See Identifying paths for IPC connections.
-      // backlog <number> Common parameter of server.listen() functions.
-      // exclusive <boolean> Default: false
-      // readableAll <boolean> For IPC servers makes the pipe readable for all users. Default: false.
-      // writableAll <boolean> For IPC servers makes the pipe writable for all users. Default: false.
-      // ipv6Only <boolean> For TCP servers, setting ipv6Only to true will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound. Default: false.
-      // signal <AbortSignal> An AbortSignal that may be used to close a listening server.
-
-      if (typeof options.callback === "function") onListen = options?.callback;
-    } else if (port === undefined || port === null) {
-      port = 0;
-    } else if (typeof port === "number" || typeof port === "string") {
-      // Positional port: validatePort coerces and throws ERR_SOCKET_BAD_PORT for
-      // out-of-range/non-numeric values, matching Node's normalizeArgs + validatePort.
-      validatePort(port, "options.port");
-      port = +port | 0;
-    } else {
-      let message = "The argument 'options' is invalid";
-      try {
-        message = `${message}. Received ${JSON.stringify(port)}`;
-      } catch {}
-      const error = new TypeError(message);
-      error.code = "ERR_INVALID_ARG_VALUE";
-      throw error;
-    }
-    if (reusePort === true) {
-      exclusive = true;
-    }
-    var clusterHost: string | null | undefined = typeof hostname === "string" && hostname.length > 0 ? hostname : null;
-    hostname = hostname || "::";
-  }
-
-  if (typeof port === "number" && (port < 0 || port >= 65536)) {
-    throw $ERR_SOCKET_BAD_PORT(`options.port should be >= 0 and < 65536. Received type number: (${port})`);
-  }
-
   if (this._handle) {
     throw $ERR_SERVER_ALREADY_LISTEN();
   }
 
+  let backlog;
+  if (typeof hostname === "number") {
+    backlog = hostname;
+  } else if (typeof hostname === "function") {
+    onListen = hostname;
+  } else if (typeof onListen === "number") {
+    backlog = onListen;
+    onListen = arguments[3];
+  }
+
+  let options;
+  const hasNoAddress = arguments.length === 0 || typeof port === "function";
+  if (hasNoAddress) {
+    onListen = port;
+    // Node publishes the callback as the port.
+    options = {};
+  } else if (port !== null && typeof port === "object") {
+    options = port;
+  } else if (isPipeName(port)) {
+    options = { path: port };
+  } else {
+    options = typeof hostname === "string" ? { port, host: hostname } : { port };
+  }
+
+  // A subscriber can change the options.
+  if (listenStartChannel.hasSubscribers) listenStartChannel.publish({ server: this, options });
+  if (options !== port) options = { __proto__: null, ...options };
+  if (hasNoAddress) options.port ??= 0;
+
+  try {
+    listenWithOptions(this, options, backlog, onListen);
+  } catch (error) {
+    // Node publishes nothing for what listen() throws.
+    publishListenError(this, error);
+    throw error;
+  }
+  return this;
+};
+
+function listenWithOptions(server: $Node.NetServer, options, backlog, onListen) {
+  addServerAbortSignalOption(server, options);
+
+  let hostname = options.host;
+  let exclusive = options.exclusive;
+  let path = options.path;
+  let port = options.port;
+  const ipv6Only = options.ipv6Only;
+  // NOTE: options.allowHalfOpen for a server is consumed by the Server
+  // constructor (it shapes accepted sockets' Duplex behavior); the native
+  // listen always uses allowHalfOpen: true.
+  const reusePort = options.reusePort;
+  backlog = options.backlog || backlog;
+  // For a unix-socket listen, readableAll/writableAll chmod the socket file
+  // in kRealListen; threaded through as locals (not stashed on the instance).
+  const readableAll = options.readableAll;
+  const writableAll = options.writableAll;
+
+  let fd;
+  const optionsFd = options.fd;
+  if (typeof optionsFd === "number" && optionsFd >= 0) {
+    fd = optionsFd;
+    port = 0;
+  }
+
+  const isLinux = process.platform === "linux" || process.platform === "android";
+
+  // Match Node's listen() option normalization + validation.
+  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L2145
+  if ((port === undefined && "port" in options) || port === null) {
+    port = 0;
+  }
+
+  if (typeof port === "number" || typeof port === "string") {
+    // validatePort coerces "0" -> 0 and throws ERR_SOCKET_BAD_PORT for
+    // out-of-range/non-numeric values; a valid port takes precedence over path.
+    validatePort(port, "options.port");
+    port = +port | 0;
+    // A valid port takes precedence over `path` (Node listens on TCP when both are given).
+    path = undefined;
+  } else if (isPipeName(path)) {
+    const isAbstractPath = path.startsWith("\0");
+    if (isLinux && isAbstractPath && (options.writableAll || options.readableAll)) {
+      const message = `The argument 'options' can not set readableAll or writableAll to true when path is abstract unix socket. Received ${JSON.stringify(options)}`;
+
+      const error = new TypeError(message);
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    }
+
+    hostname = path;
+    port = undefined;
+  } else if (!("port" in options) && !("path" in options)) {
+    let message = 'The argument \'options\' must have the property "port" or "path"';
+    try {
+      message = `${message}. Received ${JSON.stringify(options)}`;
+    } catch {}
+
+    const error = new TypeError(message);
+    error.code = "ERR_INVALID_ARG_VALUE";
+    throw error;
+  } else {
+    let message = "The argument 'options' is invalid";
+    try {
+      message = `${message}. Received ${JSON.stringify(options)}`;
+    } catch {}
+
+    const error = new TypeError(message);
+    error.code = "ERR_INVALID_ARG_VALUE";
+    throw error;
+  }
+
+  // port <number>
+  // host <string>
+  // path <string> Will be ignored if port is specified. See Identifying paths for IPC connections.
+  // backlog <number> Common parameter of server.listen() functions.
+  // exclusive <boolean> Default: false
+  // readableAll <boolean> For IPC servers makes the pipe readable for all users. Default: false.
+  // writableAll <boolean> For IPC servers makes the pipe writable for all users. Default: false.
+  // ipv6Only <boolean> For TCP servers, setting ipv6Only to true will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound. Default: false.
+  // signal <AbortSignal> An AbortSignal that may be used to close a listening server.
+
+  if (typeof options.callback === "function") onListen = options?.callback;
+  if (reusePort === true) {
+    exclusive = true;
+  }
+  const clusterHost: string | null = typeof hostname === "string" && hostname.length > 0 ? hostname : null;
+  hostname = hostname || "::";
+
   if (onListen != null) {
-    this.once("listening", onListen);
+    server.once("listening", onListen);
   }
 
   try {
     var tls: ServerTLSOptions | undefined = undefined;
     var TLSSocketClass: $Node.SocketConstructor | undefined = undefined;
-    const bunTLS = this[bunTlsSymbol];
-    const options = this[bunSocketServerOptions]!;
+    const bunTLS = server[bunTlsSymbol];
+    const serverOptions = server[bunSocketServerOptions]!;
     let contexts: Map<string, $Node.SecureContext> | null = null;
     if (typeof bunTLS === "function") {
-      [tls, TLSSocketClass] = bunTLS.$call(this, port, hostname, false);
-      options.servername = tls!.serverName;
-      options[kSocketClass] = TLSSocketClass;
+      [tls, TLSSocketClass] = bunTLS.$call(server, port, hostname, false);
+      serverOptions.servername = tls!.serverName;
+      serverOptions[kSocketClass] = TLSSocketClass;
       contexts = tls!.contexts;
     } else {
-      options[kSocketClass] = Socket;
+      serverOptions[kSocketClass] = Socket;
     }
 
     const flags = (ipv6Only === true ? 1 : 0) | (reusePort === true ? 2 : 0);
@@ -4540,7 +4528,7 @@ Server.prototype.listen = function listen(this: $Node.NetServer, port, hostname,
     }
 
     listenInCluster(
-      this,
+      server,
       queryAddress,
       queryPort,
       queryAddressType,
@@ -4561,14 +4549,24 @@ Server.prototype.listen = function listen(this: $Node.NetServer, port, hostname,
     );
   } catch (err) {
     const isUnix = path != null;
-    process.nextTick(
-      emitErrorNextTick,
-      this,
-      formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port),
-    );
+    failToListen(server, formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port));
   }
-  return this;
-};
+}
+
+function publishListenError(server: $Node.NetServer, error: unknown) {
+  if (listenErrorChannel.hasSubscribers) listenErrorChannel.publish({ server, error });
+}
+
+function failToListen(server: $Node.NetServer, error: unknown) {
+  publishListenError(server, error);
+  process.nextTick(emitErrorNextTick, server, error);
+}
+
+function announceListening(server: $Node.NetServer) {
+  if (listenEndChannel.hasSubscribers) listenEndChannel.publish({ server });
+  // A tick, not a timer, so a close() from 'listening' runs before the loop accepts anything (as in Node).
+  process.nextTick(emitListeningNextTick, server);
+}
 
 Server.prototype[kRealListen] = function (
   this: $Node.NetServer,
@@ -4672,9 +4670,6 @@ Server.prototype[kRealListen] = function (
 
   // Unref the handle if the server was unref'ed prior to listening
   if (this._unref) this.unref();
-
-  // A tick, not a timer, so a close() from 'listening' runs before the loop accepts anything (as in Node).
-  process.nextTick(emitListeningNextTick, this);
 };
 
 Server.prototype[EventEmitter.captureRejectionSymbol] = function (
@@ -4752,7 +4747,8 @@ function listenInCluster(
     require("node:dns").lookup(address, (err, ip, family) => {
       if (lookupListeningId !== server[kClusterListeningId]) return;
       if (err) {
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2268-L2269
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2268-L2269, which publishes nothing.
+        publishListenError(server, err);
         server.emit("error", err);
         return;
       }
@@ -4795,6 +4791,7 @@ function listenInCluster(
       onListen,
       fd,
     );
+    announceListening(server);
     return;
   }
 
@@ -4828,6 +4825,8 @@ function listenInCluster(
       if (err) {
         const ex = new ExceptionWithHostPort(err, "bind", address!, port!);
         if (typeof _reply?.bunHint === "string") ex.message += `\n  note: ${_reply.bunHint}`;
+        // Node publishes nothing.
+        publishListenError(server, ex);
         server.emit("error", ex);
         return;
       }
@@ -4863,8 +4862,10 @@ function listenInCluster(
           server[kClusterUnixPath] = undefined;
           handle[kClusterOwner] = null;
           handle.close();
-          process.nextTick(emitErrorNextTick, server, err);
+          failToListen(server, err);
+          return;
         }
+        announceListening(server);
         return;
       }
       server[kClusterFauxListen](handle!, backlog, path);
@@ -4893,7 +4894,7 @@ Server.prototype[kClusterFauxListen] = function (
   handle[kClusterOwner] = this;
   handle.listen(backlog || 511);
   if (this._unref) this.unref();
-  process.nextTick(emitListeningNextTick, this);
+  announceListening(this);
 };
 
 function onClusterConnection(this: ClusterFauxHandle, err: number, clientHandle: ClusterClientHandle) {
@@ -4935,7 +4936,11 @@ function onClusterConnection(this: ClusterFauxHandle, err: number, clientHandle:
   socket.server = self;
   socket._server = self;
   self._connections++;
-  self.emit("connection", socket);
+  try {
+    self.emit("connection", socket);
+  } finally {
+    if (serverSocketChannel.hasSubscribers) serverSocketChannel.publish({ socket });
+  }
 }
 
 function createServer(

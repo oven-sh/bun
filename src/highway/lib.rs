@@ -716,6 +716,16 @@ impl ByteSet {
         debug_assert_eq!(len, scalar());
         len
     }
+
+    /// [`Self::prefix_len`] for a loop over many short runs, each of which would pay for a call.
+    #[inline]
+    pub fn short_prefix_len(&self, text: &[u8]) -> usize {
+        let (head, rest) = text.split_at(text.len().min(SCALAR_CUTOFF - 1));
+        match self.prefix_len(head) {
+            len if len < head.len() => len,
+            len => len + self.prefix_len(rest),
+        }
+    }
 }
 
 /// Buffer for [`ScannerStops`]. Keep one per thread so the allocation is reused from file to file.

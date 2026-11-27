@@ -1,3 +1,5 @@
+use bun_paths::dirname_or_root;
+
 use super::bundle::entry_point_list;
 use super::*;
 
@@ -164,9 +166,7 @@ impl PluginWatchStore {
                 dependencies.dirs.iter().any(|directory| {
                     directory.watching.as_ref() == path
                         || (cfg!(any(target_os = "linux", target_os = "android"))
-                            && bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                                &directory.path,
-                            ) == path)
+                            && dirname_or_root(&directory.path) == path)
                 }) || dependencies.files.iter().any(|file| {
                     file.recovery_dir
                         .as_ref()
@@ -193,11 +193,7 @@ impl PluginWatchStore {
                         && (event.files.contains_key(&directory.path)
                             || event
                                 .dirs
-                                .get(
-                                    bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                                        &directory.path,
-                                    ),
-                                )
+                                .get(dirname_or_root(&directory.path))
                                 .is_some_and(|op| op.contains(bun_watcher::Op::WATCH_INVALIDATED)));
                     if event.directory_entries_changed(&directory.watching) || parent_event {
                         if let Some(watching) = watch_plugin_directory(watcher, &directory.path) {
@@ -221,9 +217,7 @@ impl PluginWatchStore {
                             released_directories.extend(file.recovery_dir.take());
                             changed = true;
                         } else {
-                            let parent = bun_paths::resolve_path::dirname::<
-                                bun_paths::platform::Auto,
-                            >(&file.path);
+                            let parent = dirname_or_root(&file.path);
                             let recovery_dir = watch_plugin_directory(watcher, parent);
                             if recovery_dir != file.recovery_dir {
                                 released_directories.extend(core::mem::replace(
@@ -272,7 +266,7 @@ impl DevServer {
             );
             #[cfg(any(target_os = "linux", target_os = "android"))]
             self.plugin_watchers.release_directory(
-                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(&directory.path),
+                dirname_or_root(&directory.path),
                 &self.bun_watcher,
                 &self.directory_watchers,
             );
@@ -290,7 +284,7 @@ impl DevServer {
             {
                 self.bun_watcher.remove_file(&file.path);
                 self.plugin_watchers.release_directory(
-                    bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(&file.path),
+                    dirname_or_root(&file.path),
                     &self.bun_watcher,
                     &self.directory_watchers,
                 );
@@ -344,7 +338,7 @@ impl DevServer {
             let recovery_dir = if registered {
                 None
             } else {
-                let parent = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(file);
+                let parent = dirname_or_root(file);
                 watch_plugin_directory(&self.bun_watcher, parent)
             };
             if registered || recovery_dir.is_some() {
@@ -364,9 +358,7 @@ impl DevServer {
                     #[cfg(any(target_os = "linux", target_os = "android"))]
                     {
                         // Other owners can keep the inode alive and defer IN_DELETE_SELF.
-                        let parent = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                            directory,
-                        );
+                        let parent = dirname_or_root(directory);
                         if !parent.is_empty() && parent != directory.as_ref() {
                             let _ = watch_plugin_directory(&self.bun_watcher, parent);
                         }
@@ -391,8 +383,7 @@ fn watch_plugin_directory(watcher: &Watcher, mut directory: &[u8]) -> Option<Box
             Ok(index) if index != bun_watcher::NO_WATCH_ITEM => return Some(Box::from(directory)),
             Ok(_) => return None,
             Err(error) if error.get_errno() == bun_sys::E::ENOENT => {
-                let parent =
-                    bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(directory);
+                let parent = dirname_or_root(directory);
                 if parent == directory || parent.is_empty() {
                     return None;
                 }

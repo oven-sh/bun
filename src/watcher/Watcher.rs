@@ -222,15 +222,7 @@ impl Watcher {
     }
 
     fn directory_path(path: &[u8]) -> &[u8] {
-        #[cfg(windows)]
-        {
-            bun_paths::string_paths::without_trailing_slash_windows_path(path)
-        }
-        #[cfg(not(windows))]
-        {
-            let trimmed = strings::trim_right(path, b"/");
-            if trimmed.is_empty() { path } else { trimmed }
-        }
+        bun_paths::without_trailing_sep(path)
     }
 
     fn thread_main(&self) {
@@ -390,8 +382,8 @@ impl Watcher {
         #[cfg(windows)]
         {
             // on windows we can only watch items that are in the directory tree of the top level dir
-            let rel = bun_paths::resolve_path::is_parent_or_equal(self.top_level_dir(), file_path);
-            if rel == bun_paths::resolve_path::ParentEqual::Unrelated {
+            let rel = bun_paths::is_parent_or_equal(self.top_level_dir(), file_path);
+            if rel == bun_paths::ParentEqual::Unrelated {
                 bun_core::warn!(
                     "File {} is not in the project directory and will not be watched\n",
                     bstr::BStr::new(file_path)
@@ -405,14 +397,9 @@ impl Watcher {
             self.add_file_descriptor_to_kqueue_without_checks(file, watchlist.len());
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        let eventlist_index = {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            if file_path.len() >= buf.len() {
-                return Err(sys::Error::new(sys::E::ENAMETOOLONG, sys::Tag::watch));
-            }
-            self.platform
-                .watch_path(bun_paths::resolve_path::z(file_path, &mut buf))?
-        };
+        let eventlist_index = self
+            .platform
+            .watch_path(&bun_paths::Path::from(file_path))?;
 
         watchlist.append_assume_capacity(WatchItem {
             file_path: to_static(file_path),
@@ -435,8 +422,8 @@ impl Watcher {
     ) -> sys::Result<WatchItemIndex> {
         #[cfg(windows)]
         {
-            let rel = bun_paths::resolve_path::is_parent_or_equal(self.top_level_dir(), file_path);
-            if rel == bun_paths::resolve_path::ParentEqual::Unrelated {
+            let rel = bun_paths::is_parent_or_equal(self.top_level_dir(), file_path);
+            if rel == bun_paths::ParentEqual::Unrelated {
                 bun_core::warn!(
                     "Directory {} is not in the project directory and will not be watched\n",
                     bstr::BStr::new(file_path)
@@ -476,15 +463,10 @@ impl Watcher {
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         self.add_file_descriptor_to_kqueue_without_checks(&dir, index);
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        let eventlist_index = {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            if file_path.len() >= buf.len() {
-                return Err(sys::Error::new(sys::E::ENAMETOOLONG, sys::Tag::watch));
-            }
-            self.platform
-                .watch_dir(bun_paths::resolve_path::z(file_path, &mut buf))
-                .map_err(|error| error.with_path(file_path))?
-        };
+        let eventlist_index = self
+            .platform
+            .watch_dir(&bun_paths::Path::from(file_path))
+            .map_err(|error| error.with_path(file_path))?;
         watchlist.items_file_mut()[index] = Some(dir);
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
@@ -518,13 +500,8 @@ impl Watcher {
     #[cfg(not(windows))]
     fn refresh_directory_watch(&self, watchlist: &mut WatchList, index: usize) -> sys::Result<()> {
         if let Some(file) = &watchlist.items_file()[index] {
-            let mut buffer = bun_paths::path_buffer_pool::get();
             let file_path = &watchlist.items_file_path()[index];
-            if file_path.len() >= buffer.len() {
-                return Err(sys::Error::new(sys::E::ENAMETOOLONG, sys::Tag::watch));
-            }
-            let path = bun_paths::resolve_path::z(file_path, &mut buffer);
-            let current = match bun_sys::stat(path) {
+            let current = match bun_sys::stat(&bun_paths::Path::from(file_path)) {
                 Ok(stat) => stat,
                 Err(error) => {
                     if error.get_errno() == sys::E::ENOENT {
@@ -679,8 +656,8 @@ impl Watcher {
             return false;
         }
         #[cfg(windows)]
-        if bun_paths::resolve_path::is_parent_or_equal(self.top_level_dir(), file_path)
-            == bun_paths::resolve_path::ParentEqual::Unrelated
+        if bun_paths::is_parent_or_equal(self.top_level_dir(), file_path)
+            == bun_paths::ParentEqual::Unrelated
         {
             return false;
         }
@@ -699,12 +676,7 @@ impl Watcher {
         // Only open fd if we might need it
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         let file = {
-            let mut path_z = bun_paths::path_buffer_pool::get();
-            if file_path.len() >= path_z.len() {
-                return false;
-            }
-            let z = bun_paths::resolve_path::z(file_path, &mut path_z);
-            match File::open(z, WATCH_OPEN_FLAGS, 0) {
+            match File::open(&bun_paths::Path::from(file_path), WATCH_OPEN_FLAGS, 0) {
                 Ok(opened) => Some(opened),
                 Err(_) => return false,
             }

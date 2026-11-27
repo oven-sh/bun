@@ -78,6 +78,10 @@ impl ZStr {
         // SAFETY: invariant — byte at `len` is NUL and owned by the same allocation.
         unsafe { core::slice::from_raw_parts(self.0.as_ptr(), self.0.len() + 1) }
     }
+    #[inline]
+    pub fn to_zbox(&self) -> ZBox {
+        ZBox(self.as_bytes_with_nul().into())
+    }
     /// Borrow a `&CStr` as `&ZStr` — both are NUL-terminated, len excludes NUL.
     #[inline]
     pub fn from_cstr(s: &core::ffi::CStr) -> &ZStr {
@@ -362,12 +366,6 @@ impl WStr {
     pub const fn as_ptr(&self) -> *const u16 {
         self.0.as_ptr()
     }
-    /// Mirrors [`ZStr::nul_terminate`].
-    #[inline]
-    pub fn nul_terminate(buf: &mut [u16], len: usize) -> &WStr {
-        buf[len] = 0;
-        Self::from_buf(buf, len)
-    }
     /// Mirrors [`ZStr::substring`].
     #[inline]
     pub fn substring(&self, start_index: usize) -> &WStr {
@@ -564,17 +562,10 @@ pub use bun_alloc::SEP;
 ///
 /// Canonical definition; `bun_paths::PathBuffer` re-exports this so the two
 /// crates share ONE nominal type and callers can pass a `bun_paths` buffer to
-/// `bun_core::getcwd`/`which` without a pointer cast.
+/// `bun_core::getcwd` without a pointer cast.
 ///
 /// Scratch instances come from `bun_paths::path_buffer_pool::get()`. `ZEROED`
 /// is for long-lived struct fields: on Windows it is a 98 KB memset.
-///
-/// NOTE on alignment: `os_path_kernel32` (Windows) reinterprets a
-/// `&mut PathBuffer` as `&mut [u16]` via [`cast_slice_mut`]. The language
-/// only guarantees align=1 for `[u8; N]`, so that reinterpret is guarded by a
-/// hard `assert!`. In practice every `PathBuffer` fed to
-/// the `[u16]` view is a fresh stack local or a pooled heap allocation, both
-/// of which are ≥8-byte aligned on every supported target.
 #[repr(transparent)]
 pub struct PathBuffer(pub [u8; MAX_PATH_BYTES]);
 impl PathBuffer {
@@ -625,49 +616,6 @@ impl core::ops::DerefMut for WPathBuffer {
     fn deref_mut(&mut self) -> &mut [u16] {
         &mut self.0
     }
-}
-
-/// Directory portion of `path` (handles trailing-sep stripping and root).
-pub fn dirname(path: &[u8]) -> Option<&[u8]> {
-    use crate::path_sep::is_sep_native as is_sep;
-
-    if path.is_empty() {
-        return None;
-    }
-    // Strip trailing separators.
-    let mut end = path.len();
-    while end > 1 && is_sep(path[end - 1]) {
-        end -= 1;
-    }
-    // Windows: skip drive prefix `X:` so `C:\foo` → `C:\`, `C:foo` → None.
-    let root_end: usize =
-        if cfg!(windows) && end >= 2 && path[1] == b':' && path[0].is_ascii_alphabetic() {
-            if end >= 3 && is_sep(path[2]) { 3 } else { 2 }
-        } else if is_sep(path[0]) {
-            1
-        } else {
-            0
-        };
-    // Scan back for last separator after the root.
-    let mut i = end;
-    while i > root_end {
-        i -= 1;
-        if is_sep(path[i]) {
-            // Return up to (excluding) the separator found — do NOT collapse a
-            // preceding run of separators, so `/foo//bar` → `/foo/`. Preserve
-            // that contract for re-export parity with `bun_paths::dirname`.
-            return Some(&path[..i]);
-        }
-    }
-    // No separator AFTER root, but content past it (e.g. "/foo", "C:\foo"):
-    // return the root prefix iff the root itself ends in a separator
-    // (`"/foo"` → `"/"`, `"C:\\foo"` → `"C:\\"`). A bare drive prefix with no
-    // separator (`"C:foo"`, root_end==2) falls through to `None`. Root-only
-    // inputs ("/", "C:\") have `end == root_end` and also fall through.
-    if root_end > 0 && end > root_end && is_sep(path[root_end - 1]) {
-        return Some(&path[..root_end]);
-    }
-    None
 }
 
 // ─── Fd + fd module (from bun_sys::fd) ────────────────────────────────────
@@ -1042,7 +990,8 @@ impl Stdio {
 /// (`readlink("/proc/self/fd/N")` on Linux, `fcntl(F_GETPATH)` on macOS,
 /// `fcntl(F_KINFO)` on FreeBSD), so it lives at T0 — moved down from
 /// `bun_sys::fd` per PORTING.md (no cross-crate extern).
-pub fn fd_path_raw(fd: Fd, buf: &mut [u8]) -> isize {
+#[cfg(all(not(windows), debug_assertions))]
+fn fd_path_raw(fd: Fd, buf: &mut [u8]) -> isize {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let mut proc = [0u8; 32];
@@ -1101,71 +1050,6 @@ pub fn fd_path_raw(fd: Fd, buf: &mut [u8]) -> isize {
         target_os = "macos",
         target_os = "freebsd"
     )))]
-    {
-        let _ = (fd, buf);
-        0
-    }
-}
-
-/// Wide-char fd → path (Windows `GetFinalPathNameByHandleW`). Returns code
-/// units written (>0), -1 on lookup failure,
-/// -2 when the buffer is too small, 0 on
-/// non-Windows. Body is a single kernel32 call, so it lives at T0 — moved
-/// down from `bun_sys` per PORTING.md (no cross-crate extern).
-pub fn fd_path_raw_w(fd: Fd, buf: &mut [u16]) -> isize {
-    #[cfg(windows)]
-    {
-        unsafe extern "system" {
-            fn GetFinalPathNameByHandleW(
-                hFile: *mut core::ffi::c_void,
-                lpszFilePath: *mut u16,
-                cchFilePath: u32,
-                dwFlags: u32,
-            ) -> u32;
-        }
-        let cap = buf.len();
-        // VOLUME_NAME_DOS (0) — matches `bun_sys::windows::GetFinalPathNameByHandle` default.
-        // SAFETY: buf has `cap` u16 units; handle from Fd::native().
-        let n = unsafe { GetFinalPathNameByHandleW(fd.native(), buf.as_mut_ptr(), cap as u32, 0) }
-            as usize;
-        // The size check below is `>=` because a return
-        // value equal to `cap` is the buffer-too-small sentinel (required size
-        // including NUL), not a successful write of `cap` chars.
-        if n == 0 {
-            // Lookup failure.
-            return -1;
-        }
-        if n >= cap {
-            // Buffer too small.
-            return -2;
-        }
-        // Strip the `\\?\` prefix if present so callers see a plain DOS path
-        // (matches `bun_sys::windows::GetFinalPathNameByHandle` post-processing).
-        let buf = &mut buf[..n];
-        let bs = b'\\' as u16;
-        let off: usize =
-            if n >= 4 && buf[0] == bs && buf[1] == bs && buf[2] == b'?' as u16 && buf[3] == bs {
-                if n >= 8
-                    && (buf[4] == b'U' as u16 || buf[4] == b'u' as u16)
-                    && (buf[5] == b'N' as u16 || buf[5] == b'n' as u16)
-                    && (buf[6] == b'C' as u16 || buf[6] == b'c' as u16)
-                    && buf[7] == bs
-                {
-                    // `\\?\UNC\server\share` → `\\server\share`
-                    buf[6] = bs;
-                    buf.copy_within(6.., 0);
-                    6
-                } else {
-                    // `\\?\C:\...` → `C:\...`
-                    buf.copy_within(4.., 0);
-                    4
-                }
-            } else {
-                0
-            };
-        return (n - off) as isize;
-    }
-    #[cfg(not(windows))]
     {
         let _ = (fd, buf);
         0
@@ -1999,7 +1883,7 @@ impl StackCheck {
     /// Stack reserved for the work a frame does before the next check. One
     /// `WTF::StringBuilder` growth reallocates through libpas, a ~35 frame
     /// path that measures ~160 KB under a sanitizer and a few KB without one.
-    const THRESHOLD: usize = if cfg!(windows) {
+    pub const THRESHOLD: usize = if cfg!(windows) {
         256 * 1024
     } else {
         128 * 1024
@@ -2464,11 +2348,13 @@ pub fn is_writable(fd: Fd) -> Pollable {
 // ── os_entropy ────────────────────────────────────────────────────────────
 // Raw OS entropy source: getrandom(2) on Linux, getentropy on Darwin/BSD,
 // RtlGenRandom on Windows. bun_core sits below boringssl_sys in the crate
-// graph so it cannot reach `RAND_bytes`; this is used only to seed
-// `fast_random()`'s thread-local PRNG once per thread. Every other caller
-// must use `bun_boringssl_sys::rand_bytes` (userspace DRBG, no syscall per
-// call).
-fn os_entropy(bytes: &mut [u8]) {
+// graph so it cannot reach `RAND_bytes`; this seeds `fast_random()`'s
+// thread-local PRNG once per thread. Prefer `bun_boringssl_sys::rand_bytes`
+// (userspace DRBG, no syscall per call) unless the bytes are asked for in
+// batches.
+/// Returns whether the system filled `bytes`.
+#[must_use]
+pub fn os_entropy(bytes: &mut [u8]) -> bool {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let mut filled = 0usize;
@@ -2481,34 +2367,31 @@ fn os_entropy(bytes: &mut [u8]) {
                     0,
                 )
             };
-            if rc < 0 {
-                let err = crate::ffi::errno();
-                if err == libc::EINTR {
+            if rc <= 0 {
+                if rc < 0 && crate::ffi::errno() == libc::EINTR {
                     continue;
                 }
                 // Linux before 3.17 returns ENOSYS, and a seccomp filter can return EPERM.
                 use std::io::Read;
-                if std::fs::File::open("/dev/urandom")
-                    .and_then(|mut f| f.read_exact(&mut bytes[filled..]))
-                    .is_err()
-                {
-                    panic!("getrandom failed: errno {err}");
-                }
-                return;
+                // It stays open: there may be no descriptor left the next time.
+                static URANDOM: Once<std::fs::File> = Once::new();
+                let file = URANDOM.get().or_else(|| {
+                    let file = std::fs::File::open("/dev/urandom").ok()?;
+                    Some(URANDOM.get_or_init(|| file))
+                });
+                return file.is_some_and(|mut f| f.read_exact(&mut bytes[filled..]).is_ok());
             }
             filled += rc as usize;
         }
+        true
     }
     #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
     {
         // getentropy caps at 256 bytes per call.
-        for chunk in bytes.chunks_mut(256) {
+        bytes.chunks_mut(256).all(|chunk| {
             // SAFETY: chunk is a valid writable slice ≤ 256 bytes.
-            let rc = unsafe { libc::getentropy(chunk.as_mut_ptr().cast(), chunk.len()) };
-            if rc != 0 {
-                panic!("getentropy failed");
-            }
-        }
+            unsafe { libc::getentropy(chunk.as_mut_ptr().cast(), chunk.len()) == 0 }
+        })
     }
     #[cfg(windows)]
     {
@@ -2517,13 +2400,10 @@ fn os_entropy(bytes: &mut [u8]) {
             #[link_name = "SystemFunction036"]
             fn RtlGenRandom(buf: *mut u8, len: u32) -> u8;
         }
-        for chunk in bytes.chunks_mut(u32::MAX as usize) {
+        bytes.chunks_mut(u32::MAX as usize).all(|chunk| {
             // SAFETY: chunk fits in u32; RtlGenRandom writes exactly that many bytes.
-            let ok = unsafe { RtlGenRandom(chunk.as_mut_ptr(), chunk.len() as u32) };
-            if ok == 0 {
-                panic!("RtlGenRandom failed");
-            }
-        }
+            unsafe { RtlGenRandom(chunk.as_mut_ptr(), chunk.len() as u32) != 0 }
+        })
     }
 }
 
@@ -3221,11 +3101,12 @@ pub mod rand {
 
 /// Port of `bun.fastRandom()`. Thread-local xoshiro256++ seeded once per
 /// process from the OS CSPRNG (or `BUN_DEBUG_HASH_RANDOM_SEED` in debug).
+/// The clock stands in for as long as the OS has no seed to give.
 pub fn fast_random() -> u64 {
     use core::cell::Cell;
     use core::sync::atomic::{AtomicU64, Ordering as O};
     static SEED: AtomicU64 = AtomicU64::new(0);
-    fn random_seed() -> u64 {
+    fn random_seed() -> Option<u64> {
         let mut v = SEED.load(O::Relaxed);
         while v == 0 {
             // Should also apply to canary builds, but bun_core has no `canary`
@@ -3234,23 +3115,26 @@ pub fn fast_random() -> u64 {
             #[cfg(debug_assertions)]
             if let Some(n) = crate::env_var::BUN_DEBUG_HASH_RANDOM_SEED.get() {
                 SEED.store(n, O::Relaxed);
-                return n;
+                return Some(n);
             }
             let mut buf = [0u8; 8];
-            os_entropy(&mut buf);
-            v = u64::from_ne_bytes(buf);
+            v = os_entropy(&mut buf).then(|| u64::from_ne_bytes(buf))?;
             SEED.store(v, O::Relaxed);
             v = SEED.load(O::Relaxed);
         }
-        v
+        Some(v)
     }
     thread_local! {
         static PRNG: Cell<Option<rand::DefaultPrng>> = const { Cell::new(None) };
     }
     PRNG.with(|p| {
-        let mut prng = p
+        let prng = p
             .take()
-            .unwrap_or_else(|| rand::DefaultPrng::init(random_seed()));
+            .or_else(|| random_seed().map(rand::DefaultPrng::init));
+        let Some(mut prng) = prng else {
+            let now = crate::time::nano_timestamp() as u64;
+            return rand::DefaultPrng::init(now ^ (u64::from(std::process::id()) << 32)).next_u64();
+        };
         let v = prng.next_u64();
         p.set(Some(prng));
         v
@@ -3813,23 +3697,6 @@ pub fn set_argv(view: &'static &'static [&'static ZStr]) {
 }
 
 // ── getcwd ────────────────────────────────────────────────────────────────
-/// `getcwd` tolerating an unreachable cwd (e.g. deleted while we run): falls
-/// back to the executable's directory like Node's `Environment::GetCwd`, so
-/// startup proceeds and `process.cwd()` surfaces the real error later.
-pub fn getcwd_or_exe_dir(buf: &mut PathBuffer) -> &ZStr {
-    if let Ok(cwd) = getcwd(buf) {
-        return cwd;
-    }
-    let dir: &[u8] = self_exe_path()
-        .ok()
-        .and_then(|p| dirname(p.as_bytes()))
-        // Paths from /proc/self/exe are not bounded by MAX_PATH_BYTES.
-        .filter(|d| d.len() < buf.0.len())
-        .unwrap_or(if cfg!(windows) { b"C:\\" } else { b"/" });
-    buf.0[..dir.len()].copy_from_slice(dir);
-    ZStr::nul_terminate(buf, dir.len())
-}
-
 /// Writes the current working directory into `buf` and returns it.
 pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
     #[cfg(unix)]
@@ -3912,7 +3779,7 @@ pub(crate) fn which<'a>(
         return None;
     }
     // If `bin` contains a separator, resolve relative to cwd only.
-    let has_sep = bin.iter().copied().any(crate::path_sep::is_sep_native);
+    let has_sep = crate::strings::contains_char(bin, b'/');
     fn check<'a>(buf: &'a mut PathBuffer, dir: &[u8], bin: &[u8]) -> Option<&'a ZStr> {
         let mut n = 0usize;
         if !dir.is_empty() {
@@ -3936,7 +3803,7 @@ pub(crate) fn which<'a>(
         (unsafe { libc::access(path.as_ptr(), libc::X_OK) } == 0).then_some(path)
     }
     // Absolute `bin` → probe it directly without joining `cwd`.
-    if crate::path_sep::is_absolute_native(bin) {
+    if bin.starts_with(b"/") {
         return check(buf, b"", bin);
     }
     if has_sep {
@@ -5168,10 +5035,6 @@ mod tests {
         let mut bytes = *b"abc";
         let string = ZStr::nul_terminate(&mut bytes, 2);
         assert_eq!(string.as_bytes_with_nul(), b"ab\0");
-
-        let mut units = [1, 2, 3];
-        assert_eq!(WStr::nul_terminate(&mut units, 2).as_slice(), [1, 2]);
-        assert_eq!(units, [1, 2, 0]);
     }
 
     #[test]

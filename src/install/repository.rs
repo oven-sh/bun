@@ -71,9 +71,8 @@ impl GitEnv {
         }
 
         // The spawn does no `PATH` search; resolve `git` on the child's `PATH`.
-        let mut git_buf = bun_paths::path_buffer_pool::get();
-        let git = bun_which::which(&mut git_buf, map.get(b"PATH").unwrap_or(b""), b"", b"git")
-            .map(|git| ZBox::from_bytes(git.as_bytes()));
+        let git =
+            bun_which::which(map.get(b"PATH").unwrap_or(b""), b"", b"git").map(|git| git.to_zbox());
 
         GitEnv {
             envp: map.to_envp(),

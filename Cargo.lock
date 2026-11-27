@@ -291,9 +291,7 @@ version = "0.0.0"
 dependencies = [
  "bun_alloc",
  "bun_boringssl_sys",
- "bun_cares_sys",
  "bun_core",
- "bun_sys",
 ]
 
 [[package]]
@@ -417,19 +415,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_cares_sys"
-version = "0.0.0"
-dependencies = [
- "bun_alloc",
- "bun_core",
- "bun_libuv_sys",
- "bun_opaque",
- "enum-map",
- "libc",
- "strum",
-]
-
-[[package]]
 name = "bun_clap"
 version = "0.0.0"
 dependencies = [
@@ -517,7 +502,6 @@ dependencies = [
  "bun_removable_features",
  "bun_sys",
  "bun_threading",
- "bun_which",
  "bun_zlib",
  "const_format",
  "libc",
@@ -609,12 +593,27 @@ dependencies = [
 name = "bun_dns"
 version = "0.0.0"
 dependencies = [
- "bun_cares_sys",
+ "bun_collections",
  "bun_core",
+ "bun_dns_client",
+ "bun_paths",
  "bun_sys",
  "bun_windows_sys",
  "bun_wyhash",
  "libc",
+ "strum",
+]
+
+[[package]]
+name = "bun_dns_client"
+version = "0.0.0"
+dependencies = [
+ "bun_collections",
+ "bun_core",
+ "bun_wyhash",
+ "enum-map",
+ "hashbrown 0.15.5",
+ "smallvec",
  "strum",
 ]
 
@@ -818,7 +817,6 @@ dependencies = [
  "bun_boringssl",
  "bun_collections",
  "bun_core",
- "bun_deflate",
  "bun_errno",
  "bun_highway",
  "bun_http",
@@ -828,9 +826,9 @@ dependencies = [
  "bun_jsc",
  "bun_opaque",
  "bun_ptr",
- "bun_sha_hmac",
  "bun_uws",
  "bun_uws_sys",
+ "bun_websocket",
  "bun_zlib",
  "strum",
  "thiserror",
@@ -850,11 +848,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_icu"
+version = "0.0.0"
+dependencies = [
+ "bun_collections",
+ "bun_core",
+ "bun_icu_macros",
+ "bun_paths",
+ "bun_sema_standalone",
+ "bun_sys",
+ "bun_wyhash",
+ "libc",
+]
+
+[[package]]
 name = "bun_icu_data"
 version = "0.0.0"
 dependencies = [
  "bun_zstd_decoder",
 ]
+
+[[package]]
+name = "bun_icu_macros"
+version = "0.0.0"
 
 [[package]]
 name = "bun_ini"
@@ -870,6 +886,7 @@ dependencies = [
  "bun_install_types",
  "bun_options_types",
  "bun_parsers",
+ "bun_paths",
  "bun_url",
  "strum",
 ]
@@ -955,6 +972,7 @@ dependencies = [
  "bun_alloc",
  "bun_ast",
  "bun_core",
+ "bun_paths",
  "bun_semver",
  "bun_wyhash",
  "strum",
@@ -977,6 +995,7 @@ dependencies = [
  "bun_uws_sys",
  "enumset",
  "libc",
+ "rustc-hash",
  "strum",
  "thiserror",
 ]
@@ -1005,7 +1024,6 @@ dependencies = [
  "bun_crash_handler",
  "bun_glob",
  "bun_highway",
- "bun_node_path",
  "bun_options_types",
  "bun_paths",
  "bun_ptr",
@@ -1428,6 +1446,7 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_highway",
+ "bun_ptr",
  "bun_simdutf_sys",
  "bun_wyhash",
  "criterion",
@@ -1473,11 +1492,9 @@ dependencies = [
  "bun_alloc",
  "bun_core",
  "bun_errno",
+ "bun_highway",
  "bun_simdutf_sys",
  "const_format",
- "libc",
- "strum",
- "thiserror",
 ]
 
 [[package]]
@@ -1572,6 +1589,7 @@ dependencies = [
  "bun_http_types",
  "bun_install_types",
  "bun_js_parser",
+ "bun_node_path",
  "bun_options_types",
  "bun_parsers",
  "bun_paths",
@@ -1637,7 +1655,6 @@ dependencies = [
  "bun_bundler",
  "bun_bundler_jsc",
  "bun_bunfig",
- "bun_cares_sys",
  "bun_clap",
  "bun_collections",
  "bun_core",
@@ -1648,6 +1665,7 @@ dependencies = [
  "bun_css_jsc",
  "bun_deflate",
  "bun_dns",
+ "bun_dns_client",
  "bun_dotenv",
  "bun_errno",
  "bun_event_loop",
@@ -1663,6 +1681,7 @@ dependencies = [
  "bun_http1",
  "bun_http_jsc",
  "bun_http_types",
+ "bun_icu",
  "bun_icu_data",
  "bun_install",
  "bun_install_jsc",
@@ -1720,6 +1739,7 @@ dependencies = [
  "bun_valkey",
  "bun_watcher",
  "bun_webp",
+ "bun_websocket",
  "bun_which",
  "bun_wyhash",
  "bun_zlib",
@@ -1786,7 +1806,6 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_core",
- "bun_paths",
  "bun_sema",
  "bun_sema_driver",
  "bun_sys",
@@ -2055,7 +2074,6 @@ dependencies = [
  "bun_zstd",
  "const_format",
  "libc",
- "scopeguard",
  "strum",
  "thiserror",
 ]
@@ -2164,7 +2182,6 @@ dependencies = [
  "bun_alloc",
  "bun_collections",
  "bun_core",
- "bun_opaque",
  "bun_paths",
  "bun_wyhash",
  "thiserror",
@@ -2194,11 +2211,13 @@ dependencies = [
  "bun_core",
  "bun_errno",
  "bun_hpack",
+ "bun_http1",
  "bun_http_types",
  "bun_libuv_sys",
  "bun_opaque",
  "bun_paths",
  "bun_ptr",
+ "bun_websocket",
  "bun_windows_sys",
  "libc",
  "strum",
@@ -2240,6 +2259,19 @@ dependencies = [
  "bun_alloc",
  "bun_highway",
  "thiserror",
+]
+
+[[package]]
+name = "bun_websocket"
+version = "0.0.0"
+dependencies = [
+ "bun_base64",
+ "bun_collections",
+ "bun_core",
+ "bun_deflate",
+ "bun_sha_hmac",
+ "bun_wyhash",
+ "bun_zlib",
 ]
 
 [[package]]

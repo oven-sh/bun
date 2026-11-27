@@ -154,9 +154,7 @@ fn display_name(filename: &[u8], is_cjs: bool) -> String {
     } else if cfg!(windows) {
         let mut bytes = Vec::with_capacity(filename.len() + 8);
         bytes.extend_from_slice(b"file:///");
-        // 0x5C never appears inside a multi-byte UTF-8 sequence, so a byte
-        // swap matches the per-char replacement.
-        bytes.extend(filename.iter().map(|&b| if b == b'\\' { b'/' } else { b }));
+        bytes.extend_from_slice(&bun_paths::to_portable(filename));
         bytes.as_bstr().to_string()
     } else {
         let mut bytes = Vec::with_capacity(filename.len() + 7);
@@ -207,8 +205,7 @@ fn hex(digest: &[u8; HASH_SIZE]) -> String {
 /// Windows drives, where `relative` returns `to` unchanged — Node parity).
 fn key_for(state: &CacheState, filename: &[u8], is_cjs: bool) -> u64 {
     if state.portable {
-        // Thread-local scratch result: consumed before any other resolve call.
-        let rel = bun_paths::resolve_path::relative(&state.dir, filename);
+        let rel: &[u8] = &bun_paths::Path::relative(&state.dir, filename);
         if !rel.is_empty() && !bun_paths::is_absolute(rel) {
             cclog!(
                 "[compile cache] using relative path {} from {}\n",
@@ -327,19 +324,15 @@ pub fn enable(explicit_dir: Option<&[u8]>, portable: Option<bool>) -> EnableResu
         };
     }
 
-    let default_buf: Vec<u8>;
+    let default_buf;
     let dir: &[u8] = match explicit_dir {
         // "" resolves to cwd, like Node's path.resolve("").
         Some(d) => d,
         None => match env_var::NODE_COMPILE_CACHE::get_not_empty() {
             Some(d) => d,
             None => {
-                let tmp = platform_tmp_dir();
-                let mut buf = Vec::with_capacity(tmp.len() + 20);
-                buf.extend_from_slice(tmp);
-                buf.push(SEP);
-                buf.extend_from_slice(b"node-compile-cache");
-                default_buf = buf;
+                default_buf =
+                    bun_paths::Path::from_parts(&[platform_tmp_dir(), b"node-compile-cache"]);
                 &default_buf
             }
         },
@@ -348,7 +341,7 @@ pub fn enable(explicit_dir: Option<&[u8]>, portable: Option<bool>) -> EnableResu
 }
 
 /// Node's `os.tmpdir()` order: TEMP -> TMP on Windows, TMPDIR -> TMP ->
-/// TEMP -> /tmp on POSIX; trailing separator stripped.
+/// TEMP -> /tmp on POSIX.
 fn platform_tmp_dir() -> &'static [u8] {
     #[cfg(windows)]
     let candidate = env_var::TEMP::get_not_empty().or_else(env_var::TMP::get_not_empty);
@@ -357,9 +350,6 @@ fn platform_tmp_dir() -> &'static [u8] {
         .or_else(env_var::TMP::get_not_empty)
         .or_else(env_var::TEMP::get_not_empty);
     if let Some(dir) = candidate {
-        if dir.len() > 1 && dir[dir.len() - 1] == SEP {
-            return &dir[..dir.len() - 1];
-        }
         return dir;
     }
     #[cfg(windows)]
@@ -381,7 +371,7 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
     };
 
     // Resolve `dir` to an absolute path against the process cwd.
-    let mut abs_buf = bun_paths::path_buffer_pool::get();
+    let resolved;
     let mut cwd_buf = bun_paths::path_buffer_pool::get();
     let abs: &[u8] = if bun_paths::is_absolute(dir) {
         dir
@@ -399,22 +389,15 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
                 };
             }
         };
-        match bun_paths::resolve_path::join_abs_string_buf_checked::<
-            bun_paths::resolve_path::platform::Auto,
-        >(&cwd_buf[..cwd_len], &mut abs_buf[..], &[dir])
-        {
-            Some(abs) => abs,
-            None => return path_too_long(),
-        }
+        resolved = bun_resolver::resolve_keeping_sep(&[&cwd_buf[..cwd_len], dir]);
+        &resolved
     };
     if abs.len() + 1 + tag.len() + 2 > MAX_PATH_BYTES {
         return path_too_long();
     }
 
-    let mut tagged: Vec<u8> = Vec::with_capacity(abs.len() + 1 + tag.len());
-    tagged.extend_from_slice(abs);
-    tagged.push(SEP);
-    tagged.extend_from_slice(tag.as_bytes());
+    let mut tagged = bun_paths::Path::from(abs);
+    tagged.push(tag.as_bytes());
 
     cclog!(
         "[compile cache] resolved path {} + {} -> {}\n",
@@ -484,19 +467,16 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
                 message: None,
             };
         }
-        let mut tagged = tagged;
         if portable {
             // Resolve symlinks (e.g. macOS /var -> /private/var) so relative
             // keys match Bun's realpath'd module paths.
-            let mut z_buf = bun_paths::path_buffer_pool::get();
             let mut real_buf = bun_paths::path_buffer_pool::get();
-            let tagged_z = bun_paths::resolve_path::z(&tagged, &mut z_buf);
-            if let Ok(real) = sys::realpath(tagged_z, &mut real_buf) {
-                tagged = real.to_vec();
+            if let Ok(real) = sys::realpath(&tagged, &mut real_buf) {
+                tagged.set(real);
             }
         }
         *state = Some(CacheState {
-            dir: tagged.into_boxed_slice(),
+            dir: tagged.as_bytes().into(),
             dir_handle,
             portable,
             entries: HashMap::new(),

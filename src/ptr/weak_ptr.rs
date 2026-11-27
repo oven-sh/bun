@@ -95,7 +95,6 @@ pub unsafe fn destroy<T: HasWeakPtrData>(this: *mut T) {
 /// rather than `&mut T`. Deriving it from a `&mut T` reborrow instead makes the
 /// next write through any *other* pointer to the object a foreign write that
 /// invalidates the handle, so every later `get` or drop is UB. This mirrors
-/// [`ThisPtr::new`](crate::ThisPtr::new) and
 /// [`ParentRef::from_raw_mut`](crate::ParentRef::from_raw_mut).
 pub struct WeakPtr<T: HasWeakPtrData> {
     raw_ptr: Option<NonNull<T>>,

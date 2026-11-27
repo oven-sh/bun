@@ -10,13 +10,11 @@ use bun_core::CodeGenerationFromStrings;
 use bun_core::strings::{contains_char, is_all_whitespace};
 use bun_paths::fs::PathName;
 use bun_paths::path_buffer_pool;
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 use bun_resolve_builtins::Alias;
 use bun_sema::atom::Interner;
 use bun_sema::bind::Bound;
 use bun_sema::fold::Decisions;
-use bun_sema::hir::{self, CallId, ExprId, File, NodeData};
+use bun_sema::hir::{self, CallId, ExprId, ExprKind, File, NodeData, StmtId, StmtKind};
 use bun_sema::hir_from_data::{DataValue, FOLDER_OF_DATABASE, HostValue};
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::program::{HostLoader, HostModuleId};
@@ -24,8 +22,8 @@ use bun_sema::resolve::{
     CodeHost, CodeImportForm, CodeImportKind, CodeParseRequest, CodeRead, CodeRequest,
     ComputedCodeRequest, EarlyTransformRequest, ExternalKind, FileSearch, FileStamp, FinishedFile,
     FoundCode, Host, HostPayload, HostResolution, LoaderRequest, MacroRequest, ModuleDetection,
-    ParsedCode, ScriptKind, TransformRequest, TreeChange, is_declaration_file_name, join, to_path,
-    to_path_in,
+    ParsedCode, ScriptKind, TransformRequest, TreeChange, is_declaration_file_name, join,
+    parent_directory, to_path, to_path_in,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
@@ -42,7 +40,9 @@ use crate::diagnostics::{
     FileDiagnostic, LoadMessages, log_diagnostic, range_of_node, syntax_errors_of,
 };
 use crate::load::builtin_uses::{self, BuiltinUseInput};
-use crate::load::bundled_commonjs::{blank_commonjs_wrapper, is_bundled_commonjs};
+use crate::load::bundled_commonjs::{
+    blank_commonjs_wrapper, blank_commonjs_wrapper_with_tail, is_bundled_commonjs,
+};
 use crate::load::compiler_declarations;
 use crate::load::contents::worker_entries::{
     count_highest_level_on_way, find_file_named_as_in_executable, find_file_on_way,
@@ -297,6 +297,25 @@ fn is_javascript_too(typescript_options: &CompileParseOptions<'_>, text: &[u8]) 
         && diagnostics.all(|it| it.class != hir::DiagnosticClass::EarlyError)
 }
 
+fn find_tail_of_bundled_function(
+    options: &CompileParseOptions<'_>,
+    text: &[u8],
+) -> Option<std::ops::Range<usize>> {
+    let session = Session::new();
+    let atoms = Interner::new_in(&session);
+    let hir = parse_for_compile(session.arena(), options, text, &atoms);
+    let mut statements = hir.ids::<StmtId>(hir.body);
+    let (Some(statement), None) = (statements.next(), statements.next()) else {
+        return None;
+    };
+    let StmtKind::Expr(function) = hir[statement].kind else {
+        return None;
+    };
+    let is_whole =
+        syntax_errors_of(&hir).next().is_none() && matches!(hir[function].kind, ExprKind::Fn(_));
+    is_whole.then(|| hir[function].end as usize - 1..hir[statement].loc.end as usize)
+}
+
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct ResolveWhoseFoldersBringNothing {
     pub(crate) file: Vec<u8>,
@@ -494,7 +513,7 @@ impl<'a> LoadHost<'a> {
         let working_directory = &self.input.options.code.working_directory;
         match (self.plugins).directory_of_virtual_module(path, working_directory) {
             Some(directory) => Cow::Owned(directory),
-            None => Cow::Borrowed(dirname::<Posix>(path)),
+            None => Cow::Borrowed(parent_directory(path)),
         }
     }
 
@@ -995,7 +1014,7 @@ impl Host for LoadHost<'_> {
         let (mut files, directories) = self.disk.entries(path);
         let folder = path.strip_suffix(b"/").unwrap_or(path);
         for product in self.outfile.iter().chain(&self.other_products) {
-            if self.is_same_path(dirname::<Posix>(product), folder) {
+            if self.is_same_path(parent_directory(product), folder) {
                 let name_of_product = &product[folder.len() + 1..];
                 files.retain(|name| !self.is_same_path(name, name_of_product));
             }
@@ -1236,7 +1255,7 @@ impl CodeHost for LoadHost<'_> {
         let directory = to_native(request.directory);
         let is_left_to_run_time = is_import
             && ((load.runs_tests && contains_char(request.specifier, b'?'))
-                || is_external(&load.externals, request.specifier, directory));
+                || is_external(&load.externals, request.specifier, request.kind, directory));
         match is_left_to_run_time {
             true => HostResolution::External {
                 specifier: request.specifier.to_vec(),
@@ -1287,7 +1306,7 @@ impl CodeHost for LoadHost<'_> {
         };
         let path = self.disk.realpath(&path);
         let next_to_vitest = FileSearch {
-            directory: dirname::<Posix>(&path),
+            directory: parent_directory(&path),
             ..*search
         };
         self.input.provider.find_file(self, &next_to_vitest)
@@ -1455,7 +1474,7 @@ impl CodeHost for LoadHost<'_> {
     fn directory_of_dynamic_imports<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
         match self.plugins.name_of_entry_text(path) {
             Some(name) if is_url_with_text(name) => {
-                Cow::Owned(dirname::<Posix>(&[b"/", name].concat()).to_vec())
+                Cow::Owned(parent_directory(&[b"/", name].concat()).to_vec())
             }
             Some(_) | None => LoadHost::directory_of(self, path),
         }
@@ -1802,12 +1821,22 @@ impl CodeHost for LoadHost<'_> {
                 || hir::find_transpiled_mark(text).is_some(),
         };
         let is_bundled_commonjs = is_bundled_commonjs(text);
-        let body_of_bundle = match is_bundled_commonjs {
+        let mut body_of_bundle = match is_bundled_commonjs {
             true => blank_commonjs_wrapper(text),
             false => None,
         };
         let parsed_text = body_of_bundle.as_deref().unwrap_or(text);
         let mut hir = parse_for_compile(arena, &compile_options, parsed_text, atoms);
+        // A last line that begins with `//` may be a comment or the rest of a template, so then the parser finds the end.
+        if is_bundled_commonjs
+            && (body_of_bundle.is_none() || syntax_errors_of(&hir).next().is_some())
+            && let Some(tail) = find_tail_of_bundled_function(&compile_options, text)
+            && let Some(body) = blank_commonjs_wrapper_with_tail(text, tail)
+        {
+            hir = parse_for_compile(arena, &compile_options, &body, atoms);
+            body_of_bundle = Some(body);
+        }
+        let parsed_text = body_of_bundle.as_deref().unwrap_or(text);
         let is_entry_text = self.plugins.loader_of_entry_text(path).is_some();
         let is_language_assumed = is_entry_text
             || (matches!(served_by, ServedBy::Disk)

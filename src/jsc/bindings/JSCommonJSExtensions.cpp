@@ -1,6 +1,7 @@
 #include "JSCommonJSExtensions.h"
 #include "ZigGlobalObject.h"
 #include "BunProcess.h"
+#include "ErrorCode.h"
 #include "ModuleLoader.h"
 #include "BunCompiledModules.h"
 #include "JSCommonJSModule.h"
@@ -238,6 +239,8 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     JSC::JSValue specifier = callFrame->argument(1);
     WTF::String specifierWtfString = specifier.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    if (specifierWtfString.contains('\0')) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "path"_s, specifier, "must be a string, Uint8Array, or URL without null bytes"_s);
     bool hasGoneOn = resumeDelegatedRequire(global, mod, specifierWtfString);
     RETURN_IF_EXCEPTION(scope, {});
     if (hasGoneOn)

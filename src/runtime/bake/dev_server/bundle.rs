@@ -558,7 +558,7 @@ impl DevServer {
             self.publish(
                 HmrTopic::TestingWatchSynchronization,
                 &[MessageId::TestingWatchSynchronization.char(), 2],
-                Opcode::BINARY,
+                Opcode::Binary,
             );
             return;
         }

@@ -1,6 +1,7 @@
 //! `DirectoryWatchStore`: directory watches that retry failed import resolutions.
 
 use super::*;
+use bun_paths::{Path, dirname_or_root};
 
 /// `DevServer.DirectoryWatchStore` — sparse map of directories under watch
 /// for resolution-failure recovery.
@@ -92,7 +93,7 @@ impl Default for Dep {
 
 impl DevServer {
     /// Registers a directory watch so that a failed import resolution is
-    /// retried when the containing directory changes.
+    /// retried when the containing directory changes. Takes a `bun_resolver::path_of_specifier`.
     pub(crate) fn track_resolution_failure(
         &mut self,
         import_source: &[u8],
@@ -124,18 +125,8 @@ impl DevServer {
             _ => debug_assert!(false),
         }
 
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let Some(joined) =
-            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
-                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
-                &mut buf.0,
-                &[specifier],
-            )
-        else {
-            // There's nothing to watch: the name is too long.
-            return Ok(());
-        };
-        let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(joined);
+        let joined = Path::resolve(&[dirname_or_root(import_source), specifier]);
+        let dir = bun_paths::without_trailing_sep(dirname_or_root(&joined));
 
         // The `import_source` parameter is not a stable string. Since the
         // import source will be added to IncrementalGraph anyways, this is a
@@ -185,9 +176,7 @@ impl DevServer {
 
         // Note: reshaped for borrowck — capture gop scalars before
         // calling methods that need &mut store.
-        let gop = store.watches.get_or_put(
-            bun_paths::string_paths::without_trailing_slash_windows_path(dir_name_to_watch),
-        )?;
+        let gop = store.watches.get_or_put(dir_name_to_watch)?;
         let gop_index = gop.index;
         let found_existing = gop.found_existing;
 

@@ -211,6 +211,7 @@ using namespace JSC;
     macro(textEncoderStreamEncoder) \
     macro(toClass) \
     macro(toNamespacedPath) \
+    macro(traceRequire) \
     macro(transform) \
     macro(type) \
     macro(updateRef) \

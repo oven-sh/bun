@@ -5,7 +5,8 @@
 // null (or garbage, depending on build mode) and the DevServer is never told that
 // plugin loading finished, so the request it deferred to `next_bundle` waits forever.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 
 const indexHtml = /* html */ `<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
@@ -560,6 +561,25 @@ test.concurrent(
     expect(exitCode).toBe(0);
   },
 );
+
+test.concurrent.skipIf(isWindows)("a backslash separates in the path of a [serve.static] plugin only", async () => {
+  using dir = tempDir("serve-plugins-devserver-backslash", {
+    "bunfig.toml": String.raw`
+      [serve.static]
+      plugins = ['.\plugins\a.ts?x=\d', 'data:text/javascript,console.log("b\nc"); export default { name: "b", setup() {} };']
+    `,
+    "plugins/a.ts": `console.log(import.meta.url.split("?")[1]); export default { name: "a", setup() {} };`,
+    "index.html": `<!DOCTYPE html><html><body></body></html>`,
+    "server.ts": `
+      import html from "./index.html";
+      using server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+      console.log((await fetch(server.url)).status);
+    `,
+  });
+  const { stdout, exitCode } = await bunRun(join(String(dir), "server.ts"));
+  expect(stdout).toBe("x=\\d\nb\nc\n200");
+  expect(exitCode).toBe(0);
+});
 
 // `bun ./index.html` and `bun bake` load the plugins when the first request arrives, so that
 // request waits for them. The later ones must not wait for a bundle that never starts.

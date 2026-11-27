@@ -76,6 +76,9 @@
   "src/runtime/cli/open.rs": {
     "thread spawn": 1
   },
+  "src/runtime/cli/pm_diff_command.rs": {
+    "thread spawn": 1
+  },
   "src/runtime/cli/publish_command.rs": {
     "thread spawn": 1
   },
@@ -196,27 +199,9 @@
   "src/runtime/shell/interpreter.rs": {
     "WorkPool::schedule*": 1
   },
-  "src/runtime/webcore/Blob.rs": {
-    "WorkPool::schedule*": 1
-  },
-  "src/runtime/webcore/blob/copy_file.rs": {
-    "unsafe impl Send": [
-      "CopyFile"
-    ]
-  },
-  "src/runtime/webcore/blob/read_file.rs": {
-    "WorkPool::schedule*": 2,
-    "intrusive_work_task!": [
-      "ReadFile"
-    ],
-    "unsafe impl Send": [
-      "ReadFile"
-    ]
-  },
-  "src/runtime/webcore/blob/write_file.rs": {
-    "WorkPool::schedule*": 2,
-    "intrusive_work_task!": [
-      "WriteFile"
+  "src/runtime/webcore/blob/fd_job.rs": {
+    "unsafe impl Waiter": [
+      "Parked"
     ]
   },
   "src/runtime/webcore/fetch/FetchTasklet.rs": {

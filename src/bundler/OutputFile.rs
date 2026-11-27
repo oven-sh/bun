@@ -3,7 +3,6 @@ use crate::options::Loader;
 // the `options` module already defines them locally.
 use crate::Error;
 use crate::options::{OutputKind, Side};
-use bun_paths::resolve_path::{self, platform};
 use bun_sys::Fd;
 use std::borrow::Cow;
 
@@ -196,22 +195,18 @@ impl OutputFile {
                 // already written to disk
             }
             Value::Buffer { bytes } => {
-                let parent = resolve_path::dirname::<platform::Auto>(&self.dest_path);
+                let parent = bun_paths::dirname_or_root(&self.dest_path);
                 if !parent.is_empty() && parent != b"." {
                     bun_sys::Dir::borrow(&root_dir).make_path(parent)?;
                 }
 
-                let mut path_buf = bun_paths::path_buffer_pool::get();
-                let _ = bun_sys::write_file_with_path_buffer(
-                    &mut path_buf,
-                    &bun_sys::WriteFileArgs {
-                        data: bun_sys::WriteFileData::Buffer { buffer: bytes },
-                        encoding: bun_sys::WriteFileEncoding::Buffer,
-                        mode: if self.is_executable { 0o755 } else { 0o644 },
-                        dirfd: root_dir,
-                        file: bun_sys::PathOrFileDescriptor::Path(&self.dest_path),
-                    },
-                )?;
+                let _ = bun_sys::write_file(&bun_sys::WriteFileArgs {
+                    data: bun_sys::WriteFileData::Buffer { buffer: bytes },
+                    encoding: bun_sys::WriteFileEncoding::Buffer,
+                    mode: if self.is_executable { 0o755 } else { 0o644 },
+                    dirfd: root_dir,
+                    file: bun_sys::PathOrFileDescriptor::Path(&self.dest_path),
+                })?;
             }
             Value::Copy(value) => {
                 self.copy_to(&value.pathname, root_dir)?;
@@ -221,17 +216,15 @@ impl OutputFile {
     }
 
     pub(crate) fn copy_to(&self, rel_path: &[u8], dir: Fd) -> Result<(), Error> {
-        let mut out_buf = bun_paths::path_buffer_pool::get();
         let fd_out = bun_sys::openat(
             dir,
-            resolve_path::z(rel_path, &mut out_buf),
+            &bun_paths::Path::from(rel_path),
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o644,
         )?;
-        let mut in_buf = bun_paths::path_buffer_pool::get();
         let fd_in = bun_sys::openat(
             Fd::cwd(),
-            resolve_path::z(&self.src_path, &mut in_buf),
+            &bun_paths::Path::from(&self.src_path),
             bun_sys::O::RDONLY,
             0,
         )?;

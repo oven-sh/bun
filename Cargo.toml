@@ -54,7 +54,6 @@ members = [
   "src/threading",
   "src/valkey",
   "src/watcher",
-  "src/cares_sys",
   "src/clap",
   "src/clap_macros",
   "src/crash_handler",
@@ -62,6 +61,7 @@ members = [
   "src/csrf",
   "src/css_jsc",
   "src/dns",
+  "src/dns/client",
   "src/dotenv",
   "src/event_loop",
   "src/executable",
@@ -75,7 +75,9 @@ members = [
   "src/http1",
   "src/http_jsc",
   "src/http_types",
+  "src/icu",
   "src/icu_data",
+  "src/icu_macros",
   "src/ini",
   "src/install_jsc",
   "src/install_types",
@@ -89,6 +91,7 @@ members = [
   "src/png",
   "src/jpeg",
   "src/webp",
+  "src/websocket",
   "src/s3_signing",
   "src/sql_jsc",
   "src/zlib",
@@ -227,7 +230,7 @@ warnings = { level = "deny", priority = -1 }
 # (`--cfg=...` + `--check-cfg=cfg(...)`) by scripts/build/rust.ts; register
 # them here so a plain `cargo build` / `cargo check` (without those flags)
 # doesn't warn.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(bun_fuzzilli)', 'cfg(bun_hardened)', 'cfg(bun_locked_environment)', 'cfg(bun_refuses_execute_only_start)', 'cfg(bun_starts_without_mdwe)', 'cfg(socket_fault_injection)', 'cfg(bun_disallow_code_generation_from_strings)', 'cfg(bun_sema_mimalloc)', 'cfg(mordant)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(bun_fuzzilli)', 'cfg(bun_hardened)', 'cfg(bun_locked_environment)', 'cfg(bun_refuses_execute_only_start)', 'cfg(bun_starts_without_mdwe)', 'cfg(bun_system_icu)', 'cfg(socket_fault_injection)', 'cfg(bun_disallow_code_generation_from_strings)', 'cfg(bun_sema_mimalloc)', 'cfg(mordant)'] }
 # link.exe unconditionally prints "Creating library X.dll.lib and object
 # X.dll.exp" to stdout when linking each proc-macro DLL on Windows hosts;
 # there is no linker flag to suppress it. The lint already exempts itself
@@ -436,7 +439,6 @@ bun_tar = { path = "src/tar" }
 bun_threading = { path = "src/threading" }
 bun_valkey = { path = "src/valkey" }
 bun_watcher = { path = "src/watcher" }
-bun_cares_sys = { path = "src/cares_sys" }
 bun_clap = { path = "src/clap" }
 bun_clap_macros = { path = "src/clap_macros" }
 bun_crash_handler = { path = "src/crash_handler" }
@@ -444,6 +446,7 @@ bun_cron = { path = "src/cron" }
 bun_csrf = { path = "src/csrf" }
 bun_css_jsc = { path = "src/css_jsc" }
 bun_dns = { path = "src/dns" }
+bun_dns_client = { path = "src/dns/client" }
 bun_dotenv = { path = "src/dotenv" }
 bun_event_loop = { path = "src/event_loop" }
 bun_exe_format = { path = "src/exe_format" }
@@ -511,7 +514,9 @@ bun_tcc_sys = { path = "src/tcc_sys" }
 bun_uws_sys = { path = "src/uws_sys" }
 bun_lsquic_sys = { path = "src/lsquic_sys" }
 bun_global_allocator = { path = "src/global_allocator" }
+bun_icu = { path = "src/icu" }
 bun_icu_data = { path = "src/icu_data" }
+bun_icu_macros = { path = "src/icu_macros" }
 bun_zstd = { path = "src/zstd" }
 bun_zstd_decoder = { path = "src/zstd/decoder" }
 bun_zstd_encoder = { path = "src/zstd/encoder" }
@@ -520,6 +525,7 @@ bun_bunfig = { path = "src/bunfig" }
 bun_output = { path = "src/output" }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_webp = { path = "src/webp" }
+bun_websocket = { path = "src/websocket" }
 bun_which = { path = "src/which" }
 
 # Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. Assertions and overflow
@@ -544,6 +550,10 @@ opt-level = 3
 [profile.dev.package.bun_brotli]
 opt-level = 3
 
+# Runs for every byte that a WebSocket server receives.
+[profile.dev.package.bun_websocket]
+opt-level = 3
+
 # Runs for every line of a response head and every chunk of a body.
 [profile.dev.package.bun_http1]
 opt-level = 3
@@ -554,6 +564,10 @@ opt-level = 3
 
 # Runs for every byte that is compressed or decompressed.
 [profile.dev.package.bun_zlib]
+opt-level = 3
+
+# Runs under all of `Intl`, `Date` and `Temporal`, and for every character that is normalized, compared or changes case.
+[profile.dev.package.bun_icu]
 opt-level = 3
 
 # It stands in for vector code that every test program runs over each byte it parses.

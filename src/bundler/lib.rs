@@ -93,7 +93,26 @@ pub use bun_js_printer::MangledProps;
 pub use options_impl::PathTemplate;
 
 pub use HTMLImportManifest::html_import_manifest;
-pub use bun_core::cheap_prefix_normalizer;
+
+/// The two halves of `prefix` + `suffix`, without a doubled separator or a `./` between them.
+pub(crate) fn cheap_prefix_normalizer<'a>(prefix: &'a [u8], suffix: &'a [u8]) -> [&'a [u8]; 2] {
+    if prefix.is_empty() {
+        let suffix = bun_paths::without_leading_dot_slash(suffix);
+        return [
+            if suffix.starts_with(b"../") {
+                b""
+            } else {
+                b"./"
+            },
+            suffix,
+        ];
+    }
+    if bun_paths::has_trailing_sep(prefix) && bun_paths::has_leading_sep(suffix) {
+        return [prefix, &suffix[1..]];
+    }
+    [prefix, bun_paths::without_leading_dot_slash(suffix)]
+}
+
 pub use bundle_v2::{
     CompileResult, CompileResultForSourceMap, ContentHasher, EventLoop, ImportTracker, PartRange,
     StableRef, WrapKind, generic_path_with_pretty_initialized, target_from_hashbang,

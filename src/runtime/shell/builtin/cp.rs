@@ -1,6 +1,6 @@
 use bstr::BStr;
 use bun_jsc::ThreadIsolated;
-use bun_paths::resolve_path;
+use bun_paths::Path;
 
 use crate::node::PathLike;
 use crate::node::fs::{ShellAsyncCpTask, args};
@@ -165,18 +165,10 @@ impl ShellCpTask {
         if !self.opts.verbose {
             return;
         }
-        #[cfg(not(windows))]
-        {
-            self.on_copy_impl(src, dest);
-        }
-        #[cfg(windows)]
-        {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let mut buf2 = bun_paths::path_buffer_pool::get();
-            let src8 = bun_paths::strings::from_wpath(&mut buf, src);
-            let dest8 = bun_paths::strings::from_wpath(&mut buf2, dest);
-            self.on_copy_impl(src8, dest8);
-        }
+        let (mut src, mut dest) = (Path::from(src), Path::from(dest));
+        src.strip_nt_prefix();
+        dest.strip_nt_prefix();
+        self.on_copy_impl(&src, &dest);
     }
 
     /// The `ShellAsyncCpTask`'s completion, on the thread that runs the script.
@@ -255,11 +247,6 @@ impl ShellCpTask {
         unsafe { ShellTask::on_finish(bun_core::heap::into_raw(this)) };
     }
 
-    fn has_trailing_sep(path: &[u8]) -> bool {
-        path.last()
-            .is_some_and(|&c| resolve_path::Platform::AUTO.is_separator(c))
-    }
-
     fn is_dir(path: &bun_core::ZStr) -> bun_sys::Maybe<bool> {
         #[cfg(windows)]
         {
@@ -294,18 +281,12 @@ impl ShellCpTask {
         appended: Option<&[u8]>,
     ) -> Result<(), Stop> {
         use bun_sys::S;
-        use resolve_path::Platform;
 
         let src_shown = bstr::BStr::new(&self.src);
         let tgt_shown = || -> Vec<u8> {
-            let mut shown = self.tgt.clone();
-            if let Some(basename) = appended {
-                if !Self::has_trailing_sep(&shown) {
-                    shown.push(bun_paths::SEP);
-                }
-                shown.extend_from_slice(basename);
-            }
-            shown
+            let mut shown = Path::from(&self.tgt);
+            shown.push(appended.unwrap_or_default());
+            shown.to_vec()
         };
 
         // If lstat fails, let the copy report the error.
@@ -354,27 +335,16 @@ impl ShellCpTask {
             ))
         };
         let (s, t) = (src.as_bytes(), tgt.as_bytes());
-        if t.len() > s.len() && t.starts_with(s) && Platform::AUTO.is_separator(t[s.len()]) {
+        if bun_paths::strip_prefix(t, s).is_some_and(|below| !below.is_empty()) {
             return into_itself();
         }
         // A symlink can alias `src`, so also compare each of `tgt`'s ancestors by inode.
         let src_parent = bun_paths::dirname(s);
-        let mut path = bun_paths::path_buffer_pool::get();
-        let mut ancestor = t;
-        while let Some(parent) = bun_paths::dirname(ancestor) {
-            if Some(parent) == src_parent {
-                break;
-            }
-            path[..parent.len()].copy_from_slice(parent);
-            if let Ok(stat) = bun_sys::stat(bun_core::ZStr::nul_terminate(&mut path, parent.len()))
-            {
-                if Self::same_inode(&src_stat, &stat) {
-                    return into_itself();
-                }
-            }
-            ancestor = parent;
-        }
-        Ok(())
+        let is_below_src = (bun_paths::ancestors(t).skip(1))
+            .take_while(|&parent| Some(parent) != src_parent)
+            .filter_map(|parent| bun_sys::stat(&Path::from(parent)).ok())
+            .any(|stat| Self::same_inode(&src_stat, &stat));
+        if is_below_src { into_itself() } else { Ok(()) }
     }
 
     /// Resolves src/tgt to absolute paths, classifies them per the three
@@ -408,7 +378,7 @@ impl ShellCpTask {
             Ok(is_dir) => (is_dir, true),
             Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
                 // If it has a trailing directory separator, it's a directory.
-                (Self::has_trailing_sep(tgt.as_bytes()), false)
+                (bun_paths::has_trailing_sep(tgt.as_bytes()), false)
             }
             Err(e) => return Err(e.into()),
         };
@@ -422,7 +392,7 @@ impl ShellCpTask {
         } else if self.opts.recursive {
             // 2nd synopsis: -R source_files... -> target.
             if tgt_exists {
-                let basename = resolve_path::basename(src.as_bytes());
+                let basename = bun_paths::basename(src.as_bytes());
                 tgt = shell_join_path(bun_sys::Tag::copyfile, &[tgt.as_bytes(), basename])?;
                 appended = Some(basename);
             } else if self.operands == 2 {
@@ -438,7 +408,7 @@ impl ShellCpTask {
             if !tgt_exists || !tgt_is_dir {
                 return fail(format!("{} is not a directory", bstr::BStr::new(&self.tgt)));
             }
-            let basename = resolve_path::basename(src.as_bytes());
+            let basename = bun_paths::basename(src.as_bytes());
             tgt = shell_join_path(bun_sys::Tag::copyfile, &[tgt.as_bytes(), basename])?;
             appended = Some(basename);
         }

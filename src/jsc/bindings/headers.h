@@ -447,6 +447,7 @@ ZIG_DECL bool Bun__WebSocketClient__resume(WebSocketClient* arg0);
 ZIG_DECL void Bun__WebSocketClient__setRef(WebSocketClient* arg0, bool ref);
 ZIG_DECL bool Bun__WebSocketClient__remoteAddress(WebSocketClient* arg0, Bun::OwnedString* address, uint16_t* port, bool* isIPv6);
 ZIG_DECL struct us_socket_t* Bun__WebSocketClient__usSocket(WebSocketClient* arg0);
+ZIG_DECL bool Bun__WebSocket__addressOfSocket(struct us_socket_t* socket, bool isLocal, Bun::OwnedString* address, uint16_t* port);
 ZIG_DECL void Bun__WebSocketClient__close(WebSocketClient* arg0, uint16_t code, const unsigned char* utf8Reason, size_t utf8ReasonLen);
 ZIG_DECL void Bun__WebSocketClient__finalize(WebSocketClient* arg0);
 ZIG_DECL WebSocketClient* Bun__WebSocketClient__init(CppWebSocket* arg0, void* arg1, JSC::JSGlobalObject* arg2, void* bufferedData, const PerMessageDeflateParams* arg5, void* customSSLCtx, const unsigned char* verifiedHostname, size_t verifiedHostnameLen, const WebSocketConnectedOptions* options);
@@ -504,7 +505,7 @@ extern "C" SYSV_ABI void Bun__ConsoleObject__countReset(JSC::JSGlobalObject* arg
 extern "C" SYSV_ABI void Bun__ConsoleObject__messageWithTypeAndLevel(uint32_t MessageType1, uint32_t MessageLevel2, JSC::JSGlobalObject* arg3, JSC::EncodedJSValue* arg4, size_t arg5);
 extern "C" SYSV_ABI void Bun__ConsoleObject__takeHeapSnapshot(JSC::JSGlobalObject* arg1);
 extern "C" SYSV_ABI void Bun__ConsoleObject__time(const BunString* arg2);
-extern "C" SYSV_ABI void Bun__ConsoleObject__timeEnd(const BunString* arg2);
+extern "C" SYSV_ABI void Bun__ConsoleObject__timeEnd(JSC::JSGlobalObject* arg1, const BunString* arg2);
 extern "C" SYSV_ABI void Bun__ConsoleObject__timeLog(JSC::JSGlobalObject* arg1, const BunString* arg2, JSC::EncodedJSValue* arg3, size_t arg4);
 
 #endif

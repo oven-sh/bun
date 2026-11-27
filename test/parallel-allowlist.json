@@ -1910,6 +1910,8 @@
     "aot/a-path-leads-to-its-file-where-the-sources-are-gone.test.ts",
     "aot/library-class-fields.test.ts",
     "aot/library-comparisons.test.ts",
-    "aot/library-loads.test.ts"
+    "aot/library-loads.test.ts",
+    "aot/a-folder-lists-an-imported-file-at-the-name-of-an-entry-point.test.ts",
+    "aot/the-build-warns-where-the-options-of-a-require-may-name-a-type-that-it-cannot-read.test.ts"
   ]
 }

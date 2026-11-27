@@ -28,6 +28,9 @@ inline bool collectOwnEnumerableProperties(JSC::VM& vm, JSC::JSObject* object, O
     namespace PropertyWalk = JSC::AOT::PropertyWalk;
     if (PropertyWalk::isCompiledObject(object)) {
         auto visit = [&](const PropertyWalk::OwnProperty& property) {
+            // Structure::canPerformFastPropertyEnumeration() refuses it too, enumerable or not.
+            if (property.name == vm.propertyNames->underscoreProto.impl())
+                return IterationStatus::Done;
             if (property.attributes & JSC::PropertyAttribute::DontEnum)
                 return IterationStatus::Continue;
             properties.names.append(property.name);
@@ -120,32 +123,30 @@ std::optional<bool> compareCompiledObjectProperties(JSC::JSGlobalObject* globalO
         return true;
     }
 
+    // How many of the properties that the second loop counts are in `pairs`.
+    size_t remain = 0;
     for (size_t i = 0; i < properties1.names.size(); i++) {
-        WTF::UniquedStringImpl* name = properties1.names[i];
         JSC::JSValue left = properties1.values.at(i);
         JSC::JSValue right;
-        if (size_t found = properties2.indexOf(name, i); found != notFound)
+        if (size_t found = properties2.indexOf(properties1.names[i], i); found != notFound)
             right = properties2.values.at(found);
-        else if constexpr (!isStrict)
-            right = o2->getDirect(vm, JSC::PropertyName(name));
         if constexpr (!isStrict) {
             if (left.isUndefined() && right.isEmpty())
                 continue;
         }
         if (!right)
             return false;
+        if (isStrict || !right.isUndefined())
+            remain++;
         pairs.appendWithCrashOnOverflow(left);
         pairs.appendWithCrashOnOverflow(right);
     }
-    size_t remain = properties1.names.size();
     for (size_t i = 0; i < properties2.names.size(); i++) {
         if constexpr (!isStrict) {
             if (properties2.values.at(i).isUndefined())
                 continue;
         }
-        WTF::UniquedStringImpl* name = properties2.names[i];
-        bool isInFirst = properties1.indexOf(name, i) != notFound || o1->getDirect(vm, JSC::PropertyName(name));
-        if (!isInFirst || !remain)
+        if (!remain)
             return false;
         remain--;
     }

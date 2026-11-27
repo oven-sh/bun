@@ -4,6 +4,7 @@ export default b.module({ rustPath: "crate::shell::interpreter" });
 
 export const ShellInterpreter = b.class({
   rustPath: "crate::shell::Interpreter",
+  thisValue: "this_value",
   memoryCost: true,
   estimatedSize: true,
   internalFields: ["resolve", "reject", "jsobjs"],

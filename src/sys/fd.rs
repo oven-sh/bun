@@ -290,8 +290,3 @@ fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwnedError> {
     }
     Ok(out)
 }
-
-// fd → path bodies moved down to `bun_core::fd_path_raw[_w]` (libc/kernel32-
-// only; PORTING.md "move storage down"). `bun_sys` keeps the richer
-// `get_fd_path[_w]` returning `Maybe<&mut [u8/u16]>` for callers that want
-// `bun_sys::Error` with a syscall tag.

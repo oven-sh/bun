@@ -105,7 +105,7 @@ pub(super) fn finish_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: boo
         dev.publish(
             HmrTopic::TestingWatchSynchronization,
             &[MessageId::TestingWatchSynchronization.char(), 0],
-            Opcode::BINARY,
+            Opcode::Binary,
         );
     } else {
         dev.publish(
@@ -114,7 +114,7 @@ pub(super) fn finish_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: boo
                 MessageId::TestingWatchSynchronization.char(),
                 if had_sent_hmr_event { 4 } else { 3 },
             ],
-            Opcode::BINARY,
+            Opcode::Binary,
         );
     }
 
@@ -1102,7 +1102,7 @@ fn finalize_bundle_inner(
             w_int!(i32, 0);
         }
 
-        dev.publish(HmrTopic::HotUpdate, &hot_update_payload, Opcode::BINARY);
+        dev.publish(HmrTopic::HotUpdate, &hot_update_payload, Opcode::Binary);
         *had_sent_hmr_event = true;
     }
 
@@ -1152,12 +1152,12 @@ fn finalize_bundle_inner(
         // Intentionally creating a new scope here so we can limit the lifetime
         // of the `relative_path_buf`
         {
-            let mut buf = paths::path_buffer_pool::get();
+            let mut buf = paths::Path::new();
 
             // Compute a file name to display
             let file_name: Option<&[u8]> = if current_bundle!().had_reload_event {
                 if !bv2.graph.entry_points.is_empty() {
-                    Some(dev.relative_path(&mut *buf, {
+                    Some(dev.relative_path(&mut buf, {
                         use bun_bundler::Graph::InputFileColumns as _;
                         bv2.graph.input_files.items_source()
                             [bv2.graph.entry_points[0].get() as usize]
@@ -1178,7 +1178,7 @@ fn finalize_bundle_inner(
                     // / `dev.router` / `dev.graphs` reads below stay disjoint.
                     break 'brk match &dev.route_bundles[route_bundle_index.get() as usize].data {
                         route_bundle::Data::Html(html) => {
-                            Some(dev.relative_path(&mut *buf, &html.html_bundle.bundle.path))
+                            Some(dev.relative_path(&mut buf, &html.html_bundle.bundle.path))
                         }
                         route_bundle::Data::Framework(fw) => 'file_name: {
                             let route = dev.router.route_ptr(fw.route_index);
@@ -1190,7 +1190,7 @@ fn finalize_bundle_inner(
                                 from_opaque_file_id::<{ bake::Side::Server }>(opaque_id);
                             let abs_path = &dev.graphs.server.bundled_files.keys()
                                 [server_index.get() as usize];
-                            break 'file_name Some(dev.relative_path(&mut *buf, abs_path));
+                            break 'file_name Some(dev.relative_path(&mut buf, abs_path));
                         }
                     };
                 }
@@ -1272,8 +1272,8 @@ impl DevServer {
         let arr = jsc::JSArray::create_empty(global, items.len())?;
         let names = self.graphs.server.bundled_files.keys();
         for (i, item) in items.iter().enumerate() {
-            let mut buf = paths::path_buffer_pool::get();
-            let s = self.relative_path(&mut *buf, &names[item.get() as usize]);
+            let mut buf = paths::Path::new();
+            let s = self.relative_path(&mut buf, &names[item.get() as usize]);
             arr.put_index(
                 global,
                 u32::try_from(i).expect("int cast"),

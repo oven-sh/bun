@@ -368,7 +368,7 @@ fn check_route_failures(
 impl DevServer {
     pub(crate) fn respond_for_html_bundle(
         &mut self,
-        html: bun_ptr::ThisPtr<HTMLBundleRoute>,
+        html: &bun_ptr::RefPtr<HTMLBundleRoute>,
         req: &mut Request,
         resp: AnyResponse,
     ) -> Result<(), AllocError> {
@@ -401,7 +401,7 @@ impl DevServer {
 
     pub(super) fn get_or_put_route_bundle(
         &mut self,
-        route: route_bundle::UnresolvedIndex,
+        route: route_bundle::UnresolvedIndex<'_>,
     ) -> crate::Result<route_bundle::Index> {
         let index_location: &::core::cell::Cell<route_bundle::IndexOptional> = match &route {
             route_bundle::UnresolvedIndex::Framework(route_index) => {
@@ -417,15 +417,14 @@ impl DevServer {
 
         // A file delivers its html to one route bundle only: a route `server.reload()` re-registers reuses it.
         if let route_bundle::UnresolvedIndex::Html(html) = route {
-            let html_ref = &*html;
             if let Some(existing) = self
                 .graphs
                 .client
                 .bundled_files
-                .get(&html_ref.bundle.path)
+                .get(&html.bundle.path)
                 .and_then(|file| file.html_route_bundle_index)
             {
-                html_ref.dev_server_id.set(Some(existing));
+                html.dev_server_id.set(Some(existing));
                 return Ok(existing);
             }
         }
@@ -445,10 +444,9 @@ impl DevServer {
                     })
                 }
                 route_bundle::UnresolvedIndex::Html(html) => 'brk: {
-                    let html_ref = &*html;
                     let incremental_graph_index =
                         self.graphs.insert_stale_extra::<{ Side::Client }>(
-                            &html_ref.bundle.path,
+                            &html.bundle.path,
                             bake::Graph::Client,
                             incremental_graph::RouteKind::Route,
                         )?;
@@ -456,7 +454,7 @@ impl DevServer {
                         [incremental_graph_index.get() as usize];
                     file.html_route_bundle_index = Some(bundle_index);
                     break 'brk route_bundle::Data::Html(route_bundle::Html {
-                        html_bundle: bun_ptr::RefPtr::from_this(html),
+                        html_bundle: html.clone(),
                         bundled_file: incremental_graph_index,
                         script_injection_offset: None,
                         cached_response: None,
@@ -492,7 +490,7 @@ impl DevServer {
         }
         if let Some(html) = self.html_router.get(pattern) {
             return Some(
-                self.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))
+                self.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(&html))
                     .expect("oom"),
             );
         }
@@ -500,14 +498,11 @@ impl DevServer {
     }
 }
 
-/// This structure does not increment the reference count of its contents, as
-/// the lifetime of them are all tied to the underling Bun.serve instance.
-/// `<'a>` retained only for the owning `DevServer<'a>`'s `Transpiler` borrows.
 #[derive(Default)]
 pub(crate) struct HTMLRouter {
-    pub(crate) map: StringHashMap<bun_ptr::BackRef<HTMLBundleRoute, bun_ptr::Root>>,
+    pub(crate) map: StringHashMap<bun_ptr::RefPtr<HTMLBundleRoute>>,
     /// If a catch-all route exists, it is not stored in map, but here.
-    pub(crate) fallback: Option<bun_ptr::BackRef<HTMLBundleRoute, bun_ptr::Root>>,
+    pub(crate) fallback: Option<bun_ptr::RefPtr<HTMLBundleRoute>>,
 }
 
 impl HTMLRouter {
@@ -518,18 +513,14 @@ impl HTMLRouter {
         }
     }
 
-    pub(crate) fn get(&self, path: &[u8]) -> Option<bun_ptr::ThisPtr<HTMLBundleRoute>> {
-        self.map
-            .get(path)
-            .copied()
-            .or(self.fallback)
-            .map(|r| r.this_ptr())
+    pub(crate) fn get(&self, path: &[u8]) -> Option<bun_ptr::RefPtr<HTMLBundleRoute>> {
+        self.map.get(path).or(self.fallback.as_ref()).cloned()
     }
 
     pub(crate) fn put(
         &mut self,
         path: &[u8],
-        route: bun_ptr::BackRef<HTMLBundleRoute, bun_ptr::Root>,
+        route: bun_ptr::RefPtr<HTMLBundleRoute>,
     ) -> crate::Result<()> {
         if path == b"/*" {
             self.fallback = Some(route);

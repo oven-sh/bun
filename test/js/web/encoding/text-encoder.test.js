@@ -714,3 +714,36 @@ describe("TextEncoder UTF-16 exact-size path", () => {
     }
   });
 });
+
+describe("no more of a long string is read than fits", () => {
+  const encoder = new TextEncoder();
+  const rest = Buffer.alloc(32 * 1024 * 1024, "a").toString();
+
+  it.each([
+    ["UTF-16", "\u4e2d", 2, 1_000],
+    ["Latin-1", "\xe9", 3, 10_000],
+  ])("%s", (_, first, units, calls) => {
+    const text = first + rest;
+    const buffer = Buffer.alloc(4);
+    let [read, written] = [0, 0];
+    for (let i = 0; i < calls; i++) {
+      read += encoder.encodeInto(text, buffer).read;
+      written += buffer.write(text);
+    }
+    expect({ read, written }).toEqual({ read: calls * units, written: calls * 4 });
+  });
+
+  it.each([
+    ["abc\u{1f600}\u4e2d", 3, 3],
+    ["\u{1f600}\u4e2dabcd", 2, 4],
+    ["abcd\ud83d\u4e2d", 4, 4],
+    ["a\ud83d\u4e2dabcd", 2, 4],
+  ])("%j", (text, read, written) => {
+    expect(encoder.encodeInto(text, new Uint8Array(4))).toEqual({ read, written });
+    expect(Buffer.alloc(4).write(text)).toBe(written);
+  });
+
+  it("fill() cuts a surrogate pair at the end", () => {
+    expect([...Buffer.alloc(4).fill("abc\u{1f600}\u4e2d")]).toEqual([0x61, 0x62, 0x63, 0xf0]);
+  });
+});

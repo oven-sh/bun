@@ -12,7 +12,8 @@ use bun_ast::stmt::Data;
 use bun_ast::{self as ast, Binding, Expr, G, Ref, Stmt, b, s};
 use smallvec::SmallVec;
 
-use crate::collections::FxHashMap as HashMap;
+use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
+use std::collections::hash_map::Entry;
 
 use crate::hir::environment::{Environment, OutputMode};
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
@@ -42,7 +43,7 @@ fn lower_block_statement(
     builder: &mut HirBuilder,
     body: &[Stmt],
 ) -> Result<(), CompilerDiagnostic> {
-    lower_block_statement_inner(builder, body)
+    lower_block_statement_inner(builder, body, None)
 }
 
 /// Not in upstream (oxc 4372e145f): the `finally` block of a `try`, lowered after the rest of it.
@@ -59,11 +60,12 @@ fn lower_finally_block(
     result
 }
 
-pub(super) fn lower_block_statement_with_scope(
+pub(super) fn lower_function_body(
     builder: &mut HirBuilder,
+    params: &[G::Arg],
     body: &[Stmt],
 ) -> Result<(), CompilerDiagnostic> {
-    lower_block_statement_inner(builder, body)
+    lower_block_statement_inner(builder, body, Some(params))
 }
 
 // Upstream's BlockStatement hoisting only emits a `DeclareContext` for a
@@ -81,12 +83,17 @@ pub(super) fn lower_block_statement_with_scope(
 fn lower_block_statement_inner(
     builder: &mut HirBuilder,
     body: &[Stmt],
+    params: Option<&[G::Arg]>,
 ) -> Result<(), CompilerDiagnostic> {
+    // Not in Bun's lowering: a `var` is a binding of the body of its function, wherever in it the `var` is. To oxc
+    // it is declared by the first statement of the body that is a declaration of its name, or by none, and no
+    // parameter is declared early.
+    let vars_of = params.filter(|_| builder.environment().config.jsx_tags_hoist_no_declaration);
     // Phase 1: collect this block's let/const/function bindings by statement index.
     let mut decls: SmallVec<[(usize, Ref, ast::Loc, InstructionKind); 8]> = SmallVec::new();
     for (i, stmt) in body.iter().enumerate() {
         match &stmt.data {
-            Data::SLocal(local) => {
+            Data::SLocal(local) if !matches!(local.kind, s::Kind::KVar) => {
                 let kind = match local.kind {
                     s::Kind::KLet => InstructionKind::HoistedLet,
                     s::Kind::KConst => InstructionKind::HoistedConst,
@@ -108,7 +115,20 @@ fn lower_block_statement_inner(
                     ));
                 }
             }
-            _ => {}
+            _ => {
+                if let Some(params) = vars_of {
+                    let declared_at = match &stmt.data {
+                        Data::SLocal(_) => i,
+                        _ => usize::MAX,
+                    };
+                    vars_in_stmt(builder, stmt, &mut |r, loc| {
+                        let var = builder.resolve_ref(r);
+                        if !is_parameter(builder, params, var) {
+                            decls.push((declared_at, var, loc, InstructionKind::HoistedConst));
+                        }
+                    });
+                }
+            }
         }
     }
 
@@ -131,9 +151,32 @@ fn lower_block_statement_inner(
     // resulting scope to be flattened.
     // A statement is walked once, for all the decls that are not before it.
     let mut refs = ForwardRefs::default();
+    let mut has_redeclarations = false;
     for &(decl_i, target, _, kind) in &decls {
-        refs.last_decl.insert(target, decl_i);
+        match refs.last_decl.entry(target) {
+            Entry::Occupied(mut declared) if vars_of.is_some() => {
+                has_redeclarations = true;
+                let first = declared.get_mut();
+                *first = decl_i.min(*first);
+            }
+            Entry::Occupied(mut declared) => {
+                declared.insert(decl_i);
+            }
+            Entry::Vacant(declared) => {
+                declared.insert(decl_i);
+            }
+        }
         refs.has_functions |= kind == InstructionKind::HoistedFunction;
+    }
+    if has_redeclarations {
+        // The first declaration of a name says of what kind it is.
+        let mut kept: HashSet<Ref> = HashSet::default();
+        decls.retain(|decl| {
+            if let Some(&first) = refs.last_decl.get(&decl.1) {
+                decl.0 = first;
+            }
+            kept.insert(decl.1)
+        });
     }
     let mut hoist: SmallVec<[Hoist; 4]> = SmallVec::new();
     'outer: for (i, stmt) in body.iter().enumerate() {
@@ -319,7 +362,7 @@ struct SeenRef {
 /// What one statement of a block refers to, of the block's own bindings that are not declared before it.
 #[derive(Default)]
 struct ForwardRefs {
-    /// The index of the statement that declares it.
+    /// The index of the statement that declares it, or `usize::MAX` for a `var` that none declares.
     last_decl: HashMap<Ref, usize>,
     has_functions: bool,
     seen: HashMap<Ref, SeenRef>,
@@ -351,6 +394,91 @@ impl ForwardRefs {
                 seen.outside_patterns.see(first, in_function);
             }
         }
+    }
+}
+
+fn is_parameter(builder: &HirBuilder, params: &[G::Arg], target: Ref) -> bool {
+    let mut found = false;
+    for param in params {
+        collect_binding_refs(builder.environment(), &param.binding, &mut |r, _| {
+            found |= builder.resolve_ref(r) == target;
+        });
+    }
+    found
+}
+
+type OnVar<'a> = &'a mut dyn FnMut(Ref, ast::Loc);
+
+/// Calls `on_var` for each binding of the `var`s in the statement that are not in a nested function. Not for one that
+/// has the name of the parameter of a `catch` that it is in: oxc's semantic has one symbol for the two.
+fn vars_in_stmt(builder: &HirBuilder, stmt: &Stmt, on_var: OnVar) {
+    if !builder.environment().has_stack() {
+        return;
+    }
+    let stmts = |stmts: &[Stmt], on_var: OnVar| {
+        for s in stmts {
+            vars_in_stmt(builder, s, on_var);
+        }
+    };
+    match &stmt.data {
+        Data::SLocal(l) if matches!(l.kind, s::Kind::KVar) => {
+            for d in l.decls.iter() {
+                collect_binding_refs(builder.environment(), &d.binding, &mut |r, loc| {
+                    on_var(r, loc);
+                });
+            }
+        }
+        Data::SBlock(b) => stmts(b.stmts.slice(), on_var),
+        Data::SIf(i) => {
+            vars_in_stmt(builder, &i.yes, on_var);
+            if let Some(n) = &i.no {
+                vars_in_stmt(builder, n, on_var);
+            }
+        }
+        Data::SFor(f) => {
+            if let Some(s) = &f.init {
+                vars_in_stmt(builder, s, on_var);
+            }
+            vars_in_stmt(builder, &f.body, on_var);
+        }
+        Data::SForIn(f) => {
+            vars_in_stmt(builder, &f.init, on_var);
+            vars_in_stmt(builder, &f.body, on_var);
+        }
+        Data::SForOf(f) => {
+            vars_in_stmt(builder, &f.init, on_var);
+            vars_in_stmt(builder, &f.body, on_var);
+        }
+        Data::SWhile(w) => vars_in_stmt(builder, &w.body, on_var),
+        Data::SDoWhile(d) => vars_in_stmt(builder, &d.body, on_var),
+        Data::SSwitch(sw) => {
+            for c in sw.cases.slice() {
+                stmts(c.body.slice(), on_var);
+            }
+        }
+        Data::STry(t) => {
+            stmts(t.body.slice(), on_var);
+            if let Some(c) = &t.catch {
+                let host = builder.host();
+                let parameter = c.binding.as_ref().and_then(|it| match &it.data {
+                    b::B::BIdentifier(id) => Some(host.ref_name(id.r#ref)),
+                    _ => None,
+                });
+                for s in c.body.slice() {
+                    vars_in_stmt(builder, s, &mut |r, loc| {
+                        if parameter != Some(host.ref_name(r)) {
+                            on_var(r, loc);
+                        }
+                    });
+                }
+            }
+            if let Some(f) = &t.finally {
+                stmts(f.stmts.slice(), on_var);
+            }
+        }
+        Data::SLabel(l) => vars_in_stmt(builder, &l.stmt, on_var),
+        Data::SWith(w) => vars_in_stmt(builder, &w.body, on_var),
+        _ => {}
     }
 }
 
@@ -1594,7 +1722,7 @@ fn lower_statement(
                         }
                     }
                 }
-                lower_block_statement_with_scope(builder, &handler_clause.body)?;
+                lower_block_statement(builder, &handler_clause.body)?;
                 builder.pop_scope();
                 builder.pop_scope();
                 Ok(Terminal::Goto {

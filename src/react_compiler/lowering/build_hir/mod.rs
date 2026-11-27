@@ -309,10 +309,10 @@ pub(super) fn lower_inner<'h>(
                     directives.push(d.value);
                 }
             }
-            // Use lower_block_statement_with_scope to get hoisting support for the function body.
+            // Use lower_function_body to get hoisting support for the function body.
             // Pass the function scope since in Babel, a function body BlockStatement shares
             // the function's scope (node_to_scope maps the function node, not the block).
-            stmt::lower_block_statement_with_scope(&mut builder, body_stmts)?;
+            stmt::lower_function_body(&mut builder, params, body_stmts)?;
         }
     }
 

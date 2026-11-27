@@ -2349,6 +2349,15 @@ fn collect_dependencies(
     Ok(ctx.deps)
 }
 
+fn has_finish_memoize(func: &HirFunction, id: u32) -> bool {
+    func.body.blocks.values().any(|block| {
+        block.instructions.iter().any(|instr_id| {
+            matches!(&func.instructions[instr_id.0 as usize].value,
+                InstructionValue::FinishMemoize { manual_memo_id, .. } if *manual_memo_id == id)
+        })
+    })
+}
+
 fn handle_function_deps(
     func: &HirFunction,
     env: &mut Environment,
@@ -2409,7 +2418,10 @@ fn handle_function_deps(
                             deps: Some(deps),
                             ..
                         } if env.config.nested_function_dependencies
-                            == NestedFunctionDependencies::BeforeCurrentUnlessListed =>
+                            == NestedFunctionDependencies::BeforeCurrentUnlessListed
+                            && deps.iter().any(|it| it.path.iter().any(is_current))
+                            // A callback of `useMemo` that always throws leaves no `FinishMemoize` to end the list at.
+                            && has_finish_memoize(func, *manual_memo_id) =>
                         {
                             let through_current =
                                 deps.iter().filter(|it| it.path.iter().any(is_current));

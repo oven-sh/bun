@@ -5180,7 +5180,7 @@ test("react-compiler sorts the dependencies and the declarations of a scope as J
 test("react-compiler ends the dependency of a nested function before `.current`", async () => {
   using dir = tempDir("react-compiler-nested-current", {
     "entry.jsx": `
-      import { useCallback, useContext, useEffect, useLayoutEffect, useRef } from "react";
+      import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 
       export function Handler({ forwardedRef, onTag }) {
         const ownRef = useRef(null);
@@ -5235,6 +5235,24 @@ test("react-compiler ends the dependency of a nested function before `.current`"
       }
       export function useListsLessThanItReads(x) {
         return useCallback(() => x.current.a.b, [x.current]);
+      }
+      // The list is for the functions of its own call alone. \`later\` is after the call.
+      export function AfterAListOfCurrent({ x, onTag }) {
+        const value = useMemo(() => [() => x.current.a], [x.current.a]);
+        const later = () => onTag(x.current.a.b);
+        return <div onClick={later}>{value}</div>;
+      }
+      // Nothing marks where this call ends, because it does not return. Not compiled, as before: with the list still
+      // open, the guard of \`later\` read \`x.current.a\` outside the \`try\`.
+      export function AfterAListOfCurrentThatThrows({ x }) {
+        let value = null;
+        try {
+          value = useMemo(() => {
+            throw new Error(String(x.current.a));
+          }, [x.current.a]);
+        } catch {}
+        const later = () => x.current.a.b;
+        return <div onClick={later}>{value}</div>;
       }
 
       // What it costs: these are not made again when \`store.current\` is assigned and \`store\` stays. A function that
@@ -5298,6 +5316,8 @@ test("react-compiler ends the dependency of a nested function before `.current`"
     InRender: ["props.store.current.v"],
     ListsCurrent: ["fetchPage", "pagination.current", "load"],
     useListsLessThanItReads: ["x.current"],
+    AfterAListOfCurrent: ["x.current.a", "onTag", "x", "later", "value"],
+    AfterAListOfCurrentThatThrows: null,
     CalledInRender: ["store", "value"],
     Context: ["foo", "value"],
     ReadNextToAFunction: ["store"],

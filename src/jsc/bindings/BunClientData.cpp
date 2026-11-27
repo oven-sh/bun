@@ -27,6 +27,7 @@
 #include "ConsoleObject.h"
 #include "StrongRootBlock.h"
 #include "IsolatedModuleCache.h"
+#include "ZigSourceProvider.h"
 
 namespace WebCore {
 using namespace JSC;

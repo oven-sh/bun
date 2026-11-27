@@ -572,8 +572,8 @@ test("rejects cached module records containing out-of-range string indices", () 
   //
   // Cache entry layout (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
   //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8,
-  //   then twelve u64 fields; esm_record_byte_offset @ 78,
-  //   esm_record_byte_length @ 86, esm_record_hash @ 94. Payload follows @ 102.
+  //   then fifteen u64 fields; esm_record_byte_offset @ 78,
+  //   esm_record_byte_length @ 86, esm_record_hash @ 94. Payload follows @ 126.
   // Serialized module record layout (ModuleInfoStringTable + body, see
   // `ModuleInfoDeserialized::serialize` in src/js_printer/lib.rs):
   //   table: [offset_width u8][0;3][count u32][(count+1) offsets][pad to even][bytes]
@@ -582,7 +582,7 @@ test("rejects cached module records containing out-of-range string indices", () 
   const ESM_RECORD_BYTE_OFFSET_AT = 78;
   const ESM_RECORD_BYTE_LENGTH_AT = 86;
   const ESM_RECORD_HASH_AT = 94;
-  const METADATA_SIZE = 102;
+  const METADATA_SIZE = 126;
 
   function corruptModuleRecordStringIndices(file: string): boolean {
     const data = readFileSync(file);
@@ -688,7 +688,7 @@ test("rejects a cached entry whose sourcemap section header is corrupt", () => {
   //
   // Cache entry layout (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
   //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8,
-  //   then twelve u64 fields; sourcemap_byte_offset @ 54,
+  //   then fifteen u64 fields; sourcemap_byte_offset @ 54,
   //   sourcemap_byte_length @ 62, sourcemap_hash @ 70.
   // InternalSourceMap header (src/sourcemap/InternalSourceMap.rs):
   //   0: total_len u64, 8: mapping_count u64, 16: unused,
@@ -698,7 +698,7 @@ test("rejects a cached entry whose sourcemap section header is corrupt", () => {
 
   function corruptSourceMapHeader(file: string): boolean {
     const data = readFileSync(file);
-    if (data.length < 102) return false;
+    if (data.length < 126) return false;
     const smOff = Number(data.readBigUInt64LE(SOURCEMAP_BYTE_OFFSET_AT));
     const smLen = Number(data.readBigUInt64LE(SOURCEMAP_BYTE_LENGTH_AT));
     if (smLen < 32 || smOff + smLen > data.length) return false;
@@ -1218,12 +1218,11 @@ describe("cached sourcemap with a corrupted body", () => {
     }
   }
 
-  // The coverage report walks every mapping in the module.
-  test("bun test --coverage doesn't crash", () => {
+  test("a stack trace under bun test --coverage doesn't crash", () => {
     writeFileSync(
       join(temp_dir, "lib.ts"),
       `${filler}
-export function add(a: number, b: number): number { return a + b; }
+export function add(a: number, b: number): number { String(new Error().stack); return a + b; }
 export function unused(a: number): number { if (a > 1) { return a * 2; } return a; }
 `,
     );
@@ -1251,6 +1250,84 @@ test("add", () => { expect(add(1, 2)).toBe(3); });
         servedFromDamagedEntry: servedFromDamagedEntry(),
       }).toEqual({ name, passed: true, signalCode: undefined, exitCode: 0, servedFromDamagedEntry: true });
     });
+  });
+});
+
+// The section says where generated code adds to an array (`PlacedInText::encode` in src/ast/coverage.rs):
+//   [n u32][n counters without a place u32][offset u32, counter | event << 30 u32]...
+describe.concurrent("cached places of coverage counters", () => {
+  const COVERAGE_BYTE_OFFSET_AT = 102;
+  const COVERAGE_BYTE_LENGTH_AT = 110;
+  const COVERAGE_HASH_AT = 118;
+
+  test.each<[string, (section: Buffer, entry: Buffer) => void]>([
+    ["a counter past the last", s => void s.writeUInt32LE((s.length - 4) / 8, 8)],
+    ["the largest counter", s => void s.writeUInt32LE(0xffffffff, 8)],
+    ["offsets out of order", s => void s.writeUInt32LE(0xffffffff, 4)],
+    ["more counters without a place than bytes", s => void s.writeUInt32LE(0xffffffff, 0)],
+    ["a counter without a place past the last", s => void (s.writeUInt32LE(2, 0), s.fill(0xff, 4, 12))],
+    ["counters without a place out of order", s => void (s.writeUInt32LE(2, 0), s.fill(0xff, 4, 8), s.fill(0, 8, 12))],
+    ["another hash", (_, entry) => void entry.writeBigUInt64LE(0n, COVERAGE_HASH_AT)],
+    ["no section", (_, entry) => void entry.writeBigUInt64LE(0n, COVERAGE_BYTE_LENGTH_AT)],
+    ["a section past the end", (_, entry) => void entry.writeBigUInt64LE(1n << 40n, COVERAGE_BYTE_LENGTH_AT)],
+  ])("an entry with %s is replaced", async (_, damage) => {
+    using dir = tempDir("transpiler-cache-coverage", {
+      "lib.ts": `export const pick = (v: number) => (v ? 1 : 2);\n//${Buffer.alloc(4096, "x")}\n`,
+      "lib.test.ts": `import { pick } from "./lib.ts"; pick(1);`,
+    });
+    const cache = join(String(dir), ".cache");
+    const run = async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--coverage-reporter=lcov", "--coverage-include=lib.ts"],
+        cwd: String(dir),
+        env: { ...env, BUN_RUNTIME_TRANSPILER_CACHE_PATH: cache },
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      const exitCode = await proc.exited;
+      return { lcov: readFileSync(join(String(dir), "coverage", "lcov.info"), "utf8"), exitCode };
+    };
+    const first = await run();
+    expect(first.lcov).toContain("BRDA:1,0,0,1\nBRDA:1,0,1,0\n");
+
+    const entry = join(cache, readdirSync(cache)[0]);
+    const pristine = readFileSync(entry);
+    const damaged = Buffer.from(pristine);
+    const section = damaged.subarray(Number(damaged.readBigUInt64LE(COVERAGE_BYTE_OFFSET_AT)));
+    expect(BigInt(section.length)).toBe(damaged.readBigUInt64LE(COVERAGE_BYTE_LENGTH_AT));
+    expect(Bun.hash.wyhash(section, 42n)).toBe(damaged.readBigUInt64LE(COVERAGE_HASH_AT));
+    damage(section, damaged);
+    damaged.writeBigUInt64LE(Bun.hash.wyhash(section, 42n), COVERAGE_HASH_AT);
+    damage(section, damaged);
+    writeFileSync(entry, damaged);
+
+    expect(await run()).toEqual(first);
+    expect(readFileSync(entry).equals(pristine)).toBe(true);
+    expect(first.exitCode).toBe(0);
+  });
+
+  test("a file has an entry with coverage and one without", async () => {
+    using dir = tempDir("transpiler-cache-coverage", {
+      "lib.ts": `export const one = 1;\n//${Buffer.alloc(4096, "x")}\n`,
+      "lib.test.ts": `import "./lib.ts";`,
+      "ignores.toml": `[test]\ncoverageIgnoreSourcemaps = true\n`,
+    });
+    const cache = join(String(dir), ".cache");
+    const entriesAfter = async (...flags: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...flags],
+        cwd: String(dir),
+        env: { ...env, BUN_RUNTIME_TRANSPILER_CACHE_PATH: cache },
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      expect(await proc.exited).toBe(0);
+      return readdirSync(cache).length;
+    };
+    expect(await entriesAfter()).toBe(1);
+    expect(await entriesAfter("--coverage-include=!lib.ts")).toBe(1);
+    expect(await entriesAfter("--coverage", "--config=ignores.toml")).toBe(1);
+    expect(await entriesAfter("--coverage")).toBe(2);
   });
 });
 

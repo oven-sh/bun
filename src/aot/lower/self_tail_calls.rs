@@ -270,7 +270,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let is_plain = matches!(written.kind, FnKind::Decl | FnKind::Expr | FnKind::Arrow)
             && written.is_strict
             && !written.flags.intersects(Flags::ASYNC | Flags::GENERATOR)
-            && (has_simple_parameter_list(hir, function) || has_names_with_defaults(hir, function));
+            && (has_simple_parameter_list(hir, function)
+                || has_names_with_defaults(hir, function) && !self.file.counts_executions());
         if !is_plain || self.file.scopes.has_environment(top) {
             return None;
         }

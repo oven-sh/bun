@@ -30,9 +30,7 @@ pub(crate) enum Kind {
     Run,
     /// (empty)
     Shutdown,
-    /// str report — one source file's coverage from this worker, sent at exit
-    /// as `bun_sourcemap_jsc::code_coverage::wire`. The coordinator merges
-    /// every worker's per file and writes the one report.
+    /// str part, u32 parts before, u32 parts after — of what `Collector::add_encoded` takes, sent at exit
     CoverageFile,
     /// str line — one write to a read-only built-in that failed in a file that ran compiled, sent ahead of the file's FileDone
     RefusedChange,

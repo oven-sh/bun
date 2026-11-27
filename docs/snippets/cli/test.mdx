@@ -105,12 +105,16 @@ bun test <patterns>
 </ParamField>
 
 <ParamField path="--coverage-reporter" type="string" default="text">
-  Report coverage in <code>text</code> and/or <code>lcov</code>. Defaults to <code>text</code>. Implies{" "}
-  <code>--coverage</code>
+  Report coverage in <code>text</code>, <code>lcov</code>, <code>json</code> and/or <code>json-summary</code>. Defaults
+  to <code>text</code>. Implies <code>--coverage</code>
 </ParamField>
 
 <ParamField path="--coverage-dir" type="string" default="coverage">
   Directory for coverage files. Defaults to <code>coverage</code>
+</ParamField>
+
+<ParamField path="--coverage-include" type="string">
+  Report coverage for the files that match this glob, even if no test loads them. Implies <code>--coverage</code>
 </ParamField>
 
 ### Snapshots

@@ -195,6 +195,8 @@ public:
 using ErrorableString = Errorable<Bun::OwnedString>;
 static_assert(sizeof(ErrorableString) == 32 && alignof(ErrorableString) == 8, "ErrorableString layout is mirrored in src/jsc/Errorable.rs");
 BUN_DECLARE_FFI_DELETER(bun_ModuleInfoDeserialized, zig__ModuleInfoDeserialized__deinit);
+BUN_DECLARE_FFI_DELETER(bun_CountedText, Bun__CountedText__destroy);
+extern "C" void Bun__CountedText__didReplaceStart(bun_CountedText*, uint32_t removed, uint32_t added);
 extern "C" void ResolvedSource__freeBytecode(uint8_t* bytecode);
 class ResolvedSourceBytecode {
     WTF_MAKE_NONCOPYABLE(ResolvedSourceBytecode);
@@ -241,11 +243,13 @@ typedef struct ResolvedSource {
     // File path whose file:// URL is the source origin (what import() resolves against, what a bytecode cache is
     // validated against). If empty, origin is derived from source_url.
     Bun::OwnedString origin_path;
+    // `bun test --coverage`. It has offsets in source_code.
+    std::unique_ptr<bun_CountedText> coverage;
 } ResolvedSource;
-static_assert(sizeof(ResolvedSource) == 136 && OBJECT_OFFSETOF(ResolvedSource, is_prelinked_module) == 77 && OBJECT_OFFSETOF(ResolvedSource, depends_on_more_than_source) == 78 && OBJECT_OFFSETOF(ResolvedSource, is_static) == 79 && OBJECT_OFFSETOF(ResolvedSource, bytecode_cache) == 80 && sizeof(ResolvedSourceBytecode) == 24 && OBJECT_OFFSETOF(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
+static_assert(sizeof(ResolvedSource) == 144 && OBJECT_OFFSETOF(ResolvedSource, is_prelinked_module) == 77 && OBJECT_OFFSETOF(ResolvedSource, depends_on_more_than_source) == 78 && OBJECT_OFFSETOF(ResolvedSource, is_static) == 79 && OBJECT_OFFSETOF(ResolvedSource, bytecode_cache) == 80 && sizeof(ResolvedSourceBytecode) == 24 && OBJECT_OFFSETOF(ResolvedSource, module_info) == 104 && OBJECT_OFFSETOF(ResolvedSource, coverage) == 136, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 using ErrorableResolvedSource = Errorable<ResolvedSource>;
-static_assert(sizeof(ErrorableResolvedSource) == 144 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");
+static_assert(sizeof(ErrorableResolvedSource) == 152 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");
 static_assert(JSC::CompiledEnvironmentType == 33 && JSC::ObjectType == 34 && JSC::JSFunctionType == 37 && JSC::CompiledClosureType == 38 && JSC::InternalFunctionType == 39 && JSC::Int8ArrayType == 51 && JSC::DataViewType == 63 && JSC::WebAssemblyGCObjectType == 96 && JSC::CompiledObjectType == 97 && JSC::SlimClosureType == 98 && JSC::SlimClosureWithPropertiesType == 99 && JSC::StringObjectType == 100 && JSC::DerivedStringObjectType == 101, "JSType numbers are mirrored in src/jsc/JSType.rs");
 
 typedef struct SystemError {

@@ -1829,8 +1829,13 @@ fn codegen_instruction_value(
             }
         }
         ReactiveValue::OptionalExpression {
-            value, optional, ..
+            value,
+            optional,
+            loc,
+            ..
         } => {
+            let end = loc.and_then(|it| it.end.index);
+            let end = end.map(|it| Loc { start: it as i32 });
             let opt_value = codegen_instruction_value_to_expression(cx, value)?;
             let chain = Some(if *optional {
                 OptionalChain::Start
@@ -1840,14 +1845,17 @@ fn codegen_instruction_value(
             match opt_value.data {
                 ExprData::ECall(mut c) => {
                     c.optional_chain = chain;
+                    c.close_paren_loc = end.unwrap_or(c.close_paren_loc);
                     Ok(opt_value)
                 }
                 ExprData::EDot(mut d) => {
                     d.optional_chain = chain;
+                    d.name_loc = end.unwrap_or(d.name_loc);
                     Ok(opt_value)
                 }
                 ExprData::EIndex(mut i) => {
                     i.optional_chain = chain;
+                    i.index.loc = end.unwrap_or(i.index.loc);
                     Ok(opt_value)
                 }
                 other => Err(invariant_err(

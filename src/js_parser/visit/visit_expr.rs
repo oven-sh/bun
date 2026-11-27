@@ -1490,7 +1490,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .was_originally_macro
                     {
                         if let Some(obj) = e_.target.get(&e_.name) {
-                            *e = obj;
+                            *e = p.in_place_of(e.loc, obj);
                             return;
                         }
                     }
@@ -2185,7 +2185,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
                         // This makes static analysis later easier
                         if let Some(transposed) = p.maybe_transpose_if_require(first, &state) {
-                            *e = transposed;
+                            *e = p.in_place_of(e.loc, transposed);
                         }
                         return;
                     }
@@ -2247,7 +2247,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let Some(transposed) =
                             p.maybe_transpose_if_require_resolve(first, e_.target)
                         {
-                            *e = transposed;
+                            *e = p.in_place_of(e.loc, transposed);
                         }
                         return;
                     }
@@ -2340,6 +2340,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !matches!(macro_result.data, Data::ECall(..)) {
                     *e = macro_result;
                     p.visit_expr(e);
+                    if p.options.features.code_coverage {
+                        forget_locs_inside(*e);
+                    }
                     return;
                 }
             }
@@ -2809,6 +2812,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 == 0
         {
             e_.class_name = None;
+        }
+    }
+}
+
+/// For data that is not written in this file, which coverage would take for what is.
+#[cold]
+fn forget_locs_inside(data: Expr) {
+    let mut parts = vec![data];
+    while let Some(part) = parts.pop() {
+        let forget = |it: &mut Expr| {
+            if !core::mem::replace(&mut it.loc, js_ast::Loc::EMPTY).is_empty() {
+                parts.push(*it);
+            }
+        };
+        match part.data {
+            Data::EArray(mut it) => it.items.iter_mut().for_each(forget),
+            Data::EObject(mut it) => (it.properties.iter_mut())
+                .flat_map(|it| it.key.iter_mut().chain(&mut it.value))
+                .for_each(forget),
+            _ => {}
         }
     }
 }

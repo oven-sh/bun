@@ -286,10 +286,9 @@ impl FileLowering<'_, '_, '_, '_> {
             return None;
         }
         let added = self.inputs.names_added_to_builtins;
-        if self.inputs.options.counts_executions
-            || added
-                .iter()
-                .any(|added| added.0 == BuiltinId::ObjectPrototype)
+        if added
+            .iter()
+            .any(|added| added.0 == BuiltinId::ObjectPrototype)
             || (lists_lacking && !target.is_some_and(|target| self.is_target_fresh(target, call)))
         {
             return None;
@@ -370,10 +369,9 @@ impl FileLowering<'_, '_, '_, '_> {
         let site = self.find_plain_call(call).filter(|it| it.args.len() == 1)?;
         let helper = self.find_getter_of_copies(site.callee)?;
         let added = self.inputs.names_added_to_builtins;
-        if self.inputs.options.counts_executions
-            || added
-                .iter()
-                .any(|added| added.0 == BuiltinId::ObjectPrototype)
+        if added
+            .iter()
+            .any(|added| added.0 == BuiltinId::ObjectPrototype)
         {
             return None;
         }

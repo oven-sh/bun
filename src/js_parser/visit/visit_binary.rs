@@ -435,7 +435,7 @@ impl BinaryExpressionVisitor {
                         p.arena,
                         FoldStringAdditionKind::Normal,
                     ) {
-                        return res;
+                        return p.in_place_of(v.loc, res);
                     }
 
                     // "(x + 'abc') + 'xyz'" => "'abcxyz'"
@@ -703,7 +703,7 @@ impl BinaryExpressionVisitor {
                 if let Some(dot) = e_.left.data.e_dot() {
                     if let Some(obj) = dot.target.data.e_object() {
                         if obj.properties.len_u32() == 0 {
-                            if dot.name != b"__proto__" {
+                            if dot.name != b"__proto__" && !p.options.features.code_coverage {
                                 return e_.right;
                             }
                         }

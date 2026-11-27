@@ -166,6 +166,7 @@ dependencies = [
  "bun_base64",
  "bun_builtin_sources",
  "bun_bundler",
+ "bun_code_coverage",
  "bun_collections",
  "bun_core",
  "bun_glob",
@@ -433,6 +434,28 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "bun_code_coverage"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_ast",
+ "bun_collections",
+ "bun_core",
+ "bun_glob",
+ "bun_options_types",
+ "bun_parsers",
+ "bun_paths",
+ "bun_removable_features",
+ "bun_resolver",
+ "bun_sema",
+ "bun_sema_parser",
+ "bun_sort_by_number",
+ "bun_sourcemap",
+ "bun_sys",
+ "bun_threading",
 ]
 
 [[package]]
@@ -1094,6 +1117,7 @@ dependencies = [
  "bun_base64",
  "bun_boringssl",
  "bun_bundler",
+ "bun_code_coverage",
  "bun_collections",
  "bun_core",
  "bun_crash_handler",
@@ -1656,6 +1680,7 @@ dependencies = [
  "bun_bundler_jsc",
  "bun_bunfig",
  "bun_clap",
+ "bun_code_coverage",
  "bun_collections",
  "bun_core",
  "bun_crash_handler",
@@ -1949,19 +1974,9 @@ dependencies = [
 name = "bun_sourcemap_jsc"
 version = "0.0.0"
 dependencies = [
- "bun_alloc",
- "bun_ast",
- "bun_collections",
  "bun_core",
- "bun_io",
- "bun_js_parser",
- "bun_js_printer",
  "bun_jsc",
- "bun_options_types",
- "bun_paths",
- "bun_removable_features",
  "bun_sourcemap",
- "bun_wyhash",
 ]
 
 [[package]]

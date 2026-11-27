@@ -5,6 +5,9 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_ast::ExportsKind;
 use bun_ast::Source;
+use bun_ast::coverage::PlacedInText;
+use bun_bundler::transpiler::ParseResult;
+use bun_code_coverage::{CountedText, Loading, Transpiling};
 use bun_core::{FeatureFlags, env_var};
 use bun_core::{String as BunString, StringView, ZStr};
 use bun_js_parser::lower::defer_requires::has_react_compiler;
@@ -89,7 +92,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 52: Every directive is printed: a `"use strict"` in a function body too, and the
 /// prologue of the file first.
 /// Version 53: The name of a Node.js builtin in `import()` is printed as it is written.
-const EXPECTED_VERSION: u32 = 53;
+/// Version 54: An entry has the places of the counters of `--coverage`.
+const EXPECTED_VERSION: u32 = 54;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -153,6 +157,10 @@ pub struct Metadata {
     pub(crate) esm_record_byte_offset: u64,
     pub(crate) esm_record_byte_length: u64,
     pub(crate) esm_record_hash: u64,
+
+    pub(crate) coverage_byte_offset: u64,
+    pub(crate) coverage_byte_length: u64,
+    pub(crate) coverage_hash: u64,
 }
 
 impl Default for Metadata {
@@ -173,13 +181,16 @@ impl Default for Metadata {
             esm_record_byte_offset: 0,
             esm_record_byte_length: 0,
             esm_record_hash: 0,
+            coverage_byte_offset: 0,
+            coverage_byte_length: 0,
+            coverage_hash: 0,
         }
     }
 }
 
 impl Metadata {
-    // 1×u32 + 2×u8 (enum reprs) + 12×u64 = 4 + 2 + 96 = 102
-    pub(crate) const SIZE: usize = 4 + 1 + 1 + 12 * 8;
+    // 1×u32 + 2×u8 (enum reprs) + 15×u64 = 4 + 2 + 120 = 126
+    pub(crate) const SIZE: usize = 4 + 1 + 1 + 15 * 8;
 
     pub(crate) fn encode<W: bun_io::Write>(&self, writer: &mut W) -> crate::CrateResult<()> {
         writer.write_int_le::<u32>(self.cache_version)?;
@@ -202,6 +213,10 @@ impl Metadata {
         writer.write_int_le::<u64>(self.esm_record_byte_offset)?;
         writer.write_int_le::<u64>(self.esm_record_byte_length)?;
         writer.write_int_le::<u64>(self.esm_record_hash)?;
+
+        writer.write_int_le::<u64>(self.coverage_byte_offset)?;
+        writer.write_int_le::<u64>(self.coverage_byte_length)?;
+        writer.write_int_le::<u64>(self.coverage_hash)?;
         Ok(())
     }
 
@@ -239,6 +254,10 @@ impl Metadata {
         self.esm_record_byte_length = reader.read_int_le::<u64>()?;
         self.esm_record_hash = reader.read_int_le::<u64>()?;
 
+        self.coverage_byte_offset = reader.read_int_le::<u64>()?;
+        self.coverage_byte_length = reader.read_int_le::<u64>()?;
+        self.coverage_hash = reader.read_int_le::<u64>()?;
+
         self.module_type = match module_type_raw {
             1 => ModuleType::Esm,
             2 => ModuleType::Cjs,
@@ -263,6 +282,7 @@ pub struct Entry {
     pub output_code: BunString,
     pub sourcemap: Box<[u8]>,
     pub esm_record: Box<[u8]>,
+    coverage: Option<PlacedInText>,
 }
 
 impl Entry {
@@ -274,6 +294,7 @@ impl Entry {
         features_hash: u64,
         sourcemap: &[u8],
         esm_record: &[u8],
+        coverage: &[u8],
         output_code: &BunString,
         exports_kind: ExportsKind,
     ) -> crate::CrateResult<()> {
@@ -288,6 +309,8 @@ impl Entry {
         )?;
 
         let output_bytes = output_code.byte_slice();
+        let coverage_byte_offset =
+            Metadata::SIZE + output_bytes.len() + sourcemap.len() + esm_record.len();
 
         // First we open the tmpfile, to avoid any other work in the event of failure.
         let tmpfile = sys::Tmpfile::create(destination_dir, tmpfilename)?;
@@ -316,6 +339,9 @@ impl Entry {
                     esm_record_byte_offset: (Metadata::SIZE + output_bytes.len() + sourcemap.len())
                         as u64,
                     esm_record_byte_length: esm_record.len() as u64,
+                    coverage_byte_offset: coverage_byte_offset as u64,
+                    coverage_byte_length: coverage.len() as u64,
+                    coverage_hash: hash(coverage),
                     ..Default::default()
                 };
 
@@ -347,9 +373,9 @@ impl Entry {
             };
             let metadata_bytes: &[u8] = &metadata_buf[0..metadata_bytes_len];
 
-            let mut vecs_buf = [sys::IoVec::new(metadata_bytes); 4];
+            let mut vecs_buf = [sys::IoVec::new(metadata_bytes); 5];
             let mut vecs_i: usize = 1;
-            for part in [output_bytes, sourcemap, esm_record] {
+            for part in [output_bytes, sourcemap, esm_record, coverage] {
                 if !part.is_empty() {
                     vecs_buf[vecs_i] = sys::IoVec::new(part);
                     vecs_i += 1;
@@ -358,7 +384,7 @@ impl Entry {
             let vecs = &vecs_buf[0..vecs_i];
 
             let mut position: i64 = 0;
-            let file_len = Metadata::SIZE + output_bytes.len() + sourcemap.len() + esm_record.len();
+            let file_len = coverage_byte_offset + coverage.len();
 
             debug_assert!(file_len == vecs.iter().map(sys::IoVec::size).sum());
 
@@ -380,11 +406,21 @@ impl Entry {
         Ok(())
     }
 
+    pub fn take_coverage(
+        &mut self,
+        coverage: Option<&Loading>,
+        ParseResult { source, loader, .. }: &ParseResult<'_>,
+    ) -> Option<Box<CountedText>> {
+        let file = (*loader, &*source.contents);
+        Some(coverage?.count_cached(file, self.coverage.take()?, self.output_code.byte_slice()))
+    }
+
     pub(crate) fn load(&mut self, file: &sys::File, stat_size: u64) -> crate::CrateResult<()> {
         let required = (Metadata::SIZE as u64)
             .saturating_add(self.metadata.output_byte_length)
             .saturating_add(self.metadata.sourcemap_byte_length)
-            .saturating_add(self.metadata.esm_record_byte_length);
+            .saturating_add(self.metadata.esm_record_byte_length)
+            .saturating_add(self.metadata.coverage_byte_length);
         if stat_size < required {
             return Err(crate::CrateError::MissingData);
         }
@@ -525,6 +561,20 @@ impl Entry {
             }
 
             self.esm_record = esm_record;
+        }
+
+        if self.metadata.coverage_byte_length > 0 {
+            let coverage = pread_box(
+                file,
+                self.metadata.coverage_byte_length as usize,
+                self.metadata.coverage_byte_offset,
+            )?;
+
+            if hash(&coverage) != self.metadata.coverage_hash {
+                return Err(crate::CrateError::InvalidHash);
+            }
+
+            self.coverage = PlacedInText::decode(&coverage);
         }
 
         Ok(())
@@ -703,6 +753,7 @@ impl RuntimeTranspilerCache {
         features_hash: u64,
         sourcemap: &[u8],
         esm_record: &[u8],
+        coverage: &[u8],
         source_code: &BunString,
         exports_kind: ExportsKind,
     ) -> crate::CrateResult<()> {
@@ -730,6 +781,7 @@ impl RuntimeTranspilerCache {
             features_hash,
             sourcemap,
             esm_record,
+            coverage,
             source_code,
             exports_kind,
         )
@@ -756,6 +808,7 @@ impl RuntimeTranspilerCache {
         output_code: &[u8],
         sourcemap: &[u8],
         module_info: Option<&ModuleInfo>,
+        coverage: Option<&PlacedInText>,
     ) -> bun_js_printer::Result<()> {
         let Some(parsed) = &self.parsed else {
             return Ok(());
@@ -784,6 +837,7 @@ impl RuntimeTranspilerCache {
             },
             sourcemap,
             &esm_record,
+            &coverage.map_or_else(Vec::new, PlacedInText::encode),
             &StringView::ascii(output_code),
             parsed.exports_kind,
         );
@@ -791,6 +845,18 @@ impl RuntimeTranspilerCache {
             bun_core::scoped_log!(cache, "put() = {}", err.name());
         }
         Ok(())
+    }
+
+    pub fn will_print(
+        &mut self,
+        coverage: Option<&Loading>,
+        ParseResult { source, loader, .. }: &ParseResult<'_>,
+    ) -> Option<Transpiling> {
+        let transpiling = coverage?.will_print(*loader, &source.contents);
+        if !transpiling.can_be_cached {
+            self.parsed = None;
+        }
+        Some(transpiling)
     }
 
     fn miss(&mut self) -> CacheLookup<'_> {
@@ -830,10 +896,12 @@ impl bun_js_parser::TranspilerCache for RuntimeTranspilerCache {
             return CacheLookup::Skipped;
         }
 
-        // The hash names the file. `bun lint` and `bun run` would take turns to overwrite it.
+        // The hash names the file. `bun lint`, `bun run` and `bun test --coverage` would take turns to overwrite it.
         let features = &parser_options.features;
         let defers_more = features.defers_requires && has_react_compiler(source.path.text);
-        let variant = u64::from(features.lists_loads) + u64::from(defers_more);
+        let variant = u64::from(features.lists_loads)
+            + u64::from(defers_more)
+            + 4 * u64::from(features.code_coverage);
         let input_hash = hash(&source.contents).wrapping_add(variant);
 
         let mut features_hasher = Wyhash::init(SEED);
@@ -856,6 +924,7 @@ impl bun_js_parser::TranspilerCache for RuntimeTranspilerCache {
             [features_hash, test_features_hash, vitest_features_hash],
             source.contents.len() as u64,
         ) {
+            Ok(e) if features.code_coverage && e.coverage.is_none() => return self.miss(),
             Ok(e) => Some(e),
             Err(err) => {
                 bun_core::scoped_log!(

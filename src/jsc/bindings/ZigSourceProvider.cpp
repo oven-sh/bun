@@ -16,6 +16,7 @@
 #include <mimalloc.h>
 #include <JavaScriptCore/CodeCache.h>
 #include "BunBuiltinNames.h"
+#include "ErrorCode.h"
 
 RefPtr<JSC::CachedBytecode> ResolvedSourceBytecode::take()
 {
@@ -59,20 +60,6 @@ SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
     return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
 }
 
-extern "C" void ByteRangeMapping__generate(const BunString* sourceURL, const BunString* code, int sourceID, bool alreadyBundled);
-extern "C" void ByteRangeMapping__addSourceID(const BunString* sourceURL, const BunString* code, int sourceID);
-
-void addCodeCoverageSourceID(JSC::VM& vm, JSC::SourceProvider& provider)
-{
-    if (!vm.controlFlowProfiler())
-        return;
-    BunString sourceURL = Bun::toString(provider.sourceURL());
-    WTF::String sourceString = provider.source().toStringWithoutCopying();
-    BunString source = Bun::toString(sourceString);
-    ByteRangeMapping__addSourceID(&sourceURL, &source, provider.asID());
-}
-
-extern "C" bool BunTest__shouldGenerateCodeCoverage(const BunString* sourceURL);
 extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* specifier);
 extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* specifier);
 
@@ -92,14 +79,6 @@ Ref<SourceProvider> SourceProvider::create(
 
     auto string = resolvedSource.source_code.transferToWTFString();
     auto sourceURLString = resolvedSource.source_url.transferToWTFString();
-
-    bool isCodeCoverageEnabled = !!globalObject->vm().controlFlowProfiler();
-
-    bool shouldGenerateCodeCoverage = false;
-    if (isCodeCoverageEnabled && !isBuiltin) {
-        BunString sourceURLBunString = Bun::toString(sourceURLString);
-        shouldGenerateCodeCoverage = BunTest__shouldGenerateCodeCoverage(&sourceURLBunString);
-    }
 
     const auto getSourceOrigin = [&]() -> SourceOrigin {
         auto originPath = resolvedSource.origin_path.transferToWTFString();
@@ -135,13 +114,6 @@ Ref<SourceProvider> SourceProvider::create(
     };
 
     auto provider = getProvider();
-
-    if (shouldGenerateCodeCoverage) {
-        BunString providerURL = Bun::toString(provider->sourceURL());
-        WTF::String providerSourceString = provider->source().toStringWithoutCopying();
-        BunString providerSource = Bun::toString(providerSourceString);
-        ByteRangeMapping__generate(&providerURL, &providerSource, provider->asID(), provider->m_alreadyBundled);
-    }
 
     if (provider->m_alreadyBundled) {
         BunString str = Bun::toString(provider->sourceURL());
@@ -416,6 +388,24 @@ extern "C" BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider)
 
 namespace Bun {
 
+struct CountersOfText {
+    const JSC::CoverageCounters::Place* places;
+    size_t placeCount;
+    uint64_t* counts;
+    size_t count;
+};
+extern "C" CountersOfText Bun__CountedText__start(bun_CountedText*);
+
+CountedText::CountedText(std::unique_ptr<bun_CountedText>&& text)
+    : m_text(WTF::move(text))
+{
+    using Event = JSC::CoverageCounters::Event;
+    static_assert(sizeof(JSC::CoverageCounters::Place) == 8 && offsetof(JSC::CoverageCounters::Place, counterAndEvent) == 4 && JSC::CoverageCounters::Place::eventShift == 30, "Place is mirrored in src/ast/coverage.rs");
+    static_assert(!static_cast<uint8_t>(Event::Reached) && static_cast<uint8_t>(Event::Skipped) == 1, "Event is mirrored in src/ast/coverage.rs");
+    auto counters = Bun__CountedText__start(m_text.get());
+    m_counters = { { counters.places, counters.placeCount }, { counters.counts, counters.count } };
+}
+
 bool hasStringTooLongForBytecodeCache(JSC::VM& vm, const JSC::SourceCode& source)
 {
     constexpr unsigned limit = 1u << 27;
@@ -440,6 +430,44 @@ JSC_DEFINE_HOST_FUNCTION(jsSourceHasLineStarts, (JSC::JSGlobalObject*, JSC::Call
     if (!function || function->isHostFunction())
         return JSValue::encode(jsUndefined());
     return JSValue::encode(jsBoolean(function->jsExecutable()->source().provider()->lineStartTableIsBuilt()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsCheckCoverageCounters, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String path = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (path.contains('\0'))
+        return ERR::INVALID_ARG_VALUE(scope, globalObject, "path"_s, callFrame->argument(0), "must be a string without null bytes"_s);
+
+    BunString specifier = Bun::toString(path);
+    ErrorableResolvedSource resolved;
+    Bun__transpileFile(globalObject->bunVM(), globalObject, &specifier, &specifier, nullptr, &resolved, false, false, BunLoaderTypeNone);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!resolved.success)
+        return throwVMError(globalObject, scope, JSValue::decode(resolved.result.err));
+    if (!resolved.result.value.coverage)
+        return JSValue::encode(jsUndefined());
+
+    bool isCommonJS = resolved.result.value.isCommonJSModule;
+    Ref provider = Zig::SourceProvider::create(globalObject, resolved.result.value, isCommonJS ? JSC::SourceProviderSourceType::Program : JSC::SourceProviderSourceType::Module);
+    JSC::SourceCode source(provider.copyRef());
+    JSC::ParserError error;
+    auto places = JSC::coveragePlacesWithoutCode(vm, source, isCommonJS ? JSC::JSParserScriptMode::Classic : JSC::JSParserScriptMode::Module, error);
+    if (error.isValid())
+        return throwVMError(globalObject, scope, error.toErrorObject(globalObject, source));
+
+    MarkedArgumentBuffer result;
+    result.append(jsString(vm, provider->source().toString()));
+    result.append(jsNumber(provider->coverageCounters()->counts.size()));
+    result.append(jsNumber(provider->coverageCounters()->places.size()));
+    for (auto& place : places)
+        result.append(jsNumber(place.offset));
+    if (result.hasOverflowed()) [[unlikely]]
+        return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), result)));
 }
 
 } // namespace Bun

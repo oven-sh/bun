@@ -15,13 +15,13 @@ test.test.ts:
 ✓ math > add [0.71ms]
 ✓ math > multiply [0.03ms]
 ✓ random [0.13ms]
--------------|---------|---------|-------------------
-File         | % Funcs | % Lines | Uncovered Line #s
--------------|---------|---------|-------------------
-All files    |   50.00 |   66.67 |
- math.ts     |   50.00 |   66.67 |
- random.ts   |   50.00 |   66.67 |
--------------|---------|---------|-------------------
+-----------|---------|---------|---------|----------|-------------------
+File       | % Funcs | % Lines | % Stmts | % Branch | Uncovered Line #s
+-----------|---------|---------|---------|----------|-------------------
+All files  |   75.00 |   75.00 |   75.00 |    50.00 |
+ math.ts   |   66.66 |   66.66 |   66.66 |   100.00 | 9-10
+ random.ts |  100.00 |  100.00 |  100.00 |    50.00 | 1
+-----------|---------|---------|---------|----------|-------------------
 
  3 pass
  0 fail
@@ -30,7 +30,7 @@ All files    |   50.00 |   66.67 |
 
 ---
 
-To set a minimum coverage threshold, add the following to your `bunfig.toml`. A threshold of `0.9` requires that tests cover 90% of the lines and 90% of the functions of every file in the coverage report. Bun checks the threshold against each file, not against the `All files` average.
+To set a minimum coverage threshold, add the following to your `bunfig.toml`. A threshold of `0.9` requires that tests cover 90% of the lines and 90% of the functions in the coverage report. Bun checks the threshold against the `All files` row.
 
 ```toml bunfig.toml icon="settings"
 [test]
@@ -48,18 +48,28 @@ bun test --coverage
 
 ```txt
 <test output>
+error: Coverage of functions is 75.00%, which is below the threshold of 90%
+error: Coverage of lines is 75.00%, which is below the threshold of 90%
 $ echo $?
 1 # this is the exit code of the previous command
 ```
 
 ---
 
-You can set different thresholds for line-level and function-level coverage.
+You can set different thresholds for `lines`, `functions`, `statements` and `branches`.
 
 ```toml bunfig.toml icon="settings"
 [test]
-# to set different thresholds for lines and functions
-coverageThreshold = { lines = 0.5, functions = 0.7 }
+coverageThreshold = { lines = 0.5, functions = 0.7, branches = 0.6 }
+```
+
+---
+
+To check each file instead of the total, set `perFile`.
+
+```toml bunfig.toml icon="settings"
+[test]
+coverageThreshold = { lines = 0.9, functions = 0.9, perFile = true }
 ```
 
 ---

@@ -1,0 +1,28 @@
+[package]
+name = "bun_code_coverage"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bstr.workspace = true
+bun_ast.workspace = true
+bun_collections.workspace = true
+bun_core.workspace = true
+bun_glob.workspace = true
+bun_options_types.workspace = true
+bun_parsers.workspace = true
+bun_paths.workspace = true
+bun_removable_features.workspace = true
+bun_resolver.workspace = true
+bun_sema.workspace = true
+bun_sema_parser.workspace = true
+bun_sort_by_number.workspace = true
+bun_sourcemap.workspace = true
+bun_sys.workspace = true
+bun_threading.workspace = true

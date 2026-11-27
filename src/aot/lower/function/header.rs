@@ -121,7 +121,7 @@ impl FileLowering<'_, '_, '_, '_> {
         )
     }
 
-    pub(in crate::lower) fn find_end_of_function(&self, function: FnId) -> Option<u32> {
+    fn find_end_of_function(&self, function: FnId) -> Option<u32> {
         end_of_function(self.hir, self.bound, function)
     }
 

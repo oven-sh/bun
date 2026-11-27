@@ -224,6 +224,19 @@ impl List {
         None
     }
 
+    /// Those that start right there.
+    pub fn all_at(&self, line: Ordinal, column: Ordinal) -> impl Iterator<Item = Mapping> {
+        let generated = self.generated();
+        let last = Self::find_index_from_generated(generated, line, column);
+        (0..last.map_or(0, |it| it + 1))
+            .rev()
+            .take_while(move |&i| (generated[i].lines, generated[i].columns) == (line, column))
+            .map(|i| match &self.r#impl {
+                ListValue::WithoutNames(list) => list.get(i).to_named(),
+                ListValue::WithNames(list) => *list.get(i),
+            })
+    }
+
     pub fn generated(&self) -> &[LineColumnOffset] {
         both_lists!(&self.r#impl, |list| list.items_generated())
     }
@@ -232,7 +245,7 @@ impl List {
         both_lists!(&self.r#impl, |list| list.items_original())
     }
 
-    pub(crate) fn source_index(&self) -> &[i32] {
+    pub fn source_index(&self) -> &[i32] {
         both_lists!(&self.r#impl, |list| list.items_source_index())
     }
 

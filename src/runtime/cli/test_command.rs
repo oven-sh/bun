@@ -1,4 +1,5 @@
 use core::cell::{Cell, OnceCell, RefCell};
+use std::sync::Arc;
 
 use bun_io::Write as _;
 
@@ -8,6 +9,8 @@ use crate::cli::test::changed_files_filter as ChangedFilesFilter;
 use crate::cli::test::parallel::runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
 use crate::cli::test::timings::Timings;
+use bun_bundler::options::ImportSuffix;
+use bun_code_coverage::{CountedText, Origin};
 use bun_collections::BoundedArray;
 use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{EncodedSlice, strings};
@@ -15,48 +18,18 @@ use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
 use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc};
-use bun_options_types::aot_options::ReplacedByTests;
-use bun_options_types::code_coverage_options::CodeCoverageOptions;
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue};
+use bun_options_types::aot_options::{CoveredFiles, ReplacedByTests};
 use bun_options_types::context::{JunitSuites, ReactCompilerScope, TestEnvironment, TestGlobals};
 use bun_paths as bun_path;
 use bun_paths::{Path, dirname_or_root, without_trailing_sep};
 use bun_ptr::{CellExt as _, Interned};
+use bun_removable_features::removable_definition;
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
 
 // Debug log scope for test-runner entrypoint loading.
 bun_output::declare_scope!(bun_test, hidden);
-
-mod coverage {
-    pub(super) use bun_sourcemap_jsc::code_coverage::{
-        ByteRangeMapping, Fraction, Report as CodeCoverageReport, lcov, text,
-    };
-
-    /// Less-than predicate adapted to the `Ordering` shape `sort_by` wants.
-    #[inline]
-    pub(super) fn is_less_than_cmp(
-        a: &&mut ByteRangeMapping,
-        b: &&mut ByteRangeMapping,
-    ) -> core::cmp::Ordering {
-        bun_core::order(a.source_url.slice(), b.source_url.slice())
-    }
-
-    pub(super) fn is_ignored(
-        ignore_patterns: &[bun_glob::Prepared<&[u8]>],
-        relative_dir: &[u8],
-        source_url: &[u8],
-    ) -> bool {
-        if ignore_patterns.is_empty() {
-            return false;
-        }
-        let relative_path: &[u8] = &bun_paths::Path::relative(relative_dir, source_url);
-        ignore_patterns
-            .iter()
-            .any(|pattern| pattern.r#match(relative_path).matches())
-    }
-}
-use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
 
 fn end_of_string(text: &[u8], mut at: usize, quote: u8) -> usize {
     while at < text.len()
@@ -589,9 +562,10 @@ fn find_files_of_preloads(vm: &VirtualMachine, preloads: &[Box<[u8]>]) -> Vec<Bo
     let top = FileSystem::get().top_level_dir();
     let file_of = |name: &[u8]| -> Box<[u8]> {
         let kind = bun_ast::ImportKind::Stmt;
+        let specifier = name.strip_prefix(b"file://").unwrap_or(name);
         match vm
             .transpiler
-            .with_mut(|t| t.resolver.resolve(top, name, kind))
+            .with_mut(|t| t.resolver.resolve(top, specifier, kind))
         {
             Ok(found) if bun_path::is_absolute(found.path_pair.primary.text()) => {
                 Box::from(found.path_pair.primary.text())
@@ -1758,6 +1732,8 @@ pub(crate) struct CommandLineReporter {
     /// Set in a `--parallel` worker, which sends per-test output to the coordinator instead of to stderr.
     pub(crate) worker: OnceCell<ParallelRunner::CoordinatorLink>,
 
+    coverage: OnceCell<bun_code_coverage::Collector>,
+
     pub(crate) failures_to_repeat_buf: Cell<Vec<u8>>,
     pub(crate) skips_to_repeat_buf: Cell<Vec<u8>>,
     pub(crate) todos_to_repeat_buf: Cell<Vec<u8>>,
@@ -2276,328 +2252,71 @@ impl CommandLineReporter {
             });
         }
     }
+}
 
-    /// `bun test --aot --coverage`: the files that ran as compiled code join those that JSC has counted.
-    pub(crate) fn add_compiled_files_to_coverage(vm: &VirtualMachine) {
-        let mut files: Vec<(Vec<u8>, Vec<u64>)> = Vec::new();
-        bun_jsc::compiled_program::for_each_counted_file(
-            vm.global(),
-            &mut |description, counts| {
-                files.push((description.to_vec(), counts.to_vec()));
-            },
-        );
-        for (description, counts) in &files {
-            let Some(end_of_path) = strings::index_of_char_usize(description, b'\n') else {
-                continue;
-            };
-            let (path, ranges) = (&description[..end_of_path], &description[end_of_path + 1..]);
-            if !BunTest__shouldGenerateCodeCoverage(&bun_core::StringView::from_bytes(path)) {
-                continue;
-            }
-            let Ok(text) = File::read_from(Fd::cwd(), path) else {
-                continue;
-            };
-            let Some(transpiled) = crate::jsc_hooks::transpile_as_loaded(vm.global(), path, &text)
-            else {
-                continue;
-            };
-            ByteRangeMapping::add_compiled_file(
-                path,
-                &text,
-                &transpiled.source_code,
-                transpiled.already_bundled,
-                ranges,
-                counts,
-            );
-        }
-    }
-
-    /// This process's coverage, one `Report` per instrumented file, sorted by
-    /// path, with `coveragePathIgnorePatterns` applied.
-    pub(crate) fn for_each_coverage_report(
-        vm: &VirtualMachine,
-        opts: &CodeCoverageOptions,
-        mut each: impl FnMut(CodeCoverageReport<'_>),
-    ) {
-        let Some(map) = ByteRangeMapping::map() else {
-            return;
-        };
-        // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
-        // collection loop below (single-threaded CLI report path).
-        let map = unsafe { &mut *map.as_ptr() };
-        let relative_dir = FileSystem::get().top_level_dir();
-        let ignore_patterns: Vec<bun_glob::Prepared<&[u8]>> = (opts
-            .ignore_patterns
-            .iter()
-            .map(|it| bun_glob::Prepared::new(&**it)))
-        .collect();
-        let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
-        for entry in map.values_mut() {
-            if !coverage::is_ignored(&ignore_patterns, relative_dir, entry.source_url.slice()) {
-                byte_ranges.push(entry);
-            }
-        }
-        index_sort::sort_slice_by(&mut byte_ranges, coverage::is_less_than_cmp);
-
-        for entry in byte_ranges {
-            if let Some(report) =
-                CodeCoverageReport::generate(vm.global(), entry, opts.ignore_sourcemap)
-            {
-                each(report);
-            }
-        }
-    }
-
-    /// Returns false if `lcov.info` could not be written.
-    pub(crate) fn generate_code_coverage(
-        &self,
-        vm: &VirtualMachine,
-        opts: &mut CodeCoverageOptions,
-    ) -> bool {
-        let _trace = bun::perf::trace("TestCommand.printCodeCoverage");
-        Self::add_compiled_files_to_coverage(vm);
-        if ByteRangeMapping::map().is_none_or(|m| {
-            // SAFETY: see `for_each_coverage_report`.
-            unsafe { m.as_ref() }.is_empty()
-        }) {
-            return true;
-        }
-        let mut reports: Vec<CodeCoverageReport<'static>> = Vec::new();
-        Self::for_each_coverage_report(vm, opts, |report| reports.push(report.into_owned()));
-        if let Err(err) = print_coverage_reports(opts, &reports) {
-            Output::err(err, "Failed to write lcov.info", ());
-            return false;
-        }
-        true
+fn project_for_coverage(vm: &VirtualMachine, preloads: &[Box<[u8]>]) -> bun_code_coverage::Project {
+    bun_code_coverage::Project {
+        root: FileSystem::get().top_level_dir(),
+        loaders: bun_core::handle_oom(vm.transpiler.get().options.loaders.clone()),
+        suffixes_of_test_files: &scanner::TEST_NAME_SUFFIXES,
+        preloads: find_files_of_preloads(vm, preloads),
+        // Other queries (a plugin's `./a.vue?x`) are user code.
+        is_generated_for: |query, by_extension| {
+            ImportSuffix::find(query, Some(by_extension)).is_some()
+        },
     }
 }
 
-/// Write the `--coverage` text table to stderr and/or `lcov.info` for
-/// `reports` (sorted by path), and set `opts.fractions.failing`. The serial
-/// runner passes this process's reports; the `--parallel` coordinator passes
-/// reports merged from every worker. Errors only from writing `lcov.info`.
-#[optimize(size)]
-pub(crate) fn print_coverage_reports(
-    opts: &mut CodeCoverageOptions,
-    reports: &[CodeCoverageReport<'_>],
-) -> bun_sys::Result<()> {
-    if Output::enable_ansi_colors_stderr() {
-        print_coverage_reports_::<true>(opts, reports)
-    } else {
-        print_coverage_reports_::<false>(opts, reports)
-    }
-}
-
-fn print_coverage_reports_<const COLORS: bool>(
-    opts: &mut CodeCoverageOptions,
-    reports: &[CodeCoverageReport<'_>],
-) -> bun_sys::Result<()> {
-    let relative_dir = FileSystem::get().top_level_dir();
-    let thresholds = opts.fractions;
-
-    let fractions: Vec<Fraction> = reports.iter().map(|r| r.fraction(&thresholds)).collect();
-    let failing = fractions.iter().any(|f| f.failing);
-    opts.fractions.failing = failing;
-
-    if opts.reporters.text {
-        print_coverage_table::<COLORS>(relative_dir, &thresholds, reports, &fractions, failing);
-    }
-    if opts.reporters.lcov {
-        write_lcov_report(opts, relative_dir, reports)?;
-    }
-    Ok(())
-}
-
-fn print_coverage_table<const COLORS: bool>(
-    relative_dir: &[u8],
-    thresholds: &Fraction,
-    reports: &[CodeCoverageReport<'_>],
-    fractions: &[Fraction],
-    failing: bool,
-) {
-    use coverage::text;
-    let thresholds = *thresholds;
-    let max_filepath_length = reports
-        .iter()
-        .map(|r| Path::relative(relative_dir, &r.source_url).len())
-        .fold(b"All files".len(), usize::max);
-
-    let zero = Fraction {
-        functions: 0.0,
-        lines: 0.0,
-        stmts: 0.0,
-        failing: false,
-    };
-    let mut avg = zero;
-    for f in fractions {
-        avg.functions += f.functions;
-        avg.lines += f.lines;
-        avg.stmts += f.stmts;
-    }
-    let avg_thresholds = if fractions.is_empty() {
-        zero
-    } else {
-        let n = fractions.len() as f64;
-        avg.functions /= n;
-        avg.lines /= n;
-        avg.stmts /= n;
-        thresholds
-    };
-
-    // Writes below target a Vec and cannot fail.
-    let mut out: Vec<u8> = Vec::new();
-    let separator = |out: &mut Vec<u8>| {
-        let _ = bun_core::write_pretty!(out, COLORS, "<r><d>");
-        out.resize(out.len() + max_filepath_length + 2, b'-');
-        let _ =
-            bun_core::write_pretty!(out, COLORS, "|---------|---------|-------------------<r>\n");
-    };
-    separator(&mut out);
-    out.extend_from_slice(b"File");
-    out.resize(out.len() + max_filepath_length - b"File".len() + 1, b' ');
-    let _ = bun_core::write_pretty!(
-        out,
-        COLORS,
-        " <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n"
-    );
-    separator(&mut out);
-    let _ = text::write_format_with_values::<COLORS>(
-        b"All files",
-        max_filepath_length,
-        avg,
-        avg_thresholds,
-        failing,
-        &mut out,
-        false,
-    );
-    let _ = bun_core::write_pretty!(out, COLORS, "<r><d> |<r>\n");
-    for (report, fraction) in reports.iter().zip(fractions) {
-        let _ = text::write_format::<COLORS>(
-            report,
-            max_filepath_length,
-            fraction,
-            &thresholds,
-            relative_dir,
-            &mut out,
-        );
-        out.push(b'\n');
-    }
-    separator(&mut out);
-
-    // A closed stderr is not a reason to fail the run.
-    let _ = Output::error_writer().write_all(&out);
-    Output::flush();
-}
-
-/// Render to `<reports_directory>/.lcov.info.<hex>.tmp` and rename it over
-/// `lcov.info`, so an interrupted run never leaves a truncated report.
-#[optimize(size)]
-fn write_lcov_report(
-    opts: &CodeCoverageOptions,
-    relative_dir: &[u8],
-    reports: &[CodeCoverageReport<'_>],
-) -> bun_sys::Result<()> {
-    let mut contents: Vec<u8> = Vec::with_capacity(64 * 1024);
-    for report in reports {
-        // Writing into a Vec cannot fail.
-        let _ = coverage::lcov::write_format(report, relative_dir, &mut contents);
-    }
-
-    let mut rand = [0u8; 8];
-    bun_boringssl_sys::rand_bytes(&mut rand);
-    let mut tmpname: Vec<u8> = Vec::new();
-    let _ = write!(
-        &mut tmpname,
-        ".lcov.info.{}.tmp",
-        bun_core::fmt::hex_lower(&rand)
-    );
-    let too_long = || {
-        bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
-            .with_path(&opts.reports_directory)
-    };
-    let in_reports = |name: &[u8]| {
-        Path::resolve(&[relative_dir, &opts.reports_directory, name])
-            .check_len()
-            .map_err(|_| too_long())
-    };
-    let tmp_path: &bun_core::ZStr = &in_reports(&tmpname)?;
-    let path: &bun_core::ZStr = &in_reports(b"lcov.info")?;
-    if let Some(dir) = bun_path::dirname(path.as_bytes()) {
-        let mut fs = crate::node::fs::NodeFS::default();
-        let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
-            path: crate::node::PathLike::borrowed(dir),
-            always_return_none: true,
-            recursive: true,
-            ..Default::default()
-        });
-    }
-
-    let tmp = bun_sys::Tmpfile::open(
-        Fd::cwd(),
-        tmp_path,
-        bun_sys::O::CREAT | bun_sys::O::RDWR | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
-        0o644,
-    )?;
-    tmp.file.write_all(&contents)?;
-    tmp.finish(path).map_err(|(err, _)| err)
-}
-
+/// `codeCoverageForFile()` of `bun:jsc`
 #[unsafe(no_mangle)]
-extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::String) -> bool {
-    let zig_slice = test_name_str.to_utf8();
-    // In this particular case, we don't actually care about non-ascii latin1 characters.
-    // so we skip the ascii check
-    let slice: &[u8] = zig_slice.slice();
-
-    // always ignore node_modules.
-    if strings::contains(slice, b"/node_modules/")
-        || (cfg!(windows) && strings::contains(slice, bun_paths::NODE_MODULES_NEEDLE))
-    {
-        return false;
-    }
-
-    let options = &VirtualMachine::get().transpiler.get().options;
-
-    // Skip the wrapper modules Bun generates for these suffixes. Other queries (a plugin's `./a.vue?x`) are user code.
-    if let Some(query) = strings::index_of_char_usize(slice, b'?') {
-        use bun_bundler::options::ImportSuffix;
-        let by_extension = options.loader(bun_path::extension(&slice[..query]));
-        if matches!(
-            ImportSuffix::find(&slice[query..], Some(by_extension)),
-            Some(ImportSuffix::Inline | ImportSuffix::Init | ImportSuffix::Worker(_))
-        ) {
-            return false;
+extern "C" fn BunTest__codeCoverageForFile(
+    global: &JSGlobalObject,
+    path: &bun_core::String,
+    ignore_source_map: bool,
+) -> JSValue {
+    jsc::to_js_host_call(global, || {
+        let coverage = global.bun_vm().coverage.get();
+        if ignore_source_map && coverage.is_some_and(|it| !it.ignores_source_maps()) {
+            return Err(global.throw(format_args!(
+                "To ignore source maps, set \"coverageIgnoreSourcemaps\" in bunfig.toml"
+            )));
         }
-    }
-
-    let ext = bun_path::extension(slice);
-    let loader_by_ext = options.loader(ext);
-
-    // allow file loader just incase they use a custom loader with a non-standard extension
-    if !(loader_by_ext.is_javascript_like() || loader_by_ext == bun_ast::Loader::File) {
-        return false;
-    }
-
-    if let Some(runner) = jest::Jest::runner() {
-        if runner.coverage_skips_test_files {
-            let name_without_extension = &slice[0..slice.len() - ext.len()];
-            for suffix in scanner::TEST_NAME_SUFFIXES {
-                if strings::ends_with(name_without_extension, suffix) {
-                    return false;
-                }
-            }
+        match coverage.and_then(|it| it.row_of(&path.to_utf8())) {
+            Some(row) => jsc::bun_string_jsc::create_utf8_for_js(global, &row),
+            None => Err(global.throw(format_args!("No source for file"))),
         }
-    }
+    })
+}
 
-    true
+/// `bun test --aot`
+#[inline(never)]
+#[unsafe(no_mangle)]
+extern "C" fn BunTest__countCompiledFile(
+    vm: &VirtualMachine,
+    description: &bun_core::String,
+) -> Option<Box<CountedText>> {
+    removable_definition!(TestCommand, BunTest__countCompiledFile);
+    vm.coverage.get()?.count_compiled(description.latin1())
+}
+
+/// For builds with assertions, which report `node:fs` and the like.
+#[unsafe(no_mangle)]
+extern "C" fn BunTest__countInternalModule(
+    vm: &VirtualMachine,
+    name: &bun_core::String,
+    text: &bun_core::String,
+) -> Option<Box<CountedText>> {
+    let coverage = vm.coverage.get()?;
+    let loading = coverage.will_load(&name.to_utf8(), bun_ast::Loader::Js, Origin::Memory);
+    (!text.is_utf16() && loading.is_covered).then(|| {
+        // `@name` is a name there.
+        loading.count_as_written(&strings::replace_owned(text.latin1(), b"@", b"_"))
+    })
 }
 
 pub(crate) struct TestCommand;
 
 impl TestCommand {
-    // pub use bun_options_types::code_coverage_options::{CodeCoverageOptions, Reporter, Reporters};
-    // Re-exports moved to top-level `use` per crate map.
-
     #[optimize(size)]
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
         Output::IS_GITHUB_ACTION.store(
@@ -2642,8 +2361,10 @@ impl TestCommand {
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
         crate::cli::startup_options::refuse_code_the_compiler_did_not_see();
         jsc::initialize(jsc::InitializeOptions {
-            short_lived_globals: ctx.test_options.isolate
-                && !run_compiled::test_files_share_global(ctx),
+            // Its code dies with the global of each file. Coverage mostly runs in CI, with no core to spare for compiling.
+            delays_last_tier: ctx.test_options.isolate
+                && !run_compiled::test_files_share_global(ctx)
+                || ctx.test_options.coverage.enabled,
             runs_compiled_code: run_compiled::runs_compiled_code(),
             locks_builtins: run_compiled::is_checked(),
             ..Default::default()
@@ -2699,7 +2420,6 @@ impl TestCommand {
                 retry: ctx.test_options.retry,
                 resets_before_each_test: ctx.test_options.resets_before_each_test,
                 environment: ctx.test_options.environment,
-                coverage_skips_test_files: ctx.test_options.coverage.skip_test_files,
                 reports_to_junit: ctx.test_options.reporters.junit,
                 // `test_filter_regex` is an erased `*mut RegularExpression` (see
                 // options_types::context).
@@ -2722,6 +2442,7 @@ impl TestCommand {
             repeat_count: ctx.test_options.repeat_count.max(1),
             last_printed_dot: Cell::new(false),
             worker: OnceCell::new(),
+            coverage: OnceCell::new(),
             failures_to_repeat_buf: Cell::default(),
             skips_to_repeat_buf: Cell::default(),
             todos_to_repeat_buf: Cell::default(),
@@ -2828,14 +2549,10 @@ impl TestCommand {
             .set(true);
 
         if ctx.test_options.coverage.enabled {
-            vm.transpiler.with_mut(|t| {
-                t.options.code_coverage = true;
-                t.options.minify_syntax = false;
-                t.options.minify_identifiers = false;
-                t.options.minify_whitespace = false;
-                t.options.dead_code_elimination = false;
-            });
-            vm.global().vm().enable_control_flow_profiler();
+            vm.coverage.set(Some(reporter.coverage.get_or_init(|| {
+                let project = project_for_coverage(vm, &ctx.preloads);
+                bun_code_coverage::Collector::new(ctx.test_options.coverage.clone(), project)
+            })));
         }
 
         // For tests, we default to UTC time zone
@@ -2985,6 +2702,7 @@ impl TestCommand {
         // and the run exits 0 — an empty shard or an unchanged tree
         // is not a misconfiguration.
         let mut pass_with_no_tests_from_filter = false;
+        let mut reports_untested_changes = false;
         let mut changed_module_graph_files: Vec<Box<[u8]>> = Vec::new();
         // Defer free handled by Drop.
         let mut test_files: &mut [Interned] = if let Some(changed_since) = &ctx.test_options.changed
@@ -3009,6 +2727,9 @@ impl TestCommand {
                     }
                 };
                 changed_module_graph_files = result.module_graph_files;
+                if let Some(coverage) = vm.coverage.get() {
+                    coverage.report_only(result.files_to_cover);
+                }
                 if result.test_files.is_empty() && result.changed_count == 0 {
                     pretty_error!("<r><d>--changed:<r> no changed files, nothing to run\n");
                     pass_with_no_tests_from_filter = true;
@@ -3019,6 +2740,8 @@ impl TestCommand {
                         if result.changed_count == 1 { "" } else { "s" }
                     );
                     pass_with_no_tests_from_filter = true;
+                    reports_untested_changes =
+                        !ctx.test_options.coverage.include_patterns.is_empty();
                 } else if !run_compiled::is_second_process() {
                     pretty_error!(
                         "<r><d>--changed:<r> {} changed file{}, running {}/{} test file{}\n",
@@ -3129,6 +2852,16 @@ impl TestCommand {
             }
             let preloads = find_files_of_preloads(vm, &ctx.preloads);
             if let Some(aot) = (ctx.bundler_options.aot.as_mut()).filter(|aot| !aot.checks_only) {
+                if (vm.coverage.get()).is_some_and(|it| it.ignores_source_maps()) {
+                    bun_core::warn!(
+                        "\"coverageIgnoreSourcemaps\" has no effect on the files that --aot compiles"
+                    );
+                }
+                aot.covered_files = vm.coverage.get().map(|it| {
+                    CoveredFiles(Arc::new(|path, loader| {
+                        it.will_load(path, loader, Origin::Memory).is_covered
+                    }))
+                });
                 aot.replaced_by_tests = find_what_tests_replace(has_window);
                 aot.replaced_by_tests.test_files =
                     test_files.iter().map(|path| (**path).to_vec()).collect();
@@ -3152,7 +2885,6 @@ impl TestCommand {
             vm.run_with_api_lock(|| Self::run_event_loop_for_watch(vm));
         }
 
-        let mut coverage_options: CodeCoverageOptions = ctx.test_options.coverage.clone();
         let mut ran_parallel = false;
 
         if !test_files.is_empty() {
@@ -3176,13 +2908,8 @@ impl TestCommand {
                     "{} test files are to run",
                     test_files.len()
                 ));
-                ran_parallel = ParallelRunner::run_as_coordinator(
-                    reporter,
-                    vm,
-                    test_files,
-                    &mut *ctx,
-                    &mut coverage_options,
-                )?;
+                ran_parallel =
+                    ParallelRunner::run_as_coordinator(reporter, vm, test_files, &mut *ctx)?;
             } else {
                 // SAFETY: `vm.transpiler.env` is the process-lifetime DotEnv loader pointer.
                 ParallelRunner::set_ids_without_workers(unsafe { &mut *vm.transpiler.get().env });
@@ -3218,7 +2945,7 @@ impl TestCommand {
         let runner = &reporter.jest;
         let write_snapshots_success = runner.with_snapshots(Snapshots::write_inline_snapshots)?;
         runner.with_snapshots(Snapshots::write_snapshot_file)?;
-        let mut write_coverage_success = true;
+        let mut coverage_success = true;
         if reporter.summary().pass > 20
             && !Output::is_ai_agent()
             && !reporter.reporters.dots
@@ -3331,10 +3058,17 @@ impl TestCommand {
                 );
             }
         } else {
-            pretty_error!("\n");
-
-            if coverage_options.enabled && !ran_parallel {
-                write_coverage_success = reporter.generate_code_coverage(vm, &mut coverage_options);
+            if reporter.reporters.dots {
+                pretty_error!("\n");
+            }
+            if let Some(coverage) = vm.coverage.get()
+                && (!test_files.is_empty() || reports_untested_changes)
+            {
+                let _trace = bun::perf::trace("TestCommand.printCodeCoverage");
+                coverage_success = coverage.write_reports();
+            }
+            if !reporter.reporters.dots {
+                pretty_error!("\n");
             }
 
             let summary: Summary = reporter.summary();
@@ -3602,11 +3336,8 @@ impl TestCommand {
             && (failed_to_find_any_tests || summary.did_label_filter_out_all_tests());
         if should_fail_on_no_tests
             || summary.fail > 0
-            || (coverage_options.enabled
-                && coverage_options.fractions.failing
-                && coverage_options.fail_on_low_coverage)
             || !write_snapshots_success
-            || !write_coverage_success
+            || !coverage_success
             || reporter.jest.unhandled_errors_between_tests.get() > 0
         {
             vm.exit_handler.exit_code.set(1);

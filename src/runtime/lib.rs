@@ -74,7 +74,10 @@ pub(crate) mod timer;
 pub(crate) mod typescript_front;
 
 // In the crate graph for the functions generated C++ calls.
-use {bun_css_jsc as _, bun_install_jsc as _, bun_patch_jsc as _, bun_semver_jsc as _};
+use {
+    bun_css_jsc as _, bun_install_jsc as _, bun_patch_jsc as _, bun_semver_jsc as _,
+    bun_sourcemap_jsc as _,
+};
 pub(crate) mod generated_bindgen; // include!()s ${BUN_CODEGEN_DIR}/generated_bindgen_bun_runtime.rs
 pub(crate) mod generated_host_exports; // include!()s ${BUN_CODEGEN_DIR}/generated_host_exports.rs
 

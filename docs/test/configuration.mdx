@@ -364,9 +364,20 @@ coverageReporter = ["text", "lcov"]
 coverageDir = "./coverage"
 ```
 
+The reporters are `text`, `lcov`, `json` and `json-summary`.
+
+### Choose the Files to Report
+
+List every file that matches, including files that no test loads:
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+coverageInclude = ["src/**/*.{ts,tsx}", "!src/generated"]
+```
+
 ### Skip Test Files from Coverage
 
-Exclude files matching test patterns (for example `*.test.ts`) from the coverage report:
+Exclude files matching test patterns (for example `*.test.ts`) and preload scripts from the coverage report:
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -383,16 +394,16 @@ Specify the coverage threshold as a single number or as an object with per-metri
 coverageThreshold = 0.8
 
 # Detailed thresholds
-coverageThreshold = { lines = 0.9, functions = 0.8 }
+coverageThreshold = { lines = 0.9, functions = 0.8, statements = 0.9, branches = 0.7 }
 ```
 
-Setting a threshold makes `bun test` exit with code 1 when coverage is enabled and any file's line or function coverage is below it. Bun accepts the `statements` key but does not currently enforce it. The check applies with any coverage reporter.
+Setting a threshold makes `bun test` exit with code 1 when coverage is enabled and the total over all files is below it. Set `perFile = true` to check each file instead. Bun checks only the keys you set. The check applies with any coverage reporter.
 
 #### Threshold Examples
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
-# Require 90% coverage across the board
+# Require 90% line and function coverage
 coverageThreshold = 0.9
 
 # Different requirements for different metrics
@@ -400,6 +411,15 @@ coverageThreshold = {
   lines = 0.85,      # 85% line coverage
   functions = 0.90   # 90% function coverage
 }
+
+# Require 80% branch coverage of every file
+coverageThreshold = { branches = 0.8, perFile = true }
+
+# Allow at most 10 uncovered lines
+coverageThreshold = { lines = -10 }
+
+# Require more of some files
+coverageThreshold = { lines = 0.8, "src/billing" = { lines = 1 } }
 ```
 
 ### Coverage Path Ignore Patterns
@@ -461,7 +481,7 @@ coveragePathIgnorePatterns = [
 
 ### Sourcemap Handling
 
-Bun transpiles every file, so coverage results pass through sourcemaps before they're reported. `coverageIgnoreSourcemaps` opts out of this, but the results are confusing: during transpilation, Bun may move code around and rename variables. The option is mostly useful for debugging coverage issues.
+Bun transpiles every file and reports coverage for the source. `coverageIgnoreSourcemaps` reports coverage for the transpiled code instead, but the results are confusing: during transpilation, Bun may move code around and rename variables. The option is mostly useful for debugging coverage issues.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]

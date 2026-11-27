@@ -20,6 +20,7 @@
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSBuiltins.h"
 #include "ZigGlobalObject.h"
+#include "ZigSourceProvider.h"
 #if ENABLE(AOT)
 #include "RemovableFeatures.h"
 
@@ -195,6 +196,7 @@ extern "C" JSC::EncodedJSValue Bun__compiledProgramErrorOfRefusedData(JSC::JSGlo
 extern "C" bool Bun__AOT__isWorkerTextRefusedByTrimming(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__isMainModule(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__isLoadedSynchronously(JSC::JSGlobalObject*, const BunString* path);
+extern "C" bun_CountedText* BunTest__countCompiledFile(void* bunVM, const BunString* description);
 extern "C" bool Bun__AOT__isBetweenLoadOfTestFileAndItsCallbacks(JSC::JSGlobalObject*);
 extern "C" bool Bun__AOT__runsTestFilesAgain();
 extern "C" bool Bun__AOT__hasImmediatesYetToRun(JSC::JSGlobalObject*);
@@ -2350,6 +2352,20 @@ static const AOT::MockOperations* mockOperations()
     BUN_END_REMOVABLE_ENTRY_POINT
 }
 
+static std::span<uint64_t> coverageCounts(JSGlobalObject* globalObject, const String& description)
+{
+    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, std::span<uint64_t>)
+    RELEASE_ASSERT(description.is8Bit());
+    BunString descriptionArgument = Bun::toString(description);
+    std::unique_ptr<bun_CountedText> text { BunTest__countCompiledFile(bunVM(globalObject), &descriptionArgument) };
+    if (!text)
+        return {};
+    auto& files = WebCore::clientData(globalObject->vm())->countedCompiledFiles;
+    files.append(makeUnique<CountedText>(WTF::move(text)));
+    return files.last()->counters().counts;
+    BUN_END_REMOVABLE_ENTRY_POINT
+}
+
 static uint64_t computeFileStamp(std::span<const char> path)
 {
     return Bun__AOT__computeFileStamp(path.data(), path.size());
@@ -2424,9 +2440,10 @@ const AOT::ModuleHost compiledModuleHost = {
     &evictOriginal,
     &requiresPatch,
     &isESModuleInNode,
+    &coverageCounts,
 };
 // A member missing from the initializer is null, which tells the engine that the host does not support it.
-static_assert(sizeof(AOT::ModuleHost) == 68 * sizeof(void*));
+static_assert(sizeof(AOT::ModuleHost) == 69 * sizeof(void*));
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);
 bool recordAddonLoadedFromDisk(JSGlobalObject*, const String& path);
@@ -2690,15 +2707,6 @@ extern "C" void Bun__AOT__forEachFilePathStartingWith(BunAOTBytes start, void* c
     });
 }
 
-// For `bun test --aot --coverage`, on the thread of the VM.
-extern "C" void Bun__AOT__forEachCountedFile(JSC::VM* vm, void* context, void (*each)(void* context, BunAOTBytes description, const uint64_t* counts, size_t count))
-{
-    JSC::AOT::forEachCountedFile(*vm, [&](const String& description, std::span<const uint64_t> counts) {
-        CString bytes = description.utf8();
-        each(context, BunAOTBytes { byteCast<uint8_t>(bytes.span().data()), bytes.length() }, counts.data(), counts.size());
-    });
-}
-
 // For `bun test --aot` over several programs, on the thread of the VM.
 extern "C" void Bun__AOT__forEachFirstLoad(JSC::VM* vm, void* context, void (*each)(void* context, BunAOTBytes path, bool wasSynchronous))
 {
@@ -2835,7 +2843,6 @@ extern "C" void Bun__AOT__releaseUnusedPagesOfThread() {}
 extern "C" void Bun__AOT__didStartThread() {}
 extern "C" bool Bun__AOT__entryPointIsCommonJS(JSC::JSGlobalObject*) { return false; }
 extern "C" void Bun__AOT__forEachFilePathStartingWith(BunAOTBytes, void*, bool (*)(void*, BunAOTBytes)) {}
-extern "C" void Bun__AOT__forEachCountedFile(JSC::VM*, void*, void (*)(void*, BunAOTBytes, const uint64_t*, size_t)) {}
 extern "C" void Bun__AOT__forEachFirstLoad(JSC::VM*, void*, void (*)(void*, BunAOTBytes, bool)) {}
 extern "C" void Bun__AOT__noteFirstLoadInEarlierProcess(JSC::VM*, BunAOTBytes, bool) {}
 extern "C" JSC::EncodedJSValue Bun__AOT__errorIfCodeOutsideImageIsRefused(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({}); }

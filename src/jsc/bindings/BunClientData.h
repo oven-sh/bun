@@ -90,6 +90,7 @@ class VersionSqlite3;
 namespace Bun {
 class StrongRootBlock;
 struct IsolatedInternalModule;
+class CountedText;
 
 // JSC measures the live size of the heap at the end of each collection, but only
 // publishes it per scope: an eden collection updates
@@ -308,6 +309,9 @@ public:
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
     Vector<Bun::IsolatedInternalModule> isolationInternalModules;
+
+    // `bun test --aot --coverage`
+    Vector<std::unique_ptr<Bun::CountedText>> countedCompiledFiles;
 
     void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope) final;
 

@@ -1127,7 +1127,6 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
         warns_of_rejections: args.option(b"--unhandled-rejections").is_some(),
         checks_only: !compiles,
         runs_tests: cmd == Tag::TestCommand,
-        counts_executions: cmd == Tag::TestCommand && compiles && ctx.test_options.coverage.enabled,
         // A test writes a module at run time and imports it, as under plain `bun test`.
         loads_code_from_disk: loads_code_from_disk
             || (cmd == Tag::TestCommand && compiles && !cfg!(bun_hardened)),

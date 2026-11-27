@@ -45,6 +45,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let hir = self.file.hir;
         let inner = self.file.skip_type_syntax(callee);
         let is_parenthesized = hir.expr_flags(inner).contains(ExprFlags::PARENTHESIZED);
+        let links = self.links_counted();
         let mut lowered = match self.file.decisions().decision(inner) {
             Decision::Unknown
                 if self.file.is_chain_root(inner) && (exit.is_none() || is_parenthesized) =>
@@ -60,6 +61,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 Callee::without_key(self.lower_expression(inner), None, None)
             }
         };
+        self.count_untested_links(inner, links);
         if let Some(builtin) = expected {
             lowered.function = self.expect_builtin(lowered.function, builtin);
         }

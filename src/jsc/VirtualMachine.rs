@@ -411,6 +411,8 @@ pub struct VirtualMachine {
     /// the finalizer). Not the current context: that is what the async context says.
     pub(crate) entered_context: Cell<Option<crate::ContextId>>,
     pub(crate) is_in_on_resolve: Cell<bool>,
+    /// `bun test --coverage`. Set before the first module is loaded.
+    pub coverage: Cell<Option<&'static bun_code_coverage::Collector>>,
     pub test_isolation_enabled: Cell<bool>,
     /// Counts `bun test --isolate` file swaps. The realm's context keeps its identifier across
     /// them, so a timer or pool job of the realm's remembers the count it was made under: one
@@ -3079,6 +3081,7 @@ impl VirtualMachine {
             graph_contexts: JsCell::default(),
             entered_context: Cell::new(None),
             is_in_on_resolve: Cell::new(false),
+            coverage: Cell::new(None),
             test_isolation_enabled: Cell::new(false),
             test_isolation_generation: Cell::new(0),
             test_isolation_state: Default::default(),
@@ -3564,9 +3567,10 @@ impl bun_js_printer::OnSourceMapChunk for RuntimeSourceMapHandler<'_> {
         source: &bun_ast::Source,
         output: &mut bun_core::MutableString,
         module_info: Option<&bun_js_printer::analyze_transpiled_module::ModuleInfo>,
+        coverage: Option<&bun_ast::coverage::PlacedInText>,
     ) -> bun_js_printer::Result<()> {
         self.cache
-            .put(&output.list, &chunk.buffer.list, module_info)?;
+            .put(&output.list, &chunk.buffer.list, module_info, coverage)?;
 
         // Take the inline-sourcemap path only when a
         // debugger is present AND it is *not* in `.connect` mode — `.connect`

@@ -712,6 +712,8 @@ pub struct ParseOptions<'a, 'b> {
     pub replace_exports: bun_collections::StringArrayHashMap<bun_ast::runtime::ReplaceableExport>,
     pub inject_jest_globals: bool,
     pub is_test_entry_point: bool,
+    /// `bun test --coverage` reports the file.
+    pub is_covered: bool,
     pub set_breakpoint_on_first_line: bool,
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
@@ -1309,7 +1311,7 @@ impl<'a> Transpiler<'a> {
                 // @bun annotation
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
 
-                opts.features.code_coverage = self.options.code_coverage;
+                opts.features.code_coverage = this_parse.is_covered;
 
                 opts.features.commonjs_at_runtime = this_parse.allow_commonjs;
                 opts.features.lists_loads =
@@ -1338,9 +1340,10 @@ impl<'a> Transpiler<'a> {
                 opts.features.vitest_globals =
                     self.options.vitest_globals || self.options.test_file_imports_vitest;
                 opts.features.own_test_globals = self.options.own_test_globals;
-                opts.features.minify_syntax = self.options.minify_syntax;
+                opts.features.minify_syntax = self.options.minify_syntax && !this_parse.is_covered;
                 opts.features.minify_identifiers = self.options.minify_identifiers;
-                opts.features.dead_code_elimination = self.options.dead_code_elimination;
+                opts.features.dead_code_elimination =
+                    self.options.dead_code_elimination && !this_parse.is_covered;
                 opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
                 // `Features.bundler_feature_flags` is currently owned
                 // (`Option<Box<StringSet>>`), so clone by value.
@@ -2009,6 +2012,7 @@ impl<'a> Transpiler<'a> {
         format: js_printer::Format,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
+        coverage: Option<&mut bun_ast::coverage::Printing>,
     ) -> crate::Result<usize> {
         // Routed through the T0 ftrace subset like the
         // other bundler spans (`Bundler.computeChunks` etc.) —
@@ -2079,6 +2083,7 @@ impl<'a> Transpiler<'a> {
                         source_map_context,
                         exports_kind,
                         module_info,
+                        coverage,
                     )
                 } else {
                     self.print_ast_esm_ascii_not_bun_cold::<ENABLE_SOURCE_MAP>(
@@ -2162,6 +2167,7 @@ impl<'a> Transpiler<'a> {
             source_map_context,
             exports_kind,
             module_info,
+            None,
         )
     }
 
@@ -2178,15 +2184,16 @@ impl<'a> Transpiler<'a> {
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         exports_kind: bun_ast::ExportsKind,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
+        coverage: Option<&mut bun_ast::coverage::Printing>,
     ) -> crate::Result<usize> {
         let opts = js_printer::Options {
             bundling: false,
             require_ref: Some(ast.require_ref),
             source_map_handler: source_map_context,
             minify_whitespace: self.options.minify_whitespace,
-            minify_syntax: self.options.minify_syntax,
+            minify_syntax: self.options.minify_syntax && coverage.is_none(),
             minify_identifiers: self.options.minify_identifiers,
-            code_coverage: self.options.code_coverage,
+            coverage,
             module_type: if IS_BUN && self.options.transform_only {
                 // this is for when using `bun build --no-bundle`
                 // it should copy what was passed for the cli
@@ -2245,6 +2252,7 @@ impl<'a> Transpiler<'a> {
             format,
             None,
             None,
+            None,
         )
     }
 
@@ -2262,6 +2270,7 @@ impl<'a> Transpiler<'a> {
         format: js_printer::Format,
         handler: js_printer::SourceMapHandler<'_>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
+        coverage: Option<&mut bun_ast::coverage::Printing>,
     ) -> crate::Result<usize> {
         // env_var feature_flag getters return `Option<bool>`
         // (Some(default) when unset).
@@ -2277,6 +2286,7 @@ impl<'a> Transpiler<'a> {
                 format,
                 Some(handler),
                 module_info,
+                coverage,
             );
         }
         self.print_with_source_map_maybe::<true>(
@@ -2287,6 +2297,7 @@ impl<'a> Transpiler<'a> {
             format,
             Some(handler),
             module_info,
+            coverage,
         )
     }
 
@@ -2613,6 +2624,7 @@ impl<'a> Transpiler<'a> {
                     replace_exports: Default::default(),
                     inject_jest_globals: false,
                     is_test_entry_point: false,
+                    is_covered: false,
                     set_breakpoint_on_first_line: false,
                     remove_cjs_module_wrapper: false,
                     dont_bundle_twice: false,

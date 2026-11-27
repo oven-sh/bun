@@ -95,7 +95,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     /// `_createClass(..)`, `_callSuper(..)` where the helper is a declaration inside a function that nothing reads as a value.
     pub(in crate::lower) fn try_lower_certain_helper(&mut self, call: ExprId) -> Option<ValueId> {
         let inputs = self.file.inputs;
-        if !inputs.known_helpers.has_bindings() || inputs.options.counts_executions {
+        if !inputs.known_helpers.has_bindings() {
             return None;
         }
         let ExprKind::Call(id) = self.file.hir[call].kind else {
@@ -307,14 +307,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return None;
         }
         let helper = callee.helper(helpers)?;
-        // A coverage report counts the functions and the lines of a helper. The exports of a star are linked by the build.
-        let inputs = self.file.inputs;
-        if inputs.options.counts_executions
-            && inputs.sources.is_in_coverage_report(callee.file)
-            && !matches!(helper, Helper::ExportStar)
-        {
-            return None;
-        }
         match helper {
             Helper::ExportStar => self.lower_export_star(call, site, &callee),
             Helper::CreateClass => {
@@ -2007,7 +1999,6 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
             removable: Default::default(),
             minifies_identifiers: false,
             obfuscates: false,
-            counts_executions: false,
             runs_tests: false,
             divides_small_files: false,
         };

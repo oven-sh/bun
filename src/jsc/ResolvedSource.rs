@@ -48,6 +48,8 @@ pub struct ResolvedSource {
     /// The file path whose `file://` URL is this module's source origin (what `import()` resolves against and what a
     /// bytecode cache is validated against). Empty: derived from `source_url` (a builtin gets a `builtin://` origin).
     pub origin_path: BunString,
+    /// `Zig::SourceProvider` takes it (nulling the field).
+    pub coverage: Option<Box<bun_code_coverage::CountedText>>,
 }
 
 /// The AST fields a `ResolvedSource` needs, copied out before the printer consumes the AST.
@@ -172,5 +174,5 @@ extern "C" fn ResolvedSource__freeBytecode(bytecode: *mut u8) {
     unsafe { bun_alloc::default_alloc::free(bytecode.cast()) };
 }
 
-bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_prelinked_module @ 77, depends_on_more_than_source @ 78, is_static @ 79, bytecode_cache @ 80, module_info @ 104);
+bun_core::assert_ffi_layout!(ResolvedSource, 144, 8; is_prelinked_module @ 77, depends_on_more_than_source @ 78, is_static @ 79, bytecode_cache @ 80, module_info @ 104, coverage @ 136);
 bun_core::assert_ffi_layout!(Bytecode, 24, 8; owned @ 16, persistent @ 17, entry_offset @ 20);

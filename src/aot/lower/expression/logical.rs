@@ -253,12 +253,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             if decisions.is_dead_expr(no) {
                 self.lower_test_with_known_answer(test, in_bun_run.is_dead_expr(no));
                 current = yes;
+                self.enter_counted_expression(current);
                 break;
             }
             let if_true = self.create_block();
             let if_false = self.create_block();
             self.lower_condition(test, if_true, if_false);
             self.continue_in(if_true);
+            self.enter_counted_expression(yes);
             lower_arm(self, yes);
             self.continue_in(if_false);
             current = no;

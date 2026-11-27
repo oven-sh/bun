@@ -12,17 +12,33 @@ class SourceProvider;
 } // namespace JSC
 
 #include <JavaScriptCore/CachedBytecode.h>
+#include <JavaScriptCore/CoverageCounters.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSTypeInfo.h>
 #include <JavaScriptCore/SourceProvider.h>
 #include <JavaScriptCore/Structure.h>
 
+namespace Bun {
+
+// Puts the text in the report of `bun test --coverage`.
+class CountedText {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(CountedText);
+
+public:
+    explicit CountedText(std::unique_ptr<bun_CountedText>&&);
+    const JSC::CoverageCounters& counters() const LIFETIME_BOUND { return m_counters; }
+
+private:
+    const std::unique_ptr<bun_CountedText> m_text;
+    JSC::CoverageCounters m_counters;
+};
+
+} // namespace Bun
+
 namespace Zig {
 
 class GlobalObject;
 
-// A provider that wraps another one has a SourceID of its own, which `bun test --coverage` has to learn of.
-void addCodeCoverageSourceID(JSC::VM&, JSC::SourceProvider& provider);
 JSC::SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin);
 class SourceProvider final : public JSC::SourceProvider {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SourceProvider);
@@ -44,6 +60,11 @@ public:
         return m_cachedBytecode.copyRef();
     };
 
+    const JSC::CoverageCounters* coverageCounters() const final
+    {
+        return m_countedText ? &m_countedText->counters() : nullptr;
+    }
+
     std::unique_ptr<bun_ModuleInfoDeserialized> m_moduleInfo;
     uint32_t m_tag { 0 };
     bool m_alreadyBundled { false };
@@ -63,6 +84,7 @@ private:
         , m_dependsOnMoreThanSource(resolvedSource.depends_on_more_than_source)
         , m_bunVM(bunVM)
         , m_source(WTF::move(sourceImpl))
+        , m_countedText(resolvedSource.coverage ? makeUnique<Bun::CountedText>(WTF::move(resolvedSource.coverage)) : nullptr)
     {
     }
 
@@ -71,6 +93,7 @@ private:
     void* m_bunVM;
     RefPtr<JSC::CachedBytecode> m_cachedBytecode;
     Ref<WTF::StringImpl> m_source;
+    const std::unique_ptr<Bun::CountedText> m_countedText;
     unsigned m_hash = 0;
 };
 
@@ -110,5 +133,6 @@ struct BytecodeOrderNamesRef {
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsSourceHasLineStarts);
+JSC_DECLARE_HOST_FUNCTION(jsCheckCoverageCounters);
 
 } // namespace Bun

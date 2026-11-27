@@ -38,6 +38,16 @@ impl fmt::Debug for ReadListener {
     }
 }
 
+/// Whether the coverage report is about a file.
+#[derive(Clone)]
+pub struct CoveredFiles(pub Arc<dyn Fn(&[u8], bun_ast::Loader) -> bool + Send + Sync>);
+
+impl fmt::Debug for CoveredFiles {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("CoveredFiles")
+    }
+}
+
 /// For a process that builds many programs: it is called back right before a build looks at its entry points.
 #[derive(Clone)]
 pub struct Preload {
@@ -107,8 +117,8 @@ pub struct AotOptions {
     pub runs_tests: bool,
     /// `bun test --globals=vitest`.
     pub has_globals_of_vitest: bool,
-    /// `bun test --aot --coverage`: the files that the report is about count how often their parts run.
-    pub counts_executions: bool,
+    /// `bun test --aot --coverage`: these count how often their parts run.
+    pub covered_files: Option<CoveredFiles>,
     /// `--watch` starts to watch each file here.
     pub before_read: Option<ReadListener>,
     /// `bun test --aot --rerun-each`: the runner loads each test file several times in one realm, and what the file imports stays as it is.
@@ -204,7 +214,7 @@ impl Default for AotOptions {
             dependency_type_errors: DependencyTypeErrors::NotChecked,
             runs_tests: false,
             has_globals_of_vitest: false,
-            counts_executions: false,
+            covered_files: None,
             before_read: None,
             entry_points_run_again: false,
             typescript_drops_absent_exports: false,
@@ -273,7 +283,7 @@ mod tests {
             dependency_type_errors,
             runs_tests,
             has_globals_of_vitest,
-            counts_executions,
+            covered_files,
             before_read,
             entry_points_run_again,
             typescript_drops_absent_exports,
@@ -333,7 +343,7 @@ mod tests {
         assert_eq!(dependency_type_errors, DependencyTypeErrors::NotChecked);
         assert!(!runs_tests);
         assert!(!has_globals_of_vitest);
-        assert!(!counts_executions);
+        assert!(covered_files.is_none());
         assert!(before_read.is_none());
         assert!(!entry_points_run_again);
         assert!(!typescript_drops_absent_exports);

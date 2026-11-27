@@ -107,3 +107,17 @@ test.skipIf(!hasHook)(
   },
   60_000,
 );
+
+test.skipIf(!hasHook).each(["BUN_TEST_WORKER_EXIT_BEFORE_READY", "BUN_TEST_WORKER_ABORT_AFTER_SHUTDOWN"])(
+  "--parallel --coverage has nothing to report with %s",
+  async hook => {
+    using dir = makeDir("parallel-crash-coverage");
+    const flags = ["--parallel-delay=600000", "--coverage-include=."];
+    const [, stderr, exitCode] = await runParallel(String(dir), "1", hook, ...flags);
+    expect(stderr).toContain("across 2 files");
+    expect(stderr).not.toContain("All files");
+    expect(stderr).not.toContain("before it reported the coverage");
+    expect(exitCode).toBe(1);
+  },
+  60_000,
+);

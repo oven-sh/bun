@@ -27,8 +27,8 @@ use parser::ahead::Ahead;
 pub use summarize::{
     COUNTS, CompileParseOptions, Counts, PartError, Parts, Summary, ThreadCaches,
     parse_appended_expressions, parse_for_compile, parse_for_compile_in, summarize, summarize_as,
-    summarize_in, summarize_top_level, summarize_without_comments, with_summary,
-    with_summary_in_place,
+    summarize_in, summarize_top_level, summarize_without_comments, with_file_as_written,
+    with_summary, with_summary_in_place,
 };
 
 /// Why the parser rejected a text.
@@ -160,6 +160,8 @@ pub struct Options {
     pub accepts_legacy_octal: bool,
     /// With `compiles`: the engine gets the text as it is written, so a comment says of no call that it is pure.
     pub ignores_pure_comments: bool,
+    /// With `compiles`: `a, b;` stays one statement.
+    pub keeps_comma_statements: bool,
     /// Functions have empty bodies wherever `parser/skipped_blocks.rs` can step over their blocks.
     pub skips_function_blocks: bool,
     /// Of a TypeScript module only the `import` and `export` statements in front of the others are parsed. A text whose

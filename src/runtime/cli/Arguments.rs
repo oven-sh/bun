@@ -16,7 +16,9 @@ use bun_core::strings;
 use bun_core::{self, FeatureFlags, Global, Output, env_var};
 use bun_jsc::RegularExpression;
 use bun_jsc::regular_expression::Flags as RegexFlags;
-use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
+use bun_options_types::code_coverage_options::{
+    CodeCoverageOptions, Reporters as CoverageReporters,
+};
 use bun_options_types::context::{
     Debugger, DebuggerEnable, HotReload, MacroOptions, Shard, TestEnvironment, TestGlobals,
 };
@@ -936,10 +938,13 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!("--seed <INT>                     Set the random seed for test randomization"),
     parse_param!("--coverage                       Generate a coverage profile"),
     parse_param!(
-        "--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'. Implies --coverage."
+        "--coverage-reporter <STR>...     Report coverage in 'text', 'lcov', 'json' and/or 'json-summary'. Defaults to 'text'. Implies --coverage."
     ),
     parse_param!(
         "--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'."
+    ),
+    parse_param!(
+        "--coverage-include <STR>...      Report coverage for the files that match this glob, even if no test loads them. Implies --coverage."
     ),
     parse_param!(
         "--bail <NUMBER>?                 Exit the test suite after \\<NUMBER\\> failures. If you do not specify a number, it defaults to 1."
@@ -1355,6 +1360,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             let named_file = args.option(b"--config").filter(|file| !file.is_empty());
             startup_options::reject_unusable_bunfig_settings(ctx, named_file);
         }
+    }
+
+    if cmd == CommandTag::TestCommand {
+        parse_coverage_options(&args, &mut ctx.test_options.coverage);
     }
 
     // So far these are `[bundle] entryPoints`. An AOT build expands patterns, in which `\` escapes.
@@ -2124,7 +2133,39 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     Ok(opts)
 }
 
-/// Cold path: `bun test` option-group parsing — timeout / coverage / reporter /
+/// After bunfig.toml, which they override.
+#[cold]
+#[inline(never)]
+fn parse_coverage_options(args: &clap::Args<clap::Help>, coverage: &mut CodeCoverageOptions) {
+    bun_removable_features::removable_definition!(TestCommand, parse_coverage_options);
+    coverage.enabled |= args.flag(b"--coverage");
+
+    if !args.options(b"--coverage-reporter").is_empty() {
+        coverage.enabled = true;
+        coverage.reporters = CoverageReporters::default();
+        for reporter in args.options(b"--coverage-reporter") {
+            if !coverage.reporters.add(reporter) {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: invalid coverage reporter '{}'. Available options: 'text' (console output), 'lcov' (lcov.info), 'json' (coverage-final.json), 'json-summary' (coverage-summary.json)",
+                    BStr::new(reporter)
+                );
+                Global::exit(1);
+            }
+        }
+    }
+
+    if let Some(dir) = args.option(b"--coverage-dir") {
+        coverage.reports_directory =
+            bun_sys::converted_spelling(dir, bun_paths::from_portable).into();
+    }
+
+    if !args.options(b"--coverage-include").is_empty() {
+        coverage.enabled = true;
+        coverage.include_patterns = slice_to_owned(args.options(b"--coverage-include"));
+    }
+}
+
+/// Cold path: `bun test` option-group parsing — timeout / reporter /
 /// shard / parallel / seed / etc. Split out of [`parse`] so the `bun run <script>`
 /// and bare-`bun <file>` hot path (`USES_GLOBAL_OPTIONS` ⇒ `parse` runs on every
 /// invocation) doesn't carry the test-runner flag handling in its instruction pages.
@@ -2161,31 +2202,6 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
                     Global::exit(1);
                 }
             };
-        }
-    }
-
-    if !ctx.test_options.coverage.enabled {
-        ctx.test_options.coverage.enabled = args.flag(b"--coverage");
-    }
-
-    if !args.options(b"--coverage-reporter").is_empty() {
-        ctx.test_options.coverage.enabled = true;
-        ctx.test_options.coverage.reporters = CoverageReporters {
-            text: false,
-            lcov: false,
-        };
-        for reporter in args.options(b"--coverage-reporter") {
-            if *reporter == b"text" {
-                ctx.test_options.coverage.reporters.text = true;
-            } else if *reporter == b"lcov" {
-                ctx.test_options.coverage.reporters.lcov = true;
-            } else {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: invalid coverage reporter '{}'. Available options: 'text' (console output), 'lcov' (code coverage file)",
-                    BStr::new(reporter)
-                );
-                Global::exit(1);
-            }
         }
     }
 
@@ -2234,11 +2250,6 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     // Handle --only-failures flag
     if args.flag(b"--only-failures") {
         ctx.test_options.reporters.only_failures = true;
-    }
-
-    if let Some(dir) = args.option(b"--coverage-dir") {
-        ctx.test_options.coverage.reports_directory =
-            bun_sys::converted_spelling(dir, bun_paths::from_portable).into();
     }
 
     if !args.options(b"--path-ignore-patterns").is_empty() {

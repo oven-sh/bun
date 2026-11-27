@@ -11,7 +11,7 @@ import {
   tmpdirSync,
   untilEveryThreadIs,
 } from "harness";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 // Each case spawns a full `bun test` process; give the concurrent group
@@ -106,6 +106,53 @@ describe.concurrent("bun test --changed", () => {
     expect(stderr).toContain("no changed files");
     expect(exitCode).toBe(0);
   });
+
+  test.each<[string[], string[], string[], number]>([
+    [["src/helper.ts"], ["--coverage"], ["All files", "helper.ts"], 0],
+    [["src/helper.ts"], ["--coverage-include=src"], ["All files", "helper.ts"], 0],
+    [["src/helper.ts", "c.test.ts"], ["--coverage-include=src", "--parallel=2"], ["All files", "helper.ts"], 0],
+    [["src/helper.ts", "b.test.ts"], ["--coverage"], ["All files", "helper.ts", "other.ts"], 0],
+    [["src/helper.ts", "src/untested.ts"], ["--coverage"], ["All files", "helper.ts"], 0],
+    [["src/helper.ts", "src/untested.ts"], ["--coverage-include=src"], ["All files", "helper.ts", "untested.ts"], 1],
+    [["src/untested.ts"], ["--coverage-include=src"], ["All files", "untested.ts"], 1],
+    [["src/untested.ts"], ["--coverage"], [], 0],
+    [["src/other.ts", "d.test.ts"], ["--coverage", "./d.test.ts"], ["All files", "other.ts?query"], 0],
+    [["src/other.ts", "f.test.ts"], ["--coverage", "./f.test.ts"], ["All files", "other.ts"], 0],
+    [["a.test.ts"], ["--coverage-include=src"], ["All files", "util.ts"], 0],
+    [["c.test.ts"], ["--coverage-include=src"], ["All files"], 0],
+    [["e.test.ts"], ["--coverage", "--preserve-symlinks"], ["All files", "other.ts"], 0],
+    [
+      ["e.test.ts", "src/helper.ts"],
+      ["--coverage", "--preserve-symlinks", "./e.test.ts"],
+      ["All files", "helper.ts", "other.ts"],
+      0,
+    ],
+    [["a.test.ts"], ["--coverage-include=scr"], ["All files"], 1],
+    [[], ["--coverage-include=src"], [], 0],
+  ])(
+    "coverage is reported for changed files and what changed tests import: %j %j",
+    async (changed, flags, rows, expectedExitCode) => {
+      using dir = tempDir("test-changed-coverage", {
+        ...fixture,
+        "src/untested.ts": `export const untested = () => 0;\n`,
+        "d.test.ts": `
+        Bun.plugin({ setup: build => void build.onLoad({ filter: /query$/ }, () => ({ contents: "", loader: "ts" })) });
+        for (const name of ["other", "util"]) require("./src/" + name + ".ts?query");\n`,
+        "e.test.ts": `import { other } from "./link/other";\nother(), require("./link/" + ["util"]).util();\n`,
+        "f.test.ts": `(await import(URL.createObjectURL(Bun.file("src/other.ts")))).other();\n`,
+        ".gitignore": "link\n",
+        "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\ncoverageThreshold = { lines = 1, functions = 1, src = {} }\n`,
+      });
+      symlinkSync(join(String(dir), "src"), join(String(dir), "link"), "junction");
+      initRepo(String(dir));
+      for (const file of changed) appendFileSync(join(String(dir), file), "// touched\n");
+
+      const { stderr, exitCode } = await runTestChanged(String(dir), flags);
+      expect([...stderr.matchAll(/^ ?(\S.*?) +\| +\d/gm)].map(it => basename(it[1]))).toEqual(rows);
+      expect(stderr).not.toContain("not checked");
+      expect(exitCode).toBe(expectedExitCode);
+    },
+  );
 
   test("direct change to a test file runs only that test", async () => {
     using dir = tempDir("test-changed-direct", fixture);
@@ -629,6 +676,40 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
     for (const name of names) appendFileSync(join(String(dir), name), "// touched\n");
     proc.kill("SIGCONT");
     expect(await nextSummary()).toBe("Ran 12 tests across 12 files.");
+  });
+
+  test("coverage is not reported for a changed file whose tests do not run again", async () => {
+    using dir = tempDir("test-changed-watch-coverage", {
+      "a.ts": "",
+      "b.ts": "",
+      "a.test.ts": `import "./a.ts";\n`,
+      "b.test.ts": `import "./b.ts";\n`,
+      "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\ncoverageInclude = "."\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "b.ts"), "// dirty\n");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--changed", "--watch", "--no-clear-screen", "--coverage"],
+      cwd: String(dir),
+      env: gitEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+      killSignal: "SIGKILL",
+    });
+    const lines = forEachLine(proc.stderr);
+    async function nextRows() {
+      const rows: string[] = [];
+      while (true) {
+        const { value, done } = await lines.next();
+        if (done || value.startsWith("Ran ")) return rows;
+        if (value.includes(" | ")) rows.push(value.split("|")[0].trim());
+      }
+    }
+    expect(await nextRows()).toEqual(["File", "All files", "b.ts"]);
+    appendFileSync(join(String(dir), "a.test.ts"), "// touched\n");
+    expect(await nextRows()).toEqual(["File", "All files", "a.ts"]);
   });
 
   test("trigger file path handed to restarted runs has a 128-bit random hex suffix", async () => {

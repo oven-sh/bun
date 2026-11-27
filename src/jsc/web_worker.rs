@@ -147,6 +147,7 @@ struct WorkerVmInit {
     transform_options: bun_options_types::schema::api::TransformOptions,
     env_loader: bun_dotenv::Loader,
     proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
+    coverage: Option<&'static bun_code_coverage::Collector>,
 }
 
 /// What the worker thread is handed: its refcounted `WebWorker` (a ref of the
@@ -537,6 +538,7 @@ impl WebWorker {
             transform_options,
             env_loader,
             proxy_env_slots,
+            coverage: parent.coverage.get(),
         };
 
         // The construction ref: handed to C++ on success, dropped on failure.
@@ -939,6 +941,7 @@ impl WebWorker {
             transform_options,
             mut env_loader,
             proxy_env_slots,
+            coverage,
         } = init;
         let mut log = bun_ast::Log::default();
         let dot_slash = OnceCell::new();
@@ -959,6 +962,7 @@ impl WebWorker {
                     ));
                 }
             };
+            vm.coverage.set(coverage);
             // Never released: `shutdown()` destroys the `JSC::VM`, and the lock with it.
             JSC__VM__getAPILock(vm.global().vm());
             self.spin(&dot_slash);

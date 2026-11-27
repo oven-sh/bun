@@ -343,7 +343,7 @@ pub(super) fn plan_parts(
         && queries.role(file) == FileRole::Inferred
         && kind_of_source == SourceKind::Program
         && !bound.has_loop_types_that_depend_on_order
-        && !options.counts_executions
+        && !inputs.sources.is_in_coverage_report(file)
         && !modules.has_instances(file)
         && matches!(
             modules.kind(file),

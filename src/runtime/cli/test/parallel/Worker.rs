@@ -49,6 +49,10 @@ pub(crate) struct Worker {
     pub(crate) startup_failures: u8,
     /// `runner::first_loads` as of the last file that ran in this slot. The next process of the slot starts from there, as one process that ran all of them would.
     pub(crate) first_loads: Vec<u8>,
+    /// The parts of the last `CoverageFile` so far.
+    pub(crate) coverage_file: Vec<u8>,
+    /// From the first `FileDone` up to `RepeatBufs`, which follows the last `CoverageFile`.
+    pub(crate) owes_coverage: bool,
 }
 
 /// What every `Worker::start` of a run needs.

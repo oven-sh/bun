@@ -6,6 +6,7 @@ mod compile;
 
 pub use compile::{
     CompileParseOptions, parse_appended_expressions, parse_for_compile, parse_for_compile_in,
+    with_file_as_written,
 };
 
 use crate::{Options, Part, Rejection, Scratch};
@@ -101,6 +102,8 @@ struct ParseSettings<'a> {
     reads_as_bun_run: bool,
     /// `Options::ignores_pure_comments`
     ignores_pure_comments: bool,
+    /// `Options::keeps_comma_statements`
+    keeps_comma_statements: bool,
     /// `Options::skips_function_blocks`
     skips_function_blocks: bool,
     /// `Options::reads_module_statements_alone`
@@ -289,6 +292,7 @@ fn parse_file_as(
             && !is_json
             && ScriptKind::from_file_name(path).is_none(),
         ignores_pure_comments: how.ignores_pure_comments,
+        keeps_comma_statements: how.keeps_comma_statements,
         skips_function_blocks: how.skips_function_blocks,
         reads_module_statements_alone: how.reads_module_statements_alone,
         drops_comments: how.drops_comments,
@@ -519,6 +523,7 @@ fn summarize_for_checker<'s>(
         compiles: false,
         reads_as_bun_run,
         ignores_pure_comments: false,
+        keeps_comma_statements: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
         drops_comments,
@@ -556,6 +561,7 @@ pub fn summarize_top_level<'s>(
         compiles: false,
         reads_as_bun_run,
         ignores_pure_comments: false,
+        keeps_comma_statements: false,
         skips_function_blocks: true,
         reads_module_statements_alone: true,
         drops_comments: false,
@@ -616,6 +622,7 @@ pub fn summarize_in<'s>(
         compiles: false,
         reads_as_bun_run: false,
         ignores_pure_comments: false,
+        keeps_comma_statements: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
         drops_comments: false,
@@ -712,6 +719,7 @@ pub fn with_summary_in_place<'s, R>(
         compiles: false,
         reads_as_bun_run: false,
         ignores_pure_comments: false,
+        keeps_comma_statements: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
         drops_comments: false,
@@ -725,8 +733,19 @@ pub fn with_summary_in_place<'s, R>(
         return_scratch(scratch);
         return then(Summary::InArena(Box::new(file)), atoms);
     }
+    with_own_atoms(scratch, how, text, |file, atoms| {
+        then(Summary::InPlace(file), atoms)
+    })
+}
+
+fn with_own_atoms<R>(
+    mut scratch: Box<Scratch>,
+    how: ParseSettings<'_>,
+    text: &[u8],
+    then: impl FnOnce(&mut FileBuilder, &dyn Intern) -> R,
+) -> R {
     let mut file = parse_file(&mut scratch, how, text, None);
-    let result = then(Summary::InPlace(&mut file), &scratch.atoms(text));
+    let result = then(&mut file, &scratch.atoms(text));
     // Don't keep a very large file's capacity around for every later file.
     if text.len() >= 4 << 20 {
         *file = FileBuilder::default();

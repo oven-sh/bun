@@ -81,6 +81,7 @@ pub enum SourceMapLoadHint {
 #[derive(Clone, Copy)]
 pub enum ParseUrlResultHint {
     MappingsOnly,
+    MappingsAndSources,
     SourceOnly(u32),
     All {
         line: i32,
@@ -94,6 +95,8 @@ pub struct ParseUrl {
     pub map: Option<std::sync::Arc<ParsedSourceMap>>,
     pub mapping: Option<Mapping>,
     pub source_contents: Option<Box<[u8]>>,
+    pub contents_of_all_sources: Vec<Option<Box<[u8]>>>,
+    pub debug_id: Option<Box<[u8]>>,
 }
 
 pub type ParseResult = core::result::Result<ParsedSourceMap, ParseFail>;
@@ -311,11 +314,12 @@ pub struct DebugIDFormatter {
     pub id: u64,
 }
 
+/// The RFC asks for a UUID (128 bits / 32 hex chars). Our hashes are 64 bits.
+const DEBUG_ID_TAIL: &str = "64756E2164756E21";
+
 impl core::fmt::Display for DebugIDFormatter {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // The RFC asks for a UUID (128 bits / 32 hex chars). Our hashes are 64
-        // bits; the tail is "bun!bun!" hex-encoded.
-        write!(f, "{:016X}64756E2164756E21", self.id)
+        write!(f, "{:016X}{DEBUG_ID_TAIL}", self.id)
     }
 }
 
@@ -421,15 +425,7 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
         if load_hint != SourceMapLoadHint::IsExternalMap {
             'try_inline: {
                 let source = provider.get_source_slice();
-                debug_assert!(source.tag() == bun_core::Tag::EncodedSlice);
-
-                let maybe_found_url = if source.is_8bit() {
-                    find_source_mapping_url_u8(source.latin1())
-                } else {
-                    find_source_mapping_url_u16(source.utf16())
-                };
-
-                let Some(found_url) = maybe_found_url else {
+                let Some(found_url) = find_source_mapping_url(&source) else {
                     break 'try_inline;
                 };
 
@@ -503,6 +499,10 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     }
                 }
 
+                if bun_core::strings::contains_char(source_filename, 0) {
+                    break 'try_external;
+                }
+
                 let mut load_path = bun_paths::Path::from(source_filename);
                 load_path.extend_from_slice(b".map");
                 let load_path: &bun_core::ZStr = &load_path;
@@ -559,6 +559,31 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
         }
     }
     Some(parsed)
+}
+
+impl SourceProvider for [u8] {
+    fn get_source_slice(&self) -> bun_core::StringView<'_> {
+        bun_core::StringView::ascii(self)
+    }
+    fn to_source_content_ptr(&self) -> SourceContentPtr {
+        SourceContentPtr::NONE
+    }
+}
+
+/// The map that `bun build` wrote together with `text`, and the text of each source.
+pub fn load_with_sources(
+    path: &[u8],
+    text: &[u8],
+    load_hint: SourceMapLoadHint,
+) -> Option<(std::sync::Arc<ParsedSourceMap>, Vec<Option<Box<[u8]>>>)> {
+    const COMMENT: &[u8] = b"\n//# debugId=";
+    let end = &text[bun_core::strings::last_index_of(text, COMMENT)? + COMMENT.len()..];
+    let debug_id =
+        (end.get(..32)).filter(|it| it[16..].eq_ignore_ascii_case(DEBUG_ID_TAIL.as_bytes()))?;
+    let hint = ParseUrlResultHint::MappingsAndSources;
+    let parsed = get_source_map_impl(end, path, load_hint, hint)?;
+    parsed.debug_id.filter(|it| **it == *debug_id)?;
+    Some((parsed.map?, parsed.contents_of_all_sources))
 }
 
 // ── SavedSourceMap leaf state ─────────────────────────────────────────────
@@ -995,7 +1020,7 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
             let idx = u32::try_from(m.source_index).ok();
             (Some(m), idx)
         }
-        ParseUrlResultHint::MappingsOnly => (None, None),
+        ParseUrlResultHint::MappingsOnly | ParseUrlResultHint::MappingsAndSources => (None, None),
     };
 
     let content_slice: Option<Box<[u8]>> = match source_index {
@@ -1021,6 +1046,13 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
         map,
         mapping: found_mapping,
         source_contents: content_slice,
+        contents_of_all_sources: match hint {
+            ParseUrlResultHint::MappingsAndSources => (sources_content.items().iter())
+                .map(|it| it.as_str().map(Box::from))
+                .collect(),
+            _ => Vec::new(),
+        },
+        debug_id: (json.get(b"debugId")).and_then(|it| it.as_utf8_string_literal().map(Box::from)),
     })
 }
 
@@ -1092,6 +1124,15 @@ pub fn append_source_map_chunk<'a>(
     // Then append everything after that without modification.
     j.push_static(source_map);
     Ok(())
+}
+
+fn find_source_mapping_url(source: &bun_core::String) -> Option<bun_core::Utf8Bytes<'_>> {
+    debug_assert!(source.tag() == bun_core::Tag::EncodedSlice);
+    if source.is_8bit() {
+        find_source_mapping_url_u8(source.latin1())
+    } else {
+        find_source_mapping_url_u16(source.utf16())
+    }
 }
 
 /// Always returns UTF-8.

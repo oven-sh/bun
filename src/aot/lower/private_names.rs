@@ -325,7 +325,6 @@ _Counter_x = new WeakMap(), _Counter_instances = new WeakSet(), _Counter_step = 
             removable: Default::default(),
             minifies_identifiers: false,
             obfuscates: false,
-            counts_executions: false,
             runs_tests: false,
             divides_small_files: false,
         };

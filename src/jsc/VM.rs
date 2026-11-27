@@ -8,7 +8,6 @@ use crate::{JSGlobalObject, JSValue, JsError};
 // params as references and the fns as `safe fn` moves the validity proof into
 // the type signature and removes the per-call-site `unsafe { }` wrappers.
 unsafe extern "C" {
-    safe fn JSC__VM__enableControlFlowProfiler(vm: &VM);
     safe fn JSC__VM__getAPILock(vm: &VM);
     safe fn JSC__VM__releaseAPILock(vm: &VM);
     safe fn JSC__VM__reportExtraMemory(vm: &VM, size: usize);
@@ -40,10 +39,6 @@ impl VM {
     // its VM via `Zig::GlobalObject::create` → `WebWorker__createVM` instead).
 
     // Note: not `impl Drop` — takes a `global_object` param and `VM` is an opaque FFI handle.
-
-    pub fn enable_control_flow_profiler(&self) {
-        JSC__VM__enableControlFlowProfiler(self)
-    }
 
     /// See `JSLock.h` in WebKit for more detail on how the API lock prevents races.
     pub fn get_api_lock(&self) -> Lock<'_> {

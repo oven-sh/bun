@@ -881,6 +881,85 @@ test.each([
   expect(exitCode).toBe(1);
 });
 
+// On Windows a write to fd 3 breaks libuv's IPC framing and the worker is killed.
+test.skipIf(isWindows)("--parallel --coverage drops the counts that a test makes up if they do not fit", async () => {
+  using dir = tempDir("parallel-coverage-frames", {
+    "a.test.js": `import {test} from "bun:test"; import {writeSync} from "fs";
+      const u32 = value => Buffer.from(new Uint32Array([value]).buffer);
+      const string = text => [text.length, ...Buffer.from(text)];
+      const part = (before, after, ...bytes) => writeSync(3, Buffer.concat([u32(12 + bytes.length), Buffer.from([7]), u32(bytes.length), Buffer.from(bytes), u32(before), u32(after)]));
+      const send = (...bytes) => part(0, 0, ...bytes);
+      const [js, css] = [1, 4], largest = [255, 255, 255, 255, 255, 255, 255, 255, 255, 1];
+      test("a", () => {
+        part(0, 1, js, 0, ...string("/unfinished.js"), ...string("a;"), 1, 1);
+        send(js, 0, ...string("/fits.js"), ...string("a;"), 1, 0);
+        send(js, 0, ...string("/fits.js"), ...string("a;"), 1, 254, ...largest.slice(1));
+        send(js, 0, ...string("/fits.js"), ...string("a;"), 1, 254, ...largest.slice(1));
+        send(js, 0, ...string("/too-few.js"), ...string("a;"), 1);
+        send(js, 0, ...string("/too-many.js"), ...string("a;"), 1, 1, 1);
+        send(css, 0, ...string("/no-code.css"), ...string("a;"), 1, 1);
+        send(js, 3, ...string("/no-origin.js"), ...string("a;"), 1, 1);
+        send(js, 0, ...string("/cut.js"), ...string("a;"), 1, 128);
+        send(js, 0, ...string("/long-number.js"), ...string("a;"), 1, 255, ...largest);
+        send(js, 0, ...string("/long-text.js"), ...largest);
+        send(js, 0, ...largest);
+        send(js);
+        send();
+      });`,
+    "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
+    "bunfig.toml": `[test]\ncoveragePathIgnorePatterns = "**"\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "ignore",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr.match(/^warn: .*$/gm)).toEqual([
+    `warn: Failed to parse "/too-few.js". It is not in the coverage report.`,
+    `warn: Failed to parse "/too-many.js". It is not in the coverage report.`,
+  ]);
+  const lcov = await Bun.file(String(dir) + "/coverage/lcov.info").text();
+  expect(lcov.match(/[^/]+\.\w+$|^DA:.*$/gm)).toEqual(["fits.js", `DA:1,${2n ** 64n - 2n}`]);
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(isWindows).each([
+  ["interrupted", false],
+  ["interrupted", true],
+  ["crashed", false],
+  ["crashed", true],
+  ["exited", false],
+  ["exited", true],
+])("--parallel --coverage reports on a run that was %s only if there are counts: %p", async (end, hasCounts) => {
+  const last = `test("last", () => ${end === "exited" ? "process.exit(0)" : "new Promise(() => {})"}, 999999);`;
+  using dir = tempDir("parallel-coverage-cut-short", {
+    "a.test.js": `import {test} from "bun:test"; import {writeSync} from "fs"; import {crash_handler} from "bun:internal-for-testing";
+      // What a worker sends for the empty file "/a".
+      test("first", () => void (${hasCounts} && writeSync(3, Buffer.from([11, 0, 0, 0, 7, 7, 0, 0, 0, 1, 0, 2, 47, 97, 0, 1]))));
+      ${end === "crashed" ? `test("crash", () => crash_handler.fastfail());` : last}`,
+    "b.test.js": `import {test} from "bun:test"; ${last}`,
+    "lib.js": "",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--coverage-reporter=lcov", "--coverage-include=lib.js"],
+    env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "ignore",
+  });
+  let stderr = "";
+  for await (const chunk of proc.stderr) {
+    const isWaiting = end === "interrupted" && !stderr.includes("(pass) first");
+    stderr += Buffer.from(chunk);
+    if (isWaiting && stderr.includes("(pass) first")) proc.kill("SIGTERM");
+  }
+  expect(await Bun.file(String(dir) + "/coverage/lcov.info").exists()).toBe(hasCounts);
+  expect(await proc.exited).toBe(end === "interrupted" ? 143 : 1);
+});
+
 test("--parallel --dots prints one status character per test", async () => {
   using dir = tempDir("parallel-dots", {
     "a.test.js": `import {test,expect} from "bun:test";
@@ -1295,6 +1374,13 @@ describe.skipIf(!isLinux)("--parallel: a worker that has exited gets no file", (
       0,
     ],
     ["after a Ready frame", exitAfterReady, {}, "1 fail", 1],
+    [
+      "after its file, with the coverage of it",
+      exitAfterTheFile,
+      { BUN_OPTIONS: "--coverage" },
+      "error: test worker 1 exited (exit code 0) before it reported the coverage of its test files\n",
+      1,
+    ],
   ])("%s", async (_, exit, env, summary, expectedExitCode) => {
     using dir = tempDir("parallel-exited-worker", {
       "a.test.js": `import {test} from "bun:test"; import {existsSync, writeSync} from "fs";

@@ -89,6 +89,8 @@ Replace `collectCoverage` with the `--coverage` CLI flag.
 bun test --coverage
 ```
 
+Bun reports what Jest reports, and [some code that Jest doesn't look at](/test/code-coverage#differences-from-istanbul).
+
 ---
 
 Replace `testTimeout` with the `--timeout` CLI flag.
@@ -114,6 +116,7 @@ Many other settings have an equivalent in the `[test]` section of `bunfig.toml`.
 - `setupFiles`/`setupFilesAfterEnv` → `preload`
 - `testPathIgnorePatterns` → `pathIgnorePatterns`
 - `rootDir` → `root`
+- `collectCoverageFrom` → `coverageInclude`
 - `coverageDirectory` → `coverageDir`
 - `coverageReporters` → `coverageReporter`
 - `coverageThreshold` → `coverageThreshold` (as a fraction like `0.9`, not a percentage)

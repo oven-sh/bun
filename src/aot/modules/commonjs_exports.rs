@@ -1364,7 +1364,11 @@ impl Scan<'_, '_, '_> {
         self.found.creations.push(creation);
     }
 
-    fn find_returned_expression(&self, getter: ExprId) -> Option<ExprId> {
+    fn find_returned_expression(&self, getter: ExprId, is_enumerable: bool) -> Option<ExprId> {
+        // It counts if it runs. An import finds no other getter on the object.
+        if is_enumerable && (self.text.bind.sources).is_in_coverage_report(self.text.file) {
+            return None;
+        }
         let hir = self.text.hir;
         let ExprKind::Fn(function) = hir[hir.skip_type_assertions(getter)].kind else {
             return None;
@@ -1517,7 +1521,7 @@ impl Scan<'_, '_, '_> {
                 getter: Some(getter),
                 setter: None,
             } => {
-                let returned = self.find_returned_expression(getter)?;
+                let returned = self.find_returned_expression(getter, is_enumerable)?;
                 let behind_load = self.find_alias_target(returned, call_node, false);
                 let (target, needs_marker, handed_to_helper) = match behind_load {
                     Some(found) => found,
@@ -1573,7 +1577,7 @@ impl Scan<'_, '_, '_> {
                     is_enumerable,
                     ..
                 } => {
-                    let returned = self.find_returned_expression(getter)?;
+                    let returned = self.find_returned_expression(getter, is_enumerable)?;
                     let behind_load =
                         self.find_alias_target(returned, definition, is_read_behind_body);
                     let (target, needs_marker, handed_to_helper) = match behind_load {

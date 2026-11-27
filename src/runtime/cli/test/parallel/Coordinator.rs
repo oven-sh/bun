@@ -33,9 +33,6 @@ pub(crate) struct Coordinator<'a> {
     /// `TestDone` records received for it, replayed in file order at the end
     /// so the document matches a serial run. Empty otherwise.
     pub(crate) test_records: Vec<FileTestRecords>,
-    /// Per source path: coverage folded across every worker that loaded it.
-    pub(crate) coverage_files:
-        bun_collections::StringArrayHashMap<bun_sourcemap_jsc::code_coverage::MergedReport>,
     /// File index whose `path:` header was most recently written. Result lines
     /// from concurrent workers interleave; whenever the source file changes the
     /// header is re-emitted so every line has visible context. None at start.
@@ -48,6 +45,7 @@ pub(crate) struct Coordinator<'a> {
     pub(crate) spawned_count: usize,
     pub(crate) aborted: Option<u32>,
     pub(crate) stop_reason: Option<StopReason>,
+    pub(crate) lacks_coverage: bool,
 }
 
 /// What the processes that test files start hold. A worker leads a process group, and what it starts stays in the group. Five times a
@@ -486,6 +484,7 @@ impl<'a> Coordinator<'a> {
             }
             frame::Kind::FileDone => self.on_file_done(slot, rd),
             frame::Kind::RepeatBufs => {
+                self.workers[slot].owes_coverage = false;
                 for to_repeat in [
                     &self.reporter.failures_to_repeat_buf,
                     &self.reporter.skips_to_repeat_buf,
@@ -495,13 +494,14 @@ impl<'a> Coordinator<'a> {
                 }
             }
             frame::Kind::CoverageFile => {
-                use bun_sourcemap_jsc::code_coverage::wire;
-                // fd 3 is writable from test JS, so a frame that doesn't
-                // decode is dropped rather than trusted.
-                if let Some(report) = wire::decode(rd.str()) {
-                    let merged =
-                        bun_core::handle_oom(self.coverage_files.get_or_put(&report.source_url));
-                    bun_core::handle_oom(merged.value_ptr.add(&report));
+                let (part, before, after) = (rd.str(), rd.u32(), rd.u32());
+                let file = &mut self.workers[slot].coverage_file;
+                if before == 0 {
+                    file.clear();
+                }
+                file.extend_from_slice(part);
+                if let Some(coverage) = self.spawn.vm.coverage.get().filter(|_| after == 0) {
+                    coverage.add_encoded(file);
                 }
             }
             frame::Kind::RefusedChange => {
@@ -526,6 +526,7 @@ impl<'a> Coordinator<'a> {
         let (growth_of_worker, largest_child) = (rd.u32(), rd.u32());
         self.max_worker_peak_rss_mb = self.max_worker_peak_rss_mb.max(rd.u32());
         rd.str().clone_into(&mut self.workers[slot].first_loads);
+        self.workers[slot].owes_coverage = self.spawn.vm.coverage.get().is_some();
         // Of the two views of the children, one sees the short-lived and one sees those that run at once.
         let growth = growth_of_worker + largest_child.max(self.take_highest_of_children(slot));
         if let Some(file) = self.test_records.get_mut(idx) {
@@ -630,6 +631,19 @@ impl<'a> Coordinator<'a> {
                 }
             }
         }
+        if core::mem::take(&mut self.workers[slot].owes_coverage) {
+            self.lacks_coverage = true;
+            if self.stop_reason != Some(StopReason::WorkerPanicked) {
+                self.break_dots();
+                bun_core::pretty_error!(
+                    "<r><red>error<r>: test worker {} exited ({}) before it reported the coverage of its test files\n",
+                    slot + 1,
+                    describe_status(status),
+                );
+                Output::flush();
+                (self.reporter.jest.unhandled_errors_between_tests).update(|n| n + 1);
+            }
+        }
 
         let startup_failures = self.workers[slot].startup_failures;
         let can_respawn = startup_failures < MAX_STARTUP_FAILURES && self.has_work_to_hand_out();
@@ -691,6 +705,7 @@ impl<'a> Coordinator<'a> {
         ran_ms: Option<i64>,
     ) {
         self.reporter.count_failed_file();
+        self.lacks_coverage = true;
         if let Some(file) = self.test_records.get_mut(file_idx) {
             file.unfinished = Some(test_case);
             if let Some(ms) = ran_ms {

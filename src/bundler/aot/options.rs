@@ -112,7 +112,7 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         bytecode_order: _, compile_target_builtins: _, metafile: _, metafile_json_path: _,
         metafile_markdown_path: _, serve_plugins: _, bunfig_path: _, unwrap_commonjs_packages: _,
         supports_multiple_outputs: _, rewrite_jest_for_tests: _, vitest_globals: _,
-        test_file_imports_vitest: _, own_test_globals: _, code_coverage: _, defers_requires: _, debugger: _,
+        test_file_imports_vitest: _, own_test_globals: _, defers_requires: _, debugger: _,
     } = options;
 
     let is_development_server = framework.is_some() || !dev_server.is_null() || *hot_module_reloading;
@@ -222,6 +222,7 @@ fn code_options(input: &OptionsInput<'_, '_, '_>) -> CodeOptions {
     code.builds_executable = !input.aot.runs_in_place;
     code.preserves_symlinks = options.preserve_symlinks;
     code.ignores_declared_side_effects = options.ignore_dce_annotations;
+    code.runs_all_files_outside_packages = input.aot.covered_files.is_some();
     // As `bun run` and `bun test` transpile the same files.
     code.transpiles_by_working_directory = input.aot.runs_in_place;
     code.allows_es_module_mark = input.aot.checks_only || input.aot.runs_tests;

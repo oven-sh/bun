@@ -488,8 +488,9 @@ impl<'a, 's> TreeWriter<'a, 's> {
         let StmtData::SFunction(outlined) = &statement.data else {
             return Err(UnsupportedNode::statement(statement.data.tag()));
         };
+        let place = self.find_place_around(outlined_from);
         let declaration = self.write_function_declaration(&outlined.func, statement.loc)?;
-        match self.find_place_around(outlined_from) {
+        match place {
             None => self.items.outlined.push(declaration),
             Some(Place::Head(_)) => return Ok(Some(declaration)),
             Some(Place::TestOfCase(case)) => {

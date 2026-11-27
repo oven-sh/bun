@@ -39,20 +39,32 @@ extern "C" JSC::EncodedJSValue Bun__createModuleNotCompiledInError(JSC::JSGlobal
 
 namespace Bun {
 
-extern "C" bool BunTest__shouldGenerateCodeCoverage(const BunString* sourceURL);
-extern "C" void ByteRangeMapping__generate(const BunString* sourceURL, const BunString* code, int sourceID, bool alreadyBundled);
+#if ASSERT_ENABLED
+extern "C" bun_CountedText* BunTest__countInternalModule(void* bunVM, const BunString* name, const BunString* text);
 
-static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
+class CountedInternalModule final : public JSC::StringSourceProvider {
+public:
+    CountedInternalModule(const String& text, JSC::SourceProvider& module, std::unique_ptr<bun_CountedText>&& countedText)
+        : StringSourceProvider(text, module.sourceOrigin(), module.taintedness(), String(module.sourceURL()), module.startPosition(), module.sourceType(), module.provenance())
+        , m_countedText(WTF::move(countedText))
+    {
+    }
+
+    const JSC::CoverageCounters* coverageCounters() const final { return &m_countedText.counters(); }
+
+private:
+    const CountedText m_countedText;
+};
+#endif
+
+static void maybeAddCodeCoverage([[maybe_unused]] void* bunVM, [[maybe_unused]] JSC::SourceCode& code)
 {
 #if ASSERT_ENABLED
-    bool isCodeCoverageEnabled = !!vm.controlFlowProfiler();
-    BunString sourceURL = Bun::toString(code.provider()->sourceURL());
-    bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && BunTest__shouldGenerateCodeCoverage(&sourceURL);
-    if (shouldGenerateCodeCoverage) {
-        WTF::String sourceString = code.provider()->source().toStringWithoutCopying();
-        BunString source = Bun::toString(sourceString);
-        ByteRangeMapping__generate(&sourceURL, &source, code.provider()->asID(), false);
-    }
+    String borrowedText = code.provider()->source().toStringWithoutCopying();
+    BunString name = Bun::toString(code.provider()->sourceURL());
+    BunString text = Bun::toString(borrowedText);
+    if (std::unique_ptr<bun_CountedText> countedText { BunTest__countInternalModule(bunVM, &name, &text) })
+        code = JSC::SourceCode(adoptRef(*new CountedInternalModule(code.provider()->source().toString(), *code.provider(), WTF::move(countedText))));
 #endif
 }
 
@@ -210,7 +222,7 @@ static NEVER_INLINE JSC::JSValue generateInternalModuleFromText(JSC::JSGlobalObj
         executable = cached->executable.get();
     } else {
         source = makeInternalModuleSource(internalModuleSource(id), moduleName, internalModuleString(m.urlOffset, m.urlLength), internalModuleProvenance(id));
-        maybeAddCodeCoverage(vm, source);
+        maybeAddCodeCoverage(::bunVM(globalObject), source);
 
         const uint8_t* cachedBytes = nullptr;
         size_t cachedSize = 0;

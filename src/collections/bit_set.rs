@@ -492,17 +492,6 @@ impl DynamicBitSet {
             masks: masks.into_boxed_slice(),
         })
     }
-
-    /// Inverse of `bytes()`. Clears the padding bits, so `bytes` can be untrusted.
-    pub fn from_bytes(bit_length: usize, bytes: &[u8]) -> Result<Option<Self>, AllocError> {
-        let mut set = Self::init_empty(bit_length)?;
-        if bytes.len() != mem::size_of_val(&*set.masks) {
-            return Ok(None);
-        }
-        bun_core::cast_slice_mut::<usize, u8>(&mut set.masks).copy_from_slice(bytes);
-        set.clear_padding();
-        Ok(Some(set))
-    }
 }
 
 impl<Masks: Deref<Target = [usize]>> DynamicBitSet<Masks> {

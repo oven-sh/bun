@@ -275,16 +275,25 @@ The coverage threshold. By default, no threshold is set. If your test suite does
 coverageThreshold = 0.9
 ```
 
-You can set separate thresholds for line and function coverage. Bun accepts a `statements` key but does not currently enforce it.
+You can set separate thresholds for `lines`, `functions`, `statements` and `branches`. They apply to the total over all files. Set `perFile = true` to check each file instead. See [Coverage thresholds](/test/code-coverage#coverage-thresholds) for negative numbers and thresholds for some files.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
-coverageThreshold = { lines = 0.7, functions = 0.8 }
+coverageThreshold = { lines = 0.7, functions = 0.8, branches = 0.6, perFile = true }
+```
+
+### `test.coverageInclude`
+
+The files to report, including files that no test loads. Accepts a glob pattern, a folder or a file, or an array of them. An entry that starts with `!` excludes files. By default, the report lists the files in the working directory that tests load. Use `--coverage-include` to override.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+coverageInclude = ["src/**/*.{ts,tsx}", "!src/generated"]
 ```
 
 ### `test.coverageSkipTestFiles`
 
-Whether to skip test files when computing coverage statistics. Default `false`.
+Whether to skip test files and preload scripts when computing coverage statistics. Default `true`.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -293,7 +302,7 @@ coverageSkipTestFiles = false
 
 ### `test.coverageIgnoreSourcemaps`
 
-Whether to report coverage against transpiled output instead of remapping line numbers through sourcemaps back to the original source. Default `false`. Primarily useful for debugging.
+Whether to report coverage against transpiled output instead of the original source. Default `false`. Primarily useful for debugging.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -320,7 +329,7 @@ coveragePathIgnorePatterns = [
 
 ### `test.coverageReporter`
 
-By default, the test runner prints coverage reports to the console. For persistent reports that CI and other tools can read, use `lcov`.
+By default, the test runner prints coverage reports to the console. For persistent reports that CI and other tools can read, use `lcov`, `json` or `json-summary`.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]

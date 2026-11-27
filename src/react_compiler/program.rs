@@ -1156,7 +1156,7 @@ fn build_outlined_decl(outlined: CodegenFunction) -> Stmt {
                 name: outlined.id,
                 args: leak_args(outlined.params),
                 body: G::FnBody {
-                    loc: Loc::EMPTY,
+                    loc: outlined.id.map_or(Loc::EMPTY, |it| it.loc),
                     stmts: leak_stmts(outlined.body),
                 },
                 flags: fn_flags,

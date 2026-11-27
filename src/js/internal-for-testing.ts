@@ -1106,6 +1106,12 @@ export const sourceHasLineStarts: (fn: Function) => boolean = $newCppFunction(
   1,
 );
 
+// Under `bun test --coverage`: transpiles the file and generates all of its code, which is not run.
+export const checkCoverageCounters: (
+  path: string,
+) => [printed: string, counters: number, placed: number, ...offsetsWhereNothingCounts: number[]] | undefined =
+  $newCppFunction("ZigSourceProvider.cpp", "jsCheckCoverageCounters", 1);
+
 // The bytecode `bun build --compile --bytecode` embeds for a builtin module, plus the external string table it embeds
 // beside it: internal module number `index` (null past the last), or `source` written in builtin syntax (@-intrinsics,
 // a function expression) compiled under `name`.

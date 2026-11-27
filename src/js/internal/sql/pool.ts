@@ -75,13 +75,15 @@ type OnConnected = (err: Error | null, connection: any) => void;
 /// In the pool's queue: a caller that wants a connection for itself, or a query that has a timer. A query
 /// without one is queued as its bare callback.
 class Waiter {
-  onConnected: OnConnected;
-  reserved: boolean;
+  // `declare`: a field that the class defines costs each begin() and reserve() more than an assignment.
+  declare onConnected: OnConnected;
+  declare reserved: boolean;
   /// Of `queueTimeout`. What takes the caller out of the queue clears it.
-  timer: ReturnType<typeof setTimeout> | undefined = undefined;
+  declare timer: ReturnType<typeof setTimeout> | undefined;
   constructor(onConnected: OnConnected, reserved: boolean) {
     this.onConnected = onConnected;
     this.reserved = reserved;
+    this.timer = undefined;
   }
 }
 
@@ -783,11 +785,13 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   /// Serves the oldest caller that can be served now. It is booked before it is called: it can re-enter the pool.
   #serveNext(): boolean {
     const queue = this.queue;
+    // Without a queueTimeout every query in `queue` is a bare callback.
+    const timed = this.#queueTimeout !== 0;
     let reservationsAhead = 0;
     // Behind as many reservations as there are connections nobody can be served.
     for (let i = 0; i < queue.length && reservationsAhead < this.connections.length; i++) {
       const waiter = queue[i];
-      if (typeof waiter === "function" || !waiter.reserved) {
+      if (typeof waiter === "function" || (timed && !waiter.reserved)) {
         // An even share of the demand over `max` connections.
         // A reservation ahead gets a dial that is on its way, or one connection has to drain for it.
         const connection = this.#leastBusy(

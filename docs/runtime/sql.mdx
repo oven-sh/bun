@@ -869,6 +869,7 @@ Bun reads these keys from the query string of a connection URL:
 | `sslmode`, `ssl`, `tls`                           | PostgreSQL, MySQL | `tls`. MySQL also takes `ssl-mode`                            |
 | `path`, `socket`                                  | PostgreSQL, MySQL | `path`                                                        |
 | `connect_timeout`, `idle_timeout`, `max_lifetime` | PostgreSQL, MySQL | `connectionTimeout`, `idleTimeout`, `maxLifetime`             |
+| `queue_timeout`                                   | PostgreSQL, MySQL | `queueTimeout`                                                |
 | `max`                                             | PostgreSQL, MySQL | `max`                                                         |
 | `prepare`                                         | PostgreSQL        | `prepare`                                                     |
 | `channel_binding`                                 | PostgreSQL        | `channelBinding`                                              |
@@ -921,6 +922,7 @@ You can configure the connection manually by passing options to the `SQL` constr
 | `idleTimeout`             | `0` (off)                 | Seconds a connection can sit unused before Bun closes it                                                          |
 | `maxLifetime`             | `0` (off)                 | Seconds after which Bun replaces a connection                                                                     |
 | `connectionTimeout`       | `30`                      | Seconds to wait for a new connection                                                                              |
+| `queueTimeout`            | `0` (off)                 | Seconds a query, `begin()` or `reserve()` waits for a connection of the [pool](#timeouts)                         |
 | `prepare`                 | `true`                    | PostgreSQL. Use named [prepared statements](#prepared-statements)                                                 |
 | `bigint`                  | `false`                   | Return large integers as [`BigInt`](#bigint-instead-of-strings)                                                   |
 | `connection`              |                           | PostgreSQL. Startup parameters, such as `{ application_name: "api", search_path: "app" }`                         |
@@ -1422,8 +1424,29 @@ globalThis.subscription = await sql.listen("orders", handleOrder);
 | `idleTimeout`       | Closes a connection that has had nothing to do for this many seconds                                |
 | `maxLifetime`       | Replaces a connection this many seconds after it opened                                             |
 | `connectionTimeout` | Fails a connection attempt that takes longer than this many seconds. Does not limit a running query |
+| `queueTimeout`      | Rejects a caller that has waited this many seconds for a connection of the pool                     |
 
 `idleTimeout` and `maxLifetime` never interrupt work. A running query, a `begin()` transaction and a reserved connection keep their connection. A connection past `maxLifetime` finishes what it has, takes no new queries, and then closes.
+
+By default a caller waits for a connection without a limit. When every connection is reserved, in a transaction, or busy, `queueTimeout` limits that wait for a query, `sql.begin()`, `sql.reserve()` and `sql.connect()`:
+
+```ts
+const sql = new SQL({ max: 10, queueTimeout: 5 });
+
+try {
+  await sql`SELECT * FROM users`;
+} catch (err) {
+  if (err.code === "ERR_POSTGRES_QUEUE_TIMEOUT") {
+    // No connection was free for 5 seconds. Bun did not send the query.
+  }
+}
+```
+
+- The pool and its connections stay as they are, and Bun serves the next caller as before.
+- `queueTimeout` does not limit a query that runs. Use the `statement_timeout` of PostgreSQL or the `max_execution_time` of MySQL for that.
+- The wait for a connection that Bun is still opening counts. With a `queueTimeout` below `connectionTimeout`, the first query to a server that does not answer rejects with `ERR_POSTGRES_QUEUE_TIMEOUT`.
+- A caller that waits keeps the process alive until it gets a connection or its `queueTimeout` ends.
+- SQLite has no pool and ignores the option.
 
 Bun turns on TCP keepalive (60 seconds) for PostgreSQL and MySQL connections, so a query fails instead of waiting forever when the server disappears without closing the connection.
 
@@ -1679,6 +1702,7 @@ Some errors are not `SQLError`s. A certificate that fails verification is a plai
 | `ERR_POSTGRES_CONNECTION_REFUSED` | Connection was refused because nothing is listening at the address. Fails immediately and is not retried                                                                                                                                                                               |
 | `ERR_POSTGRES_CONNECTION_TIMEOUT` | Failed to establish connection within timeout period                                                                                                                                                                                                                                   |
 | `ERR_POSTGRES_IDLE_TIMEOUT`       | Connection closed due to inactivity. Reported to `onclose`                                                                                                                                                                                                                             |
+| `ERR_POSTGRES_QUEUE_TIMEOUT`      | A query, `begin()` or `reserve()` waited longer than `queueTimeout` for a connection of the pool. The query was not sent                                                                                                                                                               |
 | `ERR_POSTGRES_LIFETIME_TIMEOUT`   | Connection exceeded maximum lifetime. Reported to `onclose`                                                                                                                                                                                                                            |
 | `ERR_POSTGRES_TLS_NOT_AVAILABLE`  | The SSL mode requires TLS and the server does not support it                                                                                                                                                                                                                           |
 | `ERR_POSTGRES_TLS_UPGRADE_FAILED` | Failed to upgrade connection to SSL/TLS                                                                                                                                                                                                                                                |
@@ -1766,6 +1790,7 @@ MySQL and MariaDB errors are `SQL.MySQLError`s.
 | `ERR_MYSQL_CONNECTION_TIMEOUT` | Failed to establish connection within timeout period                                                   |
 | `ERR_MYSQL_IDLE_TIMEOUT`       | Connection closed due to inactivity. Reported to `onclose`                                             |
 | `ERR_MYSQL_LIFETIME_TIMEOUT`   | Connection exceeded maximum lifetime. Reported to `onclose`                                            |
+| `ERR_MYSQL_QUEUE_TIMEOUT`      | A caller waited longer than `queueTimeout` for a connection of the pool. The query was not sent        |
 
 | Authentication Errors                        | Description                                                                                          |
 | -------------------------------------------- | ---------------------------------------------------------------------------------------------------- |

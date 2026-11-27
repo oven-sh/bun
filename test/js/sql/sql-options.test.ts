@@ -29,6 +29,7 @@ describe("the query of a postgres:// URL", () => {
     ["connect_timeout=7", { connectionTimeout: 7000 }],
     ["idle_timeout=3", { idleTimeout: 3000 }],
     ["max_lifetime=60", { maxLifetime: 60000 }],
+    ["queue_timeout=5", { queueTimeout: 5000 }],
     ["max=3", { max: 3 }],
     ["prepare=false", { prepare: false }],
     ["prepare=0", { prepare: false }],
@@ -62,6 +63,24 @@ describe("the query of a postgres:// URL", () => {
     expect(options).toMatchObject({ hostname: "uh", max: 10, sslMode: 0, channelBinding: "disable", query: "" });
     expect(options.connectionTimeout).toBeUndefined();
     expect(options.tls).toBeUndefined();
+  });
+
+  test("queueTimeout: the option, its alias and the key, in seconds", () => {
+    const url = "postgres://uh/ud?queue_timeout=7";
+    expect("queueTimeout" in optionsOf("postgres://uh/ud")).toBe(false);
+    expect("queueTimeout" in optionsOf("postgres://uh/ud?queue_timeout=")).toBe(false);
+    expect(optionsOf(url).queueTimeout).toBe(7000);
+    expect(optionsOf(url, { queue_timeout: 2 }).queueTimeout).toBe(2000);
+    expect(optionsOf(url, { queueTimeout: 0.5, queue_timeout: 2 }).queueTimeout).toBe(500);
+    expect(optionsOf(url, { queueTimeout: 0 }).queueTimeout).toBe(0);
+    for (const refused of [-1, NaN, "soon", 2 ** 31 + 1]) {
+      expect(() => optionsOf(url, { queueTimeout: refused })).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+      );
+    }
+    expect(() => optionsOf("postgres://uh/ud?queue_timeout=soon")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
   });
 
   test("every other key is a startup parameter", () => {
@@ -145,8 +164,8 @@ describe("the query of a postgres:// URL", () => {
 describe.each(["mysql", "mariadb"] as const)("the query of a %s:// URL", adapter => {
   test("Bun's own options are read, libpq's keywords are not", () => {
     expect(
-      optionsOf(`${adapter}://uu:up@uh:1/ud?connect_timeout=7&idle_timeout=3&max_lifetime=60&max=3`),
-    ).toMatchObject({ connectionTimeout: 7000, idleTimeout: 3000, maxLifetime: 60000, max: 3 });
+      optionsOf(`${adapter}://uu:up@uh:1/ud?connect_timeout=7&idle_timeout=3&max_lifetime=60&queue_timeout=5&max=3`),
+    ).toMatchObject({ connectionTimeout: 7000, idleTimeout: 3000, maxLifetime: 60000, queueTimeout: 5000, max: 3 });
     expect(optionsOf(`${adapter}://uu:up@uh:1/ud?host=qh&port=99&user=qu&password=qp&dbname=qd`)).toMatchObject({
       hostname: "uh",
       port: 1,

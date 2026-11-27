@@ -502,6 +502,10 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   public readonly readyConnections: Set<PooledConnection> = new Set();
 
   public queue: Array<OnConnected | Reservation> = [];
+  /// `queueTimeout` in milliseconds, and the timer of each queued caller by its callback. null: they wait
+  /// without a limit. A caller's timer is cleared where it leaves `queue`.
+  #queueTimeout: number = 0;
+  #queueTimers: Map<OnConnected, ReturnType<typeof setTimeout>> | null = null;
 
   public totalQueries: number = 0;
   /// Which form of the password logged in last, see Login. undefined: none has yet.
@@ -577,6 +581,12 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     if (this.generation !== -1) {
       hotPools.add(this);
     }
+    const queueTimeout = $getByIdDirect(connectionInfo, "queueTimeout");
+    if (queueTimeout !== undefined && queueTimeout > 0) {
+      // setTimeout turns a longer delay into 1 ms
+      this.#queueTimeout = Math.min(Math.ceil(queueTimeout), 2 ** 31 - 1);
+      this.#queueTimers = new Map();
+    }
   }
 
   get closed(): boolean {
@@ -621,6 +631,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       const waiter = queue[i];
       if (waiter === onConnected || (waiter as Reservation).onConnected === onConnected) {
         queue.splice(i, 1);
+        if (this.#queueTimers !== null) {
+          this.#clearQueueTimer(onConnected);
+        }
         // the callers behind it may have waited for it
         this.#serve();
         this.#closeIfDrained();
@@ -780,6 +793,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
           return false;
         }
         queue.splice(i, 1);
+        if (this.#queueTimers !== null) {
+          this.#clearQueueTimer(waiter);
+        }
         connection.queryCount++;
         this.totalQueries++;
         waiter(null, connection);
@@ -788,6 +804,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       const connection = reservationsAhead++ === 0 ? this.#leastBusy(1, 0) : null;
       if (connection !== null) {
         queue.splice(i, 1);
+        if (this.#queueTimers !== null) {
+          this.#clearQueueTimer(waiter.onConnected);
+        }
         connection.flags |= PooledConnectionFlags.reserved;
         connection.queryCount++;
         this.totalQueries++;
@@ -900,6 +919,13 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
 
   #failQueued(err: Error) {
     const failed = this.queue.splice(0);
+    const timers = this.#queueTimers;
+    if (timers !== null) {
+      for (const timer of timers.values()) {
+        clearTimeout(timer);
+      }
+      timers.clear();
+    }
     for (let i = 0; i < failed.length; i++) {
       const waiter = failed[i];
       (typeof waiter === "function" ? waiter : waiter.onConnected)(err, null);
@@ -984,9 +1010,35 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       return onConnected(this.connectionClosedError(), null);
     }
     this.asked = true;
-    this.queue.push(reserved ? new Reservation(onConnected) : onConnected);
+    const waiter = reserved ? new Reservation(onConnected) : onConnected;
+    this.queue.push(waiter);
     this.#serve();
-    this.#dialForQueued();
+    if (this.queue.length !== 0) {
+      this.#dialForQueued();
+      // Only a caller that still waits gets a timer: a dial can fail the queue before it returns.
+      const timers = this.#queueTimers;
+      if (timers !== null && this.queue.lastIndexOf(waiter) !== -1) {
+        timers.set(onConnected, setTimeout(BaseSQLAdapter.#queueTimerFired, this.#queueTimeout, this, onConnected));
+      }
+    }
+  }
+
+  #clearQueueTimer(onConnected: OnConnected) {
+    const timers = this.#queueTimers!;
+    const timer = timers.get(onConnected);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timers.delete(onConnected);
+    }
+  }
+
+  static #queueTimerFired(self: BaseSQLAdapter<any, any>, onConnected: OnConnected) {
+    if (self.cancelConnect(onConnected)) {
+      onConnected(
+        self.error("QUEUE_TIMEOUT", `Waited more than ${self.#queueTimeout / 1000} seconds for a connection`),
+        null,
+      );
+    }
   }
 }
 

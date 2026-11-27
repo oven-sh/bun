@@ -1492,6 +1492,186 @@ describe.each(scripted)("$adapter, scripted server", script => {
     expect(await server.dials()).toBe(0);
   });
 
+  describe("queueTimeout", () => {
+    const QUEUE_TIMEOUT = prefix + "QUEUE_TIMEOUT";
+    /** The pool has a connection when it resolves. On a slow build the login can take longer than the queueTimeout. */
+    async function warm(sql: SQL) {
+      while ((await outcome(sql.connect())) === QUEUE_TIMEOUT);
+    }
+    /** In a process of its own, against `port`: what it prints, and how it exits. */
+    async function run(port: number, script: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, SQL_URL: url(port) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    test.concurrent.each([
+      ["query", (sql: SQL) => sql.unsafe("select 1").simple()],
+      ["query with a parameter", (sql: SQL) => sql`select ${1}`],
+      ["reserve()", (sql: SQL) => sql.reserve()],
+      ["reserve({ signal })", (sql: SQL) => sql.reserve({ signal: new AbortController().signal })],
+      ["begin()", (sql: SQL) => sql.begin(tx => tx.unsafe("select 1").simple())],
+      ["beginDistributed()", (sql: SQL) => sql.beginDistributed("bun_queue_timeout", tx => tx.unsafe("select 1"))],
+    ])("a %s that waits longer rejects, and the pool is as it was", async (_, call) => {
+      await using server = await serverOf(serving);
+      await using sql = new SQL({ url: url(server.port), max: 1, queueTimeout: 0.01 });
+      expect(sql.options.queueTimeout).toBe(10);
+      await warm(sql);
+      const holder = await sql.reserve();
+      const error = await call(sql).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect(error).toBeInstanceOf(SQL.SQLError);
+      expect(error).toMatchObject({
+        code: QUEUE_TIMEOUT,
+        message: "Waited more than 0.01 seconds for a connection",
+      });
+      // The reservation is still the caller's, and the pool's one connection serves whoever comes next.
+      expect(await outcome(holder.unsafe("select 1").simple())).toBe("resolved");
+      expect(await outcome(holder.reserve())).toBe(QUEUE_TIMEOUT);
+      holder.release();
+      expect(await outcome(sql.unsafe("select 1").simple())).toBe("resolved");
+      expect(await outcome(sql.reserve().then(reserved => reserved.release()))).toBe("resolved");
+      expect(server.sockets.length).toBe(1);
+    });
+
+    test.concurrent("the wait for a connection that is still being opened counts", async () => {
+      // It accepts and says nothing: connectionTimeout would end the wait after 30 s.
+      await using server = await serverOf(() => {});
+      const sql = new SQL({ url: url(server.port), max: 2, queue_timeout: 0.01 });
+      await using _ = unanswered(sql);
+      expect(sql.options.queueTimeout).toBe(10);
+      const waiting = [sql.connect(), sql.unsafe("select 1")].map(outcome);
+      expect(await Promise.all(waiting)).toEqual([QUEUE_TIMEOUT, QUEUE_TIMEOUT]);
+    });
+
+    test.concurrent("the callers behind one that gives up are served", async () => {
+      await using server = await serverOf(ready);
+      const sql = new SQL({ url: url(server.port), max: 1, queueTimeout: 0.01 });
+      await using _ = unanswered(sql);
+      expect(sql.options.queueTimeout).toBe(10);
+      await warm(sql);
+      const busy = sql.unsafe("select 1").simple().execute();
+      const reservation = outcome(sql.reserve());
+      // It waits behind the reservation, which waits for the connection to drain.
+      const behind = sql.unsafe("select 2").simple().execute();
+      const settled = [busy, behind].map(outcome);
+      expect([busy.active, behind.active]).toEqual([true, false]);
+      expect(await reservation).toBe(QUEUE_TIMEOUT);
+      expect(behind.active).toBe(true);
+      await sql.close({ timeout: 0 });
+      expect(await Promise.all(settled)).toEqual(Array(2).fill(prefix + "CONNECTION_CLOSED"));
+    });
+
+    test.concurrent("close() waits for a caller that waits, for no longer than its queueTimeout", async () => {
+      await using server = await serverOf(serving);
+      const sql = new SQL({ url: url(server.port), max: 1, queueTimeout: 0.01 });
+      expect(sql.options.queueTimeout).toBe(10);
+      await warm(sql);
+      const holder = await sql.reserve();
+      const waiting = outcome(sql.unsafe("select 1").simple());
+      const closing = outcome(sql.close());
+      expect(await waiting).toBe(QUEUE_TIMEOUT);
+      holder.release();
+      expect(await closing).toBe("resolved");
+    });
+
+    test.concurrent("2 ** 31 seconds is not a timer of 1 ms", async () => {
+      await using server = await serverOf(serving);
+      await using sql = new SQL({ url: url(server.port), max: 1, queueTimeout: 2 ** 31 });
+      expect(sql.options.queueTimeout).toBe(2 ** 31 * 1000);
+      const holder = await sql.reserve();
+      const waiting = outcome(sql.unsafe("select 1").simple());
+      // Timers fire in the order of their deadlines: this one is armed later and for longer than 1 ms.
+      const later = new Promise(resolve => setTimeout(resolve, 10));
+      expect(await unlessPending(waiting, later)).toBe("pending");
+      holder.release();
+      expect(await waiting).toBe("resolved");
+    });
+
+    test.concurrent("the timer of a caller is cleared where the caller leaves the queue", async () => {
+      await using server = await serverOf(serving);
+      const { stdout, stderr, exitCode } = await run(
+        server.port,
+        `
+        const { heapStats } = require("bun:jsc");
+        const sql = new Bun.SQL(process.env.SQL_URL, { max: 1, queueTimeout: 3600 });
+        let holder = await sql.reserve();
+        // An armed timer is a protected object: exact, and without a collection.
+        const armed = () => heapStats().protectedObjectTypeCounts.Timeout ?? 0;
+        const before = armed();
+        const timers = () => armed() - before;
+        const query = () => sql.unsafe("select 1").simple().execute();
+        const code = promise => promise.then(() => "resolved", err => err.code ?? err.message);
+        const result = {};
+
+        let waiting = Array.from({ length: 10 }, query);
+        result["10 queries wait"] = timers();
+        holder.release();
+        await Promise.all(waiting);
+        result["and are served"] = timers();
+
+        holder = await sql.reserve();
+        const reservation = sql.reserve();
+        result["a reservation waits"] = timers();
+        holder.release();
+        holder = await reservation;
+        result["and is served"] = timers();
+
+        const cancelled = query();
+        const controller = new AbortController();
+        const aborted = sql.reserve({ signal: controller.signal });
+        result["a query and a reserve({ signal }) wait"] = timers();
+        cancelled.cancel();
+        controller.abort(new Error("aborted"));
+        result["and give up"] = [await code(cancelled), await code(aborted), timers()];
+
+        waiting = Array.from({ length: 10 }, query).map(code);
+        result["10 queries wait for a pool"] = timers();
+        await sql.close({ timeout: 0 });
+        result["that is closed at once"] = [...new Set(await Promise.all(waiting)), timers()];
+        console.log(JSON.stringify(result));
+        `,
+      );
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        "10 queries wait": 10,
+        "and are served": 0,
+        "a reservation waits": 1,
+        "and is served": 0,
+        "a query and a reserve({ signal }) wait": 2,
+        "and give up": [prefix + "QUERY_CANCELLED", "aborted", 0],
+        "10 queries wait for a pool": 10,
+        "that is closed at once": [prefix + "CONNECTION_CLOSED", 0],
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a caller that waits keeps the process alive until its queueTimeout", async () => {
+      await using server = await serverOf(serving);
+      // Nothing else does: a reservation that is idle does not, and without the option the process exits here.
+      const { stdout, stderr, exitCode } = await run(
+        server.port,
+        `
+        const sql = new Bun.SQL(process.env.SQL_URL, { max: 1, queueTimeout: 0.01 });
+        while (await sql.connect().then(() => false, () => true));
+        // A reservation that nothing reaches is released.
+        globalThis.holder = await sql.reserve();
+        sql.unsafe("select 1").simple().then(() => console.log("resolved"), err => console.log(err.code));
+        `,
+      );
+      expect(stderr).toBe("");
+      expect(stdout).toBe(QUEUE_TIMEOUT + "\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   // Not concurrent: setSystemTime() is for the whole process.
   describe("the budget for dialing a server that accepts and closes", () => {
     test("runs out while setSystemTime() pins Date.now()", async () => {

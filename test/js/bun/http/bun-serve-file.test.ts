@@ -1388,7 +1388,7 @@ test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not
 // One request on its own connection; `Connection: close` makes the server hang
 // up once it considers the response finished, so `body` is every byte that
 // followed the head, however many the head declared.
-async function wireResponse(port: number, method: "GET" | "HEAD", path: string, secure = false) {
+async function wireResponse(port: number, method: "GET" | "HEAD", path: string, { secure = false } = {}) {
   const { promise, resolve, reject } = Promise.withResolvers<string>();
   let captured = "";
   await Bun.connect({
@@ -1515,7 +1515,8 @@ test("a fetch handler frames a Bun.file() slice by the bytes it serves", async (
 
   const fds: number[] = [];
   try {
-    // A descriptor of its own for each window: Bun.file(fd) shares the file offset of the descriptor.
+    // Each Bun.file(fd) window has a descriptor of its own and starts past byte 0. A window at byte 0 is read
+    // from the position of the descriptor, which an earlier response moves.
     const open = (file = path) => {
       const fd = openSync(file, "r");
       fds.push(fd);
@@ -1594,10 +1595,14 @@ test("a fetch handler frames a Bun.file() slice by the bytes it serves", async (
         body: get.body,
         head: { contentLength: head.contentLength, body: head.body },
       };
-      answers[name] = { status: get.status, contentRange: get.contentRange };
+      answers[name] = {
+        status: get.status,
+        contentRange: get.contentRange,
+        head: { status: head.status, contentRange: head.contentRange },
+      };
     }
 
-    // HEAD declares what GET sends, and sends nothing.
+    // HEAD declares the Content-Length of the body that GET sends, and sends nothing.
     const exactly = (body: string) => ({
       contentLength: String(body.length),
       body,
@@ -1627,33 +1632,47 @@ test("a fetch handler frames a Bun.file() slice by the bytes it serves", async (
       "fd slice(16, 32)": exactly(""),
       "fd slice(5, 10) with status 206 and its own Content-Range": exactly("56789"),
     });
+    // HEAD does not go through do_sendfile. It answers the status and the Content-Range that the handler set.
+    const answer = (status: number, contentRange: string | null, head = { status: 200, contentRange }) => ({
+      status,
+      contentRange,
+      head,
+    });
+    const partial = answer(206, "bytes 5-15/*", { status: 200, contentRange: null });
+    // A descriptor gets no automatic 206 or Content-Range.
+    const whole = answer(200, null);
     expect(answers).toEqual({
-      "path slice(5, 21)": { status: 206, contentRange: "bytes 5-15/*" },
-      "path slice(5, 21) from an async handler": { status: 206, contentRange: "bytes 5-15/*" },
-      "path slice(5, 21) of a file whose size was read": { status: 206, contentRange: "bytes 5-15/*" },
-      "path slice(5, 21).stream()": { status: 206, contentRange: "bytes 5-15/*" },
+      "path slice(5, 21)": partial,
+      "path slice(5, 21) from an async handler": partial,
+      "path slice(5, 21) of a file whose size was read": partial,
+      "path slice(5, 21).stream()": partial,
       // Headers without a Content-Range keep the handler's status.
-      "path slice(5, 21) with headers": { status: 200, contentRange: null },
-      "path slice(5, 21) with its own Content-Range": { status: 206, contentRange: "bytes 5-15/16" },
+      "path slice(5, 21) with headers": whole,
+      "path slice(5, 21) with its own Content-Range": answer(206, "bytes 5-15/16"),
       // An explicit status is replaced, as for the shorter slice below.
-      "path slice(5, 21) with status 404": { status: 206, contentRange: "bytes 5-15/*" },
-      "path slice(5, 21) with status 404 and headers": { status: 404, contentRange: null },
-      "path slice(5, 21) with status 416 and its own Content-Range": { status: 206, contentRange: "bytes */16" },
+      "path slice(5, 21) with status 404": answer(206, "bytes 5-15/*", { status: 404, contentRange: null }),
+      "path slice(5, 21) with status 404 and headers": answer(404, null, { status: 404, contentRange: null }),
+      "path slice(5, 21) with status 416 and its own Content-Range": answer(206, "bytes */16", {
+        status: 416,
+        contentRange: "bytes */16",
+      }),
       // The Content-Range text of an empty window is not pinned here.
-      "path slice(16, 32)": { status: 206, contentRange: expect.any(String) },
-      "path slice(5, 20) with status 404": { status: 206, contentRange: "bytes 5-15/*" },
-      "path slice(5, 20)": { status: 206, contentRange: "bytes 5-15/*" },
-      "path slice(5, 22)": { status: 206, contentRange: "bytes 5-15/*" },
-      "path slice(0, 16)": { status: 200, contentRange: null },
-      // A descriptor gets no automatic 206 or Content-Range.
-      "fd slice(5, 10)": { status: 200, contentRange: null },
-      "fd slice(5, 10) from an async handler": { status: 200, contentRange: null },
-      "fd slice(5, 10).stream()": { status: 200, contentRange: null },
-      "fd slice(5, 10) with headers": { status: 200, contentRange: null },
-      "fd slice(10)": { status: 200, contentRange: null },
-      "fd slice(5, 21)": { status: 200, contentRange: null },
-      "fd slice(16, 32)": { status: 200, contentRange: null },
-      "fd slice(5, 10) with status 206 and its own Content-Range": { status: 206, contentRange: "bytes 5-9/16" },
+      "path slice(16, 32)": answer(206, expect.any(String), { status: 200, contentRange: null }),
+      "path slice(5, 20) with status 404": answer(206, "bytes 5-15/*", { status: 404, contentRange: null }),
+      "path slice(5, 20)": partial,
+      "path slice(5, 22)": partial,
+      "path slice(0, 16)": whole,
+      "fd slice(5, 10)": whole,
+      "fd slice(5, 10) from an async handler": whole,
+      "fd slice(5, 10).stream()": whole,
+      "fd slice(5, 10) with headers": whole,
+      "fd slice(10)": whole,
+      "fd slice(5, 21)": whole,
+      "fd slice(16, 32)": whole,
+      "fd slice(5, 10) with status 206 and its own Content-Range": answer(206, "bytes 5-9/16", {
+        status: 206,
+        contentRange: "bytes 5-9/16",
+      }),
     });
 
     // GET only: HEAD takes its length from the size the Blob cached before the file shrank.
@@ -1687,7 +1706,9 @@ test("a fetch handler frames a Bun.file() slice by the bytes it serves", async (
     });
 
     // Over TLS, where a file body never takes sendfile(2).
-    expect(await wireResponse(secureServer.port!, "GET", `/${names.indexOf("path slice(5, 21)")}`, true)).toEqual({
+    expect(
+      await wireResponse(secureServer.port!, "GET", `/${names.indexOf("path slice(5, 21)")}`, { secure: true }),
+    ).toEqual({
       status: 206,
       contentRange: "bytes 5-15/*",
       contentLength: "11",
@@ -1701,10 +1722,10 @@ test("a fetch handler frames a Bun.file() slice by the bytes it serves", async (
 // The handler of docs/runtime/http/routing.mdx ("To send part of a file")
 // slices by the request's Range header. `Range: bytes=5-21` asks this 16-byte
 // file for 16 bytes from byte 5. The response declared 16 and sent the 11
-// that exist. A client that waits for the rest gets a truncated response when
-// the connection times out. A relay that sends the next request on the
-// connection, as this test does, reads the head of the next response as the
-// 5 bytes still owed (RFC 9112 6.3).
+// that exist. A client that waits for the rest stalls until the idle timeout
+// closes the connection. A client that pipelines the next request, as this
+// test does, reads the head of the next response as the 5 bytes still owed
+// (RFC 9112 6.3).
 test("a Range as long as the file, past byte 0, leaves the next response on the connection in step", async () => {
   using dir = tempDir("serve-range-by-slice", { "partial.txt": "0123456789ABCDEF" });
   const path = join(String(dir), "partial.txt");
@@ -2422,9 +2443,8 @@ console.log(JSON.stringify({ status, later, pendingRequests: server.pendingReque
   },
 );
 
-// A window of 1 MiB or more goes through sendfile(2) on Linux. The file is
-// 1 MiB + 100 bytes, so each of these windows is 1 MiB from byte 100, except
-// the last, which is one byte under and takes the reader.
+// The file is 1 MiB + 100 bytes. The first three windows are 1 MiB from byte 100, which is long enough for
+// sendfile(2) on Linux over plain HTTP. The last window is one byte shorter.
 test.skipIf(!isLinux)("a fetch handler frames a Bun.file() slice that goes through sendfile", async () => {
   const MiB = 1 << 20;
   const K = 100;

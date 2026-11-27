@@ -2641,6 +2641,8 @@ describe("should support Content-Range with Bun.file()", () => {
     [full.byteLength - 10, full.byteLength - 1],
     [full.byteLength - 1, full.byteLength],
     [0, full.byteLength],
+    // as long as the file, from past byte 0
+    [10, full.byteLength + 10],
   ] as const;
 
   for (const [start, end] of good) {
@@ -2678,6 +2680,8 @@ describe("should support Content-Range with Bun.file()", () => {
     [(full.byteLength / 2) | 0, (full.byteLength / 2) | 0],
     [full.byteLength, full.byteLength],
     [full.byteLength - 1, full.byteLength - 1],
+    // as long as the file, from its end
+    [full.byteLength, 2 * full.byteLength],
   ];
 
   for (const [start, end] of emptyRanges) {

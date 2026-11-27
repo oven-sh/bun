@@ -1559,18 +1559,10 @@ pub fn find_heritage_of_super_call(
     bound: &Bound<'_>,
     call: ExprId,
 ) -> Option<ExprId> {
-    hir[find_class_of_super_call(hir, bound, call)?]
-        .extends
-        .some()
-}
-
-/// `super(..)`: the class whose constructor holds the call, with no function in between.
-pub fn find_class_of_super_call(
-    hir: &File<'_>,
-    bound: &Bound<'_>,
-    call: ExprId,
-) -> Option<ClassId> {
-    if !is_super_call(hir, call) {
+    let ExprKind::Call(written) = expr_kind(hir, call)? else {
+        return None;
+    };
+    if !matches!(expr_kind(hir, hir[written].callee), Some(ExprKind::Super)) {
         return None;
     }
     let mut statement = bound.statement_of_expr(call)?;
@@ -1585,14 +1577,9 @@ pub fn find_class_of_super_call(
         return None;
     };
     match bound.member_owner[member.idx()] {
-        MemberOwner::Class(class) => Some(class),
+        MemberOwner::Class(class) => hir[class].extends.some(),
         _ => None,
     }
-}
-
-pub fn is_super_call(hir: &File<'_>, call: ExprId) -> bool {
-    matches!(expr_kind(hir, call), Some(ExprKind::Call(written))
-        if matches!(expr_kind(hir, hir[written].callee), Some(ExprKind::Super)))
 }
 
 pub(crate) fn may_construct_worker(hir: &File<'_>, bound: &Bound<'_>, callee: ExprId) -> bool {

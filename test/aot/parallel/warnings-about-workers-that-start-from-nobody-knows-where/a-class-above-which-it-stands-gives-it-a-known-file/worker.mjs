@@ -1,1 +1,0 @@
-postMessage("from the worker");

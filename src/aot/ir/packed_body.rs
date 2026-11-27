@@ -131,19 +131,14 @@ pub(super) fn pack_words(before: &[u32], words: &[u32], scratch: &mut Vec<u8>) -
     packed
 }
 
-fn bytes_of(words: &[u32]) -> &[u8] {
-    const { assert!(cfg!(target_endian = "little")) };
-    // SAFETY: every byte of a `u32` is a byte, and the slice is that long.
-    unsafe { core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), words.len() * 4) }
-}
-
 pub(super) fn unpacked_count(packed: &[u32]) -> usize {
     packed[0] as usize
 }
 
 pub(super) fn unpack_words<'a>(packed: &[u32], to: &'a mut [MaybeUninit<u32>]) -> &'a [u32] {
     debug_assert_eq!(to.len(), unpacked_count(packed));
-    let bytes = bytes_of(&packed[1..]);
+    const { assert!(cfg!(target_endian = "little")) };
+    let bytes = bun_core::slice_as_bytes(&packed[1..]);
     let (controls, mut data) = bytes.split_at(to.len().div_ceil(WORDS_PER_CONTROL));
     let (full, rest) = to.as_chunks_mut::<WORDS_PER_CONTROL>();
     let (full_controls, rest_control) = controls.split_at(full.len());

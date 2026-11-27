@@ -406,7 +406,9 @@ impl<S: System, R> Client<S, R> {
                 last_error: Error::ETIMEOUT,
             }),
         };
-        if self.servers.any_failed() && self.system.random().is_multiple_of(PROBE_ODDS) {
+        if self.servers.any_failed()
+            && (self.system.random()).is_some_and(|it| it.is_multiple_of(PROBE_ODDS))
+        {
             self.probe(&question, self.config.transport);
         }
         self.send(question, None);
@@ -481,7 +483,7 @@ impl<S: System, R> Client<S, R> {
         let mut query = find(&mut self.queries, &question);
         let (server, transport) = match (&mut query, probed) {
             (Some(query), _) => {
-                let random = self.config.rotate.then(|| self.system.random());
+                let random = self.config.rotate.then(|| self.system.random()).flatten();
                 let out_of_turn = query.last_error == Error::ECONNREFUSED;
                 let server = self.servers.choose(random, &mut query.avoided, out_of_turn);
                 (server, query.transport)
@@ -554,7 +556,12 @@ impl<S: System, R> Client<S, R> {
         let id = match late_tries.copied().find(is_ours) {
             Some((_, id)) => id,
             None => loop {
-                let id = self.system.random();
+                let Some(id) = self.system.random() else {
+                    self.connections.idle.push(socket);
+                    let end = Step::End(question, Err(Error::ECONNREFUSED));
+                    self.steps.push_back(end);
+                    return Ok(());
+                };
                 if !connection.tries.contains_key(&id) {
                     break id;
                 }
@@ -983,7 +990,7 @@ fn back_off(
     let doubled = (timeout.as_millis() as u64).saturating_mul(2u64.saturating_pow(rounds as u32));
     let doubled = Duration::from_millis(doubled).min(max.unwrap_or(Duration::MAX));
     let doubled = doubled.as_millis() as u64;
-    let jitter = f32::from(system.random()) / f32::from(u16::MAX) * 0.5;
+    let jitter = f32::from(system.random().unwrap_or(0)) / f32::from(u16::MAX) * 0.5;
     timeout.max(Duration::from_millis(
         doubled - (doubled as f32 * jitter) as u64,
     ))

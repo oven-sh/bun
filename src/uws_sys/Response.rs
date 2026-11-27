@@ -1,7 +1,6 @@
 //! Handles to the response of a request. The methods for HTTP/1 are in `http1`.
 
 use core::ffi::c_void;
-use core::marker::{PhantomData, PhantomPinned};
 
 use crate::http1::{OnData, OnWritable};
 use crate::thunk;
@@ -59,16 +58,13 @@ bun_opaque::opaque_ffi! {
 
 /// A [`uws_res`] whose handlers know whether it has TLS.
 #[repr(C)]
-pub struct Response<const SSL: bool> {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+pub struct Response<const SSL: bool>(uws_res);
 
 impl<const SSL: bool> core::ops::Deref for Response<SSL> {
     type Target = uws_res;
 
     fn deref(&self) -> &uws_res {
-        uws_res::opaque_ref(self._p.get().cast())
+        &self.0
     }
 }
 

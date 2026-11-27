@@ -59,7 +59,7 @@ pub(super) fn emit_program<'p>(
     // SAFETY: the header, the paddings and the outputs of the tasks are all of the first
     // `size_in_bytes` bytes, and each has been written.
     unsafe { storage.set_len(size_in_bytes / 8) };
-    Ok(ProgramBytes::new(storage, size_in_bytes))
+    Ok(ProgramBytes::new(storage))
 }
 
 fn describe_sections(totals: &ListCounts) -> String {
@@ -182,12 +182,7 @@ fn byte_count(list: ProgramList, record_count: u64) -> usize {
 }
 
 fn uninitialized_bytes(storage: &mut Vec<u64>, size_in_bytes: usize) -> &mut [MaybeUninit<u8>] {
-    let spare = storage.spare_capacity_mut();
-    assert!(size_in_bytes <= size_of_val(spare));
-    let first_byte = spare.as_mut_ptr().cast::<MaybeUninit<u8>>();
-    // SAFETY: a `MaybeUninit<u8>` has no validity or alignment requirement, and the range is
-    // inside the allocation.
-    unsafe { std::slice::from_raw_parts_mut(first_byte, size_in_bytes) }
+    &mut storage.spare_capacity_mut().as_bytes_mut()[..size_in_bytes]
 }
 
 fn carve<'o>(mut output: OutputSlice<'o>, plan: &SectionPlan, tasks: &mut [Task<'_, 'o>]) {

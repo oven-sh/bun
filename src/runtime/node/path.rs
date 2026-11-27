@@ -7,6 +7,7 @@ use crate::jsc::rare_data::PathBuf as RarePathBuf;
 use crate::node::validators::{validate_object, validate_string};
 use bun_collections::smallvec::SmallVec;
 use bun_core::Utf8Bytes;
+use bun_core::vec::BorrowedBuf;
 use bun_node_path::{
     CHAR_BACKWARD_SLASH, CHAR_FORWARD_SLASH, PathParsed, RelativePosixLatin1,
     basename_posix_latin1, basename_posix_t, basename_windows_t,
@@ -450,13 +451,6 @@ const FEW: usize = 8;
 
 type Parts<'p> = [core::mem::MaybeUninit<&'p [u8]>; FEW];
 
-/// SAFETY: All of `parts` are written.
-#[inline(always)]
-unsafe fn written<'s, 'p>(parts: &'s [core::mem::MaybeUninit<&'p [u8]>]) -> &'s [&'p [u8]] {
-    // SAFETY: forwarded.
-    unsafe { &*(core::ptr::from_ref(parts) as *const [&'p [u8]]) }
-}
-
 #[inline(always)]
 fn normalize_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
     heap: &JsHeap<'a>,
@@ -561,20 +555,18 @@ fn join_windows_latin1<'a, const FLAT_ONLY: bool>(
         return Ok(None);
     }
     let mut parts: Parts<'_> = [const { core::mem::MaybeUninit::uninit() }; FEW];
-    let mut count = 0;
+    let mut parts = BorrowedBuf::from(&mut parts[..]);
     for &path in paths {
         let Some(text) = ascii_of::<FLAT_ONLY>(heap, path)? else {
             return Ok(None);
         };
         if !text.characters().is_empty() {
-            parts[count].write(text.characters());
-            count += 1;
+            parts.unfilled().append(&[text.characters()]);
         }
     }
-    // SAFETY: the first `count` are written.
-    Ok(join_windows_parts(heap, unsafe {
-        written(&parts[..count])
-    }))
+    // With this bound LLVM unrolls the loop over the parts in `join_windows_parts`.
+    assert!(parts.len() <= FEW);
+    Ok(join_windows_parts(heap, parts.filled()))
 }
 
 #[inline(never)]

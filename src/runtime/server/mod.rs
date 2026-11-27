@@ -820,18 +820,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
         }
 
-        let ctx_slot = self.request_pool.claim();
-        let ctx = ctx_slot.addr().as_ptr();
-        // SAFETY: `claim` hands out an uninitialized slot.
-        let ctx_uninit = unsafe { &mut *ctx.cast::<core::mem::MaybeUninit<_>>() };
-        ServerRequestContext::<SSL, DEBUG>::create(
-            ctx_uninit,
+        let ctx = ServerRequestContext::<SSL, DEBUG>::create(
+            self.request_pool.claim(),
             self,
             std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
             any_response_from::<SSL>(resp),
-        );
-        // SAFETY: fully initialized by `create()`.
-        let ctx_ref = request_context::Dispatch::new(unsafe { ctx_slot.assume_init().as_ref() });
+        )
+        .as_ptr();
+        // SAFETY: `create()` just made it, and it holds its base ref.
+        let ctx_ref = request_context::Dispatch::new(unsafe { &*ctx });
 
         self.vm()
             .jsc_vm()
@@ -1845,7 +1842,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             .into_boxed_slice();
         // `base_url` drops on Err automatically.
 
-        let owner = bun_ptr::AliasableBox::new(Self {
+        let mut owner = bun_ptr::AliasableBox::new(Self {
             ref_count: bun_ptr::RefCount::init(),
             open_ref: Cell::new(None),
             global_this: std::ptr::from_ref(global),
@@ -1884,25 +1881,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             ws_package_handler: JsCell::new(None),
             _pin: core::marker::PhantomPinned,
         });
-        let server = owner.as_ptr();
 
         // The packed `AnyServer` is a pure function of the (now-stable) heap
         // address and the const variant tag; cache it so the per-request
         // `node:http` prologue is a plain field load instead of a tag match +
         // `TaggedPtr::init`.
-        // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
-        unsafe {
-            (*server).any_server_packed = AnyServer::from(server.cast_const()).to_packed() as usize;
-        }
+        owner.any_server_packed = AnyServer::from(owner.as_ptr().cast_const()).to_packed() as usize;
 
         // The bake options (`root`, and the arena the transpilers live in) are in
-        // `(*server).config.bake` for the server's lifetime. Initialise
+        // `owner.config.bake` for the server's lifetime. Initialise
         // DevServer AFTER the server box exists so the `Options::arena` borrow
         // points into the heap-allocated config rather than the caller's
         // (since-moved) stack slot. On Err, dropping `owner` frees the
         // half-built server.
-        // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
-        let config = unsafe { (*server).config.get_mut() };
+        let config = owner.config.as_mut();
         if let Some(bake_options) = &mut config.bake {
             let broadcast = config.broadcast_console_log_from_browser_to_server_for_bake;
             let dev = crate::bake::DevServer::init(crate::bake::DevServer::Options {
@@ -1914,8 +1906,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 bundler_options: core::mem::take(&mut bake_options.bundler_options),
                 broadcast_console_log_from_browser_to_server: broadcast,
             })?;
-            // SAFETY: `server` is uniquely owned here.
-            unsafe { (*server).dev_server.set(Some(dev)) };
+            owner.dev_server.set(Some(dev));
         }
 
         if SSL {

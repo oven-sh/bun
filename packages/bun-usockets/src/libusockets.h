@@ -250,10 +250,7 @@ int us_udp_socket_bind(struct us_udp_socket_t *s, const char *hostname, unsigned
 #ifdef _WIN32
 
 /* Create a new high precision, low performance timer. May fail and return null */
-struct us_timer_t *us_create_timer(us_loop_r loop, int fallthrough, unsigned int ext_size);
-
-/* Returns user data extension for this timer */
-void *us_timer_ext(struct us_timer_t *timer);
+struct us_timer_t *us_create_timer(us_loop_r loop, int fallthrough);
 
 /* */
 void us_timer_close(struct us_timer_t *timer, int fallthrough);

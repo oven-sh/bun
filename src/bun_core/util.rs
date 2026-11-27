@@ -2352,7 +2352,9 @@ pub fn is_writable(fd: Fd) -> Pollable {
 // thread-local PRNG once per thread. Prefer `bun_boringssl_sys::rand_bytes`
 // (userspace DRBG, no syscall per call) unless the bytes are asked for in
 // batches.
-pub fn os_entropy(bytes: &mut [u8]) {
+/// Returns whether the system filled `bytes`.
+#[must_use]
+pub fn os_entropy(bytes: &mut [u8]) -> bool {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let mut filled = 0usize;
@@ -2365,34 +2367,31 @@ pub fn os_entropy(bytes: &mut [u8]) {
                     0,
                 )
             };
-            if rc < 0 {
-                let err = crate::ffi::errno();
-                if err == libc::EINTR {
+            if rc <= 0 {
+                if rc < 0 && crate::ffi::errno() == libc::EINTR {
                     continue;
                 }
                 // Linux before 3.17 returns ENOSYS, and a seccomp filter can return EPERM.
                 use std::io::Read;
                 // It stays open: there may be no descriptor left the next time.
-                static URANDOM: Once<std::io::Result<std::fs::File>> = Once::new();
-                let file = URANDOM.get_or_init(|| std::fs::File::open("/dev/urandom"));
-                if !(file.as_ref()).is_ok_and(|mut f| f.read_exact(&mut bytes[filled..]).is_ok()) {
-                    panic!("getrandom failed: errno {err}");
-                }
-                return;
+                static URANDOM: Once<std::fs::File> = Once::new();
+                let file = URANDOM.get().or_else(|| {
+                    let file = std::fs::File::open("/dev/urandom").ok()?;
+                    Some(URANDOM.get_or_init(|| file))
+                });
+                return file.is_some_and(|mut f| f.read_exact(&mut bytes[filled..]).is_ok());
             }
             filled += rc as usize;
         }
+        true
     }
     #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
     {
         // getentropy caps at 256 bytes per call.
-        for chunk in bytes.chunks_mut(256) {
+        bytes.chunks_mut(256).all(|chunk| {
             // SAFETY: chunk is a valid writable slice ≤ 256 bytes.
-            let rc = unsafe { libc::getentropy(chunk.as_mut_ptr().cast(), chunk.len()) };
-            if rc != 0 {
-                panic!("getentropy failed");
-            }
-        }
+            unsafe { libc::getentropy(chunk.as_mut_ptr().cast(), chunk.len()) == 0 }
+        })
     }
     #[cfg(windows)]
     {
@@ -2401,13 +2400,10 @@ pub fn os_entropy(bytes: &mut [u8]) {
             #[link_name = "SystemFunction036"]
             fn RtlGenRandom(buf: *mut u8, len: u32) -> u8;
         }
-        for chunk in bytes.chunks_mut(u32::MAX as usize) {
+        bytes.chunks_mut(u32::MAX as usize).all(|chunk| {
             // SAFETY: chunk fits in u32; RtlGenRandom writes exactly that many bytes.
-            let ok = unsafe { RtlGenRandom(chunk.as_mut_ptr(), chunk.len() as u32) };
-            if ok == 0 {
-                panic!("RtlGenRandom failed");
-            }
-        }
+            unsafe { RtlGenRandom(chunk.as_mut_ptr(), chunk.len() as u32) != 0 }
+        })
     }
 }
 
@@ -2800,7 +2796,7 @@ pub use bun_pod::{
 
 // ─── extern_union_accessors! ──────────────────────────────────────────────────
 // Wraps each bare-union field read in a tag-asserted `unsafe` accessor so call
-// sites stay safe. `Resolution` and `Bin` share it.
+// sites stay safe.
 //
 // Emits, per arm, `pub fn $field(&self) -> &$Ty` and optionally
 // `pub fn $field_mut(&mut self) -> &mut $Ty`, each guarded by
@@ -3105,11 +3101,12 @@ pub mod rand {
 
 /// Port of `bun.fastRandom()`. Thread-local xoshiro256++ seeded once per
 /// process from the OS CSPRNG (or `BUN_DEBUG_HASH_RANDOM_SEED` in debug).
+/// The clock stands in for as long as the OS has no seed to give.
 pub fn fast_random() -> u64 {
     use core::cell::Cell;
     use core::sync::atomic::{AtomicU64, Ordering as O};
     static SEED: AtomicU64 = AtomicU64::new(0);
-    fn random_seed() -> u64 {
+    fn random_seed() -> Option<u64> {
         let mut v = SEED.load(O::Relaxed);
         while v == 0 {
             // Should also apply to canary builds, but bun_core has no `canary`
@@ -3118,23 +3115,26 @@ pub fn fast_random() -> u64 {
             #[cfg(debug_assertions)]
             if let Some(n) = crate::env_var::BUN_DEBUG_HASH_RANDOM_SEED.get() {
                 SEED.store(n, O::Relaxed);
-                return n;
+                return Some(n);
             }
             let mut buf = [0u8; 8];
-            os_entropy(&mut buf);
-            v = u64::from_ne_bytes(buf);
+            v = os_entropy(&mut buf).then(|| u64::from_ne_bytes(buf))?;
             SEED.store(v, O::Relaxed);
             v = SEED.load(O::Relaxed);
         }
-        v
+        Some(v)
     }
     thread_local! {
         static PRNG: Cell<Option<rand::DefaultPrng>> = const { Cell::new(None) };
     }
     PRNG.with(|p| {
-        let mut prng = p
+        let prng = p
             .take()
-            .unwrap_or_else(|| rand::DefaultPrng::init(random_seed()));
+            .or_else(|| random_seed().map(rand::DefaultPrng::init));
+        let Some(mut prng) = prng else {
+            let now = crate::time::nano_timestamp() as u64;
+            return rand::DefaultPrng::init(now ^ (u64::from(std::process::id()) << 32)).next_u64();
+        };
         let v = prng.next_u64();
         p.set(Some(prng));
         v

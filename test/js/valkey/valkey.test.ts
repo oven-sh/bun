@@ -1086,7 +1086,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(serialized).toBeDefined();
         expect(serialized).not.toBeNull();
 
-        expect(typeof serialized === "string" || Buffer.isBuffer(serialized)).toBe(true);
+        expect(Buffer.isBuffer(serialized)).toBe(true);
 
         const nonExistent = await redis.dump("dump-test-nonexistent");
         expect(nonExistent).toBeNull();

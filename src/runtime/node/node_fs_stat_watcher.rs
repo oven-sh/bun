@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use bun_core::strings;
 use bun_core::{Timespec, TimespecMockMode, ZBox, ZStr};
-use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task};
+use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_io::JsKeepAlive;
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::node::PathLike;
@@ -402,7 +402,7 @@ impl StatWatcher {
     /// Pool thread → JS thread, where `hop` runs unless the VM is tearing down.
     fn post_to_js_thread(self: RefPtr<Self>, hop: StatWatcherHop, ticket: &bun_jsc::Ticket) {
         self.pending_hop.set(hop as u8);
-        ticket.post(ConcurrentTask::create(Task::from_ref::<Self>(self)));
+        ticket.post(ConcurrentTask::create::<Self>(self));
     }
 
     /// JS thread dispatch of a [`post_to_js_thread`](Self::post_to_js_thread) hop.
@@ -753,13 +753,13 @@ pub(crate) enum StatWatcherHop {
     Changed = 3,
 }
 
-impl bun_event_loop::RefTask for StatWatcher {
+impl bun_event_loop::Taskable for StatWatcher {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::StatWatcherHop;
-    type Ref = RefPtr<Self>;
-    fn release_unrun(_: Self::Ref) {}
+    type Payload = RefPtr<Self>;
+    fn release_unrun(_: Self::Payload) {}
     /// The watcher closes with the context that started it (`abort_handle`); a hop that arrives
     /// afterwards finds it closed.
-    fn context(_: &Self::Ref) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Payload) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

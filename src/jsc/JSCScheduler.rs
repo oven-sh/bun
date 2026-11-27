@@ -1,53 +1,57 @@
+use core::ffi::c_void;
+use core::ptr::NonNull;
+
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 
 use crate::{JSGlobalObject, JsResult};
 
-bun_opaque::opaque_ffi! {
-    /// Opaque FFI handle for a JSC deferred work task (constructed/owned on the C++ side).
-    pub struct JSCDeferredWorkTask;
+/// A JSC deferred work task (constructed on the C++ side). Deleted on drop.
+#[repr(transparent)]
+pub struct JSCDeferredWorkTask(NonNull<c_void>);
+
+unsafe extern "C" {
+    safe fn Bun__runDeferredWork(task: JSCDeferredWorkTask);
+    fn Bun__deleteDeferredWorkTask(task: NonNull<c_void>);
+}
+
+impl Drop for JSCDeferredWorkTask {
+    fn drop(&mut self) {
+        // SAFETY: `self` is the only owner.
+        unsafe { Bun__deleteDeferredWorkTask(self.0) }
+    }
 }
 
 impl Taskable for JSCDeferredWorkTask {
     const TAG: TaskTag = task_tag::JSCDeferredWorkTask;
+    type Payload = Self;
     /// A cross-thread Atomics.notify / Wasm / FinalizationRegistry completion:
-    /// delete the C++ job (its `Ref<Ticket>` drops before ~VM).
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract; heap-allocated by JSCTaskScheduler::onScheduleWorkSoon.
-        unsafe { Bun__deleteDeferredWorkTask(this) }
-    }
+    /// its `Ref<Ticket>` drops before ~VM.
+    fn release_unrun(_: Self) {}
     /// `JSCTaskScheduler::runPendingWork` checks the graph that scheduled the work.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
-}
-
-unsafe extern "C" {
-    // safe: `JSCDeferredWorkTask` is an `opaque_ffi!` ZST handle (`!Freeze`
-    // via `UnsafeCell`); `&mut` is ABI-identical to a non-null `*mut` and the
-    // C++ side consuming it is interior to the opaque cell.
-    safe fn Bun__runDeferredWork(task: &mut JSCDeferredWorkTask);
-    fn Bun__deleteDeferredWorkTask(task: *mut JSCDeferredWorkTask);
 }
 
 impl JSCDeferredWorkTask {
     /// The C++ side reports what a job throws at its own boundary; what can
     /// still be pending here is the VM's termination.
-    pub fn run(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+    pub fn run(self, global: &JSGlobalObject) -> JsResult<()> {
         crate::call_check_slow(global, || Bun__runDeferredWork(self))
     }
 }
 
 /// JSC helper threads (DeferredWorkTimer): deliver a deferred-work job to the
 /// VM's `kind` loop (captured by `JSCTaskScheduler::onAddPendingWork` on the JS
-/// thread when the work was registered). Returns whether the VM took it.
+/// thread when the work was registered).
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
     r: *const crate::vm_handle::Shared,
-    task: *mut JSCDeferredWorkTask,
+    task: JSCDeferredWorkTask,
     kind: crate::LoopKind,
-) -> bool {
+) {
     crate::mark_binding!();
     // SAFETY: C++ passes the reference its JSVMClientData holds.
     let handle = unsafe { crate::VmHandle::borrow_ref(r) };
-    matches!(handle.post(kind, task), crate::Posted::Queued)
+    drop(handle.post::<JSCDeferredWorkTask>(kind, task));
 }

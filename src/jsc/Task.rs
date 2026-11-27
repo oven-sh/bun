@@ -1,7 +1,7 @@
-//! `bun_jsc::Task` — the hoisted task-dispatch tag/ptr pair.
+//! `bun_jsc::Task` — the hoisted task-dispatch tag/payload pair.
 //!
 //! Per `docs/PORTING.md` §Dispatch hot-path: this crate (low/mid tier) only
-//! stores `{ tag: u8, ptr: *mut () }` and a one-shot hook; the per-tick
+//! stores a tag, a one-word payload and a one-shot hook; the per-tick
 //! `match` over all ~96 variant types lives in `bun_runtime::dispatch`
 //! (high tier — it owns every variant type). LLVM inlines the high-tier arms;
 //! this layer never names a variant.

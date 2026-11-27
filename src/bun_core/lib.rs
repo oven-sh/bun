@@ -791,7 +791,7 @@ impl<T: ?Sized + core::marker::Freeze> __IsFreeze<T> {
 
 /// Declares that `Self` embeds exactly one intrusive `F` field at byte
 /// [`OFFSET`](IntrusiveField::OFFSET). Every per-module `const X_OFFSET: usize`
-/// trait (`TASK_OFFSET`, `MIXIN_OFFSET`,
+/// trait (`MIXIN_OFFSET`,
 /// `CHANNEL_OFFSET`, `LazyBool<_, const OFFSET>`, `from_task`, …) is the same
 /// `(Parent, Field, OFFSET)` triple plus [`container_of`] arithmetic — this
 /// trait is exactly that triple, with both directions provided.

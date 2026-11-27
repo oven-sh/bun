@@ -82,7 +82,7 @@ pub(crate) use ssl_config::{
 pub(crate) use handlers::{Handlers, SocketConfig};
 pub(crate) use listener::Listener;
 pub(crate) use socket_address::SocketAddress;
-pub(crate) use socket_body::DuplexUpgradeContext;
+pub(crate) use socket_body::{DuplexUpgradeContext, DuplexUpgradeContextFree};
 pub(crate) use socket_body::{
     Flags as SocketFlags, NativeCallbacks, NativeRef, NewSocket, SocketMode, TCPSocket, TLSSocket,
     server_ctx_rejects_unauthorized, server_ctx_requests_cert,

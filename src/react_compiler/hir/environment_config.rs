@@ -127,6 +127,10 @@ pub struct EnvironmentConfig {
     /// The `finally` block of a `try` is lowered after the rest of it, and so is the `try` block that has no `catch`:
     /// the function is not compiled, and the rules see what the blocks use. Upstream lowers neither.
     pub finally_blocks_are_lowered: bool,
+    /// For `prune_maybe_throws`: with the edge to a `catch` go the operands that phis have for it and the phis that are
+    /// then redundant, and a `catch` that is no longer reached is no predecessor of what follows the `try`. Upstream
+    /// keeps them, and fails: "Found a block with a single predecessor but where a phi has multiple operands".
+    pub pruned_throw_edges_are_removed_from_phis: bool,
     /// `React.useMemo` is React's if `React` is imported from React, under whatever name. To upstream it is if the name
     /// is `React`, wherever that comes from.
     pub react_is_known_by_its_module: bool,
@@ -202,6 +206,7 @@ impl Default for EnvironmentConfig {
             unreachable_code_is_reported_at_its_function: false,
             tagged_templates_are_always_called: false,
             finally_blocks_are_lowered: false,
+            pruned_throw_edges_are_removed_from_phis: false,
             react_is_known_by_its_module: true,
             dependencies_are_sorted_by_bytes: false,
             callback_dependencies_end_before_current: false,

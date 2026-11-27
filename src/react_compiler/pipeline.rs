@@ -388,7 +388,7 @@ pub(crate) fn run_analysis_passes(
     pass!(
         env,
         "PruneMaybeThrows",
-        crate::optimization::prune_maybe_throws(hir, &mut env.functions)
+        crate::optimization::prune_maybe_throws(hir, env)
     )?;
 
     pass!(
@@ -512,7 +512,7 @@ pub(crate) fn run_analysis_passes(
     pass!(
         env,
         "PruneMaybeThrows2",
-        crate::optimization::prune_maybe_throws(hir, &mut env.functions)
+        crate::optimization::prune_maybe_throws(hir, env)
     )?;
 
     pass!(

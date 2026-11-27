@@ -9,26 +9,29 @@
 //! array/object literals. Even a variable reference could throw due to TDZ.
 //!
 //! Analogous to TS `Optimization/PruneMaybeThrows.ts`.
-//! What may throw: https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License).
+//! What may throw, and phis after a pruned edge: https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and
+//! contributors, MIT License).
 
 use crate::collections::IdMap;
 use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
 use crate::hir::assert_terminal_blocks_exist::assert_terminal_successors_exist;
 use crate::hir::cfg_utils::{
-    mark_instruction_ids, remove_dead_do_while_statements, remove_unnecessary_try_catch,
-    remove_unreachable_for_updates, reverse_postorder_blocks,
+    mark_instruction_ids, mark_predecessors, remove_dead_do_while_statements,
+    remove_unnecessary_try_catch, remove_unreachable_for_updates, reverse_postorder_blocks,
 };
+use crate::hir::environment::Environment;
 use crate::hir::{
     ArrayElement, BlockId, HirFunction, InstructionKind, InstructionValue, ObjectPropertyKey,
     ObjectPropertyOrSpread, Terminal,
 };
 
 use crate::optimization::merge_consecutive_blocks::merge_consecutive_blocks;
+use crate::ssa::eliminate_redundant_phi;
 
 /// Prune `MaybeThrow` terminals for blocks that cannot throw, then clean up the CFG.
 pub(crate) fn prune_maybe_throws(
     func: &mut HirFunction,
-    functions: &mut [HirFunction],
+    env: &mut Environment,
 ) -> Result<(), CompilerDiagnostic> {
     let terminal_mapping = prune_maybe_throws_impl(func);
     if let Some(terminal_mapping) = terminal_mapping {
@@ -38,8 +41,16 @@ pub(crate) fn prune_maybe_throws(
         remove_unreachable_for_updates(&mut func.body);
         remove_dead_do_while_statements(&mut func.body);
         remove_unnecessary_try_catch(&mut func.body);
+        if env.config.pruned_throw_edges_are_removed_from_phis {
+            // Not in upstream (oxc e0f8937ae, 6e6bd61f7). The merge reads the predecessors too: with a `catch` that
+            // is gone among them, what follows the `try` is not merged into it.
+            mark_predecessors(&mut func.body);
+            if prune_unreachable_phi_operands(func) {
+                eliminate_redundant_phi(func, env);
+            }
+        }
         mark_instruction_ids(&mut func.body, &mut func.instructions);
-        merge_consecutive_blocks(func, functions)?;
+        merge_consecutive_blocks(func, &mut env.functions)?;
 
         // Rewrite phi operands to reference the updated predecessor blocks
         for block in func.body.blocks.values_mut() {
@@ -82,6 +93,20 @@ pub(crate) fn prune_maybe_throws(
         assert_terminal_successors_exist(func)?;
     }
     Ok(())
+}
+
+/// Removes the phi operands whose edge is no longer in the CFG. Returns whether there was one.
+fn prune_unreachable_phi_operands(func: &mut HirFunction) -> bool {
+    let mut pruned = false;
+    for block in func.body.blocks.values_mut() {
+        for phi in &mut block.phis {
+            let len = phi.operands.len();
+            phi.operands
+                .retain(|pred, _operand| block.preds.contains(pred));
+            pruned |= phi.operands.len() != len;
+        }
+    }
+    pruned
 }
 
 fn prune_maybe_throws_impl(func: &mut HirFunction) -> Option<IdMap<BlockId, BlockId>> {

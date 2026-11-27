@@ -58,6 +58,7 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
         unreachable_code_is_reported_at_its_function: is_oxlint,
         tagged_templates_are_always_called: is_oxlint,
         finally_blocks_are_lowered: is_oxlint,
+        pruned_throw_edges_are_removed_from_phis: is_oxlint,
         react_is_known_by_its_module: false,
         dependencies_are_sorted_by_bytes: is_oxlint,
         callback_dependencies_end_before_current: is_oxlint,

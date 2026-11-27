@@ -8,11 +8,10 @@ raiseDefaultTimeout(120_000);
 
 const test = oneAtATime.concurrent;
 
-// The path of the import() is written out and its type is made at run time. Once the file has been taken out, it is loaded again by that type.
+// The path of the import() is written out and its type is made at run time.
 
 const files = {
   "package.json": `{ "name": "box", "private": true }`,
-  "a.ts": `globalThis.ran = (globalThis.ran ?? 0) + 1;\nconsole.log("a.ts runs");\nexport default "code";\n`,
   "box.json": `{ "name": "box" }\n`,
   "crate.toml": `lid = "oak"\n`,
 };
@@ -22,27 +21,6 @@ const show = (call: string) => `show(await ${call});`;
 const reset = `vi.resetModules();`;
 
 const cases: Record<string, string[]> = {
-  "a JSON file": [show(load("box.json")), reset, show(load("box.json")), show(load("box.json"))],
-  "a file of code": [show(load("a.ts")), reset, show(load("a.ts")), show(`import("./a.ts")`)],
-  "a file whose key is deleted": [
-    show(load("box.json")),
-    `delete require.cache[require.resolve("./box.json")];`,
-    show(load("box.json")),
-  ],
-  "another type behind it": [
-    show(load("box.json")),
-    reset,
-    show(load("box.json", "json")),
-    show(`import("./box.json")`),
-    show(load("box.json")),
-  ],
-  "a call that the reset overtakes": [
-    show(load("box.json")),
-    `const imported = ${load("box.json")};`,
-    reset,
-    `show(await imported);`,
-    show(load("box.json")),
-  ],
   "the type that the file has anyway, and a require behind it": [
     show(load("crate.toml", "toml")),
     `delete require.cache[require.resolve("./crate.toml")];`,

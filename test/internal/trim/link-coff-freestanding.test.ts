@@ -1239,7 +1239,8 @@ extern "C" int unreferenced(int x) { return GUARDED(Extra, entered, x); }
           const removal = await run([objcopy, `--remove-section=${coffRecordSectionName}`, `${name}.obj`], folder);
           expect(removal).toEqual(cleanExit);
         }
-        expect(await run(command, folder)).toEqual(cleanExit);
+        // Only the exit code: the clang-cl of Alpine warns here about a flag of its own configuration.
+        expect((await run(command, folder)).exitCode).toBe(0);
         const withoutRecords = readLink(folder);
         expect(withoutRecords.recordSections).toEqual([]);
         expect(withoutRecords.graph.count).toBe(reading.graph.count);

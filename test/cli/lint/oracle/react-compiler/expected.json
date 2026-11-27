@@ -4301,8 +4301,584 @@
   },
   "ref arguments": {
    "exit": 1,
-   "files": 11,
+   "files": 15,
    "diagnostics": {
+    "assigned-in-callback.tsx": [
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value previously passed as an argument to a hook is not allowed. Consider moving the modification before calling the hook",
+      "labels": [
+       {
+        "label": "`total` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 5,
+         "line": 29,
+         "offset": 650
+        }
+       },
+       {
+        "label": "`total` originates here",
+        "span": {
+         "column": 7,
+         "length": 5,
+         "line": 27,
+         "offset": 596
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value previously passed as an argument to a hook is not allowed. Consider moving the modification before calling the hook",
+      "labels": [
+       {
+        "label": "`total` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 5,
+         "line": 37,
+         "offset": 824
+        }
+       },
+       {
+        "label": "`total` originates here",
+        "span": {
+         "column": 7,
+         "length": 5,
+         "line": 35,
+         "offset": 770
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value previously passed as an argument to a hook is not allowed. Consider moving the modification before calling the hook",
+      "labels": [
+       {
+        "label": "`total` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 5,
+         "line": 45,
+         "offset": 1001
+        }
+       },
+       {
+        "label": "`total` originates here",
+        "span": {
+         "column": 7,
+         "length": 5,
+         "line": 42,
+         "offset": 918
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Reassigning `total` after render has completed can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "Cannot reassign `total` after render completes",
+        "span": {
+         "column": 5,
+         "length": 5,
+         "line": 22,
+         "offset": 521
+        }
+       },
+       {
+        "label": "`total` is declared here",
+        "span": {
+         "column": 7,
+         "length": 5,
+         "line": 20,
+         "offset": 467
+        }
+       }
+      ],
+      "message": "Cannot reassign variable after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Reassigning `total` after render has completed can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "Cannot reassign `total` after render completes",
+        "span": {
+         "column": 5,
+         "length": 5,
+         "line": 29,
+         "offset": 650
+        }
+       },
+       {
+        "label": "`total` is declared here",
+        "span": {
+         "column": 7,
+         "length": 5,
+         "line": 27,
+         "offset": 596
+        }
+       }
+      ],
+      "message": "Cannot reassign variable after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Reassigning `total` after render has completed can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "Cannot reassign `total` after render completes",
+        "span": {
+         "column": 5,
+         "length": 5,
+         "line": 37,
+         "offset": 824
+        }
+       },
+       {
+        "label": "`total` is declared here",
+        "span": {
+         "column": 7,
+         "length": 5,
+         "line": 35,
+         "offset": 770
+        }
+       }
+      ],
+      "message": "Cannot reassign variable after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Reassigning `total` after render has completed can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "Cannot reassign `total` after render completes",
+        "span": {
+         "column": 5,
+         "length": 5,
+         "line": 45,
+         "offset": 1001
+        }
+       },
+       {
+        "label": "`total` is declared here",
+        "span": {
+         "column": 7,
+         "length": 5,
+         "line": 42,
+         "offset": 918
+        }
+       }
+      ],
+      "message": "Cannot reassign variable after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `total` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `total`",
+        "span": {
+         "column": 5,
+         "length": 5,
+         "line": 22,
+         "offset": 521
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `total` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 21,
+         "offset": 509
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `total` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `total`",
+        "span": {
+         "column": 5,
+         "length": 5,
+         "line": 22,
+         "offset": 521
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `total` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 21,
+         "offset": 509
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `total` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `total`",
+        "span": {
+         "column": 5,
+         "length": 5,
+         "line": 29,
+         "offset": 650
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `total` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 28,
+         "offset": 638
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `total` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `total`",
+        "span": {
+         "column": 5,
+         "length": 5,
+         "line": 37,
+         "offset": 824
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `total` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 36,
+         "offset": 812
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `total` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `total`",
+        "span": {
+         "column": 5,
+         "length": 5,
+         "line": 45,
+         "offset": 1001
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `total` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 43,
+         "offset": 960
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `count`, but the source dependencies were []. Inferred dependency not present in source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 2,
+         "line": 7,
+         "offset": 180
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 13,
+         "length": 5,
+         "line": 6,
+         "offset": 164
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `state`, but the source dependencies were [state.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 15,
+         "line": 16,
+         "offset": 403
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 12,
+         "length": 5,
+         "line": 15,
+         "offset": 377
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `total`, but the source dependencies were []. Inferred dependency not present in source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 2,
+         "line": 23,
+         "offset": 537
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 5,
+         "line": 22,
+         "offset": 521
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `total`, but the source dependencies were [total.next]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 12,
+         "line": 31,
+         "offset": 695
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 5,
+         "line": 29,
+         "offset": 650
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `total`, but the source dependencies were [total.next]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 12,
+         "line": 38,
+         "offset": 849
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 13,
+         "length": 5,
+         "line": 37,
+         "offset": 832
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `total`, but the source dependencies were [total.next]. Inferred less specific property than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 12,
+         "line": 46,
+         "offset": 1017
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 17,
+         "length": 5,
+         "line": 44,
+         "offset": 984
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(syntax)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 10,
+         "length": 5,
+         "line": 12,
+         "offset": 288
+        }
+       }
+      ],
+      "message": "Expected `const` declaration not to be reassigned",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(syntax)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 10,
+         "length": 5,
+         "line": 4,
+         "offset": 85
+        }
+       }
+      ],
+      "message": "Expected `const` declaration not to be reassigned",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(syntax)",
+      "help": "`count` is declared as const",
+      "labels": [
+       {
+        "label": "Cannot reassign `count`",
+        "span": {
+         "column": 5,
+         "length": 5,
+         "line": 6,
+         "offset": 156
+        }
+       },
+       {
+        "label": "`count` is declared here",
+        "span": {
+         "column": 10,
+         "length": 5,
+         "line": 4,
+         "offset": 85
+        }
+       }
+      ],
+      "message": "Cannot reassign a `const` variable",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(syntax)",
+      "help": "`state` is declared as const",
+      "labels": [
+       {
+        "label": "Cannot reassign `state`",
+        "span": {
+         "column": 5,
+         "length": 5,
+         "line": 14,
+         "offset": 355
+        }
+       },
+       {
+        "label": "`state` is declared here",
+        "span": {
+         "column": 10,
+         "length": 5,
+         "line": 12,
+         "offset": 288
+        }
+       }
+      ],
+      "message": "Cannot reassign a `const` variable",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
     "callback-in-memo.ts": [
      {
       "code": "react(preserve-manual-memoization)",
@@ -4332,6 +4908,739 @@
       "severity": "error"
      }
     ],
+    "current-by-a-computed-name.ts": [
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`box` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 17,
+         "line": 19,
+         "offset": 465
+        }
+       },
+       {
+        "label": "`box` originates here",
+        "span": {
+         "column": 35,
+         "length": 3,
+         "line": 17,
+         "offset": 425
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`box` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 20,
+         "line": 13,
+         "offset": 335
+        }
+       },
+       {
+        "label": "`box` originates here",
+        "span": {
+         "column": 40,
+         "length": 3,
+         "line": 11,
+         "offset": 295
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `box` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `box`",
+        "span": {
+         "column": 5,
+         "length": 17,
+         "line": 19,
+         "offset": 465
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `box` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 18,
+         "offset": 453
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `box` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `box`",
+        "span": {
+         "column": 5,
+         "length": 20,
+         "line": 13,
+         "offset": 335
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `box` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 12,
+         "offset": 323
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 50,
+         "length": 13,
+         "line": 4,
+         "offset": 122
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 28,
+         "length": 20,
+         "line": 4,
+         "offset": 100
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 51,
+         "length": 13,
+         "line": 37,
+         "offset": 985
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 28,
+         "length": 21,
+         "line": 37,
+         "offset": 962
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 52,
+         "length": 13,
+         "line": 33,
+         "offset": 881
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 28,
+         "length": 11,
+         "line": 33,
+         "offset": 857
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 56,
+         "length": 13,
+         "line": 29,
+         "offset": 779
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 28,
+         "length": 11,
+         "line": 29,
+         "offset": 751
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 56,
+         "length": 13,
+         "line": 8,
+         "offset": 237
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 28,
+         "length": 26,
+         "line": 8,
+         "offset": 209
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 14,
+         "offset": 372
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 20,
+         "line": 13,
+         "offset": 335
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 20,
+         "offset": 502
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 17,
+         "line": 19,
+         "offset": 465
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 61,
+         "length": 13,
+         "line": 25,
+         "offset": 670
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 28,
+         "length": 11,
+         "line": 25,
+         "offset": 637
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     }
+    ],
+    "current-is-called.ts": [
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 5,
+         "length": 13,
+         "line": 64,
+         "offset": 1293
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 9,
+         "length": 17,
+         "line": 61,
+         "offset": 1245
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 12,
+         "offset": 252
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 17,
+         "line": 11,
+         "offset": 220
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 18,
+         "offset": 380
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 23,
+         "line": 17,
+         "offset": 339
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 24,
+         "offset": 523
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 17,
+         "line": 23,
+         "offset": 463
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 30,
+         "offset": 636
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 29,
+         "offset": 613
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 36,
+         "offset": 765
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 12,
+         "length": 11,
+         "line": 35,
+         "offset": 734
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 42,
+         "offset": 889
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 6,
+         "length": 11,
+         "line": 41,
+         "offset": 862
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 48,
+         "offset": 1006
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 47,
+         "offset": 979
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 54,
+         "offset": 1139
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 53,
+         "offset": 1106
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 6,
+         "offset": 137
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 5,
+         "offset": 111
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 72,
+         "offset": 1452
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 6,
+         "length": 17,
+         "line": 71,
+         "offset": 1425
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 78,
+         "offset": 1572
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 17,
+         "line": 77,
+         "offset": 1544
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 84,
+         "offset": 1692
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 83,
+         "offset": 1665
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 90,
+         "offset": 1803
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 9,
+         "length": 16,
+         "line": 89,
+         "offset": 1778
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 96,
+         "offset": 1913
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 15,
+         "line": 95,
+         "offset": 1885
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     }
+    ],
     "current-is-listed.ts": [
      {
       "code": "react(preserve-manual-memoization)",
@@ -4353,6 +5662,1304 @@
          "length": 17,
          "line": 4,
          "offset": 97
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     }
+    ],
+    "current-is-written.ts": [
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`box` cannot be modified",
+        "span": {
+         "column": 12,
+         "length": 11,
+         "line": 41,
+         "offset": 839
+        }
+       },
+       {
+        "label": "`box` originates here",
+        "span": {
+         "column": 27,
+         "length": 3,
+         "line": 39,
+         "offset": 792
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`box` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 17,
+         "offset": 354
+        }
+       },
+       {
+        "label": "`box` originates here",
+        "span": {
+         "column": 32,
+         "length": 3,
+         "line": 15,
+         "offset": 314
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`box` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 29,
+         "offset": 597
+        }
+       },
+       {
+        "label": "`box` originates here",
+        "span": {
+         "column": 30,
+         "length": 3,
+         "line": 27,
+         "offset": 557
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`box` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 47,
+         "offset": 949
+        }
+       },
+       {
+        "label": "`box` originates here",
+        "span": {
+         "column": 28,
+         "length": 3,
+         "line": 45,
+         "offset": 909
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`box` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 5,
+         "offset": 113
+        }
+       },
+       {
+        "label": "`box` originates here",
+        "span": {
+         "column": 27,
+         "length": 3,
+         "line": 3,
+         "offset": 73
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`box` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 53,
+         "offset": 1061
+        }
+       },
+       {
+        "label": "`box` originates here",
+        "span": {
+         "column": 24,
+         "length": 3,
+         "line": 51,
+         "offset": 1021
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`box` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 59,
+         "offset": 1173
+        }
+       },
+       {
+        "label": "`box` originates here",
+        "span": {
+         "column": 25,
+         "length": 3,
+         "line": 57,
+         "offset": 1133
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`box` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 66,
+         "offset": 1336
+        }
+       },
+       {
+        "label": "`box` originates here",
+        "span": {
+         "column": 35,
+         "length": 3,
+         "line": 63,
+         "offset": 1262
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`box` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 84,
+         "offset": 1710
+        }
+       },
+       {
+        "label": "`box` originates here",
+        "span": {
+         "column": 34,
+         "length": 3,
+         "line": 82,
+         "offset": 1670
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`box` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 13,
+         "line": 78,
+         "offset": 1588
+        }
+       },
+       {
+        "label": "`box` originates here",
+        "span": {
+         "column": 42,
+         "length": 3,
+         "line": 76,
+         "offset": 1548
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`box` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 17,
+         "line": 11,
+         "offset": 230
+        }
+       },
+       {
+        "label": "`box` originates here",
+        "span": {
+         "column": 31,
+         "length": 3,
+         "line": 9,
+         "offset": 190
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`box` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 20,
+         "line": 23,
+         "offset": 472
+        }
+       },
+       {
+        "label": "`box` originates here",
+        "span": {
+         "column": 35,
+         "length": 3,
+         "line": 21,
+         "offset": 432
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`box` cannot be modified",
+        "span": {
+         "column": 6,
+         "length": 11,
+         "line": 72,
+         "offset": 1459
+        }
+       },
+       {
+        "label": "`box` originates here",
+        "span": {
+         "column": 40,
+         "length": 3,
+         "line": 70,
+         "offset": 1418
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`box` cannot be modified",
+        "span": {
+         "column": 6,
+         "length": 11,
+         "line": 90,
+         "offset": 1829
+        }
+       },
+       {
+        "label": "`box` originates here",
+        "span": {
+         "column": 31,
+         "length": 3,
+         "line": 88,
+         "offset": 1788
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`box` cannot be modified",
+        "span": {
+         "column": 7,
+         "length": 11,
+         "line": 97,
+         "offset": 1962
+        }
+       },
+       {
+        "label": "`box` originates here",
+        "span": {
+         "column": 27,
+         "length": 3,
+         "line": 94,
+         "offset": 1913
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`box` cannot be modified",
+        "span": {
+         "column": 7,
+         "length": 17,
+         "line": 35,
+         "offset": 717
+        }
+       },
+       {
+        "label": "`box` originates here",
+        "span": {
+         "column": 34,
+         "length": 3,
+         "line": 33,
+         "offset": 675
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `box` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `box`",
+        "span": {
+         "column": 12,
+         "length": 11,
+         "line": 41,
+         "offset": 839
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `box` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 40,
+         "offset": 820
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `box` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `box`",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 17,
+         "offset": 354
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `box` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 16,
+         "offset": 342
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `box` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `box`",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 29,
+         "offset": 597
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `box` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 28,
+         "offset": 585
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `box` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `box`",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 47,
+         "offset": 949
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `box` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 46,
+         "offset": 937
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `box` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `box`",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 5,
+         "offset": 113
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `box` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 4,
+         "offset": 101
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `box` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `box`",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 53,
+         "offset": 1061
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `box` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 52,
+         "offset": 1049
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `box` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `box`",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 59,
+         "offset": 1173
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `box` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 58,
+         "offset": 1161
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `box` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `box`",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 66,
+         "offset": 1336
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `box` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 64,
+         "offset": 1290
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `box` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `box`",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 84,
+         "offset": 1710
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `box` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 83,
+         "offset": 1698
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `box` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `box`",
+        "span": {
+         "column": 5,
+         "length": 13,
+         "line": 78,
+         "offset": 1588
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `box` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 77,
+         "offset": 1576
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `box` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `box`",
+        "span": {
+         "column": 5,
+         "length": 17,
+         "line": 11,
+         "offset": 230
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `box` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 10,
+         "offset": 218
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `box` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `box`",
+        "span": {
+         "column": 5,
+         "length": 20,
+         "line": 23,
+         "offset": 472
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `box` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 22,
+         "offset": 460
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `box` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `box`",
+        "span": {
+         "column": 6,
+         "length": 11,
+         "line": 72,
+         "offset": 1459
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `box` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 71,
+         "offset": 1446
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `box` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `box`",
+        "span": {
+         "column": 6,
+         "length": 11,
+         "line": 90,
+         "offset": 1829
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `box` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 89,
+         "offset": 1816
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `box` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `box`",
+        "span": {
+         "column": 7,
+         "length": 11,
+         "line": 97,
+         "offset": 1962
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `box` after render",
+        "span": {
+         "column": 11,
+         "length": 7,
+         "line": 96,
+         "offset": 1948
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `box` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `box`",
+        "span": {
+         "column": 7,
+         "length": 17,
+         "line": 35,
+         "offset": 717
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `box` after render",
+        "span": {
+         "column": 22,
+         "length": 7,
+         "line": 34,
+         "offset": 703
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 5,
+         "length": 13,
+         "line": 99,
+         "offset": 1996
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 7,
+         "length": 11,
+         "line": 97,
+         "offset": 1962
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 12,
+         "offset": 264
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 17,
+         "line": 11,
+         "offset": 230
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 18,
+         "offset": 379
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 17,
+         "offset": 354
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 24,
+         "offset": 509
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 20,
+         "line": 23,
+         "offset": 472
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 30,
+         "offset": 623
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 29,
+         "offset": 597
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 36,
+         "offset": 747
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 7,
+         "length": 17,
+         "line": 35,
+         "offset": 717
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 42,
+         "offset": 863
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 12,
+         "length": 11,
+         "line": 41,
+         "offset": 839
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 48,
+         "offset": 979
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 47,
+         "offset": 949
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 54,
+         "offset": 1090
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 53,
+         "offset": 1061
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 6,
+         "offset": 141
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 5,
+         "offset": 113
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 60,
+         "offset": 1209
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 59,
+         "offset": 1173
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 67,
+         "offset": 1360
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 17,
+         "length": 15,
+         "line": 65,
+         "offset": 1314
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 73,
+         "offset": 1488
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 6,
+         "length": 11,
+         "line": 72,
+         "offset": 1459
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 79,
+         "offset": 1618
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 13,
+         "line": 78,
+         "offset": 1588
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 85,
+         "offset": 1739
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 84,
+         "offset": 1710
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `box`, but the source dependencies were [box.current]. Differences in ref.current access",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 13,
+         "line": 91,
+         "offset": 1868
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 6,
+         "length": 11,
+         "line": 90,
+         "offset": 1829
         }
        }
       ],

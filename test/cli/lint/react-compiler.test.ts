@@ -444,8 +444,16 @@ ${chain}
   // oven-sh/bun#49621
   test("a callback that reads `.current` of a value depends on the value, whether or not it's known to be a ref", async () => {
     const diagnostics = await matches("ref arguments");
-    // The first two list `.current` as a dependency.
-    expect(Object.keys(diagnostics)).toEqual(["callback-in-memo.ts", "current-is-listed.ts", "other-dependency.ts"]);
+    // All but the first and the last list `.current` as a dependency. The first assigns to what it depends on.
+    expect(Object.keys(diagnostics)).toEqual([
+      "assigned-in-callback.tsx",
+      "callback-in-memo.ts",
+      "current-by-a-computed-name.ts",
+      "current-is-called.ts",
+      "current-is-listed.ts",
+      "current-is-written.ts",
+      "other-dependency.ts",
+    ]);
   });
 
   test("a file is compiled if a top-level function is named like a component or a hook, or is a default export without a name", async () => {

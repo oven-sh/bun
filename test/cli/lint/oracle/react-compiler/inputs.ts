@@ -563,6 +563,295 @@ export function useSum(a: { x: number; y: number }, b: number) {
   return sum;
 }
 `,
+  // What's stored to, updated, deleted or called as a method isn't loaded: its object is the dependency.
+  "current-is-written.ts": `import { useCallback, useMemo } from "react";
+
+export function useAssign(box) {
+  return useCallback(() => {
+    box.current.value = 1;
+  }, [box.current]);
+}
+
+export function useAssignDeep(box) {
+  return useCallback(() => {
+    box.current.value.inner = 1;
+  }, [box.current]);
+}
+
+export function useAssignIndex(box) {
+  return useCallback(() => {
+    box.current[0] = 1;
+  }, [box.current]);
+}
+
+export function useAssignAfterKey(box) {
+  return useCallback(() => {
+    box.current["value"].inner = 1;
+  }, [box.current]);
+}
+
+export function useIncrement(box) {
+  return useCallback(() => {
+    box.current.count++;
+  }, [box.current]);
+}
+
+export function useDecrementDeep(box) {
+  return useCallback(() => {
+    --box.current.value.count;
+  }, [box.current]);
+}
+
+export function useDelete(box) {
+  return useCallback(() => {
+    delete box.current.value;
+  }, [box.current]);
+}
+
+export function useDefault(box) {
+  return useCallback(() => {
+    box.current.value ??= 1;
+  }, [box.current]);
+}
+
+export function useAdd(box) {
+  return useCallback(() => {
+    box.current.count += 1;
+  }, [box.current]);
+}
+
+export function useCopy(box) {
+  return useCallback(() => {
+    box.current.a = box.current.b;
+  }, [box.current]);
+}
+
+export function useReadThenAssign(box) {
+  return useCallback(() => {
+    console.log(box.current.a.b);
+    box.current.a = 1;
+  }, [box.current]);
+}
+
+export function useAssignInParentheses(box) {
+  return useCallback(() => {
+    (box.current).value = 1;
+  }, [box.current]);
+}
+
+export function useAssignToParenthesized(box) {
+  return useCallback(() => {
+    (box).current.value = 1;
+  }, [box.current]);
+}
+
+export function useAssignNonNull(box) {
+  return useCallback(() => {
+    box.current!.value = 1;
+  }, [box.current]);
+}
+
+export function useAssignCast(box) {
+  return useCallback(() => {
+    (box.current.value as number) = 1;
+  }, [box.current]);
+}
+
+export function useSetter(box) {
+  return useMemo(
+    () => () => {
+      box.current.value = 1;
+    },
+    [box.current],
+  );
+}
+`,
+  "current-is-called.ts": `import { useCallback, useMemo } from "react";
+
+export function useCall(box) {
+  return useCallback(() => {
+    box.current.focus();
+  }, [box.current]);
+}
+
+export function usePush(box) {
+  return useCallback(() => {
+    box.current.items.push(1);
+  }, [box.current]);
+}
+
+export function useCallDeep(box) {
+  return useCallback(() => {
+    box.current.a.b.handler.call(null);
+  }, [box.current]);
+}
+
+export function useEach(box) {
+  return useCallback(() => {
+    box.current.items.forEach(item => item.current.run());
+  }, [box.current]);
+}
+
+export function useCallAtIndex(box) {
+  return useCallback(() => {
+    box.current[0]();
+  }, [box.current]);
+}
+
+export function useCallThenRead(box) {
+  return useCallback(() => {
+    return box.current.read().value;
+  }, [box.current]);
+}
+
+export function useCallInParentheses(box) {
+  return useCallback(() => {
+    (box.current).focus();
+  }, [box.current]);
+}
+
+export function useCallNonNull(box) {
+  return useCallback(() => {
+    box.current!.focus();
+  }, [box.current]);
+}
+
+export function useCallWithTypeArguments(box) {
+  return useCallback(() => {
+    box.current.read<number>();
+  }, [box.current]);
+}
+
+export function usePusher(box) {
+  return useMemo(
+    () => ({
+      push() {
+        box.current.items.push(1);
+      },
+    }),
+    [box.current],
+  );
+}
+
+// These read the whole chain.
+export function useCallParenthesized(box) {
+  return useCallback(() => {
+    (box.current.focus)();
+  }, [box.current]);
+}
+
+export function useCallIfDefined(box) {
+  return useCallback(() => {
+    box.current.focus?.();
+  }, [box.current]);
+}
+
+export function useCallOfOptional(box) {
+  return useCallback(() => {
+    box.current?.focus();
+  }, [box.current]);
+}
+
+export function useNew(box) {
+  return useCallback(() => {
+    new box.current.Item();
+  }, [box.current]);
+}
+
+export function useTag(box) {
+  return useCallback(() => {
+    box.current.tag\`text\`;
+  }, [box.current]);
+}
+`,
+  "current-by-a-computed-name.ts": `import { useCallback } from "react";
+
+export function useTemplate(box) {
+  return useCallback(() => box[\`current\`].value, [box.current]);
+}
+
+export function useTemplateInside(box) {
+  return useCallback(() => box.current[\`value\`].inner, [box.current]);
+}
+
+export function useAssignAfterTemplate(box) {
+  return useCallback(() => {
+    box.current[\`value\`].inner = 1;
+  }, [box.current]);
+}
+
+export function useAssignTemplate(box) {
+  return useCallback(() => {
+    box.current.value[\`inner\`] = 1;
+  }, [box.current]);
+}
+
+// A string that's no identifier isn't a property name.
+export function useDashed(box) {
+  return useCallback(() => box.current["not-a-name"].inner, [box.current]);
+}
+
+export function useReserved(box) {
+  return useCallback(() => box.current["class"].inner, [box.current]);
+}
+
+export function useDigit(box) {
+  return useCallback(() => box.current["0"].inner, [box.current]);
+}
+
+export function useNegative(box) {
+  return useCallback(() => box.current[-1].inner, [box.current]);
+}
+`,
+  // A variable that the callback assigns to is loaded by itself, and the assignment comes after its value.
+  "assigned-in-callback.tsx": `import { useCallback, useState } from "react";
+
+export function Counter() {
+  const [count, setCount] = useState(0);
+  const bump = useCallback(() => {
+    count = count + 1;
+  }, []);
+  return <button onClick={bump}>{count}</button>;
+}
+
+export function useConstantRead(props) {
+  const [state] = useState(props.initial);
+  return useCallback(() => {
+    state = 1;
+    return state.current.value;
+  }, [state.current]);
+}
+
+export function useAssigned(props) {
+  let total = props.total;
+  return useCallback(() => {
+    total = 1;
+  }, []);
+}
+
+export function useAssignedThenRead(props) {
+  let total = props.total;
+  return useCallback(() => {
+    total = 1;
+    console.log(total.next);
+  }, [total.next]);
+}
+
+export function useAssignedItsOwnProperty(props) {
+  let total = props.total;
+  return useCallback(() => {
+    total = total.next;
+  }, [total.next]);
+}
+
+export function useReadThenAssigned(props) {
+  let total = props.total;
+  return useCallback(() => {
+    console.log(total.next);
+    total = 1;
+  }, [total.next]);
+}
+`,
 };
 
 /** A component that's declared inside another function. */

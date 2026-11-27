@@ -1313,14 +1313,11 @@ impl EventLoop {
     #[cfg(windows)]
     fn hold_forever_poll(&self, loop_: &'static uws::Loop) {
         if self.forever_timer.get().is_none() {
-            let this = core::ptr::from_ref(self)
-                .cast_mut()
-                .cast::<core::ffi::c_void>();
-            let mut t = uws::Timer::create(loop_, this);
+            let mut t = uws::Timer::create(loop_);
             // SAFETY: t is a fresh non-null timer handle
             unsafe {
                 t.as_mut()
-                    .set(this, Some(noop_forever_timer), 1000 * 60 * 4, 1000 * 60 * 4)
+                    .set(Some(noop_forever_timer), 1000 * 60 * 4, 1000 * 60 * 4)
             };
             self.forever_timer.set(Some(t));
         }

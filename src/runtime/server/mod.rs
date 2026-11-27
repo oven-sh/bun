@@ -1994,6 +1994,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         });
 
         // --- 3. Register compiled user routes & track "/*" coverage ---
+        let mut has_star_route = false;
         let mut has_star_route_for_any_method = false;
         let mut has_any_ws_route_for_star_path = false;
 
@@ -2004,6 +2005,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             let ud: *mut c_void = core::ptr::from_ref(user_route).cast_mut().cast();
             let path = user_route.route.path.as_bytes();
             let is_star_path = path == b"/*";
+            has_star_route |= is_star_path;
             if should_add_chrome_devtools_json_route
                 && (path == CHROME_DEVTOOLS_ROUTE || path.starts_with(b"/.well-known/"))
             {
@@ -2092,8 +2094,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let mut needs_plugins = dev_server.is_some();
 
         for entry in &self.config.get().static_routes {
+            let is_star_path = &*entry.path == b"/*";
+            has_star_route |= is_star_path;
             has_star_route_for_any_method |=
-                &*entry.path == b"/*" && entry.method == server_config::MethodOptional::Any;
+                is_star_path && entry.method == server_config::MethodOptional::Any;
             if should_add_chrome_devtools_json_route
                 && (&*entry.path == CHROME_DEVTOOLS_ROUTE
                     || entry.path.starts_with(b"/.well-known/"))
@@ -2265,12 +2269,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // --- 9. Consolidated "/*" HTTP fallback registration ---
         let ud = self_ptr.cast::<c_void>();
         if !has_star_route_for_any_method {
+            // With the name of a route for a method, it would go right behind that one instead of last.
+            let pattern: &[u8] = if has_star_route { b"/*\xff" } else { b"/*" };
             if !has_dev_server_for_star_path {
-                app.any(b"/*", default_h1, ud);
+                app.any(pattern, default_h1, ud);
             }
             // DevServer routes are not mirrored to H2/H3.
             for_each_mux_app!(self, |mux| {
-                mux.any(b"/*", self_ptr, Self::on_mux_request);
+                mux.any(pattern, self_ptr, Self::on_mux_request);
             });
         }
 

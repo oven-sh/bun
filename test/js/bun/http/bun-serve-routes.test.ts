@@ -1014,6 +1014,18 @@ describe.each(["http1.1", "http2", "http3"] as const)("over %s", protocol => {
     expect(await routesOf(missing, ["GET /a", "HEAD /a"])).toEqual({ "GET /a": "fetch GET", "HEAD /a": "fetch HEAD" });
   });
 
+  it("a /* without its file passes the request on to the next wildcard", async () => {
+    const missing = () => Bun.file(import.meta.dir + "/missing");
+    const all = () => new Response(null, { headers: { "x-route": "all" } });
+    for (const star of [missing(), { GET: missing() }, { GET: missing(), POST: missing() }]) {
+      expect(await routesOf({ "/*": star, "/**": all() }, ["GET /a", "HEAD /a", "POST /a"])).toEqual({
+        "GET /a": "all",
+        "HEAD /a": "all",
+        "POST /a": "all",
+      });
+    }
+  });
+
   it("a route that cannot match does not put fetch() before a wildcard", async () => {
     expect(await routesOf({ "/*/a": say("never"), "/**": say("all") }, ["GET /b/a"])).toEqual({
       "GET /b/a": "all GET",

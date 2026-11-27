@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 
 use crate::{
-    JSGlobalObject, JSPromise, JSValue, Strong, Task, VirtualMachineRef as VirtualMachine,
+    CppTask, JSGlobalObject, JSPromise, JSValue, Strong, Task, VirtualMachineRef as VirtualMachine,
 };
 use bun_core::String as BunString;
 use bun_sourcemap::SourceProviderMap;
@@ -91,17 +91,17 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
 /// `ScriptExecutionContext::postTask` — the context addresses the thread's VM
 /// directly because it outlives the `Zig::GlobalObject` it was created with.
 // HOST_EXPORT(Bun__VM__queueTask, c)
-pub fn vm_queue_task(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask) {
+pub fn vm_queue_task(this: &VirtualMachine, task: crate::cpp_task::OwnedCppTask) {
     crate::mark_binding!();
-    this.event_loop().enqueue_task(Task::init(task));
+    this.event_loop().enqueue_task(Task::new::<CppTask>(task));
 }
 
 /// [`vm_queue_task`] for a task that must let the loop poll I/O and timers
 /// first (a drain re-posting its own continuation).
 // HOST_EXPORT(Bun__VM__queueTaskAfterYield, c)
-pub fn vm_queue_task_after_yield(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask) {
+pub fn vm_queue_task_after_yield(this: &VirtualMachine, task: crate::cpp_task::OwnedCppTask) {
     crate::mark_binding!();
-    this.event_loop().enqueue_task_after_yield(Task::init(task));
+    (this.event_loop()).enqueue_task_after_yield(Task::new::<CppTask>(task));
 }
 
 // HOST_EXPORT(Bun__handleRejectedPromise, c)

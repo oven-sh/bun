@@ -28,12 +28,12 @@ pub(super) struct PendingState {
     pub(super) scheduled: bool,
 }
 
-impl bun_event_loop::RefTask for PendingReloadEvent {
+impl bun_event_loop::Taskable for PendingReloadEvent {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BakePendingReloadEvent;
-    type Ref = Arc<Self>;
-    fn release_unrun(_: Self::Ref) {}
+    type Payload = Arc<Self>;
+    fn release_unrun(_: Self::Payload) {}
     /// The dev server is the realm's.
-    fn context(_: &Self::Ref) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Payload) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

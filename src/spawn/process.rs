@@ -778,7 +778,7 @@ pub use waiter_thread_posix::WaiterThreadPosix as WaiterThread;
 #[cfg(unix)]
 pub mod waiter_thread_posix {
     use super::*;
-    use bun_event_loop::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New as AnyTaskNew};
+    use bun_event_loop::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, MiniTask};
     use bun_event_loop::ConcurrentTask::TaskTag;
     use bun_event_loop::task_tag;
     use bun_threading::UnboundedQueue;
@@ -855,31 +855,16 @@ pub mod waiter_thread_posix {
         }
     }
 
-    /// Posted to `MiniEventLoop` from the waiter thread. Self-referential via
-    /// the embedded intrusive `task: AnyTaskWithExtraContext` (`.ctx == self`).
-    #[repr(C)]
+    /// Posted to `MiniEventLoop` from the waiter thread.
     pub(crate) struct ResultTaskMini<T: ProcessLike> {
         pub(crate) result: bun_sys::Result<WaitPidResult>,
         pub(crate) subprocess: RefPtr<T>,
         pub(crate) task: AnyTaskWithExtraContext,
     }
 
-    impl<T: ProcessLike> ResultTaskMini<T> {
-        #[inline]
-        pub(crate) fn new(v: ResultTaskMini<T>) -> *mut ResultTaskMini<T> {
-            bun_core::heap::into_raw(Box::new(v))
-        }
-
-        pub(crate) fn run_from_main_thread(self) {
+    impl<T: ProcessLike> MiniTask for ResultTaskMini<T> {
+        fn run_from_main_thread(self: Box<Self>) {
             T::on_wait_pid_from_waiter_thread(self.subprocess, &self.result, &mut rusage_zeroed());
-        }
-
-        /// Stored thunk for `AnyTaskWithExtraContext` (`fn(*mut T, *mut C)`
-        /// shape — `C = ()`). Default Rust ABI.
-        fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
-            // SAFETY: `this` was heap-allocated in `loop_()` below; the mini
-            // event loop hands ownership back here exactly once.
-            unsafe { bun_core::heap::take(this) }.run_from_main_thread();
         }
     }
 
@@ -994,22 +979,12 @@ pub mod waiter_thread_posix {
                 }));
             }
             EventLoopHandle::Mini(mini) => {
-                let out = ResultTaskMini::<T>::new(ResultTaskMini {
+                let task = Box::new(ResultTaskMini {
                     result,
                     subprocess: process,
                     task: AnyTaskWithExtraContext::default(),
                 });
-                // SAFETY: `out` just produced by heap::alloc — non-null.
-                unsafe {
-                    (*out).task = AnyTaskNew::<ResultTaskMini<T>, ()>::init(
-                        out,
-                        ResultTaskMini::<T>::run_from_main_thread_mini,
-                    );
-                    mini.enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(
-                        core::ptr::addr_of_mut!((*out).task),
-                    ));
-                }
-                // `out` is now owned by the mini queue; freed in `run_from_main_thread_mini`.
+                mini.post(task, |task| &mut task.task);
             }
         }
     }

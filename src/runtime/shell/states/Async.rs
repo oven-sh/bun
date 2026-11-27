@@ -8,6 +8,7 @@ use crate::shell::states::cond_expr::CondExpr;
 use crate::shell::states::r#if::If;
 use crate::shell::states::pipeline::Pipeline;
 use crate::shell::yield_::Yield;
+use bun_event_loop::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, MiniTask};
 
 pub(crate) struct Async {
     pub(crate) base: Base,
@@ -16,10 +17,8 @@ pub(crate) struct Async {
     pub(crate) io: IO,
     pub(crate) state: AsyncState,
     pub(crate) event_loop: EventLoopHandle,
-    /// Heap payload for the main-thread bounce. The node lives in the
-    /// reallocatable `Interpreter::nodes` arena, so the intrusive
-    /// concurrent-task node must live in a stable heap allocation instead.
-    task: bun_ptr::AliasableBox<crate::shell::dispatch_tasks::ShellAsyncTask>,
+    /// `None` while it is queued.
+    task: Option<Box<ShellAsyncTask>>,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -51,12 +50,13 @@ impl Async {
             io,
             state: AsyncState::Idle,
             event_loop: evtloop,
-            task: bun_ptr::AliasableBox::new(crate::shell::dispatch_tasks::ShellAsyncTask {
-                interp: interp.as_ctx_ptr(),
-                node: core::cell::Cell::new(NodeId::NONE),
-            }),
+            task: None,
         }));
-        interp.as_async(id).task.node.set(id);
+        interp.as_async_mut(id).task = Some(Box::new(ShellAsyncTask {
+            interp: interp.as_ctx_ptr(),
+            node: id,
+            mini_task: AnyTaskWithExtraContext::default(),
+        }));
         id
     }
 
@@ -147,30 +147,18 @@ impl Async {
         Yield::suspended()
     }
 
-    /// Bounce `run_from_main_thread` through the event loop so the async body runs on subsequent ticks while the
+    /// Bounce `next` through the event loop so the async body runs on subsequent ticks while the
     /// parent proceeds.
     fn enqueue_self(interp: &Interpreter, this: NodeId) {
         let me = interp.as_async_mut(this);
-        let task = me.task.as_ptr();
+        let task = me.task.take().expect("queued once at a time");
         match me.event_loop {
             // Next loop iteration, after I/O has had a turn.
             EventLoopHandle::Js { owner } => {
-                owner.enqueue_task_after_yield(bun_jsc::Task::init(task))
+                owner.enqueue_task_after_yield(bun_jsc::Task::from_boxed(task))
             }
-            EventLoopHandle::Mini(mini) => {
-                // The payload embeds only the JS-arm `ConcurrentTask`, so the
-                // mini arm heap-allocates an auto-deinit wrapper per bounce.
-                let any = bun_jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from_callback_auto_deinit(
-                    task,
-                    run_from_main_thread_mini,
-                );
-                mini.enqueue_task_concurrent(core::ptr::NonNull::new(any).expect("heap task"));
-            }
+            EventLoopHandle::Mini(mini) => mini.post(task, |task| &mut task.mini_task),
         }
-    }
-
-    pub(crate) fn run_from_main_thread(interp: &Interpreter, this: NodeId) {
-        Self::next(interp, this).run(interp);
     }
 }
 
@@ -181,28 +169,27 @@ enum NextAction {
     Finish,
 }
 
-// `runtime::dispatch::run_task`'s `task_tag::ShellAsync` arm casts the
-// enqueued pointer back to `ShellAsyncTask`; both sides MUST agree.
-impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellAsyncTask {
+/// The bounce back to the main thread.
+pub(crate) struct ShellAsyncTask {
+    interp: *mut Interpreter,
+    node: NodeId,
+    mini_task: AnyTaskWithExtraContext,
+}
+
+impl bun_event_loop::BoxedTask for ShellAsyncTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellAsync;
-    /// The `Async` node's, which drops with the interpreter.
-    unsafe fn release_unrun(_: *mut Self) {}
-    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn release_unrun(self: Box<Self>) {}
+    /// See [`ShellTask`](crate::shell::interpreter::ShellTask): a step of a shell script always runs.
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
 
-/// Mini-loop trampoline.
-fn run_from_main_thread_mini(
-    task: *mut crate::shell::dispatch_tasks::ShellAsyncTask,
-    _: *mut core::ffi::c_void,
-) {
-    // SAFETY: `task` is owned by the Async node, which is freed at the tail of
-    // this bounce chain, and `interp` outlives every node.
-    unsafe {
-        let interp = &*(*task).interp;
-        let node = (*task).node.get();
-        Async::run_from_main_thread(interp, node);
+impl MiniTask for ShellAsyncTask {
+    fn run_from_main_thread(self: Box<Self>) {
+        // SAFETY: the interpreter does not finish before `async_cmd_done`; this is its thread.
+        let (interp, node) = (unsafe { &*self.interp }, self.node);
+        interp.as_async_mut(node).task = Some(self);
+        Async::next(interp, node).run(interp);
     }
 }

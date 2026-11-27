@@ -266,14 +266,8 @@ pub struct ThreadSafeRefCount<T: ThreadSafeRefCounted> {
 
 impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
     pub fn init() -> Self {
-        Self::init_exact_refs(1)
-    }
-
-    /// Caller will have to call `deref()` exactly `count` times to destroy.
-    fn init_exact_refs(count: u32) -> Self {
-        debug_assert!(count > 0);
         Self {
-            raw_count: AtomicU32::new(count),
+            raw_count: AtomicU32::new(1),
             #[cfg(debug_assertions)]
             debug: DebugData::empty(),
             _phantom: PhantomData,
@@ -319,38 +313,6 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
             count.debug.deinit();
             // SAFETY: last ref dropped
             unsafe { T::destructor(self_) };
-        }
-    }
-
-    /// Decrement the refcount WITHOUT running `T::destructor`; returns `true`
-    /// on the 1→0 transition (caller now exclusively owns `*self_` and MUST
-    /// destroy it exactly once).
-    ///
-    /// Prefer [`deref`](Self::deref). Use `release` only when destruction must
-    /// be deferred or routed elsewhere (e.g. bouncing the final drop back to
-    /// the owning thread's event loop).
-    ///
-    /// # Safety
-    /// `self_` must point to a live `T`.
-    pub unsafe fn release(self_: *mut T) -> bool {
-        // SAFETY: caller contract
-        let count = unsafe { &*T::get_ref_count(self_) };
-        count.assert_valid();
-        let old_count = count.raw_count.fetch_sub(1, Ordering::SeqCst);
-        bun_core::scoped_log!(
-            ref_count,
-            "0x{:x} deref {} -> {}",
-            self_ as usize,
-            old_count,
-            old_count - 1,
-        );
-        debug_assert!(old_count > 0);
-        if old_count == 1 {
-            #[cfg(debug_assertions)]
-            count.debug.deinit();
-            true
-        } else {
-            false
         }
     }
 
@@ -569,6 +531,23 @@ impl<T: AnyRefCounted> RefPtr<T> {
     #[inline]
     pub fn as_non_null(&self) -> NonNull<T> {
         self.0
+    }
+}
+
+impl<T: AnyRefCounted + ThreadSafeRefCounted> RefPtr<T> {
+    /// Returns the last ref, for a `T` that has to be destroyed on another thread.
+    pub fn drop_unless_last(self) -> Option<Self> {
+        let this = self.into_non_null();
+        // SAFETY: live until the ref that `self` held is given up, and afterwards if there was no other.
+        let count = unsafe { &*T::get_ref_count(this.as_ptr()) };
+        count.assert_valid();
+        let old_count = count.raw_count.fetch_sub(1, Ordering::SeqCst);
+        debug_assert!(old_count > 0);
+        if old_count != 1 {
+            return None;
+        }
+        count.raw_count.store(1, Ordering::Relaxed);
+        Some(Self(this))
     }
 }
 
@@ -835,6 +814,7 @@ mod tests {
 
     // ── ThreadSafeRefCount (atomic, cross-thread) ─────────────────────────
 
+    #[derive(crate::ThreadSafeRefCounted)]
     struct Shared {
         ref_count: ThreadSafeRefCount<Shared>,
         payload: Box<u32>,
@@ -843,13 +823,6 @@ mod tests {
     impl Drop for Shared {
         fn drop(&mut self) {
             DROPS.fetch_add(1, Ordering::SeqCst);
-        }
-    }
-
-    impl ThreadSafeRefCounted for Shared {
-        unsafe fn get_ref_count(this: *mut Self) -> *mut ThreadSafeRefCount<Self> {
-            // SAFETY: caller contract — pure field projection, no read.
-            unsafe { &raw mut (*this).ref_count }
         }
     }
 
@@ -894,22 +867,18 @@ mod tests {
     }
 
     #[test]
-    fn thread_safe_release_defers_destruction() {
+    fn drop_unless_last_defers_destruction() {
         let _serial = serial();
         let before = drops();
-        let s = bun_core::heap::into_raw(Box::new(Shared {
-            ref_count: ThreadSafeRefCount::init_exact_refs(2),
+        let first = RefPtr::new(Shared {
+            ref_count: ThreadSafeRefCount::init(),
             payload: Box::new(8),
-        }));
-        // SAFETY: `s` is live with two refs.
-        unsafe {
-            assert!(!ThreadSafeRefCount::<Shared>::release(s));
-            assert_eq!(drops(), before);
-            // 1 → 0: `release` reports sole ownership but runs no destructor.
-            assert!(ThreadSafeRefCount::<Shared>::release(s));
-            assert_eq!(drops(), before);
-            drop(bun_core::heap::take(s));
-        }
+        });
+        assert!(first.clone().drop_unless_last().is_none());
+        let last = first.drop_unless_last().unwrap();
+        assert_eq!(*last.payload, 8);
+        assert_eq!(drops(), before);
+        drop(last);
         assert_eq!(drops(), before + 1);
     }
 

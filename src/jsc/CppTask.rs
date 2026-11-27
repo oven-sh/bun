@@ -1,9 +1,13 @@
+use core::ptr::NonNull;
+
 use crate::vm_handle::KeepAliveTicket;
 use crate::{JSGlobalObject, JsResult};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 unsafe extern "C" {
+    safe fn Bun__performTask(global: &JSGlobalObject, task: OwnedCppTask);
+    fn Bun__deleteEventLoopTask(task: NonNull<CppTask>);
     fn Bun__EventLoopTaskNoContext__performTask(task: *mut EventLoopTaskNoContext);
 }
 
@@ -12,37 +16,35 @@ bun_opaque::opaque_ffi! {
     pub struct CppTask;
 }
 
+/// Deleted on drop.
+#[repr(transparent)]
+pub struct OwnedCppTask(NonNull<CppTask>);
+
+impl Drop for OwnedCppTask {
+    fn drop(&mut self) {
+        // SAFETY: `self` is the only owner.
+        unsafe { Bun__deleteEventLoopTask(self.0) }
+    }
+}
+
 impl Taskable for CppTask {
     const TAG: TaskTag = task_tag::CppTask;
-    /// Delete the `WebCore::EventLoopTask` — its captured `Ref`s drop against
-    /// the still-live heap.
-    unsafe fn release_unrun(this: *mut Self) {
-        unsafe extern "C" {
-            fn Bun__deleteEventLoopTask(task: *mut CppTask);
-        }
-        // SAFETY: fn contract; every CppTask payload is a heap EventLoopTask.
-        unsafe { Bun__deleteEventLoopTask(this) }
-    }
+    type Payload = OwnedCppTask;
+    /// Its captured `Ref`s drop against the still-live heap.
+    fn release_unrun(_: OwnedCppTask) {}
     /// A `WebCore::EventLoopTask`: C++ posted it to a context and checks that context there.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &OwnedCppTask) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
 
-impl CppTask {
-    pub fn run(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+impl OwnedCppTask {
+    pub fn run(self, global: &JSGlobalObject) -> JsResult<()> {
         crate::mark_binding!();
-        // SAFETY: self is a valid C++ EventLoopTask; global outlives the call.
-        //
-        // `Bun__performTask` is `[[ZIG_EXPORT(check_slow)]]` — the task body
-        // (a `ScriptExecutionContext::postTask` lambda) may declare its own
-        // throw scope (e.g. `JSUint8Array::create`, `JSC::call`) without an
-        // enclosing one, so we must go through the generated `cpp::` wrapper
-        // (which opens a `TopExceptionScope` and `return_if_exception`s) rather
-        // than the raw FFI. Calling the raw extern left the simulated throw
-        // unchecked, which then tripped `drainMicrotasks`'s scope ctor under
-        // `BUN_JSC_validateExceptionChecks=1`.
-        unsafe { crate::cpp::Bun__performTask(global, std::ptr::from_mut::<CppTask>(self)) }
+        // The task may declare a throw scope of its own without an enclosing one.
+        crate::top_scope!(scope, global);
+        Bun__performTask(global, self);
+        scope.return_if_exception()
     }
 }
 

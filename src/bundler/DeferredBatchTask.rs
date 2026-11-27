@@ -4,86 +4,75 @@
 //! out, so the pass cannot finish and be freed under it (a plugin may answer a deferred load without
 //! awaiting `.defer()`, so nothing else orders the pass's completion after this hop).
 
+use core::cell::Cell;
+
 use crate::BundleV2;
-// Task is `(tag: u8, ptr: *mut ())` owned by bun_event_loop;
-// runtime owns the match-loop. See PORTING.md §Dispatch.
-use bun_event_loop::ConcurrentTask::ConcurrentTask;
-use bun_event_loop::{Task, task_tag};
+use bun_event_loop::task_tag;
 
 #[derive(Default)]
-pub struct DeferredBatchTask {
+pub(crate) struct DeferredBatchTask {
     /// Intrusive node for the trip back to the bundle thread's Mini loop.
     returned: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
     /// Notified instead of the bundle's loop. `aot::plugins` sets it for each hop: its bundle ticks no loop.
-    pub(crate) waiter: Option<core::ptr::NonNull<crate::aot::plugins::PluginWaiter>>,
+    pub(crate) waiter: Cell<Option<core::ptr::NonNull<crate::aot::plugins::PluginWaiter>>>,
 }
 
-impl bun_event_loop::Taskable for DeferredBatchTask {
+/// The bundle that waits for the hop to come back.
+pub struct DeferredBatch(*mut BundleV2<'static>);
+
+impl bun_event_loop::Taskable for DeferredBatch {
     const TAG: bun_event_loop::TaskTag = task_tag::BundleV2DeferredBatchTask;
+    type Payload = Self;
     /// The plugins' VM released the hop unrun (it is shutting down; its stop phase has answered what the
     /// plugins held): nothing to resolve, but the pass is waiting for the hop to come back.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: released ⇒ never ran; `BundleV2` is alive until this comes back.
-        unsafe { (*this).come_back() };
+    fn release_unrun(batch: Self) {
+        batch.come_back();
     }
     /// A step of the bundle, which is waiting for it to come back: what the build reports is its
     /// completion's to decide.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
 
-impl DeferredBatchTask {
-    pub(crate) fn get_bundle_v2(&mut self) -> &mut BundleV2<'static> {
-        // SAFETY: self points to the `drain_defer_task` field embedded in a BundleV2.
-        unsafe {
-            &mut *bun_core::from_field_ptr!(
-                BundleV2<'static>,
-                drain_defer_task,
-                std::ptr::from_mut::<Self>(self)
-            )
-        }
-    }
-
-    /// Bundle thread. The caller has counted the hop as a pending item (`BundleV2::drain_deferred_tasks`).
-    pub(crate) fn schedule(&mut self) {
-        let task = ConcurrentTask::create(Task::init(std::ptr::from_mut::<Self>(self)));
+impl DeferredBatch {
+    /// SAFETY: `bv2` is not moved or dropped, and no other hop is scheduled, until this one has come back.
+    pub(crate) unsafe fn schedule(bv2: &mut BundleV2<'_>) {
+        let batch = Self(std::ptr::from_mut(bv2).cast());
         // Refused: the VM was torn down mid-bundle, the hop never runs.
-        let _ = self.get_bundle_v2().js_loop_for_plugins().post(task);
+        bv2.js_loop_for_plugins().post_task::<Self>(batch);
     }
 
     /// Plugins' (JS) thread.
-    pub fn run_on_js_thread(&mut self) {
-        {
-            let bv2 = self.get_bundle_v2();
-            // A cancelled pass rejects the `.defer()` promises rather than resuming plugins into it.
-            // (The completion's flag, not `graph.cancelled`: that one is the bundle thread's.)
-            let rejected = bv2.completion.as_ref().is_some_and(|c| c.is_cancelled());
-            bv2.plugins_mut().expect("plugins").drain_deferred(rejected);
-        }
+    pub fn run_on_js_thread(self) {
+        // SAFETY: `schedule`'s contract. Shared, because the bundle thread is at work meanwhile.
+        let bv2 = unsafe { &*self.0 };
+        // A cancelled pass rejects the promises. Not `graph.cancelled`: that flag is the bundle thread's.
+        let rejected = bv2.completion.as_ref().is_some_and(|c| c.is_cancelled());
+        bv2.plugins_ref().expect("plugins").drain_deferred(rejected);
         self.come_back();
     }
 
     /// Plugins' (JS) thread → bundle thread: the hop's pending item is consumed there.
-    fn come_back(&mut self) {
-        if let Some(waiter) = self.waiter.take() {
+    fn come_back(self) {
+        // SAFETY: as in `run_on_js_thread`.
+        let bv2 = unsafe { &*self.0 };
+        if let Some(waiter) = bv2.drain_defer_task.waiter.take() {
             // SAFETY: `aot::plugins` frees the waiter only after it has waited for this answer.
             unsafe { waiter.as_ref() }.answer_drained();
             return;
         }
-        let this: *mut Self = self;
-        let bv2 = self.get_bundle_v2();
-        match bv2.any_loop() {
-            // bake: the plugins run on the loop that runs the bundle; already there.
-            bun_event_loop::AnyEventLoop::Js { .. } => bv2.decrement_scan_counter(),
-            bun_event_loop::AnyEventLoop::Mini(mini) => {
-                // SAFETY: `returned` is this struct's own node; `BundleV2` (and so `self`) is alive until
-                // the bundle thread runs this.
-                unsafe {
-                    mini.enqueue_task_concurrent_with_extra_ctx::<Self, BundleV2<'static>>(
-                        this,
+        // SAFETY: a JS loop is the bundle's thread, which uses no borrow of it across a tick. `returned`
+        // is in no queue, and the bundle is alive until its thread has run it.
+        unsafe {
+            match bv2.any_loop() {
+                // bake: the plugins run on the loop that runs the bundle; already there.
+                bun_event_loop::AnyEventLoop::Js { .. } => (*self.0).decrement_scan_counter(),
+                bun_event_loop::AnyEventLoop::Mini(mini) => {
+                    mini.enqueue_task_concurrent_with_extra_ctx::<_, BundleV2<'static>>(
+                        &raw mut (*self.0).drain_defer_task,
                         |_, bv2| (*bv2).decrement_scan_counter(),
-                        core::mem::offset_of!(Self, returned),
+                        core::mem::offset_of!(DeferredBatchTask, returned),
                     );
                 }
             }

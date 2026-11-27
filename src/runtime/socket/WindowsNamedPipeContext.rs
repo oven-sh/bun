@@ -11,7 +11,7 @@ use bun_core::ZStr;
 use bun_event_loop::Task;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, SysErrorJsc};
-use bun_ptr::RefPtr;
+use bun_ptr::{AliasableBox, RefPtr};
 use bun_sys::{self, Error as SysError, Fd, SystemErrno};
 use bun_uws::{self as uws, us_bun_verify_error_t};
 
@@ -23,7 +23,7 @@ bun_output::declare_scope!(WindowsNamedPipeContext, visible);
 pub(crate) static LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = schedule_deinit)]
+#[ref_count(destroy_box = schedule_deinit)]
 pub(crate) struct WindowsNamedPipeContext {
     // Intrusive refcount; on zero → `schedule_deinit` (deferred free), not
     // immediate `Box::from_raw`.
@@ -39,7 +39,6 @@ pub(crate) struct WindowsNamedPipeContext {
 
     vm: &'static VirtualMachine,
     global_this: GlobalRef,
-    task_event: EventState,
     is_open: bool,
     /// A socket over a Windows named pipe is in no uSockets group: the context
     /// that opened it closes it through this owner when it stops.
@@ -52,24 +51,9 @@ bun_jsc::impl_abort_handle_owner!(WindowsNamedPipeContext, abort_handle, |this, 
     unsafe { (*ptr::addr_of_mut!((*this).named_pipe)).close_or_cancel_connect() }
 });
 
-/// Reached from `on_close` while `WindowsNamedPipe::on_close`
-/// still holds a live `&mut (*this).named_pipe` and uses it after we return, so
-/// project raw fields only — same constraint as the `on_*` handlers below.
-fn schedule_deinit(this: *mut WindowsNamedPipeContext) {
-    // SAFETY: called from `deref()` at count zero; `this` is live until the task fires.
-    // `task_event`/`vm` are disjoint from the caller's `&mut named_pipe`.
-    unsafe {
-        debug_assert!((*this).task_event != EventState::Deinit);
-        (*this).task_event = EventState::Deinit;
-        (*this).vm.enqueue_task(Task::init(this));
-    }
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum EventState {
-    Deinit,
-    None,
+/// Not freed in place: `WindowsNamedPipe::on_close` uses the pipe after `on_close` returns.
+fn schedule_deinit(this: AliasableBox<WindowsNamedPipeContext>) {
+    (this.vm).enqueue_task(Task::new::<WindowsNamedPipeContext>(this));
 }
 
 /// The ref a pipe holds on the socket it carries.
@@ -254,21 +238,6 @@ impl WindowsNamedPipeContext {
         });
     }
 
-    /// # Safety
-    /// `this` is the live queued pointer; the call may free it.
-    pub(crate) unsafe fn run_event(this: *mut Self) {
-        // SAFETY: called from the `task_tag::WindowsNamedPipeContext` dispatch
-        // arm; `this` is the live ctx pointer registered in create()
-        match unsafe { (*this).task_event } {
-            EventState::Deinit => {
-                // SAFETY: `this` was allocated via heap::alloc in create(); refcount hit zero
-                // and this deferred task is the sole remaining owner. Drop runs field destructors.
-                drop(unsafe { bun_core::heap::take(this) });
-            }
-            EventState::None => panic!("Invalid event state"),
-        }
-    }
-
     fn fail_open(self: &RefPtr<Self>) {
         let _self_ref = self.self_ref.take();
         Self::fail_connect(self.as_ptr(), SystemErrno::ENOENT as i32);
@@ -315,7 +284,6 @@ impl WindowsNamedPipeContext {
                     named_pipe,
                     vm,
                     global_this,
-                    task_event: EventState::None,
                     is_open: false,
                     abort_handle: bun_jsc::AbortHandle::for_owner::<WindowsNamedPipeContext>(),
                 },
@@ -390,14 +358,10 @@ impl Drop for WindowsNamedPipeContext {
 
 impl bun_event_loop::Taskable for WindowsNamedPipeContext {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WindowsNamedPipeContext;
-    /// A `Deinit` hop (refcount already zero) that will not run: `this` is the
-    /// heap context, freed by nobody else — do what the hop does, script-free.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe { Self::run_event(this) }
-    }
+    type Payload = AliasableBox<Self>;
+    fn release_unrun(_: Self::Payload) {}
     /// A socket's own hop; its handlers carry their context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Payload) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

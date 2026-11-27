@@ -53,7 +53,8 @@ pub(crate) enum State {
         next: usize,
         missing: bool,
     },
-    Yes(Box<yes::Yes>),
+    /// The line, tiled out to ~BUFSIZ.
+    Yes(Vec<u8>),
 }
 
 macro_rules! shell_builtins {
@@ -736,7 +737,7 @@ impl Builtin {
             (State::Exiting(_) | State::Which { .. } | State::Yes(_), Some(code))
             | (&State::Exiting(code), None) => Self::done(interp, cmd, code),
             (&State::Which { next, missing }, None) => which::print(interp, cmd, next, missing),
-            (State::Yes(_), None) => yes::Yes::write(interp, cmd),
+            (State::Yes(_), None) => yes::write(interp, cmd),
             (State::Idle | State::Mv(_), _) => Yield::suspended(),
         }
     }

@@ -13,7 +13,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::webcore;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
 use bun_core::{String as BunString, Utf8WithString, ZBox, ZStr};
-use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
+use bun_event_loop::AnyTaskWithExtraContext::MiniTask;
 use bun_io::JsKeepAlive;
 use bun_jsc::AbortSignal;
 use bun_jsc::debugger::AsyncTaskTracker;
@@ -2200,6 +2200,12 @@ mod _async_tasks {
         }
     }
 
+    impl<const IS_SHELL: bool> MiniTask for NewAsyncCpTask<IS_SHELL> {
+        fn run_from_main_thread(self: Box<Self>) {
+            self.report_to_shell();
+        }
+    }
+
     impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         /// May be called from any thread (the subtasks).
         fn record_written(&self, dest: &OSPathSliceZ) {
@@ -2370,14 +2376,13 @@ mod _async_tasks {
                 .take()
                 .expect("fs.cp in flight holds its poster");
             // Only the shell's task can have a mini loop.
-            if !IS_SHELL || poster.is_js() {
-                poster.post_js(ConcurrentTask::ConcurrentTask::create_boxed(this));
-            } else {
-                let at = AnyTaskWithExtraContext::from_callback_auto_deinit(this, |task, _| {
-                    task.report_to_shell();
+            if IS_SHELL {
+                poster.post(this, |this| {
+                    let shelltask = this.shelltask.as_mut().expect("IS_SHELL ⇒ shelltask");
+                    &mut shelltask.task.concurrent_task
                 });
-                // `from_callback_auto_deinit` heap-allocates; never null.
-                poster.post_mini(core::ptr::NonNull::new(at).expect("heap task"));
+            } else {
+                poster.post_js(ConcurrentTask::ConcurrentTask::create_boxed(this));
             }
         }
 

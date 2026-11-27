@@ -13,7 +13,7 @@ use bun_uws_sys as uws_sys;
 use bun_uws_sys::app::c as uws_app_c;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult};
-use bun_ptr::{AsCtxPtr, OptionCellExt as _};
+use bun_ptr::{AliasableBox, AsCtxPtr, OptionCellExt as _};
 
 use crate::webcore::Request;
 
@@ -188,6 +188,8 @@ bitflags::bitflags! {
     #[derive(Default, Clone, Copy)]
     pub struct ServerFlags: u8 {
         const TERMINATED                  = 1 << 1;
+        /// `schedule_deinit` left `app.close()` to its task.
+        const CLOSE_SCHEDULED             = 1 << 2;
     }
 }
 
@@ -209,7 +211,7 @@ bun_jsc::impl_abort_handle_owner!(
 );
 
 #[derive(bun_ptr::RefCounted)]
-#[ref_count(destroy = Self::schedule_deinit)]
+#[ref_count(destroy_box = Self::schedule_deinit)]
 pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// The JS wrapper holds one ref, `open_ref` another.
     ref_count: bun_ptr::RefCount<Self>,
@@ -1770,37 +1772,36 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// The last ref is gone: the JS wrapper is collected and the server is drained.
-    fn schedule_deinit(this: *mut Self) {
+    fn schedule_deinit(server: AliasableBox<Self>) {
         httplog!("scheduleDeinit");
-        // SAFETY: `this` stays allocated until it is freed below, or by the task.
-        let server = unsafe { &*this };
+        let terminated = server.flags.get().contains(ServerFlags::TERMINATED);
 
         if server.vm().is_shutting_down() {
             // No more ticks. `TERMINATED` means `app.close()` already ran, so destroying it can't orphan a keep-alive socket.
-            if server.flags.get().contains(ServerFlags::TERMINATED) && !server.deinit_running.get()
-            {
-                // SAFETY: the box from `init`, and the last ref is gone.
-                unsafe { bun_core::heap::destroy(this) };
+            if !terminated || server.deinit_running.get() {
+                server.into_raw();
             }
             return;
         }
 
-        if !server.flags.get().contains(ServerFlags::TERMINATED) {
+        if !terminated {
             // App.close can cause finalizers to run.
             // scheduleDeinit can be called inside a finalizer.
-            // Therefore, we split it into two tasks.
-            server
-                .flags
-                .set(server.flags.get() | ServerFlags::TERMINATED);
-            let app = server.app().unwrap();
-            server
-                .vm()
-                .enqueue_task(bun_event_loop::Task::init(app.cast::<AppCloseTask<SSL>>()));
+            // Therefore, the task does it.
+            (server.flags).update(|f| f | ServerFlags::TERMINATED | ServerFlags::CLOSE_SCHEDULED);
         }
 
-        server.vm().enqueue_task(bun_event_loop::Task::init(
-            this.cast::<ServerDeinitTask<SSL, DEBUG>>(),
-        ));
+        let vm = server.vm;
+        vm.enqueue_task(bun_event_loop::Task::new::<Self>(server));
+    }
+
+    /// `schedule_deinit`'s task, which then frees the server.
+    pub(crate) fn run_scheduled_close(&self) {
+        if self.flags.get().contains(ServerFlags::CLOSE_SCHEDULED) {
+            // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+            bun_opaque::opaque_deref_mut(self.app().unwrap()).close();
+            self.vm().drain_microtasks();
+        }
     }
 
     pub(crate) fn on_listen(&self, listener: Option<uws_sys::app::OwnedListenSocket<SSL>>) {
@@ -3845,58 +3846,21 @@ pub(crate) enum SavedRequestUnion<'a> {
     Saved(&'a SavedRequest),
 }
 
-// ─── schedule_deinit's tasks ─────────────────────────────────────────────────
-/// `schedule_deinit`'s first task, `app.close()`: same pointer as the app, one tag per `SSL`.
-#[repr(transparent)]
-pub(crate) struct AppCloseTask<const SSL: bool>(uws_sys::NewApp<SSL>);
-
-impl<const SSL: bool> bun_event_loop::Taskable for AppCloseTask<SSL> {
-    const TAG: bun_event_loop::TaskTag = if SSL {
-        bun_event_loop::task_tag::HTTPSAppClose
-    } else {
-        bun_event_loop::task_tag::HTTPAppClose
-    };
-    /// The app goes with its server.
-    unsafe fn release_unrun(_: *mut Self) {}
-    /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
-        bun_event_loop::ContextId::NONE
-    }
-}
-
-impl<const SSL: bool> AppCloseTask<SSL> {
-    pub(crate) fn run(this: *mut Self) {
-        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-        bun_opaque::opaque_deref_mut(this.cast::<uws_sys::NewApp<SSL>>()).close();
-    }
-}
-
-/// `schedule_deinit`'s second task, the free: same pointer as the server, one tag per
-/// monomorphization.
-#[repr(transparent)]
-pub(crate) struct ServerDeinitTask<const SSL: bool, const DEBUG: bool>(NewServer<SSL, DEBUG>);
-
-impl<const SSL: bool, const DEBUG: bool> bun_event_loop::Taskable for ServerDeinitTask<SSL, DEBUG> {
+impl<const SSL: bool, const DEBUG: bool> bun_event_loop::Taskable for NewServer<SSL, DEBUG> {
     const TAG: bun_event_loop::TaskTag = match (SSL, DEBUG) {
         (false, false) => bun_event_loop::task_tag::HTTPServerDeinit,
         (true, false) => bun_event_loop::task_tag::HTTPSServerDeinit,
         (false, true) => bun_event_loop::task_tag::DebugHTTPServerDeinit,
         (true, true) => bun_event_loop::task_tag::DebugHTTPSServerDeinit,
     };
+    type Payload = AliasableBox<Self>;
     /// Frees nothing: a server whose deinit is still queued when its VM stops stays allocated.
-    unsafe fn release_unrun(_: *mut Self) {}
-    /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
-        bun_event_loop::ContextId::NONE
+    fn release_unrun(server: Self::Payload) {
+        server.into_raw();
     }
-}
-
-impl<const SSL: bool, const DEBUG: bool> ServerDeinitTask<SSL, DEBUG> {
-    /// # Safety
-    /// `this` is the unique owning server pointer `schedule_deinit` queued.
-    pub(crate) unsafe fn run(this: *mut Self) {
-        // SAFETY: caller contract.
-        unsafe { bun_core::heap::destroy(this) };
+    /// Enters no context.
+    fn context(_: &Self::Payload) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

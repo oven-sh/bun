@@ -31,7 +31,7 @@ use bun_io::file_poll::Store as FilePollStore;
 use bun_threading::UnboundedQueue;
 use bun_uws::Loop as UwsLoop;
 
-use crate::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New};
+use crate::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, MiniTask};
 // MOVE-IN: EventLoopHandle relocated from bun_jsc — see AnyEventLoop.rs.
 use crate::EventLoopHandle;
 
@@ -47,7 +47,7 @@ unsafe impl bun_threading::Linked for AnyTaskWithExtraContext {
     }
 }
 
-/// FIFO of raw task pointers (tasks are intrusive nodes; the queue does not own them).
+/// FIFO of the nodes of queued tasks.
 type Queue = LinearFifo<*mut AnyTaskWithExtraContext, DynamicBuffer<*mut AnyTaskWithExtraContext>>;
 
 /// Shared borrows only: what a tick runs reaches the loop again, and other threads post to it.
@@ -232,9 +232,27 @@ impl MiniEventLoop {
         self.on_after_event_loop();
     }
 
-    /// `task` must outlive the queued work item; ownership of the intrusive
-    /// node stays with the caller until the callback runs.
-    pub fn enqueue_task_concurrent(&self, task: NonNull<AnyTaskWithExtraContext>) {
+    /// For a task that `node` returns a field of.
+    pub fn post<T: MiniTask>(
+        &self,
+        task: Box<T>,
+        node: impl FnOnce(&mut T) -> &mut AnyTaskWithExtraContext,
+    ) {
+        let task = bun_core::heap::into_raw_nn(task);
+        // SAFETY: nothing else can reach the box before the callback takes it back.
+        let node = node(unsafe { &mut *task.as_ptr() });
+        *node = AnyTaskWithExtraContext {
+            ctx: Some(task.cast()),
+            callback: |task, _| {
+                // SAFETY: `ctx`, and a node that was queued once runs once.
+                unsafe { bun_core::heap::take(task.cast::<T>()) }.run_from_main_thread();
+            },
+            next: bun_threading::Link::new(),
+        };
+        self.push(NonNull::from(node));
+    }
+
+    fn push(&self, task: NonNull<AnyTaskWithExtraContext>) {
         // Read first: the push lets a bundle finish and drop `self`. The main and bundle threads never call `free_thread_loop`.
         let loop_ = self.loop_;
         self.concurrent_tasks.push(task);
@@ -254,13 +272,18 @@ impl MiniEventLoop {
         callback: fn(*mut C, *mut P),
         field_offset: usize,
     ) {
-        // SAFETY: caller contract — see fn `# Safety`.
-        let task = unsafe { ctx.byte_add(field_offset).cast::<AnyTaskWithExtraContext>() };
-        // SAFETY: `task` points at a properly aligned `AnyTaskWithExtraContext` field of `*ctx`.
-        unsafe { task.write(New::<C, P>::init(ctx, callback)) };
-
-        // SAFETY: `task` was just initialized above and is non-null (derived from `ctx`).
-        self.enqueue_task_concurrent(unsafe { NonNull::new_unchecked(task) });
+        // SAFETY: fn contract. The two `fn` types differ in their pointees alone.
+        unsafe {
+            let task = ctx.byte_add(field_offset).cast::<AnyTaskWithExtraContext>();
+            task.write(AnyTaskWithExtraContext {
+                ctx: NonNull::new(ctx.cast()),
+                callback: bun_ptr::cast_fn_ptr::<fn(*mut C, *mut P), fn(*mut (), *mut ())>(
+                    callback,
+                ),
+                next: bun_threading::Link::new(),
+            });
+            self.push(NonNull::new_unchecked(task));
+        }
     }
 }
 

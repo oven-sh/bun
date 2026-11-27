@@ -365,7 +365,7 @@ impl DuplexUpgradeContext {
     }
 
     /// Replay bytes that arrived before the engine existed. Called by
-    /// `run_event` once the `StartTLS` branch has
+    /// `run_start_tls` once it has
     /// finished its bookkeeping, so the replay is indistinguishable from an
     /// ordinary post-start delivery.
     pub(super) fn drain_pending(&self) {

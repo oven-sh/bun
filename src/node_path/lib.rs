@@ -145,7 +145,7 @@ fn write_dot<T: PathCharCwd>(buf: &mut [T]) -> &[T] {
 
 /// Based on Node v21.6.1 private helper posixCwd:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1074
-fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> &mut [T] {
+pub fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> &mut [T] {
     let cwd = get_cwd_t(buf);
     let len = cwd.len();
     if len == 0 {
@@ -1717,21 +1717,56 @@ pub fn relative_posix_t<'a, T: PathCharCwd>(
     from_buf: &mut [T],
     tmp_buf: &mut [T],
 ) -> &'a [T] {
+    relative_posix_with_cwd::<T, core::convert::Infallible, _>(
+        from,
+        to,
+        buf,
+        from_buf,
+        tmp_buf,
+        |buf| Ok(posix_cwd_t(buf)),
+    )
+    .unwrap_or_else(|never| match never {})
+}
+
+pub fn relative_posix_with_cwd<'a, T: PathCharCwd, E, F>(
+    from: &[T],
+    to: &[T],
+    buf: &'a mut [T],
+    from_buf: &mut [T],
+    tmp_buf: &mut [T],
+    mut get_cwd: F,
+) -> Result<&'a [T], E>
+where
+    F: for<'b> FnMut(&'b mut [T]) -> Result<&'b mut [T], E>,
+{
     // validateString of `from` and `to` are performed in pub fn relative.
     if from == to {
-        return &[];
+        return Ok(&[]);
     }
 
     // Trim leading forward slashes.
     // Backed by from_buf.
-    let from_orig = resolve_posix_t(&[from], from_buf, tmp_buf);
+    let from_orig = resolve_posix_with_cwd::<T, _, _, false>(
+        &[from],
+        from_buf,
+        tmp_buf,
+        MAX_PATH_SIZE_UPPER,
+        &mut get_cwd,
+    )?;
     let from_orig_len = from_orig.len();
     // Backed by buf.
-    let to_orig_len = resolve_posix_t(&[to], buf, tmp_buf).len();
+    let to_orig_len = resolve_posix_with_cwd::<T, _, _, false>(
+        &[to],
+        buf,
+        tmp_buf,
+        MAX_PATH_SIZE_UPPER,
+        &mut get_cwd,
+    )?
+    .len();
     let to_orig = &buf[0..to_orig_len];
 
     if from_orig == to_orig {
-        return &[];
+        return Ok(&[]);
     }
 
     let from_start = 1usize;
@@ -1765,12 +1800,12 @@ pub fn relative_posix_t<'a, T: PathCharCwd>(
             if to_orig[to_start + smallest_length] == T::from_u8(CHAR_FORWARD_SLASH) {
                 // We get here if `from` is the exact base path for `to`.
                 // For example: from='/foo/bar'; to='/foo/bar/baz'
-                return &buf[to_start + smallest_length + 1..to_orig_len];
+                return Ok(&buf[to_start + smallest_length + 1..to_orig_len]);
             }
             if smallest_length == 0 {
                 // We get here if `from` is the root
                 // For example: from='/'; to='/foo'
-                return &buf[to_start + smallest_length..to_orig_len];
+                return Ok(&buf[to_start + smallest_length..to_orig_len]);
             }
         } else if from_len > smallest_length {
             if from_orig[from_start + smallest_length] == T::from_u8(CHAR_FORWARD_SLASH) {
@@ -1837,7 +1872,7 @@ pub fn relative_posix_t<'a, T: PathCharCwd>(
         memmove(&mut buf[0..out_len], &tmp_buf[0..out_len]);
     }
     buf[buf_size] = T::default();
-    &buf[0..buf_size]
+    Ok(&buf[0..buf_size])
 }
 
 /// Based on Node v21.6.1 path.win32.relative:
@@ -1849,19 +1884,54 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
     from_buf: &mut [T],
     tmp_buf: &mut [T],
 ) -> &'a [T] {
+    relative_windows_with_cwd::<T, core::convert::Infallible, _>(
+        from,
+        to,
+        buf,
+        from_buf,
+        tmp_buf,
+        |buf| Ok(get_cwd_t(buf)),
+    )
+    .unwrap_or_else(|never| match never {})
+}
+
+pub fn relative_windows_with_cwd<'a, T: PathCharCwd, E, F>(
+    from: &[T],
+    to: &[T],
+    buf: &'a mut [T],
+    from_buf: &mut [T],
+    tmp_buf: &mut [T],
+    mut get_cwd: F,
+) -> Result<&'a [T], E>
+where
+    F: for<'b> FnMut(&'b mut [T]) -> Result<&'b mut [T], E>,
+{
     // validateString of `from` and `to` are performed in pub fn relative.
     if from == to {
-        return &[];
+        return Ok(&[]);
     }
 
     // Backed by from_buf.
-    let from_orig = resolve_windows_t(&[from], from_buf, tmp_buf);
+    let from_orig = resolve_windows_with_cwd::<T, _, _, false>(
+        &[from],
+        from_buf,
+        tmp_buf,
+        MAX_PATH_SIZE_UPPER,
+        &mut get_cwd,
+    )?;
     let from_orig_len = from_orig.len();
     // Backed by buf.
-    let to_orig_len = resolve_windows_t(&[to], buf, tmp_buf).len();
+    let to_orig_len = resolve_windows_with_cwd::<T, _, _, false>(
+        &[to],
+        buf,
+        tmp_buf,
+        MAX_PATH_SIZE_UPPER,
+        &mut get_cwd,
+    )?
+    .len();
 
     if from_orig == &buf[0..to_orig_len] || eql_ignore_case_t(from_orig, &buf[0..to_orig_len]) {
-        return &[];
+        return Ok(&[]);
     }
 
     // Trim leading backslashes
@@ -1917,19 +1987,19 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
     // return the original `to`.
     if !matches_all_of_smallest {
         if last_common_sep.is_none() {
-            return &buf[0..to_orig_len];
+            return Ok(&buf[0..to_orig_len]);
         }
     } else {
         if to_len > smallest_length {
             if buf[to_start + smallest_length] == T::from_u8(CHAR_BACKWARD_SLASH) {
                 // We get here if `from` is the exact base path for `to`.
                 // For example: from='C:\foo\bar'; to='C:\foo\bar\baz'
-                return &buf[to_start + smallest_length + 1..to_orig_len];
+                return Ok(&buf[to_start + smallest_length + 1..to_orig_len]);
             }
             if smallest_length == 2 {
                 // We get here if `from` is the device root.
                 // For example: from='C:\'; to='C:\foo'
-                return &buf[to_start + smallest_length..to_orig_len];
+                return Ok(&buf[to_start + smallest_length..to_orig_len]);
             }
         }
         if from_len > smallest_length {
@@ -2007,14 +2077,14 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
         }
         memmove(&mut buf[0..out_len], &tmp_buf[0..out_len]);
         buf[buf_size] = T::default();
-        return &buf[0..buf_size];
+        return Ok(&buf[0..buf_size]);
     }
 
     // JS `charCodeAt` returns NaN past the end, which never equals '\'.
     if to_start < to_orig_len && buf[to_start] == T::from_u8(CHAR_BACKWARD_SLASH) {
         to_start += 1;
     }
-    &buf[to_start.min(to_end)..to_end]
+    Ok(&buf[to_start.min(to_end)..to_end])
 }
 
 /// Based on Node v21.6.1 path.posix.resolve:
@@ -2024,6 +2094,26 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
     buf: &'a mut [T],
     buf2: &mut [T],
 ) -> &'a [T] {
+    resolve_posix_with_cwd::<T, core::convert::Infallible, _, false>(
+        paths,
+        buf,
+        buf2,
+        MAX_PATH_SIZE_UPPER,
+        |buf| Ok(posix_cwd_t::<T>(buf)),
+    )
+    .unwrap_or_else(|never| match never {})
+}
+
+pub fn resolve_posix_with_cwd<'a, T: PathCharCwd, E, F, const ALLOW_LONG_CWD: bool>(
+    paths: &[&[T]],
+    buf: &'a mut [T],
+    buf2: &mut [T],
+    cwd_buffer_capacity: usize,
+    mut get_cwd: F,
+) -> Result<&'a [T], E>
+where
+    F: for<'b> FnMut(&'b mut [T]) -> Result<&'b mut [T], E>,
+{
     // Backed by expandable buf2 because resolvedPath may be long.
     // We use buf2 here because resolvePosixT is called by other methods and using
     // buf2 here avoids stepping on others' toes.
@@ -2042,12 +2132,15 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
         // in this scope; copy into buf2 before reusing.
         // Sized to the larger of the two T variants.
         let mut tmp_buf: [T; MAX_PATH_SIZE_UPPER];
+        let mut tmp_spill: Vec<T>;
         let path: &[T] = if i_i64 >= 0 {
             paths[usize::try_from(i_i64).expect("int cast")]
+        } else if ALLOW_LONG_CWD && cwd_buffer_capacity > MAX_PATH_SIZE_UPPER {
+            tmp_spill = vec![T::default(); cwd_buffer_capacity];
+            &*get_cwd(&mut tmp_spill)?
         } else {
-            // cwd is limited to MAX_PATH_BYTES.
             tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER];
-            &*posix_cwd_t(&mut tmp_buf)
+            &*get_cwd(&mut tmp_buf)?
         };
         // validateString of `path` is performed in pub fn resolve.
         let len = path.len();
@@ -2081,7 +2174,7 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
 
     // Exit early for empty path.
     if resolved_path_len == 0 {
-        return write_dot(buf);
+        return Ok(write_dot(buf));
     }
 
     // At this point the path should be resolved to a full absolute path, but
@@ -2107,15 +2200,15 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
         buf.copy_within(0..resolved_path_len, 1);
         buf[0] = T::from_u8(CHAR_FORWARD_SLASH);
         buf[buf_size] = T::default();
-        return &buf[0..buf_size];
+        return Ok(&buf[0..buf_size]);
     }
     // Translated from the following JS code:
     //   return resolvedPath.length > 0 ? resolvedPath : '.';
-    if resolved_path_len > 0 {
+    Ok(if resolved_path_len > 0 {
         &buf[0..resolved_path_len]
     } else {
         write_dot(buf)
-    }
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -2133,11 +2226,38 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
     buf: &'a mut [T],
     buf2: &mut [T],
 ) -> &'a [T] {
+    resolve_windows_with_cwd::<T, core::convert::Infallible, _, false>(
+        paths,
+        buf,
+        buf2,
+        MAX_PATH_SIZE_UPPER,
+        |buf| Ok(get_cwd_t::<T>(buf)),
+    )
+    .unwrap_or_else(|never| match never {})
+}
+
+pub fn resolve_windows_with_cwd<'a, T: PathCharCwd, E, F, const ALLOW_LONG_CWD: bool>(
+    paths: &[&[T]],
+    buf: &'a mut [T],
+    buf2: &mut [T],
+    cwd_buffer_capacity: usize,
+    mut get_cwd: F,
+) -> Result<&'a [T], E>
+where
+    F: for<'b> FnMut(&'b mut [T]) -> Result<&'b mut [T], E>,
+{
     let is_sep_t = is_sep_windows_t::<T>;
     // Sized to the larger of the two T variants.
-    let mut tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER + 1];
+    let mut tmp_stack = [T::default(); MAX_PATH_SIZE_UPPER + 1];
+    let mut tmp_spill;
+    let tmp_buf: &mut [T] = if ALLOW_LONG_CWD && cwd_buffer_capacity > MAX_PATH_SIZE_UPPER {
+        tmp_spill = vec![T::default(); cwd_buffer_capacity + 1];
+        &mut tmp_spill
+    } else {
+        &mut tmp_stack
+    };
     // Taken by the last iteration.
-    let mut cwd_buf = &mut tmp_buf[..];
+    let mut cwd_buf = tmp_buf;
 
     let mut resolved_device: Option<Device<'_, T>> = None;
     // Backed by expandable buf2 because resolvedTail may be long.
@@ -2201,7 +2321,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             let len = match env_path_len {
                 Some(len) => len,
                 // cwd is limited to MAX_PATH_BYTES.
-                None => get_cwd_t(cwd_buf).len(),
+                None => get_cwd(cwd_buf)?.len(),
             };
 
             // Verify that a cwd was found and that it actually points
@@ -2226,7 +2346,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             }
         } else {
             // cwd is limited to MAX_PATH_BYTES.
-            get_cwd_t(core::mem::take(&mut cwd_buf))
+            get_cwd(core::mem::take(&mut cwd_buf))?
         };
 
         let len = path.len();
@@ -2341,7 +2461,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
 
     // Exit early for empty path.
     if resolved_tail_len == 0 {
-        return write_dot(buf);
+        return Ok(write_dot(buf));
     }
 
     // At this point, the path should be resolved to a full absolute path,
@@ -2369,7 +2489,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
     let buf_offset = resolved_device_len + usize::from(resolved_absolute);
     let buf_size = buf_offset + resolved_tail_len;
     if buf_size == 0 {
-        return write_dot(buf);
+        return Ok(write_dot(buf));
     }
     buf[buf_size] = T::default();
     // Use copy_within because resolvedTail and buf overlap.
@@ -2392,7 +2512,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             memmove(&mut buf[server_end + 1..resolved_device_len], share);
         }
     }
-    &buf[0..buf_size]
+    Ok(&buf[0..buf_size])
 }
 
 /// Based on Node v21.6.1 path.win32.toNamespacedPath:

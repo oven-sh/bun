@@ -1238,6 +1238,41 @@ describe("bundler", () => {
     },
   });
 
+  // After `??` the compiler does not know that `target` is a ref. The guard of `report` read `target.current.tagName`
+  // during render, before React sets the ref. Upstream 1.0.0 does the same. From oxc-project/oxc#27423.
+  itBundled("react-compiler/NestedFunctionReadsCurrentOfARefThatIsNotKnown", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useRef } from "react";
+        function Component({ forwardedRef, onTag }) {
+          const ownRef = useRef(null);
+          const target = forwardedRef ?? ownRef;
+          const report = () => {
+            onTag(target.current.tagName);
+          };
+          return <div ref={target} onClick={report} />;
+        }
+        const tags = [];
+        const element = Component({ onTag: tag => tags.push(tag) });
+        element.p.ref.current = { tagName: "DIV" };
+        element.p.onClick();
+        console.log(element.t, tags.join());
+      `,
+      "/node_modules/react/index.js": `exports.useRef = current => ({ current });`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `let cache; exports.c = n => (cache ??= new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "div DIV" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
   // The scope around each loop has the variable as an output and as a dependency. Upstream gives the variable to a scope
   // in the loop alone, and prunes the one around it.
   itBundled("react-compiler/LoopThatAssignsWhatItReads", {
@@ -4460,21 +4495,23 @@ describe("bundler", () => {
 
   // A local whose name ends in "Ref" is taken for a ref once its `.current` is read. Listing it in an effect's dependencies
   // used to be reported as reading a ref during render, unless it was initialized in one of a few ways. The expected sizes
-  // come from babel-plugin-react-compiler 0.0.0-experimental-a1856f3-20260507, which only refuses `pier.bollard`.
+  // come from babel-plugin-react-compiler 0.0.0-experimental-a1856f3-20260507, which only refuses `pier.bollard`. Where
+  // the plugin's callback depends on `bollardRef.current`, Bun's depends on `bollardRef`, as the list next to it does.
+  // The two are then in one scope, which takes one slot less.
   describe("react-compiler/ALocalNamedLikeARef", () => {
     const remove = "bollardRef.current.remove();";
     test.each([
-      ["const bollardRef = pier?.bollard;", "bollardRef?.current?.remove();", 4],
-      ["const bollardRef = pier?.bollard;", remove, 4],
-      ["const bollardRef = pier?.bollard;", "bollardRef?.current.remove();", 4],
-      ["const bollardRef = pier?.bollard;", "bollardRef.current?.remove();", 4],
+      ["const bollardRef = pier?.bollard;", "bollardRef?.current?.remove();", 3],
+      ["const bollardRef = pier?.bollard;", remove, 3],
+      ["const bollardRef = pier?.bollard;", "bollardRef?.current.remove();", 3],
+      ["const bollardRef = pier?.bollard;", "bollardRef.current?.remove();", 3],
       ["const bollardRef = pier?.bollard;", "const x = bollardRef?.current; x;", 3],
       ["const bollardRef = pier?.bollard;", "const x = bollardRef.current; x;", 2],
-      ["const bollardRef = pier ? pier.bollard : undefined;", remove, 4],
-      ["const bollardRef = pier && pier.bollard;", remove, 4],
-      ["const bollardRef = pier?.a?.bollard;", remove, 4],
-      ["const bollardRef = pier?.[0];", remove, 4],
-      ["const bollardRef = pier?.();", remove, 6],
+      ["const bollardRef = pier ? pier.bollard : undefined;", remove, 3],
+      ["const bollardRef = pier && pier.bollard;", remove, 3],
+      ["const bollardRef = pier?.a?.bollard;", remove, 3],
+      ["const bollardRef = pier?.[0];", remove, 3],
+      ["const bollardRef = pier?.();", remove, 5],
       ["const bollardRef = pier;", remove, 3],
       ["let bollardRef; bollardRef = pier.bollard;", remove, 6],
       ["let bollardRef = null; if (pier) bollardRef = pier.bollard;", remove, 6],
@@ -5134,6 +5171,136 @@ test("react-compiler sorts the dependencies and the declarations of a scope as J
   }).toEqual({
     dependencies: [outside, inside],
     declarations: [outside, inside],
+  });
+  expect(exitCode).toBe(0);
+});
+
+// Not in upstream (oxc-project/oxc#27423). A nested function reads `x.current` when it runs, and the guard of its scope
+// reads the dependency during render. So the dependency is `x`. Upstream has that for an `x` that it knows to be a ref.
+test("react-compiler ends the dependency of a nested function before `.current`", async () => {
+  using dir = tempDir("react-compiler-nested-current", {
+    "entry.jsx": `
+      import { useCallback, useContext, useEffect, useLayoutEffect, useRef } from "react";
+
+      export function Handler({ forwardedRef, onTag }) {
+        const ownRef = useRef(null);
+        const target = forwardedRef ?? ownRef;
+        const report = () => {
+          onTag(target.current.tagName);
+        };
+        return <div ref={target} onClick={report} />;
+      }
+      export function useEffectCallback(field, onHeight) {
+        useEffect(() => {
+          onHeight(field.current.offsetHeight);
+        });
+      }
+      // https://github.com/oven-sh/bun/issues/49621: was not compiled, for "Differences in ref.current access".
+      export function useSyncHeight(field, sizer, text) {
+        const fit = useCallback(() => {
+          const box = field.current;
+          const measured = sizer.current;
+          if (box === null || measured === null) return;
+          box.style.setProperty("--text-height", getComputedStyle(measured).height);
+        }, [field, sizer]);
+        useLayoutEffect(fit, [fit, text]);
+      }
+      export function InAFunctionInAFunction({ field }) {
+        const make = () => () => field.current.x;
+        return <button onClick={make} />;
+      }
+      export function Deep(props) {
+        const read = () => props.inner.current.x;
+        return <button onClick={read} />;
+      }
+      export function Optional({ field }) {
+        const focus = () => field?.current?.focus();
+        return <button onClick={focus} />;
+      }
+
+      // As before: a ref by its name, and a read that is not in a nested function.
+      export function NamedRef({ fieldRef }) {
+        const read = () => fieldRef.current.x;
+        return <button onClick={read} />;
+      }
+      export function InRender(props) {
+        const value = [props.store.current.v];
+        return <div>{value}</div>;
+      }
+
+      // As before, or compiled where it was not: the dependency list reads \`.current\` during render, so the guard can.
+      export function ListsCurrent({ pagination, fetchPage }) {
+        const load = useCallback(() => fetchPage(pagination.current), [fetchPage, pagination.current]);
+        return <button onClick={load} />;
+      }
+      export function useListsLessThanItReads(x) {
+        return useCallback(() => x.current.a.b, [x.current]);
+      }
+
+      // What it costs: these are not made again when \`store.current\` is assigned and \`store\` stays. A function that
+      // the render calls, and what a scope reads during render next to such a function. The first is also in the
+      // fixtures useContext-read-context-in-callback, useContext-read-context-in-callback-if-condition and
+      // useContext-maybe-mutate-context-in-callback, whose .expect.md has \`$[0] !== foo.current\`.
+      export function CalledInRender({ store }) {
+        const get = () => store.current.v;
+        const value = get();
+        return <div>{value}</div>;
+      }
+      export function Context() {
+        const foo = useContext(FooContext);
+        const getValue = () => {
+          if (foo.current) {
+            return {};
+          } else {
+            return null;
+          }
+        };
+        const value = getValue();
+        return <Valid value={value} />;
+      }
+      export function ReadNextToAFunction({ store }) {
+        const value = {
+          v: store.current.v,
+          get() {
+            return store.current.v;
+          },
+        };
+        return <Valid value={value} />;
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  // What each function's guards compare, or null for a function that is not compiled.
+  const guards = Object.fromEntries(
+    Array.from(stdout.matchAll(/^function (\w+)\(.*?^}$/gms), ([body, name]) => [
+      name,
+      body.includes("_c(") ? Array.from(body.matchAll(/\$\[\d+\] !== ([\w.?]+)/g), it => it[1]) : null,
+    ]),
+  );
+  expect(guards).toEqual({
+    Handler: ["onTag", "target", "report", "target"],
+    useEffectCallback: ["field", "onHeight"],
+    useSyncHeight: ["field", "sizer", "fit", "text"],
+    InAFunctionInAFunction: ["field"],
+    Deep: ["props.inner"],
+    Optional: ["field"],
+    NamedRef: ["fieldRef"],
+    InRender: ["props.store.current.v"],
+    ListsCurrent: ["fetchPage", "pagination.current", "load"],
+    useListsLessThanItReads: ["x.current"],
+    CalledInRender: ["store", "value"],
+    Context: ["foo", "value"],
+    ReadNextToAFunction: ["store"],
   });
   expect(exitCode).toBe(0);
 });

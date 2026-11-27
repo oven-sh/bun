@@ -62,6 +62,8 @@ function Table({ rows }) {
 }
 ```
 
+A callback that reads `x.current` can list `x` or `x.current`. With an oxlint config, `[x.current]` is reported, like it is in oxlint 1.91. With an ESLint config, `[x]` is reported unless the compiler knows that `x` is a ref, like it is in `eslint-plugin-react-hooks`.
+
 ## When not to use it
 
 This rule only matters if you build with React Compiler.

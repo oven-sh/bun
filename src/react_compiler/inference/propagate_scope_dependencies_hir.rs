@@ -20,12 +20,14 @@ use std::rc::Rc;
 
 use crate::diagnostics::CompilerDiagnostic;
 use crate::hir::environment::Environment;
+use crate::hir::environment_config::NestedFunctionDependencies;
 use crate::hir::visitors::{ScopeBlockInfo, ScopeBlockTraversal};
 use crate::hir::{
     AstAlloc, BasicBlock, BlockId, DeclarationId, DependencyPathEntry, EvaluationOrder, FunctionId,
     GotoVariant, HirFunction, HirVec, IdentifierId, Instruction, InstructionKind, InstructionValue,
-    MutableRange, ParamPattern, Phi, Place, PlaceOrSpread, PropertyLiteral, ReactFunctionType,
-    ReactiveScopeDependency, ScopeId, Terminal, Type, hir_vec, visitors,
+    ManualMemoDependency, ManualMemoDependencyRoot, MutableRange, ParamPattern, Phi, Place,
+    PlaceOrSpread, PropertyLiteral, ReactFunctionType, ReactiveScopeDependency, ScopeId, Terminal,
+    Type, hir_vec, visitors,
 };
 use crate::optimization::dead_code_elimination::find_semantic_only_caught_instructions;
 
@@ -1858,6 +1860,13 @@ struct DependencyCollectionContext<'a> {
     temporaries: &'a IdMap<IdentifierId, ReactiveScopeDependency>,
     processed_instrs_in_optional: &'a HashSet<ProcessedInstr>,
     inner_fn_context: Option<EvaluationOrder>,
+    /// For `NestedFunctionDependencies::BeforeCurrentUnlessListed`: what the `useMemo` and `useCallback` calls that
+    /// are visited list with a `.current` in it, each with the `manual_memo_id` of its call.
+    listed_through_current: Vec<(u32, ManualMemoDependency)>,
+}
+
+fn is_current(entry: &DependencyPathEntry) -> bool {
+    matches!(&entry.property, PropertyLiteral::String(s) if s == b"current")
 }
 
 impl<'a> DependencyCollectionContext<'a> {
@@ -1875,7 +1884,28 @@ impl<'a> DependencyCollectionContext<'a> {
             temporaries,
             processed_instrs_in_optional,
             inner_fn_context: None,
+            listed_through_current: Vec::new(),
         }
+    }
+
+    /// The length of the longest of `listed_through_current` that `dep` begins with.
+    fn listed_length(&self, dep: &ReactiveScopeDependency, env: &Environment) -> usize {
+        let declaration_of = |id: IdentifierId| env.identifiers[id.0 as usize].declaration_id;
+        self.listed_through_current
+            .iter()
+            .filter(|(_, listed)| {
+                matches!(&listed.root, ManualMemoDependencyRoot::NamedLocal { value, .. }
+                    if declaration_of(value.identifier) == declaration_of(dep.identifier))
+                    && listed.path.len() <= dep.path.len()
+                    && listed
+                        .path
+                        .iter()
+                        .zip(dep.path.iter())
+                        .all(|(a, b)| a.property == b.property && a.optional == b.optional)
+            })
+            .map(|(_, listed)| listed.path.len())
+            .max()
+            .unwrap_or(0)
     }
 
     fn enter_scope(&mut self, scope_id: ScopeId) {
@@ -2076,6 +2106,16 @@ impl<'a> DependencyCollectionContext<'a> {
                 path: hir_vec![],
                 loc: dep.loc,
             }
+        } else if env.config.nested_function_dependencies != NestedFunctionDependencies::Whole
+            && self.inner_fn_context.is_some()
+            && let Some(index) = dep.path.iter().position(is_current)
+        {
+            // Not in upstream (oxc-project/oxc#27423): with `target = forwardedRef ?? ownRef`, the guard of
+            // `() => onTag(target.current.tagName)` read `target.current.tagName` during render, where it is null.
+            let end = index.max(self.listed_length(&dep, env));
+            let mut dep = dep;
+            dep.path.truncate(end);
+            dep
         } else {
             dep
         };
@@ -2363,6 +2403,25 @@ fn handle_function_deps(
                     ctx.inner_fn_context = prev_inner;
                 }
                 _ => {
+                    match &instr.value {
+                        InstructionValue::StartMemoize {
+                            manual_memo_id,
+                            deps: Some(deps),
+                            ..
+                        } if env.config.nested_function_dependencies
+                            == NestedFunctionDependencies::BeforeCurrentUnlessListed =>
+                        {
+                            let through_current =
+                                deps.iter().filter(|it| it.path.iter().any(is_current));
+                            ctx.listed_through_current
+                                .extend(through_current.map(|it| (*manual_memo_id, it.clone())));
+                        }
+                        InstructionValue::FinishMemoize { manual_memo_id, .. } => {
+                            ctx.listed_through_current
+                                .retain(|(id, _)| id != manual_memo_id);
+                        }
+                        _ => {}
+                    }
                     let is_semantic_only = semantic_only.is_some_and(|it| it[instr_id.0 as usize]);
                     handle_instruction(instr, is_semantic_only, ctx, env);
                 }

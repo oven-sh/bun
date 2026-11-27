@@ -678,3 +678,93 @@ describe.concurrent(
     });
   },
 );
+
+// oxc-project/oxc#27423, in oxlint 1.91: the dependency of a nested function stops before `.current`, because its cache
+// guard reads the dependency during render. The plugin's compiler keeps the whole path, so the two tools accept the
+// opposite lists. `bun build --react-compiler` compiles both.
+describe.concurrent("bun lint: preserve-manual-memoization for a `.current` that a nested function reads", () => {
+  const hook = (name: string, call: string) =>
+    `import { useCallback, useMemo } from "react";\nexport function ${name}(field) {\n  return ${call};\n}\n`;
+  const files: Files = {
+    // https://github.com/oven-sh/bun/issues/49621
+    "parameters.ts": `import { useCallback, useLayoutEffect, type RefObject } from "react";
+
+export function useSyncHeight(
+  field: RefObject<HTMLElement | null>,
+  sizer: RefObject<HTMLElement | null>,
+  text: string,
+): void {
+  const fit = useCallback(() => {
+    const box = field.current;
+    const measured = sizer.current;
+    if (box === null || measured === null) return;
+    box.style.setProperty("--text-height", getComputedStyle(measured).height);
+  }, [field, sizer]);
+
+  useLayoutEffect(fit, [fit, text]);
+}
+`,
+    "deep.jsx": hook("useDeep", "useCallback(() => field.a.current.b, [field.a])"),
+    "optional.jsx": hook("useFocus", "useCallback(() => field?.current?.focus(), [field])"),
+    "lists-current.jsx": hook("useListed", "useCallback(() => field.current.focus(), [field.current])"),
+    "lists-current-deep.jsx": hook("useListed", "useCallback(() => field.current.a.focus(), [field.current])"),
+    // Not in a nested function: `useMemo` calls its callback during render.
+    "in-render.jsx": hook("useInRender", "useMemo(() => [field.current.v], [field])"),
+  };
+  const inferredIn = (text: string) => /The inferred dependency was `([^`]+)`/.exec(text)![1];
+  const rule = "preserve-manual-memoization";
+
+  test("with an oxlint config, it is oxlint 1.91's", async () => {
+    const { diagnostics, exit } = await report({ ".oxlintrc.json": rc([`react/${rule}`]), ...files });
+    type Report = { code: string; help: string; labels: { span: { offset: number; length: number } }[] };
+    const found = Object.entries(diagnostics).map(([name, reports]) => [
+      name,
+      (reports as Report[]).map(({ code, help, labels: [, { span }] }) => ({
+        code,
+        inferred: inferredIn(help),
+        // "This dependency is inferred here"
+        where: Buffer.from(files[name])
+          .subarray(span.offset, span.offset + span.length)
+          .toString(),
+      })),
+    ]);
+    expect(Object.fromEntries(found)).toEqual({
+      "in-render.jsx": [{ code: `react(${rule})`, inferred: "field.current.v", where: "v" }],
+      "lists-current.jsx": [{ code: `react(${rule})`, inferred: "field", where: "field.current" }],
+      "lists-current-deep.jsx": [{ code: `react(${rule})`, inferred: "field", where: "field.current.a" }],
+    });
+    expect(exit).toBe(1);
+  });
+
+  /** Lints with a config whose `-f json` is ESLint's. Returns what each report says the compiler inferred. */
+  async function inferred(config: Files) {
+    const { raw, stderr, exitCode, directories } = await lint({ ...config, ...files }, ["-f", "json"]);
+    if (!raw.startsWith("[")) throw new Error(`No report (exit ${exitCode}): ${stderr}`);
+    const found: Record<string, string[]> = {};
+    for (const [name, { messages }] of Object.entries(byEslintFile(JSON.parse(raw), directories))) {
+      const ofTheRule = messages.filter(it => it.ruleId === `react-hooks/${rule}`);
+      if (ofTheRule.length > 0) found[name] = ofTheRule.map(it => inferredIn(it.message)).sort();
+    }
+    return { found, exitCode };
+  }
+
+  test("with an ESLint config, it is the plugin's", async () => {
+    const { found, exitCode } = await inferred({ "eslint.config.js": eslintConfig });
+    expect(found).toEqual({
+      "deep.jsx": ["field.a.current.b"],
+      "in-render.jsx": ["field.current.v"],
+      "lists-current-deep.jsx": ["field.current.a"],
+      "optional.jsx": ["field?.current"],
+      "parameters.ts": ["field.current", "sizer.current"],
+    });
+    expect(exitCode).toBe(1);
+  });
+
+  test("with neither, a callback can list `x` or `x.current`", async () => {
+    const { found, exitCode } = await inferred({
+      "bunfig.toml": `[lint.rules]\n"react-hooks/${rule}" = "error"\n`,
+    });
+    expect(found).toEqual({ "in-render.jsx": ["field.current.v"] });
+    expect(exitCode).toBe(1);
+  });
+});

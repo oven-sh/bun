@@ -12,7 +12,9 @@ use bun_react_compiler::diagnostics::{
     CompilerSuggestion, ErrorCategory, SourceLocation,
 };
 use bun_react_compiler::hir::ReactFunctionType;
-use bun_react_compiler::hir::environment_config::ExhaustiveEffectDepsMode;
+use bun_react_compiler::hir::environment_config::{
+    ExhaustiveEffectDepsMode, NestedFunctionDependencies,
+};
 use bun_react_compiler::lowering::FunctionNode;
 use bun_react_compiler::{Categories, EnvironmentConfig};
 
@@ -51,6 +53,13 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
         tagged_templates_are_always_called: is_oxlint,
         react_is_known_by_its_module: false,
         dependencies_are_sorted_by_bytes: is_oxlint,
+        // For a callback that reads `x.current`, `preserve-manual-memoization` accepts `[x]` alone in oxlint since
+        // 1.91, and `[x.current]` alone in the plugin. Without a config of either, it accepts what the build compiles.
+        nested_function_dependencies: match (is_oxlint, has_no_foreign_config) {
+            (true, _) => NestedFunctionDependencies::BeforeCurrent,
+            (false, true) => NestedFunctionDependencies::BeforeCurrentUnlessListed,
+            (false, false) => NestedFunctionDependencies::Whole,
+        },
         validate_no_set_state_in_render: true,
         validate_no_set_state_in_effects: true,
         validate_no_jsx_in_try_statements: true,

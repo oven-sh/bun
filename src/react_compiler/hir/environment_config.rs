@@ -46,6 +46,20 @@ pub enum ExhaustiveEffectDepsMode {
     ExtraOnly,
 }
 
+/// Where the dependency of a nested function ends. The function reads `x.current.y` when it runs. The cache guard of
+/// its scope reads the dependency on each render.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NestedFunctionDependencies {
+    /// `x.current.y`, as upstream, which ends at `x` only if it knows `x` to be a ref. The guard throws while
+    /// `x.current` is null.
+    Whole,
+    /// `x`: before the first `.current`. From oxc-project/oxc#27423.
+    BeforeCurrent,
+    /// As `BeforeCurrent`, but not before the end of a dependency that the `useMemo` or `useCallback` around the
+    /// function lists: `x.current`, for `[x.current]`. The list reads that on each render.
+    BeforeCurrentUnlessListed,
+}
+
 /// Compiler environment configuration. Contains feature flags and settings.
 ///
 /// Fields that would require passing JS functions across the JS/Rust boundary
@@ -106,6 +120,10 @@ pub struct EnvironmentConfig {
     /// For `validate_exhaustive_*_dependencies`: the dependencies that are inferred are in the order of their bytes.
     /// Upstream's are in that of `localeCompare`: `a`, `A`, `b`.
     pub dependencies_are_sorted_by_bytes: bool,
+    /// The cost of all but `Whole`, when `x.current` is assigned and `x` stays: the scope of such a function is not run
+    /// again. What that scope reads from `x.current` during render stays as it was, and so does what a call of the
+    /// function during render returns.
+    pub nested_function_dependencies: NestedFunctionDependencies,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
@@ -164,6 +182,7 @@ impl Default for EnvironmentConfig {
             tagged_templates_are_always_called: false,
             react_is_known_by_its_module: true,
             dependencies_are_sorted_by_bytes: false,
+            nested_function_dependencies: NestedFunctionDependencies::BeforeCurrentUnlessListed,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,

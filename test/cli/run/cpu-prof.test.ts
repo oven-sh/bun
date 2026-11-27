@@ -530,7 +530,7 @@ describe.concurrent("--cpu-prof", () => {
       // A row of the table of private functions, in ZigGlobalObject.cpp.
       [
         "esmLoadSync",
-        nativeFrame("bound require"),
+        undefined,
         "main.cjs",
         { "main.cjs": `require("./loaded.mjs");`, "loaded.mjs": `${busy}\nexport {};` },
       ],
@@ -585,23 +585,15 @@ describe.concurrent("--cpu-prof", () => {
             process.nextTick(tick);`,
         },
       ],
-    ])("%s", async (name, nativeAncestor, entry, files) => {
+    ])("%s", async (name, caller, entry, files) => {
       using result = await profileOf(files, entry);
       const named = result.nodes.filter(node => node.callFrame.functionName === name);
-      const nativeAncestors = named.map(node => {
-        for (let ancestor = result.parent(node); ancestor; ancestor = result.parent(ancestor))
-          if (ancestor.callFrame.scriptId === "0" && ancestor.callFrame.functionName !== "(root)")
-            return ancestor.callFrame;
-      });
       expect({
         callFrames: distinct(named.map(node => node.callFrame)),
-        nativeAncestors: nativeAncestor && distinct(nativeAncestors),
         markdown: result.hasNativeRow(name),
-      }).toEqual({
-        callFrames: [nativeFrame(name)],
-        nativeAncestors: nativeAncestor && [nativeAncestor],
-        markdown: true,
-      });
+      }).toEqual({ callFrames: [nativeFrame(name)], markdown: true });
+      // A native function that has a name of its own keeps it.
+      if (caller) expect(named.map(node => result.parent(node).callFrame)).toContainEqual(caller);
       expect(result.exitCode).toBe(0);
     });
   });

@@ -379,7 +379,7 @@ pub mod fs {
     // ── PathName / Path ──────────────────────────────────────────────────
     // CANONICAL: re-exported from `bun_paths::fs` (D090). The struct defs,
     // `init`/`is_file`/`source_dir`/etc, and `Default`/`Clone`/`Copy` derives
-    // live there; only resolver-tier methods (those needing `FilenameStore` or
+    // live there; only resolver-tier methods (those needing `FilenameStore`,
     // `bun_options_types`) remain here as an extension trait.
     pub use bun_paths::fs::{Path, PathName};
 

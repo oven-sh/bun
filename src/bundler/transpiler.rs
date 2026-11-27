@@ -2730,8 +2730,7 @@ impl<'a> Transpiler<'a> {
         template
     }
 
-    /// Mirrors the entry-point naming in `computeChunks`. `ext` has its dot, and
-    /// is empty for a copy of a file without an extension.
+    /// Mirrors the entry-point naming in `computeChunks`.
     fn transform_only_dest_path(
         &self,
         file_path_text: &[u8],
@@ -2866,11 +2865,7 @@ impl<'a> Transpiler<'a> {
         Some(result.code.into_boxed_slice())
     }
 
-    /// Cold path like `build_css_output`: the bytes of an entry point that
-    /// `bun build --no-bundle` copies (`.wasm`, `.node`, sqlite, bunsh,
-    /// generic `file`), and whether the file has an execute bit. Not read
-    /// through the resolver's file cache, which removes a BOM. `None` means
-    /// the error is logged.
+    /// Cold path like `build_css_output`. Not read through the resolver's file cache, which removes a BOM.
     #[cold]
     #[inline(never)]
     fn read_copied_file(

@@ -188,8 +188,7 @@ pub(crate) fn check_entry_points_are_kept<'a>(
     }
 }
 
-/// Whether `path` in `dir` is the file at `other`. A link, letter case and `..` spell one file in several ways, so the
-/// files themselves are compared. `false` if one of them does not exist.
+/// Whether `path` in `dir` and `other` are one file, by device and inode. `false` if either does not exist.
 pub(crate) fn is_same_file_at(dir: Fd, path: &[u8], other: &[u8]) -> bool {
     let Ok(found) = bun_sys::fstatat(dir, &ZBox::from_bytes(path)) else {
         return false;

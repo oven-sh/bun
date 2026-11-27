@@ -2260,8 +2260,7 @@ impl Placeholder {
         }
     }
 
-    /// `[ext]` of an output that keeps the name of a file. `ext` is as `PathName::ext` gives it:
-    /// with its dot, or empty for a name without an extension. The extension of `foo.` is `.`.
+    /// `ext` is as `PathName::ext` gives it: with its dot, or empty for a name without an extension.
     pub(crate) fn set_ext_of_name(&mut self, ext: &[u8]) {
         self.ext = ext.strip_prefix(b".").unwrap_or(ext).into();
         self.has_no_ext = ext.is_empty();
@@ -2728,8 +2727,7 @@ pub struct Placeholder {
     pub(crate) dir: Box<[u8]>,
     pub(crate) name: Box<[u8]>,
     pub(crate) ext: Box<[u8]>,
-    /// The output has the name of a file without an extension, so a `.` directly before `[ext]`
-    /// is not printed. Only [`Placeholder::set_ext_of_name`] sets it.
+    /// Set for a name without an extension: the `.` directly before `[ext]` is not printed.
     pub(crate) has_no_ext: bool,
     pub(crate) hash: Option<bun_core::fmt::ContentHash>,
     pub(crate) target: Box<[u8]>,

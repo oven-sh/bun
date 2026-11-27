@@ -1170,8 +1170,7 @@ impl BuildCommand {
             for f in output_files.iter() {
                 use bun_io::Write as _;
 
-                // `--no-bundle` holds the bytes of `src_path` for this output, so a write onto
-                // `src_path` changes nothing when it succeeds and truncates the source when it fails.
+                // A `--no-bundle` asset is the bytes of `src_path`: a write onto it can only truncate it.
                 let is_its_own_source = opt_transform_only
                     && f.output_kind == options::OutputKind::Asset
                     && super::compile_command::is_same_file_at(

@@ -359,11 +359,15 @@ pub(crate) fn run_task(
                 copy.run_from_js_thread(global)
             }
         )?,
-        task_tag::ShellAsyncCpTask => {
-            boxed_arm!(task, [Shell], |copy: crate::node::fs::ShellAsyncCpTask| {
-                copy.report_to_shell()
-            })
-        }
+        // With no result the linker folds this arm with the mini loop's callback, and `--trim` keeps the shell.
+        task_tag::ShellAsyncCpTask => boxed_arm!(
+            task,
+            [Shell],
+            |copy: crate::node::fs::ShellAsyncCpTask| -> JsResult<()> {
+                copy.report_to_shell();
+                Ok(())
+            }
+        )?,
         task_tag::StatWatcherHop => counted_arm!(
             task,
             [NodeFs],

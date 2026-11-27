@@ -406,6 +406,3767 @@ function NotNull(props: Props) {
 }
 `;
 
+// ── What oxlint 1.95 reports differently from 1.87 ──
+
+/**
+ * oven-sh/bun#49620. A component that's declared inside another function. The file is only compiled if `rest` has a
+ * component or a hook at the top level.
+ */
+const nested = (rest: string) => `import { useState } from "react";
+
+export function setup() {
+  const held: { value?: number } = {};
+  function Harness() {
+    held.value = useState(1)[0];
+    return null;
+  }
+  return { held, Harness };
+}
+${rest}`;
+
+const nestedComponents: Files = {
+  ".oxlintrc.json": rc(),
+  "in-a-function.tsx": nested(""),
+  "in-a-test.tsx": `import { useState } from "react";
+
+test("renders", () => {
+  let seen = 0;
+  const Harness = () => {
+    seen = useState(1)[0];
+    return <p>{seen}</p>;
+  };
+  render(<Harness />);
+  expect(seen).toBe(1);
+});
+`,
+  "in-a-describe.tsx": `import { useRef } from "react";
+
+describe("a hook", () => {
+  it("reads a ref", () => {
+    function useProbe() {
+      const ref = useRef(0);
+      return ref.current;
+    }
+    expect(renderHook(useProbe)).toBe(0);
+  });
+});
+`,
+  "beside-a-component.tsx": nested("\nexport function App() {\n  return null;\n}\n"),
+  "beside-a-hook.ts": nested("\nexport const useHeld = () => setup().held;\n"),
+  "beside-a-helper.tsx": nested("\nexport function helper() {\n  return setup();\n}\n"),
+};
+
+/**
+ * oven-sh/bun#49621. A callback reads `x.current` when it runs, not during render, so it depends on `x` even if the
+ * compiler doesn't know that `x` is a ref.
+ */
+const refArguments: Files = {
+  ".oxlintrc.json": rc(),
+  "typed.ts": `import { useCallback, useLayoutEffect, type RefObject } from "react";
+
+export function useSyncHeight(
+  field: RefObject<HTMLElement | null>,
+  sizer: RefObject<HTMLElement | null>,
+  text: string,
+): void {
+  const fit = useCallback(() => {
+    const box = field.current;
+    const measured = sizer.current;
+    if (box === null || measured === null) return;
+    box.style.setProperty("--text-height", getComputedStyle(measured).height);
+  }, [field, sizer]);
+
+  useLayoutEffect(fit, [fit, text]);
+}
+`,
+  "untyped.ts": `import { useCallback } from "react";
+
+export function useSync(field) {
+  const fit = useCallback(() => {
+    return field.current;
+  }, [field]);
+  return fit;
+}
+`,
+  "named-like-a-ref.ts": `import { useCallback, type RefObject } from "react";
+
+export function useSync(fieldRef: RefObject<HTMLElement | null>) {
+  const fit = useCallback(() => {
+    return fieldRef.current;
+  }, [fieldRef]);
+  return fit;
+}
+`,
+  "prop.tsx": `import { useCallback } from "react";
+
+export function Field({ field }) {
+  const fit = useCallback(() => {
+    return field.current;
+  }, [field]);
+  return <div onClick={fit} />;
+}
+`,
+  "after-nullish.jsx": `import { useEffect, useRef } from "react";
+
+export function Forwarded({ forwardedRef }) {
+  const ownRef = useRef(null);
+  const target = forwardedRef ?? ownRef;
+  const report = () => {
+    console.log(target.current.tagName);
+  };
+  useEffect(report);
+  return <div ref={target} />;
+}
+`,
+  "in-an-effect.ts": `import { useCallback, useEffect } from "react";
+
+export function useFocus(input, enabled) {
+  const focus = useCallback(() => {
+    if (enabled) input.current?.focus();
+  }, [input, enabled]);
+  useEffect(() => {
+    focus();
+  }, [focus]);
+}
+`,
+  "memo.ts": `import { useMemo } from "react";
+
+export function useValue(box) {
+  return useMemo(() => box.current, [box]);
+}
+`,
+  // These list `.current`, and are reported because of it.
+  "current-is-listed.ts": `import { useCallback } from "react";
+
+export function useValue(box) {
+  return useCallback(() => box.current.value, [box.current]);
+}
+`,
+  "callback-in-memo.ts": `import { useMemo } from "react";
+
+export function useReader(state) {
+  return useMemo(() => () => state.current, [state.current]);
+}
+`,
+  "inner-current.ts": `import { useCallback } from "react";
+
+export function useValue(box) {
+  return useCallback(() => box.inner.current, [box.inner]);
+}
+`,
+  "other-dependency.ts": `import { useCallback } from "react";
+
+export function useSum(a: { x: number; y: number }, b: number) {
+  const sum = useCallback(() => {
+    return a.x + b;
+  }, [a.y]);
+  return sum;
+}
+`,
+};
+
+/** A component that's declared inside another function. */
+const probe = `import { useState } from "react";
+let g = 0;
+export function mountProbe() {
+  function Probe() {
+    g = useState(1)[0];
+    return null;
+  }
+  return Probe;
+}
+`;
+/** `probe`, followed by `rest` at the top level. */
+const gated = (rest: string) => `${probe}${rest}\n`;
+
+/** Whether a file is compiled depends on its top-level statements. `Probe` is reported in a file that is. */
+const gate: Files = {
+  ".oxlintrc.json": rc(),
+  "00-control-nested-only.jsx": gated(""),
+  "01-control-top-fn.jsx": gated("function Top() { return null; }"),
+  "02-default-anon-fn.jsx": gated("export default function () { return null; }"),
+  "03-default-lower-named-fn.jsx": gated("export default function helper() { return null; }"),
+  "04-default-upper-named-fn.jsx": gated("export default function Top() { return null; }"),
+  "05-default-arrow.jsx": gated("export default () => null;"),
+  "06-default-paren-fn-expr.jsx": gated("export default (function () { return null; });"),
+  "07-default-paren-lower-named-fn-expr.jsx": gated("export default (function helper() { return null; });"),
+  "08-default-memo-call.jsx": gated("export default memo(function Top() { return null; });"),
+  "09-default-object.jsx": gated("export default {};"),
+  "10-default-class.jsx": gated("export default class Top extends React.Component { render() { return null; } }"),
+  "11-top-class.jsx": gated("class Top extends React.Component { render() { return null; } }"),
+  "12-declare-fn.ts": gated("declare function Top(): void;"),
+  "13-export-declare-hook.ts": gated("export declare function useTop(): void;"),
+  "14-overload.ts": gated("export function Top(a: string): null;\nexport function Top(a: any) { return null; }"),
+  "15-export-const-arrow.jsx": gated("export const Top = () => null;"),
+  "16-const-paren-arrow.jsx": gated("const Top = (() => null);"),
+  "17-const-as.ts": gated("const Top = (() => null) as any;"),
+  "18-const-satisfies.ts": gated("const Top = (() => null) satisfies unknown;"),
+  "19-const-typed.ts": gated("const Top: () => null = () => null;"),
+  "20-const-memo.jsx": gated("const Top = memo(() => null);"),
+  "21-let-assign.jsx": gated("let Top;\nTop = () => null;"),
+  "22-name-use.jsx": gated("function use() { return null; }"),
+  "23-name-use1.jsx": gated("function use1() { return null; }"),
+  "24-name-usefoo.jsx": gated("function usefoo() { return null; }"),
+  "25-name-_Top.jsx": gated("function _Top() { return null; }"),
+  "26-name-dollarTop.jsx": gated("function $Top() { return null; }"),
+  "27-name-nonascii-upper.jsx": gated("function Étop() { return null; }"),
+  "28-async-fn.jsx": gated("async function Top() { return null; }"),
+  "29-generator-fn.jsx": gated("function* Top() { return null; }"),
+  "30-namespace.ts": gated("namespace NS { export function Top() { return null; } }"),
+  "31-default-identifier.jsx": gated("const top = () => null;\nexport default top;"),
+  "32-second-declarator.jsx": gated("const a = 1, Top = function () { return null; };"),
+  "33-const-nonnull.ts": gated("const Top = (() => null)!;"),
+  "34-destructure.jsx": gated("const { Top } = { Top: () => null };"),
+  "35-generic-arrow.ts": gated("const Top = <T,>() => null;"),
+  "36-block-fn.jsx": gated("{ function Top() { return null; } }"),
+  "37-default-arrow-as.ts": gated("export default (() => null) as any;"),
+  "38-export-specifier-memo.jsx": gated("const Top = memo(() => null);\nexport { Top };"),
+  "39-default-async-arrow.jsx": gated("export default async () => null;"),
+  "40-const-class-expr.jsx": gated("const Top = class extends React.Component { render() { return null; } };"),
+  "41-object-method.jsx": gated("export const obj = { Top() { return null; } };"),
+  "42-use-memo-directive.jsx": `"use memo";\n${probe}`,
+  "43-default-upper-fn-expr-paren.jsx": gated("export default (function Top() { return null; });"),
+  "44-export-var-hook-fnexpr.jsx": gated("export var useTop = function () { return null; };"),
+  "45-const-typeassert-angle.ts": gated("const Top = <any>(() => null);"),
+  "46-export-assign.ts": gated("export = function Top() { return null; };"),
+  "47-const-double-paren.jsx": gated("const Top = ((() => null));"),
+  "48-default-lower-async-fn.jsx": gated("export default async function helper() { return null; }"),
+  "49-const-seq.jsx": gated("const Top = (0, () => null);"),
+  // A path that contains `node_modules` isn't compiled, whatever the file has.
+  "not_node_modules_x/50-top-fn-in-node_modules-substring.jsx": gated("function Top() { return null; }"),
+};
+
+const randomize = (hook: string) => `export function Randomize() {
+  const progress = ${hook}(0);
+  return <Button onPress={() => (progress.value = Math.random())} title="Randomize" />;
+}
+`;
+
+/** A shared value from react-native-reanimated may be written outside of render, like a ref. */
+const reanimated: Files = {
+  ".oxlintrc.json": rc(),
+  "imported.tsx": `import { useEffect } from "react";
+import { Gesture } from "react-native-gesture-handler";
+import { useDerivedValue, useSharedValue, withSpring, withTiming } from "react-native-reanimated";
+
+${randomize("useSharedValue")}
+export function usePressToGrow() {
+  const width = useSharedValue(100);
+  return () => {
+    width.value = withSpring(width.value + 50);
+  };
+}
+
+export function useFadeIn(visible: boolean) {
+  const opacity = useSharedValue(0);
+  useEffect(() => {
+    opacity.value = withTiming(visible ? 1 : 0);
+  }, [opacity, visible]);
+  return opacity;
+}
+
+export function useDrag() {
+  const offset = useSharedValue({ x: 0, y: 0 });
+  return Gesture.Pan()
+    .onChange(event => {
+      offset.value = { x: offset.value.x + event.changeX, y: offset.value.y + event.changeY };
+    })
+    .onFinalize(() => {
+      offset.value = withSpring({ x: 0, y: 0 });
+    });
+}
+
+export function Doubled() {
+  const base = useSharedValue(1);
+  const doubled = useDerivedValue(() => base.value * 2);
+  const reset = () => {
+    base.value += 1;
+    doubled.value = 2;
+  };
+  return <Button onPress={reset} title="Reset" />;
+}
+
+export function InRender(props: { start: number }) {
+  const position = useSharedValue(0);
+  position.value = props.start;
+  return <View data-position={position.value} />;
+}
+`,
+  // Without the import it's an unknown hook, and what an unknown hook returns can't be modified.
+  "not-imported.jsx": randomize("useSharedValue"),
+  "from-another-module.jsx": `import { useSharedValue } from "./reanimated";\n\n${randomize("useSharedValue")}`,
+  "other-names-imported.jsx": `import { withSpring } from "react-native-reanimated";
+
+${randomize("useSharedValue")}
+export function Spring() {
+  const width = useSharedValue(0);
+  return <Button onPress={() => (width.value = withSpring(1))} title="Grow" />;
+}
+`,
+  "type-imported.tsx": `import type { SharedValue } from "react-native-reanimated";
+
+export function Randomize() {
+  const progress: SharedValue<number> = useSharedValue(0);
+  return <Button onPress={() => (progress.value = Math.random())} title="Randomize" />;
+}
+`,
+  "renamed.jsx": `import { useSharedValue as useValue } from "react-native-reanimated";\n\n${randomize("useValue")}`,
+  "namespace.jsx": `import * as Reanimated from "react-native-reanimated";\n\n${randomize("Reanimated.useSharedValue")}`,
+  "default.jsx": `import Animated from "react-native-reanimated";\n\n${randomize("Animated.useSharedValue")}`,
+  "required.js": `const { useSharedValue } = require("react-native-reanimated");\n\n${randomize("useSharedValue")}`,
+};
+
+/** One component for each name, because only a function's first capitalized call is reported. */
+const callsOf = (names: string[], call: (name: string) => string) =>
+  names.map((name, k) => `export function Calls${k}(props) {\n  return <div>{${call(name)}}</div>;\n}\n`).join("\n");
+
+const CALLED = [
+  "Child",
+  "GET",
+  "A",
+  "A1",
+  "HTML5",
+  "FOO_BAR",
+  "$FOO",
+  "_Foo",
+  "_FOO",
+  "Foo_BAR",
+  "FOo",
+  "F_o",
+  "ÉCOLE",
+];
+const ALSO_CALLED = ["École", "Ω", "child"];
+
+/** A name in capitals is a constant, not a component. */
+const allCaps: Files = {
+  ".oxlintrc.json": rc(),
+  "methods.jsx": callsOf([...CALLED, ...ALSO_CALLED], name => `props.api.${name}()`),
+  "functions.jsx": `import { ${[...CALLED, ...ALSO_CALLED].join(", ")} } from "./module";\n\n${callsOf([...CALLED, ...ALSO_CALLED], name => `${name}()`)}`,
+  "globals.jsx": callsOf(CALLED, name => `${name}()`),
+  "utc.jsx": `export function Month() {
+  const now = new Date(0);
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  return <div>{start.toString()}</div>;
+}
+
+export function Formatted({ amount }) {
+  return <div>{Intl.NumberFormat("en").format(amount)}{JSON.stringify(CSS.supports("color", "red"))}</div>;
+}
+`,
+  "other-calls.jsx": `import { Child, GET } from "./module";
+
+export function Optional(props) {
+  return <div>{props.api?.Child()}{props.api?.GET()}</div>;
+}
+
+export function Computed(props) {
+  return <div>{props.api["Child"]()}{props.api["GET"]()}</div>;
+}
+
+export function Constructed() {
+  return <div>{new Child().value}{new GET().value}</div>;
+}
+
+export function Tagged() {
+  return <div>{Child\`a\`}{GET\`a\`}</div>;
+}
+
+export function Local(props) {
+  const Item = props.render;
+  const ITEM = props.render;
+  return <div>{ITEM()}{Item()}</div>;
+}
+
+export function InACallback(props) {
+  const render = () => [Child(), GET()];
+  return <div>{props.items.map(() => GET())}{render()}</div>;
+}
+
+export function Both(props) {
+  return <div>{GET()}{Child()}</div>;
+}
+`,
+};
+
+/** An `.oxlintrc.json` with every rule, and options for react/capitalized-calls. */
+const rcWithCalls = (options: object) =>
+  JSON.stringify({
+    plugins: ["react"],
+    categories: { correctness: "off" },
+    rules: {
+      ...Object.fromEntries(RULE_NAMES.map(rule => [rule, "error"])),
+      "react/capitalized-calls": ["error", options],
+    },
+  });
+
+const capitalizedCalls = `import Child from "./Child";
+import Other from "./Other";
+import { BuildStore, ButtonClickEvent, EventChild, MakeStore, Makefile } from "./factories";
+import module from "./module";
+
+export function Named() {
+  return <div>{Child()}</div>;
+}
+
+export function EndsInEvent() {
+  const event = ButtonClickEvent();
+  return <button onClick={() => send(event)} />;
+}
+
+export function StartsWithEvent() {
+  return <div>{EventChild()}</div>;
+}
+
+export function Factory() {
+  const store = MakeStore();
+  return <div>{store.value}</div>;
+}
+
+export function OtherFactory() {
+  const store = BuildStore();
+  return <div>{store.value}</div>;
+}
+
+export function NotAFactory() {
+  return <div>{Makefile()}</div>;
+}
+
+export function NotListed() {
+  return <div>{Other()}</div>;
+}
+
+export function Method() {
+  return <div>{module.Child()}</div>;
+}
+
+export function Local(props) {
+  const Child = props.render;
+  return <div>{Child()}</div>;
+}
+
+export function Global() {
+  return <div>{Child2()}{ChildEvent()}</div>;
+}
+
+export function AllowedThenNot() {
+  return <div>{Child()}{Other()}</div>;
+}
+`;
+
+/** The names that react/capitalized-calls allows are in its options. They only apply to a name that isn't local. */
+const allowedCalls: Files = {
+  ".oxlintrc.json": rc([]),
+  "default/.oxlintrc.json": rc(),
+  "default/calls.jsx": capitalizedCalls,
+  "allow/.oxlintrc.json": rcWithCalls({ allow: ["Child", "MakeStore"] }),
+  "allow/calls.jsx": capitalizedCalls,
+  "pattern/.oxlintrc.json": rcWithCalls({ allowPattern: "Event$" }),
+  "pattern/calls.jsx": capitalizedCalls,
+  "both/.oxlintrc.json": rcWithCalls({ allow: ["Child"], allowPattern: "Event$" }),
+  "both/calls.jsx": capitalizedCalls,
+  "unanchored/.oxlintrc.json": rcWithCalls({ allowPattern: "Child" }),
+  "unanchored/calls.jsx": capitalizedCalls,
+  "alternation/.oxlintrc.json": rcWithCalls({ allowPattern: "^(?:Make|Build)[A-Z]|^Other$" }),
+  "alternation/calls.jsx": capitalizedCalls,
+  "empty/.oxlintrc.json": rcWithCalls({ allow: [] }),
+  "empty/calls.jsx": capitalizedCalls,
+  "empty-pattern/.oxlintrc.json": rcWithCalls({ allowPattern: "" }),
+  "empty-pattern/calls.jsx": capitalizedCalls,
+  "case-insensitive/.oxlintrc.json": rcWithCalls({ allowPattern: "(?i)^child" }),
+  "case-insensitive/calls.jsx": capitalizedCalls,
+  "alone/.oxlintrc.json": JSON.stringify({
+    plugins: ["react"],
+    categories: { correctness: "off" },
+    rules: { "react/capitalized-calls": ["error", { allow: ["Other"] }] },
+  }),
+  "alone/calls.jsx": capitalizedCalls,
+};
+
+/** An async component is a Server Component. It's rendered once, so it may call impure functions. */
+const asyncComponents: Files = {
+  ".oxlintrc.json": rc(),
+  "declarations.jsx": `export default async function Posts() {
+  const posts = await getPosts();
+  return posts.map(post => <p key={post.id}>{Date.now() - post.createdAt < 86_400_000 ? "new" : ""}</p>);
+}
+
+async function Declaration() {
+  const date = Date.now();
+  const now = new Date();
+  const random = Math.random();
+  const id = crypto.randomUUID();
+  return <Foo date={date} now={now} random={random} id={id} />;
+}
+
+const Arrow = async () => {
+  return <p>{performance.now()}</p>;
+};
+
+const Expression = async function () {
+  return <p>{new Date().getTime()}</p>;
+};
+
+export const Page = async ({ params }) => <main data-at={Date.now()}>{(await params).slug}</main>;
+
+async function WithoutAwait() {
+  return <p>{Math.random()}</p>;
+}
+`,
+  "callbacks.jsx": `async function InAMap({ posts }) {
+  return (
+    <ul>
+      {posts.map(post => (
+        <li key={post.id}>{Date.now() - post.createdAt}</li>
+      ))}
+    </ul>
+  );
+}
+
+async function InAHelper({ posts }) {
+  const label = post => (Date.now() - post.createdAt < 86400000 ? "new" : "");
+  return (
+    <ul>
+      {posts.map(post => (
+        <li key={post.id}>{label(post)}</li>
+      ))}
+    </ul>
+  );
+}
+
+async function InANestedComponent() {
+  function Badge() {
+    return <span>{Date.now()}</span>;
+  }
+  return <Badge />;
+}
+
+async function InAHandler() {
+  const stamp = () => Math.random();
+  return <button onClick={stamp} />;
+}
+
+async function InAnImmediateFunction() {
+  const value = (() => Math.random())();
+  return <p>{value}</p>;
+}
+`,
+  // The other rules still apply to an async component.
+  "other-rules.jsx": `import { useRef } from "react";
+
+async function Mutates(props) {
+  props.at = Date.now();
+  return <p>{props.at}</p>;
+}
+
+async function ReadsARef() {
+  const ref = useRef(null);
+  const value = ref.current;
+  return <p>{value}{Math.random()}</p>;
+}
+`,
+  "client.jsx": `async function Server() {
+  return <p>{Date.now()}</p>;
+}
+
+function AfterAServerComponent() {
+  return <p>{Date.now()}</p>;
+}
+
+const Arrow = () => {
+  return <p>{Math.random()}</p>;
+};
+
+function InAMap({ posts }) {
+  return (
+    <ul>
+      {posts.map(post => (
+        <li key={post.id}>{Date.now()}</li>
+      ))}
+    </ul>
+  );
+}
+
+function CallsAnAsyncHelper() {
+  const load = async () => Date.now();
+  return <p>{load()}</p>;
+}
+
+function* Generator() {
+  yield <p>{Math.random()}</p>;
+}
+`,
+  "hooks.js": `import { useId } from "react";
+
+function useNow() {
+  return [useId(), Date.now()];
+}
+
+async function useAsyncNow() {
+  return [useId(), new Date().getTime()];
+}
+
+const useAsyncArrow = async () => [useId(), Math.random()];
+
+export async function useLoaded(load) {
+  const id = useId();
+  const at = performance.now();
+  return [await load(), at, id];
+}
+`,
+  "wrapped.jsx": `import { forwardRef, memo } from "react";
+
+export const Memoized = memo(async function Memoized() {
+  return <p>{Date.now()}</p>;
+});
+
+export const Forwarded = forwardRef(async (props, ref) => <p ref={ref}>{Math.random()}</p>);
+
+export const Client = memo(function Client() {
+  return <p>{Date.now()}</p>;
+});
+
+export function Top() {
+  return null;
+}
+`,
+};
+
+/** `count++` on a variable that a function captures. */
+const updateExpressions: Files = {
+  ".oxlintrc.json": rc(),
+  "in-effects.jsx": `import { useEffect, useLayoutEffect } from "react";
+
+export function Postfix() {
+  let local = 0;
+  const bump = () => {
+    local++;
+  };
+  const onMount = expected => {
+    bump();
+    if (local !== expected) throw new Error("not updated");
+  };
+  useEffect(() => {
+    onMount(1);
+  }, [onMount]);
+  return null;
+}
+
+export function Prefix() {
+  let local = 0;
+  useEffect(() => {
+    ++local;
+  });
+  return <div>{local}</div>;
+}
+
+export function Decrement() {
+  let remaining = 3;
+  useLayoutEffect(() => {
+    const step = () => --remaining;
+    step();
+  }, []);
+  return <div>{remaining}</div>;
+}
+
+export function InACleanup() {
+  let mounted = 0;
+  useEffect(() => {
+    mounted++;
+    return () => {
+      mounted--;
+    };
+  }, []);
+  return null;
+}
+
+export function LocalToTheEffect() {
+  useEffect(() => {
+    let ticks = 0;
+    const id = setInterval(() => {
+      ticks++;
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+  return null;
+}
+`,
+  "in-handlers.jsx": `export function Inline() {
+  let count = 0;
+  return <button onClick={() => count++}>{count}</button>;
+}
+
+export function Named() {
+  let count = 0;
+  function handleClick() {
+    ++count;
+  }
+  return <button onClick={handleClick}>{count}</button>;
+}
+
+export function Curried() {
+  let count = 0;
+  const by = step => () => {
+    count--;
+    return step;
+  };
+  return <button onClick={by(2)}>{count}</button>;
+}
+
+export function TheValueIsUsed() {
+  let count = 0;
+  const next = () => count++ + 1;
+  const previous = () => --count;
+  return <button onClick={next} onBlur={previous} />;
+}
+
+export function Wrapped() {
+  let count = 0;
+  const onClick = () => count++;
+  return <button onClick={debounce(onClick)} />;
+}
+
+export function NeverPassed() {
+  let count = 0;
+  const unused = () => count++;
+  return <button>{count}</button>;
+}
+
+export function CalledInRender() {
+  let count = 0;
+  const bump = () => count++;
+  bump();
+  return <button>{count}</button>;
+}
+`,
+  "in-array-callbacks.jsx": `import { useDebugValue } from "react";
+
+export function FromMap() {
+  let count = 0;
+  const handlers = [0].map(() => () => count++);
+  return <List handlers={handlers} />;
+}
+
+export function FromFlatMap() {
+  let count = 0;
+  const handlers = [0].flatMap(() => [() => ++count]);
+  return <List handlers={handlers} />;
+}
+
+export function useFromMap() {
+  useDebugValue("map");
+  let count = 0;
+  return [0].map(() => () => count--);
+}
+
+export function FromForEach() {
+  let count = 0;
+  const value = [1].forEach(() => () => count++);
+  return <div>{value}</div>;
+}
+
+export function InsideForEach({ items }) {
+  let total = 0;
+  items.forEach(item => {
+    total++;
+  });
+  return <div>{total}</div>;
+}
+
+export function InsideMap({ items }) {
+  let index = 0;
+  return (
+    <ul>
+      {items.map(item => (
+        <li key={index++}>{item}</li>
+      ))}
+    </ul>
+  );
+}
+
+export function FromFilter({ items }) {
+  let seen = 0;
+  const kept = items.filter(() => seen++ < 2);
+  return <div>{kept}</div>;
+}
+
+export function FromReduce({ items }) {
+  let calls = 0;
+  const handlers = items.reduce((all, item) => [...all, () => calls++], []);
+  return <List handlers={handlers} />;
+}
+
+export function HandlersInAMap({ items }) {
+  let clicks = 0;
+  return (
+    <ul>
+      {items.map(item => (
+        <li key={item} onClick={() => clicks++} />
+      ))}
+    </ul>
+  );
+}
+`,
+  "parameters.js": `import { useCallback, useDebugValue } from "react";
+
+export function useCounter(count) {
+  useDebugValue(count);
+  return () => count++;
+}
+
+export function useDestructured({ count }) {
+  useDebugValue(count);
+  return () => --count;
+}
+
+export const useDefaulted = (cb = () => count++, { count } = { count: 0 }) => {
+  useDebugValue(count);
+  return cb;
+};
+
+export function useUpdatedInRender(count) {
+  useDebugValue(count);
+  count++;
+  return count;
+}
+
+export function useCapturedAndUpdatedInRender(count) {
+  useDebugValue(count);
+  const read = () => count;
+  ++count;
+  return read;
+}
+
+export function Parameter({ count }) {
+  return <button onClick={() => count++}>{count}</button>;
+}
+
+export function useCallbackParameter() {
+  return useCallback(count => () => count++, []);
+}
+
+export function useOwnParameter() {
+  return useCallback(count => {
+    count++;
+    return count;
+  }, []);
+}
+`,
+  "captures.js": `import { useDebugValue, useEffect } from "react";
+
+export function useLiveCapture() {
+  useDebugValue(null);
+  let count = 0;
+  let cb = () => null;
+  const wrapper = () => cb();
+  cb = () => count++;
+  return wrapper;
+}
+
+export function useOverwrittenBeforeCapture() {
+  useDebugValue(null);
+  let count = 0;
+  let cb = () => count++;
+  cb = () => null;
+  const wrapper = () => cb();
+  return wrapper;
+}
+
+export function useValueBeforeReassignment() {
+  useDebugValue(null);
+  let count = 0;
+  let cb = () => null;
+  const result = cb;
+  [0].map(() => cb);
+  cb = () => --count;
+  return result;
+}
+
+export function useLoopPhi(condition) {
+  useDebugValue(null);
+  let count = 0;
+  let cb = () => null;
+  let run = condition;
+  while (run) {
+    cb = () => count++;
+    run = false;
+  }
+  return cb;
+}
+
+export function useBranch(condition) {
+  useDebugValue(null);
+  let count = 0;
+  let cb = () => null;
+  if (condition) cb = () => ++count;
+  return cb;
+}
+
+export function usePostfixKillsTheOldValue() {
+  useDebugValue(null);
+  let count = 0;
+  let cb = () => count++;
+  cb++;
+  return cb;
+}
+
+export function usePostfixResult() {
+  useDebugValue(null);
+  let count = 0;
+  let cb = () => count++;
+  return cb++;
+}
+
+export function useEscapesBeforeReassignment() {
+  let count = 0;
+  let cb = () => null;
+  useEffect(() => cb(), []);
+  cb = () => count++;
+  return null;
+}
+
+export function useNested() {
+  useDebugValue(null);
+  let count = 0;
+  const outer = () => {
+    const inner = () => {
+      count++;
+    };
+    return inner;
+  };
+  return outer;
+}
+
+export function useInAnObject() {
+  useDebugValue(null);
+  let count = 0;
+  return { next: () => count++, previous: () => count--, get: () => count };
+}
+
+export function useObjectMethod() {
+  useDebugValue(null);
+  let count = 0;
+  return {
+    next() {
+      return ++count;
+    },
+  };
+}
+`,
+  "timers.js": `import { useDebugValue, useEffect } from "react";
+
+export function useTimeoutInRender() {
+  useDebugValue(null);
+  let fired = 0;
+  setTimeout(() => fired++, 10);
+  return fired;
+}
+
+export function useInterval() {
+  let ticks = 0;
+  useEffect(() => {
+    const id = setInterval(() => ++ticks, 1000);
+    return () => clearInterval(id);
+  }, []);
+  return ticks;
+}
+
+export function useFrames(draw) {
+  let frames = 0;
+  useEffect(() => {
+    let id = requestAnimationFrame(function tick() {
+      frames++;
+      draw(frames);
+      id = requestAnimationFrame(tick);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [draw]);
+}
+
+export function useMicrotask() {
+  useDebugValue(null);
+  let count = 0;
+  queueMicrotask(() => count++);
+  Promise.resolve().then(() => count--);
+  return count;
+}
+`,
+  "async.js": `import { useDebugValue, useEffect } from "react";
+
+export function useAsyncArrow() {
+  useDebugValue(null);
+  let count = 0;
+  const run = async () => {
+    await 0;
+    count++;
+  };
+  return run;
+}
+
+export function useBeforeAnAwait() {
+  useDebugValue(null);
+  let count = 0;
+  const run = async () => {
+    count++;
+    await 0;
+  };
+  run();
+  return null;
+}
+
+export function useCallbackParameter() {
+  useDebugValue(null);
+  let count = 0;
+  const run = async cb => {
+    await 0;
+    cb();
+  };
+  run(() => count++);
+  return null;
+}
+
+export function useUnusedParameter() {
+  useDebugValue(null);
+  let count = 0;
+  const run = async (unused, cb) => {
+    await 0;
+    cb();
+  };
+  run(
+    () => count++,
+    () => null,
+  );
+  return null;
+}
+
+export function useThen(load) {
+  useDebugValue(null);
+  let count = 0;
+  load().then(() => {
+    ++count;
+  });
+  return count;
+}
+
+export function useAsyncEffect(load) {
+  useEffect(() => {
+    let done = 0;
+    (async () => {
+      await load();
+      done++;
+    })();
+  }, [load]);
+}
+
+export function useAsyncHandler(save) {
+  useDebugValue(null);
+  let saving = 0;
+  const onSave = async () => {
+    saving++;
+    try {
+      await save();
+    } finally {
+      saving--;
+    }
+  };
+  return onSave;
+}
+`,
+  "typescript.ts": `import { useDebugValue } from "react";
+
+export function useCast() {
+  useDebugValue(null);
+  let value = 0;
+  const read = () => value;
+  (value as number)++;
+  return read();
+}
+
+export function useNonNull() {
+  useDebugValue(null);
+  let value: number | undefined = 0;
+  const read = () => value;
+  value!++;
+  return read();
+}
+
+export function useCastInACallback() {
+  useDebugValue(null);
+  let value = 0;
+  return () => (value as number)--;
+}
+
+export function useNonNullInACallback() {
+  useDebugValue(null);
+  let value: number | undefined = 0;
+  return () => ++value!;
+}
+`,
+  "members.jsx": `import { useRef, useState } from "react";
+
+export function Ref() {
+  const ref = useRef(0);
+  return <button onClick={() => ref.current++} />;
+}
+
+export function RefInRender() {
+  const ref = useRef(0);
+  ref.current++;
+  return <div />;
+}
+
+export function ObjectMember() {
+  const box = { count: 0 };
+  const bump = () => box.count++;
+  return <button onClick={bump}>{box.count}</button>;
+}
+
+export function Props(props) {
+  const bump = () => ++props.count;
+  return <button onClick={bump} />;
+}
+
+export function State() {
+  const [state] = useState({ count: 0 });
+  return <button onClick={() => state.count--} />;
+}
+
+export function Computed({ name }) {
+  const counts = {};
+  const bump = () => counts[name]++;
+  bump();
+  return <div>{counts[name]}</div>;
+}
+`,
+  "globals.jsx": `import { useEffect, useState } from "react";
+
+let renders = 0;
+let clicks = 0;
+
+export function InRender() {
+  renders++;
+  return <div />;
+}
+
+export function InAHandler() {
+  return <button onClick={() => clicks++} />;
+}
+
+export function InAnEffect() {
+  useEffect(() => {
+    ++renders;
+  });
+  return null;
+}
+
+export function useInAHook() {
+  const [state] = useState(0);
+  return --clicks + state;
+}
+`,
+  "render.jsx": `export function Loop({ items }) {
+  let total = 0;
+  for (let i = 0; i < items.length; i++) total++;
+  return <div>{total}</div>;
+}
+
+export function AfterTheCapture() {
+  let a = 0;
+  const read = () => a;
+  a++;
+  return <div onClick={read}>{a}</div>;
+}
+
+export function BeforeTheCapture() {
+  let a = 0;
+  a++;
+  const read = () => a;
+  return <div onClick={read} />;
+}
+
+export function InAnExpression(props) {
+  let a = props.a;
+  const read = () => a;
+  const b = a++ + ++a;
+  return <div onClick={read}>{b}</div>;
+}
+
+export function InALoop(props) {
+  let a = 0;
+  const read = () => a;
+  while (a < props.limit) a++;
+  return <div onClick={read}>{a}</div>;
+}
+
+export function InASequence(props) {
+  let a = 0;
+  const read = () => a;
+  const b = (a++, a--, a);
+  return <div onClick={read}>{b}</div>;
+}
+`,
+  "default-parameter.js": `import { createRef, forwardRef } from "react";
+
+const Component = forwardRef((cb = () => ref.current++, ref = createRef()) => <div>{cb}</div>);
+
+export function Top() {
+  return <Component />;
+}
+`,
+};
+
+/** A variable that's declared in a callback isn't a render variable, so a nested function may reassign it. */
+const callbackLocals: Files = {
+  ".oxlintrc.json": rc(),
+  "effects.ts": `import { useEffect, useState } from "react";
+
+export function useStopwatch(running: boolean) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!running) return;
+    let previous = performance.now();
+    const id = setInterval(() => {
+      const now = performance.now();
+      setElapsed(total => total + (now - previous));
+      previous = now;
+    }, 250);
+    return () => clearInterval(id);
+  }, [running]);
+  return elapsed;
+}
+
+export function useDeferred(task: () => Promise<void>) {
+  useEffect(() => {
+    let handle: ReturnType<typeof setTimeout> | undefined;
+    const start = async () => {
+      await task();
+      handle = setTimeout(() => {}, 10);
+    };
+    start();
+    return () => clearTimeout(handle);
+  }, [task]);
+}
+
+export function useSubscription(subscribe: () => Promise<() => void>) {
+  useEffect(() => {
+    let stopped = false;
+    let unsubscribe: (() => void) | undefined;
+    void subscribe().then(stop => {
+      if (stopped) {
+        stop();
+        return;
+      }
+      unsubscribe = stop;
+    });
+    return () => {
+      stopped = true;
+      unsubscribe?.();
+    };
+  }, [subscribe]);
+}
+
+export function useRetry(attempt: () => Promise<boolean>) {
+  useEffect(() => {
+    let tries = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const again = async () => {
+      tries += 1;
+      if (!(await attempt()) && tries < 3) timer = setTimeout(again, 100 * tries);
+    };
+    void again();
+    return () => clearTimeout(timer);
+  }, [attempt]);
+}
+
+export function useCleanedUp(prop: number) {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    let cleanedUp = false;
+    setTimeout(() => {
+      if (!cleanedUp) {
+        cleanedUp = true;
+        setCount(c => c + 1);
+      }
+    }, 0);
+    return () => {
+      if (!cleanedUp) {
+        cleanedUp = true;
+        setCount(c => c + 1);
+      }
+    };
+  }, [prop]);
+  return count;
+}
+
+// This one is a render variable.
+export function useRenderLocal() {
+  let count = 0;
+  useEffect(() => {
+    count = 1;
+  });
+  return count;
+}
+
+export function useBoth(load: () => Promise<number>) {
+  let latest = 0;
+  useEffect(() => {
+    let cancelled = false;
+    void load().then(value => {
+      if (!cancelled) latest = value;
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [load]);
+  return latest;
+}
+`,
+  "handlers.tsx": `export function Drag() {
+  const onPointerDown = (down: PointerEvent) => {
+    let last = down.clientX;
+    const onMove = (move: PointerEvent) => {
+      report(move.clientX - last);
+      last = move.clientX;
+    };
+    window.addEventListener("pointermove", onMove);
+  };
+  return <div onPointerDown={onPointerDown} />;
+}
+
+export function Submit({ save }) {
+  const onSubmit = async event => {
+    let result = null;
+    const finish = value => {
+      result = value;
+    };
+    await save(event).then(finish, finish);
+    return result;
+  };
+  return <form onSubmit={onSubmit} />;
+}
+
+export function Parameter() {
+  const onChange = (value: string) => {
+    const trim = () => {
+      value = value.trim();
+    };
+    trim();
+    return value;
+  };
+  return <input onChange={event => onChange(event.target.value)} />;
+}
+
+export function Inline({ items }) {
+  return (
+    <button
+      onClick={() => {
+        let total = 0;
+        items.forEach(item => {
+          total += item.size;
+        });
+        report(total);
+      }}
+    />
+  );
+}
+
+// This one is a render variable.
+export function RenderLocal() {
+  let clicked = false;
+  const onClick = () => {
+    clicked = true;
+  };
+  return <button onClick={onClick}>{String(clicked)}</button>;
+}
+`,
+  "callbacks.ts": `import { useCallback, useMemo } from "react";
+
+export function useCounter() {
+  return useCallback((count: number) => () => count++, []);
+}
+
+export function useAccumulator() {
+  return useCallback((items: number[]) => {
+    let sum = 0;
+    items.forEach(item => {
+      sum += item;
+    });
+    return sum;
+  }, []);
+}
+
+export function useDebounced(fn: (...args: unknown[]) => void, ms: number) {
+  return useMemo(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    return (...args: unknown[]) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => fn(...args), ms);
+    };
+  }, [fn, ms]);
+}
+
+export function useBox() {
+  return useMemo(() => {
+    let value: unknown;
+    return {
+      set: (next: unknown) => {
+        value = next;
+      },
+      get: () => value,
+    };
+  }, []);
+}
+
+export function useOnce(fn: () => void) {
+  return useCallback(() => {
+    let called = false;
+    return () => {
+      if (called) return;
+      called = true;
+      fn();
+    };
+  }, [fn]);
+}
+`,
+  "array-callbacks.jsx": `import { useEffect } from "react";
+
+export function Rows({ rows }) {
+  return rows.map(row => {
+    let label = row.name;
+    const shorten = () => {
+      label = label.slice(0, 10);
+    };
+    if (label.length > 10) shorten();
+    return <li key={row.id}>{label}</li>;
+  });
+}
+
+export function Groups({ groups }) {
+  const sizes = groups.flatMap(group => {
+    let offset = 0;
+    return group.items.map(item => () => {
+      offset += item.size;
+      return offset;
+    });
+  });
+  return <List sizes={sizes} />;
+}
+
+export function Each({ items }) {
+  useEffect(() => {
+    items.forEach(item => {
+      let seen = false;
+      item.on("change", () => {
+        seen = true;
+      });
+      item.on("close", () => report(seen));
+    });
+  }, [items]);
+  return null;
+}
+
+export function Nested({ table }) {
+  const cells = table.map(row => {
+    let column = 0;
+    return row.map(cell => {
+      const next = () => {
+        column = column + 1;
+        return column;
+      };
+      return <td key={next()}>{cell}</td>;
+    });
+  });
+  return <tbody>{cells}</tbody>;
+}
+`,
+};
+
+/** `||=`, `&&=` and `??=`. */
+const logicalAssignment: Files = {
+  ".oxlintrc.json": rc(),
+  "locals.jsx": `export function Operators({ value }) {
+  let nullish = value;
+  nullish ??= "fallback";
+  let and = value;
+  and &&= "replaced";
+  let or = value;
+  or ||= "default";
+  return <Stringify nullish={nullish} and={and} or={or} />;
+}
+
+export function TheResultIsUsed({ value, other }) {
+  let a = value;
+  const b = (a ??= other) ?? "none";
+  let c;
+  const d = (c ||= a &&= b);
+  return <div>{a}{b}{c}{d}</div>;
+}
+
+export function InALoop({ items }) {
+  let first;
+  for (const item of items) {
+    first ??= item;
+  }
+  return <div>{first}</div>;
+}
+
+export function InAValueBlock({ value, flag }) {
+  let label = value;
+  const result = flag ? (label ||= "default") : "none";
+  return <Stringify label={label} result={result} />;
+}
+
+export function Parameters(props, ref) {
+  props ??= {};
+  ref ||= null;
+  return <div ref={ref}>{props.a}</div>;
+}
+
+export function Destructured({ label, size = 1 }) {
+  label ??= "none";
+  size &&= size * 2;
+  return <div style={{ size }}>{label}</div>;
+}
+`,
+  "members.jsx": `export function Targets({ value }) {
+  const obj = { x: value, a: 0, full: 1 };
+  const calls = { key: 0, rhs: 0 };
+  function key() {
+    calls.key += 1;
+    return "a";
+  }
+  function rhs(result) {
+    calls.rhs += 1;
+    return result;
+  }
+  obj.x ??= rhs("fallback");
+  obj[key()] ||= rhs("updated");
+  const skipped = (obj.full ??= rhs("skipped"));
+  return <Stringify obj={obj} calls={calls} skipped={skipped} />;
+}
+
+export function Props(props) {
+  props.label ??= "none";
+  return <div>{props.label}</div>;
+}
+
+export function NestedProps(props) {
+  props.style.color ||= "red";
+  return <div style={props.style} />;
+}
+
+export function State() {
+  const [state] = useState({});
+  state.count &&= 0;
+  return <div>{state.count}</div>;
+}
+
+export function AfterItsFrozen({ value }) {
+  const obj = { value };
+  const element = <Child obj={obj} />;
+  obj.value ??= 1;
+  return element;
+}
+
+export function InAHandler(props) {
+  const onClick = () => {
+    props.cache.value ??= compute();
+  };
+  return <button onClick={onClick} />;
+}
+
+export function Optional({ value }) {
+  const obj = { inner: value };
+  obj.inner.count ??= 0;
+  obj["inner"].total ||= obj.inner.count;
+  return <div>{obj.inner.total}</div>;
+}
+`,
+  "refs.jsx": `import { useEffect, useRef } from "react";
+
+export function LazilyInitialized(props) {
+  const ref = useRef(null);
+  ref.current ??= props.value;
+  return <Child ref={ref} />;
+}
+
+export function Or(props) {
+  const ref = useRef(null);
+  ref.current ||= props.value;
+  return ref;
+}
+
+export function And(props) {
+  const ref = useRef(null);
+  ref.current &&= props.value;
+  return <Child ref={ref} />;
+}
+
+export function ReadAfterwards() {
+  const ownerRef = useRef(null);
+  ownerRef.current ??= Symbol("owner");
+  const owner = ownerRef.current;
+  useEffect(() => () => release(owner), [owner]);
+  return null;
+}
+
+export function Member(props) {
+  const ref = useRef({});
+  ref.current.value ??= props.value;
+  return <Child ref={ref} />;
+}
+
+export function InAnEffect(props) {
+  const ref = useRef(null);
+  useEffect(() => {
+    ref.current ||= props.value;
+    ref.current &&= props.other;
+  });
+  return <Child ref={ref} />;
+}
+
+export function TheResultIsUsed(props) {
+  const ref = useRef(null);
+  const value = (ref.current ??= props.value);
+  return <div>{value}</div>;
+}
+
+export function Twice(props) {
+  const ref = useRef(null);
+  ref.current ??= props.a;
+  ref.current ??= props.b;
+  return <Child ref={ref} />;
+}
+`,
+  "const.jsx": `const moduleValue = 1;
+
+export function NeverAssigns() {
+  const value = 1;
+  value ??= 2;
+  return <div>{value}</div>;
+}
+
+export function Nullish() {
+  const value = null;
+  value ??= 2;
+  return <div>{value}</div>;
+}
+
+export function Or() {
+  const value = false;
+  value ||= true;
+  return <div>{value}</div>;
+}
+
+export function And() {
+  const value = true;
+  value &&= false;
+  return <div>{value}</div>;
+}
+
+export function ClosedOver() {
+  const value = 1;
+  const assign = () => {
+    value &&= 2;
+    return value;
+  };
+  return <div>{assign()}</div>;
+}
+
+export function Captured() {
+  const value = 1;
+  const read = () => value;
+  value ??= 2;
+  return <div>{read()}</div>;
+}
+
+export function Module() {
+  moduleValue ??= 2;
+  return <div>{moduleValue}</div>;
+}
+
+export function Props(props) {
+  const { label } = props;
+  label ||= "none";
+  return <div>{label}</div>;
+}
+`,
+  "context.jsx": `import { useEffect } from "react";
+
+export function Captured({ value }) {
+  let cached = value;
+  const read = () => cached;
+  cached ??= "fallback";
+  return <Stringify cached={read()} />;
+}
+
+export function InACallback({ value }) {
+  let cached = value;
+  const fill = () => {
+    cached ??= compute();
+    return cached;
+  };
+  return <Stringify cached={fill()} />;
+}
+
+export function InAHandler({ value }) {
+  let cached = value;
+  const onClick = () => {
+    cached ||= compute();
+  };
+  return <button onClick={onClick}>{cached}</button>;
+}
+
+export function InAnEffect({ value }) {
+  let cached = value;
+  useEffect(() => {
+    cached &&= null;
+  });
+  return <div>{cached}</div>;
+}
+
+export function LocalToTheCallback({ load }) {
+  useEffect(() => {
+    let pending;
+    const start = () => {
+      pending ??= load();
+      return pending;
+    };
+    start();
+  }, [load]);
+  return null;
+}
+
+export function CapturedReceiver({ value }) {
+  let obj = {};
+  const other = { x: "other" };
+  Object.defineProperty(obj, "x", {
+    get() {
+      obj = other;
+      return null;
+    },
+    configurable: true,
+  });
+  const fromGetter = (obj.x ??= value);
+  return <Stringify fromGetter={fromGetter} same={obj === other} />;
+}
+
+export function CapturedKey({ value }) {
+  let key = "a";
+  const keyed = {};
+  Object.defineProperty(keyed, "a", {
+    get() {
+      key = "b";
+      return null;
+    },
+    configurable: true,
+  });
+  const fromKey = (keyed[key] ||= value);
+  return <Stringify fromKey={fromKey} name={key} />;
+}
+`,
+  "globals.jsx": `let cache;
+let count = 0;
+
+export function InRender(props) {
+  cache ??= props.value;
+  return <div>{cache}</div>;
+}
+
+export function InAHandler(props) {
+  const onClick = () => {
+    cache ||= props.value;
+    count &&= 0;
+  };
+  return <button onClick={onClick} />;
+}
+
+export function Undeclared(props) {
+  window.started ??= Date.now();
+  globalCache ??= props.value;
+  return <div />;
+}
+`,
+};
+
+/** `new Date()` without arguments is only reported in the body of a component or a hook. */
+const newDate: Files = {
+  ".oxlintrc.json": rc(),
+  "render.jsx": `import { useMemo, useState } from "react";
+
+export function InRender() {
+  const now = new Date();
+  return <div>{now.getTime()}</div>;
+}
+
+export function WithoutParentheses() {
+  const now = new Date;
+  return <div>{now.getTime()}</div>;
+}
+
+export function Chained() {
+  const time = new Date().getTime();
+  const year = new Date().getFullYear();
+  return <Foo time={time} year={year} />;
+}
+
+export function WithArguments({ timestamp }) {
+  const epoch = new Date(0);
+  const date = new Date(timestamp);
+  const parts = new Date(2020, 0, 1);
+  const spread = new Date(...timestamp.parts);
+  return <Foo epoch={epoch} date={date} parts={parts} spread={spread} />;
+}
+
+export function FromNow() {
+  const date = new Date(Date.now());
+  return <Foo date={date} />;
+}
+
+export function InJsx() {
+  return <time dateTime={new Date().toISOString()} />;
+}
+
+export function InAMemo() {
+  const today = useMemo(() => new Date(), []);
+  return <Foo today={today} />;
+}
+
+export function InitialState() {
+  const [eager] = useState(new Date());
+  const [lazy] = useState(() => new Date());
+  return <Foo eager={eager} lazy={lazy} />;
+}
+
+export function useToday() {
+  const [offset] = useState(0);
+  return [new Date(), offset];
+}
+
+export function Shadowed({ Date }) {
+  return <Foo date={new Date()} />;
+}
+`,
+  "through-an-object.jsx": `export function Window() {
+  const now = new window.Date();
+  return <Foo now={now} />;
+}
+
+export function GlobalThis() {
+  const now = new globalThis.Date();
+  return <Foo now={now} />;
+}
+`,
+  "callbacks.jsx": `import { useCallback, useEffect } from "react";
+
+export function Submit({ form, create }) {
+  const onSubmit = async data => {
+    await create({ ...data, createdAt: new Date(), updatedAt: new Date() });
+  };
+  return <form onSubmit={form.handleSubmit(onSubmit)} />;
+}
+
+export function Wrapped({ create }) {
+  const onClick = () => create(new Date());
+  return <button onClick={debounce(onClick)} />;
+}
+
+export function DateNowWrapped({ create }) {
+  const onClick = () => create(Date.now());
+  return <button onClick={debounce(onClick)} />;
+}
+
+export function Inline({ create }) {
+  return <button onClick={() => create(new Date())} />;
+}
+
+export function InAnEffect({ report }) {
+  useEffect(() => {
+    report(new Date());
+  }, [report]);
+  return null;
+}
+
+export function Memoized({ report }) {
+  const onClick = useCallback(() => report(new Date()), [report]);
+  return <button onClick={onClick} />;
+}
+
+export function InAMap({ items }) {
+  return (
+    <ul>
+      {items.map(item => (
+        <li key={item.id}>{new Date().getTime() - item.at}</li>
+      ))}
+    </ul>
+  );
+}
+
+export function CalledInRender() {
+  const today = () => new Date();
+  return <Foo today={today()} />;
+}
+
+export function Immediate() {
+  const today = (() => new Date())();
+  return <Foo today={today} />;
+}
+
+export function InAHelper({ items }) {
+  function age(item) {
+    return new Date() - item.at;
+  }
+  return <Foo ages={items.map(age)} />;
+}
+
+export function Nested({ create }) {
+  const make = () => () => create(new Date());
+  return <button onClick={make()} />;
+}
+
+export function useStamp(report) {
+  return useCallback(() => report(new Date()), [report]);
+}
+
+export function useStampNotMemoized() {
+  useEffect(() => {});
+  return () => new Date();
+}
+`,
+};
+
+/** A function declaration is initialized when its scope is entered, so a callback above it may capture it. */
+const hoistedFunctions: Files = {
+  ".oxlintrc.json": rc(),
+  "captured-before-declaration.jsx": `import { useCallback, useEffect } from "react";
+
+export function HookArgument({ value }) {
+  const callback = useIdentity(() => format());
+  function format() {
+    return \`value: \${value}\`;
+  }
+  return <Stringify callback={callback} format={format} />;
+}
+
+export function Handler({ value }) {
+  const onClick = () => send(read());
+  function read() {
+    return value;
+  }
+  return <button onClick={onClick} />;
+}
+
+export function Effect({ value }) {
+  useEffect(() => {
+    log();
+  });
+  function log() {
+    console.log(value);
+  }
+  return null;
+}
+
+export function Memoized({ value }) {
+  const onClick = useCallback(() => send(read()), [read]);
+  function read() {
+    return value;
+  }
+  return <button onClick={onClick} />;
+}
+
+export function PassedByName({ value }) {
+  const element = <button onClick={handle} />;
+  function handle() {
+    send(value);
+  }
+  return element;
+}
+
+export function CalledBeforeDeclaration({ value }) {
+  const result = compute();
+  function compute() {
+    return { value };
+  }
+  return <Stringify result={result} compute={compute} />;
+}
+
+export function Recursive({ depth }) {
+  const start = () => walk(depth);
+  function walk(n) {
+    return n > 0 ? walk(n - 1) : 0;
+  }
+  return <button onClick={start} />;
+}
+
+export function EachOther({ value }) {
+  const start = () => first();
+  function first() {
+    return second();
+  }
+  function second() {
+    return value;
+  }
+  return <button onClick={start} />;
+}
+`,
+  "reassigned.jsx": `export function AfterTheCapture() {
+  const callback = useIdentity(() => format());
+  format = () => "reassigned";
+  function format() {
+    return "declared";
+  }
+  return callback;
+}
+
+export function BeforeTheDeclaration() {
+  let count = 0;
+  wrapper = () => null;
+  function wrapper() {
+    count++;
+  }
+  return <button onClick={() => wrapper()} />;
+}
+
+export function AfterTheDeclaration({ value }) {
+  const onClick = () => send(read());
+  function read() {
+    return value;
+  }
+  read = () => null;
+  return <button onClick={onClick} />;
+}
+
+export function InAHandler({ value }) {
+  function read() {
+    return value;
+  }
+  const onClick = () => {
+    read = () => null;
+  };
+  return <button onClick={onClick}>{read()}</button>;
+}
+`,
+  "reassigns-a-local.jsx": `import { useDebugValue } from "react";
+
+export function useCapturedBeforeDeclaration() {
+  useDebugValue(null);
+  let count = 0;
+  const cb = () => wrapper();
+  function wrapper() {
+    count++;
+  }
+  return cb;
+}
+
+export function useReferencedBeforeDeclaration() {
+  useDebugValue(null);
+  let count = 0;
+  const result = wrapper;
+  function wrapper() {
+    count++;
+  }
+  return result;
+}
+
+export function useDeclaredFirst() {
+  useDebugValue(null);
+  let count = 0;
+  function wrapper() {
+    count = count + 1;
+  }
+  const cb = () => wrapper();
+  return cb;
+}
+
+export function CapturedBeforeDeclaration() {
+  let count = 0;
+  const cb = () => wrapper();
+  function wrapper() {
+    count++;
+  }
+  return <button onClick={cb}>{count}</button>;
+}
+`,
+  "in-blocks.jsx": `export function InABlock({ value, flag }) {
+  let onClick = null;
+  if (flag) {
+    onClick = () => send(read());
+    function read() {
+      return value;
+    }
+  }
+  return <button onClick={onClick} />;
+}
+
+export function InACallback({ value }) {
+  const onClick = () => {
+    const later = () => read();
+    function read() {
+      return value;
+    }
+    return later();
+  };
+  return <button onClick={onClick} />;
+}
+
+export function AfterAReturn({ value }) {
+  const onClick = () => send(read());
+  return <button onClick={onClick} />;
+
+  function read() {
+    return value;
+  }
+}
+`,
+};
+
+/** Passing `props.inputRef` as a `ref` doesn't make `props` a ref. */
+const refReceiver: Files = {
+  ".oxlintrc.json": rc(),
+  "members.tsx": `export function Sibling(props) {
+  return <input ref={props.inputRef} value={props.value} readOnly />;
+}
+
+export function OwnRef(props) {
+  return <button ref={props.ref} />;
+}
+
+export function Destructured({ ref }) {
+  return <button ref={ref} />;
+}
+
+export function Nested(props) {
+  return <input ref={props.refs.input} value={props.refs.value} aria-label={props.label} />;
+}
+
+export function Computed(props) {
+  return <input ref={props.refs[props.index]} value={props.values[props.index]} readOnly />;
+}
+
+export function Optional(props) {
+  return <input ref={props.refs?.input} value={props.refs?.value} readOnly />;
+}
+
+export function Conditional(props) {
+  return <input ref={props.flag ? props.first : props.second} value={props.first.value} readOnly />;
+}
+
+export function OnAComponent(props) {
+  return <Field ref={props.fieldRef} innerRef={props.inner} label={props.label} />;
+}
+`,
+  "callback-refs.tsx": `const callbacks = {
+  refs: { setReference() {}, setFloating() {} },
+  floatingStyles: { position: "absolute" },
+};
+
+function useFloating() {
+  return callbacks;
+}
+
+export function Floating() {
+  const { refs, floatingStyles } = useFloating();
+  return (
+    <>
+      <div ref={refs.setReference} />
+      <div ref={refs.setFloating} style={floatingStyles} />
+    </>
+  );
+}
+
+export function NotDestructured() {
+  const floating = useFloating();
+  return <div ref={floating.refs.setFloating} style={floating.floatingStyles} />;
+}
+
+export function State() {
+  const [state] = useState({ attach() {}, label: "a" });
+  return <div ref={state.attach}>{state.label}</div>;
+}
+
+export function Context() {
+  const context = useContext(Fields);
+  return <input ref={context.register} name={context.name} />;
+}
+`,
+  // These read a ref's value during render.
+  "reads.tsx": `import { useRef } from "react";
+
+export function CurrentOfAProp(props) {
+  return <input ref={props.inputRef} value={props.inputRef.current} readOnly />;
+}
+
+export function OwnRefAndItsValue() {
+  const ref = useRef(null);
+  return <input ref={ref} value={ref.current} readOnly />;
+}
+
+export function RefInAnObject() {
+  const ref = useRef(null);
+  const fields = { input: ref, label: "a" };
+  return <input ref={fields.input} aria-label={fields.label} value={fields.input.current} readOnly />;
+}
+
+export function AfterwardsInRender(props) {
+  const element = <input ref={props.inputRef} />;
+  props.inputRef.current = null;
+  return element;
+}
+`,
+};
+
+/** A value that's assigned in a `try` block and used after it, and a ref that's compared with what a function returns. */
+const catchPhis: Files = {
+  ".oxlintrc.json": rc(),
+  "phis.jsx": `import { useMemo } from "react";
+
+export function ConstantDeclaration() {
+  let x = 0;
+  try {
+    const p = "p";
+    x = f(p);
+  } catch {}
+  return <div>{x}</div>;
+}
+
+export function useNestedConditional(json) {
+  return useMemo(() => {
+    let result = 0;
+    try {
+      result = json ? f(json) : null;
+    } catch {}
+    return result;
+  }, [json]);
+}
+
+export function PrunedEdgeValues({ value }) {
+  let result = "initial";
+  try {
+    const prefix = "p";
+    result = read(prefix, value);
+  } catch {
+    result = "caught";
+  }
+  return <div>{result}</div>;
+}
+
+export function TwoVariables({ value }) {
+  let a = null;
+  let b = null;
+  try {
+    const key = 1;
+    a = first(key);
+    const other = key + 1;
+    b = second(other, value);
+  } catch {
+    b = a;
+  }
+  return <div>{a}{b}</div>;
+}
+
+export function Logical({ value }) {
+  let result = null;
+  try {
+    const fallback = "none";
+    result = (value && parse(value)) ?? fallback;
+  } catch {}
+  return <div>{result}</div>;
+}
+
+export function InALoop({ items }) {
+  let last = null;
+  for (const item of items) {
+    try {
+      const scale = 2;
+      last = item.read(scale);
+    } catch {
+      continue;
+    }
+  }
+  return <div>{last}</div>;
+}
+
+export function Nested({ value }) {
+  let result = 0;
+  try {
+    const one = 1;
+    try {
+      const two = 2;
+      result = f(one, two, value);
+    } catch {}
+    result = g(result, one);
+  } catch {}
+  return <div>{result}</div>;
+}
+
+export function WithAParameter({ value }) {
+  let result = null;
+  try {
+    const limit = 10;
+    result = f(value, limit);
+  } catch (error) {
+    result = String(error);
+  }
+  return <div>{result}</div>;
+}
+`,
+  "callbacks.jsx": `import { useRef } from "react";
+
+export function NullishGuard() {
+  const ref = useRef(null);
+  const empty = () => null;
+  if (ref.current === empty()) {
+    ref.current = 1;
+  }
+  return <div />;
+}
+
+export function CallbackResult() {
+  const ref = useRef(null);
+  const callbacks = { read: () => ({ ref }) };
+  const { ref: alias } = callbacks.read();
+  return <div>{alias.current}</div>;
+}
+
+export function UndefinedGuard() {
+  const ref = useRef();
+  const nothing = () => undefined;
+  if (ref.current === nothing()) {
+    ref.current = create();
+  }
+  return <div />;
+}
+
+export function LooseGuard() {
+  const ref = useRef(null);
+  const empty = () => null;
+  if (ref.current == empty()) {
+    ref.current = create();
+  }
+  return <div />;
+}
+
+export function NotAGuard() {
+  const ref = useRef(null);
+  const zero = () => 0;
+  if (ref.current === zero()) {
+    ref.current = 1;
+  }
+  return <div />;
+}
+
+export function ReturnsTheRef() {
+  const ref = useRef(null);
+  const get = () => ref;
+  const same = get();
+  return <div>{same.current}</div>;
+}
+
+export function Declaration() {
+  const ref = useRef(null);
+  function empty() {
+    return null;
+  }
+  if (ref.current === empty()) {
+    ref.current = 1;
+  }
+  return <div ref={ref} />;
+}
+`,
+  "catch-parameter.js": `import { useState } from "react";
+const bar = () => ({ data: null });
+
+export const useFoot = () => {
+  const [, setState] = useState(null);
+  try {
+    const { data } = bar();
+    setState({
+      data,
+      error: null,
+    });
+  } catch (err) {
+    setState(_prevState => ({
+      loading: false,
+      error: err,
+    }));
+  }
+};
+
+export function useCaptured(load) {
+  const [, setError] = useState(null);
+  try {
+    load();
+  } catch (thrown) {
+    const report = () => setError(thrown);
+    report();
+  }
+}
+`,
+};
+
+/**
+ * A comment that disables an ESLint rule of React. The compiler used to skip every function that such a comment is
+ * in, and react/rule-suppression reported the comment.
+ */
+const suppressions: Files = {
+  ".oxlintrc.json": rc(),
+  "next-line.jsx": `import { useRef } from "react";
+
+export function NothingElse({ value }) {
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const doubled = value * 2;
+  return <div>{doubled}</div>;
+}
+
+export function RulesOfHooks({ value }) {
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const doubled = value * 2;
+  return <div>{doubled}{Date.now()}</div>;
+}
+
+export function AboveTheReport() {
+  const ref = useRef(null);
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  ref.current = "bad";
+  return <button ref={ref} />;
+}
+
+export function Unrelated({ value }) {
+  // eslint-disable-next-line no-console
+  console.log(value);
+  return <div>{Math.random()}</div>;
+}
+
+export function SeveralRules(props) {
+  // eslint-disable-next-line react-hooks/rules-of-hooks, react-hooks/exhaustive-deps, no-console
+  props.value = 1;
+  return <div />;
+}
+
+export function Oxlint() {
+  // oxlint-disable-next-line react/exhaustive-deps
+  const filler = 0;
+  const b = Math.random() + filler;
+  return <div>{b}</div>;
+}
+
+export function OxlintRulesOfHooks(props) {
+  // oxlint-disable-next-line react-hooks/rules-of-hooks
+  if (props.flag) useThing();
+  return <div />;
+}
+
+export function Untouched() {
+  return <div>{Date.now()}</div>;
+}
+`,
+  "block.jsx": `import { useEffect, useState } from "react";
+
+/* eslint-disable react-hooks/rules-of-hooks */
+export function Inside({ value }) {
+  const doubled = value * 2;
+  return <div>{doubled}{Date.now()}</div>;
+}
+/* eslint-enable react-hooks/rules-of-hooks */
+
+export function After() {
+  return <div>{Date.now()}</div>;
+}
+
+/* eslint-disable react-hooks/exhaustive-deps */
+export function Form({ item }) {
+  const [name, setName] = useState("");
+  useEffect(() => {
+    if (!item) return;
+    setName(item.name);
+  }, [item?.id]);
+  return <input value={name} onChange={event => setName(event.target.value)} />;
+}
+/* eslint-enable */
+
+export function Last(props) {
+  props.value = 1;
+  return <div />;
+}
+`,
+  "unclosed.jsx": `/* eslint-disable react-hooks/rules-of-hooks */
+function lowercasecomponent() {
+  "use forget";
+  const x = [];
+  return <div>{x}</div>;
+}
+
+export function First(props) {
+  return <div>{props.greeting}</div>;
+}
+
+export function Second() {
+  let x = React.useMemo(async () => {
+    await a;
+  }, []);
+
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  return <div>{x}{Math.random()}</div>;
+}
+`,
+  "unclosed-exhaustive-deps.jsx": `/* eslint-disable react-hooks/exhaustive-deps */
+import { useCallback, useEffect, useMemo } from "react";
+
+export function Effect({ x }) {
+  useEffect(() => {
+    console.log(x);
+  }, []);
+  return null;
+}
+
+export function Memo({ x }) {
+  const value = useMemo(() => [x], []);
+  return <div>{value}</div>;
+}
+
+export function Callback({ x }) {
+  const send = useCallback(() => post(x), []);
+  return <button onClick={send} />;
+}
+`,
+  "use-no-forget.jsx": `import { useRef } from "react";
+
+const useControllableState = options => {};
+function NoopComponent() {}
+
+export function OptedOut() {
+  "use no forget";
+  const ref = useRef(null);
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  ref.current = "bad";
+  return <button ref={ref} />;
+}
+
+export function OptedOutWithNoMemo(props) {
+  "use no memo";
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  props.value = 1;
+  return <div>{Date.now()}</div>;
+}
+
+/* eslint-disable react-hooks/rules-of-hooks */
+function optedin() {
+  "use forget";
+  const x = [];
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  return <div>{x}{Date.now()}</div>;
+}
+/* eslint-enable react-hooks/rules-of-hooks */
+`,
+  "dependencies.jsx": `import { useCallback, useEffect, useMemo, useState } from "react";
+
+export function Effect({ x }) {
+  useEffect(
+    () => {
+      console.log(x);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [
+      /* intentionally missing */
+    ],
+  );
+  const memo = useMemo(() => [x], [x]);
+  return <Validate inputs={[x]} output={memo} />;
+}
+
+export function Callback() {
+  const item = [];
+  const push = useCallback(
+    () => {
+      arrayPush(item, 1);
+    }, // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+  return <Button push={push} />;
+}
+
+export function Form({ item }) {
+  const [name, setName] = useState("");
+  useEffect(() => {
+    if (!item) return;
+    setName(item.name);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.id]);
+  return <input value={name} onChange={event => setName(event.target.value)} />;
+}
+
+export function SameLine({ a, b }) {
+  const sum = useMemo(() => a + b, [a]); // eslint-disable-line react-hooks/exhaustive-deps
+  return <div>{sum}</div>;
+}
+`,
+  "every-rule.jsx": `/* eslint-disable */
+export function Component(props) {
+  props.value = Date.now();
+  return <div />;
+}
+`,
+  "flow.jsx": `export function Hook({ value }) {
+  // $FlowFixMe[react-rule-hook]
+  const doubled = value * 2;
+  return <div>{doubled}{Date.now()}</div>;
+}
+
+export function Ref({ value }) {
+  // $FlowFixMe[react-rule-unsafe-ref]
+  const doubled = value * 2;
+  return <div>{doubled}{Date.now()}</div>;
+}
+
+export function Other() {
+  // $FlowFixMe[incompatible-type]
+  return <div>{Date.now()}</div>;
+}
+`,
+};
+
+/** `declare` in a function declares nothing at run time. */
+const ambientDeclarations: Files = {
+  ".oxlintrc.json": rc(),
+  "inside.tsx": `import { useRef } from "react";
+
+export function Var() {
+  declare var document: Document | undefined;
+  const env = typeof document === "undefined" ? "server" : document.nodeName;
+  return <div>{env}</div>;
+}
+
+export function Const() {
+  declare const __DEV__: boolean;
+  return <div>{__DEV__ ? "dev" : "prod"}</div>;
+}
+
+export function Let() {
+  declare let navigator: Navigator | undefined;
+  return <div>{navigator?.language}</div>;
+}
+
+export function ReferencedBeforeTheDeclaration() {
+  const env = typeof document === "undefined" ? "server" : document.nodeName;
+  declare const document: Document | undefined;
+  return <div>{env}</div>;
+}
+
+export function InACallback() {
+  declare const document: Document | undefined;
+  const readEnv = () => (typeof document === "undefined" ? "server" : document.nodeName);
+  return <button onClick={readEnv}>{readEnv()}</button>;
+}
+
+export function BesideAnUninitializedLocal({ flag }) {
+  let value;
+  declare const document: Document | undefined;
+  if (flag) value = typeof document === "undefined" ? "server" : document.nodeName;
+  return <div>{value}</div>;
+}
+
+export function SeveralNames() {
+  declare const first: number, second: number;
+  return <div>{first + second}</div>;
+}
+
+export function InABlock({ flag }) {
+  if (flag) {
+    declare const analytics: { track(name: string): void };
+    analytics.track("shown");
+  }
+  return <div />;
+}
+
+export function DeclaredInACallback() {
+  const onClick = () => {
+    declare const analytics: { track(name: string): void };
+    analytics.track("click");
+  };
+  return <button onClick={onClick} />;
+}
+
+export function Written() {
+  declare let title: string;
+  title = "changed";
+  return <div>{title}</div>;
+}
+
+export function WithAReport() {
+  declare const scale: number;
+  const ref = useRef(0);
+  return <div>{ref.current * scale}</div>;
+}
+`,
+  "before.tsx": `import { useRef } from "react";
+
+declare const __DEV__: boolean;
+declare var analytics: { track(name: string): void; last?: string };
+declare let counter: number;
+declare function track(name: string): void;
+declare class Store {
+  read(): number;
+}
+declare namespace Flags {
+  const enabled: boolean;
+}
+declare enum Mode {
+  Light,
+  Dark,
+}
+declare global {
+  interface Window {
+    started?: number;
+  }
+}
+declare module "virtual:config" {
+  export const name: string;
+}
+
+export function Reads() {
+  return <div>{__DEV__ ? "dev" : Flags.enabled ? "on" : "off"}{Mode.Dark}</div>;
+}
+
+export function Calls() {
+  track("render");
+  analytics.track("render");
+  return <div>{new Store().read()}</div>;
+}
+
+export function Writes() {
+  counter = counter + 1;
+  analytics.last = "render";
+  return <div>{counter}</div>;
+}
+
+export function InAHandler() {
+  const onClick = () => {
+    counter++;
+    track("click");
+  };
+  return <button onClick={onClick} />;
+}
+
+export function WithAReport() {
+  const ref = useRef(0);
+  return <div>{__DEV__ ? ref.current : 0}</div>;
+}
+`,
+};
+
+/** A `finally` block isn't compiled, but the rules see what it and its `try` block use. */
+const tryFinally: Files = {
+  ".oxlintrc.json": rc(),
+  "dependencies.jsx": `import { useCallback, useEffect, useMemo, useState } from "react";
+
+export function TryBody() {
+  const [foo] = useState("bar");
+  useEffect(() => {
+    try {
+      report(foo);
+    } finally {
+    }
+  }, [foo]);
+}
+
+export function FinallyBody() {
+  const [foo] = useState("bar");
+  const cb = useCallback(() => {
+    try {
+      report("x");
+    } finally {
+      report(foo);
+    }
+  }, [foo]);
+  return <button onClick={cb} />;
+}
+
+export function WithACatch() {
+  const [foo] = useState("bar");
+  const cb = useCallback(() => {
+    try {
+      report("x");
+    } catch {
+      report("y");
+    } finally {
+      report(foo);
+    }
+  }, [foo]);
+  return <button onClick={cb} />;
+}
+
+export function ReturnInTry({ foo }) {
+  const value = useMemo(() => {
+    try {
+      return foo;
+    } finally {
+      report("z");
+    }
+  }, [foo]);
+  return <div>{value}</div>;
+}
+
+export function MissingInFinally() {
+  const [foo] = useState("bar");
+  useEffect(() => {
+    try {
+      report("x");
+    } finally {
+      report(foo);
+    }
+  }, []);
+}
+
+export function MissingInTry({ a, b }) {
+  const value = useMemo(() => {
+    try {
+      return compute(a);
+    } finally {
+      report(b);
+    }
+  }, [b]);
+  return <div>{value}</div>;
+}
+
+export function ExtraInFinally({ a, b }) {
+  const cb = useCallback(() => {
+    try {
+      report(a);
+    } finally {
+      report("done");
+    }
+  }, [a, b]);
+  return <button onClick={cb} />;
+}
+
+export function Nested({ a, b, c }) {
+  const cb = useCallback(() => {
+    try {
+      try {
+        report(a);
+      } finally {
+        report(b);
+      }
+    } finally {
+      report(c);
+    }
+  }, [a]);
+  return <button onClick={cb} />;
+}
+`,
+  "render.jsx": `import { useRef, useState } from "react";
+
+export function Plain(props) {
+  let value = 0;
+  try {
+    value = props.load();
+  } finally {
+    props.done();
+  }
+  return <div>{value}</div>;
+}
+
+export function ReadsARefInTry() {
+  const ref = useRef(null);
+  let value;
+  try {
+    value = ref.current;
+  } finally {
+    cleanup();
+  }
+  return <div>{value}</div>;
+}
+
+export function ReadsARefInFinally() {
+  const ref = useRef(null);
+  let value;
+  try {
+    prepare();
+  } finally {
+    value = ref.current;
+  }
+  return <div>{value}</div>;
+}
+
+export function MutatesInFinally(props) {
+  try {
+    prepare();
+  } finally {
+    props.done = true;
+  }
+  return <div />;
+}
+
+export function SetsStateInFinally() {
+  const [state, setState] = useState(0);
+  try {
+    prepare();
+  } finally {
+    setState(1);
+  }
+  return <div>{state}</div>;
+}
+
+export function ImpureInFinally() {
+  let at;
+  try {
+    prepare();
+  } finally {
+    at = Date.now();
+  }
+  return <div>{at}</div>;
+}
+
+export function HookInTry() {
+  try {
+    const [state] = useState(0);
+    return <div>{state}</div>;
+  } finally {
+    cleanup();
+  }
+}
+
+export function JsxInTry(props) {
+  try {
+    return <Child value={props.value} />;
+  } finally {
+    cleanup();
+  }
+}
+
+export function WithACatch(props) {
+  let value = 0;
+  try {
+    value = props.load();
+  } catch (error) {
+    value = -1;
+  } finally {
+    props.done();
+  }
+  return <div>{value}</div>;
+}
+
+export function AfterTheStatement(props) {
+  try {
+    prepare();
+  } finally {
+    cleanup();
+  }
+  props.value = 1;
+  return <div />;
+}
+
+export function InALoop({ items }) {
+  const ref = useRef(null);
+  for (const item of items) {
+    try {
+      if (item.skip) continue;
+      item.run();
+    } finally {
+      item.close();
+    }
+  }
+  return <div>{ref.current}</div>;
+}
+
+export function InAHandler(props) {
+  const ref = useRef(null);
+  const onClick = () => {
+    try {
+      ref.current = props.load();
+    } finally {
+      props.done();
+    }
+  };
+  return <button onClick={onClick} />;
+}
+`,
+};
+
+const cannotThrow = (body: string, handler: string) => `  try {\n    ${body}\n  } catch {\n    ${handler}\n  }`;
+
+/** A `try` block with nothing in it that can throw. Its `catch` block is removed. */
+const unreachableCatch: Files = {
+  ".oxlintrc.json": rc(),
+  "unreachable.jsx": `import { useMemo, useRef } from "react";
+
+export function ReassignsAnOuterVariable() {
+  let x = 0;
+${cannotThrow("const unused = 1;", "x = 2;")}
+  return <div>{x}</div>;
+}
+
+export function InALoop(props) {
+  let x = 0;
+  for (let i = 0; i < props.count; i++) {
+    try {
+      const unused = 1;
+    } catch {
+      x = i;
+    }
+  }
+  return <div>{x}</div>;
+}
+
+export function Nested(props) {
+  let x = props.value;
+  try {
+    try {
+      const unused = 1;
+    } catch {
+      x = 1;
+    }
+  } catch {
+    x = 2;
+  }
+  return <div>{x}</div>;
+}
+
+export function WithAnIf(props) {
+  let x = props.value;
+  try {
+    const unused = 1;
+  } catch {
+    if (props.cond) {
+      x = 1;
+    } else {
+      x = 2;
+    }
+  }
+  return <div>{x}</div>;
+}
+
+export function WithoutAReassignment(props) {
+  try {
+    const unused = 1;
+  } catch {
+    if (props.cond) {
+      props.onError();
+    } else {
+      props.onFallback();
+    }
+  }
+  return <div>{props.value}</div>;
+}
+
+export function Empty() {
+  let x = 0;
+  try {
+  } catch {
+    x = 1;
+  }
+  return <div>{x}</div>;
+}
+
+export function WithAParameter() {
+  let message = "";
+  try {
+    const unused = "a";
+  } catch (error) {
+    message = String(error);
+  }
+  return <div>{message}</div>;
+}
+
+export function Arithmetic() {
+  let x = 0;
+  try {
+    const a = 1;
+    const b = a + 2;
+    x = b;
+  } catch {
+    x = -1;
+  }
+  return <div>{x}</div>;
+}
+
+export function InAWhileLoop(props) {
+  let x = 0;
+  let i = 0;
+  while (i < props.count) {
+    try {
+      const step = 1;
+      i = i + step;
+    } catch {
+      x = i;
+      break;
+    }
+  }
+  return <div>{x}</div>;
+}
+
+export function InAMemo({ value }) {
+  const result = useMemo(() => {
+    let x = value;
+    try {
+      const unused = 1;
+    } catch {
+      x = null;
+    }
+    return x;
+  }, [value]);
+  return <div>{result}</div>;
+}
+
+export function InAHandler({ send }) {
+  const onClick = () => {
+    let x = 0;
+    try {
+      const unused = 1;
+    } catch {
+      x = 2;
+    }
+    send(x);
+  };
+  return <button onClick={onClick} />;
+}
+
+export function ReturnsFromTheCatch() {
+  try {
+    const unused = 1;
+  } catch {
+    return null;
+  }
+  return <div />;
+}
+
+export function TwoInARow() {
+  let x = 0;
+  let y = 0;
+${cannotThrow("const first = 1;", "x = 1;")}
+${cannotThrow("const second = 2;", "y = x;")}
+  return <div>{x}{y}</div>;
+}
+`,
+  // The rest of the function is still checked.
+  "with-a-report.jsx": `import { useRef } from "react";
+
+export function AfterTheTry() {
+  const ref = useRef(null);
+  let x = 0;
+${cannotThrow("const unused = 1;", "x = 2;")}
+  return <div>{x}{ref.current}</div>;
+}
+
+export function InTheCatch(props) {
+  let x = 0;
+${cannotThrow("const unused = 1;", "props.value = x;")}
+  return <div>{x}</div>;
+}
+
+export function InALoop(props) {
+  const ref = useRef(null);
+  let x = 0;
+  for (let i = 0; i < props.count; i++) {
+    try {
+      const unused = 1;
+    } catch {
+      x = ref.current;
+    }
+  }
+  props.last = x;
+  return <div>{x}</div>;
+}
+
+export function Reachable(props) {
+  const ref = useRef(null);
+  let x = 0;
+  try {
+    props.load();
+  } catch {
+    x = ref.current;
+  }
+  return <div>{x}</div>;
+}
+`,
+};
+
+/** A property key that's half of a surrogate pair can't be compiled. A string value can. */
+const loneSurrogates: Files = {
+  ".oxlintrc.json": rc(),
+  "keys.jsx": `export function Lead() {
+  return <div>{{ "\\uD800": 1 }["\\uD800"]}</div>;
+}
+
+export function Trail() {
+  return <div>{{ "\\uDC00": 2 }["\\uDC00"]}</div>;
+}
+
+export const Arrow = () => <div>{{ "\\uD800": 3 }["\\uD800"]}</div>;
+
+export function Computed() {
+  return <div>{{ ["\\uD800"]: 4 }["\\uD800"]}</div>;
+}
+
+export function Destructured({ "\\uD800": value }) {
+  return <div>{value}</div>;
+}
+
+export function Assigned(props) {
+  let value;
+  ({ "\\uDC00": value } = props);
+  return <div>{value}</div>;
+}
+
+export function Method() {
+  const object = {
+    "\\uD800"() {
+      return 5;
+    },
+  };
+  return <div>{object["\\uD800"]()}</div>;
+}
+
+export function InANestedFunction() {
+  const read = () => {
+    return { "\\uDC00": 6 }["\\uDC00"];
+  };
+  return <div>{read()}</div>;
+}
+
+export function Pairs() {
+  return <div>{{ "\\uD800\\uDC00": 7, "\\uFFFDd800": 8 }["\\uD800\\uDC00"]}</div>;
+}
+
+export function Reversed() {
+  return <div>{{ "\\uDC00\\uD800": 9 }.length}</div>;
+}
+
+export function Braces() {
+  return <div>{{ "\\u{D800}": 10, "a\\u{DFFF}b": 11 }.a}</div>;
+}
+
+export function SingleQuotes() {
+  return <div>{{ '\\uD83D': 12 }.a}</div>;
+}
+
+export function Getter() {
+  const object = {
+    get "\\uD800"() {
+      return 13;
+    },
+  };
+  return <div>{object.a}</div>;
+}
+`,
+  "values.jsx": `import { useRef } from "react";
+
+export function Values() {
+  const ref = useRef(null);
+  return <Emoji codepoints={["\\uD83E", "\\uDD21"]} size={16} title={ref.current} />;
+}
+
+export function MemberAccess(props) {
+  const ref = useRef(null);
+  return <div>{props["\\uD800"]}{props.items["\\uDC00"]}{ref.current}</div>;
+}
+
+export function Template(props) {
+  const ref = useRef(null);
+  const text = \`\\uD800\${props.a}\\uDC00\`;
+  return <div>{text}{ref.current}</div>;
+}
+
+export function Entities() {
+  const ref = useRef(null);
+  return (
+    <div title="&#xD800;" pair="&#xD83D;&#xDE00;" mixed="x&#xDC00;y" data-ref={ref.current}>
+      &#xD800;{"&#xD800;"}&#xD83D;&#xDE00;
+    </div>
+  );
+}
+
+export function Attribute() {
+  const ref = useRef(null);
+  return <div title="\\uD800" data-ref={ref.current} />;
+}
+`,
+};
+
+/** A component that reads a ref during render, and `props` followed by `members`. */
+const chained = (
+  members: string,
+  use = (chain: string) => `const value = ${chain};`,
+) => `import { useRef } from "react";
+
+export function Chain(props) {
+  const ref = useRef(0);
+  const bad = ref.current;
+  ${use(`props${members}`)}
+  return <div>{bad}</div>;
+}
+`;
+const members = (n: number, member = ".a") => Buffer.alloc(n * member.length, member).toString();
+
+/** A function with a chain of more than 500 members isn't compiled. */
+const memberChains: Files = {
+  ".oxlintrc.json": rc(),
+  "499.jsx": chained(members(499)),
+  "500.jsx": chained(members(500)),
+  "501.jsx": chained(members(501)),
+  "5000.jsx": chained(members(5000)),
+  "computed-500.jsx": chained(members(500, "[0]")),
+  "computed-501.jsx": chained(members(501, "[0]")),
+  "optional-500.jsx": chained(members(500, "?.a")),
+  "optional-501.jsx": chained(members(501, "?.a")),
+  "call-in-the-middle.jsx": chained(`${members(300)}()${members(300)}`),
+  "call-at-the-end-500.jsx": chained(`${members(500)}()`),
+  "call-at-the-end-501.jsx": chained(`${members(501)}()`),
+  "in-a-callback-501.jsx": chained(members(501), chain => `const value = () => ${chain};`),
+  "assigned-500.jsx": chained(members(500), chain => `const write = () => {\n    ${chain} = 1;\n  };`),
+  "assigned-501.jsx": chained(members(501), chain => `const write = () => {\n    ${chain} = 1;\n  };`),
+  "two-chains.jsx": chained(members(300), chain => `const value = [${chain}, ${chain}];`),
+  "another-component.jsx": `${chained(members(501))}
+export function Short(props) {
+  const ref = useRef(0);
+  return <div>{ref.current}{props.a.a.a}</div>;
+}
+`,
+};
+
+/** Functions that access a ref have the same type wherever in the function the access is. */
+const refTypes: Files = {
+  ".oxlintrc.json": rc(),
+  "convergence.jsx": `import { useEffect, useMemo, useRef } from "react";
+
+export function RecursiveClosure() {
+  useEffect(() => {
+    let config = { onEvent: () => {} };
+    subscribe(() => {
+      config = { ...config };
+    });
+  }, []);
+  return <div />;
+}
+
+export function RecursiveLoop({ items }) {
+  let x = () => {};
+  for (const item of items) {
+    x = { x };
+  }
+  return <div onClick={x} />;
+}
+
+export function PhiJoin({ cond }) {
+  const ref1 = useRef(null);
+  const ref2 = useRef(null);
+  const chosen = cond ? ref1 : ref2;
+  return <div ref={chosen} />;
+}
+
+export function useCancellableDebounce(fn, time) {
+  const timeoutRef = useRef(null);
+  return useMemo(() => {
+    const cancel = () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+    const debounced = (...args) => {
+      cancel();
+      timeoutRef.current = setTimeout(() => fn(...args), time);
+    };
+    debounced.cancel = cancel;
+    return debounced;
+  }, [fn, time]);
+}
+
+export function WhileLoop({ depth }) {
+  let wrap = () => null;
+  let n = depth;
+  while (n > 0) {
+    wrap = [wrap];
+    n = n - 1;
+  }
+  return <div onClick={wrap} />;
+}
+
+export function RefInALoop({ items }) {
+  const ref = useRef(null);
+  let read = () => ref.current;
+  for (const item of items) {
+    read = { read, item };
+  }
+  return <List read={read} />;
+}
+
+export function TwoClosures() {
+  const ref = useRef(0);
+  let handler = () => {
+    ref.current = 1;
+  };
+  useEffect(() => {
+    handler = () => {
+      ref.current = 2;
+      handler();
+    };
+  }, []);
+  return <div onClick={handler} />;
+}
+
+export function Reassigned({ flag }) {
+  const ref = useRef(0);
+  let get = () => ref.current;
+  if (flag) {
+    get = () => ref.current + 1;
+  }
+  return <div onClick={get} />;
+}
+`,
+};
+
+/** The message for modifying `.current` suggests a name that ends in "Ref". */
+const refHints: Files = {
+  ".oxlintrc.json": rc(),
+  "hints.tsx": `import { useEffect, useRef } from "@wordpress/element";
+
+export function AssignsCurrent({ value }) {
+  value.current = true;
+  return <div />;
+}
+
+export function InAnEffect({ foo }) {
+  useEffect(() => {
+    foo.current = true;
+  }, [foo]);
+}
+
+export function Context() {
+  const FooContext = useContext(Foo);
+  const onClick = () => {
+    FooContext.current = true;
+  };
+  return <div onClick={onClick} />;
+}
+
+export function useLatest<T>(value: T) {
+  const latest = useRef(value);
+  useEffect(() => {
+    latest.current = value;
+  });
+  return () => latest.current;
+}
+
+export function Clicks() {
+  const clicks = useRef(0);
+  return (
+    <button
+      onClick={() => {
+        clicks.current += 1;
+      }}
+    />
+  );
+}
+
+export function useLatestRef<T>(value: T) {
+  const latestRef = useRef(value);
+  useEffect(() => {
+    latestRef.current = value;
+  });
+  return () => latestRef.current;
+}
+
+export function NamedRef({ valueRef }) {
+  valueRef.current = true;
+  return <div />;
+}
+
+export function OtherProperty({ value }: { value: { other: boolean } }) {
+  value.other = true;
+  return <div />;
+}
+
+export function Nested({ value }) {
+  value.current.inner = true;
+  return <div />;
+}
+
+export function ComputedCurrent({ value }) {
+  value["current"] = true;
+  return <div />;
+}
+
+export function Updates({ value }) {
+  value.current++;
+  return <div />;
+}
+
+export function Deletes({ value }) {
+  delete value.current;
+  return <div />;
+}
+
+export function State() {
+  const [state] = useState({ current: 0 });
+  state.current = 1;
+  return <div />;
+}
+
+export function HookResult() {
+  const store = useStore();
+  const onClick = () => {
+    store.current = null;
+  };
+  return <div onClick={onClick} />;
+}
+`,
+};
+
+/** A function that's captured by an event handler isn't called during render, even in a callback that is. */
+const capturedFunctions: Files = {
+  ".oxlintrc.json": rc(),
+  "handlers-in-a-map.jsx": `const ITEMS = [{ id: "a" }, { id: "b" }];
+
+export function HelperCalledFromAHandler({ onPick }) {
+  function handlePick(item) {
+    onPick(item.id, Date.now());
+  }
+  return (
+    <div>
+      {ITEMS.map(item => (
+        <button key={item.id} onClick={() => handlePick(item)} />
+      ))}
+    </div>
+  );
+}
+
+export function InlineHandler() {
+  return (
+    <div>
+      {ITEMS.map(item => (
+        <button key={item.id} onClick={() => Date.now()} />
+      ))}
+    </div>
+  );
+}
+
+export function HandlerPassedByName() {
+  function handlePick() {
+    Math.random();
+  }
+  return (
+    <div>
+      {ITEMS.map(item => (
+        <button key={item.id} onClick={handlePick} />
+      ))}
+    </div>
+  );
+}
+
+export function OutsideTheMap({ onPick }) {
+  function handlePick(item) {
+    onPick(item.id, Date.now());
+  }
+  return (
+    <div>
+      <button onClick={() => handlePick(ITEMS[0])} />
+    </div>
+  );
+}
+
+export function InTheMapCallback() {
+  return <div>{ITEMS.map(item => Date.now())}</div>;
+}
+
+export function HelperCalledFromTheMapCallback() {
+  function getTime() {
+    return Date.now();
+  }
+  return <div>{ITEMS.map(item => getTime())}</div>;
+}
+
+export function ArrowHelper({ onPick }) {
+  const stamp = item => onPick(item.id, performance.now());
+  return (
+    <ul>
+      {ITEMS.filter(item => item.id).map(item => (
+        <li key={item.id} onClick={() => stamp(item)} onKeyDown={event => stamp(event.target)} />
+      ))}
+    </ul>
+  );
+}
+
+export function TwoLevels({ groups, onPick }) {
+  function handlePick(item) {
+    onPick(item.id, Math.random());
+  }
+  return (
+    <div>
+      {groups.map(group => (
+        <ul key={group.id}>
+          {group.items.map(item => (
+            <li key={item.id} onClick={() => handlePick(item)} />
+          ))}
+        </ul>
+      ))}
+    </div>
+  );
+}
+
+export function HandlerAndCall({ onPick }) {
+  function stamp(item) {
+    return onPick(item.id, Date.now());
+  }
+  return (
+    <div>
+      {ITEMS.map(item => (
+        <button key={item.id} onClick={() => stamp(item)}>
+          {stamp(item)}
+        </button>
+      ))}
+    </div>
+  );
+}
+`,
+  "mutating-callbacks.jsx": `function callLater(fn) {
+  fn();
+}
+
+export function DirectCall(props) {
+  const arr = [];
+  const push = () => {
+    arr.push(props.x);
+  };
+  const run = () => {
+    push();
+  };
+  callLater(run);
+  return <div>{arr}</div>;
+}
+
+export function NestedCall(props) {
+  const arr = [];
+  const push = () => {
+    arr.push(props.x);
+  };
+  const run = () => {
+    [0].forEach(() => push());
+  };
+  callLater(run);
+  return <div>{arr}</div>;
+}
+
+export function AfterItsFrozen(props) {
+  const arr = [];
+  const push = () => {
+    arr.push(props.x);
+  };
+  const run = () => {
+    push();
+  };
+  const element = <div>{arr}</div>;
+  callLater(run);
+  return element;
+}
+
+export function CapturedNotCalled(props) {
+  const push = () => {
+    props.items.push(1);
+  };
+  const run = () => push;
+  return <button onClick={run()} />;
+}
+
+export function CapturedAndCalled(props) {
+  const push = () => {
+    props.items.push(1);
+  };
+  const run = () => push();
+  run();
+  return <div />;
+}
+`,
+};
+
+/** A manual dependency with optional and non-optional members. */
+const optionalDependencies: Files = {
+  ".oxlintrc.json": rc(),
+  "mixed.jsx": `import { useCallback, useMemo } from "react";
+
+export function Mixed({ x }) {
+  const object = useMemo(() => {
+    return identity({
+      callback: () => {
+        return identity(x.a.b?.c.d?.e);
+      },
+    });
+  }, [x.a.b?.c.d?.e]);
+  const result = useMemo(() => {
+    return [object.callback()];
+  }, [object]);
+  return <Inner x={x} result={result} />;
+}
+
+export function Shorter({ x }) {
+  const callback = useCallback(() => identity(x.a?.b.c), [x.a?.b.c]);
+  return <Inner callback={callback} />;
+}
+
+export function OptionalFirst({ x }) {
+  const callback = useCallback(() => identity(x?.a.b?.c), [x?.a.b?.c]);
+  return <Inner callback={callback} />;
+}
+
+export function AllOptional({ x }) {
+  const callback = useCallback(() => identity(x?.a?.b?.c), [x?.a?.b?.c]);
+  return <Inner callback={callback} />;
+}
+
+export function NoneOptional({ x }) {
+  const callback = useCallback(() => identity(x.a.b.c), [x.a.b.c]);
+  return <Inner callback={callback} />;
+}
+
+export function InAMemo({ x }) {
+  const value = useMemo(() => identity(x.a.b?.c.d?.e), [x.a.b?.c.d?.e]);
+  return <Inner value={value} />;
+}
+
+export function ListedShorter({ x }) {
+  const callback = useCallback(() => identity(x.a.b?.c.d), [x.a.b]);
+  return <Inner callback={callback} />;
+}
+`,
+  "non-null.tsx": `import { useCallback, useMemo } from "react";
+
+export function NonNull({ x }) {
+  const callback = useCallback(() => identity(x.a!.b?.c), [x.a!.b?.c]);
+  return <Inner callback={callback} />;
+}
+
+export function NonNullAfterOptional({ x }) {
+  const callback = useCallback(() => identity(x.a?.b!.c), [x.a?.b!.c]);
+  return <Inner callback={callback} />;
+}
+
+export function InAMemo({ x }) {
+  const value = useMemo(() => identity(x?.a!.b), [x?.a!.b]);
+  return <Inner value={value} />;
+}
+`,
+};
+
+const ownNameOfTheComponent = `import { memo, useRef } from "react";
+
+export default memo(function Tree({ items }) {
+  const ref = useRef(0);
+  const bad = ref.current;
+  return <div>{bad}{items.map(item => <Tree key={item.id} items={item.items} />)}<Tree items={[]} /></div>;
+});
+`;
+
+const updatesInATest = `let count = 0;
+
+test("counts", () => {
+  let renders = 0;
+  function Component() {
+    renders++;
+    count++;
+    return <div />;
+  }
+  render(<Component />);
+});
+`;
+
 /** The small input directories, keyed by test name. */
 export const small: Record<string, Files> = {
   comments,
@@ -414,8 +4175,11 @@ export const small: Record<string, Files> = {
     // Nothing here creates JSX or calls a hook, and nothing is named like a component or a hook.
     "plain.js": notReact(""),
     "class.js": "export class Component {\n  render() {\n    this.props.a = Date.now();\n    return null;\n  }\n}\n",
-    // The same function, opted in with 'use memo'.
+    // The same function, opted in with 'use memo'. Nothing at the top level is a component or a hook, so the file isn't
+    // compiled.
     "asked-for.js": notReact("\n  'use memo';"),
+    // Beside a hook, it is.
+    "asked-for-beside-a-hook.js": `${notReact("\n  'use memo';")}\nexport function useThing() {\n  return useState(0);\n}\n`,
   },
   todo: {
     ".oxlintrc.json": rc([]),
@@ -503,14 +4267,9 @@ function Component(props) {
   return <div />;
 }
 `,
-    "own-name-of-the-component.jsx": `import { memo, useRef } from "react";
-
-export default memo(function Tree({ items }) {
-  const ref = useRef(0);
-  const bad = ref.current;
-  return <div>{bad}{items.map(item => <Tree key={item.id} items={item.items} />)}<Tree items={[]} /></div>;
-});
-`,
+    // Nothing at the top level of this one is a component or a hook, so it isn't compiled.
+    "own-name-of-the-component.jsx": ownNameOfTheComponent,
+    "own-name-beside-a-component.jsx": `${ownNameOfTheComponent}\nexport function Other() {\n  return null;\n}\n`,
     // oxc's AST has a node for parentheses.
     "parentheses.tsx": `import { useRef } from "react";
 
@@ -578,18 +4337,9 @@ export function Component({ ["data-testid"]: testId, a }) {
   return <div>{icon}{empty}{either}</div>;
 }
 `,
-    "update.jsx": `let count = 0;
-
-test("counts", () => {
-  let renders = 0;
-  function Component() {
-    renders++;
-    count++;
-    return <div />;
-  }
-  render(<Component />);
-});
-`,
+    // Nor is this one.
+    "update.jsx": updatesInATest,
+    "update-beside-a-component.jsx": `${updatesInATest}\nexport function Other() {\n  return null;\n}\n`,
     "clock.jsx": `function Component() {
   const now = new Date();
   const text = Date();
@@ -652,6 +4402,30 @@ function Component(props) {
     // `node_modules` only has to be a substring of the path.
     "src/not_node_modules/a.jsx": impure,
   },
+  "nested components": nestedComponents,
+  "ref arguments": refArguments,
+  gate,
+  reanimated,
+  "all caps": allCaps,
+  "allowed calls": allowedCalls,
+  "async components": asyncComponents,
+  "update expressions": updateExpressions,
+  "callback locals": callbackLocals,
+  "logical assignment": logicalAssignment,
+  "new Date": newDate,
+  "hoisted functions": hoistedFunctions,
+  "ref receiver": refReceiver,
+  "catch phis": catchPhis,
+  suppressions,
+  "ambient declarations": ambientDeclarations,
+  "try finally": tryFinally,
+  "unreachable catch": unreachableCatch,
+  "lone surrogates": loneSurrogates,
+  "member chains": memberChains,
+  "ref types": refTypes,
+  "ref hints": refHints,
+  "captured functions": capturedFunctions,
+  "optional dependencies": optionalDependencies,
 };
 
 type RawDiagnostic = { filename?: string; url?: string; [key: string]: unknown };

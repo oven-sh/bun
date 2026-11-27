@@ -70,6 +70,21 @@ const slow = isDebug || isASAN ? 120_000 : undefined;
 type Found = { code: string; labels: { span: { line: number; column: number } }[] };
 const locationsOf = (found: unknown[]) =>
   (found as Found[]).map(it => [it.code, it.labels[0].span.line, it.labels[0].span.column]).sort();
+/** The lines of the diagnostics of `rule`, in order. */
+const linesOf = (found: unknown[] = [], rule: string) =>
+  (found as Found[])
+    .filter(it => it.code === `react(${rule})`)
+    .map(it => it.labels[0].span.line)
+    .sort((a, b) => a - b);
+
+/** Lints one of the directories of inputs.ts and compares the whole report with oxlint's. Returns its diagnostics. */
+async function matches(name: keyof typeof expected.reports) {
+  const { diagnostics, files, exit } = await report(small[name]);
+  expect(diagnostics).toEqual(expected.reports[name].diagnostics);
+  expect(files).toBe(expected.reports[name].files);
+  expect(exit).toBe(expected.reports[name].exit);
+  return diagnostics;
+}
 
 const memo = (params: string, values: string, listed: string) => `import { useMemo } from "react";
 
@@ -123,7 +138,6 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
         "react(preserve-manual-memoization)",
         "react(purity)",
         "react(refs)",
-        "react(rule-suppression)",
         "react(set-state-in-effect)",
         "react(set-state-in-render)",
         "react(static-components)",
@@ -138,11 +152,12 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     slow,
   );
 
-  test("reports nothing in a function that's neither a component nor a hook, unless it has 'use memo'", async () => {
+  test("reports nothing in a function that's neither a component nor a hook, unless it has 'use memo' in a file that's compiled", async () => {
     const { diagnostics, files, exit } = await report(small["not React"]);
     expect(diagnostics).toEqual(expected.reports["not React"].diagnostics);
-    expect(Object.keys(diagnostics)).toEqual(["asked-for.js"]);
-    expect(files).toBe(3);
+    // asked-for.js has the same function and nothing else, so it isn't compiled.
+    expect(Object.keys(diagnostics)).toEqual(["asked-for-beside-a-hook.js"]);
+    expect(files).toBe(4);
     expect(exit).toBe(1);
   });
 
@@ -173,7 +188,7 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
   test("on code that oxc's fork of the compiler accepts or reports differently", async () => {
     const { diagnostics, files, exit } = await report(small.fork);
     expect(diagnostics).toEqual(expected.reports.fork.diagnostics);
-    // The other files compile without diagnostics.
+    // own-name-of-the-component.jsx and update.jsx aren't compiled. The other files compile without diagnostics.
     expect(Object.keys(diagnostics)).toEqual([
       "arguments.jsx",
       "captured-target.jsx",
@@ -182,12 +197,12 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
       "computed-string.jsx",
       "default.jsx",
       "import.jsx",
-      "own-name-of-the-component.jsx",
+      "own-name-beside-a-component.jsx",
       "parentheses.tsx",
       "ref-in-memo.jsx",
       "tagged-template.jsx",
       "unreachable.jsx",
-      "update.jsx",
+      "update-beside-a-component.jsx",
       "virtual.jsx",
     ]);
     expect(locationsOf(diagnostics["captured-target.jsx"])).toEqual([["react(invariant)", 12, 9]]);
@@ -262,7 +277,7 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     slow,
   );
 
-  // oxlint 1.87.0 reports the same with up to 1,500 of them, on the third line from the end, and crashes with SIGSEGV
+  // oxlint 1.95.0 reports the same with up to 1,500 of them, on the third line from the end, and crashes with SIGSEGV
   // from 2,000.
   test(
     "reports a ref value that's used after 4,000 optional chains",
@@ -287,7 +302,8 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     slow,
   );
 
-  // oxlint and eslint-plugin-react-hooks use up all available memory on functions like these.
+  // eslint-plugin-react-hooks and oxlint 1.87.0 use up all available memory on functions like these. oxlint 1.95.0
+  // reports nothing in them either.
   test(
     "a small function with mutually recursive inferred types compiles quickly",
     async () => {
@@ -303,7 +319,7 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     slow,
   );
 
-  // oxlint doesn't finish this one within a minute.
+  // oxlint 1.87.0 doesn't finish this one within a minute.
   test(
     "a small function with mutually recursive ref types compiles quickly and without much memory",
     async () => {
@@ -311,15 +327,15 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
         ".oxlintrc.json": rc(),
         "refs.jsx": `function Component(props) { let a, b, c, d, e; a += (([props.x, c] || props.x) ? ({k: props.x} ?? \`\${props.x}-\${props.x}\`) : d.p?.q); e = ((() => (d.p?.q)) ? [<b x={b}>{c}</b>, f(b)] : ((e ? a : c) < e)); if (([(null || props.x), {k: c, [props.x]: d}] || c)) { for (let i7 = 0; i7 < f(null); i7++) { while (c.m(d)) { const n8 = {}; n8.p = ((null ?? 2) || d); f(n8); for (let i9 = 0; i9 < (props.x === c); i9++) { if (2) { b = [a, f(0)]; b -= ((() => ((b ? props.x : d))) ? null : \`\${(a - d)}-\${d}\`); b = [props.x, ([props.x, props.y] ? \`\${null}-\${props.y}\` : (null || props.x))]; } } f(d, a); a = [a, c]; c = [a, c]; c = {k: c, j: a}; { const s = (props.y ? (null + b) : {k: 1}); f(s); { const s = a; f(() => s); } } } } } else { if ((props.x ? [(props.x + e), c] : ({k: c} && (c ? c : props.y)))) { for (const z2 of props.l) { switch (3) { case 0: {  } case 1: { if ((e?.p.q && props.x)) { f(b, d); e = (() => ((c?.p === (c < null)))); } else {  } e = null; l1: { b = (f((props.x ? c : a)) === (c - c.p.q)); f(e, props.x); b = b + 1; f(d, props.x); } } break; default: {  } } f(e); e = \`\${\`\${null}-\${a}\`}-\${c}\`; } f(e); [d = 6, a = 4] = props.l; } a = c?.p?.[0]; if (1) { for (let z6 = 0; z6 < 3; z6++) { if (((d < 4) ? (props.y - props.x) : [e, props.y])) { do { e = ((() => ((null === a))) === f(a)); } while (props.x); try { f(e); a = a; const t3 = [([props.y, null] || a), ((props.y || null) ? {k: c} : {k: null})]; f(t3); f(e, 2); f(e); } catch (err) { d = e; d = f(a); f(c, props.x); e = (((a - null) + props.x) < ([d, props.y] ?? (props.y - props.y))); } a = {k: b}; f(d, a); if (null) { a = []; } d = {k: d, j: a}; } else if ((props.x ? {k: a} : null)) { if (c) { d = d; d = (() => (b)); } } else { while ({k: {k: f(d)}}) {  } } f(c); c = (() => ({k: c})); } f(c); e = d + 1; } e = props.y; } if (props.o.m((() => (props.o.m(e))))) { const o12 = { m() { return ((() => (d)) + null); }, n: () => (a.p?.q), k: props.x }; f(o12.m(), o12.n()); } c = (<b x={(b ? e : null)}>{[props.y, b]}</b> ? f((c === a)) : props.x); return <C a={a} b={b} {...e}>{c}{d}</C>; }`,
       });
-      // This is upstream's own error after ten iterations: "Ref type environment did not converge".
-      expect(rulesIn(diagnostics)).toEqual(["react(invariant)"]);
+      // oxlint 1.95.0 reports nothing in it either.
+      expect(diagnostics).toEqual({});
       expect(peak).toBeLessThan((isDebug || isASAN ? 1500 : 300) * 1024 * 1024);
-      expect(exit).toBe(1);
+      expect(exit).toBe(0);
     },
     slow,
   );
 
-  // oxlint 1.87.0 also reports nothing with up to 1,000 of them, in 16 s, and doesn't finish within a minute at 3,000.
+  // oxlint 1.95.0 also reports nothing with up to 1,000 of them, in 5 s, and doesn't finish within a minute at 3,000.
   test(
     "a chain of objects that each contain the previous one, starting from a ref, takes linear memory",
     async () => {
@@ -361,7 +377,7 @@ ${chain}
     expect(exit).toBe(1);
   });
 
-  // Matches oxlint 1.87.
+  // Matches oxlint 1.95.
   test("missing dependencies are sorted by bytes, and the report is located after the dependency list", async () => {
     const { diagnostics, exit } = await report({ ".oxlintrc.json": rc(["react/memo-dependencies"]), ...unlisted });
     const labels = (name: string) =>
@@ -409,6 +425,212 @@ ${chain}
     // Those files are linted, but not compiled.
     expect(files).toBe(4);
     expect(exit).toBe(1);
+  });
+
+  // The tests from here to the end of this block are about what oxlint 1.95 reports differently from 1.87.
+
+  // oven-sh/bun#49620
+  test("a component that's declared in another function is only compiled beside a top-level component or hook", async () => {
+    const diagnostics = await matches("nested components");
+    expect(Object.keys(diagnostics)).toEqual(["beside-a-component.tsx", "beside-a-hook.ts"]);
+  });
+
+  // oven-sh/bun#49621
+  test("a callback that reads `.current` of a value depends on the value, whether or not it's known to be a ref", async () => {
+    const diagnostics = await matches("ref arguments");
+    // The first two list `.current` as a dependency.
+    expect(Object.keys(diagnostics)).toEqual(["callback-in-memo.ts", "current-is-listed.ts", "other-dependency.ts"]);
+  });
+
+  test("a file is compiled if a top-level function is named like a component or a hook, or is a default export without a name", async () => {
+    const diagnostics = await matches("gate");
+    const compiled = Object.keys(diagnostics).filter(name => linesOf(diagnostics[name], "globals").length === 1);
+    expect(compiled.map(name => name.slice(0, 2)).join(" ")).toBe(
+      "01 02 04 05 06 07 14 15 16 19 23 28 29 32 35 39 43 44 47",
+    );
+  });
+
+  test("a shared value that's imported from react-native-reanimated can be written outside of render", async () => {
+    const diagnostics = await matches("reanimated");
+    expect(rulesIn({ it: diagnostics["imported.tsx"] })).toEqual(["react(capitalized-calls)"]);
+    expect(Object.keys(diagnostics)).toEqual([
+      "default.jsx",
+      "from-another-module.jsx",
+      "imported.tsx",
+      "not-imported.jsx",
+      "other-names-imported.jsx",
+      "required.js",
+      "type-imported.tsx",
+    ]);
+  });
+
+  test("a method whose name is in capitals isn't a capitalized call", async () => {
+    const diagnostics = await matches("all caps");
+    // `Child`, `Foo_BAR`, `FOo` and `F_o`.
+    expect(linesOf(diagnostics["methods.jsx"], "capitalized-calls")).toEqual([2, 38, 42, 46]);
+    expect(linesOf(diagnostics["functions.jsx"], "capitalized-calls")).toEqual([4, 40, 44, 48]);
+  });
+
+  test("`allow` and `allowPattern` of react/capitalized-calls allow the names that aren't local", async () => {
+    const diagnostics = await matches("allowed calls");
+    const count = Object.entries(diagnostics).map(([name, found]) => [name.slice(0, name.indexOf("/")), found.length]);
+    expect(Object.fromEntries(count)).toEqual({
+      "allow": 9,
+      "alone": 10,
+      "alternation": 8,
+      "both": 8,
+      "case-insensitive": 8,
+      "default": 12,
+      "empty": 12,
+      "empty-pattern": 1,
+      "pattern": 10,
+      "unanchored": 7,
+    });
+  });
+
+  test("an impure call in an async component isn't reported", async () => {
+    const diagnostics = await matches("async components");
+    expect(diagnostics["declarations.jsx"]).toBeUndefined();
+    expect(rulesIn({ it: diagnostics["callbacks.jsx"] })).toEqual(["react(static-components)"]);
+    expect(rulesIn({ it: diagnostics["other-rules.jsx"] })).toEqual(["react(immutability)", "react(refs)"]);
+  });
+
+  test("`count++` on a captured variable is compiled, and reported where the function runs after render", async () => {
+    const diagnostics = await matches("update expressions");
+    expect(diagnostics["render.jsx"]).toBeUndefined();
+    for (const path of ["in-effects.jsx", "in-handlers.jsx", "in-array-callbacks.jsx", "timers.js", "typescript.ts"])
+      expect([path, rulesIn({ it: diagnostics[path] })]).toEqual([path, ["react(immutability)"]]);
+  });
+
+  test("a nested function may reassign a variable that's declared in a callback", async () => {
+    const diagnostics = await matches("callback locals");
+    expect(diagnostics["array-callbacks.jsx"]).toBeUndefined();
+    // The variables that are declared during render.
+    expect(linesOf(diagnostics["effects.ts"], "immutability")).toEqual([85, 85]);
+    expect(linesOf(diagnostics["handlers.tsx"], "immutability")).toEqual([54, 54]);
+  });
+
+  test("`||=`, `&&=` and `??=` are compiled, except on a `const`", async () => {
+    const diagnostics = await matches("logical assignment");
+    expect(diagnostics["locals.jsx"]).toBeUndefined();
+    expect(rulesIn({ it: diagnostics["refs.jsx"] })).toEqual(["react(refs)"]);
+    expect(rulesIn({ it: diagnostics["const.jsx"] })).toEqual(["react(todo)"]);
+  });
+
+  test("`new Date()` without arguments is reported in render, and not in a callback", async () => {
+    const diagnostics = await matches("new Date");
+    // `Date.now()` in a handler that's passed to a function, and `new Date()` in a function that's called in render.
+    expect(linesOf(diagnostics["callbacks.jsx"], "purity")).toEqual([16, 52]);
+    expect(diagnostics["render.jsx"]).toHaveLength(9);
+  });
+
+  test("a callback may capture a function declaration that comes after it", async () => {
+    const diagnostics = await matches("hoisted functions");
+    expect(rulesIn({ it: diagnostics["captured-before-declaration.jsx"] })).toEqual([
+      "react(preserve-manual-memoization)",
+      "react(todo)",
+    ]);
+    expect(linesOf(diagnostics["reassigned.jsx"], "immutability")).toEqual([2, 33, 33]);
+  });
+
+  test("passing a member of an object as a `ref` doesn't make the object a ref", async () => {
+    const diagnostics = await matches("ref receiver");
+    expect(Object.keys(diagnostics)).toEqual(["reads.tsx"]);
+  });
+
+  test("a variable that's assigned in a `try` block can be used after it, and a ref can be compared with a function's result", async () => {
+    const diagnostics = await matches("catch phis");
+    expect(diagnostics["phis.jsx"]).toBeUndefined();
+    expect(rulesIn({ it: diagnostics["callbacks.jsx"] })).toEqual(["react(refs)"]);
+    expect(linesOf(diagnostics["catch-parameter.js"], "invariant")).toEqual([15, 25]);
+  });
+
+  test("a comment that disables a react-hooks rule isn't reported, and the function it's in is compiled", async () => {
+    const diagnostics = await matches("suppressions");
+    expect(rulesIn(diagnostics)).not.toContain("react(rule-suppression)");
+    expect(Object.keys(diagnostics)).toEqual([
+      "block.jsx",
+      "dependencies.jsx",
+      "flow.jsx",
+      "next-line.jsx",
+      "unclosed-exhaustive-deps.jsx",
+      "unclosed.jsx",
+      "use-no-forget.jsx",
+    ]);
+  });
+
+  test("a `declare` statement in a function is compiled", async () => {
+    const diagnostics = await matches("ambient declarations");
+    expect(locationsOf(diagnostics["inside.tsx"])).toEqual([
+      ["react(globals)", 61, 3],
+      ["react(refs)", 68, 16],
+    ]);
+  });
+
+  test("what the blocks of a `try` statement with `finally` do is reported, and so is the statement", async () => {
+    const diagnostics = await matches("try finally");
+    expect(rulesIn({ it: diagnostics["render.jsx"] })).toEqual([
+      "react(immutability)",
+      "react(purity)",
+      "react(refs)",
+      "react(set-state-in-render)",
+      "react(todo)",
+    ]);
+    expect(linesOf(diagnostics["dependencies.jsx"], "memo-dependencies")).toEqual([64, 79, 94]);
+  });
+
+  test("a `catch` block that can't be reached is removed", async () => {
+    const diagnostics = await matches("unreachable catch");
+    expect(Object.keys(diagnostics)).toEqual(["with-a-report.jsx"]);
+    // The third is in a `catch` block that can be reached.
+    expect(locationsOf(diagnostics["with-a-report.jsx"])).toEqual([
+      ["react(immutability)", 34, 3],
+      ["react(refs)", 11, 19],
+      ["react(refs)", 44, 9],
+    ]);
+  });
+
+  test("a property key that's half of a surrogate pair is reported, and a string value isn't", async () => {
+    const diagnostics = await matches("lone surrogates");
+    expect(linesOf(diagnostics["keys.jsx"], "todo")).toEqual([2, 6, 9, 12, 15, 21, 27, 36, 46, 50, 54, 59]);
+    expect(rulesIn({ it: diagnostics["values.jsx"] })).toEqual(["react(refs)"]);
+  });
+
+  test(
+    "a function with a chain of more than 500 members isn't compiled",
+    async () => {
+      const diagnostics = await matches("member chains");
+      for (const path of ["499.jsx", "500.jsx", "computed-500.jsx", "call-at-the-end-500.jsx", "optional-501.jsx"])
+        expect([path, rulesIn({ it: diagnostics[path] })]).toEqual([path, ["react(refs)"]]);
+      for (const path of ["501.jsx", "5000.jsx", "computed-501.jsx", "call-at-the-end-501.jsx"])
+        expect([path, locationsOf(diagnostics[path])]).toEqual([path, [["react(todo)", 6, 17]]]);
+    },
+    slow,
+  );
+
+  test("functions that access a ref in different places have the same type", async () => {
+    const diagnostics = await matches("ref types");
+    expect(linesOf(diagnostics["convergence.jsx"], "invariant")).toEqual([55]);
+  });
+
+  test("the help for modifying `.current` suggests a name that ends in Ref", async () => {
+    const diagnostics = await matches("ref hints");
+    const hinted = (diagnostics["hints.tsx"] as (Found & { help: string })[])
+      .filter(it => it.help.endsWith('rename the variable to end in "Ref".'))
+      .map(it => it.labels[0].span.line);
+    expect(hinted.sort((a, b) => a - b)).toEqual([4, 10, 17, 25, 35, 65, 70, 81, 88]);
+  });
+
+  test("a function that an event handler calls isn't called during render, even in a callback that is", async () => {
+    const diagnostics = await matches("captured functions");
+    expect(linesOf(diagnostics["handlers-in-a-map.jsx"], "purity")).toEqual([51, 56, 91]);
+    expect(diagnostics["mutating-callbacks.jsx"]).toBeUndefined();
+  });
+
+  test("on manual dependencies with optional and non-optional members", async () => {
+    const diagnostics = await matches("optional dependencies");
+    expect(locationsOf(diagnostics["mixed.jsx"])).toEqual([["react(preserve-manual-memoization)", 10, 6]]);
+    expect(locationsOf(diagnostics["non-null.tsx"])).toEqual([["react(preserve-manual-memoization)", 9, 59]]);
   });
 });
 

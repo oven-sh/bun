@@ -206,6 +206,10 @@ pub struct EnvironmentConfig {
     /// is impure, nor in a function in it. An async hook is no component. Upstream reports it as in any component.
     pub async_components_render_once: bool,
     pub validate_no_freezing_known_mutable_functions: bool,
+    /// For `validate_no_freezing_known_mutable_functions`: a function that is frozen is reported where it is written,
+    /// through the loads and the stores that brought it to where it is frozen. Upstream reports it there, which is
+    /// the call of `useMemo` for a function that the callback of one returns.
+    pub frozen_functions_are_reported_where_written: bool,
     pub enable_assume_hooks_follow_rules_of_react: bool,
     pub enable_transitively_freeze_function_expressions: bool,
 
@@ -288,6 +292,7 @@ impl Default for EnvironmentConfig {
             validate_no_impure_functions_in_render: false,
             async_components_render_once: false,
             validate_no_freezing_known_mutable_functions: false,
+            frozen_functions_are_reported_where_written: false,
             enable_assume_hooks_follow_rules_of_react: true,
             enable_transitively_freeze_function_expressions: true,
             enable_emit_hook_guards: None,

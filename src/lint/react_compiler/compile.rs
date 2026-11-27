@@ -82,6 +82,7 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
         async_components_render_once: is_oxlint,
         validate_static_components: true,
         validate_no_freezing_known_mutable_functions: true,
+        frozen_functions_are_reported_where_written: is_oxlint,
         validate_no_void_use_memo: true,
         validate_no_capitalized_calls: Some(match is_oxlint || has_no_foreign_config {
             // Globals that oxc's compiler knows and Bun's doesn't.

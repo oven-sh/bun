@@ -22,6 +22,9 @@ use crate::hir::{
 struct MutationInfo {
     value_identifier: IdentifierId,
     value_loc: Option<SourceLocation>,
+    /// Where the function that does it, or that captured the one that does, is written. It is set if the function is
+    /// reported there: `frozen_functions_are_reported_where_written`.
+    function_loc: Option<SourceLocation>,
 }
 
 /// Validates that functions with known mutations (ie due to types) cannot be passed
@@ -40,6 +43,7 @@ pub(crate) fn validate_no_freezing_known_mutable_functions(
         &env.identifiers,
         &env.types,
         &env.functions,
+        env.config.frozen_functions_are_reported_where_written,
     );
     for diagnostic in diagnostics {
         env.record_diagnostic(diagnostic);
@@ -51,6 +55,7 @@ fn check_no_freezing_known_mutable_functions(
     identifiers: &[Identifier],
     types: &[Type],
     functions: &[HirFunction],
+    reports_where_written: bool,
 ) -> Vec<CompilerDiagnostic> {
     // Maps an identifier to the mutation effect that makes it "known mutable"
     let mut context_mutation_effects: IdMap<IdentifierId, MutationInfo> = IdMap::new();
@@ -82,6 +87,7 @@ fn check_no_freezing_known_mutable_functions(
 
                 InstructionValue::FunctionExpression { lowered_func, .. } => {
                     let inner_function = &functions[lowered_func.func.0 as usize];
+                    let function_loc = inner_function.loc.filter(|_| reports_where_written);
                     if let Some(ref aliasing_effects) = inner_function.aliasing_effects {
                         let mut context_ids: Option<IdBitSet<IdentifierId>> = None;
 
@@ -93,10 +99,12 @@ fn check_no_freezing_known_mutable_functions(
                                     if let Some(known_mutation) =
                                         context_mutation_effects.get(value.identifier)
                                     {
-                                        context_mutation_effects.insert(
-                                            instr.lvalue.identifier,
-                                            known_mutation.clone(),
-                                        );
+                                        let captured = MutationInfo {
+                                            function_loc,
+                                            ..known_mutation.clone()
+                                        };
+                                        context_mutation_effects
+                                            .insert(instr.lvalue.identifier, captured);
                                     } else if context_ids
                                         .get_or_insert_with(|| {
                                             (inner_function.context.iter())
@@ -116,6 +124,7 @@ fn check_no_freezing_known_mutable_functions(
                                             MutationInfo {
                                                 value_identifier: value.identifier,
                                                 value_loc: value.loc,
+                                                function_loc,
                                             },
                                         );
                                         break 'effects;
@@ -128,10 +137,12 @@ fn check_no_freezing_known_mutable_functions(
                                     if let Some(known_mutation) =
                                         context_mutation_effects.get(value.identifier)
                                     {
-                                        context_mutation_effects.insert(
-                                            instr.lvalue.identifier,
-                                            known_mutation.clone(),
-                                        );
+                                        let captured = MutationInfo {
+                                            function_loc,
+                                            ..known_mutation.clone()
+                                        };
+                                        context_mutation_effects
+                                            .insert(instr.lvalue.identifier, captured);
                                     }
                                 }
 
@@ -216,7 +227,7 @@ fn freeze_violation_diagnostic(
         )),
     )
     .with_detail(CompilerDiagnosticDetail::Error {
-        loc: operand.loc,
+        loc: mutation_info.function_loc.or(operand.loc),
         message: Some(format!(
             "This function may (indirectly) reassign or modify {} after render",
             variable_name

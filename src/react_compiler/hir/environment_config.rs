@@ -162,6 +162,10 @@ pub struct EnvironmentConfig {
     /// function: `<Foo />` before `function Foo() {}` in the same function reads `Foo` before it is defined. Bun's
     /// lowering hoists the declaration for it, as for `Foo()`.
     pub jsx_tags_hoist_no_declaration: bool,
+    /// For `infer_types`: an arithmetic or relational operator says nothing of the type of its operands, so `x` in
+    /// `x - 1` can still be an object that is written to elsewhere. To upstream both operands are primitives wherever
+    /// they are used, and a write to one or a dependency on one is not seen.
+    pub operators_say_nothing_of_their_operands: bool,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
@@ -238,6 +242,7 @@ impl Default for EnvironmentConfig {
             unwanted_throws_are_not_looked_for: false,
             fixture_modules_have_no_types: false,
             jsx_tags_hoist_no_declaration: false,
+            operators_say_nothing_of_their_operands: false,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,

@@ -48,6 +48,7 @@ pub(crate) fn infer_types(
         enable_treat_ref_like_identifiers_as_refs,
         custom_hook_type,
         enable_treat_set_identifiers_as_state_setters,
+        env.config.operators_say_nothing_of_their_operands,
         env.stack(),
     );
     let generated = generate(func, env, &mut unifier);
@@ -668,7 +669,8 @@ fn generate_instruction_types(
             right: bin_right,
             ..
         } => {
-            if is_primitive_binary_op(operator) {
+            if is_primitive_binary_op(operator) && !unifier.operators_say_nothing_of_their_operands
+            {
                 let left_operand_type = get_type(bin_left.identifier, identifiers);
                 unifier.unify(left_operand_type, Type::Primitive, shapes)?;
                 let right_operand_type = get_type(bin_right.identifier, identifiers);
@@ -1085,6 +1087,7 @@ struct Unifier {
     resolved: RefCell<OfPhis<Option<Arc<[Type]>>>>,
     enable_treat_ref_like_identifiers_as_refs: bool,
     enable_treat_set_identifiers_as_state_setters: bool,
+    operators_say_nothing_of_their_operands: bool,
     custom_hook_type: Option<Type>,
     stack: bun_core::StackCheck,
     is_out_of_stack: std::cell::Cell<bool>,
@@ -1095,6 +1098,7 @@ impl Unifier {
         enable_treat_ref_like_identifiers_as_refs: bool,
         custom_hook_type: Option<Type>,
         enable_treat_set_identifiers_as_state_setters: bool,
+        operators_say_nothing_of_their_operands: bool,
         stack: bun_core::StackCheck,
     ) -> Self {
         Unifier {
@@ -1102,6 +1106,7 @@ impl Unifier {
             resolved: RefCell::default(),
             enable_treat_ref_like_identifiers_as_refs,
             enable_treat_set_identifiers_as_state_setters,
+            operators_say_nothing_of_their_operands,
             custom_hook_type,
             stack,
             is_out_of_stack: std::cell::Cell::new(false),

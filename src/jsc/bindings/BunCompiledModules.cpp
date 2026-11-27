@@ -509,7 +509,7 @@ static std::optional<AOT::ModuleID> findDefaultForm(const String& path)
 // The resolver ignores import attributes and finds a file in any form. A require() or an import() without a type treats it as missing, but its path can still be resolved and read.
 void throwIfOnlyTyped(Zig::GlobalObject* globalObject, const String& key, const String& specifier, const String& importer, bool isForRequire)
 {
-    if (Bun__compiledProgramRunsInPlace() || findModuleForPath(key) || findDefaultForm(key) || !AOT::hasAttributeVariant(key))
+    if (Bun__compiledProgramRunsInPlace() || findModuleForPath(key) || findDefaultForm(key) || hasMatchingLoadPlugin(globalObject, key) || !AOT::hasAttributeVariant(key))
         return;
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     BunString specifierString = Bun::toString(specifier);
@@ -619,6 +619,9 @@ static std::optional<AOT::ModuleID> findFormOfModule(JSGlobalObject* globalObjec
     if (!module && isFormWithoutAttributes && formWithoutAttributes == FormWithoutAttributes::MayAnswer && !Bun__compiledProgramRunsInPlace())
         module = compiledModuleForPath(path);
     if (module && (rejectsRequester(globalObject, *module, AOT::LoadKind::Import) || AOT::delegatesModuleToHost(globalObject, *module)))
+        return std::nullopt;
+    // As for an import without a type: what the plugins answer is asked first, but not behind an import that the file has answered.
+    if (module && hasMatchingLoadPlugin(globalObject, path) && !AOT::hasBeenImported(globalObject, *module))
         return std::nullopt;
     return module;
 }

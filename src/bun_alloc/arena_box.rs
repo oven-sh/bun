@@ -71,12 +71,12 @@ impl<'a, T: ?Sized> ArenaBox<'a, T> {
 impl<T: ?Sized> ArenaBox<'_, T> {
     /// Gives the block up. `from_raw` takes it back.
     #[inline]
-    pub fn into_raw(self) -> *mut T {
-        Box::into_raw_with_allocator(self.0).0
+    pub fn into_non_null(self) -> NonNull<T> {
+        Box::into_non_null_with_allocator(self.0).0
     }
 
     /// # Safety
-    /// `raw` comes from `into_raw`, once, and its arena is alive for the lifetime of the result.
+    /// `raw` comes from `into_non_null`, once, and its arena is alive for the lifetime of the result.
     #[inline]
     pub unsafe fn from_raw(raw: *mut T) -> Self {
         // SAFETY: caller contract.

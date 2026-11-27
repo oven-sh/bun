@@ -12,7 +12,7 @@
 // `mi_heap_set_default(heap)` for the parse scope, not manual theap caching.
 //!
 //! The bumpalo-compatible convenience methods (`alloc`, `alloc_slice_copy`,
-//! `alloc_slice_fill_*`, `alloc_str`, `alloc_layout`) are provided so that
+//! `alloc_slice_fill_*`, `alloc_layout`) are provided so that
 //! the `pub type Arena = MimallocArena` swap is mostly source-compatible
 //! with the previous `Arena = bumpalo::Bump` alias.
 
@@ -704,15 +704,6 @@ impl MimallocArena {
             p.as_ptr().write(val);
             &mut *p.as_ptr()
         }
-    }
-
-    /// `bumpalo::Bump::alloc_str` parity.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub fn alloc_str(&self, s: &str) -> &mut str {
-        let bytes = self.alloc_slice_copy(s.as_bytes());
-        // SAFETY: copied from valid UTF-8.
-        unsafe { core::str::from_utf8_unchecked_mut(bytes) }
     }
 
     /// `bumpalo::Bump::alloc_slice_copy` parity.

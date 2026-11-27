@@ -1,5 +1,3 @@
-use core::ffi::c_void;
-
 use crate::{JSGlobalObject, JSValue, JsError};
 
 // All JSC__VM__* shims take only a `JSC::VM*` (and at most a
@@ -9,19 +7,8 @@ use crate::{JSGlobalObject, JSValue, JsError};
 // aliasing (interior mutability; zero Rust-visible bytes). Declaring the
 // params as references and the fns as `safe fn` moves the validity proof into
 // the type signature and removes the per-call-site `unsafe { }` wrappers.
-// `holdAPILock` keeps a raw `*mut c_void` ctx (opaque round-trip; C++ never
-// dereferences it as Rust data) so it stays `unsafe fn`.
 unsafe extern "C" {
     safe fn JSC__VM__enableControlFlowProfiler(vm: &VM);
-    // safe: `VM` is an opaque `UnsafeCell`-backed ZST handle (`&` is ABI-identical
-    // to non-null `*const`); `ctx` is an opaque round-trip pointer C++ only forwards
-    // to `callback` (never dereferenced as Rust data) — same contract as
-    // `JSC__JSGlobalObject__queueMicrotaskCallback`.
-    safe fn JSC__VM__holdAPILock(
-        this: &VM,
-        ctx: *mut c_void,
-        callback: extern "C" fn(ctx: *mut c_void),
-    );
     safe fn JSC__VM__getAPILock(vm: &VM);
     safe fn JSC__VM__releaseAPILock(vm: &VM);
     safe fn JSC__VM__reportExtraMemory(vm: &VM, size: usize);
@@ -58,21 +45,11 @@ impl VM {
         JSC__VM__enableControlFlowProfiler(self)
     }
 
-    /// deprecated in favor of `get_api_lock` to avoid an annoying callback wrapper
-    #[deprecated = "use get_api_lock"]
-    pub fn hold_api_lock(&self, ctx: *mut c_void, callback: extern "C" fn(ctx: *mut c_void)) {
-        JSC__VM__holdAPILock(self, ctx, callback)
-    }
-
     /// See `JSLock.h` in WebKit for more detail on how the API lock prevents races.
     pub fn get_api_lock(&self) -> Lock<'_> {
         JSC__VM__getAPILock(self);
         Lock { vm: self }
     }
-
-    // Note: `JSC__VM__deferGC` was removed from bindings.cpp in the
-    // WebKit-bump that introduced `JSC::DeferGC` RAII. Callers should use
-    // `holdAPILock`/`DeferGC` on the C++ side instead.
 
     pub fn report_extra_memory(&self, size: usize) {
         crate::mark_binding!();

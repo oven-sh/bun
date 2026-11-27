@@ -10,7 +10,7 @@ use core::mem::{self, MaybeUninit};
 use core::net::{IpAddr, Ipv4Addr};
 
 use bun_core::ip_address::{self, IpText};
-use bun_core::{String as BunString, ZStr, strings};
+use bun_core::{String as BunString, strings};
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{CommonString, JSGlobalObject, JSString, JSValue, JsError, JsResult, StringJsc};
@@ -632,10 +632,10 @@ impl AF {
         }
     }
 
-    pub(crate) fn upper(self) -> &'static ZStr {
+    pub(crate) fn upper(self) -> &'static str {
         match self {
-            AF::INET => bun_core::zstr!("IPv4"),
-            AF::INET6 => bun_core::zstr!("IPv6"),
+            AF::INET => "IPv4",
+            AF::INET6 => "IPv6",
         }
     }
 }

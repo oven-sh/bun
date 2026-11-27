@@ -1,7 +1,7 @@
 use core::cmp::Ordering;
 use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
-use bun_core::{String as BunString, ZStr};
+use bun_core::String as BunString;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_ptr::RefPtr;
@@ -20,13 +20,6 @@ use crate::node::util::validators;
 use crate::socket::socket_address::{SocketAddress, sockaddr};
 
 use crate::socket::socket_address::inet::{self, AF_INET, AF_INET6};
-
-/// `&ZStr` → `&str` for `format_args!`. AF family names are ASCII literals.
-#[inline]
-fn z(s: &ZStr) -> &str {
-    // SAFETY: callers pass ASCII-only `ZStr`s (see above).
-    unsafe { core::str::from_utf8_unchecked(s.as_bytes()) }
-}
 
 /// The address of a `SocketAddress`, or of an address string in `family`.
 fn sockaddr_from_js(
@@ -295,18 +288,18 @@ impl BlockList {
             let s = match rule {
                 Rule::Addr(a) => BunString::create_format(format_args!(
                     "Address: {} {}",
-                    z(a.family().upper()),
+                    a.family().upper(),
                     a.text(),
                 )),
                 Rule::Range { start, end } => BunString::create_format(format_args!(
                     "Range: {} {}-{}",
-                    z(start.family().upper()),
+                    start.family().upper(),
                     start.text(),
                     end.text(),
                 )),
                 Rule::Subnet { network, prefix } => BunString::create_format(format_args!(
                     "Subnet: {} {}/{}",
-                    z(network.family().upper()),
+                    network.family().upper(),
                     network.text(),
                     prefix,
                 )),
@@ -342,15 +335,13 @@ pub(crate) unsafe extern "C" fn BlockList__onStructuredCloneDeserialize(
     let start = *ptr;
     let total_length: usize = (end as usize) - (start as usize);
     // SAFETY: `[start, end)` spans `total_length` bytes (fn contract).
-    let mut r =
-        bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(start, total_length) });
+    let unread = unsafe { bun_core::ffi::slice(start, total_length) };
 
-    let Ok(nonce) = r.read_int_le::<u64>() else {
+    let Some((nonce, rest)) = unread.split_first_chunk() else {
         return JSValue::ZERO;
     };
-
-    // SAFETY: `r.pos <= total_length`, so the advanced cursor stays within `[start, end]`.
-    *ptr = unsafe { start.add(r.pos) };
+    let nonce = u64::from_le_bytes(*nonce);
+    *ptr = rest.as_ptr();
 
     // One SerializedScriptValue can be deserialized many times (BroadcastChannel): a ref per wrapper.
     let this = {

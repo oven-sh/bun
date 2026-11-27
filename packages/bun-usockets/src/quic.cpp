@@ -310,7 +310,7 @@ int us_quic_send(struct us_udp_socket_t *udp, bool names_source, const char *byt
 #ifdef LIBUS_USE_LIBUV
 /* libuv has no hook into the timeout of its poll. */
 void us_quic_loop_set_timer(struct us_loop_t *loop, int ms) {
-    if (!loop->data.quic_timer) loop->data.quic_timer = us_create_timer(loop, 1, 0);
+    if (!loop->data.quic_timer) loop->data.quic_timer = us_create_timer(loop, 1);
     us_timer_set(loop->data.quic_timer, [](struct us_timer_t *t) { us_quic_loop_process(us_timer_loop(t)); }, ms, 0);
 }
 #endif

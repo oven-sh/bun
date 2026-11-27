@@ -2,6 +2,7 @@ use core::cell::Cell;
 use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
 
+use bun_collections::HiveSlot;
 use bun_core::String as BunString;
 use bun_http_types::Method::Method;
 use bun_jsc::bindgen::{JsLocal, JsScope};
@@ -41,7 +42,7 @@ pub(crate) type ResponseStream<const SSL_ENABLED: bool> =
 /// It costs about 655,632 bytes.
 // Capacity 0 when heap-breakdown is enabled routes every allocation through
 // the fallback heap path.
-const REQUEST_CONTEXT_POOL_CAPACITY: usize = if bun_alloc::heap_breakdown::ENABLED {
+pub(super) const REQUEST_CONTEXT_POOL_CAPACITY: usize = if bun_alloc::heap_breakdown::ENABLED {
     0
 } else {
     2048
@@ -1348,71 +1349,55 @@ where
         }
     }
 
-    #[inline]
-    fn req_method(r: *mut Req<SSL_ENABLED, MUX>) -> &'static [u8] {
-        // SAFETY: r is a live uWS request handle for the duration of
-        // the request callback; both surfaces return request-owned slices.
-        unsafe {
-            if MUX {
-                (*r.cast::<bun_uws_sys::h3::Request>()).method()
-            } else {
-                (*r.cast::<bun_uws_sys::Request>()).method()
-            }
-        }
-    }
-
     pub(crate) fn create(
-        this: &mut core::mem::MaybeUninit<Self>,
+        slot: HiveSlot<'_, Self, REQUEST_CONTEXT_POOL_CAPACITY>,
         server: &ThisServer,
         req: *mut Req<SSL_ENABLED, MUX>,
         resp: uws::AnyResponse,
-        method: Option<Method>,
-    ) {
-        let resolved_method = method
-            .or_else(|| Method::which(Self::req_method(req)))
-            .unwrap_or(Method::GET);
+        method: Method,
+    ) -> NonNull<Self> {
         let any_req = Self::any_request(req);
         let range = RangeRequest::raw_from_request(&any_req);
         let if_range = RangeRequest::if_range_from_request(&any_req, range);
-        let slot: *mut Self = this.as_mut_ptr();
-        // SAFETY: writing to MaybeUninit slot. `resp` adopts its first ref, which does not read the slot.
-        unsafe {
-            slot.write(Self {
-                root: Cell::new(slot),
-                resp: AttachedResponse(JsCell::new(Some((resp, RefPtr::from_raw(slot))))),
-                req: Cell::new(Some(req)),
-                method: resolved_method,
-                server: JsCell::new(Some(PendingRequest::new(bun_ptr::BackRef::new(server)))),
-                range,
-                if_range,
-                request_weakref: JsCell::new(request::WeakRef::EMPTY),
-                signal: JsCell::new(None),
-                cookies: JsCell::new(None),
-                flags: Flags::<DEBUG_MODE>::default(),
-                upgrade_context: Cell::new(UpgradeState::None),
-                response_root: ResponseRoot::default(),
-                ref_count: Cell::new(1),
-                pin_count: Cell::new(0),
-                dispatch_count: Cell::new(0),
-                response_weakref: JsCell::new(response::WeakRef::EMPTY),
-                blob: JsCell::new(AnyBlob::Blob(Blob::default())),
-                sendfile: Cell::new(SendfileContext::default()),
-                request_body_readable_stream_ref: JsCell::new(readable_stream::Strong::default()),
-                request_body: JsCell::new(None),
-                request_body_buf: JsCell::new(Vec::new()),
-                request_body_content_len: Cell::new(0),
-                request_body_streamed_len: Cell::new(0),
-                sink: JsCell::new(None),
-                byte_stream: Cell::new(None),
-                response_body_readable_stream_ref: JsCell::new(readable_stream::Strong::default()),
-                pathname: JsCell::new(BunString::EMPTY),
-                response_buf_owned: JsCell::new(Vec::new()),
-                deferred_request: Cell::new(None),
-                promise_cell: Cell::new(JSValue::ZERO),
-            });
-        }
+        let root = slot.addr().as_ptr();
+        // SAFETY: the first ref of the value written below. Adopting it does not read the slot.
+        let base_ref = unsafe { RefPtr::from_raw(root) };
+        let this = slot.write(Self {
+            root: Cell::new(root),
+            resp: AttachedResponse(JsCell::new(Some((resp, base_ref)))),
+            req: Cell::new(Some(req)),
+            method,
+            server: JsCell::new(Some(PendingRequest::new(bun_ptr::BackRef::new(server)))),
+            range,
+            if_range,
+            request_weakref: JsCell::new(request::WeakRef::EMPTY),
+            signal: JsCell::new(None),
+            cookies: JsCell::new(None),
+            flags: Flags::<DEBUG_MODE>::default(),
+            upgrade_context: Cell::new(UpgradeState::None),
+            response_root: ResponseRoot::default(),
+            ref_count: Cell::new(1),
+            pin_count: Cell::new(0),
+            dispatch_count: Cell::new(0),
+            response_weakref: JsCell::new(response::WeakRef::EMPTY),
+            blob: JsCell::new(AnyBlob::Blob(Blob::default())),
+            sendfile: Cell::new(SendfileContext::default()),
+            request_body_readable_stream_ref: JsCell::new(readable_stream::Strong::default()),
+            request_body: JsCell::new(None),
+            request_body_buf: JsCell::new(Vec::new()),
+            request_body_content_len: Cell::new(0),
+            request_body_streamed_len: Cell::new(0),
+            sink: JsCell::new(None),
+            byte_stream: Cell::new(None),
+            response_body_readable_stream_ref: JsCell::new(readable_stream::Strong::default()),
+            pathname: JsCell::new(BunString::EMPTY),
+            response_buf_owned: JsCell::new(Vec::new()),
+            deferred_request: Cell::new(None),
+            promise_cell: Cell::new(JSValue::ZERO),
+        });
 
         ctx_log!("create<d> ({:p})<r>", this.as_ptr());
+        this
     }
 
     fn on_close(this: *mut Self, resp: uws::AnyResponse) {

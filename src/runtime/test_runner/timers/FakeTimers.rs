@@ -10,7 +10,7 @@ use crate::timer::{
 };
 use crate::generated_bindgen::fake_timers as generated;
 use bun_core::{Timespec, TimespecMockMode};
-use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
 use bun_jsc::{
     JSFunction, JSGlobalObject, JSHostFn, JSPromiseStrong, JSValue, JsError, JsResult, Strong,
     StrongCell, StrongOptional,
@@ -1391,13 +1391,14 @@ fn loop_limit_error(global: &JSGlobalObject, limit: u32) -> JsResult<JSValue> {
 // JS Functions
 // ===
 
+const NOT_ACTIVE_MESSAGE: core::fmt::Arguments<'static> =
+    format_args!("Fake timers are not active. Call useFakeTimers() first.");
+
 fn error_unless_fake_timers(global: &JSGlobalObject) -> JsResult<()> {
     if is_active() {
         return Ok(());
     }
-    Err(global.throw(format_args!(
-        "Fake timers are not active. Call useFakeTimers() first."
-    )))
+    Err(global.throw(NOT_ACTIVE_MESSAGE))
 }
 
 fn error_if_reading_globals(global: &JSGlobalObject) -> JsResult<()> {
@@ -1757,9 +1758,10 @@ pub(crate) fn set_timer_tick_mode(
     Ok(chainable_this(global, this_value))
 }
 
-pub(crate) fn get_timer_count(heap: &JsHeap<'_>) -> JsResult<usize> {
-    // SAFETY: throws, and the body returns.
-    error_unless_fake_timers(unsafe { heap.global() })?;
+pub(crate) fn get_timer_count<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, usize> {
+    if !is_active() {
+        return Err(heap.error(NOT_ACTIVE_MESSAGE));
+    }
 
     Ok(timer_all().fake_timers.count())
 }

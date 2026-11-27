@@ -92,28 +92,63 @@ bitflags::bitflags! {
     }
 }
 
-/// The descriptor that a response is read from. Closed off this thread.
-pub(crate) struct StreamFd(MaybeOwnedFile);
+/// The descriptor that a response is read from.
+pub(crate) struct StreamFd {
+    file: MaybeOwnedFile,
+    /// Closed on this thread when set. Off it otherwise, because the last close of a file can block.
+    close_inline: Cell<bool>,
+}
 
 impl StreamFd {
     pub(crate) fn borrowed(fd: Fd) -> Self {
-        Self(MaybeOwnedFile::Borrowed(fd))
+        Self {
+            file: MaybeOwnedFile::Borrowed(fd),
+            close_inline: Cell::new(false),
+        }
+    }
+
+    /// Bun's own duplicate of the descriptor of a `Bun.file(fd)`. The caller can close the number while the response is sent, and the kernel then gives the number to the next file that is opened.
+    ///
+    /// Out of line: the eight `RequestContext` monomorphizations share one copy.
+    #[inline(never)]
+    pub(crate) fn duplicate_of(fd: Fd, file_type: FileType) -> sys::Result<Self> {
+        // libuv takes a pipe or a tty over and closes it with its handle, and the tty of fd 0 is one handle for the whole process.
+        if cfg!(windows) && (file_type != FileType::File || fd.stdio_tag().is_some()) {
+            return Ok(Self::borrowed(fd));
+        }
+        // Not 0, 1 or 2: `File` leaves those open.
+        #[cfg(unix)]
+        let duplicate = sys::dup_at_least(fd, 3)?;
+        #[cfg(windows)]
+        let duplicate = sys::dup(fd)?;
+        let file = File::from_fd(duplicate).make_lib_uv_owned_for_syscall(sys::Tag::dup)?;
+        Ok(Self {
+            file: file.into(),
+            // While the caller's descriptor holds the file open, this close only drops a reference. `FileResponseStream::start` clears it for a stream that it leaves running.
+            close_inline: Cell::new(cfg!(unix)),
+        })
     }
 
     pub(crate) fn get(&self) -> Fd {
-        self.0.fd()
+        self.file.fd()
     }
 }
 
 impl From<File> for StreamFd {
     fn from(file: File) -> Self {
-        Self(file.into())
+        Self {
+            file: file.into(),
+            close_inline: Cell::new(false),
+        }
     }
 }
 
 impl Drop for StreamFd {
     fn drop(&mut self) {
-        if let MaybeOwnedFile::Owned(file) = core::mem::take(&mut self.0) {
+        if let MaybeOwnedFile::Owned(file) = core::mem::take(&mut self.file) {
+            if self.close_inline.get() {
+                return drop(file);
+            }
             #[cfg(windows)]
             Closer::close(file, bun_sys::windows::libuv::Loop::get());
             #[cfg(not(windows))]
@@ -180,6 +215,9 @@ impl StreamOwner {
 
 impl FileResponseStream {
     pub(crate) fn start(opts: StartOptions) {
+        // epoll cannot remove a descriptor that someone else has closed.
+        #[cfg(unix)]
+        debug_assert!(opts.fd.file.is_owned());
         let use_sendfile = can_sendfile(opts.resp, opts.file_type, opts.length);
 
         let owned = RefPtr::new(FileResponseStream {
@@ -237,6 +275,7 @@ impl FileResponseStream {
             });
             resp.prepare_for_sendfile();
             let _ = this_ref.on_sendfile();
+            this_ref.leave_running();
             return;
         }
 
@@ -271,6 +310,14 @@ impl FileResponseStream {
         #[cfg(windows)]
         this_ref.hold_read_ref();
         this_ref.read(None);
+        this_ref.leave_running();
+    }
+
+    /// At the end of `start()`. A stream that goes on can outlive the descriptor that its own is a duplicate of.
+    fn leave_running(&self) {
+        if self.self_ref.get().is_some() {
+            self.fd.close_inline.set(false);
+        }
     }
 
     fn arm_on_writable(&self) {
@@ -503,9 +550,6 @@ impl FileResponseStream {
         if !self.state.get().contains(State::RESPONSE_DONE) {
             self.insert_state(State::RESPONSE_DONE);
             self.detach_resp();
-            // An `abort` listener may close the fd, and epoll cannot remove a closed fd.
-            #[cfg(unix)]
-            self.reader.release_handle();
             self.deliver(self.resp.get(), StreamEnd::Abort);
         }
         self.finish();

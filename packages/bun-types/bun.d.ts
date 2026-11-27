@@ -5271,7 +5271,7 @@ declare module "bun" {
    * const file = Bun.file(fd);
    * ```
    *
-   * @param fileDescriptor An open file descriptor
+   * @param fileDescriptor An open file descriptor. Bun does not close it. You own the descriptor: close it after the read or write that uses it finishes. To have Bun open and close its own descriptor, pass a path.
    */
   function file(fileDescriptor: number, options?: BlobPropertyBag): BunFile;
 

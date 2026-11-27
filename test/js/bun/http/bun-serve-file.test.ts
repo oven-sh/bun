@@ -1,8 +1,31 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isLinux,
+  isWindows,
+  rmScope,
+  rss,
+  tempDir,
+  tempDirWithFiles,
+  tls as tlsCert,
+} from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, constants, openSync, readdirSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  openSync,
+  readdirSync,
+  readlinkSync,
+  realpathSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -2046,6 +2069,221 @@ console.log(await later());
     closeSync(fd);
   }
 });
+
+// Bun does not close the descriptor of a Bun.file(fd), and nothing tells the app
+// when a response has ended. An app that closes the descriptor while the body is
+// in flight lets the kernel give the number to the next file it opens. The
+// response must go on with the file it started with.
+describe.concurrent("Response(Bun.file(fd)) whose fd the handler closes and the kernel gives to another file", () => {
+  const size = 16 * 1024 * 1024;
+  for (const transport of ["http", "https"] as const) {
+    test(transport, async () => {
+      using dir = tempDir("serve-fd-reuse", {
+        "cert.pem": tlsCert.cert,
+        "key.pem": tlsCert.key,
+        "fixture.ts": `
+import { closeSync, openSync, writeFileSync } from "node:fs";
+import net from "node:net";
+import tls from "node:tls";
+
+const size = Number(process.argv[2]);
+const secure = process.argv[3] === "https";
+writeFileSync("a.bin", Buffer.alloc(size, "A"));
+writeFileSync("b.bin", Buffer.alloc(size, "B"));
+
+let fdA = -1;
+let fdB = -1;
+const reopened = Promise.withResolvers<void>();
+using server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  tls: secure ? { cert: Bun.file("cert.pem"), key: Bun.file("key.pem") } : undefined,
+  fetch() {
+    fdA = openSync("a.bin", "r");
+    setImmediate(() => {
+      closeSync(fdA);
+      fdB = openSync("b.bin", "r");
+      reopened.resolve();
+    });
+    return new Response(Bun.file(fdA));
+  },
+});
+
+const chunks: Buffer[] = [];
+const closed = Promise.withResolvers<void>();
+const options = { host: "127.0.0.1", port: server.port, rejectUnauthorized: false };
+const socket = secure ? tls.connect(options) : net.connect(options);
+socket.once(secure ? "secureConnect" : "connect", () => {
+  // The client reads nothing until the number belongs to b.bin, so the server
+  // cannot send all of the body from inside the handler.
+  socket.pause();
+  socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+});
+socket.on("data", chunk => chunks.push(chunk));
+socket.on("error", closed.reject);
+socket.on("close", () => closed.resolve());
+await reopened.promise;
+socket.resume();
+await closed.promise;
+
+const response = Buffer.concat(chunks);
+const headEnd = response.indexOf("\\r\\n\\r\\n");
+const head = response.subarray(0, headEnd).toString().toLowerCase().split("\\r\\n");
+const body = response.subarray(headEnd + 4);
+console.log(
+  JSON.stringify({
+    status: head[0],
+    contentLength: head.find(line => line.startsWith("content-length:")),
+    contentRange: head.find(line => line.startsWith("content-range:")) ?? null,
+    sameNumber: fdA === fdB,
+    bytes: body.length,
+    firstByteOfB: body.indexOf("B"),
+  }),
+);
+closeSync(fdB);
+`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.ts", String(size), transport],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        status: "http/1.1 200 ok",
+        contentLength: `content-length: ${size}`,
+        contentRange: null,
+        sameNumber: true,
+        bytes: size,
+        firstByteOfB: -1,
+      });
+      expect(exitCode).toBe(0);
+    });
+  }
+});
+
+// Bun reads a Response(Bun.file(fd)) from its own duplicate of the descriptor.
+// It closes the duplicate when the response ends or aborts, and never the
+// caller's.
+test.skipIf(!isLinux)(
+  "Response(Bun.file(fd)) reads from a duplicate that it closes, and not the caller's fd",
+  async () => {
+    const size = 16 * 1024 * 1024;
+    using dir = tempDir("serve-fd-dup-leak", {});
+    const path = join(realpathSync(String(dir)), "big.bin");
+    writeFileSync(path, Buffer.alloc(size, "x"));
+    const fd = openSync(path, "r");
+    try {
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () => new Response(Bun.file(fd)),
+      });
+
+      const descriptorsOfFile = () =>
+        readdirSync("/proc/self/fd").filter(entry => {
+          try {
+            return readlinkSync(`/proc/self/fd/${entry}`) === path;
+          } catch {
+            return false;
+          }
+        }).length;
+      // The close happens on another thread.
+      const onlyTheCallersIsLeft = async () => {
+        const deadline = Date.now() + 5000;
+        while (descriptorsOfFile() > 1 && Date.now() < deadline) await Bun.sleep(10);
+        return descriptorsOfFile();
+      };
+      expect(descriptorsOfFile()).toBe(1);
+
+      for (let i = 0; i < 4; i++) {
+        const sawHead = Promise.withResolvers<void>();
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: {
+            open: socket => void socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n"),
+            data: () => sawHead.resolve(),
+            close: () => sawHead.resolve(),
+            error: () => sawHead.resolve(),
+          },
+        });
+        await sawHead.promise;
+        expect(descriptorsOfFile()).toBe(2);
+        client.terminate();
+        expect(await onlyTheCallersIsLeft()).toBe(1);
+
+        const res = await fetch(server.url);
+        expect((await res.arrayBuffer()).byteLength).toBe(size);
+        expect(await onlyTheCallersIsLeft()).toBe(1);
+      }
+      expect(fstatSync(fd).size).toBe(size);
+    } finally {
+      closeSync(fd);
+    }
+  },
+);
+
+// The duplicate needs a free descriptor. Without one the response is the error
+// handler's, and nothing of the file has been written by then.
+test.concurrent.skipIf(isWindows)(
+  "Response(Bun.file(fd)) goes to the error handler when out of descriptors",
+  async () => {
+    using dir = tempDir("serve-fd-emfile", {
+      "hello.txt": "hello",
+      "fixture.ts": `
+import { closeSync, openSync } from "node:fs";
+
+const held: number[] = [];
+using server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  fetch(req) {
+    const fd = openSync("hello.txt", "r");
+    if (req.url.endsWith("/full")) {
+      try {
+        for (;;) held.push(openSync("/dev/null", "r"));
+      } catch {}
+    }
+    setImmediate(() => closeSync(fd));
+    return new Response(Bun.file(fd));
+  },
+  error(err: any) {
+    for (const fd of held.splice(0)) closeSync(fd);
+    return new Response(err.code, { status: 500 });
+  },
+});
+const results = [];
+for (const path of ["/full", "/free"]) {
+  const res = await fetch(server.url.origin + path);
+  results.push({ status: res.status, body: await res.text() });
+}
+console.log(JSON.stringify(results));
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", 'ulimit -n 64 && exec "$0" fixture.ts', bunExe()],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      { status: 500, body: "EMFILE" },
+      { status: 200, body: "hello" },
+    ]);
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent.skipIf(isWindows)(
   "a handler that answers with Bun.file(FIFO) while its request body fails on maxRequestBodySize",

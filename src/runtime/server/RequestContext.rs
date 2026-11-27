@@ -1783,6 +1783,19 @@ where
             (bun_io::FileType::File, false)
         };
 
+        // Before anything of the file is written to this request, so the error handler answers a clean one.
+        let caller_fd = match &file.pathlike {
+            crate::webcore::node_types::PathOrFileDescriptor::Path(_) => None,
+            crate::webcore::node_types::PathOrFileDescriptor::Fd(caller_fd) => {
+                match file_response_stream::StreamFd::duplicate_of(*caller_fd, file_type) {
+                    bun_sys::Result::Ok(duplicate) => Some(duplicate),
+                    bun_sys::Result::Err(err) => {
+                        return self.run_error_handler(err.to_js(global_this));
+                    }
+                }
+            }
+        };
+
         let (original_size, blob_offset) = match blob_ref {
             AnyBlob::Blob(b) => (b.size.get(), b.offset.get()),
             _ => unreachable!(),
@@ -1922,7 +1935,12 @@ where
 
         let server = self.server();
         FileResponseStream::start(file_response_stream::StartOptions {
-            fd: opened.map_or_else(|| file_response_stream::StreamFd::borrowed(fd), Into::into),
+            fd: match (opened, caller_fd) {
+                (Some(file), _) => file.into(),
+                (None, Some(duplicate)) => duplicate,
+                // A path blob has `opened`, an fd blob has `caller_fd`.
+                (None, None) => unreachable!(),
+            },
             resp,
             vm: bun_ptr::BackRef::new(server.vm()),
             file_type,

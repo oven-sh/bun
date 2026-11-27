@@ -42,6 +42,8 @@ Bun.file(1234);
 Bun.file(new URL(import.meta.url)); // reference to the current file
 ```
 
+Bun does not close a file descriptor that you pass to `Bun.file()`. You own the descriptor. Close it after the read or write that uses it finishes. To have Bun open and close its own descriptor, pass a path.
+
 A `BunFile` can point to a location on disk where a file does not exist.
 
 ```ts

@@ -159,6 +159,10 @@ pub struct EnvironmentConfig {
     /// The `finally` block of a `try` is lowered after the rest of it, and so is the `try` block that has no `catch`:
     /// the function is not compiled, and the rules see what the blocks use. Upstream lowers neither.
     pub finally_blocks_are_lowered: bool,
+    /// A `catch` parameter that is a context variable, as the `e` that `() => { e = 2 }` in the block writes to, is no
+    /// error where it is bound. Nothing is stored to it, so what reads it fails if the block is reached. Upstream
+    /// records "Unexpected context variable kind" there, also for a `catch` that nothing throws to.
+    pub context_catch_parameters_are_not_reported: bool,
     /// For `prune_maybe_throws`: with the edge to a `catch` go the operands that phis have for it and the phis that are
     /// then redundant, and a `catch` that is no longer reached is no predecessor of what follows the `try`. Upstream
     /// keeps them, and fails: "Found a block with a single predecessor but where a phi has multiple operands".
@@ -297,6 +301,7 @@ impl Default for EnvironmentConfig {
             throws_in_try_control_reactivity: false,
             outer_branches_control_reactivity: false,
             finally_blocks_are_lowered: false,
+            context_catch_parameters_are_not_reported: false,
             pruned_throw_edges_are_removed_from_phis: false,
             react_is_known_by_its_module: true,
             dependencies_are_sorted_by_bytes: false,

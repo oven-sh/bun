@@ -1946,13 +1946,21 @@ pub(super) fn lower_assignment_binding(
                             && kind != InstructionKind::Let
                             && kind != InstructionKind::Function
                         {
-                            builder.record_error(CompilerErrorDetail {
-                                reason: "Unexpected context variable kind".to_string(),
-                                category: ErrorCategory::Syntax,
-                                loc,
-                                suggestions: None,
-                                description: None,
-                            })?;
+                            // Not in upstream: oxc 1.95 has no such error.
+                            let is_reported = kind != InstructionKind::Catch
+                                || !builder
+                                    .environment()
+                                    .config
+                                    .context_catch_parameters_are_not_reported;
+                            if is_reported {
+                                builder.record_error(CompilerErrorDetail {
+                                    reason: "Unexpected context variable kind".to_string(),
+                                    category: ErrorCategory::Syntax,
+                                    loc,
+                                    suggestions: None,
+                                    description: None,
+                                })?;
+                            }
                             let temp = lower_value_to_temporary(
                                 builder,
                                 InstructionValue::UnsupportedNode {

@@ -877,7 +877,7 @@ Bun reads these keys from the query string of a connection URL:
 | `sslrootcert`, `sslcert`, `sslkey`, `sslpassword` | PostgreSQL        | `tls.caFile`, `tls.certFile`, `tls.keyFile`, `tls.passphrase` |
 | `mode`                                            | SQLite            | `readonly`, `create`                                          |
 
-On PostgreSQL, Bun sends every other key to the server as a startup parameter, like the `connection` option: `?application_name=api&search_path=app`. Bun leaves out the keys that only configure libpq, such as `keepalives` and `target_session_attrs`.
+On PostgreSQL, Bun sends every other key to the server as a startup parameter, like the `connection` option: `?application_name=api&search_path=app`. Bun leaves out the keys that only configure libpq, such as `keepalives` and `target_session_attrs`. Bun also leaves out `uselibpqcompat=true`, a key of node-postgres.
 
 ---
 

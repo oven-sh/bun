@@ -11858,6 +11858,13 @@ CREATE TABLE ${table_name} (
         );
         expect(await sql`select current_setting('application_name') as name`).toEqual([{ name: "bun_url_keys" }]);
       });
+      test.each(["uselibpqcompat=true", "uselibpqcompat=true&sslmode=prefer"])(
+        "query string: ?%s of node-postgres is not sent to the server",
+        async query => {
+          await using sql = postgres(`${process.env.DATABASE_URL}?${query}&application_name=bun_url_keys`, { max: 1 });
+          expect(await sql`select current_setting('application_name') as name`).toEqual([{ name: "bun_url_keys" }]);
+        },
+      );
       test("query string: host, port, user and dbname, as in libpq", async () => {
         await using sql = postgres(
           `postgres:///?host=${container.host}&port=${container.port}&user=bun_sql_test&dbname=bun_sql_test&max=1`,

@@ -93,6 +93,10 @@ pub struct Environment {
     // are NOT in this set and should keep their original names).
     pub reference_node_ids: HashSet<u32>,
 
+    /// Not in upstream. Where each call is that is a tagged template in the source: `Host::is_tagged_template`.
+    /// Only with `EnvironmentConfig::captured_variables_can_be_updated`.
+    pub(crate) tagged_template_calls: HashSet<SourceLocation>,
+
     // Hoisted identifiers: tracks which bindings have already been hoisted
     // via DeclareContext to avoid duplicate hoisting.
     // Uses u32 to avoid depending on react_compiler_ast types.
@@ -196,6 +200,7 @@ impl Environment {
             renames: AstAlloc::vec(),
             binding_names: HashMap::default(),
             reference_node_ids: HashSet::default(),
+            tagged_template_calls: HashSet::default(),
             hoisted_identifiers: HashSet::default(),
             validate_preserve_existing_memoization_guarantees: config
                 .validate_preserve_existing_memoization_guarantees,

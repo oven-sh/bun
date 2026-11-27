@@ -161,102 +161,180 @@ struct Call {
     arguments: Option<Arguments>,
 }
 
-/// What the parameters bind. A parameter that is no plain name is a temporary, and what it declares is stored from it
-/// by the instructions that the function starts with. oxc knows those by their place in the source, within the
+/// Whether `value` is a tagged template in the source. The tree of `bun lint` has a call for one with substitutions,
+/// and oxc a `TaggedTemplateExpression`: its substitutions come after the strings, and it is no call to a signature.
+pub(super) fn is_tagged_template(value: &InstructionValue, env: &Environment) -> bool {
+    match value {
+        InstructionValue::CallExpression { loc: Some(loc), .. }
+        | InstructionValue::MethodCall { loc: Some(loc), .. } => {
+            env.tagged_template_calls.contains(loc)
+        }
+        _ => false,
+    }
+}
+
+/// The names that the tree of `bun lint` has and the source has not. It destructures a parameter in the body where
+/// oxc's lowering destructures it as a declaration: `({ a }) => ..` is `(t) => { let { a } = t; .. }`. The `t` is named,
+/// and is to be the temporary that oxc has for the parameter. It is known by where it is read: that read has the
+/// location of the declaration, and each node of the source has a location of its own.
+fn converted_patterns(func: &HirFunction, env: &Environment) -> FxHashSet<DeclarationId> {
+    let mut found = FxHashSet::default();
+    for instruction in &func.instructions {
+        let InstructionValue::LoadLocal {
+            place,
+            loc: Some(loc),
+        } = &instruction.value
+        else {
+            continue;
+        };
+        let identifier = &env.identifiers[place.identifier.0 as usize];
+        if identifier.loc == Some(*loc) && matches!(identifier.name, Some(IdentifierName::Named(_)))
+        {
+            found.insert(identifier.declaration_id);
+        }
+    }
+    found
+}
+
+/// What the parameters declare. A parameter that is no plain name is a temporary, and what it declares is stored from
+/// it by the instructions that the function starts with. oxc knows those by their place in the source, within the
 /// parameter. Here a location is no range, so they are the instructions up to the last one that takes a value from
 /// such a temporary: `HirFunction::instructions` is in the order of lowering, and the parameters are lowered first.
-/// The temporary itself is not among the bindings.
-fn parameter_bindings(func: &HirFunction, env: &Environment) -> FxHashSet<IdentifierId> {
+#[derive(Default)]
+struct ParameterDeclarations {
+    /// Each temporary that a parameter, or a part of one, goes through, with the index of the parameter.
+    temporaries: FxHashMap<IdentifierId, usize>,
+    /// Each name of the source that a parameter declares, with the index of the parameter.
+    named: FxHashMap<DeclarationId, usize>,
+    /// Everything that those instructions declare, and each parameter that is a plain name.
+    all: FxHashSet<DeclarationId>,
+}
+
+fn parameter_declarations(func: &HirFunction, env: &Environment) -> ParameterDeclarations {
     let declaration_of = |id: IdentifierId| env.identifiers[id.0 as usize].declaration_id;
-    let is_named = |id: IdentifierId| {
-        matches!(
-            env.identifiers[id.0 as usize].name,
-            Some(IdentifierName::Named(_))
-        )
+    let converted = converted_patterns(func, env);
+    let is_source_name = |id: IdentifierId| {
+        let identifier = &env.identifiers[id.0 as usize];
+        matches!(identifier.name, Some(IdentifierName::Named(_)))
+            && !converted.contains(&identifier.declaration_id)
     };
 
-    let mut bindings: FxHashSet<IdentifierId> = FxHashSet::default();
-    let mut declarations: FxHashSet<DeclarationId> = FxHashSet::default();
-    let mut from_parameters: FxHashSet<IdentifierId> = FxHashSet::default();
+    let mut declared = ParameterDeclarations::default();
     let mut first_declaration: Option<DeclarationId> = None;
-    for param in &func.params {
+    for (index, param) in func.params.iter().enumerate() {
         let id = param.place().identifier;
         let declaration = declaration_of(id);
         first_declaration = Some(first_declaration.map_or(declaration, |it| it.min(declaration)));
-        if matches!(param, ParamPattern::Place(_)) && is_named(id) {
-            bindings.insert(id);
-            declarations.insert(declaration);
+        if matches!(param, ParamPattern::Place(_)) && is_source_name(id) {
+            declared.named.insert(declaration, index);
+            declared.all.insert(declaration);
         } else {
-            from_parameters.insert(id);
+            declared.temporaries.insert(id, index);
         }
     }
+    let Some(first_declaration) = first_declaration else {
+        return declared;
+    };
+    if declared.temporaries.is_empty() {
+        return declared;
+    }
 
-    if let Some(first_declaration) = first_declaration
-        && !from_parameters.is_empty()
-    {
-        let mut last: Option<usize> = None;
-        loop {
-            let mut changed = false;
-            for (_, block) in &func.body.blocks {
-                for phi in &block.phis {
-                    if phi
-                        .operands
-                        .values()
-                        .any(|operand| from_parameters.contains(&operand.identifier))
-                    {
-                        changed |= from_parameters.insert(phi.place.identifier);
-                    }
+    let mut last: Option<usize> = None;
+    loop {
+        let mut changed = false;
+        let mut add =
+            |temporaries: &mut FxHashMap<IdentifierId, usize>, id: IdentifierId, index: usize| {
+                if !temporaries.contains_key(&id) {
+                    temporaries.insert(id, index);
+                    changed = true;
                 }
-            }
-            for (index, instruction) in func.instructions.iter().enumerate() {
-                let source = match &instruction.value {
-                    InstructionValue::LoadLocal { place, .. } => place,
-                    InstructionValue::StoreLocal { value, .. }
-                    | InstructionValue::StoreContext { value, .. }
-                    | InstructionValue::Destructure { value, .. } => value,
-                    _ => continue,
-                };
-                if !from_parameters.contains(&source.identifier) {
-                    continue;
+            };
+        for (_, block) in &func.body.blocks {
+            for phi in &block.phis {
+                let index = phi
+                    .operands
+                    .values()
+                    .find_map(|operand| declared.temporaries.get(&operand.identifier).copied());
+                if let Some(index) = index {
+                    add(&mut declared.temporaries, phi.place.identifier, index);
                 }
-                last = last.max(Some(index));
-                if matches!(instruction.value, InstructionValue::LoadLocal { .. }) {
-                    changed |= from_parameters.insert(instruction.lvalue.identifier);
-                }
-                for place in value_lvalues(&instruction.value) {
-                    if !is_named(place.identifier) {
-                        changed |= from_parameters.insert(place.identifier);
-                    }
-                }
-            }
-            if !changed {
-                break;
             }
         }
-        if let Some(last) = last {
-            for instruction in func.instructions.iter().take(last.saturating_add(1)) {
-                for place in value_lvalues(&instruction.value) {
-                    let declaration = declaration_of(place.identifier);
-                    if declaration >= first_declaration {
-                        declarations.insert(declaration);
-                    }
+        for (at, instruction) in func.instructions.iter().enumerate() {
+            let source = match &instruction.value {
+                InstructionValue::LoadLocal { place, .. } => place,
+                InstructionValue::StoreLocal { value, .. }
+                | InstructionValue::StoreContext { value, .. }
+                | InstructionValue::Destructure { value, .. } => value,
+                _ => continue,
+            };
+            let Some(&index) = declared.temporaries.get(&source.identifier) else {
+                continue;
+            };
+            last = last.max(Some(at));
+            if matches!(instruction.value, InstructionValue::LoadLocal { .. }) {
+                add(
+                    &mut declared.temporaries,
+                    instruction.lvalue.identifier,
+                    index,
+                );
+            }
+            for place in value_lvalues(&instruction.value) {
+                if is_source_name(place.identifier) {
+                    declared
+                        .named
+                        .entry(declaration_of(place.identifier))
+                        .or_insert(index);
+                } else {
+                    add(&mut declared.temporaries, place.identifier, index);
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    if let Some(last) = last {
+        for instruction in func.instructions.iter().take(last.saturating_add(1)) {
+            for place in value_lvalues(&instruction.value) {
+                let declaration = declaration_of(place.identifier);
+                if declaration >= first_declaration {
+                    declared.all.insert(declaration);
                 }
             }
         }
     }
+    declared
+}
 
+/// Each name of the source that a parameter of `func` declares, with the index of the parameter.
+pub(crate) fn named_parameter_declarations(
+    func: &HirFunction,
+    env: &Environment,
+) -> FxHashMap<DeclarationId, usize> {
+    parameter_declarations(func, env).named
+}
+
+/// What the parameters bind. A temporary that is a parameter is not among the bindings.
+fn parameter_bindings(func: &HirFunction, env: &Environment) -> FxHashSet<IdentifierId> {
+    let declared = parameter_declarations(func, env);
+    let is_temporary =
+        |param: &ParamPattern| declared.temporaries.contains_key(&param.place().identifier);
+    let mut bindings: FxHashSet<IdentifierId> = FxHashSet::default();
     for instruction in &func.instructions {
         for place in value_lvalues(&instruction.value) {
-            if declarations.contains(&declaration_of(place.identifier)) {
+            let declaration = env.identifiers[place.identifier.0 as usize].declaration_id;
+            if declared.all.contains(&declaration) {
                 bindings.insert(place.identifier);
             }
         }
     }
     for param in &func.params {
         let id = param.place().identifier;
-        if from_parameters.contains(&id) {
-            bindings.remove(&id);
-        }
+        match is_temporary(param) {
+            true => bindings.remove(&id),
+            false => bindings.insert(id),
+        };
     }
     bindings
 }
@@ -1140,6 +1218,7 @@ impl CallableState {
         require_result_flow: bool,
     ) -> Values {
         let args = match instruction {
+            _ if is_tagged_template(instruction, env) => return Values::default(),
             InstructionValue::CallExpression { args, .. }
             | InstructionValue::MethodCall { args, .. } => args,
             _ => return Values::default(),
@@ -1177,6 +1256,9 @@ impl CallableState {
         else {
             return None;
         };
+        if is_tagged_template(instruction, env) {
+            return None;
+        }
         let signature = signature_of(env, property.identifier)?;
         if !matches!(
             signature.canonical_name,
@@ -1226,6 +1308,9 @@ impl CallableState {
     }
 
     fn update_collection(&mut self, instruction: &Instruction, env: &Environment) {
+        if is_tagged_template(&instruction.value, env) {
+            return;
+        }
         let (callee, args) = match &instruction.value {
             InstructionValue::NewExpression { callee, args, .. } => (callee.identifier, args),
             InstructionValue::MethodCall { property, args, .. } => (property.identifier, args),
@@ -1461,10 +1546,15 @@ impl CallableState {
         self.keys.remove(&into);
     }
 
-    fn invoked(&self, instruction: &InstructionValue) -> Values {
+    fn invoked(&self, instruction: &InstructionValue, env: &Environment) -> Values {
         match instruction {
             InstructionValue::CallExpression { callee, .. }
             | InstructionValue::NewExpression { callee, .. } => self.values(callee.identifier),
+            InstructionValue::MethodCall { property, .. }
+                if is_tagged_template(instruction, env) =>
+            {
+                self.values(property.identifier)
+            }
             InstructionValue::MethodCall {
                 receiver, property, ..
             } => match self
@@ -1684,9 +1774,31 @@ impl CallableState {
         (substitutions, rest_arguments)
     }
 
-    fn call_arguments(&self, instruction: &Instruction) -> (Arguments, Option<IdentifierId>) {
+    fn call_arguments(
+        &self,
+        instruction: &Instruction,
+        env: &Environment,
+    ) -> (Arguments, Option<IdentifierId>) {
         let mut binding = None;
         let arguments = match &instruction.value {
+            InstructionValue::CallExpression { args, .. }
+            | InstructionValue::MethodCall { args, .. }
+                if is_tagged_template(&instruction.value, env) =>
+            {
+                Arguments {
+                    elements: args
+                        .iter()
+                        .enumerate()
+                        .map(|(index, argument)| {
+                            (
+                                Some((index + 1).to_string()),
+                                self.values(argument.place().identifier),
+                            )
+                        })
+                        .collect(),
+                    length: Some(args.len() + 1),
+                }
+            }
             InstructionValue::CallExpression { args, .. }
             | InstructionValue::NewExpression { args, .. } => self.arguments(args),
             InstructionValue::MethodCall {
@@ -1712,7 +1824,7 @@ impl CallableState {
                     _ => self.arguments(args),
                 }
             }
-            // The strings of the template are the first argument. A template that has more is not lowered.
+            // The strings of the template are the first argument, and this one has no substitutions.
             InstructionValue::TaggedTemplateExpression { .. } => Arguments {
                 elements: Properties::default(),
                 length: Some(1),
@@ -1722,8 +1834,8 @@ impl CallableState {
         (arguments, binding)
     }
 
-    fn call_result(&mut self, instruction: &Instruction) {
-        let (arguments, binding) = self.call_arguments(instruction);
+    fn call_result(&mut self, instruction: &Instruction, env: &Environment) {
+        let (arguments, binding) = self.call_arguments(instruction, env);
         if let Some(receiver) = binding {
             let mut values = self.values(receiver);
             // Bound arguments snapshot their values. Keep identities here so
@@ -1736,7 +1848,7 @@ impl CallableState {
             self.values.insert(instruction.lvalue.identifier, values);
             return;
         }
-        let invoked = self.invoked(&instruction.value);
+        let invoked = self.invoked(&instruction.value, env);
         let mut result = Values::default();
         for callable in invoked.contexts.values() {
             if callable.generator {
@@ -1967,6 +2079,7 @@ impl CallableState {
         captured_contexts: &Captures,
         function_returns: &FxHashMap<IdentifierId, ReturnedCallables>,
         captured_bindings: &FxHashSet<IdentifierId>,
+        env: &Environment,
     ) {
         let id = instruction.lvalue.identifier;
         match &instruction.value {
@@ -2137,7 +2250,9 @@ impl CallableState {
             InstructionValue::CallExpression { .. }
             | InstructionValue::NewExpression { .. }
             | InstructionValue::MethodCall { .. }
-            | InstructionValue::TaggedTemplateExpression { .. } => self.call_result(instruction),
+            | InstructionValue::TaggedTemplateExpression { .. } => {
+                self.call_result(instruction, env)
+            }
             _ => {}
         }
     }
@@ -2239,10 +2354,10 @@ pub(super) fn infer_async_callable_contexts(
                         .extend(state.values(place.identifier).identities);
                 }
                 let mut invocations = Vec::new();
-                let (arguments, _) = state.call_arguments(instruction);
+                let (arguments, _) = state.call_arguments(instruction, env);
                 let calls: Vec<Call> = [
                     Call {
-                        callees: state.invoked(&instruction.value),
+                        callees: state.invoked(&instruction.value, env),
                         arguments: Some(arguments),
                     },
                     Call {
@@ -2297,6 +2412,7 @@ pub(super) fn infer_async_callable_contexts(
                     captured_contexts,
                     function_returns,
                     &captured_bindings,
+                    env,
                 );
                 state.update_collection(instruction, env);
             }

@@ -4,12 +4,16 @@
 //!
 //! A captured variable isn't renamed by SSA. So this follows, block by block, which values a captured variable can
 //! hold, and asks for a function that escapes what its captured variables hold where it escapes.
+//!
+//! Not what oxlint reports: which variable is named, and so where its reassignment is, where what escapes can reach
+//! the reassignments of more than one. Both take the first in a hash set of identifiers, and oxc's identifiers have
+//! other numbers, hashed in another form. The rule and the rest of the message are the same.
 
 use std::collections::VecDeque;
 use std::collections::hash_map::Entry;
 
 use super::async_callable_contexts::{
-    AsyncCallables, ReturnedCallables, infer_async_callable_contexts,
+    AsyncCallables, ReturnedCallables, infer_async_callable_contexts, is_tagged_template,
 };
 use super::validate_locals_not_reassigned_after_render::format_variable_name;
 use crate::collections::{FxHashMap, FxHashSet};
@@ -229,6 +233,7 @@ pub(super) fn no_alias_callback_parameters(
     argument_count: usize,
 ) -> Vec<usize> {
     let signature_identifier = match value {
+        _ if is_tagged_template(value, env) => return Vec::new(),
         InstructionValue::CallExpression { callee, .. } => callee.identifier,
         InstructionValue::MethodCall { property, .. } => property.identifier,
         _ => return Vec::new(),

@@ -79,6 +79,12 @@ pub trait Host {
         &[]
     }
 
+    /// Whether the call at `call` is a tagged template in the source. For a tree that has a call for one with
+    /// substitutions.
+    fn is_tagged_template(&self, _call: Loc) -> bool {
+        false
+    }
+
     /// The namespace import that `item` is a member of. The parser makes an import of its own of `ns.member`.
     fn namespace_of_import_item(&self, _item: Ref) -> Option<Ref> {
         None

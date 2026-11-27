@@ -49,6 +49,7 @@ pub mod validate_preserved_manual_memoization;
 pub(crate) mod validate_static_components;
 pub(crate) mod validate_use_memo;
 
+pub(crate) use async_callable_contexts::named_parameter_declarations;
 pub(crate) use validate_captured_reassignments::validate_captured_reassignments;
 pub(crate) use validate_context_variable_lvalues::validate_context_variable_lvalues;
 pub(crate) use validate_exhaustive_dependencies::validate_exhaustive_dependencies;

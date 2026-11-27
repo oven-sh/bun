@@ -43,6 +43,9 @@ impl Host for LintHost<'_> {
     fn parentheses(&self) -> &[(Loc, Loc)] {
         &self.converted.parentheses
     }
+    fn is_tagged_template(&self, call: Loc) -> bool {
+        self.converted.tagged_templates.contains(&call)
+    }
     fn is_module_level(&self, ref_: Ref) -> bool {
         let is_outside = self.converted.is_outside.get(ref_.inner_index() as usize);
         is_outside.copied().unwrap_or(true)

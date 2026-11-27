@@ -72,6 +72,15 @@ pub(crate) fn lower_expression(
             if call.optional_chain.is_some() {
                 return lower_optional_call_expression(builder, expr);
             }
+            if builder
+                .environment()
+                .config
+                .captured_variables_can_be_updated
+                && let Some(loc) = loc
+                && builder.host().is_tagged_template(expr.loc)
+            {
+                builder.environment_mut().tagged_template_calls.insert(loc);
+            }
             // Check if callee is a MemberExpression => MethodCall
             let is_member = matches!(
                 &call.target.data,

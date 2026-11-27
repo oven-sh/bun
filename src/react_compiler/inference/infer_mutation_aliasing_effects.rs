@@ -133,6 +133,15 @@ pub(crate) fn infer_mutation_aliasing_effects(
             infer_param(param, &mut initial_state, param_kind, &mut next_value_id);
         }
     }
+    if env.config.captured_variables_can_be_updated {
+        infer_context_parameter_bindings(
+            func,
+            env,
+            &mut initial_state,
+            param_kind,
+            &mut next_value_id,
+        );
+    }
 
     let mut queued_states: IdMap<BlockId, InferenceState> = IdMap::new();
 
@@ -1369,6 +1378,54 @@ fn infer_param(
     *next_value_id += 1;
     state.initialize(value_id, param_kind);
     state.define(place.identifier, value_id);
+}
+
+/// Not in upstream: oxc's, as of oxlint 1.95 (oxc 8612f43be). A parameter that is no plain name is a temporary, and
+/// the names that it declares are stored from it by the instructions that the function starts with. This gives those
+/// names a value before any of them runs, so that the default value of an earlier parameter can be a function that
+/// reads or updates a later one.
+fn infer_context_parameter_bindings(
+    func: &HirFunction,
+    env: &Environment,
+    state: &mut InferenceState,
+    param_kind: AbstractValue,
+    next_value_id: &mut u32,
+) {
+    if func.params.is_empty() {
+        return;
+    }
+    let mut declared_by: Option<HashMap<DeclarationId, usize>> = None;
+    for (_, block) in &func.body.blocks {
+        for &instruction_id in &block.instructions {
+            let lvalue = match &func.instructions[instruction_id.0 as usize].value {
+                InstructionValue::StoreContext { lvalue, .. }
+                | InstructionValue::StoreLocal { lvalue, .. } => lvalue,
+                _ => continue,
+            };
+            let declaration = env.identifiers[lvalue.place.identifier.0 as usize].declaration_id;
+            let identifier = IdentifierId(declaration.0);
+            if state.is_defined(identifier) {
+                continue;
+            }
+            let declared_by = declared_by
+                .get_or_insert_with(|| crate::validation::named_parameter_declarations(func, env));
+            let Some(&index) = declared_by.get(&declaration) else {
+                continue;
+            };
+            let kind = if func.fn_type == ReactFunctionType::Component && index == 1 {
+                AbstractValue {
+                    kind: ValueKind::Mutable,
+                    reason: hashset_of(ValueReason::Other),
+                }
+            } else {
+                param_kind
+            };
+            let value_id = ValueId(*next_value_id);
+            *next_value_id += 1;
+            state.initialize(value_id, kind);
+            state.define(identifier, value_id);
+        }
+    }
 }
 
 // =============================================================================

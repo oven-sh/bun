@@ -68,6 +68,8 @@ pub(crate) struct Converted {
     pub(crate) wrapped_defaults: Vec<WrappedDefault>,
     /// Each `new Date()` and `Date()` that the tree has as `Date.now()`. In source order.
     pub(crate) clock_reads: Vec<Span>,
+    /// [`Host::is_tagged_template`](bun_react_compiler::Host::is_tagged_template)
+    pub(crate) tagged_templates: Vec<Loc>,
     /// Each string key with a lone surrogate that the tree has no key for, in the order in which oxc's lowering would
     /// come to them. It gives up on the function at the first that it lowers, and Bun's records a `Todo` at each.
     pub(crate) lone_surrogate_keys: Vec<Span>,
@@ -190,6 +192,7 @@ pub(crate) struct Converter<'a, 'x> {
     parentheses: Vec<(Loc, Loc)>,
     wrapped_defaults: Vec<WrappedDefault>,
     clock_reads: Vec<Span>,
+    tagged_templates: Vec<Loc>,
     body: Body,
     /// The function that oxc's compiler inlines into the compiled one, from when its call is converted until it is.
     inlined: Option<Span>,
@@ -236,6 +239,7 @@ pub(crate) fn convert<'a>(
         parentheses: Vec::new(),
         wrapped_defaults: Vec::new(),
         clock_reads: Vec::new(),
+        tagged_templates: Vec::new(),
         body: Body::Nested,
         inlined: None,
         is_after_inlined_call: false,
@@ -276,6 +280,7 @@ pub(crate) fn convert<'a>(
         fragment: converter.fragment,
         recorded: converter.recorded,
         clock_reads: converter.clock_reads,
+        tagged_templates: converter.tagged_templates,
         lone_surrogate_keys: converter.lone_surrogate_keys,
     })
 }
@@ -538,7 +543,8 @@ impl<'a> Converter<'a, '_> {
     }
 
     /// Rewrites `({ a }) => ..` as `(t) => { let { a } = t; .. }`. Returns the `t` and adds the
-    /// declaration to `first`.
+    /// declaration to `first`. The read of `t` has the `Loc` of its declaration, which is how the compiler's
+    /// `converted_patterns` knows that the source has no `t`.
     fn destructure_in_body(
         &mut self,
         binding: Binding,
@@ -1255,6 +1261,7 @@ impl<'a> Converter<'a, '_> {
                     Some(ExprKind::Template(template))
                         if self.flavor == Flavor::Oxlint && !template.exprs().is_empty() =>
                     {
+                        self.tagged_templates.push(loc);
                         JsExpr::init(
                             E::Call {
                                 target: tag,

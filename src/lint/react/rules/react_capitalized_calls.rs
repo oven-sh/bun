@@ -176,58 +176,139 @@ fn push_literal(out: &mut String, c: char) {
     }
 }
 
-/// `\p{name}` as JavaScript spells it, which wants the case and the `_` that the crate ignores. `None` if it has none.
+/// The binary properties that both `regex-syntax` 0.8.11 and JavaScript have, by each name that JavaScript takes.
+/// The crate's `Other_*`, `Grapheme_Link`, `Hyphen`, `IDS_Unary_Operator`, `ID_Compat_Math_*`, `Modifier_Combining_Mark`
+/// and `Prepended_Concatenation_Mark` are missing, which JavaScript hasn't.
+const BINARY_PROPERTIES: &[u8] = b"\
+AHex ASCII_Hex_Digit Alpha Alphabetic Bidi_C Bidi_Control Bidi_M Bidi_Mirrored CI CWCF CWCM CWL CWT CWU \
+Case_Ignorable Cased Changes_When_Casefolded Changes_When_Casemapped Changes_When_Lowercased \
+Changes_When_Titlecased Changes_When_Uppercased DI Dash Default_Ignorable_Code_Point Dep Deprecated Dia \
+Diacritic EBase EComp EMod EPres Emoji Emoji_Component Emoji_Modifier Emoji_Modifier_Base Emoji_Presentation Ext \
+ExtPict Extended_Pictographic Extender Gr_Base Gr_Ext Grapheme_Base Grapheme_Extend Hex Hex_Digit IDC IDS IDSB \
+IDST IDS_Binary_Operator IDS_Trinary_Operator ID_Continue ID_Start Ideo Ideographic Join_C Join_Control LOE \
+Logical_Order_Exception Lower Lowercase Math NChar Noncharacter_Code_Point Pat_Syn Pat_WS Pattern_Syntax \
+Pattern_White_Space QMark Quotation_Mark RI Radical Regional_Indicator SD STerm Sentence_Terminal Soft_Dotted \
+Term Terminal_Punctuation UIdeo Unified_Ideograph Upper Uppercase VS Variation_Selector White_Space XIDC XIDS \
+XID_Continue XID_Start space";
+
+/// The crate's general categories, by each name that JavaScript takes. It has no `Cs`.
+const GENERAL_CATEGORIES: &[u8] = b"\
+C Cased_Letter Cc Cf Close_Punctuation Cn Co Combining_Mark Connector_Punctuation Control Currency_Symbol \
+Dash_Punctuation Decimal_Number Enclosing_Mark Final_Punctuation Format Initial_Punctuation L LC Letter \
+Letter_Number Line_Separator Ll Lm Lo Lowercase_Letter Lt Lu M Mark Math_Symbol Mc Me Mn Modifier_Letter \
+Modifier_Symbol N Nd Nl No Nonspacing_Mark Number Open_Punctuation Other Other_Letter Other_Number \
+Other_Punctuation Other_Symbol P Paragraph_Separator Pc Pd Pe Pf Pi Po Private_Use Ps Punctuation S Sc Separator \
+Sk Sm So Space_Separator Spacing_Mark Symbol Titlecase_Letter Unassigned Uppercase_Letter Z Zl Zp Zs cntrl digit \
+punct";
+
+/// The crate's scripts, which are Unicode 16's, by each name that JavaScript takes. It has no `Hrkt` and no `Zzzz`.
+const SCRIPTS: &[u8] = b"\
+Adlam Adlm Aghb Ahom Anatolian_Hieroglyphs Arab Arabic Armenian Armi Armn Avestan Avst Bali Balinese Bamu Bamum \
+Bass Bassa_Vah Batak Batk Beng Bengali Bhaiksuki Bhks Bopo Bopomofo Brah Brahmi Brai Braille Bugi Buginese Buhd \
+Buhid Cakm Canadian_Aboriginal Cans Cari Carian Caucasian_Albanian Chakma Cham Cher Cherokee Chorasmian Chrs \
+Common Copt Coptic Cpmn Cprt Cuneiform Cypriot Cypro_Minoan Cyrillic Cyrl Deseret Deva Devanagari Diak \
+Dives_Akuru Dogr Dogra Dsrt Dupl Duployan Egyp Egyptian_Hieroglyphs Elba Elbasan Elym Elymaic Ethi Ethiopic Gara \
+Garay Geor Georgian Glag Glagolitic Gong Gonm Goth Gothic Gran Grantha Greek Grek Gujarati Gujr Gukh \
+Gunjala_Gondi Gurmukhi Guru Gurung_Khema Han Hang Hangul Hani Hanifi_Rohingya Hano Hanunoo Hatr Hatran Hebr \
+Hebrew Hira Hiragana Hluw Hmng Hmnp Hung Imperial_Aramaic Inherited Inscriptional_Pahlavi Inscriptional_Parthian \
+Ital Java Javanese Kaithi Kali Kana Kannada Katakana Kawi Kayah_Li Khar Kharoshthi Khitan_Small_Script Khmer \
+Khmr Khoj Khojki Khudawadi Kirat_Rai Kits Knda Krai Kthi Lana Lao Laoo Latin Latn Lepc Lepcha Limb Limbu Lina \
+Linb Linear_A Linear_B Lisu Lyci Lycian Lydi Lydian Mahajani Mahj Maka Makasar Malayalam Mand Mandaic Mani \
+Manichaean Marc Marchen Masaram_Gondi Medefaidrin Medf Meetei_Mayek Mend Mende_Kikakui Merc Mero \
+Meroitic_Cursive Meroitic_Hieroglyphs Miao Mlym Modi Mong Mongolian Mro Mroo Mtei Mult Multani Myanmar Mymr \
+Nabataean Nag_Mundari Nagm Nand Nandinagari Narb Nbat New_Tai_Lue Newa Nko Nkoo Nshu Nushu \
+Nyiakeng_Puachue_Hmong Ogam Ogham Ol_Chiki Ol_Onal Olck Old_Hungarian Old_Italic Old_North_Arabian Old_Permic \
+Old_Persian Old_Sogdian Old_South_Arabian Old_Turkic Old_Uyghur Onao Oriya Orkh Orya Osage Osge Osma Osmanya \
+Ougr Pahawh_Hmong Palm Palmyrene Pau_Cin_Hau Pauc Perm Phag Phags_Pa Phli Phlp Phnx Phoenician Plrd Prti \
+Psalter_Pahlavi Qaac Qaai Rejang Rjng Rohg Runic Runr Samaritan Samr Sarb Saur Saurashtra Sgnw Sharada Shavian \
+Shaw Shrd Sidd Siddham SignWriting Sind Sinh Sinhala Sogd Sogdian Sogo Sora Sora_Sompeng Soyo Soyombo Sund \
+Sundanese Sunu Sunuwar Sylo Syloti_Nagri Syrc Syriac Tagalog Tagb Tagbanwa Tai_Le Tai_Tham Tai_Viet Takr Takri \
+Tale Talu Tamil Taml Tang Tangsa Tangut Tavt Telu Telugu Tfng Tglg Thaa Thaana Thai Tibetan Tibt Tifinagh Tirh \
+Tirhuta Tnsa Todhri Todr Toto Tulu_Tigalari Tutg Ugar Ugaritic Vai Vaii Vith Vithkuqi Wancho Wara Warang_Citi \
+Wcho Xpeo Xsux Yezi Yezidi Yi Yiii Zanabazar_Square Zanb Zinh Zyyy";
+
+/// `regex-syntax`'s `symbolic_name_normalize`: the name of a property or of a value without what the crate ignores.
+fn symbolic_name_normalize(name: &str) -> String {
+    let bytes = name.as_bytes();
+    let after_is = match bytes {
+        [b'i' | b'I', b's' | b'S', rest @ ..] => Some(rest),
+        _ => None,
+    };
+    let mut normalized = String::new();
+    for &byte in after_is.unwrap_or(bytes) {
+        if byte.is_ascii() && !matches!(byte, b' ' | b'_' | b'-') {
+            normalized.push(char::from(byte.to_ascii_lowercase()));
+        }
+    }
+    // `isc` is a property that the crate has no class for, and not the general category `C`.
+    if after_is.is_some() && normalized == "c" {
+        return "isc".to_owned();
+    }
+    normalized
+}
+
+/// The name in `names`, a space-separated list, that the crate reads as `normalized`.
+fn spelling_of(names: &'static [u8], normalized: &str) -> Option<&'static str> {
+    let is_same = |name: &&[u8]| {
+        let letters = name.iter().filter(|&&byte| byte != b'_');
+        letters.map(u8::to_ascii_lowercase).eq(normalized.bytes())
+    };
+    let name = strings::split(names, b" ").find(is_same)?;
+    std::str::from_utf8(name).ok()
+}
+
+/// What JavaScript has between the braces for a general category of the crate.
+fn general_category(normalized: &str) -> Option<String> {
+    Some(match normalized {
+        // General categories in the crate, properties in JavaScript.
+        "any" => "Any".to_owned(),
+        "assigned" => "Assigned".to_owned(),
+        "ascii" => "ASCII".to_owned(),
+        _ => format!("gc={}", spelling_of(GENERAL_CATEGORIES, normalized)?),
+    })
+}
+
+/// The same for a name without a property, which the crate reads as a binary property, then as a general category,
+/// then as a script. Its properties that aren't binary have no class. Of their names only `cf`, `sc` and `lc` are also
+/// names of a category or a script, and it reads those as categories.
+fn lone_name(normalized: &str) -> Option<String> {
+    // JavaScript has no `WSpace`.
+    if normalized == "wspace" {
+        return Some("White_Space".to_owned());
+    }
+    let property = spelling_of(BINARY_PROPERTIES, normalized).map(str::to_owned);
+    let category = property.or_else(|| general_category(normalized));
+    category.or_else(|| Some(format!("sc={}", spelling_of(SCRIPTS, normalized)?)))
+}
+
+/// `\p{name}` in JavaScript, which takes one spelling of a name where the crate ignores case, ` `, `_`, `-` and a
+/// leading `is`. `None` if the crate has no such class, or if JavaScript hasn't: `Age`, `Grapheme_Cluster_Break`,
+/// `Sentence_Break`, `Word_Break` and the binary properties that [`BINARY_PROPERTIES`] lacks.
 fn unicode_class(name: &str, is_negated: bool) -> Option<String> {
     let bytes = name.as_bytes();
+    // The crate looks for `!=`, then for `:`, then for `=`.
     let (separator, is_negated) = match strings::index_of(bytes, b"!=") {
         Some(at) => (Some((at, at + 2)), !is_negated),
-        None => (
-            strings::index_of_any(bytes, b":=").map(|at| (at, at + 1)),
-            is_negated,
-        ),
-    };
-    let (property, value) = match separator {
-        Some((start, end)) => (name.get(..start), name.get(end..)?),
-        None => (None, name),
-    };
-    let is_separator = |c: char| c.is_whitespace() || matches!(c, '_' | '-');
-    let property = property.map(|it| {
-        let letters = it.chars().filter(|&c| !is_separator(c));
-        letters.map(|c| c.to_ascii_lowercase()).collect::<String>()
-    });
-    // Alone it's a general category or a binary property, and then a script.
-    let properties: &[&str] = match property.as_deref() {
-        None => &["", "sc="],
-        Some("gc" | "generalcategory") => &["gc="],
-        Some("sc" | "script") => &["sc="],
-        Some("scx" | "scriptextensions") => &["scx="],
-        Some(_) => return None,
-    };
-    let compact: String = value.chars().filter(|c| !c.is_whitespace()).collect();
-    let mut capitalized = String::new();
-    let mut is_word_start = true;
-    for c in value.chars() {
-        if is_separator(c) {
-            is_word_start = true;
-            continue;
+        None => {
+            let colon = strings::index_of_char_usize(bytes, b':');
+            let at = colon.or_else(|| strings::index_of_char_usize(bytes, b'='));
+            (at.map(|at| (at, at + 1)), is_negated)
         }
-        if is_word_start && !capitalized.is_empty() {
-            capitalized.push('_');
+    };
+    let class = match separator {
+        None => lone_name(&symbolic_name_normalize(name))?,
+        Some((start, end)) => {
+            let value = symbolic_name_normalize(name.get(end..)?);
+            match symbolic_name_normalize(name.get(..start)?).as_str() {
+                "gc" | "generalcategory" => general_category(&value)?,
+                "sc" | "script" => format!("sc={}", spelling_of(SCRIPTS, &value)?),
+                "scx" | "scriptextensions" => format!("scx={}", spelling_of(SCRIPTS, &value)?),
+                _ => return None,
+            }
         }
-        capitalized.push(match is_word_start {
-            true => c.to_ascii_uppercase(),
-            false => c.to_ascii_lowercase(),
-        });
-        is_word_start = false;
-    }
-    let (upper, lower) = (compact.to_ascii_uppercase(), compact.to_ascii_lowercase());
-    let spellings = [&compact, &capitalized, &upper, &lower];
-    let (property, value) = properties
-        .iter()
-        .flat_map(|property| spellings.iter().map(move |value| (property, value)))
-        .find(|(property, value)| Regex::new(&format!("\\p{{{property}{value}}}"), "u").is_ok())?;
+    };
     let escape = if is_negated { 'P' } else { 'p' };
-    Some(format!("\\{escape}{{{property}{value}}}"))
+    Some(format!("\\{escape}{{{class}}}"))
 }
 
 /// The items before a class's operator, and after it. JavaScript has `&&` and `--` between classes only, and no `~~`.
@@ -613,16 +694,25 @@ impl<'p> RustPattern<'p> {
 
     /// At the `p` of `\pL` and `\p{Greek}`.
     fn unicode_class(&mut self, is_negated: bool) -> Option<String> {
+        // The crate rejects it with `(?-u)`.
+        if !self.modes.unicode {
+            return None;
+        }
         let letter = self.bump_and_bump_space()?;
         if letter != '{' {
             self.bump_and_bump_space();
             return unicode_class(letter.encode_utf8(&mut [0; 4]), is_negated);
         }
-        let start = self.offset + 1;
-        while self.bump_and_bump_space()? != '}' {}
-        let name = self.pattern.get(start..self.offset)?;
+        // Not a slice of the pattern: with `(?x)` the blanks and comments inside the braces aren't part of the name.
+        let mut name = String::new();
+        loop {
+            match self.bump_and_bump_space()? {
+                '}' => break,
+                c => name.push(c),
+            }
+        }
         self.bump();
-        unicode_class(name, is_negated)
+        unicode_class(&name, is_negated)
     }
 
     /// At `[`. Returns the class as a JavaScript class.

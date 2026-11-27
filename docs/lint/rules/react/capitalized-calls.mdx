@@ -130,7 +130,22 @@ function SaveButton({ track }) {
 }
 ```
 
-A `\p{..}` class that JavaScript has no name for, such as `\p{Age=6.0}`, makes the pattern allow nothing.
+A name in `\p{..}` is read as the crate reads it. Case, spaces, `_` and `-` don't count, and neither does `is` before the name, so `\p{lu}`, `\p{IsLu}` and `\p{uppercase letter}` are all `\p{Lu}`:
+
+{/* good {"config": "oxlint", "options": [{"allowPattern": "^\\p{lu}\\p{isLower}+Event$"}]} */}
+```jsx
+import { ClickEvent } from "./events";
+
+function SaveButton({ track }) {
+  const event = ClickEvent("save");
+  return <button onClick={() => track(event)}>Save</button>;
+}
+```
+
+Some classes that the crate has aren't supported. A pattern with one of them allows nothing, and no message says so. oxlint allows what the pattern matches. They are:
+
+- `\p{Age=..}`, `\p{Grapheme_Cluster_Break=..}`, `\p{Sentence_Break=..}` and `\p{Word_Break=..}`, also when the property is written `age`, `gcb`, `sb` or `wb`
+- the binary properties `Grapheme_Link`, `Hyphen`, `IDS_Unary_Operator`, `ID_Compat_Math_Continue`, `ID_Compat_Math_Start`, `Modifier_Combining_Mark`, `Other_Alphabetic`, `Other_Default_Ignorable_Code_Point`, `Other_Grapheme_Extend`, `Other_ID_Continue`, `Other_ID_Start`, `Other_Lowercase`, `Other_Math`, `Other_Uppercase` and `Prepended_Concatenation_Mark`
 
 ## When not to use it
 

@@ -19,7 +19,8 @@ describe.skipIf(!hasPrebuild)("@datadog/pprof", () => {
         },
         trustedDependencies: ["@datadog/pprof"],
       }),
-      "loaded.js": /* js */ `
+      // .cjs: with the name loaded.js Bun loads this file as an ES module, and requireCommonJS does not call it.
+      "loaded.cjs": /* js */ `
         const start = Date.now();
         while (Date.now() - start < 300) {}
       `,
@@ -39,7 +40,7 @@ describe.skipIf(!hasPrebuild)("@datadog/pprof", () => {
 
         time.start({ intervalMicros: 1000, durationMillis: 60000 });
         hotLoop();
-        require("./loaded.js");
+        require("./loaded.cjs");
         const profile = time.stop();
 
         const strings = profile.stringTable.strings;

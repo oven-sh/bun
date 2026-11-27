@@ -3250,14 +3250,34 @@ console.log(<div {...obj} key="after" />);`),
       });
 
       it.each([
-        ["after a newline", "\n#!/usr/bin/env bun\n" + body],
-        ["after a space", " #!/usr/bin/env bun\n" + body],
-        ["on the second line", "#!/usr/bin/env bun\n#!/usr/bin/env bun\n" + body],
-      ])("is a syntax error %s", (_, source) => {
+        ["a hashbang after a newline", "\n#!/usr/bin/env bun\n" + body, "Syntax Error", 2, 1],
+        ["a hashbang after a space", " #!/usr/bin/env bun\n" + body, "Syntax Error", 1, 2],
+        ["a second hashbang", "#!/usr/bin/env bun\n#!/usr/bin/env bun\n" + body, "Syntax Error", 2, 1],
+        ["an unterminated string after it", '#!/usr/bin/env bun\n"unterminated', "Unterminated string literal", 2, 1],
+      ])("%s is a located syntax error", (_, source, message, line, column) => {
+        const thrown = { name: "BuildMessage", message, line, column };
+        const actual = {};
         for (const loader of ["ts", "js"]) {
-          expect(() => transpiler.scanImports(source, loader)).toThrow();
-          expect(() => transpiler.scan(source, loader)).toThrow();
+          for (const api of ["scanImports", "scan"]) {
+            try {
+              transpiler[api](source, loader);
+              actual[`${api} ${loader}`] = "did not throw";
+            } catch (e) {
+              actual[`${api} ${loader}`] = {
+                name: e.name,
+                message: e.message,
+                line: e.position?.line,
+                column: e.position?.column,
+              };
+            }
+          }
         }
+        expect(actual).toEqual({
+          "scanImports ts": thrown,
+          "scan ts": thrown,
+          "scanImports js": thrown,
+          "scan js": thrown,
+        });
       });
     });
   });

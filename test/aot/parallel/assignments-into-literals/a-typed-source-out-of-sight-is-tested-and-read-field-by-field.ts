@@ -1,4 +1,4 @@
-// STATISTIC: AssignmentsWrittenOutFieldByField >= 2
+// STATISTIC: ObjectAssignCallsExpanded >= 2
 interface Options { depth: number; width: number; color: boolean }
 const DEFAULTS: Options = { depth: 2, width: 80, color: false };
 let reads = 0, work = 0;

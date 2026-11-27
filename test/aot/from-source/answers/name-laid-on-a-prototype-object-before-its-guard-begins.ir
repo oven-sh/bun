@@ -2,7 +2,8 @@
 # function Point(x) { this.x = x; }
 # Point.prototype.size = function () { return this.x; };
 # let answers = "";
-# for (let turn = 0; turn < 8; turn++) {
+# const turns = JSON.parse("8");
+# for (let turn = 0; turn < turns; turn++) {
 #     if (turn === when) change(Point);
 #     const point = new Point(turn);
 #     answers += "," + point.size();
@@ -13,22 +14,22 @@
 # The guard of `size` begins where the first Point is made. Code that the build has not seen lays names on the prototype object in front of that, or behind it.
 # A name that a guard names ends the guard, whenever it comes. A name that no guard names ends nothing, and what comes behind it still ends what it names.
 # OPTIONS: mechanisms=all
-# RUN(NEVER): run-in-shell --aotCountsPath=/dev/null globalThis.when = -1; globalThis.report = () => { const lines = aotRuntimeCounters().split("\n"); let ended = "0"; for (let i = 0; i < lines.length; i++) { if (lines[i].includes("counter:ClassGuardBitsEnded")) ended = lines[i].split("\t")[0]; } print("guards ended: " + ended); };
+# RUN(NEVER): run-in-shell --aotCountsPath=/dev/null globalThis.when = -1; globalThis.report = () => { const lines = aotRuntimeCounters().split("\n"); let ended = "0"; for (let i = 0; i < lines.length; i++) { if (lines[i].includes("counter:ClassGuardBitsInvalidated")) ended = lines[i].split("\t")[0]; } print("guards ended: " + ended); };
 # NEVER: ,0,1,2,3,4,5,6,7
 # NEVER-NEXT: guards ended: 0
 # NEVER-NEXT: exited with 0
 # RUN(BEFORE): run-in-shell globalThis.when = 0; globalThis.report = () => { }; globalThis.change = P => { P.prototype.size = function () { return 100 + this.x; }; };
 # BEFORE: ,100,101,102,103,104,105,106,107
 # BEFORE-NEXT: exited with 0
-# RUN(LATER): run-in-shell --aotCountsPath=/dev/null globalThis.when = 5; globalThis.change = P => { P.prototype.size = function () { return 100 + this.x; }; }; globalThis.report = () => { const lines = aotRuntimeCounters().split("\n"); let ended = "0", counted = 0; for (let i = 0; i < lines.length; i++) { if (lines[i] && !lines[i].startsWith("0")) counted++; if (lines[i].includes("counter:ClassGuardBitsEnded")) ended = lines[i].split("\t")[0]; } print(counted && ended === "0" ? "compiled code ran and no guard ended" : "a guard ended wherever compiled code ran"); };
+# RUN(LATER): run-in-shell --aotCountsPath=/dev/null globalThis.when = 5; globalThis.change = P => { P.prototype.size = function () { return 100 + this.x; }; }; globalThis.report = () => { const lines = aotRuntimeCounters().split("\n"); let ended = "0", counted = 0; for (let i = 0; i < lines.length; i++) { if (lines[i] && !lines[i].startsWith("0")) counted++; if (lines[i].includes("counter:ClassGuardBitsInvalidated")) ended = lines[i].split("\t")[0]; } print(counted && ended === "0" ? "compiled code ran and no guard ended" : "a guard ended wherever compiled code ran"); };
 # LATER: ,0,1,2,3,4,105,106,107
 # LATER-NEXT: a guard ended wherever compiled code ran
 # LATER-NEXT: exited with 0
-# RUN(OTHERS): run-in-shell --aotCountsPath=/dev/null globalThis.when = 0; globalThis.change = P => { P.prototype.other = 1; P.prototype.more = function () { return 2; }; P.prototype[Symbol("none")] = 3; }; globalThis.report = () => { const lines = aotRuntimeCounters().split("\n"); let ended = "0"; for (let i = 0; i < lines.length; i++) { if (lines[i].includes("counter:ClassGuardBitsEnded")) ended = lines[i].split("\t")[0]; } print("guards ended: " + ended); };
+# RUN(OTHERS): run-in-shell --aotCountsPath=/dev/null globalThis.when = 0; globalThis.change = P => { P.prototype.other = 1; P.prototype.more = function () { return 2; }; P.prototype[Symbol("none")] = 3; }; globalThis.report = () => { const lines = aotRuntimeCounters().split("\n"); let ended = "0"; for (let i = 0; i < lines.length; i++) { if (lines[i].includes("counter:ClassGuardBitsInvalidated")) ended = lines[i].split("\t")[0]; } print("guards ended: " + ended); };
 # OTHERS: ,0,1,2,3,4,5,6,7
 # OTHERS-NEXT: guards ended: 0
 # OTHERS-NEXT: exited with 0
-# RUN(BEHIND): run-in-shell --aotCountsPath=/dev/null globalThis.when = 5; globalThis.change = P => { P.prototype.other = 1; P.prototype.more = function () { return 2; }; P.prototype[Symbol("none")] = 3; }; globalThis.report = () => { const lines = aotRuntimeCounters().split("\n"); let ended = "0"; for (let i = 0; i < lines.length; i++) { if (lines[i].includes("counter:ClassGuardBitsEnded")) ended = lines[i].split("\t")[0]; } print("guards ended: " + ended); };
+# RUN(BEHIND): run-in-shell --aotCountsPath=/dev/null globalThis.when = 5; globalThis.change = P => { P.prototype.other = 1; P.prototype.more = function () { return 2; }; P.prototype[Symbol("none")] = 3; }; globalThis.report = () => { const lines = aotRuntimeCounters().split("\n"); let ended = "0"; for (let i = 0; i < lines.length; i++) { if (lines[i].includes("counter:ClassGuardBitsInvalidated")) ended = lines[i].split("\t")[0]; } print("guards ended: " + ended); };
 # BEHIND: ,0,1,2,3,4,5,6,7
 # BEHIND-NEXT: guards ended: 0
 # BEHIND-NEXT: exited with 0

@@ -1,9 +1,10 @@
+use crate::Graph::CssAsts;
 use crate::mal_prelude::*;
 use bun_collections::VecExt as _VecExt;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
-use bun_ast::{B, Binding, E, Expr, ExprData, G, Part, S, Stmt, StmtData};
+use bun_ast::{B, Binding, E, Expr, ExprData, G, S, Stmt, StmtData};
 use bun_ast::{ImportRecord, Source};
 use bun_js_parser::js_lexer;
 
@@ -15,6 +16,7 @@ type SymbolList<'a> = bun_ast::symbol::List<'a>;
 
 pub(crate) fn generate_code_for_lazy_export(
     this: &mut LinkerContext,
+    log: &mut bun_ast::Log,
     source_index: IndexInt,
 ) -> Result<(), AllocError> {
     let mut exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
@@ -29,27 +31,18 @@ pub(crate) fn generate_code_for_lazy_export(
         exports_kind = bun_ast::ExportsKind::Cjs;
         this.graph.ast.items_exports_kind_mut()[source_index as usize] = exports_kind;
     }
-    // Take `parts` as a raw pointer *before* the
-    // long-lived immutable `items_css()` borrow below; re-borrowed again later as needed.
-    let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
-    // SAFETY: parse_graph backref; raw deref because `all_sources` is held
-    // across `&mut *this.log` below (split borrow).
-    let all_sources = unsafe { &(*this.parse_graph).input_files }.items_source();
-    let all_css_asts: &[crate::bundled_ast::CssCol] = this.graph.ast.items_css();
-    let maybe_css_ast: Option<&BundlerStyleSheet> = all_css_asts[source_index as usize].as_deref();
-
-    // SAFETY: `parts` is a stable SoA column slice valid for the link pass.
-    if unsafe { (&*parts).len() } < 1 {
-        panic!("Internal error: expected at least one part for lazy export");
-    }
-
-    // SAFETY: `parts.ptr[1]` — Vec raw indexing; using index 1 here.
-    let part: &mut Part = unsafe { &mut (*parts)[1] };
-
-    // `Part.stmts: StoreSlice<Stmt>` — safe `Deref` to `&[Stmt]`.
-    if part.stmts.is_empty() {
+    let part = &mut this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice()[1];
+    let stmts = part.stmts;
+    if stmts.is_empty() {
         panic!("Internal error: expected at least one statement in the lazy export");
     }
+    if exports_kind != bun_ast::ExportsKind::Cjs {
+        part.stmts = bun_ast::StoreSlice::EMPTY;
+    }
+
+    let all_sources = this.parse_graph().input_files.items_source();
+    let all_css_asts = &this.parse_graph().css_asts;
+    let maybe_css_ast: Option<&BundlerStyleSheet> = all_css_asts[source_index as usize].as_deref();
 
     let module_ref = this.graph.ast.items_module_ref()[source_index as usize];
 
@@ -60,7 +53,7 @@ pub(crate) fn generate_code_for_lazy_export(
     // this JavaScript stub with the local names from that CSS file. This is done
     // now instead of earlier because we need the whole bundle to be present.
     if let Some(css_ast) = maybe_css_ast {
-        let stmt: Stmt = part.stmts[0];
+        let stmt: Stmt = stmts[0];
         if !matches!(stmt.data, StmtData::SLazyExport(_)) {
             panic!("Internal error: expected top-level lazy export statement");
         }
@@ -72,15 +65,14 @@ pub(crate) fn generate_code_for_lazy_export(
 
             let symbols: &SymbolList<'_> = &this.graph.ast.items_symbols()[source_index as usize];
 
-            struct Graph<'a> {
+            struct Graph<'a, 'bump> {
                 all_import_records: &'a [bun_ast::import_record::List<'a>],
-                // `BundledAst.css` SoA column.
-                all_css_asts: &'a [crate::bundled_ast::CssCol],
+                all_css_asts: &'a CssAsts<'bump>,
                 all_sources: &'a [Source<'a>],
             }
 
-            impl ComposesGraph for Graph<'_> {
-                fn stylesheet(&self, idx: IndexInt) -> Option<&BundlerStyleSheet> {
+            impl<'bump> ComposesGraph<'bump> for Graph<'_, 'bump> {
+                fn stylesheet(&self, idx: IndexInt) -> Option<&BundlerStyleSheet<'bump>> {
                     self.all_css_asts[idx as usize].as_deref()
                 }
 
@@ -119,9 +111,7 @@ pub(crate) fn generate_code_for_lazy_export(
                     ),
                     ExportedName::Global(name) => Expr::init(E::String::init(name), stmt.loc),
                 };
-                // Split-borrow — see `LinkerContext::log_disjoint`.
-                let names =
-                    visitor.exported_names(css_ast, ref_, source_index, this.log_disjoint());
+                let names = visitor.exported_names(css_ast, ref_, source_index, log);
                 let value = if let [name] = names {
                     name_expr(name)
                 } else {
@@ -152,14 +142,14 @@ pub(crate) fn generate_code_for_lazy_export(
                 exports.put(arena, key, value)?;
             }
 
-            if let StmtData::SLazyExport(mut slot) = part.stmts[0].data {
+            if let StmtData::SLazyExport(mut slot) = stmts[0].data {
                 // `StoreRef<ExprData>` is a Copy `NonNull` — write through the pointer.
                 *slot = Expr::init(exports, stmt.loc).data;
             }
         }
     }
 
-    let stmt: Stmt = part.stmts[0];
+    let stmt: Stmt = stmts[0];
     let StmtData::SLazyExport(lazy) = stmt.data else {
         panic!("Internal error: expected top-level lazy export statement");
     };
@@ -176,7 +166,7 @@ pub(crate) fn generate_code_for_lazy_export(
 
     match exports_kind {
         bun_ast::ExportsKind::Cjs => {
-            part.stmts.slice_mut()[0] = Stmt::assign(
+            stmts.slice_mut()[0] = Stmt::assign(
                 Expr::init(
                     E::Dot {
                         target: Expr::init_identifier(module_ref, stmt.loc),
@@ -208,8 +198,6 @@ pub(crate) fn generate_code_for_lazy_export(
         _ => {
             // Otherwise, generate ES6 export statements. These are added as additional
             // parts so they can be tree shaken individually.
-            part.stmts = bun_ast::StoreSlice::EMPTY;
-
             if let ExprData::EObject(e_object) = &expr.data {
                 for property in e_object.properties.slice() {
                     let _: &G::Property = property;
@@ -273,8 +261,7 @@ pub(crate) fn generate_code_for_lazy_export(
                 write!(
                     &mut name_buf,
                     "{}_default",
-                    this.parse_graph().input_files.items_source()[source_index as usize]
-                        .fmt_identifier()
+                    all_sources[source_index as usize].fmt_identifier()
                 )
                 .expect("write to Vec<u8> cannot fail");
                 let alloc = this.arena();

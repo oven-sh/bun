@@ -48,7 +48,7 @@ private:
 
     void visitJSFunction(JSC::SlotVisitor&) override;
 
-    JSCallbackData* m_data;
+    JSCallbackData m_data;
 };
 
 } // namespace WebCore

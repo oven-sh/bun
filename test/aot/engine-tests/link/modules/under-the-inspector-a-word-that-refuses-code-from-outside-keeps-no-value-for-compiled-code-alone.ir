@@ -1,0 +1,34 @@
+# The same program where the build admits the inspector AND is told to refuse code from outside the image: the inspector wins (refusedCodeOf()): the library does not run compiled alone, so the value of the internal file is not kept for compiled code alone:
+# its record is handed out frozen and not every caller of `grow` is known. The arms of findModulesWhoseValueStaysInSight() for the files of the program hang on the same word.
+# OPTIONS: admit=Inspector exclude=CodeOutsideImage
+# RUN: link modules functions mechanisms=all
+# CHECK: module m1 record-is-handed-out-frozen
+# CHECK-NOT: function f2 callers-known
+layout L0 module=m1 fields=[{key="grow" declared={type=anything} flags=[IsRequired]}, {key="size" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m2 kind=Require completes=true}]
+module m1 path="internal:net/isIP" displayPath="internal:net/isIP" kind=RuntimeSource flags=[IsLoadedByImportOnly, RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalNetIsIP body=f1
+module m2 path="node:net" displayPath="node:net" kind=RuntimeSource flags=[RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeNet body=f3
+entry module=m0
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = RequireModule module=m2 referrer=m0 specifier="node:net"
+    Return
+}
+function f1 module=m1 kind=Module role=Library results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = Integer integer=3
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    Return v3
+}
+function f2 name="grow" module=m1 role=Library length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 module=m2 kind=Module role=Library results=[{type=anything}] {
+    v0 = RequireModule module=m1 referrer=m2 specifier="internal/net/isIP"
+    v1 = PropGet v0 key="grow"
+    v2 = Integer integer=1
+    v3 = Call v1, v0, v2 calleeKey="grow" calleeName="grow"
+    Return v3
+}

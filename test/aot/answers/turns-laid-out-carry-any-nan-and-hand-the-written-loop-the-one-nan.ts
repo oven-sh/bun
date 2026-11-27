@@ -12,11 +12,13 @@
 // # the sum goes from turn to turn untested
 // # RUN(UNTESTED): emit f2 mechanisms=all
 // # UNTESTED: = Load({{*}}offset = 8, TypedArrayProperties
-// # UNTESTED-NOT: = Equal(
+// # UNTESTED-NOT: = Branch(
+// # UNTESTED-NOT: = Select(
 // # UNTESTED: = Load({{*}}offset = 56, TypedArrayProperties
 // # RUN(FLOATS): emit f5 mechanisms=all
 // # FLOATS: = Load({{*}}offset = 4, TypedArrayProperties
-// # FLOATS-NOT: = Equal(
+// # FLOATS-NOT: = Branch(
+// # FLOATS-NOT: = Select(
 // # FLOATS: = Load({{*}}offset = 28, TypedArrayProperties
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL

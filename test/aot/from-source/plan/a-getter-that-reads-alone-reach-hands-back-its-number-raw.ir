@@ -1,0 +1,30 @@
+# -- source: main.ts
+# declare function print(value: unknown): void;
+# declare function publish<T>(value: T): T;
+# declare const given: number;
+# class Sum { constructor(readonly whole: number) {} get value(): number { let sum = 0; for (let i = 0; i < this.whole; i++) sum += i * 0.5; return sum; } }
+# class Shown { constructor(readonly whole: number) {} get value(): number { let sum = 0; for (let i = 0; i < this.whole; i++) sum += i * 0.25; return sum; } }
+# function twice(s: Sum): number { return s.value + s.value; }
+# function shown(s: Shown): number { return s.value + s.value; }
+# publish(Object.getOwnPropertyDescriptor(Shown.prototype, "value")!.get);
+# print(twice(new Sum(given)) + shown(new Shown(given)));
+# -- end of source
+# A getter is entered by reads, not by calls. Where every caller of it is known and it shares no call, each read that calls its body knows which body it calls, as a call of a method does:
+# so the body hands back its proven number raw, and neither it boxes nor the reader unboxes. Whoever comes by value (a read that nobody resolved, Reflect.get, the function out of the descriptor) enters by the entry that boxes.
+# The function of `Shown.value` is published: not every caller of it is known, and its body goes on handing back a boxed value.
+# RUN(RAW): walk f1:Body f4:Body mechanisms=all
+# RAW-LABEL: code f1:Body
+# RAW-NOT: = Unbox
+# RAW-COUNT-2: number @Double = CallDirect {{*}}function=f4
+# RAW-NOT: = Unbox
+# RAW-LABEL: code f4:Body
+# RAW-NOT: = Box
+# RUN(BOXED): walk f2:Body f6:Body mechanisms=all
+# BOXED-LABEL: code f2:Body
+# BOXED-NOT: @Double = CallDirect
+# BOXED-COUNT-2: number @JSValue = CallDirect {{*}}function=f6
+# BOXED-LABEL: code f6:Body
+# BOXED: number @JSValue = Box
+# RUN(SAID): link functions mechanisms=all
+# SAID: function f4 callers-known
+# SAID-NOT: function f6 callers-known

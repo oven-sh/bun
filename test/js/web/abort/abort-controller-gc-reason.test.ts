@@ -99,7 +99,7 @@ describe("AbortController GC", () => {
     expect(exitCode).toBe(0);
   });
 
-  // JSAbortSignalOwner::isReachableFromOpaqueRoots runs on JSC's parallel marker threads and
+  // JSAbortSignal::isReachableFromOpaqueRoots runs on JSC's parallel marker threads and
   // must not prune the dependent signal's source set there: doing so destroys WeakPtrImpls
   // owned by the JS thread once every source controller has been collected.
   test("AbortSignal.any() dependent signals survive parallel GC after their sources are collected", async () => {

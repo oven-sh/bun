@@ -1,0 +1,20 @@
+# -- source: a-call-laid-on-one-of-five-functions-is-seen-to-take-the-receiver.js
+# class Box { constructor(n) { this.count = n; this.note = 0; } }
+# function a() { return this.count + 1; }
+# function b() { return this.count + 2; }
+# function c() { return this.count + 3; }
+# function d() { return this.count + 4; }
+# function e() { return this.count + 5; }
+# function through(handed, box) { return handed.call(box); }
+# function pick(i) { return i === 0 ? a : i === 1 ? b : i === 2 ? c : i === 3 ? d : e; }
+# function all(box) { let sum = ""; for (let i = 0; i < 5; i++) sum += through(pick(i), box) + ","; return sum + box.count + "," + box.note + "," + typeof box.count; }
+# print(all(new Box(10)));
+# c.call = function (box) { box.count = "text"; box.note = { deep: 1 }; return "own"; };
+# print(all(new Box(20)));
+# -- end of source
+# L0 = Box. One of the five lost functions answers `call` by a function of its own, laid by name on that one closure behind the first round: it takes the box and stores a text into a field of whole numbers.
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS: "count" proven=int[0, 2147483647]|string
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 11,12,13,14,15,10,0,number
+# ANSWERS-NEXT: 21,22,own,text4,text5,text,[object Object],string

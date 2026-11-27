@@ -12,6 +12,7 @@ use crate::bind::{FnOwner, MemberOwner};
 use crate::resolve::{ModuleKind, ScriptTarget};
 use crate::util::number_repeated;
 use smallvec::SmallVec;
+use std::collections::hash_map::Entry;
 
 // `DeclarationMeaning`
 const GET_ACCESSOR: u8 = 1;
@@ -938,7 +939,7 @@ impl Checker<'_, '_> {
             self.report_conflicts_of_late_bound_members(file, container, false);
         }
         let mut has_proto_setter = false;
-        let mut seen: SmallVec<[(Atom, u8); 8]> = SmallVec::new();
+        let mut seen = crate::util::FxHashMap::<Atom, u8>::default();
         let text = &hir.text[..];
         for p in properties.iter() {
             let prop = &hir[p];
@@ -1022,28 +1023,31 @@ impl Checker<'_, '_> {
             else {
                 continue;
             };
-            let Some(existing) = seen.iter_mut().find(|seen| seen.0 == effective_name) else {
-                seen.push((effective_name, current_kind));
-                continue;
+            let existing = match seen.entry(effective_name) {
+                Entry::Vacant(vacant) => {
+                    vacant.insert(current_kind);
+                    continue;
+                }
+                Entry::Occupied(occupied) => occupied.into_mut(),
             };
             let name = hir.name(hir.node(p));
-            if current_kind & existing.1 & METHOD != 0 {
+            if current_kind & *existing & METHOD != 0 {
                 let (start, end) = self.get_error_range_for_node(file, name);
                 let text = self.source_text(file, start, end);
                 self.grammar_error_at((file, start, end), 2300, &[Arg::Bytes(&text)]);
-            } else if current_kind & existing.1 & PROPERTY_ASSIGNMENT != 0 {
+            } else if current_kind & *existing & PROPERTY_ASSIGNMENT != 0 {
                 if repeats_proto_setter {
                     self.early_grammar_error_on_node(file, name, 1117, &[]);
                 } else {
                     self.grammar_error_on_node(file, name, 1117, &[]);
                 }
             } else if current_kind & GET_OR_SET_ACCESSOR != 0
-                && existing.1 & GET_OR_SET_ACCESSOR != 0
+                && *existing & GET_OR_SET_ACCESSOR != 0
             {
-                if existing.1 == GET_OR_SET_ACCESSOR || current_kind == existing.1 {
+                if *existing == GET_OR_SET_ACCESSOR || current_kind == *existing {
                     return self.grammar_error_on_node(file, name, 1118, &[]);
                 }
-                existing.1 |= current_kind;
+                *existing |= current_kind;
             } else {
                 return self.grammar_error_on_node(file, name, 1119, &[]);
             }

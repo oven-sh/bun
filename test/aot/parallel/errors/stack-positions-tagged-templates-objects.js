@@ -103,6 +103,12 @@ show("const a = new Thrower(); const b = a.x; pass(b);", () => { const a = new T
 show("const a = new Thrower(); throw a.x;", () => { const a = new Thrower(); throw a.x; });
 show("const a = new Thrower(); switch (a.x) { }", () => { const a = new Thrower(); switch (a.x) { } });
 show("const a = new Thrower(); for (const b of a.x) pass(b);", () => { const a = new Thrower(); for (const b of a.x) pass(b); });
+show("nothing`a`;", () => { nothing`a`; });
+show("nothing`a${five}b`;", () => { nothing`a${five}b`; });
+show("pass`a${five}b`.x.y;", () => { pass`a${five}b`.x.y; });
+show("pass`a${five}b`();", () => { pass`a${five}b`(); });
+show("pass`a`();", () => { pass`a`(); });
+show("pass`a``b`;", () => { pass`a``b`; });
 show("over several lines, a tagged template ends the function", () => {
   (function () {
     fail();

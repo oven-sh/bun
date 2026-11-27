@@ -9,8 +9,8 @@
 # two words. In the fourth turn the program lays another function under the name: the guard ends, the closed read in the rare arm gives what lies there now.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: = AreMembersUnchanged {{*}}key="twice"
 # CHECK: = NewClosure function=f3 {{*}}[isHeldByClosureTable]
+# CHECK: = AreMembersUnchanged {{*}}key="twice"
 # CHECK: = StrictEq {{*}}form=Bits
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 3

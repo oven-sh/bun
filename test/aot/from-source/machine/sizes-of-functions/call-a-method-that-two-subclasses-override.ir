@@ -1,0 +1,37 @@
+# f1 = areaOf
+# -- source: call-a-method-that-two-subclasses-override.ts
+# abstract class Shape {
+#   abstract area(): number;
+# }
+# class Square extends Shape {
+#   side: number;
+#   constructor(side: number) {
+#     super();
+#     this.side = side;
+#   }
+#   area(): number {
+#     return this.side * this.side;
+#   }
+# }
+# class Disc extends Shape {
+#   radius: number;
+#   constructor(radius: number) {
+#     super();
+#     this.radius = radius;
+#   }
+#   area(): number {
+#     return 3 * this.radius * this.radius;
+#   }
+# }
+# function areaOf(shape: Shape): number {
+#   return shape.area();
+# }
+# declare const input: any;
+# (globalThis as any).answer = areaOf(input ? new Square(+input) : new Disc(+input));
+# -- end of source
+# The compiler before this one: 1 instructions, 2 of them patches.
+# When the bound was taken: steps: operations 14, patches 1, moves 1, unlikely or rare 0.
+# RUN(X64): steps most:15 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 15

@@ -1,4 +1,4 @@
-// docs/compiler/compatibility.mdx, "Where --no-aot goes another way": plain Bun drops what it does not understand of these and runs the rest.
+// Plain Bun drops what it does not understand of these and runs the rest.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./harness/default-timeout";

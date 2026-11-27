@@ -28,7 +28,7 @@ let sum = 0; for (let i = 0; i < 100000; i++) sum += orUndefined(i & 1, i).g + O
 
 // GENERATED: constants restOf show
 // CHECK-LABEL: function {{*}}name="constants"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = Undefined
 // CHECK-NEXT: v2 = CopyObject v1
@@ -50,7 +50,7 @@ let sum = 0; for (let i = 0; i < 100000; i++) sum += orUndefined(i & 1, i).g + O
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="restOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|boolean|number|string):
 // CHECK-NEXT: v1 = ToBoolean v0
 // CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
@@ -85,7 +85,7 @@ let sum = 0; for (let i = 0; i < 100000; i++) sum += orUndefined(i & 1, i).g + O
 // CHECK-NEXT: Return v23
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = Builtin builtin=JSON
 // CHECK-NEXT: v2 = PropGet v1 key="stringify"

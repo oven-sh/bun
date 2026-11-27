@@ -1,0 +1,14 @@
+# Six operators on bits take one number. Outside loops each of them converted it for itself: six conversions, each with a rare half of its own for what does not fit, and the
+# registers saved and loaded again round each. The number is converted once, as in a loop, and the operators work on the integer.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-1: = ToInt32
+# CHECK-NOT: = ToInt32
+# RUN(FORMS): walk f1 mechanisms=all
+# FORMS-NOT: Shift {{*}} form=Numbers
+# -- source: main.ts
+# export {};
+# function tells(hour: number): number { return ((hour << 4) & 4080) + ((hour >> 3) | (hour & 7)) - ((hour ^ 85) >>> 1) + (hour | 64) - (hour >>> 2); }
+# const fraction: number = JSON.parse("1.5");
+# console.log(tells(fraction), tells(fraction + 1));
+# -- end of source

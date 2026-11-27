@@ -93,14 +93,14 @@ extern "C" void ExpectDeferred__location(JSGlobalObject* globalObject, EncodedJS
         if (Zig::isImplementationVisibilityPrivate(frame) || !frame.hasLineAndColumnInfo())
             continue;
         LineColumn lineColumn = frame.computeLineAndColumn();
-        Bun::OwnedZigStackFrames remapped(1);
-        remapped[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
-        remapped[0].position.column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
-        remapped[0].source_url = Bun::toStringRef(Zig::sourceURL(vm, frame));
-        remapped.remap(Bun::vm(globalObject));
-        *outSourceURL = Bun::toStringRef(remapped[0].source_url.toWTFString());
-        *outLine = OrdinalNumber::fromZeroBasedInt(remapped[0].position.line_zero_based).oneBasedInt();
-        *outColumn = OrdinalNumber::fromZeroBasedInt(remapped[0].position.column_zero_based).oneBasedInt();
+        ZigStackFrame remapped;
+        remapped.position.line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
+        remapped.position.column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
+        remapped.source_url = Bun::toStringRef(Zig::sourceURL(vm, frame));
+        Bun__remapStackFramePositions(Bun::vm(globalObject), &remapped, 1);
+        *outSourceURL = Bun::toStringRef(remapped.source_url.toWTFString()).leak();
+        *outLine = OrdinalNumber::fromZeroBasedInt(remapped.position.line_zero_based).oneBasedInt();
+        *outColumn = OrdinalNumber::fromZeroBasedInt(remapped.position.column_zero_based).oneBasedInt();
         return;
     }
 }

@@ -4,7 +4,6 @@
 
 #include "ZigSourceProvider.h"
 #include "MimallocWTFMalloc.h"
-#include "BunAnalyzeTranspiledModule.h"
 
 #include "ZigGlobalObject.h"
 #include "wtf/Assertions.h"
@@ -17,6 +16,25 @@
 #include <mimalloc.h>
 #include <JavaScriptCore/CodeCache.h>
 #include "BunBuiltinNames.h"
+
+RefPtr<JSC::CachedBytecode> ResolvedSourceBytecode::take()
+{
+    static_assert(offsetof(ResolvedSourceBytecode, m_owned) == 16 && offsetof(ResolvedSourceBytecode, m_persistent) == 17 && offsetof(ResolvedSourceBytecode, m_entryOffset) == 20, "Bytecode layout is mirrored in src/jsc/ResolvedSource.rs");
+    if (!m_bytes)
+        return nullptr;
+    // No destructor for borrowed bytes, so that JSC treats them as outliving the CachedBytecode only when `m_persistent` says so.
+    JSC::CachePayload::Destructor destructor = nullptr;
+    if (m_owned) {
+        destructor = [](const void* ptr) {
+            ResolvedSource__freeBytecode(static_cast<uint8_t*>(const_cast<void*>(ptr)));
+        };
+    }
+    Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(std::exchange(m_bytes, nullptr), m_size), WTF::move(destructor), {});
+    if (m_persistent)
+        bytecode->setPayloadIsPersistent();
+    bytecode->setEntryOffset(m_entryOffset);
+    return bytecode;
+}
 
 namespace Zig {
 
@@ -92,19 +110,7 @@ Ref<SourceProvider> SourceProvider::create(
 
     const auto getProvider = [&]() -> Ref<SourceProvider> {
         auto origin = getSourceOrigin();
-        if (resolvedSource.bytecode_cache != nullptr) {
-            // Not owned: borrowed from the standalone module graph / compile cache. No destructor then, so that JSC treats
-            // the bytes as outliving the CachedBytecode only when `bytecode_cache_persistent` says so (CachePayload::isOwnedOrPersistent).
-            JSC::CachePayload::Destructor destructor = nullptr;
-            if (resolvedSource.bytecode_cache_owned) {
-                destructor = [](const void* ptr) {
-                    ResolvedSource__freeBytecode(static_cast<uint8_t*>(const_cast<void*>(ptr)));
-                };
-            }
-            Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(std::exchange(resolvedSource.bytecode_cache, nullptr), resolvedSource.bytecode_cache_size), WTF::move(destructor), {});
-            if (resolvedSource.bytecode_cache_persistent)
-                bytecode->setPayloadIsPersistent();
-            bytecode->setEntryOffset(resolvedSource.bytecode_cache_entry_offset);
+        if (auto bytecode = resolvedSource.bytecode_cache.take()) {
             auto provider = adoptRef(*new SourceProvider(
                 globalObject->bunVM(),
                 resolvedSource,
@@ -155,9 +161,6 @@ SourceProvider::~SourceProvider()
     if (m_alreadyBundled) {
         BunString str = Bun::toString(sourceURL());
         Bun__removeSourceProviderSourceMap(m_bunVM, this, &str);
-    }
-    if (m_moduleInfo) {
-        zig__ModuleInfoDeserialized__deinit(m_moduleInfo);
     }
 }
 
@@ -274,10 +277,9 @@ static bool generateCachedByteCodeFromSourceCode(const BunString* sourceProvider
     if (!cachedBytecode)
         return false;
 
-    cachedBytecode->ref();
-    *cachedBytecodePtr = cachedBytecode.get();
     *outputByteCode = cachedBytecode->span().data();
     *outputByteCodeSize = cachedBytecode->span().size();
+    *cachedBytecodePtr = cachedBytecode.leakRef();
 
     return true;
 }

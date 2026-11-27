@@ -1,0 +1,31 @@
+# performance.removeEventListener("tick", second)
+# The twin of member-of-an-open-prototype-laid-through-the-link-of-an-instance-is-not-taken-for-the-tables.ir without the store: it says whether the call is taken for its row at all: where this one is red too, the other holds nothing.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="performance" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(GlobalThis_performance) flags=[IsExpected]}
+    v3 = PropGet v2 key="removeEventListener"
+    v4 = Convert v3 declared={type=builtin(EventTargetPrototypeRemoveEventListener) flags=[IsExpected]}
+    v5 = String string="tick"
+    v6 = NewClosure function=f2
+    v7 = Call v4, v2, v5, v6 calleeKey="removeEventListener" calleeName="performance.removeEventListener"
+    v8 = Undefined
+    Return v8
+}
+function f1 module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v1, -
+    Return v2
+}
+function f2 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

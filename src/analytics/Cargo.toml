@@ -13,4 +13,6 @@ workspace = true
 libc.workspace = true
 bitflags.workspace = true
 bun_core.workspace = true
+
+[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))'.dependencies]
 bun_semver.workspace = true

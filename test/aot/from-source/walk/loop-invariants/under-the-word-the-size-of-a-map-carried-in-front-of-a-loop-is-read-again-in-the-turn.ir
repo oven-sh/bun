@@ -15,7 +15,7 @@
 # AGAIN: = CallInline {{*}}inlineBuiltin=MapSize
 # AGAIN: isLoopHead=true
 # AGAIN: = CallInline {{*}}inlineBuiltin=MapSize
-# AGAIN: CheckProof {{*}}source=WhatIsRemembered
+# AGAIN: CheckProof {{*}}source=RememberedFact
 # RUN(RIGHT): run-in-shell mechanisms=all-Inlining testing=CheckProofsAtRunTime
 # RIGHT: 8
 # RIGHT-NEXT: 12

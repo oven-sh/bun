@@ -1,0 +1,16 @@
+# -- source: main.cjs
+# function clamp(a, low, high) { if (a === undefined) a = 0; return a < low ? low : a > high ? high : a; }
+# function C() { this._r = 0; this.x = 0; }
+# Object.defineProperty(C.prototype, "r", { get: function () { return this._r; }, set: function (y) { this._r = clamp(y, 0, 1); } });
+# C.prototype.move = function (d) { this.x = clamp(this.x + d, -10, 10); };
+# function run(n) { var c = new C(), s = 0; for (var i = 0; i < n; i++) { c.move(i & 1 ? 0.5 : -0.25); c.r = i * 0.001; s += c.r; s += c.x; } return s; }
+# console.log(run(10), run(1000));
+# -- end of source
+# What reads and stores the name enters the functions of the accessor, and nobody else does.
+# RUN: link functions
+# CHECK: function f1 callers-known
+# CHECK: function f2 callers-known
+# CHECK: function f3 callers-known
+# CHECK: function f4 callers-known
+# CHECK: function f5 callers-known
+# CHECK: function f6 callers-known

@@ -97,11 +97,11 @@ impl RouteBundle {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum UnresolvedIndex {
+pub(crate) enum UnresolvedIndex<'a> {
     Framework(router::RouteIndex),
     /// `getOrPutRouteBundle` writes `dev_server_id` back through this and
     /// takes its own ref when stored.
-    Html(bun_ptr::ThisPtr<HTMLBundleRoute>),
+    Html(&'a RefPtr<HTMLBundleRoute>),
 }
 
 pub(crate) struct RouteBundle {

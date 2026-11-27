@@ -150,7 +150,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             true => IteratorKind::Async,
             false => IteratorKind::Sync,
         };
+        self.file.intern_keys_of_written_list(expr);
         let iterable = self.lower_loop_subject(statement, expr);
+        self.set_position(self.file.loop_head_position(statement, left));
         self.quote_head_of_loop_if_next_fails(left, expr);
         let iterator = self.emit_iterator_open(iterable, kind, None);
         let header = self.begin_loop(statement);
@@ -169,7 +171,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.jump(header);
         self.pop_jump_target();
 
-        self.set_position(self.file.hir[statement].start);
+        self.set_position(self.file.loop_head_position(statement, left));
         self.end_cleanup_per_exit(CleanupLanding::KeepsException, &mut |lowering, path| {
             let completion = match path {
                 CleanupPath::Normal => IteratorCompletion::Normal,

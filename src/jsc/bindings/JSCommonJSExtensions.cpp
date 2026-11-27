@@ -1,6 +1,7 @@
 #include "JSCommonJSExtensions.h"
 #include "ZigGlobalObject.h"
 #include "BunProcess.h"
+#include "ErrorCode.h"
 #include "ModuleLoader.h"
 #include "BunCompiledModules.h"
 #include "JSCommonJSModule.h"
@@ -152,7 +153,7 @@ void onAssign(Zig::GlobalObject* globalObject, JSC::PropertyName propertyName, J
     auto* name = propertyName.publicName();
     if (!name->startsWith('.')) return;
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    Bun::willStoreLoaderOfExtension(globalObject, StringView(*name));
+    Bun::willSetExtensionLoader(globalObject, StringView(*name));
     RETURN_IF_EXCEPTION(scope, void());
     BunString ext = Bun::toString(name);
     JSC::CallData callData = JSC::getCallData(value);
@@ -238,7 +239,9 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     JSC::JSValue specifier = callFrame->argument(1);
     WTF::String specifierWtfString = specifier.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    bool hasGoneOn = goOnWithRequireHandedToLoaderOfProgram(global, mod, specifierWtfString);
+    if (specifierWtfString.contains('\0')) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "path"_s, specifier, "must be a string, Uint8Array, or URL without null bytes"_s);
+    bool hasGoneOn = resumeDelegatedRequire(global, mod, specifierWtfString);
     RETURN_IF_EXCEPTION(scope, {});
     if (hasGoneOn)
         return JSC::JSValue::encode(jsUndefined());

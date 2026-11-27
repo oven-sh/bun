@@ -505,6 +505,63 @@ describe("bundler", () => {
       });
     }
 
+    // require() of a chunk that an import() is loading loads it at once, whichever step of the loader the import() has
+    // reached, and both give the same namespace.
+    for (const bytecode of [false, true]) {
+      const turns = Array.from({ length: 10 }, (_, turn) => turn);
+      itBundled(`compile/splitting/RequireDuringImport${bytecode ? "+bytecode" : ""}`, {
+        compile: true,
+        splitting: true,
+        bytecode,
+        format: "esm",
+        files: {
+          "/entry.ts": /* js */ `
+            const chunks = [${turns.map(i => `[() => import("./chunk${i}"), () => require("./chunk${i}")]`)}];
+            const required = [];
+            for (const [turn, [load, loadSync]] of chunks.entries()) {
+              const loaded = load();
+              for (let i = 0; i < turn; i++) await undefined;
+              try {
+                required.push(loadSync() === (await loaded));
+              } catch (error: any) {
+                required.push(error.message);
+              }
+            }
+            console.log(required.join());
+
+            const throwing = [${turns.map(i => `[() => import("./throws${i}"), () => require("./throws${i}")]`)}];
+            const thrown = [];
+            for (const [turn, [load, loadSync]] of throwing.entries()) {
+              const loaded = load().catch(error => error);
+              for (let i = 0; i < turn; i++) await undefined;
+              try {
+                loadSync();
+              } catch (error: any) {
+                thrown.push(error === (await loaded) && error.message);
+              }
+            }
+            console.log(thrown.join());
+
+            const importer = import("./importer"), sibling = import("./sibling");
+            console.log((await importer).value, (await sibling).value);
+          `,
+          ...Object.fromEntries(
+            turns.flatMap(i => [
+              [`/chunk${i}.ts`, `import { value } from "./dependency${i}"; export const chunk = value;`],
+              [`/dependency${i}.ts`, `import * as path from "node:path"; export const value = path.sep;`],
+              [`/throws${i}.ts`, `throw new Error("thrown");`],
+            ]),
+          ),
+          "/importer.ts": `import "./requirer"; import { value } from "./sibling"; export { value };`,
+          "/requirer.ts": `require("./sibling");`,
+          "/sibling.ts": `export const value = "sibling";`,
+        },
+        run: {
+          stdout: [turns.map(() => "true").join(), turns.map(() => "thrown").join(), "sibling sibling"].join("\n"),
+        },
+      });
+    }
+
     // In an executable, nothing folds into the entry's own chunk; chunks shared
     // between `import()` targets still fold into the first target's chunk.
     itBundled("compile/splitting/MinChunkSizeKeepsEntryChunkImportable", {

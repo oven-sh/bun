@@ -1,0 +1,34 @@
+# An object of unknown make, whose list is read in a loop beside classes of the same names. The arm of the look that fails reads the element beside a number that it has tested, and the sum stands behind the join
+# of the arms, which asks again whether the element is a number: the element keeps its hole there. Read as NaN it would pass a test that undefined fails.
+# RUN(KEPT): walk f2 mechanisms=all
+# KEPT-LABEL: code f2:Body
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: object
+# RIGHT-NEXT: 1791631360
+# RIGHT-NEXT: 62
+# RIGHT-NEXT: 0
+# RIGHT-NEXT: exited with 0
+# -- source: main.mjs
+# class Row { constructor(list) { this.list = list; this.n = 1000; this.sum = -1; this.last = 1; } }
+# class Longer { list; n; last; constructor(list) { this.list = list; this.n = 1; this.last = 1; } }
+# class Shorter { constructor(list) { this.list = list; this.n = 7; this.sum = 7; } }
+# class Other { constructor(list) { this.list = list; } }
+# function revive(value) { return JSON.parse("0", () => value); }
+# function run(o) {
+#   for (let i = 0; i < 3; i++) {
+#     o.n = o.sum + o.last;
+#   }
+#   let i = 0;
+#   while (i < o.list.length) {
+#     o.last = (o.last * 31 + o.list[i]) | 0;
+#     i++;
+#   }
+#   return o.last;
+# }
+# const rows = [];
+# for (const row of rows) print(typeof new Row(row), typeof new Shorter(row));
+# print(typeof new Longer([1]));
+# print(run(revive({ list: [62, 18, 0.5, 0.5, 18, 62], n: "7", sum: 1, last: 0 })));
+# print(run(revive({ list: [62, , 0.5, 0.5, , 62], n: "7", sum: 1, last: 0 })));
+# print(run(revive({ list: [62, undefined, 5, 7, 18, NaN], n: "7", sum: 1, last: "3" })));
+# -- end of source

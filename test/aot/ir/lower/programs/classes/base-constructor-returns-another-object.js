@@ -28,51 +28,20 @@ console.log(lines.join("\n"));
 
 // GENERATED: Below Lower read has byValue
 // CHECK-LABEL: function {{*}}name="Below"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_1]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_1]]] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: anything):
 // CHECK-NEXT: v3 = Absent
 // CHECK-NEXT: v4 = GetSuperBase v0
 // CHECK-NEXT: v5 = SuperConstruct v4, v1, v2 layout=[[L_2]]
 // CHECK-NEXT: v6 = Convert v5 declared={type=[[L_2]]}
-// CHECK-NEXT: v7 = TypeTest v3 testedType=absent
-// CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b11(| 0)
-// CHECK-NEXT: b1(v8):
-// CHECK-NEXT: v9 = CallDirect v6 function=[[f_3]]
-// CHECK-NEXT: v10 = TypeTest v6 testedType=absent
-// CHECK-NEXT: Branch v10 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v11):
-// CHECK-NEXT: v12 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v12
-// CHECK-NEXT: b3(v13):
-// CHECK-NEXT: v14 = Integer integer=2
-// CHECK-NEXT: PropSet v13, v14 key="y"
-// CHECK-NEXT: v16 = Undefined
-// CHECK-NEXT: v17 = TypeTest v16 testedType=object
-// CHECK-NEXT: Branch v17 -> taken b4(| 0), notTaken b5(| 0)
-// CHECK-NEXT: b4(v18):
-// CHECK-NEXT: Jump -> next b9(v18)
-// CHECK-NEXT: b5(v19):
-// CHECK-NEXT: v20 = TypeTest v19 testedType=undefined
-// CHECK-NEXT: Branch v20 -> taken b6(| 0), notTaken b10(| 0)
-// CHECK-NEXT: b6(v21):
-// CHECK-NEXT: v22 = TypeTest v13 testedType=absent
-// CHECK-NEXT: Branch v22 -> taken b7(| 0), notTaken b8(| 0)
-// CHECK-NEXT: b7(v23):
-// CHECK-NEXT: v24 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v24
-// CHECK-NEXT: b8(v25):
-// CHECK-NEXT: Jump -> next b9(v25)
-// CHECK-NEXT: b9(v26):
-// CHECK-NEXT: Return v26
-// CHECK-NEXT: b10(v27):
-// CHECK-NEXT: v28 = NewRuntimeError runtimeError=DerivedConstructorResult name="Below"
-// CHECK-NEXT: Throw v28
-// CHECK-NEXT: b11(v29):
-// CHECK-NEXT: v30 = NewRuntimeError runtimeError=ThisAlreadyBound
-// CHECK-NEXT: Throw v30
+// CHECK-NEXT: v7 = CallDirect v6 function=[[f_3]]
+// CHECK-NEXT: v8 = Integer integer=2
+// CHECK-NEXT: PropSet v6, v8 key="y"
+// CHECK-NEXT: v10 = Undefined
+// CHECK-NEXT: Return v6
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Lower"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_4]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_4]]] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_5]]
@@ -81,21 +50,21 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] thisType={type=[[L_5]] flags=[IsExpected]} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasThis, HasExplicitName] thisType={type=[[L_5]] flags=[IsExpected]} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: [[L_5]]):
 // CHECK-NEXT: v1 = GetModuleVariable variable=[[g_7]]
 // CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_5]] field=1
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="has"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|object):
 // CHECK-NEXT: v1 = GetModuleVariable variable=[[g_7]]
 // CHECK-NEXT: v2 = PrivateHas v0, v1 layout=[[L_5]] field=1
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="byValue"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|function, v1: anything):
 // CHECK-NEXT: v2 = Construct v0, -, v1 calleeName="C"
 // CHECK-NEXT: Return v2

@@ -1,5 +1,5 @@
 # what checked code writes of a field is what its slot is held to, whoever has the object. Both classes are handed to code that nobody has seen, which constructs with anything: Link proves nothing of any field here.
-# a class is held to its layout, a text to every text. Beside a boolean undefined and null are markers (a class's field holds undefined until its definition runs); a type that holds a reference lists both. Boxed, no number is held: neither the enum nor `number` has a line.
+# a class is held to its layout, a text to every text. Beside a boolean and a number undefined and null are markers (a class's field holds undefined until its definition runs); a type that holds a reference lists both. `ratio`, which nothing reckons with, stays boxed and is held to nothing.
 # of `any` nothing is written: the slot takes every value and the field has no line.
 # -- source: written-type-of-checked-code-is-the-type-of-the-slot.ts
 # declare function sink(...values: unknown[]): void;
@@ -22,7 +22,6 @@
 # FEWEST: field {{*}} "open" source=written type=boolean markers spares-test
 # RUN(NEVER): facts enforced mechanisms=all
 # NEVER-NOT: "loose"
-# NEVER-NOT: slot=JSValue held=undefined|null|i
 # NEVER-NOT: slot=JSValue held=undefined|null|number
 # NEVER-NOT: differs-from-table
 # NEVER-NOT: taken-back

@@ -1,0 +1,14 @@
+# -- source: main.cjs
+# class Table { constructor() { this.count = 0; this.slots = [0, 0, 0, 0]; this.limit = undefined; } resize() { this.slots = this.slots.concat(this.slots); this.limit = (this.slots.length * 0.75) | 0; return this; } add() { if (++this.count > this.limit) this.resize(); return this; } }
+# const table = new Table(); for (let i = 0; i < 3; i++) table.add(); table.resize(); for (let i = 0; i < 12; i++) table.add();
+# print(table.count, table.limit, table.slots.length);
+# -- end of source
+# The counter is an integer, and so is the limit where it is one: no double is compared. f3 = add
+# RUN: emit f3:Body mechanisms=all
+# CHECK-LABEL: unit f3:Body
+# CHECK: Double @{{*}} = IToD(
+# CHECK: Double @{{*}} = Select(
+# CHECK-NEXT: Int32 @{{*}} = GreaterThan(
+# CHECK-NEXT: Branch(
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 15 24 32

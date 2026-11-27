@@ -17,7 +17,6 @@ use bun_install::{Behavior, Dependency, Lockfile, PackageManager, PackageNameHas
 use bun_semver::SlicedString;
 use bun_semver::String;
 use bun_semver::string::{ArrayHashContext, Buf as StringBuf, Builder as StringBuilderNs};
-use core::mem::ManuallyDrop;
 
 // `Map` is keyed by `bun_semver::String` whose hash/eq depend on an external
 // string buffer. The default `AutoContext` cannot satisfy `String: Hash`, so
@@ -166,7 +165,7 @@ impl CatalogMap {
         };
         let entry = &mut map.values_mut()[i];
         if !matches!(
-            entry.version.tag,
+            entry.version.tag(),
             DependencyVersionTag::Npm | DependencyVersionTag::DistTag
         ) {
             return Ok(());
@@ -204,10 +203,10 @@ impl CatalogMap {
         string_buf: &[u8],
         dep: &'a Dependency,
     ) -> &'a DependencyVersion {
-        if dep.version.tag != DependencyVersionTag::Catalog {
+        let DependencyVersionValue::Catalog(catalog) = dep.version.value else {
             return &dep.version;
-        }
-        match self.get_ref(string_buf, *dep.version.catalog(), dep.name) {
+        };
+        match self.get_ref(string_buf, catalog, dep.name) {
             Some(entry) => &entry.version,
             None => &dep.version,
         }
@@ -215,32 +214,21 @@ impl CatalogMap {
 
     /// Only the root and its workspaces may reference catalogs; elsewhere a `catalog:` dependency is left unresolvable and a `catalog:` peer becomes an optional `*` peer, binding to whatever the importer provides.
     pub(crate) fn strip_reference(dep: &mut Dependency) {
-        if dep.version.tag != DependencyVersionTag::Catalog {
+        if dep.version.tag() != DependencyVersionTag::Catalog {
             return;
         }
-        let literal = dep.version.literal;
         if !dep.behavior.is_peer() {
-            dep.version = DependencyVersion {
-                tag: DependencyVersionTag::Uninitialized,
-                literal,
-                value: DependencyVersionValue::default(),
-            };
+            dep.version.value = DependencyVersionValue::Uninitialized;
             return;
         }
         let star = bun_semver::query::parse(b"*", SlicedString::init(b"*", b"*"))
             .unwrap_or_else(|_| bun_core::out_of_memory());
         dep.behavior.insert(Behavior::OPTIONAL);
-        dep.version = DependencyVersion {
-            tag: DependencyVersionTag::Npm,
-            literal,
-            value: DependencyVersionValue {
-                npm: ManuallyDrop::new(NpmInfo {
-                    name: dep.name,
-                    version: star,
-                    is_alias: false,
-                }),
-            },
-        };
+        dep.version.value = DependencyVersionValue::Npm(NpmInfo {
+            name: dep.name,
+            version: star,
+            is_alias: false,
+        });
     }
 
     pub(crate) fn get_or_put_group(

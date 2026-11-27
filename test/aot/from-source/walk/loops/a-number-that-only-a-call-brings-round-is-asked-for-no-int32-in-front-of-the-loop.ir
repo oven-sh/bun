@@ -1,0 +1,88 @@
+# f4 = weighs
+# f5 = waits
+# f6 = scans
+# -- source: a-number-that-only-a-call-brings-round-is-asked-for-no-int32-in-front-of-the-loop.ts
+# // `weighs`: only a call brings `x` round; `x + 1` is no step of it. `waits`: one way more brings `x` itself, under a narrower name. `scans`: `at` is a number all round, one way steps it, one way brings what a call gives.
+# declare function print(...values: unknown[]): void;
+# const unseen = (x: any): any => (globalThis as any).nothingOfThisName ?? x;
+# let by = 0.5;
+# let hook: ((at: number) => void) | null = null;
+# function next(x: number): any { return x + by; }
+# function half(x: number): number { return x * 0.5; }
+# function weighs(from: number, limit: number): string {
+#   let turns = 0, sum = 0;
+#   let x: any = from;
+#   while (x < limit) {
+#     turns++;
+#     sum += half(x + 1);
+#     x = next(x);
+#   }
+#   return turns + " " + sum + " " + String(x);
+# }
+# function waits(from: number, limit: number): string {
+#   let turns = 0, sum = 0;
+#   let x: any = from;
+#   while (x < limit) {
+#     turns++;
+#     if (turns === 400) return "no end";
+#     sum += half(x + 1);
+#     if (typeof x === "number" && (turns & 7) === 0) { limit -= 0.25; continue; }
+#     x = next(x);
+#   }
+#   return turns + " " + sum + " " + String(x);
+# }
+# function past(held: string, at: number): number { let spun = 0; for (let k = 0; k < 1; k++) spun += k; if (hook) hook(at); return Number(at) + by * 4 + spun; }
+# function scans(held: string, start: number, limit: number): string {
+#   let turns = 0;
+#   let at = Number(start);
+#   while (at < limit) {
+#     turns++;
+#     if (held.charCodeAt(at) === 94) { at = past(held, at); continue; }
+#     at++;
+#   }
+#   return turns + " " + String(at);
+# }
+# const handedOut: ((...given: unknown[]) => unknown)[] = [unseen(weighs), unseen(scans), unseen(waits)];
+# const said: string[] = [];
+# function attempt(name: string, run: () => unknown): void {
+#   let answer: string;
+#   try { answer = String(run()); } catch (error) { answer = (error as Error).constructor.name; }
+#   said.push(name + " " + answer);
+# }
+# for (let round = 0; round < 3; round++) {
+#   for (const step of [0.5, 1, 0.25, 2147483648, 3]) {
+#     by = step;
+#     for (const from of [0, 0.5, -3, 7, "2", null, undefined, 2n, NaN]) {
+#       attempt("weighs " + step + " from " + String(from), () => handedOut[0]!(from, 12));
+#       attempt("scans " + step + " from " + String(from), () => handedOut[1]!("ab^cd^^efg^h^", from, 13));
+#       attempt("waits " + step + " from " + String(from), () => handedOut[2]!(from, 12));
+#     }
+#   }
+#   by = 0.5;
+#   attempt("the helper's other code lays another step", () => {
+#     hook = (at) => { by = at > 4 ? 0.75 : 0.5; };
+#     try { return handedOut[1]!("ab^cd^^efg^h^", 0, 13); } finally { hook = null; by = 0.5; }
+#   });
+# }
+# function digest(text: string): number { let hash = 2166136261; for (let at = 0; at < text.length; at++) { hash ^= text.charCodeAt(at); hash = Math.imul(hash, 16777619); } return hash >>> 0; }
+# const say: (...values: unknown[]) => void = (globalThis as any).print ?? console.log;
+# say(said.length + " lines " + digest(said.join("\n")));
+# -- end of source
+# Only what a call gives comes round as `x`, and `x + 1` is no step of it: nothing says that it is an integer. Asked for an int32 in front of the loop, a start or a step with a fraction sent the whole loop into a copy built for size. Nothing is asked: `x` goes round as a number.
+# RUN(WEIGHS): walk f4 mechanisms=all
+# WEIGHS: number @Double) isInLoop=true isLoopHead=true
+# RUN(UNASKED): walk f4 mechanisms=all
+# UNASKED-NOT: testedType=i32
+# A way round that brings `x` itself under a narrower name brings no step either.
+# RUN(WAITS): walk f5 mechanisms=all
+# WAITS-NOT: testedType=i32
+# `at` is stepped on one way and brought by a call on the other: it is asked in front, so the other copy is built for size. It carries `at` raw, as a double; the typed build is left at the call all the same, for a copy that is dear: the builds are made again and the call stands in both.
+# RUN(SCANS): walk f6 mechanisms=all
+# SCANS: number @Double) frequency=Rare isLoopHead=true
+# SCANS: = CallDirect {{*}} function=f3
+# SCANS: i32 @Int32) isInLoop=true isLoopHead=true
+# SCANS: = CallDirect {{*}} function=f3
+# SCANS-NEXT: = TypeTest {{*}} testedType=i32
+# Steps and starts with fractions, past every int32, texts, nothing, a big integer, NaN; the helper's other code lays another step.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 408 lines 698092051

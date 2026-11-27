@@ -1,4 +1,4 @@
-use bun_ptr::{RefPtr, ThisPtr};
+use bun_ptr::RefPtr;
 
 use super::WebSocketProxyTunnel;
 
@@ -14,7 +14,6 @@ pub(crate) struct WebSocketProxy {
     /// WebSocket upgrade request to send after CONNECT succeeds
     websocket_request_buf: Box<[u8]>,
     /// TLS tunnel for wss:// through HTTP proxy.
-    /// Holds one ref; `Drop` calls shutdown() and releases it.
     tunnel: Option<RefPtr<WebSocketProxyTunnel>>,
 }
 
@@ -45,8 +44,8 @@ impl WebSocketProxy {
     }
 
     /// Get the TLS tunnel for wss:// through HTTP proxy
-    pub(crate) fn get_tunnel(&self) -> Option<ThisPtr<WebSocketProxyTunnel>> {
-        self.tunnel.as_ref().map(RefPtr::this_ptr)
+    pub(crate) fn get_tunnel(&self) -> Option<&RefPtr<WebSocketProxyTunnel>> {
+        self.tunnel.as_ref()
     }
 
     /// Store the TLS tunnel, taking over the caller's ref.
@@ -66,8 +65,9 @@ impl WebSocketProxy {
 impl Drop for WebSocketProxy {
     fn drop(&mut self) {
         // target_host / websocket_request_buf: Box<[u8]> drops automatically.
-        if let Some(tunnel) = self.tunnel.take() {
-            WebSocketProxyTunnel::shutdown(tunnel.this_ptr());
+        if let Some(tunnel) = &self.tunnel {
+            tunnel.detach_upgrade_client();
+            tunnel.shutdown();
         }
     }
 }

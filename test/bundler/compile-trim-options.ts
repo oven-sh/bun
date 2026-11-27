@@ -31,7 +31,7 @@ export const obeyed: Record<string, string[]> = {
   ...themselves(
     "--silent --version -v --revision --bun -b --no-orphans --workspaces --parallel --sequential --no-exit-on-error",
   ),
-  ...themselves("--no-clear-screen --smol --aot-huge-heap --interactive"),
+  ...themselves("--no-clear-screen --smol --aot-huge-heap --interactive --check --aot"),
   ...themselves(
     "--if-present --no-install --prefer-offline --prefer-latest --experimental-http2-fetch --experimental-http3-fetch",
   ),
@@ -129,7 +129,7 @@ export const neverEnd = ["--watch", "--hot", "--redis-preconnect"];
 
 export const needRemovedFeatures: Record<string, string[]> = themselves("--sql-preconnect");
 export const needTheBunCommandLine: Record<string, string[]> = themselves(
-  "--help -h --check --aot --aot-allow-code-from-disk --debug-aot --expose-internals",
+  "--help -h --aot-allow-code-from-disk --debug-aot --expose-internals",
 );
 export const cantBeUsed = "can't be used with this executable";
 export const wasLeftOut = /isn't in this executable|was not compiled into this executable/;
@@ -165,10 +165,18 @@ export const obeyedWhereTheProgramUsesTheFeature: Record<string, { forms: string
 export const obeyedWhereTheFeatureIsAllowed: Record<string, { forms: string[]; allow: Bun.Build.TrimFeature }> = {
   "-i": { forms: ["-i"], allow: "install" },
   "--install": {
-    forms: ["--install=auto", "--install=force", "--install=fallback", "--install=nonsense"],
+    forms: ["--install=force", "--install=fallback"],
     allow: "install",
   },
 };
+/** Of `--install`. */
+export const formsThatNeedNothing = [
+  "--install=disable",
+  "--install disable",
+  "--install=auto",
+  "--smol --install=disable",
+];
+export const formsWithAnUnknownValue = ["--install=nonsense"];
 export const nameTheExecutable: Record<string, string[]> = themselves("--aot-build-id");
 
 export const longNames: Record<string, string> = { "-r": "--preload", "-e": "--eval", "-p": "--print", "-h": "--help" };

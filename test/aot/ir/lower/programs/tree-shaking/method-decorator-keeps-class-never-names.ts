@@ -56,25 +56,25 @@ for (const [label, constructor] of kept) console.log(label + ": " + new construc
 
 // GENERATED: keep marked ByProperty
 // CHECK-LABEL: function {{*}}name="keep"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|string):
 // CHECK-NEXT: v1 = NewClosure v0 function=[[f_1]]
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="marked"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = Undefined
 // CHECK-NEXT: Return v0
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="marked"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = Undefined
 // CHECK-NEXT: Return v0
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="ByProperty"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
 // CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
@@ -85,13 +85,13 @@ for (const [label, constructor] of kept) console.log(label + ": " + new construc
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="marked"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: number):
 // CHECK-NEXT: v1 = Undefined
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="marked"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = Integer integer=1
 // CHECK-NEXT: v1 = Convert v0 declared={type=number}

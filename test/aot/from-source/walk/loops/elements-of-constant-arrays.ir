@@ -1,0 +1,28 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const factors = [1, -2, 3, 0.5];
+# const pushed = [1, -2, 3, 0.5];
+# function horner(x: number): number { let r = 0; for (let i = factors.length - 1; i >= 0; i--) r = r * x + factors[i]!; return r; }
+# function changed(x: number): number { let r = 0; for (let i = pushed.length - 1; i >= 0; i--) r = r * x + pushed[i]!; return r; }
+# function repeated(n: number): number { let sum = 0; for (let k = 0; k < n; k++) sum += horner((k & 7) / 4); return sum; }
+# print(horner(0.5), horner(3), changed(2), repeated(9));
+# pushed.push(4);
+# print(changed(2));
+# -- end of source
+# Nobody changes the first list: its length and its elements are those that were written, and the four iterations are written out. The second list is pushed onto.
+# f1 = horner, f2 = changed, f3 = repeated
+# RUN(HORNER): walk f1 mechanisms=all
+# HORNER-LABEL: code f1:Body
+# HORNER: Double number=0.5
+# HORNER: Add {{*}} form=Numbers
+# RUN(ONCE): walk f1 mechanisms=all
+# ONCE-NOT: GetArrayLength
+# RUN(LOOP): walk f1 mechanisms=all
+# LOOP-NOT: isLoopHead
+# RUN(CHANGED): walk f2 mechanisms=all
+# CHANGED-LABEL: code f2:Body
+# CHANGED: GetArrayLength
+# CHANGED: isLoopHead=true
+# RUN(REPEATED): walk f3 mechanisms=all
+# REPEATED-LABEL: code f3:Body
+# REPEATED: Double number=0.5

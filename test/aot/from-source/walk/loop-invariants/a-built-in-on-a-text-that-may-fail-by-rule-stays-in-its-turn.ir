@@ -1,0 +1,11 @@
+# repeat and padStart throw a RangeError by rule, normalize too: what is moved in front must not be able to fail ahead of what the first turn owes first. They stay in their turns.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: ) isInLoop=true isLoopHead=true:
+# CHECK: StringPrototypeRepeat
+# CHECK: StringPrototypePadStart
+# -- source: a-built-in-on-a-text-that-may-fail-by-rule-stays-in-its-turn.ts
+# const list: string[] = []; for (let i = 0; i < 64; i++) list.push("name" + (i % 7));
+# function count(q: string, times: number): number { let n = 0; for (let i = 0; i < list.length; i++) if (list[i] === q.repeat(times) || list[i] === q.padStart(times, "n")) n++; return n; }
+# (globalThis as any).kept = count;
+# console.log(count("name3", 1), count("ame5", 5));
+# -- end of source

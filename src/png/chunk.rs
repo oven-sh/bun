@@ -80,7 +80,7 @@ pub(crate) fn end(out: &mut Vec<u8>, start: usize) -> Result<()> {
         return Err(Error::ChunkTooLong);
     }
     *length_field = len.to_be_bytes();
-    let crc = bun_zlib::crc32_bytes(0, crc_input);
+    let crc = bun_highway::crc32(0, crc_input);
     out.try_reserve(4)?;
     out.extend_from_slice(&crc.to_be_bytes());
     Ok(())

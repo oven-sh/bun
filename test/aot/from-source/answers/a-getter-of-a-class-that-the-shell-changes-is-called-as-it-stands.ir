@@ -1,0 +1,46 @@
+# -- source: main.cjs
+# "use strict";
+# function add(a, b) { return (a + b) | 0; }
+# class Names { get add() { return add; } }
+# const names = new Names();
+# function called(t) { let s = 0; for (let i = 0; i < t + 3; i++) s = (s + names.add(i, t)) | 0; return s; }
+# function attempt(t) { try { return called(t); } catch (error) { return error.constructor.name; } }
+# print(attempt(1));
+# change(names, Names);
+# print(attempt(1));
+# -- end of source
+# f1 = add, f2 = called, f3 = attempt, f4 = Names, f119 = get add
+# The other side of a-call-by-name-that-a-getter-of-a-class-answers-enters-the-getter.ir: the object and the class are handed to the shell between two runs of the loop.
+# What leaves is lost to Link's proofs; what the walk still expects is tested at the run. The shell lays another getter, a method, a property of the object's own, takes the getter away, gives the object another prototype.
+# RUN(NOTHING): run-in-shell change = function () { };
+# NOTHING: 10
+# NOTHING-NEXT: 10
+# NOTHING-NEXT: exited with 0
+# RUN(GETTER): run-in-shell change = function (names, Names) { Object.defineProperty(Names.prototype, "add", { get() { return (a, b) => a * b; }, configurable: true }); };
+# GETTER: 10
+# GETTER-NEXT: 6
+# GETTER-NEXT: exited with 0
+# RUN(METHOD): run-in-shell change = function (names, Names) { Object.defineProperty(Names.prototype, "add", { value(a, b) { return a - b; }, configurable: true, writable: true }); };
+# METHOD: 10
+# METHOD-NEXT: 2
+# METHOD-NEXT: exited with 0
+# RUN(OWN): run-in-shell change = function (names) { Object.defineProperty(names, "add", { value: (a, b) => 7, configurable: true }); };
+# OWN: 10
+# OWN-NEXT: 28
+# OWN-NEXT: exited with 0
+# RUN(GONE): run-in-shell change = function (names, Names) { delete Names.prototype.add; };
+# GONE: 10
+# GONE-NEXT: TypeError
+# GONE-NEXT: exited with 0
+# RUN(PROTOTYPE): run-in-shell change = function (names) { Object.setPrototypeOf(names, { add(a, b) { return 1; } }); };
+# PROTOTYPE: 10
+# PROTOTYPE-NEXT: 4
+# PROTOTYPE-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime change = function (names, Names) { Object.defineProperty(Names.prototype, "add", { get() { return (a, b) => a * b; }, configurable: true }); };
+# CHECKED: 10
+# CHECKED-NEXT: 6
+# CHECKED-NEXT: exited with 0
+# RUN(CHECKEDTOO): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime change = function (names) { Object.defineProperty(names, "add", { value: (a, b) => 7, configurable: true }); };
+# CHECKEDTOO: 10
+# CHECKEDTOO-NEXT: 28
+# CHECKEDTOO-NEXT: exited with 0

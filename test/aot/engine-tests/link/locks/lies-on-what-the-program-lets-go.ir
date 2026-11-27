@@ -1,0 +1,32 @@
+# whoever has an object reads what lies on it, under the names that the program spells: the program lets a constructor go and reads `prototype` off a value that nobody knows, so the members of the prototype object stay open too
+# What nobody lets go keeps its locks: TextDecoder. WebKit's aot/tests/link/locks/name-that-stands-in-a-text-alone.ir: so does what lies under a name that no operation of the program reads
+# globalThis.keep(TextEncoder); function below(value) { return value.prototype; } below(globalThis.given);  new TextEncoder().encode(""); new TextDecoder().decode();
+# RUN: locks
+# CHECK: locked TextDecoderPrototypeDecode constant
+# CHECK-NOT: TextEncoderPrototypeEncode
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="TextEncoder" [isFreeName]
+    v2 = Construct v1, -
+    v3 = PropGet v2 key="encode"
+    v4 = Call v3, v2
+    v5 = PropGet v0 key="TextDecoder" [isFreeName]
+    v6 = Construct v5, -
+    v7 = PropGet v6 key="decode"
+    v8 = Call v7, v6
+    v9 = PropGet v0 key="keep"
+    v10 = Call v9, v0, v1 calleeKey="keep"
+    v11 = NewClosure function=f1
+    v12 = PropGet v0 key="given"
+    v13 = Call v11, -, v12
+    Return v13
+}
+function f1 name="below" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="prototype"
+    Return v1
+}

@@ -9,10 +9,11 @@
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
 # CHECK: isLoopHead=true
+# CHECK: = IsUnmodifiedGenerator
+# CHECK: frequency=Rare
+# CHECK: = Call {{*}}calleeKey="next"
 # CHECK: [[step]]: {{*}} = StepGenerator {{*}}check=IsUnmodified 
 # CHECK: = ResultAt [[step]]
-# CHECK: frequency=Rare
-# CHECK: [[answer]]: {{*}} = Call {{*}}calleeKey="next"
 # CHECK: frequency=Rare
 # CHECK: = PropGet {{*}}key="done"
 # RUN(NONE): walk f2 mechanisms=all

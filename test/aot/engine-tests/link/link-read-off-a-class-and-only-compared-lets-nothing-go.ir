@@ -1,0 +1,25 @@
+# CustomEvent.__proto__ === Event; typeof CustomEvent.__proto__
+# The control of link-read-off-the-prototype-of-a-class-lets-go-what-stands-above-it.ir: the answer goes into a comparison or is asked for its type and nobody takes it on: nobody has come by what stands above.
+# If the read let it go, a program that only asks about a class would hold everything that the class above it brings.
+# RUN: link lookups mechanisms=all
+# CHECK: lookup read CustomEvent
+# CHECK-NOT: lookup let-go Event
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="CustomEvent" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(CustomEvent) flags=[IsExpected]}
+    v3 = PropGet v2 key="__proto__"
+    v4 = Convert v3 declared={type=builtin(ObjectPrototype__proto__) flags=[IsExpected]}
+    v5 = PropGet v0 key="Event" [isFreeName]
+    v6 = Convert v5 declared={type=builtin(Event) flags=[IsExpected]}
+    v7 = StrictEq v4, v6
+    v8 = PropGet v2 key="__proto__"
+    v9 = Convert v8 declared={type=builtin(ObjectPrototype__proto__) flags=[IsExpected]}
+    v10 = TypeOf v9
+    v11 = Undefined
+    Return v11
+}

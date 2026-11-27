@@ -1,0 +1,1 @@
+import { test, vi, beforeEach } from 'bun:test'; import { d } from './d.mjs'; beforeEach(() => { vi.doMock('node:path', () => ({ basename: () => 'X' })); }); test('x', () => { console.log('R x', d()); });

@@ -1,5 +1,7 @@
 import { describe, expect } from "bun:test";
-import { itBundled } from "./expectBundled";
+import { isWindows } from "harness";
+import path from "node:path";
+import { type BundlerTestBundleAPI, itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   // Basic test for bundling HTML with JS and CSS
@@ -800,6 +802,67 @@ body {
     },
   });
 
+  // A browser reads `\\app.js` as `/app.js`.
+  itBundled("html/absolute-path-written-with-a-backslash", {
+    outdir: "out/",
+    files: {
+      "/pages/index.html": `<script src="\\app.js"></script>`,
+      "/app.js": "console.log('at the root')",
+      "/pages/app.js": "console.log('beside the page')",
+    },
+    entryPoints: ["/pages/index.html"],
+    onAfterBundle(api) {
+      const src = api.readFile("out/index.html").match(/src="(.*\.js)"/);
+      expect(api.readFile("out/" + src![1])).toContain("at the root");
+    },
+  });
+
+  // `\\?\` starts a path only on Windows.
+  (isWindows ? itBundled : itBundled.skip)("html/path-that-starts-with-two-backslashes", {
+    outdir: "out/",
+    files: {
+      "/pages/index.html": `<script src="\\\\?\\{{root}}\\app.js"></script>`,
+      "/app.js": "console.log('found')",
+    },
+    entryPoints: ["/pages/index.html"],
+    onAfterBundle(api) {
+      const src = api.readFile("out/index.html").match(/src="(.*\.js)"/);
+      expect(api.readFile("out/" + src![1])).toContain("found");
+    },
+  });
+
+  for (const [name, src] of Object.entries({
+    "one-letter-directory": "d\\app.js",
+    "trailing-slash": "lib.d/",
+  })) {
+    itBundled(`html/script-src-${name}`, {
+      outdir: "out/",
+      files: {
+        "/pages/index.html": `<script src="${src}"></script>`,
+        "/pages/d/app.js": "console.log('found')",
+        "/pages/lib.d/index.js": "console.log('found')",
+        "/pages/lib.d.js": "console.log('sibling')",
+      },
+      entryPoints: ["/pages/index.html"],
+      onAfterBundle(api) {
+        const src = api.readFile("out/index.html").match(/src="(.*\.js)"/);
+        expect(api.readFile("out/" + src![1])).toContain("found");
+      },
+    });
+  }
+
+  itBundled("html/backslash-before-a-query-with-a-colon", {
+    outdir: "out/",
+    files: {
+      "/pages/index.html": `<img src="/pages\\pic.png?t=1:2">`,
+      "/pages/pic.png": "png",
+    },
+    entryPoints: ["/pages/index.html"],
+    onAfterBundle(api) {
+      expect(api.readFile("out/index.html")).toMatch(/src="\.\/pic-\w+\.png/);
+    },
+  });
+
   // Test absolute paths in HTML
   itBundled("html/absolute-paths", {
     outdir: "out/",
@@ -1170,6 +1233,99 @@ body {
       const manifestContent = api.readFile("out/" + manifestMatch![1]);
       expect(manifestContent).toContain('"name"');
       expect(manifestContent).toContain('"My App"');
+    },
+  });
+
+  // The same rule applies when the reference is resolved through an onResolve
+  // plugin instead of by the bulk resolution pass: the resolver runs after the
+  // callback declines, or the callback returns the path itself.
+  const manifestViaPluginFiles = {
+    "/index.html": `<!DOCTYPE html><link rel="manifest" href="./manifest.json" /><script src="./app.js"></script>`,
+    "/app.js": "console.log('hello')",
+  };
+  function expectManifestCopied(api: BundlerTestBundleAPI) {
+    const htmlContent = api.readFile("out/index.html");
+    expect(htmlContent).not.toContain('manifest.json"');
+    const manifestMatch = htmlContent.match(/href="(?:\.\/|\/)?(manifest-[a-zA-Z0-9]+\.json)"/);
+    expect(manifestMatch).not.toBeNull();
+    expect(api.readFile("out/" + manifestMatch![1])).toBe('{"name":"My App"}');
+    // The page's script is still bundled, not copied.
+    expect(htmlContent).toMatch(/src="(?:\.\/|\/)?[^"]+\.js"/);
+  }
+
+  itBundled("html/manifest-json-onresolve-declines", () => {
+    const declined: string[] = [];
+    return {
+      outdir: "out/",
+      files: {
+        ...manifestViaPluginFiles,
+        "/manifest.json": '{"name":"My App"}',
+      },
+      entryPoints: ["/index.html"],
+      plugins(builder) {
+        builder.onResolve({ filter: /manifest\.json$/ }, args => {
+          declined.push(args.path);
+          return undefined;
+        });
+      },
+      onAfterBundle(api) {
+        expect(declined).toEqual(["./manifest.json"]);
+        expectManifestCopied(api);
+      },
+    };
+  });
+
+  itBundled("html/manifest-json-onresolve-path", ({ root }) => ({
+    outdir: "out/",
+    files: {
+      ...manifestViaPluginFiles,
+      // Only reachable through the plugin: index.html references ./manifest.json.
+      "/generated/manifest.json": '{"name":"My App"}',
+    },
+    entryPoints: ["/index.html"],
+    plugins(builder) {
+      builder.onResolve({ filter: /manifest\.json$/ }, () => ({
+        path: path.join(root, "generated", "manifest.json"),
+      }));
+    },
+    onAfterBundle: expectManifestCopied,
+  }));
+
+  // The HTML references manifest.json as an asset (file loader) while the script
+  // imports it as JSON. These are two modules; the script must not end up with
+  // the asset's output path in place of the parsed object.
+  itBundled("html/manifest-json-also-imported-as-json", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="manifest" href="./manifest.json" />
+  </head>
+  <body>
+    <script src="./app.js"></script>
+  </body>
+</html>`,
+      "/manifest.json": JSON.stringify({ name: "My App" }),
+      "/app.js": /* js */ `
+        import manifest from "./manifest.json";
+        console.log(manifest.name);
+      `,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const htmlContent = api.readFile("out/index.html");
+
+      const manifestMatch = htmlContent.match(/href="(?:\.\/|\/)?(manifest-[a-zA-Z0-9]+\.json)"/);
+      expect(manifestMatch).not.toBeNull();
+      expect(api.readFile("out/" + manifestMatch![1])).toBe(JSON.stringify({ name: "My App" }));
+
+      const scriptMatch = htmlContent.match(/src="(?:\.\/|\/)?([^"]+\.js)"/);
+      expect(scriptMatch).not.toBeNull();
+      const js = api.readFile("out/" + scriptMatch![1]);
+      expect(js).toContain('"My App"');
+      expect(js).not.toContain(manifestMatch![1]);
     },
   });
 

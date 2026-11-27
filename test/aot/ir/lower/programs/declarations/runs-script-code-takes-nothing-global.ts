@@ -1,7 +1,7 @@
 // RUN: lower
 // OPTIONS: builtin-modules
-// DIAGNOSTIC: TS2339 1
-// DIAGNOSTIC: TS2345 1
+// tsc accepts this program: main.ts is a script there and merges with globals.d.ts. So the build goes on, though its own check finds TS2339 and TS2345
+// (the_check_of_a_build_takes_a_script_of_the_project_for_a_module in src/sema/driver/compile/tests/what_tsc_accepts.rs).
 
 // FILE: main.ts
 /// <reference path="./globals.d.ts" />

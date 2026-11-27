@@ -5,7 +5,9 @@ use bun_collections::HashMap;
 use bun_core::{Global, Output, UnwrapOrOom as _};
 use bun_semver as Semver;
 
-use crate::dependency::{Behavior, Tag as DependencyTag, Version as DependencyVersion};
+use crate::dependency::{
+    Behavior, Tag as DependencyTag, Value as DependencyValue, Version as DependencyVersion,
+};
 use crate::lockfile::package::{PackageColumns as _, folder_relative_to_top_level_dir};
 use crate::lockfile::{self, DependencySlice, Lockfile, Package};
 use crate::npm::{FindResult, FindVersionResult, MinimumReleaseAgeExcludes, PackageManifest};
@@ -261,7 +263,7 @@ impl DeclaredDependencies {
                     .lockfile
                     .catalogs
                     .resolve_range(scratch.lockfile.buffers.string_bytes.as_slice(), dep);
-                if !matches!(range.tag, DependencyTag::Npm | DependencyTag::DistTag) {
+                if !matches!(range.tag(), DependencyTag::Npm | DependencyTag::DistTag) {
                     continue;
                 }
                 let Some(installed_dep_id) = installed_row(&manager.lockfile, installed, dep)
@@ -440,23 +442,25 @@ impl WorkspaceManifests {
         if path.is_empty() {
             return None;
         }
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let relative_directory = folder_relative_to_top_level_dir(package_dir, path, &mut buf[..])?;
+        let relative_directory: &[u8] = &folder_relative_to_top_level_dir(package_dir, path)?;
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
         self.root_dependencies
             .get(self.lockfile.buffers.dependencies.as_slice())
             .iter()
             .find(|dependency| {
                 dependency.behavior.is_workspace()
-                    && dependency.version.workspace().slice(string_buf) == relative_directory
+                    && matches!(
+                        &dependency.version.value,
+                        DependencyValue::Workspace(path)
+                            if path.slice(string_buf) == relative_directory
+                    )
             })
             .map(|dependency| dependency.name.slice(string_buf))
     }
 
     pub fn contains_package_dir(&self, package_dir: &[u8]) -> bool {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        folder_relative_to_top_level_dir(package_dir, b".", &mut buf[..])
-            .is_some_and(|relative| relative == b".")
+        folder_relative_to_top_level_dir(package_dir, b".")
+            .is_some_and(|relative| relative.as_bytes() == b".")
             || self.workspace_name_at_path(package_dir, b".").is_some()
     }
 
@@ -526,23 +530,20 @@ pub(crate) fn relation_graph(
                 continue;
             }
             let version = scratch.lockfile.catalogs.resolve_range(sbuf, dep);
-            let to: Option<u32> = match version.tag {
-                DependencyTag::Workspace => index_by_path
-                    .get(version.workspace().slice(sbuf))
+            let to: Option<u32> = match &version.value {
+                DependencyValue::Workspace(workspace) => index_by_path
+                    .get(workspace.slice(sbuf))
                     .copied()
                     .or_else(|| index_by_hash.get(&dep.name_hash).copied()),
-                DependencyTag::Npm => {
-                    let npm = version.npm();
-                    lockfile::linked_workspace_path(
-                        manager.options.link_workspace_packages,
-                        &scratch.lockfile.workspace_paths,
-                        &scratch.lockfile.workspace_versions,
-                        Semver::string::Builder::string_hash(npm.name.slice(sbuf)),
-                        &npm.version,
-                        sbuf,
-                    )
-                    .and_then(|path| index_by_path.get(path.slice(sbuf)).copied())
-                }
+                DependencyValue::Npm(npm) => lockfile::linked_workspace_path(
+                    manager.options.link_workspace_packages,
+                    &scratch.lockfile.workspace_paths,
+                    &scratch.lockfile.workspace_versions,
+                    Semver::string::Builder::string_hash(npm.name.slice(sbuf)),
+                    &npm.version,
+                    sbuf,
+                )
+                .and_then(|path| index_by_path.get(path.slice(sbuf)).copied()),
                 _ => None,
             };
             let Some(to) = to else {
@@ -598,7 +599,7 @@ fn crash_for_filter(log: &mut bun_ast::Log, pattern: &[u8], err: crate::Error) -
 /// If there are parse errors, they explain the failure. `what` and `err` are the fallback.
 fn crash(log: &mut bun_ast::Log, err: crate::Error, what: fmt::Arguments<'_>) -> ! {
     if log.has_errors() {
-        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        let _ = log.print(Output::error_writer());
     } else {
         Output::err_generic("{}: {}", (what, err.name()));
     }

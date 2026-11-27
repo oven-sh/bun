@@ -1,6 +1,6 @@
 use core::ffi::c_int;
 
-use crate::{JSValue, VM};
+use crate::{JSValue, VM, WrapperGuard};
 use bun_core as bstr;
 
 bun_opaque::opaque_ffi! {
@@ -27,25 +27,19 @@ pub enum ToFileSystemPathError {
 }
 
 impl DOMURL {
-    pub fn cast_<'a>(value: JSValue, vm: &'a VM) -> Option<&'a mut DOMURL> {
-        // DOMURL is a GC-owned C++ cell; the returned reference is only valid
-        // while `value` stays alive (e.g. stack-rooted for the conservative GC
-        // scan) — the borrow on `vm` does not capture that.
-        // `DOMURL` is an `opaque_ffi!` ZST handle; `opaque_mut` is the
-        // centralised non-null-ZST deref proof (zero-byte `&mut` cannot alias).
-        let p = WebCore__DOMURL__cast_(value, vm);
-        (!p.is_null()).then(|| DOMURL::opaque_mut(p))
+    pub fn cast_<'a>(value: &'a JSValue, vm: &VM) -> Option<WrapperGuard<'a, DOMURL>> {
+        // SAFETY: a `JSDOMURL` holds a ref on what it wraps.
+        unsafe { WrapperGuard::new(value, WebCore__DOMURL__cast_(*value, vm)) }
     }
 
-    pub fn cast<'a>(value: JSValue) -> Option<&'a mut DOMURL> {
-        // SAFETY: VirtualMachine::get() returns the per-thread singleton; caller is on the JS thread.
+    pub fn cast(value: &JSValue) -> Option<WrapperGuard<'_, DOMURL>> {
         Self::cast_(
             value,
             crate::virtual_machine::VirtualMachine::get().global().vm(),
         )
     }
 
-    pub fn file_system_path(&mut self) -> Result<bstr::String, ToFileSystemPathError> {
+    pub fn file_system_path(&self) -> Result<bstr::String, ToFileSystemPathError> {
         let mut error_code: c_int = 0;
         let path = WebCore__DOMURL__fileSystemPath(self, &mut error_code);
         match error_code {

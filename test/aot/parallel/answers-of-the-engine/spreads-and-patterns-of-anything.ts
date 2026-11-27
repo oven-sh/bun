@@ -1,5 +1,5 @@
 // A spread and a pattern over a value of which nothing is known are one operation of the run time each. It takes a shorter road by what the value is, where nobody can see the difference: lists, sets, maps, their iterators fresh and half used, texts, typed arrays, arguments; and the protocol for classes below with an iteration of their own, an own @@iterator or next, a moved prototype, getters, a proxy, iterables that log, throw and have to be closed.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 (globalThis as any).report = (value: unknown) => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 declare function report(value: unknown): void;
 function show(list: any): string { let s = ""; for (let i = 0; i < list.length; i++) s += (i in list ? (Array.isArray(list[i]) ? "[" + list[i].join("|") + "]" : String(list[i])) : "hole") + ","; return s; }

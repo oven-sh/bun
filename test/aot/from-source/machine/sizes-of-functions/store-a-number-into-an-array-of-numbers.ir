@@ -1,0 +1,17 @@
+# f1 = put
+# -- source: store-a-number-into-an-array-of-numbers.ts
+# function put(list: number[], index: number, value: number): void {
+#   list[index] = value;
+# }
+# declare const input: any;
+# const list: number[] = [0.5, 1.5];
+# put(list, input | 0, +input);
+# put(list, 1, 2.5);
+# (globalThis as any).answer = list[0] + list[1];
+# -- end of source
+# The compiler before this one: 15 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 26, patches 1, moves 1, unlikely or rare 4.
+# RUN(X64): steps most:27 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 27

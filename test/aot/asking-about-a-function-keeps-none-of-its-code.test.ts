@@ -34,6 +34,7 @@ const namedIsUsedToday = [
   /^Bun\.TOML\./,
   /^Bun\.XML\./,
   /^Bun\.YAML\./,
+  /^Bun\.diff\./,
   /^Bun\.dns\./,
   /^Bun\.markdown\./,
   /^Bun\.password\./,
@@ -79,7 +80,7 @@ test("few functions that --trim can remove have members that the table does not 
       .filter(each => !listsAllMembers(each))
       .map(({ path }) => path)
       .sort(),
-  ).toEqual(["Bun.cron", "Bun.peek", "Bun.sql", "process.memoryUsage"]);
+  ).toEqual(["Bun.cron", "Bun.peek", "Bun.sql"]);
 });
 
 // The table takes what it knows only as a property for something that a read may create, so `typeof URL.createObjectURL` would keep URL.

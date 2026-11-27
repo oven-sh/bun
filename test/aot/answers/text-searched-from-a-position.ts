@@ -2,17 +2,13 @@
 // # indexOf, lastIndexOf and startsWith with a position go by the stub of String where the position is an int32, inside the text or not; every other position, operand and receiver is served as before
 // # f1 = found, f2 = foundLast, f3 = began: the site is the one of a call by name, and the stub that it calls bears the form and the count
 // # RUN(FOUND): bytes f1:Body mechanisms=all
-// # REQUIRES(FOUND): entries-of-bun
 // # FOUND: CallMethodOfBuiltinClass{{*}}StringIndexOf count 2
 // # RUN(LAST): bytes f2:Body mechanisms=all
-// # REQUIRES(LAST): entries-of-bun
 // # LAST: CallMethodOfBuiltinClass{{*}}StringLastIndexOf count 2
 // # RUN(BEGAN): bytes f3:Body mechanisms=all
-// # REQUIRES(BEGAN): entries-of-bun
 // # BEGAN: CallMethodOfBuiltinClass{{*}}StringStartsWith count 2
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
-// # REQUIRES: entries-of-bun
 // # CHECK: 103 of 103 of 103
 // # CHECK-NEXT: exited with 0
 declare function report(value: unknown): void;

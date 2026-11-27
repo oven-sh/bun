@@ -22,8 +22,7 @@ test("a spy", async () => {
 });
 `;
 
-// The build reads a file once, under its path. What `import("./named.js?again")` loads is one more instance, read from disk when the test runs, and its spy is one that the build never saw:
-// docs/compiler/debugging.mdx: "A spy that the build never saw .. throws a `TypeError` that names the export."
+// The build reads a file once, under its path. What `import("./named.js?again")` loads is one more instance, read from disk when the test runs, and its spy is one that the build never saw.
 test("the spy of a file that is loaded under a query is refused by the name of the export", async () => {
   using dir = tempDir("aot-spy-in-a-file-loaded-under-a-query", {
     "package.json": `{ "name": "spy-under-a-query", "type": "module" }`,

@@ -3,7 +3,9 @@ use super::search::{is_in_node_modules, join_unrooted};
 use super::*;
 use crate::atom::{Atom, Interner};
 use crate::hir::JsxPragmas;
+use crate::resolve::{basename, parent_directory};
 use bun_core::identifier::is_identifier;
+use bun_paths::portable::from_portable_specifier;
 use std::sync::OnceLock;
 
 const MAX_EXTENDED_CONFIGS: usize = 64;
@@ -71,6 +73,7 @@ pub struct TranspileSettings {
     pub experimental_decorators: bool,
     pub emits_decorator_metadata: bool,
     pub use_define_for_class_fields: Option<bool>,
+    pub bun_run_assigns_class_fields: bool,
 }
 
 pub(in crate::resolve) struct CodeConfig<'h> {
@@ -140,6 +143,7 @@ pub(in crate::resolve) struct ConfigCaches<'h> {
     default_settings: OnceLock<&'h TranspileSettings>,
     aot_package_settings: Memo<&'h [u8], &'h TranspileSettings>,
     is_development: OnceLock<bool>,
+    bun_run_assigns_class_fields: OnceLock<bool>,
 }
 
 impl<'h> ConfigCaches<'h> {
@@ -151,6 +155,7 @@ impl<'h> ConfigCaches<'h> {
             default_settings: OnceLock::new(),
             aot_package_settings: Memo::new(are_small),
             is_development: OnceLock::new(),
+            bun_run_assigns_class_fields: OnceLock::new(),
         }
     }
 }
@@ -177,7 +182,8 @@ impl JsxFields {
             is_development: emit.and_then(|emit| emit.1),
             factory: identifiers(b"jsxFactory"),
             fragment: identifiers(b"jsxFragmentFactory"),
-            import_source: string_entry(options, b"jsxImportSource").map(<[u8]>::to_vec),
+            import_source: string_entry(options, b"jsxImportSource")
+                .map(|text| from_portable_specifier(text).into_owned()),
         }
     }
 
@@ -218,7 +224,7 @@ struct ParsedConfig {
 
 impl ParsedConfig {
     fn parse(path: &[u8], json: &Json) -> ParsedConfig {
-        let config_dir = dirname::<Posix>(path);
+        let config_dir = parent_directory(path);
         let extends = string_entry(json, b"extends")
             .filter(|text| !text.is_empty() && !is_in_node_modules(config_dir))
             .map(|text| join(config_dir, text));
@@ -284,9 +290,21 @@ impl<'h> Resolver<'h> {
     }
 
     pub fn transpile_settings(&self, path: &[u8]) -> &'h TranspileSettings {
-        if self.is_aot_source_of_dependency(path) {
-            return self.aot_package_settings(dirname::<Posix>(path));
+        self.transpile_settings_as(path, || is_javascript_file(self.host, path))
+    }
+
+    pub fn transpile_settings_as(
+        &self,
+        path: &[u8],
+        is_javascript: impl FnOnce() -> bool,
+    ) -> &'h TranspileSettings {
+        match self.is_aot_source_of_dependency(path, is_javascript) {
+            true => self.aot_package_settings(parent_directory(path)),
+            false => self.configured_transpile_settings(path),
         }
+    }
+
+    fn configured_transpile_settings(&self, path: &[u8]) -> &'h TranspileSettings {
         let config = match self.transpiles_by_working_directory() {
             true => self.code_config_in_working_directory(),
             false if self.code_host().is_given_in_memory(path) => None,
@@ -310,9 +328,13 @@ impl<'h> Resolver<'h> {
         *self.config_caches().in_working_directory.get_or_init(find)
     }
 
-    fn is_aot_source_of_dependency(&self, path: &[u8]) -> bool {
+    fn is_aot_source_of_dependency(
+        &self,
+        path: &[u8],
+        is_javascript: impl FnOnce() -> bool,
+    ) -> bool {
         let working_directory = &self.code_options().working_directory;
-        !is_javascript_file(self.host, path)
+        !is_javascript()
             && (self.aot_package_directory(path)).is_some_and(|package| {
                 !contains_path(package, working_directory, self.host.is_case_sensitive())
             })
@@ -324,7 +346,7 @@ impl<'h> Resolver<'h> {
             return known;
         }
         let stated = ancestors(directory)
-            .take_while(|&ancestor| strings::basename_posix(ancestor) != b"node_modules")
+            .take_while(|&ancestor| basename(ancestor) != b"node_modules")
             .map(|ancestor| inside(ancestor, b"package.json"))
             .filter(|path| self.is_file(path))
             .find_map(|path| self.read_config(&path).filter(|it| it.has_compiler_options));
@@ -341,6 +363,7 @@ impl<'h> Resolver<'h> {
             experimental_decorators: stated.experimental_decorators,
             emits_decorator_metadata: stated.emits_decorator_metadata,
             use_define_for_class_fields: stated.use_define_for_class_fields,
+            bun_run_assigns_class_fields: self.bun_run_assigns_class_fields(),
         });
         *by_directory.insert_ref(self.keep(directory), settings)
     }
@@ -433,6 +456,22 @@ impl<'h> Resolver<'h> {
             experimental_decorators: config.experimental_decorators,
             emits_decorator_metadata: config.emits_decorator_metadata,
             use_define_for_class_fields: config.use_define_for_class_fields,
+            bun_run_assigns_class_fields: self.bun_run_assigns_class_fields(),
+        })
+    }
+
+    fn load_config_that_bun_run_takes(&self) -> Option<ParsedConfig> {
+        let working_directory = &self.code_options().working_directory;
+        let find_in_working_directory = || self.find_config_file(working_directory);
+        let path = self.override_path().or_else(find_in_working_directory);
+        path.and_then(|path| self.load_merged(&path))
+    }
+
+    fn bun_run_assigns_class_fields(&self) -> bool {
+        let caches = self.config_caches();
+        *caches.bun_run_assigns_class_fields.get_or_init(|| {
+            let taken = self.load_config_that_bun_run_takes();
+            taken.and_then(|taken| taken.use_define_for_class_fields) == Some(false)
         })
     }
 
@@ -442,10 +481,8 @@ impl<'h> Resolver<'h> {
             if let Some(forced) = options.forced_jsx_development {
                 return forced;
             }
-            let find_in_working_directory = || self.find_config_file(&options.working_directory);
-            let path = self.override_path().or_else(find_in_working_directory);
-            let merged = path.and_then(|path| self.load_merged(&path));
-            let written = merged.and_then(|merged| merged.jsx.is_development);
+            let taken = self.load_config_that_bun_run_takes();
+            let written = taken.and_then(|taken| taken.jsx.is_development);
             written.unwrap_or(options.jsx.is_development)
         })
     }

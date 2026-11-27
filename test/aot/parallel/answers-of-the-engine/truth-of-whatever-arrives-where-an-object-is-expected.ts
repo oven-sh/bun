@@ -1,5 +1,5 @@
 // the truth of whatever arrives where `Node | undefined` is written: in a condition, under `!`, `&&`, `||`, as a value, in a loop, out of a field, out of a list, and where the proof is read behind it
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 (globalThis as any).report = (value: unknown) => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 declare function report(value: unknown): void;
 class Node { kind = 7; parent: Node | undefined = undefined; }

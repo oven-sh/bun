@@ -215,14 +215,21 @@ async function serve(cwd: string, cmd: string[], requests: string, more: Record<
 
 export function testFramework(name: keyof typeof frameworks, form: "in place" | "one file" = "in place") {
   const framework: Framework = frameworks[name];
-  // TODO: on Windows x64 the build of next ends with exit code 9 and says nothing.
-  const notYet = name === "next" && isWindows && process.arch === "x64";
-  (notYet
-    ? test.todo
+  // TODO: on Windows x64 the build of next ends with exit code 9 and says nothing. A build that dies is no goal, so the case runs there all the same: it says how each
+  // step ended and all that the step said, and it turns red on the day on which the build ends well.
+  const diesToday = name === "next" && isWindows && process.arch === "x64";
+  const title = form === "in place" ? name : `${name}, as one file`;
+  const ended = async (step: string, running: ReturnType<typeof run>) => {
+    const result = await running;
+    if (diesToday) console.error(`STEP ${step}: exit code ${result.exitCode}${result.output && ":\n" + result.output}`);
+    return result;
+  };
+  (diesToday
+    ? test.failing
     : test.skipIf(
         (framework.isBuiltByNode === true && !nodeExe()) || (framework.isLeftOutWithASAN === true && isASAN),
       ))(
-    form === "in place" ? name : `${name}, as one file`,
+    diesToday ? `${title}: on Windows x64 the build ends with exit code 9 and says nothing` : title,
     async () => {
       using dir = tempDir(`aot-framework-${name}`, {});
       const site = join(String(dir), "site");
@@ -233,9 +240,12 @@ export function testFramework(name: keyof typeof frameworks, form: "in place" | 
 
       const installed = process.env.BUN_TEST_AOT_FRAMEWORK_PACKAGES;
       expect(
-        installed
-          ? await run(site, ["cp", "-R", join(installed, name, "node_modules"), "node_modules"])
-          : await run(site, [bunExe(), "install", "--frozen-lockfile", "--ignore-scripts", "--linker", "hoisted"]),
+        await ended(
+          "the packages",
+          installed
+            ? run(site, ["cp", "-R", join(installed, name, "node_modules"), "node_modules"])
+            : run(site, [bunExe(), "install", "--frozen-lockfile", "--ignore-scripts", "--linker", "hoisted"]),
+        ),
       ).toEqual({ output: "", exitCode: 0 });
 
       mkdirSync(join(site, "node_modules", "@types"), { recursive: true });
@@ -249,10 +259,13 @@ export function testFramework(name: keyof typeof frameworks, form: "in place" | 
           await run(site, [bunExe(), "--bun", "node_modules/@sveltejs/kit/svelte-kit.js", "sync"], buildToolEnv),
         ).toEqual({ output: "", exitCode: 0 });
       expect(
-        await run(
-          site,
-          [...(framework.isBuiltByNode ? [nodeExe()!] : [bunExe(), "--bun"]), ...framework.build],
-          buildToolEnv,
+        await ended(
+          "the framework's own build",
+          run(
+            site,
+            [...(framework.isBuiltByNode ? [nodeExe()!] : [bunExe(), "--bun"]), ...framework.build],
+            buildToolEnv,
+          ),
         ),
       ).toEqual({ output: "", exitCode: 0 });
       for (const [from, to] of framework.copiedAfterTheBuild ?? [])
@@ -266,21 +279,23 @@ export function testFramework(name: keyof typeof frameworks, form: "in place" | 
       expect(expected.join("\n")).not.toContain("Unable to connect");
 
       const executable = join(String(dir), "executable");
-      expect(
-        await run(directory, [
-          bunExe(),
-          "build",
-          "--compile",
-          "--aot",
-          ...moreBuildFlags,
-          ...(form === "in place" ? ["--compile-in-place"] : []),
-          framework.entryPoint,
-          ...(framework.moreEntryPoints ?? []),
-          ...framework.assets.flatMap(asset => ["--asset", asset]),
-          "--outfile",
-          executable,
-        ]),
-      ).toEqual({ output: "", exitCode: 0 });
+      const build = [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        ...moreBuildFlags,
+        ...(form === "in place" ? ["--compile-in-place"] : []),
+        framework.entryPoint,
+        ...(framework.moreEntryPoints ?? []),
+        ...framework.assets.flatMap(asset => ["--asset", asset]),
+        "--outfile",
+        executable,
+      ];
+      const built = await ended("bun build --compile --aot", run(directory, build));
+      if (diesToday && built.exitCode !== 0)
+        await ended("the same on one thread", run(directory, [...build, "--aot-threads=1"]));
+      expect(built).toEqual({ output: "", exitCode: 0 });
 
       renameSync(site, join(String(dir), "moved-away"));
       if (framework.isCopiedToServerByItself) renameSync(directory, join(String(dir), "copy-moved-away"));

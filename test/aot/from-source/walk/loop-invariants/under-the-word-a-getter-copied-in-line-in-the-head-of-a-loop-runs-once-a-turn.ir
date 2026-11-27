@@ -15,7 +15,7 @@
 # for (let turn = 0; turn < 300; turn++) said = run(rows | 0, times | 0);
 # print(said);
 # -- end of source
-# A RIGHT PROGRAM (the outside readers' g18-condition-of-a-for). `c.length` is an accessor found above and copied in line in the head of a loop; what it gives, `this.items.length`, stands in front of the loop. Where proofs are
+# A RIGHT PROGRAM. `c.length` is an accessor found above and copied in line in the head of a loop; what it gives, `this.items.length`, stands in front of the loop. Where proofs are
 # checked at run time (testing=CheckProofsAtRunTime, which --aot-harden=proof-checks stands for) an answer that comes from in front of a loop is read again in the turn and compared. The whole read was walked again, the getter
 # with it: `this.reads + 1` ran twice a turn: 12/32. A check repeats only what may be run again unseen: the reads inside the getter are walked one by one and have their own checks.
 # RUN(ONCE): run-in-shell testing=CheckProofsAtRunTime

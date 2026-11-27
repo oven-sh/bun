@@ -50,7 +50,7 @@ export function indexOf(this: unknown[], searched: unknown, fromIndex: number | 
 }
 
 function includesNaN(array: unknown[], index: number, length: number): boolean {
-  for (; index < length; index++) {
+  for (index >>>= 0; index < length; index++) {
     const element = array[index];
     if (element !== element) return true;
   }

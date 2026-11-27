@@ -1,0 +1,23 @@
+// What typeof gives of values of every kind where the answer is kept, joined, measured, compared with another answer, switched on or taken for a key; in loops and outside them.
+class Plain { } class Callable extends Function { constructor() { super("return 1"); } }
+async function asynchronous() { } function* generator() { yield 1; } async function* both() { }
+const values = [0, -0, 1, 1.5, NaN, Infinity, 2 ** 31, -(2 ** 31), 2 ** 53, "", "a", "ab" + String(Math.min(3, 4)), "中", true, false, undefined, null, Symbol("s"), Symbol.iterator, Symbol.for("x"), 0n, 5n, -(2n ** 70n), {}, { a: 1 }, [], [1, 2], [1.5], Object.create(null), new Plain(), Plain, Callable, new Callable(), function () { }, () => 1, asynchronous, generator, both, generator(), asynchronous(), both(), (() => { }).bind(null), Math.max, Array.prototype.push, Date, new Date(0), /x/, new RegExp("y"), new Map(), new WeakMap(), new Set(), new Uint8Array(2), new DataView(new ArrayBuffer(1)), new ArrayBuffer(1), Promise.resolve(), new Error("e"), new String("s"), new Number(1), new Boolean(false), Object(1n), Object(Symbol("t")), new Proxy({}, {}), new Proxy(function () { }, {}), new Proxy(class { }, {}), new Proxy([], {}), globalThis, Math, JSON, Reflect, Intl, process, console.log, require, module, exports, Buffer.from("b"), new URL("http://a/b"), new AbortController(), structuredClone, queueMicrotask, Object.freeze({}), { get a() { return 1; } }, Object.getOwnPropertyDescriptor({ get a() { return 1; } }, "a").get, (function () { return arguments; })(1), new (class { #p = 1; })(), eval, new Function("return 1"), Symbol, BigInt, new WeakRef({}), Iterator, [].values(), "x"[Symbol.iterator](), import.meta === undefined];
+const lines = [];
+let sink; const keep = v => { sink = v; };
+function kept(list) { let s = ""; for (let i = 0; i < list.length + 2; i++) { keep(typeof list[i]); s += sink[0] + sink.length; } return s; }
+function joined(list) { let s = ""; for (let i = 0; i < list.length; i++) s += "<" + typeof list[i] + ">"; return s; }
+function measured(list) { let n = 0; for (let i = 0; i < list.length; i++) n = n * 3 % 100003 + (typeof list[i]).length; return n; }
+function same(list) { let s = ""; for (let i = 0; i < list.length; i++) s += typeof list[i] === typeof list[(i * 7 + 3) % list.length] ? 1 : typeof list[i] < typeof list[(i * 5 + 1) % list.length] ? 2 : 0; return s; }
+function counted(list) { const c = {}; for (let i = 0; i < list.length; i++) { const t = typeof list[i]; c[t] = (c[t] || 0) + 1; } return JSON.stringify(c); }
+function mapped(list) { const m = new Map(); for (const v of list) { const t = typeof v; m.set(t, (m.get(t) ?? 0) + 1); } return [...m].join(); }
+function switched(list) { let n = 0; for (const v of list) { const t = typeof v; switch (t) { case "string": n += 1; break; case "number": n += 3; break; case "object": n += v === null ? 7 : 11; break; case "function": n += 13; break; case "undefined": n += 17; break; default: n += t.length * 19; } } return n; }
+const handlers = { string: v => v.length, number: v => 1, object: v => v === null ? 2 : 3, undefined: () => 4, boolean: v => v ? 5 : 6, function: v => 7, symbol: () => 8, bigint: v => v > 1n ? 9 : 10 };
+function handled(list) { let s = ""; for (const v of list) s += handlers[typeof v](v) + ","; return s; }
+for (const f of [kept, joined, measured, same, counted, mapped, switched, handled]) { lines.push(f(values)); lines.push(f(values.slice().reverse())); lines.push(f([])); }
+for (const list of [[1, 2.5, -0], ["a", "b"], [true, false], [null], [undefined], [{}, []], [() => 1], [1n], [Symbol.iterator], [1, "a"], [1, undefined], ["a", undefined], [, "a"], [0.5, , 1], [null, {}]]) lines.push(kept(list), joined(list), measured(list), same(list), switched(list));
+lines.push(typeof undeclared, typeof values, typeof values.length, typeof values[0], typeof void 0, typeof typeof 1, typeof (() => { }), typeof class { }, typeof null, [typeof values, typeof 1].map(t => typeof t).join());
+function early() { try { return typeof later; } catch (error) { return error.name; } let later = 1; } lines.push(early(), early());
+function ofParameter(a, b = typeof a) { return b + typeof b + typeof arguments + typeof this; } lines.push(ofParameter(1), ofParameter(), ofParameter({}, null), ofParameter.call(5, "x"));
+const sloppy = new Function("return typeof this")(); lines.push(sloppy);
+function typed(n) { let s = ""; for (let i = 0; i < n; i++) { const a = i % 2 ? i : undefined, b = i % 3 ? "t" : i, c = i % 2 ? "u" : undefined, d = i % 2 ? i / 2 : null, e = i % 2 ? i > 2 : "v"; s += typeof a + typeof b + typeof c + typeof d + typeof e; } return s; } lines.push(typed(7));
+console.log(lines.join("\n"));

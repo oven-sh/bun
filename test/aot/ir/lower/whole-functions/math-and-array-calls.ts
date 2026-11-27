@@ -6,7 +6,7 @@ export function largest(values: number[]): number {
 
 // GENERATED: largest
 // CHECK-LABEL: function {{*}}name="largest"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array<number>):
 // CHECK-NEXT: v1 = Builtin builtin=Math
 // CHECK-NEXT: v2 = Builtin builtin=MathMax

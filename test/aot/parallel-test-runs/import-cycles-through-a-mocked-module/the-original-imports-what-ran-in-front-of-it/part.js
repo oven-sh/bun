@@ -1,0 +1,1 @@
+import { order } from "./log.js"; import { readA } from "./b.js"; import * as ring from "./a.js"; order.push("part " + readA()); export const part = "real"; export const seesRing = () => { try { return ring.name; } catch (e) { return e.constructor.name; } };

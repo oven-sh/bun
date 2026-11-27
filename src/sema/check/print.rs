@@ -2589,7 +2589,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         let class = hir.class_of(hir.get_containing_class(hir.node(declaration)));
         let in_files_bound_before: usize = (files.order.iter())
             .skip(files.rank_of_file(file) as usize + 1)
-            .map(|&later| self.c.bound(later).classes_of_private_names.len())
+            .map(|&later| files.module(later).facts.private_name_class_count as usize)
             .sum();
         let mut in_file = self.c.bound(file).classes_of_private_names.iter();
         let id = in_files_bound_before + in_file.position(|&it| it == class).unwrap_or(0) + 1;

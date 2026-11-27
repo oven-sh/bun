@@ -12,13 +12,18 @@ import {
   MYSQL_CLIENT_SSL,
   MYSQL_DEFAULT_CAPABILITIES,
   listeningServer,
+  loopbackFence,
   mysqlAckSessionSetup,
+  mysqlAuthMoreData,
+  mysqlAuthSwitchRequest,
   mysqlHandshakeV10,
   mysqlOkPacket,
   mysqlReadPackets,
+  pgAuthenticationCleartextPassword,
   pgAuthenticationOk,
   pgReadyForQuery,
   pgSSLResponse,
+  runEventLoopUntil,
 } from "./wire-frames";
 
 // CN=agent1 (no SAN), signed by ca1: trusted through `ca1`, valid for no host the tests dial.
@@ -110,6 +115,64 @@ async function connect(url: string, tlsOptions: Bun.SQL.Options["tls"], sslmode 
     e => e,
   );
 }
+
+// TLS 1.2: in 1.3 the client's Finished is held back until the callback returns, so the server cannot write yet.
+test.each([
+  ["accepts the login", mysqlOkPacket(2)],
+  ["asks for full authentication", mysqlAuthMoreData(2, Buffer.from([0x04]))],
+  ["switches to sha256_password", mysqlAuthSwitchRequest(2, "sha256_password", Buffer.from("cccccccccccccccccccc\0"))],
+])("MySQL: a server that %s while the callback runs the event loop is sent nothing", async (_, packet) => {
+  const received: string[] = [];
+  let socket!: tls.TLSSocket;
+  const { server, port } = await listeningServer(rawSocket => {
+    rawSocket.on("error", () => {});
+    const capabilities = MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL;
+    rawSocket.write(mysqlHandshakeV10({ capabilities, authPlugin: "caching_sha2_password" }));
+    rawSocket.once("data", (chunk: Buffer) => {
+      const cert = { ...agent1, maxVersion: "TLSv1.2" };
+      socket = upgrade(rawSocket, cert, chunk.subarray(4 + chunk.readUIntLE(0, 3)), () => {});
+      let buffered = Buffer.alloc(0);
+      socket.on("data", (chunk: Buffer) => {
+        buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (_, payload) => {
+          received.push(payload.toString("latin1"));
+          mysqlAckSessionSetup(socket, payload);
+        });
+      });
+    });
+  });
+  try {
+    let connected = 0;
+    let built: Promise<unknown> | undefined;
+    await using sql = new SQL({
+      url: `mysql://u:pw@127.0.0.1:${port}/db?sslmode=verify-full`,
+      max: 1,
+      onconnect: err => void (err || connected++),
+      tls: {
+        ca: agent1.ca,
+        checkServerIdentity() {
+          built = runEventLoopUntil(async () => {
+            socket.write(packet);
+            // After an OK: the session setup, its OK, the query.
+            for (let i = 0; i < 4; i++) await loopbackFence();
+          });
+          return new Error("PIN_MISMATCH");
+        },
+      },
+    });
+    const err: any = await sql
+      .unsafe("SELECT 'secret'")
+      .simple()
+      .catch(err => err);
+    await built;
+    expect({ code: err.code, connected, received }).toEqual({
+      code: "ERR_MYSQL_UNEXPECTED_PACKET",
+      connected: 0,
+      received: [],
+    });
+  } finally {
+    server.close();
+  }
+});
 
 describe.concurrent.each([
   ["PostgreSQL", "postgres", postgresServer],
@@ -285,6 +348,48 @@ describe.concurrent.each([
       });
     });
   });
+});
+
+test.each([
+  ["asks for the password", [pgAuthenticationCleartextPassword()]],
+  ["says that the session is ready", [pgAuthenticationOk(), pgReadyForQuery()]],
+])("PostgreSQL: a server that %s while the callback runs the event loop is sent nothing", async (_, frames) => {
+  const bytesInsideTls = Promise.withResolvers<number>();
+  let secure: tls.TLSSocket;
+  const { server, port } = await listeningServer(rawSocket => {
+    rawSocket.on("error", () => {});
+    rawSocket.once("data", () => {
+      rawSocket.write(pgSSLResponse("S"));
+      // In TLS 1.2 the server has finished its handshake when the client finishes.
+      const cert = { ...localhost, maxVersion: "TLSv1.2" };
+      secure = upgrade(rawSocket, cert, Buffer.alloc(0), bytesInsideTls.resolve);
+    });
+  });
+  let built: Promise<unknown> | undefined;
+  try {
+    await using sql = new SQL({
+      url: `postgres://u:secret@127.0.0.1:${port}/db?sslmode=verify-full`,
+      max: 1,
+      tls: {
+        ca: localhost.ca,
+        checkServerIdentity() {
+          secure.write(Buffer.concat(frames));
+          // Bun.build() runs the event loop until an async setup() settles.
+          const plugins = [{ name: "wait", setup: () => loopbackFence().then(loopbackFence) }];
+          built = Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins });
+          return new Error("not the server");
+        },
+      },
+    });
+    const error = await sql.unsafe("select 'secret'").catch(e => e);
+    expect({ code: error.code, bytesInsideTls: await bytesInsideTls.promise }).toEqual({
+      code: "ERR_POSTGRES_UNEXPECTED_MESSAGE",
+      bytesInsideTls: 0,
+    });
+    await built;
+  } finally {
+    server.close();
+  }
 });
 
 for (const { image, adapter, username, password, ca, certificate } of [

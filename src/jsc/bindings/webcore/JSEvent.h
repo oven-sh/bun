@@ -21,73 +21,28 @@
 #pragma once
 
 #include "Event.h"
-#include "JSDOMWrapper.h"
-#include <wtf/NeverDestroyed.h>
+#include "JSDOMInterface.h"
 
 namespace WebCore {
 
-class JSEvent : public JSDOMWrapper<Event> {
+class JSEvent : public JSDOMInterface<JSEvent, Event> {
 public:
-    using Base = JSDOMWrapper<Event>;
-    static JSEvent* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<Event>&& impl)
-    {
-        JSEvent* ptr = new (NotNull, JSC::allocateCell<JSEvent>(globalObject->vm())) JSEvent(structure, *globalObject, WTF::move(impl));
-        ptr->finishCreation(globalObject->vm());
-        return ptr;
-    }
-
-    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
-    static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static WEBCORE_EXPORT Event* toWrapped(JSC::VM&, JSC::JSValue);
-    static void destroy(JSC::JSCell*);
+    using JSDOMInterface::JSDOMInterface;
 
     DECLARE_INFO;
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::JSType(JSEventType), StructureFlags), info(), JSC::NonArray);
-    }
-
-    static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return subspaceForImpl(vm);
-    }
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-
-public:
+    static constexpr auto subspaceSlots = BUN_SUBSPACE_SLOTS(m_clientSubspaceForEvent, m_subspaceForEvent);
+    static constexpr uint8_t jsType = JSEventType;
     static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::HasStaticPropertyTable;
 
-protected:
-    JSEvent(JSC::Structure*, JSDOMGlobalObject&, Ref<Event>&&);
-
-    void finishCreation(JSC::VM&);
+    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
+    static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
+    bool isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor&, ASCIILiteral*) const { return false; }
 };
-
-class JSEventOwner final : public JSC::WeakHandleOwner {
-public:
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
-};
-
-inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, Event*)
-{
-    static NeverDestroyed<JSEventOwner> owner;
-    return &owner.get();
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, Event&);
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Event* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<Event>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<Event>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
 template<> struct JSDOMWrapperConverterTraits<Event> {
     using WrapperClass = JSEvent;
-    using ToWrappedReturnType = Event*;
 };
+template<> JSC::JSValue toJSNewlyCreated<Event>(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<Event>&&);
 
 } // namespace WebCore
 #include "JSEventCustom.h"

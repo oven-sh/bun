@@ -39,6 +39,7 @@
 #include <wtf/Lock.h>
 #include "FetchHeaders.h"
 #include "JSValueInWrappedObject.h"
+#include "headers-handwritten.h"
 #include <span>
 #include <variant>
 
@@ -47,61 +48,13 @@ class ArgList;
 class Identifier;
 }
 
-extern "C" void Bun__WebSocket__freeSSLConfig(void* sslConfig);
+BUN_DECLARE_FFI_DELETER(WebSocketSSLConfig, Bun__WebSocket__freeSSLConfig);
 
 namespace WebCore {
 
-// Move-only owning handle for the natively heap-allocated SSLConfig returned by
-// Bun__WebSocket__parseSSLConfig. The SSLConfig holds duped cert/key/CA
-// strings, so every exception / early-return path between parsing and the
-// upgrade client taking ownership must free it. Wrapping the raw `void*`
-// in this RAII type lets normal C++ destruction handle all of those paths
-// without ad-hoc scope guards or manual frees at each call site.
-class WebSocketSSLConfigPtr {
-    WTF_MAKE_NONCOPYABLE(WebSocketSSLConfigPtr);
-
-public:
-    WebSocketSSLConfigPtr() = default;
-    explicit WebSocketSSLConfigPtr(void* ptr)
-        : m_ptr(ptr)
-    {
-    }
-    WebSocketSSLConfigPtr(WebSocketSSLConfigPtr&& other)
-        : m_ptr(std::exchange(other.m_ptr, nullptr))
-    {
-    }
-    WebSocketSSLConfigPtr& operator=(WebSocketSSLConfigPtr&& other)
-    {
-        if (this != &other) {
-            reset();
-            m_ptr = std::exchange(other.m_ptr, nullptr);
-        }
-        return *this;
-    }
-    ~WebSocketSSLConfigPtr() { reset(); }
-
-    explicit operator bool() const { return m_ptr != nullptr; }
-
-    // Transfer ownership out to the upgrade client; after this the
-    // destructor is a no-op.
-    void* release() { return std::exchange(m_ptr, nullptr); }
-    const void* get() const { return m_ptr; }
-
-private:
-    void reset()
-    {
-        if (m_ptr) {
-            Bun__WebSocket__freeSSLConfig(m_ptr);
-            m_ptr = nullptr;
-        }
-    }
-
-    void* m_ptr { nullptr };
-};
-
 // A parsed `tls` or `proxy.tls` option.
 struct WebSocketTLSOptions {
-    WebSocketSSLConfigPtr sslConfig;
+    std::unique_ptr<WebSocketSSLConfig> sslConfig;
     std::optional<bool> rejectUnauthorized;
     // create()'s caller stores this on the wrapper. Until then the JS options object keeps it alive.
     JSC::JSValue checkServerIdentity;
@@ -120,6 +73,8 @@ struct WebSocketOptions {
     // Value of the Sec-WebSocket-Extensions request header (the permessage-deflate offer). Null omits the header.
     String extensions { "permessage-deflate; client_max_window_bits"_s };
     WebSocketConnectedOptions connected { 128 * 1024 * 1024, true, false, false, false };
+    // From WebSocket::createRequestTracer(). create()'s caller keeps it alive and stores it on the wrapper.
+    JSC::JSValue requestTracer;
 };
 
 // Options for createOverStream(): the handshake is already done and a JS stream is the transport. Used by the `ws` module.
@@ -260,7 +215,7 @@ public:
         size_t len;
         std::span<const uint8_t> span() const { return { ptr, len }; }
     };
-    // Same layout as `bun_picohttp::Header`.
+    // Matches `HandshakeRawHeader` in CppWebSocket.rs.
     struct HandshakeRawHeader {
         FfiSlice name;
         FfiSlice value;
@@ -333,6 +288,19 @@ public:
         m_asyncContext.set(vm, wrapper, context);
     }
 
+    // What node:diagnostics_channel hears of a WHATWG socket, in WebSocketDiagnostics.cpp.
+    // Empty if nobody is subscribed to the steps of the opening handshake.
+    static JSC::JSValue createRequestTracer(ScriptExecutionContext&);
+    const JSValueInWrappedObject& requestTracer() const { return m_requestTracer; }
+    void setRequestTracer(JSC::VM& vm, const JSC::JSCell* wrapper, JSC::JSValue tracer)
+    {
+        m_requestTracer.set(vm, wrapper, tracer);
+    }
+    // These two run no script.
+    void willSendRequest(std::span<const uint8_t> request, us_socket_t*);
+    // `closeCode` is 0 if it was the TLS session that failed.
+    void socketDidFail(int32_t closeCode, bool isWrite, String&& tlsReason);
+
     size_t memoryCost() const;
 
 private:
@@ -351,6 +319,21 @@ private:
         // `error.code`
         String code;
         String detail;
+        bool isCancellation { false };
+    };
+
+    struct SentRequest {
+        WTF_MAKE_STRUCT_TZONE_ALLOCATED(SentRequest);
+        String head;
+        std::optional<RemoteAddress> remoteAddress;
+        std::optional<RemoteAddress> localAddress;
+    };
+
+    struct AcceptedHandshake {
+        WTF_MAKE_STRUCT_TZONE_ALLOCATED(AcceptedHandshake);
+        String statusText;
+        Vector<String> fields;
+        std::optional<RemoteAddress> localAddress;
     };
 
     // ActiveDOMObject. Read from the GC thread. A stale value only keeps or collects the wrapper
@@ -373,6 +356,19 @@ private:
     void finish(size_t bufferedAmount, unsigned short code, String&& reason, bool wasClean, std::optional<Failure>&&);
     void reportFailure(const Failure&);
     void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData);
+
+    // Subscribers can change `names` and `values`.
+    ExceptionOr<void> publishRequest(const WebSocketOptions&, const String& host, const String& resource, const String& protocols, const String& authorization, Vector<String, 8>& names, Vector<String, 8>& values);
+    void publishSentRequest();
+    void publishResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader>);
+    void publishRequestError(const Failure&, JSC::JSValue error);
+    void publishOpen();
+    void publishClose(unsigned short code, const String& reason);
+    void publishPingOrPong(Opcode, JSC::JSValue payload);
+    static std::optional<RemoteAddress> addressOfSocket(us_socket_t*, bool isLocal);
+    // Null if nobody is subscribed.
+    JSC::JSObject* diagnosticsHook() const;
+    void callInContext(JSC::JSValue function, const JSC::ArgList&);
 
     // handlers[name].call(owner, ...arguments). Anything it throws is reported as an uncaught exception.
     // Returns the handler's return value, or an empty JSValue if it threw or wasn't called.
@@ -431,6 +427,7 @@ private:
     bool m_proxyRejectUnauthorized { false };
     bool m_paused { false };
     bool m_unref { false };
+    bool m_didSendRequest { false };
     WebSocketConnectedOptions m_connectedOptions {};
     AnyWebSocket m_connectedWebSocket { nullptr };
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
@@ -438,10 +435,16 @@ private:
     // alive on their own through queueTaskKeepingObjectAlive().
     RefPtr<PendingActivity<WebSocket>> m_pendingActivity;
 
-    // `tls.checkServerIdentity`, `proxy.tls.checkServerIdentity` and the async context, marked by JSWebSocket::visitChildren.
+    // Marked by JSWebSocket::visitChildren.
     JSValueInWrappedObject m_checkServerIdentity;
     JSValueInWrappedObject m_proxyCheckServerIdentity;
     JSValueInWrappedObject m_asyncContext;
+    // Up to the outcome of the opening handshake.
+    JSValueInWrappedObject m_requestTracer;
+    // From willSendRequest() to publishSentRequest().
+    std::unique_ptr<SentRequest> m_sentRequest;
+    // From the 101 to publishOpen().
+    std::unique_ptr<AcceptedHandshake> m_acceptedHandshake;
 
     NativeCallbacks m_native;
 };

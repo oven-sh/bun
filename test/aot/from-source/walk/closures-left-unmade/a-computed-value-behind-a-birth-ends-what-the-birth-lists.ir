@@ -1,0 +1,18 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# interface Dial { first(): number; second(): number; third(): number; fourth(): number; fifth(): number; sixth(): number; seventh(): number; eighth(): number; ninth(): number; tenth(): number; size: number; eleventh(): number; twelfth(): number; }
+# function measure(n: number): number { sink("measured", n); return n * 2; }
+# function makeDial(start: number): Dial { let at = start; return { first: () => at + 0, second: () => at + 1, third: () => at + 2, fourth: () => at + 3, fifth: () => at + 4, sixth: () => at + 5, seventh: () => at + 6, eighth: () => at + 7, ninth: () => at + 8, tenth: () => at + 9, size: measure(at), eleventh: () => at + 10, twelfth: () => ++at }; }
+# const dial = makeDial(10); sink(dial.twelfth(), dial.tenth(), dial.size, dial.eleventh(), Object.keys(dial).join());
+# const other = makeDial(100); sink(other.twelfth(), other.size, other.eleventh(), dial.eleventh());
+# -- end of source
+# A call stands between the functions behind the birth. The birth takes the run in front of it alone, so that the names keep their order: `size` and what follows are stored where they are written.
+# f2 = makeDial
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = NewObject {{*}}fields=[3, 6, 11, 4, 2, 8, 7, 0, 5, 10, 13]
+# CHECK: = PutSlotOrAdd {{*}}key="size"
+# CHECK: = PutSlotOrAdd {{*}}key="eleventh"
+# CHECK: = PutSlotOrAdd {{*}}key="twelfth"
+# RUN(NEVER): walk f2 mechanisms=all
+# NEVER-NOT: = PropDefine

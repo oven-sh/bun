@@ -1,0 +1,18 @@
+# A callee that takes int32 | null counted as taking whole numbers: what holds values is reckoned without undefined and null. But a list that does hold a null lies in storage for any values: it failed the row
+# for numbers in front of the loop in every call and ran the closed copy: 1,915 > 2,685 instructions a call over 96 elements. The build asked for a kind that it knew the list may not have.
+# Null among what the callee takes: the row that admits any values and int32s, as before.
+# Since the loop is bought once more behind the question for int32s, the question is asked again: the list that holds a null finds that row behind the failing answer, not the closed copy.
+# f1 = total . f2 = often, into whose loop total is copied
+# -- source: main.cjs
+# "use strict";
+# const XS = Array.from({ length: 9 }, (_, i) => i * 3 % 7);
+# XS[8] = null;
+# function total(t) { let s = t; XS.forEach(x => { s += x; }); return s; }
+# function often() { let sum = 0; for (let t = 0; t < XS.length; t++) sum += total(t); return sum; }
+# print(often());
+# -- end of source
+# RUN(OFTEN): walk f2 mechanisms=all
+# OFTEN: = HasArrayStorage {{*}}arrayStorage=Int32
+# OFTEN: = HasArrayStorage {{*}}arrayStorage=Contiguous [admitsInt32Storage]
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 225

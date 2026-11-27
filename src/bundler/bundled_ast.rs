@@ -6,33 +6,14 @@
 //!
 //! So we make a slimmer version of Ast for bundling that doesn't allocate as much memory
 
-// `bun_css` is a T2 peer crate that does not depend on `bun_js_parser`, so the
-// dep is acyclic. Typing the `css` field concretely removes the `*mut c_void`
-// erasure that forced every bundler/linker call site to `.cast()` back.
-pub use bun_css::BundlerStyleSheet;
-
-/// Arena-owned handle to a parsed CSS stylesheet.
-///
-/// The pointee lives in a per-file `Bump` whose ownership is held by
-/// `Graph.heap` (bumps are `Pin<Box<Bump>>` owned by the
-/// graph and outlive every `BundledAst` row by struct drop order). No `'arena`
-/// lifetime is threaded — N files imply N distinct per-worker bumps with no
-/// single common lifetime — so the invariant is enforced by drop order, not
-/// the type system. `StoreRef`'s `Deref`/`DerefMut` encapsulate the single
-/// documented `unsafe` deref justified by that invariant; callers use `&*r`
-/// (or `Option::as_deref`) instead of open-coded `unsafe { &*ptr }`.
-pub(crate) type CssAstRef = bun_ast::StoreRef<BundlerStyleSheet>;
-
-/// Element type of the `css` SoA column (`items_css()`). Exposed so bundler
-/// call sites can name the column without re-spelling the pointer shape.
-pub(crate) type CssCol = Option<CssAstRef>;
-
 use bun_ast::import_record;
 use bun_core::strings;
 
 use crate::options::ModuleType;
 use bun_ast::ast_result::Ast;
-use bun_ast::{CharFreq, ExportsKind, Ref, Scope, SlotCounts, StoreStr, TlaCheck};
+use bun_ast::{
+    CharFreq, ExportsKind, Ref, Scope, SlotCounts, Stmt, StoreSlice, StoreStr, TlaCheck,
+};
 use bun_ast::{part, symbol};
 
 pub(crate) type CommonJSNamedExports = bun_ast::ast_result::CommonJSNamedExports;
@@ -59,15 +40,12 @@ pub struct BundledAst<'arena> {
     /// they can be manipulated efficiently without a full AST traversal
     pub(crate) import_records: import_record::List<'arena>,
 
-    // Ast.hashbang is `StoreStr`; mirror it here so init/to_ast can
-    // round-trip.
     pub(crate) hashbang: StoreStr,
+    /// See `Ast::directives`.
+    pub(crate) directives: StoreSlice<Stmt>,
     /// See `Ast::export_default_alias_of_import`.
     pub(crate) export_default_alias_of_import: Ref,
     pub(crate) parts: part::List<'arena>,
-    // See `CssAstRef` doc for the arena drop-order invariant that backs the
-    // safe `Deref`.
-    pub(crate) css: CssCol,
     pub(crate) url_for_css: &'arena [u8],
     pub(crate) symbols: symbol::List<'arena>,
     pub(crate) module_scope: Scope,
@@ -75,7 +53,6 @@ pub struct BundledAst<'arena> {
     pub(crate) exports_ref: Ref,
     pub(crate) module_ref: Ref,
     pub(crate) wrapper_ref: Ref,
-    pub(crate) require_ref: Ref,
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub tla_check: TlaCheck,
 
@@ -113,9 +90,9 @@ bun_collections::multi_array_columns! {
         module_type: ModuleType,
         import_records: import_record::List<'arena>,
         hashbang: StoreStr,
+        directives: StoreSlice<Stmt>,
         export_default_alias_of_import: Ref,
         parts: part::List<'arena>,
-        css: CssCol,
         url_for_css: &'arena [u8],
         symbols: symbol::List<'arena>,
         module_scope: Scope,
@@ -123,7 +100,6 @@ bun_collections::multi_array_columns! {
         exports_ref: Ref,
         module_ref: Ref,
         wrapper_ref: Ref,
-        require_ref: Ref,
         top_level_await_keyword: bun_ast::Range,
         tla_check: TlaCheck,
         named_imports: NamedImports,
@@ -153,8 +129,6 @@ bitflags::bitflags! {
         const FORCE_CJS_TO_ESM = 1 << 4;
         const HAS_LAZY_EXPORT = 1 << 5;
         const COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED = 1 << 6;
-        const HAS_EXPLICIT_USE_STRICT_DIRECTIVE = 1 << 7;
-        const HAS_IMPORT_META = 1 << 8;
         /// See `Ast::commonjs_lifted_to_esm`.
         const COMMONJS_LIFTED_TO_ESM = 1 << 9;
         // _padding: u6 fills the rest
@@ -173,9 +147,9 @@ impl<'arena> BundledAst<'arena> {
             module_type: ModuleType::Unknown,
             import_records: import_record::List::new_in(arena),
             hashbang: StoreStr::EMPTY,
+            directives: StoreSlice::EMPTY,
             export_default_alias_of_import: Ref::NONE,
             parts: part::List::new_in(arena),
-            css: None,
             url_for_css: b"",
             symbols: symbol::List::new_in(arena),
             module_scope: Scope::default(),
@@ -183,7 +157,6 @@ impl<'arena> BundledAst<'arena> {
             exports_ref: Ref::NONE,
             module_ref: Ref::NONE,
             wrapper_ref: Ref::NONE,
-            require_ref: Ref::NONE,
             top_level_await_keyword: bun_ast::Range::NONE,
             tla_check: TlaCheck::default(),
             named_imports: NamedImports::default(),
@@ -200,82 +173,14 @@ impl<'arena> BundledAst<'arena> {
         }
     }
 
-    // The collection types aren't Copy, so consume `self` to move them (to_ast
-    // is a one-shot conversion back to the fat Ast).
-    pub(crate) fn to_ast(self) -> Ast<'arena> {
-        let arena: &'arena bun_alloc::Arena = *self.parts.allocator();
-        Ast {
+    pub(crate) fn as_printer_view(&self) -> bun_js_printer::BundledAstView<'_> {
+        bun_js_printer::BundledAstView {
             approximate_newline_count: self.approximate_newline_count as usize,
-            nested_scope_slot_counts: self.nested_scope_slot_counts,
-
-            exports_kind: self.exports_kind,
-
-            import_records: self.import_records,
-
-            hashbang: self.hashbang,
-            export_default_alias_of_import: self.export_default_alias_of_import,
-            parts: self.parts,
-            // This list may be mutated later, so we should store the capacity
-            symbols: self.symbols,
-            module_scope: self.module_scope,
-            char_freq: self.char_freq,
-            exports_ref: self.exports_ref,
-            module_ref: self.module_ref,
-            wrapper_ref: self.wrapper_ref,
-            require_ref: self.require_ref,
-            top_level_await_keyword: self.top_level_await_keyword,
-
-            // These are used when bundling. They are filled in during the parser pass
-            // since we already have to traverse the AST then anyway and the parser pass
-            // is conveniently fully parallelized.
-            named_imports: self.named_imports,
-            named_exports: self.named_exports,
-            export_star_import_records: self.export_star_import_records,
-            dynamic_import_aliases: self.dynamic_import_aliases,
-
-            top_level_symbols_to_parts: self.top_level_symbols_to_parts,
-            scope_uses: self.scope_uses,
-
-            commonjs_named_exports: self.commonjs_named_exports,
-
-            redirect_import_record_index: if self.redirect_import_record_index == u32::MAX {
-                None
-            } else {
-                Some(self.redirect_import_record_index)
-            },
-
-            target: self.target,
-
-            // const_values: self.const_values,
-            ts_enums: self.ts_enums,
-
-            uses_exports_ref: self.flags.contains(Flags::USES_EXPORTS_REF),
-            uses_module_ref: self.flags.contains(Flags::USES_MODULE_REF),
-            // uses_require_ref: ast.uses_require_ref,
-            export_keyword: bun_ast::Range {
-                len: if self.flags.contains(Flags::USES_EXPORT_KEYWORD) {
-                    1
-                } else {
-                    0
-                },
-                loc: bun_ast::Loc::default(),
-            },
-            force_cjs_to_esm: self.flags.contains(Flags::FORCE_CJS_TO_ESM),
-            commonjs_lifted_to_esm: self.flags.contains(Flags::COMMONJS_LIFTED_TO_ESM),
             has_lazy_export: self.flags.contains(Flags::HAS_LAZY_EXPORT),
-            commonjs_module_exports_assigned_deoptimized: self
-                .flags
-                .contains(Flags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
-            directive: if self
-                .flags
-                .contains(Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE)
-            {
-                Some(StoreStr::new(b"use strict"))
-            } else {
-                None
-            },
-            has_import_meta: self.flags.contains(Flags::HAS_IMPORT_META),
-            ..Ast::empty_in(arena)
+            has_top_level_await: !self.top_level_await_keyword.is_empty(),
+            exports_kind: self.exports_kind,
+            named_exports: &self.named_exports,
+            export_star_import_records: &self.export_star_import_records,
         }
     }
 
@@ -292,11 +197,6 @@ impl<'arena> BundledAst<'arena> {
             Flags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED,
             ast.commonjs_module_exports_assigned_deoptimized,
         );
-        flags.set(
-            Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE,
-            ast.directive.is_some_and(|d| d == b"use strict"),
-        );
-        flags.set(Flags::HAS_IMPORT_META, ast.has_import_meta);
 
         Self {
             approximate_newline_count: ast.approximate_newline_count as u32,
@@ -309,9 +209,9 @@ impl<'arena> BundledAst<'arena> {
             import_records: ast.import_records,
 
             hashbang: ast.hashbang,
+            directives: ast.directives,
             export_default_alias_of_import: ast.export_default_alias_of_import,
             parts: ast.parts,
-            css: None,
             url_for_css: b"",
             // This list may be mutated later, so we should store the capacity
             symbols: ast.symbols,
@@ -320,7 +220,6 @@ impl<'arena> BundledAst<'arena> {
             exports_ref: ast.exports_ref,
             module_ref: ast.module_ref,
             wrapper_ref: ast.wrapper_ref,
-            require_ref: ast.require_ref,
             top_level_await_keyword: ast.top_level_await_keyword,
             tla_check: TlaCheck::default(),
             // These are used when bundling. They are filled in during the parser pass

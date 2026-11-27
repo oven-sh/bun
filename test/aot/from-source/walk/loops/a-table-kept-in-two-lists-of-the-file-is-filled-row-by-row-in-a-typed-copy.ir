@@ -1,0 +1,33 @@
+# -- source: main.cjs
+# 'use strict';
+# const heights = [];
+# const marks = [];
+# function spread(left, right, width, depth) {
+#   let mark, last, above, beside, i = 0, j = 0;
+#   while (i < width) { marks[i] = left.charCodeAt(i); heights[i] = ++i; }
+#   while (j < depth) { mark = right.charCodeAt(j); above = j++; last = j; for (i = 0; i < width; i++) { beside = mark === marks[i] ? above : above + 1; above = heights[i]; last = heights[i] = above > last ? (beside > last ? last + 1 : beside) : beside > above ? above + 1 : beside; } }
+#   return last;
+# }
+# const words = ['harbour', 'arbour', 'labour', 'harbor'];
+# let sum = 0;
+# for (let t = 0; t < 40; t++) sum += spread(words[t & 3], words[(t >> 2) & 3], words[t & 3].length, words[(t >> 2) & 3].length);
+# print(sum);
+# -- end of source
+# The table of an edit distance, kept in two lists that are constants of the file and whose making is put off to the first read. Four things let the inner loop run in a typed copy, and none pays alone.
+# The two lists are read, and made where they are not yet, in front of the first loop, so no turn reads the variable or asks whether the list is made, and the look at a loop has a name for each list.
+# `above` and `last` take what `heights[i]` gives round the loop. In the plain walk that may be undefined; in the typed copy the turn that finds no element begins again in the other copy, so its head
+# starts without undefined, the store takes a number, and the turns come round as numbers.
+# f1 = spread
+# RUN(COUNT): compile ModuleConstantReadsHoisted AbsentArrayElementWideningsAvoided WalkLoopsVersioned mechanisms=all
+# COUNT: statistic ModuleConstantReadsHoisted 2
+# COUNT: statistic AbsentArrayElementWideningsAvoided 2
+# RUN(FORM): walk f1 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM: = GetModuleVariable
+# FORM: = GetModuleVariable
+# FORM: isLoopHead=true
+# FORM: = HasArrayStorage {{*}} arrayStorage=Int32 [isWritable]
+# FORM: int|whole @Double, {{*}}: int|whole @Double, {{*}} isLoopHead=true
+# FORM: PutDoubleIndex
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 53

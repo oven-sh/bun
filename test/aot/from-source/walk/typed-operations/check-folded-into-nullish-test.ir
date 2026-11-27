@@ -1,0 +1,26 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const list: unknown[] = ["abc"];
+# declare const put: (list: unknown[], value: unknown) => void;
+# function first(i: number): unknown { return (list[i] as string).length; }
+# print(first(0));
+# put(list, 5);
+# print(first(0));
+# print("went on");
+# -- end of source
+# The check after the read emits no code, because it is split in two. A type test that covers the full type takes every value that is not nullish, and on its failing edge a check covers the rest. Together they check what the single check did.
+# The injected fault treats what the program passes to unknown code as non-escaping. Link does not see the store of the function that the host passes, and keeps claiming what the array held at first.
+# RUN: run-in-shell mechanisms=all globalThis.put = (list, value) => { list[0] = value; };
+# CHECK: 3
+# CHECK-NEXT: undefined
+# CHECK-NEXT: went on
+# CHECK-NEXT: exited with 0
+# RUN(SHAPE): walk f1 mechanisms=all testing=AssumeArgumentsNeverEscape
+# SHAPE: CheckProof {{*}}source=Contents [isLeftToTestBehind]
+# SHAPE: TypeTest {{*}}[asksInFull]
+# SHAPE: CheckProof {{*}}source=Contents
+# RUN(FAULT): run-in-shell mechanisms=all testing=AssumeArgumentsNeverEscape globalThis.put = (list, value) => { list[0] = value; };
+# FAULT: 3
+# FAULT: found int32 in an element
+# FAULT-NOT: went on
+# FAULT: crashed

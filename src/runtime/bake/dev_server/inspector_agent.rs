@@ -32,7 +32,7 @@ pub(crate) struct BunFrontendDevServerAgent<'a>(&'a ErasedAgentSlot);
 impl<'a> BunFrontendDevServerAgent<'a> {
     /// The VM's agent, or `None` while the `BunFrontendDevServer` domain is disabled.
     pub(crate) fn of(vm: &'a VirtualMachine) -> Option<Self> {
-        if let Some(debugger) = vm.debugger.as_ref() {
+        if let Some(debugger) = vm.debugger.get() {
             bun_core::hint::cold();
             let agent = Self(&debugger.extension_agent);
             if agent.is_enabled() {
@@ -173,7 +173,7 @@ pub(crate) fn frontend_dev_server_agent_set_enabled(
 ) {
     // `VirtualMachine::get()` is valid here: the C++ inspector agent invokes
     // this on the JS thread, after the VM is initialized.
-    if let Some(dbg) = VirtualMachine::get().debugger.as_deref() {
+    if let Some(dbg) = VirtualMachine::get().debugger.get() {
         dbg.extension_agent.set_agent_ptr(agent.cast());
     }
 }

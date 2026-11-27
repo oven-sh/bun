@@ -16,9 +16,10 @@
 // # RUN(TEXT): emit f6 mechanisms=all
 // # TEXT: = Load8Z({{*}}offset = 1, characters8
 // # TEXT: = Load8Z({{*}}offset = 7, characters8
-// # whether the text is of bytes is asked once, in front: the turns laid out read bytes, and a wide text takes the written loop
+// # whether the text is of bytes is asked once, in front: the first eight turns laid out read bytes; a wide text has eight turns of its own, which read words
 // # RUN(WIDE): emit f6 mechanisms=all
-// # WIDE-NOT: = Load16Z({{*}}offset = 2, characters16
+// # WIDE: = Load16Z({{*}}offset = 2, characters16
+// # WIDE: = Load16Z({{*}}offset = 14, characters16
 // # (A turn that may leave the loop by itself, a counter that steps by two, and a bound so near the end of int32 that the bound less seven wraps: turn-laid-out-that-leaves-the-loop-hands-itself-to-the-written-loop.ir and counter-of-turns-laid-out-steps-up-or-down-by-a-constant.ir hold what is done with them now.)
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL

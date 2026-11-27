@@ -5,7 +5,8 @@
 // null (or garbage, depending on build mode) and the DevServer is never told that
 // plugin loading finished, so the request it deferred to `next_bundle` waits forever.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 
 const indexHtml = /* html */ `<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
@@ -140,6 +141,59 @@ test.concurrent("DevServer is notified when [serve.static] plugin setup resolves
   expect(out).toEqual({ status: 200, fromPlugin: true });
   expect(exitCode).toBe(0);
 });
+
+test.concurrent.each([
+  { development: true, setup: "resolves" },
+  { development: false, setup: "resolves" },
+  { development: true, setup: "rejects" },
+])(
+  "a server that is gone unroots its plugins (development: $development, setup $setup)",
+  async ({ development, setup }) => {
+    using dir = tempDir("serve-plugins-unrooted", {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "plugin.ts": `
+        export default {
+          name: "p",
+          async setup() {
+            globalThis.rootedInSetup = globalThis.rooted();
+            await new Promise(setImmediate);
+            if (${setup === "rejects"}) throw new Error("plugin setup failed on purpose");
+          },
+        };
+      `,
+      "index.html": indexHtml,
+      "entry.ts": `console.log("entry");`,
+      "server.ts": `
+        import { heapStats } from "bun:jsc";
+        import html from "./index.html";
+        globalThis.rooted = () => heapStats().protectedObjectTypeCounts.BundlerPlugin ?? 0;
+        async function serve() {
+          const server = Bun.serve({ port: 0, development: ${development}, routes: { "/": html } });
+          await fetch(server.url).then(r => r.text(), () => {});
+          await server.stop(true);
+        }
+        await serve();
+        for (let i = 0; i < 50 && rooted() > 0; i++) {
+          Bun.gc(true);
+          await new Promise(setImmediate);
+        }
+        console.log(JSON.stringify({ rootedInSetup, rooted: rooted() }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr.includes("plugin setup failed on purpose")).toBe(setup === "rejects");
+    expect(stdout).toEndWith(`{"rootedInSetup":1,"rooted":0}\n`);
+    expect(exitCode).toBe(0);
+  },
+);
 
 const parkedPlugin = /* ts */ `
   export default {
@@ -360,6 +414,25 @@ test.concurrent(
     expect(exitCode).toBe(0);
   },
 );
+
+test.concurrent.skipIf(isWindows)("a backslash separates in the path of a [serve.static] plugin only", async () => {
+  using dir = tempDir("serve-plugins-devserver-backslash", {
+    "bunfig.toml": String.raw`
+      [serve.static]
+      plugins = ['.\plugins\a.ts?x=\d', 'data:text/javascript,console.log("b\nc"); export default { name: "b", setup() {} };']
+    `,
+    "plugins/a.ts": `console.log(import.meta.url.split("?")[1]); export default { name: "a", setup() {} };`,
+    "index.html": `<!DOCTYPE html><html><body></body></html>`,
+    "server.ts": `
+      import html from "./index.html";
+      using server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+      console.log((await fetch(server.url)).status);
+    `,
+  });
+  const { stdout, exitCode } = await bunRun(join(String(dir), "server.ts"));
+  expect(stdout).toBe("x=\\d\nb\nc\n200");
+  expect(exitCode).toBe(0);
+});
 
 // `bun ./index.html` and `bun bake` load the plugins when the first request arrives, so that
 // request waits for them. The later ones must not wait for a bundle that never starts.

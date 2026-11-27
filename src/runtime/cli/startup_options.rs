@@ -11,8 +11,8 @@ use bun_resolver::compiled_program::CompiledProgram;
 use bun_trim::OptionRequirement;
 
 use crate::cli::arguments::{
-    AUTO_REQUIREMENTS, AUTO_TABLE, CODE_GENERATION_PARAM, HOT_RELOAD_PARAMS, NODE_SHORT_ALIASES,
-    ParamType, UNHANDLED_REJECTIONS_PARAM,
+    AUTO_REQUIREMENTS, AUTO_TABLE, CODE_GENERATION_PARAM, HOT_RELOAD_PARAMS, INSTALL_PARAM,
+    NODE_SHORT_ALIASES, ParamType, UNHANDLED_REJECTIONS_PARAM,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -313,6 +313,18 @@ fn code_generation_level(option: &WrittenOption<'_>) -> Option<CodeGenerationFro
     CodeGenerationFromStrings::from_flag_value(option.value.unwrap_or_default())
 }
 
+fn installs_packages(value: &[u8]) -> bool {
+    let installs = |cache: &GlobalCache| uses_package_manager(*cache);
+    value.is_empty() || GlobalCache::MAP.get(value).is_some_and(installs)
+}
+
+fn requirement_of(option: &WrittenOption<'_>) -> RuntimeRequirement {
+    if option.index == INSTALL_PARAM && !installs_packages(option.value.unwrap_or_default()) {
+        return RuntimeRequirement::Nothing;
+    }
+    AUTO_REQUIREMENTS[option.index]
+}
+
 fn read_option_words(words: &[&[u8]]) -> ExecArgvOptions {
     let mut requirements = Vec::new();
     // The runtime looks for these in every word, a value or what follows a positional included.
@@ -327,7 +339,7 @@ fn read_option_words(words: &[&[u8]]) -> ExecArgvOptions {
     }
     let options = walk_option_words(words);
     for option in &options {
-        let requirement = AUTO_REQUIREMENTS[option.index];
+        let requirement = requirement_of(option);
         if requirement != RuntimeRequirement::Nothing {
             add_requirement(&mut requirements, requirement, label_of(option.index));
         }

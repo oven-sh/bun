@@ -11,13 +11,11 @@ use crate::json::{Json, TsConfigSourceFile};
 use crate::program::COMPARE_PATHS_CASE_SENSITIVE;
 use crate::resolve::{
     JsxEmit, ModuleKind, Options, combine_paths, displayed_path, ensure_path_is_non_module_name,
-    get_relative_path_from_directory, get_root_length, path_is_relative, to_path,
+    get_relative_path_from_directory, get_root_length, parent_directory, path_is_relative, to_path,
 };
 use crate::util::{FxHashMap, FxHashSet};
 use bun_core::lexer;
 use bun_core::strings;
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 use std::borrow::Cow;
 
 /// `hasZeroOrOneAsteriskCharacter`
@@ -291,7 +289,7 @@ impl Problem {
 
 /// `GetRelativePathFromFile` for two absolute, normalized paths.
 pub(crate) fn relative_from_file(from: &[u8], to: &[u8], is_case_sensitive: bool) -> Vec<u8> {
-    let from_directory = dirname::<Posix>(from);
+    let from_directory = parent_directory(from);
     let relative = get_relative_path_from_directory(from_directory, to, is_case_sensitive);
     ensure_path_is_non_module_name(relative)
 }

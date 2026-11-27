@@ -10,7 +10,7 @@
 # -- end of source
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: : undefined|int|whole {{*}} = GetSlotOrUndefined {{*}}key="hits" receivers=[L0] level=Proven
+# CHECK: : undefined|number {{*}} = GetSlotOrUndefined {{*}}key="hits" receivers=[L0] level=Proven
 # CHECK: = PutSlotOrAdd {{*}}key="hits" receivers=[L0] level=Proven
 # CHECK-NOT: key="never"
 # RUN(LINK): link fields layouts mechanisms=all

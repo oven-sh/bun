@@ -1,0 +1,22 @@
+# -- source: main.js
+# function Guest(seats) { this.seats = seats; }
+# function Inn() { this.rooms = {}; }
+# Inn.prototype.lets = function (room, seats) { var there = this.rooms[room], list = Array.isArray(there) ? there : there ? [there] : []; list.unshift(new Guest(seats)); this.rooms[room] = list[1] ? list : list[0]; return list.length; };
+# Inn.prototype.counts = function (room, most) { var there = this.rooms[room], free = most; if (there === undefined) return -1; if (there.seats > 0) return most - there.seats; for (var at = there.length - 1; at >= 0; at--) free -= there[at].seats; return free; };
+# var inn = new Inn();
+# inn.lets("east", 2); inn.lets("west", 1); inn.lets("west", 3); inn.lets("west", 4);
+# function night(turn) { var sum = turn; for (var i = 0; i < 16; i++) sum = sum * 2 + inn.counts("east", i) - inn.counts("west", 9) & 1023; return sum; }
+# print(night(1)); print(night(2));
+# -- end of source
+# Under a name lies one record or a list of them, and Link holds both of the read. One question cannot tell the two, and asked for both at once it tells nothing. The loop asks the value for its length and its elements under an index: that use lies within what is held, so it narrows it: the value is asked in front of the turns whether it is a list.
+# f5 = counts
+# RUN(HELD): link held accesses mechanisms=all
+# HELD: read f5 v{{*}} proven=undefined|L0|Array
+# The turns are built twice behind that one question, typed and as written.
+# RUN(FORM): walk f5 mechanisms=all
+# FORM-LABEL: code f5:Body
+# FORM-NOT: testedType=L0|Array
+# FORM: = TypeTest {{*}} testedType=Array
+# FORM-NOT: testedType=L0|Array
+# FORM: frequency=Rare isLoopHead=true
+# FORM: isInLoop=true isLoopHead=true

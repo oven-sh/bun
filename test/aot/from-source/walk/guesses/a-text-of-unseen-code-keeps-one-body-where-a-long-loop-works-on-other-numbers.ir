@@ -1,0 +1,42 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function knits(text: string, wool: Uint8Array, salt: number): number {
+#   let at = 0, sum = 0, last = 0, row = 1;
+#   for (let i = 0; i < text.length; i++) {
+#     let code = (i * 331 + salt * 77) & 255; last = text.charCodeAt(i);
+#     if (code === 92 && i + 1 < text.length) { code = (code + 64) & 255; last = text.charCodeAt(i + 1); i++; }
+#     if (code > 96) wool[at++] = code - 96;
+#     else if (code > 47) { wool[at++] = code & 15; row += 2; }
+#     else if (code === 32) { row = row * 3 & 1023; wool[at] = row; }
+#     sum = (sum * 5 + (code ^ row)) & 0xffffff;
+#     sum = (sum ^ (code << 3)) + ((code >> 2) & 31) & 0xffffff;
+#     sum = (sum + ((code * 11) & 127) - ((code * 13) & 63)) & 0xffffff;
+#     sum = ((sum >> 2) ^ ((code + 19) & 511) ^ ((code + 23) & 255)) + (code & 7) & 0xffffff;
+#     sum = (sum + ((code * 17) & 1023) + ((code * 29) & 511) + ((code * 31) & 255)) & 0xffffff;
+#     sum = (sum ^ ((code + 37) & 2047) ^ ((code + 41) & 1023) ^ ((code + 43) & 511)) & 0xffffff;
+#     sum = (sum * 3 + ((code >> 1) & 15) + ((code >> 3) & 7) + ((code << 1) & 63)) & 0xffffff;
+#     sum = (sum ^ ((code * 47) & 4095) ^ ((code * 53) & 2047) ^ ((code * 59) & 1023)) & 0xffffff;
+#     sum = (sum + ((code + 61) & 511) - ((code + 67) & 255) + ((code + 71) & 127)) & 0xffffff;
+#     sum = ((sum >> 3) + ((code ^ 73) & 1023) + ((code ^ 79) & 511) + ((code ^ 83) & 255)) & 0xffffff;
+#     sum = (sum * 7 + ((code << 2) & 1023) - ((code << 3) & 511) + ((code >> 4) & 3)) & 0xffffff;
+#     sum = (sum ^ ((code * 89) & 8191) ^ ((code * 97) & 4095) ^ ((code * 101) & 2047)) & 0xffffff;
+#     if (code > 200) wool[at] = (wool[at] + (code & 3)) & 127;
+#   }
+#   return at * 1000000 + (sum % 1000) * 1000 + (last & 255);
+# }
+# const texts: string[] = JSON.parse('["ab 7","\\\\\\\\n x","Zz9\\\\u00e9"]');
+# const wool = new Uint8Array(64);
+# (globalThis as any).kept = knits;
+# print(knits(texts[0], wool, 3), knits(texts[1], wool, 3), knits(texts[2], wool, 3));
+# -- end of source
+# The twin of a-text-of-unseen-code-is-tested-once-where-a-long-loop-works-on-what-it-yields.ir: the same loop looks at `text` as often, and what the looks yield is only kept: the long body works on numbers of its own.
+# A second version of the body would buy four looks: the guard stays refused for the length of the body.
+# RUN(WALK): walk f1 mechanisms=all
+# WALK: code f1:Body
+# WALK: b0(v0: anything?ParameterOfEscapedFunction @JSValue
+# RUN(UNITS): units-with-code mechanisms=all
+# UNITS-NOT: f1:SlowBody
+# UNITS-NOT: f1:ParameterGuard
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 4820055 4189120 8779057
+# ANSWERS-NEXT: exited with 0

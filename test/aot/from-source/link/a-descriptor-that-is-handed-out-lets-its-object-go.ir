@@ -1,0 +1,17 @@
+# The control of what-a-descriptor-that-a-constant-holds-has-under-value-lies-under-the-name.ir: the descriptor is handed to code that nobody sees, which may lay anything on it: object and descriptor go out of sight as before. L1 = the object.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L1 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# -- source: a-descriptor-that-is-handed-out-lets-its-object-go.js
+# const shared = { value: undefined, enumerable: false };
+# function make(kind) {
+#   const made = {};
+#   shared.value = { kind, seen: 0 };
+#   Object.defineProperty(made, "inner", shared);
+#   shared.value = undefined;
+#   made.inner.run = payload => { made.inner.seen++; return payload.value + 1; };
+#   return made;
+# }
+# globalThis.kept = shared;
+# const one = make("first");
+# console.log(one.inner.run({ value: 1 }), one.inner.seen);
+# -- end of source

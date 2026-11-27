@@ -2334,11 +2334,11 @@ describe("direct stream edge cases over Bun.serve", () => {
           (async function* () {
             try {
               yield "first";
-              for (let i = 0; i < 50; i++) {
+              // No number of turns is enough for the server to see that the client is gone: only the abort ends this.
+              for (;;) {
                 await later();
                 yield "more";
               }
-              events.push("completed");
             } catch (e: any) {
               events.push("catch:" + (e?.message ?? e));
             } finally {

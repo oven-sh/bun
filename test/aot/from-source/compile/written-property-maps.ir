@@ -1,0 +1,10 @@
+# Object.defineProperties with a map and descriptors that are written out makes neither.
+# -- source: main.cjs
+# class Text { constructor(s, options) { Object.defineProperties(this, { original: { writable: true, value: s }, outro: { writable: true, value: "" }, offset: { writable: true, value: options.offset || 0 }, last: { writable: true, value: s } }); } end() { return this.original.length + this.offset; } }
+# console.log(new Text("abc", { offset: process.argv.length }).end() > 3, new Text("abc", {}).end());
+# -- end of source
+# f1 = Text
+# RUN: walk f1:Body mechanisms=all
+# CHECK: DefineOwnProperty
+# CHECK-NOT: ObjectDefineProperties
+# CHECK-NOT: NewDictionary

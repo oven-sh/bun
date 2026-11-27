@@ -1,0 +1,6 @@
+# -- source: a-built-in-left-of-instanceof-a-built-in-class-lets-nothing-go.cjs
+# console.log(require instanceof Function);
+# -- end of source
+# The control of a-built-in-left-of-instanceof-is-handed-to-the-hook-of-the-right.ir: no built-in class takes a method under Symbol.hasInstance.
+# RUN: link lookups mechanisms=all
+# CHECK-NOT: lookup called-out-of-sight

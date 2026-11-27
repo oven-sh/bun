@@ -1,7 +1,7 @@
 /**
  * Build-config regression tests for cross-compiling Windows binaries from a
  * non-Windows host (scripts/build/config.ts + flags.ts), with a focus on the
- * LTO configuration: Windows x64 cross builds use ThinLTO with cross-language
+ * LTO configuration: Windows cross builds use ThinLTO with cross-language
  * (Rust↔C++) LTO through lld-link.
  *
  * These exercise the configure-time logic only — no compiler, sysroot, or
@@ -14,9 +14,12 @@ import { describe, expect, test } from "bun:test";
 import { isWindows } from "harness";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../../scripts/build/config.ts";
+import { mimalloc } from "../../../scripts/build/deps/mimalloc.ts";
 import { webkit } from "../../../scripts/build/deps/webkit.ts";
-import { computeFlags } from "../../../scripts/build/flags.ts";
+import { computeDepFlags, computeFlags } from "../../../scripts/build/flags.ts";
 import { rustTarget } from "../../../scripts/build/rust.ts";
+import type { DirectBuild } from "../../../scripts/build/source.ts";
+import { arm64PointerLoads, weakReferencesToVariables } from "../../../scripts/build/verify-binary.ts";
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
 function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
@@ -84,14 +87,36 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     expect(cfg.lto).toBe(true);
   });
 
-  test("no -lto WebKit prebuilt exists for arm64 — LTO is forced off there", () => {
-    // arm64: LLVM's CodeView emitter aborts on ARM64 NEON tuple registers
-    // during LTO codegen, so oven-sh/WebKit ships no windows-arm64-lto.
-    const arm64 = resolveWindowsCross({ arch: "aarch64" });
-    expect(arm64.lto).toBe(false);
-    // Forced off even when explicitly requested, so the WebKit fetch never
-    // 404s on a tarball that doesn't exist.
-    expect(resolveWindowsCross({ arch: "aarch64", lto: true }).lto).toBe(false);
+  test("ci release arm64 cross builds are LTO too, unless turned off", () => {
+    expect(resolveWindowsCross({ arch: "aarch64" }).lto).toBe(true);
+    expect(resolveWindowsCross({ arch: "aarch64", lto: false }).lto).toBe(false);
+  });
+
+  test("LTO leaves mimalloc out of line, also where it overrides nothing", () => {
+    const freebsd = resolveConfig(
+      { os: "freebsd", arch: "x64", buildType: "Release", freebsdSysroot: "/fake" },
+      mockToolchain(),
+    );
+    const darwin = resolveConfig(
+      { os: "darwin", arch: "aarch64", buildType: "Release" },
+      mockToolchain({
+        ld64Lld: "/fake/llvm/bin/ld64.lld",
+        dsymutil: "/fake/llvm/bin/dsymutil",
+        clangResourceDir: "/fake/llvm/lib/clang/23",
+      }),
+    );
+    for (const cfg of [resolveWindowsCross(), resolveWindowsCross({ arch: "aarch64" }), freebsd, darwin]) {
+      expect((mimalloc.build(cfg) as DirectBuild).cflags).toContain("-fno-builtin-malloc");
+    }
+  });
+
+  test("C and C++ outline their atomics on arm64, as rustc does", () => {
+    for (const compute of [computeFlags, computeDepFlags]) {
+      const { cflags, cxxflags } = compute(resolveWindowsCross({ arch: "aarch64" }));
+      expect(cflags).toContain("/clang:-moutline-atomics");
+      expect(cxxflags).toContain("/clang:-moutline-atomics");
+      expect(compute(resolveWindowsCross()).cxxflags).not.toContain("/clang:-moutline-atomics");
+    }
   });
 
   test("local (non-ci) release builds are LTO too, unless turned off", () => {
@@ -146,7 +171,7 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
 
     const arm64 = webkit.source(resolveWindowsCross({ arch: "aarch64", aot: false }));
     if (arm64.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${arm64.kind}`);
-    expect(arm64.url).toContain("bun-webkit-windows-arm64.tar.gz");
+    expect(arm64.url).toContain("bun-webkit-windows-arm64-lto.tar.gz");
   });
 
   test("rust side targets pc-windows-msvc triples", () => {
@@ -168,5 +193,99 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     // reject with "inconsistent LTO Unit splitting". WPD falls back to
     // index-only mode (still devirtualizes, just without the hybrid split).
     expect(linuxFlags.cxxflags).toContain("-fno-split-lto-unit");
+  });
+});
+
+describe("the check for weak references that LLVM miscompiles on arm64", () => {
+  /** Code at 0x140001000 and 0x140003000, data at 0x140002000. `instructions` begin the second section of code. */
+  function image(instructions: number[]): Buffer {
+    const bytes = Buffer.alloc(0x800);
+    const header = 0x40;
+    bytes.writeUInt32LE(header, 0x3c);
+    bytes.writeUInt16LE(3, header + 6);
+    bytes.writeUInt16LE(0xf0, header + 20);
+    bytes.writeBigUInt64LE(0x140000000n, header + 48);
+    [0x60000020, 0x40000040, 0x60000020].forEach((characteristics, index) => {
+      const section = header + 24 + 0xf0 + index * 40;
+      bytes.writeUInt32LE(0x100, section + 8);
+      bytes.writeUInt32LE(0x1000 * (index + 1), section + 12);
+      bytes.writeUInt32LE(0x200, section + 16);
+      bytes.writeUInt32LE(0x200 * (index + 1), section + 20);
+      bytes.writeUInt32LE(characteristics, section + 36);
+    });
+    instructions.forEach((instruction, index) => bytes.writeUInt32LE(instruction, 0x600 + index * 4));
+    return bytes;
+  }
+  const adrpX1 = { thisPage: 0x90000001, data: 0xf0ffffe1, otherCode: 0xd0ffffe1 };
+  const ldrX1 = 0xf9401421; // ldr x1, [x1, #0x28]
+  const movX2 = 0xaa0003e2; // mov x2, x0
+
+  test.each([
+    ["a slot", [adrpX1.data, ldrX1], 1, []],
+    ["a function", [adrpX1.thisPage, ldrX1], 1, ["0x140003004 loads from 0x140003028"]],
+    ["a function before it", [adrpX1.otherCode, ldrX1], 1, ["0x140003004 loads from 0x140001028"]],
+    ["a function, later", [adrpX1.thisPage, movX2, movX2, ldrX1], 1, ["0x14000300c loads from 0x140003028"]],
+    [
+      "a function, much later",
+      [adrpX1.thisPage, ...Array(24).fill(movX2), ldrX1],
+      1,
+      ["0x140003064 loads from 0x140003028"],
+    ],
+    [
+      "a function, behind a branch and a vector register",
+      [adrpX1.thisPage, 0x54000041 /* b.ne */, 0xfd400041 /* ldr d1, [x2] */, ldrX1],
+      1,
+      ["0x14000300c loads from 0x140003028"],
+    ],
+    [
+      "a function, behind what looks like a load of a pair into the register",
+      [
+        adrpX1.thisPage,
+        0xa9000440 /* stp x0, x1, [x2] */,
+        0x6d400440 /* ldp d0, d1, [x2] */,
+        0xa9400c40 /* ldp x0, x3, [x2] */,
+        0xc8230440 /* stxp w3, x0, x1, [x2] */,
+        0xf9400440 /* ldr x0, [x2, #8] */,
+        0x8b430440 /* add x0, x2, x3, lsr #1 */,
+        ldrX1,
+      ],
+      1,
+      ["0x14000301c loads from 0x140003028"],
+    ],
+    ["what the register holds next", [adrpX1.thisPage, 0xaa0003e1 /* mov x1, x0 */, ldrX1], 0, []],
+    ["nothing", [adrpX1.thisPage, 0x9100a021 /* add x1, x1, #0x28 */], 0, []],
+  ])("a load from %s", (_, instructions, pointerLoads, fromCode) => {
+    expect(arm64PointerLoads(image(instructions))).toEqual({ pointerLoads, fromCode });
+  });
+
+  test.each([
+    ["ldp x0, x1, [x2]", 0xa9400440],
+    ["ldp x0, x1, [x2, #16]!", 0xa9c10440],
+    ["ldp x0, x1, [x2], #16", 0xa8c10440],
+    ["ldp w0, w1, [x2]", 0x29400440],
+    ["ldnp x0, x1, [x2]", 0xa8400440],
+    ["ldpsw x0, x1, [x2]", 0x69400440],
+    ["ldxp x0, x1, [x2]", 0xc87f0440],
+    ["ldaxp x0, x1, [x2]", 0xc87f8440],
+  ])("a load from what %s puts in its second register", (_, pair) => {
+    expect(arm64PointerLoads(image([adrpX1.thisPage, pair, ldrX1]))).toEqual({ pointerLoads: 0, fromCode: [] });
+  });
+
+  test.each(["\n", "\r\n"])("a reference to a variable, with lines that end in %j", end => {
+    const references = ["variable", "constant", "func", "native", "missing"].map(
+      name => `C:\\a.lib:a.obj:                  (undefined) weak external ${name}`,
+    );
+    const definitions = [
+      "b.obj: ---------------- (LTO,DATA) external variable",
+      "b.obj: ---------------- (LTO,RODATA) weak external constant",
+      "b.obj: ---------------- (LTO,CODE) external func",
+      "b.obj: ---------------- (LTO,DATA) external strong",
+      "b.obj:                  (undefined) external strong",
+      "c.obj: 00000000 00000000 R native",
+    ];
+    expect(weakReferencesToVariables([references.join(end) + end, definitions.join(end) + end])).toEqual([
+      "variable in C:\\a.lib:a.obj",
+      "constant in C:\\a.lib:a.obj",
+    ]);
   });
 });

@@ -3,15 +3,11 @@
 use bun_core::{Output, ZBox};
 
 use super::add_remove_with_filter::root_package_json_path;
-use super::enqueue::{
-    enqueue_git_for_checkout, enqueue_package_for_download, enqueue_tarball_for_download,
-    enqueue_tarball_for_reading,
-};
+use super::enqueue::enqueue_install_task;
 use super::install_with_manager::{install_with_manager, wait_for_everything_except_peers};
 use super::package_manager_options::{Do, LogLevel};
 use super::{Command, PackageManager};
 use crate::network_task::ForTarballError;
-use crate::resolution::Tag as ResolutionTag;
 use crate::{DependencyID, PackageID, PreinstallState, TaskCallbackContext, invalid_dependency_id};
 
 #[derive(Clone, Copy, Default)]
@@ -140,37 +136,7 @@ pub(crate) fn download_pinned_packages(
         }
 
         let waiter = TaskCallbackContext::Dependency(dep_id);
-        // The callees copy these before `string_bytes` can grow.
-        let alias = manager.lockfile.buffers.dependencies[dep_id as usize].name;
-        let alias = manager.lockfile.str_detached(&alias);
-        let enqueued = match resolution.tag {
-            ResolutionTag::Npm => {
-                let name = manager.lockfile.str_detached(&pkg.name);
-                let url = manager.lockfile.str_detached(&resolution.npm().url);
-                let version = resolution.npm().version;
-                enqueue_package_for_download(manager, name, dep_id, pkg_id, version, url, waiter)
-            }
-            ResolutionTag::Github => {
-                let url = manager.alloc_github_url(resolution.github());
-                enqueue_tarball_for_download(manager, dep_id, pkg_id, &url, waiter)
-            }
-            ResolutionTag::RemoteTarball => {
-                let url = manager.lockfile.str_detached(resolution.remote_tarball());
-                enqueue_tarball_for_download(manager, dep_id, pkg_id, url, waiter)
-            }
-            ResolutionTag::LocalTarball => {
-                enqueue_tarball_for_reading(manager, dep_id, pkg_id, alias, &resolution, waiter)
-            }
-            ResolutionTag::Git => enqueue_git_for_checkout(
-                manager,
-                dep_id,
-                pkg_id,
-                alias,
-                waiter,
-                name_and_version_hash,
-            ),
-            _ => continue,
-        };
+        let enqueued = enqueue_install_task(manager, dep_id, pkg_id, waiter, name_and_version_hash);
         // Any other error is already in `manager.log`.
         if let Err(ForTarballError::OutOfMemory) = enqueued {
             bun_core::out_of_memory();

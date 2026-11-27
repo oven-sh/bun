@@ -29,7 +29,9 @@
 #include <memory>
 #include <openssl/ec.h>
 #include <openssl/hmac.h>
+#include <openssl/mem.h>
 #include <openssl/x509.h>
+#include <wtf/Noncopyable.h>
 
 namespace WebCore {
 
@@ -67,10 +69,26 @@ DEFINE_OPENSSL_CRYPTO_PTR(PKCS8PrivKeyInfoPtr, PKCS8_PRIV_KEY_INFO, PKCS8_PRIV_K
 DEFINE_OPENSSL_CRYPTO_PTR(BIGNUMPtr, BIGNUM, BN_clear_free)
 DEFINE_OPENSSL_CRYPTO_PTR(BNCtxPtr, BN_CTX, BN_CTX_free)
 DEFINE_OPENSSL_CRYPTO_PTR(ECDSASigPtr, ECDSA_SIG, ECDSA_SIG_free)
+DEFINE_OPENSSL_CRYPTO_PTR(OpenSSLBytesPtr, uint8_t, OPENSSL_free)
 
 DEFINE_OPENSSL_CRYPTO_PTR_FULL(ASN1SequencePtr, ASN1_SEQUENCE_ANY, sk_ASN1_TYPE_pop_free(ptr, ASN1_TYPE_free))
 
 #undef DEFINE_OPENSSL_CRYPTO_PTR
 #undef DEFINE_OPENSSL_CRYPTO_PTR_FULL
+
+// bssl::ScopedCBB and the like are unavailable under BORINGSSL_NO_CXX (Windows). `cleanup` runs even if `init` failed.
+template<typename T, auto init, auto cleanup>
+class OpenSSLCryptoScoped {
+    WTF_MAKE_NONCOPYABLE(OpenSSLCryptoScoped);
+
+public:
+    explicit OpenSSLCryptoScoped(auto... arguments) { init(&m_value, arguments...); }
+    ~OpenSSLCryptoScoped() { cleanup(&m_value); }
+
+    T* get() { return &m_value; }
+
+private:
+    T m_value;
+};
 
 } // namespace WebCore

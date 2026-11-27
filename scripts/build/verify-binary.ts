@@ -6,7 +6,8 @@
  *       Static scans of the linked executable against the expectations
  *       configure wrote into <spec.json> (see binary-expectations.ts):
  *       exported symbols, dynamic libraries + symbol-version ceilings,
- *       forbidden imports, static initializers, hardening bits, debug info.
+ *       forbidden imports, static initializers, hardening bits, debug info,
+ *       and on Windows arm64 weak references that LLVM miscompiled.
  *
  *   verify-binary.ts duplicates <nm> <rspfile> <report>
  *       Every object and archive on bun's link line, scanned for a symbol
@@ -14,6 +15,7 @@
  *       when the other sits in an archive member it never loads). <report>
  *       also lists weak definitions whose sizes disagree across objects —
  *       the usual face of an ODR violation — without failing on them.
+ *       On Windows arm64, also for weak references to variables.
  *
  * Everything is read with the LLVM binutils the build already requires
  * (llvm-nm / llvm-readobj / llvm-objdump), so ELF, Mach-O and PE are all
@@ -74,7 +76,15 @@ function versionLeq(a: string, b: string): boolean {
 }
 
 type CheckName =
-  "exports" | "dynamic libraries" | "imports" | "static initializers" | "symbols" | "hardening" | "debug info" | "size";
+  | "exports"
+  | "dynamic libraries"
+  | "imports"
+  | "static initializers"
+  | "symbols"
+  | "hardening"
+  | "debug info"
+  | "size"
+  | "weak references";
 
 /**
  * What a violation of each check means for the shipped binary and what the
@@ -116,6 +126,7 @@ const GUIDANCE: Record<CheckName, string[]> = {
     "This code is there for tests and debugging and must not ship: the linker kept it because",
     "something reachable refers to it. Find the caller (llvm-nm -A --undefined-only over the link",
     "inputs) and compile the call out of this flavour, as binary-expectations.ts says for the list.",
+    "A highway_* function means that LTO does not inline C++ into Rust: -mllvm -pass-remarks-missed=inline says why.",
   ],
   hardening: [
     "These bits are process-wide exploit mitigations / layout guarantees (non-executable",
@@ -125,6 +136,12 @@ const GUIDANCE: Record<CheckName, string[]> = {
   size: [
     "This program is written to stay tiny (no CRT, no allocator, no formatting). A jump in size",
     "means one of those came in: look for a new panic message, a `core::fmt` use, or a new dependency.",
+  ],
+  "weak references": [
+    "For Windows arm64, ThinLTO in LLVM 23 marks a weak declaration dso_local when the definition is bitcode",
+    "from clang, and then loads from the symbol where it means to take its address. Addresses are in the .map",
+    "beside the executable. Drop __attribute__((weak)) from the declaration if the symbol is always there,",
+    "or compile the file that refers to it with -fno-lto.",
   ],
   "debug info": [
     "The profile binary is what crash reports and profilers are symbolized against; it",
@@ -644,6 +661,61 @@ function verifyPE(spec: VerifySpec): void {
     const props = [...chars, `subsystem ${ver}`];
     report("hardening", `${props.length} hardening properties`, violations, props);
   }
+
+  // 6. weak references
+  if (readAt(exe, readAt(exe, 0x3c, 4).readUInt32LE() + 4, 2).readUInt16LE() === 0xaa64 /* ARM64 */) {
+    const { pointerLoads, fromCode } = arm64PointerLoads(readFileSync(exe));
+    report(
+      "weak references",
+      `${pointerLoads} loads of an address`,
+      pointerLoads > 0 ? fromCode : ["no code was found, so nothing can be said"],
+    );
+  }
+}
+
+/** Weak references to functions: every `adrp xN, page` with its `ldr xN, [xN, #offset]`, which is how LLVM reads an address out of a slot. */
+export function arm64PointerLoads(image: Buffer): { pointerLoads: number; fromCode: string[] } {
+  const header = image.readUInt32LE(0x3c);
+  const imageBase = image.readBigUInt64LE(header + 48);
+  const table = header + 24 + image.readUInt16LE(header + 20);
+  const code = Array.from({ length: image.readUInt16LE(header + 6) }, (_, index) => table + index * 40)
+    .filter(section => image.readUInt32LE(section + 36) & 0x20000000 /* IMAGE_SCN_MEM_EXECUTE */)
+    .map(section => ({
+      start: image.readUInt32LE(section + 12),
+      size: Math.min(image.readUInt32LE(section + 8), image.readUInt32LE(section + 16)),
+      offset: image.readUInt32LE(section + 20),
+    }));
+  // In the low bits a branch has its condition or offset, and a vector instruction a register of the other file.
+  const writesFirst = (instruction: number, register: number) =>
+    (instruction & 31) === register &&
+    (instruction & 0x1c000000) !== 0x14000000 &&
+    (instruction & 0x0c000000) !== 0x0c000000;
+  // ldp, ldnp, ldpsw, ldxp, ldaxp. The other exclusive and ordered loads match too, and have 31 there.
+  const writesSecond = (instruction: number, register: number) =>
+    (instruction & 0x1e400000) === 0x08400000 && ((instruction >>> 10) & 31) === register;
+  const writes = (instruction: number, register: number) =>
+    writesFirst(instruction, register) || writesSecond(instruction, register);
+  const address = (rva: number) => `0x${(imageBase + BigInt(rva)).toString(16)}`;
+  let pointerLoads = 0;
+  const fromCode: string[] = [];
+  for (const { start, size, offset } of code) {
+    for (let at = 0; at + 8 <= size; at += 4) {
+      const adrp = image.readUInt32LE(offset + at);
+      if ((adrp & 0x9f000000) >>> 0 !== 0x90000000) continue;
+      const register = adrp & 31;
+      // The scheduler may put other instructions in between.
+      let next = at + 4;
+      while (next < at + 128 && next + 8 <= size && !writes(image.readUInt32LE(offset + next), register)) next += 4;
+      const ldr = image.readUInt32LE(offset + next);
+      if ((ldr & 0xffc003ff) >>> 0 !== (0xf9400000 | (register << 5) | register) >>> 0) continue;
+      pointerLoads++;
+      const pages = (((adrp << 8) >> 13) << 2) | ((adrp >>> 29) & 3);
+      const target = start + at - ((start + at) % 4096) + pages * 4096 + ((ldr >>> 10) & 0xfff) * 8;
+      if (code.some(section => target >= section.start && target < section.start + section.size))
+        fromCode.push(`${address(start + next)} loads from ${address(target)}`);
+    }
+  }
+  return { pointerLoads, fromCode };
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -759,7 +831,22 @@ function coffDefinitions(
   return { defs, objects };
 }
 
-function verifyDuplicates(nm: string, objdump: string | undefined, rspfile: string, reportPath: string): number {
+/** What arm64PointerLoads cannot tell from a load of the variable's value. From the output of `llvm-nm -A -m`. */
+export function weakReferencesToVariables(outputs: string[]): string[] {
+  const matches = (pattern: RegExp) => outputs.flatMap(output => [...output.matchAll(pattern)]);
+  const variables = new Set(matches(/ \(LTO,(?:RO)?DATA\) .* (\S+)$/gm).map(([, name]) => name));
+  return matches(/^(.*): +\(undefined\) weak external (\S+)$/gm)
+    .filter(([, , name]) => variables.has(name))
+    .map(([, obj, name]) => `${name} in ${obj}`);
+}
+
+function verifyDuplicates(
+  nm: string,
+  objdump: string | undefined,
+  rspfile: string,
+  reportPath: string,
+  windowsArm64: boolean,
+): number {
   // .res (compiled Windows resources) is a link input with no symbols and
   // no object format nm reads; everything else on the line must scan.
   const inputs = readFileSync(rspfile, "utf8")
@@ -783,11 +870,13 @@ function verifyDuplicates(nm: string, objdump: string | undefined, rspfile: stri
   // only one that says whether a definition is weak ("weak external"); ELF
   // objects ignore it and print the BSD form, whose type letter (W/V/C)
   // carries the same bit.
+  const outputs: string[] = [];
   for (const { stdout: out, stderr } of chunkedRun(
     nm,
-    ["-A", "-S", "-m", "--extern-only", "--defined-only", "--no-demangle"],
+    ["-A", "-S", "-m", "--extern-only", ...(windowsArm64 ? [] : ["--defined-only"]), "--no-demangle"],
     inputs,
   )) {
+    if (windowsArm64) outputs.push(out);
     errors.push(...toolErrors(stderr).filter(e => !/no symbols$/.test(e)));
     for (const line of out.split("\n")) {
       // Darwin form: `<obj>: <value> (<segment>,<section>) [weak] [private] external [<attrs>] <name>`
@@ -848,7 +937,10 @@ function verifyDuplicates(nm: string, objdump: string | undefined, rspfile: stri
   if (dups.length > 50) console.log(`  … ${dups.length - 50} more in ${reportPath}`);
   if (dups.length > 0)
     console.log(`  full report (and ${odr.length} weak definitions with differing sizes): ${reportPath}`);
-  return dups.length > 0 ? 1 : 0;
+  const weak = weakReferencesToVariables(outputs);
+  if (windowsArm64) console.log(`${weak.length} weak references to variables`);
+  for (const line of weak.length > 0 ? [...weak, ...GUIDANCE["weak references"]] : []) console.log(`  ${line}`);
+  return dups.length + weak.length > 0 ? 1 : 0;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -903,15 +995,15 @@ function scan(argv: string[]): number {
     return failed > 0 ? 1 : 0;
   }
   if (mode === "duplicates") {
-    // duplicates <nm> <rspfile> <report> [<objdump, for a Windows target>]
-    const [nm, rspfile, reportPath, objdump] = args;
+    // duplicates <nm> <rspfile> <report> [<objdump> <arch>, for a Windows target]
+    const [nm, rspfile, reportPath, objdump, arch] = args;
     assert(
       nm !== undefined && rspfile !== undefined && reportPath !== undefined,
       "duplicates: missing <nm> <rspfile> <report>",
     );
-    return verifyDuplicates(nm, objdump, rspfile, reportPath);
+    return verifyDuplicates(nm, objdump, rspfile, reportPath, arch === "aarch64");
   }
-  console.error("usage: verify-binary.ts binary <spec.json> | duplicates <nm> <rspfile> <report> [objdump]");
+  console.error("usage: verify-binary.ts binary <spec.json> | duplicates <nm> <rspfile> <report> [objdump arch]");
   return 2;
 }
 

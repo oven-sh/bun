@@ -1,0 +1,12 @@
+# The control of this-of-a-member-written-in-a-literal-is-expected-to-be-of-the-literal-or-created-below-it.ir: a plain function and an arrow that are VALUES in a literal are no members of it: a plain function may be constructed or stored anywhere, an arrow has no `this`. The literal (L0) is written of neither.
+# RUN: link functions mechanisms=all
+# CHECK: function f1 cycle
+# CHECK-NOT: parameter 0 expected=L0
+# CHECK: function f3 cycle
+# -- source: this-of-a-plain-function-or-an-arrow-that-is-a-value-in-a-literal-is-not-written.js
+# const reply = { plain: function () { return this && this.tag; }, arrow: () => typeof this, tag: "literal" };
+# globalThis.kept = reply;
+# const below = Object.create(globalThis.kept);
+# below.tag = "below";
+# console.log(below.plain(), below.arrow());
+# -- end of source

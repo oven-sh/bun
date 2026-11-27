@@ -1,0 +1,16 @@
+# -- source: main.cjs
+# class Pair { constructor(a, b) { this.a = a; this.b = b; } }
+# const callees = [Pair, Date, () => 1];
+# function make(index, list) { return new callees[index](...list); }
+# for (let i = 0; i < 3; i++) print(make(0, [i, 2]).a, make(1, [i]).getTime());
+# try { make(2, []); } catch (error) { print(error.constructor.name); }
+# -- end of source
+# `new F(...list)` was an operation of the run time (645 instructions); a compiled class is entered by the stub that super(...list) calls. f1 = make
+# RUN: bytes f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: ConstructWithArray.NewExpression
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 0 0
+# ANSWERS-NEXT: 1 1
+# ANSWERS-NEXT: 2 2
+# ANSWERS-NEXT: TypeError

@@ -1,16 +1,20 @@
-# What a closure captures is shown or asked where the closure is made. Link types a capture by what it sees captured, and the closure's function reads it with no look.
-# THE RED CONTROL. The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined, so `captured` is undefined, and a number is captured.
-# In the second run the maker is entered with an argument of another type than is written, so its slow version makes the closure: such a version is walked, and the door stands there too.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# A value that a closure captures either has been shown to have the capture's type or is checked where the closure is created. Link types a capture by the values that it sees captured,
+# and the closure's function reads the capture without a check.
+# The failing control. Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined, so `captured` is undefined, but a number is captured.
+# In the second run the function that creates the closure is called with an argument of another type than the declared one, so its slow version creates the closure.
+# Such a version goes through the walk, and the entry check is there too.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(MADE): run-in-shell mechanisms=all-Inlining globalThis.which = 1;
-# MADE: AOT: f{{*}} at {{*}}: what was captured is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# MADE: bun: internal AOT error: type check failed
+# MADE-NEXT: found int32 in a captured variable
 # MADE-NOT: went on
 # MADE: crashed with
 # RUN(SLOW): run-in-shell mechanisms=all-Inlining globalThis.which = 2;
-# SLOW: AOT: f{{*}} at {{*}}: what was captured is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# SLOW: bun: internal AOT error: type check failed
+# SLOW-NEXT: found int32 in a captured variable
 # SLOW-NOT: went on
 # SLOW: crashed with
-# THE GREEN CONTROL: the same closure over what fits.
+# The passing control: the same closure, over a value that fits.
 # RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;
 # NONE: undefined
 # NONE-NEXT: went on

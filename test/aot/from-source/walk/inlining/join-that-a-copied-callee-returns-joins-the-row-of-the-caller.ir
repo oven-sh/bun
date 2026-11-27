@@ -18,7 +18,8 @@
 # RUN(BOTH): walk f3 mechanisms=none+TypedOperations+DirectCalls+Inlining
 # BOTH-LABEL: code f3:Body
 # BOTH-COUNT-2: = Strcat
+# under all mechanisms the loop is built twice (the lesser bound of its counter buys a build that counts in int32): one Strcat in each build, the callee's dropped in both
 # RUN(ALL): walk f2 mechanisms=all
 # ALL-LABEL: code f2:Body
-# ALL-COUNT-1: = Strcat
+# ALL-COUNT-2: = Strcat
 # ALL-NOT: = Strcat

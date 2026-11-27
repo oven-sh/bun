@@ -1,0 +1,19 @@
+# -- source: main.cjs
+# class Entry { constructor(key, next) { this.key = key; this.value = null; this.hash = key; this.next = next; } }
+# const table = [null, null, null, null];
+# function put(key) { const entry = new Entry(key, table[key & 3]); entry.value = key & 255; table[key & 3] = entry; }
+# function find(key) { let entry = table[key & 3]; while (entry && entry.hash !== key) entry = entry.next; return entry; }
+# function get(key) { const entry = find(key); if (entry) return entry.value; return null; }
+# function total(count) { let sum = 0; for (let i = 0; i < count; i++) sum += get(i); return sum; }
+# for (let i = 0; i < 9; i++) if (i % 4) put(i); else table[i & 3] = new Entry(i, table[i & 3]);
+# print(total(12), get(3), get(4), get(20));
+# -- end of source
+# Where an entry is found or not, the word of its slot goes into the join. One comparison makes zero of null.
+# f4 = total
+# RUN: emit f4:Body mechanisms=all
+# CHECK-LABEL: unit f4:Body
+# CHECK: Int32 @{{*}} = Phi(
+# CHECK: Int32 @{{*}} = Select(
+# CHECK: Int64 @{{*}} = Add(
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 24 3 null null

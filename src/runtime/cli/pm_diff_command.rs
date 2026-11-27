@@ -1,6 +1,6 @@
 //! `bun pm diff` — show what changed between two versions of a package (or a package and a folder/tarball).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::Write as _;
 
 use bstr::BStr;
@@ -9,8 +9,8 @@ use bun_archive::tar;
 use bun_collections::VecExt as _;
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
-use bun_core::strings::{self, StringOrTinyString};
-use bun_core::{Global, Output, pretty, prettyln};
+use bun_core::strings;
+use bun_core::{Global, Output, StackCheck, pretty, prettyln};
 use bun_http as http;
 use bun_install::dependency::{self, TagExt as _};
 use bun_install::lockfile::LoadResult;
@@ -20,10 +20,12 @@ use bun_install::npm::{self, PackageManifest};
 use bun_install::package_manager::options::Do;
 use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
 use bun_install::{PackageManager, resolution};
-use bun_sys::{Fd, FdExt as _, dir_iterator as DirIterator};
+use bun_sys::{Fd, dir_iterator as DirIterator};
+use bun_threading::{Condvar, Guarded, ThreadPool, thread_pool};
 use bun_url::URL;
 
 use crate::cli::pm_diff_normalize as normalize;
+use crate::cli::pm_diff_normalize::{Otherwise, Pair};
 use crate::cli::pm_diff_semantic::Operation;
 use crate::cli::pm_diff_semantic::{self as semantic, Op};
 
@@ -60,6 +62,8 @@ struct Tree {
     /// The registry manifest's entry for this version, as JSON. `None` unless this side came from a
     /// registry.
     registry_entry: Option<Vec<u8>>,
+    /// The tarball that holds the files, until `unpack` has read it.
+    packed: Option<Vec<u8>>,
 }
 
 /// `original_cwd` is the folder the user ran the command from; inside a workspace the manager has since `chdir`ed
@@ -90,16 +94,20 @@ pub(crate) fn exec(
     let args: Vec<Vec<u8>> = typed
         .iter()
         .map(|&arg| {
-            use bun_paths::resolve_path::{join_abs_string, platform};
-            match (arg.strip_prefix(b"~/"), bun_core::env_var::HOME.get()) {
-                (Some(rest), Some(home)) => {
-                    join_abs_string::<platform::Auto>(home, &[rest]).to_vec()
-                }
+            use bun_paths::Path;
+            let home = bun_core::env_var::HOME.get_not_empty();
+            let (base, typed) = match (arg.strip_prefix(b"~/"), home) {
+                (Some(rest), Some(home)) => (Path::resolve(&[original_cwd, home]), rest),
                 _ if looks_like_path(arg) && !bun_paths::is_absolute(arg) => {
-                    join_abs_string::<platform::Auto>(original_cwd, &[arg]).to_vec()
+                    (Path::from(original_cwd), arg)
                 }
-                _ => arg.to_vec(),
-            }
+                _ => return arg.to_vec(),
+            };
+            let spelling = bun_sys::typed_spelling(&base, typed, bun_paths::from_portable);
+            let mut path = Path::resolve(&[&base, &spelling]);
+            // The trailing separator is what tells a directory named `lib.tgz/` from a tarball.
+            path.copy_trailing_sep_from(arg);
+            path.to_vec()
         })
         .collect();
 
@@ -113,7 +121,8 @@ pub(crate) fn exec(
         (&left_spec, &mut right_spec)
     {
         if name.is_empty() {
-            let local = materialize(pm, &left_spec, as_published)?;
+            let mut local = materialize(pm, &left_spec, as_published)?;
+            local.unpack().map_err(Unreadable::report)?;
             *name = package_name_in(&local);
             left_early = Some(local);
         }
@@ -121,6 +130,7 @@ pub(crate) fn exec(
     let mut right = materialize(pm, &right_spec, as_published)?;
     if let Spec::Registry { name, .. } = &mut left_spec {
         if name.is_empty() {
+            right.unpack().map_err(Unreadable::report)?;
             *name = package_name_in(&right);
         }
     }
@@ -128,6 +138,16 @@ pub(crate) fn exec(
         Some(tree) => tree,
         None => materialize(pm, &left_spec, as_published)?,
     };
+    let threads = Threads::with_stack_of_this_one();
+    let packed = |tree: &Tree| tree.packed.as_ref().map_or(0, Vec::len);
+    let (unpacked_right, unpacked_left) = threads.join(
+        packed(&right).min(packed(&left)),
+        || right.unpack(),
+        || left.unpack(),
+    );
+    unpacked_right
+        .and(unpacked_left)
+        .map_err(Unreadable::report)?;
     // Show local paths the way they were typed, not as resolved against the invoking folder.
     for (tree, spec) in [(&mut left, &left_spec), (&mut right, &right_spec)] {
         if let Spec::Dir(p) | Spec::Tarball(p) = spec {
@@ -156,7 +176,7 @@ pub(crate) fn exec(
             Global::exit(1);
         }
     }
-    print_diff(&left, &right, flags);
+    print_diff(&left, &right, flags, threads);
     Output::flush();
     Ok(())
 }
@@ -208,12 +228,7 @@ impl<'a> Filter<'a> {
 }
 
 fn looks_like_path(spec: &[u8]) -> bool {
-    spec.starts_with(b".")
-        || spec.starts_with(b"/")
-        || spec.starts_with(b"~/")
-        || (cfg!(windows)
-            && (spec.starts_with(b"\\")
-                || (spec.len() > 2 && spec[1] == b':' && matches!(spec[2], b'\\' | b'/'))))
+    spec.starts_with(b".") || spec.starts_with(b"~/") || bun_paths::is_absolute(spec)
 }
 
 fn classify(spec: &[u8]) -> Spec {
@@ -384,8 +399,7 @@ fn is_npm_name(name: &[u8]) -> bool {
 }
 
 fn root_package_name(pm: &PackageManager, original_cwd: &[u8]) -> Vec<u8> {
-    let mut path = original_cwd.to_vec();
-    path.extend_from_slice(b"/package.json");
+    let path = bun_paths::Path::from_parts(&[original_cwd, b"package.json"]);
     // The folder we are in, before the workspace root the manager walked up to.
     if let Ok(bytes) = bun_sys::File::read_from(Fd::cwd(), &path)
         && let Some(name) = package_json_name(&bytes)
@@ -416,7 +430,7 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<(Vec<u8>, V
         LoadResult::NotFound => false,
         // A lockfile that exists but will not load is reported as that, not as "package not installed".
         broken @ LoadResult::Err(_) => {
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print(Output::error_writer());
             crate::cli::package_manager_command::PackageManagerCommand::handle_load_lockfile_errors_for(
                 &broken, log_level, "",
             );
@@ -517,66 +531,75 @@ fn materialize(
                     Global::exit(1);
                 }
             };
-            let mut tree = Tree {
+            Ok(Tree {
                 label: path.clone(),
                 files: BTreeMap::new(),
                 modes: BTreeMap::new(),
                 registry_entry: None,
-            };
-            read_tarball_into(&bytes, &mut tree)?;
-            Ok(tree)
+                packed: Some(bytes),
+            })
         }
         Spec::Dir(path) => read_dir_tree(path, as_published.then_some(pm)),
     }
 }
 
-fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> {
-    let fail = |err: tar::Error, message: &str| -> crate::Error {
-        if let tar::Error::Alloc(err) = err {
-            return err.into();
+/// Why a tarball was not unpacked. The main thread reports it, so that timing does not pick one of two errors.
+enum Unreadable {
+    Damaged(String),
+    Alloc(bun_alloc::AllocError),
+}
+
+impl Unreadable {
+    fn report(self) -> crate::Error {
+        match self {
+            Unreadable::Damaged(message) => {
+                Status::clear();
+                Output::err_generic("{}", (message.as_str(),));
+                Global::exit(1);
+            }
+            Unreadable::Alloc(err) => err.into(),
         }
-        Status::clear();
-        Output::err_generic("{}: {}", (BStr::new(&tree.label), message));
-        Global::exit(1);
+    }
+}
+
+impl Tree {
+    fn unpack(&mut self) -> Result<(), Unreadable> {
+        match self.packed.take() {
+            Some(bytes) => read_tarball_into(&bytes, self),
+            None => Ok(()),
+        }
+    }
+}
+
+fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), Unreadable> {
+    let fail = |err: tar::Error, message: core::fmt::Arguments<'_>| match err {
+        tar::Error::Alloc(err) => Unreadable::Alloc(err),
+        _ => Unreadable::Damaged(format!("{}: {message}", BStr::new(&tree.label))),
     };
-    let mut reader = bun_archive::open_memory(bytes, tar::Dialect::General)
-        .map_err(|err| fail(err, "failed to read tarball"))?;
+    let mut reader = bun_archive::open_memory(bytes, tar::Dialect::Npm)
+        .map_err(|err| fail(err, format_args!("failed to read tarball")))?;
     while let Some(entry) = reader
         .next_entry()
-        .map_err(|err| fail(err, "failed to read archive header"))?
+        .map_err(|err| fail(err, format_args!("failed to read archive header")))?
     {
         if entry.kind() != bun_sys::FileKind::File {
             continue;
         }
         let perm = (entry.perm() & 0o777) as bun_sys::Mode;
         let size = usize::try_from(entry.size().max(0)).expect("int cast");
-        let path = bun_archive::display_path(entry)?;
-        let path: &[u8] = &path;
-        // npm tarballs root everything under one folder (usually `package/`).
-        let rel = match strings::index_of_char(path, b'/') {
-            Some(i) => &path[i as usize + 1..],
-            None => path,
-        };
+        let rel = bun_paths::Path::from(&bun_archive::normalize_npm_entry_path(entry));
         if rel.is_empty() {
             continue;
         }
-        let rel = rel.to_vec();
+        let rel = rel.into_portable().to_vec();
         let mut data = Vec::new();
-        if let Err(err) = reader.read_data(size, &mut data) {
-            if let tar::Error::Alloc(err) = err {
-                return Err(err.into());
-            }
-            Status::clear();
-            Output::err_generic(
-                "{}: {}: {}",
-                (
-                    BStr::new(&tree.label),
-                    BStr::new(&rel),
-                    "failed to read archive data",
-                ),
-            );
-            Global::exit(1);
-        }
+        // The header can claim any size.
+        (data.try_reserve_exact(size.min(bytes.len())))
+            .map_err(|_| Unreadable::Alloc(bun_alloc::AllocError))?;
+        reader.read_data(size, &mut data).map_err(|err| {
+            let rel = BStr::new(&rel);
+            fail(err, format_args!("{rel}: failed to read archive data"))
+        })?;
         tree.modes.insert(rel.clone(), perm);
         tree.files.insert(rel, data);
     }
@@ -593,9 +616,10 @@ fn read_dir_tree(
         files: BTreeMap::new(),
         modes: BTreeMap::new(),
         registry_entry: None,
+        packed: None,
     };
-    let root_fd = match bun_sys::open_dir_at(Fd::cwd(), root) {
-        Ok(fd) => fd,
+    let root_dir = match bun_sys::Dir::open(root) {
+        Ok(dir) => dir,
         Err(err) => {
             Status::clear();
             Output::err(err, "failed to open {}", (BStr::new(root),));
@@ -615,7 +639,7 @@ fn read_dir_tree(
     // A package (has a package.json) is read as `bun pm pack` would publish it: `files`, .npmignore/.gitignore,
     // bins — not the whole checkout with its vendor/ and build/.
     'package: {
-        if let Ok(pkg) = bun_sys::File::read_from(root_fd, b"package.json") {
+        if let Ok(pkg) = bun_sys::File::read_from(&root_dir, b"package.json") {
             // This has to come before the parse below, because it parses other package.json files.
             let manifests = as_published_by.and_then(|pm| manifests_for(pm, root, &pkg));
             let bump = Bump::new();
@@ -641,21 +665,19 @@ fn read_dir_tree(
                 }
                 // pack's own error paths crash without unwinding: no status line to print over.
                 Status::clear();
-                let dir = bun_sys::Dir::from_fd(root_fd);
                 let (queue, _bins) = crate::cli::pack_command::published_files(
-                    &dir,
+                    &root_dir,
                     root,
                     &json,
                     &bump,
                     bun_install::package_manager::LogLevel::Silent,
                 )?;
-                let _ = dir.into_raw();
                 for path in queue.into_paths() {
                     let rel = path.as_bytes();
-                    match bun_sys::File::read_from(root_fd, rel) {
+                    match bun_sys::File::read_from(&root_dir, rel) {
                         Ok(bytes) => {
                             #[cfg(not(windows))]
-                            if let Ok(st) = bun_sys::fstatat(root_fd, path.as_zstr()) {
+                            if let Ok(st) = bun_sys::fstatat(&root_dir, path.as_zstr()) {
                                 tree.modes.insert(rel.to_vec(), st.st_mode as u32 & 0o777);
                             }
                             tree.files.insert(rel.to_vec(), bytes);
@@ -668,14 +690,14 @@ fn read_dir_tree(
                     None => pkg,
                 };
                 tree.files.insert(b"package.json".to_vec(), pkg);
-                root_fd.close();
                 return Ok(tree);
             }
         }
     }
-    let mut stack: Vec<(Fd, Vec<u8>)> = vec![(root_fd, Vec::new())];
+    let mut stack = vec![(root_dir, Vec::new())];
     while let Some((dir, prefix)) = stack.pop() {
-        let mut it = DirIterator::iterate(dir);
+        let mut it = DirIterator::iterate_owned(dir);
+        let dir = it.dir();
         loop {
             let entry = match it.next() {
                 Ok(Some(entry)) => entry,
@@ -717,7 +739,7 @@ fn read_dir_tree(
             match kind {
                 bun_sys::FileKind::Directory if own_kind == bun_sys::FileKind::SymLink => {}
                 bun_sys::FileKind::Directory => match bun_sys::open_dir_at(dir, name) {
-                    Ok(sub) => stack.push((sub, rel)),
+                    Ok(sub) => stack.push((bun_sys::Dir::from_fd(sub), rel)),
                     Err(err) => fail(err, &rel),
                 },
                 bun_sys::FileKind::File => match bun_sys::File::read_from(dir, name) {
@@ -743,7 +765,6 @@ fn read_dir_tree(
                 _ => {}
             }
         }
-        dir.close();
     }
     Ok(tree)
 }
@@ -844,7 +865,7 @@ fn fetch_registry_tree(
 
     let mut log = bun_ast::Log::init();
     let manifest = match PackageManifest::parse(
-        scope,
+        scope.manifest_cache_key(),
         &mut log,
         body.list.as_slice(),
         name,
@@ -943,7 +964,7 @@ fn fetch_registry_tree(
     if tarball_url.is_empty() {
         tarball_url = bun_install::extract_tarball::build_url_with_printer(
             scope.url.href(),
-            &StringOrTinyString::init_append_if_needed(name, &mut BumpAppender(&bump))?,
+            name,
             found.version,
             &manifest.string_buf,
             |args| -> Result<Vec<u8>, bun_alloc::AllocError> {
@@ -973,21 +994,13 @@ fn fetch_registry_tree(
         }
     }
 
-    let mut tree = Tree {
+    Ok(Tree {
         label,
         files: BTreeMap::new(),
         modes: BTreeMap::new(),
         registry_entry,
-    };
-    read_tarball_into(tarball.list.as_slice(), &mut tree)?;
-    Ok(tree)
-}
-
-struct BumpAppender<'a>(&'a Bump);
-impl bun_core::strings::Appender for BumpAppender<'_> {
-    fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
-        Ok(self.0.alloc_slice_copy(s))
-    }
+        packed: Some(tarball.list),
+    })
 }
 
 fn registry_get(
@@ -1024,19 +1037,19 @@ fn registry_get(
     }
 
     let mut response_buf = MutableString::init(64 * 1024)?;
-    let display_url = url.href.to_vec();
-    let mut req = pm.registry_request(
+    let display_url = url.href;
+    let req = pm.registry_request(
         http::Method::GET,
         url,
         headers.entries,
         headers.content.written_slice(),
         b"",
     );
-    let res = match pm.send_with_retries(&mut req, &mut response_buf) {
+    let res = match pm.send_with_retries(req, &mut response_buf) {
         Ok(r) => r,
         Err(err) => {
             Status::clear();
-            let url = bun_core::fmt::redacted_npm_url(&display_url);
+            let url = bun_core::fmt::redacted_npm_url(display_url);
             Output::err(
                 err,
                 "GET {} failed",
@@ -1047,7 +1060,7 @@ fn registry_get(
     };
     if res.status_code() >= 400 {
         Status::clear();
-        npm::response_error::<false>(&req, &res, for_error, &mut response_buf)?;
+        npm::response_error::<false>(display_url, &res, for_error, &mut response_buf)?;
     }
     Ok(response_buf)
 }
@@ -1092,6 +1105,9 @@ struct FileChange<'a> {
     added: usize,
     removed: usize,
     binary: bool,
+    became_binary: bool,
+    gained_terminal_escapes: bool,
+    gained_bidi_controls: bool,
     /// `*.js.map`: regenerated on every build, never worth reading.
     sourcemap: bool,
     /// Textually different shown lines folded away as equivalent by the key.
@@ -1099,6 +1115,93 @@ struct FileChange<'a> {
     /// Un-minified view: per printed line, where it came from in the original (`line:col`, 1-based), per side.
     origin: Option<[Vec<(u32, u32)>; 2]>,
     hunks: Vec<u8>,
+}
+
+impl FileChange<'_> {
+    fn bytes(&self) -> usize {
+        [self.old, self.new]
+            .iter()
+            .flatten()
+            .map(|side| side.len())
+            .sum()
+    }
+
+    fn is_js(&self) -> bool {
+        matches!(normalize::kind_for(self.path), Some(normalize::Kind::Js(_)))
+    }
+
+    fn is_sourcemap(&self) -> bool {
+        // Because of the colon, this prefix can only start JSON, never a JavaScript program.
+        strings::ends_with(self.path, b".map")
+            && (self.new.or(self.old)).is_some_and(|b| b.starts_with(b"{\"version\":"))
+    }
+
+    /// Only the terminal view with hunks uses the re-print of a deleted file.
+    fn is_parsed(&self, flags: DiffFlags, style: Style) -> bool {
+        !flags.raw
+            && normalize::kind_for(self.path).is_some()
+            && (self.new.is_some() || (style.pretty && style.hunks))
+    }
+
+    /// About how long comparing and coloring the file take, in bytes that are parsed or colored. Others take far less.
+    fn work(&self, flags: DiffFlags, style: Style) -> usize {
+        let is_read_closely = self.highlight || self.is_parsed(flags, style);
+        self.bytes() / if is_read_closely { 1 } else { 16 }
+    }
+
+    fn memory(&self, flags: DiffFlags, style: Style) -> Memory {
+        let sides = [self.old, self.new];
+        // `is_binary` may parse such a file to find out, and most often gives up at once.
+        let may_be_binary = sides.iter().flatten().any(|side| has_early_nul(side));
+        let is_parsed = self.is_parsed(flags, style);
+        let mut memory = Memory::default();
+        if self.is_sourcemap() && !may_be_binary {
+            return memory;
+        }
+        for side in sides.iter().flatten() {
+            if may_be_binary {
+                memory.at_most += side.len();
+            } else if is_parsed && side.len() <= normalize::MAX_BYTES {
+                let tokens = count_tokens(side).max(side.len() / 8);
+                memory.at_most += tokens;
+                memory.likely += tokens;
+            } else {
+                memory.at_most += (2 * count_lines(side)).max(side.len() / 8);
+            }
+        }
+        memory
+    }
+}
+
+/// About how much memory comparing a file takes, in tokens: words, signs and line ends.
+#[derive(Default, Clone, Copy)]
+struct Memory {
+    /// A line that is not parsed counts as two tokens, eight bytes as at least one, and a byte that may be binary as one.
+    at_most: usize,
+    /// Only the tokens that are parsed.
+    likely: usize,
+}
+
+impl Memory {
+    /// For two files that are compared one after the other.
+    fn max(self, other: Memory) -> Memory {
+        Memory {
+            at_most: self.at_most.max(other.at_most),
+            likely: self.likely.max(other.likely),
+        }
+    }
+}
+
+fn count_tokens(text: &[u8]) -> usize {
+    let in_word = |b: u8| b.is_ascii_alphanumeric() | (b == b'_') | (b == b'$') | (b >= 0x80);
+    let starts_token =
+        |(&a, &b): (&u8, &u8)| (b != b' ') & (b != b'\t') & !(in_word(a) & in_word(b));
+    // No branches, and sums that fit in a byte, so that the compiler looks at many bytes at once.
+    let next = text.get(1..).unwrap_or_default();
+    (text.chunks(255).zip(next.chunks(255)))
+        .map(|(a, b)| a.iter().zip(b).map(starts_token).map(u8::from).sum::<u8>())
+        .map(usize::from)
+        .sum()
 }
 
 fn is_js_like(path: &[u8]) -> bool {
@@ -1133,8 +1236,9 @@ fn has_bidi_controls(bytes: &[u8]) -> bool {
 /// Makes bytes that come from a package safe to print to a terminal. C0 and C1 control characters
 /// (except tab), bidi overrides and the two Unicode line separators become visible stand-ins.
 fn defang(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
-    let suspicious = |b: &u8| (*b < 0x20 && *b != b'\t') || *b == 0x7f || *b == 0xc2 || *b == 0xe2;
-    if !text.iter().any(suspicious) {
+    let suspicious = |b: u8| ((b < 0x20) & (b != b'\t')) | (b == 0x7f) | (b == 0xc2) | (b == 0xe2);
+    // No branches, so that the compiler looks at many bytes at once.
+    if !text.iter().fold(false, |found, &b| found | suspicious(b)) {
         return std::borrow::Cow::Borrowed(text);
     }
     let mut out = Vec::with_capacity(text.len() + 16);
@@ -1178,19 +1282,23 @@ fn strip_cr(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Every run of ASCII whitespace becomes one space and leading/trailing runs go, for `-w`.
+/// Every run of spaces, tabs and line endings becomes one byte and leading/trailing runs go, for `-w`. A line break
+/// stays one: it ends a comment or a command. What follows a backslash decides if the command goes on, `#!` only
+/// counts at the start, and to a shell a form feed or a `\r` on its own is part of a word.
 fn collapse_whitespace(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
-    let mut pending_space = false;
-    for &b in bytes {
-        if b.is_ascii_whitespace() {
-            pending_space = !out.is_empty();
-        } else {
-            if pending_space {
-                out.push(b' ');
-                pending_space = false;
+    let mut pending = None;
+    for (at, &b) in bytes.iter().enumerate() {
+        match b {
+            _ if pending.is_none() && out.last() == Some(&b'\\') => out.push(b),
+            b'\n' => pending = Some(b),
+            b'\r' if bytes.get(at + 1) == Some(&b'\n') => {}
+            b' ' | b'\t' => pending = pending.or(Some(b' ')),
+            _ => {
+                let is_kept = !out.is_empty() || bytes[at..].starts_with(b"#!");
+                out.extend(pending.take().filter(|_| is_kept));
+                out.push(b);
             }
-            out.push(b);
         }
     }
     out
@@ -1200,13 +1308,17 @@ fn collapse_whitespace(bytes: &[u8]) -> Vec<u8> {
 /// something reads as text, such as scripts and the file types that Bun loads as text.
 fn is_binary(path: &[u8], bytes: &[u8]) -> bool {
     use bun_ast::Loader;
-    strings::contains_char(&bytes[..bytes.len().min(8192)], 0)
+    has_early_nul(bytes)
         && !bytes.starts_with(b"#!")
         && !path.ends_with(b".sh")
         && match bun_bundler::options::DEFAULT_LOADERS.get(bun_paths::extension(path)) {
             Some(loader) => matches!(loader, Loader::Wasm | Loader::Napi),
             None => normalize::normalize(b"as.js", bytes, Default::default()).is_none(),
         }
+}
+
+fn has_early_nul(bytes: &[u8]) -> bool {
+    strings::contains_char(&bytes[..bytes.len().min(8192)], 0)
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -1259,7 +1371,500 @@ fn patch_name(prefix: &[u8], path: &[u8]) -> Vec<u8> {
     out
 }
 
-fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
+/// Starts the threads that files are unpacked and compared on.
+#[derive(Clone, Copy)]
+pub(crate) struct Threads {
+    stack_size: usize,
+}
+
+impl Threads {
+    const MIN_BYTES: usize = 256 << 10;
+
+    /// A file that nests too deep for the stack is not parsed, so a thread gets at least as much as this one has left.
+    fn with_stack_of_this_one() -> Threads {
+        /// Upper bound on the stack that a thread has used when it starts on a file.
+        const THREAD_START: usize = 64 << 10;
+        /// What the calling thread has left of its stack varies from run to run, because the kernel starts it at a
+        /// random address. The stack size is rounded up to a multiple of this, so that it doesn't.
+        const STACK_STEP: usize = 1 << 20;
+
+        let remaining = StackCheck::init().remaining() + StackCheck::THRESHOLD;
+        Threads {
+            stack_size: remaining.next_multiple_of(STACK_STEP) + THREAD_START,
+        }
+    }
+
+    /// The pool must not be moved once it has started a thread.
+    fn pool_for(self, changes: &[FileChange<'_>], flags: DiffFlags, style: Style) -> ThreadPool {
+        /// One more thread per this much work. With less, starting it costs more than it saves.
+        const WORK_PER_THREAD: usize = 64 << 10;
+        /// More take more memory, and no less time on real packages.
+        const MAX_THREADS: usize = 8;
+
+        let work: usize = (changes.iter())
+            .filter(|change| change.semantic != Semantic::ModeOnly)
+            .map(|change| change.work(flags, style))
+            .sum();
+        let threads = (1 + work / WORK_PER_THREAD)
+            .min(usize::from(bun_core::get_thread_count()))
+            .min(MAX_THREADS);
+        ThreadPool::init(thread_pool::Config {
+            max_threads: threads as u32,
+            stack_size: u32::try_from(self.stack_size).unwrap_or(u32::MAX),
+        })
+        .named("Diff")
+        .without_spare_threads()
+    }
+
+    /// Runs `there` on a new thread while `here` runs on this one. Runs neither if the OS cannot start a thread, or if
+    /// `bytes`, which is about how much input the new thread takes off this one, is under `MIN_BYTES`.
+    pub(crate) fn try_join<A, B: Send>(
+        self,
+        bytes: usize,
+        here: impl FnOnce() -> A,
+        there: impl FnOnce() -> B + Send,
+    ) -> Option<(A, B)> {
+        if bytes < Self::MIN_BYTES {
+            return None;
+        }
+        std::thread::scope(|scope| {
+            // SAFETY: this command starts no VM, so `there` holds no state of one.
+            let thread = std::thread::Builder::new()
+                .stack_size(self.stack_size)
+                .spawn_scoped(scope, || {
+                    Output::Source::configure_named_thread(bun_core::zstr!("Diff"));
+                    there()
+                })
+                .ok()?;
+            Some((here(), thread.join().ok()?))
+        })
+    }
+
+    /// Like `try_join`, but runs both on this thread instead of neither.
+    pub(crate) fn join<A, B: Send>(
+        self,
+        bytes: usize,
+        mut here: impl FnMut() -> A,
+        mut there: impl FnMut() -> B + Send,
+    ) -> (A, B) {
+        self.try_join(bytes, &mut here, &mut there)
+            .unwrap_or_else(|| (here(), there()))
+    }
+}
+
+/// Files that one thread compares one after the other. Its memory is that of the largest.
+type Part<'c, 'a> = &'c mut [&'c mut FileChange<'a>];
+
+struct Queue<'c, 'a> {
+    /// The parts that no thread has taken yet, by `Memory::at_most` and then by position.
+    parts: BTreeMap<(usize, usize), Part<'c, 'a>>,
+    /// `Memory::at_most` of the parts that are being compared.
+    running: Vec<usize>,
+    /// How many tokens these may have in total, without the largest.
+    beside_largest: usize,
+}
+
+impl Queue<'_, '_> {
+    /// How many tokens one more part may have.
+    fn room(&self) -> usize {
+        let total: usize = self.running.iter().sum();
+        match self.running.iter().max() {
+            Some(largest) if total > self.beside_largest => self.beside_largest - (total - largest),
+            _ => usize::MAX,
+        }
+    }
+}
+
+/// Compares the files on the threads of `pool`, or on this one without it.
+fn compare_all(
+    changes: &mut [FileChange<'_>],
+    flags: DiffFlags,
+    style: Style,
+    threads: Threads,
+    pool: Option<&ThreadPool>,
+) {
+    /// Beside one file of any size, files with as many tokens as the largest parsed one has are
+    /// compared at the same time, within these limits. A token takes some 100 bytes of memory.
+    const MIN_BESIDE: usize = 128 << 10;
+    const MAX_BESIDE: usize = 4 << 20;
+    /// A part ends with the file that brings it to this much work, so small files do not take a turn each.
+    const WORK_PER_PART: usize = 16 << 10;
+
+    let mut files: Vec<&mut FileChange<'_>> = changes
+        .iter_mut()
+        .filter(|change| change.semantic != Semantic::ModeOnly)
+        .collect();
+    let Some(pool) = pool else {
+        for file in files {
+            compare(file, flags, style, threads);
+        }
+        return;
+    };
+    let mut in_part = 0;
+    let mut parts: Vec<(Memory, Part<'_, '_>)> = files
+        .split_inclusive_mut(|file| {
+            in_part += file.work(flags, style);
+            let is_full = in_part >= WORK_PER_PART;
+            if is_full {
+                in_part = 0;
+            }
+            is_full
+        })
+        .map(|part| (Memory::default(), part))
+        .collect();
+    let workers = pool.max_threads().min(parts.len());
+
+    pool.each_ptr(
+        (),
+        |(), (memory, part), _| {
+            *memory = (part.iter()).fold(*memory, |most, file| most.max(file.memory(flags, style)));
+        },
+        &mut parts,
+    );
+    let largest = parts.iter().map(|(memory, _)| memory.likely).max();
+    let shared = Guarded::new(Queue {
+        running: Vec::with_capacity(workers),
+        beside_largest: largest.unwrap_or(0).clamp(MIN_BESIDE, MAX_BESIDE),
+        parts: (parts.into_iter().enumerate())
+            .map(|(at, (memory, part))| ((memory.at_most, at), part))
+            .collect(),
+    });
+    let has_room = Condvar::new();
+    let work = || {
+        let mut queue = shared.lock();
+        while !queue.parts.is_empty() {
+            let mut fitting = queue.parts.range(..=(queue.room(), usize::MAX));
+            let next = fitting.next_back().map(|(&next, _)| next);
+            let Some(((tokens, _), part)) = next.and_then(|it| queue.parts.remove_entry(&it))
+            else {
+                has_room.wait_guarded(&mut queue);
+                continue;
+            };
+            queue.running.push(tokens);
+            // Each thread wakes the next, if that one finds a part or can end.
+            if (queue.parts.keys().next()).is_none_or(|smallest| smallest.0 <= queue.room()) {
+                has_room.notify_one();
+            }
+            drop(queue);
+            for file in part {
+                compare(file, flags, style, threads);
+            }
+            queue = shared.lock();
+            if let Some(at) = queue.running.iter().position(|&it| it == tokens) {
+                queue.running.swap_remove(at);
+            }
+        }
+        has_room.notify_one();
+    };
+    // This thread does not join in: whether a file is parsed must not depend on the thread that takes it.
+    pool.each_iter((), |(), _| work(), workers, 0..workers);
+}
+
+/// Decides what changed between the two sides of a file, and renders it.
+fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style, threads: Threads) {
+    let FileChange { path, old, new, .. } = *change;
+    let [old_binary, new_binary] = [old, new].map(|side| side.map(|side| is_binary(path, side)));
+    change.binary = old_binary == Some(true) || new_binary == Some(true);
+    change.became_binary = old_binary == Some(false) && new_binary == Some(true);
+    let gained = |has: fn(&[u8]) -> bool| new.is_some_and(has) && !old.is_some_and(has);
+    change.gained_terminal_escapes = !change.binary && gained(has_terminal_escapes);
+    change.gained_bidi_controls = !change.binary && gained(has_bidi_controls);
+    change.sourcemap = change.is_sourcemap();
+    if change.binary || change.sourcemap {
+        return;
+    }
+    if style.pretty {
+        if let (Some(o), Some(n)) = (old, new) {
+            if (strings::contains_char(o, b'\r') || strings::contains_char(n, b'\r'))
+                && strip_cr(o) == strip_cr(n)
+            {
+                change.semantic = Semantic::LineEndingsOnly;
+                return;
+            }
+        }
+    }
+    // Like `formatting only`, a terminal-view summary; piped output stays a complete patch.
+    if flags.ignore_space && style.pretty {
+        if let (Some(o), Some(n)) = (old, new) {
+            if collapse_whitespace(o) == collapse_whitespace(n) {
+                change.semantic = Semantic::WhitespaceOnly;
+                return;
+            }
+        }
+    }
+    // Readable JS is compared on the aggressive key and shown as written; minified JS is shown re-printed,
+    // so it gets the gentler display print.
+    let (is_parsed, js_family) = (change.is_parsed(flags, style), change.is_js());
+    let readable_js = js_family
+        && is_parsed
+        && !flags.unminify
+        && !old.is_some_and(normalize::looks_minified)
+        && !new.is_some_and(normalize::looks_minified);
+    let nopts = normalize::Options {
+        minify_syntax: flags.minify,
+        dce: false,
+        relayout: true,
+        source_map: style.pretty,
+    };
+    let popts = if readable_js {
+        normalize::Options {
+            source_map: style.pretty && old.is_some() && new.is_some(),
+            ..normalize::Options::KEY
+        }
+    } else {
+        nopts
+    };
+    let mut renamed = None;
+    // Canonical re-print: same parser and printer on both sides, so only meaning survives.
+    let (norm_old, norm_new) = match (is_parsed, readable_js, old, new) {
+        (false, ..) => (None, None),
+        // Both sides of readable JS are keyed together so their locals get lockstep names.
+        (true, true, Some(o), Some(n)) => {
+            match normalize::normalize_key_pair(path, o, n, popts, Otherwise::PrintApart, threads) {
+                Pair::Renamed { old, new, .. } => (Some(old), Some(new)),
+                Pair::Apart { old, new } => (old, new),
+            }
+        }
+        (true, false, Some(o), Some(n)) if js_family && style.pretty => {
+            match normalize::normalize_minified_pair(path, o, n, nopts, threads) {
+                Pair::Renamed { old, new, .. } => {
+                    renamed = Some((old, new));
+                    let not_shown = nopts.without_source_map();
+                    threads.join(
+                        o.len().min(n.len()),
+                        || normalize::normalize(path, o, not_shown),
+                        || normalize::normalize(path, n, not_shown),
+                    )
+                }
+                Pair::Apart { old, new } => (old, new),
+            }
+        }
+        _ => (
+            old.and_then(|b| normalize::normalize(path, b, popts)),
+            new.and_then(|b| normalize::normalize(path, b, popts)),
+        ),
+    };
+    if is_parsed {
+        let too_big = |b: Option<&[u8]>| b.is_some_and(|b| b.len() > normalize::MAX_BYTES);
+        if too_big(old) || too_big(new) {
+            change.not_normalized = Some("too large to normalize");
+        } else if (old.is_some() && norm_old.is_none()) || (new.is_some() && norm_new.is_none()) {
+            change.not_normalized = Some("not parsed");
+        }
+    }
+    if let Some(n) = &norm_new {
+        let mut seen: BTreeSet<&Vec<u8>> = norm_old.iter().flat_map(|o| &o.imports).collect();
+        for imp in &n.imports {
+            if seen.insert(imp) {
+                change.new_imports.push(imp.clone());
+            }
+        }
+        let before = norm_old
+            .as_ref()
+            .map_or([0; normalize::SIGNALS.len()], |o| {
+                normalize::count_signals(&o.text)
+            });
+        let after = normalize::count_signals(&n.text);
+        for (i, (_, label)) in normalize::SIGNALS.iter().enumerate() {
+            if after[i] > before[i] {
+                change.signal_deltas.push((label, after[i] - before[i]));
+            }
+        }
+    }
+    // Equal re-prints prove the code is the same; comments and TypeScript types are not in the re-print, so
+    // those are checked separately before anything is called "formatting only".
+    let reprint_equal = matches!((&norm_old, &norm_new), (Some(a), Some(b)) if a.text == b.text);
+    change.formatting_only = reprint_equal && !js_family;
+    match (old, new, &norm_old, &norm_new) {
+        // Patch output must apply to the real files, so only the terminal view uses the re-print.
+        (Some(o), Some(n), Some(no), Some(nn))
+            if style.pretty
+                && (js_family || no.was_minified || nn.was_minified)
+                && (no.was_minified || nn.was_minified || flags.unminify) =>
+        {
+            // Minified: the original is one enormous line, so an un-minified re-print stands in as the source —
+            // locals renamed in lockstep, banner comment as written — and the folded key decides what changed.
+            change.semantic = Semantic::Normalized;
+            let (disp_o, disp_n) = match &renamed {
+                Some((co, cn)) => (co, cn),
+                None => (no, nn),
+            };
+            let (shown_o, shown_n) = (with_banner(o, disp_o), with_banner(n, disp_n));
+            let faithful =
+                [(o, no, &shown_o), (n, nn, &shown_n)]
+                    .iter()
+                    .all(|&(raw, print, shown)| {
+                        if renamed.is_some() {
+                            normalize::stands_for_renamed(path, raw, &shown.text, nopts, threads)
+                        } else {
+                            normalize::stands_for(path, print, &shown.text, nopts)
+                        }
+                    });
+            let keys = (js_family && faithful).then(|| {
+                let options = normalize::Options::KEY;
+                normalize::normalize_key_pair(path, o, n, options, Otherwise::GiveUp, threads)
+            });
+            match keys {
+                // A re-print that does not parse as the same file is not shown in the file's
+                // place. The raw text is diffed instead.
+                _ if !faithful => {
+                    change.semantic = Semantic::Text;
+                    unified_hunks(o, n, flags.context, style, change);
+                }
+                Some(Pair::Renamed {
+                    old: mut ko,
+                    new: mut kn,
+                    ..
+                }) if !ko.map.is_empty() && !kn.map.is_empty() => {
+                    rebase_key_onto(&mut ko, &shown_o, disp_o);
+                    rebase_key_onto(&mut kn, &shown_n, disp_n);
+                    let (projection, _) =
+                        semantic::project(&shown_o.text, &shown_n.text, &ko, &kn, threads);
+                    let same_key = ko.text == kn.text;
+                    if !same_key && shown_o.text == shown_n.text {
+                        // The code differs but the re-prints are identical, so only the raw
+                        // text can show the change.
+                        change.semantic = Semantic::Text;
+                        unified_hunks(o, n, flags.context, style, change);
+                    } else if !projection.holds(path, &shown_o.text, &shown_n.text, same_key) {
+                        change.origin = Some([shown_o.origin, shown_n.origin]);
+                        unified_hunks(&shown_o.text, &shown_n.text, flags.context, style, change);
+                    } else if projection
+                        .ops
+                        .iter()
+                        .any(|op| op.kind != Operation::Equal || op.affected)
+                    {
+                        change.hidden = projection.hidden;
+                        change.origin = Some([shown_o.origin, shown_n.origin]);
+                        render_ops(
+                            &projection.ops,
+                            flags.context,
+                            style,
+                            change,
+                            (false, false),
+                        );
+                    } else {
+                        change.semantic = Semantic::FormattingOnly;
+                        change.formatting_only = true;
+                    }
+                }
+                _ if shown_o.text == shown_n.text => {
+                    change.semantic = Semantic::FormattingOnly;
+                    change.formatting_only = true;
+                }
+                _ => {
+                    change.origin = Some([shown_o.origin, shown_n.origin]);
+                    unified_hunks(&shown_o.text, &shown_n.text, flags.context, style, change);
+                }
+            }
+        }
+        (Some(o), Some(n), Some(ko), Some(kn)) if style.pretty && js_family => {
+            // Readable code: decide on the aggressive canonical form, show the author's lines.
+            match (ko, kn) {
+                (ko, kn) if !ko.map.is_empty() && !kn.map.is_empty() => {
+                    let (old_v, new_v) = (view_bytes(o), view_bytes(n));
+                    let (projection, unfolded) = semantic::project(&old_v, &new_v, ko, kn, threads);
+                    let shown = projection
+                        .ops
+                        .iter()
+                        .any(|op| op.kind != Operation::Equal || op.affected);
+                    if !projection.holds(path, &old_v, &new_v, ko.text == kn.text) {
+                        render_ops(&unfolded, flags.context, style, change, (false, false));
+                    } else if shown {
+                        change.semantic = Semantic::Projected;
+                        change.hidden = projection.hidden;
+                        render_ops(
+                            &projection.ops,
+                            flags.context,
+                            style,
+                            change,
+                            (false, false),
+                        );
+                    } else {
+                        change.semantic = Semantic::FormattingOnly;
+                        change.formatting_only = true;
+                    }
+                }
+                _ => unified_hunks(o, n, flags.context, style, change),
+            }
+        }
+        (Some(_), Some(_), Some(_), Some(_)) if style.pretty && reprint_equal => {
+            // JSON / CSS: no source map to project through; an identical re-print is formatting.
+            change.semantic = Semantic::FormattingOnly;
+        }
+        (Some(_), Some(_), Some(no), Some(nn)) if style.pretty => {
+            // JSON / CSS with a real change: the canonical prints are what is compared and shown, so a
+            // reformat around one edit is one edit.
+            change.semantic = Semantic::Reprinted;
+            unified_hunks(&no.text, &nn.text, flags.context, style, change);
+        }
+        (None, Some(n), _, _) => change.added = count_lines(n),
+        (Some(o), None, _, _) => change.removed = count_lines(o),
+        (Some(o), Some(n), _, _) => unified_hunks(o, n, flags.context, style, change),
+        (None, None, _, _) => unreachable!(),
+    }
+    if style.hunks
+        && change.hunks.is_empty()
+        && change.semantic == Semantic::Text
+        && (old.is_none() || new.is_none())
+    {
+        // Whole-file add/remove: render every line as +/- (a minified bundle in its readable re-print).
+        let (op, raw, norm) = match (new, old) {
+            (Some(n), _) => (Operation::Insert, n, &norm_new),
+            (None, Some(o)) => (Operation::Delete, o, &norm_old),
+            (None, None) => unreachable!(),
+        };
+        let shown = match norm {
+            Some(norm) if style.pretty && norm.was_minified => Some(with_banner(raw, norm))
+                .filter(|shown| normalize::stands_for(path, norm, &shown.text, nopts)),
+            _ => None,
+        };
+        let body = shown.as_ref().map_or(raw, |shown| &shown.text);
+        if body.len() != raw.len() {
+            change.semantic = Semantic::Normalized;
+            change.origin = shown
+                .as_ref()
+                .map(|shown| [shown.origin.clone(), shown.origin.clone()]);
+            if op == Operation::Insert {
+                change.added = count_lines(body)
+            } else {
+                change.removed = count_lines(body)
+            }
+        }
+        let n = count_lines(body);
+        let range = if new.is_some() {
+            (0, 0, 1, n)
+        } else {
+            (1, n, 0, 0)
+        };
+        // An empty file has no lines, and a hunk header without lines corrupts the patch.
+        if n > 0 {
+            style.hunk_header(&mut change.hunks, range, true);
+        }
+        let unterminated = !style.pretty && !body.is_empty() && !body.ends_with(b"\n");
+        for (i, line) in Lines(body).enumerate() {
+            style.line(
+                &mut change.hunks,
+                op,
+                i + 1,
+                i + 1,
+                line,
+                change.highlight,
+                None,
+                false,
+                change
+                    .origin
+                    .as_ref()
+                    .map(|[o, _]| o.get(i).copied().unwrap_or((0, 0))),
+            );
+        }
+        if unterminated {
+            change.hunks.extend_from_slice(NO_NEWLINE_MARKER);
+        }
+    }
+}
+
+fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags, threads: Threads) {
     let style = Style::detect(flags);
     let mut changes: Vec<FileChange> = Vec::new();
 
@@ -1286,329 +1891,27 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
         if old == new && mode_change.is_none() {
             continue;
         }
-        let mut change = FileChange {
+        changes.push(FileChange {
             path,
             highlight: style.pretty && is_js_like(path),
+            semantic: if old == new {
+                Semantic::ModeOnly
+            } else {
+                Semantic::Text
+            },
             old,
             new,
             mode_change,
             ..Default::default()
-        };
-        if old == new {
-            change.semantic = Semantic::ModeOnly;
-            changes.push(change);
-            continue;
-        }
-        change.binary = [old, new]
-            .iter()
-            .flatten()
-            .any(|side| is_binary(path, side));
-        // Because of the colon, this prefix can only start JSON, never a JavaScript program.
-        change.sourcemap = strings::ends_with(path, b".map")
-            && new.or(old).is_some_and(|b| b.starts_with(b"{\"version\":"));
-        if change.binary || change.sourcemap {
-            changes.push(change);
-            continue;
-        }
-        if style.pretty {
-            if let (Some(o), Some(n)) = (old, new) {
-                if (strings::contains_char(o, b'\r') || strings::contains_char(n, b'\r'))
-                    && strip_cr(o) == strip_cr(n)
-                {
-                    change.semantic = Semantic::LineEndingsOnly;
-                    changes.push(change);
-                    continue;
-                }
-            }
-        }
-        // Like `formatting only`, a terminal-view summary; piped output stays a complete patch.
-        if flags.ignore_space && style.pretty {
-            if let (Some(o), Some(n)) = (old, new) {
-                if collapse_whitespace(o) == collapse_whitespace(n) {
-                    change.semantic = Semantic::WhitespaceOnly;
-                    changes.push(change);
-                    continue;
-                }
-            }
-        }
-        let nopts = normalize::Options {
-            minify_syntax: flags.minify,
-            dce: false,
-            relayout: true,
-        };
-        // Readable JS is compared on the aggressive key and shown as written; minified JS is shown re-printed,
-        // so it gets the gentler display print.
-        let readable_js = matches!(normalize::kind_for(path), Some(normalize::Kind::Js(_)))
-            && !flags.unminify
-            && !old.is_some_and(normalize::looks_minified)
-            && !new.is_some_and(normalize::looks_minified);
-        let popts = if readable_js {
-            normalize::Options::KEY
-        } else {
-            nopts
-        };
-        // Canonical re-print: same parser and printer on both sides, so only meaning survives.
-        let (norm_old, norm_new) = match (flags.raw, readable_js, old, new) {
-            (true, ..) => (None, None),
-            // Both sides of readable JS are keyed together so their locals get lockstep names.
-            (false, true, Some(o), Some(n)) => match normalize::normalize_key_pair(path, o, n) {
-                Some((ko, kn)) => (Some(ko), Some(kn)),
-                None => (
-                    normalize::normalize(path, o, popts),
-                    normalize::normalize(path, n, popts),
-                ),
-            },
-            _ => (
-                old.and_then(|b| normalize::normalize(path, b, popts)),
-                new.and_then(|b| normalize::normalize(path, b, popts)),
-            ),
-        };
-        if !flags.raw && normalize::kind_for(path).is_some() {
-            let too_big = |b: Option<&[u8]>| b.is_some_and(|b| b.len() > normalize::MAX_BYTES);
-            if too_big(old) || too_big(new) {
-                change.not_normalized = Some("too large to normalize");
-            } else if (old.is_some() && norm_old.is_none()) || (new.is_some() && norm_new.is_none())
-            {
-                change.not_normalized = Some("not parsed");
-            }
-        }
-        if let Some(n) = &norm_new {
-            let old_imports: &[Vec<u8>] = norm_old.as_ref().map_or(&[], |o| o.imports.as_slice());
-            for imp in &n.imports {
-                if !old_imports.contains(imp) && !change.new_imports.contains(imp) {
-                    change.new_imports.push(imp.clone());
-                }
-            }
-            let before = norm_old
-                .as_ref()
-                .map_or([0; normalize::SIGNALS.len()], |o| {
-                    normalize::count_signals(&o.text)
-                });
-            let after = normalize::count_signals(&n.text);
-            for (i, (_, label)) in normalize::SIGNALS.iter().enumerate() {
-                if after[i] > before[i] {
-                    change.signal_deltas.push((label, after[i] - before[i]));
-                }
-            }
-        }
-        // Equal re-prints prove the code is the same; comments and TypeScript types are not in the re-print, so
-        // those are checked separately before anything is called "formatting only".
-        let reprint_equal =
-            matches!((&norm_old, &norm_new), (Some(a), Some(b)) if a.text == b.text);
-        let js_family = matches!(normalize::kind_for(path), Some(normalize::Kind::Js(_)));
-        change.formatting_only = reprint_equal && !js_family;
-        match (old, new, &norm_old, &norm_new) {
-            // Patch output must apply to the real files, so only the terminal view uses the re-print.
-            (Some(o), Some(n), Some(no), Some(nn))
-                if style.pretty
-                    && (js_family || no.was_minified || nn.was_minified)
-                    && (no.was_minified || nn.was_minified || flags.unminify) =>
-            {
-                // Minified: the original is one enormous line, so an un-minified re-print stands in as the source —
-                // locals renamed in lockstep, banner comment as written — and the folded key decides what changed.
-                change.semantic = Semantic::Normalized;
-                let renamed = if js_family {
-                    normalize::normalize_minified_pair(path, o, n, nopts)
-                } else {
-                    None
-                };
-                let (disp_o, disp_n) = match &renamed {
-                    Some((co, cn)) => (co, cn),
-                    None => (no, nn),
-                };
-                let (shown_o, shown_n) = (with_banner(o, disp_o), with_banner(n, disp_n));
-                let faithful = [(o, &shown_o), (n, &shown_n)].iter().all(|(raw, shown)| {
-                    normalize::stands_for(path, raw, &shown.text, nopts, renamed.is_some())
-                });
-                let keys = if js_family && faithful {
-                    normalize::normalize_key_pair(path, o, n)
-                } else {
-                    None
-                };
-                match keys {
-                    // A re-print that does not parse as the same file is not shown in the file's
-                    // place. The raw text is diffed instead.
-                    _ if !faithful => {
-                        change.semantic = Semantic::Text;
-                        unified_hunks(o, n, flags.context, style, &mut change);
-                    }
-                    Some((mut ko, mut kn)) if !ko.map.is_empty() && !kn.map.is_empty() => {
-                        rebase_key_onto(&mut ko, &shown_o, disp_o);
-                        rebase_key_onto(&mut kn, &shown_n, disp_n);
-                        let projection = semantic::project(&shown_o.text, &shown_n.text, &ko, &kn);
-                        let same_key = ko.text == kn.text;
-                        if !same_key && shown_o.text == shown_n.text {
-                            // The code differs but the re-prints are identical, so only the raw
-                            // text can show the change.
-                            change.semantic = Semantic::Text;
-                            unified_hunks(o, n, flags.context, style, &mut change);
-                        } else if !projection.holds(path, &shown_o.text, &shown_n.text, same_key) {
-                            change.origin = Some([shown_o.origin, shown_n.origin]);
-                            unified_hunks(
-                                &shown_o.text,
-                                &shown_n.text,
-                                flags.context,
-                                style,
-                                &mut change,
-                            );
-                        } else if projection
-                            .ops
-                            .iter()
-                            .any(|op| op.kind != Operation::Equal || op.affected)
-                        {
-                            change.hidden = projection.hidden;
-                            change.origin = Some([shown_o.origin, shown_n.origin]);
-                            render_ops(
-                                &projection.ops,
-                                flags.context,
-                                style,
-                                &mut change,
-                                (false, false),
-                            );
-                        } else {
-                            change.semantic = Semantic::FormattingOnly;
-                            change.formatting_only = true;
-                        }
-                    }
-                    _ if shown_o.text == shown_n.text => {
-                        change.semantic = Semantic::FormattingOnly;
-                        change.formatting_only = true;
-                    }
-                    _ => {
-                        change.origin = Some([shown_o.origin, shown_n.origin]);
-                        unified_hunks(
-                            &shown_o.text,
-                            &shown_n.text,
-                            flags.context,
-                            style,
-                            &mut change,
-                        );
-                    }
-                }
-            }
-            (Some(o), Some(n), Some(ko), Some(kn)) if style.pretty && js_family => {
-                // Readable code: decide on the aggressive canonical form, show the author's lines.
-                match (ko, kn) {
-                    (ko, kn) if !ko.map.is_empty() && !kn.map.is_empty() => {
-                        let (old_v, new_v) = (view_bytes(o), view_bytes(n));
-                        let projection = semantic::project(&old_v, &new_v, ko, kn);
-                        let shown = projection
-                            .ops
-                            .iter()
-                            .any(|op| op.kind != Operation::Equal || op.affected);
-                        if !projection.holds(path, &old_v, &new_v, ko.text == kn.text) {
-                            unified_hunks(o, n, flags.context, style, &mut change);
-                        } else if shown {
-                            change.semantic = Semantic::Projected;
-                            change.hidden = projection.hidden;
-                            render_ops(
-                                &projection.ops,
-                                flags.context,
-                                style,
-                                &mut change,
-                                (false, false),
-                            );
-                        } else {
-                            change.semantic = Semantic::FormattingOnly;
-                            change.formatting_only = true;
-                        }
-                    }
-                    _ => unified_hunks(o, n, flags.context, style, &mut change),
-                }
-            }
-            (Some(_), Some(_), Some(_), Some(_)) if style.pretty && reprint_equal => {
-                // JSON / CSS: no source map to project through; an identical re-print is formatting.
-                change.semantic = Semantic::FormattingOnly;
-            }
-            (Some(_), Some(_), Some(no), Some(nn)) if style.pretty => {
-                // JSON / CSS with a real change: the canonical prints are what is compared and shown, so a
-                // reformat around one edit is one edit.
-                change.semantic = Semantic::Reprinted;
-                unified_hunks(&no.text, &nn.text, flags.context, style, &mut change);
-            }
-            (None, Some(n), _, _) => change.added = count_lines(n),
-            (Some(o), None, _, _) => change.removed = count_lines(o),
-            (Some(o), Some(n), _, _) => unified_hunks(o, n, flags.context, style, &mut change),
-            (None, None, _, _) => unreachable!(),
-        }
-        if !flags.name_only
-            && !flags.stat
-            && change.hunks.is_empty()
-            && change.semantic == Semantic::Text
-            && (old.is_none() || new.is_none())
-        {
-            // Whole-file add/remove: render every line as +/- (a minified bundle in its readable re-print).
-            let readable = |raw: &[u8], norm: &Option<normalize::Normalized>| -> Vec<u8> {
-                let reprint = match norm {
-                    Some(nz) if style.pretty && nz.was_minified => Some(with_banner(raw, nz).text),
-                    _ => None,
-                };
-                reprint
-                    .filter(|shown| normalize::stands_for(path, raw, shown, nopts, false))
-                    .unwrap_or_else(|| raw.to_vec())
-            };
-            let body_owned;
-            let (op, body) = match (new, old) {
-                (Some(n), _) => {
-                    body_owned = readable(n, &norm_new);
-                    (Operation::Insert, body_owned.as_slice())
-                }
-                (None, Some(o)) => {
-                    body_owned = readable(o, &norm_old);
-                    (Operation::Delete, body_owned.as_slice())
-                }
-                (None, None) => unreachable!(),
-            };
-            if body.len() != new.or(old).map_or(0, <[u8]>::len) {
-                change.semantic = Semantic::Normalized;
-                let (raw, nz) = if op == Operation::Insert {
-                    (new, &norm_new)
-                } else {
-                    (old, &norm_old)
-                };
-                if let (Some(raw), Some(nz)) = (raw, nz) {
-                    let origin = with_banner(raw, nz).origin;
-                    change.origin = Some([origin.clone(), origin]);
-                }
-                if op == Operation::Insert {
-                    change.added = count_lines(body)
-                } else {
-                    change.removed = count_lines(body)
-                }
-            }
-            let n = count_lines(body);
-            let range = if new.is_some() {
-                (0, 0, 1, n)
-            } else {
-                (1, n, 0, 0)
-            };
-            // An empty file has no lines, and a hunk header without lines corrupts the patch.
-            if n > 0 {
-                style.hunk_header(&mut change.hunks, range, true);
-            }
-            let unterminated = !style.pretty && !body.is_empty() && !body.ends_with(b"\n");
-            for (i, line) in Lines(body).enumerate() {
-                style.line(
-                    &mut change.hunks,
-                    op,
-                    i + 1,
-                    i + 1,
-                    line,
-                    change.highlight,
-                    None,
-                    false,
-                    change
-                        .origin
-                        .as_ref()
-                        .map(|[o, _]| o.get(i).copied().unwrap_or((0, 0))),
-                );
-            }
-            if unterminated {
-                change.hunks.extend_from_slice(NO_NEWLINE_MARKER);
-            }
-        }
-        changes.push(change);
+        });
     }
+    let pool = threads.pool_for(&changes, flags, style);
+    if pool.max_threads() > 1 {
+        pool.warm(1);
+    }
+    // If the OS cannot start the pool's first thread, what is scheduled on the pool never runs.
+    let pool = pool.has_workers().then_some(&pool);
+    compare_all(&mut changes, flags, style, threads, pool);
 
     if flags.json {
         print_json(left, right, &changes, flags);
@@ -1624,6 +1927,12 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
     }
     if !style.pretty || flags.name_only || flags.stat {
         prettyln!("");
+    }
+
+    if style.pretty && style.hunks {
+        print_in_colors(&changes, style, pool);
+        print_summary(left, right, &changes, style);
+        return;
     }
 
     let path_width = changes
@@ -1698,11 +2007,6 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             }
             continue;
         }
-        if style.pretty {
-            style.file_header(c);
-            Output::print(format_args!("{}", BStr::new(&c.hunks)));
-            continue;
-        }
         // A file whose contents the patch omits gets neither a `diff --git` header nor a mode line,
         // because GNU patch would apply the mode line to the previous file.
         let in_patch = !c.binary && !c.sourcemap;
@@ -1719,7 +2023,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
         // context line has to come out unchanged for the patch to apply.
         let put = |part: &[u8]| {
             if style.escape {
-                Output::print(format_args!("{}", BStr::new(part)));
+                print_lossy(part);
             } else {
                 Output::print_bytes(part);
             }
@@ -1784,6 +2088,119 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
         }
     }
     print_summary(left, right, &changes, style);
+}
+
+/// Prints the terminal view. Syntax colours make it much longer, so only what is about to be printed has them.
+fn print_in_colors(changes: &[FileChange<'_>], style: Style, pool: Option<&ThreadPool>) {
+    const BYTES_PER_PART: usize = 64 << 10;
+    const PARTS_PER_THREAD: usize = 4;
+
+    struct Ahead<Parts: Iterator> {
+        parts: core::iter::Peekable<Parts>,
+        printed: usize,
+        /// The parts after the printed ones, each `None` until a thread is done with it.
+        colored: VecDeque<Option<Vec<u8>>>,
+    }
+
+    // The first piece of a file has its header.
+    let mut pieces = changes.iter().flat_map(|change| {
+        let (mut header, mut rest) = (Some(change), change.hunks.as_slice());
+        core::iter::from_fn(move || {
+            if header.is_none() && rest.is_empty() {
+                return None;
+            }
+            let piece;
+            (piece, rest) = split_marked(rest, BYTES_PER_PART);
+            Some((header.take(), piece))
+        })
+    });
+    // The header of a binary file has the hashes of its sides.
+    let header_work = |it: &FileChange<'_>| {
+        it.path.len() + style.width * "─".len() + if it.binary { it.bytes() } else { 0 }
+    };
+    // A part has pieces of several files, so that small files do not take a turn each.
+    let parts = core::iter::from_fn(move || {
+        let (mut part, mut len) = (Vec::new(), 0);
+        while len < BYTES_PER_PART
+            && let Some((header, piece)) = pieces.next()
+        {
+            len += piece.len() + header.map_or(0, header_work);
+            part.push((header, piece));
+        }
+        (!part.is_empty()).then_some(part)
+    });
+    let color = |part: Vec<(Option<&FileChange<'_>>, &[u8])>| {
+        let mut out = Vec::with_capacity(2 * BYTES_PER_PART);
+        for (header, piece) in part {
+            if let Some(change) = header {
+                style.file_header(&mut out, change);
+            }
+            style.highlight(&mut out, piece);
+        }
+        if strings::is_valid_utf8(&out) {
+            out
+        } else {
+            BStr::new(&out).to_string().into_bytes()
+        }
+    };
+    let Some(pool) = pool else {
+        return parts.for_each(|part| Output::print_bytes(&color(part)));
+    };
+
+    let threads = pool.max_threads();
+    let shared = Guarded::new(Ahead {
+        parts: parts.peekable(),
+        printed: 0,
+        colored: VecDeque::new(),
+    });
+    let (has_room, has_next) = (Condvar::new(), Condvar::new());
+    let work = || {
+        let mut ahead = shared.lock();
+        loop {
+            if ahead.colored.len() == PARTS_PER_THREAD * threads {
+                has_room.wait_guarded(&mut ahead);
+                continue;
+            }
+            let Some(part) = ahead.parts.next() else {
+                // Each thread that ends wakes the next.
+                return has_room.notify_one();
+            };
+            let at = ahead.printed + ahead.colored.len();
+            ahead.colored.push_back(None);
+            drop(ahead);
+            let colored = color(part);
+            ahead = shared.lock();
+            let at = at - ahead.printed;
+            ahead.colored[at] = Some(colored);
+            if at == 0 {
+                has_next.notify_one();
+            }
+        }
+    };
+    let print = || {
+        let mut ahead = shared.lock();
+        while !ahead.colored.is_empty() || ahead.parts.peek().is_some() {
+            let Some(Some(next)) = ahead.colored.pop_front_if(|next| next.is_some()) else {
+                has_next.wait_guarded(&mut ahead);
+                continue;
+            };
+            ahead.printed += 1;
+            has_room.notify_one();
+            drop(ahead);
+            Output::print_bytes(&next);
+            ahead = shared.lock();
+        }
+    };
+    pool.each_while((), |(), (), _| work(), &vec![(); threads], print);
+}
+
+/// Prints U+FFFD in place of what is not UTF-8.
+fn print_lossy(bytes: &[u8]) {
+    if strings::is_valid_utf8(bytes) {
+        Output::print_bytes(bytes);
+    } else {
+        Output::print(format_args!("{}", BStr::new(bytes)));
+    }
 }
 
 /// The header everyone reads first: which versions, how much changed, and the changes worth a second look
@@ -1909,18 +2326,19 @@ fn collect_notes(
             )),
             _ => {}
         }
-        if let Some(n) = c.new {
-            let gained = |needle: fn(&[u8]) -> bool| needle(n) && !c.old.is_some_and(needle);
-            if !c.binary && gained(has_terminal_escapes) {
-                notes.push(note!(
-                    colors,
-                    "terminal escape sequences in <b>{}<r> <d>(shown as ␛)<r>",
-                    &[BStr::new(c.path).to_string()]
-                ));
-            }
-            if !c.binary && gained(has_bidi_controls) {
-                notes.push(note!(colors, "bidirectional text controls in <b>{}<r> <d>(Trojan Source; shown as ‹U+202E›)<r>", &[BStr::new(c.path).to_string()]));
-            }
+        if c.gained_terminal_escapes {
+            notes.push(note!(
+                colors,
+                "terminal escape sequences in <b>{}<r> <d>(shown as ␛)<r>",
+                &[BStr::new(c.path).to_string()]
+            ));
+        }
+        if c.gained_bidi_controls {
+            notes.push(note!(
+                colors,
+                "bidirectional text controls in <b>{}<r> <d>(Trojan Source; shown as ‹U+202E›)<r>",
+                &[BStr::new(c.path).to_string()]
+            ));
         }
         if c.binary && c.old.is_none() {
             notes.push(note!(
@@ -1932,9 +2350,7 @@ fn collect_notes(
                 ],
             ));
         }
-        if c.new.is_some_and(|new| is_binary(c.path, new))
-            && c.old.is_some_and(|old| !is_binary(c.path, old))
-        {
+        if c.became_binary {
             notes.push(note!(
                 colors,
                 "<b>{}<r> was text and is now binary",
@@ -2041,7 +2457,7 @@ fn print_json(left: &Tree, right: &Tree, changes: &[FileChange<'_>], flags: Diff
         lines_removed,
         formatting_only
     );
-    Output::print(format_args!("{}", BStr::new(&out)));
+    print_lossy(&out);
 }
 
 /// What the parser saw that a reviewer would want to know: new imports of consequential builtins, other new
@@ -2049,13 +2465,12 @@ fn print_json(left: &Tree, right: &Tree, changes: &[FileChange<'_>], flags: Diff
 fn ast_notes(changes: &[FileChange<'_>], notes: &mut Vec<String>, colors: bool) {
     let mut builtins: Vec<(Vec<u8>, &[u8])> = Vec::new();
     let mut packages: Vec<Vec<u8>> = Vec::new();
+    let mut seen = BTreeSet::new();
     for c in changes {
-        for imp in &c.new_imports {
+        for imp in c.new_imports.iter().filter(|&imp| seen.insert(imp)) {
             if normalize::notable_builtin(imp) {
-                if !builtins.iter().any(|(b, _)| b == imp) {
-                    builtins.push((imp.clone(), c.path));
-                }
-            } else if !imp.starts_with(b".") && !imp.starts_with(b"/") && !packages.contains(imp) {
+                builtins.push((imp.clone(), c.path));
+            } else if !imp.starts_with(b".") && !imp.starts_with(b"/") {
                 packages.push(imp.clone());
             }
         }
@@ -2195,7 +2610,6 @@ fn string_pairs(e: Option<&bun_ast::Expr>, bump: &Bump) -> Vec<(Vec<u8>, Vec<u8>
 /// Returns one of `INSTALL_FIELDS` as sorted pairs, normalized so that two spellings that install
 /// the same thing compare equal. A registry rewrites some fields when a package is published.
 fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>, Vec<u8>)> {
-    use bun_paths::resolve_path::{join_abs_string_checked, platform};
     let Some(value) = json.get(field) else {
         return Vec::new();
     };
@@ -2211,11 +2625,12 @@ fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>
             }
             for (name, path) in &mut pairs {
                 *name = bun_paths::basename(name).to_vec();
-                if let Some(normal) =
-                    join_abs_string_checked::<platform::Posix>(b"/", &[path.as_slice()])
-                {
-                    *path = normal.to_vec();
+                let mut normal = bun_paths::Path::from(b"/");
+                normal.push_inside(&strings::replace_char(path, b'\\', b'/'));
+                if path.ends_with(b"/") {
+                    normal.push_trailing_sep();
                 }
+                *path = normal.to_vec();
             }
         }
         b"directories" => pairs.retain(|(name, _)| name == b"bin"),
@@ -2234,7 +2649,9 @@ fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>
         // optional dependencies under `dependencies`.
         b"dependencies" => {
             let optional = install_view(json, b"optionalDependencies", bump);
-            pairs.retain(|(name, _)| !optional.iter().any(|(other, _)| other == name));
+            pairs.retain(|(name, _)| {
+                (optional.binary_search_by(|(other, _)| other.cmp(name))).is_err()
+            });
         }
         _ => {}
     }
@@ -2243,6 +2660,7 @@ fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>
 }
 
 fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors: bool) {
+    bun_ast::initialize_store();
     let bump = Bump::new();
     let parse = |bytes: &[u8]| {
         let src: &[u8] = bump.alloc_slice_copy(bytes);
@@ -2294,14 +2712,14 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
     };
     // When a key appears twice, which value wins depends on the tool that reads the file.
     if let Some(object) = new.file.data.e_object() {
-        let keys: Vec<&[u8]> = object
+        let keys = object
             .properties
             .slice()
             .iter()
-            .filter_map(|p| p.key.as_ref()?.as_string(&bump))
-            .collect();
-        for (i, key) in keys.iter().enumerate() {
-            if keys[..i].contains(key) {
+            .filter_map(|p| p.key.as_ref()?.as_string(&bump));
+        let mut seen = BTreeSet::new();
+        for key in keys {
+            if !seen.insert(key) {
                 notes.push(note!(
                     colors,
                     "<b>{}<r> listed more than once in package.json",
@@ -2351,9 +2769,13 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
         let is_range = |version: &[u8]| {
             dependency::Tag::infer(version) == dependency::Tag::Npm && !version.starts_with(b"npm:")
         };
+        // Of several entries with one name the first counts, so it is inserted last.
+        let mut old_versions = BTreeMap::new();
+        old_versions.extend(o.iter().rev().map(|(name, ver)| (name, ver)));
+        let new_names: BTreeSet<_> = n.iter().map(|(name, _)| name).collect();
         let mut bumps: Vec<String> = Vec::new();
         for (name, ver) in &n {
-            match o.iter().find(|(on, _)| on == name) {
+            match old_versions.get(name) {
                 None => notes.push(note!(
                     colors,
                     "{} added: <b>{}<r>@{}",
@@ -2363,7 +2785,7 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
                         (BStr::new(ver)).to_string(),
                     ],
                 )),
-                Some((_, ov)) if ov != ver => {
+                Some(&ov) if ov != ver => {
                     let list = if is_range(ov) && is_range(ver) {
                         &mut bumps
                     } else {
@@ -2395,7 +2817,7 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
         }
         notes.append(&mut bumps);
         for (name, _) in &o {
-            if !n.iter().any(|(nn, _)| nn == name) {
+            if !new_names.contains(name) {
                 notes.push(note!(
                     colors,
                     "{} removed: <b>{}<r>",
@@ -2481,9 +2903,13 @@ fn json_text(e: &bun_ast::Expr, minify_whitespace: bool) -> Vec<u8> {
         *e,
         &source,
         bun_js_printer::PrintJsonOptions {
+            // No caller shows the indentation.
+            indent: bun_ast::Indentation {
+                scalar: 0,
+                ..Default::default()
+            },
             mangled_props: None,
             minify_whitespace,
-            ..Default::default()
         },
     );
     printer.ctx.get_written().to_vec()
@@ -2494,7 +2920,7 @@ fn expr_text(e: &bun_ast::Expr, bump: &Bump) -> Vec<u8> {
     if let Some(s) = e.as_string(bump) {
         return s.to_vec();
     }
-    // Collapse the printer's indentation.
+    // Collapse the printer's line breaks.
     let mut out: Vec<u8> = Vec::new();
     let mut last_space = false;
     for b in json_text(e, false) {
@@ -2556,54 +2982,65 @@ impl<'a> Iterator for Lines<'a> {
     }
 }
 
-/// Plain output is a valid unified patch; a terminal gets a gutter with line numbers instead of `@@` headers.
 /// Line tints for removed/added lines and the stronger tint for the differing span within them.
-struct Palette {
-    del: &'static str,
-    del_strong: &'static str,
-    ins: &'static str,
-    ins_strong: &'static str,
+#[derive(Clone, Copy)]
+enum Tint {
+    None,
+    Del,
+    DelStrong,
+    Ins,
+    InsStrong,
 }
+
+/// Indexed by `Tint`.
+type Palette = [&'static str; 5];
 
 /// GitHub's diff colours where the terminal can show them exactly, the nearest xterm-256 cells otherwise; the
 /// light set keeps default (dark) text readable, the dark set keeps default (light) text readable.
 static PALETTES: [Palette; 4] = [
     // dark, 256
-    Palette {
-        del: "\x1b[48;5;52m",
-        del_strong: "\x1b[48;5;88m",
-        ins: "\x1b[48;5;22m",
-        ins_strong: "\x1b[48;5;28m",
-    },
+    [
+        "",
+        "\x1b[48;5;52m",
+        "\x1b[48;5;88m",
+        "\x1b[48;5;22m",
+        "\x1b[48;5;28m",
+    ],
     // dark, truecolor
-    Palette {
-        del: "\x1b[48;2;68;20;24m",
-        del_strong: "\x1b[48;2;134;40;48m",
-        ins: "\x1b[48;2;18;54;30m",
-        ins_strong: "\x1b[48;2;30;104;52m",
-    },
+    [
+        "",
+        "\x1b[48;2;68;20;24m",
+        "\x1b[48;2;134;40;48m",
+        "\x1b[48;2;18;54;30m",
+        "\x1b[48;2;30;104;52m",
+    ],
     // light, 256
-    Palette {
-        del: "\x1b[48;5;224m",
-        del_strong: "\x1b[48;5;217m",
-        ins: "\x1b[48;5;194m",
-        ins_strong: "\x1b[48;5;157m",
-    },
+    [
+        "",
+        "\x1b[48;5;224m",
+        "\x1b[48;5;217m",
+        "\x1b[48;5;194m",
+        "\x1b[48;5;157m",
+    ],
     // light, truecolor
-    Palette {
-        del: "\x1b[48;2;255;235;233m",
-        del_strong: "\x1b[48;2;255;193;192m",
-        ins: "\x1b[48;2;218;251;225m",
-        ins_strong: "\x1b[48;2;172;238;187m",
-    },
+    [
+        "",
+        "\x1b[48;2;255;235;233m",
+        "\x1b[48;2;255;193;192m",
+        "\x1b[48;2;218;251;225m",
+        "\x1b[48;2;172;238;187m",
+    ],
 ];
 
+/// Plain output is a valid unified patch; a terminal gets a gutter with line numbers instead of `@@` headers.
 #[derive(Clone, Copy)]
 struct Style {
     pretty: bool,
     /// True when the output goes to a terminal, either in color or (with `NO_COLOR`) as a plain
     /// patch. Bytes from a package then go through `defang`.
     escape: bool,
+    /// False with `--name-only` and `--stat`, which only count the changed lines.
+    hunks: bool,
     width: usize,
     palette: &'static Palette,
 }
@@ -2637,6 +3074,7 @@ impl Style {
         Style {
             pretty,
             escape: pretty || (!flags.json && Output::is_stdout_tty()),
+            hunks: !flags.name_only && !flags.stat,
             width,
             palette,
         }
@@ -2698,36 +3136,44 @@ impl Style {
         });
         let text: &[u8] = &defang(text);
         // Changed lines get a tinted background so the foreground is free for syntax colours.
-        let (num, accent, bg, strong) = match op {
+        let (num, accent, tint, strong) = match op {
             // Unchanged text whose meaning moved (now dead, or newly live): flagged, not tinted.
-            Operation::Equal if affected => (new_no, "\x1b[33m", "", ""),
-            Operation::Equal => (new_no, "\x1b[2m", "", ""),
-            Operation::Delete => (
-                old_no,
-                "\x1b[31m",
-                self.palette.del,
-                self.palette.del_strong,
-            ),
-            Operation::Insert => (
-                new_no,
-                "\x1b[32m",
-                self.palette.ins,
-                self.palette.ins_strong,
-            ),
+            Operation::Equal if affected => (new_no, "\x1b[33m", Tint::None, Tint::None),
+            Operation::Equal => (new_no, "\x1b[2m", Tint::None, Tint::None),
+            Operation::Delete => (old_no, "\x1b[31m", Tint::Del, Tint::DelStrong),
+            Operation::Insert => (new_no, "\x1b[32m", Tint::Ins, Tint::InsStrong),
         };
+        let bg = self.palette[tint as usize];
         // Re-printed (un-minified) lines are numbered by where they sit in the original: `line:col`.
         // `(0, 0)` is the no-mapping sentinel (CSS/JSON re-prints have no source map): plain numbering then.
         let pos = pos.filter(|&(l, _)| l > 0);
-        let gutter = match pos {
-            Some((l, c)) => format!("{l}:{c}"),
-            None => format!("{num}"),
+        let gw: usize = if pos.is_some() { 9 } else { 5 };
+        let (mut line_buf, mut col_buf) = (bun_fmt::ItoaBuf::new(), bun_fmt::ItoaBuf::new());
+        let (line, colon, col): (&[u8], &[u8], &[u8]) = match pos {
+            Some((l, c)) => (
+                bun_fmt::itoa(&mut line_buf, l),
+                b":",
+                bun_fmt::itoa(&mut col_buf, c),
+            ),
+            None => (bun_fmt::itoa(&mut line_buf, num), b"", b""),
         };
-        let gw = if pos.is_some() { 9 } else { 5 };
-        let _ = write!(
-            out,
-            "{accent}{gutter:>gw$} \x1b[0m\x1b[2m│\x1b[0m{bg}{accent}\x1b[1m{} \x1b[0m{bg}",
-            sign as char
-        );
+        let padding = gw.saturating_sub(line.len() + colon.len() + col.len());
+        for part in [
+            accent.as_bytes(),
+            &b"         "[..padding],
+            line,
+            colon,
+            col,
+            " \x1b[0m\x1b[2m│\x1b[0m".as_bytes(),
+            bg.as_bytes(),
+            accent.as_bytes(),
+            b"\x1b[1m",
+            &[sign],
+            b" \x1b[0m",
+            bg.as_bytes(),
+        ] {
+            out.extend_from_slice(part);
+        }
         let budget = self.width.saturating_sub(gw + 4);
         match emph {
             Some((lo, hi)) if lo < hi || text.len() > budget => {
@@ -2752,11 +3198,11 @@ impl Style {
                     out.extend_from_slice(bg.as_bytes());
                     prefix = &text[cut..lo];
                 }
-                self.segment(out, prefix, highlight, bg);
-                out.extend_from_slice(strong.as_bytes());
-                self.segment(out, &text[lo..hi], highlight, strong);
+                segment(out, prefix, highlight, tint);
+                out.extend_from_slice(self.palette[strong as usize].as_bytes());
+                segment(out, &text[lo..hi], highlight, strong);
                 out.extend_from_slice(bg.as_bytes());
-                self.segment(out, &text[hi..], highlight, bg);
+                segment(out, &text[hi..], highlight, tint);
             }
             _ if op == Operation::Equal && text.len() > budget && budget > 16 => {
                 // Context nobody will read to the end: one screen line is enough.
@@ -2764,10 +3210,10 @@ impl Style {
                 while cut > 0 && text[cut] & 0xC0 == 0x80 {
                     cut -= 1;
                 }
-                self.segment(out, &text[..cut], highlight, bg);
+                segment(out, &text[..cut], highlight, tint);
                 out.extend_from_slice("\x1b[2m…\x1b[0m".as_bytes());
             }
-            _ => self.segment(out, text, highlight, bg),
+            _ => segment(out, text, highlight, tint),
         }
         // Erase-to-EOL carries the tint to the edge before resetting.
         out.extend_from_slice(if bg.is_empty() {
@@ -2777,42 +3223,33 @@ impl Style {
         });
     }
 
-    fn segment(self, out: &mut Vec<u8>, text: &[u8], highlight: bool, bg: &str) {
-        if text.is_empty() {
-            return;
-        }
-        let start = out.len();
-        let hl = bun_core::fmt::fmt_javascript(
-            text,
-            bun_core::fmt::HighlighterOptions {
-                enable_colors: true,
-                check_for_unhighlighted_write: false,
-                ..Default::default()
-            },
-        );
-        if !highlight || text.len() > 4096 || write!(out, "{hl}").is_err() {
-            out.truncate(start);
-            out.extend_from_slice(text);
-        } else if !bg.is_empty() {
-            // The highlighter resets all attributes between tokens; put the tint back after each reset.
-            let tail = out.split_off(start);
-            for (i, piece) in strings::split(&tail, b"\x1b").enumerate() {
-                if i > 0 {
-                    out.push(0x1b);
-                }
-                if i > 0 && piece.starts_with(b"[0m") {
-                    out.extend_from_slice(b"[0m");
-                    out.extend_from_slice(bg.as_bytes());
-                    out.extend_from_slice(&piece[3..]);
-                } else {
-                    out.extend_from_slice(piece);
-                }
+    /// Copies `lines`, with syntax colours for the code that `segment` has marked in them.
+    fn highlight(self, out: &mut Vec<u8>, mut lines: &[u8]) {
+        while let Some((plain, [tint, marked @ ..])) = strings::split_once_char(lines, CODE_START)
+            && let Some((code, rest)) = strings::split_once_char(marked, CODE_END)
+        {
+            out.extend_from_slice(plain);
+            let bg = self.palette[usize::from(*tint)];
+            let hl = bun_core::fmt::fmt_javascript(
+                code,
+                bun_core::fmt::HighlighterOptions {
+                    enable_colors: true,
+                    check_for_unhighlighted_write: false,
+                    ..Default::default()
+                },
+            );
+            let before = out.len();
+            if core::fmt::write(&mut Tinted { out, bg }, format_args!("{hl}")).is_err() {
+                out.truncate(before);
+                out.extend_from_slice(code);
             }
+            lines = rest;
         }
+        out.extend_from_slice(lines);
     }
 
     /// `path ─────────────── +3 -1`, sized to the terminal.
-    fn file_header(self, c: &FileChange<'_>) {
+    fn file_header(self, out: &mut Vec<u8>, c: &FileChange<'_>) {
         let note = match c.semantic {
             Semantic::Text => "",
             Semantic::FormattingOnly => "\x1b[2mformatting only\x1b[0m",
@@ -2888,12 +3325,61 @@ impl Style {
             .width
             .saturating_sub(strip_ansi_len(&shown_path) + badge_width + 4)
             .max(2);
-        Output::print(format_args!(
+        let _ = write!(
+            out,
             "\n\x1b[1m{}\x1b[0m \x1b[2m{}\x1b[0m {}\n",
             BStr::new(&shown_path),
             "─".repeat(rule),
             badge
-        ));
+        );
+    }
+}
+
+/// Around code that `Style::highlight` is to colour. `defang` leaves neither in the text of a file.
+const CODE_START: u8 = 0x0e;
+const CODE_END: u8 = 0x0f;
+
+fn segment(out: &mut Vec<u8>, text: &[u8], highlight: bool, tint: Tint) {
+    if highlight && !text.is_empty() && text.len() <= 4096 {
+        out.extend_from_slice(&[CODE_START, tint as u8]);
+        out.extend_from_slice(text);
+        out.push(CODE_END);
+    } else {
+        out.extend_from_slice(text);
+    }
+}
+
+/// Splits at `at`, or after the marked code or the character that `at` is inside of. `text` starts outside of both.
+fn split_marked(text: &[u8], at: usize) -> (&[u8], &[u8]) {
+    let mut at = at.min(text.len());
+    if let Some(start) = strings::last_index_of_char(&text[..at], CODE_START)
+        && let Some(len) = strings::index_of_char_usize(&text[start..], CODE_END)
+    {
+        at = at.max(start + len + 1);
+    }
+    // A character has three of these at most, so the halves get U+FFFD where the whole would.
+    let continues = |byte: &&u8| **byte & 0xC0 == 0x80;
+    text.split_at(at + text[at..].iter().take(3).take_while(continues).count())
+}
+
+/// The highlighter resets all attributes between tokens. This puts the tint back after each reset.
+struct Tinted<'a> {
+    out: &'a mut Vec<u8>,
+    bg: &'a str,
+}
+
+impl core::fmt::Write for Tinted<'_> {
+    fn write_str(&mut self, text: &str) -> core::fmt::Result {
+        const RESET: &[u8] = b"\x1b[0m";
+        let mut rest = text.as_bytes();
+        while let Some(at) = strings::index_of(rest, RESET) {
+            let part;
+            (part, rest) = rest.split_at(at + RESET.len());
+            self.out.extend_from_slice(part);
+            self.out.extend_from_slice(self.bg.as_bytes());
+        }
+        self.out.extend_from_slice(rest);
+        Ok(())
     }
 }
 
@@ -3051,26 +3537,23 @@ fn rebase_key_onto(
     shown: &Shown,
     display: &normalize::Normalized,
 ) {
-    let mut at: bun_collections::HashMap<(u32, u32), (u32, u32)> =
-        bun_collections::HashMap::default();
-    at.reserve(display.map.len());
-    for m in display.map.iter().rev() {
-        if m.gen_line >= shown.skipped {
-            at.insert(
-                (m.orig_line, m.orig_col),
-                (m.gen_line + shown.banner - shown.skipped, m.gen_col),
-            );
-        }
-    }
-    key.map
-        .retain_mut(|m| match at.get(&(m.orig_line, m.orig_col)) {
-            Some(&(line, col)) => {
-                m.orig_line = line;
+    // Sorted by source position. The first print of a position comes first.
+    let mut at: Vec<_> = (display.map.iter())
+        .filter(|m| m.gen_line >= shown.skipped)
+        .map(|m| ((m.orig_line, m.orig_col), (m.gen_line, m.gen_col)))
+        .collect();
+    at.sort_unstable();
+    key.map.retain_mut(|m| {
+        let original = (m.orig_line, m.orig_col);
+        match at.get(at.partition_point(|it| it.0 < original)) {
+            Some(&(found, (line, col))) if found == original => {
+                m.orig_line = line + shown.banner - shown.skipped;
                 m.orig_col = col;
                 true
             }
-            None => false,
-        });
+            _ => false,
+        }
+    });
 }
 
 /// Printed line → original `line:col` of the first thing on it, for gutters in the un-minified view.
@@ -3127,6 +3610,9 @@ fn render_ops(
             Operation::Delete => change.removed += 1,
             Operation::Equal => {}
         }
+    }
+    if !style.hunks {
+        return;
     }
     let is_change = |op: &Op| op.kind != Operation::Equal || op.affected;
     let last_old = ops.iter().rposition(|op| op.kind != Operation::Insert);

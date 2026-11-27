@@ -1,0 +1,3 @@
+//  assigned, own
+const show = (label, f) => { let r; try { r = f(); } catch (e) { r = `${e?.name}: ${e?.message}`.slice(0, 90); } console.log(label, typeof r === "object" ? Object.prototype.toString.call(r) : String(r).slice(0, 60)); };
+function f() { class A { k = 4;  } let a = new A(); A.prototype.m = function (n) { return n + this.k; }; let s = 0; for (let j = 0; j < 150; j++) { s += a.m(j & 3); if (j === 70) { Object.defineProperty(a, "m", { value: function (n) { return n - 1; }, configurable: true, writable: true }); } } a = new A(); for (let j = 0; j < 50; j++) { s += a.m(j & 3); } return s; } show("in a loop of a function", f);

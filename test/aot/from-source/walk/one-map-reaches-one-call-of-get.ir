@@ -1,0 +1,13 @@
+# -- source: main.cts
+# const rounds = Number(process.argv[2] ?? 3);
+# const mine = new Map<string, number>();
+# mine.set("a", 1);
+# function joined(this: Map<string, number>, keys: string[]): string { let text = ""; for (const key of keys) text = text + this.get(key); return text; }
+# let last = "";
+# for (let r = 0; r < rounds; r++) last = joined.call(mine, ["a", "a"]);
+# console.log(last);
+# -- end of source
+# The twin: every receiver of the call is in sight, one Map of the program that holds whole numbers: what it holds is proven at the call, and the read is typed by it.
+# RUN: walk f1 mechanisms=all
+# CHECK: undefined|i32 {{*}} = GetMapValueByStringTag
+# CHECK: kind=ProvenContents subjectKind=Operation type=i32

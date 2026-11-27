@@ -26,6 +26,8 @@ pub enum SymbolOrigin {
     EarlyReturnSentinel,
     ImportItem,
     ImportNamespace,
+    /// `__rawTemplate` of the runtime, which the parser calls where a tagged template has text outside ASCII.
+    RawTemplate,
 }
 
 pub struct ObservedSymbol<'a> {
@@ -153,6 +155,9 @@ impl Observation<'_> {
         if let Some(kind) = host.jsx_import_kind(reference) {
             return SymbolOrigin::JsxImport(kind);
         }
+        if host.is_raw_template(reference) {
+            return SymbolOrigin::RawTemplate;
+        }
         // The parser also lists `a` of `import { a }` and of `const { a } = require()` under a namespace, one that has
         // no name in the source.
         if host.is_module_level(reference) {
@@ -232,6 +237,9 @@ impl Host for RecordingHost<'_> {
     fn namespace_of_import_item(&self, item: Ref) -> Option<Ref> {
         self.host.namespace_of_import_item(item)
     }
+    fn is_raw_template(&self, ref_: Ref) -> bool {
+        self.host.is_raw_template(ref_)
+    }
     fn is_module_level(&self, ref_: Ref) -> bool {
         self.host.is_module_level(ref_)
     }
@@ -303,6 +311,12 @@ impl Host for RecordingHost<'_> {
     fn record_usage(&mut self, ref_: Ref) {
         self.referenced.push(ref_);
         self.host.record_usage(ref_);
+    }
+    fn record_import_property_use(&mut self, target: &Expr, name: &[u8]) -> bool {
+        self.host.record_import_property_use(target, name)
+    }
+    fn record_import_property_call(&mut self, import: Ref, name: &[u8]) {
+        self.host.record_import_property_call(import, name);
     }
     fn add_import_record(&mut self, path: &[u8], kind: ImportKind) -> (u32, Ref) {
         let (index, namespace) = self.host.add_import_record(path, kind);

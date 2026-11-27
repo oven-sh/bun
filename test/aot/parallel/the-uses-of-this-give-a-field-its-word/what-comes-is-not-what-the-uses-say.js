@@ -1,0 +1,5 @@
+// A class in a file without types: a constructor's parameter fills the field, so nothing is written of it; what the class's own methods do with `this.<name>` gives the field a word, as a parameter's uses give the parameter one. The word is expected alone: every read is guarded at the run. The data comes out of a text. The field holds what its uses do not say: a record with a length, a view of views' stead, a number, null: the answers and the errors are plain Bun's.
+class Matrix { constructor(rows) { this.rows = rows; } count() { let s = 0; for (let r = 0; r < this.rows.length; r++) for (let c = 0; c < this.rows[r].length; c++) if (this.rows[r][c]) s++; return s; } }
+const name = JSON.parse('"count"');
+const out = text => JSON.parse(text);
+for (const given of [out('{"length":2,"0":[1,1],"1":"x"}'), [new Uint8Array([1, 0, 2]), new Float64Array([0.5])], 7, 'ab', out('null'), undefined, out('[null]'), out('[[1],null]')]) { try { console.log(new Matrix(given)[name]()); } catch (error) { console.log(error instanceof TypeError); } }

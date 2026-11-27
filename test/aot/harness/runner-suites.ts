@@ -1,6 +1,6 @@
 import { describe as describeOfBun, expect, test as testOfBun } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { canTrim } from "../../bundler/compile-trim-features";
@@ -11,7 +11,7 @@ import { run } from "./run";
 // `--aot`, so what the runner learns to do reaches compiled runs too, or shows up here.
 // ../runner-suites.known.txt names the tests that still fail so, `<file>: <test>` a line. A test that fails and isn't named there fails its file here, and so
 // does one that is named and passes: take its line out.
-// `~ ` before a line: that test fails in some runs and passes in others.
+// `~ ` before a line: that test fails in some runs and passes in others. `~ASAN `: so in a Bun built with a sanitizer, and it is held to pass in every other.
 // `! ` before a line: that test fails, and in a Bun built with assertions one of them stops its child run: an invariant of the engine is broken there.
 // `x64 ` or `arm64 ` before a line: that test fails on that architecture alone, and has to pass on the other.
 // `trims ` before a line: that test damages an executable and awaits that it goes on as Bun. Where the Bun under test trims, the executable has no command line left to go on with:
@@ -23,7 +23,7 @@ import { run } from "./run";
 // Under a sanitizer a case should end within two minutes: a suite that takes longer there is dealt over more parts.
 //
 // It is a net, not the test of a fault, and the dearest family of this folder: an eighth of what all its files take. The benches behind a build run all of it, and CI the
-// shares that have caught faults: ../every-build.txt.
+// shares that have caught faults: the files in ../runner-suites.
 const root = join(import.meta.dir, "..", "..", "..");
 const listOf = (file: string) =>
   readFileSync(join(import.meta.dir, "..", file), "utf8")
@@ -73,7 +73,9 @@ export const holdSuitesOffSanitizers = (...parts: string[]) =>
 function hold(title: string, preloaded: string, list: string, parts: string[]) {
   const preload = join(import.meta.dir, preloaded);
   const known = listOf(list);
-  // One after another: each keeps every processor busy by itself.
+  // One after another: each keeps every processor busy by itself. With a sanitizer the cases of a file run beside one another (../supported.ts), so there the parts share the
+  // processors. Each with all of them to itself, five parts start forty child runs at once on eight processors, and a test of a suite runs into the suite's own time limit.
+  const processors = isASAN ? Math.max(2, Math.ceil(availableParallelism() / parts.length)) : availableParallelism();
   describe(title, () => {
     test.each(parts)(
       "%s",
@@ -98,13 +100,15 @@ function hold(title: string, preloaded: string, list: string, parts: string[]) {
             "--preload",
             preload,
             "--timeout=300000",
-            `--max-concurrency=${Math.min(Number(atATime), availableParallelism())}`,
+            `--max-concurrency=${Math.min(Number(atATime), processors)}`,
             ...(of > 1 ? ["-t", `^(?:[^]{${of}})*[^]{${nth - 1}}$`] : []),
             suite,
           ],
           root,
           env,
         );
+        // A matcher that fails prints what it received. Where that is an executable, a copy of Bun, a suite prints several times the length of Bun, and no string holds 2 ** 31 characters.
+        expect(stdout.length + stderr.length).toBeLessThan(statSync(bunExe()).size);
         // A suite that started no compiled run has shown nothing.
         expect(readFileSync(started).length).toBeGreaterThan(0);
         // A failing test quotes what its child run printed, which has results of its own. Some runs list their own failures once more at the end.
@@ -136,9 +140,12 @@ function hold(title: string, preloaded: string, list: string, parts: string[]) {
         const withoutCommandLine = canTrim ? named("trims ") : [];
         const awaited = [...named(""), ...named("! "), ...named(process.arch + " "), ...withoutCommandLine];
         // The names alone do not say what went wrong: of a test that fails and is not named, what the suite printed in front of its result.
-        for (const result of failed.filter(result => ![...awaited, ...named("~ ")].includes(nameOf(result))))
+        // Not of one that is passed over for asking for a frame: whoever reads the log by its "(fail)" lines would take a green suite for a red one.
+        const wavering = [...named("~ "), ...(isASAN ? named("~ASAN ") : [])];
+        const unnamed = names.filter(name => ![...awaited, ...wavering].includes(name));
+        for (const result of failed.filter(result => unnamed.includes(nameOf(result))))
           console.error([result, ...saidBefore(result).filter(Boolean).slice(0, 60)].join("\n"));
-        expect(names.filter(name => !named("~ ").includes(name)).sort()).toEqual(awaited.sort());
+        expect(names.filter(name => !wavering.includes(name)).sort()).toEqual(awaited.sort());
         for (const result of failed.filter(result => withoutCommandLine.includes(nameOf(result)))) {
           const said = saidBefore(result).join("\n");
           expect(said).toContain("is damaged. Its embedded program can't be read.");

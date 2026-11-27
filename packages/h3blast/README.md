@@ -36,7 +36,7 @@ No TLS verification by default (it's a load tester).
 
 ## Build
 
-h3blast links the **already-compiled** lsquic / BoringSSL / zlib
+h3blast links the **already-compiled** lsquic / BoringSSL
 object files from Bun's build tree, so you need a Bun release build first:
 
 ```sh

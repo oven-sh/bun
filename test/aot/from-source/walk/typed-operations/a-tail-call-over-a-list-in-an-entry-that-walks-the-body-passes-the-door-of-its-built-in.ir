@@ -1,0 +1,21 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function greatest(list: number[], ...rest: number[]): number { if (list.length) return Math.hypot(...list); return rest.length; }
+# function caller(given: [number[], ...number[]]): number { const v = greatest(...given); return Math.round(v) - v; }
+# print(caller([[id(7.5), 2]]));
+# print(caller([[], 2, 3]));
+# print("went on");
+# -- end of source
+# `greatest` has a rest parameter that is first mentioned after the call, so its generic entry visits the body itself.
+# Its result is a number, so its Body is unboxed and a type is enforced on its result.
+# Fault injection, testing=UnderstateEffects:Builtin/Math.hypot/KindOfResult: the signature of Math.hypot declares null as its only result.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 0.2379126518699879
+# CHECK-NEXT: 0
+# CHECK-NEXT: went on
+# CHECK-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=UnderstateEffects:Builtin/Math.hypot/KindOfResult
+# LIE: expected null, found double in the result of Math.hypot
+# LIE-NOT: went on
+# LIE: crashed

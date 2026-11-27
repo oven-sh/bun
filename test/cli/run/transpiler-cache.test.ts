@@ -231,6 +231,37 @@ describe("transpiler cache", () => {
     }
     expect(existsSync(cache_dir)).toBeFalse();
   });
+  test("is written to XDG_CACHE_HOME when it is ..\\cache", async () => {
+    mkdirSync(join(temp_dir, "cwd"));
+    writeFileSync(join(temp_dir, "cwd", "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "separator"));
+
+    expect(
+      await bunRun(join(temp_dir, "cwd", "a.js"), {
+        ...env,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined,
+        XDG_CACHE_HOME: "..\\cache",
+      }),
+    ).toSpawn("separator");
+
+    expect(readdirSync(join(temp_dir, "cache", "bun", "@t@"))).toHaveLength(1);
+  });
+
+  test.skipIf(isWindows)("is written to XDG_CACHE_HOME when it contains a backslash", async () => {
+    writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "backslash"));
+    mkdirSync(join(temp_dir, "x\\y"));
+
+    expect(
+      await bunRun(join(temp_dir, "a.js"), {
+        ...env,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined,
+        HOME: join(temp_dir, "x\\y"),
+        XDG_CACHE_HOME: join(temp_dir, "x\\y", ".cache"),
+      }),
+    ).toSpawn("backslash");
+
+    expect(readdirSync(temp_dir).sort()).toEqual(["a.js", "x\\y"]);
+    expect(readdirSync(join(temp_dir, "x\\y", ".cache", "bun", "@t@"))).toHaveLength(1);
+  });
   test("works if the cache is not user-readable", async () => {
     mkdirSync(cache_dir, { recursive: true });
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "b"));
@@ -291,6 +322,16 @@ describe("transpiler cache", () => {
 
     expect(statSync(entry).isFile()).toBeTrue();
     expect(readFileSync(entry).equals(good)).toBeTrue();
+  });
+  test("an entry that cannot be moved into place leaves no temporary file", async () => {
+    writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "a"));
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("a");
+    const [entry] = readdirSync(cache_dir);
+    unlinkSync(join(cache_dir, entry));
+    mkdirSync(join(cache_dir, entry, "occupied"), { recursive: true });
+
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("a");
+    expect(readdirSync(cache_dir)).toEqual([entry]);
   });
   test("does not inline process.env", async () => {
     writeFileSync(

@@ -19,7 +19,7 @@ const DATA_WITH_DEFAULT: Interop = Interop::new(
     RequireResult::DefaultExport,
 );
 const TEXT_IN_EXECUTABLE: Interop = Interop {
-    answers_loader_with_namespace: true,
+    loader_returns_namespace: true,
     ..DATA_WITH_DEFAULT
 };
 const TEXT_LEFT_TO_LOADER: Interop = Interop::new(
@@ -286,6 +286,16 @@ fn text_file_exports_default_only() {
 }
 
 #[test]
+fn blank_markdown_file_exports_nothing() {
+    let main = "import './blank.md'; import './short.md';";
+    let files = [("main.js", main), ("blank.md", ""), ("short.md", " \n")];
+    with_graph(&files, |graph, input| {
+        assert!(export_names(graph, input, "blank.md").is_empty());
+        assert!(export_names(graph, input, "short.md").is_empty());
+    });
+}
+
+#[test]
 fn text_file_answers_its_text_only_where_the_bundler_links_every_require() {
     let linked = [
         ("main.cjs", "require('./notes.txt');"),
@@ -309,6 +319,7 @@ fn text_file_answers_its_text_only_where_the_bundler_links_every_require() {
         ("main.mjs", "import.meta.require('./notes.txt');"),
         ("main.cjs", "const load = require; load('./notes.txt');"),
         ("main.cjs", "require.call(null, './notes.txt');"),
+        ("main.cjs", "require('./notes.txt', {});"),
         (
             "main.cjs",
             "for (const name of ['notes']) require('./' + name + '.txt');",

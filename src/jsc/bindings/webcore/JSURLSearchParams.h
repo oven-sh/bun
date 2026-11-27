@@ -21,60 +21,29 @@
 #pragma once
 
 #include "JSDOMIterator.h"
-#include "JSDOMWrapper.h"
+#include "JSDOMInterface.h"
 #include "URLSearchParams.h"
 
 namespace WebCore {
 
-class JSURLSearchParams : public JSDOMWrapper<URLSearchParams> {
+class JSURLSearchParams final : public JSDOMInterface<JSURLSearchParams, URLSearchParams> {
 public:
-    using Base = JSDOMWrapper<URLSearchParams>;
-    static JSURLSearchParams* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<URLSearchParams>&& impl)
-    {
-        JSURLSearchParams* ptr = new (NotNull, JSC::allocateCell<JSURLSearchParams>(globalObject->vm())) JSURLSearchParams(structure, *globalObject, WTF::move(impl));
-        ptr->finishCreation(globalObject->vm());
-        return ptr;
-    }
-
-    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
-    static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static URLSearchParams* toWrapped(JSC::VM&, JSC::JSValue);
-    static void destroy(JSC::JSCell*);
+    using JSDOMInterface::JSDOMInterface;
 
     DECLARE_INFO;
+    static constexpr auto subspaceSlots = BUN_SUBSPACE_SLOTS(m_clientSubspaceForURLSearchParams, m_subspaceForURLSearchParams);
+    static constexpr uint8_t jsType = JSAsJSONType;
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::JSType(WebCore::JSAsJSONType), StructureFlags), info(), JSC::NonArray);
-    }
-
+    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return subspaceForImpl(vm);
-    }
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
-
-protected:
-    JSURLSearchParams(JSC::Structure*, JSDOMGlobalObject&, Ref<URLSearchParams>&&);
-
-    void finishCreation(JSC::VM&);
 };
-
-JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, URLSearchParams&);
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, URLSearchParams* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<URLSearchParams>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<URLSearchParams>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
 JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSURLSearchParams* castedThis);
 
 template<> struct JSDOMWrapperConverterTraits<URLSearchParams> {
     using WrapperClass = JSURLSearchParams;
-    using ToWrappedReturnType = URLSearchParams*;
 };
 
 struct URLSearchParamsIteratorTraits;

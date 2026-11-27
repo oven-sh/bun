@@ -1,0 +1,142 @@
+# `for (const [key, value] of Object.entries(o))`: the loop alone takes the list, and a pattern of two takes each pair apart at once. Nobody gets hold of the list or of a pair, so neither is made:
+# the compiler's own helper lists each key with its value behind it, once, where the call stands, and a turn reads two elements. Where the program keeps a pair the call stays what is written
+# function listed(o) { let s = ""; for (const [key, value] of Object.entries(o)) s += key + value; return s; }
+# function kept(o) { const pairs = []; for (const pair of Object.entries(o)) pairs.push(pair); return pairs; }
+# globalThis.held = [listed, kept];
+# console.log(listed({ a: 1 }), kept({ b: 2 }).length);
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[list]]: Array {{*}} = CallBuiltin {{*}}overload=CompilerHelpersOwnEntriesFlat/0
+# CHECK: isLoopHead=true
+# CHECK: = GetArrayLength
+# CHECK: = GetArrayElement {{*}}level=Proven
+# CHECK: = GetArrayElement {{*}}level=Proven
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: overload=ObjectEntries
+# RUN(KEPT): walk f2 mechanisms=all
+# KEPT-LABEL: code f2:Body
+# KEPT-NOT: OwnEntriesFlat
+# KEPT: = CallInline {{*}}overload=ObjectEntries/0
+# RUN(WITHHELD): walk f1 mechanisms=all-EscapeAnalysis
+# WITHHELD-LABEL: code f1:Body
+# WITHHELD-NOT: OwnEntriesFlat
+# WITHHELD: ObjectEntries
+
+module m0 path="entries-taken-apart-in-a-loop-are-listed-flat.js" displayPath="entries-taken-apart-in-a-loop-are-listed-flat.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=271 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 position=287 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Object{layout=L0 members=[{key="a" value=Number{value=1}}]} module=m0
+data d1 root=Object{layout=L1 members=[{key="b" value=Number{value=2}}]} module=m0
+data d2 root=Array{contents=anything} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Builtin builtin=GlobalThis @218
+    v5 = PropGet v4 key="globalThis" [isFreeName] @218
+    v6 = Convert v5 declared={type=builtin(GlobalThis) flags=[IsExpected]} @218
+    v7 = NewArray v1, v3 contents=anything @236
+    PropSet v6, v7 key="held" @218
+    v9 = Builtin builtin=GlobalThis @252
+    v10 = PropGet v9 key="console" [isFreeName] @252
+    v11 = Convert v10 declared={type=builtin(Console) flags=[IsExpected]} @252
+    v12 = PropGet v11 key="log" @252
+    v13 = Convert v12 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @252
+    v14 = Data data=d0 @271
+    v15 = Call v1, -, v14 calleeName="listed" @264
+    v16 = Data data=d1 @287
+    v17 = Call v3, -, v16 calleeName="kept" @282
+    v18 = PropGet v17 key="length" @295
+    v19 = Call v13, v11, v15, v18 calleeKey="log" calleeName="console.log" @260
+    v20 = Undefined @252
+    Return v20 @252
+}
+function f1 name="listed" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|object):
+    Jump -> next b1() @0
+  b1():
+    v1 = String string="" @29
+    v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]} @29
+    v3 = Builtin builtin=Object @60
+    v4 = Builtin builtin=ObjectEntries @60
+    v5 = Call v4, v3, v0 calleeName="Object.entries" @67
+    v6 = IteratorOpen v5 @33
+    Jump -> next b2(v2) @33
+  b2(v7):
+    LoopHint @33
+    v9 = IteratorResume v6 @33
+    v10 = ResultAt v9 @33
+    v11 = ResultAt v9 index=1 @33
+    Branch v10 -> taken b3(), notTaken b4() @33
+  b3():
+    Return v7 @104
+  b4():
+    Jump -> next b5() @33
+  b5() handler=b13():
+    v12 = IteratorOpen v11 elementCount=2 [isDestructuring] @44
+    Jump -> next b6() @44
+  b6() handler=b12():
+    v13 = IteratorResume v12 stepIndex=0 @44
+    v14 = ResultAt v13 @44
+    v15 = ResultAt v13 index=1 @44
+    Jump -> next b7() @45
+  b7() handler=b12():
+    v16 = IteratorResume v12 stepIndex=1 @44
+    v17 = ResultAt v16 @44
+    v18 = ResultAt v16 index=1 @44
+    Jump -> next b8() @50
+  b8() handler=b12():
+    Jump -> next b9() @50
+  b9() handler=b13():
+    IteratorClose v12 @44
+    Jump -> next b10() @44
+  b10() handler=b13():
+    v20 = Add v15, v18 @90
+    v21 = Add v7, v20 @90
+    v22 = Convert v21 declared={type=undefined|null|string flags=[IsExpected]} @79
+    Jump -> next b11() @79
+  b11() handler=b13():
+    Jump -> next b2(v22) @79
+  b12() role=IterationCleanup subject=v12 handler=b13():
+    v23 = CatchException @44
+    IteratorClose v12 completion=Throw @44
+    Rethrow v23 @44
+  b13() role=IterationCleanup subject=v6:
+    v25 = CatchException @33
+    IteratorClose v6 completion=Throw @33
+    Rethrow v25 @33
+}
+function f2 name="kept" module=m0 position=109 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|object):
+    Jump -> next b1() @109
+  b1():
+    v1 = Data data=d2 @142
+    v2 = Builtin builtin=Object @165
+    v3 = Builtin builtin=ObjectEntries @165
+    v4 = Call v3, v2, v0 calleeName="Object.entries" @172
+    v5 = IteratorOpen v4 @146
+    Jump -> next b2() @146
+  b2():
+    LoopHint @146
+    v7 = IteratorResume v5 @146
+    v8 = ResultAt v7 @146
+    v9 = ResultAt v7 index=1 @146
+    Branch v8 -> taken b3(), notTaken b4() @146
+  b3():
+    Return v1 @209
+  b4():
+    Jump -> next b5() @146
+  b5() handler=b6():
+    v10 = PropGet v1 key="push" @184
+    v11 = Call v10, v1, v9 calleeKey="push" calleeName="pairs.push" @190
+    Jump -> next b2() @184
+  b6() role=IterationCleanup subject=v5:
+    v12 = CatchException @146
+    IteratorClose v5 completion=Throw @146
+    Rethrow v12 @146
+}

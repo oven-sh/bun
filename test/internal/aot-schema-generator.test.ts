@@ -175,3 +175,89 @@ test.skipIf(schema === undefined)(
     expect((await generate(join(ir, "AOTSchema.def"), "--hash")).exitCode).toBe(0);
   },
 );
+
+const madeMembers = (count: number) => Array.from({ length: count }, (_, index) => `Made${index}`).join(" ");
+
+test.skipIf(fileList === undefined || !existsSync(fileList))(
+  "a flag word of the interface has 64 bits on both sides once it has more than 32 members, and 32 bits until then",
+  async () => {
+    using dir = tempDir("aot-schema-wide-flag-words", {});
+    const ir = copyOfSchema(String(dir));
+    const file = join(ir, "schema", "compile-call.def");
+    const text = readFileSync(file, "utf8");
+    writeFileSync(
+      file,
+      `${text}flags MadeNarrow { ${madeMembers(32)} }\nflags MadeWide { ${madeMembers(33)} }\nflags MadeFull { ${madeMembers(64)} }\n` +
+        "record MadeRecord abi { wide: MadeWide full: MadeFull two: MadeWide[2] narrow: MadeNarrow filler: UInt32 }\n",
+    );
+    const rust = join(String(dir), "rust");
+    const engine = join(String(dir), "engine");
+    const { stderr, exitCode } = await generate(join(ir, "AOTSchema.def"), "--rust-out", rust, "--engine-out", engine);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const written = Object.values({ ...textsIn(rust), ...textsIn(engine) }).join("\n");
+
+    expect(written).toContain("enum class MadeNarrow : uint32_t {");
+    expect(written).toContain("Made31 = 1u << 31\n");
+    expect(written).toContain("pub struct MadeNarrow(pub u32);");
+    expect(written).toContain("pub const fn from_wire(word: u32) -> Option<MadeNarrow> { Some(MadeNarrow(word)) }");
+
+    expect(written).toContain("enum class MadeWide : uint64_t {");
+    expect(written).toContain("Made31 = 1ull << 31, Made32 = 1ull << 32\n");
+    expect(written).toContain("pub struct MadeWide(pub u64);");
+    expect(written).toContain("pub const MADE32: MadeWide = MadeWide(1 << 32);");
+    expect(written).toContain("pub const fn from_wire(word: u64) -> Option<MadeWide> { if word & !Self::ALL.0 == 0 {");
+
+    expect(written).toContain("enum class MadeFull : uint64_t {");
+    expect(written).toContain("Made63 = 1ull << 63\n");
+    expect(written).toContain("pub const fn from_wire(word: u64) -> Option<MadeFull> { Some(MadeFull(word)) }");
+
+    expect(written).toContain("MadeWide::from_wire(wide_word_at(record, 0))?;");
+    expect(written).toContain("MadeFull::from_wire(wide_word_at(record, 8))?;");
+    expect(written).toContain("MadeWide::from_wire(wide_word_at(record, 16))?;");
+    expect(written).toContain("MadeWide::from_wire(wide_word_at(record, 24))?;");
+    expect(written).toContain("MadeNarrow::from_wire(word_at(record, 32))?;");
+    expect(written).toContain("size_of::<MadeRecord>() == 40 && align_of::<MadeRecord>() == 8");
+    expect(written).toContain("static_assert(sizeof(MadeRecord) == 40 && alignof(MadeRecord) == 8");
+  },
+);
+
+test.skipIf(schema === undefined)(
+  "it turns away a flag word that is too long for its place, and a long one outside the records of the interface",
+  async () => {
+    using dir = tempDir("aot-schema-faulty-flag-words", {});
+    const alone = "a flag word of more than 32 members stands in abi records alone";
+    const faults: [string, string, string][] = [
+      ["compile-call.def", `flags MadeWord { ${madeMembers(65)} }\n`, "flag word MadeWord has more than 64 members"],
+      ["types.def", `flags MadeWord { ${madeMembers(33)} }\n`, "flag word MadeWord has more than 32 members"],
+      [
+        "compile-call.def",
+        `flags MadeWord { ${madeMembers(33)} }\nrecord MadeRecord abi { first: UInt32 word: MadeWord }\n`,
+        "record MadeRecord has 4 bytes of padding before word",
+      ],
+      [
+        "program-records.def",
+        `flags MadeWord abi { ${madeMembers(33)} }\nrecord MadeRecord wire { word: MadeWord }\n`,
+        `field word of MadeRecord: ${alone}`,
+      ],
+      [
+        "program-records.def",
+        `flags MadeWord abi { ${madeMembers(33)} }\nrecord MadeInner abi { word: MadeWord }\nrecord MadeRecord wire { inner: MadeInner }\n`,
+        `field inner of MadeRecord: ${alone}`,
+      ],
+    ];
+    const outcomes = await Promise.all(
+      faults.map(async ([name, declarations], index) => {
+        const ir = copyOfSchema(join(String(dir), String(index)));
+        const file = join(ir, "schema", name);
+        writeFileSync(file, readFileSync(file, "utf8") + declarations);
+        const { stderr, exitCode } = await generate(join(ir, "AOTSchema.def"), "--hash");
+        const problems = stderr
+          .trim()
+          .split("\n")
+          .map(line => line.replace(/^.*?:\d+:\d+: /, ""));
+        return { problems, exitCode };
+      }),
+    );
+    expect(outcomes).toEqual(faults.map(([, , problem]) => ({ problems: [problem], exitCode: 1 })));
+  },
+);

@@ -16,13 +16,13 @@
 # read(c as any);
 # -- end of source
 # RUN: link fields layouts mechanisms=all
-# CHECK: field L1.2 "t" appended proven=i32 writers-known
-# CHECK: field L2.2 "t" appended proven=i32 writers-known
+# CHECK: field L1.2 "t" appended proven=int[0, 2147483647] writers-known
+# CHECK: field L2.2 "t" appended proven=int[0, 2147483647] writers-known
 # CHECK: layout L1 {{*}}changes=[]
 # CHECK-NEXT: layout L2 {{*}}changes=[]
-# The members keep the name in one place: 24 + 2 x 8 bytes take a cell of 48, and the word that is left over takes the name in each.
+# The members keep the name in one place: "k" lies beside the word of the extra properties, the integer behind it in each, and the cell is 32 bytes.
 # RUN(PLAN): plan layouts mechanisms=all
-# PLAN: layout L1 CompiledObject size=48 shapes
-# PLAN: slot 2 "t" appended {{*}} Inline offset=40
-# PLAN: layout L2 CompiledObject size=48 shapes
-# PLAN: slot 2 "t" appended {{*}} Inline offset=40
+# PLAN: layout L1 CompiledObject size=32 shapes
+# PLAN: slot 2 "t" appended {{*}} Inline offset=24
+# PLAN: layout L2 CompiledObject size=32 shapes
+# PLAN: slot 2 "t" appended {{*}} Inline offset=24

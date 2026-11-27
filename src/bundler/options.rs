@@ -39,33 +39,49 @@ mod bun_http {
 /// `bun.StringSet` (re-exported for `BundleOptions.bundler_feature_flags`).
 pub use bun_collections::StringSet;
 
-pub(crate) fn validate_path(
-    log: &mut bun_ast::Log,
-    cwd: &[u8],
-    rel_path: &[u8],
-    path_kind: &[u8],
-) -> Box<[u8]> {
-    if rel_path.is_empty() {
-        return Box::default();
+/// The root of a build that names none. Outputs are named from it, so another answer moves them.
+pub fn default_root_dir(entry_points: &[Box<[u8]>]) -> &[u8] {
+    let root = match entry_points {
+        [] if cfg!(windows) => None,
+        [] => return b"",
+        [only] => bun_paths::dirname(only),
+        [first, rest @ ..] => shared_root_dir(first, rest),
+    };
+    match root {
+        None => b".",
+        // No drive, so nothing to open. `/a.js` is what a plugin's entry point looks like.
+        Some([b'/' | b'\\']) if cfg!(windows) => b".",
+        Some(root) => root,
     }
-    // TODO: switch to getFdPath()-based implementation
-    // `join_abs_string` resolves `.`/`..` against `cwd` into a threadlocal
-    // buffer which is then boxed.
-    let out =
-        bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &[rel_path]);
-    if out.is_empty() {
-        log.add_error_fmt(
-            None,
-            bun_ast::Loc::EMPTY,
-            format_args!(
-                "Invalid {}: {}",
-                bstr::BStr::new(path_kind),
-                bstr::BStr::new(rel_path),
-            ),
-        );
-        return Box::default();
+}
+
+/// Compares the entry points as they are written, so it is not always a directory that holds them all.
+fn shared_root_dir<'a>(first: &'a [u8], rest: &'a [Box<[u8]>]) -> Option<&'a [u8]> {
+    let all = || core::iter::once(first).chain(rest.iter().map(|it| &it[..]));
+    let shortest = all().map(<[u8]>::len).min()?;
+    let shared_len = |other: &[u8]| {
+        (first[..shortest].iter().zip(other))
+            .take_while(|(a, b)| a == b)
+            .count()
+    };
+    let shared = all().map(shared_len).min()?;
+    let is_many = rest.len() >= 8;
+    if shortest == 0 || (is_many && shortest == 1 && shared == 1) {
+        return Some(bun_paths::SEP_STR.as_bytes());
     }
-    Box::from(out)
+    // Nine or more nearly always get the working directory, and builds depend on that.
+    if is_many {
+        let start = &first[..shortest];
+        let is_dir = shared_len(&rest[0]) == shortest && bun_paths::has_trailing_sep(start);
+        return is_dir.then_some(start);
+    }
+    let sep = first[..shared]
+        .iter()
+        .rposition(|&c| bun_paths::is_sep(c))?;
+    match all().find(|it| bun_paths::has_leading_sep(&it[shared..])) {
+        Some(it) => Some(&it[..=shared]),
+        None => Some(&first[..=sep]),
+    }
 }
 
 // `AllowUnresolved` is defined canonically in
@@ -166,9 +182,13 @@ pub(crate) fn init_external_modules(
         } else if bun_paths::is_package_path(external) {
             result.node_modules.insert(external).expect("unreachable");
         } else {
-            let normalized = validate_path(log, cwd, external, b"external path");
-
-            if !normalized.is_empty() {
+            // On POSIX `import` reads `\` as `/`, and `require()` does not.
+            let mut imported = path.to_vec();
+            let below_cwd = bun_paths::strip_prefix(path, cwd).unwrap_or(path);
+            let start = path.len() - below_cwd.len();
+            strings::replace_char_in_place(&mut imported[start..], b'\\', bun_paths::SEP);
+            for spelling in [path, &imported] {
+                let normalized = bun_resolver::resolve_keeping_sep(&[cwd, spelling]);
                 result.abs_paths.insert(&normalized).expect("unreachable");
             }
         }
@@ -591,18 +611,8 @@ pub fn get_loader_and_virtual_source<'a>(
     if let Some(eval_source) = jsc_vm.eval_source() {
         // SAFETY: eval_source outlives jsc_vm
         let eval_source: &'a bun_ast::Source<'a> = unsafe { &*eval_source };
-        // The eval/stdin entry path uses the platform path separator
-        // (`/` becomes `\` on Windows), so the suffix is per-platform.
-        const EVAL_SUFFIX: &[u8] = if cfg!(windows) {
-            b"\\[eval]"
-        } else {
-            b"/[eval]"
-        };
-        const STDIN_SUFFIX: &[u8] = if cfg!(windows) {
-            b"\\[stdin]"
-        } else {
-            b"/[stdin]"
-        };
+        const EVAL_SUFFIX: &[u8] = bun_paths::path_literal!("/[eval]").as_bytes();
+        const STDIN_SUFFIX: &[u8] = bun_paths::path_literal!("/[stdin]").as_bytes();
         if strings::ends_with(specifier, EVAL_SUFFIX) {
             virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
@@ -649,7 +659,7 @@ pub fn get_loader_and_virtual_source<'a>(
 
     let is_main = jsc_vm
         .main()
-        .is_some_and(|main| strings::eql_long(specifier, main, true));
+        .is_some_and(|main| strings::eql_long(specifier, main));
 
     let dir = path.name().dir;
     // NOTE: we cannot trust `path.isFile()` since it's not always correct
@@ -1458,6 +1468,8 @@ pub struct BundleOptions<'a> {
     pub compile_target_builtins: CompileTargetBuiltins,
 
     pub code_coverage: bool,
+    /// For a linter's configuration and plugins. See `Features::lists_loads` and `Features::defers_requires`.
+    pub defers_requires: bool,
     pub debugger: bool,
 
     pub compile_mode: CompileMode,
@@ -1474,7 +1486,7 @@ pub struct BundleOptions<'a> {
     // directly — all access goes through crate::dispatch::DevServerVTable.
     pub dev_server: *const (),
     /// Set when Bake is bundling. Affects module resolution.
-    pub framework: Option<&'a crate::bake_types::Framework>,
+    pub framework: Option<std::sync::Arc<crate::bake_types::Framework>>,
 
     pub serve_plugins: Option<Box<[Box<[u8]>]>>,
     pub bunfig_path: Box<[u8]>,
@@ -1672,6 +1684,7 @@ impl<'a> BundleOptions<'a> {
             bytecode_order: self.bytecode_order.clone(),
             compile_target_builtins: self.compile_target_builtins.clone(),
             code_coverage: self.code_coverage,
+            defers_requires: self.defers_requires,
             debugger: self.debugger,
             compile_mode: self.compile_mode,
             compile_entry_point_name: self.compile_entry_point_name.clone(),
@@ -1679,7 +1692,7 @@ impl<'a> BundleOptions<'a> {
             metafile_json_path: self.metafile_json_path.clone(),
             metafile_markdown_path: self.metafile_markdown_path.clone(),
             dev_server: self.dev_server,
-            framework: self.framework,
+            framework: self.framework.clone(),
             serve_plugins: self.serve_plugins.clone(),
             bunfig_path: self.bunfig_path.clone(),
             unwrap_commonjs_packages: self.unwrap_commonjs_packages,
@@ -1928,6 +1941,7 @@ impl<'a> BundleOptions<'a> {
             bytecode_order: Vec::new(),
             compile_target_builtins: CompileTargetBuiltins::Host,
             code_coverage: false,
+            defers_requires: false,
             debugger: false,
             compile_mode: CompileMode::None,
             compile_entry_point_name: Box::default(),
@@ -2101,15 +2115,6 @@ impl<'a> BundleOptions<'a> {
     }
 }
 
-impl Drop for BundleOptions<'_> {
-    fn drop(&mut self) {
-        // self.define dropped automatically (Box<Define>).
-        //
-        // bundler_feature_flags is `Option<Box<StringSet>>`; `None` ≡ the static
-        // empty set (nothing to free), `Some` drops the Box here automatically.
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportPathFormat {
     Relative,
@@ -2119,7 +2124,7 @@ pub enum ImportPathFormat {
     PackagePath,
 }
 
-pub(crate) mod bundle_options_defaults {
+pub mod bundle_options_defaults {
     pub(crate) const EXTENSION_ORDER: &[&[u8]] = &[
         b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts", b".json",
     ];
@@ -2127,7 +2132,7 @@ pub(crate) mod bundle_options_defaults {
     pub(crate) const MAIN_FIELD_EXTENSION_ORDER: &[&[u8]] =
         &[b".js", b".cjs", b".cts", b".tsx", b".ts", b".jsx", b".json"];
 
-    pub(crate) const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
+    pub const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
         b".tsx", b".jsx", b".mts", b".ts", b".mjs", b".js", b".cts", b".cjs", b".json",
     ];
 
@@ -2150,13 +2155,8 @@ pub(crate) fn open_output_dir(output_dir: &[u8]) -> Result<Dir, crate::Error> {
             // Single-level mkdir
             // (fails ENOENT if parent missing). Do NOT use `make_path` (the
             // recursive `mkdir -p` variant) here.
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let len = output_dir.len().min(buf.0.len() - 1);
-            buf.0[..len].copy_from_slice(&output_dir[..len]);
-            buf.0[len] = 0;
-            // SAFETY: NUL-terminated above; `buf` outlives the `mkdirat` call.
-            let z = bun_core::ZStr::from_buf(&buf.0[..], len);
-            if let Err(err) = bun_sys::mkdirat(bun_sys::Fd::cwd(), z, 0o755) {
+            let path = bun_paths::Path::from(output_dir);
+            if let Err(err) = bun_sys::mkdirat(bun_sys::Fd::cwd(), &path, 0o755) {
                 let err: crate::Error = err.into();
                 Output::print_errorln(format_args!(
                     "error: Unable to mkdir \"{}\": \"{}\"",
@@ -2246,6 +2246,19 @@ pub enum PlaceholderField {
     Ext,
     Hash,
     Target,
+}
+
+impl Placeholder {
+    /// For an output that is referenced by URL, where a `\` in the name of its source would be `/`.
+    pub(crate) fn replace_backslashes(&mut self) {
+        for text in [&mut self.dir, &mut self.name, &mut self.ext] {
+            if cfg!(not(windows))
+                && let Cow::Owned(replaced) = strings::replace_char(text, b'\\', b'_')
+            {
+                *text = replaced.into();
+            }
+        }
+    }
 }
 
 // Shared body for PathTemplate::needs / PathTemplateConst::needs (D064).
@@ -2415,13 +2428,17 @@ pub fn write_sanitized_parent_dirs<W: bun_io::Write>(
     writer: &mut W,
     dir: &[u8],
 ) -> bun_io::Result<()> {
-    let mut rest: &[u8] = dir;
+    // The path from one drive or share to another is absolute. `D:\a` becomes `D_\a`.
+    let (volume, mut rest) = dir.split_at(bun_paths::volume(dir).len());
+    for byte in volume {
+        let is_name = !matches!(byte, b'\\' | b'/' | b':' | b'?');
+        writer.write_all(&[if is_name { *byte } else { b'_' }])?;
+    }
+    if bun_paths::root(dir).len() == dir.len() {
+        return Ok(());
+    }
     loop {
-        // On POSIX `\` is a legal filename byte, not a separator, so only split
-        // on it under Windows (matches `write_replacing_slashes_on_windows`).
-        let sep = rest
-            .iter()
-            .position(|&b| b == b'/' || (cfg!(windows) && b == b'\\'));
+        let sep = rest.iter().position(|&b| bun_paths::is_sep(b));
         let seg = sep.map_or(rest, |i| &rest[..i]);
         PathTemplate::write_replacing_slashes_on_windows(
             writer,
@@ -2509,6 +2526,26 @@ impl PathTemplate {
         path_template_needs(&self.data, field)
     }
 
+    /// Makes `[dir]` lead to a real path, as `root_dir` is. On Windows the working directory keeps junctions and `subst` drives.
+    pub(crate) fn resolve_dir(&mut self, root_dir: &[u8]) {
+        use bun_paths::Path;
+        if !cfg!(windows) || !self.needs(PlaceholderField::Dir) {
+            return;
+        }
+        let dir = Path::resolve(&[root_dir, &self.placeholder.dir]);
+        if !matches!(bun_paths::volume(&dir), [_, b':']) {
+            return;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        for ancestor in bun_paths::ancestors(&dir) {
+            if let Ok(real) = bun_sys::realpath(&Path::from(ancestor), &mut buf) {
+                let real = Path::join(&[real, &dir[ancestor.len()..]]);
+                self.placeholder.dir = Path::relative(root_dir, &real).as_bytes().into();
+                return;
+            }
+        }
+    }
+
     /// The width this template's `[hash]`/`[hashN]` asks for.
     pub(crate) fn hash_len(&self) -> usize {
         path_template_hash_len(&self.data).unwrap_or(bun_core::fmt::ContentHash::DEFAULT_LEN)
@@ -2530,21 +2567,7 @@ impl PathTemplate {
         w: &mut W,
         slice: &[u8],
     ) -> bun_io::Result<()> {
-        #[cfg(windows)]
-        {
-            let mut remain = slice;
-            while let Some(i) = strings::index_of_char(remain, b'/') {
-                let i = i as usize;
-                w.write_all(&remain[0..i])?;
-                w.write_all(&[b'\\'])?;
-                remain = &remain[i + 1..];
-            }
-            w.write_all(remain)
-        }
-        #[cfg(not(windows))]
-        {
-            w.write_all(slice)
-        }
+        w.write_all(&bun_paths::to_native(slice))
     }
 
     pub const CHUNK: PathTemplateConst = PathTemplateConst {

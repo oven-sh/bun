@@ -1,7 +1,7 @@
 // JSON.parse without a written type: the run time's own parser makes the second object of a form a cell of a layout of the program, where one has every name. Whatever the text holds, the answer is what JSON.parse gives:
 // other orders of the keys, members left out, members that no layout has, a member twice, values of other types, records in records and in lists, `__proto__`, indexes, names of Object.prototype, escapes, odd numbers,
 // bad texts; and what is done to the object afterwards: a store of another type, a new name, delete, freeze, an accessor, another prototype
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function make(port, host) { return { port, host }; }
 function pair(id, name, tags) { return { id, name, tags }; }

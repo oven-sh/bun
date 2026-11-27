@@ -73,6 +73,7 @@ mod related;
 mod related_expected;
 pub mod services;
 mod shape;
+pub mod shared_indexes;
 mod shortcuts;
 mod signature_links;
 mod sink;
@@ -96,7 +97,7 @@ use crate::atom::{Atom, Atoms, known};
 use crate::bind::{AssignmentKind, AssignmentTarget, Bound, ModuleInstanceState, SymFlags};
 use crate::hir::{self, *};
 use crate::local::MaybeLocal;
-use crate::program::{FileId, Files, ModuleCell, Sym};
+use crate::program::{FileId, Files, ModuleCell, ModuleTrees, Sym};
 use crate::session::{Arena, ArenaBox, Session};
 use crate::session::{ArenaVec, vec_from_iter_in};
 use crate::table::{At, Bases, Buffered, ById, ByIdIndirect, ByKey, ByNode, ByNodeIndirect};
@@ -292,9 +293,10 @@ pub struct Program<'s> {
     exporting_modules_stopped_at: std::sync::atomic::AtomicU32,
     #[cfg(any(test, feature = "test_support"))]
     modules_searched_for_exports: std::sync::atomic::AtomicUsize,
-    aot_symbols: std::sync::OnceLock<aot::ProgramSymbols>,
+    aot_symbols: aot::ProgramSymbols,
     aot_store_indexes: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::StoreIndex<'s>>]>,
-    aot_prototype_links: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::PrototypeLinks<'s>>]>,
+    aot_written_stores: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::WrittenStores<'s>>]>,
+    aot_prototype_links: std::sync::OnceLock<&'s [aot::LinksOfFile<'s>]>,
     pub files: &'s Files<'s>,
     pub types: TypeStore<'s>,
 
@@ -599,40 +601,54 @@ type Rechecked = (
     FxHashMap<(FileId, PropId), TypeId>,
 );
 
-/// For each file: whether it is a leaf, and how many nodes of each kind it has.
-pub type NodeCounts = Vec<(bool, [usize; 10])>;
+/// What a `Program` reads from the trees of all files, before the first task.
+pub struct ProgramInputs {
+    /// For each file: whether it is a leaf, and how many nodes of each kind it has.
+    node_counts: Vec<(bool, [usize; 10])>,
+    aot_symbols: aot::ProgramSymbols,
+}
 
-impl<'s> Program<'s> {
-    pub fn new(session: &'s Session, files: &'s Files<'s>) -> Program<'s> {
-        Program::with_node_counts(session, files, &Program::count_nodes(files))
-    }
-
-    /// While every file still has its tree.
-    pub fn count_nodes(files: &Files<'_>) -> NodeCounts {
+impl ProgramInputs {
+    pub fn read(files: &Files<'_>) -> ProgramInputs {
         // The counts are read in one pass because the modules are far apart in memory.
         let counts = files.modules.iter().map(|m| {
+            let ModuleTrees { hir, bound, .. } = m.trees();
             let counts = [
-                m.hir.exprs.len(),
-                m.hir.types.len(),
-                m.hir.fns.len(),
-                m.hir.pats.len(),
-                m.hir.props.len(),
-                m.hir.params.len(),
-                m.hir.enum_members.len(),
-                m.bound.scopes.len(),
-                m.hir.type_params.len(),
-                m.bound.symbols.len(),
+                hir.exprs.len(),
+                hir.types.len(),
+                hir.fns.len(),
+                hir.pats.len(),
+                hir.props.len(),
+                hir.params.len(),
+                hir.enum_members.len(),
+                bound.scopes.len(),
+                hir.type_params.len(),
+                bound.symbols.len(),
             ];
             (m.is_leaf, counts)
         });
-        counts.collect()
+        ProgramInputs {
+            node_counts: counts.collect(),
+            aot_symbols: aot::ProgramSymbols::resolve(files),
+        }
+    }
+}
+
+impl<'s> Program<'s> {
+    pub fn new(session: &'s Session, files: &'s Files<'s>) -> Program<'s> {
+        Program::with_inputs(session, files, &ProgramInputs::read(files))
     }
 
-    pub fn with_node_counts(
+    #[allow(
+        clippy::large_unopt_stack_frames,
+        reason = "every table is made here and moved into the program, each with its chunks' addresses in line; runs once per program, close to the bottom of the stack"
+    )]
+    pub fn with_inputs(
         session: &'s Session,
         files: &'s Files<'s>,
-        counts: &NodeCounts,
+        inputs: &ProgramInputs,
     ) -> Program<'s> {
+        let counts = &inputs.node_counts;
         // Nothing that mentions a leaf file's node is published, so the shared part has no capacity
         // for those nodes, and `Bases::at` returns `None` for them.
         let bases = |kind: usize| {
@@ -683,8 +699,9 @@ impl<'s> Program<'s> {
             exporting_modules_stopped_at: std::sync::atomic::AtomicU32::new(u32::MAX),
             #[cfg(any(test, feature = "test_support"))]
             modules_searched_for_exports: Default::default(),
-            aot_symbols: Default::default(),
+            aot_symbols: inputs.aot_symbols,
             aot_store_indexes: Default::default(),
+            aot_written_stores: Default::default(),
             aot_prototype_links: Default::default(),
             types,
             expr_types: ByNode::new_in(&exprs, session),
@@ -789,6 +806,7 @@ impl<'s> Program<'s> {
         self.diagnostics_of_re_resolved_calls = ByNodeIndirect::new_in(&no_nodes, session);
         self.key_properties = ByIdIndirect::new_in(session);
         self.distributed_intersections = ByKey::new_in(session);
+        self.release_prototype_links();
     }
 
     /// `GetGlobalDiagnostics`. Returns the errors that don't belong to a file, sorted and
@@ -860,10 +878,11 @@ impl<'s> Program<'s> {
             left_frame: None,
             files: self.files,
             modules: &self.files.modules,
-            visited_module: std::cell::Cell::new((FileId(u32::MAX), None)),
+            visited_trees: std::cell::Cell::new((FileId(u32::MAX), None)),
             variance_type_parameter: Atom::NONE,
             auto_array_type: self.auto_array_type,
             stack: Vec::new(),
+            nearest_resolutions: Default::default(),
             in_progress: vec![0; 1024],
             in_progress_shift: 54,
             frames: Vec::new(),
@@ -883,6 +902,7 @@ impl<'s> Program<'s> {
             this_types: Default::default(),
             this_types_in_progress: Vec::new(),
             thisless_members: Default::default(),
+            recent_symbol_types: Default::default(),
             flow_type_skips: Default::default(),
             instantiated_symbol_links: Default::default(),
             late_binding: Vec::new(),
@@ -1027,6 +1047,7 @@ impl<'s> Program<'s> {
             reported: Vec::new(),
             is_checking_in_flow_loop: false,
             never_checked: Default::default(),
+            never_checked_in_last_file: Vec::new(),
             left_out: Default::default(),
             file_with_early_error: None,
             first_early_error: Default::default(),
@@ -1045,8 +1066,13 @@ impl<'s> Program<'s> {
             names_of_small_numbers: Default::default(),
             names_of_other_numbers: std::cell::RefCell::new(Box::new([(0, Atom::NONE); 256])),
             interface_declarations: Default::default(),
+            identical_inherited_properties: Default::default(),
+            local_properties: Default::default(),
+            modifiers_of_type_parameters: Default::default(),
+            symbols_with_identical_type_parameters: Default::default(),
             counted_export_declarations: Default::default(),
             has_class_or_function_declaration: Default::default(),
+            flow_containers_of_classes: Default::default(),
             generic_mapped_types_in_progress: Vec::new(),
             generic_mapped_types_cut_short: Vec::new(),
             recent_members: Box::new([shape::RecentMembers::NONE; shape::RECENT_MEMBERS]),
@@ -1056,6 +1082,13 @@ impl<'s> Program<'s> {
             unions_without_subtypes: Default::default(),
             unrelated_classes: Default::default(),
             grown_unions: Default::default(),
+            unions_less_a_member: Default::default(),
+            unions_without_member: Default::default(),
+            subsets_of_unions: Default::default(),
+            unions_with_empty_member: Default::default(),
+            unions_with_global_object: Default::default(),
+            have_same_members: Default::default(),
+            unions_of_large_unions: Default::default(),
             grown_signatures: Default::default(),
             union_members_compared: 0,
             union_calls: Default::default(),
@@ -1071,8 +1104,11 @@ impl<'s> Program<'s> {
             fns_around: Default::default(),
             this_containers_around: Default::default(),
             spread_indices_of_many: Default::default(),
+            functions_typed_with_literals: Default::default(),
             times_cut_short: std::cell::Cell::new(0),
             exprs_by_kind: [None, None],
+            alias_declarations: Default::default(),
+            shared_indexes: None,
             provisional_shapes: Default::default(),
             provisional: Default::default(),
             taint_events: Vec::new(),
@@ -1113,6 +1149,8 @@ impl<'s> Program<'s> {
             undefined_properties: Default::default(),
             synthetic_default_import_types: Default::default(),
             referenced_properties: Default::default(),
+            types_of_properties_under_keys: Default::default(),
+            keys_that_name_no_private_member: Default::default(),
             tracked_names: Default::default(),
             unused_private_members: Vec::new(),
             widening_contexts: Vec::new(),
@@ -1179,6 +1217,7 @@ impl<'s> Program<'s> {
             stack_limit: 6 << 20,
             has_stack_for_questions: false,
             work: 0,
+            copies_of_types_by_spread: Default::default(),
             scopes_begun: 0,
             work_trap: WORK_TRAP_DISARMED,
             rejected_expressions: Vec::new(),
@@ -1511,9 +1550,13 @@ mod marks {
         drops_reported: bool,
     }
 
-    /// The frames that have both marks because `mark_tainted_from` gave them to every frame from one up.
+    /// The frames that have both marks because `mark_tainted_from` gave them to every frame from one up, and those
+    /// that `taint_from` has marked in the same way.
     #[derive(Default)]
-    pub(super) struct FullyMarked(RangesInProgress);
+    pub(super) struct FullyMarked {
+        with_both_marks: RangesInProgress,
+        tainted_by_incomplete_flow: RangesInProgress,
+    }
 
     impl Marks {
         #[inline]
@@ -1552,12 +1595,13 @@ mod marks {
 
         pub(super) fn clear_tainted(&mut self, fully_marked: &mut FullyMarked) {
             self.tainted = false;
-            fully_marked.0.clear();
+            fully_marked.with_both_marks.clear();
+            fully_marked.tainted_by_incomplete_flow.clear();
         }
 
         pub(super) fn set_drops_reported(&mut self, drops: bool, fully_marked: &mut FullyMarked) {
             if self.drops_reported && !drops {
-                fully_marked.0.clear();
+                fully_marked.with_both_marks.clear();
             }
             self.drops_reported = drops;
         }
@@ -1567,10 +1611,25 @@ mod marks {
         /// Gives both marks to every frame from `from` up that isn't known to have them.
         pub(super) fn mark_from(&mut self, frames: &mut [QueryFrame], from: usize) {
             let mut unmarked: SmallVec<[Range<usize>; 2]> = SmallVec::new();
-            self.0.add_from(frames, from, |new| unmarked.push(new));
+            (self.with_both_marks).add_from(frames, from, |new| unmarked.push(new));
             for new in unmarked {
                 for frame in &mut frames[new] {
                     frame.marks = Marks::both();
+                }
+            }
+        }
+
+        pub(super) fn taint_by_incomplete_flow_from(
+            &mut self,
+            frames: &mut [QueryFrame],
+            from: usize,
+        ) {
+            let mut unmarked: SmallVec<[Range<usize>; 2]> = SmallVec::new();
+            (self.tainted_by_incomplete_flow).add_from(frames, from, |new| unmarked.push(new));
+            for new in unmarked {
+                for frame in &mut frames[new] {
+                    frame.marks.taint();
+                    frame.incomplete_flow = true;
                 }
             }
         }
@@ -1717,13 +1776,82 @@ impl ThislessMembers {
     }
 }
 
+const RECENT_SYMBOL_TYPES: usize = 512;
+
+#[derive(Copy, Clone)]
+struct RecentSymbolType {
+    symbol: Sym,
+    /// `View::snapshot_of` the symbol's file when it was looked up.
+    snapshot: u32,
+    /// `RecentSymbolTypes::visit` at that time.
+    visit: u32,
+    ty: TypeId,
+}
+
+/// FOR SPEED. What `Program::symbol_types` has returned for symbols of files that the task isn't visiting. It returns the
+/// same again during the visit, as long as the task sees the same commits in the symbol's file.
+struct RecentSymbolTypes {
+    entries: Box<[RecentSymbolType; RECENT_SYMBOL_TYPES]>,
+    /// Counts the visits, from 1 on.
+    visit: u32,
+}
+
+impl Default for RecentSymbolTypes {
+    fn default() -> Self {
+        let free = RecentSymbolType {
+            symbol: NO_MEMBER,
+            snapshot: 0,
+            visit: 0,
+            ty: TypeId::NEVER,
+        };
+        RecentSymbolTypes {
+            entries: Box::new([free; RECENT_SYMBOL_TYPES]),
+            visit: 1,
+        }
+    }
+}
+
+impl RecentSymbolTypes {
+    fn begin_visit(&mut self) {
+        self.visit += 1;
+    }
+
+    #[inline]
+    fn index_of(symbol: Sym) -> usize {
+        let mixed = symbol.id.0 ^ symbol.file.0.wrapping_mul(0x9E37_79B1);
+        mixed as usize % RECENT_SYMBOL_TYPES
+    }
+
+    #[inline]
+    fn get(&self, symbol: Sym, snapshot: u32) -> Option<TypeId> {
+        let entry = &self.entries[Self::index_of(symbol)];
+        let is_known =
+            entry.symbol == symbol && entry.snapshot == snapshot && entry.visit == self.visit;
+        is_known.then_some(entry.ty)
+    }
+
+    #[inline]
+    fn put(&mut self, symbol: Sym, snapshot: u32, ty: TypeId) {
+        self.entries[Self::index_of(symbol)] = RecentSymbolType {
+            symbol,
+            snapshot,
+            visit: self.visit,
+            ty,
+        };
+    }
+
+    fn forget(&mut self, symbol: Sym) {
+        self.entries[Self::index_of(symbol)].visit = 0;
+    }
+}
+
 // The fields are laid out as declared: small ones that most accesses touch first, where x86-64 reaches them with a
 // one-byte offset.
 #[repr(C)]
 pub struct Checker<'p, 's> {
     files: &'p Files<'s>,
     modules: &'s [ModuleCell<'s>],
-    visited_module: std::cell::Cell<(FileId, Option<&'s crate::program::Module<'s>>)>,
+    visited_trees: std::cell::Cell<(FileId, Option<&'s ModuleTrees<'s>>)>,
     pub p: &'p Program<'s>,
     /// The arena of the thread that runs the task. It's for the records the task creates, which may
     /// be published. Everything else that a task allocates is on the regular heap.
@@ -1764,6 +1892,8 @@ pub struct Checker<'p, 's> {
     /// The spans of `task.file` that `checkSourceFile` never visits. The passes that iterate over
     /// all nodes of a kind do visit them.
     never_checked: std::cell::RefCell<Vec<(u32, u32)>>,
+    /// `never_checked` as it was when the check of the last file ended. Kept where `Files::brings_declarations`.
+    never_checked_in_last_file: Vec<(u32, u32)>,
     /// `number_name` of each index, or `NONE` if it hasn't been requested.
     names_of_small_numbers: std::cell::RefCell<Vec<Atom>>,
     /// The numbers asked for last among the others, by their bits, each with its name.
@@ -1777,6 +1907,7 @@ pub struct Checker<'p, 's> {
     this_types: FxHashMap<Sym, bool>,
     /// See `is_thisless_for_this_mapper`.
     thisless_members: ThislessMembers,
+    recent_symbol_types: RecentSymbolTypes,
     /// See `skip_ancestors_without_flow_constraint`.
     flow_type_skips: FxHashMap<(FileId, Node), FlowTypeSkip>,
     /// `links.resolvedType` of instantiated symbols, by target and mapper. Only contains the ones that differ from what
@@ -1840,8 +1971,14 @@ pub struct Checker<'p, 's> {
     /// `resolvedConstraintOfDistributive`. `None` is `noConstraintType`.
     cond_distributive_memo: FxHashMap<TypeId, Option<TypeId>>,
     interface_declarations: FxHashMap<Sym, std::rc::Rc<errors_heritage::InterfaceDeclarations>>,
+    /// What `check_inherited_properties_are_identical` has answered for an interface.
+    identical_inherited_properties: FxHashMap<Sym, bool>,
+    local_properties: FxHashMap<TypeId, std::rc::Rc<errors_heritage::LocalProperties>>,
+    modifiers_of_type_parameters: std::cell::RefCell<FxHashMap<(Sym, TypeId), Flags>>,
+    symbols_with_identical_type_parameters: crate::util::FxHashSet<Sym>,
     /// For `check_namespace_merge_order`: whether a class or a function is among the declarations of a symbol.
     has_class_or_function_declaration: FxHashMap<Sym, bool>,
+    flow_containers_of_classes: FxHashMap<(FileId, ClassId), shape::FlowContainers>,
     /// For `check_external_module_exports`: how many declarations of an exported symbol count as duplicates.
     counted_export_declarations: FxHashMap<Sym, usize>,
     /// `unionOfUnionTypes`, for `UnionReductionSubtype`: the lower id first.
@@ -1851,10 +1988,26 @@ pub struct Checker<'p, 's> {
     unions_without_subtypes: FxHashMap<TypeId, bool>,
     unrelated_classes: unions::UnrelatedClasses,
     grown_unions: FxHashMap<TypeId, unions::Growth>,
+    unions_less_a_member: FxHashMap<TypeId, unions::Loss>,
+    /// The rest of a union by the union and the member that was removed.
+    unions_without_member: FxHashMap<(TypeId, TypeId), TypeId>,
+    /// `isTypeSubsetOfUnion` of unions of `unions::MANY_MEMBERS` or more.
+    subsets_of_unions: FxHashMap<(TypeId, TypeId), bool>,
+    /// `isEmptyObjectType` of unions of `unions::MANY_MEMBERS` or more, asked while the members of no type were being resolved.
+    unions_with_empty_member: FxHashMap<TypeId, bool>,
+    /// Whether a union of `unions::MANY_MEMBERS` or more has the global `Object`.
+    unions_with_global_object: FxHashMap<TypeId, bool>,
+    /// Whether two different unions of `unions::MANY_MEMBERS` or more have the same members.
+    have_same_members: FxHashMap<(TypeId, TypeId), bool>,
+    /// `unionOfUnionTypes`, for `UnionReductionLiteral`, where one of the two has `unions::MANY_MEMBERS` or more: the lower id first.
+    unions_of_large_unions: FxHashMap<(TypeId, TypeId), TypeId>,
     /// The same for the signature of a union of function types: the signature that combines one fewer, and the one more.
     grown_signatures: FxHashMap<SigId, (SigId, SigId)>,
     /// `spread_indices` of the array literals and the calls with many elements or arguments.
     spread_indices_of_many: FxHashMap<(FileId, ExprId), Option<(usize, usize)>>,
+    /// The first function in each object literal whose signature requests the literal's type.
+    /// See `check_containing_object_literal_cached`.
+    functions_typed_with_literals: FxHashMap<(FileId, ExprId), Option<FnId>>,
     /// Non-cacheable query results, kept for reuse while the computation that made them
     /// non-cacheable is in flight. See `cache_provisionally`.
     provisional: FxHashMap<Query, Provisional>,
@@ -1867,6 +2020,12 @@ pub struct Checker<'p, 's> {
     /// `symbolReferenceLinks` of the private members marked by an access in a file other than the
     /// one that declares them (`mark_property_as_referenced`).
     referenced_properties: crate::util::FxHashSet<Sym>,
+    /// By a holder and a union of keys that each name a property of it: the declared types of those properties, each
+    /// once. An element access that reads under the union narrows each of them by its own flow.
+    types_of_properties_under_keys: FxHashMap<(TypeId, TypeId), std::sync::Arc<[TypeId]>>,
+    /// A receiver and a union of keys of which none names a private member: `mark_property_as_referenced` has nothing
+    /// to mark for them, wherever the access stands.
+    keys_that_name_no_private_member: crate::util::FxHashSet<(TypeId, TypeId)>,
     /// `Resolve` with `isUse` in `trackComputedName` and `trackExistingEntityName`, by the file it
     /// starts from: the scope, the name and the meaning. `check_unused` of that file resolves it
     /// again.
@@ -1935,7 +2094,12 @@ pub struct Checker<'p, 's> {
     checked_type_references: (Option<FileId>, Vec<u64>),
     /// A file, and which of its expressions `prepare_ancestors` has processed.
     prepared_exprs: (FileId, Vec<bool>),
-    exprs_by_kind: [Option<(FileId, std::rc::Rc<hir::ExprsByKind>)>; 2],
+    exprs_by_kind: [Option<(FileId, std::sync::Arc<hir::ExprsByKind>)>; 2],
+    /// `symbols_of_alias_declarations` of the last file that was asked about.
+    alias_declarations:
+        std::cell::RefCell<Option<(FileId, std::sync::Arc<errors_aliases::AliasDeclarations>)>>,
+    /// Of the large file whose parts several checkers ask about.
+    shared_indexes: Option<(FileId, std::sync::Arc<shared_indexes::SharedIndexes<'s>>)>,
     /// See `provisional_shape`, which returns a reference to one and pushes the next.
     provisional_shapes: crate::util::memory::LocalVec<shape::Resolved<'s>>,
     /// The innermost resolution that was in progress at the rejection. The frame at `unwind_to`
@@ -2036,6 +2200,9 @@ pub struct Checker<'p, 's> {
     has_stack_for_questions: bool,
     /// Number of queries made so far.
     pub work: u64,
+    /// `get_spread_type(EMPTY_OBJECT, right, readonly)` at rank 0 without a symbol, by `(right, readonly)`. See
+    /// `can_keep_copies_of_types_by_spread` and `mark_of_what_a_copy_by_spread_read`.
+    copies_of_types_by_spread: FxHashMap<(TypeId, bool), TypeId>,
     /// Number of `begin_scope` calls so far for a result that's permanent once stored. It excludes
     /// the calls for a memo that evicts entries, like `FlowMemo::types_with_facts`, which begins
     /// another scope for the same question without computing anything new.
@@ -2121,6 +2288,7 @@ pub struct Checker<'p, 's> {
     /// The same for `union_unreduced`, in the order of the arguments.
     recent_unreduced_unions: instantiate::Recent,
     stack: Vec<Query>,
+    nearest_resolutions: std::cell::RefCell<Vec<(u64, u32)>>,
     /// One per entry of `stack`.
     frames: Vec<QueryFrame>,
     /// The patterns whose implied type is being computed as the contextual type of their
@@ -2554,30 +2722,32 @@ impl<'p, 's> Checker<'p, 's> {
     // ───────────────────────────── access ─────────────────────────────
 
     #[inline]
-    fn module(&self, file: FileId) -> &'s crate::program::Module<'s> {
-        match self.visited_module.get() {
-            (visited, Some(module)) if visited == file => module,
-            _ => self.look_up_module(file),
+    fn module_trees(&self, file: FileId) -> &'s ModuleTrees<'s> {
+        match self.visited_trees.get() {
+            (visited, Some(trees)) if visited == file => trees,
+            _ => self.look_up_trees(file),
         }
     }
 
     #[inline(never)]
-    fn look_up_module(&self, file: FileId) -> &'s crate::program::Module<'s> {
-        let module: &'s crate::program::Module<'s> = &self.modules[file.idx()];
-        if self.task.file == Some(file) {
-            self.visited_module.set((file, Some(module)));
-        }
-        module
+    fn look_up_trees(&self, file: FileId) -> &'s ModuleTrees<'s> {
+        self.modules[file.idx()].trees()
+    }
+
+    /// Call where `task` begins to visit `file`.
+    fn note_visited_trees(&self, file: FileId) {
+        self.visited_trees
+            .set((file, Some(self.look_up_trees(file))));
     }
 
     #[inline]
     pub fn hir(&self, file: FileId) -> &'p hir::File<'s> {
-        &self.module(file).hir
+        &self.module_trees(file).hir
     }
 
     #[inline]
     pub fn bound(&self, file: FileId) -> &'p Bound<'s> {
-        &self.module(file).bound
+        &self.module_trees(file).bound
     }
 
     #[inline]
@@ -3654,6 +3824,32 @@ impl<'p, 's> Checker<'p, 's> {
         self.add_diagnostic_of(Some(Query::Comparison(entry)), diagnostic);
     }
 
+    fn height_of_nearest_resolution(&self, below: usize) -> usize {
+        debug_assert_eq!(self.stack.len(), self.frames.len());
+        let mut known = self.nearest_resolutions.borrow_mut();
+        if known.len() < below {
+            known.resize(below, (0, 0));
+        }
+        let mut height = below;
+        let (nearest, asked_from) = loop {
+            if height == 0 {
+                break (0, 0);
+            }
+            let (serial, nearest) = known[height - 1];
+            if serial == self.frames[height - 1].serial {
+                break (nearest as usize, height);
+            }
+            if self.is_resolution(self.stack[height - 1]) {
+                break (height, height - 1);
+            }
+            height -= 1;
+        };
+        for at in asked_from..below {
+            known[at] = (self.frames[at].serial, nearest as u32);
+        }
+        nearest
+    }
+
     /// True if `q` is a query that TypeScript tracks as well (`TypeSystemPropertyName`): the type of a named
     /// declaration, the return type of a function, the base types of a class or an interface, the target of a
     /// type alias, the base constraint of a type, or whether a parameter's initializer can be `undefined`. In
@@ -4485,15 +4681,15 @@ impl<'p, 's> Checker<'p, 's> {
     /// Returns the expressions of `file` grouped by kind, for callers that need a few kinds and would
     /// otherwise iterate over all expressions. It's built once per file. The handle doesn't borrow
     /// `self`, so this works: `let index = self.exprs_by_kind(file); for &e in index.of(ExprTag::Call)`.
-    pub(crate) fn exprs_by_kind(&mut self, file: FileId) -> std::rc::Rc<hir::ExprsByKind> {
+    pub(crate) fn exprs_by_kind(&mut self, file: FileId) -> std::sync::Arc<hir::ExprsByKind> {
         for (of, index) in self.exprs_by_kind.iter().flatten() {
             if *of == file {
-                return std::rc::Rc::clone(index);
+                return std::sync::Arc::clone(index);
             }
         }
-        let index = std::rc::Rc::new(hir::ExprsByKind::new(self.hir(file)));
+        let index = self.shared_exprs_by_kind(file);
         let is_visited = self.task.file == Some(file);
-        self.exprs_by_kind[usize::from(is_visited)] = Some((file, std::rc::Rc::clone(&index)));
+        self.exprs_by_kind[usize::from(is_visited)] = Some((file, std::sync::Arc::clone(&index)));
         index
     }
 
@@ -4760,13 +4956,19 @@ impl<'p, 's> Checker<'p, 's> {
         // `getTypeOfVariableOrParameterOrProperty` stores what `getQuickTypeOfExpression` returns,
         // which checks the callee with the loops visible, and the type of a `...rest`. Nothing stores
         // the type of a pattern around a binding element, which is recomputed for the next element.
-        for at in depth..self.frames.len() {
-            let is_quick = |&(from, to): &(usize, usize)| (from..to).contains(&at);
-            if self.quick_initializers.iter().any(is_quick) && self.is_resolution(self.stack[at]) {
-                continue;
+        if self.quick_initializers.is_empty() {
+            (self.fully_marked).taint_by_incomplete_flow_from(&mut self.frames, depth);
+        } else {
+            for at in depth..self.frames.len() {
+                let is_quick = |&(from, to): &(usize, usize)| (from..to).contains(&at);
+                if self.quick_initializers.iter().any(is_quick)
+                    && self.is_resolution(self.stack[at])
+                {
+                    continue;
+                }
+                self.frames[at].marks.taint();
+                self.frames[at].incomplete_flow = true;
             }
-            self.frames[at].marks.taint();
-            self.frames[at].incomplete_flow = true;
         }
         self.taints += 1;
         self.incomplete_flow_taints += 1;

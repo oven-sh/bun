@@ -1,4 +1,11 @@
 // Structs, arrays and small integers of the garbage collected heap: made, read, written, tested, cast, handed to JavaScript and back, and null where an object is asked for.
+// STATISTIC: WasmOptimizedCopies = 0
+// STATISTIC: WasmBaselineCopies = 32
+// STATISTIC: WasmOptimizedCheckingCopies = 0
+// STATISTIC: WasmBaselineCheckingCopies = 10
+// COUNTER in every build: WasmInstancesUsingImageCode = 1
+// COUNTER in every build: WasmInstancesInterpreted = 0
+// COUNTER in every build: WasmModulesFoundBeforeParsing = 1
 /// <reference path="../wasm-files.d.ts" />
 // Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
 import path from "./module.wasm";

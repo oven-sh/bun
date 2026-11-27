@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS, tempDir } from "harness";
 import { once } from "node:events";
 import http from "node:http";
 import net, { type AddressInfo } from "node:net";
@@ -74,13 +74,18 @@ test.concurrent.skipIf(!slow)(
   60_000,
 );
 
+// On macOS an aborted upload is closed with a FIN, so over TCP each one holds an
+// ephemeral port for 30 seconds, and the whole machine has 16,384 of them. Right
+// after thousands of aborts the listen(0, "127.0.0.1") of the tests below failed
+// there. Over a Unix socket they hold none; bun 1.2.6 crashes there as well.
 function uafTest(fixture: string, extraEnv: Record<string, string>) {
   test.concurrent(
     `should not crash on abort (${fixture})`,
     async () => {
+      using dir = tempDir("node-http-uaf", {});
       await using proc = Bun.spawn({
         cmd: [bunExe(), join(import.meta.dir, fixture)],
-        env: { ...bunEnv, ...extraEnv },
+        env: { ...bunEnv, ...extraEnv, SOCKET_PATH: isMacOS ? join(String(dir), "socket") : undefined },
         stdout: "pipe",
         stderr: "pipe",
         stdin: "ignore",

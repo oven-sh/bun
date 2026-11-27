@@ -1,37 +1,23 @@
-#[cfg(windows)]
-use core::ptr;
-
 use bun_alloc::AllocError;
-use bun_paths::path_options::{CheckLength, Kind, PathSeparators};
-use bun_paths::{self, OSPathChar, OSPathSlice};
+use bun_paths::{OSPath, OSPathSlice, Path};
 use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skippable::Walker};
 
-// The path-builder types here use the OS path unit: u8 on POSIX,
-// u16 on Windows — encoded via `OSPathChar` so `slice()`/`slice_z()` produce
-// the platform-native width. The auto separator mode normalizes `/` → `\` on Windows
-// during `from`/`append`, which is load-bearing for the Win32 calls below.
-// Length-checked like the Hardlinker's paths: the walker entries appended on Windows are unbounded.
-type AbsPathAutoOs =
-    bun_paths::AbsPath<OSPathChar, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
-type PathAutoOs =
-    bun_paths::Path<OSPathChar, { Kind::ANY }, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
-
 pub(crate) struct FileCopier {
-    pub(crate) src_path: AbsPathAutoOs,
-    pub(crate) dest_subpath: PathAutoOs,
+    pub(crate) src_path: OSPath,
+    pub(crate) dest_subpath: OSPath,
     pub(crate) walker: Walker,
 }
 
 impl FileCopier {
     pub(crate) fn init(
         src_dir: Fd,
-        src_path: bun_paths::AbsPath<OSPathChar, { PathSeparators::AUTO }>,
-        dest_subpath: bun_paths::Path<OSPathChar, { Kind::ANY }, { PathSeparators::AUTO }>,
+        src_path: OSPath,
+        dest_subpath: OSPath,
         skip_dirnames: &[&OSPathSlice],
     ) -> Result<FileCopier, AllocError> {
         Ok(FileCopier {
-            src_path: src_path.into_checked(),
-            dest_subpath: dest_subpath.into_checked(),
+            src_path,
+            dest_subpath,
             walker: {
                 let mut w = walker_skippable::walk(
                     src_dir,
@@ -49,23 +35,12 @@ impl FileCopier {
     // `Drop` impl is needed.
 
     pub(crate) fn copy(&mut self) -> sys::Result<()> {
-        // `make_open_path` is u8-only; on Windows the OS-unit path is u16 so
-        // narrow it via the same infallible `from_w_path` transcode that
-        // `bun_sys::make_path_w` uses. Don't synthesise EINVAL on
-        // conversion — store paths are built from UTF-8 package names and are
-        // always WTF-8 round-trippable. On POSIX `OSPathChar == u8` and
-        // `slice_z()` already yields `&ZStr`, so deref-coerce to `&[u8]`.
-        #[cfg(windows)]
-        let mut dest_u8_buf = bun_paths::path_buffer_pool::get();
-        #[cfg(windows)]
-        let dest_subpath_u8: &[u8] =
-            bun_paths::string_paths::from_w_path(&mut dest_u8_buf[..], self.dest_subpath.slice())
-                .as_bytes();
-        #[cfg(not(windows))]
-        let dest_subpath_u8: &[u8] = self.dest_subpath.slice_z().as_bytes();
+        // `make_open_path` only takes bytes.
+        let mut dest_subpath_u8 = Path::from(&self.dest_subpath);
+        dest_subpath_u8.strip_nt_prefix();
         let dest_dir = match bun_sys::make_path::make_open_path(
             &Dir::cwd(),
-            dest_subpath_u8,
+            &dest_subpath_u8,
             Default::default(),
         ) {
             Ok(d) => d,
@@ -97,75 +72,22 @@ impl FileCopier {
                     _ => continue,
                 }
 
-                // A `path.save()` ResetScope would hold `&mut Path` and keep
-                // `self.src_path` / `self.dest_subpath` exclusively borrowed
-                // for the rest of the iteration. Capture the saved lengths and
-                // restore via `set_length` after the body instead.
-                let src_saved_len = self.src_path.len();
-                let dest_saved_len = self.dest_subpath.len();
-                let appended = self.src_path.append(entry.path.as_slice()).is_ok()
-                    && self.dest_subpath.append(entry.path.as_slice()).is_ok();
+                let src = self.src_path.push_scoped(entry.path);
+                let dest = self.dest_subpath.push_scoped(entry.path);
 
-                let result: sys::Result<()> = match entry.kind {
-                    _ if !appended => {
-                        sys::Result::Err(sys::Error::from_code(E::ENAMETOOLONG, sys::Tag::copyfile))
+                if entry.kind == EntryKind::Directory {
+                    if bun_sys::windows::CreateDirectoryExW(&src, &dest).is_err() {
+                        // Also taken when the directory exists, a success for make_path.
+                        bun_sys::make_path::make_path(&dest_dir, entry.path)?;
                     }
-                    EntryKind::Directory => {
-                        // SAFETY: FFI — both `slice_z()` are NUL-terminated WStrs.
-                        if unsafe {
-                            bun_sys::windows::CreateDirectoryExW(
-                                self.src_path.slice_z().as_ptr(),
-                                self.dest_subpath.slice_z().as_ptr(),
-                                ptr::null_mut(),
-                            )
-                        } == 0
-                        {
-                            // Also taken when the directory exists, a success for make_path.
-                            bun_sys::make_path::make_path::<u16>(&dest_dir, entry.path.as_slice())
-                        } else {
-                            sys::Result::Ok(())
-                        }
-                    }
-                    EntryKind::File => {
-                        match bun_sys::copy_file::copy_file(
-                            self.src_path.slice_z(),
-                            self.dest_subpath.slice_z(),
-                        ) {
-                            sys::Result::Ok(()) => sys::Result::Ok(()),
-                            sys::Result::Err(first_err) => {
-                                // Retry after creating the parent directory.
-                                // For root-level files (`index.js`,
-                                // `package.json`, `LICENSE`) `dirname` is
-                                // null and there is no missing parent to
-                                // create — `dest_dir` itself was already
-                                // opened above — so the original error is the
-                                // real failure and must propagate. Silently
-                                // continuing here would let a staged
-                                // global-store entry be renamed into place
-                                // with files missing.
-                                match bun_paths::Dirname::dirname::<u16>(entry.path.as_slice()) {
-                                    None => sys::Result::Err(first_err),
-                                    Some(entry_dirname) => {
-                                        let _ = bun_sys::make_path::make_path::<u16>(
-                                            &dest_dir,
-                                            entry_dirname,
-                                        );
-                                        bun_sys::copy_file::copy_file(
-                                            self.src_path.slice_z(),
-                                            self.dest_subpath.slice_z(),
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    _ => unreachable!(),
-                };
-
-                self.src_path.set_length(src_saved_len);
-                self.dest_subpath.set_length(dest_saved_len);
-
-                result?;
+                } else if let Err(first_err) = bun_sys::copy_file::copy_file(&src, &dest) {
+                    // No parent to create, so this is the real error. Skipping it would publish an incomplete entry.
+                    let Some(entry_dirname) = bun_paths::dirname(entry.path) else {
+                        return Err(first_err);
+                    };
+                    let _ = bun_sys::make_path::make_path(&dest_dir, entry_dirname);
+                    bun_sys::copy_file::copy_file(&src, &dest)?;
+                }
             }
             #[cfg(not(windows))]
             {
@@ -179,13 +101,8 @@ impl FileCopier {
                 let dest = match dest_dir.create_file_z(entry.path, Default::default()) {
                     Ok(f) => f,
                     Err(_) => {
-                        if let Some(entry_dirname) =
-                            bun_paths::Dirname::dirname::<OSPathChar>(entry.path)
-                        {
-                            let _ = bun_sys::make_path::make_path::<OSPathChar>(
-                                &dest_dir,
-                                entry_dirname,
-                            );
+                        if let Some(entry_dirname) = bun_paths::dirname(entry.path) {
+                            let _ = bun_sys::make_path::make_path(&dest_dir, entry_dirname);
                         }
 
                         dest_dir.create_file_z(entry.path, Default::default())?

@@ -40,7 +40,6 @@ use core::ptr;
 use std::sync::Once;
 
 use crate::image::codecs;
-use bun_sys::windows;
 
 /// `codecs::Error` plus `BackendUnavailable`; the variants used in this file
 /// are inlined here and `split()`
@@ -92,7 +91,6 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
     }
 
     let stream = f.create_stream().ok_or(BackendUnavailable)?;
-    scopeguard::defer! { release(stream.as_ptr()); }
     if stream.initialize_from_memory(
         bytes.as_ptr(),
         u32::try_from(bytes.len()).expect("int cast"),
@@ -103,12 +101,10 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
 
     // WICDecodeMetadataCacheOnDemand = 0. vendor GUID null = let WIC pick.
     let dec = f
-        .create_decoder_from_stream(stream.cast::<IUnknown>().as_ptr(), 0)
+        .create_decoder_from_stream(stream.as_ptr().cast(), 0)
         .ok_or(DecodeFailed)?;
-    scopeguard::defer! { release(dec.as_ptr()); }
 
     let frame = dec.get_frame(0).ok_or(DecodeFailed)?;
-    scopeguard::defer! { release(frame.as_ptr()); }
 
     let mut w: u32 = 0;
     let mut h: u32 = 0;
@@ -131,7 +127,6 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
         return Err(DecodeFailed);
     }
     let conv = ComPtr::new(conv).ok_or(DecodeFailed)?;
-    scopeguard::defer! { release(conv.as_ptr()); }
 
     // Compute stride/size in u64 first: with `maxPixels` raised past ~1.07B,
     // `w * 4` can wrap u32 (0x4000_0001×4 → 4); the checked cast below is a
@@ -190,23 +185,20 @@ pub(crate) fn encode(
     if unsafe { CreateStreamOnHGlobal(ptr::null_mut(), 1, &mut stream) } < 0 {
         return Err(BackendUnavailable);
     }
-    let stream = ComPtr::new(stream).ok_or(BackendUnavailable)?;
-    scopeguard::defer! { release(stream.as_ptr()); }
+    let stream = ComPtr::new(stream.cast::<IStream>()).ok_or(BackendUnavailable)?;
 
     // WINCODEC_ERR_COMPONENTNOTFOUND when the HEIF/AV1 store extension isn't
     // installed → BackendUnavailable so codecs.encode() falls through to
     // UnsupportedOnPlatform instead of a generic "encode failed".
     let guid = container_guid(opts.format).ok_or(BackendUnavailable)?;
     let enc = f.create_encoder(guid).ok_or(BackendUnavailable)?;
-    scopeguard::defer! { release(enc.as_ptr()); }
     // WICBitmapEncoderNoCache = 2.
-    if enc.initialize(stream.as_ptr(), 2) < 0 {
+    if enc.initialize(stream.as_ptr().cast(), 2) < 0 {
         return Err(EncodeFailed);
     }
 
-    let (frame, props) = enc.create_new_frame().ok_or(EncodeFailed)?;
-    scopeguard::defer! { release(frame.as_ptr()); }
-    scopeguard::defer! { release(props); }
+    let (frame, bag) = enc.create_new_frame().ok_or(EncodeFailed)?;
+    let props = bag.as_ref().map_or(ptr::null_mut(), ComPtr::as_ptr);
 
     // Thread `quality` and the HEIF sub-codec through the IPropertyBag2 the
     // encoder hands back. Both go via the C++ shim so the SDK's own VARIANT/
@@ -278,7 +270,6 @@ pub(crate) fn encode(
                 rgba.as_ptr(),
             )
             .ok_or(EncodeFailed)?;
-        scopeguard::defer! { release(src.as_ptr()); }
         let convert_fn = wicConvertBitmapSource
             .get()
             .copied()
@@ -289,8 +280,7 @@ pub(crate) fn encode(
             return Err(EncodeFailed);
         }
         let conv = ComPtr::new(conv).ok_or(EncodeFailed)?;
-        scopeguard::defer! { release(conv.as_ptr()); }
-        if frame.write_source(conv, ptr::null()) < 0 {
+        if frame.write_source(&conv, ptr::null()) < 0 {
             return Err(EncodeFailed);
         }
     }
@@ -308,27 +298,20 @@ pub(crate) fn encode(
     // position IS the byte count. (MSDN GetHGlobalFromStream: "use IStream::Stat
     // to obtain the actual size".)
     let mut pos: u64 = 0;
-    if stream.cast::<IStream>().seek(0, STREAM_SEEK_CUR, &mut pos) < 0 {
+    if stream.seek(0, STREAM_SEEK_CUR, &mut pos) < 0 {
         return Err(EncodeFailed);
     }
 
     let mut hg: *mut c_void = ptr::null_mut();
     // SAFETY: stream is non-null.
-    if unsafe { GetHGlobalFromStream(stream.as_ptr(), &mut hg) } < 0 || hg.is_null() {
+    if unsafe { GetHGlobalFromStream(stream.as_ptr().cast(), &mut hg) } < 0 || hg.is_null() {
         return Err(EncodeFailed);
     }
-    // SAFETY: hg is non-null.
-    let ptr_ = unsafe { GlobalLock(hg) };
-    if ptr_.is_null() {
-        return Err(EncodeFailed);
-    }
-    let ptr_ = ptr_ as *const u8;
-    scopeguard::defer! {
-        // SAFETY: hg is a locked HGLOBAL.
-        let _ = unsafe { GlobalUnlock(hg) };
-    }
-    // SAFETY: ptr_ points to `pos` valid bytes inside the locked HGLOBAL.
-    let slice = unsafe { bun_core::ffi::slice(ptr_, usize::try_from(pos).expect("int cast")) };
+    // SAFETY: the stream's memory, which outlives the lock.
+    let locked = unsafe { LockedGlobal::new(hg) }.ok_or(EncodeFailed)?;
+    let len = usize::try_from(pos).expect("int cast");
+    // SAFETY: the stream wrote `pos` bytes.
+    let slice = unsafe { bun_core::ffi::slice(locked.bytes, len) };
     Ok(slice.to_vec())
 }
 
@@ -399,60 +382,33 @@ struct IStreamVTable {
 }
 const STREAM_SEEK_CUR: u32 = 1;
 
-/// Generic Release through the IUnknown slots — every COM pointer is
-/// layout-compatible with `*IUnknown`.
-#[inline]
-fn release<T>(p: *mut T) {
-    if !p.is_null() {
-        let unk = p as *mut IUnknown;
-        // SAFETY: every COM interface vtable begins with IUnknownVTable;
-        // p was returned by a COM creation call and not yet released.
-        unsafe {
-            let _ = ((*(*unk).vt).Release)(unk);
-        }
-    }
-}
-
-/// Non-null COM interface pointer. Exists solely to move the per-call-site
-/// `unsafe { ((*(*p).vt).Method)(p, ..) }` vtable dance into one place per
-/// method, so `decode`/`encode` read as straight-line safe code.
-///
-/// Not an owning smart pointer — release is still explicit via
-/// `scopeguard::defer! { release(p.as_ptr()) }` at the call site. `Copy` so the defer-guard
-/// closure captures a copy and the handle stays usable afterwards.
-#[repr(transparent)]
+/// Owns one reference to a COM interface.
 struct ComPtr<T>(ptr::NonNull<T>);
 
-// Hand-rolled instead of `#[derive]` because the derive adds an implicit
-// `T: Copy` bound, and the COM interface structs (`IWICStream`, …) are not
-// `Copy`. `NonNull<T>` is always `Copy` so the unconstrained impl is sound.
-impl<T> Copy for ComPtr<T> {}
-impl<T> Clone for ComPtr<T> {
-    #[inline]
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
 impl<T> ComPtr<T> {
+    /// Takes the reference that a creation call returned.
     #[inline]
     fn new(p: *mut T) -> Option<Self> {
         ptr::NonNull::new(p).map(Self)
     }
     #[inline]
-    fn as_ptr(self) -> *mut T {
+    fn as_ptr(&self) -> *mut T {
         self.0.as_ptr()
-    }
-    /// Reinterpret as a base/derived interface. Every COM interface is
-    /// vtable-prefix-compatible with its parents, so this is the moral
-    /// equivalent of a C++ `static_cast` along the inheritance chain.
-    #[inline]
-    fn cast<U>(self) -> ComPtr<U> {
-        ComPtr(self.0.cast())
     }
 }
 
-// SAFETY for every `ComPtr<I*>` method body below: `self.0` is a non-null
+impl<T> Drop for ComPtr<T> {
+    fn drop(&mut self) {
+        let unk = self.as_ptr().cast::<IUnknown>();
+        // SAFETY: every COM vtable begins with IUnknownVTable, and `self` owns a reference.
+        unsafe { ((*(*unk).vt).Release)(unk) };
+    }
+}
+
+/// The process's factory, which is never released.
+struct Factory(ptr::NonNull<IWICImagingFactory>);
+
+// SAFETY for every `Factory` and `ComPtr<I*>` method body below: `self.0` is a non-null
 // live COM interface pointer (enforced at construction by `ComPtr::new`
 // immediately after a successful creation call + HRESULT check), and each
 // vtable slot is typed to match the Windows SDK signature. Out-params are
@@ -460,16 +416,19 @@ impl<T> ComPtr<T> {
 // no `&`/`&mut` to the COM object is ever materialised — only raw-pointer
 // reads of the (immutable) `vt` field — so there is no aliasing assertion.
 
-impl ComPtr<IWICImagingFactory> {
+impl Factory {
+    fn as_ptr(&self) -> *mut IWICImagingFactory {
+        self.0.as_ptr()
+    }
     #[inline]
-    fn create_stream(self) -> Option<ComPtr<IWICStream>> {
+    fn create_stream(&self) -> Option<ComPtr<IWICStream>> {
         let mut out = ptr::null_mut();
         let hr = unsafe { ((*(*self.as_ptr()).vt).CreateStream)(self.as_ptr(), &mut out) };
         if hr < 0 { None } else { ComPtr::new(out) }
     }
     #[inline]
     fn create_decoder_from_stream(
-        self,
+        &self,
         stream: *mut IUnknown,
         opts: u32,
     ) -> Option<ComPtr<IWICBitmapDecoder>> {
@@ -486,7 +445,7 @@ impl ComPtr<IWICImagingFactory> {
         if hr < 0 { None } else { ComPtr::new(out) }
     }
     #[inline]
-    fn create_encoder(self, container: *const GUID) -> Option<ComPtr<IWICBitmapEncoder>> {
+    fn create_encoder(&self, container: *const GUID) -> Option<ComPtr<IWICBitmapEncoder>> {
         let mut out = ptr::null_mut();
         let hr = unsafe {
             ((*(*self.as_ptr()).vt).CreateEncoder)(self.as_ptr(), container, ptr::null(), &mut out)
@@ -495,7 +454,7 @@ impl ComPtr<IWICImagingFactory> {
     }
     #[inline]
     fn create_bitmap_from_memory(
-        self,
+        &self,
         width: u32,
         height: u32,
         fmt: *const GUID,
@@ -522,14 +481,14 @@ impl ComPtr<IWICImagingFactory> {
 
 impl ComPtr<IWICStream> {
     #[inline]
-    fn initialize_from_memory(self, buf: *const u8, len: u32) -> HRESULT {
+    fn initialize_from_memory(&self, buf: *const u8, len: u32) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).InitializeFromMemory)(self.as_ptr(), buf, len) }
     }
 }
 
 impl ComPtr<IWICBitmapDecoder> {
     #[inline]
-    fn get_frame(self, index: u32) -> Option<ComPtr<IWICBitmapSource>> {
+    fn get_frame(&self, index: u32) -> Option<ComPtr<IWICBitmapSource>> {
         let mut out = ptr::null_mut();
         let hr = unsafe { ((*(*self.as_ptr()).vt).GetFrame)(self.as_ptr(), index, &mut out) };
         if hr < 0 { None } else { ComPtr::new(out) }
@@ -538,22 +497,24 @@ impl ComPtr<IWICBitmapDecoder> {
 
 impl ComPtr<IWICBitmapSource> {
     #[inline]
-    fn get_size(self, w: &mut u32, h: &mut u32) -> HRESULT {
+    fn get_size(&self, w: &mut u32, h: &mut u32) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).GetSize)(self.as_ptr(), w, h) }
     }
     #[inline]
-    fn copy_pixels(self, rc: *const c_void, stride: u32, size: u32, out: *mut u8) -> HRESULT {
+    fn copy_pixels(&self, rc: *const c_void, stride: u32, size: u32, out: *mut u8) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).CopyPixels)(self.as_ptr(), rc, stride, size, out) }
     }
 }
 
 impl ComPtr<IWICBitmapEncoder> {
     #[inline]
-    fn initialize(self, stream: *mut IUnknown, cache: u32) -> HRESULT {
+    fn initialize(&self, stream: *mut IUnknown, cache: u32) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).Initialize)(self.as_ptr(), stream, cache) }
     }
     #[inline]
-    fn create_new_frame(self) -> Option<(ComPtr<IWICBitmapFrameEncode>, *mut IUnknown)> {
+    fn create_new_frame(
+        &self,
+    ) -> Option<(ComPtr<IWICBitmapFrameEncode>, Option<ComPtr<IUnknown>>)> {
         let mut frame = ptr::null_mut();
         let mut props = ptr::null_mut();
         let hr = unsafe {
@@ -562,44 +523,45 @@ impl ComPtr<IWICBitmapEncoder> {
         if hr < 0 {
             return None;
         }
+        let props = ComPtr::new(props);
         ComPtr::new(frame).map(|f| (f, props))
     }
     #[inline]
-    fn commit(self) -> HRESULT {
+    fn commit(&self) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).Commit)(self.as_ptr()) }
     }
 }
 
 impl ComPtr<IWICBitmapFrameEncode> {
     #[inline]
-    fn initialize(self, props: *mut IUnknown) -> HRESULT {
+    fn initialize(&self, props: *mut IUnknown) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).Initialize)(self.as_ptr(), props) }
     }
     #[inline]
-    fn set_size(self, w: u32, h: u32) -> HRESULT {
+    fn set_size(&self, w: u32, h: u32) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).SetSize)(self.as_ptr(), w, h) }
     }
     #[inline]
-    fn set_pixel_format(self, pf: &mut GUID) -> HRESULT {
+    fn set_pixel_format(&self, pf: &mut GUID) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).SetPixelFormat)(self.as_ptr(), pf) }
     }
     #[inline]
-    fn write_pixels(self, lines: u32, stride: u32, size: u32, buf: *const u8) -> HRESULT {
+    fn write_pixels(&self, lines: u32, stride: u32, size: u32, buf: *const u8) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).WritePixels)(self.as_ptr(), lines, stride, size, buf) }
     }
     #[inline]
-    fn write_source(self, src: ComPtr<IWICBitmapSource>, rc: *const c_void) -> HRESULT {
+    fn write_source(&self, src: &ComPtr<IWICBitmapSource>, rc: *const c_void) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).WriteSource)(self.as_ptr(), src.as_ptr(), rc) }
     }
     #[inline]
-    fn commit(self) -> HRESULT {
+    fn commit(&self) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).Commit)(self.as_ptr()) }
     }
 }
 
 impl ComPtr<IStream> {
     #[inline]
-    fn seek(self, dlib_move: i64, origin: u32, new_pos: &mut u64) -> HRESULT {
+    fn seek(&self, dlib_move: i64, origin: u32, new_pos: &mut u64) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).Seek)(self.as_ptr(), dlib_move, origin, new_pos) }
     }
 }
@@ -850,8 +812,29 @@ unsafe extern "system" {
     fn GlobalUnlock(h: *mut c_void) -> c_int;
 }
 
+struct LockedGlobal {
+    handle: *mut c_void,
+    bytes: *const u8,
+}
+
+impl LockedGlobal {
+    /// SAFETY: `handle` is an HGLOBAL that outlives the lock.
+    unsafe fn new(handle: *mut c_void) -> Option<Self> {
+        // SAFETY: fn contract.
+        let bytes = unsafe { GlobalLock(handle) }.cast_const().cast::<u8>();
+        (!bytes.is_null()).then(|| Self { handle, bytes })
+    }
+}
+
+impl Drop for LockedGlobal {
+    fn drop(&mut self) {
+        // SAFETY: locked in `new`.
+        unsafe { GlobalUnlock(self.handle) };
+    }
+}
+
 /// `WICConvertBitmapSource` is the one flat export from windowscodecs.dll we
-/// need. Loaded lazily (LoadLibraryA inside `loadFactory`) so the binary
+/// need. Loaded lazily (`DynLib::open` inside `load_factory`) so the binary
 /// carries no import-table dependency on windowscodecs — nano-server / stripped
 /// containers without the WIC feature still launch and just fall back.
 type WICConvertBitmapSourceFn = unsafe extern "system" fn(
@@ -878,7 +861,7 @@ static FACTORY_PTR: core::sync::atomic::AtomicPtr<IWICImagingFactory> =
     core::sync::atomic::AtomicPtr::new(ptr::null_mut());
 static FACTORY_ONCE: Once = Once::new();
 
-fn factory() -> Result<ComPtr<IWICImagingFactory>, BackendError> {
+fn factory() -> Result<Factory, BackendError> {
     // COM apartment must be entered on the *calling* thread; the factory
     // itself is created once and shared (valid in the MTA).
     if !COM_INITIALISED.get() {
@@ -891,26 +874,27 @@ fn factory() -> Result<ComPtr<IWICImagingFactory>, BackendError> {
     }
     FACTORY_ONCE.call_once(load_factory);
     // FACTORY_PTR is only written inside FACTORY_ONCE; happens-before via call_once.
-    ComPtr::new(FACTORY_PTR.load(core::sync::atomic::Ordering::Relaxed)).ok_or(BackendUnavailable)
+    ptr::NonNull::new(FACTORY_PTR.load(core::sync::atomic::Ordering::Relaxed))
+        .map(Factory)
+        .ok_or(BackendUnavailable)
 }
 
 fn load_factory() {
     // Resolve the one flat C export first; if windowscodecs.dll isn't present
     // we never attempt CoCreateInstance and the whole backend stays disabled.
-    // SAFETY: literal C string; LoadLibraryA is safe to call from any thread.
-    let dll = unsafe { windows::LoadLibraryA(c"windowscodecs.dll".as_ptr()) };
-    if dll.is_null() {
-        return;
-    }
-    let Some(sym) = windows::GetProcAddressA(
-        Some(dll),
-        bun_core::ZStr::from_static(b"WICConvertBitmapSource\0"),
-    ) else {
+    // SAFETY: a library of the system, which stays loaded, and the type of its export.
+    let convert = unsafe {
+        bun_sys::DynLib::open(b"windowscodecs.dll")
+            .ok()
+            .and_then(|dll| {
+                dll.leak()
+                    .lookup_as(bun_core::zstr!("WICConvertBitmapSource"))
+            })
+    };
+    let Some(convert) = convert else {
         return;
     };
-    // SAFETY: sym is the export of WICConvertBitmapSource — fn-ptr transmute.
-    let _ = wicConvertBitmapSource
-        .set(unsafe { core::mem::transmute::<_, WICConvertBitmapSourceFn>(sym) });
+    let _ = wicConvertBitmapSource.set(convert);
 
     let mut out: *mut c_void = ptr::null_mut();
     // SAFETY: GUIDs are static; out is a valid out-param.
@@ -983,26 +967,38 @@ pub(crate) fn has_clipboard_image() -> bool {
     false
 }
 
+struct Clipboard(());
+
+impl Clipboard {
+    fn open() -> Option<Self> {
+        // SAFETY: a null hwnd associates the open with the current task; fine for read-only.
+        (unsafe { OpenClipboard(ptr::null_mut()) } != 0).then(|| Self(()))
+    }
+
+    fn data(&self, format: c_uint) -> *mut c_void {
+        // SAFETY: the clipboard is open.
+        unsafe { GetClipboardData(format) }
+    }
+}
+
+impl Drop for Clipboard {
+    fn drop(&mut self) {
+        // SAFETY: the clipboard is open.
+        unsafe { CloseClipboard() };
+    }
+}
+
 // The wider `BackendError` type matches the macOS backend so the caller in
 // Image.rs handles both identically.
 pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
-    // hwnd=null associates the open with the current task; fine for read-only.
-    // SAFETY: null hwnd is documented as valid.
-    if unsafe { OpenClipboard(ptr::null_mut()) } == 0 {
-        return Err(BackendUnavailable);
-    }
-    scopeguard::defer! {
-        // SAFETY: clipboard is open.
-        let _ = unsafe { CloseClipboard() };
-    }
+    let clipboard = Clipboard::open().ok_or(BackendUnavailable)?;
 
     // 1. Registered file-format chunks — copy verbatim.
     for name in NAMED_FORMATS {
         // SAFETY: name is a static NUL-terminated C string.
         let id = unsafe { RegisterClipboardFormatA(name.as_ptr()) };
         if id != 0 {
-            // SAFETY: clipboard is open.
-            let h = unsafe { GetClipboardData(id) };
+            let h = clipboard.data(id);
             if !h.is_null() {
                 if let Some(b) = dup_global::<0>(h)? {
                     return Ok(Some(b));
@@ -1016,8 +1012,7 @@ pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     //    hostile: a 1-byte CF_DIB or a header with biSize≈u32::MAX must drop
     //    the format, not panic the process.
     for cf in [CF_DIBV5, CF_DIB] {
-        // SAFETY: clipboard is open.
-        let h = unsafe { GetClipboardData(cf) };
+        let h = clipboard.data(cf);
         if h.is_null() {
             continue;
         }
@@ -1069,18 +1064,12 @@ fn dup_global<const PREFIX: usize>(
     if size == 0 {
         return Ok(None);
     }
-    // SAFETY: h is a non-null HGLOBAL.
-    let ptr_ = unsafe { GlobalLock(h) };
-    if ptr_.is_null() {
+    // SAFETY: h is a non-null HGLOBAL, and the clipboard is open.
+    let Some(locked) = (unsafe { LockedGlobal::new(h) }) else {
         return Ok(None);
-    }
-    let ptr_ = ptr_ as *const u8;
-    scopeguard::defer! {
-        // SAFETY: h is locked.
-        let _ = unsafe { GlobalUnlock(h) };
-    }
+    };
     let mut out = vec![0u8; PREFIX + size];
-    // SAFETY: ptr_ points to `size` valid bytes inside the locked HGLOBAL.
-    out[PREFIX..].copy_from_slice(unsafe { bun_core::ffi::slice(ptr_, size) });
+    // SAFETY: `size` valid bytes inside the locked HGLOBAL.
+    out[PREFIX..].copy_from_slice(unsafe { bun_core::ffi::slice(locked.bytes, size) });
     Ok(Some(out))
 }

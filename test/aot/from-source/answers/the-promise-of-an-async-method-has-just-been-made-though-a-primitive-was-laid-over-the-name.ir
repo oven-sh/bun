@@ -1,0 +1,24 @@
+# -- source: main.cjs
+# "use strict";
+# class Plain { constructor(run) { this.other = run; this.go = 0; delete this.go; } async go() { return 1; } }
+# const kept = (async () => 5)();
+# kept.constructor = function Other() {};
+# kept.then = function (resolve) { resolve("text" + suffix); };
+# const plain = new Plain(() => kept);
+# let made = 0, other = 0;
+# function report() { print(made + 1, typeof made, other + 1, typeof other); }
+# async function main() { made = await plain.go(); other = await plain.other(); report(); }
+# main();
+# -- end of source
+# f1 = report, f2 = main, f3 = Plain
+# The other side of a-promise-has-just-been-made-only-where-the-object-holds-nothing-of-its-own-under-the-name.ir: the proof which that question is there for stays.
+# Some promise of the program bears names of its own; `await plain.go()` awaits a promise that the async method has just made: `made` is a whole number. A PRIMITIVE laid over the name cannot be called and says nothing against it.
+# `await plain.other()` awaits the kept promise: nothing is held of `other`.
+# RUN(PROOF): link variables mechanisms=all
+# PROOF-COUNT-1: proven=int[0, 2147483647] writers-known filled
+# RUN(ANSWER): run-in-shell suffix = 7;
+# ANSWER: 2 number text71 string
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime suffix = 7;
+# CHECKED: 2 number text71 string
+# CHECKED-NEXT: exited with 0

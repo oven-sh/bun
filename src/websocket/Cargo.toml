@@ -1,0 +1,23 @@
+[package]
+name = "bun_websocket"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_base64.workspace = true
+bun_collections.workspace = true
+bun_core.workspace = true
+bun_deflate.workspace = true
+bun_sha_hmac.workspace = true
+bun_wyhash.workspace = true
+bun_zlib.workspace = true
+
+[[test]]
+name = "server"
+path = "tests/server.rs"

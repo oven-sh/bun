@@ -1,0 +1,13 @@
+# -- source: main.cjs
+# 'use strict';
+# const key = process.argv[9] ?? "other";
+# function Base(a) { this.a = a; }
+# class Below extends Base { [key]() { return 1; } }
+# globalThis.published = [Base, Below, new Below(2), new Below(3), new Base(1)];
+# console.log(new Base(4).a, new Below(5).a);
+# -- end of source
+# A member of a class under a computed key may be an accessor under any name, so a store that may create a field has no typed form on objects of that class, nor on a set of layouts that they are among.
+# The guess about `this` tests for the classes whose members all have names, and the objects of the other class go through the store as written.
+# RUN: walk f1 mechanisms=all-ParameterGuards
+# CHECK: ShapeTest v0 layouts=[L0]
+# CHECK: PutSlotOrAdd {{*}} key="a" receivers=[L0]

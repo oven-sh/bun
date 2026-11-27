@@ -1,13 +1,13 @@
 # a function that is constructed through a variable stores ten fields into `this`: the walk makes the object and copies the body, so the stores go into an object in sight and no call is left
-# f1 = Node, f4 = getNodeConstructor, f2 = createBaseNode, f3 = callsIt
+# f1 = Tile, f2 = tileOf, f3 = callsIt
 # -- source: constructor-function-that-fills-its-object-is-copied-where-it-is-constructed.ts
 # declare function sink(...values: unknown[]): void;
-# function Node(this: any, kind: number, pos: number, end: number) { this.pos = pos; this.end = end; this.kind = kind; this.id = 0; this.flags = 0; this.modifierFlagsCache = 0; this.transformFlags = 0; this.parent = undefined; this.original = undefined; this.emitNode = undefined; }
-# const allocator = { getNodeConstructor: () => Node as any };
-# let NodeConstructor: any;
-# function createBaseNode(kind: number) { return new (NodeConstructor || (NodeConstructor = allocator.getNodeConstructor()))(kind, -1, -1); }
-# function callsIt(holder: any, kind: number) { Node.call(holder, kind, 0, 0); return holder; }
-# sink(createBaseNode, callsIt);
+# function Tile(this: any, clay: number, row: number) { this.row = row; this.isFired = false; this.grams = 350; this.clay = clay; this.glaze = "white"; this.crack = null; this.mark = ""; this.left = -1; this.right = undefined; this.twin = clay; }
+# function tileOf(clay: number) { if (!shape) shape = shapes[clay & 1 ? "tile" : "tile"]; return new shape(clay, 7); }
+# function callsIt(holder: any, clay: number) { Tile.call(holder, clay, 2); return holder; }
+# const shapes: any = { tile: Tile };
+# let shape: any;
+# sink(tileOf, callsIt);
 # -- end of source
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body

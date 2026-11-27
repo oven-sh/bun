@@ -1,0 +1,30 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const list: string[] = []; for (let i = 0; i < 12; i++) list.push("name" + (i % 3));
+# const table = new Map<string, string>([["k", "name0"]]);
+# function count(key: string, from: number, writes: boolean): number { let n = from; for (let i = 0; i < list.length; i++) { if (list[i] === table.get(key)) n++; if (writes) table.set(key, "name" + ((i * 2) % 3)); } return n; }
+# (globalThis as any).kept = count;
+# print(count("k", 0, (globalThis as any).writes === true));
+# -- end of source
+# Calls of eight string built-ins are hoisted into the preheader of the specialized loop version, because their results depend on their operands alone.
+# A list of names says so, and nothing else does. A built-in that should have stayed in its iteration gave a silent wrong result that neither the verifier nor testing=CheckProofsAtRunTime caught.
+# With testing=CheckHoistedCallsAtRunTime in addition to CheckProofsAtRunTime, the call is emitted in the iteration too, and its result is checked against the result of the hoisted call.
+# Fault injection, testing=AssumeInlineBuiltinsPure: every inline built-in is assumed to compute its result from its operands alone, so the read of a Map that the iterations write is hoisted.
+# RUN(RIGHT): run-in-shell mechanisms=all globalThis.writes = true;
+# RIGHT: 5
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CheckHoistedCallsAtRunTime globalThis.writes = true;
+# HELD: 5
+# HELD-NEXT: exited with 0
+# What the check is for: with the fault injected and testing=CheckProofsAtRunTime alone, the program prints another number and nothing crashes.
+# RUN(SILENT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeInlineBuiltinsPure globalThis.writes = true;
+# SILENT: 4
+# SILENT-NEXT: exited with 0
+# The injected fault does not harm iterations that write nothing. So the crash in the last run comes from the result that changed and from nothing else.
+# RUN(PASSES): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CheckHoistedCallsAtRunTime,AssumeInlineBuiltinsPure
+# PASSES: 4
+# PASSES-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CheckHoistedCallsAtRunTime,AssumeInlineBuiltinsPure globalThis.writes = true;
+# LIE: bun: internal AOT error: loop-invariant code motion check failed
+# LIE-NEXT: a call that the compiler hoisted out of the loop returns a different result in this iteration
+# LIE: crashed with

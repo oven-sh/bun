@@ -584,7 +584,7 @@ rm -rf node_modules
 bun install --backend copyfile
 ```
 
-**`symlink`** symlinks each file instead of copying it. Without the flag, Bun only uses it for a package that depends on itself (`"pkg": "file:."`). Other `file:` folders are hardlinked, so their files resolve their dependencies from the project's `node_modules`. A relative symlink that stays inside such a folder is kept, a symlink to a file elsewhere in the project is installed as that file, and any other symlink is left out with a warning. `link:` dependencies do not use this backend; Bun installs them as a single symlink to the linked directory.
+**`symlink`** symlinks each file instead of copying it. Without the flag, Bun only uses it for a package that depends on itself (`"pkg": "file:."`). Other `file:` folders are hardlinked, so their files resolve their dependencies from the project's `node_modules`. A relative symlink that stays inside such a folder is kept, a symlink to a file elsewhere in the project is installed as that file, and any other symlink is left out with a warning. `link:` dependencies do not use this backend; Bun installs them as a single symlink to the linked directory. If the path of the cache contains a backslash (macOS and Linux), Bun copies from it, because Node.js can't `import` from such a path.
 
 If you install with `--backend=symlink`, Node.js won't resolve node_modules of dependencies unless each dependency has its own node_modules folder or you pass `--preserve-symlinks` to `node` or `bun`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
 

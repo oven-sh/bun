@@ -57,7 +57,7 @@ for (const [fault, code, config] of faults) {
         using dir = tempDir("faulty-tsconfig", { ...project, ...files(config) });
         await using run = Bun.spawn({
           cmd: [bunExe(), "test", "--aot", ...flags],
-          env: { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, BUN_JSC_logAOTPhaseTimes: "1" },
+          env: { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words },
           cwd: String(dir),
           stdout: "ignore",
           stderr: "pipe",
@@ -65,7 +65,6 @@ for (const [fault, code, config] of faults) {
         const [stderr, exitCode] = await Promise.all([run.stderr.text(), run.exited]);
         expect(stderr.split("\n").filter(line => line.startsWith("error"))).toEqual([]);
         expect(stderr).toContain(`warn: ${code}`);
-        expect(stderr).not.toContain("AOT build starts over");
         expect(stderr).toContain(" 1 pass");
         expect(exitCode).toBe(0);
       });

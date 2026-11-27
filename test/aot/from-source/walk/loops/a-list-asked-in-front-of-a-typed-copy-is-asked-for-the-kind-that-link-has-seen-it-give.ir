@@ -1,0 +1,38 @@
+# The lists are constants of the module, read inside the loops. The look at a loop lists only what enters from in front, so such a list is asked when the walk of the typed copy comes to the read: that it is as made, in
+# front of the copy. Its own type is `Array` and says nothing of what it holds, so it was not asked for the kind of its storage: the read loaded the storage and told the kinds apart in every turn. Now what is expected of
+# the list is asked, and then Link's word on what this read gives: numbers alone, or no number at all. One test in front; the storage and the length are read in front; the turn loads.
+# `mixed` holds numbers and a text: a list of which that is all that is known may still be of a kind for numbers, so no kind is asked for.
+# `list` and `written` are written lists of numbers that nobody changes: their test for the kind is the compare with the written data, and their length is the written number: it is not read.
+# f1 = sum, f2 = sumOfWritten, f3 = sumOfFields, f4 = sumOfNumbers
+# -- source: a-list-asked-in-front-of-a-typed-copy-is-asked-for-the-kind-that-link-has-seen-it-give.ts
+# class Point { x = 1; }
+# const list: any = [1, 2, 3, 4, 5, 6, 7, 8];
+# const written: number[] = [1.5, 2, 3, 4, 5, 6, 7, 8];
+# const points: any = [new Point(), new Point()];
+# const mixed: any = [1, "two", 3, "four"];
+# function sum(n: number): number { let s = 0; for (let i = 0; i < n; i++) s += list[i & 7]; return s; }
+# function sumOfWritten(n: number): number { let s = 0; for (let i = 0; i < n; i++) s += written[i & 7]; return s; }
+# function sumOfFields(n: number): number { let s = 0; for (let i = 0; i < n; i++) s += points[i & 1].x; return s; }
+# function sumOfNumbers(n: number): number { let s = 0; for (let i = 0; i < n; i++) { const found = mixed[i & 3]; if (typeof found === "number") s += found; } return s; }
+# print(sum(20), sumOfWritten(20), sumOfFields(20), sumOfNumbers(5));
+# declare function print(...values: unknown[]): void;
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetArrayElement {{*}}, [[storage]] arrayStorage=Int32 level=Proven
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Int32
+# CHECK: [[storage]]: {{*}} = GetArrayStorage
+# RUN(WRITTEN): walk f2 mechanisms=all
+# WRITTEN-LABEL: code f2:Body
+# WRITTEN: = GetArrayElement {{*}}arrayStorage=Double
+# WRITTEN: = HasArrayStorage {{*}}arrayStorage=Double
+# RUN(FIELDS): walk f3 mechanisms=all
+# FIELDS-LABEL: code f3:Body
+# FIELDS: = GetArrayElement {{*}}arrayStorage=Contiguous level=Proven
+# FIELDS: = HasArrayStorage {{*}}arrayStorage=Contiguous
+# RUN(MIXED): walk f4 mechanisms=all
+# MIXED-LABEL: code f4:Body
+# MIXED: = IsPristine {{*}}builtinClass=Array
+# MIXED-NOT: = HasArrayStorage
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 82 83.5 20 5

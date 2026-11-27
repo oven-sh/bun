@@ -1,8 +1,8 @@
 # The scan counts every store into what `super()` answers as a part of the construction. A constructor above may answer with another object than the one that this construction makes:
 # then `new B(2)` stores into the object that `new B(1)` made, and `x` is written long behind its making. Where every constructor above answers with its own object, `y` is written at the construction alone
 # RUN: link fields mechanisms=all
-# CHECK: field L1.0 "x" proven=i32 writers-known
-# CHECK: "y" proven=i32 writers-known written-at-construction-alone
+# CHECK: field L1.0 "x" proven=int[0, 2147483647] writers-known
+# CHECK: "y" proven=int[0, 2147483647] writers-known written-at-construction-alone
 # RUN(OLDER): link fields mechanisms=all
 # OLDER-NOT: field L1.0 "x" {{*}}written-at-construction-alone
 # RUN(ALL): run-in-shell mechanisms=all

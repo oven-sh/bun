@@ -1,0 +1,30 @@
+# `return Object.assign({}, given)` copied in line in a loop: the call is written out by the layout that its source is expected to have. The arm that is left as written runs the source's getters:
+# it stands for the written call and bears the mark of the tail call, so that a stack taken under it does not list the function that left. The same for `Object.assign({}, { x: 1 }, given)`, whose first source is laid at once.
+# RUN(MARKED): walk f0:Body mechanisms=all
+# MARKED: = CopyObject {{*}}[assigns]{{*}} tail
+# MARKED: = Call {{*}}calleeName="Object.assign"{{*}} tail
+# RUN(SAID): run-in-shell mechanisms=all
+# SAID: worth,assign,,attempt
+# SAID-NEXT: worth,assign,,attempt
+# SAID-NEXT: worth,assign,keptAssign,
+# SAID-NEXT: [{"worth":1},1]
+# SAID-NEXT: [{"x":1,"worth":1},1]
+# SAID-NEXT: [1,1]
+# SAID-NEXT: exited with 0
+# -- source: main.js
+# "use strict";
+# const namesOf = error => String(error.stack).split("\n").slice(0, 4).map(line => line.split("@")[0]).join();
+# function lastAssign(given) { return Object.assign({}, given); }
+# function lastAssignTwo(given) { return Object.assign({}, { x: 1 }, given); }
+# function keptAssign(given) { const made = Object.assign({}, given); return made.worth + 0; }
+# function attempt(f) { try { print(JSON.stringify(f())); } catch (error) { print(namesOf(error)); } }
+# const kinds = { bad: () => ({ get worth() { throw new Error("no"); } }), good: () => ({ worth: 1 }) };
+# for (let round = 0; round < 3; round++) {
+#   for (const [kind, make] of Object.entries(kinds)) {
+#     const show = round === 2 ? attempt : f => { try { f(); } catch { } };
+#     show(() => { const given = make(); return [lastAssign(given), 1]; });
+#     show(() => { const given = make(); return [lastAssignTwo(given), 1]; });
+#     show(() => { const given = make(); return [keptAssign(given), 1]; });
+#   }
+# }
+# -- end of source

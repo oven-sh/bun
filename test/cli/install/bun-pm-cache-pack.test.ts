@@ -559,6 +559,18 @@ describe("bun pm cache unpack", () => {
     expect(readdirSync(box.tmp)).toEqual([]);
   });
 
+  test.concurrent("a backslash separates in <file>", async () => {
+    using box = sandbox();
+    writeFileSync(box.at("a.pack"), packOf(pkg("real@1.0.0@@@1")));
+    if (!isWindows) writeFileSync(join(box.project, "..\\a.pack"), packOf(pkg("planted@1.0.0@@@1")));
+
+    const { err, code } = await bun(box, ["pm", "cache", "unpack", "..\\a.pack"]);
+
+    expect(err).toBe("");
+    expect(readdirSync(box.cache).filter(name => name.includes("@@@"))).toEqual(["real@1.0.0@@@1"]);
+    expect(code).toBe(0);
+  });
+
   // The pack the next three tests damage. It has every kind of record, and two packages.
   const sound = packOf(
     pkg("@scope/b@1.0.0@@@1", [packageJson, dir("lib"), file("lib/index.js", "module.exports = 1;")]),

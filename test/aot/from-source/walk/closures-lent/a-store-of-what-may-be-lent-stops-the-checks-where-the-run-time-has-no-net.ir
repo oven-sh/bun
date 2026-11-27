@@ -1,0 +1,16 @@
+# f1 = keep, f2 = make
+# -- source: main.ts
+# declare function print(value: any): void;
+# let kept: (() => string) | null = null;
+# function keep(callback: () => string): void { kept = callback; }
+# function make(start: number): number { const label = "n" + start; keep(() => label); return label.length; }
+# print(make(3));
+# print(kept!());
+# -- end of source
+# Fault injection, testing=AssumeCalleesRetainNothing: Link reports that keep() only calls its arguments, so a caller may allocate the closure in its own frame.
+# Together with testing=CheckProofsAtRunTime, the fault is left for the run-time check to catch. Without that switch, the compiler's own checks fail at the store.
+# The closure has no name of its own, so it is one that may be borrowed.
+# OPTIONS: testing=AssumeCalleesRetainNothing
+# DIAGNOSTIC: OpcodeNotInForm 1
+# RUN: walk f1 mechanisms=all
+# CHECK: the walk of f1:Body failed

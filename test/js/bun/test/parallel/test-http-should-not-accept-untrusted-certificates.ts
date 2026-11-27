@@ -7,9 +7,8 @@ const { expect } = createTest(import.meta.path);
 
 await using server = https.createServer(
   {
-    key: nodefs.readFileSync(path.join(import.meta.dir, "../../..", "node/http/fixtures", "openssl.key")),
-    cert: nodefs.readFileSync(path.join(import.meta.dir, "../../..", "node/http/fixtures", "openssl.crt")),
-    passphrase: "123123123",
+    key: nodefs.readFileSync(path.join(import.meta.dir, "../../..", "node/tls/fixtures", "agent1-key.pem")),
+    cert: nodefs.readFileSync(path.join(import.meta.dir, "../../..", "node/tls/fixtures", "agent1-cert.pem")),
   },
   (req, res) => {
     res.write("Hello from https server");

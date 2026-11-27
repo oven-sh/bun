@@ -1,0 +1,165 @@
+# console.table prints operands of which the first is no object as console.log does: "%j" calls the toJSON that a bigint inherits, which may write what the caller reads again behind the call
+# let n = 0;
+# BigInt.prototype.toJSON = function () { n++; return "big"; };
+# function table(v) { const a = n; console.table("%s %j", undefined, v); return a + " " + n; }
+# function tableOfNumber(v) { const a = n; console.table("%s %j", undefined, v); return a + " " + n; }
+# function dir(v) { const a = n; console.dir(v); return a + " " + n; }
+# function timeLog(v) { const a = n; console.timeLog("%j", "%j", v); return a + " " + n; }
+# console.log(table(1n), tableOfNumber(2), dir(3n), timeLog(4n), n);
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetModuleVariable variable=g0
+# CHECK: = CallBuiltin {{*}}overload=ConsoleTable/1 {{*}}mayCallUnknownCode
+# CHECK: = GetModuleVariable variable=g0
+# no other primitive is asked for a toJSON
+# RUN(NUMBER): walk f2 mechanisms=all
+# NUMBER-LABEL: code f2:Body
+# NUMBER: = GetModuleVariable variable=g0
+# NUMBER: = CallBuiltin {{*}}overload=ConsoleTable/0
+# NUMBER-NOT: GetModuleVariable
+# console.dir prints its first operand alone, and console.timeLog each operand by itself: neither reads a text for directives
+# RUN(DIR): walk f3 mechanisms=all
+# DIR-LABEL: code f3:Body
+# DIR: = CallBuiltin {{*}}overload=ConsoleDir/0
+# DIR-NOT: GetModuleVariable
+# RUN(TIMELOG): walk f4 mechanisms=all
+# TIMELOG-LABEL: code f4:Body
+# TIMELOG: = CallBuiltin {{*}}overload=ConsoleTimeLog/0
+# TIMELOG-NOT: GetModuleVariable
+
+module m0 path="console-table-of-a-bigint-behind-a-text-may-run-its-to-json.js" displayPath="console-table-of-a-bigint-behind-a-text-may-run-its-to-json.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="n" module=m0 declared={type=number|absent flags=[IsExpected]}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = Integer @8
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @8
+    PutModuleVariable v9 variable=g0 @4
+    v11 = Builtin builtin=BigIntPrototype @11
+    v12 = NewClosure function=f5 @37
+    PropSet v11, v12 key="toJSON" @18
+    v14 = Builtin builtin=GlobalThis @425
+    v15 = PropGet v14 key="console" [isFreeName] @425
+    v16 = Convert v15 declared={type=builtin(Console) flags=[IsExpected]} @425
+    v17 = PropGet v16 key="log" @425
+    v18 = Convert v17 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @425
+    v19 = BigInt digits="1" @443
+    v20 = Call v1, -, v19 calleeName="table" @437
+    v21 = Integer integer=2 @462
+    v22 = Call v3, -, v21 calleeName="tableOfNumber" @448
+    v23 = BigInt digits="3" @470
+    v24 = Call v5, -, v23 calleeName="dir" @466
+    v25 = BigInt digits="4" @483
+    v26 = Call v7, -, v25 calleeName="timeLog" @475
+    v27 = GetModuleVariable variable=g0 @488
+    v28 = CheckInitialized v27 name="n" @488
+    v29 = Call v18, v16, v20, v22, v24, v26, v28 calleeKey="log" calleeName="console.log" @433
+    v30 = Undefined @425
+    Return v30 @425
+}
+function f1 name="table" module=m0 position=73 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|bigint flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|bigint):
+    Jump -> next b1() @73
+  b1():
+    v1 = GetModuleVariable variable=g0 @103
+    v2 = CheckInitialized v1 name="n" @103
+    v3 = Builtin builtin=GlobalThis @106
+    v4 = PropGet v3 key="console" [isFreeName] @106
+    v5 = Convert v4 declared={type=builtin(Console) flags=[IsExpected]} @106
+    v6 = PropGet v5 key="table" @106
+    v7 = Convert v6 declared={type=builtin(ConsoleTable) flags=[IsExpected]} @106
+    v8 = String string="%s %j" @120
+    v9 = Undefined @129
+    v10 = Call v7, v5, v8, v9, v0 calleeKey="table" calleeName="console.table" @114
+    v11 = String string=" " @155
+    v12 = Add v2, v11 @155
+    v13 = GetModuleVariable variable=g0 @161
+    v14 = CheckInitialized v13 name="n" @161
+    v15 = Add v12, v14 @161
+    Return v15 @161
+}
+function f2 name="tableOfNumber" module=m0 position=166 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @166
+  b1():
+    v1 = GetModuleVariable variable=g0 @204
+    v2 = CheckInitialized v1 name="n" @204
+    v3 = Builtin builtin=GlobalThis @207
+    v4 = PropGet v3 key="console" [isFreeName] @207
+    v5 = Convert v4 declared={type=builtin(Console) flags=[IsExpected]} @207
+    v6 = PropGet v5 key="table" @207
+    v7 = Convert v6 declared={type=builtin(ConsoleTable) flags=[IsExpected]} @207
+    v8 = String string="%s %j" @221
+    v9 = Undefined @230
+    v10 = Call v7, v5, v8, v9, v0 calleeKey="table" calleeName="console.table" @215
+    v11 = String string=" " @256
+    v12 = Add v2, v11 @256
+    v13 = GetModuleVariable variable=g0 @262
+    v14 = CheckInitialized v13 name="n" @262
+    v15 = Add v12, v14 @262
+    Return v15 @262
+}
+function f3 name="dir" module=m0 position=267 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|bigint flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|bigint):
+    Jump -> next b1() @267
+  b1():
+    v1 = GetModuleVariable variable=g0 @295
+    v2 = CheckInitialized v1 name="n" @295
+    v3 = Builtin builtin=GlobalThis @298
+    v4 = PropGet v3 key="console" [isFreeName] @298
+    v5 = Convert v4 declared={type=builtin(Console) flags=[IsExpected]} @298
+    v6 = PropGet v5 key="dir" @298
+    v7 = Convert v6 declared={type=builtin(ConsoleDir) flags=[IsExpected]} @298
+    v8 = Call v7, v5, v0 calleeKey="dir" calleeName="console.dir" @306
+    v9 = String string=" " @325
+    v10 = Add v2, v9 @325
+    v11 = GetModuleVariable variable=g0 @331
+    v12 = CheckInitialized v11 name="n" @331
+    v13 = Add v10, v12 @331
+    Return v13 @331
+}
+function f4 name="timeLog" module=m0 position=336 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|bigint flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|bigint):
+    Jump -> next b1() @336
+  b1():
+    v1 = GetModuleVariable variable=g0 @368
+    v2 = CheckInitialized v1 name="n" @368
+    v3 = Builtin builtin=GlobalThis @371
+    v4 = PropGet v3 key="console" [isFreeName] @371
+    v5 = Convert v4 declared={type=builtin(Console) flags=[IsExpected]} @371
+    v6 = PropGet v5 key="timeLog" @371
+    v7 = Convert v6 declared={type=builtin(ConsoleTimeLog) flags=[IsExpected]} @371
+    v8 = String string="%j" @387
+    v9 = String string="%j" @393
+    v10 = Call v7, v5, v8, v9, v0 calleeKey="timeLog" calleeName="console.timeLog" @379
+    v11 = String string=" " @414
+    v12 = Add v2, v11 @414
+    v13 = GetModuleVariable variable=g0 @420
+    v14 = CheckInitialized v13 name="n" @420
+    v15 = Add v12, v14 @420
+    Return v15 @420
+}
+function f5 module=m0 position=37 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @37
+  b1():
+    v0 = GetModuleVariable variable=g0 @51
+    v1 = CheckInitialized v0 name="n" @51
+    v2 = Increment v1 @51
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @51
+    v4 = GetModuleVariable variable=g0 @51
+    v5 = CheckInitialized v4 name="n" @51
+    PutModuleVariable v3 variable=g0 @51
+    v7 = String string="big" @63
+    Return v7 @63
+}

@@ -1,5 +1,5 @@
 // The source declares a text, a number or a boolean, and the method is found on the prototype object of its class where the test passes. A wrapper object, one with a property of its own under the name, an instance of a class below and a plain object answer for themselves.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 (globalThis as any).report = (value: unknown) => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 declare function report(value: unknown): void;
 function attempt(way: () => unknown) { try { return way(); } catch (error: any) { return error.name; } }

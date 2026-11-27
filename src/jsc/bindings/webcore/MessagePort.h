@@ -33,6 +33,7 @@
 #pragma once
 
 #include "ActiveDOMObject.h"
+#include "EventLoopKeepAlive.h"
 #include "EventTarget.h"
 #include "ExceptionOr.h"
 #include "MessagePortPipe.h"
@@ -107,10 +108,10 @@ public:
     // The message may legitimately be `undefined`/falsy, so emptiness is reported through hadMessage.
     JSValue tryTakeMessage(JSGlobalObject*, bool& hadMessage);
 
-    void jsRef(JSGlobalObject*);
-    void jsUnref(JSGlobalObject*);
+    void jsRef();
+    void jsUnref();
     // Report the actual loop-ref state (matches Node's uv_has_ref), not the intent flag.
-    bool jsHasRef() { return m_hasRef || m_listenerLoopRefActive; }
+    bool jsHasRef() { return m_keepAlive.isActive(); }
 
 private:
     MessagePort(ScriptExecutionContext&, Ref<MessagePortPipe>&&, uint8_t side);
@@ -153,19 +154,16 @@ private:
     // Read from the GC thread: a port whose only listener is 'close' must survive
     // until that event is delivered, or the peer's close is lost to a collection.
     std::atomic<bool> m_hasCloseEventListener { false };
-    bool m_hasRef { false };
 
-    // Whether .ref()/.unref() want this port to keep the loop alive (default refd);
-    // independent of m_hasRef (the .onmessage=/.ref() keepalive).
+    // Whether .ref()/.unref() want this port to keep the loop alive.
     bool m_isRefd { true };
-    // Whether the message-listener mechanism currently holds an event-loop ref
-    // (held iff m_isRefd && m_messageEventCount > 0).
-    bool m_listenerLoopRefActive { false };
-
+    Bun::EventLoopKeepAlive m_keepAlive;
     uint32_t m_messageEventCount { 0 };
+    // From .ref() or .onmessage= to jsUnref(), so that peerClosed() finds the port after its wrapper is collected.
+    RefPtr<MessagePort> m_protectedThis;
+
     static void onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind);
-    // Reconciles the listener event-loop ref with (m_isRefd && m_messageEventCount > 0).
-    void updateListenerEventLoopRef();
+    void updateKeepAlive() { m_keepAlive.setActive(m_isRefd && (m_protectedThis || m_messageEventCount > 0)); }
 };
 
 WebCoreOpaqueRoot root(MessagePort*);

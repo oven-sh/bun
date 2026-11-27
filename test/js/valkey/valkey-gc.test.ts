@@ -43,7 +43,7 @@ test.concurrent("RedisClient survives a failed custom-TLS context without freein
   expect(exitCode).toBe(0);
 });
 
-// The socket's close event (ValkeyClient::on_close) rejects the commands the
+// The socket's close event (JSValkeyClient::on_lost) rejects the commands the
 // connection still owes replies for, then settles connect()/onclose or arms the
 // retry. Rejecting a promise fails once the VM's termination is pending, which
 // is the state a terminated worker's teardown closes its sockets in, and
@@ -233,10 +233,8 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
   // the TCP handshake completes (POLL_TYPE_SEMI_SOCKET); closing one delivers
   // on_connect_error, which releases connect()'s keep-alive ref. One case per
   // way the client closes it: close() while the dial is pending, and the
-  // connection timeout firing during it. The command in the offline queue
-  // tells the two apart: connect() itself is always rejected as
-  // connection-closed. The client is created from a macrotask for the same
-  // reason as the workers'.
+  // connection timeout firing during it. The client is created from a
+  // macrotask for the same reason as the workers'.
   function closePendingDial(options: object, body: string, stdout: string) {
     return expectCleanExit(
       `
@@ -277,7 +275,7 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
       closePendingDial(
         { connectionTimeout: 1 },
         "",
-        "ERR_REDIS_CONNECTION_CLOSED ERR_REDIS_CONNECTION_TIMEOUT 1 false",
+        "ERR_REDIS_CONNECTION_TIMEOUT ERR_REDIS_CONNECTION_TIMEOUT 1 false",
       ),
     timeout,
   );
@@ -974,19 +972,52 @@ test.concurrent("getBuffer replies survive GC with adopted backing stores intact
   expect(exitCode).toBe(0);
 });
 
-// Closing a client from the continuation of its last reply and collecting
-// before the socket read returns used to panic ("unreachable" in
-// subscription_callback_map): the collector had found the wrapper dead but
-// finalize() had not run yet. The fixture runs the scenario ten times, checks
-// after each collection whether the wrapper is really dead, and exits non-zero
-// unless at least one round reached that state and came back from the read.
-test.concurrent("a client closed and collected from within its own reply does not crash the socket read", async () => {
-  const result = await bunRun(join(import.meta.dir, "valkey.close-from-reply.fixture.ts"));
-  expect(result).toSpawn();
-  const reached = result.stdout.match(/^([1-9]\d*) rounds? reached the window$/m);
-  expect(reached).not.toBeNull();
-  // Keep the per-lane count in the CI log so a slide toward zero is visible.
-  console.log(`close-from-reply fixture: ${reached![1]} of 10 rounds reached the window`);
+test.concurrent(
+  "a client closed from within its own reply outlives the socket read and has no root after it",
+  async () => {
+    const result = await bunRun(join(import.meta.dir, "valkey.close-from-reply.fixture.ts"));
+    expect(result).toSpawn();
+    expect(result.stdout.trim()).toBe("0 roots left");
+  },
+);
+
+test.concurrent.each([
+  ["an open socket", { peer: "silent", options: { connectionTimeout: 100 } }],
+  ["the retry timer", { peer: "drops", options: { maxRetries: 2 } }],
+  ["a dial that gave no socket", { peer: "none", options: { tls: { cert: "x", key: "y" } } }],
+])("%s keeps an unreferenced client alive until onclose, and no longer", async (_, { peer, options }) => {
+  const code = /* js */ `
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { open: socket => ${peer === "drops"} && socket.end(), data() {}, error() {} },
+    });
+    let closed = 0;
+    (() => {
+      for (let i = 0; i < 20; i++) {
+        const client = new Bun.RedisClient("redis://127.0.0.1:" + server.port, ${JSON.stringify(options)});
+        client.onclose = () => closed++;
+        client.get("k").catch(() => {});
+      }
+    })();
+    while (closed < 20) {
+      Bun.gc(true);
+      await new Promise(setImmediate);
+    }
+    Bun.gc(true);
+    // A client that nothing refers to can still be named by a stale word in a live native frame (#49178, #49214).
+    const { nodes, nodeClassNames, edges, roots } = require("bun:jsc").generateHeapSnapshotForDebugging();
+    const named = new Set([...edges.filter((_, i) => i % 4 === 1), ...roots.filter((_, i) => i % 3 === 0)]);
+    const left = nodes.filter((_, i) => i % 7 === 0 && nodeClassNames[nodes[i + 2]] === "RedisClient");
+    console.log(left.filter(id => named.has(id)).length, "held,", left.length, "left");
+    server.stop(true);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({
+    stdout: expect.stringMatching(/^0 held, [01] left$/),
+    exitCode: 0,
+  });
 });
 
 test.concurrent("new RedisClient(url) does not leak the URL and its components", async () => {

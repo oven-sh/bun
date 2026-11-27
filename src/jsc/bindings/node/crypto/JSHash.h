@@ -42,16 +42,17 @@ public:
 
     void finishCreation(JSC::VM& vm);
     bool init(JSC::JSGlobalObject* globalObject, ThrowScope& scope, const EVP_MD* md, std::optional<uint32_t> xofLen);
-    bool initZig(JSGlobalObject* globalObject, ThrowScope& scope, ExternZigHash::Hasher* hasher, std::optional<uint32_t> xofLen);
+    bool initZig(JSGlobalObject* globalObject, ThrowScope& scope, ExternZigHash::HasherPointer&& hasher, std::optional<uint32_t> xofLen);
     bool update(std::span<const uint8_t> input);
 
     ncrypto::EVPMDCtxPointer m_ctx;
     unsigned int m_mdLen { 0 };
-    ByteSource m_digest;
+    // Once digest() has freed the state, the digest is here or, when this is empty, in m_shortDigest.
+    ncrypto::DataPointer m_digest;
     std::array<uint8_t, EVP_MAX_MD_SIZE> m_shortDigest;
     bool m_finalized { false };
 
-    ExternZigHash::Hasher* m_zigHasher { nullptr };
+    ExternZigHash::HasherPointer m_zigHasher;
     size_t m_sizeForGC { 0 };
 };
 

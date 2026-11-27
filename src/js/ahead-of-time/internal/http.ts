@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/http.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 fb8173ad4b1d435f59685c97012314538ff32e2e02c603547e9fb33660589e61.
+// Written against that file with the SHA-256 8c9a37e7a9617d8c5fd06023005c4ecb34ffcd3dcd925c4d1cc8a0e74d6d21ca.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const { isIPv4 } = require("internal/net/isIP");
@@ -41,6 +41,7 @@ const fakeSocketSymbol = Symbol("fakeSocket");
 const eofInProgress = Symbol("eofInProgress");
 const isTlsSymbol = Symbol("is_tls");
 const kHandle = Symbol("handle");
+const kMadeOverHandle = Symbol("handle");
 const kOnReadParsed = Symbol("kOnReadParsed");
 const kRealListen = Symbol("kRealListen");
 const noBodySymbol = Symbol("noBody");
@@ -80,9 +81,12 @@ const requestRoad: {
   mayDumpInPlace?: (request: $Node.IncomingMessage) => boolean;
   beginDump?: (request: $Node.IncomingMessage) => boolean;
   readsUnseen?: (request: $Node.IncomingMessage) => boolean;
+  chainIsPlain?: () => boolean;
   readsDestroyedUnseen?: (socket: $Node.HttpSocket) => boolean;
+  resumeUnlessFlowing?: (socket: $Node.HttpSocket, asksWhetherReadable: boolean) => void;
 } = {};
 const responseRoad: {
+  IncomingMessage?: $Node.IncomingMessageConstructor;
   makeExchange?: (
     response: $Node.ServerResponse,
     connection: $Node.HttpServerSocket | null,
@@ -119,6 +123,7 @@ const responseRoad: {
 // per-connection queue without widening node:_http_server's exports. The
 // fallback loads node:http (and with it _http_server) before reading these.
 const http1ServerPipeline: {
+  holdPipelinedTurn?: (socket: $Node.HttpSocket, handle: $Node.PipelinedTurn) => void;
   queuePipelinedResponse?: (socket: $Node.HttpSocket, res: $Node.ServerResponse, isAncient: boolean) => void;
   advanceResponsePipeline?: (
     server: $Node.HttpSocketServer | null | undefined,
@@ -521,6 +526,14 @@ declare global {
       $resumeUnlessFlowing?(asksWhetherReadable: boolean): void;
     }
 
+    /** A stream that a program passes to a response in place of a connection. It may not be a `Duplex`. */
+    interface SubstituteSocket extends Writable, Omit<HttpSocket, keyof Writable> {
+      _readableState: ReadableState;
+      allowHalfOpen: boolean;
+      get readable(): boolean;
+      set readable(value: boolean);
+    }
+
     /** The server of a connection, as `node:http` reads it: an `http.Server`, or a `net.Server` (an `Http2SecureServer` that allows HTTP/1, a server whose sockets are handed on) that has some of an `http.Server`'s options or none. */
     interface HttpSocketServer extends EventEmitter {
       timeout?: number;
@@ -532,6 +545,7 @@ declare global {
       keepAliveTimeout?: number;
       keepAliveTimeoutBuffer?: number;
       joinDuplicateHeaders?: boolean;
+      requireHostHeader?: boolean;
       httpAllowHalfOpen?: boolean;
       shouldUpgradeCallback?: (request: IncomingMessage) => boolean;
       [kIncomingMessage]?: IncomingMessageConstructor;
@@ -566,7 +580,7 @@ declare global {
       [kNeedDrain]: boolean;
       [kErrored]: Error | null | undefined;
       [kHighWaterMark]: number;
-      [kSocket]: HttpSocket | null;
+      [kSocket]: HttpSocket | SubstituteSocket | null;
       [kRejectNonStandardBodyWrites]: boolean | undefined;
       [kUniqueHeaders]?: Set<string> | null;
       /** Of a `ServerResponse`. */
@@ -576,7 +590,7 @@ declare global {
     interface ServerResponse {
       [kHandle]: NodeHTTPResponse | Http1ResponseHandle | undefined;
       [kPendingCallbacks]: HttpWriteCallback[] | undefined;
-      [fakeSocketSymbol]: HttpSocket | null | undefined;
+      [fakeSocketSymbol]: HttpSocket | SubstituteSocket | null | undefined;
       [headerStateSymbol]: number;
       [kCloseCallback]: (() => void) | undefined;
     }
@@ -804,6 +818,7 @@ export {
   kIncomingMessage,
   kInternalSocketData,
   kLenientValidation,
+  kMadeOverHandle,
   kNeedDrain,
   kOnReadParsed,
   kOutHeaders,

@@ -1,0 +1,14 @@
+# -- source: the-remainder-of-two-whole-numbers-is-made-in-line-whatever-their-size.ts
+# function rem(a: number, b: number): number { return a % b; }
+# (globalThis as any).keep = rem;
+# -- end of source
+# f1 = rem
+# Two numbers, the divisor no constant. The road in line asked both for a non-negative int32: half of all values out of `>>> 0`, and every `4294967296 - bound`, failed it and went to the library at 53 instructions. Both are
+# now asked for a non-negative whole number of 64 bits, at the same count of instructions, and the remainder is one division of 64 bits.
+# On x86-64 a division stands in the print as a patch that takes its dividend in rax.
+# REQUIRES: x86_64 unsanitized-code
+# RUN: emit f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK-NOT: Int32 {{*}} = Patch({{*}}:Register(rax),
+# CHECK: Int64 {{*}} = Patch({{*}}:Register(rax),
+# CHECK-NOT: Int32 {{*}} = Patch({{*}}:Register(rax),

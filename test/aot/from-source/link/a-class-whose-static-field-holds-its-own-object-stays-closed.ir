@@ -1,0 +1,8 @@
+# The variable of a static field leaves with its class object, not at the start. Nobody gets at the class object here, so the object that the field holds stays in sight and its class stays closed.
+# The control stands beside this file: a-class-whose-static-field-holds-its-own-object-opens-with-its-class-object.ir
+# -- source: main.js
+# class Peg { static first = new Peg(1); constructor(x) { this.x = x; } }
+# print(new Peg(2).x);
+# -- end of source
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 changes=[]

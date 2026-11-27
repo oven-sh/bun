@@ -369,9 +369,6 @@ pub enum CssColor {
     System(SystemColor),
 }
 
-/// `Result(CssColor)`.
-pub type ParseResult = css::CssResult<CssColor>;
-
 impl Default for CssColor {
     #[inline]
     fn default() -> CssColor {
@@ -381,7 +378,7 @@ impl Default for CssColor {
 
 impl CssColor {
     /// Parse a CSS `<color>` from the parser cursor.
-    pub fn parse(input: &mut css::Parser) -> CssResult<CssColor> {
+    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, CssColor> {
         let location = input.current_source_location();
         let token = *input.next()?;
 
@@ -928,7 +925,7 @@ impl ColorFallbackKind {
         self | ColorFallbackKind::from_bits_truncate(self.bits() - 1)
     }
 
-    pub(crate) fn supports_condition(self) -> css::SupportsCondition {
+    pub(crate) fn supports_condition<'bump>(self) -> css::SupportsCondition<'bump> {
         let s: &'static [u8] = match self.bits() {
             b if b == ColorFallbackKind::P3.bits() => b"color(display-p3 0 0 0)",
             b if b == ColorFallbackKind::LAB.bits() => b"lab(0% 0 0)",
@@ -1090,11 +1087,11 @@ fn is_nearly_unit(value: f32) -> bool {
 // parse_color_function and component parsers
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) fn parse_color_function(
+pub(crate) fn parse_color_function<'bump>(
     location: css::SourceLocation,
-    function: &'static [u8],
-    input: &mut css::Parser,
-) -> CssResult<CssColor> {
+    function: &'bump [u8],
+    input: &mut css::Parser<'_, 'bump>,
+) -> CssResult<'bump, CssColor> {
     let mut parser = ComponentParser::new(true);
 
     crate::match_ignore_ascii_case! { function, {
@@ -1155,10 +1152,10 @@ pub(crate) struct RgbComponents {
     pub(crate) is_legacy: bool,
 }
 
-pub(crate) fn parse_rgb_components(
-    input: &mut css::Parser,
+pub(crate) fn parse_rgb_components<'bump>(
+    input: &mut css::Parser<'_, 'bump>,
     parser: &mut ComponentParser,
-) -> CssResult<RgbComponents> {
+) -> CssResult<'bump, RgbComponents> {
     if let Some(from) = &mut parser.from {
         from.scale = (255.0, 255.0, 255.0);
     }
@@ -1297,13 +1294,13 @@ fn delta_eok<T: Into<OKLAB>>(a_: T, b_: OKLCH) -> f32 {
 }
 
 /// `l_basis` and `ab_basis` are the numbers that `100%` stands for.
-pub(crate) fn parse_lab<T: Colorspace + ColorGamut>(
-    input: &mut css::Parser,
+pub(crate) fn parse_lab<'bump, T: Colorspace + ColorGamut>(
+    input: &mut css::Parser<'_, 'bump>,
     parser: &mut ComponentParser,
     l_basis: f32,
     ab_basis: f32,
     func: fn(f32, f32, f32, f32) -> LABColor,
-) -> CssResult<CssColor> {
+) -> CssResult<'bump, CssColor> {
     // https://www.w3.org/TR/css-color-4/#funcdef-lab
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
@@ -1324,13 +1321,13 @@ pub(crate) fn parse_lab<T: Colorspace + ColorGamut>(
 }
 
 /// `l_basis` and `c_basis` are the numbers that `100%` stands for.
-pub(crate) fn parse_lch<T: Colorspace + ColorGamut>(
-    input: &mut css::Parser,
+pub(crate) fn parse_lch<'bump, T: Colorspace + ColorGamut>(
+    input: &mut css::Parser<'_, 'bump>,
     parser: &mut ComponentParser,
     l_basis: f32,
     c_basis: f32,
     func: fn(f32, f32, f32, f32) -> LABColor,
-) -> CssResult<CssColor> {
+) -> CssResult<'bump, CssColor> {
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
             if let Some(from) = &mut p.from {
@@ -1359,12 +1356,12 @@ pub(crate) fn parse_lch<T: Colorspace + ColorGamut>(
 /// Parses the hsl() and hwb() functions.
 /// The results of this function are stored as floating point if there are any `none` components.
 /// https://drafts.csswg.org/css-color-4/#the-hsl-notation
-pub(crate) fn parse_hsl_hwb<T: Colorspace + ColorGamut>(
-    input: &mut css::Parser,
+pub(crate) fn parse_hsl_hwb<'bump, T: Colorspace + ColorGamut>(
+    input: &mut css::Parser<'_, 'bump>,
     parser: &mut ComponentParser,
     allows_legacy: bool,
     func: fn(f32, f32, f32, f32) -> CssColor,
-) -> CssResult<CssColor> {
+) -> CssResult<'bump, CssColor> {
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
             let (h, a, b, is_legacy) = parse_hsl_hwb_components(i, p, allows_legacy)?;
@@ -1379,11 +1376,11 @@ pub(crate) fn parse_hsl_hwb<T: Colorspace + ColorGamut>(
     })
 }
 
-pub(crate) fn parse_hsl_hwb_components(
-    input: &mut css::Parser,
+pub(crate) fn parse_hsl_hwb_components<'bump>(
+    input: &mut css::Parser<'_, 'bump>,
     parser: &mut ComponentParser,
     allows_legacy: bool,
-) -> CssResult<(f32, f32, f32, bool)> {
+) -> CssResult<'bump, (f32, f32, f32, bool)> {
     if let Some(from) = &mut parser.from {
         from.scale = (1.0, 100.0, 100.0);
     }
@@ -1395,7 +1392,7 @@ pub(crate) fn parse_hsl_hwb_components(
         && input.try_parse(|i| i.expect_comma()).is_ok();
 
     // The legacy syntax takes no number: `hsl(120, 50, 40)` is invalid.
-    let parse_channel = |input: &mut css::Parser| -> CssResult<f32> {
+    let parse_channel = |input: &mut css::Parser<'_, 'bump>| -> CssResult<'bump, f32> {
         let unit_value = if is_legacy_syntax {
             parser.parse_percentage(input)?
         } else {
@@ -1419,10 +1416,10 @@ pub(crate) fn parse_hsl_hwb_components(
     Ok((h, a, b, is_legacy_syntax))
 }
 
-pub(crate) fn parse_angle_or_number(
-    input: &mut css::Parser,
+pub(crate) fn parse_angle_or_number<'bump>(
+    input: &mut css::Parser<'_, 'bump>,
     parser: &ComponentParser,
-) -> CssResult<f32> {
+) -> CssResult<'bump, f32> {
     let result = parser.parse_angle_or_number(input)?;
     Ok(match result {
         css::color::AngleOrNumber::Number { value } => value,
@@ -1430,7 +1427,10 @@ pub(crate) fn parse_angle_or_number(
     })
 }
 
-fn parse_rgb(input: &mut css::Parser, parser: &mut ComponentParser) -> CssResult<CssColor> {
+fn parse_rgb<'bump>(
+    input: &mut css::Parser<'_, 'bump>,
+    parser: &mut ComponentParser,
+) -> CssResult<'bump, CssColor> {
     // https://drafts.csswg.org/css-color-4/#rgb-functions
     input.parse_nested_block(|i| {
         parser.parse_relative::<SRGB, CssColor, _>(i, |i, p| {
@@ -1459,7 +1459,10 @@ fn parse_rgb(input: &mut css::Parser, parser: &mut ComponentParser) -> CssResult
     })
 }
 
-fn parse_legacy_alpha(input: &mut css::Parser, parser: &ComponentParser) -> CssResult<f32> {
+fn parse_legacy_alpha<'bump>(
+    input: &mut css::Parser<'_, 'bump>,
+    parser: &ComponentParser,
+) -> CssResult<'bump, f32> {
     if !input.is_exhausted() {
         input.expect_comma()?;
         return Ok(parse_number_or_percentage(input, parser)?.clamp(0.0, 1.0));
@@ -1467,7 +1470,10 @@ fn parse_legacy_alpha(input: &mut css::Parser, parser: &ComponentParser) -> CssR
     Ok(1.0)
 }
 
-fn parse_alpha(input: &mut css::Parser, parser: &ComponentParser) -> CssResult<f32> {
+fn parse_alpha<'bump>(
+    input: &mut css::Parser<'_, 'bump>,
+    parser: &ComponentParser,
+) -> CssResult<'bump, f32> {
     if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
         return Ok(parse_number_or_percentage(input, parser)?.clamp(0.0, 1.0));
     }
@@ -1476,10 +1482,10 @@ fn parse_alpha(input: &mut css::Parser, parser: &ComponentParser) -> CssResult<f
     Ok(parser.from.as_ref().map_or(1.0, |from| from.components.3))
 }
 
-pub(crate) fn parse_number_or_percentage(
-    input: &mut css::Parser,
+pub(crate) fn parse_number_or_percentage<'bump>(
+    input: &mut css::Parser<'_, 'bump>,
     parser: &ComponentParser,
-) -> CssResult<f32> {
+) -> CssResult<'bump, f32> {
     Ok(parser.parse_number_or_percentage(input)?.unit_value(1.0))
 }
 
@@ -1812,15 +1818,15 @@ impl ComponentParser {
     }
 
     /// `func` is called as `func(input, parser)`.
-    pub(crate) fn parse_relative<T, C, F>(
+    pub(crate) fn parse_relative<'bump, T, C, F>(
         &mut self,
-        input: &mut css::Parser,
+        input: &mut css::Parser<'_, 'bump>,
         func: F,
-    ) -> CssResult<C>
+    ) -> CssResult<'bump, C>
     where
         T: Colorspace + ColorGamut,
         C: LightDarkOwned,
-        F: Fn(&mut css::Parser, &mut ComponentParser) -> CssResult<C> + Copy,
+        F: Fn(&mut css::Parser<'_, 'bump>, &mut ComponentParser) -> CssResult<'bump, C> + Copy,
     {
         if input
             .try_parse(|i| i.expect_ident_matching(b"from"))
@@ -1833,16 +1839,16 @@ impl ComponentParser {
         func(input, self)
     }
 
-    fn parse_from<T, C, F>(
+    fn parse_from<'bump, T, C, F>(
         &mut self,
         from: CssColor,
-        input: &mut css::Parser,
+        input: &mut css::Parser<'_, 'bump>,
         func: F,
-    ) -> CssResult<C>
+    ) -> CssResult<'bump, C>
     where
         T: Colorspace + ColorGamut,
         C: LightDarkOwned,
-        F: Fn(&mut css::Parser, &mut ComponentParser) -> CssResult<C> + Copy,
+        F: Fn(&mut css::Parser<'_, 'bump>, &mut ComponentParser) -> CssResult<'bump, C> + Copy,
     {
         if let CssColor::LightDark { light, dark } = from {
             let state = input.state();
@@ -1863,14 +1869,21 @@ impl ComponentParser {
 
     /// Clamps a channel of `rgb()`, `hsl()` or `hwb()`. A relative color out of range does not
     /// parse: no browser clamps it.
-    fn clamp_unit(&self, input: &css::Parser, value: f32) -> CssResult<f32> {
+    fn clamp_unit<'bump>(
+        &self,
+        input: &css::Parser<'_, 'bump>,
+        value: f32,
+    ) -> CssResult<'bump, f32> {
         if self.from.is_some() && !input.flags.clip_colors() && !is_nearly_unit(value) {
             return Err(input.new_custom_error(css::ParserError::invalid_value));
         }
         Ok(value.clamp(0.0, 1.0))
     }
 
-    fn parse_number_or_percentage(&self, input: &mut css::Parser) -> CssResult<NumberOrPercentage> {
+    fn parse_number_or_percentage<'bump>(
+        &self,
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> CssResult<'bump, NumberOrPercentage> {
         if let Some(from) = &self.from {
             if let Ok(res) =
                 input.try_parse(|i| RelativeComponentParser::parse_number_or_percentage(i, from))
@@ -1893,10 +1906,10 @@ impl ComponentParser {
         }
     }
 
-    fn parse_angle_or_number(
+    fn parse_angle_or_number<'bump>(
         &self,
-        input: &mut css::Parser,
-    ) -> CssResult<css::color::AngleOrNumber> {
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> CssResult<'bump, css::color::AngleOrNumber> {
         if let Some(from) = &self.from {
             if let Ok(res) =
                 input.try_parse(|i| RelativeComponentParser::parse_angle_or_number(i, from))
@@ -1919,7 +1932,7 @@ impl ComponentParser {
         }
     }
 
-    fn parse_percentage(&self, input: &mut css::Parser) -> CssResult<f32> {
+    fn parse_percentage<'bump>(&self, input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, f32> {
         if let Ok(val) = input.try_parse(Percentage::parse) {
             Ok(val.v)
         } else if self.allow_none {
@@ -1930,7 +1943,7 @@ impl ComponentParser {
         }
     }
 
-    fn parse_number(&self, input: &mut css::Parser) -> CssResult<f32> {
+    fn parse_number<'bump>(&self, input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, f32> {
         if let Ok(val) = input.try_parse(CSSNumberFns::parse) {
             Ok(val)
         } else if self.allow_none {
@@ -2009,10 +2022,10 @@ impl RelativeComponentParser {
         }
     }
 
-    fn parse_angle_or_number(
-        input: &mut css::Parser,
+    fn parse_angle_or_number<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
         this: &RelativeComponentParser,
-    ) -> CssResult<css::color::AngleOrNumber> {
+    ) -> CssResult<'bump, css::color::AngleOrNumber> {
         let allowed = ChannelType::ANGLE | ChannelType::NUMBER;
         if let Ok(value) =
             input.try_parse(|i| RelativeComponentParser::parse_ident(i, this, allowed))
@@ -2044,10 +2057,10 @@ impl RelativeComponentParser {
         Err(input.new_error_for_next_token())
     }
 
-    fn parse_number_or_percentage(
-        input: &mut css::Parser,
+    fn parse_number_or_percentage<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
         this: &RelativeComponentParser,
-    ) -> CssResult<NumberOrPercentage> {
+    ) -> CssResult<'bump, NumberOrPercentage> {
         let allowed = ChannelType::PERCENTAGE | ChannelType::NUMBER;
         if let Ok(value) =
             input.try_parse(|i| RelativeComponentParser::parse_ident(i, this, allowed))
@@ -2079,11 +2092,11 @@ impl RelativeComponentParser {
         Err(input.new_error_for_next_token())
     }
 
-    fn parse_ident(
-        input: &mut css::Parser,
+    fn parse_ident<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
         this: &RelativeComponentParser,
         allowed_types: ChannelType,
-    ) -> CssResult<f32> {
+    ) -> CssResult<'bump, f32> {
         let ident = input.expect_ident()?;
         match this.get_number(ident, allowed_types) {
             Some(v) => Ok(v),
@@ -2091,11 +2104,11 @@ impl RelativeComponentParser {
         }
     }
 
-    fn parse_calc(
-        input: &mut css::Parser,
+    fn parse_calc<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
         this: &RelativeComponentParser,
         allowed_types: ChannelType,
-    ) -> CssResult<f32> {
+    ) -> CssResult<'bump, f32> {
         if let Ok(calc_val) = Calc::<f32>::parse_with(input, &|ident| {
             let v = this.get_number(ident, allowed_types)?;
             Some(Calc::Number(v))
@@ -2163,10 +2176,10 @@ bitflags::bitflags! {
 // parse_predefined
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) fn parse_predefined(
-    input: &mut css::Parser,
+pub(crate) fn parse_predefined<'bump>(
+    input: &mut css::Parser<'_, 'bump>,
     parser: &mut ComponentParser,
-) -> CssResult<CssColor> {
+) -> CssResult<'bump, CssColor> {
     let res = input.parse_nested_block(|i| {
         // https://www.w3.org/TR/css-color-4/#color-function
         let from: Option<CssColor> = if i.try_parse(|i| i.expect_ident_matching(b"from")).is_ok() {
@@ -2196,12 +2209,12 @@ pub(crate) fn parse_predefined(
     Ok(res)
 }
 
-pub(crate) fn parse_predefined_relative(
-    input: &mut css::Parser,
+pub(crate) fn parse_predefined_relative<'bump>(
+    input: &mut css::Parser<'_, 'bump>,
     parser: &mut ComponentParser,
-    colorspace: &'static [u8],
+    colorspace: &'bump [u8],
     from_: Option<&CssColor>,
-) -> CssResult<CssColor> {
+) -> CssResult<'bump, CssColor> {
     let location = input.current_source_location();
     if let Some(from) = from_ {
         macro_rules! set_from {
@@ -2270,7 +2283,9 @@ pub(crate) enum ColorSpaceName {
     Oklch,
 }
 
-pub(crate) fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
+pub(crate) fn parse_color_mix<'bump>(
+    input: &mut css::Parser<'_, 'bump>,
+) -> CssResult<'bump, CssColor> {
     input.expect_ident_matching(b"in")?;
     let method = ColorSpaceName::parse(input)?;
 

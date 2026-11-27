@@ -1,0 +1,21 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function texts(): unknown { return ["a", 1.5, { toString() { return "o"; } }]; }
+# function numbers(): unknown { return [1.5, 2, 0.25]; }
+# function holes(): unknown { const list = [1.5, 2.5]; list[3] = 4; return list; }
+# function sum(list: number[]): unknown { let s: any = 0; for (let i = 0; i < list.length; i++) s += list[i]; return s; }
+# print(sum(numbers() as number[]));
+# print(sum(texts() as number[]));
+# print(sum(holes() as number[]));
+# -- end of source
+# Every caller of `sum` is known and each passes a list, so the body takes `number[]` for what is written of the elements without a guard in front. What is written is wrong for one of the three, and one has a hole: each read tests what it finds.
+# RUN(ANSWER): run-in-shell globalThis.unused = 0;
+# ANSWER: 3.75
+# ANSWER-NEXT: 0a1.5o
+# ANSWER-NEXT: NaN
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.unused = 0;
+# CHECKED: 3.75
+# CHECKED-NEXT: 0a1.5o
+# CHECKED-NEXT: NaN
+# CHECKED-NEXT: exited with 0

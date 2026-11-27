@@ -10,15 +10,14 @@ use bun_ast::{Loader, Loc, Log};
 use bun_core::strings;
 use bun_glob::{BunGlobWalker, detect_glob_syntax, walk};
 use bun_options_types::aot_options::AotOptions;
-use bun_paths::MAX_PATH_BYTES;
-use bun_paths::resolve_path;
-use bun_paths::string_paths::without_trailing_slash_windows_path;
+use bun_paths::{MAX_PATH_BYTES, Path};
 use bun_sema::resolve::{CodeOptions, JsxRuntime, JsxSettings};
 use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::Libs;
-use bun_sema_driver::host::{from_argument, from_native, to_native};
+use bun_sema_driver::host::{check_entry_point_dirs, from_argument, from_native, to_native};
 
 use super::paths::{absolute_path, relative_path, report_long_path};
+use super::services::is_at_or_below;
 use crate::bun_fs::PathName;
 use crate::bundle_v2::FileMap;
 use crate::options::{
@@ -52,6 +51,8 @@ pub(crate) fn options_from_bundler<'r>(
         log,
     );
     let entry_points = entry_points.map(|list| follow_links(input, list));
+    let entry_points =
+        entry_points.filter(|list| check_entry_point_dirs(input.working_directory, list, log));
     let entry_points = entry_points.and_then(|list| start_with_first_script(input, list, log));
     let paths = (entry_points.as_ref()).and_then(|list| path_options(input, list, log));
     let (true, Some(entry_points), Some(paths)) = (is_supported, entry_points, paths) else {
@@ -111,7 +112,7 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         bytecode_order: _, compile_target_builtins: _, metafile: _, metafile_json_path: _,
         metafile_markdown_path: _, serve_plugins: _, bunfig_path: _, unwrap_commonjs_packages: _,
         supports_multiple_outputs: _, rewrite_jest_for_tests: _, vitest_globals: _,
-        test_file_imports_vitest: _, own_test_globals: _, code_coverage: _, debugger: _,
+        test_file_imports_vitest: _, own_test_globals: _, code_coverage: _, defers_requires: _, debugger: _,
     } = options;
 
     let is_development_server = framework.is_some() || !dev_server.is_null() || *hot_module_reloading;
@@ -124,7 +125,7 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         bytecode.then_some("--bytecode"),
         transform_only.then_some("--no-bundle"),
         server_components.then_some("--server-components"),
-        (!matches!(allow_unresolved, AllowUnresolved::All)).then_some("--allow-unresolved"),
+        unresolved_argument(allow_unresolved),
         (!macro_remap.is_empty()).then_some("the \"macros\" map of bunfig.toml"),
         inject.as_ref().is_some_and(|list| !list.is_empty()).then_some("inject"),
         react_compiler_parse_test_pragmas.then_some("reactCompilerParseTestPragmas"),
@@ -140,6 +141,14 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         }
     }
     reported.is_empty()
+}
+
+fn unresolved_argument(allow_unresolved: &AllowUnresolved) -> Option<&'static str> {
+    match allow_unresolved {
+        AllowUnresolved::All => None,
+        AllowUnresolved::None => Some("--reject-unresolved"),
+        AllowUnresolved::Patterns(..) => Some("--allow-unresolved"),
+    }
 }
 
 fn format_argument(format: Format) -> Option<&'static str> {
@@ -269,7 +278,7 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         .collect();
     loaders.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
     LoadOptions {
-        project_root: without_trailing_slash_windows_path(input.working_directory).to_vec(),
+        project_root: bun_paths::without_trailing_sep(input.working_directory).to_vec(),
         loaders,
         externals: externals(options),
         react_compiler: options.react_compiler,
@@ -408,7 +417,8 @@ fn root_directory(
             input.assets
         };
         let directory = widen_to_assets(input.working_directory, directory, assets);
-        return Some(real_directory_path(&directory).unwrap_or(directory));
+        let directory = real_directory_path(&directory).unwrap_or(directory);
+        return Some(widen_out_of_packages(&directory).to_vec());
     }
     let root_directory = absolute_path(input.working_directory, written);
     if root_directory.len() >= MAX_PATH_BYTES {
@@ -423,15 +433,23 @@ fn common_entry_directory(working_directory: &[u8], entry_points: &[Vec<u8>]) ->
         .iter()
         .map(|entry| absolute_path(working_directory, entry))
         .collect();
-    let first_directory = paths
-        .first()
-        .map(|first| bun_core::dirname(first).unwrap_or(&first[..]));
-    let all: Vec<&[u8]> = first_directory
-        .into_iter()
-        .chain(paths.iter().map(|path| &path[..]))
-        .collect();
-    let common = absolute_path(working_directory, longest_common_path_of(&all));
-    without_trailing_slash_windows_path(&common).to_vec()
+    let Some((first, rest)) = paths.split_first() else {
+        return bun_paths::without_trailing_sep(working_directory).to_vec();
+    };
+    // A later entry point can be a folder.
+    let directories = core::iter::once(bun_paths::dirname_or_root(first));
+    let common = bun_paths::common_ancestor(directories.chain(rest.iter().map(|path| &path[..])));
+    let common = common.unwrap_or_else(|| bun_paths::root(working_directory));
+    bun_paths::without_trailing_sep(common).to_vec()
+}
+
+fn widen_out_of_packages(directory: &[u8]) -> &[u8] {
+    let outermost = bun_paths::ancestors(directory)
+        .filter(|&folder| bun_paths::basename(folder) == b"node_modules")
+        .filter_map(bun_paths::dirname)
+        .filter(|&above| above != bun_paths::root(above))
+        .last();
+    outermost.unwrap_or(directory)
 }
 
 /// Never above the working directory: the executable would name the folders of the machine that built it.
@@ -441,10 +459,8 @@ fn widen_to_assets(
     assets: &[Box<[u8]>],
 ) -> Vec<u8> {
     let working_directory = absolute_path(working_directory, b"");
-    let is_inside = |path: &[u8]| {
-        path.strip_prefix(without_trailing_slash_windows_path(&working_directory))
-            .is_some_and(|rest| rest.first().is_none_or(|&byte| bun_paths::is_sep_any(byte)))
-    };
+    let is_inside =
+        |path: &[u8]| is_at_or_below(path, bun_paths::without_trailing_sep(&working_directory));
     if !is_inside(&entry_directory) {
         return entry_directory;
     }
@@ -452,25 +468,10 @@ fn widen_to_assets(
         .iter()
         .map(|asset| absolute_path(&working_directory, asset));
     let inside = paths.filter(|path| is_inside(path) && path.len() > working_directory.len());
-    let folders = inside.filter_map(|path| bun_core::dirname(&path).map(<[u8]>::to_vec));
-    // Each ends with a separator: of two equal paths without one `longest_common_path` answers the folder that holds them.
-    let all: Vec<Vec<u8>> = core::iter::once(entry_directory)
-        .chain(folders)
-        .map(|folder| [&folder[..], b"/"].concat())
-        .collect();
-    let all: Vec<&[u8]> = all.iter().map(|folder| &folder[..]).collect();
-    let common = absolute_path(&working_directory, longest_common_path_of(&all));
-    without_trailing_slash_windows_path(&common).to_vec()
-}
-
-/// `resolve_path::longest_common_path` has a second rule for more than eight paths, which can answer a folder that does not hold all of them.
-fn longest_common_path_of<'a>(paths: &[&'a [u8]]) -> &'a [u8] {
-    let Some((&first, rest)) = paths.split_first() else {
-        return b"";
-    };
-    rest.iter().fold(first, |common, &path| {
-        resolve_path::longest_common_path(&[common, path])
-    })
+    let inside: Vec<Vec<u8>> = inside.collect();
+    let folders = inside.iter().filter_map(|path| bun_paths::dirname(path));
+    let common = bun_paths::common_ancestor(folders.chain([&entry_directory[..]]));
+    bun_paths::without_trailing_sep(common.unwrap_or(&working_directory)).to_vec()
 }
 
 /// `bun run` starts a file under its real path, and so `node_modules/.bin/tool` finds what lies beside the file that the link names.
@@ -511,15 +512,9 @@ fn start_with_first_script(
 }
 
 fn real_file_path(path: &[u8]) -> Option<Vec<u8>> {
-    let mut name = bun_paths::path_buffer_pool::get();
-    if path.len() >= name.len() {
-        return None;
-    }
-    name[..path.len()].copy_from_slice(path);
-    name[path.len()] = 0;
-    let name = bun_core::ZStr::from_buf(&name[..], path.len());
     let mut buffer = bun_paths::path_buffer_pool::get();
-    Some(bun_sys::realpath(name, &mut buffer).ok()?.to_vec())
+    let real_path = bun_sys::realpath(&Path::from(path), &mut buffer).ok()?;
+    Some(real_path.to_vec())
 }
 
 fn real_directory_path(directory: &[u8]) -> Option<Vec<u8>> {
@@ -645,8 +640,8 @@ fn entry_name(template: Option<&mut PathTemplate>, relative: Vec<u8>) -> Vec<u8>
             name
         }
     };
-    resolve_path::platform_to_posix_in_place(name.as_mut_slice());
-    strings::remove_leading_dot_slash(&name).to_vec()
+    bun_paths::to_portable_in_place(name.as_mut_slice());
+    bun_paths::without_leading_dot_slash(&name).to_vec()
 }
 
 pub fn expand_entry_points<T: AsRef<[u8]>>(

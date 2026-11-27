@@ -1,0 +1,23 @@
+# -- source: main.cjs
+# "use strict";
+# const lib = Object.create(null);
+# lib.size = 2;
+# Object.defineProperty(lib, "twice", { get: function () { return this.size * 2; } });
+# function called(t) { let s = 0; for (let i = 0; i < t; i++) s += lib.twice; return s; }
+# print(called(5), called(6));
+# -- end of source
+# f1 = called, f2 = the getter
+# what-a-maker-creates-below-null-and-written-descriptors-lay-values-on-is-a-record.ir left getters out: one written getter kept the whole object plain, because an appended accessor had no known getter.
+# It has one since a-getter-that-a-written-descriptor-lays-for-good-is-proven-once-it-is-laid.ir: a written descriptor with a getter and no setter counts as one with a value does.
+# RUN(MADE): print f0
+# MADE: = NewObject layout=L
+# RUN(CALL): print f0
+# CALL-NOT: calleeName="Object.create"
+# RUN(ACCESSORS): link accesses mechanisms=all
+# ACCESSORS: accessors L{{*}} getter=f2 proven once-laid
+# RUN(ANSWER): run-in-shell
+# ANSWER: 20 24
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 20 24
+# CHECKED-NEXT: exited with 0

@@ -84,6 +84,11 @@ pub trait Host {
         None
     }
 
+    /// Whether `ref_` is `__rawTemplate` of the runtime, which the parser calls where a tagged template has text outside ASCII.
+    fn is_raw_template(&self, _ref: Ref) -> bool {
+        false
+    }
+
     /// Whether `ref_` is bound outside the function being compiled.
     fn is_module_level(&self, ref_: Ref) -> bool {
         self.symbols()
@@ -150,6 +155,15 @@ pub trait Host {
     }
 
     fn record_usage(&mut self, ref_: Ref);
+
+    /// Turns a use of `target` into a read of `target.name`. Returns the value for `E::Dot::is_import_property_use`.
+    fn record_import_property_use(&mut self, _target: &Expr, _name: &[u8]) -> bool {
+        false
+    }
+
+    /// A read that [`Host::record_import_property_use`] counted is called with the import as `this`.
+    fn record_import_property_call(&mut self, _import: Ref, _name: &[u8]) {}
+
     fn add_import_record(&mut self, path: &[u8], kind: ImportKind) -> (u32, Ref);
 }
 
@@ -175,6 +189,8 @@ fn collect_body_directives(stmts: &[Stmt]) -> Vec<&[u8]> {
     for s in stmts {
         match &s.data {
             StmtData::SDirective(d) => out.push(d.value.slice()),
+            // A legal comment that the parser keeps does not end the prologue.
+            StmtData::SComment(_) => {}
             _ => break,
         }
     }
@@ -918,7 +934,7 @@ fn calls_hooks_or_creates_jsx_in_expr(host: &dyn Host, expr: &Expr) -> bool {
         ExprData::ETemplate(t) => {
             t.tag
                 .as_ref()
-                .is_some_and(|tag| calls_hooks_or_creates_jsx_in_expr(host, tag))
+                .is_some_and(|tag| calls_hooks_or_creates_jsx_in_expr(host, &tag.expr))
                 || t.parts()
                     .iter()
                     .any(|p| calls_hooks_or_creates_jsx_in_expr(host, &p.value))

@@ -4,7 +4,7 @@ namespace Bun {
 
 extern "C" void Bun__EventLoopTaskNoContext__performTask(EventLoopTaskNoContext* task)
 {
-    task->performTask();
+    std::unique_ptr<EventLoopTaskNoContext> { task }->performTask();
 }
 
 } // namespace Bun

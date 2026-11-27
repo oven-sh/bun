@@ -1,0 +1,14 @@
+# -- source: written-numbers-say-nothing-of-a-holder-of-which-something-else-is-expected.js
+# class Grid { constructor(n) { this.cells = new Int32Array(n); for (let i = 0; i < n; i++) this.cells[i] = i % 5; } }
+# function go(g, k) { const c = g.cells; let s = k; for (let i = 0; i < c.length; i++) { if (c[i] === 0) continue; s += c[i] * 2; } return s; }
+# const data = new Grid(40), found = { go }[JSON.parse('"go"')];
+# print(found(data, 1), found(data, 2));
+# -- end of source
+# The loop compares the elements of `c` with a written number, which by itself would have it built for a list and for bytes. But the field that `c` is read off is seen to hold 32-bit integers, and the loop
+# reckons with the elements: it is bought for what is expected. Written numbers speak only where nothing else speaks of the holder.
+# f1 = go
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=Int32Array
+# CHECK-NOT: testedType=Buffer|Uint8Array
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 161 162

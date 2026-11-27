@@ -298,6 +298,11 @@ describe("bun", () => {
       // 4. $HOME/.local/bin, once $HOME/.bun/bin does not exist.
       await installBunx({ HOME: join(String(dir), "home-local") });
       expect(fs.readlinkSync(join(String(dir), "home-local", ".local", "bin", bunxName))).toBe(exeRealpath);
+
+      // 5. A directory that is too long to exist is passed over.
+      fs.unlinkSync(join(String(dir), "home-bun", ".bun", "bin", bunxName));
+      await installBunx({ HOME: join(String(dir), "home-bun"), BUN_INSTALL: "/" + Buffer.alloc(5000, "a").toString() });
+      expect(fs.readlinkSync(join(String(dir), "home-bun", ".bun", "bin", bunxName))).toBe(exeRealpath);
     });
 
     test("reports that PowerShell completions do not exist when $SHELL is pwsh", async () => {
@@ -345,9 +350,10 @@ describe("bun", () => {
     });
 
     // IS_BUN_AUTO_UPDATE is what `bun upgrade` sets: the file is installed although stdout is a pipe.
-    async function installCompletions(args: string[], env: Record<string, string | undefined>) {
+    async function installCompletions(args: string[], env: Record<string, string | undefined>, cwd?: string) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "completions", ...args],
+        cwd,
         env: {
           ...bunEnv,
           BUN_INSTALL: undefined,
@@ -412,6 +418,20 @@ describe("bun", () => {
         expect(fs.readFileSync(join(String(dir), ".zshrc"), "utf8")).toBe(added);
         expect((await zsh(String(dir))).exitCode).toBe(0);
         expect(fs.readFileSync(join(String(dir), ".zshrc"), "utf8")).toBe(added);
+      });
+
+      test.concurrent.each([
+        ["empty", ""],
+        ["too long", "/" + Buffer.alloc(5000, "a").toString()],
+      ])("leaves the .zshrc of the cwd alone when $ZDOTDIR is %s", async (_, ZDOTDIR) => {
+        using dir = tempDir("completions-zdotdir", { "home/.bun/.keep": "", "home/.zshrc": "", "cwd/.zshrc": "" });
+        const HOME = join(String(dir), "home");
+
+        const env = { HOME, ZDOTDIR, SHELL: "/bin/zsh" };
+        const { exitCode } = await installCompletions([join(HOME, ".bun")], env, join(String(dir), "cwd"));
+        expect(fs.readFileSync(join(HOME, ".zshrc"), "utf8")).toContain("# bun completions");
+        expect(fs.readFileSync(join(String(dir), "cwd", ".zshrc"), "utf8")).toBe("");
+        expect(exitCode).toBe(0);
       });
     });
   });
@@ -533,6 +553,31 @@ describe("bun", () => {
   });
 
   describe("test command line arguments", () => {
+    test
+      .skipIf(isWindows)
+      .each([
+        [{ "cfg\\x.toml": `preload = ["./real.ts"]` }],
+        [{ "cfg/x.toml": `preload = ["./real.ts"]`, "cfg\\x.toml": `preload = ["./decoy.ts"]` }],
+      ])("a backslash in --config separates unless that leads nowhere: %j", async files => {
+      using dir = tempDir("config-backslash", {
+        ...files,
+        "real.ts": `console.log("real");`,
+        "decoy.ts": `console.log("decoy");`,
+        "main.ts": `console.log("main");`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--config=cfg\\x.toml", "main.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("real\nmain\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("test --config, issue #4128", () => {
       const path = `${tmpdir()}/bunfig-${Date.now()}.toml`;
       fs.writeFileSync(path, "[debug]");

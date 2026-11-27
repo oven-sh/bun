@@ -1,0 +1,20 @@
+# The read by key off a filled record stands in the body of a generator, which is walked in its consumer, the body of the file. Under CheckProofsAtRunTime with CheckDictionaryReadProofs what Link says
+# of it is asked there too.
+# f0 = the file, f2 = each
+# RUN(PLAIN): walk f0 mechanisms=all
+# PLAIN-LABEL: code f0:Body
+# PLAIN: ElemGet
+# PLAIN-NOT: source=Contents
+# RUN(LISTED): walk f0 mechanisms=all testing=CheckProofsAtRunTime,CheckDictionaryReadProofs
+# LISTED-LABEL: code f0:Body
+# LISTED: ElemGet
+# LISTED: CheckProof {{*}}source=Contents
+# -- source: main.cjs
+# 'use strict';
+# function make(size) { const like = { length: size }; for (let i = 0; i < size; i++) like[i] = i * 3; return like; }
+# const like = make(16);
+# function* each(turn) { for (let i = 0; i < 16; i++) yield like[(i + turn) & 15]; }
+# let total = 0;
+# for (let turn = 0; turn < 40; turn++) for (const n of each(turn)) total = (total + n) % 1000003;
+# console.log(total);
+# -- end of source

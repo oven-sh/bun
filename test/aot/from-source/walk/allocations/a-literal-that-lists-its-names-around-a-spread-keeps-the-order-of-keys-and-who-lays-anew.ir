@@ -1,0 +1,55 @@
+# `{ check: kind, ...normalize(params), least }`: what is spread is anything, so the checked type of the literal lists nothing; the literal listed nothing either, and Link appended `check` and `least` out of line.
+# Now it lists the names that it writes itself. What a spread between them must keep: the order of keys . who lays anew . indices . getters read once . what is not enumerable . an own __proto__ . symbols . the order of evaluation. As plain.
+# -- source: main.js
+# function make(kind, params, least) { return { check: kind, ...normalize(params), least }; }
+# function tail(kind, element, params) { return { type: kind, element, ...normalize(params) }; }
+# function show(label, made) { print(label + ": " + Object.keys(made).join() + " | " + JSON.stringify(made)); }
+# var order = [];
+# function note(what) { order.push(what); return what; }
+# function inOrder(source) { try { return { first: note("first"), ...source, last: note("last") }; } catch (error) { return { threw: error.message }; } }
+# show("names between", make("a", { x: 1, y: 2 }, 3));
+# show("the spread lays an earlier name anew", make("a", { check: "over" }, 3));
+# show("a later name lays the spread's anew", make("a", { least: 99, z: 1 }, 3));
+# show("nothing is spread", make("a", undefined, 3));
+# show("null is spread", make("a", null, 3));
+# show("indices come first", make("a", { 1: "one", x: 1, 0: "zero" }, 3));
+# show("a getter is read once and laid as a value", make("a", counted(), 3));
+# show("a name that is not enumerable stays behind", make("a", hidden(), 3));
+# show("a text is spread", make("a", "hi", 3));
+# show("the spread at the end", tail("list", 7, { error: "bad", type: "over" }));
+# var own = make("a", JSON.parse('{"__proto__": 5}'), 3);
+# print("an own __proto__: " + Object.keys(own).join() + " | " + (Object.getPrototypeOf(own) === Object.prototype) + " | " + Object.getOwnPropertyDescriptor(own, "__proto__").value);
+# var symbols = make("a", withSymbol(), 3);
+# print("a symbol: " + Object.getOwnPropertySymbols(symbols).length + " | " + Reflect.ownKeys(symbols).length);
+# show("in order", inOrder({ middle: 1 }));
+# show("a getter that throws", inOrder(throwing()));
+# print(order.join());
+# var d = make("a", { x: 1 }, 3);
+# delete d.least; d.least = 4; show("deleted and laid again", d);
+# Object.defineProperty(d, "check", { get() { return "got"; }, enumerable: true, configurable: true }); show("an accessor over a listed name", d);
+# print(Object.isFrozen(Object.freeze(make("a", { x: 1 }, 3))) + " " + ("least" in make("a", {}, 3)) + " " + make("a", {}, 3).hasOwnProperty("abort"));
+# -- end of source
+# RUN(LINK): link fields
+# LINK: field L
+# LINK-NOT: "least" appended
+# LINK-NOT: "element" appended
+# RUN(ANSWERS): run-in-shell globalThis.normalize = p => p; globalThis.counted = () => { let n = 0; return { get once() { return ++n; } }; }; globalThis.hidden = () => Object.defineProperty({ seen: 1 }, "unseen", { value: 2, enumerable: false }); globalThis.withSymbol = () => ({ [Symbol("s")]: 1, t: 2 }); globalThis.throwing = () => ({ ok: 1, get bad() { throw new Error("thrown by the getter"); } });
+# ANSWERS: names between: check,x,y,least | {"check":"a","x":1,"y":2,"least":3}
+# ANSWERS-NEXT: the spread lays an earlier name anew: check,least | {"check":"over","least":3}
+# ANSWERS-NEXT: a later name lays the spread's anew: check,least,z | {"check":"a","least":3,"z":1}
+# ANSWERS-NEXT: nothing is spread: check,least | {"check":"a","least":3}
+# ANSWERS-NEXT: null is spread: check,least | {"check":"a","least":3}
+# ANSWERS-NEXT: indices come first: 0,1,check,x,least | {"0":"zero","1":"one","check":"a","x":1,"least":3}
+# ANSWERS-NEXT: a getter is read once and laid as a value: check,once,least | {"check":"a","once":1,"least":3}
+# ANSWERS-NEXT: a name that is not enumerable stays behind: check,seen,least | {"check":"a","seen":1,"least":3}
+# ANSWERS-NEXT: a text is spread: 0,1,check,least | {"0":"h","1":"i","check":"a","least":3}
+# ANSWERS-NEXT: the spread at the end: type,element,error | {"type":"over","element":7,"error":"bad"}
+# ANSWERS-NEXT: an own __proto__: check,__proto__,least | true | 5
+# ANSWERS-NEXT: a symbol: 1 | 4
+# ANSWERS-NEXT: in order: first,middle,last | {"first":"first","middle":1,"last":"last"}
+# ANSWERS-NEXT: a getter that throws: threw | {"threw":"thrown by the getter"}
+# ANSWERS-NEXT: first,last,first
+# ANSWERS-NEXT: deleted and laid again: check,x,least | {"check":"a","x":1,"least":4}
+# ANSWERS-NEXT: an accessor over a listed name: check,x,least | {"check":"got","x":1,"least":4}
+# ANSWERS-NEXT: true true false
+# ANSWERS-NEXT: exited with 0

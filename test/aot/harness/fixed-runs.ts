@@ -16,6 +16,7 @@
 //   isolated-open   the rest under --isolate
 //   rerun      under --rerun-each=3: each test file is loaded three times in one realm, and closed
 //   rerun-open   under --rerun-each=3, the rest
+//   evicted-data   data files whose keys a test file deletes from require.cache, and nothing else that opens the world: these cases fall silent in open
 // A folder's project.json may say `flags`, which every run of it gets, `ways`: a name and the testing words for each compiled run, and `closed`: then the build's own
 // report is held to it: no file of the run can run code that no build has seen, no mock, hand-on or spy may reach any module. One case that opens the world would silence the rest.
 // Each folder has a test file of its own, ../fixed-runs-<project>.test.ts: CI's runner ends a test file after three minutes, six with a sanitizer.

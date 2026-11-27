@@ -1,12 +1,12 @@
 //! Prints DOM nodes and collections like pretty-format's `DOMElement` and `DOMCollection` plugins.
 
 use core::cmp::Ordering;
-use core::ffi::c_void;
 
+use bun_core::scoped::SetForScope;
 use bun_core::{StackCheck, String, strings};
 use bun_jsc::{
     JSGlobalObject, JSPropertyIterator, JSType, JSValue, JsError, JsResult,
-    PropertyIteratorOptions, StringJsc as _, VM, console_object,
+    PropertyIteratorOptions, StringJsc as _, console_object,
 };
 
 use super::pretty_format;
@@ -116,10 +116,7 @@ impl Host for console_object::Formatter<'_> {
     fn print(&mut self, out: &mut Vec<u8>, value: JSValue, _indent: u32, _depth: u32) -> JsResult<()> {
         let global = self.global_this;
         let tag = console_object::Tag::get(value, global)?;
-        let prev_single_line = core::mem::replace(&mut self.single_line, true);
-        let result = self.format::<false>(tag, out, value, global);
-        self.single_line = prev_single_line;
-        result
+        SetForScope::new(self, |this| &mut this.single_line, true).format::<false>(tag, out, value, global)
     }
 }
 
@@ -286,28 +283,11 @@ fn for_each_item(
     list: JSValue,
     each: &mut dyn FnMut(JSValue) -> JsResult<()>,
 ) -> JsResult<()> {
-    struct Iteration<'a> {
-        each: &'a mut dyn FnMut(JSValue) -> JsResult<()>,
-        result: JsResult<()>,
-    }
-    extern "C" fn next(_: *mut VM, _: &JSGlobalObject, iteration: *mut c_void, item: JSValue) {
-        // SAFETY: `iteration` is the `Iteration` below, which outlives the `for_each` call.
-        let iteration = unsafe { &mut *iteration.cast::<Iteration<'_>>() };
-        if iteration.result.is_ok() {
-            iteration.result = (iteration.each)(item);
-        }
-    }
-
     if !list.is_object() {
         return Ok(());
     }
     if list.is_iterable(global)? {
-        let mut iteration = Iteration {
-            each,
-            result: Ok(()),
-        };
-        list.for_each(global, (&raw mut iteration).cast::<c_void>(), next)?;
-        return iteration.result;
+        return list.try_for_each(global, each);
     }
     for i in 0..length_of(global, list)? {
         let item = list.get_index(global, i)?;

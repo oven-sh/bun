@@ -1,0 +1,16 @@
+# Each iteration takes bits of the word, which comes round multiplied and shifted: it is carried as an int32, and the back edge checks it.
+# LIBRARY: own
+# -- source: main.ts
+# function steps(n: number): number { let count = 0; while (n !== 1) { n = n & 1 ? 3 * n + 1 : n >> 1; count++; } return count; }
+# publish((n: number) => steps(n | 0));
+# declare function publish(run: (n: number) => number): void;
+# -- end of source
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: = Mul {{*}}form=Integers
+# CHECK: testedType=i32
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run(27)); print(run(1)); print(run(97)); };
+# SHELL: 111
+# SHELL-NEXT: 0
+# SHELL-NEXT: 118

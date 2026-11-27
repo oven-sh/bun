@@ -1,5 +1,5 @@
 // What the body of a module makes out of the text alone and only stores in a variable is made at the first read of the variable.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 (globalThis as any).report = (value: unknown) => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 declare function report(value: unknown): void;
 function tell(read: () => unknown) { try { return String(read()); } catch (e: any) { return e.name; } }

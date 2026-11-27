@@ -720,3 +720,49 @@ export function awaitableCounter(timeoutMs: number = 1000) {
       }),
   };
 }
+
+// Takes the complete RESP commands off the front of `state.buffer` and leaves
+// any partial command in it for the next chunk.
+export function readCommands(state: { buffer: Buffer }): string[][] {
+  const commands: string[][] = [];
+  while (true) {
+    const text = state.buffer.toString("latin1");
+    if (text[0] !== "*") break;
+    const headerEnd = text.indexOf("\r\n");
+    if (headerEnd === -1) break;
+    const argCount = parseInt(text.slice(1, headerEnd), 10);
+    if (!Number.isInteger(argCount) || argCount < 0) break;
+    let pos = headerEnd + 2;
+    const args: string[] = [];
+    let complete = true;
+    for (let i = 0; i < argCount; i++) {
+      if (text[pos] !== "$") {
+        complete = false;
+        break;
+      }
+      const lenEnd = text.indexOf("\r\n", pos);
+      if (lenEnd === -1) {
+        complete = false;
+        break;
+      }
+      const len = parseInt(text.slice(pos + 1, lenEnd), 10);
+      if (!Number.isInteger(len) || len < 0) {
+        complete = false;
+        break;
+      }
+      const dataStart = lenEnd + 2;
+      const dataEnd = dataStart + len;
+      if (text.length < dataEnd + 2) {
+        complete = false;
+        break;
+      }
+      if (!text.startsWith("\r\n", dataEnd)) throw new Error(`no CRLF after argument ${i} of ${JSON.stringify(text)}`);
+      args.push(text.slice(dataStart, dataEnd));
+      pos = dataEnd + 2;
+    }
+    if (!complete) break;
+    commands.push(args);
+    state.buffer = state.buffer.subarray(pos);
+  }
+  return commands;
+}

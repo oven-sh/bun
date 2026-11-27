@@ -22,13 +22,23 @@
  * artifact are skipped — better to over-enumerate and 404 than to miss one.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { resolveConfig, type Config, type PartialConfig } from "./build/config.ts";
 import { resolveToolchain } from "./build/configure.ts";
 import { allDeps } from "./build/deps/index.ts";
-import { downloadWithRetry, extractTarGz, extractZip, prefetchPathForUrl } from "./build/download.ts";
+import {
+  downloadRetry,
+  downloadWithRetry,
+  extractTarGz,
+  extractZip,
+  pinnedSha256,
+  prebuiltIsCurrent,
+  prefetchPathForUrl,
+  sha256OfFile,
+  stampPrebuilt,
+} from "./build/download.ts";
 
 const dest = process.argv[2];
 if (dest === undefined) {
@@ -63,11 +73,11 @@ for (const asan of [false, true]) {
 
 interface Item {
   url: string;
-  /** If set, also extract into `<extractedDir>/<name>/` and write `<stamp>`. */
+  sha256?: string | undefined;
+  /** If set, also extract into `<extractedDir>/<name>/` and stamp it. */
   extract?: {
     name: string;
-    stamp: string;
-    value: string;
+    identity: string;
     kind: "tar.gz" | "zip";
     /** Paths (relative to extracted root) to delete before stamping — mirrors fetchPrebuilt's rmAfterExtract. */
     rm?: string[];
@@ -76,6 +86,8 @@ interface Item {
 
 const items = new Map<string, Item>();
 const extractNames = new Set<string>();
+/** Variants the release does not have: every file it does have is pinned. */
+const unpinned = new Set<string>();
 function add(item: Item): void {
   if (items.has(item.url)) return;
   // Only one item may claim a given extracted/<name>/ — with parallel workers
@@ -84,7 +96,7 @@ function add(item: Item): void {
   // destDir basename), so this is a guard against future drift, not a tie-
   // break that matters.
   if (item.extract !== undefined) {
-    if (extractNames.has(item.extract.name)) item = { url: item.url };
+    if (extractNames.has(item.extract.name)) item = { url: item.url, sha256: item.sha256 };
     else extractNames.add(item.extract.name);
   }
   items.set(item.url, item);
@@ -109,12 +121,17 @@ for (const partial of variants) {
       add({ url: `https://github.com/${src.repo}/archive/${src.commit}.tar.gz` });
     } else if (src.kind === "prebuilt") {
       const destDir = src.destDir ?? resolve(cfg.vendorDir, dep.name);
+      const sha256 = src.sha256sums !== undefined ? pinnedSha256(src.sha256sums, src.url) : undefined;
+      if (src.sha256sums !== undefined && sha256 === undefined) {
+        unpinned.add(src.url);
+        continue;
+      }
       add({
         url: src.url,
+        sha256,
         extract: {
           name: basename(destDir),
-          stamp: ".identity",
-          value: src.identity,
+          identity: src.identity,
           kind: "tar.gz",
           ...(src.rmAfterExtract !== undefined && { rm: src.rmAfterExtract }),
         },
@@ -134,18 +151,20 @@ await mkdir(extractedDir, { recursive: true });
 
 let ok = 0;
 let skipped = 0;
-let missing = 0;
+let missing = unpinned.size;
+for (const url of unpinned) console.log(`  (skip — no sha256 is pinned for ${url})`);
 
 async function fetchOne(item: Item): Promise<void> {
   // Same key the build's downloadWithRetry will look up — keeps producer and
   // consumer in lockstep without duplicating the hash.
   const path = prefetchPathForUrl(item.url, dest)!;
 
-  if (existsSync(path)) {
+  if (existsSync(path) && (item.sha256 === undefined || sha256OfFile(path) === item.sha256)) {
     skipped++;
   } else {
     try {
-      await downloadWithRetry(item.url, path, basename(new URL(item.url).pathname));
+      const name = basename(new URL(item.url).pathname);
+      await downloadWithRetry(item.url, path, name, downloadRetry, undefined, item.sha256);
     } catch (err) {
       // 404 = the enumerated variant has no published artifact — expected,
       // the build will just download that one if it ever needs it. Anything
@@ -164,11 +183,10 @@ async function fetchOne(item: Item): Promise<void> {
 
   if (item.extract === undefined) return;
   const out = resolve(extractedDir, item.extract.name);
-  const stampPath = resolve(out, item.extract.stamp);
   // Compare contents, not just presence — re-running after a version bump
   // must replace the old tree, not skip it (the build's tryPrefetchExtracted
   // would otherwise mismatch forever and never get the extracted speedup).
-  if (existsSync(stampPath) && readFileSync(stampPath, "utf8").trim() === item.extract.value) return;
+  if (prebuiltIsCurrent(out, item.extract.identity, item.sha256)) return;
 
   // Extract → hoist single top-level dir → apply rmAfterExtract → stamp.
   // Mirrors fetchPrebuilt so the resulting tree is byte-identical
@@ -184,7 +202,7 @@ async function fetchOne(item: Item): Promise<void> {
     const entries = await readdir(staging);
     const hoist = entries.length === 1 ? resolve(staging, entries[0]!) : staging;
     for (const p of item.extract.rm ?? []) await rm(resolve(hoist, p), { recursive: true, force: true });
-    await writeFile(resolve(hoist, item.extract.stamp), item.extract.value + "\n");
+    await stampPrebuilt(hoist, item.extract.identity, item.sha256);
     await rm(out, { recursive: true, force: true });
     await rename(hoist, out);
     console.log(`  extracted → ${out}`);

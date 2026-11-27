@@ -12,16 +12,14 @@ The LinkerContext operates in several main phases:
 
 ## Main Functions
 
-### 1. `load()` - LinkerContext.rs:187
+### 1. `load()` - LinkerContext.rs
 
-**Purpose**: Initializes the LinkerContext with bundle data and prepares the graph for linking.
+**Purpose**: Creates the LinkerContext, which borrows the bundle, and prepares the graph for linking.
 
 **What it does**:
 
-- Sets up the parse graph reference
-- Configures code splitting and logging
+- Configures code splitting
 - Loads entry points and reachable files into the graph
-- Initializes wait groups for parallel processing
 - Sets up runtime symbol references (`__esm`, `__commonJS`)
 - Configures module/exports references for different output formats (CJS, IIFE)
 
@@ -32,19 +30,18 @@ The LinkerContext operates in several main phases:
 - Entry point processing
 - Memory management setup
 
-### 2. `link()` - LinkerContext.rs:294
+### 2. `link()` - LinkerContext.rs
 
 **Purpose**: The main linking orchestrator that coordinates all bundling phases.
 
 **What it does**:
 
-1. Expects `load()` to have initialized the context (`BundleV2::link` calls both)
-2. Computes source map data if needed
-3. **Phase 1**: `scanImportsAndExports()` - Analyzes all imports/exports across modules
-4. **Phase 2**: `treeShakingAndCodeSplitting()` - Eliminates dead code and determines chunk boundaries
-5. **Phase 3**: `computeChunks()` - Creates the final chunk structure
-6. **Phase 4**: `computeCrossChunkDependencies()` - Resolves dependencies between chunks
-7. Follows symbol references to ensure consistency
+1. Computes source map data if needed
+2. **Phase 1**: `scanImportsAndExports()` - Analyzes all imports/exports across modules
+3. **Phase 2**: `treeShakingAndCodeSplitting()` - Eliminates dead code and determines chunk boundaries
+4. **Phase 3**: `computeChunks()` - Creates the final chunk structure
+5. **Phase 4**: `computeCrossChunkDependencies()` - Resolves dependencies between chunks
+6. Follows symbol references to ensure consistency
 
 **Key responsibilities**:
 
@@ -61,7 +58,7 @@ The LinkerContext operates in several main phases:
 
 1. **Symbol Renaming Phase**: Renames symbols in each chunk in parallel to avoid conflicts
 2. **Source Map Processing**: Handles line offset calculations for source maps
-3. **CSS Preparation**: Processes CSS chunks, removing duplicate rules in serial order
+3. **CSS Preparation**: Nests the conditions of external `@import` rules into data URLs
 4. **Code Generation Phase**: Generates compile results for each part in parallel
    - JavaScript chunks: Generates code for each part range
    - CSS chunks: Processes CSS imports and generates stylesheets
@@ -1027,16 +1024,6 @@ This function is essential for maintaining JavaScript module semantics across di
 - Live reload integration
 
 ### Post-Processing Phase
-
-#### `prepareCssAstsForChunk.rs`
-
-**Purpose**: Prepares CSS ASTs before final processing.
-
-**Key functions**:
-
-- CSS rule deduplication
-- CSS optimization passes
-- Asset reference resolution
 
 #### `postProcessJSChunk.rs`
 

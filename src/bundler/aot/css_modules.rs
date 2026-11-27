@@ -16,7 +16,7 @@ pub(crate) fn exported_names<'s>(
     log: &mut Log,
 ) -> Result<&'s DataValue<'s>, Failed> {
     let contents = without_bom(file.contents.to_vec());
-    match context.with_worker(|transpiler, _| load_exports(transpiler, file.path, &contents)) {
+    match context.with_worker(|transpiler| load_exports(transpiler, file.path, &contents)) {
         Ok(exports) => {
             let intern = |(name, value): &(Vec<u8>, Vec<u8>)| {
                 (atoms.intern(name), DataValue::String(atoms.intern(value)))

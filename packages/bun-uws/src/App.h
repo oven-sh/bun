@@ -18,33 +18,9 @@
 // clang-format off
 
 
+#include <memory>
 #include <string>
-#include <charconv>
 #include <string_view>
-
-namespace uWS {
-    /* Safari 15.0 - 15.3 has a completely broken compression implementation (client_no_context_takeover not
-     * properly implemented) - so we fully disable compression for this browser :-(
-     * see https://github.com/uNetworking/uWebSockets/issues/1347 */
-    inline bool hasBrokenCompression(std::string_view userAgent) {
-        size_t posStart = userAgent.find(" Version/15.");
-        if (posStart == std::string_view::npos) return false;
-        posStart += 12;
-
-        size_t posEnd = userAgent.find(' ', posStart);
-        if (posEnd == std::string_view::npos) return false;
-
-        unsigned int minorVersion = 0;
-        auto result = std::from_chars(userAgent.data() + posStart, userAgent.data() + posEnd, minorVersion);
-        if (result.ec != std::errc()) return false;
-        if (result.ptr != userAgent.data() + posEnd) return false; // do not accept trailing chars
-        if (minorVersion > 3) return false; // we target just Safari 15.0 - 15.3
-
-        if (userAgent.find(" Safari/", posEnd) == std::string_view::npos) return false;
-
-        return true;
-    }
-}
 
 /* An app is a convenience wrapper of some of the most used fuctionalities and allows a
  * builder-pattern kind of init. Apps operate on the implicit thread local Loop */
@@ -52,9 +28,8 @@ namespace uWS {
 #include "HttpContext.h"
 #include "HttpResponse.h"
 #include "Http2Context.h"
-#include "WebSocketContext.h"
-#include "WebSocket.h"
-#include "PerMessageDeflate.h"
+
+extern "C" void Bun__WebSockets__close(const void *webSockets);
 
 namespace uWS {
 
@@ -101,19 +76,23 @@ namespace uWS {
 template <bool SSL>
 struct TemplatedApp {
 private:
+    struct SslCtxDeleter {
+        void operator()(struct ssl_ctx_st *ctx) const { us_internal_ssl_ctx_unref(ctx); }
+    };
+    using SslCtxPtr = std::unique_ptr<struct ssl_ctx_st, SslCtxDeleter>;
+
     /* The app always owns at least one http context, but creates websocket contexts on demand */
-    HttpContext<SSL> *httpContext;
-    /* Shared SSL_CTX for every accepted socket. nullptr for plain HTTP. Built
-     * once in the constructor; the listener up_ref's it; SSL_CTX_free in dtor. */
-    struct ssl_ctx_st *sslCtx = nullptr;
+    std::unique_ptr<HttpContext<SSL>> httpContext;
+    /* Shared by every accepted socket; a listener takes its own ref. nullptr for plain HTTP. */
+    SslCtxPtr sslCtx;
     /* SNI: the tree hangs off the listen socket, but addServerName() is allowed
      * before listen(). Queue them and replay onto each us_listen_socket_t. */
     struct PendingServerName {
         std::string hostname;
-        struct ssl_ctx_st *ctx;
+        SslCtxPtr ctx;
     };
     std::vector<PendingServerName> pendingServerNames;
-    /* No raw us_listen_socket_t* cache here. src/runtime/server/mod.rs's non-abrupt stop calls
+    /* No raw us_listen_socket_t* cache here. src/runtime/server/mod.rs's stop calls
      * us_listen_socket_close(ls) directly; the listener is queued for free in
      * loop_post, so any vector we kept would dangle by the time the deferred
      * App::close() task runs. The group's intrusive head_listen_sockets list is
@@ -125,17 +104,10 @@ private:
             fn(ls);
         }
     }
-    /* WebSocketContexts are of differing type, but we as owners and creators must delete them correctly */
-    std::vector<MoveOnlyFunction<void()>> webSocketContextDeleters;
-    std::vector<us_socket_group_t *> webSocketGroups;
-    /* Contexts can't be freed before the app because an in-flight upgrade holds a raw pointer to one, so ws() calls
-     * with the same key reuse a context. wsPackage contexts have a null key; wsPackageContext() matches them by options. */
-    std::vector<std::pair<const void *, void *>> webSocketContexts;
 
 public:
-
-    TopicTree<TopicTreeMessage, TopicTreeBigMessage> *topicTree = nullptr;
-
+    /* WebSockets in src/uws_sys/WebSocket.rs, which OwnedApp owns. */
+    const void *webSockets = nullptr;
 
     /* Server name */
     TemplatedApp &&addServerName(const std::string &hostname_pattern, SocketContextOptions options = {}, bool *success = nullptr, bool applyClientCertPolicy = false) {
@@ -143,7 +115,7 @@ public:
         /* Do nothing if not even on SSL */
         if constexpr (SSL) {
             enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
-            struct ssl_ctx_st *domainCtx = us_ssl_ctx_from_options(options, &err);
+            SslCtxPtr domainCtx{us_ssl_ctx_from_options(options, &err)};
             if (!domainCtx) {
                 if (success) *success = false;
                 return std::move(*this);
@@ -152,17 +124,17 @@ public:
              * policy; the default entry's own hostname keeps the app-level
              * one. */
             if (applyClientCertPolicy) {
-                us_ssl_ctx_set_sni_policy(domainCtx, options.request_cert, options.reject_unauthorized);
+                us_ssl_ctx_set_sni_policy(domainCtx.get(), options.request_cert, options.reject_unauthorized);
             }
             if (httpContext->getSocketContextData()->http2Context) {
-                us_ssl_ctx_enable_http2_alpn(domainCtx, httpContext->getSocketContextData()->allowHttp1);
+                us_ssl_ctx_enable_http2_alpn(domainCtx.get(), httpContext->getSocketContextData()->allowHttp1);
             }
             forEachListenSocket([&](us_listen_socket_t *ls) {
-                us_listen_socket_add_server_name(ls, hostname_pattern.c_str(), domainCtx);
+                us_listen_socket_add_server_name(ls, hostname_pattern.c_str(), domainCtx.get());
             });
             /* Queue for any listeners not yet created. We hold one SSL_CTX ref;
              * each listen socket took its own via SSL_CTX_up_ref. */
-            pendingServerNames.push_back({hostname_pattern, domainCtx});
+            pendingServerNames.push_back({hostname_pattern, std::move(domainCtx)});
             if (success) *success = true;
         }
 
@@ -181,7 +153,7 @@ public:
 
     /* Returns the SSL_CTX* of this app, or nullptr. */
     void *getNativeHandle() {
-        return sslCtx;
+        return sslCtx.get();
     }
 
     /* Attaches a "filter" function to track socket connections/disconnections */
@@ -191,91 +163,11 @@ public:
         return std::move(*this);
     }
 
-    using PublishStatus = typename WebSocket<SSL, true, int>::SendStatus;
-
-    /* Publishes a message to the app's one conceptual websocket Topic tree.
-     * Returns the worst subscriber SendStatus; no subscribers is DROPPED,
-     * then BACKPRESSURE beats SUCCESS. */
-    PublishStatus publish(std::string_view topic, std::string_view message, OpCode opCode, bool compress = false) {
-        /* Anything big bypasses corking efforts */
-        if (message.length() >= LoopData::CORK_COPY_MAX) {
-            PublishStatus worst = PublishStatus::SUCCESS;
-            bool hasReceivers = false;
-            topicTree->publishBig(nullptr, topic, {message, opCode, compress}, [&worst, &hasReceivers](Subscriber *s, TopicTreeBigMessage &message) {
-                hasReceivers = true;
-                auto *ws = (WebSocket<SSL, true, int> *) s->user;
-
-                /* Send will drain if needed */
-                worst = WebSocket<SSL, true, int>::worseStatus(worst, (PublishStatus) ws->send(message.message, (OpCode)message.opCode, message.compress));
-            });
-            return hasReceivers ? worst : PublishStatus::DROPPED;
-        } else {
-            Topic *t = topicTree->lookupTopic(topic);
-            if (!t) {
-                return PublishStatus::DROPPED;
-            }
-            topicTree->publish(nullptr, topic, {std::string(message), opCode, compress});
-            /* publish() may have synchronously drained a subscriber; check backpressure after. */
-            PublishStatus worst = PublishStatus::SUCCESS;
-            bool hasReceivers = false;
-            for (Subscriber *s : *t) {
-                hasReceivers = true;
-                auto *ws = (WebSocket<SSL, true, int> *) s->user;
-                worst = WebSocket<SSL, true, int>::worseStatus(worst, (PublishStatus) ws->sendStatus());
-            }
-            return hasReceivers ? worst : PublishStatus::DROPPED;
-        }
-    }
-
-    /* Returns number of subscribers for this topic, or 0 for failure.
-     * This function should probably be optimized a lot in future releases,
-     * it could be O(1) with a hash map of fullnames and their counts. */
-    unsigned int numSubscribers(std::string_view topic) {
-        if (!topicTree) {
-            return 0;
-        }
-
-        Topic *t = topicTree->lookupTopic(topic);
-        if (t) {
-            return (unsigned int) t->size();
-        }
-
-        return 0;
-    }
-
     ~TemplatedApp() {
-        /* Let's just put everything here */
         if (httpContext) {
             if (Http2Context *h2 = httpContext->getSocketContextData()->http2Context) {
                 h2->detach(httpContext->getSocketContextData());
             }
-            httpContext->free();
-
-            /* Free all our webSocketContexts in a type less way */
-            for (auto &webSocketContextDeleter : webSocketContextDeleters) {
-                webSocketContextDeleter();
-            }
-        }
-
-        if constexpr (SSL) {
-            /* pendingServerNames is the single owner of each domain router; the
-             * SNI trees on listen sockets hold borrowed pointers. The caller
-             * must have already run TemplatedApp::close() (which close_all()'s
-             * the http group → us_listen_socket_close() → sni_free()) before
-             * destroying us — httpContext->free() above only deinit()'s. */
-            for (auto &p : pendingServerNames) {
-                us_internal_ssl_ctx_unref(p.ctx);
-            }
-            us_internal_ssl_ctx_unref(sslCtx);
-        }
-
-        /* Delete TopicTree */
-        if (topicTree) {
-            /* And unregister loop callbacks */
-            /* We must unregister any loop post handler here */
-            Loop::get()->removePostHandler(topicTree);
-            Loop::get()->removePreHandler(topicTree);
-            delete topicTree;
         }
     }
 
@@ -306,74 +198,28 @@ private:
     TemplatedApp(SocketContextOptions options) {
         if constexpr (SSL) {
             enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
-            sslCtx = us_ssl_ctx_from_options(options, &err);
-            if (!sslCtx) { httpContext = nullptr; return; }
+            sslCtx.reset(us_ssl_ctx_from_options(options, &err));
+            if (!sslCtx) return;
         }
-        httpContext = HttpContext<SSL>::create(Loop::get(), options.request_cert, options.reject_unauthorized);
+        httpContext = std::make_unique<HttpContext<SSL>>(Loop::get(), options.request_cert, options.reject_unauthorized);
     }
 public:
 
     static TemplatedApp<SSL>* create(SocketContextOptions options = {}) {
-        auto *app = new TemplatedApp<SSL>(options);
-        if (app->constructorFailed()) {
-            delete app;
-            return nullptr;
-        }
-        return app;
+        std::unique_ptr<TemplatedApp<SSL>> app{new TemplatedApp<SSL>(options)};
+        return app->constructorFailed() ? nullptr : app.release();
     }
 
     bool constructorFailed() {
         return !httpContext;
     }
 
-    template <typename UserData>
-    struct WebSocketBehavior {
-        /* Disabled compression by default - probably a bad default */
-        CompressOptions compression = DISABLED;
-        /* Maximum message size we can receive */
-        unsigned int maxPayloadLength = 16 * 1024;
-        /* 2 minutes timeout is good */
-        unsigned short idleTimeout = 120;
-        /* 64kb backpressure is probably good */
-        unsigned int maxBackpressure = 64 * 1024;
-        bool closeOnBackpressureLimit = false;
-        /* This one depends on kernel timeouts and is a bad default */
-        bool resetIdleTimeoutOnSend = false;
-        /* A good default, esp. for newcomers */
-        bool sendPingsAutomatically = true;
-        /* Maximum socket lifetime in minutes before forced closure (defaults to disabled) */
-        unsigned short maxLifetime = 0;
-        /* See WebSocketContextData */
-        bool wsPackage = false;
-        bool autoPong = true;
-        bool skipUTF8Validation = false;
-        MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *, WebSocketContext<SSL, true, UserData> *)> upgrade = nullptr;
-        MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *)> open = nullptr;
-        MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *, std::string_view, OpCode)> message = nullptr;
-        MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *)> drain = nullptr;
-        MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *, std::string_view)> ping = nullptr;
-        MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *, std::string_view)> pong = nullptr;
-        MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *, int, std::string_view)> close = nullptr;
-    };
-
     /* Closes all sockets including listen sockets. */
     TemplatedApp &&close() {
         /* close_all() walks head_listen_sockets first, so listeners are closed
          * here without us holding raw pointers to them across loop ticks. */
         us_socket_group_close_all(httpContext->getSocketGroup());
-        for (us_socket_group_t *g : webSocketGroups) {
-            /* Snapshot the list first: end() runs the close handler, which can close other sockets in the group */
-            std::vector<us_socket_t *> sockets;
-            for (us_socket_t *s = g->head_sockets; s; s = s->next) {
-                sockets.push_back(s);
-            }
-            for (us_socket_t *s : sockets) {
-                if (!us_socket_is_closed(s)) {
-                    ((WebSocket<SSL, true, int> *) s)->end(1001, "Server closed");
-                }
-            }
-            us_socket_group_close_all(g);
-        }
+        Bun__WebSockets__close(webSockets);
         if (Http2Context *h2 = httpContext->getSocketContextData()->http2Context) {
             h2->closeAll();
         }
@@ -387,11 +233,11 @@ public:
     void attachHttp2(Http2Context *ctx, bool allowHttp1) {
         ctx->attach(httpContext->getSocketContextData(), allowHttp1);
         if constexpr (SSL) {
-            us_ssl_ctx_enable_http2_alpn(sslCtx, allowHttp1);
+            us_ssl_ctx_enable_http2_alpn(sslCtx.get(), allowHttp1);
             /* Bun attaches before addServerName(), which enables ALPN itself;
              * this covers embedders that add names first. */
             for (auto &p : pendingServerNames) {
-                us_ssl_ctx_enable_http2_alpn(p.ctx, allowHttp1);
+                us_ssl_ctx_enable_http2_alpn(p.ctx.get(), allowHttp1);
             }
         }
     }
@@ -431,231 +277,9 @@ public:
         return closed;
     }
 
-private:
-    /* Moves the handlers out of behavior. Settings are applied by applyWebSocketSettings(). */
-    template <typename UserData>
-    WebSocketContext<SSL, true, UserData> *createWebSocketContext(const void *key, WebSocketBehavior<UserData> &behavior) {
-        /* Don't compile if alignment rules cannot be satisfied */
-        static_assert(alignof(UserData) <= LIBUS_EXT_ALIGNMENT,
-        "µWebSockets cannot satisfy UserData alignment requirements. You need to recompile µSockets with LIBUS_EXT_ALIGNMENT adjusted accordingly.");
-
-        /* If we don't have a TopicTree yet, create one now */
-        if (!topicTree) {
-
-            bool needsUncork = false;
-            topicTree = new TopicTree<TopicTreeMessage, TopicTreeBigMessage>([needsUncork](Subscriber *s, TopicTreeMessage &message, TopicTree<TopicTreeMessage, TopicTreeBigMessage>::IteratorFlags flags) mutable {
-                /* Subscriber's user is the socket */
-                /* Unfortunately we need to cast is to PerSocketData = int
-                 * since many different WebSocketContexts use the same
-                 * TopicTree now */
-                auto *ws = (WebSocket<SSL, true, int> *) s->user;
-
-                /* If this is the first message we try and cork */
-                if (flags & TopicTree<TopicTreeMessage, TopicTreeBigMessage>::IteratorFlags::FIRST) {
-                    needsUncork = false;
-                    if (!ws->isCorked()) {
-                        ((AsyncSocket<SSL> *)ws)->cork();
-                        needsUncork = ws->isCorked();
-                    }
-                }
-
-                /* If we ever overstep maxBackpresure, exit immediately */
-                if (WebSocket<SSL, true, int>::SendStatus::DROPPED == ws->send(message.message, (OpCode)message.opCode, message.compress)) {
-                    if (needsUncork) {
-                        ((AsyncSocket<SSL> *)ws)->uncork();
-                        needsUncork = false;
-                    }
-                    /* Stop draining */
-                    return true;
-                }
-
-                /* If this is the last message we uncork if we are corked */
-                if (flags & TopicTree<TopicTreeMessage, TopicTreeBigMessage>::IteratorFlags::LAST) {
-                    /* We should not uncork in all cases? */
-                    if (needsUncork) {
-                        ((AsyncSocket<SSL> *)ws)->uncork();
-                        needsUncork = false;
-                    }
-                }
-
-                /* Success */
-                return false;
-            });
-
-            /* And hook it up with the loop */
-            /* We empty for both pre and post just to make sure */
-            Loop::get()->addPostHandler(topicTree, [topicTree = topicTree](Loop */*loop*/) {
-                /* Commit pub/sub batches every loop iteration */
-                topicTree->drain();
-            });
-
-            Loop::get()->addPreHandler(topicTree, [topicTree = topicTree](Loop */*loop*/) {
-                /* Commit pub/sub batches every loop iteration */
-                topicTree->drain();
-            });
-        }
-
-        auto *webSocketContext = WebSocketContext<SSL, true, UserData>::create(Loop::get(), topicTree);
-        webSocketContexts.emplace_back(key, webSocketContext);
-
-        /* We need to clear this later on */
-        webSocketContextDeleters.push_back([webSocketContext]() {
-            webSocketContext->free();
-        });
-
-        /* We also keep this list for easy closing */
-        webSocketGroups.push_back(webSocketContext->getSocketGroup());
-
-        /* Copy all handlers */
-        webSocketContext->getExt()->openHandler = std::move(behavior.open);
-        webSocketContext->getExt()->messageHandler = std::move(behavior.message);
-        webSocketContext->getExt()->drainHandler = std::move(behavior.drain);
-        webSocketContext->getExt()->closeHandler = [closeHandler = std::move(behavior.close)](WebSocket<SSL, true, UserData> *ws, int code, std::string_view message) mutable {
-            if (closeHandler) {
-                closeHandler(ws, code, message);
-            }
-
-            /* Destruct user data after returning from close handler */
-            ((UserData *) ws->getUserData())->~UserData();
-        };
-        webSocketContext->getExt()->pingHandler = std::move(behavior.ping);
-        webSocketContext->getExt()->pongHandler = std::move(behavior.pong);
-
-        return webSocketContext;
-    }
-
-    template <typename UserData>
-    void applyWebSocketSettings(WebSocketContext<SSL, true, UserData> *webSocketContext, const WebSocketBehavior<UserData> &behavior) {
-        /* If we are the first one to use compression, initialize it */
-        if (behavior.compression) {
-            LoopData *loopData = (LoopData *) us_loop_ext(us_socket_group_loop(webSocketContext->getSocketGroup()));
-
-            /* Initialize loop's deflate inflate streams */
-            if (!loopData->zlibContext) {
-                loopData->zlibContext = new ZlibContext;
-                loopData->inflationStream = new InflationStream(CompressOptions::DEDICATED_DECOMPRESSOR);
-                loopData->deflationStream = new DeflationStream(CompressOptions(CompressOptions::DEDICATED_COMPRESSOR | CompressOptions::COMPRESSOR_NO_CONTEXT_TAKEOVER));
-            }
-        }
-
-        webSocketContext->getExt()->maxPayloadLength = behavior.maxPayloadLength;
-        webSocketContext->getExt()->maxBackpressure = behavior.maxBackpressure;
-        webSocketContext->getExt()->closeOnBackpressureLimit = behavior.closeOnBackpressureLimit;
-        webSocketContext->getExt()->resetIdleTimeoutOnSend = behavior.resetIdleTimeoutOnSend;
-        webSocketContext->getExt()->sendPingsAutomatically = behavior.sendPingsAutomatically;
-        webSocketContext->getExt()->maxLifetime = behavior.maxLifetime;
-        webSocketContext->getExt()->compression = behavior.compression;
-        webSocketContext->getExt()->wsPackage = behavior.wsPackage;
-        webSocketContext->getExt()->autoPong = behavior.autoPong;
-        webSocketContext->getExt()->skipUTF8Validation = behavior.skipUTF8Validation;
-
-        /* Calculate idleTimeoutComponents */
-        webSocketContext->getExt()->calculateIdleTimeoutComponents(behavior.idleTimeout);
-    }
-
-public:
-    /* Returns the `ws` package's context for these options (maxPayloadLength, compression, autoPong, skipUTF8Validation),
-     * creating it on first use. It isn't bound to a route; pass it to HttpResponse::upgradeRaw().
-     * Every call must pass the same handlers. */
-    template <typename UserData>
-    WebSocketContext<SSL, true, UserData> *wsPackageContext(WebSocketBehavior<UserData> &&behavior) {
-        for (auto &[key, context] : webSocketContexts) {
-            auto *webSocketContext = (WebSocketContext<SSL, true, UserData> *) context;
-            auto *data = webSocketContext->getExt();
-            if (data->wsPackage && data->maxPayloadLength == behavior.maxPayloadLength && data->compression == behavior.compression
-                && data->autoPong == behavior.autoPong && data->skipUTF8Validation == behavior.skipUTF8Validation) {
-                return webSocketContext;
-            }
-        }
-
-        /* Node has no equivalent of these, and ws.ts runs its own close timer */
-        behavior.wsPackage = true;
-        behavior.idleTimeout = 0;
-        behavior.sendPingsAutomatically = false;
-        behavior.resetIdleTimeoutOnSend = false;
-        behavior.maxBackpressure = 0;
-        behavior.closeOnBackpressureLimit = false;
-        behavior.maxLifetime = 0;
-
-        auto *webSocketContext = createWebSocketContext<UserData>(nullptr, behavior);
-        applyWebSocketSettings<UserData>(webSocketContext, behavior);
-        return webSocketContext;
-    }
-
-    /* Calls with the same key share one context, so they must use the same UserData type and the same handlers
-     * (except upgrade). The context keeps the first call's handlers and the last call's settings. */
-    template <typename UserData>
-    TemplatedApp &&ws(std::string_view pattern, WebSocketBehavior<UserData> &&behavior, const void *key) {
-        if (!httpContext) {
-            return std::move(*this);
-        }
-
-        /* Terminate on misleading idleTimeout values */
-        if (behavior.idleTimeout && behavior.idleTimeout < 8) {
-            std::terminate();
-        }
-
-        /* Maximum idleTimeout is 16 minutes */
-        if (behavior.idleTimeout > 240 * 4) {
-            std::terminate();
-        }
-
-        /* Maximum maxLifetime is 4 hours */
-        if (behavior.maxLifetime > 240) {
-            std::terminate();
-        }
-
-        WebSocketContext<SSL, true, UserData> *webSocketContext = nullptr;
-        for (auto &[contextKey, context] : webSocketContexts) {
-            if (contextKey == key) {
-                webSocketContext = (WebSocketContext<SSL, true, UserData> *) context;
-                break;
-            }
-        }
-        if (!webSocketContext) {
-            webSocketContext = createWebSocketContext<UserData>(key, behavior);
-        }
-        applyWebSocketSettings<UserData>(webSocketContext, behavior);
-
-        httpContext->onHttp("GET", pattern, [webSocketContext, behavior = std::move(behavior)](auto *res, auto *req) mutable {
-
-            /* If we have this header set, it's a websocket */
-            std::string_view secWebSocketKey = req->getHeader("sec-websocket-key");
-            if (secWebSocketKey.length() == 24) {
-
-                /* Emit upgrade handler */
-                if (behavior.upgrade) {
-
-                    /* Nasty, ugly Safari 15 hack */
-                    if (hasBrokenCompression(req->getHeader("user-agent"))) {
-                        std::string_view secWebSocketExtensions = req->getHeader("sec-websocket-extensions");
-                        memset((void *) secWebSocketExtensions.data(), ' ', secWebSocketExtensions.length());
-                    }
-
-                    behavior.upgrade(res, req, webSocketContext);
-                } else {
-                    /* Default handler upgrades to WebSocket */
-                    std::string_view secWebSocketProtocol = req->getHeader("sec-websocket-protocol");
-                    std::string_view secWebSocketExtensions = req->getHeader("sec-websocket-extensions");
-
-                    /* Safari 15 hack */
-                    if (hasBrokenCompression(req->getHeader("user-agent"))) {
-                        secWebSocketExtensions = "";
-                    }
-
-                    res->template upgrade<UserData>({}, secWebSocketKey, secWebSocketProtocol, secWebSocketExtensions, webSocketContext);
-                }
-
-                /* We are going to get uncorked by the Http get return */
-
-                /* We do not need to check for any close or shutdown here as we immediately return from get handler */
-
-            } else {
-                /* Tell the router that we did not handle this request */
-                req->setYield(true);
-            }
-        }, true);
-        return std::move(*this);
+    /* Goes before get() */
+    void ws(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+        httpContext->onHttp("GET", pattern, std::move(handler), true);
     }
 
     TemplatedApp &&get(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
@@ -744,7 +368,7 @@ private:
         if (!ls) return nullptr;
         if constexpr (SSL) {
             for (auto &p : pendingServerNames) {
-                us_listen_socket_add_server_name(ls, p.hostname.c_str(), p.ctx);
+                us_listen_socket_add_server_name(ls, p.hostname.c_str(), p.ctx.get());
             }
             if (httpContext->getSocketContextData()->missingServerNameHandler) {
                 us_listen_socket_on_server_name(ls, &onMissingServerName);
@@ -753,7 +377,7 @@ private:
         return ls;
     }
 
-    struct ssl_ctx_st *sslCtxOrNull() { return SSL ? sslCtx : nullptr; }
+    struct ssl_ctx_st *sslCtxOrNull() { return SSL ? sslCtx.get() : nullptr; }
 
 public:
     /* Host, port, options, callback */

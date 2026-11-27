@@ -463,6 +463,7 @@ fn settings_start_from_command_line() {
         experimental_decorators: false,
         emits_decorator_metadata: false,
         use_define_for_class_fields: None,
+        bun_run_assigns_class_fields: false,
     };
     assert_eq!(settings(&create_host(""), "/app/a.tsx"), expected);
     assert_eq!(lib_settings("{}"), expected);

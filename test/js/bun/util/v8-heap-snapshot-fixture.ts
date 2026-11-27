@@ -164,6 +164,34 @@ switch (mode) {
     break;
   }
 
+  case "wrapper-names": {
+    const held = {
+      heldAbortController: new AbortController(),
+      heldAbortSignal: AbortSignal.abort(),
+      heldCustomEvent: new CustomEvent("x"),
+      heldEvent: new Event("x"),
+      heldEventTarget: new EventTarget(),
+      heldFormData: new FormData(),
+      heldHeaders: new Headers(),
+      heldPerformance: performance,
+      heldPerformanceMark: new PerformanceMark("x"),
+      heldProcess: process,
+      heldSubtleCrypto: crypto.subtle,
+      heldTextEncoder: new TextEncoder(),
+      heldURL: new URL("http://localhost/"),
+    };
+    const { snapshot, nodes, edges, strings } = JSON.parse(Bun.generateHeapSnapshot("v8"));
+    const { node_fields, edge_fields, edge_types } = snapshot.meta;
+    const [type, name, to] = ["type", "name_or_index", "to_node"].map(field => edge_fields.indexOf(field));
+    result = {};
+    for (let e = 0; e < edges.length; e += edge_fields.length) {
+      const property = strings[edges[e + name]];
+      if (edge_types[type][edges[e + type]] !== "property" || !Object.hasOwn(held, property)) continue;
+      result[property] = strings[nodes[edges[e + to] + node_fields.indexOf("name")]];
+    }
+    break;
+  }
+
   default:
     throw new Error(`Unknown mode: ${mode}`);
 }

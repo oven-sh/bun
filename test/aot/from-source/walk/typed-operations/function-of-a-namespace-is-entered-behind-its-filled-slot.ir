@@ -9,6 +9,7 @@
 # -- end of source
 # A store under a key that nobody knows may replace each function, and may lay another object above this one, so nothing is proven of what the object holds. The slot is held to the closures of the function that is declared:
 # a store of anything else takes the field out of its slot. So behind a look at the shape and at the slot the call enters the function, and where either fails it is the call that is written.
+
 # RUN: walk f3 mechanisms=all-Inlining
 # CHECK-LABEL: code f3:Body
 # CHECK: = ShapeTest {{*}}layouts=[L0]

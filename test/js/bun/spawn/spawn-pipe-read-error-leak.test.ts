@@ -12,7 +12,7 @@ import { bunEnv, bunExe, isLinux, isWindows, libcPathForDlopen, tempDir } from "
 // file description stays alive in the epoll interest list), then dup2() a
 // write-only fd onto the original fd number. When the child writes, epoll
 // still fires for the original file description but read() on the swapped fd
-// returns EBADF, which reaches SubprocessPipeReader.onReaderError. This
+// returns EBADF, which reaches SubprocessPipeReader.on_read_result. This
 // relies on Linux epoll semantics so the test is Linux-only, but the leak
 // itself is cross-platform.
 test.skipIf(!isLinux)(
@@ -175,7 +175,7 @@ for (let i = 0; i < 10; i++) {
   });
 
   // Inject EBADF into the stdout PipeReader as if read()/uv_read_cb had
-  // failed. This tears down the PipeReader via onReaderError.
+  // failed. This tears down the PipeReader via on_read_result.
   if (subprocessInternals.injectStdioReadError(proc, "stdout")) injected++;
 
   proc.kill();

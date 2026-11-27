@@ -4,6 +4,8 @@ use bun_collections::index_sort;
 use bun_core::strings;
 use bun_semver::String as SemverString;
 
+use crate::integrity;
+use crate::lockfile_real::Lockfile;
 use crate::lockfile_real::package::Alphabetizer;
 use bun_install::Dependency;
 use bun_install::DependencyID;
@@ -11,11 +13,6 @@ use bun_install::PackageID;
 use bun_install::Resolution;
 use bun_install::dependency::{self, TagExt as _};
 use bun_install::lockfile::package;
-// `lockfile.packages.slice()` returns
-// `bun_collections::multi_array_list::Slice<Package<_>>`; the `items_<field>()`
-// column accessors are an extension trait (hand-expanded per Package.rs).
-use crate::integrity;
-use crate::lockfile_real::Lockfile;
 
 pub(crate) fn print(
     lockfile: &Lockfile,
@@ -32,14 +29,14 @@ pub(crate) fn print(
 }
 
 fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
-    let slice = lockfile.packages.slice();
-    let names: &[SemverString] = slice.items_name();
-    let resolved: &[Resolution] = slice.items_resolution();
-    let metas: &[package::Meta] = slice.items_meta();
+    let pkgs = &lockfile.packages;
+    let names: &[SemverString] = pkgs.items_name();
+    let resolved: &[Resolution] = pkgs.items_resolution();
+    let metas: &[package::Meta] = pkgs.items_meta();
     if names.is_empty() {
         return Ok(());
     }
-    let dependency_lists = slice.items_dependencies();
+    let dependency_lists = pkgs.items_dependencies();
     let resolutions_buffer: &[PackageID] = lockfile.buffers.resolutions.as_slice();
     let dependencies_buffer: &[Dependency] = lockfile.buffers.dependencies.as_slice();
 
@@ -71,8 +68,10 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
         let version = &dependencies_buffer[dependency_id as usize].version;
         // Only the package.json parser gives the root's dependency on a workspace a literal, which
         // is the workspace's path.
-        if version.literal.is_empty() && version.tag == dependency::Tag::Workspace {
-            return version.workspace().slice(string_buf);
+        if version.literal.is_empty()
+            && let dependency::Value::Workspace(workspace) = &version.value
+        {
+            return workspace.slice(string_buf);
         }
         version.literal.slice(string_buf)
     };
@@ -87,7 +86,7 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
     };
     for i in 1..package_count {
         index_sort::sort_indices(&mut requested[starts[i]..starts[i + 1]], &mut |a, b| {
-            let tag_of = |id: DependencyID| dependencies_buffer[id as usize].version.tag;
+            let tag_of = |id: DependencyID| dependencies_buffer[id as usize].version.tag();
             strings::order(requested_name(a), requested_name(b))
                 .then_with(|| tag_of(a).cmp(tag_of(b)))
                 .then_with(|| strings::order(requested_as(a), requested_as(b)))

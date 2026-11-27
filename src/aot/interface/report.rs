@@ -1,3 +1,5 @@
+#[path = "../report/build_rows.rs"]
+pub mod build_rows;
 #[path = "../report/message.rs"]
 pub mod message;
 
@@ -12,8 +14,9 @@ use crate::engine::EngineResult;
 use crate::linked;
 pub use crate::linked::{
     bun_aot_collect_report_entries as collect_entries,
-    bun_aot_report_entries_to_messages as to_messages, bun_aot_write_summary as write_summary,
-    bun_aot_write_untyped_note as write_untyped_note,
+    bun_aot_report_entries_to_messages as to_messages,
+    bun_aot_write_developer_options as write_developer_options,
+    bun_aot_write_summary as write_summary,
 };
 use crate::statistics::Statistics;
 

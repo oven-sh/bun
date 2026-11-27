@@ -312,3 +312,74 @@ describe.skipIf(!fitsOneChild)("natively buffered bodies above the 4 GiB ArrayBu
     120_000,
   );
 });
+
+describe.concurrent.skipIf(!isASAN)("bodies that are longer than an allocation can be", () => {
+  const CAP = 4 * MiB;
+  let server: Bun.Server<undefined>;
+  beforeAll(() => {
+    const body = new Blob([Buffer.alloc(3 * CAP, "a")]);
+    server = Bun.serve({ port: 0, fetch: () => new Response(body) });
+  });
+  afterAll(() => server.stop(true));
+
+  const rangeError = "RangeError: Out of memory";
+  const memoryLimit = "Error: The memory limit has been exceeded.";
+  test.each([
+    ["(await response()).clone().blob()", rangeError],
+    ["new HTMLRewriter().transform(await response()).text()", memoryLimit],
+    ["new Blob(Array(12).fill(new Uint8Array(1024 * 1024)))", rangeError],
+    ["new Blob([form()])", rangeError],
+    ["FormData.from(form(), 'b')", rangeError],
+    ["s3.write('a', form()).catch(rethrow)", "rejected with " + rangeError],
+    ["s3.write('a', [form(), 'a']).catch(rethrow)", "rejected with " + rangeError],
+    ["new HTMLRewriter().on('p', { element: append }).transform(html)", "HTMLRewriter" + memoryLimit],
+    ["new HTMLRewriter().on('p', { element: wait }).transform(new Response(html)).text()", memoryLimit],
+  ])("%s", async (read, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const response = () => fetch("${server.url}");
+          const s3 = new Bun.S3Client({ endpoint: "${server.url}", bucket: "a", accessKeyId: "a", secretAccessKey: "a" });
+          const part = Buffer.alloc(1024 * 1024, "a").toString(), html = Buffer.alloc(12 * 7, "<p></p>").toString();
+          let left = 8;
+          function append(p) {
+            if (!left--) throw new Error("It goes on");
+            p.append(part);
+          }
+          const wait = p => new Promise(setImmediate).then(() => append(p));
+          function form() {
+            const bytes = Buffer.alloc(${1.5 * CAP}), end = "\\r\\n--b--\\r\\n";
+            bytes.write('--b\\r\\nContent-Disposition: form-data; name="a"; filename="a"\\r\\n\\r\\n');
+            bytes.write(end, bytes.length - end.length);
+            return bytes;
+          }
+          const rethrow = error => Promise.reject("rejected with " + error);
+          const read = async () => ${read};
+          console.log(await read().then(() => "resolved", error => error.code ?? String(error)));
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        BUN_FEATURE_FLAG_DISABLE_MEMFD: "1",
+        WebKitMallocForceEnabled: "1",
+        // detect_leaks=0: LeakSanitizer cannot see through JSC cells to the natives they own.
+        ASAN_OPTIONS: [
+          bunEnv.ASAN_OPTIONS,
+          "allocator_may_return_null=1",
+          `max_allocation_size_mb=${CAP / MiB}`,
+          "detect_leaks=0",
+        ]
+          .filter(Boolean)
+          .join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // ASAN logs a warning for every refused allocation.
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim() || stderr).toBe(expected);
+    expect(exitCode).toBe(0);
+  });
+});

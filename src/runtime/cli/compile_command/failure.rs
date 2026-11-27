@@ -58,6 +58,12 @@ impl CompileFailure {
                 out.extend_from_slice(b"failed to create executable: ");
                 out.extend_from_slice(error.name().as_bytes());
             }
+            CompileFailure::OverwritesEntryPoint { outfile } => {
+                write_overwrite(request_origin, outfile, b"an entry point", out);
+            }
+            CompileFailure::OverwritesSource { outfile } => {
+                write_overwrite(request_origin, outfile, b"part of the program", out);
+            }
             CompileFailure::FileNotWritten { path, error } => {
                 out.extend_from_slice(b"failed to write ");
                 out.extend_from_slice(path);
@@ -98,6 +104,21 @@ fn write_asset_error(error: &AssetError, out: &mut Vec<u8>) {
     };
 }
 
+fn write_overwrite(origin: RequestOrigin, outfile: &[u8], role: &[u8], out: &mut Vec<u8>) {
+    let option: &[u8] = match origin {
+        RequestOrigin::CompileCommand | RequestOrigin::BuildFlag => b"--outfile",
+        RequestOrigin::BuildApi => b"compile.outfile",
+    };
+    let parts: [&[u8]; 6] = [
+        b"the executable would overwrite ",
+        outfile,
+        b", which is ",
+        role,
+        b". Choose another path with ",
+        option,
+    ];
+    out.extend_from_slice(&parts.concat());
+}
 fn write_unavailable(origin: RequestOrigin, out: &mut Vec<u8>) {
     let subject = match origin {
         RequestOrigin::CompileCommand => "ahead-of-time compilation",

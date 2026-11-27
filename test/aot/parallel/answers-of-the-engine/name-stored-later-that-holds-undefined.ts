@@ -1,5 +1,5 @@
 // a maker stores undefined under optional names to give its objects one shape. Such a property takes no storage, and is there all the same: for `in`, hasOwnProperty, the lists of keys, a descriptor, a freeze, a deletion, and in front of a property of the same name above the object
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 (globalThis as any).report = (value: unknown) => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 declare function report(value: unknown): void;
 interface Node { kind: number; jsDoc?: string[]; flowNode?: object; symbol?: object; locals?: object }

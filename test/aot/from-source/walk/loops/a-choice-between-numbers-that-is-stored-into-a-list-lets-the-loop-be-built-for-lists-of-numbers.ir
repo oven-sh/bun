@@ -1,0 +1,20 @@
+# -- source: main.ts
+# function floor(xs: number[], out: number[]): number[] { for (let i = 0; i < xs.length; i++) out[i] = xs[i] > 0 ? xs[i] : 0; return out; }
+# function size(xs: number[], out: number[]): number[] { for (let i = 0; i < xs.length; i++) { const v = xs[i]; out[i] = v < 0 ? -v : v; } return out; }
+# function there(xs: number[], out: number[]): number[] { for (let i = 0; i < xs.length; i++) out[i] = xs[i] ?? 0; return out; }
+# const byName: Record<string, Function> = { floor, size, there };
+# for (const key of JSON.parse('["floor","size","there"]')) print(byName[key]([1.5, -2.5, 3.5], [0.5, 0.5, 0.5]).join(), byName[key]([1.5, "x", , -1] as number[], [0.5]).join());
+# -- end of source
+# What the loop stores is a parameter of a block in which two ways meet. The look in front of the loop knew operators and written numbers for numbers, and no parameter: the store was passed over, the list that is stored into
+# was not asked, and the loop was not built for lists of numbers at all. A parameter in which numbers alone meet is a number; so is what an edge narrows of a number, and a number with its sign changed.
+# RUN(FLOOR): walk f1 mechanisms=all
+# FLOOR: PutDoubleIndex
+# RUN(SIZE): walk f2 mechanisms=all
+# SIZE: PutDoubleIndex
+# RUN(THERE): walk f3 mechanisms=all
+# THERE: PutDoubleIndex
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 1.5,0,3.5 1.5,0,0,0
+# RIGHT-NEXT: 1.5,2.5,3.5 1.5,x,,1
+# RIGHT-NEXT: 1.5,-2.5,3.5 1.5,x,0,-1
+# RIGHT-NEXT: exited with 0

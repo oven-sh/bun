@@ -3,7 +3,7 @@
 // a dependency cycle.
 #![allow(clippy::disallowed_types)]
 #![feature(arbitrary_self_types_pointers)]
-#![feature(allocator_api)]
+#![feature(allocator_ext)]
 // `#[thread_local]` (vs the `thread_local!` macro) compiles to a bare
 // `__thread` slot — single `mov reg, fs:[OFFSET]` access, no `LocalKey`
 // `__getit()` wrapper, no lazy-init flag check, no dtor-registration probe.
@@ -22,76 +22,11 @@ use std::collections::HashMap;
 pub use bun_mimalloc_sys::mimalloc;
 pub mod c_thunks;
 
-// ── Allocator vtable ───────────────────────────────────────────────────────
-#[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Alignment(pub u8); // log2 of byte alignment
-impl Alignment {
-    #[inline]
-    pub(crate) const fn from_byte_units(b: usize) -> Self {
-        Self(b.trailing_zeros() as u8)
-    }
-}
-
-pub struct AllocatorVTable {
-    pub free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
-}
-impl AllocatorVTable {
-    /// Each call site keeps its own `static`: the vtable address is the `is_instance` tag.
-    pub const fn free_only(
-        free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
-    ) -> Self {
-        Self { free }
-    }
-}
-
-/// Fat allocator handle (ptr + vtable). Distinct from the `Allocator` trait below.
-#[derive(Clone, Copy)]
-pub struct StdAllocator {
-    pub ptr: *mut core::ffi::c_void,
-    pub vtable: &'static AllocatorVTable,
-}
-
-// SAFETY: `ptr` is an opaque tag/context handle; the vtable is `&'static`.
-// Thread-safety of dispatch is the implementor's concern (mimalloc is
-// thread-safe).
-unsafe impl Send for StdAllocator {}
-// SAFETY: see the `Send` impl directly above.
-unsafe impl Sync for StdAllocator {}
-
-impl Default for StdAllocator {
-    /// The mimalloc-backed `c_allocator`.
-    #[inline]
-    fn default() -> Self {
-        basic::C_ALLOCATOR
-    }
-}
-
-impl StdAllocator {
-    #[inline]
-    pub(crate) fn raw_free(&self, buf: &mut [u8], alignment: Alignment, ra: usize) {
-        // SAFETY: vtable invariant — `free` callee respects the (ptr, buf, alignment, ra) contract.
-        unsafe { (self.vtable.free)(self.ptr, buf, alignment, ra) }
-    }
-    /// `raw_free` with `ret_addr = 0`, byte-aligned.
-    #[inline]
-    pub fn free(&self, bytes: &[u8]) {
-        if bytes.is_empty() {
-            return;
-        }
-        // SAFETY: `bytes` is reborrowed mutably only for the vtable signature; the
-        // callee treats it as opaque.
-        let buf =
-            unsafe { core::slice::from_raw_parts_mut(bytes.as_ptr().cast_mut(), bytes.len()) };
-        self.raw_free(buf, Alignment::from_byte_units(1), 0);
-    }
-}
-
 // PORTING.md §Allocators: AST crates thread an `Arena`; non-AST use Vec/Box
 // (global mimalloc). `Arena` is the real per-heap `MimallocArena` — unlike
 // `bumpalo::Bump`, it supports per-allocation free + realloc, so `ArenaVec`
 // no longer leaks on grow.
-pub use mimalloc_arena::{ChunkOfBlocks, MimallocArena};
+pub use mimalloc_arena::{BlockChunk, FreeInProgress, MimallocArena};
 pub type Arena = MimallocArena;
 mod baby_vec;
 pub use baby_vec::BabyVec;
@@ -150,17 +85,10 @@ macro_rules! arena_format {
 /// `bun.use_mimalloc` — false under ASAN, where the global allocator is `std::alloc::System`.
 pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 
-// ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
+// ── Allocator modules: per-module disposition (PORTING.md §Allocators) ──
 //
 //   MimallocArena            → prefer `bun_alloc::Arena` (= bumpalo::Bump)
-//   heap_breakdown           → macOS malloc_zone_* per-tag heaps (debug builds)
 //   basic                    → `impl GlobalAlloc for Mimalloc` above is the canonical impl
-//
-//   LinuxMemFdAllocator, MimallocArena (the vtable impl)
-//   import bun_core/sys/runtime/collections and so live in
-//   `bun_runtime::allocators`; callers import from
-//   there directly.
-//
 pub mod stack_fallback;
 
 /// Raw alloc/free matching the `#[global_allocator]` (`mi_*` normally, libc under ASAN).
@@ -235,11 +163,6 @@ pub mod mimalloc_arena;
 
 pub mod ast_alloc;
 pub use ast_alloc::{AstAlloc, AstBox, AstVec, ast_box};
-mod hashbrown_bridge;
-/// Re-export so `bun_collections` can name the polyfill trait in
-/// `StringHashMap`'s `A` bound without taking its own direct dep on
-/// `allocator-api2`.
-pub use allocator_api2::alloc::Allocator as HashbrownAllocator;
 
 // ── tier-0 local primitives ───────────────────────────────────────────────
 // Real, self-contained helpers used by the BSS containers below. These are the
@@ -571,7 +494,6 @@ pub fn out_of_memory() -> ! {
 }
 
 // ── page_size ─────────────────────────────────────────────────────────────
-// Used by LinuxMemFdAllocator / standalone_graph.
 // Cached via OnceLock per PORTING.md §Concurrency (was lazy-init in std).
 
 static PAGE_SIZE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
@@ -858,31 +780,6 @@ pub fn secure_zero(bytes: &mut [u8]) {
 pub fn free_sensitive(mut slice: Box<[u8]>) {
     secure_zero(&mut slice);
     drop(slice);
-}
-
-/// [`free_sensitive`] for the C-string
-/// case used by http SSLConfig. Zeros the allocation before freeing
-/// (defence-in-depth for keys/passphrases).
-///
-/// # Safety
-/// `p` must be null or a NUL-terminated allocation from `dupe_z` (i.e.
-/// `default_alloc::malloc`).
-pub unsafe fn free_sensitive_cstr(p: *const core::ffi::c_char) {
-    if p.is_null() {
-        return;
-    }
-    // SAFETY: p is a NUL-terminated `default_alloc::malloc`'d buffer per
-    // `dupe_z` contract. An interior NUL truncating `strlen` only shortens the
-    // zero pass — the free is still exact (`mi_free`/`libc::free` are
-    // size-agnostic). The caller gives the allocation up, so the `&mut [u8]` is exclusive.
-    unsafe {
-        let len = libc::strlen(p);
-        secure_zero(core::slice::from_raw_parts_mut(
-            p.cast::<u8>().cast_mut(),
-            len,
-        ));
-        crate::default_alloc::free(p.cast::<core::ffi::c_void>().cast_mut());
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1244,25 +1141,7 @@ mod __bss_macro_smoke {
     crate::bss_map_inner! { _mi : u32, 4, true }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// heap_breakdown — macOS `malloc_zone_*` per-tag heaps (debug-only)
-//
-// Full port lives in `heap_breakdown.rs`. It compiles on all targets: on
-// non-macOS the FFI surface is `unreachable!()` behind `ENABLED == false`.
-// ──────────────────────────────────────────────────────────────────────────
-
-#[path = "heap_breakdown.rs"]
 pub mod heap_breakdown;
-
-/// Comptime-literal form of `heap_breakdown::get_zone` — expands a per-name `OnceLock`.
-#[macro_export]
-macro_rules! get_zone {
-    ($name:literal) => {{
-        static ZONE: ::std::sync::OnceLock<&'static $crate::heap_breakdown::Zone> =
-            ::std::sync::OnceLock::new();
-        *ZONE.get_or_init(|| $crate::heap_breakdown::Zone::init($name))
-    }};
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // IndexMap / Result
@@ -2249,32 +2128,6 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Allocator-trait surface — OBSOLETE per PORTING.md §Allocators
-// ──────────────────────────────────────────────────────────────────────────
-//
-// The legacy allocator interface threaded an allocator
-// param through every fn. Rust has a global allocator
-// (`#[global_allocator] = Mimalloc` above), so per PORTING.md:
-//
-//   - Non-AST crates: DELETE the `allocator` param. `Box`/`Vec`/`String` use
-//     global mimalloc.
-//   - AST crates: thread `&'bump bumpalo::Bump` (= `Arena`) directly.
-//
-// The trait below is kept ONLY as an empty marker so downstream code that
-// still says `&dyn bun_alloc::Allocator` continues to parse. Do not implement
-// it; do not add methods. Callers should be rewritten to drop the param
-// entirely.
-
-/// Legacy allocator marker trait. See module note.
-pub trait Allocator: 'static {}
-
-/// Legacy default-allocator ZST. With `#[global_allocator]` set,
-/// this is just a unit marker.
-#[derive(Clone, Copy, Default)]
-pub struct DefaultAlloc;
-impl Allocator for DefaultAlloc {}
-
 // `GenericAllocator` / `Borrowed<A>` / `Nullable<A>` are dropped — they modelled
 // an allocator-borrowing discipline (avoid double-free), which Rust's
 // ownership already enforces.
@@ -2286,3 +2139,33 @@ impl Allocator for DefaultAlloc {}
 // The real impl is `impl GlobalAlloc for Mimalloc` above.
 #[path = "basic.rs"]
 pub mod basic;
+
+/// Call before all of `room` is written. Memory that is new to the process takes a page fault for every page at the
+/// first write, and one call that maps them all costs a third of that.
+#[inline]
+pub fn prefault<T>(room: &mut [core::mem::MaybeUninit<T>]) {
+    #[cfg(target_os = "linux")]
+    if size_of_val(room) >= 32 << 10 && !cfg!(miri) {
+        populate(room.as_mut_ptr().cast(), size_of_val(room));
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = room;
+}
+
+#[cfg(target_os = "linux")]
+#[inline(never)]
+fn populate(start: *mut u8, size: usize) {
+    use core::sync::atomic::{AtomicBool, Ordering};
+    /// Linux has the advice since 5.14.
+    static IS_REFUSED: AtomicBool = AtomicBool::new(false);
+    if IS_REFUSED.load(Ordering::Relaxed) {
+        return;
+    }
+    let before = start.align_offset(page_size());
+    let pages = size.saturating_sub(before) / page_size() * page_size();
+    let first = start.wrapping_add(before).cast();
+    // SAFETY: the pages are inside the `size` bytes at `start`, and the call changes nothing that they hold.
+    if unsafe { libc::madvise(first, pages, libc::MADV_POPULATE_WRITE) } != 0 {
+        IS_REFUSED.store(true, Ordering::Relaxed);
+    }
+}

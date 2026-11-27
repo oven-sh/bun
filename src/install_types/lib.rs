@@ -11,5 +11,5 @@ pub use resolver_hooks::{
     NegatableEnum, NegatableExt, NpmInfo, OperatingSystem, PackageID, PackageNameHash,
     PreinstallState, Repository, Resolution, ResolutionSlice, ResolutionTag, ResolutionValue,
     TagInfo, TarballInfo, TruncatedPackageNameHash, URI, VersionSlice, VersionedURL,
-    VersionedURLType, WakeHandler, WakeTarget,
+    VersionedURLType,
 };

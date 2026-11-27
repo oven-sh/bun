@@ -1,6 +1,6 @@
 // RUN: link
 // CHECK-LABEL: function {{*}}name="double"
-// CHECK-NOT: LeftOutOfExecutable
+// CHECK-NOT: OmittedFromExecutable
 // CHECK: Return
 
 // RUN(ABSENT): link

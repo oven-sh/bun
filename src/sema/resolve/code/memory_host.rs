@@ -1,5 +1,6 @@
 use super::*;
 use crate::program::HostModuleId;
+use crate::resolve::parent_directory;
 
 const MAX_FOLLOWED_LINKS: usize = 16;
 
@@ -19,6 +20,7 @@ pub(crate) struct MemoryHost {
     required: Vec<(Vec<u8>, Vec<u8>)>,
     node_paths: Vec<Vec<u8>>,
     found: Vec<(Vec<u8>, Vec<u8>)>,
+    found_with_side_effects: Vec<Vec<u8>>,
     holds_modules_with_queries: bool,
     given_in_memory: Vec<Vec<u8>>,
     reads: bun_threading::Guarded<FxHashMap<Vec<u8>, usize>>,
@@ -48,6 +50,11 @@ impl MemoryHost {
     pub(crate) fn finds(mut self, specifier: &str, path: &str) -> MemoryHost {
         self.found.push((specifier.into(), path.into()));
         self
+    }
+
+    pub(crate) fn finds_with_side_effects(mut self, specifier: &str, path: &str) -> MemoryHost {
+        self.found_with_side_effects.push(specifier.into());
+        self.finds(specifier, path)
     }
 
     pub(crate) fn holding_modules_with_queries(mut self) -> MemoryHost {
@@ -107,7 +114,7 @@ impl MemoryHost {
     }
 
     fn add_parent_directories(&mut self, path: &[u8]) {
-        let parents = ancestors(dirname::<Posix>(path));
+        let parents = ancestors(parent_directory(path));
         self.directories.extend(parents.map(<[u8]>::to_vec));
     }
 
@@ -262,10 +269,12 @@ impl CodeHost for MemoryHost {
     fn find_code_file(&self, search: &FileSearch<'_>) -> FoundCode {
         let mut found = self.found.iter();
         if let Some((_, path)) = found.find(|(specifier, _)| specifier == search.specifier) {
+            let mut with_side_effects = self.found_with_side_effects.iter();
             return FoundCode::File {
                 path: path.clone(),
                 required: None,
                 links_followed: true,
+                has_side_effects: with_side_effects.any(|it| it == search.specifier),
             };
         }
         let in_node_paths = || {
@@ -294,8 +303,9 @@ impl CodeHost for MemoryHost {
         match found {
             FoundCode::File {
                 path,
+                required: _,
                 links_followed,
-                ..
+                has_side_effects,
             } if search.prefers_module_field => {
                 let mut pairs = self.required.iter();
                 let required = pairs.find(|pair| pair.0 == path).map(|pair| pair.1.clone());
@@ -303,6 +313,7 @@ impl CodeHost for MemoryHost {
                     path,
                     required,
                     links_followed,
+                    has_side_effects,
                 }
             }
             found => found,
@@ -347,7 +358,7 @@ pub(crate) fn resolve_in(
     format_resolution(resolver.resolve_code(&CodeRequest {
         specifier: specifier.as_bytes(),
         importer,
-        directory: dirname::<Posix>(importer),
+        directory: parent_directory(importer),
         kind,
         form: CodeImportForm::Static,
     }))
@@ -372,7 +383,7 @@ pub(crate) fn resolve_computed_in(
     suffix: &str,
     kind: CodeImportKind,
 ) -> String {
-    let options = CodeOptions::bun_run(dirname::<Posix>(importer.as_bytes()));
+    let options = CodeOptions::bun_run(parent_directory(importer.as_bytes()));
     let pattern = ComputedPattern {
         importer,
         prefix,
@@ -403,7 +414,7 @@ pub(crate) fn resolve_computed_with(
         prefix: pattern.prefix.as_bytes(),
         suffix: pattern.suffix.as_bytes(),
         importer,
-        directory: dirname::<Posix>(importer),
+        directory: parent_directory(importer),
         kind: pattern.kind,
         form: CodeImportForm::Static,
         site: Default::default(),

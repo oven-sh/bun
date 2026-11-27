@@ -1,0 +1,16 @@
+[package]
+name = "bun_global_allocator"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+test = false
+bench = false
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_alloc.workspace = true

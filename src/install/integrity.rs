@@ -201,7 +201,7 @@ impl Integrity {
                     .try_into()
                     .expect("infallible: size matches");
                 Crypto::SHA1::hash(bytes, ptr);
-                strings::eql_long(ptr, &sum[0..LEN], true)
+                strings::eql_long(ptr, &sum[0..LEN])
             }
             Tag::SHA512 => {
                 const LEN: usize = SHA512_DIGEST_LEN;
@@ -209,7 +209,7 @@ impl Integrity {
                     .try_into()
                     .expect("infallible: size matches");
                 Crypto::SHA512::hash(bytes, ptr);
-                strings::eql_long(ptr, &sum[0..LEN], true)
+                strings::eql_long(ptr, &sum[0..LEN])
             }
             Tag::SHA256 => {
                 const LEN: usize = SHA256_DIGEST_LEN;
@@ -217,7 +217,7 @@ impl Integrity {
                     .try_into()
                     .expect("infallible: size matches");
                 Crypto::SHA256::hash(bytes, ptr);
-                strings::eql_long(ptr, &sum[0..LEN], true)
+                strings::eql_long(ptr, &sum[0..LEN])
             }
             Tag::SHA384 => {
                 const LEN: usize = SHA384_DIGEST_LEN;
@@ -225,7 +225,7 @@ impl Integrity {
                     .try_into()
                     .expect("infallible: size matches");
                 Crypto::SHA384::hash(bytes, ptr);
-                strings::eql_long(ptr, &sum[0..LEN], true)
+                strings::eql_long(ptr, &sum[0..LEN])
             }
             _ => false,
         }
@@ -439,7 +439,7 @@ impl Streaming {
             return false;
         }
         let len = self.expected.tag.digest_len();
-        strings::eql_long(&computed.value[0..len], &self.expected.value[0..len], true)
+        strings::eql_long(&computed.value[0..len], &self.expected.value[0..len])
     }
 }
 

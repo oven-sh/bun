@@ -1,0 +1,21 @@
+# `f(...list)` with f out of sight and list a list as made: the front end makes a list, spreads into it and calls with it. The elements were copied (AppendElements) and the call took the copy.
+# The call takes the list itself, and the copy, which nobody reads, goes. Where something stands beside the spread the list that is made is what the call takes.
+# f1 = alone, f2 = behind
+# -- source: main.ts
+# declare function print(value: any): void;
+# function alone(f: (...args: number[]) => number, n: number) { const list: number[] = []; for (let i = 0; i < n; i++) list.push(i); return f(...list); }
+# function behind(f: (...args: number[]) => number, n: number) { const list: number[] = []; for (let i = 0; i < n; i++) list.push(i); return f(7, ...list); }
+# const fs = [(a: number, b: number) => a + b * 10, (a: number, b: number) => a * 10 + b];
+# print(alone(fs[0], 2) + " " + alone(fs[1], 2) + " " + behind(fs[0], 2) + " " + behind(fs[1], 2));
+# -- end of source
+# RUN(ALONE): walk f1 mechanisms=all
+# ALONE-LABEL: code f1:Body
+# ALONE-NOT: AppendElements
+# ALONE: CallList
+# RUN(BEHIND): walk f2 mechanisms=all
+# BEHIND-LABEL: code f2:Body
+# BEHIND: AppendElements
+# BEHIND: CallList
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 10 1 7 70
+# ANSWERS-NEXT: exited with 0

@@ -158,7 +158,7 @@ for (const replacement of [0, 1, 2, 6, "2", 2.5, -1, null, 4294967295]) attempt(
 
 // GENERATED: memberBehindAGetter attempt factor
 // CHECK-LABEL: function {{*}}name="memberBehindAGetter"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=undefined|null|boolean|number|string|symbol|bigint|[[L_1]]|Array<number> flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=undefined|null|boolean|number|string|symbol|bigint|[[L_1]]|Array<number> flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything, v1: anything, v2: undefined|null|boolean|number|string|symbol|bigint|[[L_1]]|Array<number>):
 // CHECK-NEXT: v3 = NewObject -, v1, v2 layout=[[L_2]] fields=[0, 1]
 // CHECK-NEXT: v4 = Integer
@@ -195,7 +195,7 @@ for (const replacement of [0, 1, 2, 6, "2", 2.5, -1, null, 4294967295]) attempt(
 // CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|function):
 // CHECK-NEXT: v2 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
@@ -210,7 +210,7 @@ for (const replacement of [0, 1, 2, 6, "2", 2.5, -1, null, 4294967295]) attempt(
 // CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="factor"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: env [[L_2]]):
 // CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_2]] field=2
 // CHECK-NEXT: v2 = CheckInitialized v1 name="reads"

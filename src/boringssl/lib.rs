@@ -9,7 +9,7 @@ use core::ptr;
 use std::cell::Cell;
 
 pub use bun_boringssl_sys as boring;
-use bun_cares_sys as c_ares;
+use bun_core::ip_address::IpText;
 use bun_core::strings;
 
 /// BoringSSL's translated C API
@@ -160,37 +160,6 @@ pub(crate) unsafe extern "C" fn OPENSSL_system_realloc(
 pub(crate) unsafe extern "C" fn OPENSSL_system_free(ptr: *mut c_void) {
     // SAFETY: as for OPENSSL_system_realloc; the default allocator accepts NULL.
     unsafe { bun_alloc::default_alloc::free(ptr) }
-}
-
-pub use bun_sys::posix::INET6_ADDRSTRLEN;
-
-// Canonical cross-platform AF_* surface — handles the Windows ws2def.h split.
-use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
-
-/// Node.js's `canonicalizeIP`: the canonical text of the address that libuv's `uv_inet_pton` reads in `addr_str`, without the zone id of an IPv6 address. `None` for any other text.
-pub fn canonicalize_ip<'a>(
-    addr_str: &[u8],
-    out_ip: &'a mut [u8; INET6_ADDRSTRLEN + 1],
-) -> Option<&'a [u8]> {
-    match bun_core::ip_address::parse_uv_inet_pton(addr_str)? {
-        IpAddr::V4(ip) => canonical_ip_octets(&ip.octets(), out_ip),
-        IpAddr::V6(ip) => canonical_ip_octets(&ip.octets(), out_ip),
-    }
-}
-
-/// Canonical text form of raw IP address octets (4 or 16 bytes), e.g. `::1`.
-fn canonical_ip_octets<'a>(
-    octets: &[u8],
-    out_ip: &'a mut [u8; INET6_ADDRSTRLEN + 1],
-) -> Option<&'a [u8]> {
-    let af: c_int = match octets.len() {
-        4 => AF_INET,
-        16 => AF_INET6,
-        _ => return None,
-    };
-    // SAFETY: `octets` is readable for its checked 4/16-byte length and
-    // `out_ip` is INET6_ADDRSTRLEN + 1 bytes — `ntop`'s requirements.
-    unsafe { c_ares::ntop(af, octets.as_ptr().cast(), &mut out_ip[..]) }
 }
 
 /// Strips a single trailing `.` (the DNS root label). Mirrors Node.js
@@ -428,7 +397,7 @@ fn is_hostname(host: &[u8]) -> bool {
 }
 
 pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {
-    // As in Node.js, a host is an IP address only as typed, and only in the strict form of `net.isIP`: `ares_inet_pton` reads "127.1" as 127.1.0.0 and takes "1.2.3.4/8".
+    // As in Node.js, a host is an IP address only as typed, and only in the strict form of `net.isIP`.
     let typed = unfqdn(hostname);
     let mut host_ip = bun_core::ip_address::parse_strict(typed);
     let ascii_hostname;
@@ -720,17 +689,19 @@ struct CanonicalIpList<'a>(Option<&'a boring::GeneralNames>);
 impl core::fmt::Display for CanonicalIpList<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let Some(names) = self.0 else { return Ok(()) };
-        let mut buf = [0u8; INET6_ADDRSTRLEN + 1];
         let mut first = true;
         for entry in names.subject_alt_names() {
-            if let boring::SubjectAltName::Ip(octets) = entry {
-                if let Some(ip) = canonical_ip_octets(octets, &mut buf) {
-                    if !core::mem::take(&mut first) {
-                        f.write_str(", ")?;
-                    }
-                    write!(f, "{}", NameBytes(ip))?;
-                }
+            let boring::SubjectAltName::Ip(octets) = entry else {
+                continue;
+            };
+            let v4 = <[u8; 4]>::try_from(octets).map(IpAddr::from);
+            let Ok(ip) = v4.or_else(|_| <[u8; 16]>::try_from(octets).map(IpAddr::from)) else {
+                continue;
+            };
+            if !core::mem::take(&mut first) {
+                f.write_str(", ")?;
             }
+            write!(f, "{}", IpText::new(ip))?;
         }
         Ok(())
     }
@@ -795,7 +766,7 @@ pub fn server_identity_mismatch_message(ssl_ptr: &mut boring::SSL, hostname: &[u
     message
 }
 
-/// What a client says about the name on the server's certificate, inside the handshake. openssl.c's `US_IDENTITY_*`.
+/// What a client says about the name on the server's certificate, inside the handshake. openssl.cpp's `US_IDENTITY_*`.
 #[repr(i32)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ServerIdentity {

@@ -1,5 +1,6 @@
 // One `while` that carries SIZE names round, with `if (..) y = x_k; x_k = ..;` for each: along one chain of SIZE blocks where ways meet, one more of the head's own parameters meets in `y` at each.
-// The note of a record says which of them meet in it by one bit for each parameter's place in the head: as lists of names the notes held SIZE x SIZE / 2 names, each asked for before it was added.
+// What is kept of the look is which record makes which, one entry for each step: as lists of names for each block it was SIZE x SIZE / 2 names, each asked for before it was added.
+// While the peak stands over its bound the steps are not judged here: growth-of-work/the-walk-grows-as-the-names-of-a-loop-that-each-take-what-many-others-meet-in-do judges them.
 // It writes a program: SIZE says how large, PASSES how many copies of its function under names of their own.
 // Sizes: 250 1000 4000
 // Passes: 1

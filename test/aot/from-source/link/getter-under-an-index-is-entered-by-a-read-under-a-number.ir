@@ -1,8 +1,8 @@
 # What a number does name: a getter under an index gets the object as `this`, whichever of the strangers has it, and one under `NaN` too.
 # RUN: link fields functions mechanisms=all
-# CHECK: field L0.0 "x" proven=i32 writers-known written-at-construction-alone
-# CHECK: field L1.0 "y" proven=i32|string writers-known
-# CHECK: field L2.0 "z" proven=i32|string writers-known
+# CHECK: field L0.0 "x" proven=int[0, 2147483647] writers-known written-at-construction-alone
+# CHECK: field L1.0 "y" proven=int[0, 2147483647]|string writers-known
+# CHECK: field L2.0 "z" proven=int[0, 2147483647]|string writers-known
 # RUN(REACHED): link functions mechanisms=all
 # REACHED-NOT: unreached
 # RUN(ALL): run-in-shell mechanisms=all

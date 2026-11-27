@@ -1,0 +1,22 @@
+# -- source: ranges.ts
+# interface Place { north: number; east: number }
+# class Boat { kind: number; north: number; east: number; towed: number; tug: Place | undefined; constructor(kind: number, north: number, east: number) { this.kind = kind; this.north = north; this.east = east; this.towed = 0; this.tug = undefined; } }
+# class Sloop extends Boat { name: string; constructor(name: string, north: number) { super(1, north, north + name.length); this.name = name; } }
+# class Fleet extends Boat { boats: Boat[]; constructor(boats: Boat[], north: number) { super(2, north, north + 9); this.boats = boats; } }
+# function placeOf(boat: Boat): Place { return boat.towed > 1 ? boat.tug! : boat; }
+# function wayOf(boat: Boat): number { const place = placeOf(boat); return place.east * 2 + place.north; }
+# (globalThis as any).wayOf = wayOf; (globalThis as any).placeOf = placeOf;
+# const harbor: Boat[] = [];
+# for (let i = 0; i < 200; i++) { const sloop = new Sloop("s" + i, i); harbor.push(new Fleet([sloop, sloop], i), sloop); }
+# for (let i = 3; i < harbor.length; i += 5) { harbor[i].towed = i % 4; harbor[i].tug = i % 3 ? { north: i, east: i + 2 } : harbor[i - 3]; }
+# const others: any[] = [{ north: 1, east: 5 }, { east: 7, towed: 3, north: 1, tug: { east: 2, north: 8 } }, { get north() { return 2; }, east: 4 }, Object.assign([1, 2], { north: 3, east: 5, towed: "0" }), new Proxy({ north: 1, east: 2 }, {}), Object.freeze(new Boat(3, 4, 8))];
+# let sum = 0;
+# for (const boat of harbor) sum += (globalThis as any).wayOf(boat);
+# for (const other of others) sum = sum * 3 + (globalThis as any).wayOf(other);
+# for (const wrong of [undefined, { towed: 2 }]) try { (globalThis as any).wayOf(wrong); } catch (e: any) { sum = sum * 3 + e.name.length; }
+# console.log(sum);
+# -- end of source
+# The result of placeOf(), done in place, is its parameter or what a field names. The type of the parameter is declared, so both reads are guessed by its layouts.
+# RUN: walk f2:Body mechanisms=all
+# CHECK: GetSlot {{*}} key="east"
+# CHECK: GetSlot {{*}} key="north"

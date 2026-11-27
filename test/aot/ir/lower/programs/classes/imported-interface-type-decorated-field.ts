@@ -68,19 +68,19 @@ export interface Shape {
 // CHECK-NEXT: Throw v36
 // CHECK-NEXT: }
 // CHECK: function {{*}}
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|string, v1: anything):
 // CHECK-NEXT: v2 = NewClosure v0, v1 function=[[f_6]]
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="mark"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = Undefined
 // CHECK-NEXT: Return v0
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Holder"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_4]]
 // CHECK-NEXT: v2 = NewObject v1 layout=[[L_4]]
@@ -91,7 +91,7 @@ export interface Shape {
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK: function {{*}}
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 captures=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined] variableName="about"}, {type=anything variableName="value"}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow flags=[IsChecked] length=2 captures=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined] variableName="about"}, {type=anything variableName="value"}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|string, v1: anything, v2: undefined|null|object, v3: undefined|null|string):
 // CHECK-NEXT: v4 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v5 = PropGet v4 key="console" [isFreeName]

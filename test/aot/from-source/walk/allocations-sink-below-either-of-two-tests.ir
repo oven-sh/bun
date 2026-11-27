@@ -1,0 +1,10 @@
+# `tail` is needed where one of two tests holds. The block below them has two edges in. `made` is needed below three.
+# RUN(SUNK): compile AllocationsSunk mechanisms=all
+# SUNK: statistic AllocationsSunk 2
+# -- source: lists.ts
+# declare function sink(...values: unknown[]): void;
+# class Node { id: number; list: Node[] | undefined; constructor(id: number) { this.id = id; this.list = undefined; } }
+# function concatenate(first: Node[] | undefined, second: Node): Node[] | number { const tail = [second]; if (first === undefined || first.length === 0) return tail; return first.length; }
+# function record(x: number, y: number): { x: number; y: number } | number { const made = { x, y }; if (x > 10 || y > 10 || x === y) return made; return x - y; }
+# sink(concatenate, record, Node, new Node(1));
+# -- end of source

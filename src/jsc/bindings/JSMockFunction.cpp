@@ -127,6 +127,7 @@ JSC_DECLARE_HOST_FUNCTION(jsMockFunctionMockThrowOnce);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionWithImplementationCleanup);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionWithImplementation);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionReturnThis);
+JSC_DECLARE_HOST_FUNCTION(jsMockFunctionReturnBoundThis);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionRejectWithThis);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionThrowThis);
 
@@ -365,6 +366,12 @@ class JSMockFunction final : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
+
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<JSMockFunction*>(cell)->JSMockFunction::~JSMockFunction();
+    }
 
     static constexpr unsigned prototypeAttributes = JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete;
     static constexpr JSC::PropertyOffset prototypeOffset = JSC::firstOutOfLineOffset;
@@ -895,7 +902,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSMockFunction, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSMockFunction, m_subspaceForJSMockFunction));
+        return WebCore::subspaceForImpl<JSMockFunction, UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSMockFunction, m_subspaceForJSMockFunction));
     }
 
     JSMockFunction(JSC::VM& vm, JSC::Structure* structure)
@@ -1140,7 +1147,7 @@ const ClassInfo JSMockFunction::s_info = { "Mock"_s, &Base::s_info, nullptr, nul
 
 class SpyWeakHandleOwner final : public JSC::WeakHandleOwner {
 public:
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
+    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final { return FinalizeResult::KeepImpl; }
 };
 
 static SpyWeakHandleOwner& weakValueHandleOwner()
@@ -1894,8 +1901,10 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsMockFunctionGetMockImplementation, __
     if (JSObject* function = implementation->function.get())
         return JSValue::encode(function);
 
-    JSC::NativeFunction body = jsMockFunctionReturnThis;
-    if (implementation->kind == Kind::RejectedValue)
+    JSC::NativeFunction body = jsMockFunctionReturnBoundThis;
+    if (implementation->kind == Kind::ReturnThis)
+        body = jsMockFunctionReturnThis;
+    else if (implementation->kind == Kind::RejectedValue)
         body = jsMockFunctionRejectWithThis;
     else if (implementation->kind == Kind::ThrowValue)
         body = jsMockFunctionThrowThis;
@@ -1908,7 +1917,12 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsMockFunctionGetMockImplementation, __
     return JSValue::encode(function);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsMockFunctionReturnThis, (JSC::JSGlobalObject*, JSC::CallFrame* callframe))
+JSC_DEFINE_HOST_FUNCTION(jsMockFunctionReturnThis, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return JSValue::encode(callframe->thisValue().toThis(globalObject, ECMAMode::strict()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsMockFunctionReturnBoundThis, (JSC::JSGlobalObject*, JSC::CallFrame* callframe))
 {
     return JSValue::encode(callframe->thisValue());
 }
@@ -3060,7 +3074,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     // A module mock's exports are read live from the object its factory returned, so spy on that object.
 #if ENABLE(AOT)
     while (globalObject->aotInstance()) {
-        JSObject* exports = Bun::objectHoldingExportOfCompiledModuleMock(globalObject, object, propertyKey);
+        JSObject* exports = Bun::compiledMockExportHolder(globalObject, object, propertyKey);
         RETURN_IF_EXCEPTION(scope, {});
         if (!exports)
             break;
@@ -3114,9 +3128,9 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     bool isLocked = object->structure()->mayHaveImmutableProperties();
     bool isFixedMemberOfLockedObject = isFixedMember && isLocked && !JSC::AOT::isMemberUnlockedForTests(object, propertyKey.impl());
     // A constructor need not be locked for compiled code to take its `prototype` or a constant on it for what the realm was created with.
-    bool isFixedMemberOfOpenObject = isFixedMember && !isLocked && JSC::AOT::isMemberTakenForConstant(object, propertyKey.impl());
-    if (vm.hasCompiledCode() && (object->structure()->isImmutableProperty(propertyKey.impl()) || isFixedMemberOfLockedObject || isFixedMemberOfOpenObject || JSC::AOT::isNameRefusedByLibraryFunction(object, propertyKey.impl()))) {
-        String message = JSC::AOT::refusedSpyMessage(globalObject, object, propertyKey.impl());
+    bool isFixedMemberOfOpenObject = isFixedMember && !isLocked && JSC::AOT::isMemberFoldedAsConstant(object, propertyKey.impl());
+    if (vm.hasCompiledCode() && (object->structure()->isImmutableProperty(propertyKey.impl()) || isFixedMemberOfLockedObject || isFixedMemberOfOpenObject || JSC::AOT::rejectsOwnPropertyOnLibraryFunction(object, propertyKey.impl()))) {
+        String message = JSC::AOT::rejectedSpyMessage(globalObject, object, propertyKey.impl());
         if (message.isNull())
             message = makeString("Cannot spy on '"_s, String(propertyKey.impl()), "' because this property of a built-in object is read-only in a compiled executable. Spy on a function of your own that calls it (https://bun.com/docs/compiler/compatibility#built-in-objects-are-read-only)"_s);
         throwTypeError(globalObject, scope, message);
@@ -3136,7 +3150,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             bool isReplaced = JSC::AOT::tryReplaceExport(object, propertyKey.impl(), replacement);
             RETURN_IF_EXCEPTION(scope, true);
             if (!isReplaced)
-                throwTypeError(globalObject, scope, JSC::AOT::refusedSpyOnExportMessage(object, propertyKey.impl(), Bun::fileOfCallerThatWasNotCompiled(vm, callframe)));
+                throwTypeError(globalObject, scope, JSC::AOT::spyOnExportErrorMessage(object, propertyKey.impl(), Bun::uncompiledCallerFile(vm, callframe)));
             return true;
         }
 #endif
@@ -3263,7 +3277,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
 
     switch (access) {
     case SpyAccess::Value: {
-        auto* returnThis = JSC::JSFunction::create(vm, globalObject, 0, String(), jsMockFunctionReturnThis, ImplementationVisibility::Public);
+        auto* returnThis = JSC::JSFunction::create(vm, globalObject, 0, String(), jsMockFunctionReturnBoundThis, ImplementationVisibility::Public);
         getter = JSC::JSBoundFunction::create(vm, globalObject, returnThis, mock, ArgList(), 0, nullptr, makeSource(String(), SourceOrigin(), SourceTaintedOrigin::Untainted));
         RETURN_IF_EXCEPTION(scope, {});
         break;

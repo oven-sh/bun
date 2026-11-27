@@ -1,0 +1,42 @@
+# a module of the library:  const hooks = { make: undefined };  export default { hooks };          main.js:  const { hooks } = require("state");  hooks.make = function () { return 1; };  report(hooks.make());
+# What `require` answers is unknown: the loader, a mock, a cycle or an entry of require.cache may answer. In the common run it is what the body of the module has returned, and that arrives beside the unknown.
+# If it were not, the store in main.js would land on nobody in what is held: the field would be held to `undefined` alone, and the first run would take it out of its slot
+# RUN: summary f0
+# CHECK: answer-of-require m1 -> n
+# RUN(HELD): link held fields mechanisms=all
+# HELD-NOT: field L0.0 "make" proven=undefined w
+# HELD: field L0.0 "make"
+# HELD: field L1.0 "hooks" proven=L0
+
+layout L0 module=m1 fields=[{key="make" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m1 fields=[{key="hooks" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="node:module" displayPath="node:module" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule body=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = RequireModule module=m1 referrer=m0 specifier="node:module"
+    v3 = PropGet v2 key="hooks"
+    v4 = NewClosure function=f2
+    PropSet v3, v4 key="make"
+    v6 = PropGet v3 key="make"
+    v7 = Call v6, v3 calleeKey="make" calleeName="make"
+    v8 = Call v1, -, v7 calleeName="report"
+    Return v8
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v2 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    Return v4
+}
+function f2 name="make" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}

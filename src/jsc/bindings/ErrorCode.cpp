@@ -809,7 +809,7 @@ extern "C" BunString Bun__ErrorCode__determineSpecificType(JSC::JSGlobalObject* 
     RETURN_IF_EXCEPTION(scope, Zig::BunStringEmpty);
     auto result = builder.finish(globalObject, scope);
     RETURN_IF_EXCEPTION(scope, Zig::BunStringEmpty);
-    return Bun::toStringRef(result);
+    return Bun::toStringRef(result).leak();
 }
 
 // Node's ERR_INVALID_ARG_VALUE renders the value with `util.inspect` ('w'),
@@ -823,7 +823,7 @@ extern "C" BunString Bun__ErrorCode__inspectForErrorMessage(JSC::JSGlobalObject*
     RETURN_IF_EXCEPTION(scope, Zig::BunStringEmpty);
     auto result = builder.finish(globalObject, scope);
     RETURN_IF_EXCEPTION(scope, Zig::BunStringEmpty);
-    return Bun::toStringRef(result);
+    return Bun::toStringRef(result).leak();
 }
 
 // Port of Node's addNumericalSeparator: groups digits in threes from the right

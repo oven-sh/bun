@@ -13,7 +13,7 @@ pub struct Percentage {
 }
 
 impl Percentage {
-    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Percentage> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Percentage> {
         if let Ok(calc_value) = input.try_parse(Calc::<Percentage>::parse) {
             if let Calc::Value(v) = calc_value {
                 return Ok(*v);
@@ -148,10 +148,10 @@ impl<D: PartialEq + Clone> PartialEq for DimensionPercentage<D> {
 // `where` clauses, so plain `DimensionPercentage<D>` (no behavior) needs no
 // bounds at all.
 impl<D> DimensionPercentage<D> {
-    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self>
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self>
     where
         Self: crate::values::calc::CalcValue,
-        D: protocol::Parse,
+        D: protocol::Parse<'bump>,
     {
         match input.try_parse(Calc::<Self>::parse) {
             Ok(Calc::Value(v)) => return Ok(*v),
@@ -441,7 +441,9 @@ pub enum NumberOrPercentage {
 impl NumberOrPercentage {
     // Hand-rolled as the trivial two-variant try-parse cascade so
     // `AlphaValue::parse` doesn't panic at runtime.
-    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<NumberOrPercentage> {
+    pub(crate) fn parse<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> CssResult<'bump, NumberOrPercentage> {
         if let Ok(n) = input.try_parse(crate::values::number::CSSNumberFns::parse) {
             return Ok(NumberOrPercentage::Number(n));
         }

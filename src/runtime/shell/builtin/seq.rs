@@ -1,224 +1,85 @@
 use std::io::Write as _;
 
-use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
+use crate::shell::builtin::{Arg, Builtin, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
-use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-enum State {
-    #[default]
-    Idle,
-    Err,
-    Done,
-}
+const USAGE: &[u8] = b"usage: seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n";
 
-pub(crate) struct Seq {
-    state: State,
-    start: f32,
-    end: f32,
-    increment: f32,
-    /// Borrowed from argv (NUL-terminated arena strings) or `'static` literals;
-    /// argv outlives the builtin — `RawSlice` invariant.
-    separator: bun_ptr::RawSlice<u8>,
-    terminator: bun_ptr::RawSlice<u8>,
-}
-
-impl Default for Seq {
-    fn default() -> Self {
-        Self {
-            state: State::Idle,
-            start: 1.0,
-            end: 1.0,
-            increment: 1.0,
-            separator: bun_ptr::RawSlice::new(b"\n"),
-            terminator: bun_ptr::RawSlice::EMPTY,
-        }
+pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    let fail = |message: &str| Builtin::fail(interp, cmd, format_args!("{message}\n"));
+    let mut args = Builtin::of(interp, cmd).args();
+    let mut separator: &[u8] = b"\n";
+    let mut terminator: &[u8] = b"";
+    while let [flag, rest @ ..] = args {
+        args = match (flag.get(), rest) {
+            (b"-s" | b"--separator", []) => return fail("option requires an argument -- s"),
+            (b"-t" | b"--terminator", []) => return fail("option requires an argument -- t"),
+            (b"-s" | b"--separator", [value, rest @ ..]) => {
+                separator = value;
+                rest
+            }
+            (b"-t" | b"--terminator", [value, rest @ ..]) => {
+                terminator = value;
+                rest
+            }
+            ([b'-', b's', value @ ..], _) => {
+                separator = value;
+                rest
+            }
+            ([b'-', b't', value @ ..], _) => {
+                terminator = value;
+                rest
+            }
+            (b"-w" | b"--fixed-width", _) => rest,
+            _ => break,
+        };
     }
-}
 
-impl Seq {
-    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let argc = Builtin::of(interp, cmd).args_slice().len();
-        if argc == 0 {
-            return Self::fail(interp, cmd, Kind::Seq.usage_string());
-        }
+    if args.is_empty() {
+        return Builtin::fail_usage(interp, cmd, USAGE);
+    }
+    let parse = |arg: &Arg| bun_core::fmt::parse_f32(arg).filter(|n| n.is_finite());
+    let mut numbers = [0.0; 3];
+    for (number, arg) in numbers.iter_mut().zip(args) {
+        let Some(parsed) = parse(arg) else {
+            return fail("invalid argument");
+        };
+        *number = parsed;
+    }
+    let towards = |start: f32, end: f32| (start, if start > end { -1.0 } else { 1.0 }, end);
+    let (start, incr, end) = match (args.len(), numbers) {
+        (1, [end, ..]) => towards(1.0, end),
+        (2, [start, end, _]) => towards(start, end),
+        (_, [start, incr, end]) => (start, incr, end),
+    };
+    if incr == 0.0 {
+        return fail("zero increment");
+    }
+    if start > end && incr > 0.0 {
+        return fail("needs negative decrement");
+    }
+    if start < end && incr < 0.0 {
+        return fail("needs positive increment");
+    }
 
-        let mut idx = 0usize;
-        // Flag parsing — operates on raw argv pointers so we can stash
-        // borrowed slices into separator/terminator.
-        while idx < argc {
-            let arg = Builtin::of(interp, cmd).arg_bytes(idx);
-
-            if arg == b"-s" || arg == b"--separator" {
-                idx += 1;
-                if idx >= argc {
-                    return Self::fail(interp, cmd, b"seq: option requires an argument -- s\n");
-                }
-                let bytes = Builtin::of(interp, cmd).arg_bytes(idx);
-                Self::state_mut(interp, cmd).separator = bun_ptr::RawSlice::new(bytes);
-                idx += 1;
-                continue;
-            }
-            if arg.starts_with(b"-s") && arg.len() > 2 {
-                Self::state_mut(interp, cmd).separator = bun_ptr::RawSlice::new(&arg[2..]);
-                idx += 1;
-                continue;
-            }
-            if arg == b"-t" || arg == b"--terminator" {
-                idx += 1;
-                if idx >= argc {
-                    return Self::fail(interp, cmd, b"seq: option requires an argument -- t\n");
-                }
-                let bytes = Builtin::of(interp, cmd).arg_bytes(idx);
-                Self::state_mut(interp, cmd).terminator = bun_ptr::RawSlice::new(bytes);
-                idx += 1;
-                continue;
-            }
-            if arg.starts_with(b"-t") && arg.len() > 2 {
-                Self::state_mut(interp, cmd).terminator = bun_ptr::RawSlice::new(&arg[2..]);
-                idx += 1;
-                continue;
-            }
-            if arg == b"-w" || arg == b"--fixed-width" {
-                idx += 1;
-                continue;
-            }
+    let mut out = Vec::new();
+    let mut current = start;
+    while if incr > 0.0 {
+        current <= end
+    } else {
+        current >= end
+    } {
+        // The shortest decimal that round-trips, with no exponent and no trailing ".0".
+        let _ = write!(&mut out, "{}", current);
+        out.extend_from_slice(separator);
+        let next = current + incr;
+        // f32 stops counting: `seq 1 99999999` saturates at 2^24.
+        if next == current {
             break;
         }
-
-        // Positional args.
-        macro_rules! parse_num {
-            ($i:expr) => {{
-                let s = Builtin::of(interp, cmd).arg_bytes($i);
-                match parse_f32(s) {
-                    Some(n) if n.is_finite() => n,
-                    _ => return Self::fail(interp, cmd, b"seq: invalid argument\n"),
-                }
-            }};
-        }
-
-        if idx >= argc {
-            return Self::fail(interp, cmd, Kind::Seq.usage_string());
-        }
-        let int1 = parse_num!(idx);
-        idx += 1;
-        {
-            let me = Self::state_mut(interp, cmd);
-            me.end = int1;
-            if me.start > me.end {
-                me.increment = -1.0;
-            }
-        }
-
-        if idx < argc {
-            let int2 = parse_num!(idx);
-            idx += 1;
-            {
-                let me = Self::state_mut(interp, cmd);
-                me.start = int1;
-                me.end = int2;
-                me.increment = if me.start < me.end {
-                    1.0
-                } else if me.start > me.end {
-                    -1.0
-                } else {
-                    me.increment
-                };
-            }
-            if idx < argc {
-                let int3 = parse_num!(idx);
-                {
-                    let me = Self::state_mut(interp, cmd);
-                    me.start = int1;
-                    me.increment = int2;
-                    me.end = int3;
-                }
-                let me = Self::state_mut(interp, cmd);
-                if me.increment == 0.0 {
-                    return Self::fail(interp, cmd, b"seq: zero increment\n");
-                }
-                if me.start > me.end && me.increment > 0.0 {
-                    return Self::fail(interp, cmd, b"seq: needs negative decrement\n");
-                }
-                if me.start < me.end && me.increment < 0.0 {
-                    return Self::fail(interp, cmd, b"seq: needs positive increment\n");
-                }
-            }
-        }
-
-        Self::do_(interp, cmd)
+        current = next;
     }
-
-    fn fail(interp: &Interpreter, cmd: NodeId, msg: &[u8]) -> Yield {
-        Self::state_mut(interp, cmd).state = State::Err;
-        Builtin::write_failing_error(interp, cmd, msg, 1)
-    }
-
-    fn do_(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let needs_io = Builtin::of(interp, cmd).stdout.needs_io().is_some();
-        // Render entirely into a local Vec, then either enqueue it or
-        // write_no_io it; we buffer once for simplicity.
-        let (start, end, incr, sep, term) = {
-            let me = Self::state_mut(interp, cmd);
-            (me.start, me.end, me.increment, me.separator, me.terminator)
-        };
-        let mut out = Vec::new();
-        let mut current = start;
-        while if incr > 0.0 {
-            current <= end
-        } else {
-            current >= end
-        } {
-            // Rust `{}` for f32 prints the shortest decimal that round-trips
-            // (no exponent, no trailing ".0").
-            let _ = write!(&mut out, "{}", current);
-            out.extend_from_slice(sep.slice());
-            let next = current + incr;
-            if next == current {
-                // f32 rounding can make `current + incr` equal `current`
-                // (e.g. `seq 1 99999999` saturates at 2^24, or a tiny
-                // increment relative to `current`). Without this check the
-                // loop never terminates and `out` grows without bound.
-                break;
-            }
-            current = next;
-        }
-        out.extend_from_slice(term.slice());
-
-        Self::state_mut(interp, cmd).state = State::Done;
-        if needs_io {
-            let safeguard = Builtin::of(interp, cmd).stdout.needs_io().unwrap();
-            let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stdout
-                .enqueue(child, &out, safeguard);
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &out);
-        Builtin::done(interp, cmd, 0)
-    }
-
-    pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
-        cmd: NodeId,
-        _: usize,
-        e: Option<bun_sys::SystemError>,
-    ) -> Yield {
-        if let Some(_err) = e {
-            Self::state_mut(interp, cmd).state = State::Err;
-            return Builtin::done(interp, cmd, 1);
-        }
-        match Self::state_mut(interp, cmd).state {
-            State::Done => Builtin::done(interp, cmd, 0),
-            State::Err => Builtin::done(interp, cmd, 1),
-            State::Idle => {
-                crate::shell::interpreter::unreachable_state("Seq.onIOWriterChunk", "idle")
-            }
-        }
-    }
-}
-
-#[inline]
-fn parse_f32(bytes: &[u8]) -> Option<f32> {
-    bun_core::fmt::parse_f32(bytes)
+    out.extend_from_slice(terminator);
+    Builtin::finish(interp, cmd, IoKind::Stdout, &out, 0)
 }

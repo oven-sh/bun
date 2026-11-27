@@ -4,10 +4,11 @@ use core::ptr::NonNull;
 use super::ResultSection as Section;
 use super::{
     AccessCountRecord, AccessRecord, AllocationRemarkRecord, BuiltinUseRecord, BunAOTBytes,
-    EngineResult, FeatureUseRecord, FormBytesRecord, FunctionNameRecord, InternalErrorRecord,
-    LackedFunctionRecord, LackedModuleRecord, LayoutNameRecord, LocaleUseRecord, ModuleBytesRecord,
-    ObfuscatedSiteRecord, ResultRecord, TypeTestRecord, UnseenCodeRecord, UserDiagnosticRecord,
-    WorkerEntryRecord, WorkerStartRecord, WorkerURLRecord,
+    EngineResult, FeatureUseRecord, FormBytesRecord, FunctionNameRecord, InlinedStringRecord,
+    InternalErrorRecord, LayoutNameRecord, LocaleUseRecord, MissingFunctionRecord,
+    MissingModuleRecord, ModuleBytesRecord, ObfuscatedSiteRecord, ResultRecord, TypeOriginRecord,
+    TypeTestRecord, UnseenCodeRecord, UserDiagnosticRecord, WorkerEntryRecord, WorkerStartRecord,
+    WorkerURLStartRecord,
 };
 use crate::ir::generated::StatisticId;
 
@@ -96,18 +97,20 @@ pub(crate) struct ResultRecords<'a> {
     pub locales_used: &'a [LocaleUseRecord],
     pub worker_entries: &'a [WorkerEntryRecord],
     pub worker_starts_without_name: &'a [WorkerStartRecord],
-    pub urls_that_start_workers: &'a [WorkerURLRecord],
-    pub library_functions_lacked: &'a [LackedFunctionRecord],
-    pub library_modules_lacked: &'a [LackedModuleRecord],
+    pub worker_starts_from_urls: &'a [WorkerURLStartRecord],
+    pub missing_library_functions: &'a [MissingFunctionRecord],
+    pub missing_library_modules: &'a [MissingModuleRecord],
     pub obfuscated_sites: &'a [ObfuscatedSiteRecord],
     pub bytes_by_module: &'a [ModuleBytesRecord],
     pub accesses: &'a [AccessRecord],
+    pub type_origins: &'a [TypeOriginRecord],
     pub access_counts: &'a [AccessCountRecord],
     pub type_tests: &'a [TypeTestRecord],
     pub allocation_remarks: &'a [AllocationRemarkRecord],
     pub bytes_by_form: &'a [FormBytesRecord],
     pub function_names: &'a [FunctionNameRecord],
     pub layout_names: &'a [LayoutNameRecord],
+    pub inlined_strings: &'a [InlinedStringRecord],
 }
 
 impl ResultRecords<'_> {
@@ -123,18 +126,20 @@ impl ResultRecords<'_> {
             .with_records(self.locales_used)
             .with_records(self.worker_entries)
             .with_records(self.worker_starts_without_name)
-            .with_records(self.urls_that_start_workers)
-            .with_records(self.library_functions_lacked)
-            .with_records(self.library_modules_lacked)
+            .with_records(self.worker_starts_from_urls)
+            .with_records(self.missing_library_functions)
+            .with_records(self.missing_library_modules)
             .with_records(self.obfuscated_sites)
             .with_records(self.bytes_by_module)
             .with_records(self.accesses)
+            .with_records(self.type_origins)
             .with_records(self.access_counts)
             .with_records(self.type_tests)
             .with_records(self.allocation_remarks)
             .with_records(self.bytes_by_form)
             .with_records(self.function_names)
-            .with_records(self.layout_names);
+            .with_records(self.layout_names)
+            .with_records(self.inlined_strings);
         with_result(&sections, then)
     }
 }

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
-// Regression test for use-after-poison in builtin OutputTask callbacks
+// Regression test for use-after-poison in builtin output callbacks
 // inside command substitution $().
 //
 // The bug: output_waiting was only incremented for async writes but

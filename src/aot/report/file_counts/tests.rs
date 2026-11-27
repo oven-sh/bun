@@ -178,7 +178,7 @@ fn declaration_files_are_counted_beside_the_program() {
             .map(|index| FileId(index as u32))
             .filter(|&file| !files.is_compiled(file));
         let bytes: u64 = declarations
-            .map(|file| files.module(file).hir.text.len() as u64)
+            .map(|file| files.hir(file).text.len() as u64)
             .sum();
         assert!(bytes > 0);
         assert_eq!(

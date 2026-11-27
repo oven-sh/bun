@@ -5,5 +5,4 @@
 # let turns = 3; print(gather(turns));
 # -- end of source
 # RUN(ANSWERS): run-in-shell
-# REQUIRES(ANSWERS): entries-of-bun
 # ANSWERS: k0k1k2/6

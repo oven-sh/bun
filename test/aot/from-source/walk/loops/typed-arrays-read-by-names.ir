@@ -1,0 +1,18 @@
+# -- source: typed-arrays-read-by-names.js
+# globalThis.held = new Map();
+# const kinds = {}; kinds.Small = Uint8Array; kinds.Large = Int32Array;
+# function opens(shop, size) { shop.prices = new kinds.Large(size); shop.labels = new kinds.Small(size); for (let at = 0; at < size; at += 3) { shop.prices[at] = at * 70; shop.labels[at] = at; } return shop; }
+# function sells(shop, from, to) { const prices = shop.prices, labels = shop.labels; let sum = 0; for (let at = from; at < to; at++) { if (labels[at] > 4) sum -= prices[at] >> 1; else sum += prices[at + 1]; labels[at] = sum; } shop.sum = sum; return labels[from]; }
+# for (const [name, f] of Object.entries({ opens, sells })) globalThis.held.set(name, f);
+# const get = name => globalThis.held.get(name), shop = get("opens")(JSON.parse("{}"), 40);
+# const first = get("sells")(shop, 2, 30), second = get("sells")(JSON.parse('{"labels":[1,9,2,3],"prices":[10,20,30,40,50]}'), 0, 4);
+# print(first, shop.sum, second);
+# -- end of source
+# Nobody knows the shop. Stores in sight put typed arrays of one class under each of the two names: the loop asks for these two classes, and for nothing else.
+# f2 = sells
+# RUN(LOOP): walk f2:Body mechanisms=all
+# LOOP: testedType=Int32Array
+# LOOP: = GetTypedArrayElement {{*}} typedArrayType=6
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 210 6930 20
+# ANSWERS-NEXT: exited with 0

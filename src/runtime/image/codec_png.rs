@@ -39,10 +39,8 @@ pub(crate) fn encode(
     h: u32,
     level: i8,
     icc_profile: Option<&[u8]>,
-) -> Result<codecs::Encoded, codecs::Error> {
-    bun_png::encode(rgba, w, h, None, level, icc_profile)
-        .map(codecs::Encoded::from_owned)
-        .map_err(encode_error)
+) -> Result<Vec<u8>, codecs::Error> {
+    bun_png::encode(rgba, w, h, None, level, icc_profile).map_err(encode_error)
 }
 
 /// Quantize RGBA to ≤ `colors` and emit an indexed (colour-type 3) PNG
@@ -59,7 +57,7 @@ pub(crate) fn encode_indexed(
     colors: u16,
     dither: bool,
     icc_profile: Option<&[u8]>,
-) -> Result<codecs::Encoded, codecs::Error> {
+) -> Result<Vec<u8>, codecs::Error> {
     let q = quantize::quantize(
         rgba,
         w,
@@ -74,7 +72,5 @@ pub(crate) fn encode_indexed(
         colors: q.palette.as_chunks().0,
         has_alpha: q.has_alpha,
     };
-    bun_png::encode(&q.indices, w, h, Some(&palette), level, icc_profile)
-        .map(codecs::Encoded::from_owned)
-        .map_err(encode_error)
+    bun_png::encode(&q.indices, w, h, Some(&palette), level, icc_profile).map_err(encode_error)
 }

@@ -1,0 +1,11 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# const other = (_: any, __: any): any => function () { return 9; };
+# let probe: any;
+# class Box { @other #m(): number { return 7; } [(probe = eval("(o) => o.#m()"), "k")](): void {} }
+# print(probe(new Box()));
+# -- end of source
+# A decorator answers another function for a private method. A closure of an eval in a computed key, made before the decorator ran, calls that one and not the one that is written.
+# RUN: run-in-shell
+# CHECK: 9
+# CHECK-NEXT: exited with 0

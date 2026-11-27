@@ -2,13 +2,11 @@ use bun_aot::diagnostic_codes::Code;
 use bun_aot::diagnostics::log_diagnostic;
 use bun_aot::load::source_provider::{Failed, SourceFile};
 use bun_ast::{Loader, Log, Target};
-use bun_core::strings;
-use bun_paths::resolve_path;
 use bun_sema::util::SharedSort;
 use bun_threading::Guarded;
 
+use super::database_log::read_database_with_log;
 use super::paths::{relative_path, report_long_path};
-use super::plugins::with_separators_of_host;
 use super::services::BuildContext;
 use crate::ContentHasher;
 use crate::bun_fs as Fs;
@@ -41,9 +39,7 @@ impl EmbeddedFiles {
         let (output, _) = create_embedded_file(context, file, log)?;
         let mut files = self.files.lock();
         let is_placeholder = |it: &&mut OutputFile| {
-            it.loader == file.loader
-                && *it.src_path.text == *file.path
-                && it.value.as_slice().is_empty()
+            it.loader == file.loader && *it.src_path == *file.path && it.value.as_slice().is_empty()
         };
         match files.iter_mut().find(is_placeholder) {
             Some(embedded) => *embedded = output,
@@ -91,6 +87,11 @@ fn create_embedded_file(
     file: &SourceFile<'_>,
     log: &mut Log,
 ) -> Result<(OutputFile, Vec<u8>), Failed> {
+    let with_log = read_database_with_log(file.path, file.contents);
+    let file = &SourceFile {
+        contents: with_log.as_deref().unwrap_or(file.contents),
+        ..*file
+    };
     let content_hash = ContentHasher::run(file.contents);
     let Some(template) = create_embedded_template(context, file, content_hash) else {
         report_long_path(log, "embedded file", file.path);
@@ -103,7 +104,7 @@ fn create_embedded_file(
         false => name_under_root(context, file, &template),
     };
     let path = match runs_in_place {
-        true => with_separators_of_host(file.path, cfg!(windows)).into_owned(),
+        true => bun_paths::to_native(file.path).into_owned(),
         false => embedded_path(&context.module_prefix, &dest_path),
     };
     let output = OutputFile::init(Options {
@@ -134,7 +135,11 @@ pub(crate) fn embedded_name(
 }
 
 pub(crate) fn embedded_path(module_prefix: &[u8], dest_path: &[u8]) -> Vec<u8> {
-    [module_prefix, strings::remove_leading_dot_slash(dest_path)].concat()
+    [
+        module_prefix,
+        bun_paths::without_leading_dot_slash(dest_path),
+    ]
+    .concat()
 }
 
 fn create_embedded_template(
@@ -158,6 +163,7 @@ fn create_embedded_template(
         .strip_prefix(b".")
         .unwrap_or(pathname.ext)
         .into();
+    template.placeholder.replace_backslashes();
     if template.needs(PlaceholderField::Hash) {
         template.placeholder.hash = Some(template.content_hash(content_hash));
     }
@@ -186,14 +192,14 @@ fn name_under_root(
 
 fn posix_path(path: &[u8]) -> Vec<u8> {
     let mut path = path.to_vec();
-    resolve_path::platform_to_posix_in_place::<u8>(&mut path);
+    bun_paths::to_portable_in_place::<u8>(&mut path);
     path
 }
 
 fn print_embedded_name(template: &PathTemplate) -> Vec<u8> {
     let mut name = Vec::new();
     template.print(&mut name, false).expect("oom");
-    resolve_path::platform_to_posix_in_place::<u8>(&mut name);
+    bun_paths::to_portable_in_place::<u8>(&mut name);
     name
 }
 
@@ -213,7 +219,7 @@ fn same_name_order(file: &OutputFile) -> (bool, u8, &[u8]) {
     (
         !is_runtime_require_loader(loader),
         loader as u8,
-        file.src_path.text,
+        &file.src_path,
     )
 }
 
@@ -239,7 +245,7 @@ fn retain_distinct_names(
         let same_name = last.filter(|last| last.dest_path == file.dest_path);
         if let Some(last) = same_name {
             // A build that loads a file more than once embeds it more than once. It is still one file, and a copy whose contents are read later is empty.
-            if last.src_path.text == file.src_path.text {
+            if last.src_path == file.src_path {
                 if last.value.as_slice().is_empty() {
                     *retained.last_mut().expect("there is a last file") = index;
                 }
@@ -248,7 +254,7 @@ fn retain_distinct_names(
                 log_diagnostic(
                     log,
                     Code::EmbeddedFileNameCollision,
-                    &[&*file.dest_path, last.src_path.text, file.src_path.text],
+                    &[&*file.dest_path, &last.src_path, &file.src_path],
                 );
             }
             *final_index = (retained.len() - 1) as u32;
@@ -294,6 +300,7 @@ mod tests {
     use super::super::services::with_test_context;
     use super::*;
     use crate::options::BundleOptions;
+    use bun_core::strings;
 
     impl EmbeddedFiles {
         fn embed_outputs(&self, outputs: Vec<OutputFile>) {
@@ -326,9 +333,13 @@ mod tests {
     }
 
     fn name_with_options(configure: impl FnOnce(&mut BundleOptions<'_>)) -> Vec<u8> {
+        name_of(b"/p/img/a.png", configure)
+    }
+
+    fn name_of(path: &[u8], configure: impl FnOnce(&mut BundleOptions<'_>)) -> Vec<u8> {
         with_test_context(configure, |context| {
             let file = SourceFile {
-                path: b"/p/img/a.png",
+                path,
                 contents: b"image",
                 loader: Loader::File,
             };
@@ -353,6 +364,17 @@ mod tests {
             options.asset_naming = Box::from(&b"[dir]/[name].[ext]"[..]);
         });
         assert_eq!(name, b"img/a.png");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    #[cfg_attr(miri, ignore)]
+    fn name_takes_no_backslash_from_source() {
+        let name = name_of(b"/p/i\\mg/..\\a.p\\ng", |options| {
+            options.root_dir = Box::from(&b"/p"[..]);
+            options.asset_naming = Box::from(&b"[dir]/[name].[ext]"[..]);
+        });
+        assert_eq!(name, b"i_mg/.._a.p_ng");
     }
 
     #[test]
@@ -487,7 +509,7 @@ mod tests {
                 assert!(embedded.check_names(&mut log).is_ok());
                 let files = embedded.into_output_files();
                 assert_eq!(files.len(), 5);
-                assert_eq!(files[0].src_path.text, b"/project/m.png");
+                assert_eq!(&*files[0].src_path, b"/project/m.png");
                 assert_eq!(files[0].source_map_index, u32::MAX);
                 let pairs: [(&[u8], &[u8]); 2] = [(b"a.js", b"a.js.map"), (b"z.js", b"z.js.map")];
                 for (name, map_name) in pairs {
@@ -609,7 +631,7 @@ mod tests {
         assert!(files[0].dest_path.starts_with(b"./x-"));
         assert!(files[0].dest_path.ends_with(b".db"));
         assert_eq!(files[0].value.as_slice(), b"bytes");
-        assert_eq!(files[0].src_path.text, b"/project/x.db");
+        assert_eq!(&*files[0].src_path, b"/project/x.db");
         assert_eq!(files[0].loader, Loader::File);
         assert!(matches!(files[0].output_kind, OutputKind::Asset));
         assert!(matches!(files[0].side, Some(Side::Client)));
@@ -685,7 +707,7 @@ mod tests {
         let first_files = first.into_output_files();
         let second_files = second.into_output_files();
         assert_eq!(summarize(&first_files), summarize(&second_files));
-        assert_eq!(first_files[1].src_path.text, second_files[1].src_path.text);
+        assert_eq!(first_files[1].src_path, second_files[1].src_path);
     }
 
     fn embed_files(files: &[SourceFile<'_>]) -> Vec<OutputFile> {
@@ -734,7 +756,7 @@ mod tests {
         assert!(first.is_sorted_by(|left, right| left.dest_path < right.dest_path));
         assert_eq!(summarize(&first), summarize(&second));
         for (left, right) in first.iter().zip(&second) {
-            assert_eq!(left.src_path.text, right.src_path.text);
+            assert_eq!(left.src_path, right.src_path);
             assert_eq!(left.loader, right.loader);
         }
     }

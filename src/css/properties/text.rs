@@ -21,7 +21,7 @@ pub struct TextShadow {
 }
 
 impl TextShadow {
-    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<Self> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         let mut color: Option<CssColor> = None;
         type Lengths = (Length, Length, Length, Length);
         let mut lengths: Option<Lengths> = None;

@@ -1,6 +1,6 @@
 # The same program with every body written straight: `make` hands the stub four captures, loads the others out of its frame behind the call and stores them into the cell. Every capture is boxed with all mechanisms withheld, which is what the straight form of the operation takes; the count says that `make` is written so and not walked.
-# OPTIONS: testing=WritesBodiesStraight
-# STATISTIC: UnitsWrittenStraight >= 1
+# OPTIONS: testing=ForceStraightCompilation
+# STATISTIC: StraightUnitsCompiled >= 1
 # RUN: run-in-shell mechanisms=none
 # CHECK: 10000 10000
 # CHECK-NEXT: exited with 0

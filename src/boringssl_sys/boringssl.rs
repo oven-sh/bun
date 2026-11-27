@@ -783,6 +783,14 @@ impl Iterator for CommonNames<'_> {
     }
 }
 
+impl SSL_CTX {
+    /// 32 bytes is the maximum, so it cannot fail.
+    pub fn set_session_id_context(&self, id: &[u8; 32]) {
+        // SAFETY: BoringSSL copies the `id.len()` bytes.
+        unsafe { SSL_CTX_set_session_id_context(self, id.as_ptr(), id.len()) };
+    }
+}
+
 impl SSL {
     /// The SNI host name configured on (client) or received by (server) this
     /// connection, if any.
@@ -1102,9 +1110,9 @@ unsafe extern "C" {
     fn SSL_CTX_free(ctx: *mut SSL_CTX);
     pub safe fn SSL_CTX_get_verify_mode(ctx: &SSL_CTX) -> c_int;
     /// Refuses a `sid_ctx_len` over 32 before it reads.
-    pub safe fn SSL_CTX_set_session_id_context(
+    fn SSL_CTX_set_session_id_context(
         ctx: &SSL_CTX,
-        sid_ctx: &[u8; 32],
+        sid_ctx: *const u8,
         sid_ctx_len: usize,
     ) -> c_int;
     pub fn SSL_CTX_set_ex_data(ctx: *mut SSL_CTX, idx: c_int, data: *mut c_void) -> c_int;

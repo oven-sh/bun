@@ -189,8 +189,7 @@ impl BunSocketContextOptions<'_> {
         err: &mut create_bun_socket_error_t,
     ) -> Option<OwnedSslCtx> {
         let ctx = self.create_ssl_context(err)?;
-        // 32 bytes, the session id context maximum, so it cannot fail.
-        bun_boringssl_sys::SSL_CTX_set_session_id_context(&ctx, digest, digest.len());
+        ctx.set_session_id_context(digest);
         Some(ctx)
     }
 

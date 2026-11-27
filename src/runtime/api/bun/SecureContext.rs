@@ -338,7 +338,7 @@ impl SecureContext {
         hasher.update(bytes);
         hasher.r#final(&mut folded);
         self.digest.set(folded);
-        boringssl::SSL_CTX_set_session_id_context(&self.ctx, &folded, folded.len());
+        self.ctx.set_session_id_context(&folded);
         Ok(())
     }
 

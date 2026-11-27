@@ -196,6 +196,9 @@ pub struct EnvironmentConfig {
     pub validate_no_jsx_in_try_statements: bool,
     pub validate_static_components: bool,
     pub validate_no_capitalized_calls: Option<Vec<String>>,
+    /// For `validate_no_capitalized_calls`: a method whose name is all in capitals, as `Date.UTC`, is no component, as
+    /// a function with such a name is none. Upstream reports the call of any method whose name begins with a capital.
+    pub methods_in_capitals_are_not_components: bool,
     pub validate_blocklisted_imports: Option<Vec<String>>,
     pub validate_source_locations: bool,
     pub validate_no_impure_functions_in_render: bool,
@@ -279,6 +282,7 @@ impl Default for EnvironmentConfig {
             validate_no_jsx_in_try_statements: false,
             validate_static_components: false,
             validate_no_capitalized_calls: None,
+            methods_in_capitals_are_not_components: false,
             validate_blocklisted_imports: None,
             validate_source_locations: false,
             validate_no_impure_functions_in_render: false,

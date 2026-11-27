@@ -88,6 +88,7 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
             true => vec!["BigInt".to_owned(), "Symbol".to_owned()],
             false => Vec::new(),
         }),
+        methods_in_capitals_are_not_components: is_oxlint,
         validate_hooks_usage: true,
         validate_no_derived_computations_in_effects: true,
         validate_exhaustive_memoization_dependencies: true,

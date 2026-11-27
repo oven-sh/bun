@@ -14,6 +14,7 @@ pub(crate) fn validate_no_capitalized_calls(
 ) -> Result<(), CompilerError> {
     let mut capital_load_globals: IdMap<IdentifierId, StoreStr> = IdMap::new();
     let mut capitalized_properties: IdMap<IdentifierId, StoreStr> = IdMap::new();
+    let skips_capitals = env.config.methods_in_capitals_are_not_components;
 
     let reason = "Capitalized functions are reserved for components, which must be invoked with JSX. If this is a component, render it with JSX. Otherwise, ensure that it has no hook calls and rename it to begin with a lowercase letter. Alternatively, if you know for a fact that this function is not a component, you can allowlist it via the compiler config";
 
@@ -52,10 +53,10 @@ pub(crate) fn validate_no_capitalized_calls(
                 }
                 InstructionValue::PropertyLoad { property, .. } => {
                     if let PropertyLiteral::String(prop_name) = property {
-                        if prop_name
-                            .slice()
-                            .first()
-                            .is_some_and(u8::is_ascii_uppercase)
+                        let name = prop_name.slice();
+                        if name.first().is_some_and(u8::is_ascii_uppercase)
+                            // Not in upstream (oxc d24b61c10).
+                            && !(skips_capitals && is_in_capitals(name))
                         {
                             capitalized_properties.insert(lvalue_id, *prop_name);
                         }
@@ -81,6 +82,13 @@ pub(crate) fn validate_no_capitalized_calls(
         }
     }
     Ok(())
+}
+
+/// True if `name` is what `str::to_uppercase` makes of it, which is oxc's test. Bytes that are no text change nothing.
+fn is_in_capitals(name: &[u8]) -> bool {
+    let is_capital = |it: char| it.to_uppercase().eq([it]);
+    name.utf8_chunks()
+        .all(|chunk| chunk.valid().chars().all(is_capital))
 }
 
 /// The allow list is the keys of the global registry and the entries of the config.

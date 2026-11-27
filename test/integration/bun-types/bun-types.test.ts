@@ -475,7 +475,20 @@ const PUBLISHED_AS: Record<string, string | null> = {
 const FAKE_TIMERS_TYPES = `
 type Jest = typeof import("bun:test").jest;
 type Vi = typeof import("bun:test").vi;
-type Flavored = "useFakeTimers" | "advanceTimersByTimeAsync" | "advanceTimersToNextTimerAsync" | "runAllTimersAsync" | "runOnlyPendingTimersAsync";
+type Flavored =
+  | "useFakeTimers"
+  | "advanceTimersByTime"
+  | "advanceTimersByTimeAsync"
+  | "advanceTimersToNextTimer"
+  | "advanceTimersToNextTimerAsync"
+  | "advanceTimersToNextFrame"
+  | "runOnlyPendingTimers"
+  | "runOnlyPendingTimersAsync"
+  | "runAllTimers"
+  | "runAllTimersAsync"
+  | "runAllTicks"
+  | "setTimerTickMode"
+  | "getTimerCount";
 type OfFlavor<Prefix extends string, T extends Record<Flavored, unknown>> = { [K in Flavored as \`\${Prefix}\${Capitalize<K>}\`]: T[K] };
 `;
 

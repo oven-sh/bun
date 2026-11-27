@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { once } from "node:events";
 import http from "node:http";
 import net, { type AddressInfo } from "node:net";
+import { join } from "node:path";
 import { performance as perfHooksPerformance, PerformanceObserver } from "node:perf_hooks";
 import nodeTimers, { setTimeout as nodeSetTimeout } from "node:timers";
 import { setTimeout as nodeSetTimeoutPromise } from "node:timers/promises";
@@ -306,8 +307,20 @@ describe("clearAllTimers", () => {
     vi.advanceTimersByTime(100);
     expect(order.takeOrderMessages()).toEqual([]);
   });
-  test("throws error if fake timers not active", () => {
-    expect(() => vi.clearAllTimers()).toThrow("Fake timers are not active");
+  test.each([
+    ["vi", vi],
+    ['vi of "bun:test"', bunVi],
+    ["jest", jest],
+  ])("%s: does nothing with real timers, as in Vitest and Jest", async (_, api) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    onTestFinished(() => warn.mockRestore());
+    const { promise, resolve } = Promise.withResolvers<void>();
+    setTimeout(resolve, 1);
+    expect(api.clearAllTimers()).toBe(api);
+    const { clearAllTimers } = api;
+    expect(clearAllTimers()).toBeUndefined();
+    expect(warn).not.toHaveBeenCalled();
+    await promise;
   });
 });
 describe("AbortSignal.timeout", () => {
@@ -3683,10 +3696,6 @@ describe.each([
   });
 
   test("reject where the sync versions throw", async () => {
-    await expect(api.advanceTimersByTimeAsync(1)).rejects.toThrow("Fake timers are not active");
-    await expect(api.advanceTimersToNextTimerAsync()).rejects.toThrow("Fake timers are not active");
-    await expect(api.runAllTimersAsync()).rejects.toThrow("Fake timers are not active");
-    await expect(api.runOnlyPendingTimersAsync()).rejects.toThrow("Fake timers are not active");
     api.useFakeTimers();
     // @ts-expect-error
     await expect(api.advanceTimersByTimeAsync()).rejects.toThrow(
@@ -4041,6 +4050,325 @@ describe("setTimerTickMode", () => {
 
   test("throws unless fake timers are active", () => {
     expect(() => vi.setTimerTickMode("manual")).toThrow("Fake timers are not active");
+  });
+});
+
+describe("a timer control with real timers", () => {
+  type Api = typeof vi | typeof jest;
+  const sync: [string, (api: Api) => unknown][] = [
+    ["advanceTimersByTime", api => api.advanceTimersByTime(100)],
+    ["advanceTimersToNextTimer", api => api.advanceTimersToNextTimer()],
+    ["advanceTimersToNextFrame", api => api.advanceTimersToNextFrame()],
+    ["runOnlyPendingTimers", api => api.runOnlyPendingTimers()],
+    ["runAllTimers", api => api.runAllTimers()],
+    ["runAllTicks", api => api.runAllTicks()],
+    // @ts-expect-error Vitest takes the mode, and Jest an object that has it.
+    ["setTimerTickMode", api => api.setTimerTickMode(api === jest ? { mode: "manual" } : "manual")],
+  ];
+  const async: [string, (api: Api) => Promise<unknown>][] = [
+    ["advanceTimersByTimeAsync", api => api.advanceTimersByTimeAsync(100)],
+    ["advanceTimersToNextTimerAsync", api => api.advanceTimersToNextTimerAsync()],
+    ["runAllTimersAsync", api => api.runAllTimersAsync()],
+    ["runOnlyPendingTimersAsync", api => api.runOnlyPendingTimersAsync()],
+  ];
+  const perFlavor = [...sync, ...async].map(([name]) => name).concat("getTimerCount") as (keyof typeof jest &
+    keyof typeof vi)[];
+  const jestWarning =
+    "A function to advance timers was called but the timers APIs are not replaced with fake timers. " +
+    "Call `jest.useFakeTimers()` in this test file.";
+
+  function spyOnWarn(implementation: () => void = () => {}) {
+    const warn = vi.spyOn(console, "warn").mockImplementation(implementation);
+    onTestFinished(() => warn.mockRestore());
+    return warn;
+  }
+
+  describe("of jest warns and returns, as in Jest", () => {
+    test.each(sync)("%s()", (_, call) => {
+      const warn = spyOnWarn();
+      expect(call(jest)).toBe(jest);
+      expect(warn.mock.calls).toEqual([[expect.stringContaining(`${jestWarning}\n    at ${import.meta.path}:`)]]);
+      expect(call(jest)).toBe(jest);
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(jest.isFakeTimers()).toBe(false);
+    });
+
+    test.each(async)("%s()", async (_, call) => {
+      const warn = spyOnWarn();
+      const promise = call(jest);
+      expect(promise).toBeInstanceOf(Promise);
+      expect(warn.mock.calls).toEqual([[expect.stringContaining(`${jestWarning}\n    at ${import.meta.path}:`)]]);
+      expect(await promise).toBeUndefined();
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    test("getTimerCount() returns 0", () => {
+      const warn = spyOnWarn();
+      const timer = setTimeout(() => {}, 10_000);
+      onTestFinished(() => clearTimeout(timer));
+      expect(jest.getTimerCount()).toBe(0);
+      expect(warn.mock.calls).toEqual([[expect.stringContaining(jestWarning)]]);
+    });
+
+    test("the warning names the call, when a script made it", async () => {
+      using dir = tempDir("jest-timer-control-warning", {
+        "warning.test.js": `const { jest, test } = require("bun:test");
+test("warns", async () => {
+  const messages = [];
+  console.warn = message => messages.push(message);
+  jest.runAllTimers();
+  const { advanceTimersByTime } = jest;
+  advanceTimersByTime(1);
+  jest.getTimerCount();
+  await jest.runAllTimersAsync();
+  await new Promise(resolve => {
+    setTimeout(jest.runOnlyPendingTimers, 0);
+    setTimeout(resolve, 1);
+  });
+  console.log(JSON.stringify(messages));
+});
+`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "warning.test.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const file = join(String(dir), "warning.test.js");
+      expect({ messages: JSON.parse(stdout.slice(stdout.indexOf("["))), stderr: stderr.includes("1 pass") }).toEqual({
+        messages: [
+          `${jestWarning}\n    at ${file}:5:8`,
+          `${jestWarning}\n    at ${file}:7:3`,
+          `${jestWarning}\n    at ${file}:8:8`,
+          `${jestWarning}\n    at ${file}:9:14`,
+          // The timer calls it, and no script does.
+          jestWarning,
+        ],
+        stderr: true,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("a real timer still fires", async () => {
+      spyOnWarn();
+      const { promise, resolve } = Promise.withResolvers<void>();
+      setTimeout(resolve, 1);
+      jest.runAllTimers();
+      jest.runOnlyPendingTimers();
+      jest.advanceTimersByTime(1000);
+      await promise;
+    });
+
+    test("a function called without jest", async () => {
+      const warn = spyOnWarn();
+      const { runAllTimers, advanceTimersByTime, getTimerCount, runAllTimersAsync } = jest;
+      expect([runAllTimers(), advanceTimersByTime(1), getTimerCount(), await runAllTimersAsync()]).toEqual([
+        undefined,
+        undefined,
+        0,
+        undefined,
+      ]);
+      expect(warn).toHaveBeenCalledTimes(4);
+    });
+
+    test("does not read its arguments", async () => {
+      const warn = spyOnWarn();
+      const throws = {
+        get mode(): never {
+          throw new Error("read");
+        },
+      };
+      // @ts-expect-error
+      expect([jest.advanceTimersByTime(), jest.advanceTimersByTime(-1), jest.advanceTimersToNextTimer("1")]).toEqual([
+        jest,
+        jest,
+        jest,
+      ]);
+      // @ts-expect-error
+      expect([jest.setTimerTickMode(throws), jest.setTimerTickMode({ mode: "bogus" })]).toEqual([jest, jest]);
+      // @ts-expect-error
+      expect(await Promise.all([jest.advanceTimersByTimeAsync(), jest.advanceTimersToNextTimerAsync(null)])).toEqual([
+        undefined,
+        undefined,
+      ]);
+      expect(warn).toHaveBeenCalledTimes(7);
+    });
+
+    test("what console.warn throws is thrown, and rejects an Async function", async () => {
+      spyOnWarn(() => {
+        throw new Error("from console.warn");
+      });
+      expect(() => jest.runAllTimers()).toThrow("from console.warn");
+      expect(() => jest.getTimerCount()).toThrow("from console.warn");
+      await expect(jest.runAllTimersAsync()).rejects.toThrow("from console.warn");
+    });
+
+    test("throws a TypeError when console.warn is not a function", () => {
+      const warn = console.warn;
+      onTestFinished(() => void (console.warn = warn));
+      // @ts-expect-error
+      console.warn = undefined;
+      expect(() => jest.runAllTimers()).toThrow(new TypeError("console.warn is not a function"));
+    });
+
+    test("setTimerTickMode() whose argument turns fake timers off sets no mode", () => {
+      const warn = spyOnWarn();
+      jest.useFakeTimers();
+      const config = {
+        get mode() {
+          jest.useRealTimers();
+          return "interval" as const;
+        },
+        delta: 1,
+      };
+      expect(jest.setTimerTickMode(config)).toBe(jest);
+      expect(warn).not.toHaveBeenCalled();
+      expect(jest.isFakeTimers()).toBe(false);
+    });
+
+    test("runs when console.warn turns fake timers on", () => {
+      const fired = vi.fn();
+      const warn = spyOnWarn(() => {
+        jest.useFakeTimers();
+        setTimeout(fired, 10);
+      });
+      expect(jest.runAllTimers()).toBe(jest);
+      expect(fired).toHaveBeenCalledTimes(1);
+      expect(jest.getTimerCount()).toBe(0);
+      jest.useRealTimers();
+      jest.runAllTimers();
+      expect(warn).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe.each([
+    ["vi", vi],
+    ['vi of "bun:test"', bunVi],
+  ])("of %s throws, as in Vitest", (_, api) => {
+    test.each(sync)("%s()", (_, call) => {
+      const warn = spyOnWarn();
+      expect(() => call(api)).toThrow("Fake timers are not active. Call useFakeTimers() first.");
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    test.each(async)("%s()", async (_, call) => {
+      const warn = spyOnWarn();
+      await expect(call(api)).rejects.toThrow("Fake timers are not active. Call useFakeTimers() first.");
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    test("setTimerTickMode() whose argument turns fake timers off", () => {
+      api.useFakeTimers();
+      const config = {
+        get mode() {
+          api.useRealTimers();
+          return "interval";
+        },
+        delta: 1,
+      };
+      // @ts-expect-error Jest's form, which Bun takes from vi too.
+      expect(() => api.setTimerTickMode(config)).toThrow("Fake timers are not active. Call useFakeTimers() first.");
+    });
+
+    test("before it reads its arguments", async () => {
+      // @ts-expect-error
+      expect(() => api.advanceTimersByTime("1")).toThrow("Fake timers are not active");
+      // @ts-expect-error
+      expect(() => api.advanceTimersToNextTimer("1")).toThrow("Fake timers are not active");
+      // @ts-expect-error
+      expect(() => api.setTimerTickMode("bogus")).toThrow("Fake timers are not active");
+      // @ts-expect-error
+      await expect(api.advanceTimersByTimeAsync()).rejects.toThrow("Fake timers are not active");
+    });
+  });
+
+  // The timer of the "interval" mode is a real one, and would keep the event loop of the next file alive.
+  test("setTimerTickMode() whose argument turns fake timers off arms no timer", async () => {
+    using dir = tempDir("tick-mode-after-use-real-timers", {
+      "a.test.js": `const { jest, vi, test, expect } = require("bun:test");
+const config = api => ({
+  get mode() {
+    api.useRealTimers();
+    return "interval";
+  },
+  delta: 1,
+});
+test("jest", () => {
+  jest.useFakeTimers();
+  expect(jest.setTimerTickMode(config(jest))).toBe(jest);
+});
+test("vi", () => {
+  vi.useFakeTimers();
+  expect(() => vi.setTimerTickMode(config(vi))).toThrow("Fake timers are not active");
+});
+`,
+      "b.test.js": `import { test } from "bun:test";
+await new Promise(() => {});
+test("never runs", () => {});
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./a.test.js", "./b.test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("(pass) jest");
+    expect(stderr).toContain("(pass) vi");
+    expect(stderr).toContain('b.test.js" never finished loading');
+    expect(stderr).toContain("the event loop is empty");
+    expect(exitCode).toBe(1);
+  });
+
+  // Jest's modern timers have no runAllImmediates(), and Vitest has none at all.
+  test.each([
+    ["jest", jest],
+    ["vi", vi],
+    ['vi of "bun:test"', bunVi],
+  ])("%s.runAllImmediates() throws", (_, api) => {
+    const warn = spyOnWarn();
+    expect(() => api.runAllImmediates()).toThrow("Fake timers are not active. Call useFakeTimers() first.");
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  test("jest and vi each have a function of their own", () => {
+    for (const name of perFlavor) {
+      expect(jest[name]).not.toBe(bunVi[name]);
+      expect(vi[name]).toBe(bunVi[name]);
+      expect({ name: jest[name].name, length: jest[name].length }).toEqual({
+        name,
+        length: bunVi[name].length,
+      });
+    }
+  });
+
+  test("a wrong argument throws the same on jest and vi with fake timers", () => {
+    for (const api of [jest, vi]) {
+      api.useFakeTimers();
+      // @ts-expect-error
+      expect(() => api.advanceTimersByTime()).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: "advanceTimersByTime() expects a number of milliseconds",
+        }),
+      );
+      // @ts-expect-error
+      expect(() => api.advanceTimersToNextTimer(null)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: "advanceTimersToNextTimer() expects a number of steps",
+        }),
+      );
+      expect(api.advanceTimersToNextTimer(undefined)).toBe(api);
+      api.useRealTimers();
+    }
   });
 });
 

@@ -7,16 +7,15 @@ const chainable = { passThis: true, returns: b.any, capability: "js", throws: tr
 /** `async` in Vitest and Jest, so it rejects where the sync one throws. */
 const chainableAsync = { ...chainable, rejects: true } as const;
 
-const milliseconds = (name: string) =>
-  ({
-    args: { milliseconds: b.f64 },
-    expected: { milliseconds: `${name}() expects a number of milliseconds` },
-  }) as const;
-const steps = (name: string) =>
-  ({
-    args: { steps: b.f64.optional },
-    expected: { steps: `${name}() expects a number of steps` },
-  }) as const;
+/** `faked()` runs before an argument is read, so the body converts it. */
+const milliseconds = { args: { milliseconds: b.any } } as const;
+const steps = { args: { steps: b.any } } as const;
+
+/** `jest` and `vi` each get a function of their own, since they differ when the timers are real. */
+const perFlavor = (name: string, fn: Parameters<typeof b.fn>[0]) => [
+  b.fn({ ...fn, export: `Bun__FakeTimers__vi${name}` }),
+  b.fn({ ...fn, export: `Bun__FakeTimers__jest${name}` }),
+];
 
 /** What `options` can hold depends on whose `useFakeTimers` it is, so `Options::from_js` reads it. */
 const useFakeTimers = { ...chainable, args: { options: b.any } } as const;
@@ -25,61 +24,53 @@ export const jestUseFakeTimers = b.fn({ ...useFakeTimers, export: "Bun__FakeTime
 export const vitestUseFakeTimers = b.fn({ ...useFakeTimers, export: "Bun__FakeTimers__vitestUseFakeTimers" });
 
 export const useRealTimers = b.fn({ ...chainable, export: "Bun__FakeTimers__useRealTimers" });
-export const advanceTimersToNextTimer = b.fn({
+export const [viAdvanceTimersToNextTimer, jestAdvanceTimersToNextTimer] = perFlavor("AdvanceTimersToNextTimer", {
   ...chainable,
-  ...steps("advanceTimersToNextTimer"),
-  export: "Bun__FakeTimers__advanceTimersToNextTimer",
+  ...steps,
 });
-export const advanceTimersByTime = b.fn({
+export const [viAdvanceTimersByTime, jestAdvanceTimersByTime] = perFlavor("AdvanceTimersByTime", {
   ...chainable,
-  ...milliseconds("advanceTimersByTime"),
-  export: "Bun__FakeTimers__advanceTimersByTime",
+  ...milliseconds,
 });
-export const advanceTimersToNextFrame = b.fn({ ...chainable, export: "Bun__FakeTimers__advanceTimersToNextFrame" });
-export const runOnlyPendingTimers = b.fn({ ...chainable, export: "Bun__FakeTimers__runOnlyPendingTimers" });
-export const runAllTimers = b.fn({ ...chainable, export: "Bun__FakeTimers__runAllTimers" });
-export const runAllTicks = b.fn({ ...chainable, export: "Bun__FakeTimers__runAllTicks" });
+export const [viAdvanceTimersToNextFrame, jestAdvanceTimersToNextFrame] = perFlavor(
+  "AdvanceTimersToNextFrame",
+  chainable,
+);
+export const [viRunOnlyPendingTimers, jestRunOnlyPendingTimers] = perFlavor("RunOnlyPendingTimers", chainable);
+export const [viRunAllTimers, jestRunAllTimers] = perFlavor("RunAllTimers", chainable);
+export const [viRunAllTicks, jestRunAllTicks] = perFlavor("RunAllTicks", chainable);
 export const runAllImmediates = b.fn({ ...chainable, export: "Bun__FakeTimers__runAllImmediates" });
 
-const advanceTimersByTimeAsync = { ...chainableAsync, ...milliseconds("advanceTimersByTimeAsync") } as const;
-export const viAdvanceTimersByTimeAsync = b.fn({
-  ...advanceTimersByTimeAsync,
-  export: "Bun__FakeTimers__viAdvanceTimersByTimeAsync",
-});
-export const jestAdvanceTimersByTimeAsync = b.fn({
-  ...advanceTimersByTimeAsync,
-  export: "Bun__FakeTimers__jestAdvanceTimersByTimeAsync",
-});
-const advanceTimersToNextTimerAsync = { ...chainableAsync, ...steps("advanceTimersToNextTimerAsync") } as const;
-export const viAdvanceTimersToNextTimerAsync = b.fn({
-  ...advanceTimersToNextTimerAsync,
-  export: "Bun__FakeTimers__viAdvanceTimersToNextTimerAsync",
-});
-export const jestAdvanceTimersToNextTimerAsync = b.fn({
-  ...advanceTimersToNextTimerAsync,
-  export: "Bun__FakeTimers__jestAdvanceTimersToNextTimerAsync",
-});
-export const viRunAllTimersAsync = b.fn({ ...chainableAsync, export: "Bun__FakeTimers__viRunAllTimersAsync" });
-export const jestRunAllTimersAsync = b.fn({ ...chainableAsync, export: "Bun__FakeTimers__jestRunAllTimersAsync" });
-export const viRunOnlyPendingTimersAsync = b.fn({
+export const [viAdvanceTimersByTimeAsync, jestAdvanceTimersByTimeAsync] = perFlavor("AdvanceTimersByTimeAsync", {
   ...chainableAsync,
-  export: "Bun__FakeTimers__viRunOnlyPendingTimersAsync",
+  ...milliseconds,
 });
-export const jestRunOnlyPendingTimersAsync = b.fn({
-  ...chainableAsync,
-  export: "Bun__FakeTimers__jestRunOnlyPendingTimersAsync",
-});
+export const [viAdvanceTimersToNextTimerAsync, jestAdvanceTimersToNextTimerAsync] = perFlavor(
+  "AdvanceTimersToNextTimerAsync",
+  { ...chainableAsync, ...steps },
+);
+export const [viRunAllTimersAsync, jestRunAllTimersAsync] = perFlavor("RunAllTimersAsync", chainableAsync);
+export const [viRunOnlyPendingTimersAsync, jestRunOnlyPendingTimersAsync] = perFlavor(
+  "RunOnlyPendingTimersAsync",
+  chainableAsync,
+);
 
 /** Vitest takes `(mode, interval?)` and Jest takes `({ mode, delta? })`. */
-export const setTimerTickMode = b.fn({
+export const [viSetTimerTickMode, jestSetTimerTickMode] = perFlavor("SetTimerTickMode", {
   ...chainable,
-  export: "Bun__FakeTimers__setTimerTickMode",
   args: { mode: b.any, interval: b.any },
 });
-export const getTimerCount = b.fn({
-  export: "Bun__FakeTimers__getTimerCount",
+export const viGetTimerCount = b.fn({
+  export: "Bun__FakeTimers__viGetTimerCount",
   returns: b.usize,
   capability: "heap",
+  throws: true,
+});
+/** It calls `console.warn` when the timers are real. */
+export const jestGetTimerCount = b.fn({
+  export: "Bun__FakeTimers__jestGetTimerCount",
+  returns: b.usize,
+  capability: "js",
   throws: true,
 });
 export const clearAllTimers = b.fn({ ...chainable, export: "Bun__FakeTimers__clearAllTimers" });

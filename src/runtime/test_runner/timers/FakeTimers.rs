@@ -12,8 +12,8 @@ use crate::generated_bindgen::fake_timers as generated;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
 use bun_jsc::{
-    JSFunction, JSGlobalObject, JSHostFn, JSPromiseStrong, JSValue, JsError, JsResult, Strong,
-    StrongCell, StrongOptional,
+    JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSPromiseStrong, JSValue, JsError, JsResult,
+    StringJsc as _, Strong, StrongCell, StrongOptional,
 };
 use bun_ptr::CellExt as _;
 
@@ -1256,16 +1256,21 @@ impl FakeTimers {
         Ok(())
     }
 
+    /// `false` when the fake clock is off: only a fake clock has a tick mode.
     #[optimize(size)]
-    fn set_tick_mode(mode: TickMode) {
+    fn set_tick_mode(mode: TickMode) -> bool {
         let this = &timer_all().fake_timers;
+        if !this.active.get() {
+            return false;
+        }
         if this.tick_mode.get() == mode {
-            return;
+            return true;
         }
         this.tick_mode.set(mode);
         this.tick_timer.disarm();
         Self::arm_tick_timer();
         this.post_auto_step();
+        true
     }
 
     fn arm_tick_timer() {
@@ -1391,13 +1396,58 @@ fn loop_limit_error(global: &JSGlobalObject, limit: u32) -> JsResult<JSValue> {
 // JS Functions
 // ===
 
-fn error_unless_fake_timers(global: &JSGlobalObject) -> JsResult<()> {
-    if is_active() {
-        return Ok(());
-    }
-    Err(global.throw(format_args!(
+#[cold]
+fn not_active_error(global: &JSGlobalObject) -> JsError {
+    global.throw(format_args!(
         "Fake timers are not active. Call useFakeTimers() first."
-    )))
+    ))
+}
+
+/// `false`: `jest` warned, and the control returns without reading its arguments.
+#[inline]
+fn faked(global: &JSGlobalObject, flavor: Flavor) -> JsResult<bool> {
+    if is_active() {
+        return Ok(true);
+    }
+    not_faked(global, flavor)
+}
+
+#[cold]
+#[inline(never)]
+#[optimize(size)]
+fn not_faked(global: &JSGlobalObject, flavor: Flavor) -> JsResult<bool> {
+    match flavor {
+        Flavor::Vi => Err(not_active_error(global)),
+        Flavor::Jest => {
+            warn_not_active(global)?;
+            Ok(is_active())
+        }
+    }
+}
+
+#[optimize(size)]
+fn warn_not_active(global: &JSGlobalObject) -> JsResult<()> {
+    let console = global.to_js_value().get(global, "console")?;
+    let warn = match console {
+        Some(console) => console.get(global, "warn")?,
+        None => None,
+    };
+    let (Some(console), Some(warn)) = (console, warn.filter(|warn| warn.is_callable())) else {
+        return Err(global.throw_type_error(format_args!("console.warn is not a function")));
+    };
+    const WARNING: &str = "A function to advance timers was called but the timers APIs are not replaced with fake timers. \
+                           Call `jest.useFakeTimers()` in this test file.";
+    let caller = global.get_caller_src_loc();
+    let message = if caller.str.is_empty() {
+        bun_core::String::static_(WARNING)
+    } else {
+        bun_core::String::create_format(format_args!(
+            "{WARNING}\n    at {}:{}:{}",
+            caller.str, caller.line, caller.column
+        ))
+    };
+    warn.call(global, console, &[message.to_js(global)?])?;
+    Ok(())
 }
 
 fn error_if_reading_globals(global: &JSGlobalObject) -> JsResult<()> {
@@ -1518,8 +1568,16 @@ pub(crate) fn use_real_timers(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> 
     Ok(chainable_this(global, this_value))
 }
 
-fn steps_argument(global: &JSGlobalObject, steps: Option<f64>, function: &str) -> JsResult<u32> {
-    let steps = steps.unwrap_or(1.0);
+fn steps_argument(global: &JSGlobalObject, steps: JsLocal<'_>, function: &str) -> JsResult<u32> {
+    let steps = match steps.to_js() {
+        steps if steps.is_undefined() => 1.0,
+        steps if steps.is_number() => steps.as_number(),
+        _ => {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "{function}() expects a number of steps"
+            )));
+        }
+    };
     if !(0.0..=f64::from(u32::MAX)).contains(&steps) {
         return Err(global.throw_invalid_arguments(format_args!(
             "{function}() steps is out of range. It must be >= 0 and <= {}. Received {steps}",
@@ -1529,7 +1587,14 @@ fn steps_argument(global: &JSGlobalObject, steps: Option<f64>, function: &str) -
     Ok(steps.ceil() as u32)
 }
 
-fn milliseconds_argument(global: &JSGlobalObject, ms: f64, function: &str) -> JsResult<f64> {
+fn milliseconds_argument(global: &JSGlobalObject, ms: JsLocal<'_>, function: &str) -> JsResult<f64> {
+    let ms = ms.to_js();
+    if !ms.is_number() {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "{function}() expects a number of milliseconds"
+        )));
+    }
+    let ms = ms.as_number();
     let max_advance = u32::MAX;
     if ms.is_nan() || ms < 0.0 || ms > max_advance as f64 {
         return Err(global.throw_invalid_arguments(format_args!(
@@ -1539,26 +1604,32 @@ fn milliseconds_argument(global: &JSGlobalObject, ms: f64, function: &str) -> Js
     Ok(ms)
 }
 
+#[inline]
 #[optimize(size)]
-pub(crate) fn advance_timers_to_next_timer(
-    cx: &mut JsScope<'_>,
+fn advance_timers_to_next_timer(
+    global: &JSGlobalObject,
     this_value: JsLocal<'_>,
-    steps: Option<f64>,
+    steps: JsLocal<'_>,
+    flavor: Flavor,
 ) -> JsResult<JSValue> {
-    let global = cx.global();
-    error_unless_fake_timers(global)?;
+    if !faked(global, flavor)? {
+        return Ok(chainable_this(global, this_value));
+    }
     let steps = steps_argument(global, steps, "advanceTimersToNextTimer")?;
     rethrow(global, this_value, FakeTimers::run_to_next_timer(global, steps))
 }
 
+#[inline]
 #[optimize(size)]
-pub(crate) fn advance_timers_by_time(
-    cx: &mut JsScope<'_>,
+fn advance_timers_by_time(
+    global: &JSGlobalObject,
     this_value: JsLocal<'_>,
-    milliseconds: f64,
+    milliseconds: JsLocal<'_>,
+    flavor: Flavor,
 ) -> JsResult<JSValue> {
-    let global = cx.global();
-    error_unless_fake_timers(global)?;
+    if !faked(global, flavor)? {
+        return Ok(chainable_this(global, this_value));
+    }
     let ms = milliseconds_argument(global, milliseconds, "advanceTimersByTime")?;
     rethrow(global, this_value, advance(global, ms))
 }
@@ -1592,36 +1663,54 @@ pub(crate) fn advance_by_ms(global: &JSGlobalObject, ms: f64) -> Result<JSValue,
     advance(global, ms)
 }
 
+#[inline]
 #[optimize(size)]
-pub(crate) fn advance_timers_to_next_frame(
-    cx: &mut JsScope<'_>,
+fn advance_timers_to_next_frame(
+    global: &JSGlobalObject,
     this_value: JsLocal<'_>,
+    flavor: Flavor,
 ) -> JsResult<JSValue> {
-    let global = cx.global();
-    error_unless_fake_timers(global)?;
+    if !faked(global, flavor)? {
+        return Ok(chainable_this(global, this_value));
+    }
     let now_ms = timer_all().fake_timers.now().ms_unsigned();
     let to_next_frame = FakeTimers::FRAME_MS - now_ms % FakeTimers::FRAME_MS;
     rethrow(global, this_value, advance(global, to_next_frame as f64))
 }
 
-pub(crate) fn run_only_pending_timers(
-    cx: &mut JsScope<'_>,
+#[inline]
+fn run_only_pending_timers(
+    global: &JSGlobalObject,
     this_value: JsLocal<'_>,
+    flavor: Flavor,
 ) -> JsResult<JSValue> {
-    let global = cx.global();
-    error_unless_fake_timers(global)?;
+    if !faked(global, flavor)? {
+        return Ok(chainable_this(global, this_value));
+    }
     rethrow(global, this_value, FakeTimers::run_only_pending(global))
 }
 
-pub(crate) fn run_all_timers(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSValue> {
-    let global = cx.global();
-    error_unless_fake_timers(global)?;
+#[inline]
+fn run_all_timers(
+    global: &JSGlobalObject,
+    this_value: JsLocal<'_>,
+    flavor: Flavor,
+) -> JsResult<JSValue> {
+    if !faked(global, flavor)? {
+        return Ok(chainable_this(global, this_value));
+    }
     rethrow(global, this_value, FakeTimers::run_all(global))
 }
 
-pub(crate) fn run_all_ticks(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSValue> {
-    let global = cx.global();
-    error_unless_fake_timers(global)?;
+#[inline]
+fn run_all_ticks(
+    global: &JSGlobalObject,
+    this_value: JsLocal<'_>,
+    flavor: Flavor,
+) -> JsResult<JSValue> {
+    if !faked(global, flavor)? {
+        return Ok(chainable_this(global, this_value));
+    }
     let ran = FakeTimers::run_ticks(global).map(|()| JSValue::ZERO);
     rethrow(global, this_value, ran)
 }
@@ -1632,7 +1721,9 @@ pub(crate) fn run_all_immediates(
     this_value: JsLocal<'_>,
 ) -> JsResult<JSValue> {
     let global = cx.global();
-    error_unless_fake_timers(global)?;
+    if !is_active() {
+        return Err(not_active_error(global));
+    }
     let ran = FakeTimers::run_all_immediates(global).map_err(Stop::Vm);
     rethrow(global, this_value, ran)
 }
@@ -1654,14 +1745,21 @@ fn drive_async(
     )
 }
 
+/// What an `…Async` control of `jest` returns after [`faked`] warned.
+fn nothing_to_drive(global: &JSGlobalObject) -> JSValue {
+    JSPromise::resolved_promise_value(global, JSValue::UNDEFINED)
+}
+
 #[optimize(size)]
 fn advance_timers_by_time_async(
     global: &JSGlobalObject,
     this_value: JsLocal<'_>,
-    milliseconds: f64,
+    milliseconds: JsLocal<'_>,
     flavor: Flavor,
 ) -> JsResult<JSValue> {
-    error_unless_fake_timers(global)?;
+    if !faked(global, flavor)? {
+        return Ok(nothing_to_drive(global));
+    }
     let ms = milliseconds_argument(global, milliseconds, "advanceTimersByTimeAsync")?;
     let drive = Drive::Tick(Some(Timespec::EPOCH.add_ms_float(ms)));
     Ok(drive_async(global, this_value, flavor, drive))
@@ -1671,10 +1769,12 @@ fn advance_timers_by_time_async(
 fn advance_timers_to_next_timer_async(
     global: &JSGlobalObject,
     this_value: JsLocal<'_>,
-    steps: Option<f64>,
+    steps: JsLocal<'_>,
     flavor: Flavor,
 ) -> JsResult<JSValue> {
-    error_unless_fake_timers(global)?;
+    if !faked(global, flavor)? {
+        return Ok(nothing_to_drive(global));
+    }
     let steps = steps_argument(global, steps, "advanceTimersToNextTimerAsync")?;
     Ok(drive_async(global, this_value, flavor, Drive::Next(steps, NextStep::First)))
 }
@@ -1684,7 +1784,9 @@ fn run_all_timers_async(
     this_value: JsLocal<'_>,
     flavor: Flavor,
 ) -> JsResult<JSValue> {
-    error_unless_fake_timers(global)?;
+    if !faked(global, flavor)? {
+        return Ok(nothing_to_drive(global));
+    }
     Ok(drive_async(global, this_value, flavor, Drive::All(0)))
 }
 
@@ -1693,7 +1795,9 @@ fn run_only_pending_timers_async(
     this_value: JsLocal<'_>,
     flavor: Flavor,
 ) -> JsResult<JSValue> {
-    error_unless_fake_timers(global)?;
+    if !faked(global, flavor)? {
+        return Ok(nothing_to_drive(global));
+    }
     Ok(drive_async(global, this_value, flavor, Drive::Tick(None)))
 }
 
@@ -1711,8 +1815,15 @@ macro_rules! both_flavors {
 
 both_flavors! {
     use_fake_timers(options: JsLocal<'_>) => vi_use_fake_timers, jest_use_fake_timers;
-    advance_timers_by_time_async(milliseconds: f64) => vi_advance_timers_by_time_async, jest_advance_timers_by_time_async;
-    advance_timers_to_next_timer_async(steps: Option<f64>) => vi_advance_timers_to_next_timer_async, jest_advance_timers_to_next_timer_async;
+    advance_timers_to_next_timer(steps: JsLocal<'_>) => vi_advance_timers_to_next_timer, jest_advance_timers_to_next_timer;
+    advance_timers_by_time(milliseconds: JsLocal<'_>) => vi_advance_timers_by_time, jest_advance_timers_by_time;
+    advance_timers_to_next_frame() => vi_advance_timers_to_next_frame, jest_advance_timers_to_next_frame;
+    run_only_pending_timers() => vi_run_only_pending_timers, jest_run_only_pending_timers;
+    run_all_timers() => vi_run_all_timers, jest_run_all_timers;
+    run_all_ticks() => vi_run_all_ticks, jest_run_all_ticks;
+    set_timer_tick_mode(mode: JsLocal<'_>, interval: JsLocal<'_>) => vi_set_timer_tick_mode, jest_set_timer_tick_mode;
+    advance_timers_by_time_async(milliseconds: JsLocal<'_>) => vi_advance_timers_by_time_async, jest_advance_timers_by_time_async;
+    advance_timers_to_next_timer_async(steps: JsLocal<'_>) => vi_advance_timers_to_next_timer_async, jest_advance_timers_to_next_timer_async;
     run_all_timers_async() => vi_run_all_timers_async, jest_run_all_timers_async;
     run_only_pending_timers_async() => vi_run_only_pending_timers_async, jest_run_only_pending_timers_async;
 }
@@ -1720,13 +1831,16 @@ both_flavors! {
 /// vitest: `setTimerTickMode("manual" | "nextTimerAsync" | "interval", interval?)`.
 /// Jest: `setTimerTickMode({ mode: "manual" | "nextAsync" | "interval", delta? })`.
 #[optimize(size)]
-pub(crate) fn set_timer_tick_mode(
-    cx: &mut JsScope<'_>,
+fn set_timer_tick_mode(
+    global: &JSGlobalObject,
     this_value: JsLocal<'_>,
     mode: JsLocal<'_>,
     interval: JsLocal<'_>,
+    flavor: Flavor,
 ) -> JsResult<JSValue> {
-    let global = cx.global();
+    if !faked(global, flavor)? {
+        return Ok(chainable_this(global, this_value));
+    }
     let (mut mode, mut interval) = (mode.to_js(), interval.to_js());
     if mode.is_object() {
         let config = mode;
@@ -1752,23 +1866,32 @@ pub(crate) fn set_timer_tick_mode(
     } else {
         TickMode::interval_from_js(global, "setTimerTickMode() interval", interval)?
     };
-    error_unless_fake_timers(global)?;
-    FakeTimers::set_tick_mode(mode);
+    // Reading `mode` or `delta` ran the script, which can have called `useRealTimers()`.
+    if !FakeTimers::set_tick_mode(mode) && flavor == Flavor::Vi {
+        return Err(not_active_error(global));
+    }
     Ok(chainable_this(global, this_value))
 }
 
-pub(crate) fn get_timer_count(heap: &JsHeap<'_>) -> JsResult<usize> {
-    // SAFETY: throws, and the body returns.
-    error_unless_fake_timers(unsafe { heap.global() })?;
-
+pub(crate) fn vi_get_timer_count(heap: &JsHeap<'_>) -> JsResult<usize> {
+    // SAFETY: with `Flavor::Vi` it only throws, and the body returns.
+    faked(unsafe { heap.global() }, Flavor::Vi)?;
     Ok(timer_all().fake_timers.count())
 }
 
+pub(crate) fn jest_get_timer_count(cx: &mut JsScope<'_>) -> JsResult<usize> {
+    if !faked(cx.global(), Flavor::Jest)? {
+        return Ok(0);
+    }
+    Ok(timer_all().fake_timers.count())
+}
+
+/// Vitest and Jest both do nothing when the timers are real, and Jest does not warn.
 pub(crate) fn clear_all_timers(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSValue> {
     let global = cx.global();
-    error_unless_fake_timers(global)?;
-
-    timer_all().fake_timers.clear();
+    if is_active() {
+        timer_all().fake_timers.clear();
+    }
 
     Ok(chainable_this(global, this_value))
 }
@@ -1794,27 +1917,7 @@ pub(crate) fn get_real_system_time() -> f64 {
 
 const FAKE_TIMERS_FNS: &[(&str, u32, JSHostFn)] = &[
     ("useRealTimers", 0, generated::Bun__FakeTimers__useRealTimers),
-    (
-        "advanceTimersToNextTimer",
-        0,
-        generated::Bun__FakeTimers__advanceTimersToNextTimer,
-    ),
-    ("advanceTimersByTime", 1, generated::Bun__FakeTimers__advanceTimersByTime),
-    (
-        "advanceTimersToNextFrame",
-        0,
-        generated::Bun__FakeTimers__advanceTimersToNextFrame,
-    ),
-    (
-        "runOnlyPendingTimers",
-        0,
-        generated::Bun__FakeTimers__runOnlyPendingTimers,
-    ),
-    ("runAllTimers", 0, generated::Bun__FakeTimers__runAllTimers),
-    ("runAllTicks", 0, generated::Bun__FakeTimers__runAllTicks),
     ("runAllImmediates", 0, generated::Bun__FakeTimers__runAllImmediates),
-    ("setTimerTickMode", 1, generated::Bun__FakeTimers__setTimerTickMode),
-    ("getTimerCount", 0, generated::Bun__FakeTimers__getTimerCount),
     ("clearAllTimers", 0, generated::Bun__FakeTimers__clearAllTimers),
     ("isFakeTimers", 0, generated::Bun__FakeTimers__isFakeTimers),
     ("getMockedSystemTime", 0, generated::Bun__FakeTimers__getMockedSystemTime),
@@ -1827,6 +1930,54 @@ const FLAVORED_FAKE_TIMERS_FNS: &[(&str, u32, JSHostFn, JSHostFn)] = &[
         0,
         generated::Bun__FakeTimers__viUseFakeTimers,
         generated::Bun__FakeTimers__jestUseFakeTimers,
+    ),
+    (
+        "advanceTimersToNextTimer",
+        0,
+        generated::Bun__FakeTimers__viAdvanceTimersToNextTimer,
+        generated::Bun__FakeTimers__jestAdvanceTimersToNextTimer,
+    ),
+    (
+        "advanceTimersByTime",
+        1,
+        generated::Bun__FakeTimers__viAdvanceTimersByTime,
+        generated::Bun__FakeTimers__jestAdvanceTimersByTime,
+    ),
+    (
+        "advanceTimersToNextFrame",
+        0,
+        generated::Bun__FakeTimers__viAdvanceTimersToNextFrame,
+        generated::Bun__FakeTimers__jestAdvanceTimersToNextFrame,
+    ),
+    (
+        "runOnlyPendingTimers",
+        0,
+        generated::Bun__FakeTimers__viRunOnlyPendingTimers,
+        generated::Bun__FakeTimers__jestRunOnlyPendingTimers,
+    ),
+    (
+        "runAllTimers",
+        0,
+        generated::Bun__FakeTimers__viRunAllTimers,
+        generated::Bun__FakeTimers__jestRunAllTimers,
+    ),
+    (
+        "runAllTicks",
+        0,
+        generated::Bun__FakeTimers__viRunAllTicks,
+        generated::Bun__FakeTimers__jestRunAllTicks,
+    ),
+    (
+        "setTimerTickMode",
+        1,
+        generated::Bun__FakeTimers__viSetTimerTickMode,
+        generated::Bun__FakeTimers__jestSetTimerTickMode,
+    ),
+    (
+        "getTimerCount",
+        0,
+        generated::Bun__FakeTimers__viGetTimerCount,
+        generated::Bun__FakeTimers__jestGetTimerCount,
     ),
     (
         "advanceTimersByTimeAsync",

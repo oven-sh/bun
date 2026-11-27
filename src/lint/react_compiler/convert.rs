@@ -2093,6 +2093,7 @@ impl<'a> Converter<'a, '_> {
                     Some(handler) => {
                         let loc =
                             self.loc(stmt.catch_clause_span().unwrap_or_else(|| handler.span()));
+                        let recorded = self.recorded.len();
                         let mut binding = match param {
                             Some(param) => Some(self.unread(|this| this.binding(param.pat()))?),
                             None => None,
@@ -2101,6 +2102,8 @@ impl<'a> Converter<'a, '_> {
                         if self.flavor == Flavor::Oxlint
                             && let Some(param) = param
                         {
+                            // oxc's lowering never comes to a default in the pattern.
+                            self.recorded.truncate(recorded);
                             binding = binding.map(|it| {
                                 self.catch_parameter(it, param.pat(), stmt, handler, &mut first)
                             });

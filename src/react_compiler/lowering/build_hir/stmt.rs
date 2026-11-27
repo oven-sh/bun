@@ -43,7 +43,7 @@ fn lower_block_statement(
     builder: &mut HirBuilder,
     body: &[Stmt],
 ) -> Result<(), CompilerDiagnostic> {
-    lower_block_statement_inner(builder, body, None)
+    lower_block_statement_inner(builder, body, None, &[])
 }
 
 /// Not in upstream (oxc 4372e145f): the `finally` block of a `try`, lowered after the rest of it.
@@ -65,7 +65,7 @@ pub(super) fn lower_function_body(
     params: &[G::Arg],
     body: &[Stmt],
 ) -> Result<(), CompilerDiagnostic> {
-    lower_block_statement_inner(builder, body, Some(params))
+    lower_block_statement_inner(builder, body, Some(params), &[])
 }
 
 // Upstream's BlockStatement hoisting only emits a `DeclareContext` for a
@@ -84,6 +84,7 @@ fn lower_block_statement_inner(
     builder: &mut HirBuilder,
     body: &[Stmt],
     params: Option<&[G::Arg]>,
+    unbound: &[(Ref, ast::Loc)],
 ) -> Result<(), CompilerDiagnostic> {
     // Not in Bun's lowering: a `var` is a binding of the body of its function, wherever in it the `var` is. To oxc
     // it is declared by the first statement of the body that is a declaration of its name, or by none, and no
@@ -130,6 +131,11 @@ fn lower_block_statement_inner(
                 }
             }
         }
+    }
+    // Not in upstream: the names in the parameter of this `catch` block that were not bound. They are the block's,
+    // and no statement declares them.
+    for &(binding, loc) in unbound {
+        decls.push((usize::MAX, binding, loc, InstructionKind::HoistedLet));
     }
 
     if decls.is_empty() {
@@ -362,7 +368,7 @@ struct SeenRef {
 /// What one statement of a block refers to, of the block's own bindings that are not declared before it.
 #[derive(Default)]
 struct ForwardRefs {
-    /// The index of the statement that declares it, or `usize::MAX` for a `var` that none declares.
+    /// The index of the statement that declares it, or `usize::MAX` for a binding of the block that none declares.
     last_decl: HashMap<Ref, usize>,
     has_functions: bool,
     seen: HashMap<Ref, SeenRef>,
@@ -1585,6 +1591,8 @@ fn lower_statement(
                 })?;
             }
 
+            // Not in upstream: what the parameter names and does not bind.
+            let mut unbound: SmallVec<[(Ref, ast::Loc); 2]> = SmallVec::new();
             // Set up handler binding if catch has a param
             let handler_binding_info: Option<(Place, Binding)> = if let Some(param) =
                 &handler_clause.binding
@@ -1603,17 +1611,25 @@ fn lower_statement(
                         if !env.has_stack() {
                             return;
                         }
+                        // Not in upstream: oxc's lowering does not look into what has a default.
+                        let skips_defaults = env.config.catch_bindings_with_defaults_are_not_bound;
                         match pat.data {
                             b::B::BIdentifier(_) => {
                                 locs.push(convert_loc(pat.loc));
                             }
                             b::B::BObject(obj) => {
                                 for prop in obj.properties() {
+                                    if skips_defaults && prop.default_value.is_some() {
+                                        continue;
+                                    }
                                     collect_identifier_locs(env, &prop.value, locs);
                                 }
                             }
                             b::B::BArray(arr) => {
                                 for elem in arr.items() {
+                                    if skips_defaults && elem.default_value.is_some() {
+                                        continue;
+                                    }
                                     collect_identifier_locs(env, &elem.binding, locs);
                                 }
                             }
@@ -1630,6 +1646,15 @@ fn lower_statement(
                                 description: None,
                                 suggestions: None,
                             })?;
+                    }
+                    if builder
+                        .environment()
+                        .config
+                        .catch_bindings_with_defaults_are_not_bound
+                    {
+                        collect_binding_refs(builder.environment(), param, &mut |r, loc| {
+                            unbound.push((builder.resolve_ref(r), loc));
+                        });
                     }
                     None
                 } else {
@@ -1722,7 +1747,7 @@ fn lower_statement(
                         }
                     }
                 }
-                lower_block_statement(builder, &handler_clause.body)?;
+                lower_block_statement_inner(builder, &handler_clause.body, None, &unbound)?;
                 builder.pop_scope();
                 builder.pop_scope();
                 Ok(Terminal::Goto {

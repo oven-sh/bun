@@ -68,6 +68,7 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
         outer_branches_control_reactivity: is_oxlint,
         finally_blocks_are_lowered: is_oxlint,
         context_catch_parameters_are_not_reported: is_oxlint,
+        catch_bindings_with_defaults_are_not_bound: is_oxlint,
         pruned_throw_edges_are_removed_from_phis: is_oxlint,
         react_is_known_by_its_module: false,
         dependencies_are_sorted_by_bytes: is_oxlint,

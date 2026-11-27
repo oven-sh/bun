@@ -163,6 +163,11 @@ pub struct EnvironmentConfig {
     /// error where it is bound. Nothing is stored to it, so what reads it fails if the block is reached. Upstream
     /// records "Unexpected context variable kind" there, also for a `catch` that nothing throws to.
     pub context_catch_parameters_are_not_reported: bool,
+    /// In the pattern of a `catch` parameter, what has a default is no binding: `catch ({ e = 1 })` binds nothing and
+    /// lowers nothing of the pattern. A function in the block that refers to `e` declares it early, and what else
+    /// reads it fails: "Expected value kind to be initialized". Upstream records "Could not find binding for
+    /// declaration" at every name of the pattern.
+    pub catch_bindings_with_defaults_are_not_bound: bool,
     /// For `prune_maybe_throws`: with the edge to a `catch` go the operands that phis have for it and the phis that are
     /// then redundant, and a `catch` that is no longer reached is no predecessor of what follows the `try`. Upstream
     /// keeps them, and fails: "Found a block with a single predecessor but where a phi has multiple operands".
@@ -305,6 +310,7 @@ impl Default for EnvironmentConfig {
             outer_branches_control_reactivity: false,
             finally_blocks_are_lowered: false,
             context_catch_parameters_are_not_reported: false,
+            catch_bindings_with_defaults_are_not_bound: false,
             pruned_throw_edges_are_removed_from_phis: false,
             react_is_known_by_its_module: true,
             dependencies_are_sorted_by_bytes: false,

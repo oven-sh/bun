@@ -636,8 +636,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       const waiter = queue[i];
       if (waiter === onConnected || (waiter as Waiter).onConnected === onConnected) {
         queue.splice(i, 1);
-        if (typeof waiter !== "function" && waiter.timer !== undefined) {
-          clearTimeout(waiter.timer);
+        const timer = typeof waiter === "function" ? undefined : waiter.timer;
+        if (timer !== undefined) {
+          clearTimeout(timer);
         }
         // the callers behind it may have waited for it
         this.#serve();
@@ -813,8 +814,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       const connection = reservationsAhead++ === 0 ? this.#leastBusy(1, 0) : null;
       if (connection !== null) {
         queue.splice(i, 1);
-        if (waiter.timer !== undefined) {
-          clearTimeout(waiter.timer);
+        const timer = waiter.timer;
+        if (timer !== undefined) {
+          clearTimeout(timer);
         }
         connection.flags |= PooledConnectionFlags.reserved;
         connection.queryCount++;
@@ -937,8 +939,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       if (typeof waiter === "function") {
         waiter(err, null);
       } else {
-        if (waiter.timer !== undefined) {
-          clearTimeout(waiter.timer);
+        const timer = waiter.timer;
+        if (timer !== undefined) {
+          clearTimeout(timer);
         }
         waiter.onConnected(err, null);
       }

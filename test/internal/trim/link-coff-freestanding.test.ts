@@ -131,8 +131,13 @@ async function withSharedFeatureCode<Options extends LinkOptions>(folder: string
   if (!objects.includes("feature_code") || compileFlags.feature_code !== undefined) return options;
   const text = readFileSync(join(folder, "feature_code.c"), "utf8");
   const key = `${machine} ${isFreestanding} ${text}`;
-  if (!featureCodeObjects.has(key)) featureCodeObjects.set(key, compileFeatureCode(text, options));
-  const object = await featureCodeObjects.get(key)!;
+  let compiled = featureCodeObjects.get(key);
+  if (compiled === undefined) {
+    featureCodeObjects.set(key, (compiled = compileFeatureCode(text, options)));
+    // A compile that fails is not kept: the next case with this text compiles again.
+    compiled.catch(() => featureCodeObjects.delete(key));
+  }
+  const object = await compiled;
   return {
     ...options,
     // -c is unused then, which clang is not to warn about.

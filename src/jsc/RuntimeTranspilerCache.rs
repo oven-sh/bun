@@ -89,8 +89,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 52: Every directive is printed: a `"use strict"` in a function body too, and the
 /// prologue of the file first.
 /// Version 53: The name of a Node.js builtin in `import()` is printed as it is written.
-/// Version 54: The `()` of a `new` with no arguments is printed where the source has it, and
-/// that `(` is mapped to `new`.
+/// Version 54: The written `()` of a `new` with no arguments is printed, its `(` mapped to `new`.
 const EXPECTED_VERSION: u32 = 54;
 
 /// Source files smaller than this are not written to / read from the on-disk

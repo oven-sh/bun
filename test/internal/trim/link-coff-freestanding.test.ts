@@ -95,10 +95,24 @@ for (const machine of machines) {
 const withoutSizes = (text: string) =>
   text.replace(/(?<= (?:Abort|ReturnDefault|Throw) )\d+|\d+(?= bytes\))|(?<!minimum of )\b\d+\.\d\d(?= MB)/g, "#");
 
-// The link fails, and stderr has this failure and nothing else.
-function expectOnlyFailure(folder: string, linkResult: ProcessResult, failure: string) {
-  const { stderr, exitCode } = linkResult;
-  expect({ stderr: withoutSizes(stderr), exitCode }).toEqual({ stderr: `trim: ${failure}\n`, exitCode: 1 });
+// What a link prints before it fails over its graph: the model names functions that no toy program has. The names are cut.
+const noticesOfTheFirstLink =
+  "trim: these c-function names are not in the first link\n" +
+  "trim: these cxx-function patterns match nothing in the first link\n";
+
+// The link fails: stderr has this failure and nothing else, and stdout only the notices.
+function expectOnlyFailure(
+  folder: string,
+  linkResult: ProcessResult,
+  failure: string,
+  notices: string = noticesOfTheFirstLink,
+) {
+  const { stdout, stderr, exitCode } = linkResult;
+  expect({ stdout: stdout.replace(/ link: .*/g, " link"), stderr: withoutSizes(stderr), exitCode }).toEqual({
+    stdout: notices,
+    stderr: `trim: ${failure}\n`,
+    exitCode: 1,
+  });
   expectLinkFailure(folder, output, linkResult, []);
 }
 
@@ -360,8 +374,14 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     using first = tempDir("trim-coff-freestanding-first", smallSources);
     using second = tempDir("trim-coff-freestanding-second", smallSources);
     const linkResults = await Promise.all([first, second].map(dir => wrapped(String(dir), optionsWith())));
-    const succeeded = { stderr: "", exitCode: 0 };
-    expect(linkResults.map(({ stderr, exitCode }) => ({ stderr, exitCode }))).toEqual([succeeded, succeeded]);
+    // Of what a link prints, only the time that it took differs from one folder to the other.
+    const printed = linkResults.map(({ stdout, stderr, exitCode }) => ({
+      stdout: stdout.replace(/^the trimmable link took .*$/m, ""),
+      stderr,
+      exitCode,
+    }));
+    const succeeded = { stdout: printed[0]!.stdout, stderr: "", exitCode: 0 };
+    expect(printed).toEqual([succeeded, succeeded]);
     expect(readFileSync(join(String(first), output)).equals(readFileSync(join(String(second), output)))).toBe(true);
   });
 
@@ -1462,10 +1482,12 @@ extern "C" int unreferenced(int x) { return GUARDED(Extra, entered, x); }
       "main.c": `${smallSources["main.c"]}\n${record}\n`,
     });
     const folder = String(dir);
+    // It fails over what it reads, before it looks for the names of the model.
     expectOnlyFailure(
       folder,
       await wrapped(folder, optionsWith()),
       "UnreadInput: main.obj could not be read (UnsupportedRelocations), so what it refers to is unknown",
+      "",
     );
   });
 

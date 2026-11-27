@@ -603,9 +603,11 @@ export async function runFixtureMaxRSS(fixture: string, expected: unknown) {
 export async function expectRssDeltaBelow(
   cmd: string[] /* args after bunExe(), e.g. ["--smol", "-e", code] or [fixturePath] */,
   bounds: { release: number; debug: number },
+  options: { cwd?: string } = {},
 ): Promise<void> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...cmd],
+    cwd: options.cwd,
     env: withoutAsanQuarantine(bunEnv),
     stdout: "pipe",
     stderr: "pipe",

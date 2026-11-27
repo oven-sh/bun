@@ -1,19 +1,13 @@
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { describe, test } from "bun:test";
+import { expectRssDeltaBelow, tempDir } from "harness";
 
-// ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
-// run far higher under bun-asan; widen the threshold there.
-const thresholdMB = isASAN ? 400 : 100;
 const timeout = 60_000;
 
+// The 10,000 scans of the warm-up put the memory that the JIT tiers take (7 MiB, or 22 MiB on a debug ASAN build)
+// before the baseline. The delta is then under 3 MiB. With a walker that is never freed, it is 54 MiB for "*.txt" and
+// 142 MiB for "**/*" (83 and 200 MiB on a debug ASAN build).
 async function run(dir: string, code: string) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--smol", "-e", code],
-    cwd: dir,
-    env: bunEnv,
-    stdio: ["inherit", "inherit", "inherit"],
-  });
-  expect(await proc.exited).toBe(0);
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 30, debug: 50 }, { cwd: dir });
 }
 
 describe("leaks", () => {
@@ -26,13 +20,12 @@ describe("leaks", () => {
         /* ts */ `
         const rss = process.memoryUsage.rss;
         const glob = new Bun.Glob("**/*");
-        for (let i = 0; i < 1000; i++) Array.from(glob.scanSync());
+        for (let i = 0; i < 10000; i++) Array.from(glob.scanSync());
         Bun.gc(true);
         const before = rss();
         for (let i = 0; i < 100000; i++) Array.from(glob.scanSync());
         Bun.gc(true);
-        const growthMB = (rss() - before) / 1024 / 1024;
-        if (growthMB > ${thresholdMB}) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+        console.log(JSON.stringify({ deltaMiB: (rss() - before) / 1024 / 1024 }));
       `,
       );
     },
@@ -48,13 +41,12 @@ describe("leaks", () => {
         /* ts */ `
         const rss = process.memoryUsage.rss;
         const glob = new Bun.Glob("**/*");
-        for (let i = 0; i < 1000; i++) await Array.fromAsync(glob.scan());
+        for (let i = 0; i < 10000; i++) await Array.fromAsync(glob.scan());
         Bun.gc(true);
         const before = rss();
         for (let i = 0; i < 100000; i++) await Array.fromAsync(glob.scan());
         Bun.gc(true);
-        const growthMB = (rss() - before) / 1024 / 1024;
-        if (growthMB > ${thresholdMB}) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+        console.log(JSON.stringify({ deltaMiB: (rss() - before) / 1024 / 1024 }));
       `,
       );
     },
@@ -70,13 +62,12 @@ describe("leaks", () => {
         /* ts */ `
         const rss = process.memoryUsage.rss;
         const glob = new Bun.Glob("*.txt");
-        for (let i = 0; i < 1000; i++) Array.from(glob.scanSync());
+        for (let i = 0; i < 10000; i++) Array.from(glob.scanSync());
         Bun.gc(true);
         const before = rss();
         for (let i = 0; i < 100000; i++) Array.from(glob.scanSync());
         Bun.gc(true);
-        const growthMB = (rss() - before) / 1024 / 1024;
-        if (growthMB > ${thresholdMB}) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+        console.log(JSON.stringify({ deltaMiB: (rss() - before) / 1024 / 1024 }));
       `,
       );
     },
@@ -92,13 +83,12 @@ describe("leaks", () => {
         /* ts */ `
         const rss = process.memoryUsage.rss;
         const glob = new Bun.Glob("*.txt");
-        for (let i = 0; i < 1000; i++) await Array.fromAsync(glob.scan());
+        for (let i = 0; i < 10000; i++) await Array.fromAsync(glob.scan());
         Bun.gc(true);
         const before = rss();
         for (let i = 0; i < 100000; i++) await Array.fromAsync(glob.scan());
         Bun.gc(true);
-        const growthMB = (rss() - before) / 1024 / 1024;
-        if (growthMB > ${thresholdMB}) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+        console.log(JSON.stringify({ deltaMiB: (rss() - before) / 1024 / 1024 }));
       `,
       );
     },

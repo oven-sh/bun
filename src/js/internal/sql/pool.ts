@@ -872,11 +872,11 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   }
 
   connectionOpened(connection: PooledConnection) {
+    this.dialError = null;
     this.saslprep = connection.saslprep;
     this.#most = Math.max(this.#most, this.connections.length - this.#connecting());
     this.#tries = 0;
     this.#refusedAt = -Infinity;
-    this.dialError = null;
     this.readyConnections.add(connection);
     if (this.#dialsHeld) {
       this.#dialsHeld = false;

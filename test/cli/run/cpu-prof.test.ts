@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
@@ -471,41 +471,39 @@ describe.concurrent("--cpu-prof", () => {
       columnNumber: -1,
     });
 
-    async function profileOf(files: Record<string, string>, entry: string) {
-      const dir = tempDir("cpu-prof-private-native", files);
+    // A child that failed wrote no profile: the result has no nodes then, and the exit code tells why.
+    async function profileOf(dir: string, entry: string) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "--cpu-prof", "--cpu-prof-md", "--cpu-prof-name=p", entry],
-        cwd: String(dir),
+        cwd: dir,
         // Debug builds show the frames of builtin JavaScript in error.stack unless this is off.
         env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: "0" },
         stdout: "pipe",
         stderr: "inherit",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      const nodes: any[] = JSON.parse(readFileSync(join(String(dir), "p.cpuprofile"), "utf-8")).nodes;
+      const read = (name: string) => (existsSync(join(dir, name)) ? readFileSync(join(dir, name), "utf-8") : "");
+      const nodes: any[] = JSON.parse(read("p.cpuprofile") || `{ "nodes": [] }`).nodes;
       const parentOf = new Map<number, any>();
       for (const node of nodes) for (const child of node.children ?? []) parentOf.set(child, node);
-      const markdown = readFileSync(join(String(dir), "p.md"), "utf-8");
+      const markdown = read("p.md");
       return {
         stdout,
         exitCode,
         nodes,
         parent: (node: any) => parentOf.get(node?.id),
         hasNativeRow: (name: string) => markdown.includes(`| \`${name}\` | \`[native code]\` |`),
-        [Symbol.dispose]: () => dir[Symbol.dispose](),
       };
     }
     const distinct = (values: unknown[]) =>
       [...new Set(values.map(value => JSON.stringify(value)))].map(v => JSON.parse(v));
 
     test("requireCommonJS, between require() and the module it loads", async () => {
-      using result = await profileOf(
-        {
-          "main.cjs": `require("./loaded.cjs");`,
-          "loaded.cjs": `console.log(new Error().stack.split("\\n")[2]);\n${busy}`,
-        },
-        "main.cjs",
-      );
+      using dir = tempDir("cpu-prof-private-native", {
+        "main.cjs": `require("./loaded.cjs");`,
+        "loaded.cjs": `console.log(new Error().stack.split("\\n")[2]);\n${busy}`,
+      });
+      const result = await profileOf(String(dir), "main.cjs");
       const { parent } = result;
       const loaded = result.nodes.filter(node => node.callFrame.url.endsWith("/loaded.cjs"));
       expect({
@@ -516,14 +514,15 @@ describe.concurrent("--cpu-prof", () => {
         markdown: ["requireCommonJS", "bound require"].filter(result.hasNativeRow),
         // The name is for profiles only.
         stdout: result.stdout,
+        exitCode: result.exitCode,
       }).toEqual({
         loader: [nativeFrame("requireCommonJS")],
         callerOfLoader: ["require"],
         callerOfRequire: [nativeFrame("bound require")],
         markdown: ["requireCommonJS", "bound require"],
         stdout: "    at anonymous (unknown)\n",
+        exitCode: 0,
       });
-      expect(result.exitCode).toBe(0);
     });
 
     test.each([
@@ -586,15 +585,16 @@ describe.concurrent("--cpu-prof", () => {
         },
       ],
     ])("%s", async (name, caller, entry, files) => {
-      using result = await profileOf(files, entry);
+      using dir = tempDir("cpu-prof-private-native", files);
+      const result = await profileOf(String(dir), entry);
       const named = result.nodes.filter(node => node.callFrame.functionName === name);
       expect({
         callFrames: distinct(named.map(node => node.callFrame)),
         markdown: result.hasNativeRow(name),
-      }).toEqual({ callFrames: [nativeFrame(name)], markdown: true });
+        exitCode: result.exitCode,
+      }).toEqual({ callFrames: [nativeFrame(name)], markdown: true, exitCode: 0 });
       // A native function that has a name of its own keeps it.
       if (caller) expect(named.map(node => result.parent(node).callFrame)).toContainEqual(caller);
-      expect(result.exitCode).toBe(0);
     });
   });
 

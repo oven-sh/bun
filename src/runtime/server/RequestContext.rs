@@ -1803,13 +1803,6 @@ where
             _ => unreachable!(),
         };
         let stat_size: BlobSizeType = BlobSizeType::try_from(stat.st_size.max(0)).unwrap();
-        if let AnyBlob::Blob(b) = blob_ref {
-            b.size.set(if is_regular {
-                stat_size
-            } else {
-                original_size.min(stat_size)
-            });
-        }
 
         self.flags.set_needs_content_length(is_regular);
         let mut sendfile = SendfileContext {
@@ -1817,11 +1810,6 @@ where
             offset: blob_offset,
             total: 0,
         };
-        if is_regular && opened.is_some() {
-            self.flags.set_needs_content_range(
-                sendfile.remain.saturating_sub(sendfile.offset) != stat_size,
-            );
-        }
         if is_regular {
             sendfile.offset = sendfile.offset.min(stat_size);
             sendfile.remain = sendfile
@@ -1829,6 +1817,10 @@ where
                 .max(sendfile.offset)
                 .min(stat_size)
                 .saturating_sub(sendfile.offset);
+            if opened.is_some() {
+                self.flags
+                    .set_needs_content_range(sendfile.remain != stat_size);
+            }
         }
         self.sendfile.set(sendfile);
 
@@ -3623,14 +3615,7 @@ where
         let sendfile = self.sendfile.get();
         let mut status = response.status_code();
         let blob = self.blob.get();
-        let mut needs_content_range = self.flags.needs_content_range()
-            && (sendfile.total > 0 || sendfile.remain < blob.size());
-
-        let size = if needs_content_range {
-            sendfile.remain
-        } else {
-            blob.size()
-        };
+        let mut needs_content_range = self.flags.needs_content_range();
 
         let (content_type, needs_content_type) =
             get_content_type(response.get_init_headers_mut(), blob);
@@ -3724,7 +3709,7 @@ where
         }
 
         if self.flags.needs_content_length() {
-            resp.write_header_int(b"content-length", size as u64);
+            resp.write_header_int(b"content-length", sendfile.remain as u64);
             resp.mark_wrote_content_length_header();
             self.flags.set_needs_content_length(false);
         }

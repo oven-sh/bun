@@ -1641,9 +1641,12 @@ pub mod formatter {
         }
     }
 
+    /// A line whose `estimated_line_length` is above this breaks at the next place where it can.
+    const MAX_ESTIMATED_LINE_LENGTH: usize = 80;
+
     impl Formatter<'_> {
         pub(crate) fn good_time_for_a_new_line(&mut self) -> bool {
-            if self.estimated_line_length > 80 {
+            if self.estimated_line_length > MAX_ESTIMATED_LINE_LENGTH {
                 self.reset_line();
                 return true;
             }
@@ -2550,7 +2553,7 @@ pub mod formatter {
         /// Mirror of `Formatter::good_time_for_a_new_line` routed through the
         /// borrowed `estimated_line_length`.
         pub(crate) fn good_time_for_a_new_line(&mut self, indent: u32) -> bool {
-            if *self.estimated_line_length > 80 {
+            if *self.estimated_line_length > MAX_ESTIMATED_LINE_LENGTH {
                 self.reset_line(indent);
                 return true;
             }
@@ -2626,17 +2629,22 @@ pub mod formatter {
             self.print(format_args!("{str}"));
         }
 
-        #[inline]
-        pub(crate) fn write_16_bit(&mut self, input: &[u16]) {
-            // `format_utf16_type` requires `impl fmt::Write + Sized`; route through
-            // the `Display` adapter so we go via `bun_io::Write::write_fmt` instead.
-            self.print(format_args!(
-                "{}",
-                bun_core::fmt::FormatUTF16 {
-                    buf: input,
-                    path_fmt_opts: None
-                }
-            ));
+        /// Writes a 16-bit string with quotes, as the 8-bit string of the same characters is written.
+        pub(crate) fn write_json_string_utf16(&mut self, units: &[u16]) {
+            if bun_core::printer::write_json_string_utf16(units, self.ctx).is_err() {
+                self.failed = true;
+            }
+        }
+
+        /// [`Self::write_json_string_utf16`] for a value, whose length is counted already: a wide character
+        /// counts for the two columns it takes. No 8-bit string has one.
+        pub(crate) fn write_string_value_utf16(&mut self, units: &[u16]) {
+            // Above the limit the line breaks with or without this count, so only a string that still fits is
+            // searched.
+            if *self.estimated_line_length <= MAX_ESTIMATED_LINE_LENGTH {
+                self.add_for_new_line(strings::visible::width::wide_units_utf16(units));
+            }
+            self.write_json_string_utf16(units);
         }
     }
 
@@ -2900,26 +2908,13 @@ pub mod formatter {
                         pfmt!("<d>:<r> ", C),
                     ));
                 } else if key.is_16bit() {
-                    let mut utf16_slice = key.utf16_slice();
-
-                    writer.add_for_new_line(utf16_slice.len() + 2);
+                    writer.add_for_new_line(key.len + 2);
 
                     if C {
                         writer.write_all(pfmt!("<r><green>", true).as_bytes());
                     }
-
-                    writer.write_all(b"\"");
-
-                    const QUOTE_U16: &[u16] = &[b'"' as u16];
-                    while let Some(j) = strings::index_of_any16(utf16_slice, QUOTE_U16) {
-                        writer.write_16_bit(&utf16_slice[0..j]);
-                        writer.write_all(b"\"");
-                        utf16_slice = &utf16_slice[j + 1..];
-                    }
-
-                    writer.write_16_bit(utf16_slice);
-
-                    writer.print(format_args!("{}", pfmt!("\"<r><d>:<r> ", C)));
+                    writer.write_json_string_utf16(key.utf16_slice());
+                    writer.print(format_args!("{}", pfmt!("<r><d>:<r> ", C)));
                 } else {
                     writer.add_for_new_line(key.len + 2);
 
@@ -3483,18 +3478,15 @@ pub mod formatter {
                 }
 
                 if str.is_utf16() {
-                    if writer.failed {
-                        self.failed = true;
-                    }
-                    self.print_as::<C>(Tag::JSON, writer_, value, jsc::JSType::StringObject)?;
-                    if C {
-                        let _ = writer_.write_all(pfmt!("<r>", true).as_bytes());
-                    }
-                    return Ok(());
-                }
-
-                JSPrinter::write_json_string(str.latin1(), writer.ctx, JSPrinter::Encoding::Latin1)
+                    writer.write_string_value_utf16(str.utf16());
+                } else {
+                    JSPrinter::write_json_string(
+                        str.latin1(),
+                        writer.ctx,
+                        JSPrinter::Encoding::Latin1,
+                    )
                     .expect("unreachable");
+                }
 
                 if C {
                     writer.write_all(pfmt!("<r>", true).as_bytes());
@@ -3512,15 +3504,7 @@ pub mod formatter {
                 writer.print(format_args!("[String: "));
 
                 if str.is_utf16() {
-                    if writer.failed {
-                        self.failed = true;
-                    }
-                    self.print_as::<C>(Tag::JSON, writer_, value, jsc::JSType::StringObject)?;
-                    writer = WrappedWriter {
-                        ctx: writer_,
-                        failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
-                    };
+                    writer.write_string_value_utf16(str.utf16());
                 } else {
                     JSPrinter::write_json_string(
                         str.latin1(),

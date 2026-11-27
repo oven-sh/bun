@@ -6611,9 +6611,8 @@ impl VirtualMachine {
             && error_instance.is_cell()
             && error_instance.js_type() == JSType::ErrorInstance;
         let global_ref = self.global();
-        // Holds the owning `bun_core::String` so the latin1 view below stays
-        // live for this fn.
-        let code_string: Option<bun_core::String>;
+        // Holds the bytes of the code so the view below stays live for this fn.
+        let code_bytes: bun_core::Utf8Bytes<'static>;
         let code: Option<&[u8]> = if is_error_instance {
             // SAFETY: `is_error_instance` ⇒ `get_object()` is `Some`.
             let obj = unsafe { &mut *error_instance.get_object().unwrap_unchecked() };
@@ -6622,11 +6621,11 @@ impl VirtualMachine {
                 // `Symbol.toPrimitive`. The property loop below prints one.
                 if code_value.is_string_literal() {
                     match code_value.to_bun_string(global_ref) {
-                        Ok(s) if s.is_8bit() => {
-                            code_string = Some(s);
-                            code_string.as_ref().map(|s| s.latin1())
+                        // In UTF-8, which `fmt::quote` below takes: a code prints the same in either storage.
+                        Ok(s) => {
+                            code_bytes = s.into_utf8();
+                            Some(&code_bytes[..])
                         }
-                        Ok(_) => None,
                         // A primitive string only fails to convert when it is a rope
                         // that cannot be resolved.
                         Err(_) => bun_core::out_of_memory(),

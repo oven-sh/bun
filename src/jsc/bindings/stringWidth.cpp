@@ -1008,6 +1008,34 @@ extern "C" uint8_t Bun__codepointWidth(uint32_t cp, bool ambiguous_as_wide)
     return StringWidth::visibleCodepointWidth(cp, ambiguous_as_wide);
 }
 
+static constexpr bool hasWideCodepoint(char32_t first, char32_t last)
+{
+    for (char32_t cp = first; cp <= last; cp++) {
+        if (StringWidth::widthFromFused(StringWidth::fusedClassify(cp), false) == 2)
+            return true;
+    }
+    return false;
+}
+
+// How many of the code units are two terminal columns wide. Half a surrogate pair is not, so an astral character
+// counts as its two units.
+extern "C" size_t Bun__wideUnitCount_utf16(const uint16_t* ptr, size_t len)
+{
+    static_assert(!hasWideCodepoint(0, 0x10FF) && !hasWideCodepoint(0xD800, 0xDFFF));
+
+    // Most text has no unit from U+1100 up.
+    uint16_t all = 0;
+    for (size_t i = 0; i < len; i++)
+        all |= ptr[i];
+    if (all < 0x1100)
+        return 0;
+
+    size_t count = 0;
+    for (size_t i = 0; i < len; i++)
+        count += ptr[i] >= 0x1100 && StringWidth::widthFromFused(StringWidth::fusedClassify(ptr[i]), false) == 2;
+    return count;
+}
+
 extern "C" bool Bun__graphemeBreak(uint32_t cp1, uint32_t cp2, uint8_t* state)
 {
     // Guard the exported ABI: the grapheme class lookup indexes fixed tables,

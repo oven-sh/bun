@@ -1386,8 +1386,9 @@ fn todo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
         "(BuildHIR::lowerAssignment) Handle ",
         " rest element in ObjectPattern",
     ) {
-        // `unsupported_object_pattern_rest`
+        // `unsupported_object_pattern_rest`. The compiler marks the target here, oxc the rest element with its `...`.
         out.relabel(format!("Unsupported {kind} rest element"));
+        out.move_to(primary_span.and_then(|at| enclosing_property(file, at)));
     } else if let Some(kind) = between(
         "(BuildHIR::node.lowerReorderableExpression) Expression type `",
         "` cannot be safely reordered",

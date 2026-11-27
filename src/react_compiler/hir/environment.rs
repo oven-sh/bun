@@ -21,6 +21,8 @@ use crate::hir::object_shape::default_mutating_hook;
 use crate::hir::object_shape::default_nonmutating_hook;
 use crate::hir::*;
 
+const REANIMATED_MODULE_NAME: &[u8] = b"react-native-reanimated";
+
 /// A variable rename from lowering: the binding at `declaration_start` position
 /// was renamed from `original` to `renamed`.
 #[derive(Debug, Clone, Copy)]
@@ -172,16 +174,6 @@ impl Environment {
             global_registry.insert(hook_name.clone(), hook_type);
         }
 
-        // Register reanimated module type when enabled
-        let mut module_types: HashMap<StoreStr, Option<Global>> = HashMap::default();
-        if config.enable_custom_type_definition_for_reanimated {
-            let reanimated_module_type = globals::get_reanimated_module_type(&mut shapes);
-            module_types.insert(
-                StoreStr::new(b"react-native-reanimated"),
-                Some(reanimated_module_type),
-            );
-        }
-
         Self {
             next_block_id_counter: 0,
             next_scope_id_counter: 0,
@@ -212,7 +204,7 @@ impl Environment {
                 .enable_preserve_existing_memoization_guarantees,
             globals: global_registry,
             shapes,
-            module_types,
+            module_types: HashMap::default(),
             module_type_errors: HashMap::default(),
             default_nonmutating_hook: None,
             default_mutating_hook: None,
@@ -673,6 +665,17 @@ impl Environment {
     fn resolve_module_type(&mut self, module_name: StoreStr) -> Option<Global> {
         if let Some(cached) = self.module_types.get(&module_name) {
             return cached.clone();
+        }
+
+        // Upstream builds this type in the constructor, for every function. Built here, only a function that
+        // imports the module pays for it, and it still comes before the provider.
+        if self.config.enable_custom_type_definition_for_reanimated
+            && module_name.slice() == REANIMATED_MODULE_NAME
+        {
+            let module_type = globals::get_reanimated_module_type(&mut self.shapes);
+            self.module_types
+                .insert(module_name, Some(module_type.clone()));
+            return Some(module_type);
         }
 
         // Check pre-resolved provider results first, then fall back to default

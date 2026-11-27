@@ -71,6 +71,8 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
             true => ExhaustiveEffectDepsMode::All,
             false => ExhaustiveEffectDepsMode::Off,
         },
+        // The types are only for what is imported from `react-native-reanimated`.
+        enable_custom_type_definition_for_reanimated: is_oxlint,
         ..EnvironmentConfig::default()
     }
 }

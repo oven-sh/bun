@@ -1083,6 +1083,24 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
     expect(readTree(String(dir))).toEqual({ [`dist/${name}`]: png, [`src/${name}`]: png });
   });
 
+  // Windows has no execute bit.
+  test.skipIf(isWindows)("keeps the execute bit of a copied file", async () => {
+    using dir = tempDir("no-bundle-copy-mode", { "src/run.sh": "#!/bin/sh\necho hi\n", "src/data.bin": png });
+    fs.chmodSync(path.join(String(dir), "src", "run.sh"), 0o755);
+    fs.chmodSync(path.join(String(dir), "src", "data.bin"), 0o644);
+
+    const { stderr, exitCode } = await build(String(dir), ["./src/run.sh", "./src/data.bin", "--outdir=dist"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const mode = (name: string) => fs.statSync(path.join(String(dir), "dist", name)).mode & 0o777;
+    const allowed = 0o777 & ~process.umask();
+    expect({ "run.sh": mode("run.sh"), "data.bin": mode("data.bin") }).toEqual({
+      "run.sh": 0o755 & allowed,
+      "data.bin": 0o644 & allowed,
+    });
+  });
+
   test("writes a copied file beside the transpiled files of the same build", async () => {
     const source = `export const a: number = 1;\n`;
     using dir = tempDir("no-bundle-copy-mixed", { "src/a.ts": source, "src/x.wasm": wasm });

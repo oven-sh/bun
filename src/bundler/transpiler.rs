@@ -2705,10 +2705,13 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Wasm
             | options::Loader::File
             | options::Loader::Napi => {
-                let Some(bytes) = self.read_copied_file(file_path_text, file_path.pretty) else {
+                let Some((bytes, is_executable)) =
+                    self.read_copied_file(file_path_text, file_path.pretty)
+                else {
                     return Ok(None);
                 };
                 output_file.output_kind = options::OutputKind::Asset;
+                output_file.is_executable = is_executable;
                 (bytes, file_path_ext)
             }
         };
@@ -2865,17 +2868,32 @@ impl<'a> Transpiler<'a> {
 
     /// Cold path like `build_css_output`: the bytes of an entry point that
     /// `bun build --no-bundle` copies (`.wasm`, `.node`, sqlite, bunsh,
-    /// generic `file`). Not read through the resolver's file cache, which
-    /// removes a BOM. `None` means the error is logged.
+    /// generic `file`), and whether the file has an execute bit. Not read
+    /// through the resolver's file cache, which removes a BOM. `None` means
+    /// the error is logged.
     #[cold]
     #[inline(never)]
     fn read_copied_file(
         &mut self,
         file_path_text: &[u8],
         file_path_pretty: &[u8],
-    ) -> Option<Box<[u8]>> {
-        match bun_sys::File::read_from(FD::cwd(), file_path_text) {
-            Ok(bytes) => Some(bytes.into_boxed_slice()),
+    ) -> Option<(Box<[u8]>, bool)> {
+        // One `fstat` gives the mode and the size to reserve, as `File::read_to_end` reserves it.
+        let read = || -> bun_sys::Maybe<(Vec<u8>, bool)> {
+            let file = bun_sys::File::openat(FD::cwd(), file_path_text, bun_sys::O::RDONLY, 0)?;
+            let stat = file.stat()?;
+            let mut bytes = Vec::new();
+            if bytes
+                .try_reserve_exact((stat.st_size as usize).saturating_add(16))
+                .is_err()
+            {
+                return Err(bun_sys::Error::oom());
+            }
+            file.read_to_end_with_array_list(&mut bytes, bun_sys::SizeHint::ProbablySmall)?;
+            Ok((bytes, stat.st_mode as u32 & 0o111 != 0))
+        };
+        match read() {
+            Ok((bytes, is_executable)) => Some((bytes.into_boxed_slice(), is_executable)),
             Err(err) => {
                 self.log_mut().add_error_fmt(
                     None,

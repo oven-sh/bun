@@ -9,7 +9,7 @@
 // Machine code is not such JavaScript: an N-API addon and what bun:ffi calls are native code like Bun's own. Their routes are listed to pin that they raise no event and are not refused.
 // What native code can do to a compiled program is the subject of native-addons.test.ts.
 import { afterAll, expect } from "bun:test";
-import { bunEnv, bunExe, isGlibc, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isGlibc, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { built, slot, spawned } from "./harness/commands";
@@ -564,13 +564,16 @@ const findsNoEvent = new Set([
   "worker with preload",
 ]);
 
-// Many routes for which the build finds an event run nothing all the same. Those of them that the build reports alike are files of one program too: of each alone
+// Many routes for which the build finds an event run nothing all the same. Those of them that the build reports alike can be files of one program: of each alone
 // it prints the same `blocked by` lines, but for the places in them, and of their program it prints those lines again. No event of such a program is known to be
 // the event of one route: where a program is open, the report also has lines at statements that open nothing alone. So a route in company is held to the rule of
-// the closed program, and fails if it runs the code. It prints there what it prints alone. A route that runs the code stays a program of its own, where an event
-// is its own.
-// These lists are made by hand. With AOT_EVERY_ROUTE_ALONE=1 each of their routes is a program of its own again, for which the build must find an event.
-const reportedAlike: string[][] = process.env.AOT_EVERY_ROUTE_ALONE
+// the closed program, and fails if it runs the code. It prints there what it prints alone. A route that runs the code is always a program of its own, where an
+// event is its own.
+// Only a Bun with a sanitizer builds them in company. There a build takes several times as long, and what a sanitizer finds it finds by the code that runs over a
+// route, not by a verdict. Every other Bun builds each of these routes alone as well, and so shows that the build finds an event for each.
+// AOT_EVERY_ROUTE_ALONE=1 | 0 asks for either anywhere. These lists are made by hand.
+const everyRouteAlone = process.env.AOT_EVERY_ROUTE_ALONE ? process.env.AOT_EVERY_ROUTE_ALONE === "1" : !isASAN;
+const reportedAlike: string[][] = everyRouteAlone
   ? []
   : [
       [

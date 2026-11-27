@@ -13,7 +13,7 @@ import { bunEnv, bunExe, isGlibc, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { built, slot, spawned } from "./harness/commands";
-import { beforeAll, describe, test } from "./supported";
+import { describe, test } from "./supported";
 
 type Route = {
   body: string;
@@ -518,7 +518,7 @@ const routes: Record<string, Record<string, Route>> = {
   },
 };
 
-// A route for which the build finds an event is a program of its own: the report has a line for each kind of event and each API, with one place, so in company it would not tell whose an event is.
+// A route for which the build finds an event is a program of its own, unless `reportedAlike` below lists it: the report has a line for each kind of event and each API, with one place, so in company it would not tell whose an event is.
 // The routes for which the build finds none are files of one program, whose entry point loads the file that ROUTE names: that program stays closed, and a route in it that runs the code fails.
 const findsNoEvent = new Set([
   "arguments callee caller",
@@ -564,6 +564,35 @@ const findsNoEvent = new Set([
   "worker with preload",
 ]);
 
+// Many routes for which the build finds an event run nothing all the same. Those of them that the build reports alike are files of one program too: of each alone
+// it prints the same `blocked by` lines, but for the places in them, and of their program it prints those lines again. No event of such a program is known to be
+// the event of one route: where a program is open, the report also has lines at statements that open nothing alone. So a route in company is held to the rule of
+// the closed program, and fails if it runs the code. It prints there what it prints alone. A route that runs the code stays a program of its own, where an event
+// is its own.
+// These lists are made by hand. With AOT_EVERY_ROUTE_ALONE=1 each of their routes is a program of its own again, for which the build must find an event.
+const reportedAlike: string[][] = process.env.AOT_EVERY_ROUTE_ALONE
+  ? []
+  : [
+      [
+        "module require method",
+        "require of a file",
+        "require after resolve sync",
+        "import of a file",
+        "import of a data url",
+        "import of a blob url",
+        "import of an http url",
+        "require of vm under a computed name",
+        "require of an addon",
+        "bun jsc under a computed name",
+        "node test under a computed name",
+      ],
+      ["module extensions", "addon extension handler", "addon extension handler under a computed name"],
+      ["process get builtin module vm", "process get builtin module module", "builtin module vm run in new context"],
+      ["build then import", "build plugin from a file"],
+      ["module load", "module load of vm"],
+      ["module create require", "create require of vm"],
+    ];
+
 /** `file`: as the build prints it. Undefined: the event lies nowhere in the program. */
 type Event = { file: string | undefined };
 // That the program starts a Worker from code outside the executable is printed in a line of the same make. It is no event: that code runs apart from the program.
@@ -577,6 +606,11 @@ const all = Object.entries(routes).flatMap(([group, members]) =>
     file: `${name.replaceAll(" ", "-")}.${route.extension ?? "js"}`,
   })),
 );
+/** The routes that are files of a program of several. */
+const inCompany = [...findsNoEvent, ...reportedAlike.flat()];
+for (const name of inCompany)
+  if (!all.some(route => route.name === name) || inCompany.indexOf(name) !== inCompany.lastIndexOf(name))
+    throw new Error(`"${name}" is no route, or is listed twice`);
 const textOf = (route: Route) =>
   (route.extension === "mjs"
     ? `import { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);\n`
@@ -602,13 +636,33 @@ async function build(folder: string, main: string) {
   return { executable, events };
 }
 
+/**
+ * A program of several routes. Its entry point loads the file that ROUTE names. It requires a CommonJS file, so that the file runs as it does where it is the
+ * entry point itself: import() takes a .cjs file that names neither `require` nor `module` for an ES module and runs it as strict code, where reading `caller`,
+ * `callee` or `arguments` of a function throws. The first test that asks for the program makes its folder and builds it.
+ */
+function programOf(members: typeof all) {
+  const files = () => ({
+    "main.js":
+      `const routes = {\n${members.map(({ file }) => `  ${JSON.stringify(file)}: () => ${file.endsWith(".cjs") ? "require" : "import"}("./${file}"),\n`).join("")}};\n` +
+      `routes[process.env.ROUTE]();\n`,
+    ...Object.fromEntries(members.map(({ file, route }) => [file, textOf(route)])),
+    ...others,
+  });
+  let dir: ReturnType<typeof tempDir> | undefined;
+  afterAll(() => dir?.[Symbol.dispose]());
+  let made: ReturnType<typeof build> | undefined;
+  return () => (made ??= slot(() => build(String((dir = tempDir("aot-unseen-code", files()))), "main.js")));
+}
+
 // What a program prints where nothing says so: one of the three answers of attempt().
 const anAnswer = /^(?:RAN|did not run|refused \w+(?: \w+)?)\n$/;
 
+/** `hasAnEventOfItsOwn`: the build found an event for a program of this route alone. */
 async function judge(
   folder: string,
   executable: string,
-  sawAnEvent: boolean,
+  hasAnEventOfItsOwn: boolean,
   route: Route,
   more: Record<string, string> = {},
 ) {
@@ -627,11 +681,13 @@ async function judge(
   expect({
     // The build says that machine code may be loaded, and the load is not refused. Whether the library or the C compiler is there depends on the machine.
     ...(route.isMachineCode && {
-      sawAnEvent,
+      sawAnEvent: hasAnEventOfItsOwn,
       isRefusedAsUnseenCode: /^refused Error ERR_CODE_NOT_COMPILED$/m.test(ran.stdout),
     }),
-    // The rule of the file, whatever `prints` says: the code runs only apart from the program, where the build found an event, or in the place of the program.
-    ranTheCode: route.runsApartFromTheProgram ? ranTheCode : ranTheCode && !sawAnEvent && !route.replacesTheProgram,
+    // The rule of the file, whatever `prints` says: the code runs only apart from the program, where the build found an event of the route, or in the place of the program.
+    ranTheCode: route.runsApartFromTheProgram
+      ? ranTheCode
+      : ranTheCode && !hasAnEventOfItsOwn && !route.replacesTheProgram,
     stdout: ran.stdout,
     // C's descriptor 2 translates line ends on Windows.
     stderr: ran.stderr.replaceAll("\r\n", "\n"),
@@ -650,7 +706,7 @@ async function judge(
 
 export function codeTheCompilerNeverSaw() {
   describe.concurrent("code the compiler never saw, in a program of its own", () => {
-    for (const { group, name, route, file } of all.filter(({ name }) => !findsNoEvent.has(name))) {
+    for (const { group, name, route, file } of all.filter(({ name }) => !inCompany.includes(name))) {
       test(
         `${group}: ${name}`,
         () =>
@@ -665,29 +721,46 @@ export function codeTheCompilerNeverSaw() {
     }
   });
 
-  const routesOfProgram = all.filter(({ name }) => findsNoEvent.has(name));
+  describe("code the compiler never saw, in a program of routes that the build reports alike", () => {
+    // bun test keeps as many tests under way as --max-concurrency says, in the order of their declaration, and the first test of a program builds it. So the
+    // first route of every program comes first, then the second of each: the builds run beside one another.
+    const inTurns = reportedAlike
+      .flatMap(names => {
+        const members = names.map(name => all.find(route => route.name === name)!);
+        const program = programOf(members);
+        return members.map((member, turn) => ({ member, program, turn }));
+      })
+      .sort((one, other) => one.turn - other.turn);
+    for (const { member, program } of inTurns) {
+      test.concurrent(
+        `${member.group}: ${member.name}`,
+        async () => {
+          const { executable, events } = await program();
+          expect({ sawAnEvent: events.length > 0 }).toEqual({ sawAnEvent: true });
+          await slot(async () => {
+            using run = tempDir("aot-unseen-code-run", others);
+            await judge(String(run), executable, false, member.route, { ROUTE: member.file });
+          });
+        },
+        600_000,
+      );
+    }
+  });
+
   describe("code the compiler never saw, in a program that the build finds closed", () => {
-    // The entry point requires a CommonJS file, so that it runs as it does where it is the entry point itself. import() takes a .cjs file that names neither
-    // `require` nor `module` for an ES module and runs it as strict code, where reading `caller`, `callee` or `arguments` of a function throws.
-    const dir = tempDir("aot-unseen-code", {
-      "main.js":
-        `const routes = {\n${routesOfProgram.map(({ file }) => `  ${JSON.stringify(file)}: () => ${file.endsWith(".cjs") ? "require" : "import"}("./${file}"),\n`).join("")}};\n` +
-        `routes[process.env.ROUTE]();\n`,
-      ...Object.fromEntries(routesOfProgram.map(({ file, route }) => [file, textOf(route)])),
-      ...others,
-    });
-    afterAll(() => dir[Symbol.dispose]());
-    let program: Awaited<ReturnType<typeof build>>;
-    beforeAll(async () => void (program = await build(String(dir), "main.js")), 600_000);
-    for (const { group, name, route, file } of routesOfProgram) {
+    const members = all.filter(({ name }) => findsNoEvent.has(name));
+    const program = programOf(members);
+    for (const { group, name, route, file } of members) {
       test.concurrent(
         `${group}: ${name}`,
-        () =>
-          slot(async () => {
+        async () => {
+          const { executable, events } = await program();
+          expect(events).toEqual([]);
+          await slot(async () => {
             using run = tempDir("aot-unseen-code-run", others);
-            expect(program.events).toEqual([]);
-            await judge(String(run), program.executable, false, route, { ROUTE: file });
-          }),
+            await judge(String(run), executable, false, route, { ROUTE: file });
+          });
+        },
         600_000,
       );
     }

@@ -1,0 +1,3 @@
+# Output of `bun scripts/generate-protocol.ts --v8`. Nothing imports it.
+*
+!.gitignore

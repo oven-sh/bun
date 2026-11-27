@@ -13,6 +13,7 @@ export const mayMove = /^\.(text|rodata|bun_builtins)(\.|$)/;
 export const isOrdinary = (output: string) => isMovable(output) || [".data", ".data.rel.ro", ".bss"].includes(output);
 export const ignoredOutputs = /^\.(debug|gdb_index|symtab|strtab|comment|shstrtab|eh_frame|rela|tbss)/;
 
+const STB_GLOBAL = 1;
 const EM_X86_64 = 62;
 const EM_AARCH64 = 183;
 const R_X86_64_64 = 1;
@@ -24,7 +25,7 @@ const pointerRelocationTypes = new Map([
 
 export interface ElfObjectReferences {
   references: Map<string, Set<string>>;
-  definitions: [name: string, section: string][];
+  definitions: [name: string, section: string, isStrong: boolean][];
   named: [name: string, section: string][];
   namedByUnwindTables: Set<string>;
   recordSections: { bytes: Buffer; references: Map<number, string> }[];
@@ -99,7 +100,7 @@ function readObjectTables(
     const isGlobal = info >> 4 !== 0;
     if (!isGlobal && !mayMove.test(section)) continue;
     const name = stringAt(strings, symbols.readUInt32LE(index * 24));
-    if (isGlobal) result.definitions.push([name, section]);
+    if (isGlobal) result.definitions.push([name, section, info >> 4 === STB_GLOBAL]);
     // AArch64's mapping symbols, $x and $d, mark where code and data begin.
     if (mayMove.test(section) && !name.startsWith("$")) result.named.push([name, section]);
   }

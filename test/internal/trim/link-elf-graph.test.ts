@@ -154,6 +154,72 @@ describeLink("the graph reader", () => {
     expect(graph.section.filter((_, node) => reaches(node))).toEqual([]);
   });
 
+  const constants = (name: string, text: string, unique = "") =>
+    `.section .rodata.${name},"aR",@progbits${unique}\n${text}`;
+  const weakLabel = constants("weak", ".weak label\nlabel:\n.quad 7\n");
+  const neighbour = constants("neighbour", ".quad 9\n.addrsig\n");
+
+  test.each([
+    {
+      title: "at the end of a section to that section",
+      first: "",
+      second: constants("ended", ".globl label\n.quad 8\nlabel:\n") + neighbour,
+      adjacent: ["ended", "neighbour"],
+      reached: ["ended"],
+    },
+    {
+      title: "at the end of a section to that section where it replaces a weak one",
+      first: weakLabel,
+      second: constants("ended", ".globl label\n.quad 8\nlabel:\n") + neighbour,
+      adjacent: ["ended", "neighbour"],
+      reached: ["weak", "ended"],
+    },
+    {
+      title: "at the end of the second section of a name to that section",
+      first: "",
+      second:
+        constants("twice", ".quad 6\n", ",unique,1") +
+        constants("twice", ".globl label\n.quad 8\nlabel:\n", ",unique,2") +
+        neighbour,
+      adjacent: ["twice", "neighbour"],
+      reached: ["twice", "twice"],
+    },
+    {
+      title: "at the start of a section to that section, right behind the section of the weak one that it replaces",
+      first: weakLabel,
+      second: constants("started", ".globl label\nlabel:\n.quad 8\n") + neighbour,
+      adjacent: ["weak", "started"],
+      reached: ["weak", "started"],
+    },
+    {
+      title: "to the section that its own was folded into, right behind the section of the weak one that it replaces",
+      first: weakLabel + neighbour,
+      second: constants("folded", ".globl label\nlabel:\n.quad 9\n.addrsig\n"),
+      adjacent: ["weak", "neighbour"],
+      reached: ["weak", "neighbour"],
+    },
+  ])("follows a reference to a label without a size $title", async ({ first, second, adjacent, reached }) => {
+    using dir = tempDir("trim-elf-reader", {
+      ...files,
+      "more.c": `extern const char label[]; int more(int x) { return label[x]; }`,
+      "first.c": `__asm__(${JSON.stringify(first + ".text\n")});`,
+      "second.c": `__asm__(${JSON.stringify(second + ".text\n")});`,
+    });
+    const folder = String(dir);
+    const linkedObjects = [...objects, "first", "second"];
+    await compileObjects(folder, linkedObjects);
+    const link = { name: "second", output: "hand", objects: linkedObjects };
+    const { executable, map, log } = await linkByHand(folder, link);
+    const { graph, failures } = readElfGraph(executable, map, log);
+    expect(failures).toEqual([]);
+    const nodeOf = (name: string) => graph.section.lastIndexOf(`.rodata.${name}`);
+    const [front, behind] = adjacent.map(nodeOf) as [number, number];
+    expect(graph.address[front]! + graph.size[front]!).toBe(graph.address[behind]!);
+    const more = graph.section.indexOf(".text.more");
+    const successors = graph.successors.subarray(graph.successorStart[more]!, graph.successorStart[more + 1]!);
+    expect(Array.from(successors, node => graph.section[node])).toEqual(reached.map(name => `.rodata.${name}`));
+  });
+
   test("reports a reference to a section the map does not list", async () => {
     using dir = tempDir("trim-elf-reader", files);
     const folder = String(dir);

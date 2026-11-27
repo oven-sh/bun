@@ -59,8 +59,8 @@ public:
     // `module.children`. In that case, all children may also need their
     // children fields to exist, recursively. To avoid allocating a *JSArray for
     // each module, the children array is constructed internally as a
-    // Vector of pointers. If accessed, deduplication happens and array is
-    // moved into JavaScript. These two fields add 16 bytes to JSCommonJSModule.
+    // Vector of pointers, one per child (see addChild). createChildrenArray moves them
+    // into a JSArray on the first read of `module.children`, or when a child arrives that is not a JSCommonJSModule.
     // `m_childrenValue` can be set to any value via the user-exposed setter,
     // but Bun does not test that behavior besides ensuring it does not crash.
     mutable JSC::WriteBarrier<Unknown> m_childrenValue;
@@ -98,6 +98,8 @@ public:
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
 
     bool ignoreESModuleAnnotation { false };
+    // False means no parent's m_children holds this module, so addChild need not search. Unlike isListedAsChild, it stays true once set.
+    bool hasBeenAddedAsChild { false };
     // Of the module object of a file of an ahead-of-time executable: the number of the file in the executable. Its `exports`, `parent` and `children` are the engine's to answer.
     static constexpr uint32_t noCompiledModule = UINT32_MAX;
     uint32_t compiledModule { noCompiledModule };
@@ -169,6 +171,8 @@ public:
     JSValue filename() { return m_filename.get(); }
 
     bool load(JSC::VM& vm, Zig::GlobalObject* globalObject);
+    void addChild(JSC::VM&, JSCommonJSModule* child);
+    void createChildrenArray(JSC::JSGlobalObject*);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;

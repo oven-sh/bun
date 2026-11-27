@@ -685,10 +685,15 @@ export function arm64PointerLoads(image: Buffer): { pointerLoads: number; fromCo
       offset: image.readUInt32LE(section + 20),
     }));
   // In the low bits a branch has its condition or offset, and a vector instruction a register of the other file.
-  const writes = (instruction: number, register: number) =>
+  const writesFirst = (instruction: number, register: number) =>
     (instruction & 31) === register &&
     (instruction & 0x1c000000) !== 0x14000000 &&
     (instruction & 0x0c000000) !== 0x0c000000;
+  // ldp, ldnp, ldpsw, ldxp, ldaxp. The other exclusive and ordered loads match too, and have 31 there.
+  const writesSecond = (instruction: number, register: number) =>
+    (instruction & 0x1e400000) === 0x08400000 && ((instruction >>> 10) & 31) === register;
+  const writes = (instruction: number, register: number) =>
+    writesFirst(instruction, register) || writesSecond(instruction, register);
   const address = (rva: number) => `0x${(imageBase + BigInt(rva)).toString(16)}`;
   let pointerLoads = 0;
   const fromCode: string[] = [];

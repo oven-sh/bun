@@ -1625,6 +1625,118 @@ describe("bundler", () => {
     run: { file: "/out/a.js", stdout: "a APP" },
   });
 
+  // x.js and y.js read each other at load, so no order serves both and the chunk stays with a.js.
+  itBundled("splitting/SharedChunkOwnerKeepsChunkWhenFilesReadEachOther", {
+    files: {
+      "/a.js": `import "./x.js"; console.log("a");`,
+      "/b.js": `import "./y.js"; console.log("b");`,
+      "/x.js": `import { y } from "./y.js"; export var x = String("x"); console.log("x reads", y);`,
+      "/y.js": `import { x } from "./x.js"; export var y = String("y"); console.log("y reads", x);`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "y reads undefined\nx reads y\na" },
+      { file: "/out/b.js", stdout: "y reads undefined\nx reads y\nb" },
+    ],
+  });
+
+  // x.js reads y.js through functions that call each other, and y.js reads z.js.
+  // Only c.js and d.js enter the cycle at x.js, and c.js is first.
+  itBundled("splitting/SharedChunkOwnerIsFirstEntryPointWithSafeOrder", {
+    files: {
+      "/a.js": `import "./z.js"; console.log("a");`,
+      "/b.js": `import "./y.js"; console.log("b");`,
+      "/c.js": `import "./p.js"; import "./q.js"; import "./x.js"; console.log("c");`,
+      "/d.js": `import "./q.js"; import "./p.js"; import "./x.js"; console.log("d");`,
+      "/x.js": /* js */ `
+        import { getY } from "./y.js";
+        console.log("x reads", getY());
+        export const later = () => import("./later.js");
+      `,
+      "/y.js": /* js */ `
+        import { z } from "./z.js";
+        export var y = String("y");
+        export function getY(n) { return n ? again(n - 1) : y }
+        function again(n) { return getY(n) }
+        console.log("y reads", z);
+      `,
+      "/z.js": `import "./x.js"; import "./q.js"; import "./p.js"; export var z = String("z"); console.log("z");`,
+      "/p.js": `console.log("p");`,
+      "/q.js": `console.log("q");`,
+      "/later.js": `console.log("later");`,
+    },
+    entryPoints: ["/a.js", "/b.js", "/c.js", "/d.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "p\nq\nz\ny reads z\nx reads y\na" },
+      { file: "/out/d.js", stdout: "p\nq\nz\ny reads z\nx reads y\nd" },
+    ],
+  });
+
+  // In the order of b.js, the require() in x.js puts y.js between two statements of x.js, and e.js can read w.
+  // f names both w and w2, so that the check of this order comes to f from x.js first.
+  itBundled("splitting/SharedChunkOwnerWithRequireInsideReadingFile", {
+    files: {
+      "/a.js": `import "./y.js"; console.log("a");`,
+      "/b.js": `import "./g.js"; console.log("b");`,
+      "/e.js": `import { w } from "./y.js"; console.log("e", typeof w); export const e = 1;`,
+      "/y.js": `import "./x.js"; export let w = String("w"); console.log("y");`,
+      "/g.js": /* js */ `
+        import { w2 } from "./x.js"; import { w } from "./y.js";
+        export function f(k) { return k ? w + w2 : 0 }
+        console.log("g");
+      `,
+      "/x.js": /* js */ `
+        import { f } from "./g.js";
+        console.log("x reads", f(globalThis.k));
+        console.log(require("./e.js").e);
+        export let w2 = String("w2");
+        console.log("x");
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/b.js", stdout: "x reads 0\ny\ne string\n1\nx\ng\nb" },
+  });
+
+  // import("bun:wrap") makes the runtime an entry point. x.js and y.js fold into the chunk of the runtime.
+  itBundled("splitting/SharedChunkOwnerWithRuntimeAsEntryPoint", {
+    files: {
+      "/a.js": /* js */ `
+        import { vx } from "./x.js"; import c from "./c.cjs";
+        globalThis.z = () => import("bun:wrap");
+        globalThis.d = () => import("./d.js");
+        console.log("a", JSON.stringify(c), vx);
+      `,
+      "/b.js":
+        `import c from "./c2.cjs"; console.log("b", JSON.stringify(c));` +
+        Array.from({ length: 2000 }, (_, i) => `globalThis.q${i} = ${i};`).join("\n"),
+      "/d.js": `import { vx } from "./x.js"; console.log("d", vx);`,
+      "/x.js": `import { vy } from "./y.js"; export var vx = /* @__PURE__ */ String(vy);`,
+      "/y.js": `import { vx } from "./x.js"; export var vy = /* @__PURE__ */ String(vx);`,
+      "/c.cjs": `exports.x = 1;`,
+      "/c2.cjs": `exports.x = 2;`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    minChunkSize: 1000,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: 'a {"x":1} undefined' },
+      { file: "/out/b.js", stdout: 'b {"x":2}' },
+    ],
+  });
+
   // Ported from Rolldown's code_splitting/issue_5276_2.
   itBundled("splitting/NamespaceImportAndDynamicImportOfSameModule", {
     files: {

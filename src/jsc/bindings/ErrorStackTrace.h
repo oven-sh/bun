@@ -53,6 +53,8 @@ private:
 
     // May be null
     JSC::CodeBlock* m_codeBlock { nullptr };
+    // m_codeBlock's, or that of a suspended async function whose code was dropped. Null for a native or compiled frame.
+    JSC::ScriptExecutable* m_executable { nullptr };
     JSC::BytecodeIndex m_bytecodeIndex;
 
     // Lazy-initialized
@@ -84,7 +86,7 @@ public:
 
     const JSC::StackFrame& stackFrame() const { return *m_stackFrame; }
     JSC::JSCell* callee() const { return m_callee; }
-    JSC::CodeBlock* codeBlock() const { return m_codeBlock; }
+    JSC::ScriptExecutable* executable() const { return m_executable; }
 
     intptr_t sourceID() const;
     JSC::JSString* sourceURL();
@@ -230,6 +232,11 @@ inline bool hasOriginalSourcePosition(const JSC::StackFrame& frame)
 #endif
     return false;
 }
+
+// An async function whose code was dropped while it was suspended (old age, Bun.shrink()) still knows its file and where it starts.
+JSC::FunctionExecutable* suspendedFunctionWithoutCode(const JSC::StackFrame&);
+inline bool hasSourcePosition(const JSC::StackFrame& frame) { return frame.hasLineAndColumnInfo() || suspendedFunctionWithoutCode(frame); }
+JSC::LineColumn lineAndColumn(const JSC::StackFrame&);
 
 String sourceURL(const JSC::SourceOrigin& origin);
 String sourceURL(JSC::SourceProvider* sourceProvider);

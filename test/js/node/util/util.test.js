@@ -680,6 +680,19 @@ describe("util", () => {
       );
     });
 
+    it("does not use Bun.diff or the global Map", async () => {
+      const fixture = `
+        Bun.diff.arrays = undefined;
+        const { diff } = require("util");
+        diff("a", "b");
+        globalThis.Map = undefined;
+        console.log(diff(Buffer.alloc(300, "a").toString(), Buffer.alloc(300, "b").toString()).length);
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "inherit" });
+      expect(await proc.stdout.text()).toBe("600\n");
+      expect(await proc.exited).toBe(0);
+    });
+
     it("returns an empty array for the same value", () => {
       const lines = ["a"];
       expect(util.diff("abc", "abc")).toEqual([]);

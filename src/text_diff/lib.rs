@@ -1447,20 +1447,31 @@ fn push_trimmed<T: Elem>(a: &[T], b: &[T], mut h: Hunk, out: &mut Vec<Hunk>) {
 // ───────────────────────────── line mode ─────────────────────────────
 
 /// Open-addressing table from line content to dense id. A slot is the top 32 bits
-/// of the hash plus the id, and candidates are confirmed by comparing bytes.
-struct Interner<'a> {
+/// of the hash plus the id, and candidates are confirmed by comparing the lines.
+struct Interner<K> {
     slots: Vec<(u32, u32)>,
     mask: usize,
-    lines: Vec<&'a [u8]>,
+    lines: Vec<K>,
     /// The lines, with their hashes, whose first `PROBES` slots were taken by others. Slots are never freed, so a
     /// later search for such a line ends up here too.
-    overflow: BTreeMap<(u64, &'a [u8]), u32>,
+    overflow: BTreeMap<(u64, K), u32>,
+}
+
+trait Key: Copy + Ord {
+    fn hash(self) -> u64;
+}
+
+impl Key for &[u8] {
+    #[inline(always)]
+    fn hash(self) -> u64 {
+        hash_bytes(self)
+    }
 }
 
 const EMPTY: u32 = u32::MAX;
 const PROBES: usize = 64;
 
-impl<'a> Interner<'a> {
+impl<K: Key> Interner<K> {
     fn with_capacity(lines: usize) -> Self {
         let cap = (lines * 2).max(16).next_power_of_two();
         Self {
@@ -1472,8 +1483,8 @@ impl<'a> Interner<'a> {
     }
 
     #[inline]
-    fn intern(&mut self, line: &'a [u8]) -> u32 {
-        let h = hash_bytes(line);
+    fn intern(&mut self, line: K) -> u32 {
+        let h = line.hash();
         let tag = (h >> 32) as u32;
         let mut i = h as usize & self.mask;
         for _ in 0..PROBES {
@@ -1496,7 +1507,7 @@ impl<'a> Interner<'a> {
     }
 
     #[cold]
-    fn intern_in_overflow(&mut self, hash: u64, line: &'a [u8]) -> u32 {
+    fn intern_in_overflow(&mut self, hash: u64, line: K) -> u32 {
         *self.overflow.entry((hash, line)).or_insert_with(|| {
             self.lines.push(line);
             self.lines.len() as u32 - 1
@@ -1505,7 +1516,7 @@ impl<'a> Interner<'a> {
 
     /// The next id, for a line that is new and that the caller finds again by itself.
     #[inline]
-    fn push_new(&mut self, line: &'a [u8]) -> u32 {
+    fn push_new(&mut self, line: K) -> u32 {
         self.lines.push(line);
         self.lines.len() as u32 - 1
     }
@@ -1519,8 +1530,8 @@ impl<'a> Interner<'a> {
         *self = grown;
     }
 
-    fn find(&self, line: &[u8]) -> Option<u32> {
-        let h = hash_bytes(line);
+    fn find(&self, line: K) -> Option<u32> {
+        let h = line.hash();
         let tag = (h >> 32) as u32;
         let mut i = h as usize & self.mask;
         for _ in 0..PROBES {
@@ -1542,7 +1553,7 @@ impl<'a> Interner<'a> {
 fn tokenize<'a>(
     text: &'a [u8],
     base: usize,
-    interner: &mut Interner<'a>,
+    interner: &mut Interner<&'a [u8]>,
     ids: &mut Vec<u32>,
     offs: &mut Vec<u32>,
 ) {
@@ -3103,7 +3114,7 @@ mod tests {
     #[test]
     fn interner_finds_lines_that_got_no_slot() {
         let count = 2 * PROBES;
-        let mask = Interner::with_capacity(count).mask;
+        let mask = Interner::<&[u8]>::with_capacity(count).mask;
         let lines: Vec<String> = (0..)
             .map(|i| format!("{i}\n"))
             .filter(|line| hash_bytes(line.as_bytes()) as usize & mask == 0)

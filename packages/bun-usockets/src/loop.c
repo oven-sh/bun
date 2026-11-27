@@ -126,7 +126,7 @@ int us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct 
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
     // We allocate with calloc, so we only need to initialize the specific fields in use.
 #ifdef LIBUS_USE_LIBUV
-    loop->data.sweep_timer = us_create_timer(loop, 1, 0);
+    loop->data.sweep_timer = us_create_timer(loop, 1);
 #else
     loop->data.sweep_next_tick_ns = -1;
 #endif
@@ -559,7 +559,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 struct us_loop_t *loop = accept_group->loop;
                 struct bsd_addr_t addr;
 
-                LIBUS_SOCKET_DESCRIPTOR client_fd = bsd_accept_socket(us_poll_fd(p), &addr);
+                LIBUS_SOCKET_DESCRIPTOR client_fd = bsd_accept_socket(us_poll_fd(p), &addr, listen_socket->shared);
                 if (client_fd == LIBUS_SOCKET_ERROR) {
                     /* Todo: start timer here */
 
@@ -627,7 +627,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             break;
                         }
 
-                    } while ((client_fd = bsd_accept_socket(us_poll_fd(p), &addr)) != LIBUS_SOCKET_ERROR);
+                    } while ((client_fd = bsd_accept_socket(us_poll_fd(p), &addr, listen_socket->shared)) != LIBUS_SOCKET_ERROR);
                 }
             }
         break;

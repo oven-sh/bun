@@ -6,7 +6,7 @@ use crate::finding::{Detail, Finding, Suggestion};
 use crate::host::LintHost;
 use bun_ast::ASTMemoryAllocator;
 use bun_core::strings;
-use bun_lint::ast::{BinOp, File, Func};
+use bun_lint::ast::{BinOp, Expr, ExprTag, File, Func, UnOp};
 use bun_lint::span::Span;
 use bun_react_compiler::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, CompilerErrorOrDiagnostic,
@@ -232,11 +232,11 @@ impl<'a> Compiler<'a> {
                         if matches!(it.details.first(), Some(Detail::Error { span: Some(at), .. }) if at == span))
                 })
         };
-        let file = self.file;
+        let (file, flavor) = (self.file, self.flavor);
         let lowering_findings = |error| {
             findings(&converted, error)
                 .filter(|it| !is_already_recorded(it))
-                .map(|it| with_estree_kind(file, it))
+                .map(|it| with_estree_kind(file, flavor, it))
         };
         let all: Vec<Finding> = match linted.result {
             Ok(()) if converted.recorded.is_empty() => return Ok(()),
@@ -306,18 +306,43 @@ fn unsupported_key(converted: &Converted, result: &Result<(), CompilerError>) ->
     (!is_before_keys).then_some(first)
 }
 
-/// `a || b` is a `BinaryExpression` in Bun's tree, so that's what the lowering calls it. ESTree has a
+/// The lowering names an expression after Bun's tree, which has a `BinaryExpression` for `a || b`, and ESTree has a
 /// `LogicalExpression`.
-fn with_estree_kind<'a>(file: &'a File<'a>, mut finding: Finding) -> Finding {
+fn with_estree_kind<'a>(file: &'a File<'a>, flavor: Flavor, mut finding: Finding) -> Finding {
     if let Some(rest) = finding.reason.strip_prefix(CANNOT_BE_REORDERED)
-        && let Some(rest) = rest.strip_prefix("BinaryExpression")
+        && let Some(tick) = strings::index_of_char_usize(rest.as_bytes(), b'`')
+        && let (Some(kind), Some(rest)) = (rest.get(..tick), rest.get(tick..))
         && let Some(Detail::Error { span: Some(at), .. }) = finding.details.first()
-        && crate::oxlint::find(file, *at, |node| node.as_expr()?.binary_op())
-            .is_some_and(|op| matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish))
+        && let Some(kind) =
+            crate::oxlint::find(file, *at, |node| estree_kind(flavor, kind, node.as_expr()?))
     {
-        finding.reason = format!("{CANNOT_BE_REORDERED}LogicalExpression{rest}");
+        finding.reason = format!("{CANNOT_BE_REORDERED}{kind}{rest}");
     }
     finding
+}
+
+/// The name of `expr` where it isn't `kind`, which is the name of its node in Bun's tree. For oxlint it's the one in
+/// oxc's `expression_type_name`, which calls every optional chain an `OptionalMemberExpression`. For the plugin only
+/// `a || b` gets another name.
+fn estree_kind(flavor: Flavor, kind: &str, expr: Expr<'_>) -> Option<&'static str> {
+    let is_oxlint = flavor == Flavor::Oxlint;
+    match (kind, expr.tag()) {
+        ("BinaryExpression", ExprTag::Binary) => match expr.binary_op()? {
+            BinOp::And | BinOp::Or | BinOp::Nullish => Some("LogicalExpression"),
+            BinOp::Comma if is_oxlint => Some("SequenceExpression"),
+            _ => None,
+        },
+        _ if !is_oxlint => None,
+        ("BinaryExpression", ExprTag::Assign) => Some("AssignmentExpression"),
+        ("UnaryExpression", ExprTag::Unary) => matches!(
+            expr.unary_op()?,
+            UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec
+        )
+        .then_some("UpdateExpression"),
+        ("OptionalCallExpression", ExprTag::Call) => Some("OptionalMemberExpression"),
+        ("CallExpression", ExprTag::ImportCall) => Some("Import"),
+        _ => None,
+    }
 }
 
 fn with_wrapper_span(wrapped: &[WrappedDefault], mut finding: Finding) -> Finding {

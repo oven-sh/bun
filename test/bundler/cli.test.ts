@@ -1517,7 +1517,9 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
     expect(stdout).toContain("x.wasm  11 bytes  (asset)");
     expect(exitCode).toBe(0);
 
-    expect(readTree(String(dir))).toEqual({ "dist/x.wasm": wasm, [file]: wasm });
+    // On macOS a recursive `readdirSync` does not list a file this deep, so the source is read by its path.
+    expect(readTree(path.join(String(dir), "dist"))).toEqual({ "x.wasm": wasm });
+    expect(fs.readFileSync(path.join(String(dir), file))).toEqual(wasm);
   });
 
   // Only Linux has paths this long.

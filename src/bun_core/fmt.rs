@@ -689,27 +689,6 @@ pub fn fmt_path(path: &[u8], options: PathFormatOptions) -> FormatUTF8<'_> {
     fmt_path_u8(path, options)
 }
 
-/// Non-validating `Display` adapter for a `&[u8]` known to be valid UTF-8.
-///
-/// Writes the bytes straight through with no codepoint check. `bstr::BStr`'s `Display` impl walks
-/// the input via `Utf8Chunks` to substitute U+FFFD on invalid sequences, which
-/// shows up in install-hot-path profiles (registry hosts, package names, semver
-/// pre/build tags — all pre-validated ASCII). Use this where the bytes are
-/// already known-good and you just want `f.write_str` semantics.
-///
-/// Prefer the [`s`] alias at call sites.
-#[derive(Copy, Clone)]
-#[repr(transparent)]
-pub struct Raw<'a>(pub &'a [u8]);
-impl fmt::Display for Raw<'_> {
-    #[inline(always)]
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        // SAFETY: caller contract — `self.0` is valid UTF-8 (in practice ASCII:
-        // npm package names, registry URLs, semver tags).
-        f.write_str(unsafe { core::str::from_utf8_unchecked(self.0) })
-    }
-}
-
 // Canonical `SliceCursor` / `buf_print` / `buf_print_len` live in T0
 // `bun_alloc`; re-exported here for the
 // `bun_core::fmt::` callers and extended with an `io::Write` face so the same
@@ -3840,13 +3819,6 @@ impl Display for ContentHash {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write_bytes(f, &self.bytes()[..self.len()])
     }
-}
-
-/// Zero-validation `&[u8] -> impl Display` adapter — short alias of [`raw`]
-/// for terse call sites (`bun_fmt::s(name)`).
-#[inline(always)]
-pub const fn s(bytes: &[u8]) -> Raw<'_> {
-    Raw(bytes)
 }
 
 // ───────────────────────────────────────────────────────────────────────────

@@ -271,8 +271,8 @@ impl ExtractTarball {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "{} when create temporary directory named \"{}\" (while extracting \"{}\")",
-                            bun_fmt::s(err.name()),
-                            bun_fmt::s(tmpname.as_bytes()),
+                            bstr::BStr::new(err.name()),
+                            bstr::BStr::new(tmpname.as_bytes()),
                             bun_fmt::for_terminal(bstr::BStr::new(name)),
                         ),
                     );
@@ -331,7 +331,7 @@ impl ExtractTarball {
                 bun_core::pretty_errorln!(
                     "[{}] Extract {}<r> ({} tgz file)",
                     bun_fmt::for_terminal(bstr::BStr::new(name)),
-                    bun_fmt::s(tmpname.as_bytes()),
+                    bstr::BStr::new(tmpname.as_bytes()),
                     bun_core::fmt::size(tgz_bytes.len(), Default::default()),
                 );
             }
@@ -448,7 +448,7 @@ impl ExtractTarball {
                 bun_core::pretty_errorln!(
                     "[{}] Extracted to {} ({})<r>",
                     bun_fmt::for_terminal(bstr::BStr::new(name)),
-                    bun_fmt::s(tmpname.as_bytes()),
+                    bstr::BStr::new(tmpname.as_bytes()),
                     bun_core::fmt::fmt_duration_one_decimal(elapsed),
                 );
                 Output::flush();
@@ -589,7 +589,7 @@ impl ExtractTarball {
                             format_args!(
                                 "\"package.json\" for \"{}\" failed to open: {}",
                                 bun_fmt::for_terminal(bstr::BStr::new(name)),
-                                bun_fmt::s(err.name()),
+                                bstr::BStr::new(err.name()),
                             ),
                         );
                         return Err(crate::Error::InstallFailed);
@@ -640,8 +640,8 @@ impl ExtractTarball {
                             "moving \"{}\" to cache dir failed: {}\n  From: {}\n    To: {}",
                             bun_fmt::for_terminal(bstr::BStr::new(name)),
                             err,
-                            bun_fmt::s(tmpname.as_bytes()),
-                            bun_fmt::s(folder_name),
+                            bstr::BStr::new(tmpname.as_bytes()),
+                            bstr::BStr::new(folder_name),
                         ),
                     );
                     return Err(crate::Error::InstallFailed);
@@ -657,7 +657,7 @@ impl ExtractTarball {
                         format_args!(
                             "failed to resolve cache dir for \"{}\": {}",
                             bun_fmt::for_terminal(bstr::BStr::new(name)),
-                            bun_fmt::s(err.name()),
+                            bstr::BStr::new(err.name()),
                         ),
                     );
                     return Err(crate::Error::InstallFailed);

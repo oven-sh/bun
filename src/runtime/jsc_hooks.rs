@@ -256,7 +256,7 @@ pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCt
             Some(ctx) => slot.set(Some(ctx)),
             None => bun_core::Output::panic(format_args!(
                 "default client SSL_CTX init failed: {}",
-                bun_core::fmt::s(err.message().unwrap_or(b"unknown")),
+                bstr::BStr::new(err.message().unwrap_or(b"unknown")),
             )),
         }
     }

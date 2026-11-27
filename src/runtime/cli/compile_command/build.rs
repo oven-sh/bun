@@ -198,6 +198,10 @@ pub(crate) fn is_same_file_at(dir: Fd, path: &[u8], other: &[u8]) -> bool {
         return false;
     };
     let real_path_in_dir = || {
+        // The working directory has no descriptor to ask for its path.
+        if dir == Fd::cwd() {
+            return real_path(path);
+        }
         let dir = bun_sys::get_fd_path_owned(dir).ok()?;
         real_path(&Path::from_parts(&[dir.as_bytes(), path]))
     };

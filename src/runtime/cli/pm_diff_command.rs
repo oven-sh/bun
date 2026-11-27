@@ -848,15 +848,13 @@ fn fetch_registry_tree(
     let bump = Bump::new();
     let scope = pm.scope_for_package_name(name);
 
-    let manifest_url = format!(
-        "{}/{}",
-        BStr::new(strings::without_trailing_slash(scope.url.href())),
-        bun_fmt::dependency_url(name),
-    );
+    let base = BStr::new(strings::without_trailing_slash(scope.url.href()));
+    let mut manifest_url = format!("{base}/").into_bytes();
+    bun_fmt::append_dependency_url(&mut manifest_url, name);
     let body = registry_get(
         pm,
         scope,
-        URL::parse(manifest_url.as_bytes()),
+        URL::parse(&manifest_url),
         true,
         // The abbreviated packument has versions + dist, all this needs; full ones run to tens of MB.
         Some(b"application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*"),

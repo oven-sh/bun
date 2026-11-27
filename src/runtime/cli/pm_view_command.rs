@@ -115,12 +115,10 @@ pub(crate) fn view(
     let scope = manager.scope_for_package_name(name);
 
     // Always fetch the full registry manifest, not a specific version
-    let href = format!(
-        "{}/{}",
-        BStr::new(strings::without_trailing_slash(scope.url.href())),
-        bun_fmt::dependency_url(name),
-    );
-    let url = URL::parse(href.as_bytes());
+    let base = BStr::new(strings::without_trailing_slash(scope.url.href()));
+    let mut href = format!("{base}/").into_bytes();
+    bun_fmt::append_dependency_url(&mut href, name);
+    let url = URL::parse(&href);
 
     let authorization = scope.authorization(&url);
     let mut pairs: Vec<(&[u8], &[u8])> = vec![(b"Accept", b"application/json")];

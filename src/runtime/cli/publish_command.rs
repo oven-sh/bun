@@ -704,12 +704,10 @@ impl PublishCommand {
     }
 
     fn package_url(registry: &Npm::Registry::Scope, package_name: &[u8]) -> URL<'static> {
-        let href = format!(
-            "{}/{}",
-            bstr::BStr::new(strings::without_trailing_slash(registry.url.href())),
-            bun_fmt::dependency_url(package_name),
-        );
-        URL::parse(cli_dupe(href.as_bytes()))
+        let base = bstr::BStr::new(strings::without_trailing_slash(registry.url.href()));
+        let mut href = format!("{base}/").into_bytes();
+        bun_fmt::append_dependency_url(&mut href, package_name);
+        URL::parse(cli_dupe(&href))
     }
 
     // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14

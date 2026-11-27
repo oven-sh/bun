@@ -367,28 +367,19 @@ pub(crate) fn redacted_source(str: &[u8]) -> RedactedSourceFormatter<'_> {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// DependencyUrlFormatter
+// append_dependency_url
 // https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/node_modules/npm-package-arg/lib/npa.js#L163
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct DependencyUrlFormatter<'a> {
-    pub(crate) url: &'a [u8],
-}
-
-impl Display for DependencyUrlFormatter<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let mut remain = self.url;
-        while let Some(slash) = crate::strings::index_of_char_usize(remain, b'/') {
-            write_bytes(f, &remain[..slash])?;
-            f.write_str("%2f")?;
-            remain = &remain[slash + 1..];
-        }
-        write_bytes(f, remain)
+/// Appends the package `name` to `out` as one path segment: each `/` becomes `%2f`.
+pub fn append_dependency_url(out: &mut Vec<u8>, name: &[u8]) {
+    let mut remain = name;
+    while let Some(slash) = crate::strings::index_of_char_usize(remain, b'/') {
+        out.extend_from_slice(&remain[..slash]);
+        out.extend_from_slice(b"%2f");
+        remain = &remain[slash + 1..];
     }
-}
-
-pub fn dependency_url(url: &[u8]) -> DependencyUrlFormatter<'_> {
-    DependencyUrlFormatter { url }
+    out.extend_from_slice(remain);
 }
 
 // ───────────────────────────────────────────────────────────────────────────

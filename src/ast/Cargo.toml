@@ -18,7 +18,6 @@ enum-map.workspace = true
 enumset.workspace = true
 bitflags.workspace = true
 bun_alloc.workspace = true
-bun_dispatch.workspace = true
 bun_core.workspace = true
 bun_ptr.workspace = true
 bun_paths.workspace = true

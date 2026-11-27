@@ -1513,6 +1513,38 @@ describe("s3-server", () => {
       }
     }
   });
+
+  // The ETag of a multipart object is a hash of the hashes of its parts, so it shows where they were cut.
+  describe.concurrent("writer() cuts the UTF-8 bytes at partSize", () => {
+    const partSize = 5 * 1024 * 1024;
+    const md5 = (bytes: Uint8Array) => createHash("md5").update(bytes).digest();
+    const pattern = (size: number) => Buffer.alloc(size, "0123456789abcdefghijklmnopqrstuvwxyz!");
+    it.each<[string, () => (string | Uint8Array)[]]>([
+      ["exactly one part", () => [pattern(partSize)]],
+      ["odd sizes", () => [1, 4093, 3 << 20, 65537, (1 << 20) + 7, 3 << 20, 333, 4 << 20].map(pattern)],
+      ["Latin-1 across a part", () => [pattern(partSize - 1), "é", "éa"]],
+      ["UTF-16 across a part", () => [pattern(partSize - 2), "€", "€a"]],
+      ["a surrogate pair across a part", () => [pattern(partSize - 3), "😀", "😀a"]],
+      ["a lone surrogate across a part", () => [pattern(partSize - 1), "\ud83d", "\ude00a"]],
+      ["long Latin-1 text", () => ["ab", Buffer.alloc(3 << 20, 0xe9).toString("latin1")]],
+      ["long UTF-16 text", () => ["€" + Buffer.alloc(6 << 20, "😀").toString()]],
+    ])("%s", async (name, makeChunks) => {
+      const chunks = makeChunks();
+      const file = S3(localCredentials).file(`cut ${name}`);
+      const writer = file.writer({ partSize, queueSize: 2 });
+      for (const chunk of chunks) writer.write(chunk);
+      const written = await writer.end();
+
+      const bytes = Buffer.concat(chunks.map(chunk => Buffer.from(chunk)));
+      const parts: Buffer[] = [];
+      for (let at = 0; at < bytes.length; at += partSize) parts.push(md5(bytes.subarray(at, at + partSize)));
+      expect({ written, etag: (await file.stat()).etag }).toEqual({
+        written: bytes.length,
+        etag: `"${md5(Buffer.concat(parts)).toString("hex")}-${parts.length}"`,
+      });
+      await file.unlink();
+    });
+  });
 });
 
 describe.concurrent("s3 missing credentials", () => {
@@ -1795,7 +1827,7 @@ describe("s3 multipart upload id validation", () => {
 describe("s3 upload stream body error", () => {
   // The readStreamIntoSink abrupt path dispatches a single-file PUT before
   // the pump promise rejects; the PUT's response callback must not read a
-  // freed MultiPartUpload when fail() runs from the reject handler.
+  // freed upload when fail() runs from the reject handler.
   it("does not UAF when a ReadableStream body errors after enqueue", async () => {
     const fixture = `
       const server = Bun.serve({

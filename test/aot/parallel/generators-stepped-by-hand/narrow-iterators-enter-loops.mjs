@@ -64,6 +64,35 @@ function work2(count) {
   }
   return total + "|" + turns + "|" + show(last);
 }
+const shown = (value, depth) => typeof value !== "object" || value === null || depth > 3 ? String(value) : Object.keys(value).map(key => key + ":" + shown(value[key], depth + 1)).join();
+function steppedThrough(count) {
+  let total = 0, turns = 0, newest = null;
+  for (let round = 0; round < count; round++) {
+    const steps = stepper(make0(round));
+    let ahead = steps.next();
+    while (!ahead.done && turns++ < 20) {
+      const now = ahead;
+      ahead = steps.next();
+      total += plain(now.value);
+      newest = now;
+    }
+  }
+  return total + "|" + turns + "|" + shown(newest, 0);
+}
+function leftEarly(count) {
+  let total = 0, turns = 0, thrown = "";
+  for (let round = 0; round < count; round++) {
+    try {
+      for (const value of make1(round)) {
+        total += value;
+        if (++turns % 3 === 2) break;
+      }
+    } catch (error) {
+      thrown = error.name;
+    }
+  }
+  return total + "|" + turns + "|" + thrown;
+}
 let saved = null;
 const kept2 = [];
 function stepper(from) {
@@ -77,6 +106,7 @@ try {
 } catch (error) {
   console.log("threw", (error)?.name);
 }
+console.log(steppedThrough(JSON.parse("4")), leftEarly(JSON.parse("5")));
 shared = [1, 2, 3];
 try {
   console.log(show(work2(JSON.parse("5"))));

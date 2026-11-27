@@ -9,6 +9,12 @@ impl<T> AliasableBox<T> {
         Self(bun_core::heap::alloc_nn(value))
     }
 
+    /// # Safety
+    /// As for [`Box::from_non_null`].
+    pub unsafe fn from_non_null(ptr: NonNull<T>) -> Self {
+        Self(ptr)
+    }
+
     /// As [`Box::into_raw`].
     pub fn into_raw(self) -> *mut T {
         self.into_non_null().as_ptr()
@@ -17,6 +23,12 @@ impl<T> AliasableBox<T> {
     /// As [`Box::into_non_null`].
     pub fn into_non_null(self) -> NonNull<T> {
         core::mem::ManuallyDrop::new(self).0
+    }
+
+    /// Invalidates the pointers into the value.
+    pub fn into_box(self) -> Box<T> {
+        // SAFETY: it came from a `Box`, and `self` was the only owner.
+        unsafe { bun_core::heap::take(self.into_raw()) }
     }
 
     /// Valid until `self` is dropped.
@@ -75,6 +87,17 @@ mod tests {
         // SAFETY: as above.
         assert_eq!(unsafe { (*moved[0].as_ptr()).0 }, 3);
         drop(moved);
+        assert_eq!(Rc::strong_count(&dropped), 1);
+    }
+
+    #[test]
+    fn from_non_null_round_trips() {
+        let dropped = Rc::new(());
+        let ptr = AliasableBox::new(Rc::clone(&dropped)).into_non_null();
+        assert_eq!(Rc::strong_count(&dropped), 2);
+        // SAFETY: `into_non_null` gave the allocation up.
+        let owner = unsafe { AliasableBox::from_non_null(ptr) };
+        drop(owner.into_box());
         assert_eq!(Rc::strong_count(&dropped), 1);
     }
 }

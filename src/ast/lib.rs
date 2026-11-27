@@ -2573,11 +2573,6 @@ pub use ast_result::{
 pub use import_record::{Flags as ImportRecordFlags, ImportRecord, Tag as ImportRecordTag};
 pub use loader::{Loader, LoaderHashTable, SideEffects};
 pub use target::Target;
-pub mod transpiler_cache;
-// Glob re-export: `link_interface!` emits `#[doc(hidden)]` type aliases that
-// the `link_impl_*!` macro addresses as `$crate::__TranspilerCacheImpl__*`.
-// `$crate` resolves to this crate root, so the aliases must be reachable here.
-pub use transpiler_cache::*;
 
 pub use ast_memory_allocator::ASTMemoryAllocator;
 pub use b as B;
@@ -2628,6 +2623,8 @@ pub mod flags {
         IsStatic,
         WasShorthand,
         IsSpread,
+        /// The value is a function that returns the value. See `defer_requires.rs` in the parser.
+        IsDeferredRequire,
     }
     pub type PropertySet = EnumSet<Property>;
     pub const PROPERTY_NONE: PropertySet = EnumSet::empty();

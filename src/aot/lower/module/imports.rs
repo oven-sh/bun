@@ -11,7 +11,8 @@ use crate::builtins::id::{BuiltinId, BuiltinName};
 use crate::builtins::{BuiltinPath, Mutability, Resolved, RuntimeModule, table};
 use crate::ir::generated::{ImportPhase, ModuleKind};
 use crate::ir::{
-    BlockId, Edge, LayoutKey, ModuleId, PropertyKeyId, StringId, TypeTable, ValueId, VariableKey,
+    BlockId, Edge, LayoutId, LayoutKey, ModuleId, PropertyKeyId, StringId, TypeTable, ValueId,
+    VariableKey,
 };
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, commonjs, scope};
@@ -176,18 +177,30 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let instance = self.emit_linked_instance(target, path);
         let layout = LayoutKey::ModuleInstance(target);
         let layout = self.file.fragment.declare_layout(layout);
-        let created = self.builder.get_environment_field(instance, layout, field);
+        self.read_field_made_at_first_use(instance, layout, field, &mut |lowering| {
+            let module = (lowering.file.fragment).declare_module(ModuleRef::File(target));
+            (lowering.builder).instance_namespace(instance, layout, module, phase)
+        })
+    }
+
+    fn read_field_made_at_first_use(
+        &mut self,
+        instance: ValueId,
+        layout: LayoutId,
+        field: u32,
+        make: &mut dyn FnMut(&mut Self) -> ValueId,
+    ) -> ValueId {
+        let made = self.builder.get_environment_field(instance, layout, field);
         let result = self.builder.create_variable(None);
         let (first_use, join) = (self.create_unlikely_block(), self.create_block());
-        let split = self.split_on_type(created, TypeTable::ABSENT);
+        let split = self.split_on_type(made, TypeTable::ABSENT);
         self.builder.switch_to(split.not_taken);
         self.builder.write_variable(result, split.not_taken_value);
         self.jump(join);
         self.builder.switch_to(split.taken);
         self.jump(first_use);
         self.continue_in(first_use);
-        let module = self.file.fragment.declare_module(ModuleRef::File(target));
-        let object = (self.builder).instance_namespace(instance, layout, module, phase);
+        let object = make(self);
         self.builder.write_variable(result, object);
         self.jump(join);
         self.continue_in(join);
@@ -199,24 +212,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let field = self.file.ensure_import_meta_field();
         let instance = self.get_module_instance();
         let layout = scope::instance_layout(self.file);
-        let created = self.builder.get_environment_field(instance, layout, field);
-        let result = self.builder.create_variable(None);
-        let (first_use, join) = (self.create_unlikely_block(), self.create_block());
-        let split = self.split_on_type(created, TypeTable::ABSENT);
-        self.builder.switch_to(split.not_taken);
-        self.builder.write_variable(result, split.not_taken_value);
-        self.jump(join);
-        self.builder.switch_to(split.taken);
-        self.jump(first_use);
-        self.continue_in(first_use);
-        let module = self.file.module_id();
-        let object = (self.builder).instance_import_meta(instance, layout, module);
-        self.builder
-            .put_environment_field(instance, layout, field, object);
-        self.builder.write_variable(result, object);
-        self.jump(join);
-        self.continue_in(join);
-        self.builder.read_variable(result)
+        self.read_field_made_at_first_use(instance, layout, field, &mut |lowering| {
+            let module = lowering.file.module_id();
+            let object = (lowering.builder).instance_import_meta(instance, layout, module);
+            (lowering.builder).put_environment_field(instance, layout, field, object);
+            object
+        })
     }
 
     /// Splits on whether the instance of this code, or the instance at the end of `path`, sees a mock of `target`.
@@ -376,6 +377,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         {
             return self.emit_current_mock_namespace(module);
         }
+        if phase == ImportPhase::Evaluation
+            && path.is_empty()
+            && let Some(object) = self.emit_namespace_found_by_loader(module)
+        {
+            return object;
+        }
         let mocked = match module {
             ModuleRef::File(file) if phase == ImportPhase::Evaluation => {
                 Some(file).filter(|&file| holds_mock_in_variable(self.file.inputs.modules, file))
@@ -423,6 +430,34 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         let importer = self.file.module_id();
         self.emit_namespace_behind_mock(mocked, module, Some(importer))
+    }
+
+    fn emit_namespace_found_by_loader(&mut self, module: ModuleRef) -> Option<ValueId> {
+        let fields = self.file.inputs.modules.instance_layout(self.file.file)?;
+        let mut found = fields.fields_found_by_loader();
+        let (field, _) = found.find(|it| it.1 == module)?;
+        let instance = self.get_module_instance();
+        let layout = scope::instance_layout(self.file);
+        Some(
+            self.read_field_made_at_first_use(instance, layout, field, &mut |lowering| {
+                let id = lowering.file.fragment.declare_module(module);
+                (lowering.builder).module_namespace(id, ImportPhase::Evaluation, false, false)
+            }),
+        )
+    }
+
+    #[optimize(size)]
+    pub(super) fn store_namespaces_found_by_loader(&mut self) {
+        let Some(fields) = (self.file.inputs.modules).instance_layout(self.file.file) else {
+            return;
+        };
+        for (field, module) in fields.fields_found_by_loader() {
+            let id = self.file.fragment.declare_module(module);
+            let object = (self.builder).module_namespace(id, ImportPhase::Evaluation, false, false);
+            let instance = self.get_module_instance();
+            let layout = scope::instance_layout(self.file);
+            (self.builder).put_environment_field(instance, layout, field, object);
+        }
     }
 
     fn emit_current_mock_namespace(&mut self, module: ModuleRef) -> ValueId {

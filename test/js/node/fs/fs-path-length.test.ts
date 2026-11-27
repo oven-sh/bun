@@ -47,7 +47,7 @@ describe.if(isPosix)("path length validation with multi-byte characters", () => 
   // PATH_MAX (Linux 4096, macOS 1024) includes the NUL terminator, so the
   // longest usable path string is PATH_MAX-1 bytes. A path of exactly
   // PATH_MAX bytes used to pass the `0..=MAX_PATH_BYTES` length guard, then
-  // `slice_z_with_force_copy` had no room for the NUL and returned "" — the
+  // `slice_z` had no room for the NUL and returned "" — the
   // syscall ran on the empty path and came back ENOENT instead of
   // ENAMETOOLONG. PATH_MAX-1 (kernel rejects) and PATH_MAX+1 (guard rejects)
   // were already correct; only this one length was wrong.
@@ -115,8 +115,7 @@ describe.if(isWindows)("path length validation in normalizePathWindows", () => {
   });
 
   // Absolute drive-letter paths are normalized into `buf` with an NT object
-  // prefix (\??\ or \??\UNC\) and NUL terminator added by
-  // normalizeStringGenericTZ, which does not bounds-check. node:fs prepends
+  // prefix (\??\ or \??\UNC\) and NUL terminator. node:fs prepends
   // a \\?\ long-path prefix before reaching normalizePathWindows, so size
   // the input so that prefixed length (+4) still fits the 32767-u16
   // conversion buffer and the headroom guard is what rejects it.
@@ -202,7 +201,7 @@ describe.if(isWindows)("path length validation against UTF-16 conversion buffers
   it("still accepts multi-byte paths that are long in bytes but within the UTF-16 bound", () => {
     // 150 × 200-char CJK segments: 90152 UTF-8 bytes — past the UTF-16-unit
     // limit in bytes — but only 30152 UTF-16 units, so
-    // fits_in_wide_path_buffer must compute the exact length and accept it.
+    // the conversion must compute the exact length and accept it.
     // Each component stays under NTFS's 255-unit limit so the only possible
     // syscall failure is non-existence: copyFileSync (which checks both
     // paths against the guard and does not swallow errors) must get past

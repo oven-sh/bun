@@ -1,0 +1,12 @@
+export enum Stored { A = 1, A2 }
+export enum Trapped { B = 1 }
+export enum Defined { C = 1 }
+export enum Deleted { D = 1 }
+export enum Revocable { E = 1 }
+export enum Made { F = 1 }
+export enum Renamed { G = 1 }
+export enum Nested { H = 1 }
+export enum Assigned { I = 1 }
+export enum Asked { J = 1 }
+export enum Constructed { L = 1 }
+export enum Kept { K = 1, K2 }

@@ -1,35 +1,85 @@
 use bun_core::MutableString;
 use bun_http_types::Encoding::Encoding;
+use bun_zlib::inflate::{Container, Status, has_zlib_header};
+use bun_zlib::{GZIP_ID, Inflater};
 
-// The streaming decoders below own only their C-side state and take
+// The streaming decoders below own only their codec state and take
 // `(input, output)` per call to [`Decompressor::decompress_chunk`], so no
 // borrow of the request's `compressed_body` / `body_out_str` escapes the
 // call.
 #[derive(Default)]
 pub enum Decompressor {
-    Zlib(bun_zlib::InflateDecoder),
+    Zlib(Box<ZlibDecoder>),
     Brotli(Box<bun_brotli::StreamingDecoder>),
     Zstd(Box<bun_zstd::StreamingDecoder>),
     #[default]
     None,
 }
 
-pub(crate) fn has_zlib_header(buffer: &[u8]) -> bool {
-    let &[cmf, flg, ..] = buffer else {
-        return false;
-    };
-    (cmf & 0x0f) == 8 && (cmf >> 4) <= 7 && u16::from_be_bytes([cmf, flg]).is_multiple_of(31)
+pub struct ZlibDecoder {
+    inflater: Inflater,
+    state: ZlibState,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ZlibState {
+    Inflating,
+    /// Another gzip member may follow (RFC 1952 §2.2).
+    StreamEnd,
+    /// Behind an error, or in the stray bytes that some origins append.
+    IgnoringRest,
+}
+
+impl ZlibDecoder {
+    fn decompress(
+        &mut self,
+        mut input: &[u8],
+        out: &mut Vec<u8>,
+        max_output: usize,
+        is_done: bool,
+    ) -> crate::Result<usize> {
+        let input_len = input.len();
+        loop {
+            if self.state == ZlibState::StreamEnd && !input.is_empty() {
+                if self.inflater.container() == Container::Gzip && input[0] == GZIP_ID[0] {
+                    self.inflater.reset();
+                    self.state = ZlibState::Inflating;
+                } else {
+                    self.state = ZlibState::IgnoringRest;
+                }
+            }
+            if self.state != ZlibState::Inflating {
+                return Ok(input_len);
+            }
+            let room = max_output.saturating_sub(out.len());
+            if room == 0 {
+                return Ok(input_len - input.len());
+            }
+            let error = match self.inflater.inflate_to_vec(&mut input, out, room) {
+                Ok(Status::StreamEnd) => {
+                    self.state = ZlibState::StreamEnd;
+                    continue;
+                }
+                Ok(Status::NeedsInput | Status::NeedsOutput) if out.len() == max_output => continue,
+                Ok(Status::NeedsInput) if !is_done => return Err(crate::Error::ShortRead),
+                Ok(_) => crate::Error::Zlib,
+                Err(error) => error.into(),
+            };
+            self.state = ZlibState::IgnoringRest;
+            return Err(error);
+        }
+    }
 }
 
 impl Decompressor {
-    // Note: each variant's `Drop` releases the underlying C state, so an
+    // Note: each variant's `Drop` releases the codec state, so an
     // explicit `Drop` is unnecessary. Callers that want a mid-lifecycle reset
     // assign `*self = Decompressor::None`.
 
     /// Inside a stream: another `decompress_chunk` may produce output with no new input.
     pub(crate) fn is_mid_stream(&self) -> bool {
         match self {
-            Decompressor::Zlib(r) => r.is_inflating(),
+            Decompressor::Zlib(r) => r.state == ZlibState::Inflating,
             Decompressor::Brotli(r) => r.is_inflating(),
             Decompressor::Zstd(r) => r.is_inflating(),
             Decompressor::None => false,
@@ -44,16 +94,19 @@ impl Decompressor {
     ) -> crate::Result<bool> {
         match encoding {
             Encoding::Gzip | Encoding::Deflate => {
-                let window_bits = if encoding == Encoding::Gzip {
-                    bun_zlib::MAX_WBITS | 16
+                let container = if encoding == Encoding::Gzip {
+                    Container::Gzip
                 } else if body_start.len() < 2 && !is_done {
                     return Ok(false);
                 } else if has_zlib_header(body_start) {
-                    0
+                    Container::Zlib
                 } else {
-                    -bun_zlib::MAX_WBITS
+                    Container::Raw
                 };
-                *self = Decompressor::Zlib(bun_zlib::InflateDecoder::new(window_bits)?);
+                *self = Decompressor::Zlib(Box::new(ZlibDecoder {
+                    inflater: Inflater::new(container),
+                    state: ZlibState::Inflating,
+                }));
             }
             Encoding::Brotli => {
                 if bun_removable_features::is_removed(
@@ -61,12 +114,10 @@ impl Decompressor {
                 ) {
                     return Err(bun_brotli::Error::BrotliFailedToLoad.into());
                 }
-                *self = Decompressor::Brotli(Box::new(bun_brotli::StreamingDecoder::new(
-                    &Default::default(),
-                )?));
+                *self = Decompressor::Brotli(Box::default());
             }
             Encoding::Zstd => {
-                *self = Decompressor::Zstd(Box::new(bun_zstd::StreamingDecoder::new()?));
+                *self = Decompressor::Zstd(Box::new(bun_zstd::StreamingDecoder::new()));
             }
             _ => unreachable!("Invalid encoding. This code should not be reachable"),
         }
@@ -94,7 +145,7 @@ impl Decompressor {
         }
         let out = &mut body_out_str.list;
         match self {
-            Decompressor::Zlib(reader) => Ok(reader.decompress(buffer, out, max_output, is_done)?),
+            Decompressor::Zlib(reader) => reader.decompress(buffer, out, max_output, is_done),
             Decompressor::Brotli(reader) => {
                 Ok(reader.decompress(buffer, out, max_output, is_done)?)
             }

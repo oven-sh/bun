@@ -344,6 +344,7 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
                 // SAFETY: caller contract — `this` is live. Raw field
                 // projection; no `&Self` is formed (see `ref_count_raw`).
                 let rc = unsafe { &*::core::ptr::addr_of!((*this).#field) };
+                debug_assert!(rc.get() > 0);
                 rc.set(rc.get() + 1);
             }
             #[inline]

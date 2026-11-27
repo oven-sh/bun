@@ -34,69 +34,22 @@ template<> AddEventListenerOptions convertDictionary<AddEventListenerOptions>(JS
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    bool isNullOrUndefined = value.isUndefinedOrNull();
-    auto* object = isNullOrUndefined ? nullptr : value.getObject();
-    if (!isNullOrUndefined && !object) [[unlikely]] {
-        throwTypeError(&lexicalGlobalObject, throwScope);
-        return {};
-    }
     AddEventListenerOptions result;
-    JSValue captureValue;
-    if (isNullOrUndefined)
-        captureValue = jsUndefined();
-    else {
-        captureValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "capture"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!captureValue.isUndefined()) {
-        result.capture = convert<IDLBoolean>(lexicalGlobalObject, captureValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.capture = false;
-    JSValue onceValue;
-    if (isNullOrUndefined)
-        onceValue = jsUndefined();
-    else {
-        onceValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "once"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!onceValue.isUndefined()) {
-        result.once = convert<IDLBoolean>(lexicalGlobalObject, onceValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.once = false;
-    JSValue passiveValue;
-    if (isNullOrUndefined)
-        passiveValue = jsUndefined();
-    else {
-        passiveValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "passive"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!passiveValue.isUndefined()) {
-        result.passive = convert<IDLBoolean>(lexicalGlobalObject, passiveValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue signalValue;
-    if (isNullOrUndefined)
-        signalValue = jsUndefined();
-    else {
-        signalValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "signal"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!signalValue.isUndefined()) {
-        result.signal = convert<IDLInterface<AbortSignal>>(lexicalGlobalObject, signalValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
+    auto* object = dictionaryObject(lexicalGlobalObject, throwScope, value);
+    if (!object)
+        return result;
+    convertDictionaryMember<IDLBoolean>(lexicalGlobalObject, *object, Identifier::fromString(vm, "capture"_s), result.capture);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLBoolean>(lexicalGlobalObject, *object, Identifier::fromString(vm, "once"_s), result.once);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLBoolean>(lexicalGlobalObject, *object, Identifier::fromString(vm, "passive"_s), result.passive);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLInterface<AbortSignal>>(lexicalGlobalObject, *object, Identifier::fromString(vm, "signal"_s), result.signal);
+    RETURN_IF_EXCEPTION(throwScope, {});
     // Bun extension, keyed off a private symbol that only internal modules can
     // reach. See AddEventListenerOptions::resistStopPropagation.
-    if (!isNullOrUndefined) {
-        JSValue resistStopPropagationValue = object->get(&lexicalGlobalObject, builtinNames(vm).kResistStopPropagationPrivateName());
-        RETURN_IF_EXCEPTION(throwScope, {});
-        if (!resistStopPropagationValue.isUndefined()) {
-            result.resistStopPropagation = convert<IDLBoolean>(lexicalGlobalObject, resistStopPropagationValue);
-            RETURN_IF_EXCEPTION(throwScope, {});
-        }
-    }
+    convertDictionaryMember<IDLBoolean>(lexicalGlobalObject, *object, builtinNames(vm).kResistStopPropagationPrivateName(), result.resistStopPropagation);
+    RETURN_IF_EXCEPTION(throwScope, {});
     return result;
 }
 

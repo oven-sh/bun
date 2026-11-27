@@ -7,7 +7,7 @@
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
-import { readdirSync, rmSync } from "node:fs";
+import { readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const cc = isLinux ? (Bun.which("cc") ?? Bun.which("gcc")) : null;
@@ -96,8 +96,8 @@ test.concurrent.skipIf(!isLinux || !cc)(
     const extractDir = String(extractRoot);
     const runEnv = { ...bunEnv, BUN_TMPDIR: extractDir, TMPDIR: extractDir };
 
-    const runOnce = async () => {
-      await using proc = Bun.spawn({ cmd: [out], env: runEnv, stdout: "pipe", stderr: "pipe" });
+    const runOnce = async (env = runEnv) => {
+      await using proc = Bun.spawn({ cmd: [out], cwd: extractDir, env, stdout: "pipe", stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       // On regression, diagnostics go to stderr — surface them in the failure
       // message rather than letting the pipe swallow them. Debug+ASAN builds
@@ -123,6 +123,10 @@ test.concurrent.skipIf(!isLinux || !cc)(
     for (const p of await findExtractedCopies(extractDir, libBytes)) rmSync(p, { force: true });
     await runOnce();
     expect((await findExtractedCopies(extractDir, libBytes)).length).toBe(1);
+
+    // What lies in the working directory is not taken for the extracted file.
+    for (const p of await findExtractedCopies(extractDir, libBytes)) writeFileSync(p, Buffer.alloc(libBytes.length));
+    await runOnce({ ...runEnv, BUN_TMPDIR: "." });
   },
   // `bun build --compile` on debug+ASAN takes ~25s; default 5s isn't enough.
   180_000,

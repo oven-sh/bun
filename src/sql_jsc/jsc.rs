@@ -287,18 +287,18 @@ pub use bun_event_loop::EventLoopTimer::{
 };
 
 /// A connection that writes what one turn of JS queued on it in one flush, at the end of the turn.
-pub(crate) trait AutoFlush: Sized {
+pub(crate) trait AutoFlush: bun_ptr::AnyRefCounted {
     fn vm(&self) -> &VirtualMachine;
     fn auto_flush_registered(&self) -> &Cell<bool>;
     /// Connected, without backpressure, and with something to write.
     fn can_flush(&self) -> bool;
     /// Returns what it left in `auto_flush_registered`: whether to run again after the next turn.
-    fn on_auto_flush(&self) -> bool;
+    fn on_auto_flush(self: bun_ptr::RefPtr<Self>) -> bool;
 
     fn register_auto_flusher(&self) {
         extern "C" fn run<T: AutoFlush>(ctx: *mut c_void) -> bool {
-            let this = NonNull::new(ctx.cast::<T>()).expect("auto-flush ctx non-null");
-            bun_ptr::ParentRef::from(this).on_auto_flush()
+            // SAFETY: a connection unregisters itself before it is freed.
+            unsafe { bun_ptr::RefPtr::init_ref(ctx.cast::<T>()) }.on_auto_flush()
         }
         if !self.auto_flush_registered().get() && self.can_flush() {
             let tasks = &self.vm().event_loop().deferred_tasks;

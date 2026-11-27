@@ -1,5 +1,5 @@
 "use strict";
-function rotated(n, rows, s, c, m, l) { let h; for (let i = m - 1; i >= l; i--) { for (let k = 0; k < n; k++) { h = rows[k][i + 1]; rows[k][i + 1] = s * rows[k][i] + c * h; rows[k][i] = c * rows[k][i] - s * h; } } return rows; }
+function rotated(n, rows, part, rest, past, to) { let held; for (let at = past - 1; at >= to; at--) { for (let k = 0; k < n; k++) { held = rows[k][at + 1]; rows[k][at + 1] = rows[k][at] * part + held / 2; rows[k][at] = (held - rows[k][at]) * rest; } } return rows; }
 function summedDown(n, rows, width) { for (let k = 1; k < n; k++) { for (let j = 0; j < width; j++) rows[k][j] = rows[k - 1][j] + rows[k][j]; } return rows; }
 function crossed(n, rows) { for (let k = 0; k < n; k++) rows[k][1] = rows[(k + 1) % n][1] + rows[k][0]; return rows; }
 function widened(n, rows, values) { for (let k = 0; k < n; k++) { rows[k][0] = values[k]; rows[k][1] = rows[k][0] + rows[k][2]; } return rows; }

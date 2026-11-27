@@ -1,28 +1,23 @@
 //! One in-flight request on a multiplexed HTTP/2 `ClientSession`. Owned by the
-//! session's `streams` map; `client` is a weak back-pointer to the `HTTPClient`
-//! that the request belongs to (cleared before any terminal callback so the
-//! deliver loop never dereferences a freed client).
+//! session's `streams` map.
 
-use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 use std::time::Instant;
 
 use crate::{Error, Headers};
 
 // `live_streams` lives in the parent module of `h2_client/`.
-use crate::HTTPClient;
+use crate::InFlightRequest;
 
 pub struct Stream {
     // HTTP/2 stream IDs are 31-bit; the top bit must stay clear.
     pub(crate) id: u32,
     /// Snapshot of `client.async_http_id` at attach time. Stored so the
     /// session's `by_http_id` index can be maintained after `client` has been
-    /// cleared (terminal delivery nulls `client` before `remove_stream`).
+    /// taken (terminal delivery takes `client` before `remove_stream`).
     /// `None` for clients without an abort-signal store (not indexed).
     pub(crate) async_http_id: Option<u32>,
-    // BACKREF: weak back-pointer, cleared before terminal callbacks.
-    // Lifetime-erased — the stream never reads borrowed fields through this.
-    pub(crate) client: Option<NonNull<HTTPClient<'static>>>,
+    pub(crate) client: Option<InFlightRequest>,
     pub(crate) opened_at: Instant,
 
     /// HEADERS + CONTINUATION fragments, decoded once END_HEADERS arrives.
@@ -61,36 +56,8 @@ pub struct Stream {
     pub(crate) send_window: i32,
     /// Unsent suffix of a `.bytes` request body, parked while the send
     /// window is exhausted. Borrows from `client.state.request_body`.
-    // BACKREF: borrows from `client.state.request_body`; `RawSlice` carries
-    // the outlives-holder invariant (client outlives every Stream it owns).
+    // BACKREF: only `write_body` reads it, and it borrows that client.
     pub(crate) pending_body: bun_ptr::RawSlice<u8>,
-}
-
-impl Stream {
-    /// Mutable access to the owning `HTTPClient` while `client` is `Some`.
-    ///
-    /// INVARIANT: `client` is a weak back-pointer set in `attach` and cleared
-    /// (via `take()`) before any terminal callback that could free the
-    /// `AsyncHTTP` embedding it; while `Some`, the client is alive and is a
-    /// disjoint allocation from both this `Stream` and the `ClientSession`.
-    /// HTTP-thread-only.
-    #[inline]
-    pub(crate) fn client_mut(&mut self) -> Option<&mut HTTPClient<'static>> {
-        // Delegates to the shared accessor in `client_session`; see INVARIANT
-        // above (identical to `stream_client_mut`'s invariant).
-        self.client.map(super::client_session::stream_client_mut)
-    }
-
-    /// Shared access to the owning `HTTPClient` while `client` is `Some`.
-    /// See [`Self::client_mut`] for the lifetime invariant.
-    #[inline]
-    pub(crate) fn client_ref(&self) -> Option<&HTTPClient<'static>> {
-        // Same INVARIANT as `client_mut`; route through the shared
-        // `stream_client_mut` accessor (one centralised unsafe) and reborrow
-        // shared.
-        self.client
-            .map(|c| &*super::client_session::stream_client_mut(c))
-    }
 }
 
 /// RFC 9113 §5.1. A `Stream` is created by sending HEADERS, so it starts
@@ -114,16 +81,11 @@ impl Drop for Stream {
 }
 
 impl Stream {
-    pub(crate) fn new(
-        id: u32,
-        async_http_id: Option<u32>,
-        client: Option<NonNull<HTTPClient<'static>>>,
-        send_window: i32,
-    ) -> Self {
+    pub(crate) fn new(id: u32, async_http_id: Option<u32>, send_window: i32) -> Self {
         Self {
             id,
             async_http_id,
-            client,
+            client: None,
             opened_at: Instant::now(),
             header_block: Vec::new(),
             body_buffer: Vec::new(),

@@ -1,4 +1,5 @@
 // The stores of sums over a view reach so far below another view of the same buffer that no address is there. The first one changes what is read.
+// STATISTIC: ViewSumNests >= 1
 function scatter(a, y, z) {
   for (let i = 0; i < 16; i++) {
     let s = 0;

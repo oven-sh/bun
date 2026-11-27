@@ -7,6 +7,7 @@ import { join } from "node:path";
 import {
   contents,
   differences,
+  gzipFields,
   gzipStored,
   loadCases,
   namesToCompose,
@@ -155,6 +156,52 @@ describe("the tar reader", () => {
     expect([archive, gzipStored(archive)].flatMap(bytes => [readTar(bytes), readTar(bytes, { stream: true })])).toEqual(
       Array(4).fill(renamed),
     );
+  });
+
+  // libarchive passed over it.
+  describe("checks the CRC-16 of a gzip header", () => {
+    const flags = 2 | 4 | 8 | 16;
+    const member = (data: Buffer) => gzipStored(data, { flags, fields: gzipFields(flags) });
+    const [first, second] = [member(file("a")), member(Buffer.concat([file("b"), end]))];
+    const changed = (bytes: Buffer, at: number) => Buffer.from(bytes).fill(bytes[at] ^ 1, at, at + 1);
+
+    describe.each([{}, { npm: true }])("%j", dialect => {
+      const read = (archive: Buffer) =>
+        [{}, ...[0, 1, 7].map(pieceSize => ({ stream: true, pieceSize }))].map(mode =>
+          readTar(archive, { ...dialect, ...mode })
+            .trimEnd()
+            .split("\n")
+            .at(-1),
+        );
+
+      test("of each member", () => {
+        expect(read(Buffer.concat([first, second]))).toEqual(Array(4).fill("end"));
+      });
+
+      test.each([
+        ["the time", 4],
+        ["the system", 9],
+        ["the extra field", 14],
+        ["the name", 15],
+        ["the comment", 26],
+        ["its low byte", 28],
+        ["its high byte", 29],
+      ])("against a change in %s", (_, at) => {
+        const mismatch = ["refused", "error", "error", "error"].map(how => `${how}: gzip header mismatch: bad CRC16`);
+        expect(read(Buffer.concat([changed(first, at), second]))).toEqual(mismatch);
+        expect(read(Buffer.concat([first, changed(second, at)]))).toEqual(mismatch);
+      });
+    });
+
+    test("of a member that starts between two members of the layer inside", () => {
+      // An empty member fills the block of 64 KiB, so the layer inside asks for what follows.
+      const extra = Buffer.alloc(0x10000 - first.length - gzipStored(Buffer.alloc(0)).length);
+      extra.writeUInt16LE(extra.length - 2);
+      const block = Buffer.concat([first, gzipStored(Buffer.alloc(0), { flags: 4, fields: extra })]);
+      expect(readTar(Buffer.concat([member(block), changed(member(second), 28)]))).toBe(
+        "refused: gzip header mismatch: bad CRC16\n",
+      );
+    });
   });
 
   test("refuses what is not an archive, unless it is told that it is one", () => {

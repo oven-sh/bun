@@ -109,6 +109,11 @@ unsafe extern "C" {
     // so `safe fn` discharges the link-time proof here.
     safe fn BunString__threadIsolatedCopy(this: &String) -> String;
     safe fn BunString__makeThreadShareable(this: &mut String);
+    safe fn BunString__createSubstringSharingImpl(
+        this: &String,
+        offset: usize,
+        length: usize,
+    ) -> String;
     fn BunString__createAtom(bytes: *const u8, len: usize) -> String;
     fn BunString__tryCreateAtom(bytes: *const u8, len: usize) -> String;
     fn BunString__createStaticExternal(bytes: *const u8, len: usize, isLatin1: bool) -> String;
@@ -738,6 +743,17 @@ impl String {
                 }
             }
             _ => StringView::new(self),
+        }
+    }
+
+    /// Owned slice of the code units `range`. It holds a ref on the storage of `self` unless a copy is smaller.
+    pub fn shared_substring(&self, range: core::ops::Range<usize>) -> String {
+        if range.len() == self.length() {
+            self.clone()
+        } else if self.tag == Tag::WTFStringImpl && !range.is_empty() {
+            BunString__createSubstringSharingImpl(self, range.start, range.len())
+        } else {
+            String::clone(&self.substring_with_len(range.start, range.end))
         }
     }
 
@@ -1457,8 +1473,7 @@ impl<'a> EncodedSlice<'a> {
         if written >= buf.len() {
             return Err(crate::CrateError::NoSpaceLeft);
         }
-        buf[written] = 0;
-        Ok(ZStr::from_buf(&buf[..], written))
+        Ok(ZStr::nul_terminate(buf, written))
     }
 
     /// Re-wrap a sub-range of the underlying storage, preserving the
@@ -2348,39 +2363,6 @@ pub use printer::quote_for_json;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use crate::ffi::slice_to_nul;
-
-/// Pure path-string helper used by the bundler chunk writer and `css::printer`.
-/// Returns `[prefix', suffix']` such that concatenating them produces a
-/// reasonably-normalized path (collapses `./` leading and avoids `//`).
-/// The two-element-array return shape lets bundler call-sites index it
-/// directly.
-pub fn cheap_prefix_normalizer<'a>(prefix: &'a [u8], suffix: &'a [u8]) -> [&'a [u8]; 2] {
-    if prefix.is_empty() {
-        let suffix_no_slash = strings::remove_leading_dot_slash(suffix);
-        return [
-            if strings::has_prefix_comptime(suffix_no_slash, b"../") {
-                b""
-            } else {
-                b"./"
-            },
-            suffix_no_slash,
-        ];
-    }
-
-    // ["https://example.com/", "/out.js"]  => "https://example.com/out.js"
-    // ["/foo/", "/bar.js"]                 => "/foo/bar.js"
-    let win = crate::Environment::IS_WINDOWS;
-    if strings::ends_with_char(prefix, b'/') || (win && strings::ends_with_char(prefix, b'\\')) {
-        if strings::starts_with_char(suffix, b'/')
-            || (win && strings::starts_with_char(suffix, b'\\'))
-        {
-            return [prefix, &suffix[1..]];
-        }
-        // It gets really complicated if we try to deal with URLs more than this.
-    }
-
-    [prefix, strings::remove_leading_dot_slash(suffix)]
-}
 
 // Re-export `wtf::parse_double` at crate root (callers spell it `bun_core::parse_double`).
 pub use wtf::parse_double;

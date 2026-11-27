@@ -292,43 +292,24 @@ impl ParentDir {
     }
 }
 
-/// The separators [`paths::dirname_simple`] splits on, so the walk and the basename agree.
-const PATH_SEPS: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
-
 /// The verified directory holding `path`'s final component, and that component.
+/// One component at a time, refusing symlinks. [`is_safe_patch_path`] has ruled out `..`.
 fn resolve_target(
     patch_dir: Fd,
     path: &[u8],
     create_mode: Option<sys::Mode>,
 ) -> sys::Result<(ParentDir, ZBox)> {
-    if !is_safe_patch_path(path) {
+    if !is_safe_patch_path(path) || bun_paths::has_trailing_sep(path) {
         return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
     }
-    let parent = open_parent_beneath(patch_dir, path, create_mode)?;
-    let dir = paths::dirname_simple(path);
-    let base = if dir.is_empty() {
-        path
-    } else {
-        &path[dir.len() + 1..]
-    };
-    Ok((parent, ZBox::from_vec_with_nul(base.to_vec())))
-}
-
-/// One component at a time, refusing symlinks. [`is_safe_patch_path`] has ruled out `..`.
-fn open_parent_beneath(
-    patch_dir: Fd,
-    path: &[u8],
-    create_mode: Option<sys::Mode>,
-) -> sys::Result<ParentDir> {
-    let mut cur = ParentDir::PatchDir(patch_dir);
-    for component in strings::split_any(paths::dirname_simple(path), PATH_SEPS) {
-        if component.is_empty() || component == b"." {
-            continue;
-        }
-        let component_z = ZBox::from_vec_with_nul(component.to_vec());
-        cur = ParentDir::Opened(open_dir_component(cur.fd(), &component_z, create_mode)?);
+    let mut components = paths::components(path);
+    let base = components.next_back().unwrap_or_default();
+    let mut parent = ParentDir::PatchDir(patch_dir);
+    for component in components.filter(|&component| component != b".") {
+        let component = ZBox::from_bytes(component);
+        parent = ParentDir::Opened(open_dir_component(parent.fd(), &component, create_mode)?);
     }
-    Ok(cur)
+    Ok((parent, ZBox::from_bytes(base)))
 }
 
 /// `O_NOFOLLOW` here opens the reparse point itself and `fstat` hides it. Not atomic with the open.
@@ -973,11 +954,11 @@ fn parse_file_mode(mode: &[u8]) -> Option<FileMode> {
 pub fn is_safe_patch_path(path: &[u8]) -> bool {
     !path.is_empty()
         && !strings::contains_char(path, 0)
-        && !paths::is_absolute_loose(path)
+        && !paths::portable::is_absolute(path)
         // On Windows, openat strips a drive prefix from a component, so `C:..` resolves to a real
         // `..`.
         && !(cfg!(windows) && strings::contains_char(path, b':'))
-        && !strings::split_any(path, b"/\\").any(|part| part == b"..")
+        && !paths::portable::has_dot_dot(path)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1368,7 +1349,7 @@ pub fn spawn_git_diff(
     new_folder: &[u8],
     cwd: &ZStr,
     git: &ZStr,
-    loop_: &bun_event_loop::AnyEventLoop,
+    loop_: bun_event_loop::EventLoopHandle,
 ) -> bun_spawn::Result<bun_sys::Result<bun_spawn::sync::Result>> {
     let argv: Vec<Box<[u8]>> = {
         const ARGS: [&[u8]; 11] = [
@@ -1423,9 +1404,7 @@ pub fn spawn_git_diff(
         // zeroed.
         #[cfg(windows)]
         windows: bun_spawn::sync::WindowsOptions {
-            // `as_handle` owns the handle conversion so variant internals
-            // stay encapsulated.
-            loop_: bun_event_loop::AnyEventLoop::as_handle(loop_),
+            loop_,
             ..Default::default()
         },
         ..Default::default()
@@ -1459,19 +1438,13 @@ pub fn diff_post_process(
 }
 
 pub fn git_diff_preprocess_paths(old_folder: &[u8], new_folder: &[u8]) -> [Vec<u8>; 2] {
-    #[allow(unused_mut)]
-    let mut folders = [old_folder.to_vec(), new_folder.to_vec()];
-    #[cfg(windows)]
-    for folder in &mut folders {
-        paths::slashes_to_posix_in_place(&mut folder[..]);
-    }
-    folders
+    [old_folder, new_folder].map(|folder| paths::to_portable(folder).into_owned())
 }
 
 pub fn git_diff_internal(
     old_folder_: &[u8],
     new_folder_: &[u8],
-    loop_: &bun_event_loop::AnyEventLoop,
+    loop_: bun_event_loop::EventLoopHandle,
 ) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
     let paths = git_diff_preprocess_paths(old_folder_, new_folder_);
     let old_folder = &paths[0][..];
@@ -1479,16 +1452,10 @@ pub fn git_diff_internal(
 
     // `bun_spawn::sync` execs argv[0] verbatim (execve, no PATH search), so
     // resolve `git` here — same as `patchCommit`'s `bun.which` call.
-    let mut gitbuf = bun_paths::path_buffer_pool::get();
-    let git = bun_which::which(
-        &mut gitbuf,
-        bun_core::env_var::PATH.get().unwrap_or(b""),
-        b"",
-        b"git",
-    )
-    .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
+    let git = bun_which::which(bun_core::env_var::PATH.get().unwrap_or(b""), b"", b"git")
+        .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
 
-    let mut result = spawn_git_diff(old_folder, new_folder, ZStr::EMPTY, git, loop_)??;
+    let mut result = spawn_git_diff(old_folder, new_folder, ZStr::EMPTY, &git, loop_)??;
     diff_post_process(&mut result, old_folder, new_folder)
 }
 

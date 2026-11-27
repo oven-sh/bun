@@ -298,7 +298,7 @@ export function cxx(n: Ninja, cfg: Config, src: string, opts: CompileOpts): stri
  *
  * `.S` (preprocessed assembly) is also accepted — clang dispatches on the
  * extension and runs cpp + as. Used by deps that ship hand-tuned kernels
- * (e.g. zstd's huf_decompress_amd64.S).
+ * (e.g. BoringSSL's).
  */
 export function cc(n: Ninja, cfg: Config, src: string, opts: Omit<CompileOpts, "pch" | "pchHeader">): string {
   const ext = extname(src);
@@ -438,7 +438,7 @@ export function pch(
      * implicit, restat propagates the change to PCH and it rebuilds in the
      * same run.
      *
-     * Cost: PCH also rebuilds on unrelated dep bumps (brotli etc.). Rare
+     * Cost: PCH also rebuilds on unrelated dep bumps (cares etc.). Rare
      * enough to accept for correctness.
      */
     implicitInputs?: string[];

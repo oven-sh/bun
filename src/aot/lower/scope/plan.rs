@@ -9,6 +9,7 @@ mod tests;
 use bun_sema::bind::{BindingStability, CodeUnit, Decl, ScopeId, SymbolId};
 use bun_sema::hir::{ExprId, FnId};
 use bun_sema::import_sites::{ImportSiteKind, JsxImport};
+use bun_sema::program::FileId;
 
 pub(in crate::lower) use self::loop_updates::is_let_declaration;
 use super::analysis::{ArgumentsObjects, ScopeAnalysis, SlotKey, find_by_key, sort_unique};
@@ -38,6 +39,7 @@ struct Context<'x, 's> {
 /// `file`: a link or a mock word leads to it.
 fn is_read_through_instance(
     modules: &ModuleGraph,
+    reader: FileId,
     binding: ImportBinding,
     named: Option<ModuleRef>,
 ) -> bool {
@@ -54,7 +56,10 @@ fn is_read_through_instance(
             modules.has_instances(file) || modules.holds_mock_in_variable(file)
         }
         ModuleRef::Runtime(_) => modules.is_named_by_mock(module),
-        ModuleRef::External { .. } => modules.is_absent_module(module),
+        ModuleRef::External { .. } => {
+            modules.is_absent_module(module)
+                || modules.is_found_by_loader_for_test_file(module, reader)
+        }
         _ => false,
     };
     let reaches_mock = |module| match module {
@@ -82,7 +87,7 @@ fn find_instance_imports(input: &ScopeInput<'_, '_>) -> Vec<SymbolId> {
             Some(SiteAnswer::Module(named)) => Some(named),
             _ => None,
         };
-        is_read_through_instance(modules, binding, named)
+        is_read_through_instance(modules, file, binding, named)
     });
     imports.map(|it| it.0).collect()
 }
@@ -98,7 +103,7 @@ pub(super) fn is_instance_jsx_import(input: &ScopeInput<'_, '_>, import: JsxImpo
     };
     let bindings = modules.jsx_bindings(file).iter();
     let mut bindings = bindings.filter(|it| it.0 == import);
-    bindings.any(|&(_, binding)| is_read_through_instance(modules, binding, named))
+    bindings.any(|&(_, binding)| is_read_through_instance(modules, file, binding, named))
 }
 
 struct NormalizedUses {

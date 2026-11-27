@@ -9,6 +9,7 @@
 
 use core::ffi::{c_int, c_void};
 
+use bun_ptr::RefPtrCellExt as _;
 use bun_uws::NewSocketHandler;
 // `SocketKind` / `us_bun_verify_error_t` must come from `bun_uws_sys` — that's
 // what `us_socket_t::kind()` and the `VTable` callback signatures use. The
@@ -208,11 +209,9 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
 ) -> *mut us_socket_t {
     debug_assert!(us_socket_t::opaque_mut(s).kind() == SocketKind::BunSocketTls);
     // `bun.jsc.API.NewSocket(true)` → the runtime-local `socket::NewSocket<true>`.
-    type TLSSocket = super::NewSocket<true>;
     // The ext slot of an open `BunSocketTls` holds its `TLSSocket`.
-    let tls = NativeRef::<true>::of(s).get().unwrap();
-    if let Some(raw) = tls.twin.get().as_ref() {
-        let raw = raw.this_ptr();
+    let twin = NativeRef::<true>::of(s).owner_ref().unwrap().twin.cloned();
+    if let Some(raw) = twin {
         // A negative length from the C side means there is nothing to deliver;
         // never panic across the `extern "C"` boundary.
         let Ok(len) = usize::try_from(len) else {
@@ -221,11 +220,7 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
         // SAFETY: `data` points to `len` readable bytes from the TLS BIO; loop.c
         // guarantees the buffer outlives this call.
         let slice = unsafe { core::slice::from_raw_parts(data, len) };
-        crate::dispatch::fold(TLSSocket::on_data(
-            raw,
-            NewSocketHandler::<true>::from(s),
-            slice,
-        ));
+        crate::dispatch::fold(raw.on_data(NewSocketHandler::<true>::from(s), slice));
     }
     s
 }
@@ -249,8 +244,7 @@ pub(crate) unsafe extern "C" fn us_dispatch_session(
     if s_ref.kind() != SocketKind::BunSocketTls {
         return;
     }
-    type TLSSocket = super::NewSocket<true>;
-    let Some(tls) = s_ref.ext::<NativeRef<true>>().get() else {
+    let Some(tls) = s_ref.ext::<NativeRef<true>>().cloned() else {
         return;
     };
     // A negative length from the C side means there is nothing to deliver;
@@ -261,7 +255,7 @@ pub(crate) unsafe extern "C" fn us_dispatch_session(
     // SAFETY: `data` points to `len` readable bytes owned by the caller for the
     // duration of this call.
     let slice = unsafe { core::slice::from_raw_parts(data, len) };
-    crate::dispatch::fold(TLSSocket::on_session(tls, slice));
+    crate::dispatch::fold(tls.on_session(slice));
 }
 
 /// The name check of the verify step, routed to the owner of the socket in the handshake: a `US_IDENTITY_*` verdict.
@@ -277,15 +271,14 @@ pub(crate) extern "C" fn us_dispatch_server_identity(
     let verdict = match s_ref.kind() {
         SocketKind::BunSocketTls => s_ref
             .ext::<NativeRef<true>>()
-            .get()
+            .owner_ref()
             .map_or(Unchecked, |tls| tls.server_identity(ssl)),
-        SocketKind::HttpClientTls => s_ref
-            .ext::<Option<core::ptr::NonNull<c_void>>>()
-            .map_or(Unchecked, |ext| {
-                bun_http::http_context::Handler::<true>::server_identity(ext.as_ptr(), ssl)
-            }),
+        SocketKind::HttpClientTls => {
+            bun_http::http_context::Handler::<true>::server_identity(NewSocketHandler::from(s), ssl)
+        }
         SocketKind::WsClientUpgradeTls => s_ref
-            .ext::<Option<bun_ptr::ThisPtr<handlers::WSUpgradeClient<true>>>>()
+            .ext::<ExtSlot<handlers::WSUpgradeClient<true>>>()
+            .owner_ref()
             .map_or(Unchecked, |client| client.server_identity(ssl)),
         SocketKind::PostgresTls => s_ref
             .ext::<ExtSlot<bun_sql_jsc::postgres::PostgresSQLConnection>>()
@@ -320,7 +313,7 @@ pub(crate) extern "C" fn us_dispatch_new_session(
             0
         }
         SocketKind::BunSocketTls => {
-            let Some(tls) = s_ref.ext::<NativeRef<true>>().get() else {
+            let Some(tls) = s_ref.ext::<NativeRef<true>>().owner_ref() else {
                 return 0;
             };
             let session = SSL_SESSION::opaque_ref(session);
@@ -348,8 +341,7 @@ pub(crate) unsafe extern "C" fn us_dispatch_keylog(
     if s_ref.kind() != SocketKind::BunSocketTls {
         return;
     }
-    type TLSSocket = super::NewSocket<true>;
-    let Some(tls) = s_ref.ext::<NativeRef<true>>().get() else {
+    let Some(tls) = s_ref.ext::<NativeRef<true>>().cloned() else {
         return;
     };
     // A negative length from the C side means there is nothing to deliver;
@@ -360,5 +352,5 @@ pub(crate) unsafe extern "C" fn us_dispatch_keylog(
     // SAFETY: `data` points to `len` readable bytes owned by the caller for the
     // duration of this call.
     let slice = unsafe { core::slice::from_raw_parts(data, len) };
-    crate::dispatch::fold(TLSSocket::on_keylog(tls, slice));
+    crate::dispatch::fold(tls.on_keylog(slice));
 }

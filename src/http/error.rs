@@ -27,6 +27,8 @@ pub enum Error {
     HTTP2GoAway,
     #[error("HTTP2CompressionError")]
     HTTP2CompressionError,
+    #[error("UnableToEncode")]
+    UnableToEncode,
     #[error("Timeout")]
     Timeout,
     #[error("AbortedBeforeConnecting")]
@@ -35,8 +37,6 @@ pub enum Error {
     InvalidURL,
     #[error("ERR_TLS_CERT_ALTNAME_INVALID")]
     ERR_TLS_CERT_ALTNAME_INVALID,
-    #[error("ClientAborted")]
-    ClientAborted,
     #[error("HTTP2Unsupported")]
     HTTP2Unsupported,
     #[error("ConnectionClosed")]
@@ -79,10 +79,6 @@ pub enum Error {
     UnexpectedRedirect,
     #[error("ShortRead")]
     ShortRead,
-    #[error("WantRead")]
-    WantRead,
-    #[error("WantWrite")]
-    WantWrite,
     #[error("HTTP3HandshakeFailed")]
     HTTP3HandshakeFailed,
     #[error("HTTP3ProtocolError")]
@@ -112,13 +108,11 @@ pub enum Error {
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
     #[error(transparent)]
-    Hpack(#[from] crate::lshpack::HpackError),
-    #[error(transparent)]
     Core(#[from] bun_core::Error),
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
-    #[error(transparent)]
-    Zlib(bun_zlib::ZlibError),
+    #[error("ZlibError")]
+    Zlib,
     #[error(transparent)]
     Brotli(bun_brotli::Error),
     #[error(transparent)]
@@ -279,11 +273,11 @@ impl Error {
             Self::HTTP2StreamReset => "HTTP2StreamReset",
             Self::HTTP2GoAway => "HTTP2GoAway",
             Self::HTTP2CompressionError => "HTTP2CompressionError",
+            Self::UnableToEncode => "UnableToEncode",
             Self::Timeout => "Timeout",
             Self::AbortedBeforeConnecting => "AbortedBeforeConnecting",
             Self::InvalidURL => "InvalidURL",
             Self::ERR_TLS_CERT_ALTNAME_INVALID => "ERR_TLS_CERT_ALTNAME_INVALID",
-            Self::ClientAborted => "ClientAborted",
             Self::HTTP2Unsupported => "HTTP2Unsupported",
             Self::ConnectionClosed => "ConnectionClosed",
             Self::DNSResolveFailed => "DNSResolveFailed",
@@ -305,8 +299,6 @@ impl Error {
             Self::InvalidRedirectURL => "InvalidRedirectURL",
             Self::UnexpectedRedirect => "UnexpectedRedirect",
             Self::ShortRead => "ShortRead",
-            Self::WantRead => "WantRead",
-            Self::WantWrite => "WantWrite",
             Self::HTTP3HandshakeFailed => "HTTP3HandshakeFailed",
             Self::HTTP3ProtocolError => "HTTP3ProtocolError",
             Self::HTTP3HeaderEncodingError => "HTTP3HeaderEncodingError",
@@ -321,10 +313,9 @@ impl Error {
             Self::TLSHandshakeFailed => "TLSHandshakeFailed",
             Self::Cert(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
-            Self::Hpack(e) => <&'static str>::from(e),
             Self::Core(e) => e.name(),
             Self::Sys(e) => <&'static str>::from(e),
-            Self::Zlib(e) => <&'static str>::from(e),
+            Self::Zlib => "ZlibError",
             Self::Brotli(e) => e.name(),
             Self::Zstd(e) => <&'static str>::from(e),
         }
@@ -337,11 +328,11 @@ impl bun_core::output::ErrName for Error {
     }
 }
 
-impl From<bun_zlib::ZlibError> for Error {
-    fn from(e: bun_zlib::ZlibError) -> Self {
+impl From<bun_zlib::Error> for Error {
+    fn from(e: bun_zlib::Error) -> Self {
         match e {
-            bun_zlib::ZlibError::ShortRead => Error::ShortRead,
-            _ => Error::Zlib(e),
+            bun_zlib::Error::Alloc(e) => Error::Alloc(e),
+            _ => Error::Zlib,
         }
     }
 }

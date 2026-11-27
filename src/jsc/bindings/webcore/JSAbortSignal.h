@@ -21,81 +21,29 @@
 #pragma once
 
 #include "AbortSignal.h"
-#include "JSDOMWrapper.h"
+#include "JSDOMInterface.h"
 #include "JSEventTarget.h"
-#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 
-class JSAbortSignal : public JSEventTarget {
+class JSAbortSignal final : public JSDOMInterfaceWithAdditionalChildren<JSAbortSignal, AbortSignal, JSEventTarget> {
 public:
-    using Base = JSEventTarget;
-    static JSAbortSignal* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<AbortSignal>&& impl)
-    {
-        auto& vm = JSC::getVM(globalObject);
-        JSAbortSignal* ptr = new (NotNull, JSC::allocateCell<JSAbortSignal>(vm)) JSAbortSignal(structure, *globalObject, WTF::move(impl));
-        ptr->finishCreation(vm);
-        return ptr;
-    }
+    using JSDOMInterfaceWithAdditionalChildren::JSDOMInterfaceWithAdditionalChildren;
+
+    DECLARE_INFO;
+    static constexpr auto subspaceSlots = BUN_SUBSPACE_SLOTS(m_clientSubspaceForAbortSignal, m_subspaceForAbortSignal);
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
-    static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static AbortSignal* toWrapped(JSC::VM&, JSC::JSValue);
+    static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
 
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
 
-    DECLARE_INFO;
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
-    }
-
-    static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return subspaceForImpl(vm);
-    }
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
-    DECLARE_VISIT_CHILDREN;
-    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
     template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-    AbortSignal& wrapped() const
-    {
-        return static_cast<AbortSignal&>(Base::wrapped());
-    }
-
-    Ref<AbortSignal> protectedWrapped() const;
-
-protected:
-    JSAbortSignal(JSC::Structure*, JSDOMGlobalObject&, Ref<AbortSignal>&&);
-
-    void finishCreation(JSC::VM&);
+    bool isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor&, ASCIILiteral*) const;
 };
-
-class JSAbortSignalOwner final : public JSC::WeakHandleOwner {
-public:
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final;
-};
-
-inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, AbortSignal*)
-{
-    static NeverDestroyed<JSAbortSignalOwner> owner;
-    return &owner.get();
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, AbortSignal&);
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, AbortSignal* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<AbortSignal>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<AbortSignal>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
 template<> struct JSDOMWrapperConverterTraits<AbortSignal> {
     using WrapperClass = JSAbortSignal;
-    using ToWrappedReturnType = AbortSignal*;
 };
 
 } // namespace WebCore

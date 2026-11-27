@@ -3,7 +3,7 @@ use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 
 use bun_jsc::JsCell;
-use bun_ptr::RefPtr;
+use bun_ptr::{Attached, Detach, RefPtr};
 
 use crate::json_line_buffer::JSONLineBuffer;
 use bun_collections::{ByteVecExt, VecExt};
@@ -998,24 +998,26 @@ pub(crate) enum SocketUnion {
     Closed,
 }
 
+impl Detach for SendQueue {
+    fn detach(&self) {
+        log!("SendQueue#detach");
+        self.close_event_sent.set(true);
+        self.close_socket(CloseReason::Failure, CloseFrom::Deinit);
+        self.owner.set(None);
+    }
+}
+
 impl SendQueue {
     #[inline]
     fn owner_ref(&self) -> Option<SendQueueOwner> {
         self.owner.get()
     }
 
-    pub(crate) fn detach(&self) {
-        log!("SendQueue#detach");
-        self.close_event_sent.set(true);
-        self.close_socket(CloseReason::Failure, CloseFrom::Deinit);
-        self.owner.set(None);
-    }
-
     pub(crate) fn new(
         mode: Mode,
         owner: Option<SendQueueOwner>,
         socket: SocketUnion,
-    ) -> RefPtr<SendQueue> {
+    ) -> Attached<SendQueue> {
         log!("SendQueue#init");
         let this = RefPtr::new(Self {
             ref_count: Cell::new(1),
@@ -1045,7 +1047,7 @@ impl SendQueue {
             windows: JsCell::new(WindowsState::default()),
         });
         this.root.set(Some(this.as_non_null()));
-        this
+        this.into()
     }
 
     #[inline]
@@ -1140,7 +1142,7 @@ impl SendQueue {
         self.get_global_this()
             .bun_vm()
             .event_loop()
-            .enqueue_task(Task::init(queue.into_raw()));
+            .enqueue_task(Task::from_ref::<Self>(queue));
     }
 
     /// `task_tag::SendQueueDeferred` dispatch, under the task's ref: drain the pending flags.
@@ -1832,14 +1834,12 @@ unsafe impl uv::StreamReader for SendQueue {
     }
 }
 
-impl bun_event_loop::Taskable for SendQueue {
+impl bun_event_loop::RefTask for SendQueue {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::SendQueueDeferred;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the SendQueue root queued with a held ref.
-        drop(unsafe { RefPtr::from_raw(this) });
-    }
+    type Ref = RefPtr<Self>;
+    fn release_unrun(_: Self::Ref) {}
     /// The channel's own close hop.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Ref) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

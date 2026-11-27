@@ -15,7 +15,6 @@ use bun_install::package_manager::workspace_manifests;
 use bun_install::{self as install, Npm, PackageManager, Subcommand};
 use bun_parsers::json as json_mod;
 use bun_paths as path;
-use bun_paths::resolve_path::{join_abs_string_buf_checked, normalize_buf_z_spill};
 use bun_sha_hmac as sha;
 use bun_sys::dir_iterator as DirIterator;
 use bun_sys::{self, Fd, File, FileKind};
@@ -50,7 +49,7 @@ impl PackageFiles<'_> {
         match self {
             PackageFiles::Folder { root, .. } => bun_sys::exists_at(*root, subpath),
             PackageFiles::Tarball(paths) => {
-                let subpath = strings::without_trailing_slash(subpath.as_bytes());
+                let subpath = path::without_trailing_sep(subpath.as_bytes());
                 let is_at_or_below = |path: &Vec<u8>| {
                     (path.strip_prefix(subpath))
                         .is_some_and(|below| below.is_empty() || below[0] == b'/')
@@ -141,15 +140,11 @@ impl Context {
         original_cwd: &[u8],
         tarball_path: &[u8],
     ) -> Result<Context, PackError> {
-        let mut abs_buf = bun_paths::path_buffer_pool::get();
-        let abs_tarball_path = join_abs_string_buf_checked::<path::platform::Auto>(
-            original_cwd,
-            &mut abs_buf,
-            &[tarball_path],
-        )
-        .ok_or_else(|| bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open));
+        let spelling = bun_sys::typed_spelling(original_cwd, tarball_path, path::from_portable);
+        let mut abs_tarball_path = path::Path::resolve(&[original_cwd, &spelling]);
+        abs_tarball_path.copy_trailing_sep_from(tarball_path);
 
-        let tarball_bytes = match abs_tarball_path.and_then(|p| File::read_from(Fd::cwd(), p)) {
+        let tarball_bytes = match File::read_from(Fd::cwd(), &abs_tarball_path) {
             Ok(b) => b,
             Err(e) => {
                 Output::err(
@@ -187,8 +182,10 @@ impl Context {
             total_files += usize::from(kind == FileKind::File);
 
             // this is option `strip: 1` (npm expects a `package/` prefix for all paths)
-            let stripped = (pathname.iter().position(|&c| bun_paths::is_sep_any_t(c)))
-                .map(|slash| &pathname[slash + 1..]);
+            let stripped = (pathname
+                .iter()
+                .position(|&c| bun_paths::portable::is_sep(c)))
+            .map(|slash| &pathname[slash + 1..]);
             if stripped.is_some_and(|stripped| stripped.is_empty()) {
                 continue;
             }
@@ -215,7 +212,7 @@ impl Context {
             files.push(filename.to_vec());
             #[cfg(windows)]
             files.push(strings::to_utf8_alloc(filename));
-            if filename.iter().any(|&c| bun_paths::is_sep_any_t(c)) {
+            if filename.iter().any(|&c| bun_paths::portable::is_sep(c)) {
                 continue;
             }
 
@@ -465,8 +462,7 @@ impl PublishCommand {
             return Self::exec_workspaces(ctx, manager, &original_cwd);
         }
 
-        let abs_package_json_path =
-            bun_core::ZBox::from_bytes(manager.original_package_json_path.as_bytes());
+        let abs_package_json_path = manager.original_package_json_path.to_zbox();
         let context = Context::from_workspace(&mut *ctx, manager, &abs_package_json_path);
 
         if bun_core::handle_oom(Self::publish(manager, &context)) {
@@ -604,9 +600,8 @@ impl PublishCommand {
             return Ok(());
         }
 
-        let abs_workspace_path = path::string_paths::without_trailing_slash_windows_path(
-            strings::without_suffix_comptime(abs_package_json_path.as_bytes(), b"package.json"),
-        );
+        let abs_workspace_path =
+            path::without_trailing_sep(path::dirname_or_root(abs_package_json_path.as_bytes()));
         let script_env = manager.env_mut();
         // `pack()` left the last three describing the package it packed last.
         let variables: [(&[u8], &[u8]); 4] = [
@@ -1199,10 +1194,8 @@ impl PublishCommand {
         key: &[u8],
         value: &[u8],
         files: &PackageFiles<'_>,
-        path_buf: &mut [u8],
-        path_spill: &mut Vec<u8>,
     ) {
-        let target = normalize_buf_z_spill::<path::platform::Posix>(path_buf, path_spill, value);
+        let target: &ZStr = &pack::path_in_package(value);
         if pack::is_package_root_or_outside(target.as_bytes()) {
             return;
         }
@@ -1221,20 +1214,13 @@ impl PublishCommand {
         package_name: &[u8],
         files: &PackageFiles<'_>,
     ) -> Result<(), AllocError> {
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let mut path_spill: Vec<u8> = Vec::new();
         let use_directories_bin = pack::non_empty_bin(json).is_none();
         if let Some(bin_query) = json.as_property(b"bin") {
             let mut bin_props: Vec<G::Property> = Vec::new();
             match &bin_query.expr.data {
-                ExprData::EString(bin_str) => Self::push_bin(
-                    &mut bin_props,
-                    package_name,
-                    bin_str.string(bump)?,
-                    files,
-                    &mut *path_buf,
-                    &mut path_spill,
-                ),
+                ExprData::EString(bin_str) => {
+                    Self::push_bin(&mut bin_props, package_name, bin_str.string(bump)?, files);
+                }
                 ExprData::EObject(bin_obj) => {
                     for bin_prop in bin_obj.properties.slice() {
                         let Some(key) = (bin_prop.key.as_ref())
@@ -1243,16 +1229,7 @@ impl PublishCommand {
                         else {
                             continue;
                         };
-                        let key: Box<[u8]> = strings::without_prefix(
-                            normalize_buf_z_spill::<path::platform::Posix>(
-                                &mut *path_buf,
-                                &mut path_spill,
-                                key.string(bump)?,
-                            )
-                            .as_bytes(),
-                            b"./",
-                        )
-                        .into();
+                        let key = pack::path_in_package(key.string(bump)?);
                         if key.is_empty() {
                             continue;
                         }
@@ -1262,14 +1239,7 @@ impl PublishCommand {
                         else {
                             continue;
                         };
-                        Self::push_bin(
-                            &mut bin_props,
-                            &key,
-                            value.string(bump)?,
-                            files,
-                            &mut *path_buf,
-                            &mut path_spill,
-                        );
+                        Self::push_bin(&mut bin_props, &key, value.string(bump)?, files);
                     }
                 }
                 // It isn't empty either, so "directories" isn't checked.
@@ -1295,15 +1265,9 @@ impl PublishCommand {
             return Ok(());
         };
         let mut bin_props: Vec<G::Property> = Vec::new();
-        let Some(bin_dir_subpath) = pack::bin_subpath(
-            bin_dir_str,
-            pack::BinType::Dir,
-            &mut *path_buf,
-            &mut path_spill,
-        ) else {
+        let Some(normalized_bin_dir) = pack::bin_subpath(bin_dir_str, pack::BinType::Dir) else {
             return Ok(());
         };
-        let normalized_bin_dir = bun_core::ZBox::from_bytes(bin_dir_subpath);
 
         let (workspace_root, abs_workspace_path) = match files {
             PackageFiles::Folder { root, abs_path } => (*root, *abs_path),
@@ -1313,7 +1277,7 @@ impl PublishCommand {
                         .is_some_and(|below| below.len() > 1 && below[0] == b'/')
                     {
                         bin_props.push(string_property(
-                            cli_dupe(bun_paths::basename_posix(path)),
+                            cli_dupe(bun_paths::basename(path)),
                             cli_dupe(path),
                         ));
                     }
@@ -1386,10 +1350,7 @@ impl PublishCommand {
                     continue;
                 }
 
-                bin_props.push(string_property(
-                    cli_dupe(bun_paths::basename_posix(subpath)),
-                    subpath,
-                ));
+                bin_props.push(string_property(cli_dupe(name.as_bytes()), subpath));
 
                 if entry.kind == bun_sys::EntryKind::Directory {
                     let Ok(subdir) = bun_sys::openat(&dir, name, bun_sys::O::DIRECTORY, 0) else {

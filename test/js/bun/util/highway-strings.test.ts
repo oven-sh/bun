@@ -4,7 +4,9 @@
 // misaligned base pointers, and checks each against a scalar reference.
 
 import { highwayStringsForTesting as hw } from "bun:internal-for-testing";
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { isCI, isLinux } from "harness";
+import { readFileSync } from "node:fs";
 
 // Lengths that straddle 16/32/64-byte lanes and the scalar tails on either side.
 const LENGTHS = [0, 1, 2, 3, 8, 15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 127, 128, 129, 255, 256, 257, 1024, 1029];
@@ -684,5 +686,146 @@ describe("byteSetPrefixLength", () => {
   it("rejects a text or a set that is too short", () => {
     expect(() => hw("byteSetPrefixLength", new Uint8Array(15), set)).toThrow(RangeError);
     expect(() => hw("byteSetPrefixLength", new Uint8Array(16), set.subarray(1))).toThrow(RangeError);
+  });
+});
+
+describe("byteBits", () => {
+  it("marks the byte, and nothing past the end", () => {
+    for (const len of LENGTHS) {
+      for (const off of OFFSETS) {
+        for (const byte of [0, 0x0a, 0xff]) {
+          const text = new Uint8Array(len + off)
+            .map((_, i) => (i % 7 < 2 ? byte : byte ^ (i % 255 || 1)))
+            .subarray(off);
+          const words = Math.ceil(len / 64);
+          const expected = new BigUint64Array(words + 1);
+          text.forEach((it, i) => {
+            if (it === byte) expected[i >> 6] |= 1n << BigInt(i & 63);
+          });
+          // One word more than the kernel may write, to see that it stops.
+          expected[words] = 0xaaaaaaaaaaaaaaaan;
+          const out = new BigUint64Array(words + 1).fill(0xaaaaaaaaaaaaaaaan);
+          hw("byteBits", text, new Uint8Array(out.buffer), byte);
+          compare("byteBits", out.join(), expected.join(), `len=${len} off=${off} byte=${byte}`);
+        }
+      }
+    }
+  });
+
+  it("rejects a buffer that is too small", () => {
+    expect(() => hw("byteBits", new Uint8Array(65), new Uint8Array(8), 0)).toThrow(RangeError);
+  });
+});
+
+describe.skipIf(process.arch !== "x64")("highway_zstd.cpp", () => {
+  const hasKernels = process.arch === "x64" && hw("zstdCountBytes", new Uint8Array(), new Uint8Array(1024)) === 1;
+  const withKernels = it.skipIf(!hasKernels);
+  let state: number;
+  beforeEach(() => void (state = 1));
+  const below = (limit: number) => {
+    state = (Math.imul(state, 1103515245) + 12345) >>> 0;
+    return (state >>> 8) % limit;
+  };
+
+  // An emulator shows the file of its host.
+  it.skipIf(!isLinux || !isCI)("runs on the CPUs that it is for", () => {
+    const flags = readFileSync("/proc/cpuinfo", "utf8")
+      .match(/^flags.*/m)![0]
+      .split(" ");
+    const has = (...names: string[]) => names.every(name => flags.includes(name));
+    const needed = "avx512vbmi avx512_vbmi2 avx512_vnni avx512_bitalg avx512_vpopcntdq gfni vaes vpclmulqdq";
+    expect(hasKernels).toBe(has(...needed.split(" ")));
+    expect(hw("zstdIsQuicker", new Uint8Array(), 0)).toBe(Number(has("avx512_vbmi2", "avx512_bf16")));
+  });
+
+  it.skipIf(hasKernels)("leaves the work to the caller on others", () => {
+    const untouched = new Uint8Array(2000).fill(7);
+    expect(hw("zstdCountBytes", new Uint8Array(5000), untouched)).toBe(0);
+    expect(hw("zstdWriteCodes", new Uint8Array(100), untouched)).toBe(0);
+    expect(untouched.every(byte => byte === 7)).toBe(true);
+  });
+
+  withKernels.each<[string, () => number]>([
+    ["any", () => below(256)],
+    ...[0, 64, 255].map(value => [`only ${value}`, () => value] as [string, () => number]),
+    ...[0, 64, 128, 192].map(from => [`64 from ${from}`, () => from + below(64)] as [string, () => number]),
+    ["a few in each quarter but one", () => (below(100) ? 64 + below(64) : below(256))],
+  ])("counts bytes: %s", (_, byte) => {
+    const bytes = Uint8Array.from({ length: 4 * 3712 }, byte);
+    const around = (length: number) => [-128, -65, -64, -63, -7, -1, 0, 1, 7, 63, 64, 65, 127].map(it => length + it);
+    const lengths = [...Array(128).keys(), ...around(256), ...around(3712), ...around(3 * 3712), bytes.length];
+    // Each from another address, to the end. The kernel adds to what is there, and touches nothing behind it.
+    const before = Uint32Array.from({ length: 256 + 16 }, (_, value) => 1000 + value);
+    const [expected, counts] = [before.slice(), before.slice()];
+    let counted = 0;
+    const wrong = lengths.filter(length => {
+      for (; counted < length; counted++) expected[bytes[bytes.length - 1 - counted]]++;
+      counts.set(before);
+      hw("zstdCountBytes", bytes.subarray(bytes.length - length), new Uint8Array(counts.buffer, 0, 1024));
+      return !Buffer.from(counts.buffer).equals(new Uint8Array(expected.buffer));
+    });
+    expect(wrong).toEqual([]);
+  });
+
+  const ROOM = 24 + 512;
+  const [all, fence] = [Buffer.from(new ArrayBuffer(ROOM + 1400)), Buffer.alloc(128, 0x55)];
+  const codes = new Uint16Array(all.buffer, 24, 256);
+  /** What it wrote, or nothing if it refused. Checks that it stays in its room. */
+  function writeCodes(symbols: Uint8Array, room: number) {
+    all.set(fence, ROOM + room);
+    const isDone = hw("zstdWriteCodes", symbols, all.subarray(0, ROOM + room));
+    if (!fence.equals(all.subarray(ROOM + room, ROOM + room + 128))) throw new Error(`wrote behind ${room} bytes`);
+    if (isDone) return `${all.toString("hex", ROOM, ROOM + all.readUInt32LE(0))} ${all.readUInt32LE(8)} ${all[16]}`;
+  }
+  /** Also tells how much was written before the last 64. */
+  function writeCodesSlowly(symbols: Uint8Array) {
+    let [bytes, bits, bitCount, beforeLast] = [[] as number[], 0, 0, 0];
+    for (let i = symbols.length - 1; i >= 0; i--) {
+      if (i === 63) beforeLast = bytes.length;
+      const length = codes[symbols[i]] & 15;
+      bits |= (codes[symbols[i]] >> (16 - length)) << bitCount;
+      for (bitCount += length; bitCount >= 8; bitCount -= 8, bits >>= 8) bytes.push(bits & 255);
+    }
+    return [`${Buffer.from(bytes).toString("hex")} ${bits} ${bitCount}`, beforeLast] as const;
+  }
+
+  withKernels.each<[string, number[]]>([
+    ["1 bit", [1, 1]],
+    ["1 to 12 bits", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 12]],
+    ["8 bits", Array(256).fill(8)],
+    ["many of 12 bits", [1, 2, 3, 4, 5, ...Array(128).fill(12)]],
+    ["high values", [1, 2, 2]],
+    ["many of 11 bits", [2, 2, 2, 3, ...Array(4).fill(10), ...Array(248).fill(11)]],
+  ])("writes codes: %s", (_, lengths) => {
+    // All over the table, whose other entries mean nothing.
+    const used = lengths.map((_, i) => (i * 37 + 200) % 256);
+    codes.forEach((_, symbol) => (codes[symbol] = below(65536)));
+    let value = 0;
+    for (let length = 12; length > 0; length--, value >>= 1) {
+      lengths.forEach((it, i) => it === length && (codes[used[i]] = (value++ << (16 - length)) | length));
+    }
+    // Those of a tree are below 256. The kernel takes more, and need not be able to tell them apart.
+    if (lengths.length === 3) used.forEach(it => (codes[it] = (below(2048) << 5) | 11));
+    for (const pick of [() => below(used.length), () => (below(4) ? 0 : below(used.length)), () => used.length - 1]) {
+      const picked = Uint8Array.from({ length: 700 }, () => used[pick()]);
+      const wrong = [...Array(72).keys(), 127, 128, 129, 191, 192, 193, 700].filter(count => {
+        const symbols = picked.subarray(picked.length - count);
+        const [expected, beforeLast] = writeCodesSlowly(symbols);
+        const isRefused = !count || writeCodes(symbols, beforeLast + 127) === undefined;
+        return !isRefused || writeCodes(symbols, beforeLast + 128) !== expected;
+      });
+      expect(wrong).toEqual([]);
+    }
+  });
+
+  withKernels.each<[string, () => number]>([
+    ["all bits", () => 0xffff],
+    ["no bits", () => 0],
+    ["too long", () => 13 + below(3)],
+    ["any", () => below(65536)],
+  ])("stays in its room whatever the codes are: %s", (_, code) => {
+    const symbols = Uint8Array.from({ length: 150 }, () => below(256));
+    codes.forEach((_, symbol) => (codes[symbol] = code()));
+    for (let room = 0; room < 400; room++) writeCodes(symbols, room);
   });
 });

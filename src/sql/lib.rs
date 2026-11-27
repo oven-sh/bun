@@ -9,16 +9,12 @@ pub mod shared {
     pub mod column_identifier;
     #[path = "ConnectionFlags.rs"]
     pub mod connection_flags;
-    #[path = "QueryStatus.rs"]
-    pub mod query_status;
     #[path = "SQLQueryResultMode.rs"]
     pub mod sql_query_result_mode;
     #[path = "SSLMode.rs"]
     pub mod ssl_mode;
     #[path = "StackReader.rs"]
     pub(crate) mod stack_reader;
-    #[path = "StatementStatus.rs"]
-    pub mod statement_status;
 
     pub use column_identifier::ColumnIdentifier;
     pub use connection_flags::ConnectionFlags;
@@ -30,78 +26,66 @@ pub mod mysql {
     #[path = "AuthMethod.rs"]
     pub mod auth_method;
     #[path = "Capabilities.rs"]
-    pub mod capabilities;
-    #[path = "ConnectionState.rs"]
-    pub mod connection_state;
+    pub(crate) mod capabilities;
     #[path = "MySQLQueryResult.rs"]
     pub mod mysql_query_result;
     #[path = "MySQLRequest.rs"]
     pub mod mysql_request;
     #[path = "MySQLTypes.rs"]
     pub mod mysql_types;
+    #[path = "Session.rs"]
+    pub mod session;
     #[path = "StatusFlags.rs"]
-    pub mod status_flags;
-    #[path = "TLSStatus.rs"]
-    pub mod tls_status;
+    pub(crate) mod status_flags;
 
     pub mod protocol {
         #[path = "AnyMySQLError.rs"]
         pub mod any_mysql_error;
-        #[path = "CharacterSet.rs"]
-        pub mod character_set;
         #[path = "CommandType.rs"]
-        pub mod command_type;
+        pub(crate) mod command_type;
         #[path = "EncodeInt.rs"]
         pub mod encode_int;
         #[path = "PacketHeader.rs"]
-        pub mod packet_header;
+        pub(crate) mod packet_header;
         #[path = "PacketType.rs"]
-        pub mod packet_type;
-
-        pub use character_set::CharacterSet;
+        pub(crate) mod packet_type;
 
         #[path = "Auth.rs"]
-        pub mod auth;
+        pub(crate) mod auth;
         #[path = "AuthSwitchRequest.rs"]
-        pub mod auth_switch_request;
+        pub(crate) mod auth_switch_request;
         #[path = "ColumnDefinition41.rs"]
         pub mod column_definition41;
         #[path = "EOFPacket.rs"]
-        pub mod eof_packet;
+        pub(crate) mod eof_packet;
         #[path = "ErrorPacket.rs"]
         pub mod error_packet;
         #[path = "HandshakeResponse41.rs"]
-        pub mod handshake_response41;
+        pub(crate) mod handshake_response41;
         #[path = "HandshakeV10.rs"]
-        pub mod handshake_v10;
-        #[path = "NewWriter.rs"]
-        pub mod new_writer;
+        pub(crate) mod handshake_v10;
         #[path = "OKPacket.rs"]
-        pub mod ok_packet;
+        pub(crate) mod ok_packet;
         #[path = "PacketReader.rs"]
         pub mod packet_reader;
+        #[path = "PacketWriter.rs"]
+        pub mod packet_writer;
         #[path = "PreparedStatement.rs"]
         pub mod prepared_statement;
-        #[path = "ResultSetHeader.rs"]
-        pub mod result_set_header;
-        #[path = "SSLRequest.rs"]
-        pub mod ssl_request;
         #[path = "StmtPrepareOKPacket.rs"]
-        pub mod stmt_prepare_ok_packet;
+        pub(crate) mod stmt_prepare_ok_packet;
 
         // ── flat re-exports for `bun_sql_jsc` ──────────────────────────────
         // sql_jsc names most of these via `bun_sql::mysql::protocol::Foo`,
         // so surface them here as well as via their leaf modules.
-        pub use any_mysql_error::Error;
         pub use column_definition41::ColumnDefinition41;
         // `protocol::FieldType` (re-export of mysql_types.FieldType).
         pub use crate::mysql::mysql_types::FieldType;
     }
 
-    pub use crate::shared::query_status;
-    pub use capabilities::Capabilities;
+    pub(crate) use capabilities::Capabilities;
     pub use mysql_query_result::MySQLQueryResult;
-    pub use status_flags::StatusFlags;
+    pub(crate) use status_flags::StatusFlags;
 }
 
 pub mod postgres {
@@ -109,16 +93,15 @@ pub mod postgres {
     pub mod any_postgres_error;
     #[path = "CommandTag.rs"]
     pub mod command_tag;
+    pub mod frontend;
+    pub mod handshake;
+    pub mod pipeline;
     #[path = "PostgresProtocol.rs"]
     pub mod postgres_protocol;
     #[path = "PostgresTypes.rs"]
     pub mod postgres_types;
     #[path = "SocketMonitor.rs"]
     pub mod socket_monitor;
-    #[path = "Status.rs"]
-    pub mod status;
-    #[path = "TLSStatus.rs"]
-    pub mod tls_status;
 
     pub mod types {
         #[path = "int_types.rs"]
@@ -130,35 +113,21 @@ pub mod postgres {
     pub mod protocol {
         #[path = "FieldType.rs"]
         pub mod field_type;
-        #[path = "PortalOrPreparedStatement.rs"]
-        pub mod portal_or_prepared_statement;
-        #[path = "zHelpers.rs"]
-        pub(crate) mod z_helpers;
 
-        #[path = "Authentication.rs"]
-        pub mod authentication;
         #[path = "BackendKeyData.rs"]
         pub mod backend_key_data;
         #[path = "CommandComplete.rs"]
         pub mod command_complete;
-        #[path = "CopyData.rs"]
-        pub mod copy_data;
         #[path = "DataRow.rs"]
         pub mod data_row;
-        #[path = "Describe.rs"]
-        pub mod describe;
         #[path = "ErrorResponse.rs"]
         pub mod error_response;
-        #[path = "Execute.rs"]
-        pub mod execute;
         #[path = "FieldDescription.rs"]
         pub mod field_description;
         #[path = "FieldMessage.rs"]
         pub mod field_message;
         #[path = "NewReader.rs"]
         pub mod new_reader;
-        #[path = "NewWriter.rs"]
-        pub mod new_writer;
         pub mod notice_response {
             /// Same wire format as `ErrorResponse` (length-prefixed list of
             /// field messages), so it reuses the same decoder.
@@ -170,27 +139,12 @@ pub mod postgres {
         pub mod parameter_description;
         #[path = "ParameterStatus.rs"]
         pub mod parameter_status;
-        #[path = "Parse.rs"]
-        pub mod parse;
-        #[path = "PasswordMessage.rs"]
-        pub mod password_message;
         #[path = "ReadyForQuery.rs"]
         pub mod ready_for_query;
         #[path = "RowDescription.rs"]
         pub mod row_description;
-        #[path = "SASLInitialResponse.rs"]
-        pub mod sasl_initial_response;
-        #[path = "SASLResponse.rs"]
-        pub mod sasl_response;
-        #[path = "StartupMessage.rs"]
-        pub mod startup_message;
-
-        // ── flat re-exports for `bun_sql_jsc` (Write trait surface) ──
-        pub use new_writer::WriterContext;
     }
 
     pub use any_postgres_error::{AnyPostgresError, PostgresErrorOptions};
     pub use command_tag::CommandTag;
-    pub use status::Status;
-    pub use tls_status::TLSStatus;
 }

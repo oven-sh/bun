@@ -42,8 +42,8 @@ const MARKER = /^\s*\/\/\s*HOST_EXPORT\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:,\s*(js
 
 const GENERATED_PREFIXES = ["js2native_"];
 
-// The C++ side of the boundary. Vendored C libraries (the sqlite amalgamation,
-// llhttp) never call back into Rust and are 10 MB of text, so they are excluded.
+// The C++ side of the boundary. The sqlite amalgamation never calls back into
+// Rust and is 10 MB of text, so it is excluded.
 const CALLER_PATHSPECS = [
   ":(glob)src/**/*.cpp",
   ":(glob)src/**/*.cc",
@@ -52,7 +52,6 @@ const CALLER_PATHSPECS = [
   ":(glob)src/**/*.hpp",
   ":(glob)src/**/*.mm",
   ":(exclude)src/jsc/bindings/sqlite/",
-  ":(exclude)src/jsc/bindings/node/http/llhttp/",
 ];
 
 function gitGrep(args: string[]): string[] {

@@ -1,7 +1,5 @@
 use bstr::BStr;
 use bun_ast::LoaderHashTable;
-use bun_paths::platform::Auto;
-use bun_paths::resolve_path::join_abs_string;
 use bun_sema::check::Checker;
 use bun_sema::check::aot::{Effect, FileOrigin, effect_of};
 use bun_sema::config::{
@@ -175,14 +173,19 @@ fn options_that_types_depend_on(project: &Project) -> CompilerOptions {
 fn options_of_sources(cwd: &[u8], tsconfig: Option<&[u8]>) -> CompilerOptions {
     let session = Session::new();
     let project = tsconfig.and_then(|tsconfig| {
-        let path = from_native(join_abs_string::<Auto>(cwd, &[tsconfig]));
+        let path = from_native(&bun_paths::Path::resolve(&[cwd, tsconfig]));
         let disk = Disk::with_already_read(1, Default::default(), &path);
         load_options_for_build(&disk, &session, &path).ok()
     });
-    match project {
+    let mut options = match project {
         Some(project) => options_that_types_depend_on(&project),
         None => vec![(b"strict".to_vec(), Json::Bool(true))],
+    };
+    let mut named = options.iter_mut();
+    if let Some((_, value)) = named.find(|option| option.0 == b"useDefineForClassFields") {
+        *value = Json::Bool(true);
     }
+    options
 }
 
 pub(crate) fn warn_unless_package_states(
@@ -397,9 +400,10 @@ pub(crate) fn typed_files_for_build(
     if !report.incomplete.is_empty() {
         return warn(format_args!("they could not be type checked"));
     }
-    let typed_files = found.typed.into_iter().map(|(path, text)| TypedFile {
-        path: bundler_path(&path),
-        text,
+    // `typed` is in the order of `written`, whose paths have the bundler's spelling.
+    let typed_files = (found.typed.into_iter().zip(written)).filter_map(|((_, text), file)| {
+        let path = typed_path_beside(file.path)?;
+        Some(TypedFile { path, text })
     });
     TypedFiles {
         files: typed_files.collect(),

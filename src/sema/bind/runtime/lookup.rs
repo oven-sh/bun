@@ -45,7 +45,8 @@ impl RecentLookups {
     pub(super) fn new(lookup: &Lookup<'_, '_>) -> RecentLookups {
         let dynamic = &lookup.dynamic;
         RecentLookups {
-            is_position_ignored: dynamic.scopes.is_empty()
+            is_position_ignored: lookup.hir.known_evaluations.is_empty()
+                && dynamic.scopes.is_empty()
                 && dynamic.parameter_eval_scopes.is_empty(),
             entries: [None; 256],
         }
@@ -83,6 +84,7 @@ impl Lookup<'_, '_> {
     pub(super) fn find(&self, start: ScopeId, name: Atom, pos: u32) -> Found {
         let (mut at, mut from, mut dynamic_scope) = (start, ScopeKind::Block, ScopeId::NONE);
         let mut inner = ScopeId::NONE;
+        let is_evaluated = pos != u32::MAX && self.hir.is_in_known_evaluation(pos);
         let dynamic = &self.dynamic;
         let has_eval_scopes =
             !dynamic.scopes.is_empty() || !dynamic.parameter_eval_scopes.is_empty();
@@ -114,7 +116,9 @@ impl Lookup<'_, '_> {
             if matches!(scope.kind, ScopeKind::With(_)) && dynamic_scope.is_none() {
                 dynamic_scope = at;
             }
-            if let Some(binding) = self.find_in_scope(at, scope, from, name, may_be_appended) {
+            let binding = self.find_in_scope(at, scope, from, name, may_be_appended);
+            let binding = binding.filter(|&it| !is_evaluated || self.find_container(it).is_none());
+            if let Some(binding) = binding {
                 return Found {
                     binding,
                     scope: at,

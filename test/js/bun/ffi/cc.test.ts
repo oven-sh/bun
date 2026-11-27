@@ -1558,6 +1558,25 @@ it.skipIf(isWindows)("returns undefined for a NULL napi_value and throws a pendi
   expect(exitCode).toBe(0);
 });
 
+// Only macOS reads it.
+it.skipIf(isASAN || isWindows)("SDKROOT with the name of an SDK is not a directory below the cwd", async () => {
+  using dir = tempDir("bun-ffi-cc-sdkroot", {
+    "macosx/usr/include/in_cwd.h": "",
+    "one.c": `#include <in_cwd.h>\nint one(void) { return 1; }`,
+    "fixture.js": `require("bun:ffi").cc({ source: "./one.c", symbols: { one: { args: [], returns: "i32" } } });`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: { ...bunEnv, SDKROOT: "macosx" },
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("include file 'in_cwd.h' not found");
+  expect(exitCode).toBe(1);
+});
+
 describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", () => {
   const plantedHeader = "#define bool int\n#define true 100\n#define false 0\n";
   const files = {

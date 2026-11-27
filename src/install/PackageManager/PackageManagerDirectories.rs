@@ -6,12 +6,12 @@ use crate::lockfile_real::package::PackageColumns;
 use crate::npm::registry::{FolderCacheKey, Scope};
 use crate::repository::Repository;
 use bun_core::ZStr;
-use bun_core::{Global, Output, ZBox, env_var, fmt as bun_fmt};
+use bun_core::{Global, Output, ZBox, env_var, fmt as bun_fmt, strings};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{Dependency, Integrity, PackageID, Resolution};
-use bun_paths::{self as path, PathBuffer, SEP};
+use bun_paths::{self as path, Path, PathBuffer};
 use bun_semver as Semver;
 #[cfg(windows)]
 use bun_sys::FdDirExt;
@@ -334,9 +334,8 @@ fn get_temporary_directory_run(
 
     // The node-gyp shim is written via `handle` and put on PATH via `name`.
     let name: &'static [u8] = if tried_dot_tmp {
-        let joined =
-            path::resolve_path::join::<path::platform::Auto>(&[cache.path.as_bytes(), b".tmp"]);
-        bun_core::handle_oom(FileSystem::get().dirname_store().append(joined))
+        let joined = path::Path::join(&[&cache.path, b".tmp"]);
+        bun_core::handle_oom(FileSystem::get().dirname_store().append(&joined))
     } else {
         temp_dir_name
     };
@@ -346,7 +345,7 @@ fn get_temporary_directory_run(
         name,
         cache,
         #[cfg(windows)]
-        path: ZBox::from_bytes(temp_dir_path.as_bytes()),
+        path: temp_dir_path.to_zbox(),
     })
 }
 
@@ -366,10 +365,8 @@ fn ensure_cache_directory(this: &mut PackageManager) -> sys::Maybe<&'static Cach
     }
 
     let handle = Dir::cwd().make_open_path(b"node_modules/.cache", Default::default())?;
-    let path = ZBox::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
-        FileSystem::get().top_level_dir(),
-        &[b"node_modules", b".cache"],
-    ));
+    let path =
+        Path::resolve(&[FileSystem::get().top_level_dir(), b"node_modules/.cache"]).to_zbox();
     Ok(CACHE_DIRECTORY.get_or_init(|| CacheDirectory { handle, path }))
 }
 
@@ -380,7 +377,12 @@ pub struct CacheDir {
     pub is_cwd_fallback: bool,
 }
 
-/// An empty variable counts as unset, because `abs(&[b""])` would be the project directory.
+/// Node.js refuses to import a module whose real path has a `\` in a name.
+pub fn node_can_import_from(dir: &[u8]) -> bool {
+    cfg!(windows) || !bun_core::strings::contains_char(dir, b'\\')
+}
+
+/// An empty variable counts as unset, because it would resolve to the project directory.
 pub fn fetch_cache_directory_path(
     env: &mut DotEnvLoader,
     configured: Option<&[u8]>,
@@ -389,33 +391,33 @@ pub fn fetch_cache_directory_path(
     let variable = |name: &[u8]| {
         env.get(name)
             .filter(|dir| !dir.is_empty())
-            .map(options::expand_home)
+            .map(options::directory_from_env)
     };
     let from_env = variable(b"BUN_INSTALL_CACHE_DIR");
     let bun_install = variable(b"BUN_INSTALL");
     let home = env_var::XDG_CACHE_HOME
         .get_not_empty()
         .or_else(|| env_var::HOME.get_not_empty())
-        .map(options::expand_home);
-    let parts: &[&[u8]] = if let Some(dir) = from_env.as_deref() {
-        &[dir]
+        .map(options::directory_from_env);
+    let (dir, subdir): (_, &[u8]) = if let Some(dir) = from_env.as_deref() {
+        (dir, b"")
     } else if let Some(dir) = configured.filter(|dir| !dir.is_empty()) {
-        &[dir]
+        (dir, b"")
     } else if let Some(dir) = bun_install.as_deref() {
-        &[dir, b"install/", b"cache/"]
+        (dir, b"install/cache/")
     } else if let Some(dir) = home.as_deref() {
-        &[dir, b".bun/", b"install/", b"cache/"]
+        (dir, b".bun/install/cache/")
     } else {
-        &[CWD_FALLBACK]
+        (CWD_FALLBACK, b"")
     };
 
-    let mut buf = path::path_buffer_pool::get();
-    let Some(abs) = FileSystem::get().abs_buf_checked(parts, &mut buf[..]) else {
-        return Err(sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::open).with_path(parts[0]));
+    let parts = [FileSystem::get().top_level_dir(), dir, subdir];
+    let Ok(abs) = bun_resolver::resolve_keeping_sep(&parts).check_len() else {
+        return Err(sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::open).with_path(dir));
     };
     Ok(CacheDir {
         path: abs.to_vec(),
-        is_cwd_fallback: parts[0] == CWD_FALLBACK,
+        is_cwd_fallback: dir == CWD_FALLBACK,
     })
 }
 
@@ -558,8 +560,7 @@ impl<'a> ByteCursor<'a> {
     #[inline(always)]
     fn finish_z(self) -> &'a ZStr {
         let at = self.at;
-        self.buf[at] = 0;
-        ZStr::from_buf(self.buf, at)
+        ZStr::nul_terminate(self.buf, at)
     }
 }
 
@@ -890,12 +891,7 @@ pub fn is_package_in_cache_at(cache_dir: Fd, folder_path: &ZStr, tag: Resolution
         ResolutionTag::Git => b".bun-tag",
         _ => return sys::directory_exists_at(cache_dir, folder_path).unwrap_or(false),
     };
-    let mut buf = bun_paths::path_buffer_pool::get();
-    let marker_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
-        &mut buf.0,
-        &[folder_path.as_bytes(), marker],
-    );
-    sys::exists_at(cache_dir, marker_path)
+    sys::exists_at(cache_dir, &path::Path::from_parts(&[folder_path, marker]))
 }
 
 pub fn is_package_in_cache(
@@ -919,8 +915,6 @@ pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) ->
     let path = FileSystem::get()
         .dirname_store()
         .append(result.as_bytes_with_nul())?;
-    // SAFETY: `path` includes the trailing NUL (we appended `as_bytes_with_nul`)
-    // and lives for program lifetime in the dirname store.
     manager.options.bin_path = ZStr::from_slice_with_nul(path);
     Ok(())
 }
@@ -977,12 +971,11 @@ pub fn global_link_dir_path(this: &mut PackageManager) -> &'static [u8] {
 // ────────────────────────── cached path resolution ────────────────────────────
 
 /// `FileNotFound` unless the package is in the cache.
-pub fn path_for_cached_npm_path<'a>(
+fn path_for_cached_npm_path(
     this: &mut PackageManager,
-    buf: &'a mut PathBuffer,
     package_name: &[u8],
     version: Semver::Version,
-) -> Result<&'a mut [u8], Error> {
+) -> Result<Path, Error> {
     let mut folder_name_buf = bun_paths::path_buffer_pool::get();
     let folder_name = cached_npm_package_folder_name(
         this,
@@ -991,33 +984,25 @@ pub fn path_for_cached_npm_path<'a>(
         version,
         None,
     );
-    path_for_cached_folder(this, buf, folder_name, ResolutionTag::Npm)
+    path_for_cached_folder(this, folder_name, ResolutionTag::Npm)
 }
 
-fn path_for_cached_folder<'a>(
+fn path_for_cached_folder(
     this: &mut PackageManager,
-    buf: &'a mut PathBuffer,
     folder_name: &ZStr,
     tag: ResolutionTag,
-) -> Result<&'a mut [u8], Error> {
+) -> Result<Path, Error> {
     if !is_package_in_cache(this, folder_name, tag) {
         return Err(Error::FileNotFound);
     }
-    let len = path::resolve_path::join_abs_string_buf::<path::platform::Auto>(
-        get_cache_directory(this).path.as_bytes(),
-        &mut buf.0[..],
-        &[folder_name.as_bytes()],
-    )
-    .len();
-    Ok(&mut buf.0[..len])
+    Ok(Path::resolve(&[&get_cache_directory(this).path, folder_name]).check_len()?)
 }
 
-pub fn path_for_resolution<'a>(
+pub(crate) fn path_for_resolution(
     this: &mut PackageManager,
     package_id: PackageID,
     resolution: &Resolution,
-    buf: &'a mut PathBuffer,
-) -> Result<&'a mut [u8], Error> {
+) -> Result<Path, Error> {
     // const folder_name = this.cachedNPMPackageFolderName(name, version);
     match resolution.tag {
         ResolutionTag::Npm => {
@@ -1028,22 +1013,22 @@ pub fn path_for_resolution<'a>(
             // borrow can't be held across it. Copy the name out first.
             let package_name = this.lockfile.str(&package_name_).to_vec();
 
-            path_for_cached_npm_path(this, buf, &package_name, npm.version)
+            path_for_cached_npm_path(this, &package_name, npm.version)
         }
         ResolutionTag::Github => {
             let mut name_buf = bun_paths::path_buffer_pool::get();
             let folder_name =
                 cached_github_folder_name(this, &mut name_buf, resolution.github(), None);
-            path_for_cached_folder(this, buf, folder_name, resolution.tag)
+            path_for_cached_folder(this, folder_name, resolution.tag)
         }
         ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
             let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
             let mut name_buf = bun_paths::path_buffer_pool::get();
             let folder_name =
                 cached_tarball_folder_name(this, &mut name_buf, &integrity, resolution, None);
-            path_for_cached_folder(this, buf, folder_name, resolution.tag)
+            path_for_cached_folder(this, folder_name, resolution.tag)
         }
-        _ => Ok(&mut buf.0[..0]),
+        _ => Ok(Path::new()),
     }
 }
 
@@ -1051,6 +1036,18 @@ pub struct CacheDirAndSubpath<'a> {
     /// The cache directory, the global link directory or `Fd::cwd()`. Callers must not close it.
     pub(crate) cache_dir: Fd,
     pub(crate) cache_dir_subpath: &'a ZStr,
+}
+
+/// `folder` is spelled as in the lockfile.
+pub(crate) fn folder_in<'a>(
+    buf: &'a mut PathBuffer,
+    dir: &[u8],
+    folder: &[u8],
+) -> Result<&'a ZStr, bun_paths::NameTooLong> {
+    let mut path = Path::from(dir);
+    path.push_trailing_sep();
+    path.extend_from_slice(folder);
+    strings::copy_z(buf, &path).ok_or(bun_paths::NameTooLong)
 }
 
 /// this is copy pasted from `installPackageWithNameAndResolution()`
@@ -1066,6 +1063,14 @@ pub fn compute_cache_dir_and_subpath<'a>(
     let name = pkg_name;
     let mut cache_dir = Fd::cwd();
     let mut cache_dir_subpath: &ZStr = ZStr::EMPTY;
+    let too_long = |_| {
+        Output::err(
+            "ENAMETOOLONG",
+            "folder path for package <b>{}<r> is too long",
+            (bun_fmt::s(name),),
+        );
+        Global::exit(1)
+    };
 
     match resolution.tag {
         ResolutionTag::Npm => {
@@ -1092,11 +1097,10 @@ pub fn compute_cache_dir_and_subpath<'a>(
             // example:
             //   "mineflayer": "file:."
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
-                cache_dir_subpath = z_static(b".\0");
+                cache_dir_subpath = bun_core::zstr!(".");
             } else {
-                folder_path_buf[..folder.len()].copy_from_slice(folder);
-                folder_path_buf[folder.len()] = 0;
-                cache_dir_subpath = ZStr::from_buf(folder_path_buf, folder.len());
+                cache_dir_subpath =
+                    folder_in(folder_path_buf, b"", folder).unwrap_or_else(too_long);
             }
             cache_dir = Fd::cwd();
         }
@@ -1129,11 +1133,10 @@ pub fn compute_cache_dir_and_subpath<'a>(
             let folder = resolution.workspace().slice(buf);
             // Handle when a package depends on itself
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
-                cache_dir_subpath = z_static(b".\0");
+                cache_dir_subpath = bun_core::zstr!(".");
             } else {
-                folder_path_buf[..folder.len()].copy_from_slice(folder);
-                folder_path_buf[folder.len()] = 0;
-                cache_dir_subpath = ZStr::from_buf(folder_path_buf, folder.len());
+                cache_dir_subpath =
+                    folder_in(folder_path_buf, b"", folder).unwrap_or_else(too_long);
             }
             cache_dir = Fd::cwd();
         }
@@ -1147,7 +1150,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
                 .to_vec();
 
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
-                cache_dir_subpath = z_static(b".\0");
+                cache_dir_subpath = bun_core::zstr!(".");
                 cache_dir = Fd::cwd();
             } else {
                 // A path is relative to the project, a name to the global link dir.
@@ -1162,22 +1165,9 @@ pub fn compute_cache_dir_and_subpath<'a>(
                 } else {
                     global_link_dir_path(manager)
                 };
-                let ptr = &mut folder_path_buf.0[..];
-                if global_link_dir.len() + 1 + folder.len() < ptr.len() {
-                    let mut off = 0usize;
-                    ptr[off..off + global_link_dir.len()].copy_from_slice(global_link_dir);
-                    off += global_link_dir.len();
-                    if global_link_dir.last().is_some_and(|&c| c != SEP) {
-                        ptr[off] = SEP;
-                        off += 1;
-                    }
-                    ptr[off..off + folder.len()].copy_from_slice(&folder);
-                    off += folder.len();
-                    ptr[off] = 0;
-                    let len = off;
-                    cache_dir_subpath = ZStr::from_buf(folder_path_buf, len);
-                    cache_dir = directory;
-                }
+                cache_dir_subpath =
+                    folder_in(folder_path_buf, global_link_dir, &folder).unwrap_or_else(too_long);
+                cache_dir = directory;
             }
         }
         _ => {}
@@ -1195,7 +1185,7 @@ pub(crate) const NEW_PACKAGE_JSON: &[u8] = b"{\"dependencies\": {}}";
 
 pub(crate) fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
     let package_json_file = match Dir::cwd().create_file_z(
-        z_static(b"package.json\0"),
+        bun_core::zstr!("package.json"),
         sys::CreateFlags {
             read: true,
             ..Default::default()
@@ -1289,6 +1279,12 @@ pub fn save_lockfile(
         this.progress.refresh();
     }
 
+    if this.lockfile.converted_rows.take().is_some() {
+        let packages_len = packages_len_before_install.min(this.lockfile.packages.len());
+        this.lockfile.meta_hash =
+            (this.lockfile.generate_meta_hash(false, packages_len)).unwrap_or_default();
+    }
+
     let wrote = this.lockfile.save_to_disk(load_result, &this.options);
 
     // delete binary lockfile if saving text lockfile
@@ -1357,7 +1353,7 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
     this.lockfile.meta_hash = this.lockfile.generate_meta_hash(false, packages_len)?;
     let mut buf: Vec<u8> = Vec::with_capacity(4096);
     crate::lockfile_real::printer::Yarn::print(&this.lockfile, &mut buf)?;
-    crate::lockfile_real::replace_in_cwd(z_static(b"yarn.lock\0"), &buf, 0o666);
+    crate::lockfile_real::replace_in_cwd(bun_core::zstr!("yarn.lock"), &buf, 0o666);
     Ok(())
 }
 
@@ -1375,11 +1371,4 @@ fn verbose_install() -> bool {
     // SAFETY: `VERBOSE_INSTALL` is set once during single-threaded CLI startup
     // (PackageManagerOptions.load) and only read on the main thread.
     PackageManager::verbose_install()
-}
-
-/// `&'static ZStr` from a NUL-terminated literal.
-#[inline]
-const fn z_static(bytes_with_nul: &'static [u8]) -> &'static ZStr {
-    // `from_static` is the const-eval-safe form of `from_slice_with_nul`.
-    ZStr::from_static(bytes_with_nul)
 }

@@ -10,7 +10,7 @@
  * adopted into this context's group in place and its ext block repointed at a
  * heap Http2Connection. Each request stream is an Http2Response, which
  * exposes the same method surface as HttpResponse<SSL> / Http3Response so the
- * layers above stay transport-agnostic. HPACK is ls-hpack.
+ * layers above stay transport-agnostic.
  *
  * Lifetime rule: an Http2Response* handed to a route handler stays valid
  * until its onAborted fires. Streams retire (both directions closed or reset)
@@ -28,10 +28,9 @@
 #include "Utilities.h"
 #include "HttpResponse.h"
 #include "SocketKinds.h"
+#include "Hpack.h"
 #include "Http2ResponseData.h"
 #include "Http3Request.h"
-
-#include <lshpack.h>
 
 #include <algorithm>
 #include <charconv>
@@ -42,6 +41,7 @@
 #include <memory>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -77,7 +77,6 @@ enum SettingId : uint16_t {
 static constexpr uint32_t FRAME_HEADER_SIZE = 9;
 static constexpr int32_t DEFAULT_WINDOW_SIZE = 65535;
 static constexpr int64_t MAX_WINDOW_SIZE = 0x7fffffff;
-static constexpr uint32_t DEFAULT_HEADER_TABLE_SIZE = 4096;
 /* What we accept per frame. Kept at the protocol minimum so a full frame
  * always fits the per-connection reassembly buffer cheaply. */
 static constexpr uint32_t LOCAL_MAX_FRAME_SIZE = 16384;
@@ -94,11 +93,6 @@ static constexpr uint32_t LOCAL_MAX_CONCURRENT_STREAMS = 256;
 /* Same cap as the HTTP/1 parser (UWS_HTTP_MAX_HEADERS_COUNT). */
 static constexpr size_t MAX_HEADER_FIELDS = 200;
 static constexpr unsigned MAX_SETTINGS_PER_FRAME = 32;
-/* ls-hpack refuses to decode a longer name or value. */
-static constexpr size_t MAX_STRING_LENGTH = UINT16_MAX;
-/* ls-hpack is built with the same width, see lsxpackDefines in scripts/build/deps/lshpack.ts. */
-static_assert(sizeof(lsxpack_strlen_t) == 4 && offsetof(lsxpack_header_t, chain_next_idx) == sizeof(char *) + 24,
-    "LSXPACK_MAX_STRLEN must be UINT32_MAX");
 /* A header block may span this many CONTINUATION frames (the byte cap alone
  * doesn't bound a flood of empty ones). */
 static constexpr unsigned MAX_CONTINUATION_FRAMES = 32;
@@ -144,22 +138,6 @@ static inline void writeU32BE(char *p, uint32_t v) {
     p[0] = (char)(v >> 24); p[1] = (char)(v >> 16); p[2] = (char)(v >> 8); p[3] = (char) v;
 }
 
-static inline unsigned char *hpackEncodeInteger(unsigned char *dst, uint8_t prefixPattern, unsigned prefixBits, uint32_t value) {
-    uint32_t maxPrefix = (1u << prefixBits) - 1;
-    if (value < maxPrefix) {
-        *dst++ = (unsigned char)(prefixPattern | value);
-        return dst;
-    }
-    *dst++ = (unsigned char)(prefixPattern | maxPrefix);
-    value -= maxPrefix;
-    while (value >= 128) {
-        *dst++ = (unsigned char)((value & 0x7f) | 0x80);
-        value >>= 7;
-    }
-    *dst++ = (unsigned char) value;
-    return dst;
-}
-
 /* RFC 9113 §8.2.1 field validity, beyond what HPACK decoding guarantees: a
  * name is an RFC 9110 token with no uppercase letter, optionally behind the
  * single ':' of a pseudo-header. The token set is the one the HTTP/1 parser
@@ -181,21 +159,21 @@ static inline bool isKnownMethod(std::string_view method) {
     return Bun__HTTPMethod__from(method.data(), method.size()) != -1;
 }
 
-/* The request fields validation cares about. lshpack reports the HPACK
- * static-table index when the peer used one for the name (nearly always);
- * literal names fall back to a compare. */
+/* The request fields validation cares about. The decoder reports the HPACK
+ * static-table index (RFC 7541 Appendix A) when the peer used one for the name
+ * (nearly always); literal names fall back to a compare. */
 enum class Field : uint8_t { Other, Method, Scheme, Path, Authority, Host, ContentLength, Te, Expect, ConnectionSpecific };
 static inline Field classify(int hpackIndex, std::string_view name) {
     switch (hpackIndex) {
-    case LSHPACK_HDR_AUTHORITY: return Field::Authority;
-    case LSHPACK_HDR_METHOD_GET: case LSHPACK_HDR_METHOD_POST: return Field::Method;
-    case LSHPACK_HDR_PATH: case LSHPACK_HDR_PATH_INDEX_HTML: return Field::Path;
-    case LSHPACK_HDR_SCHEME_HTTP: case LSHPACK_HDR_SCHEME_HTTPS: return Field::Scheme;
-    case LSHPACK_HDR_HOST: return Field::Host;
-    case LSHPACK_HDR_CONTENT_LENGTH: return Field::ContentLength;
-    case LSHPACK_HDR_EXPECT: return Field::Expect;
-    case LSHPACK_HDR_TRANSFER_ENCODING: return Field::ConnectionSpecific;
-    case LSHPACK_HDR_UNKNOWN: break;
+    case 0: break;
+    case 1: return Field::Authority;
+    case 2: case 3: return Field::Method;
+    case 4: case 5: return Field::Path;
+    case 6: case 7: return Field::Scheme;
+    case 28: return Field::ContentLength;
+    case 35: return Field::Expect;
+    case 38: return Field::Host;
+    case 57: return Field::ConnectionSpecific;
     default: return Field::Other;
     }
     switch (name.size()) {
@@ -350,8 +328,7 @@ private:
 struct Http2Connection {
     us_socket_t *s;
     Http2Context *ctx;
-    struct lshpack_enc enc;
-    struct lshpack_dec dec;
+    Hpack hpack;
 
     /* Inbound: partial frame reassembly, and HEADERS+CONTINUATION block. */
     BackPressure in;
@@ -384,9 +361,6 @@ struct Http2Connection {
     int32_t peerInitialWindowSize = http2::DEFAULT_WINDOW_SIZE;
     int64_t connSendWindow = http2::DEFAULT_WINDOW_SIZE;
     uint32_t connUnackedReceive = 0;
-    uint32_t encoderTableSize = http2::DEFAULT_HEADER_TABLE_SIZE;
-    bool pendingTableSizeUpdate = false;
-    uint32_t minTableSizeSinceBlock = 0;
 
     /* Highest client stream id seen (protocol checks) vs. highest one handed
      * to a handler (what GOAWAY reports as possibly acted upon, §6.8). */
@@ -444,15 +418,7 @@ public:
     unsigned idleTimeoutS = 0;
     int drainDepth = 0;
 
-    Http2Connection(us_socket_t *socket, Http2Context *context) : s(socket), ctx(context) {
-        lshpack_enc_init(&enc);
-        lshpack_enc_use_hist(&enc, 1);
-        lshpack_dec_init(&dec);
-    }
-    ~Http2Connection() {
-        lshpack_enc_cleanup(&enc);
-        lshpack_dec_cleanup(&dec);
-    }
+    Http2Connection(us_socket_t *socket, Http2Context *context) : s(socket), ctx(context) {}
 
     Http2Response *openStream(uint32_t id) {
         streams.append(std::make_unique<Http2Response>(this, id, peerInitialWindowSize));
@@ -674,12 +640,10 @@ struct Http2Context {
     BackPressure sharedOut;
     Http2Connection *sharedOutHolder = nullptr;
 
-    /* Scratch shared by every connection on this context: decoded request
-     * header bytes + list, and the HPACK encode buffer. dispatchDepth guards
+    /* Scratch shared by every connection on this context. dispatchDepth guards
      * the (node:http-only) case of a dispatch nesting another. */
-    std::vector<char> decodeBuffer;
-    std::vector<us_quic_header_t> decodedHeaders;
-    std::vector<unsigned char> encodeBuffer;
+    HpackBuffer decodeBuffer;
+    HpackBuffer encodeBuffer;
     int dispatchDepth = 0;
 
     std::vector<Http2Connection::Pin> sweepList;
@@ -1061,59 +1025,20 @@ inline void Http2Connection::scheduleFlush() {
 inline void Http2Connection::writeHeaderBlock(Http2Response *stream, bool endStream) {
     wroteStreamBytes = true;
     Http2ResponseData *d = &stream->data;
-    std::vector<unsigned char> &buf = ctx->encodeBuffer;
-    size_t need = 16;
-    for (auto &h : d->hdrs) need += h.nameLen + h.valueLen + 32;
-    if (buf.size() < need) buf.resize(need);
-    unsigned char *p = buf.data();
-    unsigned char *end = buf.data() + buf.size();
-    if (pendingTableSizeUpdate) {
-        if (minTableSizeSinceBlock != encoderTableSize) p = http2::hpackEncodeInteger(p, 0x20, 5, minTableSizeSinceBlock);
-        p = http2::hpackEncodeInteger(p, 0x20, 5, encoderTableSize);
-        pendingTableSizeUpdate = false;
-    }
-    const char *base = d->hdrBuf.span().data();
-    for (auto &h : d->hdrs) {
-        if (h.nameLen + h.valueLen + 32 > (size_t)(end - p)) {
-            size_t used = (size_t)(p - buf.data());
-            buf.resize(buf.size() * 2 + h.nameLen + h.valueLen + 32);
-            p = buf.data() + used;
-            end = buf.data() + buf.size();
-        }
-        if (h.nameLen > http2::MAX_STRING_LENGTH / 2 || h.valueLen > http2::MAX_STRING_LENGTH / 2) {
-            /* Literal without indexing, no Huffman. */
-            *p++ = 0x00;
-            p = http2::hpackEncodeInteger(p, 0x00, 7, h.nameLen);
-            memcpy(p, base + h.nameOff, h.nameLen); p += h.nameLen;
-            p = http2::hpackEncodeInteger(p, 0x00, 7, h.valueLen);
-            memcpy(p, base + h.valueOff, h.valueLen); p += h.valueLen;
-            continue;
-        }
-        lsxpack_header_t x;
-        lsxpack_header_set_offset2(&x, base + h.nameOff, 0, h.nameLen, h.nameLen, h.valueLen);
-        for (;;) {
-            unsigned char *q = lshpack_enc_encode(&enc, p, end, &x);
-            if (q != p) { p = q; break; }
-            size_t used = (size_t)(p - buf.data());
-            buf.resize(buf.size() * 2);
-            p = buf.data() + used;
-            end = buf.data() + buf.size();
-        }
-    }
+    std::span<const char> block = hpack.encode(ctx->encodeBuffer, d->hdrBuf.span(), d->hdrs.span(), Hpack::Indexing::Allowed);
     d->hdrBuf.shrink(0);
     d->hdrs.shrink(0);
 
     /* HEADERS then CONTINUATIONs, each ≤ the peer's frame size. No other
      * frame may interleave, which holds since the block is appended at once. */
-    const char *block = (const char *) buf.data();
-    size_t total = (size_t)(p - buf.data());
+    size_t total = block.size();
     size_t off = 0;
     bool first = true;
     do {
         uint32_t chunk = (uint32_t) std::min<size_t>(total - off, peerMaxFrameSize);
         bool last = off + chunk == total;
         uint8_t flags = (last ? http2::END_HEADERS : 0) | (first && endStream ? http2::END_STREAM : 0);
-        writeFrame(first ? http2::HEADERS : http2::CONTINUATION, flags, stream->id, block + off, chunk);
+        writeFrame(first ? http2::HEADERS : http2::CONTINUATION, flags, stream->id, block.data() + off, chunk);
         off += chunk;
         first = false;
     } while (off < total);
@@ -1121,20 +1046,11 @@ inline void Http2Connection::writeHeaderBlock(Http2Response *stream, bool endStr
 }
 
 inline void Http2Connection::writeInformational(Http2Response *stream, std::string_view status) {
-    unsigned char tmp[32];
     char field[10] = {':', 's', 't', 'a', 't', 'u', 's', '1', '0', '0'};
     memcpy(field + 7, status.data(), std::min<size_t>(status.size(), 3));
-    lsxpack_header_t x;
-    lsxpack_header_set_offset2(&x, field, 0, 7, 7, 3);
-    x.indexed_type = 1;
-    unsigned char *p = tmp;
-    if (pendingTableSizeUpdate) {
-        if (minTableSizeSinceBlock != encoderTableSize) p = http2::hpackEncodeInteger(p, 0x20, 5, minTableSizeSinceBlock);
-        p = http2::hpackEncodeInteger(p, 0x20, 5, encoderTableSize);
-        pendingTableSizeUpdate = false;
-    }
-    unsigned char *q = lshpack_enc_encode(&enc, p, tmp + sizeof(tmp), &x);
-    writeFrame(http2::HEADERS, http2::END_HEADERS, stream->id, (const char *) tmp, (uint32_t)(q - tmp));
+    const HeaderRef ref{0, 7, 7, 3};
+    std::span<const char> block = hpack.encode(ctx->encodeBuffer, field, {&ref, 1}, Hpack::Indexing::Without);
+    writeFrame(http2::HEADERS, http2::END_HEADERS, stream->id, block.data(), (uint32_t) block.size());
 }
 
 inline void Http2Connection::replenishStreamWindow(Http2Response *stream, uint32_t bytes) {
@@ -1313,19 +1229,9 @@ inline bool Http2Connection::handleSettings(uint8_t flags, const unsigned char *
         uint16_t id = (uint16_t)((payload[off] << 8) | payload[off + 1]);
         uint32_t value = http2::readU32BE(payload + off + 2);
         switch (id) {
-        case http2::SETTINGS_HEADER_TABLE_SIZE: {
-            uint32_t newSize = std::min(value, http2::DEFAULT_HEADER_TABLE_SIZE);
-            if (newSize != encoderTableSize || pendingTableSizeUpdate) {
-                /* RFC 7541 §4.2: if the limit dipped below the final value
-                 * between blocks, the decoder must see that minimum first. */
-                minTableSizeSinceBlock = pendingTableSizeUpdate ? std::min(minTableSizeSinceBlock, newSize) : std::min(encoderTableSize, newSize);
-                encoderTableSize = newSize;
-                lshpack_enc_set_max_capacity(&enc, minTableSizeSinceBlock);
-                if (newSize != minTableSizeSinceBlock) lshpack_enc_set_max_capacity(&enc, newSize);
-                pendingTableSizeUpdate = true;
-            }
+        case http2::SETTINGS_HEADER_TABLE_SIZE:
+            hpack.setPeerTableSize(value);
             break;
-        }
         case http2::SETTINGS_ENABLE_PUSH:
             if (value > 1) return connectionError(http2::ERR_PROTOCOL_ERROR);
             break;
@@ -1543,46 +1449,14 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     uint32_t limit = maxHeaderListSize();
     size_t hardCap = std::max<size_t>((size_t) limit * http2::HEADER_BLOCK_HARD_CAP_FACTOR, http2::LOCAL_MAX_FRAME_SIZE);
     if (length > hardCap) return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
-    std::vector<char> localBuffer;
-    std::vector<us_quic_header_t> localList;
-    bool nested = ctx->dispatchDepth > 0;
-    std::vector<char> &buf = nested ? localBuffer : ctx->decodeBuffer;
-    std::vector<us_quic_header_t> &list = nested ? localList : ctx->decodedHeaders;
-    if (buf.size() < (size_t) limit + 64) buf.resize((size_t) limit + 64);
-    list.clear();
-    size_t used = 0, decoded = 0, fields = 0;
-    const unsigned char *p = block, *end = block + length;
-    while (p < end) {
-        lsxpack_header_t x;
-        size_t room = buf.size() - used;
-        lsxpack_header_prepare_decode(&x, buf.data() + used, 0, room > http2::MAX_STRING_LENGTH ? http2::MAX_STRING_LENGTH : room);
-        int rc = lshpack_dec_decode(&dec, &p, end, &x);
-        if (rc == LSHPACK_ERR_MORE_BUF) {
-            size_t need = used + x.val_len + 64;
-            if (x.val_len > http2::MAX_STRING_LENGTH || buf.size() >= hardCap || room >= http2::MAX_STRING_LENGTH) {
-                return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
-            }
-            buf.resize(std::min(hardCap, std::max(buf.size() * 2, need)));
-            continue;
-        }
-        /* lshpack decodes a zero-length literal name successfully. */
-        if (rc != 0 || x.name_len == 0) return connectionError(http2::ERR_COMPRESSION_ERROR);
-        decoded += lsxpack_header_get_dec_size(&x);
-        fields++;
-        /* Past the 431 thresholds we keep decoding only to keep HPACK state in
-         * sync; a block that expands far beyond them is an attack, not a request. */
-        if (decoded > hardCap || fields > http2::MAX_HEADER_FIELDS * 2) return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
-        if (list.size() > http2::MAX_HEADER_FIELDS) continue;
-        /* Offsets for now; buf may still grow. */
-        list.push_back({(const char *) (uintptr_t) (x.buf + x.name_offset - buf.data()), x.name_len,
-                        (const char *) (uintptr_t) (x.buf + x.val_offset - buf.data()), x.val_len, x.hpack_index});
-        used += lsxpack_header_get_dec_size(&x);
-    }
-    for (us_quic_header_t &h : list) {
-        h.name = buf.data() + (uintptr_t) h.name;
-        h.value = buf.data() + (uintptr_t) h.value;
-    }
-    bool tooLarge = used > limit || list.size() > http2::MAX_HEADER_FIELDS;
+    std::optional<HpackBuffer> nestedBuffer;
+    HpackBuffer &buffer = ctx->dispatchDepth > 0 ? nestedBuffer.emplace() : ctx->decodeBuffer;
+    /* Past the 431 thresholds decoding goes on only to keep HPACK state in
+     * sync; a block that expands far beyond them is an attack, not a request. */
+    auto [list, status] = hpack.decode(buffer, {block, length}, {limit, http2::MAX_HEADER_FIELDS, hardCap, http2::MAX_HEADER_FIELDS * 2});
+    if (status == Hpack::Status::Malformed) return connectionError(http2::ERR_COMPRESSION_ERROR);
+    if (status == Hpack::Status::OverHardLimit) return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
+    bool tooLarge = status == Hpack::Status::OverLimit;
     bool selfDependent = headerBlockSelfDependent;
     headerBlockSelfDependent = false;
 

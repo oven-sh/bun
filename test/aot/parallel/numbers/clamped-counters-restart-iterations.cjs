@@ -1,52 +1,34 @@
 // STATISTIC: ClampedCountersEnteringGenericVersions >= 1
-// for (j = i; j < i + half; j++) re[j + half] = ..: `half` is a fraction as far as its type says, and the version that tests it for an integer restarts an iteration whose store cannot be done.
+// for (at = from; at < from + half; at++) high[at + half] = ..: `half` is a fraction as far as its type says, and the version that tests it for an integer restarts an iteration whose store cannot be done.
 const show = v => (Object.is(v, -0) ? "-0" : typeof v === "bigint" ? v + "n" : String(v));
 const N = 64;
-const re = [], im = [], cosT = [], sinT = [];
+const high = [], low = [], cosT = [], sinT = [];
 for (let i = 0; i < N; i++) {
-  re.push(Math.sin(i));
-  im.push(0.5);
+  high.push(Math.sin(i));
+  low.push(0.5);
   cosT.push(Math.cos((2 * Math.PI * i) / N));
   sinT.push(Math.sin((2 * Math.PI * i) / N));
 }
-function fft(re, im) {
-  for (let i = 0, j = 0; i < N; i++) {
-    if (j > i) {
-      let t = re[i];
-      re[i] = re[j];
-      re[j] = t;
-      t = im[i];
-      im[i] = im[j];
-      im[j] = t;
-    }
-    let m = N >> 1;
-    while (m >= 1 && j & m) {
-      j ^= m;
-      m >>= 1;
-    }
-    j |= m;
-  }
-  for (let size = 2; size <= N; size *= 2) {
-    const half = size / 2, step = N / size;
-    for (let i = 0; i < N; i += size) {
-      for (let j = i, k = 0; j < i + half; j++, k += step) {
-        const tr = re[j + half] * cosT[k] + im[j + half] * sinT[k];
-        const ti = im[j + half] * cosT[k] - re[j + half] * sinT[k];
-        re[j + half] = re[j] - tr;
-        im[j + half] = im[j] - ti;
-        re[j] += tr;
-        im[j] += ti;
+function swell(high, low) {
+  for (let width = 2; width <= N; width *= 2) {
+    const half = width / 2, step = N / width;
+    for (let from = 0; from < N; from += width) {
+      for (let at = from, k = 0; at < from + half; at++, k += step) {
+        const tide = high[at + half] * cosT[k] - low[at];
+        low[at + half] = low[at + half] / 2 + tide;
+        high[at + half] = high[at] - tide / 4;
+        high[at] = tide * sinT[k];
       }
     }
   }
 }
 function work(r) {
   for (let i = 0; i < N; i++) {
-    re[i] = ((i * 37) % 11) * 0.1;
-    im[i] = 0;
+    high[i] = ((i * 37) % 11) * 0.1;
+    low[i] = 0;
   }
-  fft(re, im);
-  return re[3] + im[5];
+  swell(high, low);
+  return high[3] + low[5];
 }
 let s = 0;
 for (let r = 0; r < 20; r++) s += work(r);

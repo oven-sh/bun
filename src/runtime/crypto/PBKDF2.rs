@@ -149,10 +149,8 @@ impl JobContext for Pbkdf2Job {
             return Ok(());
         }
 
-        let output_slice = core::mem::take(&mut this.output);
-        debug_assert!(output_slice.len() == this.pbkdf2.length);
-        // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator → mimalloc free).
-        match JSValue::create_buffer(global_this, output_slice.leak()) {
+        debug_assert!(this.output.len() == this.pbkdf2.length);
+        match JSValue::create_buffer(global_this, core::mem::take(&mut this.output)) {
             Ok(buffer_value) => event_loop.run_callback(
                 bun_event_loop::ContextId::NONE,
                 callback,

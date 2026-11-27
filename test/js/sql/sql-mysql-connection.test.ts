@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, describeWithContainer, isASAN, isLinux, isWindows } from "harness";
 import { once } from "node:events";
 import net from "node:net";
+import { join } from "node:path";
 import {
   listeningServer,
   loopbackFence,
@@ -14,10 +15,13 @@ import {
   mysqlRawPacket,
   mysqlReadPackets,
   mysqlTextResultSet,
+  runEventLoopUntil,
 } from "./wire-frames";
 
 const COM_QUIT = 0x01;
 const COM_QUERY = 0x03;
+const COM_STMT_PREPARE = 0x16;
+const COM_STMT_EXECUTE = 0x17;
 
 /** An SQL instance, a reservation or a transaction. */
 type Tag = (strings: TemplateStringsArray, ...values: unknown[]) => PromiseLike<any>;
@@ -1138,6 +1142,175 @@ describe("scripted server", () => {
     } finally {
       server.close();
     }
+  });
+
+  test("an ERR packet that comes while the parameters of a query are read is why the connection ends", async () => {
+    let socket!: net.Socket;
+    const { port, server } = await mysqlServer({ onSocket: accepted => void (socket = accepted) });
+    try {
+      await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
+      await sql.connect();
+      let built: Promise<unknown> | undefined;
+      const parameter = {
+        toJSON() {
+          socket.write(mysqlErrPacket(0, 1927, "70100", "Connection was killed"));
+          built = runEventLoopUntil(loopbackFence);
+          return 1;
+        },
+      };
+      const err: any = await sql`SELECT ${parameter}`.catch(err => err);
+      await built;
+      expect([err.code, err.errno]).toEqual(["ERR_MYSQL_SERVER_ERROR", 1927]);
+    } finally {
+      server.close();
+    }
+  });
+
+  /** For what ends the process or patches a built-in. `serve(onCommand)` gives the URL of a server. */
+  async function runWithServer(script: string) {
+    const prelude = /* js */ `
+      import { SQL } from "bun";
+      import * as wire from ${JSON.stringify(join(import.meta.dir, "wire-frames.ts"))};
+      async function serve(onCommand) {
+        const { port } = await wire.listeningServer(socket => {
+          let buffered = Buffer.alloc(0);
+          socket.on("error", () => {});
+          socket.write(wire.mysqlHandshakeV10());
+          socket.on("data", chunk => {
+            buffered = wire.mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+              if (seq === 1) socket.write(wire.mysqlOkPacket(2));
+              else if (!wire.mysqlAckSessionSetup(socket, payload)) onCommand(socket, payload);
+            });
+          });
+        });
+        return "mysql://root@127.0.0.1:" + port + "/db";
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + script],
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "disable_coredump=1", "symbolize=0"].filter(Boolean).join(":"),
+        BUN_ENABLE_CRASH_REPORTING: "0",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent("a reply that ends while its row is pushed leaves no count to the next execution", async () => {
+    const result = await runWithServer(/* js */ `
+      const columns = [{ name: "v", type: 3 }];
+      const reply = wire.mysqlBinaryResultSet(1, columns, [[wire.mysqlBinaryLong(7)]]);
+      const terminator = reply.length - wire.mysqlOkPacket(0).length;
+      let socket, executions = 0;
+      const url = await serve((accepted, payload) => {
+        socket = accepted;
+        if (payload[0] === ${COM_STMT_PREPARE}) {
+          socket.write(Buffer.concat([wire.mysqlStmtPrepareOk(1, 1, 1, 0), wire.mysqlColumnDefinition(2, columns[0])]));
+        } else {
+          socket.write(++executions === 1 ? reply.subarray(0, terminator) : reply);
+        }
+      });
+      const sql = new SQL({ url, max: 1 });
+      await sql.connect();
+      const pushed = Promise.withResolvers();
+      let armed = true;
+      Object.defineProperty(Array.prototype, "0", {
+        configurable: true,
+        set(value) {
+          Object.defineProperty(this, "0", { value, writable: true, enumerable: true, configurable: true });
+          if (!armed || value?.v !== 7) return;
+          armed = false;
+          socket.write(reply.subarray(terminator));
+          pushed.resolve(wire.runEventLoopUntil(wire.loopbackFence));
+        },
+      });
+      const first = await sql\`SELECT 7 AS v\`;
+      await pushed.promise;
+      delete Array.prototype[0];
+      const second = await sql\`SELECT 7 AS v\`;
+      console.log(first.count, second.count);
+      process.exit(0);
+    `);
+    expect(result).toEqual({ stdout: "1 1\n", stderr: "", exitCode: 0 });
+  });
+
+  // Built-in JS runs a handle one time only.
+  test.concurrent("a handle that is under way ignores a further run()", async () => {
+    const result = await runWithServer(/* js */ `
+      let socket;
+      const commands = [];
+      const ok = (socket, payload) => payload[0] === ${COM_QUERY} && socket.write(wire.mysqlOkPacket(1));
+      const record = (accepted, payload) => (commands.push(payload[0]), ok((socket = accepted), payload));
+      const a = new SQL({ url: await serve(record), max: 1 });
+      const b = new SQL({ url: await serve(ok), max: 1 });
+      const handleOf = query => query[Object.getOwnPropertySymbols(query).find(s => s.description === "handle")];
+      const outcome = query => query.then(() => "ok", err => err.code);
+
+      const warm = a.unsafe("DO 0").simple();
+      await Promise.all([warm, b.connect()]);
+      const prototype = Object.getPrototypeOf(handleOf(warm));
+      const run = prototype.run;
+      const connections = [];
+      prototype.run = function (connection, query) {
+        connections.push(connection);
+        return run.call(this, connection, query);
+      };
+      await Promise.all([a, b].map(sql => sql.unsafe("DO 0").simple()));
+      prototype.run = run;
+
+      const first = a\`DO 1\`.execute();
+      handleOf(first).run(connections[1], first);
+      const outcomes = [outcome(first)];
+      await b.close({ timeout: 0 });
+      const second = a\`DO 1\`.execute();
+      outcomes.push(outcome(second));
+      await wire.loopbackFence();
+      socket.write(wire.mysqlStmtPrepareOk(1, 7, 0, 0));
+      await wire.loopbackFence();
+      handleOf(second).run(connections[0], second);
+      await wire.loopbackFence();
+      socket.write(Buffer.concat([wire.mysqlOkPacket(1), wire.mysqlOkPacket(1)]));
+      console.log(JSON.stringify({ outcomes: await Promise.all(outcomes), commands }));
+      process.exit(0);
+    `);
+    const commands = [COM_QUERY, COM_QUERY, COM_STMT_PREPARE, COM_STMT_EXECUTE, COM_STMT_EXECUTE];
+    expect(result).toEqual({
+      stdout: JSON.stringify({ outcomes: ["ok", "ok"], commands }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent.skipIf(!isASAN)("a parameter that the end-of-turn flush reads can free the connection", async () => {
+    const result = await runWithServer(/* js */ `
+      let sql = new SQL({ url: await serve(() => {}), max: 1 });
+      await sql.connect();
+      const read = Promise.withResolvers();
+      const parameter = {
+        toJSON() {
+          sql.close({ timeout: 0 });
+          sql = null;
+          Bun.gc(true);
+          read.resolve();
+          return 1;
+        },
+      };
+      setImmediate(() => {
+        // It fills the write buffer, so the next one waits for the flush.
+        sql.unsafe(Buffer.alloc(70_000, "a").toString()).simple().catch(() => {});
+        sql\`SELECT \${parameter}\`.catch(() => {});
+      });
+      await read.promise;
+      await new Promise(setImmediate);
+      console.log("ok");
+      process.exit(0);
+    `);
+    expect(result).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
   });
 
   test.skipIf(isWindows)("a unix socket that is not there rejects with its path", async () => {

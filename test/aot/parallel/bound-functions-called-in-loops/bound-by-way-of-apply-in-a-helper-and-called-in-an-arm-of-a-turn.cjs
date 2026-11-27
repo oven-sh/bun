@@ -1,14 +1,18 @@
-var nativeBind = Function.prototype.bind, slice = Array.prototype.slice;
-function bindTo(func, context) { return nativeBind.apply(func, slice.call(arguments, 1)); }
-function join(a, b, c) { return a.length + b.length + c; }
-const rows = JSON.parse("[1,9,2,8,3,7,4,6]");
+// A helper lays its own arguments in a list and binds by way of apply; what it gives is called in an arm of a turn.
+const tie = Function.prototype.bind;
+function lent(work) {
+  const rest = [];
+  for (let i = 1; i < arguments.length; i++) rest.push(arguments[i]);
+  return tie.apply(work, rest);
+}
+function freight(crates, sacks, weight) { return crates.length * 2 + sacks.length + weight + (this ? this.tare : 0); }
+const loads = JSON.parse("[4,12,3,8,15,1,9,6]");
 function run(turns) {
-  const bound = bindTo(join, null, "x");
+  const carried = lent(freight, { tare: 5 }, "oak");
   let sum = 0;
   for (let i = 0; i < turns; i++) {
-    if (rows[i & 7] > 3)
-      sum += bound("ab", 1);
+    if (loads[i & 7] > 7) sum += carried("rye", loads[i & 3]);
   }
   return sum;
 }
-console.log(run(1000), run(0), join("p", "qr", 1));
+console.log(run(1000), run(0), lent(freight, { tare: 1 }, "a", "bc")(7), lent(freight).name, lent(freight, null, "x").length);

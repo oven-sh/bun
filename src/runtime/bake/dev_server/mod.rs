@@ -25,7 +25,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::{LogJsc as _, StringJsc as _};
-use bun_paths::{self as paths, PathBuffer};
+use bun_paths as paths;
 use bun_sys as sys;
 use bun_uws::{self as uws, AnyResponse, Opcode, Request, WebSocketUpgradeContext};
 use bun_watcher::WatchItemColumns as _;
@@ -37,12 +37,12 @@ use crate::bake;
 use crate::bake::router::{self, FrameworkRouter, OpaqueFileId};
 use crate::server::html_bundle::HTMLBundleRoute;
 use crate::server::{PendingRequest, Served};
-use crate::timer::{EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::EventLoopTimerTag;
 use bun_ast::Loader;
 use bun_bundler::{self as bundler, BundleV2, Transpiler};
 use bun_http::{Method, MimeType};
 use bun_safety::ThreadLock;
-use bun_watcher::Watcher;
+use bun_watcher::{OwnedWatcher, Watcher};
 
 pub(super) use self::assets::Assets;
 pub(super) use self::error_report_request::ErrorReportRequest;
@@ -196,14 +196,14 @@ impl GraphTraceState {
     }
 
     pub(crate) fn clear(&mut self) {
-        self.server_bits.unmanaged.set_all(false);
-        self.client_bits.unmanaged.set_all(false);
+        self.server_bits.set_all(false);
+        self.client_bits.set_all(false);
         self.failures.clear();
     }
 
     pub(crate) fn resize(&mut self, side: Side, new_size: usize) -> Result<(), crate::Error> {
         let b = self.bits(side);
-        if b.unmanaged.bit_length < new_size {
+        if b.bit_length() < new_size {
             b.resize(new_size, false)?;
         }
         Ok(())
@@ -501,7 +501,7 @@ pub(crate) struct DevServer {
     pub(crate) server_register_update_callback: jsc::StrongOptional,
 
     // Watching
-    pub(crate) bun_watcher: Arc<Watcher>,
+    pub(crate) bun_watcher: OwnedWatcher,
     pub(crate) directory_watchers: DirectoryWatchStore,
     pub(crate) pending_reload_event: Arc<PendingReloadEvent>,
     /// Empty. Swapped with the one in `pending_reload_event` to reuse its memory.

@@ -75,6 +75,8 @@ pub(crate) mod states {
 pub(crate) mod builtins {
     #[path = "basename.rs"]
     pub(crate) mod basename;
+    #[path = "batch.rs"]
+    pub(crate) mod batch;
     #[path = "cat.rs"]
     pub(crate) mod cat;
     #[path = "cd.rs"]
@@ -89,8 +91,6 @@ pub(crate) mod builtins {
     pub(crate) mod exit;
     #[path = "export.rs"]
     pub(crate) mod export;
-    #[path = "false_.rs"]
-    pub(crate) mod false_;
     #[path = "ls.rs"]
     pub(crate) mod ls;
     #[path = "mkdir.rs"]
@@ -105,8 +105,6 @@ pub(crate) mod builtins {
     pub(crate) mod seq;
     #[path = "touch.rs"]
     pub(crate) mod touch;
-    #[path = "true_.rs"]
-    pub(crate) mod true_;
     #[path = "which.rs"]
     pub(crate) mod which;
     #[path = "yes.rs"]
@@ -122,8 +120,7 @@ pub(crate) use yield_::Yield;
 /// owning modules are still gated. See `dispatch_tasks.rs` header.
 pub(crate) mod dispatch_tasks;
 
-/// `bun.shell.subproc` — `ShellSubprocess` + its `StaticPipeWriter`. Exposed so
-/// `runtime::dispatch::__bun_run_io` can name `StaticPipeWriter<ShellSubprocess>`.
+/// `bun.shell.subproc`. Exposed so `runtime::dispatch::__bun_run_io` can name `ShellSubprocess`.
 #[path = "subproc.rs"]
 pub(crate) mod subproc;
 

@@ -286,10 +286,11 @@ impl Checker<'_, '_> {
     /// Runs every check that queries `file`. Diagnostics it causes in other files, or that other files cause in this
     /// one, go to the sink.
     pub fn check_file(&mut self, file: FileId) -> Checked {
-        let _work = current_work::working_on(
-            current_work::Step::Check,
-            self.files().module(file).file_name(),
-        );
+        let path = self.files().module(file).file_name();
+        current_work::working_on(current_work::Step::Check, path, || self.run_checks(file))
+    }
+
+    fn run_checks(&mut self, file: FileId) -> Checked {
         self.begin_visit(file);
         let hir = self.hir(file);
         // `GetSyntacticDiagnostics` and `getBindAndCheckDiagnosticsWithChecker` are separate. Only the second depends

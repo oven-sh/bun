@@ -236,26 +236,18 @@ pub(crate) fn create_index_link(
     {
         return;
     }
-    let mut link_buf = bun_paths::path_buffer_pool::get();
     #[cfg(windows)]
     {
         if Dir::borrow(&cache_dir).make_path(name).is_err() {
             return;
         }
-        let link = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Windows>(
-            cache_dir_path,
-            &mut link_buf[..],
-            &[name, version],
-        );
+        let link = &bun_paths::Path::resolve(&[cache_dir_path, name, version]);
         let _ = sys::sys_uv::symlink_uv(target, link, sys::windows::libuv::UV_FS_SYMLINK_JUNCTION);
     }
     #[cfg(not(windows))]
     {
         let _ = cache_dir_path;
-        let link = bun_paths::resolve_path::join_z_buf::<bun_paths::platform::Auto>(
-            &mut link_buf[..],
-            &[name, version],
-        );
+        let link = &bun_paths::Path::join(&[name, version]);
         if let Err(err) = sys::symlinkat(target, cache_dir, link)
             && err.get_errno() == E::ENOENT
             && Dir::borrow(&cache_dir).make_path(name).is_ok()

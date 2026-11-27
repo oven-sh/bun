@@ -32,7 +32,13 @@ extern "C" size_t highway_memmem16(const uint16_t* haystack, size_t haystack_len
 extern "C" size_t highway_memrmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 extern "C" void highway_scanner_run_stops(const uint8_t* text, size_t text_len, uint8_t* out, size_t plane_len);
 extern "C" void highway_odd_blocks(const uint8_t* text, size_t text_len, uint64_t* out);
+extern "C" void highway_byte_bits(const uint8_t* text, size_t text_len, uint8_t byte, uint64_t* out);
 extern "C" size_t highway_byte_set_prefix_length(const uint8_t* text, size_t len, const uint8_t* set);
+#if CPU(X86_64)
+extern "C" bool highway_zstd_is_quicker();
+extern "C" bool highway_zstd_count_bytes(const uint8_t* bytes, size_t len, uint32_t* counts);
+extern "C" bool highway_zstd_write_codes(const uint8_t* symbols, size_t count, const uint16_t* codes, uint8_t* out, size_t room, uint64_t* written);
+#endif
 
 namespace Bun {
 
@@ -44,9 +50,10 @@ namespace Bun {
 // for memmem/memrmem the match offset with -1 for "not found". scannerRunStops
 // writes its three bitmaps into `arg`, a third of the view each, and returns 0.
 // lineStarts writes uint32 offsets into `arg` and returns how many.
-// oddBlocks writes its uint64 words into `arg` and returns 0.
+// oddBlocks writes its uint64 words into `arg` and returns 0. So does byteBits, for the byte in a fourth argument.
 // byteSetPrefixLength takes the 16 rows and the 16 columns of the set in `arg`.
 // The kernels that look for slashes ignore `arg`. commonPrefixLength compares `haystack` with `arg`.
+// zstdCountBytes adds to 256 uint32 in `arg`. zstdWriteCodes takes 3 uint64 to set, 256 uint16 and the room. Only on x64.
 BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -143,12 +150,34 @@ BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * g
         }
         highway_odd_blocks(haystack, len, reinterpret_cast<uint64_t*>(const_cast<uint8_t*>(needle)));
         result = 0;
+    } else if (op == "byteBits"_s) {
+        if (reinterpret_cast<uintptr_t>(needle) % alignof(uint64_t) || needle_len / sizeof(uint64_t) < (len + 63) / 64 || !callFrame->argument(3).isInt32()) {
+            throwRangeError(globalObject, scope, "needs an aligned uint64 per 64 bytes of text, and a byte"_s);
+            return {};
+        }
+        highway_byte_bits(haystack, len, static_cast<uint8_t>(callFrame->argument(3).asInt32()), reinterpret_cast<uint64_t*>(const_cast<uint8_t*>(needle)));
+        result = 0;
     } else if (op == "byteSetPrefixLength"_s) {
         if (len < 16 || needle_len != 32) {
             throwRangeError(globalObject, scope, "needs 16 bytes of text and a set of 32 bytes"_s);
             return {};
         }
         result = highway_byte_set_prefix_length(haystack, len, needle);
+#if CPU(X86_64)
+    } else if (op == "zstdIsQuicker"_s) {
+        result = highway_zstd_is_quicker();
+    } else if (op == "zstdCountBytes"_s || op == "zstdWriteCodes"_s) {
+        constexpr size_t codes = 3 * sizeof(uint64_t), room = codes + 256 * sizeof(uint16_t);
+        const bool counts = op == "zstdCountBytes"_s;
+        if (reinterpret_cast<uintptr_t>(needle) % alignof(uint64_t) || needle_len < (counts ? 256 * sizeof(uint32_t) : room)) {
+            throwRangeError(globalObject, scope, "arg is too short, or not aligned"_s);
+            return {};
+        }
+        auto* bytes = const_cast<uint8_t*>(needle);
+        result = counts
+            ? highway_zstd_count_bytes(haystack, len, reinterpret_cast<uint32_t*>(bytes))
+            : highway_zstd_write_codes(haystack, len, reinterpret_cast<uint16_t*>(bytes + codes), bytes + room, needle_len - room, reinterpret_cast<uint64_t*>(bytes));
+#endif
     } else {
         throwTypeError(globalObject, scope, "unknown op"_s);
         return {};

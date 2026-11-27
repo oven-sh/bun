@@ -12,7 +12,7 @@ use smallvec::SmallVec;
 use super::{BindingRef, ScopeSlot, Storage, dead_zone};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::{BuiltinPath, Mutability};
-use crate::ir::generated::{Field, FieldFlags, ImportPhase, Layout, LayoutKind};
+use crate::ir::generated::{Field, FieldFlags, Layout, LayoutKind};
 use crate::ir::{
     ClassSlot, DeclaredType, LayoutId, LayoutKey, Mapped, OpaqueKind, PositionFlags, Primitives,
     PropertyKey, StringId, Type, TypeId, TypeTable,
@@ -79,11 +79,10 @@ pub(in crate::lower) fn instance_layout(file: &mut FileLowering<'_, '_, '_, '_>)
     for &target in fields_of_instance.links() {
         fields.push(file.create_link_field(fields.len(), target));
     }
-    let namespaces = [ImportPhase::Evaluation, ImportPhase::Defer];
     for _ in fields_of_instance.mocks() {
         fields.push(file.create_word_field(fields.len()));
     }
-    for _ in namespaces {
+    while fields.len() < fields_of_instance.field_of_scope() as usize {
         let types = &mut file.fragment.types;
         let ty = types.union(TypeTable::ANYTHING, TypeTable::ABSENT);
         fields.push(file.create_hidden_field(fields.len(), ty));

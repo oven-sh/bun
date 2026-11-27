@@ -193,16 +193,16 @@ impl Handlers {
     }
 
     /// Bumps `active_connections`, enters the JS event-loop scope, and returns
-    /// a [`Scope`] whose exit halves undo both. The scope holds its own `Rc`, so
+    /// a [`Scope`] whose exit halves undo both. The scope borrows the `Rc`, so
     /// a socket that closes and drops its reference mid-callback cannot free
     /// the `Handlers` the callback is still reading from.
     #[inline]
-    pub(crate) fn enter(self: &Rc<Self>) -> Scope {
+    pub(crate) fn enter(self: &Rc<Self>) -> Scope<'_> {
         self.mark_active();
         let context = self.vm.enter_context(self.context);
         self.vm.event_loop().enter();
         Scope {
-            handlers: Rc::clone(self),
+            handlers: self,
             _context: context,
         }
     }
@@ -414,14 +414,14 @@ impl Handlers {
     }
 }
 
-/// One in-flight dispatch into JS. Holds an `Rc` so the callbacks it is about
+/// One in-flight dispatch into JS. Borrows the caller's `Rc`, so the callbacks it is about
 /// to invoke outlive a `close()` from inside them.
-pub(crate) struct Scope {
-    pub(crate) handlers: Rc<Handlers>,
+pub(crate) struct Scope<'a> {
+    pub(crate) handlers: &'a Rc<Handlers>,
     _context: bun_jsc::virtual_machine::ContextScope<'static>,
 }
 
-impl Scope {
+impl Scope<'_> {
     /// The event-loop `exit()` half, balancing the `enter()` in
     /// [`Handlers::enter`]. Split from the `active_connections` bookkeeping
     /// because draining microtasks here can synchronously reconnect or

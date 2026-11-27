@@ -326,6 +326,11 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
     Some(Box::from(&*bytecode))
 }
 
+/// For a VM of this process. `depth`: of the functions that are compiled.
+pub fn generate(format: Format, source: &[u8], url: &BunString, depth: u32) -> Option<Box<[u8]>> {
+    __bun_jsc_generate_cached_bytecode(format, source, url, depth, false, None)
+}
+
 /// A `JSC::BytecodeLinkEncoder` on the calling thread's bytecode VM; every later call must come from the same thread.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_bytecode_link_encoder_new(

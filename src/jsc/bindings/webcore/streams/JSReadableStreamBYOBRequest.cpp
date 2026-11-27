@@ -10,6 +10,7 @@
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
+#include "JSDOMPrototype.h"
 #include "JSDOMWrapperCache.h"
 #include "JSReadableByteStreamController.h"
 #include "WebCoreJSClientData.h"
@@ -19,7 +20,6 @@
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/Error.h>
-#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/Lookup.h>
@@ -36,68 +36,21 @@ static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototypeFunction_re
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototypeFunction_respondWithNewView);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototype_inspectCustom);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamBYOBRequestPrototypeGetter_view);
-static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamBYOBRequestPrototypeGetter_constructor);
 
-class JSReadableStreamBYOBRequestPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSReadableStreamBYOBRequestPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSReadableStreamBYOBRequestPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSReadableStreamBYOBRequestPrototype))) JSReadableStreamBYOBRequestPrototype(vm, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableStreamBYOBRequestPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSReadableStreamBYOBRequestPrototype(JSC::VM& vm, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableStreamBYOBRequestPrototype, JSReadableStreamBYOBRequestPrototype::Base);
-
-// JSReadableStreamBYOBRequestConstructor = JSDOMConstructorNotConstructable<...>:
-// construct/call both throw; only the prototype link and the name/length live here.
-
-template<> JSValue JSReadableStreamBYOBRequestConstructor::prototypeForStructure(JSC::VM&, const JSDOMGlobalObject& globalObject);
-template<> void JSReadableStreamBYOBRequestConstructor::initializeProperties(JSC::VM&, JSDOMGlobalObject&);
+using JSReadableStreamBYOBRequestPrototype = JSDOMPrototype<JSReadableStreamBYOBRequest>;
 
 template<> const ClassInfo JSReadableStreamBYOBRequestConstructor::s_info = { "ReadableStreamBYOBRequest"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamBYOBRequestConstructor) };
-
-template<> JSValue JSReadableStreamBYOBRequestConstructor::prototypeForStructure(JSC::VM&, const JSDOMGlobalObject& globalObject)
-{
-    return globalObject.functionPrototype();
-}
-
-template<> void JSReadableStreamBYOBRequestConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    initializeBaseProperties(vm, 0, "ReadableStreamBYOBRequest"_s, JSReadableStreamBYOBRequest::prototype(vm, globalObject));
-}
 
 // JSReadableStreamBYOBRequestPrototype
 
 static const HashTableValue JSReadableStreamBYOBRequestPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsReadableStreamBYOBRequestPrototypeGetter_constructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSReadableStreamBYOBRequestPrototype::constructorGetter, 0 } },
     { "view"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsReadableStreamBYOBRequestPrototypeGetter_view, 0 } },
     { "respond"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamBYOBRequestPrototypeFunction_respond, 1 } },
     { "respondWithNewView"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamBYOBRequestPrototypeFunction_respondWithNewView, 1 } },
 };
 
-const ClassInfo JSReadableStreamBYOBRequestPrototype::s_info = { "ReadableStreamBYOBRequest"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamBYOBRequestPrototype) };
+template<> const ClassInfo JSReadableStreamBYOBRequestPrototype::s_info = { "ReadableStreamBYOBRequest"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamBYOBRequestPrototype) };
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -113,7 +66,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototype_inspectCustom, (JS
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "ReadableStreamBYOBRequest"_s, data));
 }
 
-void JSReadableStreamBYOBRequestPrototype::finishCreation(VM& vm)
+template<> void JSReadableStreamBYOBRequestPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSReadableStreamBYOBRequest::info(), JSReadableStreamBYOBRequestPrototypeTableValues, *this);
@@ -150,9 +103,7 @@ Structure* JSReadableStreamBYOBRequest::createStructure(VM& vm, JSGlobalObject* 
 
 JSObject* JSReadableStreamBYOBRequest::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSReadableStreamBYOBRequestPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSReadableStreamBYOBRequestPrototype::create(vm, &globalObject, structure);
+    return JSReadableStreamBYOBRequestPrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 JSObject* JSReadableStreamBYOBRequest::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -192,16 +143,6 @@ void JSReadableStreamBYOBRequest::analyzeHeap(JSCell* cell, HeapAnalyzer& analyz
 }
 
 // Prototype host functions
-
-JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamBYOBRequestPrototypeGetter_constructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSReadableStreamBYOBRequestPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, scope);
-    return JSValue::encode(JSReadableStreamBYOBRequest::getConstructor(vm, prototype->globalObject()));
-}
 
 JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamBYOBRequestPrototypeGetter_view, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {

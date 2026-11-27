@@ -1,53 +1,40 @@
 # -- source: main.js
-# // A loop whose turns are quiet reads `this.ring.tail`: the read of `ring`, the test of what it gave and the read of `tail` stand in a row in front of the loop.
+# // A loop whose turns are quiet reads `this.river.mouth`: the read of `river`, the test of what it gave and the read of `mouth` stand in a row in front of the loop.
 # // With the proofs checked at run time each of those reads is asked again whether its slot is filled: the question stands beside the read, in the same row.
-# const absent = Symbol.for("absent");
-# class Ring {
-#     constructor() { this.tail = { value: absent, next: null }; this.size = 0; }
-#     push(value) { const link = { value, next: null }; this.tail.next = link; this.tail = link; this.size += 1; }
+# class River {
+#     constructor() { this.mouth = 9; this.name = "long"; }
 # }
-# class Reader {
-#     constructor(ring) { this.ring = ring; this.head = ring.tail; this.index = 0; this.isClosed = false; }
-#     isDrained() {
-#         if (this.isClosed)
-#             return true;
-#         let drained = true, goesOn = true;
-#         while (goesOn) {
-#             if (this.head === this.ring.tail)
-#                 goesOn = false;
-#             else if (this.head.next.value !== absent) {
-#                 drained = false;
-#                 goesOn = false;
-#             } else {
-#                 this.head = this.head.next;
-#                 this.index += 1;
-#             }
+# class Raft {
+#     constructor(river, speed) { this.river = river; this.mile = 0; this.speed = speed; this.nights = 0; }
+#     drifts(days) {
+#         let left = days;
+#         while (left > 0 && this.mile < this.river.mouth) {
+#             left--;
+#             this.mile += this.speed;
+#             if (this.mile % 4 === 2) this.nights += 2;
 #         }
-#         return drained;
+#         return left;
 #     }
 # }
-# print(new Function("Ring", "Reader", "absent", `
+# print(new Function("River", "Raft", `
 #     const said = [];
-#     const ring = new Ring(), reader = new Reader(ring);
-#     said.push(reader.isDrained(), reader.index);
-#     ring.push(absent); ring.push(absent);
-#     said.push(reader.isDrained(), reader.index);
-#     ring.push(absent); ring.push(7);
-#     said.push(reader.isDrained(), reader.index);
-#     reader.isClosed = true;
-#     said.push(reader.isDrained(), reader.index);
-#     const odd = new Reader(ring); odd.ring = { tail: odd.head };
-#     said.push(odd.isDrained(), odd.index);
-#     delete ring.tail;
-#     const late = new Reader({ tail: null }); late.ring = ring; late.head = undefined;
-#     said.push(late.isDrained(), late.index);
+#     const river = new River(), raft = new Raft(river, 2);
+#     said.push(raft.drifts(3), raft.mile, raft.nights);
+#     said.push(raft.drifts(7), raft.mile, raft.nights);
+#     const odd = new Raft(river, 1); odd.river = { mouth: 2 };
+#     said.push(odd.drifts(5), odd.mile);
+#     const late = new Raft({ name: "dry" }, 1);
+#     said.push(late.drifts(2), late.mile);
+#     delete river.mouth;
+#     raft.mile = 0;
+#     said.push(raft.drifts(1), raft.mile);
 #     return said.join(" ");
-# `)(Ring, Reader, absent));
+# `)(River, Raft));
 # -- end of source
 # A RIGHT PROGRAM (after two servers). In front of a loop with quiet turns there are two rows of blocks, and each operation that is built in front is sent to its row. Where proofs are
 # checked at run time (testing=CheckProofsAtRunTime, which --aot-harden=proof-checks stands for) a read of a slot has a test of its own whether the slot is filled. Built "where it stands", that test was not sent: it landed in the
 # first row, and its operand, the Unbox of what the read in front of it gave, stands in the second: the build stopped: UseNotDominated. The sending carries nothing out of a turn: it only picks the row.
 # RUN(BUILDS): run-in-shell testing=CheckProofsAtRunTime
-# BUILDS: true 0 true 2 false 3 true 3 true 0 true 0
+# BUILDS: 0 6 4 5 10 6 3 2 2 0 1 0
 # BUILDS-NEXT: exited with 0
 # BUILDS-NEXT: the source prints the same

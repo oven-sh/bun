@@ -40,26 +40,16 @@
 #include "JSDOMConvertDictionary.h"
 #include "JSDOMConvertSequences.h"
 #include "JSDOMConvertUnion.h"
-#include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
-#include "JSDOMWrapperCache.h"
-#include "ScriptExecutionContext.h"
+#include "JSDOMPrototype.h"
 #include "streams/WebStreamsInspectCustom.h"
-#include "WebCoreJSClientData.h"
 #include "WebCoreOpaqueRoot.h"
-#include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
 #include <variant>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
-#include <wtf/URL.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -81,73 +71,30 @@ template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject,
 
 // Attributes
 
-static JSC_DECLARE_CUSTOM_GETTER(jsCryptoKeyConstructor);
 static JSC_DECLARE_HOST_FUNCTION(jsCryptoKeyPrototype_inspectCustom);
 static JSC_DECLARE_CUSTOM_GETTER(jsCryptoKey_type);
 static JSC_DECLARE_CUSTOM_GETTER(jsCryptoKey_extractable);
 static JSC_DECLARE_CUSTOM_GETTER(jsCryptoKey_algorithm);
 static JSC_DECLARE_CUSTOM_GETTER(jsCryptoKey_usages);
 
-class JSCryptoKeyPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSCryptoKeyPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSCryptoKeyPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSCryptoKeyPrototype))) JSCryptoKeyPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCryptoKeyPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSCryptoKeyPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCryptoKeyPrototype, JSCryptoKeyPrototype::Base);
-
+using JSCryptoKeyPrototype = JSDOMPrototype<JSCryptoKey>;
 using JSCryptoKeyDOMConstructor = JSDOMConstructorNotConstructable<JSCryptoKey>;
 
 template<> const ClassInfo JSCryptoKeyDOMConstructor::s_info = { "CryptoKey"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCryptoKeyDOMConstructor) };
 
-template<> JSValue JSCryptoKeyDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    UNUSED_PARAM(vm);
-    return globalObject.functionPrototype();
-}
-
-template<> void JSCryptoKeyDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    initializeBaseProperties(vm, 0, "CryptoKey"_s, JSCryptoKey::prototype(vm, globalObject));
-}
-
 /* Hash table for prototype */
 
 static const HashTableValue JSCryptoKeyPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsCryptoKeyConstructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSCryptoKeyPrototype::constructorGetter, 0 } },
     { "type"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsCryptoKey_type, 0 } },
     { "extractable"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsCryptoKey_extractable, 0 } },
     { "algorithm"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsCryptoKey_algorithm, 0 } },
     { "usages"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsCryptoKey_usages, 0 } },
 };
 
-const ClassInfo JSCryptoKeyPrototype::s_info = { "CryptoKey"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCryptoKeyPrototype) };
+template<> const ClassInfo JSCryptoKeyPrototype::s_info = { "CryptoKey"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCryptoKeyPrototype) };
 
-void JSCryptoKeyPrototype::finishCreation(VM& vm)
+template<> void JSCryptoKeyPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSCryptoKey::info(), JSCryptoKeyPrototypeTableValues, *this);
@@ -157,50 +104,14 @@ void JSCryptoKeyPrototype::finishCreation(VM& vm)
 
 const ClassInfo JSCryptoKey::s_info = { "CryptoKey"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCryptoKey) };
 
-JSCryptoKey::JSCryptoKey(Structure* structure, JSDOMGlobalObject& globalObject, Ref<CryptoKey>&& impl)
-    : JSDOMWrapper<CryptoKey>(structure, globalObject, WTF::move(impl))
-{
-}
-
-void JSCryptoKey::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-
-    // static_assert(!std::is_base_of<ActiveDOMObject, CryptoKey>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
-}
-
 JSObject* JSCryptoKey::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSCryptoKeyPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSCryptoKeyPrototype::create(vm, &globalObject, structure);
-}
-
-JSObject* JSCryptoKey::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSCryptoKey>(vm, globalObject);
+    return JSCryptoKeyPrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 JSValue JSCryptoKey::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSCryptoKeyDOMConstructor, DOMConstructorID::CryptoKey>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-void JSCryptoKey::destroy(JSC::JSCell* cell)
-{
-    JSCryptoKey* thisObject = static_cast<JSCryptoKey*>(cell);
-    thisObject->JSCryptoKey::~JSCryptoKey();
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsCryptoKeyConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSCryptoKeyPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSCryptoKey::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
 static inline JSValue jsCryptoKey_typeGetter(JSGlobalObject& lexicalGlobalObject, JSCryptoKey& thisObject)
@@ -300,11 +211,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCryptoKeyPrototype_inspectCustom, (JSGlobalObject * l
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "CryptoKey"_s, data));
 }
 
-JSC::GCClient::IsoSubspace* JSCryptoKey::subspaceForImpl(JSC::VM& vm)
-{
-    return WebCore::subspaceForImpl<JSCryptoKey, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForCryptoKey, m_subspaceForCryptoKey));
-}
-
 template<typename Visitor>
 void JSCryptoKey::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -316,32 +222,6 @@ void JSCryptoKey::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSCryptoKey);
-
-void JSCryptoKey::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSCryptoKey>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
-    Base::analyzeHeap(cell, analyzer);
-}
-
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<CryptoKey>&& impl)
-{
-    return createWrapper<CryptoKey>(globalObject, WTF::move(impl));
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, CryptoKey& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-CryptoKey* JSCryptoKey::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSCryptoKey>(value))
-        return &wrapper->wrapped();
-    return nullptr;
-}
 
 }
 

@@ -5,7 +5,7 @@ use bun_io::Write as _;
 use crate::cli::Command;
 use crate::cli::run_compiled;
 use crate::cli::test::changed_files_filter as ChangedFilesFilter;
-use crate::cli::test::parallel_runner as ParallelRunner;
+use crate::cli::test::parallel::runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
 use crate::cli::test::timings::Timings;
 use bun_collections::BoundedArray;
@@ -20,8 +20,7 @@ use bun_options_types::aot_options::ReplacedByTests;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_options_types::context::{JunitSuites, ReactCompilerScope, TestEnvironment, TestGlobals};
 use bun_paths as bun_path;
-use bun_paths::resolve_path;
-use bun_paths::string_paths::without_leading_path_separator;
+use bun_paths::{Path, dirname_or_root, without_trailing_sep};
 use bun_ptr::{CellExt as _, Interned};
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
@@ -51,7 +50,7 @@ mod coverage {
         if ignore_patterns.is_empty() {
             return false;
         }
-        let relative_path = bun_paths::resolve_path::relative(relative_dir, source_url);
+        let relative_path: &[u8] = &bun_paths::Path::relative(relative_dir, source_url);
         ignore_patterns
             .iter()
             .any(|pattern| pattern.r#match(relative_path).matches())
@@ -278,27 +277,19 @@ fn for_each_pattern_that_loads(text: &[u8], visit: &mut dyn FnMut(&[u8])) {
 
 // The folder of the package that `name` names for a file in `folder`.
 fn find_folder_of_package(folder: &[u8], name: &[u8]) -> Option<Vec<u8>> {
-    let mut ancestor = folder;
-    loop {
-        let installed = bun_core::ZBox::from_bytes([ancestor, b"/node_modules/", name].concat());
-        if bun_sys::directory_exists_at(Fd::cwd(), &installed).unwrap_or(false) {
-            let mut real = bun_paths::path_buffer_pool::get();
-            return Some(match bun_sys::realpath(&installed, &mut real) {
-                Ok(real) => real.to_vec(),
-                Err(_) => installed.as_bytes().to_vec(),
-            });
-        }
-        let parent = resolve_path::dirname::<bun_path::platform::Auto>(ancestor);
-        if parent.len() >= ancestor.len() || parent.is_empty() {
-            return None;
-        }
-        ancestor = strings::without_trailing_slash(parent);
-    }
+    let installed = bun_path::ancestors(folder)
+        .map(|ancestor| Path::from_parts(&[ancestor, b"node_modules", name]))
+        .find(|it| bun_sys::directory_exists_at(Fd::cwd(), it).unwrap_or(false))?;
+    let mut real = bun_paths::path_buffer_pool::get();
+    Some(match bun_sys::realpath(&installed, &mut real) {
+        Ok(real) => real.to_vec(),
+        Err(_) => installed.to_vec(),
+    })
 }
 
 // Whether the folder is a package: it has a package.json with a name.
 fn holds_named_manifest(folder: &[u8]) -> bool {
-    let manifest = [folder, b"/package.json"].concat();
+    let manifest = bun_paths::Path::from_parts(&[folder, b"package.json"]);
     File::read_from(Fd::cwd(), &manifest).is_ok_and(|text| strings::contains(&text, b"\"name\""))
 }
 
@@ -351,7 +342,7 @@ fn add_files_behind_pattern(
     suffix: &[u8],
     found: &mut Vec<Box<[u8]>>,
 ) {
-    let folder = strings::without_trailing_slash(folder);
+    let folder = without_trailing_sep(folder);
     let Some(slash) = strings::last_index_of_char(prefix, b'/') else {
         return;
     };
@@ -361,21 +352,16 @@ fn add_files_behind_pattern(
         [b'/', ..] => (!written_folder.is_empty()).then(|| written_folder.to_vec()),
         // As long as it stays in the package of the file.
         [b'.', ..] => {
-            let joined = resolve_path::join_abs_string::<bun_path::platform::Auto>(
-                folder,
-                &[written_folder],
-            )
-            .to_vec();
+            let joined = Path::resolve(&[folder, written_folder]).to_vec();
             let mut package = folder;
             while !holds_named_manifest(package) {
-                let parent = resolve_path::dirname::<bun_path::platform::Auto>(package);
-                let parent = strings::without_trailing_slash(parent);
+                let parent = without_trailing_sep(dirname_or_root(package));
                 if parent.len() >= package.len() || parent.is_empty() {
                     break;
                 }
                 package = parent;
             }
-            joined.starts_with(package).then_some(joined)
+            (bun_path::strip_prefix(&joined, package).is_some()).then_some(joined)
         }
         _ => {
             let parts_of_name = if prefix.starts_with(b"@") { 2 } else { 1 };
@@ -389,7 +375,7 @@ fn add_files_behind_pattern(
         }
     };
     if let Some(root) = root {
-        add_files_below(strings::without_trailing_slash(&root), start, suffix, found);
+        add_files_below(without_trailing_sep(&root), start, suffix, found);
     }
 }
 
@@ -430,7 +416,7 @@ fn find_all_that_is_reached_from(
         );
         sizes.append(&mut sizes_of_level);
         for (file, names) in (first..).zip(names_of_level) {
-            let folder = resolve_path::dirname::<bun_path::platform::Auto>(&paths[file]).to_vec();
+            let folder = dirname_or_root(&paths[file]).to_vec();
             let mut place = |path: Box<[u8]>| match position_of.get(&*path) {
                 Some(&position) => position,
                 None => {
@@ -506,7 +492,7 @@ fn select_shard_by_reach(
     let otherwise: Vec<u32> = match timings {
         Some(timings) => {
             let ranges = timings.partition(test_files, shard.count);
-            let shard_of = |test: u32| ranges.iter().position(|it| it.lo <= test && test < it.hi);
+            let shard_of = |test: u32| ranges.iter().position(|it| it.contains(&(test as usize)));
             (0..tests as u32)
                 .map(|test| shard_of(test).unwrap_or(0) as u32)
                 .collect()
@@ -738,13 +724,10 @@ fn make_stand_in_for_window() -> Box<[u8]> {
 if (name === \"\\0never\") (globalThis as any)[name] = require(name);
 ";
     // The name of the module. No file is there.
-    let path = resolve_path::join_abs_string::<bun_path::platform::Auto>(
-        FileSystem::get().top_level_dir(),
-        &[b"node_modules/.cache/bun-test-window.ts"],
-    )
-    .to_vec();
+    let mut path = Path::from_top_level_dir();
+    path.push(b"node_modules/.cache/bun-test-window.ts");
     run_compiled::set_stand_in(&path, text);
-    path.into_boxed_slice()
+    path.as_bytes().into()
 }
 
 // ─── compat shim: map legacy paths onto the test_runner crate ────────────────
@@ -864,12 +847,7 @@ pub(crate) struct TestFailure {
 /// How a test file is named in the JUnit document: relative to the project
 /// root when inside it, else as given.
 pub(crate) fn junit_file_name(path: &[u8]) -> &[u8] {
-    let top = FileSystem::get().top_level_dir();
-    if strings::has_prefix(path, top) {
-        without_leading_path_separator(&path[top.len()..])
-    } else {
-        path
-    }
+    bun_path::strip_prefix(path, FileSystem::get().top_level_dir()).unwrap_or(path)
 }
 
 /// One finished test as structured reporters see it.
@@ -1113,7 +1091,7 @@ impl TestFailure {
         let dir = FileSystem::get().top_level_dir();
         for frame in exception.stack.frames() {
             let source_url = frame.source_url.to_utf8();
-            let file = jsc::ZigStackFrame::relative_source_url(dir, source_url.slice());
+            let file: &[u8] = &jsc::ZigStackFrame::relative_source_url(dir, source_url.slice());
             let func = frame.function_name.to_utf8();
             if file.is_empty() && func.slice().is_empty() {
                 continue;
@@ -1122,15 +1100,7 @@ impl TestFailure {
             if !func.slice().is_empty() {
                 let _ = write!(body, "{} (", frame.name_formatter(false));
             }
-            let file_start = body.len();
-            body.extend_from_slice(file);
-            if cfg!(windows) {
-                for b in &mut body[file_start..] {
-                    if *b == b'\\' {
-                        *b = b'/';
-                    }
-                }
-            }
+            body.extend_from_slice(&bun_paths::to_portable(file));
             let pos = frame.position;
             if pos.line.is_valid() && pos.column.is_valid() {
                 let _ = write!(body, ":{}:{}", pos.line.one_based(), pos.column.one_based());
@@ -1713,16 +1683,6 @@ struct ReactCompilerEntry {
     absolute: Box<[u8]>,
 }
 
-fn with_forward_slashes(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
-    use std::borrow::Cow;
-    if cfg!(windows) {
-        let replaced = path.iter().map(|&b| if b == b'\\' { b'/' } else { b });
-        Cow::Owned(replaced.collect())
-    } else {
-        Cow::Borrowed(path)
-    }
-}
-
 /// Leaked on purpose: every thread's transpiler calls it until the process exits.
 pub(crate) fn react_compiler_filter(
     scope: &ReactCompilerScope,
@@ -1734,8 +1694,7 @@ pub(crate) fn react_compiler_filter(
             .map(|written| {
                 let written: &[u8] = written;
                 let absolute =
-                    resolve_path::join_abs_string::<bun_path::platform::Auto>(root, &[written]);
-                let absolute = with_forward_slashes(absolute);
+                    Path::resolve(&[root, &bun_path::from_portable(written)]).into_portable();
                 let written = written.strip_prefix(b"./").unwrap_or(written);
                 ReactCompilerEntry {
                     written: Box::from(written),
@@ -1760,8 +1719,8 @@ pub(crate) fn react_compiler_filter(
         {
             return false;
         }
-        let relative = with_forward_slashes(resolve_path::relative(root, path));
-        let path = with_forward_slashes(path);
+        let relative = Path::relative(root, path).into_portable();
+        let path = bun_path::to_portable(path);
         let matches = |entry: &ReactCompilerEntry| {
             // A folder matches everything inside it.
             path.strip_prefix(&*entry.absolute)
@@ -2460,7 +2419,7 @@ fn print_coverage_table<const COLORS: bool>(
     let thresholds = *thresholds;
     let max_filepath_length = reports
         .iter()
-        .map(|r| resolve_path::relative(relative_dir, &r.source_url).len())
+        .map(|r| Path::relative(relative_dir, &r.source_url).len())
         .fold(b"All files".len(), usize::max);
 
     let zero = Fraction {
@@ -2556,20 +2515,13 @@ fn write_lcov_report(
         bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
             .with_path(&opts.reports_directory)
     };
-    let mut tmp_buf = bun_paths::path_buffer_pool::get();
-    let tmp_path = resolve_path::join_abs_string_buf_z_checked::<bun_path::platform::Auto>(
-        relative_dir,
-        &mut tmp_buf,
-        &[&opts.reports_directory, &tmpname],
-    )
-    .ok_or_else(too_long)?;
-    let mut buf = bun_paths::path_buffer_pool::get();
-    let path = resolve_path::join_abs_string_buf_z_checked::<bun_path::platform::Auto>(
-        relative_dir,
-        &mut buf,
-        &[&opts.reports_directory, b"lcov.info"],
-    )
-    .ok_or_else(too_long)?;
+    let in_reports = |name: &[u8]| {
+        Path::resolve(&[relative_dir, &opts.reports_directory, name])
+            .check_len()
+            .map_err(|_| too_long())
+    };
+    let tmp_path: &bun_core::ZStr = &in_reports(&tmpname)?;
+    let path: &bun_core::ZStr = &in_reports(b"lcov.info")?;
     if let Some(dir) = bun_path::dirname(path.as_bytes()) {
         let mut fs = crate::node::fs::NodeFS::default();
         let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
@@ -2606,7 +2558,8 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
     let slice: &[u8] = zig_slice.slice();
 
     // always ignore node_modules.
-    if strings::contains(slice, b"/node_modules/") || strings::contains(slice, b"\\node_modules\\")
+    if strings::contains(slice, b"/node_modules/")
+        || (cfg!(windows) && strings::contains(slice, bun_paths::NODE_MODULES_NEEDLE))
     {
         return false;
     }
@@ -2868,7 +2821,7 @@ impl TestCommand {
             run_compiled::hand_on_environment(&env_loader.map);
         }
 
-        vm.load_extra_env_and_source_code_printer();
+        vm.load_extra_env();
         VirtualMachine::set_is_main_thread_vm(true);
 
         if ctx.test_options.isolate {
@@ -2942,21 +2895,7 @@ impl TestCommand {
 
         let mut scanner = Scanner::init(vm.transpiler.get(), ctx.positionals.len()).expect("oom");
         scanner.path_ignore_patterns = &path_ignore_patterns;
-        let has_relative_path = 'hr: {
-            for arg in &ctx.positionals {
-                if bun_paths::is_absolute(arg)
-                    || strings::starts_with(arg, b"./")
-                    || strings::starts_with(arg, b"../")
-                    || (cfg!(windows)
-                        && (strings::starts_with(arg, b".\\")
-                            || strings::starts_with(arg, b"..\\")))
-                {
-                    break 'hr true;
-                }
-            }
-            false
-        };
-        if has_relative_path {
+        if (ctx.positionals.iter()).any(|arg| super::Arguments::reads_as_path_of_tests(arg)) {
             // One of the files is a filepath. Instead of treating the
             // arguments as filters, treat them as filepaths
             let file_or_dirnames = &ctx.positionals[1..];
@@ -2996,7 +2935,7 @@ impl TestCommand {
                     .iter()
                     .map(|filter| {
                         let mut normalized = filter.clone();
-                        bun_path::resolve_path::posix_to_platform_in_place::<u8>(&mut normalized);
+                        bun_path::to_native_in_place::<u8>(&mut normalized);
                         normalized
                     })
                     .collect();
@@ -3004,33 +2943,17 @@ impl TestCommand {
             };
             scanner.filter_names = filters;
 
-            // Own the joined path in a hoisted buffer and borrow from it.
-            let dir_to_scan_owned: Vec<u8>;
-            let (dir_to_scan, fits): (&[u8], bool) = 'brk: {
-                if !ctx.debug.test_directory.is_empty() {
-                    let mut buf = bun_path::path_buffer_pool::get();
-                    let Some(joined) =
-                        resolve_path::join_abs_string_buf_z_checked::<bun_path::platform::Auto>(
-                            scanner.fs().top_level_dir(),
-                            &mut buf,
-                            &[&ctx.debug.test_directory],
-                        )
-                    else {
-                        break 'brk (&ctx.debug.test_directory[..], false);
-                    };
-                    dir_to_scan_owned = joined.as_bytes().into();
-                    break 'brk (&dir_to_scan_owned[..], true);
-                }
-
-                break 'brk (scanner.fs().top_level_dir(), true);
-            };
-
-            // A root that's too long for a path buffer can't be opened either.
-            let scanned = if fits {
-                scanner.scan(dir_to_scan)
+            let (top_level_dir, root) = (scanner.fs().top_level_dir(), &ctx.debug.test_directory);
+            let mut joined = Path::resolve(&[top_level_dir, root]);
+            joined.copy_trailing_sep_from(root);
+            let dir_to_scan: &[u8] = if root.is_empty() {
+                top_level_dir
+            } else if joined.len() < bun_path::MAX_PATH_BYTES {
+                &joined
             } else {
-                Err(scanner::ScanError::DoesNotExist)
+                root
             };
+            let scanned = scanner.scan(if root.is_empty() { top_level_dir } else { root });
             match scanned {
                 Ok(()) => {}
                 Err(scanner::ScanError::OutOfMemory) => bun::out_of_memory(),
@@ -3906,10 +3829,8 @@ impl TestCommand {
         vm.clear_entry_point()?;
         vm.enter_module_graph_for_test_isolation()?;
 
-        run_compiled::will_run_test_file(resolve_path::relative(
-            FileSystem::get().top_level_dir(),
-            file_path,
-        ));
+        let file_title = Path::relative(FileSystem::get().top_level_dir(), file_path);
+        run_compiled::will_run_test_file(&file_title);
         let file = reporter.jest.get_or_put_file(file_path);
 
         // In Github Actions, append a special prefix that will group
@@ -3959,10 +3880,8 @@ impl TestCommand {
                 next_load_shares_global,
             };
 
-            // Recompute on every repeat because the reporters overwrite `relative`'s buffer while the file runs.
-            let file_title = resolve_path::relative(FileSystem::get().top_level_dir(), file_path);
             reporter.jest.current_file.set(
-                file_title,
+                &file_title,
                 file_prefix,
                 repeat_count,
                 repeat_index,
@@ -4117,8 +4036,8 @@ impl TestCommand {
                         Output::enable_ansi_colors_stderr(),
                     ));
                     let top_level_dir = FileSystem::instance().top_level_dir();
-                    let title = resolve_path::relative(top_level_dir, file_path);
-                    let _ = writeln!(failures, " {}", bstr::BStr::new(title));
+                    let title = Path::relative(top_level_dir, file_path);
+                    let _ = writeln!(failures, " {}", bstr::BStr::new(title.as_bytes()));
                     reporter.failures_to_repeat_buf.set(failures);
                 }
 

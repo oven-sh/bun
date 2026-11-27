@@ -1,9 +1,9 @@
 use crate::mysql::protocol::auth::{self, Nonce};
-use crate::mysql::protocol::new_writer::{NewWriter, WriterContext};
+use crate::mysql::protocol::packet_writer::PacketWriter;
 
 // MySQL authentication methods
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum AuthMethod {
+pub(crate) enum AuthMethod {
     MysqlNativePassword,
     CachingSha2Password,
     Sha256Password,
@@ -16,7 +16,7 @@ pub enum Transport {
     Tls,
 }
 
-pub enum AuthResponse<'a> {
+pub(crate) enum AuthResponse<'a> {
     Scramble(&'a [u8]),
     Password(&'a [u8]),
     /// The server answers with its RSA key, `EncryptedPassword` answers that.
@@ -32,21 +32,20 @@ impl AuthResponse<'_> {
         }
     }
 
-    pub fn write<C: WriterContext>(&self, writer: NewWriter<C>) -> crate::Result<()> {
+    pub(crate) fn write(&self, packet: &mut PacketWriter<'_>) {
         match *self {
-            AuthResponse::Scramble(scramble) => writer.write(scramble)?,
+            AuthResponse::Scramble(scramble) => packet.write(scramble),
             AuthResponse::Password(password) => {
-                writer.write(password)?;
-                writer.int1(0)?;
+                packet.write(password);
+                packet.int1(0);
             }
-            AuthResponse::PublicKeyRequest(request) => writer.int1(request)?,
+            AuthResponse::PublicKeyRequest(request) => packet.int1(request),
         }
-        Ok(())
     }
 }
 
 impl AuthMethod {
-    pub fn first_response<'a>(
+    pub(crate) fn first_response<'a>(
         self,
         password: &'a [u8],
         nonce: &Nonce,
@@ -69,7 +68,11 @@ impl AuthMethod {
     }
 
     /// The server has no cached hash to check a scramble against: it needs the password.
-    pub fn full_authentication(self, password: &[u8], transport: Transport) -> AuthResponse<'_> {
+    pub(crate) fn full_authentication(
+        self,
+        password: &[u8],
+        transport: Transport,
+    ) -> AuthResponse<'_> {
         if password.is_empty() || self.reads_password_in_clear(transport) {
             return AuthResponse::Password(password);
         }
@@ -89,7 +92,7 @@ impl AuthMethod {
         }
     }
 
-    pub fn name(self) -> &'static [u8] {
+    pub(crate) fn name(self) -> &'static [u8] {
         match self {
             AuthMethod::MysqlNativePassword => b"mysql_native_password",
             AuthMethod::CachingSha2Password => b"caching_sha2_password",
@@ -97,7 +100,7 @@ impl AuthMethod {
         }
     }
 
-    pub fn from_string(s: &[u8]) -> Option<AuthMethod> {
+    pub(crate) fn from_string(s: &[u8]) -> Option<AuthMethod> {
         MAP.get(s).copied()
     }
 }

@@ -1408,10 +1408,11 @@ devTest("server: the error of every file that JavaScriptCore refuses is printed"
       await dev.write("a.ts", `export const a = /(/;`);
       await dev.write("b.ts", `export const b = /+/;`);
     }
-    await Promise.all([
-      dev.output.waitForLine(/Invalid regular expression: missing \)/),
-      dev.output.waitForLine(/Invalid regular expression: nothing to repeat/),
-    ]);
+    // They are printed in either order, and a wait consumes the lines before its match.
+    const { cursor } = dev.output;
+    await dev.output.waitForLine(/Invalid regular expression: missing \)/);
+    dev.output.cursor = cursor;
+    await dev.output.waitForLine(/Invalid regular expression: nothing to repeat/);
     await dev.fetch("/").equals("v1");
   },
 });

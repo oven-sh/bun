@@ -1,4 +1,5 @@
-use bun_alloc::DefaultAlloc;
+use std::alloc::Global;
+
 use bun_collections::string_hash_map::EntryRef;
 use bun_collections::{StringHashMap, StringHashMapKey};
 use bun_paths::fs::is_file_namespace;
@@ -139,7 +140,7 @@ impl<V> ModuleMap<V> {
         &mut self,
         path: &'k impl PathLike,
         key_loader: Option<Loader>,
-    ) -> EntryRef<'_, 'k, V, DefaultAlloc> {
+    ) -> EntryRef<'_, 'k, V, Global> {
         self.table_mut(path.path_namespace())
             .expect("oom")
             .map(key_loader)

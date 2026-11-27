@@ -1,4 +1,6 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::marker::PhantomData;
+use core::net::{IpAddr, SocketAddr};
 use core::ptr::{self, NonNull};
 
 use bun_boringssl_sys::OwnedSslCtx;
@@ -69,9 +71,25 @@ pub enum QueuedInput {
 /// Layout-compatible with `struct us_iovec_t` in libusockets.h (== POSIX iovec).
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct UsIoVec {
-    pub base: *const core::ffi::c_void,
-    pub len: usize,
+pub struct UsIoVec<'a> {
+    base: *const u8,
+    len: usize,
+    _marker: PhantomData<&'a [u8]>,
+}
+
+impl<'a> UsIoVec<'a> {
+    pub fn new(bytes: &'a [u8]) -> Self {
+        Self {
+            base: bytes.as_ptr(),
+            len: bytes.len(),
+            _marker: PhantomData,
+        }
+    }
+
+    pub(crate) fn as_slice(self) -> &'a [u8] {
+        // SAFETY: these are the parts of the slice that `new` took.
+        unsafe { core::slice::from_raw_parts(self.base, self.len) }
+    }
 }
 
 impl us_socket_t {
@@ -186,6 +204,26 @@ impl us_socket_t {
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).expect("int cast")])
+    }
+
+    /// One `getsockname()`. `None` when it fails or the address is no IP address.
+    pub(crate) fn local_endpoint(&self) -> Option<SocketAddr> {
+        self.endpoint(c::us_get_local_address_info)
+    }
+
+    /// One `getpeername()`. `None` when it fails or the address is no IP address.
+    pub(crate) fn remote_endpoint(&self) -> Option<SocketAddr> {
+        self.endpoint(c::us_get_remote_address_info)
+    }
+
+    fn endpoint(&self, get_address_info: c::GetAddressInfo) -> Option<SocketAddr> {
+        let (mut ip, mut port) = ([0; 16], 0);
+        let ip = match get_address_info(&mut ip, self, &mut ptr::null(), &mut port, &mut 0) {
+            4 => IpAddr::from(*ip.first_chunk::<4>()?),
+            16 => IpAddr::from(ip),
+            _ => return None,
+        };
+        Some(SocketAddr::new(ip, u16::try_from(port).ok()?))
     }
 
     pub(crate) fn set_timeout(&mut self, seconds: u32) {
@@ -422,10 +460,9 @@ impl us_socket_t {
     /// sends on platforms without it). Same closed/shutdown gating and
     /// partial-write poll handling as `raw_write`. Plain-TCP only by contract:
     /// raw writes bypass TLS framing.
-    pub(crate) fn raw_writev(&mut self, iov: &[UsIoVec]) -> i32 {
+    pub(crate) fn raw_writev(&mut self, iov: &[UsIoVec<'_>]) -> i32 {
         bun_core::scoped_log!(uws, "us_socket_raw_writev({:p}, {})", self, iov.len());
-        // SAFETY: iov entries reference memory owned by the caller for the
-        // duration of this call; the C side only reads them synchronously.
+        // SAFETY: the C side only reads the entries, and their bytes, during the call.
         unsafe {
             c::us_socket_raw_writev(
                 self,
@@ -507,6 +544,14 @@ impl us_socket_t {
 mod c {
     use super::*;
 
+    pub(super) type GetAddressInfo = extern "C" fn(
+        &mut [u8; 16],
+        &us_socket_t,
+        &mut *const c_char,
+        &mut c_int,
+        &mut c_int,
+    ) -> c_uint;
+
     // Every C-side decl takes `us_socket_r` (= `us_socket_t* nonnull_arg`), so
     // mirror that here — passing null is UB and the typed methods above never do.
     // `us_socket_t` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>`, so `&us_socket_t`
@@ -531,6 +576,21 @@ mod c {
             buf: *mut u8,
             length: *mut i32,
         );
+        // Both write an `in_addr` or an `in6_addr` to `buf`.
+        pub(super) safe fn us_get_remote_address_info(
+            buf: &mut [u8; 16],
+            s: &us_socket_t,
+            dest: &mut *const c_char,
+            port: &mut c_int,
+            is_ipv6: &mut c_int,
+        ) -> c_uint;
+        pub(super) safe fn us_get_local_address_info(
+            buf: &mut [u8; 16],
+            s: &us_socket_t,
+            dest: &mut *const c_char,
+            port: &mut c_int,
+            is_ipv6: &mut c_int,
+        ) -> c_uint;
         pub(super) safe fn us_socket_timeout(s: &mut us_socket_t, seconds: c_uint);
         pub(super) safe fn us_socket_long_timeout(s: &mut us_socket_t, minutes: c_uint);
         pub(super) safe fn us_socket_nodelay(s: &mut us_socket_t, enable: c_int);
@@ -571,7 +631,7 @@ mod c {
         ) -> i32;
         pub(super) fn us_socket_raw_writev(
             s: *mut us_socket_t,
-            iov: *const super::UsIoVec,
+            iov: *const super::UsIoVec<'_>,
             count: i32,
         ) -> i32;
         pub(super) fn us_socket_raw_write(s: *mut us_socket_t, data: *const u8, length: i32)

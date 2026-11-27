@@ -22,63 +22,32 @@
 
 #include "FetchHeaders.h"
 #include "JSDOMIterator.h"
-#include "JSDOMWrapper.h"
+#include "JSDOMInterface.h"
 
 namespace WebCore {
 
-class JSFetchHeaders : public JSDOMWrapper<FetchHeaders> {
+class JSFetchHeaders final : public JSDOMInterface<JSFetchHeaders, FetchHeaders> {
 public:
-    using Base = JSDOMWrapper<FetchHeaders>;
-    static JSFetchHeaders* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<FetchHeaders>&& impl)
-    {
-        JSFetchHeaders* ptr = new (NotNull, JSC::allocateCell<JSFetchHeaders>(globalObject->vm())) JSFetchHeaders(structure, *globalObject, WTF::move(impl));
-        ptr->finishCreation(globalObject->vm());
-        return ptr;
-    }
-
-    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
-    static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static FetchHeaders* toWrapped(JSC::VM&, JSC::JSValue);
-    static void destroy(JSC::JSCell*);
+    using JSDOMInterface::JSDOMInterface;
 
     DECLARE_INFO;
+    static constexpr auto subspaceSlots = BUN_SUBSPACE_SLOTS(m_clientSubspaceForFetchHeaders, m_subspaceForFetchHeaders);
+    static constexpr uint8_t jsType = JSDOMWrapperType;
+
+    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
+    static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
+
     DECLARE_VISIT_CHILDREN;
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::JSType(JSDOMWrapperType), StructureFlags), info(), JSC::NonArray);
-    }
-
-    static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return subspaceForImpl(vm);
-    }
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-
     size_t m_memoryCost { 0 };
     void computeMemoryCost();
-
-protected:
-    JSFetchHeaders(JSC::Structure*, JSDOMGlobalObject&, Ref<FetchHeaders>&&);
-
-    void finishCreation(JSC::VM&);
 };
 
 JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSFetchHeaders* castedThis);
 
-JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, FetchHeaders&);
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, FetchHeaders* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<FetchHeaders>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<FetchHeaders>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
-
 template<> struct JSDOMWrapperConverterTraits<FetchHeaders> {
     using WrapperClass = JSFetchHeaders;
-    using ToWrappedReturnType = FetchHeaders*;
 };
 
 JSC::EncodedJSValue fetchHeadersGetSetCookie(JSC::JSGlobalObject* lexicalGlobalObject, VM& vm, WebCore::FetchHeaders* impl);

@@ -46,6 +46,11 @@ pub mod sort_imports {
     pub use crate::js::sort_imports::{Settings, SortImports, sorted_text};
 }
 
+/// Recognizes files that are already formatted.
+pub mod settled {
+    pub use crate::js::settled::{Scratch, Verdict, check};
+}
+
 pub use ir::run::Scratch;
 pub use options::FormatOptions;
 

@@ -17,7 +17,7 @@ use crate::thunk;
 use crate::thunk::OpaqueHandle;
 use crate::us_socket_t;
 use bun_core::{BoundedArray, Fd};
-use bun_ptr::ThisPtr;
+use bun_ptr::{AnyRefCounted, RefPtr};
 
 // ─── Forward-declared opaques (cycle-break: were `bun_uws::*`, tier > 0) ───
 /// Remote socket address as returned by uWS. The IP text is copied into
@@ -730,12 +730,9 @@ macro_rules! any_dispatch {
     };
 }
 
-/// Stamp the per-variant ZST adapter triplet and register it via the matching
-/// `Response<SSL>` / `H3Response` `$method`.
-/// Each arm is a generic fn *item* monomorphized over `<U, H>`,
-/// so it is itself a ZST satisfying both the `Response<SSL>` bound
-/// (`Fn(*mut U, …)`) and the `H3Response` bound (`Fn(&mut U, …)`). The H3 arm
-/// bridges its `&mut U` to the body's uniform `*mut U` via `ptr::from_mut`.
+/// Stamp one ZST adapter per variant and register it via that variant's `$method`.
+/// Each arm is a generic fn *item* monomorphized over `<U, H>`, so it is itself
+/// a ZST satisfying the `$method` bound (`Fn(*mut U, …)`).
 ///
 /// Syntax:
 ///   any_response_register_cb! {
@@ -743,8 +740,9 @@ macro_rules! any_dispatch {
 ///       <U, H: [bounds…]>
 ///       |u $(, pre: PreTy)* ; r, any $(, post: PostTy)*| -> Ret { body }
 ///   }
-/// - `u` is bound as `*mut U` in the body (H3's `&mut U` is rebound).
-/// - `r` is the typed `&mut {TLS,TCP,H3}Response` param; `any` is the
+/// - `u` is `*mut U`, never `&mut U`: handlers re-enter code that reaches `U`, and a
+///   `noalias` param lets LLVM fold away the ref they hold across that call.
+/// - `r` is the typed `&mut {TLS,TCP,H3,H2}Response` param; `any` is the
 ///   `AnyResponse` re-wrap of `r`. Underscore-prefix either if unused.
 macro_rules! any_response_register_cb {
     (
@@ -762,13 +760,11 @@ macro_rules! any_response_register_cb {
             let $any = AnyResponse::TCP(std::ptr::from_mut($r));
             $($body)*
         }
-        fn h3<$U, $H: $($bound)*>($u: &mut $U $(, $pre: $pre_ty)*, $r: &mut H3Response $(, $post: $post_ty)*) -> $ret {
-            let $u = std::ptr::from_mut::<$U>($u);
+        fn h3<$U, $H: $($bound)*>($u: *mut $U $(, $pre: $pre_ty)*, $r: &mut H3Response $(, $post: $post_ty)*) -> $ret {
             let $any = AnyResponse::H3(std::ptr::from_mut($r));
             $($body)*
         }
-        fn h2<$U, $H: $($bound)*>($u: &mut $U $(, $pre: $pre_ty)*, $r: &mut H2Response $(, $post: $post_ty)*) -> $ret {
-            let $u = std::ptr::from_mut::<$U>($u);
+        fn h2<$U, $H: $($bound)*>($u: *mut $U $(, $pre: $pre_ty)*, $r: &mut H2Response $(, $post: $post_ty)*) -> $ret {
             let $any = AnyResponse::H2(std::ptr::from_mut($r));
             $($body)*
         }
@@ -1051,35 +1047,17 @@ impl AnyResponse {
         }
     }
 
-    /// [`on_writable`](Self::on_writable) for a handler owned by an
-    /// intrusively-refcounted `U`: the registrant passes the `ThisPtr` it was
-    /// dispatched with and keeps a ref on `U` until it clears the handler, so
-    /// the trampoline can hand the handler a `ThisPtr` again.
-    pub fn on_writable_this<U: 'static, H>(self, _handler: H, this: ThisPtr<U>)
+    /// The registrant keeps a ref on `owner` until it clears the handler, which gets a ref of its own.
+    pub fn on_aborted_ref<U: AnyRefCounted + 'static, H>(self, _handler: H, owner: &RefPtr<U>)
     where
-        H: Fn(ThisPtr<U>, u64, AnyResponse) -> bool + Copy + 'static,
-    {
-        self.on_writable(
-            |u: *mut U, off, any| {
-                // SAFETY: `u` is the `ThisPtr` registered below; the registrant holds a ref on it until the handler is cleared.
-                thunk::zst::<H>()(unsafe { ThisPtr::new(u) }, off, any)
-            },
-            this.as_ptr(),
-        )
-    }
-
-    /// [`on_aborted`](Self::on_aborted) counterpart of
-    /// [`on_writable_this`](Self::on_writable_this).
-    pub fn on_aborted_this<U: 'static, H>(self, _handler: H, this: ThisPtr<U>)
-    where
-        H: Fn(ThisPtr<U>, AnyResponse) + Copy + 'static,
+        H: Fn(RefPtr<U>, AnyResponse) + Copy + 'static,
     {
         self.on_aborted(
             |u: *mut U, any| {
-                // SAFETY: `u` is the `ThisPtr` registered below; the registrant holds a ref on it until the handler is cleared.
-                thunk::zst::<H>()(unsafe { ThisPtr::new(u) }, any)
+                // SAFETY: `u` is the pointer registered below; the registrant holds a ref on it until the handler is cleared.
+                thunk::zst::<H>()(unsafe { RefPtr::init_ref(u) }, any)
             },
-            this.as_ptr(),
+            owner.as_ptr(),
         )
     }
 

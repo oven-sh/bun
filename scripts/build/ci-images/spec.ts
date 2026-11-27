@@ -213,6 +213,7 @@ export const pins = {
       "x86_64-unknown-linux-musl",
       "aarch64-linux-android",
       "x86_64-linux-android",
+      "aarch64-unknown-freebsd",
       "x86_64-unknown-freebsd",
       "aarch64-apple-darwin",
       "x86_64-apple-darwin",

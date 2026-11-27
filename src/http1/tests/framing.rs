@@ -1,5 +1,7 @@
 use bun_http1::{ChunkedDecoder, Error, HeadOptions, ResponseParser};
 
+mod message;
+
 #[unsafe(no_mangle)]
 extern "Rust" fn __bun_crash_handler_out_of_memory() -> ! {
     panic!("out of memory");
@@ -17,6 +19,14 @@ unsafe extern "C" fn highway_byte_set_prefix_length(
     text.iter()
         .take_while(|&&byte| rows[usize::from(byte >> 4)] & columns[usize::from(byte & 15)] != 0)
         .count()
+}
+
+/// Stands in for highway_strings.cpp.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn highway_index_of_char(text: *const u8, len: usize, byte: u8) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let text = unsafe { core::slice::from_raw_parts(text, len) };
+    text.iter().take_while(|&&other| other != byte).count()
 }
 
 /// One read, every pair of reads, and one read per byte.

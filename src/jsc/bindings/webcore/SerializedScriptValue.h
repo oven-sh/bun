@@ -50,7 +50,7 @@ class Module;
 #endif
 }
 
-// The ref that `BlockList__onStructuredCloneSerialize` takes.
+// The entry that `BlockList__onStructuredCloneSerialize` adds.
 BUN_DECLARE_FFI_DELETER(SerializedBlockList, BlockList__onStructuredCloneDestroy);
 
 extern "C" uint64_t Histogram__retainForStructuredClone(JSC::EncodedJSValue histogram);

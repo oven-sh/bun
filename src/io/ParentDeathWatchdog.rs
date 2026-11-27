@@ -44,6 +44,8 @@ use bun_spawn_sys::ffi::kill;
 use bun_sys::Fd;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_sys::O;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_sys::linux::{PrctlOp, prctl};
 
 use crate::posix_event_loop::EventLoopCtx;
 #[cfg(target_os = "macos")]
@@ -232,7 +234,7 @@ pub fn enable() {
             // also runs the descendant reaper; on Linux the SIGKILL case relies on
             // env-var inheritance — Bun-spawning-Bun chains self-reap because each
             // link sets its own PDEATHSIG.
-            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong) != 0 {
+            if prctl(PrctlOp::SET_PDEATHSIG, libc::SIGKILL as _) != 0 {
                 return;
             }
             // Race: parent may have died between getppid() above and prctl()

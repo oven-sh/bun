@@ -56,7 +56,8 @@ const textsOfBundlerFeatures = [
 const textsOfLibraries: Record<string, string[]> = {
   // A run of symbols in the standard AC Huffman tables.
   "the JPEG codec": ["CDEFGHIJSTUVWXYZcdefghijstuvwxyz"],
-  libwebp: ["Frame setup failed", "Premature end-of-partition0 encountered", "NULL VP8Io parameter"],
+  // A part of DC_QUANTIZERS in src/webp/lossy/tables.rs.
+  "the WebP codec": ["Y[]_`bdefhjlnprtvz|~"],
   tar: ["Damaged tar archive", "Truncated tar archive", "Malformed pax attribute"],
   lsquic: [
     "Attempt to create second control stream",

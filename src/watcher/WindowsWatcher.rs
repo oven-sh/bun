@@ -1,14 +1,13 @@
 //! Bun's filesystem watcher implementation for windows using kernel32
 
-use core::mem::size_of;
 use core::ptr;
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+use std::sync::Arc;
 
 use crate::watcher_impl::{
     Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher, WatcherThread,
 };
-use bun_core::strings;
-use bun_paths::PathBuffer;
-use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
+use bun_paths::{ParentEqual, Path, is_parent_or_equal};
 
 use bun_collections::index_sort;
 use bun_sys::windows as w;
@@ -19,30 +18,14 @@ bun_core::declare_scope!(watcher, visible);
 pub(crate) type Platform = WindowsWatcher;
 
 pub struct WindowsWatcher {
-    pub(crate) iocp: HANDLE,
+    pub(crate) port: Arc<OwnedHandle>,
     pub(crate) watcher: DirWatcher,
-    pub(crate) buf: PathBuffer,
-    pub(crate) base_idx: usize,
+    /// The watched directory, with a trailing separator.
+    pub(crate) root: Path,
 }
 
-// SAFETY: handles belong to the process, and `overlapped` points at nothing.
+// SAFETY: `overlapped` points at nothing.
 unsafe impl Send for WindowsWatcher {}
-
-impl Default for WindowsWatcher {
-    fn default() -> Self {
-        Self {
-            iocp: w::INVALID_HANDLE_VALUE,
-            watcher: DirWatcher {
-                overlapped: bun_core::ffi::zeroed(),
-                buf: [0u8; 64 * 1024],
-                dir_handle: w::INVALID_HANDLE_VALUE,
-                read_pending: false,
-            },
-            buf: PathBuffer::ZEROED,
-            base_idx: 0,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, thiserror::Error)]
 pub enum Error {
@@ -78,7 +61,7 @@ pub struct DirWatcher {
     /// alignment proof for the cast of the name in
     /// `EventIterator::next`).
     pub(crate) buf: [u8; 64 * 1024],
-    pub(crate) dir_handle: HANDLE,
+    pub(crate) dir_handle: OwnedHandle,
     /// True while a read is in flight. The kernel owns `buf` and `overlapped` until it completes.
     read_pending: bool,
 }
@@ -114,7 +97,7 @@ impl DirWatcher {
         // buf and overlapped are valid for the duration of the async operation (self-owned).
         if unsafe {
             w::kernel32::ReadDirectoryChangesW(
-                self.dir_handle,
+                self.dir_handle.as_raw_handle(),
                 self.buf.as_mut_ptr().cast(),
                 self.buf.len() as u32,
                 1,
@@ -176,70 +159,41 @@ impl WindowsWatcher {
     // into `Box::new(WatcherThread { .. })` in `Watcher::init`.
     #[allow(clippy::large_unopt_stack_frames)]
     pub(crate) fn new(root: &[u8]) -> crate::Result<Self> {
-        let mut this = Self::default();
-        this.init(root)?;
-        Ok(this)
-    }
-
-    fn init(&mut self, root: &[u8]) -> Result<(), crate::Error> {
-        use bun_paths::string_paths as paths;
-        let mut pathbuf = bun_paths::w_path_buffer_pool::get();
-        let wpath = paths::to_nt_path(&mut pathbuf, root);
-        let path_len_bytes: u16 = (wpath.len() * 2) as u16;
-        let mut nt_name = w::UNICODE_STRING {
-            Length: path_len_bytes,
-            MaximumLength: path_len_bytes,
-            Buffer: wpath.as_ptr().cast_mut().cast::<u16>(),
-        };
-        let mut attr = w::OBJECT_ATTRIBUTES {
-            Length: size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-            RootDirectory: ptr::null_mut(),
-            Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
-            ObjectName: &mut nt_name,
-            SecurityDescriptor: ptr::null_mut(),
-            SecurityQualityOfService: ptr::null_mut(),
-        };
-        let mut handle: HANDLE = w::INVALID_HANDLE_VALUE;
-        let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
-        // SAFETY: all pointer params point to valid stack locals for the duration of the call.
-        let rc = unsafe {
-            w::ntdll::NtCreateFile(
-                &mut handle,
-                w::FILE_LIST_DIRECTORY,
-                &mut attr,
-                &mut io,
-                ptr::null_mut(),
-                0,
-                w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
-                w::FILE_OPEN,
-                w::FILE_DIRECTORY_FILE | w::FILE_OPEN_FOR_BACKUP_INTENT,
-                ptr::null_mut(),
-                0,
-            )
-        };
-
-        if rc != w::NTSTATUS::SUCCESS {
+        let wpath =
+            bun_sys::nt_path(root, bun_sys::Tag::watch).map_err(|_| Error::CreateFileFailed)?;
+        let dir_handle = w::NtCreateFile(
+            None,
+            &wpath,
+            bun_sys::NtCreateFileOptions {
+                access_mask: w::FILE_LIST_DIRECTORY,
+                disposition: w::FILE_OPEN,
+                options: w::FILE_DIRECTORY_FILE | w::FILE_OPEN_FOR_BACKUP_INTENT,
+                attributes: 0,
+                sharing_mode: w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
+            },
+        )
+        .map_err(|rc| {
             let err = w::Win32Error::from_nt_status(rc);
             bun_core::scoped_log!(watcher, "failed to open directory for watching: {}", err.0);
-            return Err(Error::CreateFileFailed.into());
-        }
-        self.watcher.dir_handle = handle;
+            Error::CreateFileFailed
+        })?;
 
-        self.iocp = w::CreateIoCompletionPort(handle, ptr::null_mut(), 0, 1)
+        let port = w::CreateIoCompletionPort(dir_handle.as_raw_handle(), 0, 1)
             .map_err(|_| crate::Error::from(Error::IocpFailed))?;
 
-        self.buf[..root.len()].copy_from_slice(root);
-        let needs_slash = root.is_empty() || !paths::char_is_any_slash(root[root.len() - 1]);
-        if needs_slash {
-            self.buf[root.len()] = b'\\';
-        }
-        self.base_idx = if needs_slash {
-            root.len() + 1
-        } else {
-            root.len()
-        };
-
-        Ok(())
+        let mut root = Path::from(root);
+        root.push_trailing_sep();
+        Ok(Self {
+            // SAFETY: just created.
+            port: Arc::new(unsafe { OwnedHandle::from_raw_handle(port) }),
+            watcher: DirWatcher {
+                overlapped: bun_core::ffi::zeroed(),
+                buf: [0u8; 64 * 1024],
+                dir_handle,
+                read_pending: false,
+            },
+            root,
+        })
     }
 
     /// wait until new events are available
@@ -253,10 +207,10 @@ impl WindowsWatcher {
         let mut key: w::ULONG_PTR = 0;
         let mut overlapped: *mut w::OVERLAPPED = ptr::null_mut();
         loop {
-            // SAFETY: iocp is a valid IOCP handle; out-params are valid stack locals.
+            // SAFETY: port is a valid IOCP handle; out-params are valid stack locals.
             let rc = unsafe {
                 w::kernel32::GetQueuedCompletionStatus(
-                    self.iocp,
+                    self.port.as_raw_handle(),
                     &mut nbytes,
                     &mut key,
                     &mut overlapped,
@@ -321,24 +275,37 @@ impl WindowsWatcher {
     }
 }
 
+/// The kernel may write to `buf` until the read has completed.
 impl Drop for WindowsWatcher {
     fn drop(&mut self) {
-        let (mut nbytes, mut key, mut overlapped) = (0, 0, ptr::null_mut());
-        // SAFETY: `self` owns both handles, and closing `INVALID_HANDLE_VALUE` does nothing.
+        if !self.watcher.read_pending {
+            return;
+        }
+        let read = &raw mut self.watcher.overlapped;
+        let (mut nbytes, mut key, mut dequeued) = (0, 0, ptr::null_mut());
+        // SAFETY: `read` was started on `dir_handle`, and the out-params are locals.
         unsafe {
-            w::CloseHandle(self.watcher.dir_handle);
-            // Closing `dir_handle` completes the read; until then the kernel may write to `buf`.
-            if self.watcher.read_pending {
-                w::kernel32::GetQueuedCompletionStatus(
-                    self.iocp,
+            w::kernel32::CancelIoEx(self.watcher.dir_handle.as_raw_handle(), read);
+            // The packet of `wake` can be ahead of it.
+            while dequeued != read {
+                let rc = w::kernel32::GetQueuedCompletionStatus(
+                    self.port.as_raw_handle(),
                     &mut nbytes,
                     &mut key,
-                    &mut overlapped,
+                    &mut dequeued,
                     w::INFINITE,
                 );
+                assert!(rc != 0 || !dequeued.is_null());
             }
-            w::CloseHandle(self.iocp);
         }
+    }
+}
+
+impl Watcher {
+    pub(crate) fn wake(&self) {
+        let port = self.port.as_raw_handle();
+        // SAFETY: only `WindowsWatcher` dequeues, and `next` fails on a null `OVERLAPPED`.
+        unsafe { w::kernel32::PostQueuedCompletionStatus(port, 0, 0, ptr::null_mut()) };
     }
 }
 
@@ -350,7 +317,8 @@ pub(crate) enum Timeout {
 }
 
 pub(crate) fn watch_loop_cycle(this: &Watcher, thread: &mut WatcherThread) -> bun_sys::Result<()> {
-    let base_idx = thread.platform.base_idx;
+    let mut eventpath = Path::from(&thread.platform.root);
+    let root_len = eventpath.len();
 
     let mut event_id: usize = 0;
 
@@ -366,14 +334,13 @@ pub(crate) fn watch_loop_cycle(this: &Watcher, thread: &mut WatcherThread) -> bu
         // Instead we use a 0ms timeout, which may not do as much coalescing but is more responsive.
         timeout = Timeout::None;
         while let Some(FileEvent { action, filename }) = iter.next(&thread.platform.watcher.buf) {
-            let convert_res =
-                strings::copy_utf16_into_utf8(&mut thread.platform.buf[base_idx..], filename);
-            let eventpath_len = base_idx + convert_res.written;
+            eventpath.truncate(root_len);
+            eventpath.extend_from_slice(filename);
 
             bun_core::scoped_log!(
                 watcher,
                 "watcher update event: (filename: {}, action: {}",
-                bstr::BStr::new(&thread.platform.buf[..eventpath_len]),
+                bstr::BStr::new(eventpath.as_bytes()),
                 <&'static str>::from(action)
             );
 
@@ -392,11 +359,10 @@ pub(crate) fn watch_loop_cycle(this: &Watcher, thread: &mut WatcherThread) -> bu
                     let watchlist = &this.state.lock().watchlist;
                     // Eviction is a swap-remove, so walk from the end to avoid skipping items.
                     item_idx = item_idx.min(watchlist.len());
-                    let eventpath = &thread.platform.buf[..eventpath_len];
                     while item_idx > 0 && event_id < thread.watch_events.len() {
                         item_idx -= 1;
                         let path = &watchlist.items_file_path()[item_idx];
-                        let rel = is_parent_or_equal(path.as_ref(), eventpath);
+                        let rel = is_parent_or_equal(path.as_ref(), &eventpath);
                         bun_core::scoped_log!(
                             watcher,
                             "checking path: {} = .{}",

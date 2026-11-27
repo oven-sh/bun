@@ -4,8 +4,6 @@
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use core::ffi::CStr;
-#[cfg(target_os = "macos")]
-use core::ffi::{c_int, c_void};
 #[cfg(unix)]
 use core::sync::atomic::Ordering;
 
@@ -62,61 +60,26 @@ pub struct WinRusage {
     // msgsnd, msgrcv, nsignals, nvcsw, nivcsw: always zero — omitted
 }
 
-pub type IoCounters = bun_windows_sys::IO_COUNTERS;
-
-#[cfg(windows)]
-unsafe extern "system" {
-    // IoCounters = bun_windows_sys::IO_COUNTERS (alias resolves, no change)
-    fn GetProcessIoCounters(
-        handle: bun_sys::windows::HANDLE,
-        counters: *mut IoCounters,
-    ) -> core::ffi::c_int;
-}
-
 #[cfg(windows)]
 pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     use core::ffi::c_void;
     let mut usage_info = Rusage::default();
     let process_pid: *mut c_void = process.process_handle;
-    type WinTime = bun_sys::windows::FILETIME;
-    let mut starttime: WinTime = bun_core::ffi::zeroed();
-    let mut exittime: WinTime = bun_core::ffi::zeroed();
-    let mut kerneltime: WinTime = bun_core::ffi::zeroed();
-    let mut usertime: WinTime = bun_core::ffi::zeroed();
     // We at least get process times
-    // SAFETY: FFI call with valid out-pointers
-    if unsafe {
-        bun_sys::windows::GetProcessTimes(
-            process_pid,
-            &mut starttime,
-            &mut exittime,
-            &mut kerneltime,
-            &mut usertime,
-        )
-    } != 0
-    {
+    if let Ok(times) = bun_sys::windows::GetProcessTimes(process_pid) {
         // FILETIME is in 100-nanosecond ticks. 1 s = 10_000_000 ticks; 1 µs =
-        // 10 ticks. A `temp % 1_000_000` computation here would be
+        // 10 ticks. A `ticks % 1_000_000` computation here would be
         // unit-mismatched (a 100-ns tick count modulo a microsecond
         // denominator): a 178 125 µs run (1_781_250 ticks) would report as
         // 781_250 µs, which is what tips the "does not use 100% cpu >
         // install" test (`cpuTime.total < 750_000`) on Windows aarch64.
         // Convert correctly: `(ticks % 10_000_000) / 10`.
-        let mut temp: u64 =
-            ((kerneltime.dwHighDateTime as u64) << 32) | kerneltime.dwLowDateTime as u64;
-        if temp > 0 {
-            usage_info.stime.sec = (temp / 10_000_000) as i64;
-            usage_info.stime.usec = ((temp % 10_000_000) / 10) as i64;
-        }
-        temp = ((usertime.dwHighDateTime as u64) << 32) | usertime.dwLowDateTime as u64;
-        if temp > 0 {
-            usage_info.utime.sec = (temp / 10_000_000) as i64;
-            usage_info.utime.usec = ((temp % 10_000_000) / 10) as i64;
-        }
+        usage_info.stime.sec = (times.kernel / 10_000_000) as i64;
+        usage_info.stime.usec = ((times.kernel % 10_000_000) / 10) as i64;
+        usage_info.utime.sec = (times.user / 10_000_000) as i64;
+        usage_info.utime.usec = ((times.user % 10_000_000) / 10) as i64;
     }
-    let mut counters = IoCounters::default();
-    // SAFETY: FFI call with valid out-pointer
-    let _ = unsafe { GetProcessIoCounters(process_pid, &mut counters) };
+    let counters = bun_sys::windows::GetProcessIoCounters(process_pid).unwrap_or_default();
     usage_info.inblock = counters.ReadOperationCount;
     usage_info.oublock = counters.WriteOperationCount;
 
@@ -765,11 +728,13 @@ pub fn spawn_process_posix(
                             _ => c"spawn_stdio_generic",
                         };
 
-                        let fd =
-                            match bun_sys::memfd_create(label, bun_sys::MemfdFlags::CrossProcess) {
-                                Ok(fd) => fd,
-                                Err(_) => break 'use_memfd,
-                            };
+                        let fd = match bun_sys::memfd_create(
+                            label.into(),
+                            bun_sys::MemfdFlags::CrossProcess,
+                        ) {
+                            Ok(fd) => fd,
+                            Err(_) => break 'use_memfd,
+                        };
 
                         set_spawned_stdio(&mut spawned, i, fd);
                         cleanup.to_set_cloexec.push(fd);
@@ -810,42 +775,14 @@ pub fn spawn_process_posix(
                     // macOS seems to default to around 8 KB for the buffer size
                     // this is comically small.
                     // TODO: investigate if this should be adjusted on Linux.
-                    let so_recvbuf: c_int = 1024 * 512;
-                    let so_sendbuf: c_int = 1024 * 512;
-                    // SAFETY: setsockopt with valid fds
-                    unsafe {
-                        if i == 0 {
-                            libc::setsockopt(
-                                fds[1].native(),
-                                libc::SOL_SOCKET,
-                                libc::SO_RCVBUF,
-                                core::ptr::from_ref(&so_recvbuf).cast::<c_void>(),
-                                core::mem::size_of::<c_int>() as u32,
-                            );
-                            libc::setsockopt(
-                                fds[0].native(),
-                                libc::SOL_SOCKET,
-                                libc::SO_SNDBUF,
-                                core::ptr::from_ref(&so_sendbuf).cast::<c_void>(),
-                                core::mem::size_of::<c_int>() as u32,
-                            );
-                        } else {
-                            libc::setsockopt(
-                                fds[0].native(),
-                                libc::SOL_SOCKET,
-                                libc::SO_RCVBUF,
-                                core::ptr::from_ref(&so_recvbuf).cast::<c_void>(),
-                                core::mem::size_of::<c_int>() as u32,
-                            );
-                            libc::setsockopt(
-                                fds[1].native(),
-                                libc::SOL_SOCKET,
-                                libc::SO_SNDBUF,
-                                core::ptr::from_ref(&so_sendbuf).cast::<c_void>(),
-                                core::mem::size_of::<c_int>() as u32,
-                            );
-                        }
-                    }
+                    use bun_sys::net::setsockopt_int;
+                    let (recv_fd, send_fd) = if i == 0 {
+                        (fds[1], fds[0])
+                    } else {
+                        (fds[0], fds[1])
+                    };
+                    let _ = setsockopt_int(recv_fd, libc::SOL_SOCKET, libc::SO_RCVBUF, 1024 * 512);
+                    let _ = setsockopt_int(send_fd, libc::SOL_SOCKET, libc::SO_SNDBUF, 1024 * 512);
                 }
 
                 cleanup.to_close_at_end.push(File::from_fd(fds[1]));

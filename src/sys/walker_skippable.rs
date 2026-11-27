@@ -3,7 +3,7 @@ use core::ops::Range;
 use crate::{self as sys, Dir, Fd, FdExt, dir_iterator};
 use bun_alloc::AllocError;
 use bun_core::slice_as_bytes;
-use bun_paths::{OSPathChar, OSPathSlice, OSPathSliceZ, SEP};
+use bun_paths::{OSPath, OSPathSlice, OSPathSliceZ};
 use bun_wyhash::Wyhash11;
 
 #[inline]
@@ -13,12 +13,10 @@ fn hash_with_seed(seed: u64, bytes: &[u8]) -> u64 {
 
 type WrappedIterator = dir_iterator::WrappedIterator;
 
-type NameBufferList = Vec<OSPathChar>;
-
 pub struct Walker {
     stack: Vec<StackItem>,
     root: Root,
-    name_buffer: NameBufferList,
+    name_buffer: OSPath,
     // `skip_filenames`/`skip_dirnames` are index ranges into `skip_all` rather
     // than sub-slices: self-referential slices are not expressible without raw
     // pointers.
@@ -84,7 +82,7 @@ impl Walker {
             // Use an index instead of holding `&mut` to the top item: it would
             // be invalidated by appending to `self.stack` below.
             let top_idx = self.stack.len() - 1;
-            let mut dirname_len = self.stack[top_idx].dirname_len;
+            let dirname_len = self.stack[top_idx].dirname_len;
             let dir_fd = self.stack[top_idx].iter.dir();
             match self.stack[top_idx].iter.next() {
                 Err(err) => return Err(err),
@@ -157,32 +155,21 @@ impl Walker {
                         }
 
                         self.name_buffer.truncate(dirname_len);
-                        if !self.name_buffer.is_empty() {
-                            self.name_buffer.push(SEP as OSPathChar);
-                            dirname_len += 1;
-                        }
-                        self.name_buffer.extend_from_slice(base.name.slice());
-                        let cur_len = self.name_buffer.len();
-                        self.name_buffer.push(0);
+                        self.name_buffer.push(base.name.slice());
 
                         let mut dir = dir_fd;
                         if kind == sys::EntryKind::Directory {
                             dir = sys::open_dir_for_iteration_os_path(dir_fd, base.name.slice())?;
                             self.stack.push(StackItem {
                                 iter: dir_iterator::iterate(dir),
-                                dirname_len: cur_len,
+                                dirname_len: self.name_buffer.len(),
                             });
                         }
-                        // `name_buffer[cur_len] == 0` was written above; both views end at
-                        // `cur_len` and are NUL-terminated by that sentinel char. `from_buf`
-                        // ties the borrow to `&self.name_buffer` (no raw-pointer reslice).
+                        let path: &OSPathSliceZ = &self.name_buffer;
                         return Ok(Some(WalkerEntry {
                             dir,
-                            basename: OSPathSliceZ::from_buf(
-                                &self.name_buffer[dirname_len..],
-                                cur_len - dirname_len,
-                            ),
-                            path: OSPathSliceZ::from_buf(&self.name_buffer, cur_len),
+                            basename: path.substring(dirname_len + usize::from(dirname_len != 0)),
+                            path,
                             kind,
                         }));
                     } else {
@@ -221,7 +208,7 @@ fn walk_root(
     skip_filenames: &[&OSPathSlice],
     skip_dirnames: &[&OSPathSlice],
 ) -> Result<Walker, AllocError> {
-    let name_buffer = NameBufferList::new();
+    let name_buffer = OSPath::new();
 
     let mut stack: Vec<StackItem> = Vec::new();
 

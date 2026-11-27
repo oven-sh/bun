@@ -89,6 +89,9 @@ fn operand_of_leading_cast(file: &FileBuilder, text: &[u8], cast: &Expr) -> Opti
 }
 
 pub(super) fn mark_pure_calls(file: &mut FileBuilder, text: &[u8]) {
+    if file.calls.is_empty() {
+        return;
+    }
     let starts = annotated_token_starts(&file.comments, text);
     if starts.is_empty() {
         return;

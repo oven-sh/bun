@@ -19,7 +19,7 @@ const wireFrames = path.join(import.meta.dir, "wire-frames.ts");
 const drivers = [
   {
     name: "postgres",
-    // .ref() calls update_has_pending_activity() which reads
+    // .ref() calls release_wrapper() which reads
     // self.socket.is_closed() when the connection is in a terminal state.
     touch: "nativeConnection.ref();",
     server: /* js */ `

@@ -148,6 +148,15 @@ extern "C" bool Bun__Bindgen__putRecordEntry(JSGlobalObject* globalObject, Encod
     return true;
 }
 
+// Empty when the copy cannot be allocated.
+extern "C" EncodedJSValue Bun__Bindgen__tryCopyString(JSGlobalObject* globalObject, const EncodedSlice* text)
+{
+    auto copy = Zig::toStringCopy(*text);
+    if (copy.isNull() && text->len) [[unlikely]]
+        return {};
+    return JSValue::encode(jsString(getVM(globalObject), WTF::move(copy)));
+}
+
 extern "C" EncodedJSValue Bun__Bindgen__enumerationValueToJS(JSGlobalObject* globalObject, unsigned index)
 {
     return JSValue::encode(schemaStrings(getVM(globalObject)).enumerationValue(index));

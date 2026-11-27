@@ -1927,6 +1927,8 @@ describe.concurrent("toMatchFileSnapshot()", () => {
             expect(promise).toBeInstanceOf(Promise);
             expect(await promise).toBeUndefined();
             await expect("text\\n").toMatchFileSnapshot("saved/text.txt", "a hint");
+            await expect("text\\n").toMatchFileSnapshot("saved\\\\text.txt");
+            await expect("text\\n").toMatchFileSnapshot(import.meta.dir + "\\\\saved\\\\text.txt");
             await expect("text\\n").toMatchFileSnapshot(join(import.meta.dir, "saved", "text.txt"));
             await expect("above").toMatchFileSnapshot("../above.txt");
             await expect("").toMatchFileSnapshot("./saved/empty.txt");
@@ -1948,7 +1950,20 @@ describe.concurrent("toMatchFileSnapshot()", () => {
     });
     const { stderr, exitCode, pass } = await runTests(String(dir), { CI: "true" });
     expect({ pass, stderr: pass ? "" : stderr }).toEqual({ pass: 1, stderr: "" });
-    expect(stderr).toContain("11 snapshots,");
+    expect(stderr).toContain("13 snapshots,");
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("finds a file beside the test's directory below a name with a backslash", async () => {
+    using dir = tempDir("file-snapshot-backslash", {
+      "a\\b/tests/a.test.js": `${header}
+          import { join } from "node:path";
+          test("t", () => expect("text").toMatchFileSnapshot(join(import.meta.dir, "../saved/text.txt")));
+        `,
+      "a\\b/saved/text.txt": "text",
+    });
+    const { stderr, exitCode, pass } = await runTests(String(dir), { CI: "true" });
+    expect({ pass, stderr: pass ? "" : stderr }).toEqual({ pass: 1, stderr: "" });
     expect(exitCode).toBe(0);
   });
 

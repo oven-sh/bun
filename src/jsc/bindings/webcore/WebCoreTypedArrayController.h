@@ -39,8 +39,6 @@ public:
     void registerWrapper(JSC::JSGlobalObject*, ArrayBuffer&, JSC::JSArrayBuffer&) override;
     bool isAtomicsWaitAllowedOnCurrentThread() override;
 
-    JSC::WeakHandleOwner* wrapperOwner() { return &m_owner; }
-
 private:
     class JSArrayBufferOwner : public JSC::WeakHandleOwner {
     public:

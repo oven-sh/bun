@@ -41,7 +41,7 @@ use bun_ptr::{AliasableBox, CellExt};
 use bun_threading::work_pool::WorkPool;
 
 use crate::jsc_hooks::{RuntimeState, runtime_state, timer_all};
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerTag};
 
 bun_output::declare_scope!(uv, hidden);
 
@@ -200,7 +200,7 @@ impl UvLoopShared {
 
     /// Posts the dispatch task. The state is `Pending`, so no other thread posts one.
     fn post_dispatch(&self) {
-        let task = ConcurrentTask::create_from(core::ptr::null_mut::<UvLoop>());
+        let task = core::ptr::null_mut::<UvLoop>();
         if let Posted::Refused(_) = self.handle.post(LoopKind::Regular, task) {
             // The VM is gone, so drop the callback like a closed libuv loop does.
             self.dispatch_state
@@ -863,14 +863,7 @@ impl UvTimerNode {
     /// `this` is a started timer's node, and this is the loop thread.
     pub(crate) unsafe fn on_fire(this: *mut UvTimerNode, vm: &VirtualMachine) -> JsResult<()> {
         // SAFETY: fn contract. A started timer is initialized and not closed.
-        let timer = unsafe {
-            // `FIRED` tells `update`/`remove` that the node isn't in the heap.
-            (*this)
-                .event_loop_timer
-                .state
-                .set(EventLoopTimerState::FIRED);
-            HandleRef::new((*this).timer)
-        };
+        let timer = unsafe { HandleRef::new((*this).timer) };
         timer.ref_state.set_active(false);
         let repeat_ms = timer.body.repeat_ms.get();
         if repeat_ms != 0 {
@@ -1121,8 +1114,7 @@ pub(crate) unsafe extern "C" fn uv_close(handle: HandleRef<'_>, close_cb: Option
     }
     // The queued task keeps the loop alive until `close_cb` has run, like libuv's
     // closing list. If the VM is gone, the task is refused and `close_cb` never runs.
-    let task = ConcurrentTask::create_from(handle.ptr.as_ptr());
-    let _ = uv_loop.shared.handle.post(LoopKind::Regular, task);
+    let _ = (uv_loop.shared.handle).post(LoopKind::Regular, handle.ptr.as_ptr());
 }
 
 /// Implements `void uv_ref(uv_handle_t*)`. Idempotent. Only matters while the handle

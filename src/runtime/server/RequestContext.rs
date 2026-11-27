@@ -40,7 +40,7 @@ pub(crate) type ResponseStream<const SSL_ENABLED: bool> =
 /// This pre-allocates up to 2,048 RequestContext structs.
 /// It costs about 655,632 bytes.
 // Capacity 0 when heap-breakdown is enabled routes every allocation through
-// the fallback heap path so the per-type malloc zones can attribute them.
+// the fallback heap path.
 const REQUEST_CONTEXT_POOL_CAPACITY: usize = if bun_alloc::heap_breakdown::ENABLED {
     0
 } else {
@@ -1728,7 +1728,7 @@ where
         let crate::webcore::blob::store::Data::File(file) = &blob_ref.store().unwrap().data else {
             unreachable!("do_sendfile called with non-file blob");
         };
-        let mut file_buf = bun_paths::path_buffer_pool::get();
+        let mut file_buf = bun_paths::Path::new();
         let opened = match &file.pathlike {
             crate::webcore::node_types::PathOrFileDescriptor::Fd(_) => None,
             crate::webcore::node_types::PathOrFileDescriptor::Path(path) => {
@@ -1937,7 +1937,7 @@ where
 
         let server = self.server();
         FileResponseStream::start(file_response_stream::StartOptions {
-            fd: opened.map_or(file_response_stream::StreamFd::Borrowed(fd), Into::into),
+            fd: opened.map_or_else(|| file_response_stream::StreamFd::borrowed(fd), Into::into),
             resp,
             vm: bun_ptr::BackRef::new(server.vm()),
             file_type,
@@ -3124,7 +3124,7 @@ where
 
     pub(crate) fn write_chunk(
         &self,
-        stream: &WebCore::streams::Result,
+        stream: &WebCore::streams::Result<'_>,
     ) -> WebCore::streams::Writable {
         let this = self;
         if this.is_aborted_or_ended() {
@@ -3939,9 +3939,6 @@ where
 
             let _exit = vm.enter_event_loop_scope();
 
-            // `RawSlice` is non-owning; ownership of `chunk` stays with the
-            // caller for the duration of the synchronous `on_data` call.
-            let borrowed = bun_ptr::RawSlice::new(chunk);
             if !last {
                 let readable_stream::Source::Bytes(bytes_ptr) = readable.ptr else {
                     return;
@@ -3950,7 +3947,7 @@ where
                 let bytes = bun_ptr::BackRef::from(
                     NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
                 );
-                bytes.on_data(WebCore::streams::Result::Temporary(borrowed));
+                bytes.on_data(WebCore::streams::Result::Temporary(chunk));
 
                 // What `on_data` buffered; `on_stream_drained` resumes once it empties.
                 let buffered = bytes.buffered_len();
@@ -3981,7 +3978,7 @@ where
                 );
                 let source = bytes.parent_const();
                 source.producer.set(WebCore::streams::SourceHandle::None);
-                bytes.on_data(WebCore::streams::Result::TemporaryAndDone(borrowed));
+                bytes.on_data(WebCore::streams::Result::TemporaryAndDone(chunk));
             }
 
             return;

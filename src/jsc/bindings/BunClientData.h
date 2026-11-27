@@ -30,7 +30,7 @@ namespace WebCore {
 class WorkerMessagingProxy;
 class EventLoopTask;
 }
-extern "C" void Bun__VmHandle__post(const BunVmHandleRef*, WebCore::EventLoopTask*, BunLoopKind);
+extern "C" bool Bun__VmHandle__post(const BunVmHandleRef*, WebCore::EventLoopTask*, BunLoopKind);
 extern "C" void Bun__VmHandle__refKeepAlive(const BunVmHandleRef*, BunLoopKind, int delta);
 extern "C" void Bun__VmHandle__wake(const BunVmHandleRef*); // any thread
 // Node's can_call_into_js(): false once the VM's stop was requested (terminate()/exit/teardown). Any thread.

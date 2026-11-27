@@ -120,7 +120,8 @@ impl Stdio {
             _ => c"spawn_stdio_memory_file",
         };
 
-        let Ok(fd) = spawn_sys::memfd_create(label, spawn_sys::MemfdFlag::CrossProcess) else {
+        let Ok(fd) = spawn_sys::memfd_create(label.into(), spawn_sys::MemfdFlag::CrossProcess)
+        else {
             return false;
         };
         let memfd = sys::File::from_fd(fd);

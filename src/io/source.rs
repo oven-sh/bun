@@ -9,8 +9,8 @@ use bun_sys::windows::libuv as uv;
 // the trait must be in scope for method resolution on `Pipe`/`Tty`.
 use bun_sys::windows::libuv::UvHandle as _;
 // `to_error` on `ReturnCode`/`ReturnCodeI64` lives in `bun_sys` (layering).
-use bun_sys::Fd;
 use bun_sys::ReturnCodeExt as _;
+use bun_sys::{Fd, MaybeOwnedFile};
 
 bun_core::declare_scope!(PipeSource, hidden);
 
@@ -28,7 +28,7 @@ pub enum Source {
 pub struct OpenTty(bun_ptr::BackRef<Tty, bun_ptr::Mut>);
 
 impl OpenTty {
-    pub fn as_ptr(&self) -> *mut Tty {
+    fn as_ptr(&self) -> *mut Tty {
         self.0.as_ptr()
     }
 
@@ -117,6 +117,24 @@ impl OpenFile {
         })
     }
 
+    /// # Safety
+    /// On `Ok` the bytes of `iov` stay until `callback` runs.
+    pub(crate) unsafe fn submit_write(
+        &self,
+        iov: uv::uv_buf_t,
+        callback: unsafe extern "C" fn(*mut uv::fs_t),
+    ) -> bun_sys::Result<()> {
+        assert!(self.can_start());
+        self.prepare();
+        let (loop_, fs, file) = (self.loop_.uv_loop(), self.as_ptr().cast(), self.file);
+        // SAFETY: fn contract, and as in `submit_read`.
+        let rc = unsafe { uv::uv_fs_write(loop_, fs, file, &raw const iov, 1, -1, Some(callback)) };
+        rc.to_result(bun_sys::Tag::write).inspect_err(|_| {
+            // SAFETY: `uv_fs_write` returned an error, so no pool thread has `fs`.
+            unsafe { self.complete(false) }
+        })
+    }
+
     /// The callback fires with UV_ECANCELED, or as usual if it is too late to cancel.
     pub(crate) fn stop(&self) {
         if self.state.get() != FileState::Operating {
@@ -156,12 +174,7 @@ impl Drop for OpenFile {
 /// - The `fs` is properly deinitialized before reuse
 /// - Cancellation is only attempted when an operation is in-flight
 ///
-/// Typical usage pattern:
-/// 1. Check `can_start()` - returns true if ready for a new operation
-/// 2. Call `prepare()` - marks fs as in-use
-/// 3. Set up buffer and call `uv_fs_write()` (`submit_read()` does both steps for a read)
-/// 4. In callback, call `on_complete()` first to clean up
-/// 5. Process the result
+/// `submit_read()` / `submit_write()` start an operation, and its callback calls `on_complete()` first.
 ///
 /// Cancellation:
 /// - Call `stop()` to cancel an in-flight operation
@@ -174,7 +187,7 @@ pub struct File {
     fs: UnsafeCell<uv::fs_t>,
 
     /// The reader or writer that hears of a completion.
-    pub(crate) parent: Cell<*mut c_void>,
+    parent: Cell<*mut c_void>,
 
     loop_: &'static bun_uws_sys::Loop,
 
@@ -185,7 +198,7 @@ pub struct File {
     state: Cell<FileState>,
 
     /// Whether dropping the [`OpenFile`] closes `file`.
-    pub(crate) close_on_drop: Cell<bool>,
+    close_on_drop: bool,
 
     /// The buffer of a read in flight, or of a detached write.
     pub(crate) buffer: Cell<Vec<u8>>,
@@ -248,7 +261,7 @@ impl File {
 
     /// Mark the file as in-use for an operation.
     /// Must only be called when can_start() returns true.
-    pub(crate) fn prepare(&self) {
+    fn prepare(&self) {
         debug_assert!(self.can_start());
         self.state.set(FileState::Operating);
     }
@@ -257,7 +270,7 @@ impl File {
     ///
     /// # Safety
     /// libuv has refused the operation, or is calling its callback.
-    pub(crate) unsafe fn complete(&self, was_canceled: bool) {
+    unsafe fn complete(&self, was_canceled: bool) {
         debug_assert!(self.is_busy());
         if was_canceled {
             debug_assert!(self.state.get() == FileState::Canceling);
@@ -273,7 +286,7 @@ impl File {
             // SAFETY: the box given up below.
             drop(unsafe { bun_core::heap::take(fs.cast::<File>()) });
         }
-        if self.close_on_drop.get() {
+        if self.close_on_drop {
             let fd = self.file;
             let fs = bun_core::heap::into_raw(self).cast::<uv::fs_t>();
             // SAFETY: `fs` is the first field of a box that lives until `on_close`.
@@ -354,7 +367,7 @@ impl Source {
         self.file().map(|file| file.as_ptr().cast())
     }
 
-    pub fn ref_(&mut self) {
+    pub(crate) fn ref_(&mut self) {
         match self {
             Source::Pipe(pipe) => pipe.ref_(),
             Source::Tty(tty) => tty.uv.ref_(),
@@ -362,7 +375,7 @@ impl Source {
         }
     }
 
-    pub fn unref(&mut self) {
+    pub(crate) fn unref(&mut self) {
         match self {
             Source::Pipe(pipe) => pipe.unref(),
             Source::Tty(tty) => tty.uv.unref(),
@@ -370,20 +383,25 @@ impl Source {
         }
     }
 
-    /// The pipe owns `fd` on `Ok`.
-    pub fn open_pipe(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<uv::Owned<Pipe>> {
-        bun_core::scoped_log!(PipeSource, "openPipe (fd = {})", fd);
+    /// libuv closes a pipe, even a borrowed one.
+    pub fn open_pipe(
+        loop_: *mut uv::Loop,
+        file: MaybeOwnedFile,
+    ) -> bun_sys::Result<uv::Owned<Pipe>> {
+        bun_core::scoped_log!(PipeSource, "openPipe (fd = {})", file.fd());
         let mut pipe = uv::Owned::<Pipe>::zeroed();
         // we should never init using IPC here
         pipe.init(loop_, false).to_result(bun_sys::Tag::pipe)?;
-        pipe.open(fd.uv()).to_result(bun_sys::Tag::open)?;
+        pipe.open(file.fd().uv()).to_result(bun_sys::Tag::open)?;
+        file.into_raw();
         Ok(pipe)
     }
 
-    pub(crate) fn open_tty(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<OpenTty> {
-        bun_core::scoped_log!(PipeSource, "openTTY (fd = {})", fd);
+    /// libuv closes a tty other than stdin, even a borrowed one.
+    pub(crate) fn open_tty(loop_: *mut uv::Loop, file: MaybeOwnedFile) -> bun_sys::Result<OpenTty> {
+        bun_core::scoped_log!(PipeSource, "openTTY (fd = {})", file.fd());
 
-        let uv_fd = fd.uv();
+        let uv_fd = file.fd().uv();
 
         if uv_fd == 0 {
             return stdin_tty::get_stdin_tty(loop_).map(OpenTty);
@@ -395,13 +413,15 @@ impl Source {
             read_scratch: Vec::new(),
         });
         tty.init(loop_, uv_fd).to_result(bun_sys::Tag::open)?;
+        file.into_raw();
         // SAFETY: lives until the `OpenTty` is dropped.
         Ok(OpenTty(unsafe {
             bun_ptr::BackRef::from_raw_mut(tty.into_raw())
         }))
     }
 
-    pub fn open_file(loop_: &'static bun_uws_sys::Loop, fd: Fd) -> OpenFile {
+    pub fn open_file(loop_: &'static bun_uws_sys::Loop, file: MaybeOwnedFile) -> OpenFile {
+        let (close_on_drop, fd) = (file.is_owned(), file.into_raw());
         debug_assert!(fd.is_valid() && fd.uv() != -1);
         bun_core::scoped_log!(PipeSource, "openFile (fd = {})", fd);
         OpenFile(Box::into_non_null(Box::new(File {
@@ -410,34 +430,37 @@ impl Source {
             loop_,
             file: fd.uv(),
             state: Cell::new(FileState::Deinitialized),
-            close_on_drop: Cell::new(false),
+            close_on_drop,
             buffer: Cell::default(),
         })))
     }
 
-    pub(crate) fn open(loop_: &'static bun_uws_sys::Loop, fd: Fd) -> bun_sys::Result<Source> {
-        let rc = uv::uv_guess_handle(fd.uv());
+    pub(crate) fn open(
+        loop_: &'static bun_uws_sys::Loop,
+        file: MaybeOwnedFile,
+    ) -> bun_sys::Result<Source> {
+        let rc = uv::uv_guess_handle(file.fd().uv());
         bun_core::scoped_log!(
             PipeSource,
             "open(fd: {}, type: {})",
-            fd,
+            file.fd(),
             <&'static str>::from(rc)
         );
 
         match rc {
-            uv::HandleType::NamedPipe => match Self::open_pipe(loop_.uv_loop(), fd) {
+            uv::HandleType::NamedPipe => match Self::open_pipe(loop_.uv_loop(), file) {
                 bun_sys::Result::Ok(pipe) => bun_sys::Result::Ok(Source::Pipe(pipe)),
                 bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
             },
-            uv::HandleType::Tty => match Self::open_tty(loop_.uv_loop(), fd) {
+            uv::HandleType::Tty => match Self::open_tty(loop_.uv_loop(), file) {
                 bun_sys::Result::Ok(tty) => bun_sys::Result::Ok(Source::Tty(tty)),
                 bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
             },
-            uv::HandleType::File => bun_sys::Result::Ok(Source::File(Self::open_file(loop_, fd))),
+            uv::HandleType::File => bun_sys::Result::Ok(Source::File(Self::open_file(loop_, file))),
             _ => {
                 let err = bun_sys::windows::Win32Error::get();
                 if err == bun_sys::windows::Win32Error::SUCCESS {
-                    return bun_sys::Result::Ok(Source::File(Self::open_file(loop_, fd)));
+                    return bun_sys::Result::Ok(Source::File(Self::open_file(loop_, file)));
                 }
                 bun_sys::Result::Err(bun_sys::Error::from_win32(err, bun_sys::Tag::open))
             }
@@ -514,7 +537,7 @@ mod stdin_tty {
 /// (`ProcessBindingTTYWrap.cpp`) supplies `defaultGlobalObject()->uvLoop()`.
 #[unsafe(no_mangle)]
 extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> c_int {
-    let tty = match Source::open_tty(uv_loop, Fd::stdin()) {
+    let tty = match Source::open_tty(uv_loop, MaybeOwnedFile::Borrowed(Fd::stdin())) {
         bun_sys::Result::Ok(tty) => tty,
         bun_sys::Result::Err(e) => return e.errno as c_int,
     };

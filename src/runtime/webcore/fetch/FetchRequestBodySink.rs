@@ -1,3 +1,5 @@
+use core::cell::Cell;
+
 use bun_ptr::RefPtr;
 use bun_sys::Error as SysError;
 
@@ -100,12 +102,12 @@ impl FetchRequestBodySink {
         Writable::Pending(core::ptr::from_mut(&mut self.pending))
     }
 
-    pub fn write(&mut self, data: &StreamResult) -> Writable {
+    pub fn write(&mut self, data: &StreamResult<'_>) -> Writable {
         bun_core::scoped_log!(FetchRequestBodySinkLog, "write({})", data.slice().len());
         self.write_chunk(EncodedChunk::Bytes(data.slice()))
     }
 
-    pub fn write_latin1(&mut self, data: &StreamResult) -> Writable {
+    pub fn write_latin1(&mut self, data: &StreamResult<'_>) -> Writable {
         let bytes = data.slice();
         if bun_core::strings::is_all_ascii(bytes) {
             return self.write_chunk(EncodedChunk::Bytes(bytes));
@@ -208,8 +210,11 @@ impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
 
     crate::impl_js_sink_forwarders!();
 
-    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
-        Self::end_from_js(self, cx)
+    fn end_from_js(
+        this: &mut Self::Entered<'_>,
+        cx: &bun_jsc::JsThread<'_>,
+    ) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(this, cx)
     }
 }
 
@@ -223,7 +228,7 @@ impl crate::webcore::sink::ControlledSink for FetchRequestBodySink {
         drop(unsafe { (*this).task.take() });
     }
 
-    fn source(&mut self) -> &mut SourceHandle {
-        &mut self.source
+    fn source<'a>(this: &'a mut Self::Entered<'_>) -> &'a Cell<SourceHandle> {
+        Cell::from_mut(&mut this.source)
     }
 }

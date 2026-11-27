@@ -38,6 +38,15 @@ export async function loopbackFence(): Promise<void> {
   server.close();
 }
 
+/** Bun.build() runs the event loop until an async setup() settles. Without a timer, that loop sleeps up to 1 s per fence. */
+export function runEventLoopUntil(settled: () => Promise<void>) {
+  const setup = () => {
+    const wake = setInterval(() => {}, 1);
+    return settled().finally(() => clearInterval(wake));
+  };
+  return Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins: [{ name: "wait", setup }] });
+}
+
 /** Reserve and immediately release a port so connecting to it is refused. */
 export async function closedPort(): Promise<number> {
   const { port, server } = await listeningServer(() => {});
@@ -820,7 +829,7 @@ export function mysqlErrPacket(seq: number, code: number, sqlState: string, mess
 }
 
 // The driver sends `SET time_zone = '+00:00'` as a COM_QUERY on every new
-// connection right after authentication (session setup, MySQLConnection.rs)
+// connection right after authentication (session setup, src/sql/mysql/Session.rs)
 // and waits for its OK before it reports itself connected. A mock server must
 // acknowledge it or the client never reaches Connected. Call this first in the
 // post-auth dispatcher; it answers OK and returns true when `payload` is that

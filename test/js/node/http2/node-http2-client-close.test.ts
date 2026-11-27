@@ -10,6 +10,7 @@
  *   node --test test/js/node/http2/node-http2-client-close.test.ts
  */
 import assert from "node:assert";
+import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
 import { Duplex } from "node:stream";
@@ -151,6 +152,216 @@ describe("a request that the server resets before it responds, and that nothing 
         srv.close();
       }
     });
+  }
+});
+
+describe("RST_STREAM(NO_ERROR) on a stream whose data has not been read", () => {
+  const frame = (type: number, flags: number, id: number, ...payload: number[]) =>
+    Buffer.from([0, 0, payload.length, type, flags, 0, 0, 0, id, ...payload]);
+  const settings = frame(4, 0, 0);
+  const request = (method: number) => [method, 0x86, 0x84, 0x01, 1, 0x61];
+  type Side = "server" | "client" | "pushed";
+
+  // `use` gets the paused stream once the session has read the reset, and the events since just before it.
+  async function afterReset(
+    side: Side,
+    prepare: (stream: any) => unknown,
+    use: (stream: any, events: string[], session: http2.Http2Session) => unknown,
+  ) {
+    let onWrite: (chunk: Buffer) => void = () => {};
+    const written = (type: number, flags: number, id: number) =>
+      new Promise<void>(resolve => {
+        onWrite = chunk => void (chunk.includes(frame(type, flags, id).subarray(3)) && resolve());
+      });
+    const transport = new Duplex({
+      read() {},
+      write(chunk, _, done) {
+        onWrite(chunk);
+        done();
+      },
+    });
+    let session: http2.Http2Session, stream: http2.Http2Stream;
+    if (side === "server") {
+      const server = http2.createServer().on("stream", stream => stream.pause());
+      const opened = once(server, "stream");
+      server.emit("connection", transport);
+      transport.push("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+      transport.push(Buffer.concat([settings, frame(1, 4, 1, ...request(0x83))]));
+      [stream] = await opened;
+      session = stream.session!;
+    } else {
+      const client = (session = http2.connect("http://a", { createConnection: () => transport }));
+      const sent = written(1, 4, 1);
+      stream = client.request({ ":method": "POST" }).pause();
+      await sent;
+      transport.push(settings);
+      if (side === "pushed") {
+        stream.on("error", () => {});
+        client.on("stream", pushed => pushed.pause());
+        const promised = once(client, "stream");
+        transport.push(frame(5, 4, 1, 0, 0, 0, 2, ...request(0x82)));
+        [stream] = await promised;
+      }
+      transport.push(frame(1, 4, stream.id!, 0x88));
+    }
+    try {
+      await prepare(stream);
+      // Out of the last read, so that each push below is a read of its own, in the same tick.
+      await new Promise(setImmediate);
+      const events: string[] = [];
+      for (const event of ["aborted", "drain", "finish", "wantTrailers", "end", "close"]) {
+        stream.on(event, () => events.push(event));
+      }
+      const acked = written(6, 1, 0);
+      transport.push(Buffer.concat([frame(0, 0, stream.id!, 0x2e), frame(3, 0, stream.id!, 0, 0, 0, 0)]));
+      transport.push(frame(6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+      await acked;
+      await new Promise(setImmediate);
+      await use(stream, events, session);
+    } finally {
+      session.destroy();
+      transport.destroy();
+    }
+  }
+
+  for (const [name, side, prepare, atReset] of [
+    ["a request that has no response yet", "server", () => {}, ["aborted", "finish"]],
+    ["a request whose response has begun", "server", stream => stream.respond(), ["aborted", "finish"]],
+    [
+      "a request whose response waits for trailers",
+      "server",
+      stream => stream.respond({}, { waitForTrailers: true }),
+      ["aborted", "finish"],
+    ],
+    ["a request whose response is complete", "server", stream => (stream.respond(), once(stream.end(), "finish")), []],
+    ["a response whose request is open", "client", () => {}, ["aborted", "finish"]],
+    ["a response whose request is complete", "client", stream => once(stream.end(), "finish"), []],
+    ["a pushed response", "pushed", () => {}, []],
+  ] as [string, Side, (stream: any) => unknown, string[]][]) {
+    test(`${name} is closed, and can still be read`, () =>
+      afterReset(side, prepare, async (stream, events) => {
+        assert.deepStrictEqual(
+          { events, closed: stream.closed, destroyed: stream.destroyed },
+          { events: atReset, closed: true, destroyed: false },
+        );
+        const [[chunk]] = await Promise.all([once(stream, "data"), once(stream.resume(), "close")]);
+        assert.deepStrictEqual({ events, chunk: String(chunk) }, { events: [...atReset, "end", "close"], chunk: "." });
+      }));
+  }
+
+  for (const side of ["server", "client"] as const) {
+    test(`write() on a ${side} fails, and 'close' still follows`, () =>
+      afterReset(
+        side,
+        () => {},
+        async (stream, _, session) => {
+          const closed = new Promise(resolve => stream.once("close", resolve));
+          const [[emitted], passed] = await Promise.all([
+            once(stream, "error"),
+            new Promise<any>(resolve => stream.write("a", resolve)),
+          ]);
+          assert.deepStrictEqual([emitted.code, passed.code], Array(2).fill("ERR_STREAM_WRITE_AFTER_END"));
+          session.destroy();
+          await closed;
+        },
+      ));
+  }
+
+  for (const chunks of ["ab", "abc"]) {
+    test(`${chunks.length - 1} write(s) behind one that has not called back are dropped`, () =>
+      afterReset(
+        "client",
+        // In the same turn as the reset.
+        stream => void setImmediate(() => [...chunks].forEach(chunk => stream.write(chunk))),
+        async (stream, _, session) => {
+          const closed = once(stream, "close");
+          await once(stream.resume(), "end");
+          session.destroy();
+          await closed;
+        },
+      ));
+  }
+
+  test("a write that waits for the window is not followed by 'drain'", () =>
+    afterReset(
+      "client",
+      stream => assert.strictEqual(stream.write(Buffer.alloc(70000)), false),
+      async (stream, events) => {
+        await once(stream.resume(), "end");
+        assert.deepStrictEqual(
+          events.filter(event => event !== "finish" && event !== "close"),
+          ["aborted", "end"],
+        );
+      },
+    ));
+
+  test("'aborted' sees the stream closed", async () => {
+    let seen: unknown;
+    await afterReset(
+      "server",
+      stream => void stream.on("aborted", () => (seen = { closed: stream.closed, rstCode: stream.rstCode })),
+      () => assert.deepStrictEqual(seen, { closed: true, rstCode: NGHTTP2_NO_ERROR }),
+    );
+  });
+
+  test("respond() throws", () =>
+    afterReset(
+      "server",
+      () => {},
+      stream => assert.throws(() => stream.respond(), { code: "ERR_HTTP2_INVALID_STREAM" }),
+    ));
+
+  test("a response can still be read after session.close()", async () => {
+    const server = net.createServer(socket => {
+      socket.on("error", () => {}).write(settings);
+      socket.on("data", chunk => {
+        if (!chunk.includes(frame(1, 4, 1).subarray(3))) return;
+        socket.write(Buffer.concat([frame(1, 4, 1, 0x88), frame(0, 0, 1, 0x2e), frame(3, 0, 1, 0, 0, 0, 0)]));
+      });
+    });
+    const client = http2.connect(`http://127.0.0.1:${await listen(server)}`);
+    try {
+      await once(client, "remoteSettings");
+      const stream = client.request({ ":method": "POST" }).pause();
+      client.close();
+      await once(stream, "finish");
+      const [[chunk]] = await Promise.all([once(stream, "data"), once(stream.resume(), "end")]);
+      assert.strictEqual(String(chunk), ".");
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+});
+
+test("session.destroy(NO_ERROR) passes the code to a request that has no 'error' listener", async () => {
+  const server = rawH2Server();
+  const client = http2.connect(`http://127.0.0.1:${await listen(server)}`);
+  try {
+    const stream = client.request({ ":method": "POST" });
+    await once(stream, "response");
+    const { promise, resolve } = Promise.withResolvers();
+    // Not once(), which listens for 'error'.
+    stream.on("close", resolve);
+    client.destroy(NGHTTP2_NO_ERROR as any);
+    await promise;
+    assert.strictEqual(stream.rstCode, NGHTTP2_NO_ERROR);
+  } finally {
+    server.close();
+  }
+});
+
+test("respond() throws after close()", async () => {
+  const server = http2.createServer();
+  const client = http2.connect(`http://127.0.0.1:${await listen(server)}`);
+  try {
+    client.request().on("error", () => {});
+    const [stream] = await once(server, "stream");
+    stream.close();
+    assert.throws(() => stream.respond(), { code: "ERR_HTTP2_INVALID_STREAM" });
+  } finally {
+    client.destroy();
+    server.close();
   }
 });
 

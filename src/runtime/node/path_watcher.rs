@@ -39,13 +39,9 @@ use bun_core::strings;
 use bun_core::{Output, zstr};
 use bun_core::{ZStr, handle_oom};
 use bun_paths as path;
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_paths::platform;
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_paths::resolve_path::join_z_buf_spill;
-use bun_sys::{self as sys, E, Tag};
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-use bun_sys::{Fd, FdExt};
+use bun_sys::Fd;
+use bun_sys::{self as sys, E, Tag};
 use bun_threading::{Guarded, Mutex};
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_watcher::inotify_watcher::EventIterator as InotifyEventIterator;
@@ -354,15 +350,8 @@ pub(crate) fn watch(
             }
         }
     };
-    let resolved: &ZStr = match sys::get_fd_path(probe.fd(), &mut resolve_buf) {
-        Err(_) => path, // fall back to the caller's path; best effort
-        Ok(r) => {
-            let len = r.len();
-            resolve_buf[len] = 0;
-            // SAFETY: resolve_buf[len] == 0 written above; buf lives for the rest of this fn.
-            ZStr::from_buf(&resolve_buf[..], len)
-        }
-    };
+    // fall back to the caller's path; best effort
+    let resolved = sys::get_fd_path_z(probe.fd(), &mut resolve_buf).unwrap_or(path);
 
     let mut key_buf = path::path_buffer_pool::get();
     let key = PathWatcherManager::make_key(key_buf.as_mut_slice(), resolved.as_bytes(), recursive);
@@ -384,7 +373,7 @@ pub(crate) fn watch(
     let mut handlers = ArrayHashMap::default();
     handle_oom(handlers.put(ctx, ChangeEvent::default()));
     let id = manager.watchers.insert(PathWatcher {
-        path: ZBox::from_bytes(resolved.as_bytes()),
+        path: resolved.to_zbox(),
         recursive,
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         is_file,
@@ -418,10 +407,10 @@ pub(crate) fn watch(
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 #[derive(Default)]
 struct WalkScratch {
-    /// NUL-terminated absolute path of the directory being read, or of the entry passed to `cb`.
-    abs: Vec<u8>,
+    /// Absolute path of the directory being read, or of the entry passed to `cb`.
+    abs: path::Path,
     /// Same path, relative to the watch root.
-    rel: Vec<u8>,
+    rel: path::Path,
     /// Unvisited entries as `[is_file][name][0]` records, innermost directory last.
     pending: Vec<u8>,
     /// Directories with records in `pending`, outermost first.
@@ -430,7 +419,7 @@ struct WalkScratch {
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 struct WalkLevel {
-    /// Length of the directory's path in `abs` (without the NUL) and in `rel`.
+    /// Length of the directory's path in `abs` and in `rel`.
     abs_len: usize,
     rel_len: usize,
     /// Offset of the directory's first record in `pending`.
@@ -441,42 +430,36 @@ struct WalkLevel {
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 impl WalkScratch {
-    /// Truncates `abs` and `rel` to the directory's path, then appends `name`.
-    fn set_entry(
-        abs: &mut Vec<u8>,
-        rel: &mut Vec<u8>,
+    /// Truncates `abs` and `rel` to the directory's path, then appends `name`. Returns `abs`.
+    fn set_entry<'a>(
+        abs: &'a mut path::Path,
+        rel: &mut path::Path,
         abs_len: usize,
         rel_len: usize,
         name: &[u8],
-    ) {
-        abs.truncate(abs_len);
-        // Only the root directory ends with a separator.
-        if abs.last() != Some(&path::SEP) {
-            abs.push(path::SEP);
-        }
-        abs.extend_from_slice(name);
-        abs.push(0);
+    ) -> &'a ZStr {
         rel.truncate(rel_len);
-        if rel_len != 0 {
-            rel.push(path::SEP);
-        }
-        rel.extend_from_slice(name);
+        rel.push(name);
+        abs.truncate(abs_len);
+        abs.push(name);
+        abs
     }
 
-    /// Reads every entry of the directory at `self.abs` and closes it before the walk descends.
+    fn open_dir(abs: &ZStr) -> sys::Result<sys::Dir> {
+        sys::open(abs, sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC, 0)
+            .map(sys::Dir::from_fd)
+    }
+
+    /// Reads every entry of `dir`, which is at `self.abs`, so that it is closed before the walk descends.
     #[inline(never)]
-    fn read_dir<const DIRS_ONLY: bool>(&mut self, cb: &mut impl FnMut(&ZStr, &[u8], bool)) {
-        let abs_len = self.abs.len() - 1;
+    fn read_dir<const DIRS_ONLY: bool>(
+        &mut self,
+        dir: &sys::Dir,
+        cb: &mut impl FnMut(&ZStr, &[u8], bool),
+    ) {
+        let abs_len = self.abs.len();
         let rel_len = self.rel.len();
         let start = self.pending.len();
-        let Ok(dir) = sys::open(
-            ZStr::from_slice_with_nul(&self.abs),
-            sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC,
-            0,
-        )
-        .map(sys::Dir::from_fd) else {
-            return;
-        };
         let mut it = sys::dir_iterator::iterate(dir.fd());
         let mut found_dir = false;
         while let Ok(Some(entry)) = it.next() {
@@ -488,8 +471,8 @@ impl WalkScratch {
             let name = entry.name.slice_u8();
             if is_file && !found_dir {
                 // No subdirectory precedes this file, so it's next in walk order.
-                Self::set_entry(&mut self.abs, &mut self.rel, abs_len, rel_len, name);
-                cb(ZStr::from_slice_with_nul(&self.abs), &self.rel, true);
+                let abs = Self::set_entry(&mut self.abs, &mut self.rel, abs_len, rel_len, name);
+                cb(abs, &self.rel, true);
                 continue;
             }
             // Copy the name because this entry is visited after the directory is closed.
@@ -523,11 +506,13 @@ fn walk_subtree<const DIRS_ONLY: bool>(
     cb: &mut impl FnMut(&ZStr, &[u8], bool),
 ) {
     let mut scratch = WalkScratch {
-        abs: abs_dir.as_bytes_with_nul().to_vec(),
-        rel: rel_dir.to_vec(),
+        abs: path::Path::from(abs_dir),
+        rel: path::Path::from(rel_dir),
         ..Default::default()
     };
-    scratch.read_dir::<DIRS_ONLY>(cb);
+    if let Ok(dir) = WalkScratch::open_dir(abs_dir) {
+        scratch.read_dir::<DIRS_ONLY>(&dir, cb);
+    }
     while let Some(level) = scratch.levels.last_mut() {
         if level.next == scratch.pending.len() {
             scratch.pending.truncate(level.start);
@@ -539,21 +524,17 @@ fn walk_subtree<const DIRS_ONLY: bool>(
         let name = &record[1..];
         let name = &name[..strings::index_of_char_usize(name, 0).unwrap_or(name.len())];
         level.next += 1 + name.len() + 1;
-        WalkScratch::set_entry(
+        let abs = WalkScratch::set_entry(
             &mut scratch.abs,
             &mut scratch.rel,
             level.abs_len,
             level.rel_len,
             name,
         );
-        cb(
-            ZStr::from_slice_with_nul(&scratch.abs),
-            &scratch.rel,
-            is_file,
-        );
-        if !is_file {
+        cb(abs, &scratch.rel, is_file);
+        if !is_file && let Ok(dir) = WalkScratch::open_dir(abs) {
             // `cb` already watches this directory, so entries created during the read still get events.
-            scratch.read_dir::<DIRS_ONLY>(cb);
+            scratch.read_dir::<DIRS_ONLY>(&dir, cb);
         }
     }
 }
@@ -579,7 +560,7 @@ compile_error!("path_watcher: unsupported target");
 /// a wd per directory, then adding new subdirectories as they appear (IN_CREATE|IN_ISDIR).
 #[cfg(any(target_os = "linux", target_os = "android"))]
 struct Linux {
-    fd: Fd,
+    file: sys::CloseOnDrop,
     /// wd → list of owners. `inotify_add_watch` returns the same wd for the same
     /// inode on a given inotify fd, so two PathWatchers whose roots overlap (e.g.
     /// a recursive watch on `/a` plus a watch on `/a/sub`) end up sharing a wd. Each
@@ -620,17 +601,17 @@ impl Linux {
         if rc < 0 {
             return Err(sys::Error::from_code_int(sys::last_errno(), Tag::watch));
         }
-        let fd = Fd::from_native(rc);
+        let file = sys::CloseOnDrop::new(Fd::from_native(rc));
+        let fd = file.fd();
         // Daemon reader — the manager is process-global and never torn down.
         if std::thread::Builder::new()
             .spawn(move || Linux::thread_main(fd))
             .is_err()
         {
-            fd.close();
             return Err(sys::Error::from_code(E::ENOMEM, Tag::watch));
         }
         Ok(Self {
-            fd,
+            file,
             wd_map: HashMap::default(),
         })
     }
@@ -662,7 +643,7 @@ impl Linux {
         } else {
             inotify_masks::WATCH_DIR_MASK
         };
-        let rc = sys::linux::inotify_add_watch(self.fd.native(), abs_path, mask);
+        let rc = sys::linux::inotify_add_watch(self.file.fd().native(), abs_path, mask);
         if rc < 0 {
             let err = sys::Error::from_code_int(sys::last_errno(), Tag::watch);
             // ENOENT/ENOTDIR during a recursive walk just means we raced; skip.
@@ -740,7 +721,7 @@ impl Linux {
             }
             if owners.is_empty() {
                 wd_map.remove(&wd);
-                sys::linux::inotify_rm_watch(self.fd.native(), wd);
+                sys::linux::inotify_rm_watch(self.file.fd().native(), wd);
             }
         }
     }
@@ -751,8 +732,7 @@ impl Linux {
         let manager = DEFAULT_MANAGER.wait();
         // Large enough for a burst of events; inotify guarantees whole events per read.
         let mut buf: Box<[u8; 64 * 1024]> = bun_core::boxed_zeroed();
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let mut rel_spill: Vec<u8> = Vec::new();
+        let mut rel_path = path::Path::new();
 
         loop {
             let rc = sys::linux::read(fd.native(), &mut *buf);
@@ -887,12 +867,9 @@ impl Linux {
                     } else if name.is_empty() {
                         owner_subpath
                     } else {
-                        join_z_buf_spill::<platform::Posix>(
-                            path_buf.as_mut_slice(),
-                            &mut rel_spill,
-                            &[owner_subpath, name],
-                        )
-                        .as_bytes()
+                        rel_path.set(owner_subpath);
+                        rel_path.push(name);
+                        &rel_path
                     };
 
                     watcher.emit(
@@ -913,13 +890,8 @@ impl Linux {
                         && (ev.mask & (IN::CREATE | IN::MOVED_TO) != 0)
                         && !name.is_empty()
                     {
-                        let mut abs_buf = path::path_buffer_pool::get();
-                        let mut abs_spill: Vec<u8> = Vec::new();
-                        let child_abs = join_z_buf_spill::<platform::Posix>(
-                            abs_buf.as_mut_slice(),
-                            &mut abs_spill,
-                            &[watcher_path, owner_subpath, name],
-                        );
+                        let child_abs: &ZStr =
+                            &path::Path::join(&[watcher_path, owner_subpath, name]);
                         // Borrowck: `rel` may borrow `wd_map`, which `add_one` mutates.
                         let rel_owned: Box<[u8]> = Box::from(rel);
                         // These may rehash `wd_map`; `owners` is re-fetched next iteration.
@@ -1012,7 +984,7 @@ impl PathWatcherManager {
 /// same behaviour as libuv on FreeBSD; callers are expected to re-scan.
 #[cfg(target_os = "freebsd")]
 struct Kqueue {
-    fd: Fd,
+    file: sys::CloseOnDrop,
     /// ident (fd number) → entry (by value — avoids a per-entry heap alloc for
     /// recursive trees). `udata` on the kevent carries a monotonic generation number
     /// so the reader can reject stale events after the fd is recycled.
@@ -1034,17 +1006,17 @@ struct KqEntry {
 #[cfg(target_os = "freebsd")]
 impl Kqueue {
     fn init() -> sys::Result<Self> {
-        let fd = sys::kqueue()?;
+        let file = sys::CloseOnDrop::new(sys::kqueue()?);
+        let fd = file.fd();
         // Daemon reader — the manager is process-global and never torn down.
         if std::thread::Builder::new()
             .spawn(move || Kqueue::thread_main(fd))
             .is_err()
         {
-            fd.close();
             return Err(sys::Error::from_code(E::ENOMEM, Tag::watch));
         }
         Ok(Self {
-            fd,
+            file,
             entries: ArrayHashMap::default(),
             next_gen: 1,
         })
@@ -1080,7 +1052,7 @@ impl Kqueue {
         subpath: &[u8],
         is_file: bool,
     ) -> sys::Result<()> {
-        use bun_sys::freebsd::{EV, EVFILT, Kevent, NOTE, kevent};
+        use bun_sys::freebsd::{EV, EVFILT, Kevent, NOTE};
         // O_EVTONLY: we only need the fd for kevent registration, never for I/O.
         // (No-op on FreeBSD where EVTONLY is 0; semantic here for kqueue-on-macOS.)
         let file = match sys::File::open(
@@ -1114,24 +1086,12 @@ impl Kqueue {
             | NOTE::LINK
             | NOTE::REVOKE;
         kev.udata = generation as _;
-        let mut changes = [kev];
-        // SAFETY: thin wrapper over libc::kevent.
-        let krc = unsafe {
-            kevent(
-                self.fd.native(),
-                changes.as_ptr(),
-                1,
-                changes.as_mut_ptr(),
-                0,
-                core::ptr::null(),
-            )
-        };
-        if krc < 0 {
+        // SAFETY: only `thread_main` waits on this kqueue, and it reads `udata` as a number.
+        if let Err(err) = unsafe { sys::kevent(self.file.fd(), &[kev], &mut [], None) } {
             // Registration failed (ENOMEM/EINVAL on a bad fd, etc.). Don't leave a
             // dead entry in the map that will never deliver events.
-            let errno = sys::get_errno(krc);
             return Err(sys::Error {
-                errno: errno as u16,
+                errno: err.errno,
                 syscall: Tag::watch,
                 ..Default::default()
             }
@@ -1159,33 +1119,22 @@ impl Kqueue {
     }
 
     fn thread_main(kq: Fd) {
-        use bun_sys::freebsd::{Kevent, NOTE, kevent};
+        use bun_sys::freebsd::{Kevent, NOTE};
         Output::Source::configure_named_thread(zstr!("fs.watch"));
         let manager = DEFAULT_MANAGER.wait();
         // SAFETY: Kevent is POD; uninitialized array filled by kernel before read.
         let mut events: [Kevent; 128] = bun_core::ffi::zeroed();
         loop {
-            // SAFETY: thin wrapper over libc::kevent.
-            let count = unsafe {
-                kevent(
-                    kq.native(),
-                    events.as_ptr(),
-                    0,
-                    events.as_mut_ptr(),
-                    events.len() as _,
-                    core::ptr::null(),
-                )
-            };
-            if count <= 0 {
+            let Ok(count @ 1..) = sys::kevent_wait(kq, &mut events, None) else {
                 continue;
-            }
+            };
 
             let locked = manager.lock();
             let watchers = &locked.watchers;
             let entries = &locked.platform.entries;
             let mut touched: ArrayHashMap<WatcherId, ()> = ArrayHashMap::default();
 
-            for kev in &events[..count as usize] {
+            for kev in &events[..count] {
                 // Validate via the map — the entry may have been freed by a racing
                 // removeWatch between kevent() returning and us taking the lock. POSIX
                 // recycles the lowest fd on open(), so the ident could also now belong

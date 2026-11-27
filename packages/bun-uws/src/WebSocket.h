@@ -228,7 +228,9 @@ private:
                     LoopData *loopData = Super::getLoopData();
                     /* Compress using either shared or dedicated deflationStream */
                     DeflationStream *deflationStream = (webSocketData->deflationStream ? webSocketData->deflationStream : loopData->deflationStream).get();
-                    message = deflationStream->deflate(loopData->zlibContext.get(), message);
+                    std::optional<std::string_view> deflated = deflationStream->deflate(loopData->zlibContext.get(), message);
+                    compress = deflated.has_value();
+                    message = deflated.value_or(message);
                 } else {
                     compress = false;
                 }

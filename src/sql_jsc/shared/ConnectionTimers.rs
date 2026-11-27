@@ -3,6 +3,7 @@ use core::fmt::Arguments;
 
 use bun_core::fmt::{ConnTimeoutKind, fmt_conn_timeout};
 use bun_core::{Timespec, TimespecMockMode};
+use bun_ptr::{AnyRefCounted, RefPtr};
 
 use crate::jsc::{EventLoopTimerState, EventLoopTimerTag, OwnedTimer, VirtualMachine};
 
@@ -65,7 +66,7 @@ pub enum Phase {
     Failed,
 }
 
-pub trait TimedConnection {
+pub trait TimedConnection: AnyRefCounted {
     fn timers(&self) -> &ConnectionTimers;
     fn phase(&self) -> Phase;
     /// In flight or queued.
@@ -108,8 +109,7 @@ pub trait TimedConnection {
         }
     }
 
-    fn on_connection_timeout(&self) {
-        self.timers().timer.state.set(EventLoopTimerState::FIRED);
+    fn on_connection_timeout(self: RefPtr<Self>) {
         let (kind, ms, stage) = self.timeout();
         if ms != 0 && !self.is_processing_data() {
             self.fail_timeout(kind, format_args!("{}", fmt_conn_timeout(kind, ms, stage)));
@@ -125,12 +125,8 @@ pub trait TimedConnection {
         }
     }
 
-    fn on_max_lifetime_timeout(&self) {
+    fn on_max_lifetime_timeout(self: RefPtr<Self>) {
         let timers = self.timers();
-        timers
-            .max_lifetime_timer
-            .state
-            .set(EventLoopTimerState::FIRED);
         match self.phase() {
             Phase::Failed => {}
             Phase::Connected if self.is_busy() => {

@@ -924,6 +924,18 @@ test("prints a Response once", () => {
 `);
 });
 
+test("a long run of equal characters that only the reverse search reaches stays unchanged", () => {
+  const times = (letter: string, n: number) => Buffer.alloc(n, letter).toString();
+  let message = "";
+  try {
+    expect("xd" + times("x", 100_000) + "c").toBe("x" + times("c", 10_000) + times("x", 100_000) + "d");
+  } catch (e) {
+    message = cleanAnsiEscapes((e as Error).message);
+  }
+  // Changed and unchanged parts are shortened one by one: the `c`, and the `x` on both sides.
+  expect(message.match(/bytes truncated/g)).toHaveLength(3);
+});
+
 test("prints a React 19 element as JSX, without the fiber in its _owner", () => {
   const element = (type: string, props: object) => ({
     $$typeof: Symbol.for("react.transitional.element"),

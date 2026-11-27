@@ -1,11 +1,8 @@
-use core::ptr::NonNull;
-
 use bun_dotenv::Loader as DotEnvLoader;
-use bun_ptr::BackRef;
 use bun_uws::Loop as UwsLoop;
 
 use crate::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
-use crate::ConcurrentTask::ConcurrentTask;
+use crate::ConcurrentTask::{BoxedTask, ConcurrentTask};
 use crate::MiniEventLoop::MiniEventLoop;
 use crate::{JsEventLoop, JsEventLoopKind};
 
@@ -57,9 +54,6 @@ pub enum AnyEventLoop {
 }
 
 impl Default for AnyEventLoop {
-    /// Stub default for `#[derive(Default)]` containers (e.g. the
-    /// `bun_install::PackageManager` stub). Real consumers always overwrite
-    /// this via `init()` / `js_current()` before use.
     fn default() -> Self {
         AnyEventLoop::Mini(Box::new(MiniEventLoop::init()))
     }
@@ -75,27 +69,12 @@ impl AnyEventLoop {
         }
     }
 
-    pub fn iteration_number(&self) -> u64 {
-        match self {
-            AnyEventLoop::Js { owner } => owner.iteration_number(),
-            AnyEventLoop::Mini(mini) => mini.loop_.iteration_number(),
-        }
-    }
-
-    /// Convert to an owned [`EventLoopHandle`]. Thin alias for
-    /// [`EventLoopHandle::from_any`].
-    #[inline]
-    pub fn as_handle(this: &AnyEventLoop) -> EventLoopHandle {
-        EventLoopHandle::from_any(this)
-    }
-
     pub fn init() -> AnyEventLoop {
         AnyEventLoop::Mini(Box::new(MiniEventLoop::init()))
     }
 
     /// Construct the `Js` variant wrapping a specific erased
-    /// `*mut jsc::EventLoop` — callers that already hold a VM pointer use this instead of
-    /// the thread-local lookup in [`js_current`].
+    /// `*mut jsc::EventLoop`.
     ///
     /// `js_event_loop` is a live erased `*mut jsc::EventLoop`
     /// that outlives every dispatch through the returned
@@ -108,15 +87,6 @@ impl AnyEventLoop {
         }
     }
 
-    /// Construct the `Js` variant for the current thread's JS event loop.
-    /// Replaces `jsc::VirtualMachine::get().event_loop()` for tier-≤4 callers
-    /// (e.g. `bun_install::PackageManager`).
-    pub fn js_current() -> AnyEventLoop {
-        AnyEventLoop::Js {
-            owner: JsEventLoop::current(),
-        }
-    }
-
     /// One turn of the loop, which waits if there is nothing to run.
     pub fn tick(&self, context: *mut core::ffi::c_void) {
         match self {
@@ -126,34 +96,6 @@ impl AnyEventLoop {
             }
             AnyEventLoop::Mini(mini) => mini.tick_once(context),
         }
-    }
-
-    pub fn tick_once(&self, context: *mut core::ffi::c_void) {
-        match self {
-            AnyEventLoop::Js { owner } => {
-                owner.tick();
-                owner.auto_tick_active();
-            }
-            AnyEventLoop::Mini(mini) => mini.tick_without_idle(context),
-        }
-    }
-}
-
-// ─── AnyEventLoop → EventLoopHandle forwarders ──────────────────────────────
-// `EventLoopHandle` (below, same file) is the canonical Js/Mini dispatcher for
-// these four methods. `AnyEventLoop` forwards through `from_any` instead of
-// duplicating each `match`.
-impl AnyEventLoop {
-    #[inline]
-    pub fn r#loop(&self) -> &'static UwsLoop {
-        EventLoopHandle::from_any(self).r#loop()
-    }
-
-    /// Alias for [`r#loop`](Self::r#loop) so callers spell `event_loop.loop_()`
-    /// without the raw-identifier escape.
-    #[inline]
-    pub fn loop_(&self) -> &'static UwsLoop {
-        self.r#loop()
     }
 }
 
@@ -171,11 +113,7 @@ pub enum EventLoopHandle {
         /// `Copy`.
         owner: JsEventLoop,
     },
-    // The pointee is the per-thread singleton
-    // (`init_global`) or an `AnyEventLoop::Mini`-owned loop, both of which
-    // strictly outlive every `EventLoopHandle` derived from them — the
-    // [`BackRef`] invariant.
-    Mini(BackRef<MiniEventLoop>),
+    Mini(&'static MiniEventLoop),
 }
 
 /// Owned storage for either kind of concurrent task.
@@ -208,7 +146,7 @@ impl Drop for EnteredEventLoop {
 
 impl EventLoopHandle {
     /// Wrap an erased `*mut jsc::EventLoop`. (Sibling constructors:
-    /// `init_mini`, `from_any`; the `*VirtualMachine` form lives in
+    /// `init_mini`, `js_current`; the `*VirtualMachine` form lives in
     /// bun_runtime since it must call `vm.eventLoop()`.)
     ///
     /// `js_event_loop` is a live erased `*mut jsc::EventLoop` whose owner
@@ -224,9 +162,21 @@ impl EventLoopHandle {
         }
     }
 
+    /// The current thread's JS event loop, for callers that cannot name `VirtualMachine`.
+    pub fn js_current() -> EventLoopHandle {
+        EventLoopHandle::Js {
+            owner: JsEventLoop::current(),
+        }
+    }
+
+    /// A new mini loop, which is never freed.
+    pub fn leak_mini() -> EventLoopHandle {
+        EventLoopHandle::Mini(Box::leak(Box::new(MiniEventLoop::init())))
+    }
+
     #[inline]
     pub fn init_mini(mini: &'static MiniEventLoop) -> EventLoopHandle {
-        EventLoopHandle::Mini(BackRef::new(mini))
+        EventLoopHandle::Mini(mini)
     }
 
     #[inline]
@@ -243,7 +193,7 @@ impl EventLoopHandle {
     fn into_tag_ptr(self) -> (core::ffi::c_char, *mut core::ffi::c_void) {
         match self {
             EventLoopHandle::Js { owner, .. } => (1, owner.owner().cast()),
-            EventLoopHandle::Mini(mini) => (2, mini.as_const_ptr().cast_mut().cast()),
+            EventLoopHandle::Mini(mini) => (2, core::ptr::from_ref(mini).cast_mut().cast()),
         }
     }
 
@@ -272,16 +222,8 @@ impl EventLoopHandle {
                 // `*mut jsc::EventLoop`. Same boundary as `EventLoopHandle::init`.
                 owner: unsafe { JsEventLoop::new(JsEventLoopKind::Jsc, ptr.cast::<()>()) },
             },
-            // `(tag, ptr)` came from `into_tag_ptr` on a live loop, so `ptr`
-            // is non-null.
-            // SAFETY: `ptr` is the pointer from `into_tag_ptr`.
-            2 => EventLoopHandle::Mini(unsafe {
-                BackRef::from_raw(
-                    NonNull::new(ptr.cast())
-                        .expect("non-null mini ptr")
-                        .as_ptr(),
-                )
-            }),
+            // SAFETY: `into_tag_ptr` made `ptr` from a `&'static MiniEventLoop`.
+            2 => EventLoopHandle::Mini(unsafe { &*ptr.cast() }),
             _ => unreachable!("invalid parent event-loop tag {}", tag),
         }
     }
@@ -294,10 +236,31 @@ impl EventLoopHandle {
         uws_loop.internal_loop_data.set_parent_raw(tag, ptr);
     }
 
-    pub fn from_any(any: &AnyEventLoop) -> EventLoopHandle {
-        match any {
-            AnyEventLoop::Js { owner } => EventLoopHandle::Js { owner: *owner },
-            AnyEventLoop::Mini(mini) => EventLoopHandle::Mini(BackRef::new(mini)),
+    pub fn iteration_number(self) -> u64 {
+        match self {
+            EventLoopHandle::Js { owner } => owner.iteration_number(),
+            EventLoopHandle::Mini(mini) => mini.loop_.iteration_number(),
+        }
+    }
+
+    /// As [`AnyEventLoop::tick`].
+    pub fn tick(self, context: *mut core::ffi::c_void) {
+        match self {
+            EventLoopHandle::Js { owner } => {
+                owner.tick();
+                owner.auto_tick();
+            }
+            EventLoopHandle::Mini(mini) => mini.tick_once(context),
+        }
+    }
+
+    pub fn tick_once(self, context: *mut core::ffi::c_void) {
+        match self {
+            EventLoopHandle::Js { owner } => {
+                owner.tick();
+                owner.auto_tick_active();
+            }
+            EventLoopHandle::Mini(mini) => mini.tick_without_idle(context),
         }
     }
 
@@ -378,7 +341,7 @@ impl EventLoopHandle {
             EventLoopHandle::Js { owner } => owner.env(),
             // `env` must be set — caller invariant. `env_ptr()` takes
             // `&self` and returns `Option<NonNull<DotEnvLoader>>` (mutable
-            // provenance). Safe via `BackRef: Deref`.
+            // provenance).
             EventLoopHandle::Mini(mini) => mini
                 .env_ptr()
                 .expect("MiniEventLoop.env unset")
@@ -410,6 +373,16 @@ pub enum Posted<T = Box<ConcurrentTask>> {
 pub trait PostToJs: Send + Sync {
     /// Queue `task` on the VM this poster was created for and wake it, or hand it back if the VM has closed.
     fn post(&self, task: Box<ConcurrentTask>) -> Posted;
+}
+
+impl dyn PostToJs + '_ {
+    /// As [`post`](PostToJs::post). A refused task is dropped on this thread.
+    pub fn post_boxed<T: BoxedTask>(&self, task: Box<T>) {
+        if let Posted::Refused(node) = self.post(ConcurrentTask::create_boxed(task)) {
+            // SAFETY: the task made above.
+            drop(unsafe { node.task.into_boxed::<T>() });
+        }
+    }
 }
 
 pub type JsPoster = std::sync::Arc<dyn PostToJs>;

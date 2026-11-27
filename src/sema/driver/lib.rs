@@ -25,8 +25,6 @@ use bstr::ByteSlice;
 use bun_core::file_steps::{self, FileStep};
 use bun_core::strings;
 use bun_paths::path_buffer_pool;
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 use bun_sema::atom::{Interner, RecentAtoms};
 use bun_sema::bind::find_commonjs_indicator;
 use bun_sema::check::aot::{DiagnosticClass, DiagnosticSubject};
@@ -47,7 +45,8 @@ use bun_sema::resolve::{
     AOT_CONDITION, Host, ModuleDetection, Options, ParseOptions, ProjectFile, ProjectFiles,
     ancestors, contains_path, displayed_path, get_relative_path_from_directory, inside,
     is_declaration_file_name, is_javascript, is_javascript_file, is_relative, is_same_path, join,
-    output_declaration_file_name, run_with_current_helpers, to_path, to_path_in, typescript_path,
+    output_declaration_file_name, parent_directory, run_with_current_helpers, to_path, to_path_in,
+    typescript_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::util::SharedSort;
@@ -143,6 +142,30 @@ fn release_free_pages_of(pool: &bun_threading::ThreadPool) {
             node: Node::default(),
             callback: release,
         }))
+    });
+}
+
+/// The buffers of the parser and the binder
+pub fn drop_caches_of_this_thread() {
+    drop(bun_sema_parser::ThreadCaches::take());
+    drop(bun_sema::bind::ThreadCaches::take());
+}
+
+/// Each thread returns to the system what it has allocated: its `caches`, its `values` and its free pages. When the
+/// process exits, a single thread unmaps what is left.
+pub fn free_before_exit<T: Send>(
+    caches: &ThreadCaches,
+    threads: usize,
+    values: Vec<(ThreadId, T)>,
+) {
+    bun_sema::session::stop_keeping_free_pages();
+    let values = Guarded::new(values);
+    for_each_parallel_in_runs(caches, threads, threads, 1, &|_| {
+        let thread = std::thread::current().id();
+        let own: Vec<_> = (values.lock().extract_if(.., |it| it.0 == thread)).collect();
+        drop(own);
+        drop_caches_of_this_thread();
+        bun_core::Global::mimalloc_cleanup(true);
     });
 }
 
@@ -429,6 +452,36 @@ pub fn use_pool_for_lowering(name: &'static str) {
     make_pool(&LOWERING_POOL, name, LOWERING_STACK_SIZE);
 }
 
+/// For a process that ends after one request, and whose number of threads nobody chose. Each thread that joins touches
+/// megabytes of its own, and a short run ends no sooner for it. So the pool gets the others while the first stay busy.
+/// `now`: the first are there when the configuration has been read.
+pub fn start_threads_gradually(now: bool) {
+    const AT_FIRST: usize = 10;
+    let pool = region_pool();
+    let allowed = AT_FIRST.min(pool.max_threads());
+    if !now && allowed == pool.max_threads() {
+        return;
+    }
+    pool.limit_threads(allowed);
+    let starter = std::thread::Builder::new()
+        .name("Bun Starter".into())
+        .stack_size(256 << 10)
+        .spawn(move || {
+            if now {
+                pool.warm(allowed as u16);
+            }
+            while pool.allowed_threads() < pool.max_threads() {
+                std::thread::sleep(Duration::from_millis(5));
+                if pool.available_threads() == 0 {
+                    pool.allow_threads(pool.allowed_threads() + 1);
+                }
+            }
+        });
+    if starter.is_err() {
+        pool.allow_threads(usize::MAX);
+    }
+}
+
 fn make_pool(place: &OnceLock<bun_threading::ThreadPool>, name: &'static str, stack_size: u32) {
     place.get_or_init(|| {
         // The tests of this program run at once on the one pool, and some hold a thread of it until another thread comes: as many as the pool can count.
@@ -526,8 +579,18 @@ pub fn did_read_source(bytes: usize) {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static POOL_OF_TEST: Cell<Option<&'static bun_threading::ThreadPool>> =
+        const { Cell::new(None) };
+}
+
 /// The pool that parallel regions run on.
 fn region_pool() -> &'static bun_threading::ThreadPool {
+    #[cfg(test)]
+    if let Some(pool) = POOL_OF_TEST.get() {
+        return pool;
+    }
     dedicated_pool().unwrap_or_else(|| bun_threading::WorkPool::get())
 }
 
@@ -642,7 +705,7 @@ impl JoinableRegion {
             let helper = bun_core::heap::into_raw(Box::new(Helper { task, region }));
             batch.push(Batch::from(helper.cast::<Task>()));
         }
-        pool.schedule(batch);
+        pool.schedule_all_at_once(batch);
     }
 
     fn help(self: &Arc<JoinableRegion>) {
@@ -1255,7 +1318,7 @@ fn overriding_options(request: &Request, is_build: bool) -> Vec<(Vec<u8>, Json)>
 
 /// Returns the `node_modules/typescript` nearest to the configuration file at `config`.
 fn installed_typescript(host: &dyn Host, config: &[u8]) -> Option<Vec<u8>> {
-    ancestors(dirname::<Posix>(config))
+    ancestors(parent_directory(config))
         .map(|directory| inside(directory, b"node_modules/typescript"))
         .find(|package| host.is_dir(package))
 }
@@ -1799,6 +1862,9 @@ pub fn check_provided_then<R>(
         0 => usize::from(bun_core::get_thread_count()),
         n => n,
     };
+    if provided.ends_the_process && request.threads == 0 && threads > 1 {
+        start_threads_gradually(true);
+    }
     let cwd = host::from_native(request.cwd);
     let applies_to_every_file = !request.plan_options.project_is_fallback;
     let named = (request.project.filter(|_| applies_to_every_file))
@@ -1830,10 +1896,16 @@ pub fn check_provided_then<R>(
         then(report)
     };
     if disk.ends_the_process {
-        let sessions = std::mem::take(&mut *disk.to_drop_before_the_process_ends.lock());
+        let mut sessions = std::mem::take(&mut *disk.to_drop_before_the_process_ends.lock());
         let (mut then, mut result) = (Some((then, report)), None);
+        // The system unmaps a small program faster than threads wake up to free it.
+        let size: usize = sessions.iter().map(Session::allocated_bytes).sum();
+        if size < 64 << 20 && !bun_core::feature_flags::HELP_CATCH_MEMORY_ISSUES {
+            let _not_dropped = std::mem::ManuallyDrop::new(std::mem::take(&mut sessions));
+        }
         Session::drop_before_the_process_ends(sessions, |count, work| {
-            disk.parallel_while(count, work, &mut || {
+            let threads = disk.threads().min(16);
+            for_each_parallel_while(&disk.caches, threads, count, 1, work, &mut || {
                 result = then.take().map(|(then, report)| then(report));
             });
         });
@@ -1904,7 +1976,7 @@ fn dependencies_not_installed(
         let package = package.join(&b'/');
         let from = match &reported.path[..] {
             b"" => project,
-            path => dirname::<Posix>(path),
+            path => parent_directory(path),
         };
         if !missing.iter().any(|it| it.0 == from && it.1 == package) {
             missing.push((from, package));
@@ -2125,7 +2197,7 @@ impl Projects {
                 break;
             }
             // Up to the root. The parent of `/C:` is `/`, which isn't a directory on Windows.
-            let parent = ancestors(dirname::<Posix>(&below)).nth(1);
+            let parent = ancestors(parent_directory(&below)).nth(1);
             let Some(above) = parent.and_then(|it| config::find_config(disk, it)) else {
                 break;
             };
@@ -2417,7 +2489,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
                 add(first, Extent::Project, path.clone());
                 continue;
             }
-            let nearest = config_in(dirname::<Posix>(path));
+            let nearest = config_in(parent_directory(path));
             match projects.owner_of(disk, request, nearest.clone(), path) {
                 // A solution has no files of its own.
                 Err(None)
@@ -2460,7 +2532,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         for config in std::iter::once(config_in(path)).chain(below.into_iter().map(Some)) {
             let is_below =
                 |dir: &&[u8]| !is_same(dir, path) && contains_path(path, dir, is_case_sensitive);
-            let top = (config.as_deref().map(dirname::<Posix>))
+            let top = (config.as_deref().map(parent_directory))
                 .filter(is_below)
                 .unwrap_or(path);
             // A configuration file that can't be read excludes nothing. `check_project_of` reports it.
@@ -2471,7 +2543,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             };
             let (mut included, mut others) = (Vec::new(), Vec::new());
             for file in files {
-                if config_in(dirname::<Posix>(&file)) == config {
+                if config_in(parent_directory(&file)) == config {
                     match projects.owner_of(disk, request, config.clone(), &file) {
                         Ok(owner) => included.push((owner, file)),
                         Err(nearest) => others.push((nearest, file)),
@@ -3137,14 +3209,14 @@ struct Expected {
 
 impl Expected {
     fn add(&mut self, path: Vec<u8>, project: usize) {
-        let mut directory = dirname::<Posix>(&path);
+        let mut directory = parent_directory(&path);
         while directory.len() > 1 {
             let projects = self.directories.entry(directory.to_vec()).or_default();
             if projects.last() == Some(&project) {
                 break;
             }
             projects.push(project);
-            directory = dirname::<Posix>(directory);
+            directory = parent_directory(directory);
         }
         self.files.entry(path).or_default().push(project);
     }
@@ -3183,9 +3255,9 @@ impl Emitted {
         }
         let mut directories: FxHashSet<Vec<u8>> = FxHashSet::default();
         for (path, text) in files {
-            let mut directory = dirname::<Posix>(&path);
+            let mut directory = parent_directory(&path);
             while directory.len() > 1 && directories.insert(directory.to_vec()) {
-                directory = dirname::<Posix>(directory);
+                directory = parent_directory(directory);
             }
             let per_project = self.files.insert_ref(path, Guarded::default());
             per_project.lock().push((project, text));
@@ -3243,7 +3315,7 @@ impl WithOutputs<'_> {
         {
             return None;
         }
-        let on_disk = ancestors(dirname::<Posix>(path))
+        let on_disk = ancestors(parent_directory(path))
             .find(|dir| dir.len() <= 1 || self.disk.is_dir(dir))?;
         let real = self.disk.realpath(on_disk);
         (real != on_disk).then(|| [&real[..], &path[on_disk.len()..]].concat())
@@ -3525,7 +3597,7 @@ fn check_with_references(
                 .into_iter()
                 .find(|dir| !dir.is_empty())?;
             let root_dir = if options.root_dir.is_empty() {
-                dirname::<Posix>(&p.project.config_path)
+                parent_directory(&p.project.config_path)
             } else {
                 options.root_dir.as_slice()
             };
@@ -4151,7 +4223,7 @@ pub fn check_project(
 /// True if the dependencies of the project at `config` aren't installed: its `package.json` lists packages, and none of
 /// them is in a `node_modules`. Then the types of Node, of the test runner and so on aren't available.
 fn has_no_installed_dependencies(host: &dyn Host, config: &[u8]) -> bool {
-    let above = || ancestors(dirname::<Posix>(config));
+    let above = || ancestors(parent_directory(config));
     let mut manifests = above().map(|it| inside(it, b"package.json"));
     let manifest = manifests.find(|it| host.is_file(it));
     let text = manifest.and_then(|it| host.read(&it));
@@ -4477,7 +4549,7 @@ fn find_files_others_cannot_see(
             .flatten();
         if let Some(text) = &text {
             for_each_augmented_file(text, &mut |name| {
-                let path = path_from_folder(dirname::<Posix>(file), name);
+                let path = path_from_folder(parent_directory(file), name);
                 if let Some(augmented) = find_listed_file(&listed, &path) {
                     may_be_seen[augmented].store(true, Ordering::Relaxed);
                 }
@@ -4492,7 +4564,7 @@ fn find_files_others_cannot_see(
                     if !is_relative(name) {
                         named.push((name.to_vec(), at));
                     } else if !leads_beyond {
-                        let path = path_from_folder(dirname::<Posix>(file), name);
+                        let path = path_from_folder(parent_directory(file), name);
                         leads_beyond = find_listed_file(&listed, &path).is_none();
                     }
                 });
@@ -4542,7 +4614,7 @@ fn check_named_files(
         config_path
             if request.plan_options.uses_project_directory_as_cwd && !config_path.is_empty() =>
         {
-            dirname::<Posix>(config_path).to_vec()
+            parent_directory(config_path).to_vec()
         }
         _ => host::from_native(request.cwd),
     };
@@ -4809,7 +4881,7 @@ fn check_named_files(
                     && it.ends_with(b".html")
                     && is_relative(it)
             });
-            let directory = dirname::<Posix>(modules[i].file_name());
+            let directory = parent_directory(modules[i].file_name());
             let scripts = pages.flat_map(|page| host.scripts_of_page(&join(directory, page)));
             let scripts = scripts.filter_map(|script| {
                 let here = program.files.by_path.get(&script);

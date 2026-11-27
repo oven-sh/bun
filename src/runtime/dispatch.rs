@@ -15,22 +15,21 @@
 //!
 //! **Adding a variant** (do all four):
 //!   1. tag constant in `bun_event_loop::task_tag` (or a `bun_io::PollTag`);
-//!   2. `impl bun_event_loop::BoxedTask for YourType` if it is queued as a `Box`, otherwise `Taskable`;
+//!   2. `impl bun_event_loop::BoxedTask for YourType` if it is queued as a `Box`, `RefTask` as an `Arc` or `RefPtr`, otherwise `Taskable`;
 //!   3. a `run_task` arm and a `release_task_unrun` arm here, both through `in_features!` if only code of removable features (`src/trim/features`) queues it;
 //!   4. bump the `task_tag::COUNT` assertion below.
 
 use std::rc::Rc;
 
-use bun_event_loop::{BoxedTask, Task, task_tag};
+use bun_event_loop::{BoxedTask, RefTask, Task, task_tag};
 use bun_ptr::RefPtr;
 
 #[cfg(not(windows))]
 use bun_io::posix_event_loop::Flags as PollFlag;
 use bun_io::{IoEvent, Owner, PollTag};
 
-use bun_event_loop::EventLoopTimer::{
-    EventLoopTimer, Tag as EventLoopTimerTag, Timespec as ElTimespec,
-};
+use bun_core::Timespec;
+use bun_event_loop::EventLoopTimer::{EventLoopTimer, Tag as EventLoopTimerTag};
 
 use bun_jsc::event_loop::{EventLoop, Stopped};
 use bun_jsc::task::report_error_or_terminate;
@@ -101,6 +100,26 @@ macro_rules! boxed_arm {
     };
 }
 
+/// The reference of a [`RefTask`], in the arm of its tag.
+macro_rules! counted {
+    ($task:ident, $Name:ty) => {
+        // SAFETY: as `boxed!`.
+        unsafe { $task.into_ref::<$Name>() }
+    };
+}
+
+/// [`in_features!`] for an arm that needs only that reference, as `$payload`.
+macro_rules! counted_arm {
+    ($task:ident, $features:tt, |$payload:ident: $Name:ty| $(-> $Result:ty)? $body:block) => {
+        in_features!(
+            $features,
+            ($payload: <$Name as RefTask>::Ref = counted!($task, $Name))
+            $(-> $Result)?
+            $body
+        )
+    };
+}
+
 // ── per-variant payload types ────────────────────────────────────────────────
 // (high-tier owns them all; grouped by source module)
 
@@ -116,31 +135,25 @@ use crate::shell::builtins::{
 use crate::shell::dispatch_tasks::{ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask};
 use crate::shell::interpreter::{PoolTask, ShellTask};
 use crate::shell::io_reader::IOReader as ShellIoReader;
-#[cfg(not(windows))]
-use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
+use crate::shell::io_writer::IOWriter as ShellIoWriter;
 use crate::shell::states::r#async::Async as ShellAsync;
-use crate::shell::subproc::PipeReader as ShellPipeReader;
+use crate::shell::subproc::{PipeReader as ShellPipeReader, ShellSubprocess};
 
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::file_reader::{FileReader, Source as FileReaderSource};
 use crate::webcore::file_sink::FileSink;
-#[cfg(not(windows))]
-use crate::webcore::file_sink::Poll as FileSinkPoll;
 use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 use crate::webcore::s3::multipart::WriterCollected as S3UploadWriterCollected;
 use crate::webcore::s3::simple_request::{RefusedRequest as S3RefusedRequest, S3HttpSimpleTask};
-use crate::webcore::streams::Pending as StreamPending;
+use crate::webcore::streams::{PendingRead as StreamPending, StreamResult};
 
 use crate::api::bun_subprocess::Subprocess;
 use crate::api::bun_subprocess::subprocess_pipe_reader::PipeReader as SubprocessPipeReader;
-#[cfg(not(windows))]
-use crate::api::bun_terminal_body::Poll as TerminalPoll;
 use crate::api::bun_terminal_body::Terminal;
 use crate::api::cron::CronJob;
+use crate::api::cron_os::OsJob;
 use crate::api::js_bundle_completion_task::JSBundleCompletionTask;
 use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
-#[cfg(not(windows))]
-use bun_spawn::static_pipe_writer::Poll as StaticPipeWriterPoll;
 
 use crate::napi::{NapiFinalizerTask, ThreadSafeFunction, TsfnRefRequest, napi_async_work};
 
@@ -189,9 +202,6 @@ use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
 use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
 use bun_jsc::garbage_collection_controller::GarbageCollectionController;
 use bun_jsc::web_worker::WebWorker;
-
-#[cfg(not(windows))]
-use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for FileSinkPoll/StaticPipeWriterPoll/etc.
 
 // ════════════════════════════════════════════════════════════════════════════
 // Task dispatch
@@ -258,9 +268,8 @@ pub(crate) fn run_task(
             // its `Completion`; the erased entry runs `then` and frees it.
             unsafe { bun_jsc::job::complete_erased(task.ptr(), global) }?;
         }
-        task_tag::SendQueueDeferred => feature_arm!([Ipc], |queue: crate::ipc::SendQueue| {
-            // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
-            unsafe { bun_ptr::RefPtr::from_raw(queue) }.run_deferred();
+        task_tag::SendQueueDeferred => counted_arm!(task, [Ipc], |queue: crate::ipc::SendQueue| {
+            queue.run_deferred();
         }),
         task_tag::BundleV2PluginResolve => in_features!(
             [Bundler],
@@ -303,9 +312,7 @@ pub(crate) fn run_task(
             feature_arm!([Sockets], |context: crate::socket::DuplexUpgradeContext| {
                 // SAFETY: tag identifies pointee; the queue owns the live context
                 // until `run_event` (which may free it).
-                crate::socket::DuplexUpgradeContext::run_event(unsafe {
-                    bun_ptr::ThisPtr::new(context)
-                });
+                unsafe { crate::socket::DuplexUpgradeContext::run_event(context) };
             })
         }
         #[cfg(windows)]
@@ -352,11 +359,11 @@ pub(crate) fn run_task(
             [Shell],
             |copy: crate::node::fs::ShellAsyncCpTask| -> JsResult<()> { copy.run_from_js_thread() }
         )?,
-        task_tag::StatWatcherHop => feature_arm!(
+        task_tag::StatWatcherHop => counted_arm!(
+            task,
             [NodeFs],
             |watcher: crate::node::node_fs_stat_watcher::StatWatcher| -> JsResult<()> {
-                // SAFETY: posted by `StatWatcher::post_to_js_thread` with a ref held.
-                unsafe { crate::node::node_fs_stat_watcher::StatWatcher::run_hop(watcher) }?;
+                watcher.run_hop()?;
                 Ok(())
             }
         )?,
@@ -389,22 +396,25 @@ pub(crate) fn run_task(
                 }
             )
         }
-        task_tag::HTMLRewriterBackgroundPull => feature_arm!(
-            [HtmlRewriter],
-            |pipe: crate::api::html_rewriter::RewriterPipe| {
+        task_tag::FetchTaskletTrace => feature_arm!(
+            [Fetch],
+            |trace: crate::webcore::fetch::FetchTaskletTrace| -> JsResult<()> {
                 // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
-                unsafe { bun_ptr::RefPtr::from_raw(pipe) }.run_background_pull();
+                let tasklet = unsafe { bun_ptr::RefPtr::from_raw(trace.cast()) };
+                FetchTasklet::on_trace_events(&tasklet)
+            }
+        )?,
+        task_tag::HTMLRewriterBackgroundPull => counted_arm!(
+            task,
+            [HtmlRewriter],
+            |pipe: crate::api::html_rewriter::RewriterPipeBackgroundPull| {
+                pipe.run_background_pull();
             }
         ),
         task_tag::RunTestsTask => boxed_arm!(
             task,
             [Test],
             |run: crate::test_runner::bun_test::RunTestsTask| -> JsResult<()> { run.call() }
-        )?,
-        task_tag::ValkeyDeferredFailure => boxed_arm!(
-            task,
-            [Valkey],
-            |failure: crate::valkey_jsc::valkey::DeferredFailure| -> JsResult<()> { failure.run() }
         )?,
         task_tag::DnsErrorDeferred => boxed_arm!(
             task,
@@ -554,10 +564,11 @@ pub(crate) fn run_task(
             [S3Client],
             |refused: S3RefusedRequest| -> JsResult<()> { refused.run() }
         )?,
-        task_tag::S3UploadWriterCollected => feature_arm!(
+        task_tag::S3UploadWriterCollected => counted_arm!(
+            task,
             [S3Client],
-            |collected: S3UploadWriterCollected| -> JsResult<()> {
-                S3UploadWriterCollected::run(collected)?;
+            |upload: S3UploadWriterCollected| -> JsResult<()> {
+                S3UploadWriterCollected::run(&upload)?;
                 Ok(())
             }
         )?,
@@ -576,12 +587,10 @@ pub(crate) fn run_task(
         task_tag::ThreadSafeFunction => in_features!(
             [NativeAddons],
             (
-                function: *mut ThreadSafeFunction = cast_ptr!(ThreadSafeFunction),
+                function: std::sync::Arc<ThreadSafeFunction> = counted!(task, ThreadSafeFunction),
                 el: &EventLoop = el,
                 vm: &VirtualMachine = vm,
             ) {
-                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
-                let function = unsafe { std::sync::Arc::from_raw(function) };
                 ThreadSafeFunction::on_dispatch(function, el, vm);
             }
         ),
@@ -666,8 +675,10 @@ pub(crate) fn run_task(
         }
         // ── bake dev-server ──────────────────────────────────────────────
         task_tag::BakePendingReloadEvent => {
-            // SAFETY: §Dispatch — tag identifies pointee.
-            unsafe { BakePendingReloadEvent::run(cast_ptr!(BakePendingReloadEvent)) };
+            counted_arm!(task, [Bundler], |event: BakePendingReloadEvent| {
+                // SAFETY: this is the dev server's thread, and no borrow of it outlasts a tick.
+                unsafe { event.run() };
+            })
         }
         task_tag::FSWatchTask => {
             boxed_arm!(task, [NodeFs], |mut watch: FSWatchTask| -> JsResult<()> {
@@ -717,7 +728,7 @@ pub(crate) fn run_task(
         }
         // One feature for each kind of context a `NativePromiseContext` cell holds.
         task_tag::NativePromiseContextDeferredDerefTask => in_features!(
-            [Serve, HtmlRewriter, S3Client, Cron],
+            [Serve, HtmlRewriter, S3Client],
             (packed: usize = task.ptr() as usize) {
                 // `ptr` packs an int, not a pointer.
                 NativePromiseContextDeferredDerefTask::run_from_js_thread(packed);
@@ -748,13 +759,12 @@ pub(crate) fn run_task(
         )?,
         // A child's stdin pipe is a `FileSink` too, whether or not the program looks at it.
         task_tag::FlushPendingFileSinkTask => {
-            feature_arm!([FileSink, Spawn, Shell], |sink: FileSink| {
-                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
-                FileSink::run_pending_if_armed(&unsafe { bun_ptr::RefPtr::from_raw(sink) });
+            counted_arm!(task, [FileSink, Spawn, Shell], |sink: FileSink| {
+                sink.run_pending_if_armed();
             })
         }
-        task_tag::StreamPending => boxed_arm!(task, [WebStreams], |mut pending: StreamPending| {
-            pending.run();
+        task_tag::StreamPending => boxed_arm!(task, [WebStreams], |pending: StreamPending| {
+            (*pending).run(StreamResult::Done);
         }),
 
         _ => {
@@ -806,7 +816,7 @@ fn run_task_cold(task: &Task) {
         task_tag::ShellTouchTask => shell_dispatch!(PoolTask<ShellTouchTask>),
         task_tag::ShellMkdirTask => shell_dispatch!(PoolTask<ShellMkdirTask>),
         task_tag::ShellLsTask => shell_dispatch!(PoolTask<ShellLsTask>),
-        task_tag::ShellMvBatchedTask => shell_dispatch!(ShellMvBatchedTask),
+        task_tag::ShellMvBatchedTask => shell_dispatch!(PoolTask<ShellMvBatchedTask>),
         task_tag::ShellMvCheckTargetTask => shell_dispatch!(PoolTask<ShellMvCheckTargetTask>),
         task_tag::ShellRmTask => shell_dispatch!(ShellRmTask),
         task_tag::ShellRmDirTask => {
@@ -815,10 +825,8 @@ fn run_task_cold(task: &Task) {
         }
         task_tag::ShellGlobTask => shell_dispatch!(PoolTask<ShellGlobTask>),
         task_tag::ShellYesTask => {
-            // SAFETY: §Dispatch — tag identifies pointee; enqueued by
-            // `YesTask::enqueue`, storage lives inside `Box<Yes>` in the
-            // interpreter arena and is stable until the builtin deinits.
-            ShellYesTask::run_from_main_thread(unsafe { &*cast_ptr!(ShellYesTask) });
+            // SAFETY: §Dispatch — tag identifies pointee; enqueued by `YesTask::enqueue`.
+            unsafe { ShellYesTask::run_from_main_thread(cast_ptr!(ShellYesTask)) };
         }
 
         // Any tag the hot path mis-routed: producer bug.
@@ -900,9 +908,6 @@ pub(crate) fn tick_queue_with_count(
 /// `owner.ptr()` is the live value that the arm of `owner.tag()` casts it to.
 #[unsafe(no_mangle)]
 unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
-    #[cfg(not(windows))]
-    let (size_or_offset, hup) = (event.size_or_offset, event.is_hup());
-
     /// Runs `$body` through [`in_features!`] with `$this = $cast(owner.ptr().cast::<$Ty>())`.
     macro_rules! io_arm {
         ($features:tt, $cast:expr, $Ty:ty, |$this:ident, $kind:pat, $event:ident| $body:expr) => {
@@ -914,85 +919,40 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             })
         };
     }
-    /// The plain `on_poll(size_or_offset, hup)` call of the writers, through [`in_features!`].
-    #[cfg(not(windows))]
-    macro_rules! feature_poll_arm {
-        ($features:tt, $Ty:ty) => {
-            in_features!(
-                $features,
-                (
-                    h: *mut $Ty = owner.ptr().cast::<$Ty>(),
-                    size: isize = size_or_offset as isize,
-                    hup: bool = hup,
-                ) {
-                    // SAFETY: tag matched, so `owner.ptr` was stored as `*mut $Ty` at
-                    // `OwnedFilePoll::new` and the owner outlives this dispatch (caller contract).
-                    unsafe { (*h).on_poll(size, hup) };
-                }
-            )
-        };
-    }
 
     match owner.tag() {
         #[cfg(not(windows))]
         PollTag::Process => {
             in_features!([ChildProcess], (proc: *mut Process = owner.ptr().cast::<Process>()) {
-                // SAFETY: a process frees its poll before it is freed, and `wait` ends with the exit handler.
-                Process::wait(unsafe { bun_ptr::ThisPtr::new(proc) }, false);
+                let mut rusage = bun_spawn::process::rusage_zeroed();
+                // SAFETY: a process frees its poll before it is freed, and `wait_posix` releases no ref.
+                unsafe {
+                    if let Some(exit) = (*proc).wait_posix(false, &mut rusage) {
+                        exit.dispatch(&rusage);
+                    } else if let Some(exit) = RefPtr::init_ref(proc).rewatch_or_reap(&mut rusage) {
+                        exit.dispatch(&rusage);
+                    }
+                }
             })
         }
         #[cfg(not(windows))]
         PollTag::MemoryPressure => {
-            crate::node::memory_pressure::on_poll(event.flags, size_or_offset);
+            crate::node::memory_pressure::on_poll(event.flags, event.size_or_offset);
         }
         #[cfg(target_os = "macos")]
         PollTag::ParentDeathWatchdog => bun_io::parent_death_watchdog::on_parent_exit(),
 
-        // A child's stdin pipe is a `FileSink` too, whether or not the program looks at it.
-        #[cfg(not(windows))]
-        PollTag::FileSink => feature_poll_arm!([FileSink, Spawn, Shell], FileSinkPoll),
-        #[cfg(not(windows))]
-        PollTag::StaticPipeWriter => {
-            feature_poll_arm!([Spawn], StaticPipeWriterPoll<Subprocess<'_>>)
-        }
-        #[cfg(not(windows))]
-        PollTag::ShellStaticPipeWriter => {
-            feature_poll_arm!(
-                [Shell],
-                StaticPipeWriterPoll<crate::shell::subproc::ShellSubprocess>
-            )
-        }
-        #[cfg(not(windows))]
-        PollTag::SecurityScanStaticPipeWriter => {
-            feature_poll_arm!([Install], StaticPipeWriterPoll<SecurityScanSubprocess<'_>>)
-        }
-        // `bun.shell.Interpreter.IOWriter.Poll`
-        #[cfg(not(windows))]
-        PollTag::ShellBufferedWriter => in_features!(
-            [Shell],
-            (
-                h: *mut ShellBufferedWriterPoll = owner.ptr().cast::<ShellBufferedWriterPoll>(),
-                size: isize = size_or_offset as isize,
-                hup: bool = hup,
-            ) {
-                // SAFETY: tag matched, so `owner.ptr` is a live `*mut ShellBufferedWriterPoll`
-                // set at `OwnedFilePoll::new`; exclusive for this dispatch.
-                unsafe { crate::shell::io_writer::on_poll(&mut *h, size, hup) };
-            }
-        ),
         #[cfg(not(windows))]
         PollTag::DnsResolver => in_features!(
             [Dns],
             (
-                resolver: *const DNSResolver = owner.ptr().cast_const().cast::<DNSResolver>(),
+                resolver: *mut DNSResolver = owner.ptr().cast::<DNSResolver>(),
                 fd: i32 = event.fd.native(),
                 readable: bool = event.flags.contains(PollFlag::Readable),
                 writable: bool = event.flags.contains(PollFlag::Writable),
             ) {
-                // R-2: deref as shared (`&*const`) — `on_dns_poll` takes `&self` and
-                // `Channel::process` re-enters the resolver via c-ares callbacks.
                 // SAFETY: tag set with this pointee type at `OwnedFilePoll::new`.
-                let resolver = unsafe { &*resolver };
+                let resolver = unsafe { RefPtr::init_ref(resolver) };
                 resolver.on_dns_poll(fd, readable, writable);
             }
         ),
@@ -1000,14 +960,6 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         PollTag::GetAddrInfoRequest => {
             crate::dns_jsc::dns_sd::SharedConnection::on_readable();
         }
-        #[cfg(not(windows))]
-        PollTag::TerminalPoll => feature_poll_arm!([Terminal], TerminalPoll),
-        #[cfg(windows)]
-        PollTag::FileSink
-        | PollTag::StaticPipeWriter
-        | PollTag::ShellStaticPipeWriter
-        | PollTag::SecurityScanStaticPipeWriter
-        | PollTag::ShellBufferedWriter => unreachable!("libuv calls these writers directly"),
 
         // A ref is held across the handler, which may release every other one.
         PollTag::FileReader => {
@@ -1026,6 +978,34 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
                 this.read(Some(event))
             })
         }
+        PollTag::TerminalWriter => {
+            io_arm!([Terminal], RefPtr::init_ref, Terminal, |this, _, event| {
+                this.on_writer_io(event)
+            })
+        }
+        // A child's stdin pipe is a `FileSink` too, whether or not the program looks at it.
+        #[cfg(not(windows))]
+        PollTag::FileSink => io_arm!(
+            [FileSink, Spawn, Shell],
+            RefPtr::init_ref,
+            FileSink,
+            |this, _, event| this.on_writer_io(event)
+        ),
+        // Every write completes here, also those of a stream that `Bun.write()` writes to a file.
+        #[cfg(windows)]
+        PollTag::FileSink => io_arm!(
+            [FileSink, Bodies, Spawn, Shell],
+            RefPtr::init_ref,
+            FileSink,
+            |this, _, event| this.on_writer_io(event)
+        ),
+        #[cfg(windows)]
+        PollTag::WindowsNamedPipe => io_arm!(
+            [Sockets],
+            <*mut _>::as_ref_unchecked,
+            WindowsNamedPipe,
+            |this, _, event| this.on_writer_io(event)
+        ),
         PollTag::ShellIoReader => {
             io_arm!([Shell], clone_rc, ShellIoReader, |this, _, event| {
                 this.on_io(event)
@@ -1034,6 +1014,19 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         PollTag::ShellPipeReader => {
             io_arm!([Shell], clone_rc, ShellPipeReader, |this, _, event| {
                 this.read(Some(event))
+            })
+        }
+        #[cfg(not(windows))]
+        PollTag::ShellIoWriter => {
+            io_arm!([Shell], clone_rc, ShellIoWriter, |this, _, event| {
+                this.on_io(event)
+            })
+        }
+        // Every write completes here, also those of `bun run` and `bun exec`.
+        #[cfg(windows)]
+        PollTag::ShellIoWriter => {
+            io_arm!([Shell, Tools], clone_rc, ShellIoWriter, |this, _, event| {
+                this.on_io(event)
             })
         }
 
@@ -1062,13 +1055,35 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             SecurityScanSubprocess<'_>,
             |this, _, event| this.on_io(event)
         ),
+        PollTag::SecurityScanWriter => io_arm!(
+            [Install],
+            <*mut _>::as_mut_unchecked,
+            SecurityScanSubprocess<'_>,
+            |this, _, event| this.on_writer_io(event)
+        ),
+        PollTag::SubprocessStdinWriter => io_arm!(
+            [Spawn],
+            <*mut _>::as_ref_unchecked,
+            Subprocess<'_>,
+            |this, _, event| this.on_stdin_io(event)
+        ),
+
+        // Only `Bun.$` redirects stdin from a buffer. `this` is not used once `on_stdin_writer_close` runs, which may free it.
+        PollTag::ShellStdinWriter => io_arm!(
+            [Shell],
+            <*mut _>::as_mut_unchecked,
+            ShellSubprocess,
+            |this, _, event| if let Some(cmd) = this.on_stdin_io(event) {
+                cmd.on_stdin_writer_close();
+            }
+        ),
 
         // These free themselves once they have read to the end.
         PollTag::InstallGit => io_arm!(
             [Install],
-            bun_ptr::ThisPtr::new,
+            RefPtr::init_ref,
             GitSubprocess,
-            |this, kind, event| GitSubprocess::on_io(this, kind, event)
+            |this, kind, event| this.on_io(kind, event)
         ),
         PollTag::SubprocessPipeReader => {
             in_features!([Spawn], (owner: Owner = owner, event: IoEvent = event) {
@@ -1082,12 +1097,9 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
                 unsafe { LifecycleScriptSubprocess::on_io(owner.ptr().cast(), owner.kind(), event) };
             })
         }
-        PollTag::CronRegister | PollTag::CronRemove => {
-            in_features!([Cron], (owner: Owner = owner, event: IoEvent = event) {
-                // SAFETY: the contract of `__bun_run_io`.
-                unsafe { crate::api::cron::on_io(owner, event) };
-            })
-        }
+        PollTag::Cron => io_arm!([Cron], RefPtr::init_ref, OsJob, |this, _, event| {
+            this.on_io(event)
+        }),
 
         PollTag::Null => debug_assert!(false, "a poll with no owner fired"),
     }
@@ -1108,9 +1120,11 @@ unsafe fn clone_rc<T>(ptr: *mut T) -> Rc<T> {
 // ════════════════════════════════════════════════════════════════════════════
 
 #[cfg(not(windows))]
-use crate::webcore::blob::read_file::ReadFile;
+use crate::webcore::blob::{fd_job::FdJob, read_file, write_file};
 #[cfg(not(windows))]
-use crate::webcore::blob::write_file::WriteFile;
+type ReadFile = FdJob<read_file::ReadFile>;
+#[cfg(not(windows))]
+type WriteFile = FdJob<write_file::WriteFile>;
 
 /// `bun_io::__bun_io_pollable_on_ready` body — declared `extern "Rust"` in
 /// `bun_io`. The owner is recovered from the embedded `io_poll` field.
@@ -1163,9 +1177,8 @@ unsafe fn __bun_io_pollable_on_io_error(
             [Bodies],
             (poll: *mut bun_io::Poll = poll, err: &bun_sys::Error = err) {
                 // SAFETY: per fn contract.
-                let this = unsafe { bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
-                // WriteFile::on_io_error already takes `*mut ()` (it self-recovers via the io_request path elsewhere); reuse that shape rather than reborrowing `&mut`.
-                WriteFile::on_io_error(this.cast(), err);
+                let this = unsafe { &mut *bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
+                this.on_io_error(err);
             }
         ),
         bun_io::PollableTag::Empty => {
@@ -1187,10 +1200,10 @@ unsafe fn __bun_io_pollable_on_io_error(
 /// `timer::ImmediateObject`, and the queue's ref comes with it.
 #[unsafe(no_mangle)]
 unsafe fn __bun_run_immediate_task(task: *mut (), vm: &VirtualMachine) -> bool {
-    // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)
+    // SAFETY: per fn contract — the only producer (`ImmediateObject::init`)
     // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
     let queued = unsafe { bun_ptr::RefPtr::from_raw(task.cast::<crate::timer::ImmediateObject>()) };
-    crate::timer::TimerObjectInternals::run_immediate_task(queued, vm)
+    crate::timer::ImmediateObject::run(queued, vm)
 }
 
 /// `__bun_cancel_pending_immediate` body — VM-teardown release of the event
@@ -1202,11 +1215,11 @@ unsafe fn __bun_run_immediate_task(task: *mut (), vm: &VirtualMachine) -> bool {
 /// `timer::ImmediateObject` whose event-loop ref has not yet been released;
 /// `RuntimeState` is still installed.
 #[unsafe(no_mangle)]
-unsafe fn __bun_cancel_pending_immediate(task: *mut (), vm: &VirtualMachine) {
-    // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)
+unsafe fn __bun_cancel_pending_immediate(task: *mut ()) {
+    // SAFETY: per fn contract — the only producer (`ImmediateObject::init`)
     // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
     let queued = unsafe { bun_ptr::RefPtr::from_raw(task.cast::<crate::timer::ImmediateObject>()) };
-    queued.internals.cancel_pending_immediate(vm);
+    queued.release_unrun();
 }
 
 /// `__bun_run_wtf_timer` body — cast the low-tier erased `*mut ()` to the real
@@ -1244,10 +1257,10 @@ unsafe fn __bun_run_wtf_timer(timer: *mut (), vm: &VirtualMachine) {
 /// `t` after the per-arm call returns.
 pub(crate) unsafe fn fire_timer(
     t: *mut EventLoopTimer,
-    now: &ElTimespec,
+    now: &Timespec,
     vm: &VirtualMachine,
 ) -> bun_event_loop::JsResult<()> {
-    use crate::timer::{Popped, TimerObjectInternals, WTFTimer};
+    use crate::timer::{ImmediateObject, TimeoutObject, WTFTimer};
 
     /// Recover the embedding container from `t` (the popped timer slot).
     macro_rules! owner {
@@ -1281,7 +1294,7 @@ pub(crate) unsafe fn fire_timer(
                 $features,
                 (
                     $c: *mut $Ty = owner!($Ty, $field),
-                    $now: &ElTimespec = now,
+                    $now: &Timespec = now,
                     $vm: &VirtualMachine = vm,
                 ) -> JsResult<()> {
                     // SAFETY: per fn contract; container derived from a live `$Ty`.
@@ -1292,13 +1305,15 @@ pub(crate) unsafe fn fire_timer(
         };
     }
     let fired: JsResult<()> = match tag {
-        // ── JS-exposed timers (TimerObjectInternals::fire_catching) ──────
         // `Bun__JSTimeout__call` reports the callback's exception itself.
-        EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::ImmediateObject => {
+        EventLoopTimerTag::TimeoutObject => {
             // SAFETY: per fn contract.
-            unsafe {
-                TimerObjectInternals::fire_catching(Popped::new(t), vm, core::ptr::null_mut())
-            };
+            unsafe { TimeoutObject::fire(t, vm, None) };
+            Ok(())
+        }
+        EventLoopTimerTag::ImmediateObject => {
+            // SAFETY: per fn contract.
+            unsafe { ImmediateObject::fire(t, vm, None) };
             Ok(())
         }
         EventLoopTimerTag::WTFTimer => {
@@ -1342,7 +1357,7 @@ pub(crate) unsafe fn fire_timer(
                 [NodeFs],
                 StatWatcherScheduler,
                 event_loop_timer,
-                |c, _now, _vm| StatWatcherScheduler::timer_callback(bun_ptr::ThisPtr::new(c))
+                |c, _now, _vm| RefPtr::init_ref(c).timer_callback()
             )
         }
         EventLoopTimerTag::UpgradedDuplex => {
@@ -1368,10 +1383,11 @@ pub(crate) unsafe fn fire_timer(
                 Ok(())
             }
         }
-        // R-2: shared deref — `check_timeouts` re-enters via `ares_process_fd`.
         EventLoopTimerTag::DNSResolver => {
             feature_timer_arm!([Dns], DNSResolver, event_loop_timer, |c, now, vm| {
-                (&*c.cast_const()).check_timeouts(now, vm)
+                if let Some(resolver) = (*c).timer_ref.take() {
+                    resolver.check_timeouts(now, vm)
+                }
             })
         }
         EventLoopTimerTag::WindowsNamedPipe => {
@@ -1396,7 +1412,7 @@ pub(crate) unsafe fn fire_timer(
                 // construction; `t` is the connection's `timer` field.
                 let container = unsafe { PostgresSQLConnection::from_timer_ptr(t) };
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_connection_timeout() };
+                unsafe { RefPtr::init_ref(container) }.on_connection_timeout();
                 Ok(())
             })
         }
@@ -1405,7 +1421,7 @@ pub(crate) unsafe fn fire_timer(
                 // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
                 let container = unsafe { PostgresSQLConnection::from_max_lifetime_timer_ptr(t) };
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_max_lifetime_timeout() };
+                unsafe { RefPtr::init_ref(container) }.on_max_lifetime_timeout();
                 Ok(())
             })
         }
@@ -1414,7 +1430,7 @@ pub(crate) unsafe fn fire_timer(
                 // SAFETY: §Dispatch — `t` is the connection's `timer` field.
                 let container = unsafe { MySQLConnection::from_timer_ptr(t) };
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_connection_timeout() };
+                unsafe { RefPtr::init_ref(container) }.on_connection_timeout();
                 Ok(())
             })
         }
@@ -1423,7 +1439,7 @@ pub(crate) unsafe fn fire_timer(
                 // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
                 let container = unsafe { MySQLConnection::from_max_lifetime_timer_ptr(t) };
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_max_lifetime_timeout() };
+                unsafe { RefPtr::init_ref(container) }.on_max_lifetime_timeout();
                 Ok(())
             })
         }
@@ -1431,14 +1447,18 @@ pub(crate) unsafe fn fire_timer(
             [Valkey],
             (container: *mut Valkey = owner!(Valkey, timer)) -> JsResult<()> {
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_connection_timeout() }
+                unsafe { (*container).timer.take_fire_ref() }
+                    .map_or(Ok(()), Valkey::on_connection_timeout)
             }
         ),
         EventLoopTimerTag::ValkeyConnectionReconnect => in_features!(
             [Valkey],
             (container: *mut Valkey = owner!(Valkey, reconnect_timer)) -> JsResult<()> {
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_reconnect_timer() }
+                if let Some(hold) = unsafe { (*container).reconnect_timer.take_fire_ref() } {
+                    hold.client.reconnect(hold.object());
+                }
+                Ok(())
             }
         ),
         EventLoopTimerTag::SubprocessTimeout => {
@@ -1448,7 +1468,7 @@ pub(crate) unsafe fn fire_timer(
         }
         EventLoopTimerTag::DevServerSweepSourceMaps => in_features!(
             [Bundler],
-            (t: *mut EventLoopTimer = t, now: &ElTimespec = now) -> JsResult<()> {
+            (t: *mut EventLoopTimer = t, now: &Timespec = now) -> JsResult<()> {
                 // `sweep_weak_refs` takes the raw `*EventLoopTimer` and recovers
                 // the store inside.
                 SourceMapStore::sweep_weak_refs(t, now);
@@ -1464,7 +1484,7 @@ pub(crate) unsafe fn fire_timer(
         ),
         EventLoopTimerTag::BunTest => in_features!(
             [Test],
-            (t: *mut EventLoopTimer = t, now: &ElTimespec = now) -> JsResult<()> {
+            (t: *mut EventLoopTimer = t, now: &Timespec = now) -> JsResult<()> {
                 if let Some(file) = clone_active_strong()
                     && core::ptr::eq(&raw const *file.timer, t)
                 {
@@ -1472,7 +1492,7 @@ pub(crate) unsafe fn fire_timer(
                 } else {
                     // SAFETY: `t` was just popped, and a timer leaves the heap before it is dropped.
                     let timer = unsafe { &*t };
-                    timer.next.set(ElTimespec::EPOCH);
+                    timer.next.set(Timespec::EPOCH);
                     timer.state.set(crate::timer::EventLoopTimerState::PENDING);
                 }
                 Ok(())
@@ -1481,8 +1501,10 @@ pub(crate) unsafe fn fire_timer(
         EventLoopTimerTag::CronJob => in_features!(
             [Cron],
             (c: *mut CronJob = owner!(CronJob, event_loop_timer)) -> JsResult<()> {
-                // SAFETY: a scheduled job's JS wrapper keeps it alive; `t` was just popped.
-                CronJob::on_timer_fire(unsafe { bun_ptr::ThisPtr::new(c) }, VirtualMachine::get());
+                // SAFETY: an armed job roots its JS wrapper, which owns `c`, and this call runs no script.
+                if let Some(root) = unsafe { (*c).timer_fired() } {
+                    CronJob::tick(&root, VirtualMachine::get());
+                }
                 Ok(())
             }
         ),
@@ -1501,7 +1523,7 @@ pub(crate) unsafe fn fire_timer(
             (
                 c: *mut crate::test_runner::vi_wait::ViWait =
                     owner!(crate::test_runner::vi_wait::ViWait, timer),
-                now: &ElTimespec = now,
+                now: &Timespec = now,
                 vm: &VirtualMachine = vm,
             ) -> JsResult<()> {
                 // SAFETY: an armed wait roots its JS wrapper, which owns `c`.
@@ -1553,25 +1575,6 @@ pub(crate) fn fold(result: JsResult<()>) {
     }
 }
 
-/// `__bun_js_timer_epoch` body — the tag→`container_of` read for
-/// [`EventLoopTimer::js_timer_epoch`]. Returns `internals.flags.epoch` for
-/// the three JS-timer container types, else `None`. Sits on the heap-compare
-/// hot path
-/// (`EventLoopTimer::less` → `TimerHeap` meld).
-///
-/// # Safety
-/// `t` points at a live [`EventLoopTimer`] currently linked into a `TimerHeap`.
-#[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_js_timer_epoch(
-    _tag: EventLoopTimerTag,
-    t: *const EventLoopTimer,
-) -> Option<u32> {
-    // SAFETY: per fn contract — `t` is live in a `TimerHeap`. `_tag` kept for
-    // the `extern "Rust"` ABI in `bun_event_loop`; helper re-reads `(*t).tag`
-    // (same address the caller loaded it from — folds under LTO).
-    unsafe { crate::timer::js_timer_flags(t) }.map(|flags| flags.get().epoch())
-}
-
 /// `__bun_tick_queue_with_count` body — declared `extern "Rust"` in
 /// `bun_jsc::event_loop`. `el` is the queue to drain; for
 /// `SpawnSyncEventLoop.tickTasksOnly`
@@ -1621,13 +1624,21 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             boxed_arm!(task, $features, |payload: $ty| { payload.release_unrun() })
         };
     }
+    /// [`release_in!`] for a [`RefTask`].
+    macro_rules! release_counted_in {
+        ($features:tt, $ty:ty) => {
+            counted_arm!(task, $features, |payload: $ty| {
+                <$ty as RefTask>::release_unrun(payload)
+            })
+        };
+    }
     match task.tag() {
         task_tag::AnyTaskJob => {
             // The one erased tag: every payload is a `Job<C>` reached through its header.
             // SAFETY: as `release!`.
             unsafe { bun_jsc::job::release_unrun_erased(task.ptr()) }
         }
-        task_tag::BakePendingReloadEvent => release_in!([Bundler], BakePendingReloadEvent),
+        task_tag::BakePendingReloadEvent => release_counted_in!([Bundler], BakePendingReloadEvent),
         task_tag::BundleV2DeferredBatchTask => release_in!([Bundler], BundleV2DeferredBatchTask),
         task_tag::BundleV2PluginResolve => {
             release_boxed_in!(
@@ -1684,17 +1695,17 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::FetchTaskletRequestDrain => {
             release_in!([Fetch], crate::webcore::fetch::FetchTaskletRequestDrain)
         }
+        task_tag::FetchTaskletTrace => {
+            release_in!([Fetch], crate::webcore::fetch::FetchTaskletTrace)
+        }
         task_tag::HTMLRewriterBackgroundPull => {
-            release_in!(
+            release_counted_in!(
                 [HtmlRewriter],
                 crate::api::html_rewriter::RewriterPipeBackgroundPull
             )
         }
         task_tag::RunTestsTask => {
             release_boxed_in!([Test], crate::test_runner::bun_test::RunTestsTask)
-        }
-        task_tag::ValkeyDeferredFailure => {
-            release_boxed_in!([Valkey], crate::valkey_jsc::valkey::DeferredFailure)
         }
         task_tag::DnsErrorDeferred => {
             release_boxed_in!([Dns], crate::dns_jsc::cares_jsc::ErrorDeferredTask)
@@ -1727,7 +1738,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::NapiFinalizerTask => release_boxed_in!([NativeAddons], NapiFinalizerTask),
         task_tag::NativePromiseContextDeferredDerefTask => {
             release_in!(
-                [Serve, HtmlRewriter, S3Client, Cron],
+                [Serve, HtmlRewriter, S3Client],
                 NativePromiseContextDeferredDerefTask
             )
         }
@@ -1740,7 +1751,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             unreachable!("posix-only tag");
         }
         task_tag::FlushPendingFileSinkTask => {
-            release_in!([FileSink, Spawn, Shell], FileSink)
+            release_counted_in!([FileSink, Spawn, Shell], FileSink)
         }
         task_tag::RuntimeTranspilerStore => {
             release_in!([RuntimeTranspiler], RuntimeTranspilerStore)
@@ -1750,8 +1761,10 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::S3HttpSimpleTask => release_in!([S3Client], S3HttpSimpleTask),
         task_tag::S3RefusedRequest => release_boxed_in!([S3Client], S3RefusedRequest),
-        task_tag::S3UploadWriterCollected => release_in!([S3Client], S3UploadWriterCollected),
-        task_tag::SendQueueDeferred => release_in!([Ipc], crate::ipc::SendQueue),
+        task_tag::S3UploadWriterCollected => {
+            release_counted_in!([S3Client], S3UploadWriterCollected)
+        }
+        task_tag::SendQueueDeferred => release_counted_in!([Ipc], crate::ipc::SendQueue),
         task_tag::ServerAllConnectionsClosedTask => {
             release_boxed_in!([Serve], ServerAllConnectionsClosedTask)
         }
@@ -1761,7 +1774,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::ShellGlobTask => release_in!([Shell], PoolTask<ShellGlobTask>),
         task_tag::ShellLsTask => release_in!([Shell], PoolTask<ShellLsTask>),
         task_tag::ShellMkdirTask => release_in!([Shell], PoolTask<ShellMkdirTask>),
-        task_tag::ShellMvBatchedTask => release_in!([Shell], ShellMvBatchedTask),
+        task_tag::ShellMvBatchedTask => release_in!([Shell], PoolTask<ShellMvBatchedTask>),
         task_tag::ShellMvCheckTargetTask => release_in!([Shell], PoolTask<ShellMvCheckTargetTask>),
         task_tag::ShellRmDirTask => release_in!([Shell], ShellRmDirTask),
         task_tag::ShellRmTask => release_in!([Shell], ShellRmTask),
@@ -1773,12 +1786,12 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             )
         }
         task_tag::StatWatcherHop => {
-            release_in!([NodeFs], crate::node::node_fs_stat_watcher::StatWatcher)
+            release_counted_in!([NodeFs], crate::node::node_fs_stat_watcher::StatWatcher)
         }
         task_tag::AsyncCpTask => release_boxed_in!([NodeFs], crate::node::fs::AsyncCpTask),
         task_tag::ShellAsyncCpTask => release_boxed_in!([Shell], crate::node::fs::ShellAsyncCpTask),
         task_tag::StreamPending => release_boxed_in!([WebStreams], StreamPending),
-        task_tag::ThreadSafeFunction => release_in!([NativeAddons], ThreadSafeFunction),
+        task_tag::ThreadSafeFunction => release_counted_in!([NativeAddons], ThreadSafeFunction),
         task_tag::ThreadSafeFunctionRefRequest => {
             release_boxed_in!([NativeAddons], TsfnRefRequest)
         }

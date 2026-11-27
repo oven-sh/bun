@@ -13,9 +13,10 @@
 
 use core::ffi::{c_int, c_uint, c_void};
 use core::mem::size_of;
+use core::net::SocketAddr;
 use core::ptr::NonNull;
 
-use bun_core::{Fd, ZStr};
+use bun_core::{Fd, ZBox, ZStr};
 
 #[cfg(windows)]
 use crate::WindowsNamedPipe;
@@ -216,16 +217,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     #[inline]
     pub const fn assume_tcp(self) -> NewSocketHandler<false> {
         debug_assert!(!IS_SSL);
-        NewSocketHandler {
-            socket: self.socket,
-        }
-    }
-    /// Generic counterpart of [`Self::assume_ssl`]/[`Self::assume_tcp`] for
-    /// callers inside an `if IS_SSL { ... }` arm widening a concrete handle
-    /// back to the surrounding `NewSocketHandler<IS_SSL>`.
-    #[inline]
-    pub const fn cast_ssl<const NEW_SSL: bool>(self) -> NewSocketHandler<NEW_SSL> {
-        debug_assert!(IS_SSL == NEW_SSL);
         NewSocketHandler {
             socket: self.socket,
         }
@@ -434,14 +425,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// Vectored raw write: one writev on real sockets; sequential raw writes on
     /// transports without an fd (duplex/pipe). Plain-TCP callers only — raw
     /// writes bypass TLS framing.
-    pub fn raw_writev(&self, iov: &[crate::UsIoVec]) -> i32 {
+    pub fn raw_writev(&self, iov: &[crate::UsIoVec<'_>]) -> i32 {
         on_socket!(self.socket;
             connected s => s.raw_writev(iov),
             duplex d => {
                 let mut total: i32 = 0;
                 for v in iov {
-                    // SAFETY: UsIoVec contract — base/len reference caller-owned memory
-                    let slice = unsafe { core::slice::from_raw_parts(v.base.cast::<u8>(), v.len) };
+                    let slice = v.as_slice();
                     let w = d.raw_write(slice);
                     if w > 0 { total += w; }
                     if w < slice.len() as i32 { break; }
@@ -451,8 +441,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             pipe p => {
                 let mut total: i32 = 0;
                 for v in iov {
-                    // SAFETY: UsIoVec contract — base/len reference caller-owned memory
-                    let slice = unsafe { core::slice::from_raw_parts(v.base.cast::<u8>(), v.len) };
+                    let slice = v.as_slice();
                     let w = p.raw_write(slice);
                     if w > 0 { total += w; }
                     if w < slice.len() as i32 { break; }
@@ -723,6 +712,20 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
+    pub fn local_endpoint(&self) -> Option<SocketAddr> {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).local_endpoint(),
+            _ => None,
+        }
+    }
+
+    pub fn remote_endpoint(&self) -> Option<SocketAddr> {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).remote_endpoint(),
+            _ => None,
+        }
+    }
+
     pub fn mark_needs_more_for_sendfile(&self) {
         const { assert!(!IS_SSL, "SSL sockets do not support sendfile yet") };
         if let InternalSocket::Connected(s) = self.socket {
@@ -809,19 +812,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         let host = bun_core::ip_address::strip_ipv6_brackets(raw_host);
         // SocketGroup.connect needs a NUL-terminated host.
         let mut stack = [0u8; 256];
-        let heap: Vec<u8>;
-        let host_z: &core::ffi::CStr = if host.len() < stack.len() {
+        let heap: ZBox;
+        let host_z: &ZStr = if host.len() < stack.len() {
             stack[..host.len()].copy_from_slice(host);
-            stack[host.len()] = 0;
-            ZStr::from_buf(&stack, host.len()).as_cstr()
+            ZStr::nul_terminate(&mut stack, host.len())
         } else {
-            heap = {
-                let mut v = Vec::with_capacity(host.len() + 1);
-                v.extend_from_slice(host);
-                v.push(0);
-                v
-            };
-            ZStr::from_slice_with_nul(&heap).as_cstr()
+            heap = ZBox::from_bytes(host);
+            &heap
         };
 
         // The dispatch trampolines read the ext slot as `Option<NonNull<_>>`
@@ -984,6 +981,5 @@ impl AnySocket {
         fn shutdown(&self);
         fn shutdown_read(&self);
         fn local_port(&self) -> Option<u16>;
-        fn get_native_handle(&self) -> Option<*mut c_void>;
     }
 }

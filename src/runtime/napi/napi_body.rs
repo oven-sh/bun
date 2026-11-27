@@ -10,7 +10,7 @@ use std::sync::Arc;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_core::Unaligned;
-use bun_event_loop::{BoxedTask, TaskTag, Taskable, task_tag};
+use bun_event_loop::{BoxedTask, Posted, RefTask, TaskTag, Taskable, task_tag};
 use bun_io::{JsKeepAlive, KeepAlive};
 use bun_jsc::StringJsc;
 use bun_jsc::bun_string_jsc;
@@ -63,16 +63,13 @@ impl Taskable for napi_async_work {
         bun_event_loop::ContextId::NONE
     }
 }
-/// The queued pointer is from `Arc::into_raw`.
-impl Taskable for ThreadSafeFunction {
+impl RefTask for ThreadSafeFunction {
     const TAG: TaskTag = task_tag::ThreadSafeFunction;
+    type Ref = Arc<Self>;
     /// The env's cleanup hook (`env_teardown`) does what the dispatch would have done.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the task owns this reference.
-        drop(unsafe { Arc::from_raw(this) });
-    }
+    fn release_unrun(_: Self::Ref) {}
     /// As `napi_async_work`.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Ref) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -2832,7 +2829,7 @@ impl ThreadSafeFunction {
                 DispatchStep::QueueFinalizer { leftovers } => {
                     this.hand_back(leftovers);
                     js.poll_ref.disable();
-                    event_loop.enqueue_task(Task::init(Arc::into_raw(this).cast_mut()));
+                    event_loop.enqueue_task(Task::from_ref::<Self>(this));
                     break;
                 }
                 DispatchStep::Finalize => {
@@ -2998,14 +2995,11 @@ impl ThreadSafeFunction {
             // A dispatch is queued or running and will see this, or `env_teardown` will.
             return;
         };
-        let queued = Arc::into_raw(this);
-        let ct = ConcurrentTask::create_from(queued.cast_mut());
-        if let bun_jsc::vm_handle::Posted::Refused(_) = self.js.handle().post(self.loop_kind, ct) {
+        if let Posted::Refused(this) = self.js.handle().post(self.loop_kind, this) {
             // VM closed before the env cleanup hook ran here: no
             // dispatch will happen; the queued calls are released by the
             // teardown path.
-            // SAFETY: the reference that the refused task carried.
-            shared.dispatch_ref = Some(unsafe { Arc::from_raw(queued) });
+            shared.dispatch_ref = Some(this);
         }
     }
 
@@ -3119,13 +3113,8 @@ impl ThreadSafeFunction {
             return;
         }
         let this = shared.threads_ref.clone().expect("held until finalized");
-        let ct = ConcurrentTask::create_boxed(Box::new(TsfnRefRequest(this)));
-        if let bun_jsc::vm_handle::Posted::Refused(ct) =
-            self.js.handle().post_without_waking(self.loop_kind, ct)
-        {
-            // SAFETY: the task made above.
-            drop(unsafe { ct.task.into_boxed::<TsfnRefRequest>() });
-        }
+        let request = Box::new(TsfnRefRequest(this));
+        let _ = (self.js.handle()).post_without_waking(self.loop_kind, request);
     }
 
     fn acquire(&self) -> NapiStatus {
@@ -5275,12 +5264,7 @@ impl NapiFinalizerTask {
             // not the env ref — the env's count is not atomic and the env goes
             // with its VM — as the cleanup-hooks-already-ran case below does.
             let handle = self.finalizer.env.vm_handle();
-            let ct = ConcurrentTask::create_boxed(self);
-            if let bun_jsc::vm_handle::Posted::Refused(ct) =
-                handle.post(bun_jsc::LoopKind::Regular, ct)
-            {
-                // SAFETY: the task made above.
-                let task = unsafe { ct.task.into_boxed::<Self>() };
+            if let Posted::Refused(task) = handle.post(bun_jsc::LoopKind::Regular, self) {
                 let _ = core::mem::ManuallyDrop::new(task.finalizer.env);
             }
             return;

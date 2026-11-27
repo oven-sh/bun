@@ -305,9 +305,6 @@ impl DevServer {
         // SAFETY: `timer` points to the `memory_visualizer_timer` field of a DevServer.
         let dev: &mut DevServer = unsafe { &mut *DevServer::from_timer_ptr(timer) };
         debug_assert!(dev.magic == Magic::Valid);
-        dev.memory_visualizer_timer
-            .state
-            .set(EventLoopTimerState::FIRED);
         dev.emit_memory_visualizer_message();
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1000);
         crate::jsc_hooks::timer_all().update(timer, &next);

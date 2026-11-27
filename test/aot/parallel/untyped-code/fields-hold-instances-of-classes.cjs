@@ -1,29 +1,29 @@
 // Fields that a constructor and an initializer fill with instances of classes; other code stores other values.
 "use strict"; const out = []; let i = 0, calls = 0; const show = (v) => { try { return v && typeof v === "object" ? v.constructor && v.constructor.name + "{" + Object.keys(v).join() + "}" : typeof v === "function" ? "fn" : String(v); } catch (e) { return "E" + e.constructor.name; } };
-class Pos { constructor(line, column) { this.line = line; this.column = column; } at() { return this.line; } }
-class Kind { constructor(label, conf = {}) { this.label = label; this.prefix = !!conf.prefix; this.update = null; } }
-class Word extends Kind { constructor(label) { super(label, { prefix: true }); this.word = label; } }
-const kinds = { a: new Kind("a"), b: new Word("b"), c: new Kind("c") };
-for (const n of ["x", "y"]) kinds["_" + n] = new Word(n);
-class Node { constructor(start) { this.start = start; this.end = 0; this.kind = kinds.a; this.pos = new Pos(start, 1); } at() { return this.end; } }
-class State { constructor() { this.depth = 0; } init(n) { this.kind = kinds.a; this.pos = new Pos(n, 0); this.node = null; this.list = [new Pos(1, 2)]; this.count = n; this.last = this.pos; return this; } copy() { const c = new State(); for (const k in this) { let v = this[k]; if (Array.isArray(v)) v = v.slice(); c[k] = v; } return c; } }
-function plain(node, depth) { let t = ""; node.late = node.body; return t + this.m0(node, depth + 1); }
-let held = {}; { class Parser { constructor() { this.state = new State(); this.state.init(1); } } held = Parser; }
-const Parser = held;
-{ const pp = Parser.prototype; pp.m0 = function (node, depth) { let s = ""; calls++; s += node.at ? node.at() : 0; if (node.extra) s += "y"; node.end = null;  return s; }; pp.m1 = function (node, depth) { let s = ""; calls++; for (let t = 0; t < 3; t++) s += node.body ? t : "o"; node.name = null; node.late = node.body; node.late = node.name; s += this.pick(depth) && this.pick(depth).start; return s; }; pp.m2 = function (node, depth) { let s = ""; calls++; { const q2 = node; s += q2.kind > 1; } node.late = kinds.b; s += node.pos ? node.pos.line + 1 : "n"; if (depth < 2) s += this.m0(this.make(depth), depth + 1); return s; }; pp.m3 = function (node, depth) { let s = ""; calls++; if (node.end) s += "y"; for (let t = 0; t < 3; t++) s += node.kind ? t : "o"; this.state.kind = node.kind; return s; }; pp.m4 = function (node, depth) { let s = ""; calls++; node.late = node; s += node.at ? node.at() : 0; node.late = node.body; this.state.kind = kinds._x; return s; }; pp.m5 = function (node, depth) { let s = ""; calls++; delete node.start; s += node.kind && node.kind.label ? node.kind.label : "-"; node.late = node.extra; if (depth < 3) s += this.m4(node, depth + 1); return s; }; pp.make = function (d) { const n = new Node(d); n.name = "n"; return n; }; pp.take = function (node) { const t = node; t.body = [t.start]; return t; }; pp.pick = function (d) { return d & 1 ? this.make(d) : null; }; }
+class Moor { constructor(row, width) { this.width = width; this.row = row; } at() { return this.row; } }
+class Timber { constructor(grain, hewn) { this.split = null; this.green = hewn !== undefined && hewn.green === true; this.grain = grain; } }
+class Oak extends Timber { constructor(grain) { super(grain + "", { green: true }); this.felled = grain; } }
+const timbers = { a: new Timber("a"), b: new Oak("b"), c: new Timber("c") };
+["x", "y"].forEach((n) => { timbers["_" + n] = new Oak(n); });
+class Plank { constructor(butt) { this.moor = new Moor(butt, 1); this.timber = timbers.a; this.tip = 0; this.butt = butt; } at() { return this.tip; } }
+class Raft { constructor() { this.deep = 0; } launch(n) { this.load = n; this.ropes = [new Moor(1, 2)]; this.plank = null; this.moor = new Moor(n, 0); this.last = this.moor; this.timber = timbers.a; return this; } twin() { const made = new Raft(); for (const name of Object.keys(this)) made[name] = Array.isArray(this[name]) ? this[name].concat() : this[name]; return made; } }
+function plain(plank, depth) { let t = ""; plank.late = plank.deck; return t + this.m0(plank, depth + 1); }
+let held = {}; { class Yard { constructor() { this.raft = new Raft(); this.raft.launch(1); } } held = Yard; }
+const Yard = held;
+{ const laid = Yard.prototype; laid.m0 = function (plank, depth) { let s = ""; calls++; s += plank.at ? plank.at() : 0; if (plank.wet) s += "y"; plank.tip = null;  return s; }; laid.m1 = function (plank, depth) { let s = ""; calls++; for (let t = 0; t < 3; t++) s += plank.deck ? t : "o"; plank.owner = null; plank.late = plank.deck; plank.late = plank.owner; s += this.pick(depth) && this.pick(depth).butt; return s; }; laid.m2 = function (plank, depth) { let s = ""; calls++; { const q2 = plank; s += q2.timber > 1; } plank.late = timbers.b; s += plank.moor ? plank.moor.row + 1 : "n"; if (depth < 2) s += this.m0(this.make(depth), depth + 1); return s; }; laid.m3 = function (plank, depth) { let s = ""; calls++; if (plank.tip) s += "y"; for (let t = 0; t < 3; t++) s += plank.timber ? t : "o"; this.raft.timber = plank.timber; return s; }; laid.m4 = function (plank, depth) { let s = ""; calls++; plank.late = plank; s += plank.at ? plank.at() : 0; plank.late = plank.deck; this.raft.timber = timbers._x; return s; }; laid.m5 = function (plank, depth) { let s = ""; calls++; delete plank.butt; s += plank.timber && plank.timber.grain ? plank.timber.grain : "-"; plank.late = plank.wet; if (depth < 3) s += this.m4(plank, depth + 1); return s; }; laid.make = function (d) { const n = new Plank(d); n.owner = "n"; return n; }; laid.take = function (plank) { const t = plank; t.deck = [t.butt]; return t; }; laid.pick = function (d) { return d & 1 ? this.make(d) : null; }; }
 const lists = { take: [1, 2], pick: new Map([[1, 2]]) };
-globalThis.kept = [Parser, Node, State, Pos, Kind, Word]; if (process.argv[9]) { new Node(1)[process.argv[9]] = 2; new State()[process.argv[9]] = 3; kinds[process.argv[9]] = 4; new Pos(1, 2)[process.argv[9]] = 5; }
-const nodes = [(p) => p.make(1), (p) => new Node(2), (p) => ({ start: 1, end: 2, kind: kinds.b }), (p) => new Pos(1, 2), (p) => Object.freeze(new Node(3)), (p) => p.take(new Node(4)), (p) => null, (p) => undefined, (p) => 7, (p) => "text", (p) => Object.create(new Node(5)), (p) => new Proxy(new Node(6), {}), (p) => { const n = new Node(8); Object.defineProperty(n, "start", { get() { return "acc"; }, configurable: true }); return n; }, (p) => new (class Heir extends Node { })(9), (p) => [1], (p) => kinds.b, (p) => p.state];
+globalThis.kept = [Yard, Plank, Raft, Moor, Timber, Oak]; if (process.argv[9]) { new Plank(1)[process.argv[9]] = 2; new Raft()[process.argv[9]] = 3; timbers[process.argv[9]] = 4; new Moor(1, 2)[process.argv[9]] = 5; }
+const planks = [(y) => null, (y) => undefined, (y) => 7, (y) => "text", (y) => [1], (y) => y.make(1), (y) => new Plank(2), (y) => ({ butt: 1, tip: 2, timber: timbers.b }), (y) => new Moor(1, 2), (y) => Object.freeze(new Plank(3)), (y) => y.take(new Plank(4)), (y) => Object.create(new Plank(5)), (y) => new Proxy(new Plank(6), {}), (y) => Object.defineProperty(new Plank(8), "butt", { get() { return "acc"; }, configurable: true }), (y) => new (class Heir extends Plank { })(9), (y) => timbers.b, (y) => y.raft];
 for (let turn = 0; turn < 3; turn++) {
-  if (turn === 2) { Node.prototype.late = "above"; }
-  for (let k = 0; k < nodes.length; k++) { const p = new Parser(); i = k;
-    try { out.push("m0 " + turn + " " + k + " " + p.m0(nodes[k](p), turn)); } catch (e) { out.push("m0 " + turn + " " + k + " T" + e.constructor.name); }
-    try { out.push("m1 " + turn + " " + k + " " + p.m1(nodes[k](p), turn)); } catch (e) { out.push("m1 " + turn + " " + k + " T" + e.constructor.name); }
-    try { out.push("m2 " + turn + " " + k + " " + p.m2(nodes[k](p), turn)); } catch (e) { out.push("m2 " + turn + " " + k + " T" + e.constructor.name); }
-    try { out.push("m3 " + turn + " " + k + " " + p.m3(nodes[k](p), turn)); } catch (e) { out.push("m3 " + turn + " " + k + " T" + e.constructor.name); }
-    try { out.push("m4 " + turn + " " + k + " " + p.m4(nodes[k](p), turn)); } catch (e) { out.push("m4 " + turn + " " + k + " T" + e.constructor.name); }
-    try { out.push("m5 " + turn + " " + k + " " + p.m5(nodes[k](p), turn)); } catch (e) { out.push("m5 " + turn + " " + k + " T" + e.constructor.name); }
-    try { out.push(show(p.state) + show(p.state.kind) + show(p.state.pos) + show(p.state.last) + show(p.take(nodes[k](p))) + show(p.pick(k))); } catch (e) { out.push("T" + e.constructor.name); }
+  if (turn === 2) { Plank.prototype.late = "above"; }
+  for (let k = 0; k < planks.length; k++) { const y = new Yard(); i = k;
+    for (const m of ["m0", "m1", "m2", "m3", "m4", "m5"]) {
+      try { out.push(m + " " + turn + " " + k + " " + y[m](planks[k](y), turn)); } catch (e) { out.push(m + " " + turn + " " + k + " T" + e.constructor.name); }
+    }
+    try { out.push(y.m0(planks[k](y), turn) + y.m1(planks[k](y), turn) + y.m2(planks[k](y), turn)); } catch (e) { out.push("T" + e.constructor.name); }
+    try { out.push(y.m3(planks[k](y), turn) + y.m4(planks[k](y), turn) + y.m5(planks[k](y), turn)); } catch (e) { out.push("T" + e.constructor.name); }
+    try { out.push([y.raft, y.raft.timber, y.raft.moor, y.raft.last, y.take(planks[k](y)), y.pick(k)].map(show).join("")); } catch (e) { out.push("T" + e.constructor.name); }
+    if (k === 5) { const other = y.raft.twin(); out.push(show(other) + show(other.ropes[0]) + (other.ropes === y.raft.ropes)); }
   }
 }
 out.push(calls);

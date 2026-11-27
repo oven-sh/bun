@@ -66,7 +66,7 @@ pub(crate) mod package_manager_command;
 // need `CommandLineReporter`. This is the sole live mount of the file.
 #[path = "test_command.rs"]
 pub(crate) mod test_command;
-/// `bun test` support modules (Scanner / ChangedFilesFilter / ParallelRunner).
+/// `bun test` support modules.
 /// Mounted here so `test_command.rs` can `use crate::cli::test::scanner` etc.
 pub(crate) mod test {
     #[path = "Scanner.rs"]
@@ -85,15 +85,7 @@ pub(crate) mod test {
     #[path = "ShardsByReach.rs"]
     pub(crate) mod shards_by_reach;
 
-    /// `bun test --parallel`: process-pool coordinator/worker entry points.
-    /// Thin façade re-exporting from `parallel::runner`.
-    #[path = "ParallelRunner.rs"]
-    pub(crate) mod parallel_runner;
-
-    /// `test/parallel/` submodule directory (no `mod.rs` on disk; declared
-    /// inline). `ParallelRunner.rs`
-    /// re-exports the public entry points from `runner`; the rest are
-    /// implementation detail of the coordinator/worker split.
+    /// `bun test --parallel`: a coordinator hands test files to worker processes. `runner` has the entry points.
     pub(crate) mod parallel {
         #[path = "aggregate.rs"]
         pub(crate) mod aggregate;
@@ -101,8 +93,6 @@ pub(crate) mod test {
         pub(crate) mod channel;
         #[path = "Coordinator.rs"]
         pub(crate) mod coordinator;
-        #[path = "FileRange.rs"]
-        pub(crate) mod file_range;
         #[path = "Frame.rs"]
         pub(crate) mod frame;
         #[path = "runner.rs"]
@@ -207,6 +197,7 @@ pub(crate) mod remove_command;
 pub(crate) mod scan_command;
 #[path = "script_or_command.rs"]
 pub(crate) mod script_or_command;
+mod short_run;
 pub(crate) mod typescript_libs;
 #[path = "unlink_command.rs"]
 pub(crate) mod unlink_command;
@@ -284,6 +275,15 @@ fn cli_arena() -> &'static bun_alloc::Arena {
     // before any caller of `cli_arena()` / `cli_dupe` / `cli_dupe_z` exists.
     // Read-only for the rest of the process lifetime.
     unsafe { (*CLI_ARENA.get()).assume_init_ref() }
+}
+
+/// The executable's directory if the working directory is gone, like Node's `Environment::GetCwd`.
+pub(crate) fn getcwd_or_exe_dir(buf: &mut bun_paths::PathBuffer) -> &[u8] {
+    if let Ok(cwd) = bun_core::getcwd(buf) {
+        return cwd;
+    }
+    let exe_dir = (bun_core::self_exe_path().ok()).and_then(|exe| bun_paths::dirname(exe));
+    exe_dir.unwrap_or(if cfg!(windows) { b"C:\\" } else { b"/" })
 }
 
 /// Dupe `s` into the process-lifetime CLI arena. Replaces ad-hoc
@@ -678,34 +678,8 @@ pub(crate) mod command {
         if first == b'-' {
             return false;
         }
-        if arg == b"." || arg == b".." {
-            return true;
-        }
-        // Unix relative/absolute path prefixes.
-        if first == b'/' || arg.starts_with(b"./") || arg.starts_with(b"../") {
-            return true;
-        }
-        #[cfg(windows)]
-        {
-            if first == b'\\' || arg.starts_with(b".\\") || arg.starts_with(b"..\\") {
-                return true;
-            }
-            // Drive-letter root: `C:\…` / `C:/…`.
-            if arg.len() >= 3
-                && first.is_ascii_alphabetic()
-                && arg[1] == b':'
-                && (arg[2] == b'\\' || arg[2] == b'/')
-            {
-                return true;
-            }
-        }
-        // Has a `.` in the basename — `foo.js`, `dir/foo.ts`, `.dotfile`, …
-        // (no subcommand keyword contains a `.`).
-        let basename = match strings::last_index_of_any(arg, b"/\\") {
-            Some(i) => &arg[i + 1..],
-            None => arg,
-        };
-        strings::contains_char(basename, b'.')
+        // No subcommand keyword contains a `.`.
+        !bun_paths::is_package_path(arg) || strings::contains_char(bun_paths::basename(arg), b'.')
     }
 
     /// `#[inline(never)]`: argv→`Tag` classification, called once from
@@ -1235,7 +1209,7 @@ pub(crate) mod command {
                 }
 
                 // Store the full argv including user arguments
-                let full_argv: &'static [&'static bun_core::ZStr] = bun::intern_argv(argv_list);
+                let full_argv: &'static [&'static bun_core::ZStr] = argv_list.leak();
                 let num_exec_argv_options = full_argv.len().saturating_sub(original_argv_len);
 
                 // Calculate offset: skip executable name + all exec argv options + BUN_OPTIONS args
@@ -1249,17 +1223,18 @@ pub(crate) mod command {
                 // Temporarily set bun.argv to only include executable name + exec_argv options + BUN_OPTIONS args.
                 // This prevents user arguments like --version/--help from being intercepted
                 // by Bun's argument parser (they should be passed through to user code).
-                // SAFETY: single-threaded startup; `full_argv` is process-static.
-                unsafe {
-                    bun::set_argv(&full_argv[..(1 + num_parsed_options).min(full_argv.len())]);
-                }
+                static VIEWS: bun_core::Once<[&[&bun_core::ZStr]; 2]> = bun_core::Once::new();
+                let [options_argv, full_argv] = VIEWS.get_or_init(|| {
+                    let options_len = (1 + num_parsed_options).min(full_argv.len());
+                    [&full_argv[..options_len], full_argv]
+                });
+                bun::set_argv(options_argv);
 
                 // Handle actual options to parse.
                 let result = init(Tag::AutoCommand, log)?;
 
                 // Restore full argv so passthrough calculation works correctly
-                // SAFETY: single-threaded startup.
-                unsafe { bun::set_argv(full_argv) };
+                bun::set_argv(full_argv);
 
                 break 'brk result;
             }

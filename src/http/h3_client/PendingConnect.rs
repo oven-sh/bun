@@ -95,14 +95,7 @@ impl PendingConnect {
             ClientContext::get().and_then(|ctx| ClientContext::as_mut(ctx).unregister(s));
         while !s.pending.is_empty() {
             let stream = s.pending[0].as_ptr();
-            // stream is live while attached to session.pending.
-            let cl = super::client_session::stream_ref(stream).client;
-            s.detach(stream);
-            if let Some(cl) = cl {
-                // HTTPClient outlives its h3 Stream; detach() nulled stream.client
-                // but `cl` is alive — `client_mut` centralises this backref upgrade.
-                super::client_session::client_mut(cl).fail_from_h2(err);
-            }
+            s.fail(stream, err);
         }
     }
 }

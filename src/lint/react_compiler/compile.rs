@@ -6,7 +6,7 @@ use crate::finding::{Detail, Finding, Suggestion};
 use crate::host::LintHost;
 use bun_ast::ASTMemoryAllocator;
 use bun_core::strings;
-use bun_lint::ast::{BinOp, Expr, ExprTag, File, Func, UnOp};
+use bun_lint::ast::{BinOp, Expr, ExprKind, ExprTag, File, Func, Node, UnOp};
 use bun_lint::span::Span;
 use bun_react_compiler::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, CompilerErrorOrDiagnostic,
@@ -238,6 +238,7 @@ impl<'a> Compiler<'a> {
             findings(&converted, error)
                 .filter(|it| !is_already_recorded(it))
                 .map(|it| with_estree_kind(file, flavor, it))
+                .map(|it| with_outermost_wrapper(file, flavor, it))
         };
         let all: Vec<Finding> = match linted.result {
             Ok(()) if converted.recorded.is_empty() => return Ok(()),
@@ -342,10 +343,65 @@ fn estree_kind(flavor: Flavor, kind: &str, expr: Expr<'_>) -> Option<&'static st
         .then_some("UpdateExpression"),
         ("OptionalCallExpression", ExprTag::Call) => Some("OptionalMemberExpression"),
         ("CallExpression", ExprTag::ImportCall) => Some("Import"),
+        ("CallExpression", ExprTag::Jsx) => match expr.kind() {
+            ExprKind::Jsx(jsx) if jsx.is_fragment() => Some("JSXFragment"),
+            _ => Some("JSXElement"),
+        },
         _ => None,
     }
 }
 
+/// oxc's tree has a node for each pair of parentheses and each cast, and its lowering names what can't be reordered
+/// after the outermost of them and marks all of it. Bun's tree has neither, so its lowering names what is in them.
+fn with_outermost_wrapper<'a>(file: &'a File<'a>, flavor: Flavor, mut finding: Finding) -> Finding {
+    if flavor == Flavor::Oxlint
+        && let Some(rest) = finding.reason.strip_prefix(CANNOT_BE_REORDERED)
+        && let Some(tick) = strings::index_of_char_usize(rest.as_bytes(), b'`')
+        && let Some(rest) = rest.get(tick + 1..)
+        && let Some(Detail::Error { span: Some(at), .. }) = finding.details.first_mut()
+        && let Some((kind, whole)) =
+            crate::oxlint::find(file, *at, |node| outermost_wrapper(node.as_expr()?))
+    {
+        finding.reason = format!("{CANNOT_BE_REORDERED}{kind}`{rest}");
+        *at = whole;
+    }
+    finding
+}
+
+/// The name and the span of the outermost of the parentheses and casts around `expr`, in oxc's tree.
+fn outermost_wrapper(expr: Expr<'_>) -> Option<(&'static str, Span)> {
+    let mut outermost = expr;
+    while let Node::Expr(parent) = outermost.parent()
+        && matches!(
+            parent.tag(),
+            ExprTag::As
+                | ExprTag::AsConst
+                | ExprTag::Satisfies
+                | ExprTag::NonNull
+                | ExprTag::Instantiation
+        )
+        && parent.operand() == Some(outermost)
+    {
+        outermost = parent;
+    }
+    let kind = match outermost.tag() {
+        _ if outermost.is_parenthesized() => "ParenthesizedExpression",
+        _ if outermost == expr => return None,
+        ExprTag::As | ExprTag::AsConst if outermost.is_angle_bracket_assertion() => {
+            "TSTypeAssertion"
+        }
+        ExprTag::As | ExprTag::AsConst => "TSAsExpression",
+        ExprTag::Satisfies => "TSSatisfiesExpression",
+        // oxc has the `!` at the end of an optional chain in the `ChainExpression`.
+        ExprTag::NonNull if outermost.is_in_optional_chain() => "OptionalMemberExpression",
+        ExprTag::NonNull => "TSNonNullExpression",
+        ExprTag::Instantiation => "TSInstantiationExpression",
+        _ => return None,
+    };
+    Some((kind, outermost.outer_span()))
+}
+
+/// The same for a [`Recorded::DefaultIsJsx`], which isn't from the lowering. `wrapped` has the wrapper of each default.
 fn with_wrapper_span(wrapped: &[WrappedDefault], mut finding: Finding) -> Finding {
     if let Some(rest) = finding.reason.strip_prefix(CANNOT_BE_REORDERED)
         && let Some(tick) = strings::index_of_char_usize(rest.as_bytes(), b'`')

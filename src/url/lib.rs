@@ -1016,12 +1016,7 @@ impl QueryStringMap {
         let mut estimated_str_len: usize = 0;
         let mut count: usize = 0;
 
-        let mut nothing_needs_decoding = true;
-
         while let Some(result) = scanner.pathname.next() {
-            if result.name_needs_decoding || result.value_needs_decoding {
-                nothing_needs_decoding = false;
-            }
             estimated_str_len += result.name.length as usize + result.value.length as usize;
             count += 1;
         }
@@ -1032,9 +1027,6 @@ impl QueryStringMap {
             let Some(result) = scanner.query.next() else {
                 break;
             };
-            if result.name_needs_decoding || result.value_needs_decoding {
-                nothing_needs_decoding = false;
-            }
             estimated_str_len += result.name.length as usize + result.value.length as usize;
             count += 1;
         }
@@ -1156,7 +1148,6 @@ impl QueryStringMap {
         }
 
         // buf.expandToCapacity() — Vec doesn't expose this; not needed since we slice by buf_writer_pos
-        let _ = nothing_needs_decoding;
         let slice_ptr: *const [u8] = &raw const buf[0..buf_writer_pos as usize];
         Ok(Some(QueryStringMap {
             list,

@@ -60,7 +60,6 @@ export function parseHandle(target: $Bindgen.Subprocess | null, serialized: $Nod
     "emitHandleIPCMessage",
   );
   const net = require("node:net");
-  // const dgram = require("node:dgram");
   switch (serialized.type) {
     case "net.Server": {
       const server = new net.Server();

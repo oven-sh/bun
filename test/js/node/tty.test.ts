@@ -551,3 +551,85 @@ describe("WriteStream.prototype.getColorDepth", () => {
     expect(WriteStream.prototype.getColorDepth.length).toBe(0);
   });
 });
+
+// A console in raw mode queues one input record per byte, and the raw reader
+// took one record per ReadConsoleInputW call - a kernel transition each. That
+// put a paste at ~60 KB/s and held the event loop for its whole length. Reading
+// a batch of records per call turns the same paste into a few milliseconds of
+// syscalls, so the same 128 KiB must now drain far below the old rate.
+test.if(isWindows)("process.stdin in raw mode drains a large paste quickly", async () => {
+  const SIZE = 128 * 1024;
+  // The old per-record read moved ~60 KB/s here, so 128 KiB took about two
+  // seconds. Batched, it is tens of milliseconds; the bound sits well clear of
+  // both.
+  const MAX_MS = 700;
+
+  let output = "";
+  const decoder = new TextDecoder();
+  const ready = Promise.withResolvers<void>();
+  const done = Promise.withResolvers<{ seen: number; ms: number }>();
+
+  await using terminal = new Bun.Terminal({
+    cols: 200,
+    rows: 24,
+    data(_terminal, chunk: Uint8Array) {
+      output += decoder.decode(chunk, { stream: true });
+      if (output.includes("READY")) ready.resolve();
+      const match = Bun.stripANSI(output).replace(/[\r\n]/g, "").match(/RESULT (\{[^}]*\})/);
+      if (match) done.resolve(JSON.parse(match[1]));
+    },
+    exit() {
+      done.reject(new Error("child exited before reporting; terminal output was: " + JSON.stringify(output)));
+    },
+  });
+
+  const proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const SIZE = ${SIZE};
+        const BYTE = "a".charCodeAt(0);
+        let seen = 0;
+        let first = 0;
+        process.stdin.setRawMode(true);
+        process.stdin.on("data", chunk => {
+          if (first === 0) first = performance.now();
+          for (let i = 0; i < chunk.length; i++) if (chunk[i] === BYTE) seen++;
+          if (seen >= SIZE) {
+            process.stdout.write(
+              "RESULT " + JSON.stringify({ seen, ms: Math.round(performance.now() - first) }) + "\\n",
+            );
+            process.exit(0);
+          }
+        });
+        process.stdout.write("READY\\n");
+      `,
+    ],
+    env: bunEnv,
+    terminal,
+  });
+
+  try {
+    // A child that never finishes must fail this test, not hang the file.
+    done.promise.catch(() => {});
+    await ready.promise;
+
+    // The console input pipe takes a bounded write and Bun buffers the rest, so
+    // keep feeding until every byte is accepted.
+    const payload = Buffer.alloc(SIZE, "a");
+    let written = 0;
+    while (written < SIZE) {
+      const n = terminal.write(payload.subarray(written));
+      if (n <= 0) throw new Error("terminal.write stopped accepting input at " + written + " bytes");
+      written += n;
+    }
+
+    const result = await done.promise;
+    expect({ seen: result.seen, sent: SIZE }).toEqual({ seen: SIZE, sent: SIZE });
+    expect(result.ms).toBeLessThan(MAX_MS);
+  } finally {
+    proc.kill();
+    await proc.exited;
+  }
+});

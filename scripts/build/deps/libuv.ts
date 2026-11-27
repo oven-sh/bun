@@ -77,6 +77,12 @@ export const libuv: Dependency = {
   // win-poll-out-of-line: inlined, the 4 KB `overlappeds` of uv__poll is part of
   // uv_run's frame while the callbacks run. The kernel writes its first entries
   // alone, so the collector finds what earlier calls left in the others.
+  //
+  // win-tty-batch-console-reads: a console in raw mode queues one input record
+  // per byte, and uv_process_tty_read_raw_req called ReadConsoleInputW once per
+  // record, a kernel transition each - 60 KB/s for a paste. Read a batch per
+  // call, keep the untranslated tail in the handle so a read_cb that pauses
+  // reading does not drop input, and resume it from uv__tty_read_start.
   patches: [
     "patches/libuv/win-poll-rearm-before-callback.patch",
     "patches/libuv/win-poll-abort-with-disconnect.patch",
@@ -84,6 +90,7 @@ export const libuv: Dependency = {
     "patches/libuv/win-poll-shared-listener.patch",
     "patches/libuv/win-pipe-read-req-count-across-callback.patch",
     "patches/libuv/win-poll-out-of-line.patch",
+    "patches/libuv/win-tty-batch-console-reads.patch",
   ],
 
   build: () => ({

@@ -1205,14 +1205,6 @@ impl<'a> Parser<'a, '_> {
             }
         }
 
-        if let Some(expr) = json.get(b"debug") {
-            if let Some(editor) = expr.get(b"editor") {
-                if let Some(value) = editor.as_string(self.bump) {
-                    self.ctx.debug.editor = value.into();
-                }
-            }
-        }
-
         if let Some(expr) = json.get(b"macros") {
             if let ExprData::EBoolean(b) = expr.data {
                 if !b.value {

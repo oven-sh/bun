@@ -1,4 +1,4 @@
-//! Renders a compiler diagnostic the way oxlint 1.87 prints it.
+//! Renders a compiler diagnostic the way oxlint 1.95 prints it.
 //!
 //! oxc has a fork of the compiler whose diagnostics are the functions in its `diagnostics.rs`. They differ from the
 //! compiler's in three ways:
@@ -194,7 +194,7 @@ fn is_reported_once(finding: &Finding) -> bool {
 
 fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Rendered {
     let category = finding.category;
-    // oxc's `diagnostic()`. The compiler's hints are dropped.
+    // oxc's `diagnostic()`. The compiler's hints are dropped, except for the one that `immutable_value` keeps.
     let mut out = Rendered {
         message: Cow::Owned(finding.reason.clone()),
         help: match &finding.description {
@@ -841,6 +841,14 @@ fn immutability<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
                      owned and pass an update callback, or use local state",
                 );
             }
+            // The hint to rename a ref, which the compiler gives for an assignment to `.current`.
+            let hint = finding.details.iter().find_map(|detail| match detail {
+                Detail::Hint { message } => Some(message),
+                Detail::Error { .. } => None,
+            });
+            if let Some(hint) = hint {
+                out.help = Cow::Owned(format!("{}\n\n{hint}", out.help));
+            }
             if let Some(variable) = out.text().strip_suffix(" cannot be modified")
                 && variable.starts_with('`')
             {
@@ -1101,15 +1109,43 @@ fn incompatible_library<'a>(file: &'a File<'a>, out: &mut Rendered) {
 }
 
 fn invariant(finding: &Finding, out: &mut Rendered) {
-    // `empty_goto`, which is never passed a span.
-    if finding.reason == "Unexpected empty block with `goto` terminal" {
-        out.labels.clear();
-    }
-    // `invariant_build_hir_lower_assignment_could_not_find_binding_declaration`
-    if finding.reason == "(BuildHIR::lowerAssignment) Could not find binding for declaration."
-        || finding.reason == "[PruneHoistedContexts] Unexpected hoisted function"
-    {
-        out.relabel("");
+    let description = finding.description.as_deref();
+    // Where the compiler has a description, oxc has it in the message.
+    let message = match (finding.reason.as_str(), description) {
+        // `empty_goto`, which is never passed a span.
+        ("Unexpected empty block with `goto` terminal", _) => {
+            out.labels.clear();
+            None
+        }
+        // `invariant_build_hir_lower_assignment_could_not_find_binding_declaration`
+        (
+            "(BuildHIR::lowerAssignment) Could not find binding for declaration."
+            | "[PruneHoistedContexts] Unexpected hoisted function",
+            _,
+        ) => {
+            out.relabel("");
+            None
+        }
+        // `invariant_single_predecessor_phi_has_multiple_operands`. The description is "2 operands in bb1".
+        (
+            "Found a block with a single predecessor but where a phi has multiple operands",
+            Some(description),
+        ) => strings::index_of(description.as_bytes(), b" operands in bb")
+            .and_then(|end| description.get(..end))
+            .map(|count| {
+                format!(
+                    "Found a block with a single predecessor but where a phi has multiple ({count}) operands"
+                )
+            }),
+        // `invariant_expected_node_all_identifiers`
+        (reason @ "Expected a node for all identifiers", Some(found)) => {
+            Some(format!("{reason}, {found}"))
+        }
+        _ => None,
+    };
+    if let Some(message) = message {
+        out.message = Cow::Owned(message);
+        out.help = Cow::Borrowed(default_help(ErrorCategory::Invariant));
     }
 }
 
@@ -1197,21 +1233,21 @@ fn todo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
     {
         let func = primary_span.and_then(|at| function_at(file, at));
         out.move_to(func.map(crate::program::diagnostic_span));
-    } else if reason
-        == "(BuildHIR::lowerExpression) Support UpdateExpression where argument is a global"
-    {
-        // oxc treats a variable of a function that encloses the compiled one as captured.
-        let variable = primary_span.and_then(|at| {
-            find(file, at, |node| match node.as_expr()?.kind() {
-                ExprKind::Unary { operand, .. } => operand.symbol(),
-                _ => None,
-            })
-        });
-        if variable.is_some_and(|it| it.scope().variable_scope().node().as_func().is_some()) {
-            out.message = Cow::Borrowed(
-                "(BuildHIR::lowerExpression) Handle UpdateExpression to variables captured within lambdas.",
-            );
-        }
+    } else if reason.starts_with("Support member expression chains longer than ") {
+        // `todo_member_expression_chain_too_long`
+        out.relabel("This member expression chain is too long");
+    } else if let Some(name) = between(
+        "Logical assignment to `const` variable ",
+        " is not supported",
+    ) {
+        // `todo_logical_assignment_to_const`
+        out.help = Cow::Owned(format!(
+            "Declare {name} with `let` if it may be assigned, or write a nullish/logical expression instead of a logical \
+             assignment"
+        ));
+        out.relabel(format!(
+            "Cannot compile logical assignment to const {name}"
+        ));
     } else if reason == LOCAL_FBT {
         // `local_fbt_variable`, which is passed the variable's declaration.
         out.relabel("Local variables named `fbt` are not supported");

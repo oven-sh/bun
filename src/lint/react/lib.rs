@@ -1,6 +1,7 @@
 //! The `react`, `react-perf`, `jsx-a11y` and `nextjs` rules, and the React Compiler's rules. With an oxlint config each
-//! rule is a port of oxlint 1.87's rule of the same name, otherwise of the ESLint plugin's rule: same options, same
-//! messages, same locations. The `react-perf`, `jsx-a11y` and `nextjs` rules only exist with an oxlint config.
+//! rule is a port of oxlint's rule of the same name, otherwise of the ESLint plugin's rule: same options, same
+//! messages, same locations. The React Compiler's rules follow oxlint 1.95, the other rules oxlint 1.87. The
+//! `react-perf`, `jsx-a11y` and `nextjs` rules only exist with an oxlint config.
 //! - https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License)
 //! - https://github.com/jsx-eslint/eslint-plugin-react (Copyright Yannick Croissant, MIT License),
 //!   https://github.com/cvazac/eslint-plugin-react-perf (Copyright Charles Vazac, MIT License),

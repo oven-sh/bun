@@ -150,6 +150,11 @@ pub struct EnvironmentConfig {
     /// What a function depends on ends before `.current`: `x.a` for the `x.a.current.b` that a callback reads. `x` can
     /// be a ref whose type is not known, and its scope would read it during render. Upstream takes the whole path.
     pub callback_dependencies_end_before_current: bool,
+    /// For a linter that wants neither a `Todo` nor an `Invariant`: what comes after the validations of the HIR runs
+    /// only for a function that has `useMemo` or `useCallback` in its own body, and its reactivity is inferred only
+    /// for that or for its own call of an effect hook. What the rest would throw then drops nothing that is recorded.
+    /// Upstream runs all of it, and what a pass throws is all that is said of the function.
+    pub unwanted_throws_are_not_looked_for: bool,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
@@ -223,6 +228,7 @@ impl Default for EnvironmentConfig {
             react_is_known_by_its_module: true,
             dependencies_are_sorted_by_bytes: false,
             callback_dependencies_end_before_current: false,
+            unwanted_throws_are_not_looked_for: false,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,

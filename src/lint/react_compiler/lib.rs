@@ -101,7 +101,12 @@ pub fn findings<'a>(file: &'a File<'a>, flavor: Flavor) -> &'a [Finding] {
                 let is_wanted = |it: &&Finding| wanted.has(it.category);
                 all.iter().filter(is_wanted).cloned().collect()
             };
-            let all = program::compile_program(file, flavor, Categories::ALL);
+            // oxlint leaves passes out if it wants nothing that they throw, and that changes what else it says.
+            let everything = match flavor == Flavor::Oxlint && !wanted.has_thrown() {
+                true => Categories::RECORDED,
+                false => Categories::ALL,
+            };
+            let all = program::compile_program(file, flavor, everything);
             debug_assert_eq!(only_wanted(&findings), only_wanted(&all));
         }
         (findings, wanted)

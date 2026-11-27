@@ -23,9 +23,12 @@
 use crate::collections::FxHashSet as HashSet;
 
 use crate::diagnostics::CompilerError;
-use crate::hir::ReactFunctionType;
 use crate::hir::environment::{Environment, OutputMode};
 use crate::hir::environment_config::{EnvironmentConfig, ExhaustiveEffectDepsMode};
+use crate::hir::{
+    InstructionValue, ReactFunctionType, is_use_effect_hook_type,
+    is_use_insertion_effect_hook_type, is_use_layout_effect_hook_type,
+};
 
 use crate::codegen::{self, Codegen, CodegenFunction, OutlinedFunction};
 use crate::collections::IndexMap;
@@ -584,11 +587,30 @@ pub(crate) fn run_analysis_passes(
         return Err(env.take_errors());
     }
 
+    let validates_static_components = env.enable_validations()
+        && env.config.validate_static_components
+        && env.output_mode == OutputMode::Lint;
+
     // Memoization to validate is followed by the other passes.
+    let mut is_rewritten = true;
     let is_reactivity_used = is_followed.is_none_or(|is_followed| {
-        env.config.validate_exhaustive_effect_dependencies != ExhaustiveEffectDepsMode::Off
-            || is_followed(hir, env)
+        let validates_effects =
+            env.config.validate_exhaustive_effect_dependencies != ExhaustiveEffectDepsMode::Off;
+        if !env.config.unwanted_throws_are_not_looked_for {
+            return validates_effects || is_followed(hir, env);
+        }
+        is_rewritten = is_followed(hir, env);
+        is_rewritten || (validates_effects && calls_effect_hook(hir, env))
     });
+
+    // oxc's order where the rest is left out: what the passes below throw does not drop this.
+    if !is_rewritten && validates_static_components {
+        context.logged.merge(pass!(
+            env,
+            "ValidateStaticComponents",
+            crate::validation::validate_static_components(hir)
+        ));
+    }
 
     if is_reactivity_used {
         pass!(
@@ -606,16 +628,17 @@ pub(crate) fn run_analysis_passes(
         )?;
     }
 
+    if !is_rewritten {
+        return Ok(());
+    }
+
     pass!(
         env,
         "RewriteInstructionKindsBasedOnReassignment",
         crate::ssa::rewrite_instruction_kinds_based_on_reassignment(hir, env)
     )?;
 
-    if env.enable_validations()
-        && env.config.validate_static_components
-        && env.output_mode == OutputMode::Lint
-    {
+    if validates_static_components {
         context.logged.merge(pass!(
             env,
             "ValidateStaticComponents",
@@ -624,6 +647,24 @@ pub(crate) fn run_analysis_passes(
     }
 
     Ok(())
+}
+
+/// oxc's `calls_effect_hook`: whether the function itself calls an effect hook, by the type of what it calls.
+fn calls_effect_hook(hir: &crate::hir::HirFunction, env: &Environment) -> bool {
+    hir.instructions.iter().any(|instruction| {
+        let callee = match &instruction.value {
+            InstructionValue::CallExpression { callee, .. } => callee,
+            InstructionValue::MethodCall { property, .. } => property,
+            _ => return false,
+        };
+        (env.identifiers.get(callee.identifier.0 as usize))
+            .and_then(|it| env.types.get(it.type_.0 as usize))
+            .is_some_and(|ty| {
+                is_use_effect_hook_type(ty)
+                    || is_use_layout_effect_hook_type(ty)
+                    || is_use_insertion_effect_hook_type(ty)
+            })
+    })
 }
 
 /// The passes from the inference of reactive scopes to the last validation, which is of the

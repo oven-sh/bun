@@ -37,6 +37,10 @@ pub struct Categories(u32);
 
 impl Categories {
     pub const ALL: Categories = Categories(u32::MAX);
+    /// All but those that a pass throws.
+    pub const RECORDED: Categories = Categories(
+        u32::MAX & !(1 << ErrorCategory::Todo as u32) & !(1 << ErrorCategory::Invariant as u32),
+    );
 
     #[must_use]
     pub fn with(self, category: ErrorCategory) -> Categories {
@@ -64,6 +68,9 @@ enum LatePasses {
     /// to before it. Their invariants are not looked for.
     AlsoForTodos,
     Always,
+    /// oxc's `lint_skip_reactive_scope_passes`: only where the function has manual memoization of its own, whatever
+    /// is recorded.
+    ForOwnMemoization,
 }
 
 impl LatePasses {
@@ -76,6 +83,9 @@ impl LatePasses {
         };
         match self {
             LatePasses::Always => true,
+            LatePasses::ForOwnMemoization => {
+                (hir.instructions.iter()).any(|it| is_start_of_memoization(&it.value))
+            }
             LatePasses::WhereTheyCount(wanted) => {
                 let validates_memoization = wanted.has(ErrorCategory::PreserveManualMemo)
                     || wanted.has(ErrorCategory::MemoDependencies);
@@ -103,6 +113,7 @@ pub fn lint_function(
 ) -> Linted {
     let wants_thrown = wanted.has_thrown();
     let late_passes = match wants_thrown {
+        false if config.unwanted_throws_are_not_looked_for => LatePasses::ForOwnMemoization,
         _ if is_more_recorded => LatePasses::Always,
         true => LatePasses::AlsoForTodos,
         false => LatePasses::WhereTheyCount(wanted),

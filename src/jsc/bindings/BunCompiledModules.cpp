@@ -573,8 +573,6 @@ static std::optional<AOT::ModuleID> compiledModuleForRequest(Zig::GlobalObject* 
         return std::nullopt;
     if (auto form = way == AOT::LoadKind::Import ? AOT::moduleFormOf(globalObject, *module) : AOT::loadedModuleForm(globalObject, *module))
         module = form;
-    if (way == AOT::LoadKind::Require)
-        AOT::willRequireAgain(globalObject, *module);
     BunString pathArgument = Bun::toString(path);
     auto startedBy = Bun__AOT__isMainModule(globalObject, &pathArgument) ? AOT::StartedBy::Host : AOT::StartedBy::Code;
     if (AOT::delegatesModuleToHost(globalObject, *module, startedBy)) {

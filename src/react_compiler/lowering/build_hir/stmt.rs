@@ -189,6 +189,9 @@ fn lower_block_statement_inner(
             }
         }
     }
+    if builder.environment().config.jsx_tags_hoist_no_declaration {
+        hoist.sort_by_key(|it| (it.before, it.first_ref.order));
+    }
 
     let mut h = 0;
     for (i, body_stmt) in body.iter().enumerate() {
@@ -206,7 +209,7 @@ fn lower_block_statement_inner(
                 builder.resolve_identifier(target, id_loc)?
             {
                 let loc = match builder.environment().config.jsx_tags_hoist_no_declaration {
-                    true => convert_loc(hoisted.first_ref),
+                    true => convert_loc(hoisted.first_ref.loc),
                     false => id_loc,
                 };
                 let place = Place {
@@ -278,22 +281,29 @@ struct Hoist {
     target: Ref,
     name_loc: ast::Loc,
     /// Of those of the statement that declare it early.
-    first_ref: ast::Loc,
+    first_ref: FirstRef,
     kind: InstructionKind,
+}
+
+#[derive(Clone, Copy)]
+struct FirstRef {
+    loc: ast::Loc,
+    /// Among all the references of the block, in the order of the source. A `Loc` is not always an offset.
+    order: u32,
 }
 
 /// Where one statement first refers to a binding.
 #[derive(Default, Clone, Copy)]
 struct FirstRefs {
-    first: Option<ast::Loc>,
-    first_in_function: Option<ast::Loc>,
+    first: Option<FirstRef>,
+    first_in_function: Option<FirstRef>,
 }
 
 impl FirstRefs {
-    fn see(&mut self, loc: ast::Loc, in_function: bool) {
-        self.first = self.first.or(Some(loc));
+    fn see(&mut self, at: FirstRef, in_function: bool) {
+        self.first = self.first.or(Some(at));
         if in_function {
-            self.first_in_function = self.first_in_function.or(Some(loc));
+            self.first_in_function = self.first_in_function.or(Some(at));
         }
     }
 }
@@ -313,6 +323,8 @@ struct ForwardRefs {
     last_decl: HashMap<Ref, usize>,
     has_functions: bool,
     seen: HashMap<Ref, SeenRef>,
+    /// How many references [`Self::see`] was given.
+    count: u32,
 }
 
 impl ForwardRefs {
@@ -325,15 +337,18 @@ impl ForwardRefs {
         in_function: bool,
         in_pattern: bool,
     ) {
+        let order = self.count;
+        self.count += 1;
         if !in_function && !self.has_functions {
             return;
         }
         let target = builder.resolve_ref(r);
         if self.last_decl.get(&target).is_some_and(|&decl| decl >= at) {
+            let first = FirstRef { loc, order };
             let seen = self.seen.entry(target).or_default();
-            seen.anywhere.see(loc, in_function);
+            seen.anywhere.see(first, in_function);
             if !in_pattern {
-                seen.outside_patterns.see(loc, in_function);
+                seen.outside_patterns.see(first, in_function);
             }
         }
     }
@@ -512,6 +527,9 @@ fn refs_in_properties(
 }
 
 fn refs_in_class(builder: &HirBuilder, class: &G::Class, in_function: bool, on_ref: OnRef) {
+    if builder.environment().config.jsx_tags_hoist_no_declaration {
+        return;
+    }
     if let Some(e) = &class.extends {
         refs_in_expr(builder, e, in_function, on_ref);
     }

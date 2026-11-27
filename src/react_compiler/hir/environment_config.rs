@@ -185,6 +185,9 @@ pub struct EnvironmentConfig {
     /// reference, in a nested function either, so `<Foo />` before `function Foo() {}` reads `Foo` before it is
     /// defined. And the early declaration is where the first such reference is. So it is upstream. Bun's lowering
     /// takes a tag for a reference, as `Foo()` is one, and has the early declaration at the declared name.
+    /// What one statement declares early is in the order of those first references, as upstream. Bun's lowering has
+    /// it in the order of the declarations. And nothing in a class is such a reference, not what it extends and not
+    /// its members: that is oxc, whose index of references has none of a class. Upstream and Bun's lowering see them.
     pub jsx_tags_hoist_no_declaration: bool,
     /// For `infer_types`: an arithmetic or relational operator says nothing of the type of its operands, so `x` in
     /// `x - 1` can still be an object that is written to elsewhere. To upstream both operands are primitives wherever

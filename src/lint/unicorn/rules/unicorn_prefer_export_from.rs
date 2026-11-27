@@ -35,8 +35,10 @@ impl Rule for PreferExportFrom {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        // There's no `export source a from "a"`.
         if let Some(import_decl) = statement.as_import()
             && !import_decl.is_side_effect()
+            && !import_decl.is_source_phase()
         {
             self.check_re_export(import_decl, cx);
         }

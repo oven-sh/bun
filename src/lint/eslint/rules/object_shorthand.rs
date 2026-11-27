@@ -309,8 +309,8 @@ impl ObjectShorthand {
                     KeyKind::String(key) if key == name && !self.avoids_quotes => true,
                     _ => return None,
                 };
-                // A JSDoc type annotation would be lost.
-                let has_type_annotation = file.comments_in(prop).any(|comment| {
+                // A JSDoc type annotation would be lost. ESLint 8 doesn't look.
+                let has_type_annotation = file.language().eslint_major >= 9 && file.comments_in(prop).any(|comment| {
                     let value = comment.comment_value();
                     let start = if is_quoted {
                         value

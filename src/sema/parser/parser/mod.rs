@@ -158,7 +158,7 @@ file_lists! {
     jsx_expressions, body_starts, specifier_uses,
     decorators, modifiers_of_params, modifiers_of_stmts, modifiers_of_props, with_bodies, detached_semicolons,
     import_attributes,
-    deferred_import_calls, import_call_type_args, keyword_identifier_positions, comments,
+    import_call_type_args, keyword_identifier_positions, comments,
     mentioned, diagnostics, after_skipped, stray_decorators,
     specifier_expressions, exports_from_expressions,
     expr_flags, template_parts, template_part_starts, jsx_attribute_texts, export_star_attributes,
@@ -324,7 +324,6 @@ struct Harvest<'a> {
     lx: Lexer<'a>,
     stacks: Stacks,
     declared: Declared,
-    ahead: ahead::Ahead,
     end: (u32, u32),
     has_top_level_await: bool,
     has_plain_top_level_await: bool,
@@ -357,7 +356,7 @@ pub(crate) fn run<'a>(
             scratch.names.begin_own(len.min(1 << 12));
         }
     }
-    let jsdoc = jsdoc::State::new(&options, atoms.is_some(), scratch.jsdoc_wanted);
+    let jsdoc = jsdoc::State::new(&options, atoms.is_some(), scratch.reads_typescript_jsdoc);
     let atoms = atoms.unwrap_or(&crate::names::NoInterner);
     let mut file = *scratch.recycled.take().unwrap_or_default();
     file.clear();
@@ -375,14 +374,13 @@ pub(crate) fn run<'a>(
     lx.comments = std::mem::take(&mut file.comments);
     let is_compiled_javascript = options.compiles && lx.is_ecmascript;
     let is_flow = options.dialect.flow && options.is_javascript && !options.is_json;
-    let is_general = options.recovers || jsdoc.wanted != 0 || is_flow;
+    let is_general = options.recovers || jsdoc.reads || is_flow;
 
     let Harvest {
         file: mut f,
         lx,
         stacks,
         declared,
-        ahead,
         end,
         has_top_level_await,
         has_plain_top_level_await,
@@ -455,7 +453,6 @@ pub(crate) fn run<'a>(
         has_top_level_await,
         names_await_at_top_level,
         end,
-        tags_in_first_comments: (ahead.tags, ahead.comments_read),
     })
 }
 
@@ -545,7 +542,8 @@ pub(crate) fn run_appended(
         lx.start_at(expression.start);
         lx.set_src(text.get(..expression.end as usize).unwrap_or(text));
         set_language(&mut lx, &options);
-        let jsdoc = jsdoc::State::new(&options, true, 0);
+        let (has_interner, reads_typescript) = (true, false);
+        let jsdoc = jsdoc::State::new(&options, has_interner, reads_typescript);
         let mut parser = Parser::<false, false>::new(lx, file, stacks, declared, options, jsdoc);
         if expression.is_strict {
             parser.context |= ctx::STRICT;
@@ -702,7 +700,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             class_depth: 0,
             options,
             recovers: options.recovers,
-            reads_jsdoc: jsdoc.wanted != 0,
+            reads_jsdoc: jsdoc.reads,
             jsdoc,
             comments: comments::CommentTracker::default(),
             lists: 0,
@@ -777,7 +775,6 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             lx: self.lx,
             stacks: self.s,
             declared: self.declared,
-            ahead: self.ahead,
             end: self.end,
             has_top_level_await: self.has_top_level_await,
             has_plain_top_level_await: self.has_plain_top_level_await,

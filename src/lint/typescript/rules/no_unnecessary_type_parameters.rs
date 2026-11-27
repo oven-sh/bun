@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::is_type_reference;
 use bun_lint::types::{IdMap, IdSet, Signature, SyntaxKind, TsNode, Type, TypeFlags, TypeStructure};
@@ -69,14 +70,72 @@ fn is_identifier_of_type_node(reference: Reference) -> bool {
     }
 }
 
+/// Where `name` is a type in `text`, which starts at `offset`. Not the `T` in `T.Member`, `typeof T`, `"T"`, or a key as
+/// in `{ T: string }`.
+fn type_names_in<'a>(text: &'a [u8], offset: u32, name: &'a [u8]) -> impl Iterator<Item = Span> + 'a {
+    let is_part_of_name = |byte: &u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | 0x80..);
+    let mut from = 0;
+    let found = std::iter::from_fn(move || {
+        let at = from + strings::index_of(text.get(from..)?, name)?;
+        from = at + name.len().max(1);
+        Some(at)
+    });
+    found.filter_map(move |at| {
+        let (before, after) = (text.get(..at)?, text.get(at + name.len()..)?);
+        if before.last().is_some_and(is_part_of_name) || after.first().is_some_and(is_part_of_name) {
+            return None;
+        }
+        let (before, after) = (before.trim_ascii_end(), after.trim_ascii_start());
+        let is_key = match after {
+            // `A extends B ? T : never`
+            [b':', ..] => before.last() != Some(&b'?'),
+            [b'?', rest @ ..] => rest.trim_ascii_start().starts_with(b":"),
+            [b'(', ..] => true,
+            _ => false,
+        };
+        let is_type = (!matches!(before.last(), Some(b'.' | b'"' | b'\'')) || before.ends_with(b"..."))
+            && !after.starts_with(b".")
+            && !is_key
+            && !before.ends_with(b"typeof");
+        let start = offset + u32::try_from(at).ok()?;
+        is_type.then(|| Span::new(start, start + name.len() as u32))
+    })
+}
+
+/// tsgolint also walks the `/** */` comments in front of a declaration. TypeScript parses the `{}` of these tags as a
+/// type, so a type parameter in there is a reference like any other.
+fn references_in_jsdoc<'a>(declaration: TsNode<'a>, file: &'a File<'a>, name: &'a [u8]) -> impl Iterator<Item = Span> + 'a {
+    // A comment in front of a function type belongs to whatever the type is in.
+    let has_comments = !matches!(declaration.kind(), SyntaxKind::FunctionType | SyntaxKind::ConstructorType);
+    // A comment on the line of the token before it belongs to that token, except in front of these.
+    let mut is_leading = matches!(declaration.kind(), SyntaxKind::FunctionExpression | SyntaxKind::ArrowFunction);
+    let comments = file.comments_before(declaration.span()).filter(move |it| {
+        let before = file.text().get(..it.start() as usize).unwrap_or_default();
+        let code = before.trim_ascii_end();
+        is_leading |= code.is_empty() || strings::contains_char(&before[code.len()..], b'\n');
+        has_comments && is_leading
+    });
+    let tags = comments.filter_map(|it| file.jsdoc().at(it.start())).flat_map(|it| it.tags());
+    let types = tags.filter_map(|tag| match tag.kind.parsed() {
+        b"param" | b"arg" | b"argument" | b"returns" | b"return" | b"type" | b"this" | b"throws" | b"exception"
+        | b"satisfies" | b"typedef" | b"template" | b"implements" | b"augments" | b"extends" => tag.type_comment().0,
+        _ => None,
+    });
+    types.flat_map(move |it| type_names_in(it.raw(), it.span.start, name))
+}
+
 fn is_type_parameter_repeated_in_ast<'a>(
     node: TypeParam<'a>,
     references: impl Iterator<Item = Reference<'a>>,
     start_of_body: u32,
-    is_oxlint: bool,
+    in_jsdoc: Option<usize>,
 ) -> bool {
     let definition = node.span();
-    let mut total = 0;
+    let is_oxlint = in_jsdoc.is_some();
+    let mut total = in_jsdoc.unwrap_or(0);
+    if total >= 2 {
+        return true;
+    }
     for reference in references {
         let identifier = reference.span();
         // These don't count: anything inside the type parameter's definition, anything outside the signature, and a
@@ -439,6 +498,7 @@ fn replace_usages_with_constraint<'a>(
 
 fn check_node<'a>(
     cx: &mut Cx<'a, NoUnnecessaryTypeParameters>,
+    declaration: TsNode<'a>,
     type_parameters: List<'a, TypeParam<'a>>,
     start_of_body: u32,
     descriptor: &'static str,
@@ -451,10 +511,13 @@ fn check_node<'a>(
         };
         // If it's written several times, there's no need to look at the types.
         let is_oxlint = cx.language().is_oxlint;
-        if is_type_parameter_repeated_in_ast(type_parameter, variable.references(), start_of_body, is_oxlint) {
+        let name = type_parameter.name();
+        let file = cx.file();
+        let in_jsdoc = || references_in_jsdoc(declaration, file, name.bytes());
+        let count_in_jsdoc = is_oxlint.then(|| in_jsdoc().count());
+        if is_type_parameter_repeated_in_ast(type_parameter, variable.references(), start_of_body, count_in_jsdoc) {
             continue;
         }
-        let name = type_parameter.name();
         // Inferred types need the type checker.
         let counts = counts.get_or_insert_with(|| count_type_parameter_usage(&mut cx.state));
         // tsgolint counts by symbol, which a class shares with an interface of the same name.
@@ -473,8 +536,9 @@ fn check_node<'a>(
         // oxlint points at the first use.
         let report_span = match is_oxlint {
             true => {
-                let in_ast = variable.references().find(|&reference| is_identifier_of_type_node(reference));
-                in_ast.map_or_else(|| name.span(), |reference| reference.span())
+                let in_ast = || variable.references().find(|&reference| is_identifier_of_type_node(reference));
+                let first = in_jsdoc().next().or_else(|| in_ast().map(|reference| reference.span()));
+                first.unwrap_or_else(|| name.span())
             }
             false => type_parameter.span(),
         };
@@ -523,7 +587,7 @@ impl Rule for NoUnnecessaryTypeParameters {
             FnBody::Expr(body) => Some(body.span().start),
             FnBody::None => node.return_type().map(|return_type| return_type.annotation_span().end),
         };
-        check_node(cx, type_parameters, start_of_body.unwrap_or(u32::MAX), "function", |known| {
+        check_node(cx, node.ts_node(), type_parameters, start_of_body.unwrap_or(u32::MAX), "function", |known| {
             let ts_node = node.ts_node();
             let State { counts_by_type, without_type_parameters } = known;
             let mut count = || {
@@ -548,7 +612,7 @@ impl Rule for NoUnnecessaryTypeParameters {
             return;
         }
         let is_oxlint = cx.language().is_oxlint;
-        check_node(cx, type_parameters, node.body_span().start, "class", |known| {
+        check_node(cx, node.ts_node(), type_parameters, node.body_span().start, "class", |known| {
             let (mut counts, known) = (Counts::default(), &mut known.without_type_parameters);
             for type_parameter in type_parameters {
                 collect_type_parameter_usage_counts(type_parameter.ts_node(), &mut counts, true, known);

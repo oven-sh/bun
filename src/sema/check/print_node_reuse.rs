@@ -21,6 +21,27 @@ pub(super) struct SerializeTypeOptions {
     pub(super) is_optional_reverse_mapped: bool,
 }
 
+/// True if checking `node` resolves a call. A function's body isn't checked with the function.
+/// A chain of binary operators is as deep as it's long, so the walk doesn't recurse.
+fn resolves_a_call(hir: &File, node: hir::Node) -> bool {
+    let mut pending = vec![node];
+    while let Some(node) = pending.pop() {
+        match hir.kind(node) {
+            Kind::CallExpression | Kind::NewExpression | Kind::TaggedTemplateExpression => {
+                return true;
+            }
+            kind if kind.is_function_like() => {}
+            _ => {
+                hir.for_each_child(node, &mut |child| {
+                    pending.push(child);
+                    false
+                });
+            }
+        }
+    }
+    false
+}
+
 impl<'p> Printer<'_, 'p, '_> {
     /// `b.ctx.enclosingDeclaration != nil`. True if a declaration's type is derived from its syntax.
     fn reuses_nodes(&self) -> bool {
@@ -537,9 +558,21 @@ impl<'p> Printer<'_, 'p, '_> {
         declaration: hir::Node,
         try_reuse: bool,
     ) -> Node {
-        let Some(ty) = self.c.iso_type_of_declared(file, declaration) else {
+        let Some(mut ty) = self.c.iso_type_of_declared(file, declaration) else {
             return Node::simple(b"any");
         };
+        // The symbol that a property assignment declares isn't the property of the object literal's type.
+        // `getTypeOfSymbol` checks the initializer again, now. Only an error type gets here with another context.
+        // `getResolvedSignature` keeps the signature of a call, so a call that failed returns the error type again. The
+        // task of another file would resolve it again, so an initializer with a call in it keeps its type.
+        if ty == TypeId::ERROR
+            && let NodeData::Prop(p) = self.c.hir(file).data(declaration)
+            && self.c.hir(file)[p].kind == PropKind::Init
+            && !resolves_a_call(self.c.hir(file), declaration)
+        {
+            let initializer = self.c.hir(file)[p].value;
+            ty = self.c.check_expression_anew(file, initializer);
+        }
         let ty = self.c.widen_literal(ty);
         let ty = self.c.instantiate(ty, self.mapper);
         self.serialize_type_for_declaration(
@@ -1004,7 +1037,7 @@ impl<'p> Printer<'_, 'p, '_> {
         else {
             return None;
         };
-        let target = files.module_of_specifier_as(file, spec, files.mode_of_import(file, mode))?;
+        let target = files.module_of_import_type(file, node)?;
         // `tryGetResolvedSymbolFromTypeNode`
         let mut resolved = Some(files.module_value(target));
         for part in hir.texts(name) {
@@ -1188,7 +1221,13 @@ impl<'p> Printer<'_, 'p, '_> {
                             Some(rest) if rest.iter().find(is_quote) == Some(&b'\'') => b'\'',
                             _ => b'"',
                         };
-                        quoted(self.c.atoms().bytes(spec), quote, false)
+                        let written = self.c.atoms().bytes(spec);
+                        match self.rewrite_content_mapped_module_specifier(written) {
+                            // The node builder creates a new literal. The transformer copies the flags of the old one.
+                            Some(name) if !self.is_transformer => self.string_literal(&name, b'"'),
+                            Some(name) => quoted(&name, quote, false),
+                            None => quoted(written, quote, false),
+                        }
                     }
                 };
                 let mut text = cat!(query, b"import(", specifier, attributes, b")");
@@ -1396,6 +1435,23 @@ impl<'p> Printer<'_, 'p, '_> {
                         && is_dynamic_name(hir, name)
                         && !(self.c.is_late_bound(file, m) && is_entity_name_expression(hir, name))
                     {
+                        continue;
+                    }
+                    // `omitPrivateMethodType`: emitted once, regardless of its overloads.
+                    if self.is_transformer
+                        && hir[m].kind == MemberKind::Method
+                        && hir[m].flags.contains(Flags::PRIVATE)
+                    {
+                        let files = self.c.files();
+                        let symbol = self.c.bound(file).member_symbol[m.idx()];
+                        if symbol.is_none()
+                            || files.decls_of(files.sym(file, symbol)).first()
+                                == Some(&(file, Decl::Member(m)))
+                        {
+                            let comments = self.comments_before(file, hir.node(m));
+                            let name = self.property_key_text(file, hir.name(hir.node(m)));
+                            elements.push(cat!(comments, b"private ", name, b";"));
+                        }
                         continue;
                     }
                     let outer_scope = hir[m]
@@ -1968,9 +2024,9 @@ impl<'p> Printer<'_, 'p, '_> {
         };
         let names: Vec<Atom> = hir.texts(name).collect();
         let &first = names.first()?;
-        // The node builder replaces a reference whose name is missing. `transformTypeReference`
+        // The node builder replaces a reference whose whole name is missing. `transformTypeReference`
         // leaves it unchanged, and it is printed as nothing.
-        if !self.is_transformer && names.contains(&known::empty) {
+        if !self.is_transformer && names[..] == [known::empty] {
             return Some(Node::simple(b"any"));
         }
         let scope = self.c.bound(file).type_scope[node.idx()];

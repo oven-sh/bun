@@ -201,6 +201,8 @@ pub enum PollTag {
     LifecycleScript,
     InstallGit,
     SecurityScanReader,
+    ContentMapperReader,
+    ContentMapperWriter,
 }
 
 /// The receiver of an [`IoEvent`]. Safe to build: `set_owner` and `OwnedFilePoll::new` carry the contract.

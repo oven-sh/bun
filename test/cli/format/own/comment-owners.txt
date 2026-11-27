@@ -109,6 +109,15 @@ casts/object-in-a-cast-behind-a-logical-operator.js
 142 158 L ParenthesizedExpression 159 247 -
 268 284 L ParenthesizedExpression 285 356 -
 374 390 L ParenthesizedExpression 391 395 -
+casts/operand-of-a-unary-operator.js
+6 40 L CallExpression 41 58 -
+69 87 L MemberExpression 88 109 -
+120 138 L MemberExpression 139 144 -
+149 167 L MemberExpression 168 173 -
+178 196 L MemberExpression 197 202 -
+211 229 L ParenthesizedExpression 230 233 -
+241 259 L MemberExpression 260 265 -
+272 290 L CallExpression 291 299 -
 casts/right-side-of-for-of.js
 20 42 L ParenthesizedExpression 43 81 -
 47 70 L ParenthesizedExpression 71 79 -

@@ -311,7 +311,8 @@ impl<'a> Func<'a> {
     /// Its `yield` expressions, excluding those in nested functions.
     pub fn yields(self) -> impl Iterator<Item = Expr<'a>> + 'a {
         let file = self.file;
-        let list = (file.bound.fns.get(self.id.idx())).map_or(hir::IdList::EMPTY, |f| f.yields);
+        let found = file.bound.yields.binary_search_by_key(&self.id, |it| it.0);
+        let list = found.map_or(hir::IdList::EMPTY, |at| file.bound.yields[at].1);
         let ids = file.bound.ids.get(list.range()).unwrap_or_default();
         ids.iter().map(move |&e| Expr::new(file, hir::ExprId(e)))
     }
@@ -1491,6 +1492,12 @@ impl<'a> Module<'a> {
         List::ids(self.file, self.raw().body)
     }
 
+    /// The `{ type: "css" }` of `declare module "*.css" with { type: "css" } { }`, a type literal.
+    #[inline]
+    pub fn attributes(self) -> Option<TypeNode<'a>> {
+        TypeNode::in_source(self.file, self.raw().attributes)
+    }
+
     /// False for `declare module "m";`.
     #[inline]
     pub fn has_body(self) -> bool {
@@ -1518,10 +1525,11 @@ impl<'a> Module<'a> {
     pub fn body_span(self) -> Option<Span> {
         let last = self.innermost();
         last.has_body().then(|| {
-            Span::new(
-                skip_trivia(self.file.text(), last.name_span().end),
-                last.span().end,
-            )
+            let before = match last.attributes() {
+                Some(attributes) => attributes.span().end,
+                None => last.name_span().end,
+            };
+            Span::new(skip_trivia(self.file.text(), before), last.span().end)
         })
     }
 
@@ -1604,17 +1612,15 @@ impl<'a> Import<'a> {
         self.raw().type_only
     }
 
-    /// `import defer ..`
+    /// `import source ..`
     #[inline]
-    pub fn is_deferred(self) -> bool {
-        self.phase() == Some("defer")
+    pub fn is_source_phase(self) -> bool {
+        self.raw().phase == hir::ImportPhase::Source
     }
 
     /// `"defer"` for `import defer ..`, `"source"` for `import source ..`.
     pub fn phase(self) -> Option<&'static str> {
-        let raw = self.raw();
-        raw.is_deferred
-            .then(|| self.file.phase_at(raw.clause_start))
+        super::expr::phase_name(self.raw().phase)
     }
 
     /// `import "spec"`

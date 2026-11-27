@@ -220,7 +220,10 @@ impl TypeLinks {
     #[inline]
     fn with_fixed_mapper(&self, mapper: FixedMapper, ty: TypeId) -> u32 {
         match self.fixed_mapper_rows.get(ty) {
-            0 => 0,
+            0 => {
+                cold_path();
+                0
+            }
             row => self.with_fixed_mappers[row as usize - 1][mapper as usize],
         }
     }
@@ -335,6 +338,7 @@ impl<'p, 's> Checker<'p, 's> {
         is_settled: impl FnOnce(&Self, &V) -> bool,
     ) -> (V, Option<Stored>) {
         if !self.index_infos_in_instantiation.is_empty() || self.is_innermost_tainted() {
+            cold_path();
             self.links.uncached_derivations += 1;
             return (derive(self), None);
         }

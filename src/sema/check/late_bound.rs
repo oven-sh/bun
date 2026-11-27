@@ -333,6 +333,7 @@ impl<'p, 's> Checker<'p, 's> {
             _ => files.decls_of(sym),
         };
         let Some(&(file, first)) = declarations.first() else {
+            cold_path();
             return (property.flags, None, List::default());
         };
         let bound = match file == sym.file {
@@ -342,6 +343,7 @@ impl<'p, 's> Checker<'p, 's> {
         let early = bound.symbol_of_declaration(first);
         match self.late_bound_symbol_among(file, first, bound, early) {
             Some((late, symbol)) => {
+                cold_path();
                 let symbol = &late.symbols[symbol];
                 let declarations = list_of_declarations(&symbol.declarations);
                 (symbol.flags, symbol.value_declaration, declarations)

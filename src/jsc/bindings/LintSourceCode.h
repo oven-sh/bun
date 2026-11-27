@@ -45,6 +45,7 @@ struct LintSourceCodeState {
         visitor.append(program);
         visitor.append(scopeManager);
         visitor.append(parserOptions);
+        visitor.append(typedServices);
         visitor.append(scopeManagerOfOxlint);
         visitor.append(lines);
         visitor.append(lineStartIndices);
@@ -78,6 +79,7 @@ struct LintSourceCodeState {
     JSC::WriteBarrier<JSC::JSObject> program;
     JSC::WriteBarrier<JSC::JSObject> scopeManager;
     JSC::WriteBarrier<JSC::JSObject> parserOptions;
+    JSC::WriteBarrier<JSC::JSObject> typedServices;
     // oxlint's `sourceCode.scopeManager`, which is one object for all files. To read it analyzes nothing.
     JSC::WriteBarrier<JSC::JSObject> scopeManagerOfOxlint;
 

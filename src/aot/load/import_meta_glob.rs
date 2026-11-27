@@ -7,10 +7,10 @@ use bun_sema::atom::{Atom, Interner};
 use bun_sema::check::spans::skip_trivia_back;
 use bun_sema::hir::{
     Call, CallId, Chain, ExprId, ExprKind, File, FileBuilder, Flags, FnBody, FnKind, Func,
-    FunctionWrittenByLoader, Import, ImportEquals, ImportEqualsTarget, ImportId, ImportSpec,
-    Keyword, ListAt, NameKind, Param, ParamId, PatKind, Prop, PropKey, PropKind, ResolutionMode,
-    Span, SpecifierKind, SpecifierUse, StmtId, StmtKind, TextRange, TextWrittenByLoader,
-    TypeNodeId, TypeNodeKind, rare, start_of,
+    FunctionWrittenByLoader, Import, ImportEquals, ImportEqualsTarget, ImportId, ImportPhase,
+    ImportSpec, Keyword, ListAt, NameKind, Param, ParamId, PatKind, Prop, PropKey, PropKind,
+    ResolutionMode, Span, SpecifierKind, SpecifierUse, StmtId, StmtKind, TextRange,
+    TextWrittenByLoader, TypeNodeId, TypeNodeKind, rare, start_of,
 };
 use bun_sema::resolve::{EarlyTransformRequest, TreeChange};
 use bun_sema::session::Arena;
@@ -249,7 +249,8 @@ impl Writer<'_, '_> {
         }
         self.written += ")";
         let args = self.file.list(&args);
-        let mut value = self.expression(ExprKind::ImportCall { args });
+        let phase = ImportPhase::Evaluation;
+        let mut value = self.expression(ExprKind::ImportCall { args, phase });
         if !files.import.is_empty() {
             value = self.then_export(value, &files.import);
         }
@@ -312,7 +313,7 @@ impl Writer<'_, '_> {
             named,
             has_named_imports: !is_namespace,
             type_only: false,
-            is_deferred: false,
+            phase: ImportPhase::Evaluation,
             mode: ResolutionMode::None,
             stmt: StmtId::NONE,
             attributes,

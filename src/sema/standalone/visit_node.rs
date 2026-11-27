@@ -33,9 +33,16 @@ impl Checker<'_, '_> {
             if node != Node::FILE && hir.is_in_jsdoc(start) {
                 continue;
             }
+            // `IsNameOfHeritageClauseTypeReference`
+            let is_qualified_name_in_heritage_clause = hir.kind(node) == Kind::QualifiedName && {
+                let reference =
+                    hir.find_ancestor(node, |above| hir.kind(above) != Kind::QualifiedName);
+                hir.kind(hir.parent(reference)) == Kind::HeritageClause
+            };
             if (hir.is_expression_node(node)
                 || hir.kind(node) == Kind::Identifier
-                || hir.is_declaration_name(node))
+                || hir.is_declaration_name(node)
+                || is_qualified_name_in_heritage_clause)
                 && let Some(kind) =
                     self.visited_kind(file, node, &|decl| symbols.get(&decl).copied())
             {
@@ -104,7 +111,7 @@ impl Checker<'_, '_> {
             | VisitedKind::Parenthesized(e, _)
             | VisitedKind::AccessName(e)
             | VisitedKind::ModuleSpecifier(e)
-            | VisitedKind::ImportDeferName(e)
+            | VisitedKind::ImportPhaseName(e)
             | VisitedKind::ConstOfAsConst(e)
             | VisitedKind::JsxIntrinsicTagName(e, _) => self.enclosing_scope_of_expr(file, e),
             VisitedKind::DeclarationName(decl, _) | VisitedKind::SpecifierPropertyName(decl, _) => {
@@ -130,7 +137,7 @@ impl Checker<'_, '_> {
             | VisitedKind::LiteralTypeOperand(node)
             | VisitedKind::TypeReferenceName(node, _)
             | VisitedKind::HeritageClauseName(node, _)
-            | VisitedKind::HeritageClausePropertyAccess(node, _)
+            | VisitedKind::HeritageClauseQualifiedName(node, _)
             | VisitedKind::ImportTypeQualifierName(node, _)
             | VisitedKind::TypePredicateParameter(node) => {
                 or_file_scope(bound.type_scope[node.idx()])

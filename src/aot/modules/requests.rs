@@ -968,9 +968,9 @@ fn diagnostic_node(hir: &hir::File<'_>, site: &ImportSite) -> NodeData {
 }
 
 pub(super) fn import_phase(hir: &hir::File<'_>, import: ImportId) -> ImportPhase {
-    match hir[import].is_deferred {
-        true => ImportPhase::Defer,
-        false => ImportPhase::Evaluation,
+    match hir[import].phase {
+        hir::ImportPhase::Evaluation => ImportPhase::Evaluation,
+        hir::ImportPhase::Defer | hir::ImportPhase::Source => ImportPhase::Defer,
     }
 }
 
@@ -981,7 +981,7 @@ pub(super) fn import_call_type_kind(
     call: ExprId,
 ) -> Option<ImportTypeKind> {
     let has_options = match hir[call].kind {
-        ExprKind::ImportCall { args } => args.len() > 1,
+        ExprKind::ImportCall { args, .. } => args.len() > 1,
         _ => true,
     };
     if !has_options {

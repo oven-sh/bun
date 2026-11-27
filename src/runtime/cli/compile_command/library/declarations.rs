@@ -55,7 +55,7 @@ pub(crate) fn add_declaration_files(
         if !has_javascript(&declaration.source) {
             continue;
         }
-        let Some(path) = declaration_path(root_directory, &declaration.source) else {
+        let Some(path) = path_below(root_directory, &declaration.beside_source) else {
             return Err(OutsideRootDirectory {
                 source: declaration.source,
                 root_directory: root_directory.to_vec(),
@@ -76,14 +76,19 @@ pub(crate) fn add_declaration_files(
 }
 
 pub(super) fn declaration_path(root_directory: &[u8], source: &[u8]) -> Option<Vec<u8>> {
-    let relative = Path::relative(root_directory, source).into_portable();
-    if bun_paths::climbs_out(&relative) {
-        return None;
-    }
+    let relative = path_below(root_directory, source)?;
     let (stem, extension) = DECLARATION_EXTENSIONS
         .iter()
         .find_map(|(from, to)| Some((relative.strip_suffix(*from)?, *to)))?;
     Some([stem, extension].concat())
+}
+
+fn path_below(root_directory: &[u8], path: &[u8]) -> Option<Vec<u8>> {
+    let relative = Path::relative(root_directory, path).into_portable();
+    if bun_paths::climbs_out(&relative) {
+        return None;
+    }
+    Some(relative.to_vec())
 }
 
 fn declaration_output_file(path: Vec<u8>, text: Vec<u8>) -> OutputFile {

@@ -10,6 +10,7 @@ use bun_jsc::Ticket;
 use bun_threading::Guarded;
 
 use super::{BundleJs, JSBundleCompletionTask};
+use crate::cli::content_mapper_process::KillSwitch;
 
 pub(super) struct QueuedBuild {
     pub(super) task: Box<JSBundleCompletionTask>,
@@ -22,12 +23,15 @@ struct State {
     queue: VecDeque<QueuedBuild>,
     /// The address of the `BundleJs` of the build that the thread took last.
     last_started_addr: usize,
+    /// Stops that build's content mappers, whose answers the thread waits for without a limit.
+    content_mappers: Option<KillSwitch>,
 }
 
 static STATE: Guarded<State> = Guarded::new(State {
     waker: None,
     queue: VecDeque::new(),
     last_started_addr: 0,
+    content_mappers: None,
 });
 
 /// Whether the build at `last_started_addr` is cancelled. Written under `STATE`'s lock.
@@ -65,15 +69,25 @@ pub(super) fn cancel_if_started(js: &BundleJs) {
         return;
     }
     CANCELLED.store(true, Ordering::SeqCst);
+    if let Some(content_mappers) = &state.content_mappers {
+        content_mappers.stop();
+    }
     // SAFETY: `start_next` wrote that address, after `thread_main` stored the loop. The thread
     // never exits or frees its loop, and wakeup is thread-safe.
     unsafe { bun_uws::us_wakeup_loop(UWS_LOOP.load(Ordering::SeqCst)) };
+}
+
+/// `State::content_mappers`, for the type check of the build that the thread runs.
+pub(super) fn content_mappers() -> KillSwitch {
+    let mut state = STATE.lock();
+    state.content_mappers.get_or_insert_default().clone()
 }
 
 fn start_next() -> Option<QueuedBuild> {
     let mut state = STATE.lock();
     let next = state.queue.pop_front()?;
     state.last_started_addr = next.task.js.as_ptr().addr();
+    state.content_mappers = Some(KillSwitch::default());
     CANCELLED.store(false, Ordering::SeqCst);
     Some(next)
 }

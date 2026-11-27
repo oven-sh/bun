@@ -174,6 +174,7 @@ pub(crate) enum T {
     Override,
     Of,
     Defer,
+    Source,
 }
 
 impl T {
@@ -286,7 +287,7 @@ impl T {
     }
 }
 
-const COUNT: usize = T::Defer as usize + 1;
+const COUNT: usize = T::Source as usize + 1;
 
 const IS_MODIFIER: [bool; COUNT] = {
     let mut table = [false; COUNT];
@@ -439,6 +440,7 @@ keywords! {
     b"override" => Override,
     b"of" => Of,
     b"defer" => Defer,
+    b"source" => Source,
 }
 
 #[cfg(test)]

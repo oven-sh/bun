@@ -4,6 +4,7 @@ use super::code_load::{LoadKey, LoadedCode};
 use super::*;
 use crate::bind::{Binding, Parent};
 use crate::file_analysis::FileAnalysis;
+use crate::hir::ImportPhase;
 use crate::import_sites::{ImportSite, ImportSiteKind, ImportSpecifier};
 use crate::module_format::ModuleFormat;
 use crate::resolve::{CodeResolution, DeclaredSideEffects, SiteResolution};
@@ -448,7 +449,8 @@ impl Summary<'_, '_> {
     }
 
     fn asked_by_import(&self, import: ImportId) -> Asked {
-        let follows_members = !self.hir[import].is_deferred && !self.runs_all_that_is_loaded;
+        let follows_members =
+            self.hir[import].phase == ImportPhase::Evaluation && !self.runs_all_that_is_loaded;
         let bindings = self.bindings_of(import);
         let mut names = Vec::with_capacity(bindings.len());
         for (symbol, imported) in bindings {
@@ -568,7 +570,7 @@ impl Summary<'_, '_> {
             ImportSiteKind::ExportFrom(_) | ImportSiteKind::ExportStar(_) => true,
             ImportSiteKind::Import(import) => {
                 let mut bindings = self.bindings_of(import).into_iter();
-                !self.hir[import].is_deferred
+                self.hir[import].phase == ImportPhase::Evaluation
                     && bindings.all(|(symbol, _)| {
                         self.uses.exported.contains(&symbol) && !self.is_evaluated(symbol)
                     })

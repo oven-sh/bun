@@ -1046,10 +1046,17 @@ JSArray* createPair(JSGlobalObject* globalObject, JSValue value)
     return pair;
 }
 
-bool checkText(JSGlobalObject* globalObject, ThrowScope& scope, FixKind kind, JSValue text)
+// ESLint 10 refuses a text that isn't a string. Earlier versions add it to a string when they merge or apply the fix, and
+// oxlint has `String(text)`.
+bool checkText(JSGlobalObject* globalObject, ThrowScope& scope, FixKind kind, JSValue& text)
 {
     if (kind == FixKind::Remove || text.isString()) [[likely]]
         return true;
+    LintHost* host = LintHost::from(globalObject);
+    if (host->isBeforeESLint10() || host->isOxlint()) {
+        text = text.toString(globalObject);
+        return !scope.exception();
+    }
     throwTypeError(globalObject, scope, "'text' must be a string"_s);
     return false;
 }

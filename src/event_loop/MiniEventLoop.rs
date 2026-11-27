@@ -60,6 +60,8 @@ pub struct MiniEventLoop {
     file_polls: OnceCell<Box<FilePollStore>>,
     /// `NonNull` so that [`EventLoopHandle::env`] can hand out a `*mut` with mutable provenance.
     env: Option<NonNull<DotEnvLoader>>,
+    /// `init_global` allocated `env`.
+    owns_env: bool,
     // Opaque ctx assigned externally; only read/cleared here.
     #[cfg(not(windows))]
     after_event_loop_callback_ctx: Cell<Option<NonNull<c_void>>>,
@@ -70,13 +72,15 @@ pub struct MiniEventLoop {
 }
 
 thread_local! {
-    static GLOBAL: Cell<Option<&'static MiniEventLoop>> = const { Cell::new(None) };
+    /// What `init_global` allocated on this thread, until `free_global`.
+    static GLOBAL: Cell<Option<NonNull<MiniEventLoop>>> = const { Cell::new(None) };
 }
 
 /// Returns this thread's loop. `env` only counts for the call that makes it.
 pub fn init_global(env: Option<&'static mut DotEnvLoader>) -> &'static MiniEventLoop {
     if let Some(global) = GLOBAL.get() {
-        return global;
+        // SAFETY: only `free_global` frees it, and its caller does not use the loop again.
+        return unsafe { global.as_ref() };
     }
     let mut global = MiniEventLoop::init();
 
@@ -85,15 +89,36 @@ pub fn init_global(env: Option<&'static mut DotEnvLoader>) -> &'static MiniEvent
         .map(NonNull::from)
         .or_else(|| NonNull::new(dotenv::INSTANCE.load(core::sync::atomic::Ordering::Acquire)));
     if global.env.is_none() {
-        // Thread-lifetime singleton.
         global.env = Some(bun_core::heap::into_raw_nn(Box::new(DotEnvLoader::init())));
+        global.owns_env = true;
     }
 
-    let global: &'static MiniEventLoop = Box::leak(Box::new(global));
+    let allocation = bun_core::heap::into_raw_nn(Box::new(global));
+    // SAFETY: as above.
+    let global: &'static MiniEventLoop = unsafe { allocation.as_ref() };
     EventLoopHandle::init_mini(global).set_as_parent_of(global.loop_);
 
-    GLOBAL.set(Some(global));
+    GLOBAL.set(Some(allocation));
     global
+}
+
+/// Frees what `init_global` created on this thread: the loop it returned, and the thread's uSockets loop. For a thread
+/// that ends before the process does. Nothing else frees them then, and nothing refers to them anymore.
+///
+/// # Safety
+/// Whatever was registered on the loop is closed, and neither the loop nor its uSockets loop is used afterwards.
+pub unsafe fn free_global() {
+    let Some(global) = GLOBAL.take() else {
+        return;
+    };
+    // SAFETY: the caller's contract. `init_global` allocated `global`.
+    unsafe {
+        bun_uws::free_thread_loop();
+        // Runs the close callbacks that are still due.
+        #[cfg(windows)]
+        bun_io::Loop::close_thread_loop();
+        bun_core::heap::destroy(global.as_ptr());
+    }
 }
 
 impl MiniEventLoop {
@@ -141,6 +166,7 @@ impl MiniEventLoop {
             #[cfg(not(windows))]
             file_polls: OnceCell::new(),
             env: None,
+            owns_env: false,
             #[cfg(not(windows))]
             after_event_loop_callback_ctx: Cell::new(None),
             #[cfg(not(windows))]
@@ -298,5 +324,9 @@ impl Drop for MiniEventLoop {
     fn drop(&mut self) {
         // `tasks.deinit()` is implicit via Queue's Drop.
         debug_assert!(self.concurrent_tasks.is_empty());
+        if let Some(env) = self.env.take().filter(|_| self.owns_env) {
+            // SAFETY: `init_global` allocated it, and only this loop hands it out.
+            unsafe { bun_core::heap::destroy(env.as_ptr()) };
+        }
     }
 }

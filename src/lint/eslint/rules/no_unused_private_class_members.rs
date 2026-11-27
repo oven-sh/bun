@@ -181,6 +181,8 @@ fn oxlint_is_read(access: Expr<'_>) -> bool {
                 && matches!(prop.key().map(Key::kind), Some(KeyKind::Computed(key)) if key == top)
                 && matches!(prop.parent(), Node::Expr(object) if object.is_assignment_target())
         }
+        // `typeof this.#x`
+        Node::Type(_) => true,
         _ => false,
     }
 }

@@ -3537,6 +3537,113 @@ export function InACallback(props) {
   return <div>{r.current}</div>;
 }
 `,
+  // The same `var` where a function of the body reads its name outside the `catch`. That's the variable of the body,
+  // which oxc's semantic has too, and which is declared before the statement that has the function. These are
+  // functions where oxc's lowering takes the variable of the body for what the `var` declares, not the parameter, and
+  // stores it as a local. In `var-declared-before-and-read.jsx` a `var` of the body comes before the function.
+  "var-read-before.jsx": `export function ReadBefore(props) {
+  const read = () => e;
+  try {
+    props.f();
+  } catch (e) {
+    var e = 2;
+  }
+  return <div>{read}</div>;
+}
+`,
+  "var-read-before-without-a-value.jsx": `export function ReadBeforeWithoutAValue(props) {
+  const read = () => e;
+  try {
+    props.f();
+  } catch (e) {
+    var e;
+  }
+  return <div>{read}</div>;
+}
+`,
+  "var-read-before-in-a-branch.jsx": `export function ReadBeforeInABranch(props) {
+  const read = () => e;
+  try {
+    props.f();
+  } catch (e) {
+    if (e) {
+      var e = 2;
+    }
+  }
+  return <div>{read}</div>;
+}
+`,
+  "var-read-before-in-an-inner-catch.jsx": `export function ReadBeforeInAnInnerCatch(props) {
+  const read = () => e;
+  try {
+    props.f();
+  } catch (e) {
+    try {
+      props.g();
+    } catch (g) {
+      var e = 2;
+    }
+  }
+  return <div>{read}</div>;
+}
+`,
+  "var-read-before-in-a-loop.jsx": `export function ReadBeforeInALoop(props) {
+  const read = () => e;
+  try {
+    props.f();
+  } catch (e) {
+    for (var e in props) {
+    }
+  }
+  return <div>{read}</div>;
+}
+`,
+  "var-read-before-and-declared-after.jsx": `export function ReadBeforeAndDeclaredAfter(props) {
+  const read = () => e;
+  try {
+    props.f();
+  } catch (e) {
+    var e = 2;
+  }
+  var e = 3;
+  return <div>{read}</div>;
+}
+`,
+  "var-read-before-and-declared-between.jsx": `export function ReadBeforeAndDeclaredBetween(props) {
+  const read = () => e;
+  var e = 3;
+  try {
+    props.f();
+  } catch (e) {
+    var e = 2;
+  }
+  return <div>{read}</div>;
+}
+`,
+  "var-declared-before-and-read.jsx": `export function DeclaredBeforeAndRead(props) {
+  var e = 3;
+  const read = () => e;
+  try {
+    props.f();
+  } catch (e) {
+    var e = 2;
+  }
+  return <div>{read}</div>;
+}
+`,
+  "var-read-after.jsx": `export function ReadAfter(props) {
+  {
+    log(1);
+  }
+  try {
+    props.f();
+  } catch (e) {
+    var e = 2;
+  }
+  const read = () => e;
+  return <div>{read}</div>;
+}
+`,
 };
 
 /**
@@ -6657,6 +6764,265 @@ export function DeclaredAsAParameter(props) {
   const read = () => props;
   var props = 1;
   return <div>{read}</div>;
+}
+`,
+  // A `var` that declares a variable again. oxc's semantic has the variable at its first declaration only: a
+  // parameter, a function or a `var`. What a later `var` declares is then stored as a local is, and that is an error
+  // where a function has the variable declared early or writes to it. In `AgainThenInItsOwnInitializer` neither does.
+  "var-again.jsx": `import { useCallback, useEffect, useMemo } from "react";
+
+export function AfterAnArrow() {
+  const read = () => Later();
+  var Later = () => 1;
+  var Later = () => 2;
+  return <div>{read}</div>;
+}
+
+export function InTwoLoops(props) {
+  const reads = [];
+  for (var index = 0; index < props.items.length; index++) {
+    reads.push(() => props.items[index]);
+  }
+  for (var index = 0; index < props.extra.length; index++) {
+    reads.push(props.extra[index]);
+  }
+  return <div>{reads}</div>;
+}
+
+export function InTheSecondOfTwoLoops(props) {
+  const reads = [];
+  for (var index = 0; index < props.extra.length; index++) {
+    reads.push(props.extra[index]);
+  }
+  for (var index = 0; index < props.items.length; index++) {
+    reads.push(() => props.items[index]);
+  }
+  return <div>{reads}</div>;
+}
+
+export function InBothBranches(props) {
+  const read = () => value;
+  if (props.a) {
+    var value = 1;
+  } else {
+    var value = 2;
+  }
+  return <div>{read}</div>;
+}
+
+export function InACallback() {
+  const read = useCallback(() => Later(), []);
+  var Later = () => 1;
+  var Later = () => 2;
+  return <div>{read}</div>;
+}
+
+export function InAMemo(props) {
+  const value = useMemo(() => later, []);
+  if (props.a) {
+    var later = 1;
+  } else {
+    var later = 2;
+  }
+  return <div>{value}</div>;
+}
+
+export function InAnEffect(props) {
+  useEffect(() => {
+    log(index);
+  }, []);
+  for (var index = 0; index < props.items.length; index++) {}
+  for (var index = 0; index < props.extra.length; index++) {}
+  return <div />;
+}
+
+export function InASwitch(props) {
+  const read = () => value;
+  switch (props.kind) {
+    case 1:
+      var value = 1;
+      break;
+    default:
+      var value = 2;
+  }
+  return <div>{read}</div>;
+}
+
+export function InOneStatement() {
+  const read = () => value;
+  var value = 1,
+    value = 2;
+  return <div>{read}</div>;
+}
+
+export function WithoutAnInitializer() {
+  const read = () => value;
+  var value = 1;
+  var value;
+  return <div>{read}</div>;
+}
+
+export function InABlockThenInTheBody() {
+  const read = () => value;
+  {
+    var value = 1;
+  }
+  var value = 2;
+  return <div>{read}</div>;
+}
+
+export function InTheBodyThenInABlock() {
+  const read = () => value;
+  var value = 1;
+  {
+    var value = 2;
+  }
+  return <div>{read}</div>;
+}
+
+export function InItsOwnInitializerThenAgain() {
+  var value = () => value;
+  var value = 2;
+  return <div>{value}</div>;
+}
+
+export function AgainThenInItsOwnInitializer() {
+  var value = 1;
+  var value = () => value;
+  return <div>{value}</div>;
+}
+
+export function InAFunctionDeclaration() {
+  function read() {
+    return value;
+  }
+  var value = 1;
+  var value = 2;
+  return <div>{read}</div>;
+}
+
+export function AfterAFunctionOfItsName() {
+  const read = () => value;
+  function value() {}
+  var value = 1;
+  return <div>{read}</div>;
+}
+
+export function InALoopThenInTheBody(props) {
+  const reads = [];
+  for (var key in props) {
+    reads.push(() => key);
+  }
+  var key;
+  return <div>{reads}</div>;
+}
+
+export function InALoopOfKeysThenOfItems(props) {
+  const read = () => key;
+  for (var key in props.a) {
+  }
+  for (var key of props.b) {
+  }
+  return <div>{read}</div>;
+}
+
+export function WrittenInAFunction() {
+  var value = 1;
+  var value = 2;
+  const write = () => {
+    value = 3;
+  };
+  return <div onClick={write}>{value}</div>;
+}
+
+export function WrittenInAFunctionBetween() {
+  var value = 1;
+  const write = () => {
+    value = 3;
+  };
+  var value = 2;
+  return <div onClick={write}>{value}</div>;
+}
+
+export function AParameterWrittenInAFunction(value) {
+  const write = () => {
+    value = 2;
+  };
+  var value = 1;
+  return <div onClick={write}>{value}</div>;
+}
+
+export function AfterAPattern(props) {
+  const read = () => value;
+  var { value } = props;
+  var value = 1;
+  return <div>{read}</div>;
+}
+
+export function InAPatternWithADefault(props) {
+  const read = () => value;
+  var value = 1;
+  var { value = 2 } = props;
+  return <div>{read}</div>;
+}
+
+export function InAPattern(props) {
+  const read = () => value;
+  var value = 1;
+  var { value } = props;
+  return <div>{read}</div>;
+}
+
+export function InAFunctionOfTheBody() {
+  const make = () => {
+    const read = () => value;
+    var value = 1;
+    var value = 2;
+    return read;
+  };
+  return <div>{make}</div>;
+}
+`,
+  // A function in the pattern of a declaration, in a default or in a computed key, that refers to what the
+  // declaration declares. It's declared before the statement, as for a function in the initializer.
+  "own-pattern.jsx": `export function InADefault(props) {
+  var { value = () => value } = props;
+  return <div>{value}</div>;
+}
+
+export function InADefaultOfAnItem(props) {
+  var [value = () => value] = props.items;
+  return <div>{value}</div>;
+}
+
+export function InAComputedKey(props) {
+  var { [(() => value)()]: value } = props;
+  return <div>{value}</div>;
+}
+
+export function ConstInADefault(props) {
+  const { value = () => value } = props;
+  return <div>{value}</div>;
+}
+
+export function LetInADefault(props) {
+  let { value = () => value } = props;
+  return <div>{value}</div>;
+}
+
+export function ConstInADefaultOfAnItem(props) {
+  const [value = () => value] = props.items;
+  return <div>{value}</div>;
+}
+
+export function AnotherInADefault(props) {
+  const { first = () => second, second } = props;
+  return (
+    <div>
+      {first}
+      {second}
+    </div>
+  );
 }
 `,
 };

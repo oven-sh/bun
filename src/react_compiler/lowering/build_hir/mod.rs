@@ -217,6 +217,7 @@ pub(super) fn lower_inner<'h>(
                 &param.binding,
                 place,
                 AssignmentStyle::Assignment,
+                &[],
             )?;
             continue;
         }
@@ -280,6 +281,7 @@ pub(super) fn lower_inner<'h>(
                     &param.binding,
                     value,
                     AssignmentStyle::Assignment,
+                    &[],
                 )?;
             }
         }

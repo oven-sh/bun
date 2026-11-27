@@ -42,20 +42,22 @@ fn statement_loc(stmt: &Stmt) -> Option<SourceLocation> {
 fn lower_block_statement(
     builder: &mut HirBuilder,
     body: &[Stmt],
+    redeclared: &[ast::Loc],
 ) -> Result<(), CompilerDiagnostic> {
-    lower_block_statement_inner(builder, body, None, &[])
+    lower_block_statement_inner(builder, body, None, &[], redeclared)
 }
 
 /// Not in upstream (oxc 4372e145f): the `finally` block of a `try`, lowered after the rest of it.
 fn lower_finally_block(
     builder: &mut HirBuilder,
     finally: Option<&ast::Finally>,
+    redeclared: &[ast::Loc],
 ) -> Result<(), CompilerDiagnostic> {
     let Some(finally) = finally else {
         return Ok(());
     };
     builder.push_scope(finally.loc);
-    let result = lower_block_statement(builder, finally.stmts.slice());
+    let result = lower_block_statement(builder, finally.stmts.slice(), redeclared);
     builder.pop_scope();
     result
 }
@@ -65,7 +67,7 @@ pub(super) fn lower_function_body(
     params: &[G::Arg],
     body: &[Stmt],
 ) -> Result<(), CompilerDiagnostic> {
-    lower_block_statement_inner(builder, body, Some(params), &[])
+    lower_block_statement_inner(builder, body, Some(params), &[], &[])
 }
 
 // Upstream's BlockStatement hoisting only emits a `DeclareContext` for a
@@ -80,18 +82,26 @@ pub(super) fn lower_function_body(
 // itself is the definition, not a reference). The scan is bounded to this
 // block's direct statements; blocks with no let/const or function
 // declarations fall straight through to lowering.
+/// `redeclared`: not in upstream (oxc). Where the names are that a `var` of the function declares and that are not
+/// the first declaration of their variable: a parameter, a function or another `var` comes before them, or they are
+/// in the block of a `catch` whose parameter has their name. oxc's semantic has the variable at its first declaration
+/// only, so oxc's lowering never takes what such a `var` declares for a context variable. The body of a function
+/// finds its own.
 fn lower_block_statement_inner(
     builder: &mut HirBuilder,
     body: &[Stmt],
     params: Option<&[G::Arg]>,
     unbound: &[(Ref, ast::Loc)],
+    redeclared: &[ast::Loc],
 ) -> Result<(), CompilerDiagnostic> {
     // Not in Bun's lowering: a `var` is a binding of the body of its function, wherever in it the `var` is. To oxc
     // it is declared by the first statement of the body that is a declaration of its name, or by none, and no
     // parameter is declared early.
     let vars_of = params.filter(|_| builder.environment().config.jsx_tags_hoist_no_declaration);
-    // Phase 1: collect this block's let/const/function bindings by statement index.
-    let mut decls: SmallVec<[(usize, Ref, ast::Loc, InstructionKind); 8]> = SmallVec::new();
+    let mut redeclared_here: SmallVec<[ast::Loc; 2]> = SmallVec::new();
+    // Phase 1: collect this block's let/const/function bindings by statement index. The last of each says whether
+    // it is the binding of a `var`.
+    let mut decls: SmallVec<[(usize, Ref, ast::Loc, InstructionKind, bool); 8]> = SmallVec::new();
     for (i, stmt) in body.iter().enumerate() {
         match &stmt.data {
             Data::SLocal(local) if !matches!(local.kind, s::Kind::KVar) => {
@@ -102,7 +112,7 @@ fn lower_block_statement_inner(
                 };
                 for d in local.decls.iter() {
                     collect_binding_refs(builder.environment(), &d.binding, &mut |r, loc| {
-                        decls.push((i, builder.resolve_ref(r), loc, kind));
+                        decls.push((i, builder.resolve_ref(r), loc, kind, false));
                     });
                 }
             }
@@ -113,6 +123,7 @@ fn lower_block_statement_inner(
                         builder.resolve_ref(name.ref_),
                         name.loc,
                         InstructionKind::HoistedFunction,
+                        false,
                     ));
                 }
             }
@@ -122,10 +133,19 @@ fn lower_block_statement_inner(
                         Data::SLocal(_) => i,
                         _ => usize::MAX,
                     };
-                    vars_in_stmt(builder, stmt, &mut |r, loc| {
+                    vars_in_stmt(builder, stmt, &mut |r, loc, has_name_of_catch_parameter| {
                         let var = builder.resolve_ref(r);
-                        if !is_parameter(builder, params, var) {
-                            decls.push((declared_at, var, loc, InstructionKind::HoistedConst));
+                        // The `var` has the parameter's own binding, and is no variable of the body.
+                        if is_catch_parameter(builder, var) {
+                            return;
+                        }
+                        let redeclares_parameter = is_parameter(builder, params, var);
+                        if redeclares_parameter || has_name_of_catch_parameter {
+                            redeclared_here.push(loc);
+                        }
+                        if !redeclares_parameter {
+                            let kind = InstructionKind::HoistedConst;
+                            decls.push((declared_at, var, loc, kind, true));
                         }
                     });
                 }
@@ -135,12 +155,16 @@ fn lower_block_statement_inner(
     // Not in upstream: the names in the parameter of this `catch` block that were not bound. They are the block's,
     // and no statement declares them.
     for &(binding, loc) in unbound {
-        decls.push((usize::MAX, binding, loc, InstructionKind::HoistedLet));
+        decls.push((usize::MAX, binding, loc, InstructionKind::HoistedLet, false));
     }
 
     if decls.is_empty() {
+        let redeclared = match params {
+            Some(_) => redeclared_here.as_slice(),
+            None => redeclared,
+        };
         for body_stmt in body {
-            lower_statement(builder, body_stmt, None)?;
+            lower_statement(builder, body_stmt, None, redeclared)?;
         }
         return Ok(());
     }
@@ -158,12 +182,15 @@ fn lower_block_statement_inner(
     // A statement is walked once, for all the decls that are not before it.
     let mut refs = ForwardRefs::default();
     let mut has_redeclarations = false;
-    for &(decl_i, target, _, kind) in &decls {
+    for &(decl_i, target, loc, kind, is_var) in &decls {
         match refs.last_decl.entry(target) {
             Entry::Occupied(mut declared) if vars_of.is_some() => {
                 has_redeclarations = true;
                 let first = declared.get_mut();
                 *first = decl_i.min(*first);
+                if is_var && !redeclared_here.contains(&loc) {
+                    redeclared_here.push(loc);
+                }
             }
             Entry::Occupied(mut declared) => {
                 declared.insert(decl_i);
@@ -184,6 +211,13 @@ fn lower_block_statement_inner(
             kept.insert(decl.1)
         });
     }
+    let redeclared = match params {
+        Some(_) => redeclared_here.as_slice(),
+        None => redeclared,
+    };
+    // To oxc what a function in the pattern of a declaration refers to, in a default or in a computed key, is
+    // declared early too.
+    let patterns_refer = builder.environment().config.jsx_tags_hoist_no_declaration;
     let mut hoist: SmallVec<[Hoist; 4]> = SmallVec::new();
     'outer: for (i, stmt) in body.iter().enumerate() {
         refs.seen.clear();
@@ -208,10 +242,11 @@ fn lower_block_statement_inner(
         }
         let mut k = 0;
         while k < decls.len() {
-            let (decl_i, target, loc, kind) = decls[k];
+            let (decl_i, target, loc, kind, _) = decls[k];
             let seen = refs.seen.get(&target).copied().unwrap_or_default();
             let seen = match decl_i.cmp(&i) {
                 std::cmp::Ordering::Greater => seen.anywhere,
+                std::cmp::Ordering::Equal if patterns_refer => seen.anywhere,
                 // Self-reference: only the initializer expressions of this
                 // statement count (the binding pattern itself is the def).
                 std::cmp::Ordering::Equal => seen.outside_patterns,
@@ -280,7 +315,7 @@ fn lower_block_statement_inner(
                     .add_hoisted_identifier(target.inner_index());
             }
         }
-        lower_statement(builder, body_stmt, None)?;
+        lower_statement(builder, body_stmt, None, redeclared)?;
     }
     Ok(())
 }
@@ -342,13 +377,16 @@ fn declares(builder: &HirBuilder, stmt: &Stmt, target: Ref) -> bool {
 }
 
 /// Not in upstream (oxc): true if `binding` is that of a `var` and is the parameter of a `catch`. The `var` is in the
-/// block of the `catch` and has the parameter's name. oxc's semantic has no symbol of its own for such a declaration,
-/// so its lowering never takes what it declares for a context variable.
+/// block of the `catch` and has the parameter's name. To oxc's semantic the name in such a declaration is the
+/// parameter, so its lowering never takes what it declares for a context variable.
 fn is_var_of_catch_parameter(builder: &HirBuilder, kind: s::Kind, binding: &Binding) -> bool {
     let (s::Kind::KVar, b::B::BIdentifier(id)) = (kind, binding.data) else {
         return false;
     };
-    let declared = builder.resolve_ref(id.r#ref);
+    is_catch_parameter(builder, builder.resolve_ref(id.r#ref))
+}
+
+fn is_catch_parameter(builder: &HirBuilder, declared: Ref) -> bool {
     declared.is_symbol()
         && (builder.host().symbols())
             .get(declared.inner_index() as usize)
@@ -446,10 +484,11 @@ fn is_parameter(builder: &HirBuilder, params: &[G::Arg], target: Ref) -> bool {
     found
 }
 
-type OnVar<'a> = &'a mut dyn FnMut(Ref, ast::Loc);
+type OnVar<'a> = &'a mut dyn FnMut(Ref, ast::Loc, bool);
 
-/// Calls `on_var` for each binding of the `var`s in the statement that are not in a nested function. Not for one that
-/// has the name of the parameter of a `catch` that it is in: oxc's semantic has one symbol for the two.
+/// Calls `on_var` for each binding of the `var`s in the statement that are not in a nested function, in the order of
+/// the source, with whether it has the name of the parameter of a `catch` whose block it is in. oxc's semantic has a
+/// variable of the function for such a binding too, and the name in the `var` is the parameter.
 fn vars_in_stmt(builder: &HirBuilder, stmt: &Stmt, on_var: OnVar) {
     if !builder.environment().has_stack() {
         return;
@@ -463,7 +502,7 @@ fn vars_in_stmt(builder: &HirBuilder, stmt: &Stmt, on_var: OnVar) {
         Data::SLocal(l) if matches!(l.kind, s::Kind::KVar) => {
             for d in l.decls.iter() {
                 collect_binding_refs(builder.environment(), &d.binding, &mut |r, loc| {
-                    on_var(r, loc);
+                    on_var(r, loc, false);
                 });
             }
         }
@@ -504,10 +543,9 @@ fn vars_in_stmt(builder: &HirBuilder, stmt: &Stmt, on_var: OnVar) {
                     _ => None,
                 });
                 for s in c.body.slice() {
-                    vars_in_stmt(builder, s, &mut |r, loc| {
-                        if parameter != Some(host.ref_name(r)) {
-                            on_var(r, loc);
-                        }
+                    vars_in_stmt(builder, s, &mut |r, loc, has_name_of_inner_parameter| {
+                        let has_name_of_parameter = parameter == Some(host.ref_name(r));
+                        on_var(r, loc, has_name_of_inner_parameter || has_name_of_parameter);
                     });
                 }
             }
@@ -816,6 +854,7 @@ fn lower_statement(
     builder: &mut HirBuilder,
     stmt: &Stmt,
     label: Option<String>,
+    redeclared: &[ast::Loc],
 ) -> Result<(), CompilerDiagnostic> {
     if !builder.environment().has_stack() {
         return Err(crate::lowering::nested_too_deeply());
@@ -884,7 +923,7 @@ fn lower_statement(
         }
         Data::SBlock(block) => {
             builder.push_scope(stmt_loc);
-            let result = lower_block_statement(builder, &block.stmts);
+            let result = lower_block_statement(builder, &block.stmts, redeclared);
             builder.pop_scope();
             result?;
         }
@@ -954,6 +993,7 @@ fn lower_statement(
                         &declarator.binding,
                         value,
                         assign_style,
+                        redeclared,
                     )?;
                 } else if let b::B::BIdentifier(id) = declarator.binding.data {
                     // No init: emit DeclareLocal or DeclareContext
@@ -970,7 +1010,10 @@ fn lower_statement(
                                 reactive: false,
                                 loc: id_loc,
                             };
-                            if builder.is_context_identifier(id.r#ref) && !redeclares_parameter {
+                            let is_context = builder.is_context_identifier(id.r#ref)
+                                && !redeclares_parameter
+                                && !redeclared.contains(&declarator.binding.loc);
+                            if is_context {
                                 if kind == InstructionKind::Const {
                                     builder.record_error(CompilerErrorDetail {
                                         reason: "Expect `const` declaration not to be reassigned"
@@ -1062,7 +1105,7 @@ fn lower_statement(
             // Block for the consequent (if the test is truthy)
             let consequent_loc = statement_loc(&if_stmt.yes);
             let consequent_block = builder.try_enter(BlockKind::Block, |builder, _block_id| {
-                lower_statement(builder, &if_stmt.yes, None)?;
+                lower_statement(builder, &if_stmt.yes, None, redeclared)?;
                 Ok(Terminal::Goto {
                     block: continuation_id,
                     variant: GotoVariant::Break,
@@ -1075,7 +1118,7 @@ fn lower_statement(
             let alternate_block = if let Some(alternate) = &if_stmt.no {
                 let alternate_loc = statement_loc(alternate);
                 builder.try_enter(BlockKind::Block, |builder, _block_id| {
-                    lower_statement(builder, alternate, None)?;
+                    lower_statement(builder, alternate, None, redeclared)?;
                     Ok(Terminal::Goto {
                         block: continuation_id,
                         variant: GotoVariant::Break,
@@ -1127,7 +1170,7 @@ fn lower_statement(
                         match init.data {
                             Data::SLocal(_) => {
                                 let init_loc = convert_loc(init.loc);
-                                lower_statement(builder, init, None)?;
+                                lower_statement(builder, init, None, redeclared)?;
                                 init_loc
                             }
                             Data::SExpr(expr) => {
@@ -1143,7 +1186,7 @@ fn lower_statement(
                                 init_loc
                             }
                             _ => {
-                                lower_statement(builder, init, None)?;
+                                lower_statement(builder, init, None, redeclared)?;
                                 convert_loc(init.loc)
                             }
                         }
@@ -1178,7 +1221,7 @@ fn lower_statement(
             let body_loc = statement_loc(&for_stmt.body);
             let body_block = builder.try_enter(BlockKind::Block, |builder, _block_id| {
                 builder.loop_scope(label, continue_target, continuation_id, |builder| {
-                    lower_statement(builder, &for_stmt.body, None)?;
+                    lower_statement(builder, &for_stmt.body, None, redeclared)?;
                     Ok(Terminal::Goto {
                         block: continue_target,
                         variant: GotoVariant::Continue,
@@ -1261,7 +1304,7 @@ fn lower_statement(
             let body_loc = statement_loc(&while_stmt.body);
             let loop_block = builder.try_enter(BlockKind::Block, |builder, _block_id| {
                 builder.loop_scope(label, conditional_id, continuation_id, |builder| {
-                    lower_statement(builder, &while_stmt.body, None)?;
+                    lower_statement(builder, &while_stmt.body, None, redeclared)?;
                     Ok(Terminal::Goto {
                         block: conditional_id,
                         variant: GotoVariant::Continue,
@@ -1310,7 +1353,7 @@ fn lower_statement(
             let body_loc = statement_loc(&do_while_stmt.body);
             let loop_block = builder.try_enter(BlockKind::Block, |builder, _block_id| {
                 builder.loop_scope(label, conditional_id, continuation_id, |builder| {
-                    lower_statement(builder, &do_while_stmt.body, None)?;
+                    lower_statement(builder, &do_while_stmt.body, None, redeclared)?;
                     Ok(Terminal::Goto {
                         block: conditional_id,
                         variant: GotoVariant::Continue,
@@ -1357,7 +1400,7 @@ fn lower_statement(
             let body_loc = statement_loc(&for_in.body);
             let loop_block = builder.try_enter(BlockKind::Block, |builder, _block_id| {
                 builder.loop_scope(label, init_block_id, continuation_id, |builder| {
-                    lower_statement(builder, &for_in.body, None)?;
+                    lower_statement(builder, &for_in.body, None, redeclared)?;
                     Ok(Terminal::Goto {
                         block: init_block_id,
                         variant: GotoVariant::Continue,
@@ -1395,6 +1438,7 @@ fn lower_statement(
                 left_loc,
                 next_property.clone(),
                 "ForInStatement",
+                redeclared,
             )?;
             // Use the assign result (StoreLocal temp) as the test, matching TS behavior
             let test_value = assign_result.unwrap_or(next_property);
@@ -1443,7 +1487,7 @@ fn lower_statement(
             let body_loc = statement_loc(&for_of.body);
             let loop_block = builder.try_enter(BlockKind::Block, |builder, _block_id| {
                 builder.loop_scope(label, init_block_id, continuation_id, |builder| {
-                    lower_statement(builder, &for_of.body, None)?;
+                    lower_statement(builder, &for_of.body, None, redeclared)?;
                     Ok(Terminal::Goto {
                         block: init_block_id,
                         variant: GotoVariant::Continue,
@@ -1501,6 +1545,7 @@ fn lower_statement(
                 left_loc,
                 advance_iterator.clone(),
                 "ForOfStatement",
+                redeclared,
             )?;
             // Use the assign result (StoreLocal temp) as the test, matching TS behavior
             let test_value = assign_result.unwrap_or(advance_iterator);
@@ -1559,7 +1604,7 @@ fn lower_statement(
                 let block = builder.try_enter(BlockKind::Block, |builder, _block_id| {
                     builder.switch_scope(label.clone(), continuation_id, |builder| {
                         for consequent in case.body.iter() {
-                            lower_statement(builder, consequent, None)?;
+                            lower_statement(builder, consequent, None, redeclared)?;
                         }
                         Ok(Terminal::Goto {
                             block: fallthrough_target,
@@ -1629,10 +1674,10 @@ fn lower_statement(
                     if builder.environment().config.finally_blocks_are_lowered {
                         // Not in upstream (oxc 4372e145f).
                         builder.push_scope(stmt_loc);
-                        let result = lower_block_statement(builder, &try_stmt.body);
+                        let result = lower_block_statement(builder, &try_stmt.body, redeclared);
                         builder.pop_scope();
                         result?;
-                        lower_finally_block(builder, try_stmt.finally.as_ref())?;
+                        lower_finally_block(builder, try_stmt.finally.as_ref(), redeclared)?;
                     }
                     return Ok(());
                 }
@@ -1760,6 +1805,7 @@ fn lower_statement(
                         pattern,
                         place.clone(),
                         AssignmentStyle::Assignment,
+                        redeclared,
                     )?;
                 }
                 // Lower the catch body using lower_block_statement to get hoisting support.
@@ -1804,7 +1850,13 @@ fn lower_statement(
                         }
                     }
                 }
-                lower_block_statement_inner(builder, &handler_clause.body, None, &unbound)?;
+                lower_block_statement_inner(
+                    builder,
+                    &handler_clause.body,
+                    None,
+                    &unbound,
+                    redeclared,
+                )?;
                 builder.pop_scope();
                 builder.pop_scope();
                 Ok(Terminal::Goto {
@@ -1822,7 +1874,7 @@ fn lower_statement(
             let try_block = builder.try_enter(BlockKind::Block, |builder, _block_id| {
                 builder.push_scope(stmt_loc);
                 builder.try_enter_try_catch(handler_block, |builder| {
-                    lower_block_statement(builder, &try_stmt.body)?;
+                    lower_block_statement(builder, &try_stmt.body, redeclared)?;
                     Ok(())
                 })?;
                 builder.pop_scope();
@@ -1848,7 +1900,7 @@ fn lower_statement(
                 continuation_block,
             );
             if builder.environment().config.finally_blocks_are_lowered {
-                lower_finally_block(builder, try_stmt.finally.as_ref())?;
+                lower_finally_block(builder, try_stmt.finally.as_ref(), redeclared)?;
             }
         }
         Data::SLabel(labeled_stmt) => {
@@ -1864,7 +1916,7 @@ fn lower_statement(
                 | Data::SForIn(_)
                 | Data::SForOf(_) => {
                     // Labeled loops are special because of continue, push the label down
-                    lower_statement(builder, &labeled_stmt.stmt, Some(label_name))?;
+                    lower_statement(builder, &labeled_stmt.stmt, Some(label_name), redeclared)?;
                 }
                 _ => {
                     // All other statements create a continuation block to allow `break`
@@ -1874,7 +1926,7 @@ fn lower_statement(
 
                     let block = builder.try_enter(BlockKind::Block, |builder, _block_id| {
                         builder.label_scope(label_name, continuation_id, |builder| {
-                            lower_statement(builder, &labeled_stmt.stmt, None)?;
+                            lower_statement(builder, &labeled_stmt.stmt, None, redeclared)?;
                             Ok(())
                         })?;
                         Ok(Terminal::Goto {
@@ -2044,6 +2096,7 @@ fn lower_for_in_of_left(
     left_loc: Option<SourceLocation>,
     value: Place,
     stmt_kind: &str,
+    redeclared: &[ast::Loc],
 ) -> Result<Option<Place>, CompilerDiagnostic> {
     match init.data {
         Data::SLocal(var_decl) => {
@@ -2068,6 +2121,7 @@ fn lower_for_in_of_left(
                     &declarator.binding,
                     value,
                     AssignmentStyle::Assignment,
+                    redeclared,
                 )?)
             } else {
                 Ok(None)
@@ -2104,6 +2158,7 @@ fn lower_for_in_of_left(
 // `Binding`-target path reached from `VariableDeclaration`, `for-in/of` heads,
 // and catch params. `kind` here is never `Reassign`, so upstream's
 // `force_temporaries` reassign analysis is unreachable and elided.
+// `redeclared` is that of `lower_block_statement_inner`: what is declared there is stored as a local is.
 pub(super) fn lower_assignment_binding(
     builder: &mut HirBuilder,
     loc: Option<SourceLocation>,
@@ -2111,6 +2166,7 @@ pub(super) fn lower_assignment_binding(
     target: &Binding,
     value: Place,
     assignment_style: AssignmentStyle,
+    redeclared: &[ast::Loc],
 ) -> Result<Option<Place>, CompilerError> {
     if !builder.environment().has_stack() {
         return Err(crate::lowering::nested_too_deeply().into());
@@ -2137,7 +2193,8 @@ pub(super) fn lower_assignment_binding(
                     Ok(Some(temp))
                 }
                 Some(IdentifierForAssignment::Place(place)) => {
-                    if builder.is_context_identifier(id.r#ref) {
+                    if builder.is_context_identifier(id.r#ref) && !redeclared.contains(&target.loc)
+                    {
                         let is_hoisted = builder
                             .environment()
                             .is_hoisted_identifier(id.r#ref.inner_index());
@@ -2221,7 +2278,8 @@ pub(super) fn lower_assignment_binding(
                     b::B::BIdentifier(id)
                         if element.default_value.is_none()
                             && (matches!(assignment_style, AssignmentStyle::Assignment)
-                                || !builder.is_context_identifier(id.r#ref)) =>
+                                || !builder.is_context_identifier(id.r#ref)
+                                || redeclared.contains(&element.binding.loc)) =>
                     {
                         let elem_loc = convert_loc(element.binding.loc);
                         match lower_identifier_for_assignment(
@@ -2299,6 +2357,7 @@ pub(super) fn lower_assignment_binding(
                     path,
                     resolved,
                     assignment_style,
+                    redeclared,
                 )?;
             }
             Ok(Some(temporary))
@@ -2315,7 +2374,8 @@ pub(super) fn lower_assignment_binding(
                         b::B::BIdentifier(id)
                             if prop.default_value.is_none()
                                 && (matches!(assignment_style, AssignmentStyle::Assignment)
-                                    || !builder.is_context_identifier(id.r#ref)) =>
+                                    || !builder.is_context_identifier(id.r#ref)
+                                    || redeclared.contains(&prop.value.loc)) =>
                         {
                             match lower_identifier_for_assignment(
                                 builder, prop_loc, prop_loc, kind, id.r#ref,
@@ -2378,7 +2438,8 @@ pub(super) fn lower_assignment_binding(
                     b::B::BIdentifier(id)
                         if prop.default_value.is_none()
                             && (matches!(assignment_style, AssignmentStyle::Assignment)
-                                || !builder.is_context_identifier(id.r#ref)) =>
+                                || !builder.is_context_identifier(id.r#ref)
+                                || redeclared.contains(&prop.value.loc)) =>
                     {
                         match lower_identifier_for_assignment(
                             builder, prop_loc, prop_loc, kind, id.r#ref,
@@ -2446,6 +2507,7 @@ pub(super) fn lower_assignment_binding(
                     path,
                     resolved,
                     assignment_style,
+                    redeclared,
                 )?;
             }
             Ok(Some(temporary))

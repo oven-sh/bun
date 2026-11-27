@@ -200,6 +200,12 @@ pub struct EnvironmentConfig {
     /// A `var` is declared early as a `const` is, for a function that refers to it before a statement of the body of
     /// the `var`'s function declares it, and a name that has more than one declaration is declared by the first.
     /// That is oxc. Bun's lowering declares no `var` early, and a function until its last declaration.
+    /// A `var` that is not the first declaration of its variable, or that has the name of the parameter of a `catch`
+    /// whose block it is in, is stored as a local is, also where the variable is a context variable: "Expected all
+    /// references to a variable to be consistently local or context references". That is oxc, whose semantic has a
+    /// variable at its first declaration only. To Bun's lowering each declaration is one of the variable.
+    /// And a function in the pattern of a declaration, in a default or in a computed key, refers to what the
+    /// declaration declares as one in its initializer does. That is oxc. Bun's lowering looks at the initializer only.
     pub jsx_tags_hoist_no_declaration: bool,
     /// For `infer_types`: an arithmetic or relational operator says nothing of the type of its operands, so `x` in
     /// `x - 1` can still be an object that is written to elsewhere. To upstream both operands are primitives wherever

@@ -13092,7 +13092,7 @@
   },
   "catch phis": {
    "exit": 1,
-   "files": 13,
+   "files": 22,
    "diagnostics": {
     "callbacks.jsx": [
      {
@@ -13315,6 +13315,42 @@
       "severity": "error"
      }
     ],
+    "var-declared-before-and-read.jsx": [
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 10,
+         "line": 2,
+         "offset": 49
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 5,
+         "length": 10,
+         "line": 7,
+         "offset": 127
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
     "var-in-a-declaration.jsx": [
      {
       "code": "react(invariant)",
@@ -13347,6 +13383,166 @@
          "length": 1,
          "line": 9,
          "offset": 172
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "var-read-after.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> e_0$9 is referenced as a context variable, but was previously referenced as a local variable",
+      "labels": [
+       {
+        "label": "this is local",
+        "span": {
+         "column": 22,
+         "length": 1,
+         "line": 10,
+         "offset": 134
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "var-read-before-and-declared-after.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> e$1 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 5,
+         "length": 10,
+         "line": 6,
+         "offset": 119
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "var-read-before-and-declared-between.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> e$1 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 5,
+         "length": 10,
+         "line": 7,
+         "offset": 134
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "var-read-before-in-a-branch.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> e$1 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 7,
+         "length": 10,
+         "line": 7,
+         "offset": 127
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "var-read-before-in-a-loop.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> e$1 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 10,
+         "length": 5,
+         "line": 6,
+         "offset": 115
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "var-read-before-in-an-inner-catch.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> e$1 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 7,
+         "length": 10,
+         "line": 9,
+         "offset": 164
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "var-read-before-without-a-value.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> e$1 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 9,
+         "length": 1,
+         "line": 6,
+         "offset": 120
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "var-read-before.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> e$1 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 5,
+         "length": 10,
+         "line": 6,
+         "offset": 103
         }
        }
       ],
@@ -20776,7 +20972,7 @@
   },
   "jsx tags": {
    "exit": 1,
-   "files": 5,
+   "files": 7,
    "diagnostics": {
     "after-a-return.jsx": [
      {
@@ -21124,6 +21320,184 @@
       "severity": "error"
      }
     ],
+    "own-pattern.jsx": [
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "label": "`ArrowFunctionExpression` cannot be safely reordered",
+        "span": {
+         "column": 16,
+         "length": 6,
+         "line": 7,
+         "offset": 166
+        }
+       }
+      ],
+      "message": "(BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "label": "`ArrowFunctionExpression` cannot be safely reordered",
+        "span": {
+         "column": 17,
+         "length": 6,
+         "line": 2,
+         "offset": 52
+        }
+       }
+      ],
+      "message": "(BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "label": "`ArrowFunctionExpression` cannot be safely reordered",
+        "span": {
+         "column": 17,
+         "length": 6,
+         "line": 22,
+         "offset": 511
+        }
+       }
+      ],
+      "message": "(BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "label": "`ArrowFunctionExpression` cannot be safely reordered",
+        "span": {
+         "column": 18,
+         "length": 6,
+         "line": 27,
+         "offset": 632
+        }
+       }
+      ],
+      "message": "(BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "label": "`ArrowFunctionExpression` cannot be safely reordered",
+        "span": {
+         "column": 19,
+         "length": 6,
+         "line": 17,
+         "offset": 401
+        }
+       }
+      ],
+      "message": "(BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "label": "`ArrowFunctionExpression` cannot be safely reordered",
+        "span": {
+         "column": 19,
+         "length": 6,
+         "line": 32,
+         "offset": 753
+        }
+       }
+      ],
+      "message": "(BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 36,
+         "line": 2,
+         "offset": 38
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 40,
+         "line": 7,
+         "offset": 153
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 41,
+         "line": 12,
+         "offset": 268
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 9,
+         "length": 24,
+         "line": 12,
+         "offset": 274
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerAssignment) Handle computed properties in ObjectPattern",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
     "same-function.jsx": [
      {
       "code": "react(static-components)",
@@ -21311,6 +21685,474 @@
        }
       ],
       "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "var-again.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> Later$0 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 3,
+         "length": 20,
+         "line": 45,
+         "offset": 1074
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> Later$0 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 3,
+         "length": 20,
+         "line": 6,
+         "offset": 146
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> index$1 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 8,
+         "length": 13,
+         "line": 64,
+         "offset": 1454
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> index$4 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 8,
+         "length": 13,
+         "line": 15,
+         "offset": 368
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> index$5 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 8,
+         "length": 13,
+         "line": 26,
+         "offset": 669
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> key$1 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 8,
+         "length": 7,
+         "line": 153,
+         "offset": 3103
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> key$4 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 7,
+         "length": 3,
+         "line": 145,
+         "offset": 2950
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> later$1 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 5,
+         "length": 14,
+         "line": 54,
+         "offset": 1252
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> value$0 is referenced as a context variable, but was previously referenced as a local variable",
+      "labels": [
+       {
+        "label": "this is local",
+        "span": {
+         "column": 32,
+         "length": 5,
+         "line": 181,
+         "offset": 3643
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> value$0 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 3,
+         "length": 14,
+         "line": 114,
+         "offset": 2356
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> value$0 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 3,
+         "length": 14,
+         "line": 129,
+         "offset": 2632
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> value$0 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 3,
+         "length": 14,
+         "line": 136,
+         "offset": 2774
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> value$0 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 3,
+         "length": 14,
+         "line": 99,
+         "offset": 2087
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> value$0 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 3,
+         "length": 29,
+         "line": 82,
+         "offset": 1797
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> value$0 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 5,
+         "length": 14,
+         "line": 107,
+         "offset": 2228
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> value$0 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 5,
+         "length": 14,
+         "line": 209,
+         "offset": 4207
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> value$0 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 7,
+         "length": 5,
+         "line": 90,
+         "offset": 1950
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> value$1 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 3,
+         "length": 14,
+         "line": 160,
+         "offset": 3218
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> value$1 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 3,
+         "length": 14,
+         "line": 172,
+         "offset": 3434
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> value$1 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 3,
+         "length": 14,
+         "line": 187,
+         "offset": 3754
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> value$1 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 5,
+         "length": 14,
+         "line": 37,
+         "offset": 920
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> value$1 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 7,
+         "length": 14,
+         "line": 75,
+         "offset": 1682
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> value$1 is referenced as a local variable, but was previously referenced as a context variable",
+      "labels": [
+       {
+        "label": "this is context",
+        "span": {
+         "column": 9,
+         "length": 9,
+         "line": 194,
+         "offset": 3901
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier value$1 is undefined",
+      "labels": [
+       {
+        "label": "`value$1` is used before it is defined",
+        "span": {
+         "column": 9,
+         "length": 5,
+         "line": 201,
+         "offset": 4042
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 14,
+         "line": 119,
+         "offset": 2454
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 24,
+         "line": 120,
+         "offset": 2471
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
       "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
       "severity": "error"
      }

@@ -5,9 +5,20 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash, createSign } from "node:crypto";
-import { createReadStream, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from "node:fs";
+import {
+  closeSync,
+  createReadStream,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readSync,
+  renameSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { type Command, getArch, request, requireCommand, run, which } from "../../scripts/agent.ts";
 import { getEnv, isMainBranch, readSecret, reportAnnotationToBuildkite } from "../../scripts/buildkite.ts";
 import { checkRelease, repository, updaterRepository } from "../../scripts/check-release.ts";
@@ -30,6 +41,58 @@ export const artifacts = [
 /** x64 ships one binary. Older `bun upgrade` clients still ask for it by its `-baseline` name. */
 export function getBaselineAlias(artifact: string): string | undefined {
   return artifact.includes("-x64") ? artifact.replace(/(-profile)?\.zip$/, "-baseline$1.zip") : undefined;
+}
+
+/**
+ * The size and the CRC-32 of the executable in a zip of a release. From the central directory, because cmake writes
+ * zeros for both into the header in front of the data.
+ */
+export function getExecutable(file: string): { size: number; crc32: number } | undefined {
+  const folder = basename(file, ".zip");
+  const suffix = folder.startsWith("bun-windows-") ? ".exe" : "";
+  const executable = `${folder}/${folder.endsWith("-profile") ? "bun-profile" : "bun"}${suffix}`;
+
+  const fd = openSync(file, "r");
+  try {
+    const { size } = fstatSync(fd);
+    // The end record, the longest comment it can have, and more than the directory of a release zip.
+    const tail = Buffer.alloc(Math.min(size, 1024 * 1024));
+    const start = size - tail.length;
+    readSync(fd, tail, 0, tail.length, start);
+
+    const end = tail.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    if (end === -1 || end + 22 > tail.length) {
+      return undefined;
+    }
+    let at = tail.readUInt32LE(end + 16) - start;
+    while (at >= 0 && at + 46 <= end && tail.readUInt32LE(at) === 0x02014b50) {
+      const nameLength = tail.readUInt16LE(at + 28);
+      if (tail.toString("utf8", at + 46, at + 46 + nameLength) === executable) {
+        const entry = { crc32: tail.readUInt32LE(at + 16), size: tail.readUInt32LE(at + 24) };
+        // Zip64 keeps the size elsewhere.
+        return entry.size === 0xffffffff ? undefined : entry;
+      }
+      at += 46 + nameLength + tail.readUInt16LE(at + 30) + tail.readUInt16LE(at + 32);
+    }
+    return undefined;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * The label that the canary release shows for a file. `bun upgrade` reads it before the download: a canary that finds
+ * its own commit, and the size and CRC-32 of its own executable, is the one in the release. The label is set by the
+ * request that uploads the file, so it never describes other bytes. A zip that cannot be read gets a label that no
+ * executable matches.
+ */
+export function getCanaryLabel(file: string, commit: string): string {
+  const executable = getExecutable(file);
+  if (!executable) {
+    console.warn(`Cannot find the executable in ${file}: \`bun upgrade\` will download it to compare`);
+    return `${basename(file)} (${commit})`;
+  }
+  return `${basename(file)} (${commit} ${executable.size} ${executable.crc32.toString(16).padStart(8, "0")})`;
 }
 
 async function trace(command: Command, options?: { cwd?: string }): Promise<void> {
@@ -226,8 +289,9 @@ async function uploadCanary(): Promise<void> {
 
   const files = await downloadFiles(() => undefined);
 
-  // In one command, because uploads of single files raced on the release.
-  await trace(["gh", "release", "upload", "canary", ...files, "--clobber", "--repo", repository]);
+  // In one command, because uploads of single files raced on the release. gh takes `file#label`.
+  const labelled = files.map(file => `${file}#${getCanaryLabel(file, commit)}`);
+  await trace(["gh", "release", "upload", "canary", ...labelled, "--clobber", "--repo", repository]);
   const notes = `This release of Bun corresponds to the commit: ${commit}`;
   await trace(["gh", "release", "edit", "canary", "--repo", repository, "--notes", notes]);
 

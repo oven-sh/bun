@@ -548,12 +548,37 @@ fn call_with_callback(func: Func) -> Option<Call> {
     (call.args().first() == Some(callback)).then_some(call)
 }
 
-/// The `useEffect`-like call whose callback directly contains `span`, not through a nested function.
+/// What `call` calls, as the compiler has it: a `!` and type arguments aren't nodes of the tree it's given.
+fn callee_of(call: Call) -> Expr {
+    let mut callee = call.callee();
+    while let ExprKind::NonNull(inner) | ExprKind::Instantiation { expr: inner, .. } = callee.kind()
+    {
+        callee = inner;
+    }
+    callee
+}
+
+/// The name that `callee` has where it comes from: the one it's imported by, or else the one it's written with.
+fn exported_name(callee: Expr) -> Option<Name> {
+    match callee.kind() {
+        ExprKind::Ident(name) => match callee.symbol().and_then(|it| it.declarations().next()) {
+            Some(Declaration::ImportSpec(specifier)) => Some(specifier.imported().name()),
+            _ => Some(name),
+        },
+        ExprKind::Dot { name, .. } => Some(name.name()),
+        _ => None,
+    }
+}
+
+/// The call of an effect hook whose callback directly contains `span`, not through a nested function. The compiler
+/// finds an effect hook by its type and only reports what's in a function that one takes. So the call that such a
+/// function is an argument of is that hook's under any name, unless it's `useCallback` or `useEffectEvent`, whose
+/// result is what the hook takes.
 fn enclosing_effect<'a>(file: &'a File<'a>, span: Span) -> Option<Call<'a>> {
     let call = call_with_callback(enclosing_function(file, span)?)?;
-    called(call)?
-        .is_any(&["useEffect", "useLayoutEffect", "useInsertionEffect"])
-        .then_some(call)
+    let is_passed_on = exported_name(callee_of(call))
+        .is_some_and(|hook| hook.is_any(&["useCallback", "useEffectEvent"]));
+    (!is_passed_on).then_some(call)
 }
 
 /// The `useMemo` or `useCallback` call at `span`, or the one whose callback is at `span`.
@@ -1167,7 +1192,7 @@ fn set_state_in_effect<'a>(file: &'a File<'a>, out: &mut Rendered) {
     );
     let effect = out.primary_span().and_then(|at| enclosing_effect(file, at));
     out.also(
-        effect.map(|call| call.callee().span()),
+        effect.map(|call| callee_of(call).span()),
         "This is the containing effect",
     );
 }

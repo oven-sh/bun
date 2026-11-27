@@ -62,7 +62,7 @@ impl WeakImpl {
 // ABI-identical to non-null `*const WeakImpl`; C++ slot mutation is interior).
 // `new` is `safe fn`: `&JSGlobalObject` is the non-null handle proof, and `ctx`
 // is an opaque round-trip pointer C++ only stores and forwards to the finalizer
-// (never dereferenced as Rust data) — same contract as `JSC__VM__holdAPILock`.
+// (never dereferenced as Rust data).
 // `delete` consumes the allocation and so stays `unsafe fn`.
 unsafe extern "C" {
     fn Bun__WeakRef__delete(this: *mut WeakImpl);

@@ -132,7 +132,7 @@ impl<T, A: Allocator + Default> VecExt<T> for Vec<T, A> {
         // - Source/dest are distinct allocations (arena heap vs `A` heap),
         //   so they cannot overlap.
         // After the copy, `out` is the sole logical owner of every `T`; its
-        // `Drop` will run their destructors exactly once. `src.set_len(0)`
+        // `Drop` will run their destructors exactly once. `src.forget_elements()`
         // marks the source logically empty so its `Drop` skips element
         // destructors but still frees the buffer back to the `MimallocArena`
         // (real `mi_free`, not a bump no-op) — without this the scratch buffer
@@ -144,8 +144,8 @@ impl<T, A: Allocator + Default> VecExt<T> for Vec<T, A> {
         unsafe {
             core::ptr::copy_nonoverlapping(src.as_ptr(), out.as_mut_ptr(), len);
             out.set_len(len);
-            src.set_len(0);
         }
+        src.forget_elements();
         // Buffer freed via `<&MimallocArena as Allocator>::deallocate` → `mi_free`.
         drop(src);
         out

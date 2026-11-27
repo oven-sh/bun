@@ -1,6 +1,6 @@
 //! JS testing bindings for `bun.patch`. Keeps `src/patch/` free of JSC types.
 
-use bun_jsc::bindgen::{JsHeap, JsScope};
+use bun_jsc::bindgen::{self, JsHeap, JsScope};
 use bun_jsc::{JsResult, SysErrorJsc};
 use bun_patch::{ApplyError, ParseErr, ParseErrAt, PatchFile, git_diff_internal, parse_patch_file};
 use bun_sys::{Fd, File};
@@ -65,21 +65,15 @@ pub(crate) fn apply(cx: &mut JsScope<'_>, patchfile: &[u8], dir: Option<&[u8]>) 
 }
 
 /// Used in JS tests, see `internal-for-testing.ts` and patch tests.
-pub(crate) fn parse(heap: &JsHeap<'_>, patchfile_src: &[u8]) -> JsResult<Vec<u8>> {
-    let patchfile = match parse_patch_file(patchfile_src) {
-        Ok(p) => p,
-        Err(ParseErrAt { err: e, .. }) => {
-            // SAFETY: it throws, and the body returns.
-            let global = unsafe { heap.global() };
-            if e == ParseErr::hunk_header_integrity_check_failed {
-                return Err(global.throw_error(bun_patch::Error::from(e), "this indicates either that the supplied patch file was incorrect, or there is a bug in Bun. Please check your .patch file, or open a GitHub issue :)"));
-            } else {
-                return Err(
-                    global.throw_error(bun_patch::Error::from(e), "failed to parse patch file")
-                );
-            }
-        }
-    };
+pub(crate) fn parse<'a>(heap: &JsHeap<'a>, patchfile_src: &[u8]) -> bindgen::Result<'a, Vec<u8>> {
+    let patchfile = parse_patch_file(patchfile_src).map_err(|ParseErrAt { err: e, .. }| {
+        let message = if e == ParseErr::hunk_header_integrity_check_failed {
+            "this indicates either that the supplied patch file was incorrect, or there is a bug in Bun. Please check your .patch file, or open a GitHub issue :)"
+        } else {
+            "failed to parse patch file"
+        };
+        heap.error(format_args!("{e} {message}"))
+    })?;
 
     let mut str: Vec<u8> = Vec::new();
     {

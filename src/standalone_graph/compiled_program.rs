@@ -1,7 +1,6 @@
 //! What a compiled program adds to the standalone module graph: its record, the graph handed over by descriptor, and the paths outside the virtual root that the graph answers for.
 
 use core::mem::size_of;
-use core::ptr::read_unaligned;
 #[cfg(not(windows))]
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::borrow::Cow;
@@ -9,7 +8,7 @@ use std::borrow::Cow;
 use bun_collections::StringArrayHashMap;
 use bun_collections::index_sort;
 use bun_core::strings;
-use bun_core::{StringBuilder, StringPointer, bytes_of, slice_as_bytes};
+use bun_core::{StringBuilder, StringPointer, bytes_of, read_prefix, slice_as_bytes};
 use bun_paths::{Path, path_buffer_pool, to_portable};
 use bun_resolver::compiled_program::{
     CompiledEntryPoint, CompiledFurtherPackageName, CompiledPackageName, CompiledPathAlias,
@@ -85,7 +84,7 @@ const _: () = assert!(size_of::<CompiledProgramRecord>() == RECORD_SIZE);
 const _: () = assert!(size_of::<CompiledEntryPointRecord>() == RECORD_SIZE);
 const _: () = assert!(cfg!(target_endian = "little"));
 
-bun_core::impl_no_uninit!(CompiledProgramRecord, CompiledEntryPointRecord);
+bun_core::impl_pod!(CompiledProgramRecord, CompiledEntryPointRecord);
 
 pub struct CompiledEntryPointInput<'a> {
     pub module_id: bun_aot::engine::EngineModuleId,
@@ -638,9 +637,7 @@ fn try_read(
     record_at: &mut usize,
     file_count: usize,
 ) -> Option<CompiledProgram> {
-    let header = payload.bytes(*record_at, RECORD_SIZE)?.as_ptr();
-    // SAFETY: `RECORD_SIZE` readable bytes, and every bit pattern is a valid record.
-    let header: CompiledProgramRecord = unsafe { read_unaligned(header.cast()) };
+    let header: CompiledProgramRecord = read_prefix(payload.bytes(*record_at, RECORD_SIZE)?)?;
     let entry_point_count = header.entry_point_count as usize;
     if entry_point_count > file_count {
         return None;
@@ -666,8 +663,7 @@ fn try_read(
         .iter()
         .zip(module_paths)
     {
-        // SAFETY: `RECORD_SIZE` readable bytes, and every bit pattern is a valid record.
-        let record: CompiledEntryPointRecord = unsafe { read_unaligned(bytes.as_ptr().cast()) };
+        let record: CompiledEntryPointRecord = read_prefix(bytes)?;
         let module_path = StringPointer {
             offset: u32::from_le_bytes(*offset),
             length: u32::from_le_bytes(*length),
@@ -1154,13 +1150,11 @@ fn load_graph_file_at_its_address(descriptor: Fd, offset: usize, size: usize) ->
 
 #[cfg(windows)]
 fn load_graph_file(descriptor: Fd, size: usize) -> Option<*mut u8> {
+    use std::alloc::{Allocator as _, Global, Layout};
+
     const ALLOCATION_ALIGNMENT: usize = 64 * 1024;
-    let layout = core::alloc::Layout::from_size_align(size, ALLOCATION_ALIGNMENT).ok()?;
-    // SAFETY: `from_descriptor` passes at least `PAYLOAD_HEADER_SIZE`, so the layout is not empty.
-    let base = unsafe { std::alloc::alloc_zeroed(layout) };
-    if base.is_null() {
-        return None;
-    }
+    let layout = Layout::from_size_align(size, ALLOCATION_ALIGNMENT).ok()?;
+    let base: *mut u8 = Global.allocate_zeroed(layout).ok()?.as_ptr().cast();
     // SAFETY: `size` initialized bytes that nothing else refers to. They are never freed.
     let bytes = unsafe { core::slice::from_raw_parts_mut(base, size) };
     let file = bun_sys::File::borrow(&descriptor);
@@ -1286,7 +1280,9 @@ fn reopen_at(fd: Fd, path: &bun_core::ZStr, is_meant: impl FnOnce() -> bool) -> 
 
 impl StandaloneModuleGraph {
     /// `descriptor` holds the result of `to_graph_bytes` and stays open: the engine maps the code from it.
-    pub fn from_descriptor(descriptor: Fd) -> crate::Result<Option<*mut StandaloneModuleGraph>> {
+    pub fn from_descriptor(
+        descriptor: Fd,
+    ) -> crate::Result<Option<&'static StandaloneModuleGraph>> {
         Self::from_descriptor_at(descriptor, 0)
     }
 
@@ -1294,7 +1290,7 @@ impl StandaloneModuleGraph {
     pub fn from_descriptor_at(
         descriptor: Fd,
         offset: usize,
-    ) -> crate::Result<Option<*mut StandaloneModuleGraph>> {
+    ) -> crate::Result<Option<&'static StandaloneModuleGraph>> {
         let size = bun_sys::get_file_size(descriptor).map_err(|_| CORRUPTED)?;
         let size = usize::try_from(size).map_err(|_| CORRUPTED)?;
         let size = size.checked_sub(offset).ok_or(CORRUPTED)?;
@@ -2602,6 +2598,8 @@ impl StandaloneModuleGraph {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use core::ptr::read_unaligned;
+
     use bun_aot::engine::EngineModuleId;
     use bun_ast::Loader;
     use bun_bundler::options::{OutputFile, OutputFileValue, OutputKind};
@@ -3865,9 +3863,7 @@ pub(crate) mod tests {
         let path = folder.write("graph", &bytes);
         let descriptor = bun_sys::open(&path, bun_sys::O::RDONLY, 0).unwrap();
         let graph = StandaloneModuleGraph::from_descriptor(descriptor).unwrap();
-        // SAFETY: the process-wide graph, which is never freed. No other test installs one.
-        let graph = unsafe { &*graph.unwrap() };
-        let program = graph.compiled_program.as_ref().unwrap();
+        let program = graph.unwrap().compiled_program.as_ref().unwrap();
         let backing_file = program.backing_file.unwrap();
         assert_eq!(backing_file.descriptor, descriptor.native() as isize);
         assert_eq!(backing_file.offset % ALIGNMENT as i64, 0);

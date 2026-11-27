@@ -3,6 +3,7 @@
 #![warn(unused_must_use)]
 #![feature(adt_const_params)]
 #![feature(core_io_borrowed_buf)]
+#![cfg_attr(debug_assertions, feature(breakpoint))]
 // ──────────────────────────────────────────────────────────────────────────
 // Resolver body. Higher-tier deps are reached via lower-tier crates:
 // bun_install -> bun_install_types::AutoInstaller trait; bun_standalone_graph ->
@@ -79,7 +80,7 @@ pub mod fs {
     // `bss_singleton!` emits one private `STORAGE` per declare site, so the
     // filename store is declared once, in `fs_full`, and shared with the
     // `readdir` appender (`FilenameStoreAppender`). A second declaration here
-    // would be a separate store that `exists`/`as_interned` cannot see into.
+    // would be a separate store that `as_interned` cannot see into.
     pub use crate::fs_full::filename_store_backing;
 
     /// Port of `FileSystem.DirnameStore` (`BSSStringList<2048,128>`).
@@ -119,11 +120,6 @@ pub mod fs {
                 ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
                     // SAFETY: see `append_slice`.
                     unsafe { bun_alloc::BSSStringList::print($backing(), args) }
-                }
-                #[inline]
-                pub fn exists(&self, value: &[u8]) -> bool {
-                    // SAFETY: see `append_slice`.
-                    unsafe { &*$backing() }.exists(value)
                 }
                 /// `value` with the store's lifetime, if it already points into the store.
                 #[inline]
@@ -677,7 +673,7 @@ pub mod fs {
         /// listing fd, in one `entries_mutex` critical section. A
         /// stale-generation re-read rewrites the slot's `DirEntry` (and frees
         /// the old map's buckets) in place under that lock, so the map must
-        /// not be walked after unlock; the returned entry pointer is
+        /// not be walked after unlock; the returned entry is
         /// EntryStore-owned and stays valid. The caller must NOT already hold
         /// `entries_mutex` (it is non-recursive).
         pub(crate) fn lookup(&self, query: &[u8]) -> (Option<crate::fs_full::EntryLookup>, Fd) {
@@ -698,15 +694,6 @@ pub mod fs {
             }
         }
     }
-
-    // SAFETY: ARENA — `EntriesOption` holds an unbounded `&mut DirEntry` (whose `data`
-    // map stores `*mut Entry` into the BSSMap singleton). All access is serialized
-    // through `RealFS.entries_mutex`. The
-    // raw-pointer fields are the only thing blocking auto-Sync.
-    unsafe impl Sync for EntriesOption {}
-    // SAFETY: the `&'static mut DirEntry` points into the process-lifetime BSSMap
-    // singleton; ownership may cross threads under the same `entries_mutex` serialization.
-    unsafe impl Send for EntriesOption {}
 
     /// Fixed-capacity (2048-entry) BSS-backed hash map for the directory-entry
     /// cache. Keys are not stored — only their hashes — so lookups cannot
@@ -1515,12 +1502,11 @@ pub mod dir_entry_accessor {
         pub(crate) value: Option<&'static DirEntry>,
     }
 
-    // `dir_entry::EntryMap` = `StringHashMap<*mut Entry>` which derefs to
-    // `std::collections::HashMap<Box<[u8]>, *mut Entry>`; iterate that directly.
+    // `dir_entry::EntryMap` derefs to a `hashbrown` map; iterate that directly.
     type EntryMapIter = bun_collections::hashbrown::hash_map::Iter<
         'static,
         bun_collections::StringHashMapKey,
-        *mut Entry,
+        &'static Entry,
     >;
 
     pub struct DirEntryDirIter {
@@ -1533,18 +1519,14 @@ pub mod dir_entry_accessor {
         #[inline]
         fn next(&mut self) -> Maybe<Option<walk::AccessorDirEntry<'_>>> {
             if let Some(value) = &mut self.value {
-                let Some((key, val)) = value.next() else {
+                let Some((key, entry)) = value.next() else {
                     return Ok(None);
                 };
-                // BACKREF: ARENA — `*mut Entry` points into the EntryStore
-                // BSSList singleton ('static lifetime). This iterator holds a
+                // This iterator holds a
                 // live `.data` iterator across calls, which `entries_mutex`
                 // cannot cover; it is only sound on the single-threaded CLI
                 // glob walk (`bun run --filter`), before any concurrent
                 // resolver exists to rewrite the map.
-                let entry = bun_ptr::BackRef::<Entry>::from(
-                    core::ptr::NonNull::new(*val).expect("EntryStore slot"),
-                );
                 let kind = entry.kind(&FS::get().fs, true);
                 let fskind = match kind {
                     EntryKind::File => bun_sys::FileKind::File,

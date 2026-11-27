@@ -546,13 +546,13 @@ pub struct FILE_DISPOSITION_INFORMATION_EX {
 }
 
 /// `FILE_RENAME_INFORMATION` ex variant (`ntifs.h`). `FileName` is a
-/// variable-length tail; declared `[u16; 1]` to match the C flex-array idiom.
+/// variable-length tail with room for `N` units; C declares one.
 #[repr(C)]
-pub struct FILE_RENAME_INFORMATION_EX {
+pub struct FILE_RENAME_INFORMATION_EX<const N: usize = 1> {
     pub Flags: ULONG,
     pub RootDirectory: HANDLE,
     pub FileNameLength: ULONG,
-    pub FileName: [u16; 1],
+    pub FileName: [core::mem::MaybeUninit<u16>; N],
 }
 
 // `FILE_DISPOSITION_INFORMATION_EX.Flags` bits (winnt.h).

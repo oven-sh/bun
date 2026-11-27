@@ -760,12 +760,7 @@ impl<'a> JsLatin1<'a> {
                 .owner
                 .substrings_of_resolved(heap.global_object(), &offsets_and_lengths)
         };
-        // SAFETY: `JsLocal` is `repr(transparent)` over `JSValue`.
-        unsafe {
-            (&raw const substrings)
-                .cast::<[JsLocal<'a, JSString>; N]>()
-                .read()
-        }
+        substrings.map(JsLocal::from_raw)
     }
 
     /// `part` as a string: a [`substring`](Self::substring) if it is a slice of [`characters`](Self::characters), a copy if it lies elsewhere.

@@ -1008,10 +1008,10 @@ pub(crate) mod command {
 
         // bun build --compile entry point
         if !bun_core::env_var::feature_flag::BUN_BE_BUN::get().unwrap_or(false) {
-            if let Some(graph) = bun_standalone_graph::Graph::from_executable()? {
+            if let Some(graph) = bun_standalone_graph::Graph::from_executable() {
                 // Never taken for a plain `bun` binary; ~2 KB of argv-splice
                 // and ctx-setup code lives behind this cold call.
-                return boot_standalone(graph, log);
+                return boot_standalone(graph?, log);
             }
             // Only `bun build --compile` removes the command line, so this file had a program.
             if bun_removable_features::is_removed(bun_removable_features::Feature::Tools) {
@@ -1177,12 +1177,9 @@ pub(crate) mod command {
     #[cold]
     #[inline(never)]
     fn boot_standalone(
-        graph: *mut bun_standalone_graph::Graph,
+        graph: &'static bun_standalone_graph::Graph,
         log: &mut bun_ast::Log,
     ) -> CmdResult {
-        // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
-        // backing storage is process-static (owned by the executable image).
-        let graph: &'static bun_standalone_graph::Graph = unsafe { &*graph };
         #[cfg(bun_hardened)]
         if bun_resolver::StandaloneModuleGraph::compiled_program(graph).is_some() {
             bun_jsc::compiled_program::deny_write_execute_memory();

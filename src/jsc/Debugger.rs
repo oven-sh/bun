@@ -384,20 +384,10 @@ impl Debugger {
             .unwrap_or_else(|_| panic!("Failed to create Debugger VM"));
         vm.event_loop().ensure_waker();
 
-        extern "C" fn start_trampoline(ctx: *mut c_void) {
-            // SAFETY: `ctx` is `&mut slot` below; `hold_api_lock` calls this
-            // synchronously on the same frame.
-            let init = unsafe { (*ctx.cast::<Option<DebuggerThreadInit>>()).take() };
-            Debugger::start(init.expect("init"));
-        }
-        let mut slot = Some(init);
-        #[allow(deprecated)]
-        vm.global()
-            .vm()
-            .hold_api_lock((&raw mut slot).cast(), start_trampoline);
+        vm.run_with_api_lock(|| Debugger::start(init))
     }
 
-    /// Runs inside `holdAPILock` on the debugger thread. Publishes the
+    /// Runs under the API lock on the debugger thread. Publishes the
     /// inspector URL(s), wakes the futex the debuggee VM is blocked on, then
     /// spins this thread's event loop forever.
     fn start(init: DebuggerThreadInit) -> ! {

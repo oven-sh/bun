@@ -2061,6 +2061,7 @@ pub mod node {
 
     pub(crate) struct Stole {
         pub(crate) node: NonNull<Node>,
+        /// Whether nodes are left that another thread could take.
         pub(crate) pushed: bool,
     }
 
@@ -2232,10 +2233,18 @@ pub mod node {
                 self.tail
                     .store(tail.wrapping_add(pushed), Ordering::Release);
             }
+
+            #[cfg(test)]
+            if let Some(hook) = tests::AFTER_LAST_POP.take() {
+                hook(queue);
+            }
+
+            // Before the check below: a thread woken for a later push may have met this consumer and gone back to sleep.
+            drop(consumer);
             Some(Stole {
                 // SAFETY: node is non-null (from queue.pop or array slot we wrote).
                 node: unsafe { NonNull::new_unchecked(node) },
-                pushed: pushed > 0,
+                pushed: pushed > 0 || !queue.is_empty(),
             })
         }
 
@@ -2307,6 +2316,52 @@ pub mod node {
                     }
                 }
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use core::cell::Cell;
+
+        std::thread_local! {
+            /// Runs once in `consume`, where another thread's push finds the queue still held.
+            pub(super) static AFTER_LAST_POP: Cell<Option<Box<dyn FnOnce(&Queue)>>> = const { Cell::new(None) };
+        }
+
+        fn list_of(node: NonNull<Node>) -> List {
+            List {
+                head: node,
+                tail: node,
+            }
+        }
+
+        #[test]
+        fn consume_reports_nothing_left_after_the_only_node() {
+            let (queue, buffer) = (Queue::default(), Buffer::default());
+            let mut only = Node::default();
+            let only = NonNull::from(&mut only);
+            queue.push(&list_of(only));
+
+            let stole = buffer.consume(&queue).unwrap();
+            assert_eq!((stole.node, stole.pushed), (only, false));
+        }
+
+        #[test]
+        fn consume_reports_a_node_pushed_while_it_held_the_queue() {
+            let (queue, buffer) = (Queue::default(), Buffer::default());
+            let (mut first, mut late) = (Node::default(), Node::default());
+            let (first, late) = (NonNull::from(&mut first), NonNull::from(&mut late));
+            queue.push(&list_of(first));
+            AFTER_LAST_POP.set(Some(Box::new(move |queue| {
+                queue.push(&list_of(late));
+                // What the thread woken for `late` finds.
+                assert!(Buffer::default().consume(queue).is_none());
+            })));
+
+            let stole = buffer.consume(&queue).unwrap();
+            assert_eq!((stole.node, stole.pushed), (first, true));
+            assert_eq!(buffer.consume(&queue).unwrap().node, late);
         }
     }
 }

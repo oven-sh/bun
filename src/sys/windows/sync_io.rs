@@ -105,11 +105,11 @@ fn is_interrupted() -> bool {
 #[repr(C)]
 #[derive(Default)]
 pub struct StatusBlock {
-    status: AtomicUsize,
-    information: AtomicUsize,
+    Status: AtomicUsize,
+    Information: AtomicUsize,
 }
 
-const _: () = assert!(size_of::<StatusBlock>() == size_of::<IO_STATUS_BLOCK>());
+bun_core::assert_ffi_layout!(StatusBlock = IO_STATUS_BLOCK; Status, Information);
 
 impl StatusBlock {
     fn new_pending() -> StatusBlock {
@@ -123,14 +123,14 @@ impl StatusBlock {
     }
 
     pub fn set(&self, status: NTSTATUS, information: usize) {
-        self.status.store(status.0 as usize, Ordering::Relaxed);
-        self.information.store(information, Ordering::Relaxed);
+        self.Status.store(status.0 as usize, Ordering::Relaxed);
+        self.Information.store(information, Ordering::Relaxed);
     }
 
     /// The kernel writes `Status` after `Information`.
     pub fn get(&self) -> (NTSTATUS, usize) {
-        let status = NTSTATUS(self.status.load(Ordering::Acquire) as u32);
-        (status, self.information.load(Ordering::Relaxed))
+        let status = NTSTATUS(self.Status.load(Ordering::Acquire) as u32);
+        (status, self.Information.load(Ordering::Relaxed))
     }
 }
 
@@ -266,7 +266,7 @@ pub(crate) fn readv(
             return super::check(rc).map(|()| read as usize);
         }
         let result = complete_transfer(handle, |event, io| {
-            // SAFETY: `buf` is writable for `len` bytes until `complete_transfer` returns.
+            // SAFETY: `buf` is writable for `len` bytes, and `io` is live, until `complete_transfer` returns.
             unsafe {
                 ntdll::NtReadFile(
                     handle,
@@ -319,7 +319,7 @@ pub(super) unsafe fn write(
     let issue_write = |len| {
         complete_transfer(handle, |event, io| {
             let null = ptr::null_mut();
-            // SAFETY: fn contract, which holds until `complete_transfer` returns.
+            // SAFETY: fn contract. It holds, and `io` is live, until `complete_transfer` returns.
             unsafe {
                 ntdll::NtWriteFile(
                     handle,

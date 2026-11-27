@@ -320,15 +320,24 @@ pub(crate) fn run_task(
                 update.run();
             }
         ),
-        task_tag::AsyncCpTask => boxed_arm!(
-            task,
+        task_tag::AsyncCpTask => in_features!(
             [NodeFs],
-            |copy: crate::node::fs::AsyncCpTask| -> JsResult<()> { copy.run_from_js_thread() }
+            (
+                copy: Box<crate::node::fs::AsyncCpTask> =
+                    boxed!(task, crate::node::fs::AsyncCpTask),
+                global: &JSGlobalObject = global,
+            ) -> JsResult<()> {
+                copy.run_from_js_thread(global)
+            }
         )?,
+        // With no result the linker folds this arm with the mini loop's callback, and `--trim` keeps the shell.
         task_tag::ShellAsyncCpTask => boxed_arm!(
             task,
             [Shell],
-            |copy: crate::node::fs::ShellAsyncCpTask| -> JsResult<()> { copy.run_from_js_thread() }
+            |copy: crate::node::fs::ShellAsyncCpTask| -> JsResult<()> {
+                copy.report_to_shell();
+                Ok(())
+            }
         )?,
         task_tag::StatWatcherHop => counted_arm!(
             task,
@@ -357,21 +366,17 @@ pub(crate) fn run_task(
                 unsafe { bun_bundler::parse_task::on_complete(result) };
             })
         }
-        task_tag::FetchTaskletRequestDrain => {
-            feature_arm!(
-                [Fetch],
-                |drain: crate::webcore::fetch::FetchTaskletRequestDrain| {
-                    // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
-                    let tasklet = unsafe { bun_ptr::RefPtr::from_raw(drain.cast()) };
-                    FetchTasklet::resume_request_data_stream(&tasklet);
-                }
-            )
-        }
-        task_tag::FetchTaskletTrace => feature_arm!(
+        task_tag::FetchTaskletRequestDrain => counted_arm!(
+            task,
             [Fetch],
-            |trace: crate::webcore::fetch::FetchTaskletTrace| -> JsResult<()> {
-                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
-                let tasklet = unsafe { bun_ptr::RefPtr::from_raw(trace.cast()) };
+            |tasklet: crate::webcore::fetch::FetchTaskletRequestDrain| {
+                FetchTasklet::resume_request_data_stream(&tasklet);
+            }
+        ),
+        task_tag::FetchTaskletTrace => counted_arm!(
+            task,
+            [Fetch],
+            |tasklet: crate::webcore::fetch::FetchTaskletTrace| -> JsResult<()> {
                 FetchTasklet::on_trace_events(&tasklet)
             }
         )?,
@@ -595,7 +600,7 @@ pub(crate) fn run_task(
                 global: &JSGlobalObject = global,
                 vm: &VirtualMachine = vm,
             ) {
-                vm.transpiler_store.run_from_js_thread(el, global, vm.into());
+                vm.transpiler_store.run_from_js_thread(el, global, vm);
             }
         ),
 
@@ -1552,10 +1557,10 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release_boxed_in!([Bundler], BundleV2ParseTaskResult)
         }
         task_tag::FetchTaskletRequestDrain => {
-            release_in!([Fetch], crate::webcore::fetch::FetchTaskletRequestDrain)
+            release_counted_in!([Fetch], crate::webcore::fetch::FetchTaskletRequestDrain)
         }
         task_tag::FetchTaskletTrace => {
-            release_in!([Fetch], crate::webcore::fetch::FetchTaskletTrace)
+            release_counted_in!([Fetch], crate::webcore::fetch::FetchTaskletTrace)
         }
         task_tag::HTMLRewriterBackgroundPull => {
             release_counted_in!(

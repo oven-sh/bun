@@ -91,6 +91,9 @@ pub struct Environment {
     // are NOT in this set and should keep their original names).
     pub reference_node_ids: HashSet<u32>,
 
+    /// The temporaries holding `X` of an `X.name` in the source. Not an alias of `X`, which is `this` in what it calls.
+    pub(crate) import_property_targets: HashSet<DeclarationId>,
+
     // Hoisted identifiers: tracks which bindings have already been hoisted
     // via DeclareContext to avoid duplicate hoisting.
     // Uses u32 to avoid depending on react_compiler_ast types.
@@ -204,6 +207,7 @@ impl Environment {
             renames: AstAlloc::vec(),
             binding_names: HashMap::default(),
             reference_node_ids: HashSet::default(),
+            import_property_targets: HashSet::default(),
             hoisted_identifiers: HashSet::default(),
             validate_preserve_existing_memoization_guarantees: config
                 .validate_preserve_existing_memoization_guarantees,
@@ -284,6 +288,11 @@ impl Environment {
             loc: None,
         });
         id
+    }
+
+    pub(crate) fn note_import_property_target(&mut self, target: &Place) {
+        let id = self.identifiers[target.identifier.0 as usize].declaration_id;
+        self.import_property_targets.insert(id);
     }
 
     /// Name the temporary `#t<declaration id>` so it survives as a variable.

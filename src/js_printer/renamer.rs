@@ -1014,7 +1014,7 @@ pub struct NestedRenamer<'r> {
     /// The AST scope being named and its serial number (from `ROOT_SCOPE + 1`).
     scope: u32,
     next_scope: u32,
-    ast_scope: *const js_ast::Scope,
+    ast_scope: &'r js_ast::Scope,
     arena: &'r bun_alloc::Arena,
 }
 
@@ -1077,9 +1077,7 @@ impl<'r> NameScopes for NestedRenamer<'r> {
         }
     }
     fn sees(&self, owner: Ref) -> bool {
-        // SAFETY: `ast_scope` is the live scope `assign_names_recursive` is
-        // visiting.
-        self.uses.sees(owner, unsafe { &*self.ast_scope })
+        self.uses.sees(owner, self.ast_scope)
     }
 }
 
@@ -1113,7 +1111,7 @@ impl<'r> NestedRenamer<'r> {
             undo: Vec::new(),
             scope: ROOT_SCOPE,
             next_scope: ROOT_SCOPE + 1,
-            ast_scope: core::ptr::null(),
+            ast_scope: const { &js_ast::Scope::EMPTY },
             arena,
         }
     }
@@ -1175,7 +1173,7 @@ impl<'r> NestedRenamer<'r> {
     }
 
     /// Names `scope` and everything below it.
-    pub fn assign_names_recursive(&mut self, scope: &js_ast::Scope, sorted: &mut Vec<u32>) {
+    pub fn assign_names_recursive(&mut self, scope: &'r js_ast::Scope, sorted: &mut Vec<u32>) {
         let parent = (self.scope, self.ast_scope);
         let undo_mark = self.undo.len();
         let slots_mark = self.slots.len();

@@ -116,26 +116,7 @@ impl JSFrameworkRouter {
         };
         if let Some(index) = self.router.match_slow(path, &mut params_out) {
             let obj = JSValue::create_empty_object(global, 2);
-            obj.put(
-                global,
-                b"params",
-                if params_out.params.len() > 0 {
-                    let params_obj =
-                        JSValue::create_empty_object(global, params_out.params.len() as usize);
-                    for param in params_out.params.slice() {
-                        // key/value borrow from `path`/pattern, both live here (RawSlice invariant)
-                        // A file named `[0].tsx` produces a param name that's an array index.
-                        params_obj.put_may_be_index(
-                            global,
-                            &bun_core::StringView::borrow_utf8(param.key.slice()),
-                            bun_string_jsc::create_utf8_for_js(global, param.value.slice())?,
-                        )?;
-                    }
-                    params_obj
-                } else {
-                    JSValue::NULL
-                },
-            );
+            obj.put(global, b"params", params_out.to_js(global)?);
             obj.put(global, b"route", self.route_to_json_inverse(global, index)?);
             return Ok(obj);
         }

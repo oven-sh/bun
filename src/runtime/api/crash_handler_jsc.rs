@@ -259,3 +259,10 @@ pub(crate) fn get_feature_data() -> FeatureData {
         generated_at: bun_core::time::milli_timestamp().max(0) as u64,
     }
 }
+
+/// Regression probe for #30861: returns `true` iff `resize(grow)` is refused.
+pub(crate) fn bounded_array_resize_grow_returns_err() -> bool {
+    let mut a = bun_collections::BoundedArray::<u8, 8>::default();
+    a.append(1).expect("capacity 8 > 1");
+    a.resize(4).is_err()
+}

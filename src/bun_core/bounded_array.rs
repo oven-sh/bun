@@ -5,9 +5,8 @@
 //! an `Allocator`.
 //!
 //! ```ignore
-//! let actual_size = 32;
-//! let mut a = BoundedArray::<u8, 64>::init(actual_size)?;
-//! let slice = a.slice(); // a slice of the 64-byte array
+//! let mut a = BoundedArray::<u8, 64>::from_slice(&bytes[..32])?;
+//! let slice = a.slice(); // the initialized prefix of the 64-byte array
 //! let a_clone = a.clone(); // creates a copy - the structure doesn't use any internal pointers
 //! ```
 
@@ -48,9 +47,6 @@ pub struct BoundedArrayAligned<T, const BUFFER_CAPACITY: usize> {
     len: usize,
 }
 
-// See the `len` field note above; collapsed to `usize`.
-type Length = usize;
-
 impl<T, const BUFFER_CAPACITY: usize> Default for BoundedArrayAligned<T, BUFFER_CAPACITY> {
     fn default() -> Self {
         Self::new()
@@ -71,18 +67,7 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         }
     }
 
-    /// Set the actual length of the slice.
-    /// Returns error.Overflow if it exceeds the length of the backing array.
-    pub(crate) fn init(len: usize) -> Result<Self, OverflowError> {
-        if len > BUFFER_CAPACITY {
-            return Err(OverflowError::Overflow);
-        }
-        let mut s = Self::default();
-        s.len = Length::try_from(len).expect("int cast");
-        Ok(s)
-    }
-
-    /// View the internal array as a slice whose size was previously set.
+    /// View the initialized prefix of the internal array as a slice.
     // Mut/const access is split into `slice(&mut self)` and `const_slice(&self)`.
     pub fn slice(&mut self) -> &mut [T] {
         let len = self.len;
@@ -97,14 +82,37 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         unsafe { &*(&raw const self.buffer[0..len] as *const [T]) }
     }
 
-    /// Adjust the slice's length to `len`.
-    /// Does not initialize added items if any.
+    /// Shrink the slice's length to `len`, dropping the truncated elements.
+    ///
+    /// Returns `Overflow` if `len` is greater than the current length: growing would
+    /// expose uninitialized elements as `T` through the safe slice views. To grow, use
+    /// `append`/`append_slice`, or `unused_capacity_slice` + [`Self::set_len_unchecked`].
     pub fn resize(&mut self, len: usize) -> Result<(), OverflowError> {
-        if len > BUFFER_CAPACITY {
+        let old_len = self.len;
+        if len > old_len {
             return Err(OverflowError::Overflow);
         }
         self.len = len;
+        // SAFETY: `[len..old_len]` is initialized; `len` reset first so a panicking Drop
+        // can't double-drop (same pattern as `clear`).
+        unsafe {
+            core::ptr::drop_in_place(&raw mut self.buffer[len..old_len] as *mut [T]);
+        }
         Ok(())
+    }
+
+    /// Set `len` directly without touching the buffer (e.g. after writing into
+    /// `unused_capacity_slice`).
+    ///
+    /// # Safety
+    /// - `len <= BUFFER_CAPACITY`.
+    /// - If growing, the elements at `[old_len..len]` must already be initialized with
+    ///   valid `T`s, as for `Vec::set_len`: every method (including `Drop`) assumes
+    ///   `[0..len]` is initialized. (Shrinking this way leaks the truncated tail
+    ///   instead of dropping it; use `resize` for that.)
+    pub unsafe fn set_len_unchecked(&mut self, len: usize) {
+        debug_assert!(len <= BUFFER_CAPACITY);
+        self.len = len;
     }
 
     /// Remove all elements from the slice.
@@ -122,8 +130,8 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
     where
         T: Copy,
     {
-        let mut list = Self::init(m.len())?;
-        list.slice().copy_from_slice(m);
+        let mut list = Self::default();
+        list.append_slice(m)?;
         Ok(list)
     }
     // If a non-`Copy` caller
@@ -153,8 +161,9 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
 
     /// Return a slice of only the extra capacity after items.
     /// This can be useful for writing directly into it.
-    /// Note that such an operation must be followed up with a
-    /// call to `resize()`
+    /// Note that such an operation must be followed up with a call to
+    /// [`Self::set_len_unchecked`] to commit the new length; `resize` is
+    /// shrink-only so it cannot be used here.
     pub fn unused_capacity_slice(&mut self) -> &mut [MaybeUninit<T>] {
         &mut self.buffer[self.len..]
     }
@@ -198,9 +207,13 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         T: Copy,
     {
         let old_len = self.len;
-        let new_len: usize = old_len + items.len();
-        self.len = Length::try_from(new_len).expect("int cast");
-        self.slice()[old_len..][..items.len()].copy_from_slice(items);
+        let new_len = old_len + items.len();
+        debug_assert!(new_len <= BUFFER_CAPACITY);
+        for (slot, &item) in self.buffer[old_len..new_len].iter_mut().zip(items) {
+            slot.write(item);
+        }
+        // SAFETY: the loop above wrote a valid `T` into every slot in `[old_len..new_len]`.
+        unsafe { self.set_len_unchecked(new_len) };
     }
 }
 

@@ -78,11 +78,10 @@ fn fix<'a>(fixer: Fixer<'a>, func: Func<'a>, done: Symbol<'a>) -> Option<Vec<Fix
             let (body, first) = (func.body_span()?, func.body_statements()?.first()?);
             let (before, after): (&[u8], &str) = if func.is_arrow() { (b"", ")") } else { (b"{ return ", "); }") };
             // The new first statement is laid out like the old one.
-            let after_brace = Span::new(body.start + 1, first.span().start);
-            let text = file.slice(after_brace);
+            let brace = Span::new(body.start, body.start + 1);
+            let text = file.slice(brace.between(first.span()));
             let space = text.get(..text.len() - text.trim_ascii_start().len()).unwrap_or_default();
             let space: &[u8] = if setup.is_empty() { b"" } else { space };
-            let brace = Span::new(body.start, body.start + 1);
             fixes.push(fixer.replace(brace, [before, &start, b"{", space, &setup].concat()));
             fixes.push(fixer.insert_after(body, after));
         }

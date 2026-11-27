@@ -1221,7 +1221,8 @@ mod _async_tasks {
     }
 
     #[cfg(windows)]
-    impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, F>
+    impl<R: FsReturn + 'static, A: FsArgument + 'static, const F: NodeFSFunctionEnum>
+        UVFSRequest<R, A, F>
     where
         Op<{ F }>: NodeFSDispatch<R, A>,
     {
@@ -1242,10 +1243,10 @@ mod _async_tasks {
             vm: &VirtualMachine,
             callback: Option<JSValue>,
         ) -> JSValue {
-            let task = Box::new(Self {
+            let mut task = Box::new(Self {
                 completion: FsCompletion::new(cx.global(), callback),
                 args: task_args,
-                // Sentinel — overwritten by `uv_callback` (or the early-return arms
+                // Sentinel — overwritten by `uv_callback` (or the early return
                 // below) before any read on the JS thread. `Maybe<R>` is
                 // `Result<R, sys::Error>` and may be niche-optimised for arbitrary
                 // `R`; never construct an all-zero `Result` value.
@@ -1256,34 +1257,49 @@ mod _async_tasks {
                 tracker: AsyncTaskTracker::init(vm),
                 context: cx.context().id(),
             });
-            // Transfer ownership to libuv: the box outlives the async request and is
-            // reclaimed in `run_from_js_thread`. `heap::release`
-            // names that hand-off — it is `Box::leak` under the hood; the reclaim
-            // happens there, not in this scope.
-            let task: &mut Self = bun_core::heap::release(task);
             task.tracker.did_schedule(cx.global());
 
             let loop_ = uv::Loop::get();
-            task.req.data = core::ptr::from_mut::<Self>(task).cast::<c_void>();
 
             // The match resolves at compile time (`F` is a const generic), but
             // each arm's body needs `A` re-asserted to its concrete `args::*`
-            // type — same identity-cast pattern as `NodeFS::dispatch` (per the
+            // type, with a downcast that the optimizer folds away (per the
             // `async_::*` aliases, `A == $Args` for the matched `F`).
             macro_rules! args_as {
-                ($Args:ty) => {{
-                    debug_assert_eq!(core::mem::size_of::<A>(), core::mem::size_of::<$Args>());
-                    // SAFETY: identity cast — `A == $Args` for this `F` (see `async_::*`).
-                    // `ThreadIsolated<A>` is `repr(transparent)`; deref through it for the inner `A`.
-                    unsafe { &*(&*task.args as *const A as *const $Args) }
-                }};
+                ($task:ident, $Args:ty) => {
+                    <dyn core::any::Any>::downcast_ref::<$Args>(&*$task.args)
+                        .expect("the arguments of F")
+                };
             }
+            let answer: Option<Maybe<R>> = match F {
+                NodeFSFunctionEnum::Open => {
+                    let args: &args::Open = args_as!(task, args::Open);
+                    refuse_open_for_write(args.path.slice(), args.flags.as_int()).map(Err)
+                }
+                NodeFSFunctionEnum::Writev => {
+                    let args: &args::Writev = args_as!(task, args::Writev);
+                    args.buffers.readable().is_empty().then(|| {
+                        NodeFS::default()
+                            .uv_dispatch::<R, A, F>(&task.args, uv::ReturnCodeI64::ZERO)
+                    })
+                }
+                _ => None,
+            };
+            if let Some(answer) = answer {
+                let _sentinel =
+                    core::mem::ManuallyDrop::new(core::mem::replace(&mut task.result, answer));
+                let value = task.completion.value();
+                task.enqueue();
+                return value;
+            }
+
+            // libuv has the box until it calls back.
+            let task: &mut Self = bun_core::heap::release(task);
+            task.req.data = core::ptr::from_mut::<Self>(task).cast::<c_void>();
             match F {
                 NodeFSFunctionEnum::Open => {
-                    let args: &args::Open = args_as!(args::Open);
+                    let args: &args::Open = args_as!(task, args::Open);
                     let named = &args.path;
-                    let refusal = refuse_open_for_write(named.slice(), args.flags.as_int());
-                    let answer: Option<Maybe<ret::Open>> = refusal.map(Err);
                     let path = if strings::eql_comptime(named.slice(), b"/dev/null") {
                         bun_core::zstr!("\\\\.\\NUL")
                     } else {
@@ -1293,21 +1309,6 @@ mod _async_tasks {
                         // never across a JS re-entry point.
                         named.slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf })
                     };
-                    if let Some(answer) = answer {
-                        // SAFETY: identity write — `R == ret::Open` for this `F`.
-                        unsafe {
-                            core::ptr::write(
-                                &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Open>,
-                                answer,
-                            )
-                        };
-                        let task_ptr: *mut Self = task;
-                        task.global_object()
-                            .bun_vm()
-                            .event_loop()
-                            .enqueue_task(bun_jsc::Task::init(task_ptr));
-                        return task.completion.value();
-                    }
                     let mut flags: c_int = args.flags.as_int();
                     flags = uv::O::from_bun_o(flags);
                     let mut mode: c_int = args.mode as c_int;
@@ -1335,7 +1336,7 @@ mod _async_tasks {
                     );
                 }
                 NodeFSFunctionEnum::Close => {
-                    let args: &args::Close = args_as!(args::Close);
+                    let args: &args::Close = args_as!(task, args::Close);
                     let fd = args.fd.uv();
                     // SAFETY: libuv async request.
                     let rc = unsafe {
@@ -1345,7 +1346,7 @@ mod _async_tasks {
                     sys::syslog!("uv close({}) = scheduled", fd);
                 }
                 NodeFSFunctionEnum::Read => {
-                    let args: &args::Read = args_as!(args::Read);
+                    let args: &args::Read = args_as!(task, args::Read);
                     let fd = args.fd.uv();
                     let buf = args.buffer.slice();
                     let off = (buf.len()).min(args.offset as usize);
@@ -1369,7 +1370,7 @@ mod _async_tasks {
                     sys::syslog!("uv read({}) = scheduled", fd);
                 }
                 NodeFSFunctionEnum::Write => {
-                    let args: &args::Write = args_as!(args::Write);
+                    let args: &args::Write = args_as!(task, args::Write);
                     let fd = args.fd.uv();
                     let buf = args.buffer.slice();
                     let off = (buf.len()).min(args.offset as usize);
@@ -1392,7 +1393,7 @@ mod _async_tasks {
                     sys::syslog!("uv write({}) = scheduled", fd);
                 }
                 NodeFSFunctionEnum::Readv => {
-                    let args: &args::Readv = args_as!(args::Readv);
+                    let args: &args::Readv = args_as!(task, args::Readv);
                     let fd = args.fd.uv();
                     let bufs = args.buffers.writable();
                     let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
@@ -1420,24 +1421,9 @@ mod _async_tasks {
                     );
                 }
                 NodeFSFunctionEnum::Writev => {
-                    let args: &args::Writev = args_as!(args::Writev);
+                    let args: &args::Writev = args_as!(task, args::Writev);
                     let fd = args.fd.uv();
                     let bufs = args.buffers.readable();
-                    if bufs.is_empty() {
-                        // SAFETY: identity write — `R == ret::Writev == ret::Write` for this `F`.
-                        unsafe {
-                            core::ptr::write(
-                                &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Writev>,
-                                Ok(ret::Write { bytes_written: 0 }),
-                            )
-                        };
-                        let task_ptr: *mut Self = task;
-                        task.global_object()
-                            .bun_vm()
-                            .event_loop()
-                            .enqueue_task(bun_jsc::Task::init(task_ptr));
-                        return task.completion.value();
-                    }
                     let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
                     let sum: usize = bufs.iter().map(sys::IoVec::size).sum();
                     // SAFETY: see Readv arm.
@@ -1463,7 +1449,7 @@ mod _async_tasks {
                     );
                 }
                 NodeFSFunctionEnum::Statfs => {
-                    let args: &args::StatFS = args_as!(args::StatFS);
+                    let args: &args::StatFS = args_as!(task, args::StatFS);
                     // SAFETY (R-2): single-JS-thread `JsCell` projection; held only
                     // across the libuv enqueue (copies `path` internally).
                     let path = path_for_statfs(&args.path, unsafe {
@@ -1487,61 +1473,53 @@ mod _async_tasks {
             task.completion.value()
         }
 
-        extern "C" fn uv_callback(req: *mut uv::fs_t) {
-            // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
-            let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>((*req).data) };
-            let mut node_fs = NodeFS::default();
-            // `req` aliases `this.req` (see create(): `task.req.data = from_mut(task)`); once
-            // `this: &mut Self` is live, re-deriving through the raw `req` would create a
-            // second overlapping `&mut` (Stacked-Borrows UB). Go through `this.req` instead.
-            this.result = NodeFS::uv_dispatch::<R, A, F>(&mut node_fs, &this.args, this.req.result);
-            let this_ptr: *mut Self = this;
-            this.global_object()
+        fn enqueue(self: Box<Self>) {
+            self.global_object()
                 .bun_vm()
                 .event_loop()
-                .enqueue_task(bun_jsc::Task::init(this_ptr));
+                .enqueue_task(bun_jsc::Task::from_boxed(self));
+        }
+
+        extern "C" fn uv_callback(req: *mut uv::fs_t) {
+            // SAFETY: req.data is the box that create() released to libuv, which is done with it.
+            let mut this = unsafe { bun_core::heap::take((*req).data.cast::<Self>()) };
+            let mut node_fs = NodeFS::default();
+            // `req` aliases `this.req` (see create(): `task.req.data = from_mut(task)`); once
+            // `this: Box<Self>` is live, re-deriving through the raw `req` would create a
+            // second overlapping `&mut` (Stacked-Borrows UB). Go through `this.req` instead.
+            this.result = NodeFS::uv_dispatch::<R, A, F>(&mut node_fs, &this.args, this.req.result);
+            this.enqueue();
         }
 
         extern "C" fn uv_callbackreq(req: *mut uv::fs_t) {
             // Same as uv_callback but passes `req` through to the dispatch fn (statfs needs req.ptr).
-            // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
-            let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>((*req).data) };
+            // SAFETY: req.data is the box that create() released to libuv, which is done with it.
+            let mut this = unsafe { bun_core::heap::take((*req).data.cast::<Self>()) };
             let mut node_fs = NodeFS::default();
-            // `req` aliases `this.req`; once `this: &mut Self` is live, re-deriving `&mut *req`
+            // `req` aliases `this.req`; once `this: Box<Self>` is live, re-deriving `&mut *req`
             // would overlap it (Stacked-Borrows UB). Go through `this.req` instead — disjoint-field
             // borrow alongside `&this.args` / `this.result =`. Hoist the result read so it isn't
             // evaluated after `&mut this.req` is formed in the same call expression.
             let rc = this.req.result;
             this.result =
                 NodeFS::uv_dispatch_req::<R, A, F>(&mut node_fs, &this.args, &mut this.req, rc);
-            let this_ptr: *mut Self = this;
-            this.global_object()
-                .bun_vm()
-                .event_loop()
-                .enqueue_task(bun_jsc::Task::init(this_ptr));
+            this.enqueue();
         }
 
-        /// SAFETY: `this` must be the pointer Box::leak'd in `create()`. The body frees it before it calls back, so it is not `&mut self`.
-        pub(crate) unsafe fn run_from_js_thread(this: *mut Self) -> JsResult<()> {
-            // SAFETY: fn contract. The borrow ends before the free below.
-            let (result, completion, global_ref, tracker) = unsafe {
-                let task = &mut *this;
+        pub(crate) fn run_from_js_thread(self: Box<Self>) -> JsResult<()> {
+            // The block frees the arguments, which pin their buffers. A callback runs inside `resolve`/`reject`, and a pinned buffer cannot be transferred.
+            let (result, completion, global_ref, tracker) = {
+                let mut task = self;
                 if let Ok(result) = &task.result {
                     task.args.write_back(result.bytes_read());
                 }
                 (
-                    core::mem::replace(&mut task.result, Err(sys::Error::default())),
-                    core::mem::replace(
-                        &mut task.completion,
-                        FsCompletion::Promise(JSPromiseStrong::empty()),
-                    ),
+                    task.result,
+                    task.completion,
                     task.global_object,
                     task.tracker,
                 )
             };
-            // The arguments pin their buffers. A callback runs inside `resolve`/`reject`, and a pinned buffer cannot be transferred.
-            // SAFETY: fn contract. `this` is not used again.
-            unsafe { bun_core::heap::destroy(this) };
 
             let global_object = global_ref.get();
             let success = matches!(result, Ok(_));
@@ -1819,25 +1797,21 @@ mod _async_tasks {
         }
     }
 
-    /// `Taskable` glue for the libuv-request ops (Windows), which complete on
+    /// `BoxedTask` glue for the libuv-request ops (Windows), which complete on
     /// the JS thread and re-enter through the task queue under a per-`F` tag.
     #[cfg(windows)]
-    impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> bun_event_loop::Taskable
-        for UVFSRequest<R, A, F>
+    impl<R: FsReturn + 'static, A: FsArgument + 'static, const F: NodeFSFunctionEnum>
+        bun_event_loop::BoxedTask for UVFSRequest<R, A, F>
     where
         Op<{ F }>: NodeFSDispatch<R, A>,
     {
         const TAG: bun_event_loop::TaskTag = F.task_tag();
         /// A libuv fs request that completed into the queue after the last
         /// tick: the drop releases its promise handle and keep-alive.
-        unsafe fn release_unrun(this: *mut Self) {
-            // SAFETY: fn contract — `Box::leak`'d in `UVFSRequest::create`.
-            unsafe { bun_core::heap::destroy(this) }
-        }
+        fn release_unrun(self: Box<Self>) {}
         /// The context whose script asked.
-        unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
-            // SAFETY: fn contract.
-            unsafe { (*this).context }
+        fn context(&self) -> bun_event_loop::ContextId {
+            self.context
         }
     }
 

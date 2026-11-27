@@ -1198,7 +1198,7 @@ fn spawn_maybe_sync(
     // SAFETY: `subprocess_ref`, and then the wrapper that takes it, outlive this borrow.
     let subprocess = unsafe { &*subprocess_ptr };
     #[cfg(windows)]
-    SubprocessT::record_stdio_pipe_ownership(subprocess_ptr);
+    subprocess_ref.record_stdio_pipe_ownership();
     let subprocess_nn = subprocess_ref.as_non_null();
 
     // Address-dependent fields, filled now that `subprocess` has a stable address.

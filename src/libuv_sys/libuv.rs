@@ -2344,6 +2344,7 @@ impl fmt::Display for ReturnCode {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ReturnCodeI64(pub(crate) i64);
 impl ReturnCodeI64 {
+    pub const ZERO: ReturnCodeI64 = ReturnCodeI64(0);
     #[inline]
     pub const fn int(self) -> i64 {
         self.0

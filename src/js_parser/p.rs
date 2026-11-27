@@ -5324,9 +5324,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // symbols in an ESM file when bundling is enabled. We make no guarantee
                 // that "eval" will be able to reach these symbols and we allow them to be
                 // renamed or removed by tree shaking.
-                // The module scope never pops, so `to_ast` applies this rule and its exception to it.
+                // The module scope never pops: `to_ast` pins it, in a bundle only for a CommonJS file.
 
-                self.symbols[member.1.ref_.inner_index() as usize].set_must_not_be_renamed(true);
+                if current_scope.kind == js_ast::scope::Kind::FunctionArgs {
+                    // A parameter links to the body `var` or function that declares it again, and the renamer names that one.
+                    self.set_must_not_be_renamed_through_links(member.1.ref_);
+                } else {
+                    // A block `var` links to a top-level name, which a flat ESM bundle has to stay free to rename.
+                    self.symbols[member.1.ref_.inner_index() as usize]
+                        .set_must_not_be_renamed(true);
+                }
             }
         }
 
@@ -9014,7 +9021,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // A direct eval can assign and read every top-level name. `pop_scope` pins nested scopes; the module scope never pops.
         if self.module_scope().contains_direct_eval {
-            // In a bundle only a CommonJS closure keeps these names apart. Flat ESM shares its chunk's scope, as in esbuild.
+            // A bundle pins only a file in a CommonJS closure. A flat ESM file shares its chunk's scope and stays renameable.
             let pin = !bundling || exports_kind == js_ast::ExportsKind::Cjs;
             let module_scope = self.module_scope_ref();
             for member in module_scope.members.values() {

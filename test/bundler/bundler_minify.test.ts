@@ -308,6 +308,57 @@ describe("bundler", () => {
     },
     run: { stdout: "undefined undefined 2 2" },
   });
+  // A parameter and a body declaration of the same name are one variable, and
+  // the body declaration is the symbol that gets the name. A direct eval in
+  // the parameter list is in the parameter scope only, so that name was not
+  // kept: `function f(param, other = eval("param + 1")) { var param }` printed
+  // as `function f(a, other = eval("param + 1")) { var a }`, and as `param2`
+  // in a bundle that is not minified.
+  for (const [mode, options] of Object.entries({
+    NoBundleMinified: { bundling: false, minifyIdentifiers: true },
+    Bundled: { format: "cjs" },
+    BundledMinified: { format: "cjs", minifyIdentifiers: true },
+  } satisfies Record<string, Partial<BundlerTestInput>>)) {
+    itBundled(`minify/DirectEvalKeepsParameterDeclaredAgainInBody${mode}`, {
+      files: {
+        "/entry.js": /* js */ `
+          function redeclared(param, other = eval("param + 1")) { var param; return other; }
+          function destructured({ field }, other = eval("field + 1")) { var field; return other; }
+          function shadowedByFunction(callee, other = eval("typeof callee")) { function callee() {} return other; }
+          const arrow = (param, other = eval("param + 1")) => { var param; return other; };
+          console.log(redeclared(1), destructured({ field: 2 }), shadowedByFunction(3), arrow(4));
+        `,
+      },
+      ...options,
+      run: { stdout: "2 3 number 5" },
+    });
+  }
+  // A block `var` links to the top-level name that it declares again. In a
+  // flat ESM bundle that name is not kept, so two files that each declare
+  // `shared` this way still get a variable each.
+  itBundled("minify/DirectEvalInBlockLeavesFlatEsmTopLevelNameRenameable", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import { readB } from "./b.mjs";
+        var shared = "a-value";
+        {
+          var shared;
+          eval("0");
+        }
+        console.log("a sees", shared, "| b sees", readB());
+      `,
+      "/b.mjs": /* js */ `
+        var shared = "b-value";
+        {
+          var shared;
+          eval("0");
+        }
+        export function readB() { return shared; }
+      `,
+    },
+    format: "esm",
+    run: { stdout: "a sees a-value | b sees b-value" },
+  });
   itBundled("minify/DefaultExportOfNamedExpressionAcrossChunks", {
     files: {
       "/a.js": /* js */ `
@@ -2278,6 +2329,20 @@ test.each(["transformSync", "transform"] as const)(
         `var topVar = 1;\nfunction sibling(parameter) { return parameter + topVar; }\nconsole.log((0, eval)("typeof topVar"), sibling(1));\n`,
       ),
     ).toBe(`var n = 1;\nfunction r(o) {\n  return o + n;\n}\nconsole.log((0, eval)("typeof topVar"), r(1));\n`);
+  },
+);
+
+// The direct eval is in the parameter list and the body declares the parameter
+// again, so the symbol that gets the name is in a scope with no direct eval.
+test.each(["transformSync", "transform"] as const)(
+  "minify.identifiers: %s keeps a parameter that a direct eval reads and the body declares again",
+  async method => {
+    const output = await new Bun.Transpiler({ loader: "js", minify: { identifiers: true } } as any)[method](
+      `function f(param, other = eval("param + 1")) { var param; return other; }\nconsole.log(f(1));\n`,
+    );
+    expect(output).toBe(
+      `function f(param, other = eval("param + 1")) {\n  var param;\n  return other;\n}\nconsole.log(f(1));\n`,
+    );
   },
 );
 

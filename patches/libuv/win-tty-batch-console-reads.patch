@@ -1,0 +1,108 @@
+--- a/include/uv/win.h
++++ b/include/uv/win.h
+@@ -491,6 +491,12 @@
+     struct { uv_pipe_server_fields } serv;                                    \
+     struct { uv_pipe_connection_fields } conn;                                \
+   } pipe;
++
++/* A console in raw mode queues one input record per byte typed or pasted, and
++ * a ReadConsoleInputW call costs a kernel transition of ~15us, so reading one
++ * record per call caps raw-mode input at tens of KB/s. Read a batch per call
++ * instead. */
++#define UV_TTY_READ_BATCH 128
+ 
+ /* TODO: put the parser states in a union - TTY handles are always half-duplex
+  * so read-state can safely overlap write-state. */
+@@ -512,6 +518,12 @@
+       unsigned char last_key_len;                                             \
+       WCHAR last_utf16_high_surrogate;                                        \
+       INPUT_RECORD last_input_record;                                         \
++      /* Console records read by one ReadConsoleInputW call, and how many of  \
++       * them the raw reader still has to translate. Records stay here when a  \
++       * read_cb pauses reading, so a paused read does not drop input. */     \
++      INPUT_RECORD read_batch[UV_TTY_READ_BATCH];                             \
++      DWORD read_batch_len;                                                   \
++      DWORD read_batch_index;                                                 \
+     } rd;                                                                     \
+     struct {                                                                  \
+       /* Used for writable TTY handles */                                     \
+--- a/src/win/tty.c
++++ b/src/win/tty.c
+@@ -304,6 +304,8 @@
+     tty->tty.rd.last_key_len = 0;
+     tty->tty.rd.last_key_offset = 0;
+     tty->tty.rd.last_utf16_high_surrogate = 0;
++    tty->tty.rd.read_batch_len = 0;
++    tty->tty.rd.read_batch_index = 0;
+     memset(&tty->tty.rd.last_input_record, 0, sizeof tty->tty.rd.last_input_record);
+   } else {
+     /* TTY output specific fields. */
+@@ -796,22 +798,45 @@
+   buf = uv_null_buf_;
+   buf_used = 0;
+ 
+-  while ((records_left > 0 || handle->tty.rd.last_key_len > 0) &&
++  while ((records_left > 0 ||
++          handle->tty.rd.last_key_len > 0 ||
++          handle->tty.rd.read_batch_index < handle->tty.rd.read_batch_len) &&
+          (handle->flags & UV_HANDLE_READING)) {
+     if (handle->tty.rd.last_key_len == 0) {
+-      /* Read the next input record */
+-      if (!ReadConsoleInputW(handle->handle,
+-                             &handle->tty.rd.last_input_record,
+-                             1,
+-                             &records_read)) {
+-        handle->flags &= ~UV_HANDLE_READING;
+-        DECREASE_ACTIVE_COUNT(loop, handle);
+-        handle->read_cb((uv_stream_t*) handle,
+-                        uv_translate_sys_error(GetLastError()),
+-                        &buf);
+-        goto out;
++      /* Read the next batch of input records. A console in raw mode queues one
++       * record per byte, so one record per call here is what kept raw input in
++       * the tens of KB/s: each call is a kernel transition. */
++      if (handle->tty.rd.read_batch_index == handle->tty.rd.read_batch_len) {
++        DWORD records_wanted;
++
++        records_wanted = records_left;
++        if (records_wanted > ARRAY_SIZE(handle->tty.rd.read_batch))
++          records_wanted = (DWORD) ARRAY_SIZE(handle->tty.rd.read_batch);
++
++        if (!ReadConsoleInputW(handle->handle,
++                               handle->tty.rd.read_batch,
++                               records_wanted,
++                               &records_read)) {
++          handle->flags &= ~UV_HANDLE_READING;
++          DECREASE_ACTIVE_COUNT(loop, handle);
++          handle->read_cb((uv_stream_t*) handle,
++                          uv_translate_sys_error(GetLastError()),
++                          &buf);
++          goto out;
++        }
++        if (records_read == 0)
++          break;
++        records_left -= records_read;
++        handle->tty.rd.read_batch_len = records_read;
++        handle->tty.rd.read_batch_index = 0;
+       }
+-      records_left--;
++
++      handle->tty.rd.last_input_record =
++          handle->tty.rd.read_batch[handle->tty.rd.read_batch_index++];
++      if (handle->tty.rd.read_batch_index == handle->tty.rd.read_batch_len) {
++        handle->tty.rd.read_batch_len = 0;
++        handle->tty.rd.read_batch_index = 0;
++      }
+ 
+       /* We might be not subscribed to EVENT_CONSOLE_LAYOUT or we might be
+        * running under some TTY emulator that does not send those events. */
+@@ -1089,7 +1114,8 @@
+ 
+   /* Maybe the user stopped reading half-way while processing key events.
+    * Short-circuit if this could be the case. */
+-  if (handle->tty.rd.last_key_len > 0) {
++  if (handle->tty.rd.last_key_len > 0 ||
++      handle->tty.rd.read_batch_index < handle->tty.rd.read_batch_len) {
+     SET_REQ_SUCCESS(&handle->read_req);
+     uv__insert_pending_req(handle->loop, (uv_req_t*) &handle->read_req);
+     /* Make sure no attempt is made to insert it again until it's handled. */

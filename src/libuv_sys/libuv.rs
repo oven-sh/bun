@@ -1357,6 +1357,9 @@ impl Pipe {
 // ──────────────────────────────────────────────────────────────────────────
 // `uv_tty_t`.
 // ──────────────────────────────────────────────────────────────────────────
+/// How many console records one `ReadConsoleInputW` call takes. Mirrors
+/// `UV_TTY_READ_BATCH` in `include/uv/win.h`.
+const UV_TTY_READ_BATCH: usize = 128;
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct tty_rd {
@@ -1368,6 +1371,13 @@ struct tty_rd {
     last_key_len: u8,
     last_utf16_high_surrogate: WCHAR,
     last_input_record: INPUT_RECORD,
+    // Console batch read by one `ReadConsoleInputW` call; `read_batch_len`
+    // counts the records it returned and `read_batch_index` how many the raw
+    // reader has translated. Layout mirrors `UV_TTY_PRIVATE_FIELDS` in
+    // `patches/libuv/win-tty-batch-console-reads.patch`.
+    read_batch: [INPUT_RECORD; UV_TTY_READ_BATCH],
+    read_batch_len: DWORD,
+    read_batch_index: DWORD,
 }
 #[repr(C)]
 #[derive(Clone, Copy)]

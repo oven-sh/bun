@@ -971,14 +971,9 @@ impl Request {
             &values_to_try_[0..((!is_first_argument_a_url) as usize + init.is_object() as usize)];
 
         for &value in values_to_try {
-            let value_type = value.js_type();
-            let explicit_check = values_to_try.len() == 2
-                && matches!(
-                    value_type,
-                    bun_jsc::JSType::FinalObject | bun_jsc::JSType::CompiledObject
-                )
-                && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
-            if value_type == bun_jsc::JSType::DOMWrapper {
+            let is_input =
+                !is_first_argument_a_url && value == values_to_try[values_to_try.len() - 1];
+            if value.js_type() == bun_jsc::JSType::DOMWrapper {
                 if let Some(request) = value.as_direct::<Request>() {
                     if values_to_try.len() == 1 {
                         let url = fields.contains(Fields::Url).then(|| req.url.take());
@@ -1005,11 +1000,10 @@ impl Request {
                         fields.insert(Fields::Mode);
                     }
 
+                    // `None` is the empty list: `req` has no request context to take headers from.
                     if !fields.contains(Fields::Headers) {
-                        if let Some(headers) = request.clone_headers(cx.global())? {
-                            req.headers.set(Some(headers));
-                            fields.insert(Fields::Headers);
-                        }
+                        req.headers.set(request.clone_headers(cx.global())?);
+                        fields.insert(Fields::Headers);
                     }
 
                     if !fields.contains(Fields::Body) {
@@ -1025,21 +1019,15 @@ impl Request {
                 }
 
                 if let Some(response) = value.as_direct::<Response>() {
-                    if !fields.contains(Fields::Method) {
+                    // A Response has no `method` property, so as `init` it cannot set one.
+                    if is_input && !fields.contains(Fields::Method) {
                         req.method = response.get_method();
                         fields.insert(Fields::Method);
                     }
 
                     if !fields.contains(Fields::Headers) {
-                        if let Some(headers) = response.get_init_headers_mut() {
-                            // The flag is set unconditionally once `getInitHeaders()` yielded a
-                            // value, even if `cloneThis` returns null — so a later arg can't
-                            // repopulate headers from a different source.
-                            let h = headers.clone_this(cx.global())?;
-                            // SAFETY: clone_this returns a +1 ref FetchHeaders.
-                            req.headers.set(h.map(|p| unsafe { HeadersRef::adopt(p) }));
-                            fields.insert(Fields::Headers);
-                        }
+                        req.headers.set(response.clone_init_headers(cx.global())?);
+                        fields.insert(Fields::Headers);
                     }
 
                     if !fields.contains(Fields::Url) {
@@ -1097,9 +1085,7 @@ impl Request {
                         // `implementsToString` (which performs JS property
                         // lookup with observable side effects) when the first
                         // two guards already hold.
-                        if value == values_to_try[values_to_try.len() - 1]
-                            && !is_first_argument_a_url
-                        {
+                        if is_input {
                             let implements = value.implements_to_string(cx.global())?;
                             if implements {
                                 let str = BunString::from_js(value, cx.global())?;
@@ -1134,37 +1120,29 @@ impl Request {
                 }
             }
 
-            if !fields.contains(Fields::Method) || !fields.contains(Fields::Headers) {
-                if let Some(response_init) =
-                    crate::webcore::response::Init::init(cx.global(), value)?
+            // WebIDL dictionary members: present iff the member is not undefined. A native
+            // Request or Response claimed the headers above, so that getter is not called.
+            if !fields.contains(Fields::Headers) {
+                if let Some(headers_) =
+                    value.fast_get(cx.global(), bun_jsc::BuiltinName::Headers)?
                 {
-                    let header_check = !explicit_check
-                        || (explicit_check
-                            && value
-                                .fast_get(cx.global(), bun_jsc::BuiltinName::Headers)?
-                                .is_some());
-                    if header_check {
-                        if let Some(headers) = response_init.headers {
-                            if !fields.contains(Fields::Headers) {
-                                req.headers.set(Some(headers));
-                                fields.insert(Fields::Headers);
-                            } else {
-                                drop(headers); // headers.deref()
-                            }
-                        }
-                    }
+                    // Empty headers are present too: they leave `req.headers` as `None` (the
+                    // empty list) and keep the input's headers from being copied.
+                    req.headers
+                        .set(HeadersRef::from_init_value(cx.global(), headers_)?);
+                    fields.insert(Fields::Headers);
+                }
+            }
 
-                    let method_check = !explicit_check
-                        || (explicit_check
-                            && value
-                                .fast_get(cx.global(), bun_jsc::BuiltinName::Method)?
-                                .is_some());
-                    if method_check {
-                        if !fields.contains(Fields::Method) {
-                            req.method = response_init.method;
-                            fields.insert(Fields::Method);
-                        }
-                    }
+            if !fields.contains(Fields::Method) {
+                if let Some(method_) = value.fast_get(cx.global(), bun_jsc::BuiltinName::Method)? {
+                    req.method = if method_.to_boolean() {
+                        bun_http_jsc::method_jsc::from_js(cx.global(), method_)?
+                            .unwrap_or(Method::GET)
+                    } else {
+                        Method::GET
+                    };
+                    fields.insert(Fields::Method);
                 }
             }
 

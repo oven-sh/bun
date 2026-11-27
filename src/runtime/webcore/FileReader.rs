@@ -859,7 +859,7 @@ impl readable_stream::SourceContext for FileReader {
                     streams::Result::IntoArray(into)
                 };
             }
-            // A completion may have landed in `buffered` while `on_read_result` ran user JS.
+            // The chunk did not fit, or a completion landed in `buffered` while `on_read_result` ran user JS.
             let drained = self.drain();
             if !drained.is_empty() {
                 return if done {

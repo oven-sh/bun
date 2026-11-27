@@ -614,7 +614,27 @@ impl PosixBufferedReader {
         }
     }
 
-    /// One non-blocking read straight into `dst` for a consumer pulling synchronously; arms the poll when nothing is available.
+    /// One read of a pipe's usual size, so that a short `dst` does not cut a chunk in two. A chunk that does not fit goes to the buffer, whole.
+    fn read_once_past(&self, file_type: FileType, fd: Fd, dst: &mut [u8]) -> ReadOnce {
+        let mut chunk = Vec::with_capacity(64 * 1024);
+        let read = bun_core::vec::append_with(&mut chunk, self.clamp_len(usize::MAX), |spare| {
+            self.read_once(file_type, fd, spare)
+        });
+        match (read, dst.get_mut(..chunk.len())) {
+            (ReadOnce::Read(_, stop), None) => {
+                chunk.shrink_to_fit();
+                self.buffer.set(chunk);
+                ReadOnce::Read(0, stop)
+            }
+            (read, Some(dst)) => {
+                dst.copy_from_slice(&chunk);
+                read
+            }
+            (read @ ReadOnce::Stop(_), None) => read,
+        }
+    }
+
+    /// One non-blocking read into `dst` for a consumer pulling synchronously; arms the poll when nothing is available. The buffer is empty before, and the caller looks into it after.
     pub fn read_into(&self, ev: EventLoopHandle, dst: &mut [u8]) -> (usize, ReadState, ReadResult) {
         let Some((fd, file_type)) = self.begin_read().filter(|_| !dst.is_empty()) else {
             return (0, ReadState::Progress, ReadResult::Pending);
@@ -622,7 +642,12 @@ impl PosixBufferedReader {
         if let bun_core::Pollable::NotReady = self.readiness(file_type, fd) {
             return (0, ReadState::Progress, self.register_poll(ev));
         }
-        let (n, stop) = match self.read_once_into(file_type, fd, dst) {
+        let read = if dst.len() < 16 * 1024 && file_type != FileType::File {
+            self.read_once_past(file_type, fd, dst)
+        } else {
+            self.read_once_into(file_type, fd, dst)
+        };
+        let (n, stop) = match read {
             ReadOnce::Read(n, stop) => (n, stop),
             ReadOnce::Stop(stop) => (0, Some(stop)),
         };

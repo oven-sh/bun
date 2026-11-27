@@ -36,3 +36,34 @@ test("spawn env skips Symbol keys", async () => {
   expect(stdout).toBe('[null,"1"]\n');
   expect(exitCode).toBe(0);
 });
+
+test("spawn env and argv reach the child as UTF-8 from either string encoding", async () => {
+  const long = Buffer.alloc(5000, "x").toString();
+  const values = ["", "ascii", "latin1-é", "utf16-日本語-😀", "lone-\ud800-surrogate", "a=b", long];
+  const env = Object.fromEntries(values.map((value, i) => [`KEY_${i}`, value]));
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `console.log(JSON.stringify([${values.map((_, i) => `process.env.KEY_${i}`)}, process.env["é日"], ...process.argv.slice(1)]))`,
+      "--",
+      ...values,
+    ],
+    env: { ...bunEnv, ...env, "é日": "key" },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const wellFormed = values.map(value => value.toWellFormed());
+  expect(await proc.stdout.json()).toEqual([...wellFormed, "key", ...wellFormed]);
+  expect(await proc.exited).toBe(0);
+});
+
+test.each([
+  [{ "A\0B": "value" }, "A\0B", "A\0B"],
+  [{ A: "val\0ue" }, "A", "val\0ue"],
+  [{ "日\0": "é\0" }, "日\0", "日\0"],
+])("a null byte in env %j is reported with the part that holds it", (env, key, received) => {
+  expect(() => spawn({ cmd: [bunExe(), "--version"], env })).toThrow(
+    `The property 'options.env['${key}']' must be a string without null bytes. Received "${received}"`,
+  );
+});

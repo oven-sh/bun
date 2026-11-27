@@ -72,11 +72,16 @@ export type NativeCreateQuery<QueryHandle> = (
 
 type OnConnected = (err: Error | null, connection: any) => void;
 
-/// In the pool's queue: a caller that wants a connection for itself. A query is queued as its bare callback.
-class Reservation {
+/// In the pool's queue: a caller that wants a connection for itself, or a query that has a timer. A query
+/// without one is queued as its bare callback.
+class Waiter {
   onConnected: OnConnected;
-  constructor(onConnected: OnConnected) {
+  reserved: boolean;
+  /// Of `queueTimeout`. What takes the caller out of the queue clears it.
+  timer: ReturnType<typeof setTimeout> | undefined = undefined;
+  constructor(onConnected: OnConnected, reserved: boolean) {
     this.onConnected = onConnected;
+    this.reserved = reserved;
   }
 }
 
@@ -502,12 +507,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   public readonly connections: PooledConnection[] = [];
   public readonly readyConnections: Set<PooledConnection> = new Set();
 
-  public queue: Array<OnConnected | Reservation> = [];
+  public queue: Array<OnConnected | Waiter> = [];
   /// `queueTimeout` in milliseconds. 0: a caller waits without a limit.
   #queueTimeout: number = 0;
-  /// `#queueTimers[i]` is the timer of `queue[i]`, for a caller that has one. It can be shorter than `queue`.
-  /// null: no caller has one. What takes `queue[i]` out of `queue` calls #clearQueueTimer(i).
-  #queueTimers: Array<ReturnType<typeof setTimeout> | undefined> | null = null;
   /// Why the last dial failed, until a connection opens.
   public dialError: Error | null = null;
 
@@ -632,10 +634,10 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     const queue = this.queue;
     for (let i = 0; i < queue.length; i++) {
       const waiter = queue[i];
-      if (waiter === onConnected || (waiter as Reservation).onConnected === onConnected) {
+      if (waiter === onConnected || (waiter as Waiter).onConnected === onConnected) {
         queue.splice(i, 1);
-        if (this.#queueTimers !== null) {
-          this.#clearQueueTimer(i);
+        if (typeof waiter !== "function" && waiter.timer !== undefined) {
+          clearTimeout(waiter.timer);
         }
         // the callers behind it may have waited for it
         this.#serve();
@@ -785,7 +787,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     // Behind as many reservations as there are connections nobody can be served.
     for (let i = 0; i < queue.length && reservationsAhead < this.connections.length; i++) {
       const waiter = queue[i];
-      if (typeof waiter === "function") {
+      if (typeof waiter === "function" || !waiter.reserved) {
         // An even share of the demand over `max` connections.
         // A reservation ahead gets a dial that is on its way, or one connection has to drain for it.
         const connection = this.#leastBusy(
@@ -796,19 +798,21 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
           return false;
         }
         queue.splice(i, 1);
-        if (this.#queueTimers !== null) {
-          this.#clearQueueTimer(i);
-        }
         connection.queryCount++;
         this.totalQueries++;
-        waiter(null, connection);
+        if (typeof waiter === "function") {
+          waiter(null, connection);
+        } else {
+          clearTimeout(waiter.timer);
+          waiter.onConnected(null, connection);
+        }
         return true;
       }
       const connection = reservationsAhead++ === 0 ? this.#leastBusy(1, 0) : null;
       if (connection !== null) {
         queue.splice(i, 1);
-        if (this.#queueTimers !== null) {
-          this.#clearQueueTimer(i);
+        if (waiter.timer !== undefined) {
+          clearTimeout(waiter.timer);
         }
         connection.flags |= PooledConnectionFlags.reserved;
         connection.queryCount++;
@@ -926,19 +930,16 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
 
   #failQueued(err: Error) {
     const failed = this.queue.splice(0);
-    const timers = this.#queueTimers;
-    if (timers !== null) {
-      this.#queueTimers = null;
-      for (let i = 0; i < timers.length; i++) {
-        const timer = timers[i];
-        if (timer !== undefined) {
-          clearTimeout(timer);
-        }
-      }
-    }
     for (let i = 0; i < failed.length; i++) {
       const waiter = failed[i];
-      (typeof waiter === "function" ? waiter : waiter.onConnected)(err, null);
+      if (typeof waiter === "function") {
+        waiter(err, null);
+      } else {
+        if (waiter.timer !== undefined) {
+          clearTimeout(waiter.timer);
+        }
+        waiter.onConnected(err, null);
+      }
     }
   }
 
@@ -1020,38 +1021,20 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       return onConnected(this.connectionClosedError(), null);
     }
     this.asked = true;
-    const waiter = reserved ? new Reservation(onConnected) : onConnected;
-    this.queue.push(waiter);
+    const queue = this.queue;
+    const waiter = reserved ? new Waiter(onConnected, true) : onConnected;
+    queue.push(waiter);
     this.#serve();
-    if (this.queue.length !== 0) {
+    if (queue.length !== 0) {
       this.#dialForQueued();
       const queueTimeout = this.#queueTimeout;
       if (queueTimeout !== 0) {
         // The caller may wait no more: it was served past a reservation, or the password function closed the pool.
-        const i = this.queue.lastIndexOf(waiter);
+        const i = queue.lastIndexOf(waiter);
         if (i !== -1) {
-          const timers = (this.#queueTimers ??= []);
-          while (timers.length <= i) {
-            timers.push(undefined);
-          }
-          timers[i] = setTimeout(BaseSQLAdapter.#queueTimerFired, queueTimeout, this, onConnected);
+          const timed = typeof waiter === "function" ? (queue[i] = new Waiter(onConnected, false)) : waiter;
+          timed.timer = setTimeout(BaseSQLAdapter.#queueTimerFired, queueTimeout, this, onConnected);
         }
-      }
-    }
-  }
-
-  /// `queue[i]` was taken out of `queue`.
-  #clearQueueTimer(i: number) {
-    const timers = this.#queueTimers!;
-    if (i < timers.length) {
-      const timer = timers[i];
-      if (timer !== undefined) {
-        clearTimeout(timer);
-      }
-      if (timers.length === 1) {
-        this.#queueTimers = null;
-      } else {
-        timers.splice(i, 1);
       }
     }
   }

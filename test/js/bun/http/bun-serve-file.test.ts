@@ -2167,6 +2167,17 @@ closeSync(fdB);
   }
 });
 
+// Linux: how many descriptors of this process are open on the file.
+function descriptorsOf(path: string) {
+  return readdirSync("/proc/self/fd").filter(entry => {
+    try {
+      return readlinkSync(`/proc/self/fd/${entry}`) === path;
+    } catch {
+      return false;
+    }
+  }).length;
+}
+
 // Bun reads a Response(Bun.file(fd)) from its own duplicate of the descriptor.
 // It closes the duplicate when the response ends or aborts, and never the
 // caller's.
@@ -2185,14 +2196,7 @@ test.skipIf(!isLinux)(
         fetch: () => new Response(Bun.file(fd)),
       });
 
-      const descriptorsOfFile = () =>
-        readdirSync("/proc/self/fd").filter(entry => {
-          try {
-            return readlinkSync(`/proc/self/fd/${entry}`) === path;
-          } catch {
-            return false;
-          }
-        }).length;
+      const descriptorsOfFile = () => descriptorsOf(path);
       // The close happens on another thread.
       const onlyTheCallersIsLeft = async () => {
         const deadline = Date.now() + 5000;
@@ -2226,6 +2230,52 @@ test.skipIf(!isLinux)(
     } finally {
       closeSync(fd);
     }
+  },
+);
+
+// A body that ends inside the call that starts it has its duplicate closed on
+// the JS thread. That close must not be the one that releases the file, so it
+// comes before any code of the app can close the app's own descriptor.
+test.skipIf(!isLinux)(
+  "Response(Bun.file(fd)) closes its duplicate before the end of the response runs JS",
+  async () => {
+    using dir = tempDir("serve-fd-dup-inline-close", { "small.txt": "small" });
+    const path = join(realpathSync(String(dir)), "small.txt");
+    const descriptorsSeen = Promise.withResolvers<number>();
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const fd = openSync(path, "r");
+        // The request body never arrives. The server rejects this read when the
+        // response ends, and runs the reaction before the call that sent the file returns.
+        req.text().catch(() => {
+          descriptorsSeen.resolve(descriptorsOf(path));
+          closeSync(fd);
+        });
+        return new Response(Bun.file(fd));
+      },
+    });
+
+    const response = Promise.withResolvers<string>();
+    let received = "";
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open: socket =>
+          void socket.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\nConnection: close\r\n\r\n"),
+        data: (_, chunk) => void (received += chunk.toString()),
+        close: () => response.resolve(received),
+      },
+    });
+    const text = await response.promise;
+
+    expect({
+      status: text.slice(0, text.indexOf("\r\n")),
+      body: text.slice(text.indexOf("\r\n\r\n") + 4),
+      descriptorsSeen: await descriptorsSeen.promise,
+    }).toEqual({ status: "HTTP/1.1 200 OK", body: "small", descriptorsSeen: 1 });
   },
 );
 

@@ -31,7 +31,7 @@ pub(crate) struct FileResponseStream {
     event_loop: bun_io::EventLoopCtx,
     reader: BufferedReader,
     /// After `reader`, whose poll goes first.
-    fd: StreamFd,
+    fd: JsCell<StreamFd>,
     idle_timeout: Cell<u8>,
 
     /// Taken by whichever of complete / abort / error fires first.
@@ -92,18 +92,18 @@ bitflags::bitflags! {
     }
 }
 
-/// The descriptor that a response is read from.
+/// The descriptor that a response is read from. Closed off this thread, where the close that releases a file can block.
 pub(crate) struct StreamFd {
     file: MaybeOwnedFile,
-    /// Closed on this thread when set. Off it otherwise, because the last close of a file can block.
-    close_inline: Cell<bool>,
+    /// A duplicate, while the descriptor it was made from is open for certain: no code of its owner has run since. The file then stays open without the duplicate, which is closed on this thread.
+    original_is_open: bool,
 }
 
 impl StreamFd {
     pub(crate) fn borrowed(fd: Fd) -> Self {
         Self {
             file: MaybeOwnedFile::Borrowed(fd),
-            close_inline: Cell::new(false),
+            original_is_open: false,
         }
     }
 
@@ -124,13 +124,20 @@ impl StreamFd {
         let file = File::from_fd(duplicate).make_lib_uv_owned_for_syscall(sys::Tag::dup)?;
         Ok(Self {
             file: file.into(),
-            // While the caller's descriptor holds the file open, this close only drops a reference. `FileResponseStream::start` clears it for a stream that it leaves running.
-            close_inline: Cell::new(cfg!(unix)),
+            // Only a regular file: the reader's poll on any other kind goes before the descriptor does.
+            original_is_open: cfg!(unix) && file_type == FileType::File,
         })
     }
 
     pub(crate) fn get(&self) -> Fd {
         self.file.fd()
+    }
+
+    /// Before code of the original's owner runs, or without any of it.
+    fn close_while_original_is_open(&mut self) {
+        if core::mem::take(&mut self.original_is_open) {
+            drop(core::mem::take(&mut self.file));
+        }
     }
 }
 
@@ -138,17 +145,15 @@ impl From<File> for StreamFd {
     fn from(file: File) -> Self {
         Self {
             file: file.into(),
-            close_inline: Cell::new(false),
+            original_is_open: false,
         }
     }
 }
 
 impl Drop for StreamFd {
     fn drop(&mut self) {
+        self.close_while_original_is_open();
         if let MaybeOwnedFile::Owned(file) = core::mem::take(&mut self.file) {
-            if self.close_inline.get() {
-                return drop(file);
-            }
             #[cfg(windows)]
             Closer::close(file, bun_sys::windows::libuv::Loop::get());
             #[cfg(not(windows))]
@@ -224,7 +229,7 @@ impl FileResponseStream {
             ref_count: Cell::new(1),
             resp: Cell::new(opts.resp),
             event_loop: opts.vm.loop_ctx(),
-            fd: opts.fd,
+            fd: JsCell::new(opts.fd),
             idle_timeout: Cell::new(opts.idle_timeout),
             owner: Cell::new(Some(opts.owner)),
             mode: Cell::new(if use_sendfile {
@@ -275,7 +280,7 @@ impl FileResponseStream {
             });
             resp.prepare_for_sendfile();
             let _ = this_ref.on_sendfile();
-            this_ref.leave_running();
+            this_ref.original_can_close();
             return;
         }
 
@@ -294,7 +299,7 @@ impl FileResponseStream {
         unsafe { reader.set_owner(owner) };
 
         let event_loop = this_ref.event_loop;
-        let fd = MaybeOwnedFile::Borrowed(this_ref.fd.get());
+        let fd = MaybeOwnedFile::Borrowed(this_ref.fd());
         let start_result = if opts.offset > 0 {
             reader.start_file_offset(event_loop, fd, opts.pollable, opts.offset as usize)
         } else {
@@ -310,14 +315,16 @@ impl FileResponseStream {
         #[cfg(windows)]
         this_ref.hold_read_ref();
         this_ref.read(None);
-        this_ref.leave_running();
+        this_ref.original_can_close();
     }
 
-    /// At the end of `start()`. A stream that goes on can outlive the descriptor that its own is a duplicate of.
-    fn leave_running(&self) {
-        if self.self_ref.get().is_some() {
-            self.fd.close_inline.set(false);
-        }
+    fn fd(&self) -> Fd {
+        self.fd.get().get()
+    }
+
+    /// When code of the owner of the descriptor that ours is a duplicate of can run: at the end of `start()` at the latest.
+    fn original_can_close(&self) {
+        self.fd.with_mut(|fd| fd.original_is_open = false);
     }
 
     fn arm_on_writable(&self) {
@@ -344,6 +351,16 @@ impl FileResponseStream {
     }
 
     fn deliver(&self, resp: AnyResponse, end: StreamEnd) {
+        // The owner can run JS (the microtasks, an `abort` listener, the `error` handler), and that can close the original.
+        if matches!(end, StreamEnd::Abort) {
+            // The reader can be inside a read loop on the number, so `Drop` closes it.
+            self.original_can_close();
+        } else if self.fd.get().original_is_open {
+            // The reader holds the same number.
+            #[cfg(unix)]
+            self.reader.release_handle();
+            self.fd.with_mut(StreamFd::close_while_original_is_open);
+        }
         if let Some(owner) = self.owner.take() {
             owner.deliver(resp, end);
         }
@@ -463,7 +480,7 @@ impl FileResponseStream {
                 let mut off: i64 = i64::try_from(sf.offset).expect("int cast");
                 let rc = sys::linux::sendfile(
                     sf.socket_fd.native(),
-                    self.fd.get().native(),
+                    self.fd().native(),
                     Some(&mut off),
                     adjusted as usize,
                 );
@@ -488,7 +505,7 @@ impl FileResponseStream {
                 sys::E::EAGAIN => return self.arm_sendfile_writable(),
                 _ => {
                     self.fail_with(
-                        sys::Error::from_code(errno, sys::Tag::sendfile).with_fd(self.fd.get()),
+                        sys::Error::from_code(errno, sys::Tag::sendfile).with_fd(self.fd()),
                     );
                     return false;
                 }

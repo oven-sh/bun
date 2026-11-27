@@ -15,7 +15,6 @@ use super::{StdioResult, Subprocess};
 
 // Intrusive, single-thread ref-count; `deinit` runs when the last ref drops.
 #[derive(bun_ptr::RefCounted)]
-#[ref_count(debug_name = "PipeReader")]
 pub(crate) struct PipeReader {
     reader: BufferedReader,
     // Backref to owning Subprocess; cleared when `Readable::Pipe` lets go of this reader.

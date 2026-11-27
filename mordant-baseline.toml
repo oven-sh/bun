@@ -110,7 +110,6 @@
 
 [bun_ptr]
 "bound_checked_only_in_debug:src/ptr/weak_ptr.rs" = 1
-"unused_pub:src/ptr/ref_count.rs" = 2
 
 [bun_react_compiler]
 "generic_body_not_generic:src/react_compiler/inference/analyse_functions.rs" = 1

@@ -502,9 +502,10 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   public readonly readyConnections: Set<PooledConnection> = new Set();
 
   public queue: Array<OnConnected | Reservation> = [];
-  /// `queueTimeout` in milliseconds, and the timer of each queued caller by its callback. null: they wait
-  /// without a limit. A caller's timer is cleared where it leaves `queue`.
+  /// `queueTimeout` in milliseconds. 0: a caller waits without a limit.
   #queueTimeout: number = 0;
+  /// The timer of each caller in `queue` that has one, by its callback. null: none has. A caller's timer is
+  /// cleared where the caller leaves `queue`.
   #queueTimers: Map<OnConnected, ReturnType<typeof setTimeout>> | null = null;
 
   public totalQueries: number = 0;
@@ -585,7 +586,6 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     if (queueTimeout !== undefined && queueTimeout > 0) {
       // setTimeout turns a longer delay into 1 ms
       this.#queueTimeout = Math.min(Math.ceil(queueTimeout), 2 ** 31 - 1);
-      this.#queueTimers = new Map();
     }
   }
 
@@ -921,10 +921,10 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     const failed = this.queue.splice(0);
     const timers = this.#queueTimers;
     if (timers !== null) {
+      this.#queueTimers = null;
       for (const timer of timers.values()) {
         clearTimeout(timer);
       }
-      timers.clear();
     }
     for (let i = 0; i < failed.length; i++) {
       const waiter = failed[i];
@@ -1016,9 +1016,10 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     if (this.queue.length !== 0) {
       this.#dialForQueued();
       // Only a caller that still waits gets a timer: a dial can fail the queue before it returns.
-      const timers = this.#queueTimers;
-      if (timers !== null && this.queue.lastIndexOf(waiter) !== -1) {
-        timers.set(onConnected, setTimeout(BaseSQLAdapter.#queueTimerFired, this.#queueTimeout, this, onConnected));
+      const queueTimeout = this.#queueTimeout;
+      if (queueTimeout !== 0 && this.queue.lastIndexOf(waiter) !== -1) {
+        const timer = setTimeout(BaseSQLAdapter.#queueTimerFired, queueTimeout, this, onConnected);
+        (this.#queueTimers ??= new Map()).set(onConnected, timer);
       }
     }
   }
@@ -1029,6 +1030,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     if (timer !== undefined) {
       clearTimeout(timer);
       timers.delete(onConnected);
+      if (timers.size === 0) {
+        this.#queueTimers = null;
+      }
     }
   }
 

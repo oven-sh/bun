@@ -4,6 +4,8 @@ use bun_lint::rule::Plugin;
 use bun_lint_react_compiler::{EnvOptions, ErrorCategory, Flavor, rule};
 use std::sync::Arc;
 
+mod regex_classes;
+
 /// A React Compiler rule, which reports the diagnostics of one category. `RULE` below `RULES.len()` is oxlint's
 /// `react/..` rule for that entry of [`RULES`]. From `RULES.len()` on it's eslint-plugin-react-hooks' `react-hooks/..`
 /// rule for the same entries.
@@ -172,13 +174,16 @@ const WORD: [&str; 2] = [
 fn push_literal(out: &mut String, c: char) {
     match c.is_ascii_alphanumeric() {
         true => out.push(c),
-        false => out.push_str(&format!("\\u{{{:X}}}", u32::from(c))),
+        false => push_code_point(out, u32::from(c)),
     }
 }
 
+fn push_code_point(out: &mut String, code_point: u32) {
+    out.push_str(&format!("\\u{{{code_point:X}}}"));
+}
+
 /// The binary properties that both `regex-syntax` 0.8.11 and JavaScript have, by each name that JavaScript takes.
-/// The crate's `Other_*`, `Grapheme_Link`, `Hyphen`, `IDS_Unary_Operator`, `ID_Compat_Math_*`, `Modifier_Combining_Mark`
-/// and `Prepended_Concatenation_Mark` are missing, which JavaScript hasn't.
+/// The crate's others are in [`regex_classes::BINARY_PROPERTIES`].
 const BINARY_PROPERTIES: &[u8] = b"\
 AHex ASCII_Hex_Digit Alpha Alphabetic Bidi_C Bidi_Control Bidi_M Bidi_Mirrored CI CWCF CWCM CWL CWT CWU \
 Case_Ignorable Cased Changes_When_Casefolded Changes_When_Casemapped Changes_When_Lowercased \
@@ -257,6 +262,55 @@ fn spelling_of(names: &'static [u8], normalized: &str) -> Option<&'static str> {
     std::str::from_utf8(name).ok()
 }
 
+/// A class that the crate has for `\p{..}`.
+enum UnicodeClass {
+    /// What JavaScript has between the braces for it.
+    Property(String),
+    /// The classes that it's the union of, for one that JavaScript lacks.
+    CodePoints(regex_classes::Classes),
+}
+
+impl UnicodeClass {
+    /// The class of `classes` that the crate reads `normalized` as. `is_cumulative` adds every class before it.
+    fn listed(
+        classes: regex_classes::Classes,
+        normalized: &str,
+        is_cumulative: bool,
+    ) -> Option<Self> {
+        let at = classes.iter().position(|(names, _)| {
+            strings::split(names.as_bytes(), b" ").any(|name| name == normalized.as_bytes())
+        })?;
+        let first = if is_cumulative { 0 } else { at };
+        classes.get(first..=at).map(Self::CodePoints)
+    }
+
+    /// A JavaScript class, for inside a class and outside.
+    fn to_javascript(&self, is_negated: bool) -> String {
+        let classes = match self {
+            Self::Property(property) => {
+                let escape = if is_negated { 'P' } else { 'p' };
+                return format!("\\{escape}{{{property}}}");
+            }
+            Self::CodePoints(classes) => classes,
+        };
+        let mut javascript = String::from(if is_negated { "[^" } else { "[" });
+        for (_, ranges) in classes.iter() {
+            let mut next = 0;
+            for &[gap, length] in ranges.as_chunks::<2>().0 {
+                let start = next + gap;
+                push_code_point(&mut javascript, start);
+                if length > 0 {
+                    javascript.push('-');
+                    push_code_point(&mut javascript, start + length);
+                }
+                next = start + length + 1;
+            }
+        }
+        javascript.push(']');
+        javascript
+    }
+}
+
 /// What JavaScript has between the braces for a general category of the crate.
 fn general_category(normalized: &str) -> Option<String> {
     Some(match normalized {
@@ -268,22 +322,27 @@ fn general_category(normalized: &str) -> Option<String> {
     })
 }
 
-/// The same for a name without a property, which the crate reads as a binary property, then as a general category,
+/// The class of a name without a property, which the crate reads as a binary property, then as a general category,
 /// then as a script. Its properties that aren't binary have no class. Of their names only `cf`, `sc` and `lc` are also
 /// names of a category or a script, and it reads those as categories.
-fn lone_name(normalized: &str) -> Option<String> {
+fn lone_name(normalized: &str) -> Option<UnicodeClass> {
     // JavaScript has no `WSpace`.
     if normalized == "wspace" {
-        return Some("White_Space".to_owned());
+        return Some(UnicodeClass::Property("White_Space".to_owned()));
     }
-    let property = spelling_of(BINARY_PROPERTIES, normalized).map(str::to_owned);
-    let category = property.or_else(|| general_category(normalized));
-    category.or_else(|| Some(format!("sc={}", spelling_of(SCRIPTS, normalized)?)))
+    if let Some(property) = spelling_of(BINARY_PROPERTIES, normalized) {
+        return Some(UnicodeClass::Property(property.to_owned()));
+    }
+    let listed = UnicodeClass::listed(regex_classes::BINARY_PROPERTIES, normalized, false);
+    listed.or_else(|| {
+        let category = general_category(normalized);
+        let script = || Some(format!("sc={}", spelling_of(SCRIPTS, normalized)?));
+        category.or_else(script).map(UnicodeClass::Property)
+    })
 }
 
 /// `\p{name}` in JavaScript, which takes one spelling of a name where the crate ignores case, ` `, `_`, `-` and a
-/// leading `is`. `None` if the crate has no such class, or if JavaScript hasn't: `Age`, `Grapheme_Cluster_Break`,
-/// `Sentence_Break`, `Word_Break` and the binary properties that [`BINARY_PROPERTIES`] lacks.
+/// leading `is`. A class that JavaScript lacks is a class of its code points. `None` if the crate has no such class.
 fn unicode_class(name: &str, is_negated: bool) -> Option<String> {
     let bytes = name.as_bytes();
     // The crate looks for `!=`, then for `:`, then for `=`.
@@ -299,16 +358,29 @@ fn unicode_class(name: &str, is_negated: bool) -> Option<String> {
         None => lone_name(&symbolic_name_normalize(name))?,
         Some((start, end)) => {
             let value = symbolic_name_normalize(name.get(end..)?);
+            let script = |property: &str| {
+                let script = spelling_of(SCRIPTS, &value)?;
+                Some(UnicodeClass::Property(format!("{property}={script}")))
+            };
             match symbolic_name_normalize(name.get(..start)?).as_str() {
-                "gc" | "generalcategory" => general_category(&value)?,
-                "sc" | "script" => format!("sc={}", spelling_of(SCRIPTS, &value)?),
-                "scx" | "scriptextensions" => format!("scx={}", spelling_of(SCRIPTS, &value)?),
+                "gc" | "generalcategory" => UnicodeClass::Property(general_category(&value)?),
+                "sc" | "script" => script("sc")?,
+                "scx" | "scriptextensions" => script("scx")?,
+                "age" => UnicodeClass::listed(regex_classes::AGE, &value, true)?,
+                "gcb" | "graphemeclusterbreak" => {
+                    UnicodeClass::listed(regex_classes::GRAPHEME_CLUSTER_BREAK, &value, false)?
+                }
+                "sb" | "sentencebreak" => {
+                    UnicodeClass::listed(regex_classes::SENTENCE_BREAK, &value, false)?
+                }
+                "wb" | "wordbreak" => {
+                    UnicodeClass::listed(regex_classes::WORD_BREAK, &value, false)?
+                }
                 _ => return None,
             }
         }
     };
-    let escape = if is_negated { 'P' } else { 'p' };
-    Some(format!("\\{escape}{{{class}}}"))
+    Some(class.to_javascript(is_negated))
 }
 
 /// The items before a class's operator, and after it. JavaScript has `&&` and `--` between classes only, and no `~~`.

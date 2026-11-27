@@ -21,9 +21,9 @@ use bun_ast::{
 };
 use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::ast::{
-    BinOp, Call, Chain, Class, Expr, ExprKind, File, FnBody, FnKind, Func, Ident, Jsx, Key,
-    KeyKind, List, Member, MemberKind, Name, Node, Param, Pat, PatKind, Prop, PropKind, Stmt,
-    StmtKind, Template, UnOp, VarDecl, VarKind,
+    BinOp, Call, Chain, Class, Expr, ExprKind, ExprTag, File, Flags, FnBody, FnKind, Func, Ident,
+    Jsx, Key, KeyKind, List, Member, MemberKind, Name, Node, Param, Pat, PatKind, Prop, PropKind,
+    Stmt, StmtKind, Template, UnOp, VarDecl, VarKind,
 };
 use bun_lint::semantic::{Declaration, Symbol};
 use bun_lint::span::Span;
@@ -40,6 +40,8 @@ pub(crate) enum ConvertError {
     ThisParameter,
     /// `using`, which oxlint's compiler silently skips.
     Using,
+    /// A string key with a lone surrogate, where oxc's lowering gives up on the function.
+    LoneSurrogateKey(Span),
 }
 
 type Converts<T> = Result<T, ConvertError>;
@@ -66,7 +68,7 @@ pub(crate) struct Converted {
     /// [`Host::parentheses`](bun_react_compiler::Host::parentheses)
     pub(crate) parentheses: Vec<(Loc, Loc)>,
     pub(crate) wrapped_defaults: Vec<WrappedDefault>,
-    /// Each `new Date()` and `Date()`, which the tree has as `Date.now()`. In source order.
+    /// Each `new Date()` and `Date()` that the tree has as `Date.now()`. In source order.
     pub(crate) clock_reads: Vec<Span>,
 }
 
@@ -153,6 +155,20 @@ enum Named {
     Private,
 }
 
+/// The body that oxc's compiler takes the code being converted to be in. It reports a zero-argument `new Date()` in
+/// the body of the function that it compiles, which has the bodies of the functions that it inlines there.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Body {
+    /// The compiled function's, where a function that's called at once is inlined.
+    Compiled,
+    /// The compiled function's, in an operand that the lowering gives a block of its own. Nothing is inlined there.
+    Operand,
+    /// An inlined function's.
+    Inlined,
+    /// Any other function's.
+    Nested,
+}
+
 pub(crate) struct Converter<'a, 'x> {
     file: &'a File<'a>,
     arena: &'x Arena,
@@ -173,6 +189,14 @@ pub(crate) struct Converter<'a, 'x> {
     parentheses: Vec<(Loc, Loc)>,
     wrapped_defaults: Vec<WrappedDefault>,
     clock_reads: Vec<Span>,
+    body: Body,
+    /// The function that oxc's compiler inlines into the compiled one, from when its call is converted until it is.
+    inlined: Option<Span>,
+    /// True in what oxc's lowering doesn't read: a class, a getter or setter, the operand of `yield`, a `catch`
+    /// parameter.
+    is_unread: bool,
+    /// The first string key with a lone surrogate that oxc's lowering reads.
+    lone_surrogate_key: Option<Span>,
     stack: bun_core::StackCheck,
 }
 
@@ -203,6 +227,10 @@ pub(crate) fn convert<'a>(
         parentheses: Vec::new(),
         wrapped_defaults: Vec::new(),
         clock_reads: Vec::new(),
+        body: Body::Nested,
+        inlined: None,
+        is_unread: false,
+        lone_surrogate_key: None,
         stack,
     };
     converter.create_element = converter.new_symbol(b"createElement", SymbolKind::Unbound, true);
@@ -211,6 +239,9 @@ pub(crate) fn convert<'a>(
         true => Root::Arrow(converter.arrow(func)?),
         false => Root::Function(converter.function(func)?),
     };
+    if let Some(span) = converter.lone_surrogate_key {
+        return Err(ConvertError::LoneSurrogateKey(span));
+    }
     // `(x as A) as B` is recorded twice with the same start. Keep the outer cast, which was pushed later.
     let mut casts = converter.casts;
     casts.reverse();
@@ -260,6 +291,33 @@ impl<'a> Converter<'a, '_> {
         }
     }
 
+    /// Converts with `then` what the lowering gives a block of its own, if `is_operand`.
+    fn in_operand<T>(
+        &mut self,
+        is_operand: bool,
+        then: impl FnOnce(&mut Self) -> Converts<T>,
+    ) -> Converts<T> {
+        let outer = self.body;
+        if is_operand && outer == Body::Compiled {
+            self.body = Body::Operand;
+        }
+        let converted = then(self);
+        self.body = outer;
+        converted
+    }
+
+    fn operand(&mut self, expr: Expr<'a>) -> Converts<JsExpr> {
+        self.in_operand(true, |this| this.expr(expr))
+    }
+
+    /// Converts with `then` what oxc's lowering doesn't read.
+    fn unread<T>(&mut self, then: impl FnOnce(&mut Self) -> Converts<T>) -> Converts<T> {
+        let outer = std::mem::replace(&mut self.is_unread, true);
+        let converted = then(self);
+        self.is_unread = outer;
+        converted
+    }
+
     // ───────────────────────────── symbols ─────────────────────────────
 
     fn new_symbol(&mut self, name: &[u8], kind: SymbolKind, is_outside: bool) -> Ref {
@@ -290,6 +348,12 @@ impl<'a> Converter<'a, '_> {
     fn ref_of_symbol(&mut self, symbol: Symbol<'a>) -> Ref {
         if let Some(known) = self.by_symbol.get(&symbol.key()) {
             return *known;
+        }
+        // For oxc's lowering, what's declared with `declare` is a global, wherever the declaration is.
+        if self.flavor == Flavor::Oxlint && !self.file.is_javascript() && is_ambient(symbol) {
+            let global = self.ref_of_name(Named::Global, symbol.name());
+            self.by_symbol.insert(symbol.key(), global);
+            return global;
         }
         let declaration = symbol.declarations().next();
         let is_outside = !self.root.contains(symbol.scope().span())
@@ -474,6 +538,27 @@ impl<'a> Converter<'a, '_> {
         Ok((G::FnBody { loc, stmts }, is_expression))
     }
 
+    /// [`Self::args`] and [`Self::body`] of `func`, whose `Loc` is `loc`: the parameters, whether the last one is a
+    /// rest parameter, the body, and whether the body is an expression.
+    fn args_and_body(
+        &mut self,
+        func: Func<'a>,
+        loc: Loc,
+    ) -> Converts<(StoreSlice<G::Arg>, bool, G::FnBody, bool)> {
+        let span = func.estree_span();
+        let outer = self.body;
+        self.body = match outer {
+            _ if span == self.root => Body::Compiled,
+            Body::Compiled if self.inlined == Some(span) => Body::Inlined,
+            _ => Body::Nested,
+        };
+        self.inlined = None;
+        let (args, has_rest, first) = self.args(func)?;
+        let (body, is_expression) = self.body(func, loc, first)?;
+        self.body = outer;
+        Ok((args, has_rest, body, is_expression))
+    }
+
     /// Upstream's compiler fails on a function expression that refers to itself by name. oxc's
     /// doesn't: it treats the name like one from outside.
     fn treats_own_name_as_outer(&self, func: Func<'a>) -> bool {
@@ -497,8 +582,7 @@ impl<'a> Converter<'a, '_> {
                 }),
                 None => None,
             };
-            let (args, has_rest, first) = this.args(func)?;
-            let (body, _) = this.body(func, loc, first)?;
+            let (args, has_rest, body, _) = this.args_and_body(func, loc)?;
             let mut flags = flags::FUNCTION_NONE;
             if func.is_async() {
                 flags |= flags::Function::IsAsync;
@@ -523,8 +607,7 @@ impl<'a> Converter<'a, '_> {
     fn arrow(&mut self, func: Func<'a>) -> Converts<E::Arrow> {
         self.nested(|this| {
             let loc = this.loc(func.estree_span());
-            let (args, has_rest_arg, first) = this.args(func)?;
-            let (body, prefer_expr) = this.body(func, loc, first)?;
+            let (args, has_rest_arg, body, prefer_expr) = this.args_and_body(func, loc)?;
             Ok(E::Arrow {
                 args,
                 body,
@@ -569,7 +652,7 @@ impl<'a> Converter<'a, '_> {
                 is_fragment: jsx.is_fragment(),
             });
         }
-        let converted = self.expr(value)?;
+        let converted = self.operand(value)?;
         let kind = match value.kind() {
             _ if self.flavor != Flavor::Oxlint => None,
             _ if value.is_parenthesized() => Some("ParenthesizedExpression"),
@@ -676,13 +759,30 @@ impl<'a> Converter<'a, '_> {
         Ok(JsExpr::init(E::EString::init(value), self.loc(span)))
     }
 
+    /// oxc's lowering gives up on the function at a string key with a lone surrogate. A template isn't one.
+    fn string_key(&mut self, name: Name<'a>, key: Key<'a>) {
+        if self.flavor != Flavor::Oxlint
+            || self.is_unread
+            || self.lone_surrogate_key.is_some()
+            || !bun_core::strings::wtf8_has_surrogate(name.bytes())
+        {
+            return;
+        }
+        let span = key.inner_span(self.file);
+        if matches!(self.file.slice(span).first(), Some(b'"' | b'\'')) {
+            self.lone_surrogate_key = Some(span);
+        }
+    }
+
     /// `at` overrides the span of a key that isn't computed.
     fn key(&mut self, key: Key<'a>, at: Option<Span>) -> Converts<(JsExpr, flags::PropertySet)> {
         let span = at.unwrap_or_else(|| key.inner_span(self.file));
         let number = |name: Name<'a>| std::str::from_utf8(name.bytes()).ok()?.parse::<f64>().ok();
         let computed = flags::PropertySet::only(flags::Property::IsComputed);
         Ok(match key.kind() {
-            KeyKind::Ident(name) | KeyKind::String(name) => {
+            KeyKind::Ident(name) => (self.string(name.bytes(), span)?, flags::PROPERTY_NONE),
+            KeyKind::String(name) => {
+                self.string_key(name, key);
                 (self.string(name.bytes(), span)?, flags::PROPERTY_NONE)
             }
             KeyKind::Number(name) => match number(name) {
@@ -700,6 +800,7 @@ impl<'a> Converter<'a, '_> {
                 )
             }
             KeyKind::ComputedString(name) => {
+                self.string_key(name, key);
                 let span = key.inner_span(self.file);
                 let flags = match self.flavor {
                     // oxc's lowering treats it as a non-computed key. Upstream's can't destructure by it.
@@ -733,6 +834,8 @@ impl<'a> Converter<'a, '_> {
         }
         // Upstream uses the whole method's span where the lowering has the key's and the function's.
         let is_function = matches!(kind, PropKind::Method | PropKind::Getter | PropKind::Setter);
+        let was_unread = self.is_unread;
+        self.is_unread |= matches!(kind, PropKind::Getter | PropKind::Setter);
         let (key, mut flags) = match prop.key() {
             Some(key) => {
                 let (key, flags) = self.key(key, is_function.then(|| prop.span()))?;
@@ -744,6 +847,7 @@ impl<'a> Converter<'a, '_> {
             (true, Some(func)) => Some(self.function_expr(func, prop.span())?),
             _ => prop.value().map(|it| self.expr(it)).transpose()?,
         };
+        self.is_unread = was_unread;
         match kind {
             PropKind::Method => flags |= flags::Property::IsMethod,
             PropKind::Shorthand => flags |= flags::Property::WasShorthand,
@@ -779,6 +883,7 @@ impl<'a> Converter<'a, '_> {
                 loc: this.loc(name.span()),
                 ref_: this.declared(class.symbol(), name.name()),
             });
+            let was_unread = std::mem::replace(&mut this.is_unread, true);
             let extends = class.extends().map(|it| this.expr(it)).transpose()?;
             let mut properties: AstVec<G::Property> =
                 AstAlloc::vec_with_capacity(class.members().len());
@@ -787,6 +892,7 @@ impl<'a> Converter<'a, '_> {
                     properties.push(property);
                 }
             }
+            this.is_unread = was_unread;
             Ok(G::Class {
                 class_name,
                 extends,
@@ -865,6 +971,81 @@ impl<'a> Converter<'a, '_> {
             Chain::No => None,
             Chain::Start => Some(OptionalChain::Start),
             Chain::Continue => Some(OptionalChain::Continuation),
+        }
+    }
+
+    /// The function that oxc's compiler inlines where `call` is: one that's called at once, or the callback of a
+    /// `useMemo`. It has no parameters and is neither async nor a generator.
+    fn inlined_at(&mut self, call: Call<'a>) -> Option<Span> {
+        if self.flavor != Flavor::Oxlint || self.body != Body::Compiled || call.chain() != Chain::No
+        {
+            return None;
+        }
+        let args = call.args();
+        let func = match args.first() {
+            None => as_function(call.callee())?,
+            Some(callback) => {
+                let func = as_function(callback)?;
+                let has_dependency_list = args.get(1).is_none_or(is_dependency_list);
+                if !has_dependency_list || !self.is_use_memo(call.callee()) {
+                    return None;
+                }
+                func
+            }
+        };
+        let is_inlined = func.params().is_empty() && !func.is_async() && !func.is_generator();
+        is_inlined.then(|| func.estree_span())
+    }
+
+    /// True if the compiler takes `callee` for React's `useMemo`: a global or an import from React of that name, or
+    /// that property of anything named `React` that isn't a local.
+    fn is_use_memo(&mut self, callee: Expr<'a>) -> bool {
+        match callee.kind() {
+            ExprKind::Ident(name) => match callee.symbol() {
+                Some(symbol) => {
+                    let r#ref = self.ref_of_symbol(symbol);
+                    (self.global_name(r#ref)).is_some_and(|it| it == b"useMemo")
+                }
+                None => name.is("useMemo"),
+            },
+            ExprKind::Dot {
+                obj,
+                name,
+                chain: Chain::No,
+            } => {
+                name.name().is("useMemo")
+                    && obj.is_ident("React")
+                    && obj.symbol().is_none_or(|symbol| {
+                        let r#ref = self.ref_of_symbol(symbol);
+                        let is_outside = self.is_outside.get(r#ref.inner_index() as usize);
+                        is_outside.copied().unwrap_or(true)
+                    })
+            }
+            _ => false,
+        }
+    }
+
+    /// The name that the compiler looks `ref` up by, if it's a global or an import from React.
+    fn global_name(&self, r#ref: Ref) -> Option<&[u8]> {
+        let symbol = self.symbols.get(r#ref.inner_index() as usize)?;
+        match symbol.kind {
+            SymbolKind::Unbound => Some(symbol.original_name.slice()),
+            SymbolKind::Import => {
+                let (_, binding) = self.import_bindings.iter().find(|it| it.0 == r#ref)?;
+                match binding {
+                    VariableBinding::ImportSpecifier {
+                        module, imported, ..
+                    } if is_react_module(module.slice()) => Some(imported.slice()),
+                    VariableBinding::ImportDefault { name, module }
+                    | VariableBinding::ImportNamespace { name, module }
+                        if is_react_module(module.slice()) =>
+                    {
+                        Some(name.slice())
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
         }
     }
 
@@ -975,17 +1156,22 @@ impl<'a> Converter<'a, '_> {
             ),
             ExprKind::Class(class) => JsExpr::init(self.class(class)?, loc),
             ExprKind::Dot { obj, name, chain } => self.dot(obj, name, chain, loc)?,
-            ExprKind::Index { obj, index, chain } => JsExpr::init(
-                E::Index {
-                    target: self.expr(obj)?,
-                    index: self.expr(index)?,
-                    optional_chain: Self::chain(chain),
-                    is_import_property_use: false,
-                },
-                loc,
-            ),
+            ExprKind::Index { obj, index, chain } => {
+                let is_chained = chain != Chain::No;
+                JsExpr::init(
+                    E::Index {
+                        target: self.in_operand(is_chained, |this| this.expr(obj))?,
+                        index: self.in_operand(is_chained, |this| this.expr(index))?,
+                        optional_chain: Self::chain(chain),
+                        is_import_property_use: false,
+                    },
+                    loc,
+                )
+            }
             ExprKind::Call(call) | ExprKind::New(call)
-                if self.flavor == Flavor::Oxlint && is_clock_read(call) =>
+                if self.flavor == Flavor::Oxlint
+                    && self.body != Body::Nested
+                    && is_clock_read(call, expr.tag() == ExprTag::New) =>
             {
                 self.clock_reads.push(span);
                 let target = self.expr(call.callee())?;
@@ -1004,12 +1190,14 @@ impl<'a> Converter<'a, '_> {
                 )
             }
             ExprKind::Call(call) => {
-                let target = self.expr(call.callee())?;
+                let is_chained = call.chain() != Chain::No;
+                self.inlined = self.inlined_at(call);
+                let target = self.in_operand(is_chained, |this| this.expr(call.callee()))?;
                 JsExpr::init(
                     E::Call {
                         target,
                         kind: E::CallKind::of(&target),
-                        args: self.exprs(call.args())?,
+                        args: self.in_operand(is_chained, |this| this.exprs(call.args()))?,
                         optional_chain: Self::chain(call.chain()),
                         ..E::Call::default()
                     },
@@ -1045,19 +1233,25 @@ impl<'a> Converter<'a, '_> {
                     loc,
                 )
             }
-            ExprKind::Binary { op, left, right } => JsExpr::init(
-                E::Binary {
-                    left: self.expr(left)?,
-                    right: self.expr(right)?,
-                    op: binary_op(op),
-                },
-                loc,
-            ),
+            ExprKind::Binary { op, left, right } => {
+                let is_operand =
+                    matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma);
+                JsExpr::init(
+                    E::Binary {
+                        left: self.in_operand(is_operand, |this| this.expr(left))?,
+                        right: self.in_operand(is_operand, |this| this.expr(right))?,
+                        op: binary_op(op),
+                    },
+                    loc,
+                )
+            }
             ExprKind::Assign { op, target, value } => {
                 let recorded = self.recorded.len();
-                let (left, right) = (self.expr(target)?, self.expr(value)?);
+                let is_logical = matches!(op, Some(BinOp::And | BinOp::Or | BinOp::Nullish));
+                let left = self.in_operand(is_logical, |this| this.expr(target))?;
+                let right = self.in_operand(is_logical, |this| this.expr(value))?;
                 // No lowering supports these, and none looks inside them.
-                if matches!(op, Some(BinOp::And | BinOp::Or | BinOp::Nullish)) {
+                if is_logical {
                     self.recorded.truncate(recorded);
                 }
                 let op = assign_op(op);
@@ -1065,9 +1259,9 @@ impl<'a> Converter<'a, '_> {
             }
             ExprKind::Cond { test, yes, no } => JsExpr::init(
                 E::If {
-                    test: self.expr(test)?,
-                    yes: self.expr(yes)?,
-                    no: self.expr(no)?,
+                    test: self.operand(test)?,
+                    yes: self.operand(yes)?,
+                    no: self.operand(no)?,
                 },
                 loc,
             ),
@@ -1085,7 +1279,10 @@ impl<'a> Converter<'a, '_> {
             ),
             ExprKind::Yield { value, star } => JsExpr::init(
                 E::Yield {
-                    value: value.map(|it| self.expr(it)).transpose()?,
+                    value: match value {
+                        Some(value) => Some(self.unread(|this| this.expr(value))?),
+                        None => None,
+                    },
                     is_star: star,
                 },
                 loc,
@@ -1118,7 +1315,7 @@ impl<'a> Converter<'a, '_> {
     }
 
     fn dot(&mut self, obj: Expr<'a>, name: Ident<'a>, chain: Chain, loc: Loc) -> Converts<JsExpr> {
-        let target = self.expr(obj)?;
+        let target = self.in_operand(chain != Chain::No, |this| this.expr(obj))?;
         let name_loc = self.loc(name.span());
         let optional_chain = Self::chain(chain);
         if name.bytes().starts_with(b"#") {
@@ -1339,6 +1536,14 @@ impl<'a> Converter<'a, '_> {
                 },
                 loc,
             ),
+            // oxc's lowering drops what's declared with `declare`.
+            StmtKind::Var(_)
+                if self.flavor == Flavor::Oxlint
+                    && !self.file.is_javascript()
+                    && stmt.flags().contains(Flags::AMBIENT) =>
+            {
+                JsStmt::alloc(S::TypeScript::default(), loc)
+            }
             StmtKind::Var(decls) => self.local(decls, loc)?,
             StmtKind::Fn(func) if func.has_body() => JsStmt::alloc(
                 S::Function {
@@ -1404,16 +1609,19 @@ impl<'a> Converter<'a, '_> {
                 body,
             } => JsStmt::alloc(
                 S::For {
-                    init: init.map(|it| self.stmt(it)).transpose()?,
+                    init: match init {
+                        Some(init) => Some(self.in_operand(true, |this| this.stmt(init))?),
+                        None => None,
+                    },
                     test: match (test, self.flavor) {
-                        (Some(it), _) => Some(self.expr(it)?),
+                        (Some(it), _) => Some(self.operand(it)?),
                         // Both lowerings continue as for `while (true)`. Upstream's also records a Todo.
                         (None, Flavor::Oxlint) => {
                             Some(JsExpr::init(E::Boolean { value: true }, loc))
                         }
                         (None, Flavor::Eslint) => None,
                     },
-                    update: update.map(|it| self.expr(it)).transpose()?,
+                    update: update.map(|it| self.operand(it)).transpose()?,
                     body: self.stmt(body)?,
                 },
                 loc,
@@ -1442,7 +1650,7 @@ impl<'a> Converter<'a, '_> {
             ),
             StmtKind::While { test, body } => JsStmt::alloc(
                 S::While {
-                    test: self.expr(test)?,
+                    test: self.operand(test)?,
                     body: self.stmt(body)?,
                 },
                 loc,
@@ -1450,7 +1658,7 @@ impl<'a> Converter<'a, '_> {
             StmtKind::DoWhile { body, test } => JsStmt::alloc(
                 S::DoWhile {
                     body: self.stmt(body)?,
-                    test: self.expr(test)?,
+                    test: self.operand(test)?,
                 },
                 loc,
             ),
@@ -1500,25 +1708,24 @@ impl<'a> Converter<'a, '_> {
                     Some(handler) => {
                         let loc =
                             self.loc(stmt.catch_clause_span().unwrap_or_else(|| handler.span()));
-                        let mut binding = param.map(|it| self.binding(it.pat())).transpose()?;
-                        let mut first: AstVec<JsStmt> = AstAlloc::vec();
-                        // Upstream's compiler fails on a `catch` parameter that a nested function
-                        // refers to. oxc's doesn't.
+                        let mut binding = match param {
+                            Some(param) => Some(self.unread(|this| this.binding(param.pat()))?),
+                            None => None,
+                        };
+                        // Both compilers fail on a `catch` parameter that a nested function refers to and
+                        // nothing assigns. Upstream's reports the parameter, oxc's the first such reference.
                         if self.flavor == Flavor::Oxlint
-                            && param.is_some_and(|it| is_captured_pattern(it.pat(), stmt))
+                            && let Some(binding) = &mut binding
+                            && let Some(captured) =
+                                param.and_then(|it| first_capture(it.pat(), stmt))
                         {
-                            let kind = SymbolKind::CatchIdentifier;
-                            binding =
-                                binding.map(|it| self.destructure_in_body(it, kind, &mut first));
+                            binding.loc = self.loc(captured);
                         }
                         Some(Catch {
                             loc,
                             binding,
                             body_loc: self.loc(handler.span()),
-                            body: match handler.as_block() {
-                                Some(statements) => self.stmts_after(first, statements)?,
-                                None => leak(first),
-                            },
+                            body: self.block(handler)?,
                         })
                     }
                     None => None,
@@ -1601,26 +1808,66 @@ fn is_assigned(pat: Pat<'_>) -> bool {
     is_assigned
 }
 
-/// True if `pat`, a pattern in `stmt`, binds a variable that a function nested in `stmt` refers to.
-fn is_captured_pattern<'a>(pat: Pat<'a>, stmt: Stmt<'a>) -> bool {
+/// The first reference from a function nested in `stmt`'s to `pat`, a name that `stmt` binds and nothing assigns.
+fn first_capture<'a>(pat: Pat<'a>, stmt: Stmt<'a>) -> Option<Span> {
+    let symbol = pat.symbol().filter(|_| !is_assigned(pat))?;
     let enclosing_fn_span = Node::Stmt(stmt).enclosing_function().map(Func::span);
-    let mut is_captured = false;
-    pat.for_each_binding(&mut |name| {
-        is_captured |= (name.symbol().into_iter())
-            .flat_map(Symbol::references)
-            .any(|it| it.node().enclosing_function().map(Func::span) != enclosing_fn_span);
-    });
-    is_captured
+    (symbol.references())
+        .filter(|it| it.node().enclosing_function().map(Func::span) != enclosing_fn_span)
+        .map(|it| it.span())
+        .min()
 }
 
-/// `new Date()` or `Date()`. oxlint's compiler treats it as impure like `Date.now()`, which is the
-/// only one Bun's knows.
-fn is_clock_read(call: Call<'_>) -> bool {
+/// oxc's `SymbolFlags::Ambient`: one of the declarations has the `declare` modifier.
+fn is_ambient(symbol: Symbol<'_>) -> bool {
+    symbol.declarations().any(|declaration| {
+        let statement = match declaration {
+            Declaration::Var(_) => declaration.parent(),
+            Declaration::Fn(func) => Some(Node::Func(func).parent()),
+            Declaration::Class(class) => Some(Node::Class(class).parent()),
+            Declaration::Interface(it) => Some(Node::Stmt(it.stmt())),
+            Declaration::TypeAlias(it) => Some(Node::Stmt(it.stmt())),
+            Declaration::Enum(it) => Some(Node::Stmt(it.stmt())),
+            Declaration::Module(it) => Some(Node::Stmt(it.stmt())),
+            _ => None,
+        };
+        matches!(statement, Some(Node::Stmt(it)) if it.flags().contains(Flags::AMBIENT))
+    })
+}
+
+/// `new Date()` or `Date()`, also `new globalThis.Date()`. oxlint's compiler treats it as impure like `Date.now()`,
+/// which is the only one Bun's knows. `globalThis.Date()` stays a call of a capitalized method, which both report.
+fn is_clock_read(call: Call<'_>, is_new: bool) -> bool {
+    if !call.args().is_empty() || call.chain() != Chain::No {
+        return false;
+    }
+    let is_global = |it: Expr<'_>, name: &str| it.is_ident(name) && it.symbol().is_none();
     let callee = call.callee();
-    call.args().is_empty()
-        && call.chain() == Chain::No
-        && callee.is_ident("Date")
-        && callee.symbol().is_none()
+    if !is_new || callee.tag() != ExprTag::Dot {
+        return is_global(callee, "Date");
+    }
+    matches!(callee.kind(), ExprKind::Dot { obj, name, chain: Chain::No }
+        if name.name().is("Date") && (is_global(obj, "globalThis") || is_global(obj, "global")))
+}
+
+/// `expr` as a function. `!` has no node in the converted tree.
+fn as_function(mut expr: Expr<'_>) -> Option<Func<'_>> {
+    while expr.tag() == ExprTag::NonNull
+        && let ExprKind::NonNull(inner) = expr.kind()
+    {
+        expr = inner;
+    }
+    expr.as_fn()
+}
+
+/// True if the compiler takes `expr` for a list of dependencies: an array without holes or spread elements.
+fn is_dependency_list(expr: Expr<'_>) -> bool {
+    let is_element = |it: Expr<'_>| !it.is_missing() && it.tag() != ExprTag::Spread;
+    matches!(expr.kind(), ExprKind::Array(items) if items.iter().all(is_element))
+}
+
+fn is_react_module(module: &[u8]) -> bool {
+    module.eq_ignore_ascii_case(b"react") || module.eq_ignore_ascii_case(b"react-dom")
 }
 
 fn unary_op(op: UnOp) -> OpCode {

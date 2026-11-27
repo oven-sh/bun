@@ -156,6 +156,11 @@ impl<'a> Compiler<'a> {
             Err(ConvertError::Using) => return Ok(()),
             Err(ConvertError::ThisParameter) => return Err(Vec::new()),
             Err(ConvertError::TooDeep) => return Err(vec![too_deep()]),
+            // oxc's lowering throws it, which drops everything else that's said of the function.
+            Err(ConvertError::LoneSurrogateKey(span)) => {
+                let reason = "Unsupported key type in ObjectExpression".to_owned();
+                return Err(vec![todo(reason, span)]);
+            }
         };
         let host = LintHost::new(&converted, arena, self.file.text());
         let node = match &converted.root {

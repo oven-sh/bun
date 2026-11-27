@@ -331,6 +331,11 @@ pub(super) fn lower_member_expression(
                 Some(obj) => obj,
                 None => lower_expression_to_temporary(builder, &d.target)?,
             };
+            if d.is_import_property_use {
+                builder
+                    .environment_mut()
+                    .note_import_property_target(&object);
+            }
             let prop_literal = PropertyLiteral::String(StoreStr::new(d.name.slice()));
             let value = InstructionValue::PropertyLoad {
                 object: object.clone(),

@@ -696,6 +696,37 @@ ${chain}
       "outer-branches.jsx": [12],
     });
   });
+
+  test("a JSX tag doesn't declare a later function early, and a call or a use of its name as a value does", async () => {
+    const diagnostics = await matches("jsx tags");
+    const lines = (path: string, rule: string) => linesOf(diagnostics[path], rule);
+    // The declaration, in every component but the last.
+    expect(lines("same-function.jsx", "todo")).toEqual([3, 11, 23, 31, 39, 50, 58, 66, 72]);
+    // The same for a tag in a callback, unless the callback also has the name as a value or the tag is declared first.
+    expect(lines("in-a-callback.jsx", "todo")).toEqual([5, 13, 23, 31, 39, 50, 74, 80, 102]);
+    // The other reference is in a later statement than the tag.
+    expect({
+      invariant: lines("other-references.jsx", "invariant"),
+      todo: lines("other-references.jsx", "todo"),
+    }).toEqual({ invariant: [44, 53, 62], todo: [] });
+    expect({
+      invariant: lines("after-a-return.jsx", "invariant"),
+      todo: lines("after-a-return.jsx", "todo"),
+    }).toEqual({ invariant: [2, 10, 31], todo: [18, 26, 43] });
+  });
+
+  test("what's imported from a module of upstream's test fixtures is reported like the same name from any module", async () => {
+    const diagnostics = await matches("fixture modules");
+    for (const name of ["shared-runtime", "known-incompatible", "hooks"])
+      expect([name, diagnostics[`${name}.jsx`]]).toEqual([name, diagnostics[`${name}-elsewhere.jsx`]]);
+    // What any hook does to its arguments and to what it returns.
+    expect(linesOf(diagnostics["shared-runtime.jsx"], "immutability")).toEqual([52, 59, 60, 66]);
+    expect(diagnostics["known-incompatible.jsx"]).toBeUndefined();
+    // The two calls of a name that's like a hook's.
+    expect(linesOf(diagnostics["hooks.jsx"], "hooks")).toEqual([19, 35]);
+    expect(diagnostics["other-imports.jsx"]).toBeUndefined();
+    expect(linesOf(diagnostics["real-modules.jsx"], "incompatible-library")).toEqual([7, 12, 17]);
+  });
 });
 
 describe.concurrent("bun lint: how a diagnostic's labels, help and note are printed", () => {

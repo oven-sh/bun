@@ -15356,6 +15356,835 @@
      }
     ]
    }
+  },
+  "jsx tags": {
+   "exit": 1,
+   "files": 4,
+   "diagnostics": {
+    "after-a-return.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "<unknown> Row$3",
+      "labels": [
+       {
+        "label": "this is uninitialized",
+        "span": {
+         "column": 11,
+         "length": 3,
+         "line": 10,
+         "offset": 178
+        }
+       }
+      ],
+      "message": "[InferMutationAliasingEffects] Expected value kind to be initialized",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "<unknown> Row$3",
+      "labels": [
+       {
+        "label": "this is uninitialized",
+        "span": {
+         "column": 11,
+         "length": 3,
+         "line": 2,
+         "offset": 43
+        }
+       }
+      ],
+      "message": "[InferMutationAliasingEffects] Expected value kind to be initialized",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Please report this internal React Compiler error to Oxc with a minimal reproduction",
+      "labels": [
+       {
+        "label": "Expected a node for all identifiers, none found for `5`",
+        "span": {
+         "column": 17,
+         "length": 14,
+         "line": 31,
+         "offset": 531
+        }
+       }
+      ],
+      "message": "Expected a node for all identifiers, none found for `5`",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier Row$4 is undefined",
+      "labels": [
+       {
+        "label": "`Row$4` is used before it is defined",
+        "span": {
+         "column": 3,
+         "length": 60,
+         "line": 43,
+         "offset": 807
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 12,
+         "length": 3,
+         "line": 18,
+         "offset": 311
+        }
+       }
+      ],
+      "message": "Support functions with unreachable code that may contain hoisted declarations",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 12,
+         "length": 3,
+         "line": 26,
+         "offset": 460
+        }
+       }
+      ],
+      "message": "Support functions with unreachable code that may contain hoisted declarations",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "in-a-callback.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "Please report this internal React Compiler error to Oxc with a minimal reproduction",
+      "labels": [
+       {
+        "label": "Expected a node for all identifiers, none found for `3`",
+        "span": {
+         "column": 17,
+         "length": 7,
+         "line": 84,
+         "offset": 1952
+        }
+       }
+      ],
+      "message": "Expected a node for all identifiers, none found for `3`",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier Row$2 is undefined",
+      "labels": [
+       {
+        "label": "`Row$2` is used before it is defined",
+        "span": {
+         "column": 3,
+         "length": 60,
+         "line": 102,
+         "offset": 2416
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier Row$3 is undefined",
+      "labels": [
+       {
+        "label": "`Row$3` is used before it is defined",
+        "span": {
+         "column": 3,
+         "length": 44,
+         "line": 74,
+         "offset": 1696
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier Row$3 is undefined",
+      "labels": [
+       {
+        "label": "`Row$3` is used before it is defined",
+        "span": {
+         "column": 3,
+         "length": 60,
+         "line": 13,
+         "offset": 327
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier Row$3 is undefined",
+      "labels": [
+       {
+        "label": "`Row$3` is used before it is defined",
+        "span": {
+         "column": 3,
+         "length": 60,
+         "line": 5,
+         "offset": 141
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier Row$4 is undefined",
+      "labels": [
+       {
+        "label": "`Row$4` is used before it is defined",
+        "span": {
+         "column": 3,
+         "length": 60,
+         "line": 23,
+         "offset": 527
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier Row$4 is undefined",
+      "labels": [
+       {
+        "label": "`Row$4` is used before it is defined",
+        "span": {
+         "column": 3,
+         "length": 60,
+         "line": 31,
+         "offset": 714
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier Row$5 is undefined",
+      "labels": [
+       {
+        "label": "`Row$5` is used before it is defined",
+        "span": {
+         "column": 3,
+         "length": 60,
+         "line": 39,
+         "offset": 910
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier Row$9 is undefined",
+      "labels": [
+       {
+        "label": "`Row$9` is used before it is defined",
+        "span": {
+         "column": 3,
+         "length": 60,
+         "line": 50,
+         "offset": 1139
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier Theme$3 is undefined",
+      "labels": [
+       {
+        "label": "`Theme$3` is used before it is defined",
+        "span": {
+         "column": 3,
+         "length": 28,
+         "line": 80,
+         "offset": 1874
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "other-references.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> Row$3 is referenced as a context variable, but was previously referenced as a local variable",
+      "labels": [
+       {
+        "label": "this is local",
+        "span": {
+         "column": 16,
+         "length": 3,
+         "line": 44,
+         "offset": 979
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> Row$3 is referenced as a context variable, but was previously referenced as a local variable",
+      "labels": [
+       {
+        "label": "this is local",
+        "span": {
+         "column": 18,
+         "length": 3,
+         "line": 53,
+         "offset": 1175
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     },
+     {
+      "code": "react(invariant)",
+      "help": "Identifier <unknown> Row$3 is referenced as a context variable, but was previously referenced as a local variable",
+      "labels": [
+       {
+        "label": "this is local",
+        "span": {
+         "column": 22,
+         "length": 3,
+         "line": 62,
+         "offset": 1400
+        }
+       }
+      ],
+      "message": "Expected all references to a variable to be consistently local or context references",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "same-function.jsx": [
+     {
+      "code": "react(static-components)",
+      "help": "Components created during render will reset their state each time they are created. Declare components outside of render",
+      "labels": [
+       {
+        "label": "This component is created during render",
+        "span": {
+         "column": 11,
+         "length": 3,
+         "line": 80,
+         "offset": 1713
+        }
+       },
+       {
+        "label": "The component is created during render here",
+        "span": {
+         "column": 3,
+         "length": 21,
+         "line": 77,
+         "offset": 1642
+        }
+       }
+      ],
+      "message": "Cannot create components during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/static-components",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier Row$3 is undefined",
+      "labels": [
+       {
+        "label": "`Row$3` is used before it is defined",
+        "span": {
+         "column": 3,
+         "length": 37,
+         "line": 58,
+         "offset": 1237
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier Row$3 is undefined",
+      "labels": [
+       {
+        "label": "`Row$3` is used before it is defined",
+        "span": {
+         "column": 3,
+         "length": 44,
+         "line": 72,
+         "offset": 1525
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier Row$3 is undefined",
+      "labels": [
+       {
+        "label": "`Row$3` is used before it is defined",
+        "span": {
+         "column": 3,
+         "length": 60,
+         "line": 23,
+         "offset": 473
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier Row$3 is undefined",
+      "labels": [
+       {
+        "label": "`Row$3` is used before it is defined",
+        "span": {
+         "column": 3,
+         "length": 60,
+         "line": 3,
+         "offset": 100
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier Row$3 is undefined",
+      "labels": [
+       {
+        "label": "`Row$3` is used before it is defined",
+        "span": {
+         "column": 3,
+         "length": 63,
+         "line": 11,
+         "offset": 264
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier Row$4 is undefined",
+      "labels": [
+       {
+        "label": "`Row$4` is used before it is defined",
+        "span": {
+         "column": 3,
+         "length": 60,
+         "line": 31,
+         "offset": 658
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier Row$5 is undefined",
+      "labels": [
+       {
+        "label": "`Row$5` is used before it is defined",
+        "span": {
+         "column": 3,
+         "length": 60,
+         "line": 39,
+         "offset": 847
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier Row$7 is undefined",
+      "labels": [
+       {
+        "label": "`Row$7` is used before it is defined",
+        "span": {
+         "column": 3,
+         "length": 60,
+         "line": 50,
+         "offset": 1055
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Identifier Theme$3 is undefined",
+      "labels": [
+       {
+        "label": "`Theme$3` is used before it is defined",
+        "span": {
+         "column": 3,
+         "length": 28,
+         "line": 66,
+         "offset": 1394
+        }
+       }
+      ],
+      "message": "[hoisting] EnterSSA: Expected identifier to be defined before being used",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ]
+   }
+  },
+  "fixture modules": {
+   "exit": 1,
+   "files": 8,
+   "diagnostics": {
+    "hooks-elsewhere.jsx": [
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 9,
+         "length": 10,
+         "line": 35,
+         "offset": 796
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 9,
+         "length": 21,
+         "line": 19,
+         "offset": 506
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     }
+    ],
+    "hooks.jsx": [
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 9,
+         "length": 10,
+         "line": 35,
+         "offset": 796
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 9,
+         "length": 21,
+         "line": 19,
+         "offset": 506
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     }
+    ],
+    "real-modules.jsx": [
+     {
+      "code": "react(incompatible-library)",
+      "help": "This API returns functions which cannot be memoized without leading to stale UI. To prevent this, by default React Compiler will skip memoizing this component/hook. However, you may see issues if values from this API are passed to other components/hooks that are memoized",
+      "labels": [
+       {
+        "label": "React Hook Form's `useForm()` API returns a `watch()` function which cannot be memoized safely.",
+        "span": {
+         "column": 17,
+         "length": 5,
+         "line": 7,
+         "offset": 229
+        }
+       }
+      ],
+      "message": "Use of incompatible library",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/incompatible-library",
+      "severity": "error"
+     },
+     {
+      "code": "react(incompatible-library)",
+      "help": "This API returns functions which cannot be memoized without leading to stale UI. To prevent this, by default React Compiler will skip memoizing this component/hook. However, you may see issues if values from this API are passed to other components/hooks that are memoized",
+      "labels": [
+       {
+        "label": "TanStack Table's `useReactTable()` API returns functions that cannot be memoized safely",
+        "span": {
+         "column": 17,
+         "length": 13,
+         "line": 12,
+         "offset": 320
+        }
+       }
+      ],
+      "message": "Use of incompatible library",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/incompatible-library",
+      "severity": "error"
+     },
+     {
+      "code": "react(incompatible-library)",
+      "help": "This API returns functions which cannot be memoized without leading to stale UI. To prevent this, by default React Compiler will skip memoizing this component/hook. However, you may see issues if values from this API are passed to other components/hooks that are memoized",
+      "labels": [
+       {
+        "label": "TanStack Virtual's `useVirtualizer()` API returns functions that cannot be memoized safely",
+        "span": {
+         "column": 23,
+         "length": 14,
+         "line": 17,
+         "offset": 470
+        }
+       }
+      ],
+      "message": "Use of incompatible library",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/incompatible-library",
+      "severity": "error"
+     }
+    ],
+    "shared-runtime-elsewhere.jsx": [
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value previously passed as an argument to a hook is not allowed. Consider moving the modification before calling the hook",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 4,
+         "line": 59,
+         "offset": 1150
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value previously passed as an argument to a hook is not allowed. Consider moving the modification before calling the hook",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 5,
+         "line": 52,
+         "offset": 1011
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value returned from a hook is not allowed. Consider moving the modification into the hook where the value is constructed",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 4,
+         "line": 66,
+         "offset": 1331
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value returned from a hook is not allowed. Consider moving the modification into the hook where the value is constructed",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 5,
+         "line": 60,
+         "offset": 1170
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     }
+    ],
+    "shared-runtime.jsx": [
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value previously passed as an argument to a hook is not allowed. Consider moving the modification before calling the hook",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 4,
+         "line": 59,
+         "offset": 1150
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value previously passed as an argument to a hook is not allowed. Consider moving the modification before calling the hook",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 5,
+         "line": 52,
+         "offset": 1011
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value returned from a hook is not allowed. Consider moving the modification into the hook where the value is constructed",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 4,
+         "line": 66,
+         "offset": 1331
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value returned from a hook is not allowed. Consider moving the modification into the hook where the value is constructed",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 5,
+         "line": 60,
+         "offset": 1170
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     }
+    ]
+   }
   }
  },
  "eslint": {

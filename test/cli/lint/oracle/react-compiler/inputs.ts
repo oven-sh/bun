@@ -4750,6 +4750,553 @@ export function ConstantBranches() {
 `,
 };
 
+/**
+ * A JSX tag that names a function or a variable that's declared later. oxlint 1.95 declares the name early for a call
+ * and for a use as a value, and not for a tag, whether the element is in the component's body or in a callback.
+ */
+const jsxTags: Files = {
+  ".oxlintrc.json": rc(),
+  // The element is in the component's body. The last one's tag is declared first.
+  "same-function.jsx": `export function ElementBeforeTheDeclaration({ label }) {
+  const element = <Row label={label} />;
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return element;
+}
+
+export function WithChildren({ label }) {
+  const element = <Row>{label}</Row>;
+  function Row(props) {
+    return <li>{props.children}</li>;
+  }
+  return element;
+}
+
+export function InsideAnotherElement({ label }) {
+  const element = (
+    <ul>
+      <Row label={label} />
+    </ul>
+  );
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return element;
+}
+
+export function InAnAttribute({ label }) {
+  const element = <List first={<Row label={label} />} />;
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return element;
+}
+
+export function InACondition({ label, shown }) {
+  const element = shown ? <Row label={label} /> : null;
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return element;
+}
+
+export function InABranch({ label, shown }) {
+  let element = null;
+  if (shown) {
+    element = <Row label={label} />;
+  }
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return element;
+}
+
+export function MemberOfTheDeclaration({ label }) {
+  const element = <Row.Cell label={label} />;
+  function Row() {
+    return null;
+  }
+  return element;
+}
+
+export function MemberOfAConst({ label }) {
+  const element = <Theme.Provider value={label} />;
+  const Theme = createTheme();
+  return element;
+}
+
+export function ConstTag({ label }) {
+  const element = <Row label={label} />;
+  const Row = props => <li>{props.label}</li>;
+  return element;
+}
+
+export function AfterTheDeclaration({ label }) {
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return <Row label={label} />;
+}
+`,
+  // The name is also called or used as a value. In the last three that's in a statement after the tag's.
+  "other-references.jsx": `export function Called({ label }) {
+  const element = Row({ label });
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return <ul>{element}</ul>;
+}
+
+export function TagAndValue({ label }) {
+  const element = <Row label={label} as={Row} />;
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return element;
+}
+
+export function ValueAndTag({ label }) {
+  const rows = [Row, <Row label={label} />];
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return rows;
+}
+
+export function TagAndCallInAChild({ label }) {
+  const element = <Row>{Row({ label })}</Row>;
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return element;
+}
+
+export function ValueThenTag({ label }) {
+  const same = Row;
+  const element = <Row label={label} />;
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return [element, same];
+}
+
+export function TagThenValue({ label }) {
+  const element = <Row label={label} />;
+  const same = Row;
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return [element, same];
+}
+
+export function TagThenCall({ label }) {
+  const element = <Row label={label} />;
+  const called = Row({ label });
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return [element, called];
+}
+
+export function TagThenValueInACallback({ label }) {
+  const element = <Row label={label} />;
+  const same = () => Row;
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return [element, same];
+}
+`,
+  // The element is in a callback or in a function declaration. The last two components have no JSX and no call of a
+  // hook outside their callbacks.
+  "in-a-callback.jsx": `import { useCallback, useEffect } from "react";
+
+export function CalledInRender({ label }) {
+  const render = () => <Row label={label} />;
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return <ul>{render()}</ul>;
+}
+
+export function Handler({ label }) {
+  const onClick = () => show(<Row label={label} />);
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return <button onClick={onClick} />;
+}
+
+export function Effect({ label }) {
+  useEffect(() => {
+    show(<Row label={label} />);
+  });
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return null;
+}
+
+export function Memoized({ label }) {
+  const render = useCallback(() => <Row label={label} />, [label]);
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return render;
+}
+
+export function MapCallback({ labels }) {
+  const rows = labels.map(label => <Row key={label} label={label} />);
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return <ul>{rows}</ul>;
+}
+
+export function FunctionDeclaration({ label }) {
+  const element = render();
+  function render() {
+    return <Row label={label} />;
+  }
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return <ul>{element}</ul>;
+}
+
+export function TagAndValue({ label }) {
+  const render = () => [<Row label={label} />, Row];
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return <ul>{render()}</ul>;
+}
+
+export function TagAndCall({ label }) {
+  const render = () => <Row>{Row({ label })}</Row>;
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return <ul>{render()}</ul>;
+}
+
+export function ConstTag({ label }) {
+  const render = () => <Row label={label} />;
+  const Row = props => <li>{props.label}</li>;
+  return <ul>{render()}</ul>;
+}
+
+export function ConstMember({ label }) {
+  const render = () => <Theme.Provider value={label} />;
+  const Theme = createTheme();
+  return <ul>{render()}</ul>;
+}
+
+export function TwoDeep({ label }) {
+  const render = () => () => <Row label={label} />;
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return <ul>{render()()}</ul>;
+}
+
+export function AfterTheDeclaration({ label }) {
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  const render = () => <Row label={label} />;
+  return <ul>{render()}</ul>;
+}
+
+export function useRow(label) {
+  const render = useCallback(() => <Row label={label} />, [label]);
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return render;
+}
+
+export function OnlyInACallback({ label }) {
+  const render = () => <Row label={label} />;
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return render();
+}
+
+export function ConstTagOnlyInACallback({ label }) {
+  const render = () => [<Row label={label} />, Row];
+  const Row = props => <li>{props.label}</li>;
+  return render();
+}
+`,
+  // The declaration comes after a `return`, or after a branch that returns.
+  "after-a-return.jsx": `export function Tag({ label }) {
+  return <Row label={label} />;
+
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+}
+
+export function Member({ label }) {
+  return <Row.Cell label={label} />;
+
+  function Row() {}
+}
+
+export function Call({ label }) {
+  return <ul>{Row({ label })}</ul>;
+
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+}
+
+export function TagAndValue({ label }) {
+  return <Row label={label} as={Row} />;
+
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+}
+
+export function TagInACallback({ labels }) {
+  return <ul>{labels.map(label => <Row key={label} label={label} />)}</ul>;
+
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+}
+
+export function TagInABranch({ label, shown }) {
+  if (shown) {
+    return <Row label={label} />;
+  }
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return null;
+}
+
+export function TagAndValueInABranch({ label, shown }) {
+  if (shown) {
+    return <Row label={label} as={Row} />;
+  }
+  function Row(props) {
+    return <li>{props.label}</li>;
+  }
+  return null;
+}
+`,
+};
+
+/** Calls of what upstream's test runner types as functions and hooks of `shared-runtime`, imported from `module`. */
+const typedCalls = (module: string) => `import sharedDefault, {
+  graphql,
+  typedArrayPush,
+  typedCapture,
+  typedCreateFrom,
+  typedLog,
+  typedMutate,
+  useFragment,
+  useFreeze,
+  useNoAlias,
+} from "${module}";
+
+export function Push(props) {
+  typedArrayPush(props.items, 1);
+  return <ul>{props.items}</ul>;
+}
+
+export function Mutate(props) {
+  typedMutate(props.value);
+  return <div>{props.value.label}</div>;
+}
+
+export function CreateFrom(props) {
+  const first = typedCreateFrom(props.value);
+  first.label = "changed";
+  return <div>{first.label}</div>;
+}
+
+export function Capture(props) {
+  const boxed = typedCapture(props.value);
+  boxed[0].label = "changed";
+  return <div>{boxed}</div>;
+}
+
+export function Log(props) {
+  const items = [props.a];
+  typedLog(items);
+  items.push(props.b);
+  return <ul>{items}</ul>;
+}
+
+export function Default(props) {
+  const items = [props.a];
+  sharedDefault(items);
+  items.push(props.b);
+  return <ul>{items}</ul>;
+}
+
+export function Freeze(props) {
+  const items = [];
+  useFreeze(items);
+  items.push(props.a);
+  return <ul>{items}</ul>;
+}
+
+export function NoAlias(props) {
+  const item = {};
+  const other = useNoAlias(item);
+  item.a = props.a;
+  other.b = props.b;
+  return <div>{item.a}</div>;
+}
+
+export function Fragment(props) {
+  const data = useFragment(graphql\`fragment F on T { id }\`, props.node);
+  data.id = 1;
+  return <div>{data.id}</div>;
+}
+`;
+
+/** What upstream's test runner types as incompatible with memoization, imported from `module`. */
+const incompatibleCalls = (module: string) => `import {
+  knownIncompatible,
+  useKnownIncompatible,
+  useKnownIncompatibleIndirect,
+} from "${module}";
+
+export function Hook() {
+  const data = useKnownIncompatible();
+  return <div>{data}</div>;
+}
+
+export function NotAHook() {
+  const data = knownIncompatible();
+  return <div>{data}</div>;
+}
+
+export function Indirect() {
+  const { incompatible } = useKnownIncompatibleIndirect();
+  return <div>{incompatible()}</div>;
+}
+`;
+
+/**
+ * What upstream's test runner types as a hook or as no hook against its name, imported from `module`, and a default
+ * export that it types as no hook, imported from `defaultModule`.
+ */
+const hookCalls = (module: string, defaultModule: string) => `import {
+  notAhookTypedAsHook,
+  useHookNotTypedAsHook,
+} from "${module}";
+import useDefault from "${defaultModule}";
+import notNamedLikeAHook from "${defaultModule}";
+
+export function CalledOnce(props) {
+  const a = useHookNotTypedAsHook();
+  const b = notAhookTypedAsHook();
+  const c = useDefault();
+  const d = notNamedLikeAHook();
+  return <div>{[a, b, c, d, props.e]}</div>;
+}
+
+export function NamedLikeAHook(props) {
+  let a = null;
+  if (props.cond) {
+    a = useHookNotTypedAsHook();
+  }
+  return <div>{a}</div>;
+}
+
+export function NotNamedLikeAHook(props) {
+  let a = null;
+  if (props.cond) {
+    a = notAhookTypedAsHook();
+  }
+  return <div>{a}</div>;
+}
+
+export function DefaultNamedLikeAHook(props) {
+  let a = null;
+  if (props.cond) {
+    a = useDefault();
+  }
+  return <div>{a}</div>;
+}
+
+export function DefaultNotNamedLikeAHook(props) {
+  let a = null;
+  if (props.cond) {
+    a = notNamedLikeAHook();
+  }
+  return <div>{a}</div>;
+}
+`;
+
+/**
+ * The modules of upstream's test fixtures. Upstream's test runner gives them types, and oxlint 1.95 doesn't: what is
+ * imported from one is reported like the same name from a module that nothing knows. The `elsewhere` files import
+ * from modules whose names are as long, so that the offsets in their reports are the same too.
+ */
+const fixtureModules: Files = {
+  ".oxlintrc.json": rc(),
+  "shared-runtime.jsx": typedCalls("shared-runtime"),
+  "shared-runtime-elsewhere.jsx": typedCalls("another-module"),
+  "known-incompatible.jsx": incompatibleCalls("ReactCompilerKnownIncompatibleTest"),
+  "known-incompatible-elsewhere.jsx": incompatibleCalls("AnotherModuleKnownIncompatibleTest"),
+  "hooks.jsx": hookCalls("ReactCompilerTest", "useDefaultExportNotTypedAsHook"),
+  "hooks-elsewhere.jsx": hookCalls("AnotherModuleTest", "useAnotherExportNotTypedAsHook"),
+  "other-imports.jsx": `import * as SharedRuntime from "shared-runtime";
+import { typedMutate as mutate, useKnownIncompatible as useData } from "shared-runtime";
+import { useKnownIncompatible as useOther } from "ReactCompilerKnownIncompatibleTest";
+
+export function Namespace(props) {
+  SharedRuntime.typedArrayPush(props.items, 1);
+  SharedRuntime.typedMutate(props.value);
+  return <ul>{props.items}</ul>;
+}
+
+export function Renamed(props) {
+  mutate(props.value);
+  const data = useData();
+  const other = useOther();
+  return <div>{[data, other, props.value.label]}</div>;
+}
+
+export function Required(props) {
+  const { typedMutate } = require("shared-runtime");
+  typedMutate(props.value);
+  return <div>{props.value.label}</div>;
+}
+`,
+  // The libraries that the compiler knows are still typed.
+  "real-modules.jsx": `import { useForm } from "react-hook-form";
+import { useReactTable } from "@tanstack/react-table";
+import { useVirtualizer } from "@tanstack/react-virtual";
+
+export function Form() {
+  const { watch } = useForm();
+  const value = watch("a");
+  return <div>{value}</div>;
+}
+
+export function Table(props) {
+  const table = useReactTable({ data: props.data });
+  return <div>{table.getRowModel().rows.length}</div>;
+}
+
+export function Virtual(props) {
+  const virtualizer = useVirtualizer({ count: props.count });
+  return <div>{virtualizer.getTotalSize()}</div>;
+}
+`,
+};
+
 const ownNameOfTheComponent = `import { memo, useRef } from "react";
 
 export default memo(function Tree({ items }) {
@@ -5159,6 +5706,8 @@ function Component(props) {
   "using declarations": usingDeclarations,
   "operator operands": operatorOperands,
   "control reactivity": controlReactivity,
+  "jsx tags": jsxTags,
+  "fixture modules": fixtureModules,
 };
 
 type RawDiagnostic = { filename?: string; url?: string; [key: string]: unknown };

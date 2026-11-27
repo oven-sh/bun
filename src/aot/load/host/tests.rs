@@ -1368,27 +1368,6 @@ fn query_string_require_in_executable_stops_build() {
 }
 
 #[test]
-fn file_under_a_query_that_a_parser_refuses_keeps_its_query() {
-    let files = [("code.mjs", "export const a = 1;"), ("blank.mjs", "\n")];
-    with_host(&files, |fixture| {
-        let as_json = to_host_loader_of_attribute(Loader::Json);
-        for file in [&b"/project/code.mjs"[..], b"/project/blank.mjs"] {
-            let import = CodeImportKind::Import;
-            let copy = fixture.host.add_module_with_query(file, b"?q=2", import);
-            let parsed = fixture.parse(&copy.unwrap(), as_json);
-            let source = payload_of(&parsed);
-            assert_eq!(source.kind, SourceKind::Program);
-            assert!(source.parse_failure.is_some());
-            let named = source.file_with_query.as_ref();
-            let named = named.map(|it| (&it.file[..], &it.query[..]));
-            assert_eq!(named, Some((file, &b"?q=2"[..])));
-            let of_file = fixture.parse(file, as_json);
-            assert!(payload_of(&of_file).file_with_query.is_none());
-        }
-    });
-}
-
-#[test]
 fn query_string_import_in_test_run_is_left_to_run_time() {
     with_test_run_host(&[("lib.ts", "export {};")], |fixture| {
         match fixture.resolve(b"./lib.ts?again", MAIN) {

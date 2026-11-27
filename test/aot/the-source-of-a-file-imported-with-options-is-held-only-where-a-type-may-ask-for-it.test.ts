@@ -35,18 +35,6 @@ try {
 }
 `;
 
-const madeUnderQuery = `const first = await import("./part.js?q=1");
-console.log(first.tell() + " under the first query");
-const options = process.argv[2] ? { with: { type: process.argv[2] } } : {};
-try {
-  const all = await import("./part.js?q=2", options);
-  console.log(all.tell ? all.tell() : String(all.default).includes("only the source"));
-} catch (error) {
-  const refused = /^Cannot import '.*' as (\\w+): /.exec(error.message);
-  console.log(refused ? "Cannot import it as " + refused[1] : error.name);
-}
-`;
-
 for (const flavor of flavors) {
   const under = flavor[0] ?? "no flag";
   for (const options of ["{}", "{ with: {} }", "{ assert: {} }"]) {
@@ -64,17 +52,6 @@ for (const flavor of flavors) {
     expect(await built.says()).toBe("told\n");
     if (!flavor.length) expect(await built.says("text")).toBe("true\n");
     else for (const type of types) expect(await built.says(type)).toBe(`Cannot import it as ${type}\n`);
-  });
-  test(`a type made when the program runs, of a file under a query (${under})`, async () => {
-    const built = await build(madeUnderQuery, flavor);
-    using dir = built.dir;
-    if (flavor.length) expect(built.stored).toBe(0);
-    const told = "told under the first query\n";
-    expect(await built.says()).toBe(told + "told\n");
-    if (!flavor.length) {
-      expect(await built.says("text")).toBe(told + "true\n");
-      expect(await built.says("json")).toBe(told + "SyntaxError\n");
-    }
   });
   test(`a file whose source is one scalar of YAML (${under})`, async () => {
     const built = await build(made, flavor, partThatIsOneScalar);

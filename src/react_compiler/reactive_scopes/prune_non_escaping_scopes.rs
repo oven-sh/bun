@@ -75,7 +75,7 @@ pub(crate) fn prune_non_escaping_scopes(
     }
 
     // Then walk outward from the returned values and find all captured operands.
-    let memoized = compute_memoized_identifiers(state, env)?;
+    let memoized = compute_memoized_identifiers(state)?;
 
     // Prune scopes that do not declare/reassign any escaping values
     let mut transform = PruneScopesTransform {
@@ -1109,19 +1109,47 @@ impl<'a> ReactiveFunctionVisitor for CollectDependenciesVisitor<'a> {
 // computeMemoizedIdentifiers
 // =============================================================================
 
+/// What is left to visit of a node of the graph. A value that contains another depends on it, so a chain of them
+/// is as deep as it is long, which the nesting of the source does not bound: the walk keeps its own stack.
+enum Pending {
+    /// TS `visit`, at the dependencies of an identifier.
+    Identifier {
+        id: DeclarationId,
+        level: MemoizationLevel,
+        force_memoize: bool,
+        has_memoized_dependency: bool,
+        dependencies: <IndexSet<DeclarationId> as IntoIterator>::IntoIter,
+        scopes: IndexSet<ScopeId>,
+    },
+    /// TS `visit`, at the scopes of an identifier that is memoized.
+    Scopes(<IndexSet<ScopeId> as IntoIterator>::IntoIter),
+    /// TS `forceMemoizeScopeDependencies`, at the dependencies of a scope.
+    Scope(<Vec<DeclarationId> as IntoIterator>::IntoIter),
+}
+
 fn compute_memoized_identifiers(
     mut state: CollectState,
-    env: &Environment,
 ) -> Result<IdBitSet<DeclarationId>, CompilerError> {
     let mut memoized = IdBitSet::new();
+    let mut pending: Vec<Pending> = Vec::new();
+
+    /// What TS `visit` returns, to the `visit` that is last in `pending`.
+    fn answer(pending: &mut [Pending], is_memoized: bool) {
+        if let Some(Pending::Identifier {
+            has_memoized_dependency,
+            ..
+        }) = pending.last_mut()
+        {
+            *has_memoized_dependency |= is_memoized;
+        }
+    }
 
     fn visit(
         id: DeclarationId,
         force_memoize: bool,
         state: &mut CollectState,
-        memoized: &mut IdBitSet<DeclarationId>,
-        env: &Environment,
-    ) -> Result<bool, CompilerError> {
+        pending: &mut Vec<Pending>,
+    ) -> Result<(), CompilerError> {
         // TS: CompilerError.invariant(node !== undefined, ...)
         let Some(node) = state.identifiers.get_mut(id) else {
             let found = format!("none found for `{}`", id.0);
@@ -1132,65 +1160,92 @@ fn compute_memoized_identifiers(
             ));
         };
         if node.seen {
-            return Ok(node.memoized);
-        }
-        if !env.has_stack() {
-            return Err(crate::lowering::nested_too_deeply().into());
+            answer(pending, node.memoized);
+            return Ok(());
         }
 
         // Mark as seen, temporarily mark as non-memoized
         node.seen = true;
         node.memoized = false;
-        let level = node.level;
-        // Nothing reads these of a node that is seen.
-        let dependencies = std::mem::take(&mut node.dependencies);
-        let scopes = std::mem::take(&mut node.scopes);
-
-        // Visit dependencies
-        let mut has_memoized_dependency = false;
-        for dep in dependencies {
-            let is_dep_memoized = visit(dep, false, state, memoized, env)?;
-            has_memoized_dependency |= is_dep_memoized;
-        }
-
-        if level == MemoizationLevel::Memoized
-            || (level == MemoizationLevel::Conditional
-                && (has_memoized_dependency || force_memoize))
-            || (level == MemoizationLevel::Unmemoized && force_memoize)
-        {
-            state.identifiers.get_mut(id).unwrap().memoized = true;
-            memoized.insert(id);
-            for scope_id in scopes {
-                force_memoize_scope_dependencies(scope_id, state, memoized, env)?;
-            }
-        }
-        Ok(state.identifiers.get(id).unwrap().memoized)
+        pending.push(Pending::Identifier {
+            id,
+            level: node.level,
+            force_memoize,
+            has_memoized_dependency: false,
+            // Nothing reads these of a node that is seen.
+            dependencies: std::mem::take(&mut node.dependencies).into_iter(),
+            scopes: std::mem::take(&mut node.scopes),
+        });
+        Ok(())
     }
 
     fn force_memoize_scope_dependencies(
         id: ScopeId,
         state: &mut CollectState,
-        memoized: &mut IdBitSet<DeclarationId>,
-        env: &Environment,
+        pending: &mut Vec<Pending>,
     ) -> Result<(), CompilerError> {
         // TS: CompilerError.invariant(node !== undefined, ...)
         let Some(node) = state.scopes.get_mut(id) else {
             return Err(cold_invariant("Expected a node for all scopes", None, None));
         };
-        if node.seen {
-            return Ok(());
-        }
-        node.seen = true;
-
-        for dep in std::mem::take(&mut node.dependencies) {
-            visit(dep, true, state, memoized, env)?;
+        if !node.seen {
+            node.seen = true;
+            let dependencies = std::mem::take(&mut node.dependencies);
+            pending.push(Pending::Scope(dependencies.into_iter()));
         }
         Ok(())
     }
 
     // Walk from the "roots" aka returned/escaping identifiers
     for value in std::mem::take(&mut state.escaping_values) {
-        visit(value, false, &mut state, &mut memoized, env)?;
+        visit(value, false, &mut state, &mut pending)?;
+        while let Some(last) = pending.last_mut() {
+            match last {
+                Pending::Identifier {
+                    id,
+                    level,
+                    force_memoize,
+                    has_memoized_dependency,
+                    dependencies,
+                    scopes,
+                } => {
+                    if let Some(dep) = dependencies.next() {
+                        visit(dep, false, &mut state, &mut pending)?;
+                        continue;
+                    }
+                    let is_memoized = match *level {
+                        MemoizationLevel::Memoized => true,
+                        MemoizationLevel::Conditional => *has_memoized_dependency || *force_memoize,
+                        MemoizationLevel::Unmemoized => *force_memoize,
+                        MemoizationLevel::Never => false,
+                    };
+                    let (id, scopes) = (*id, std::mem::take(scopes));
+                    pending.pop();
+                    answer(&mut pending, is_memoized);
+                    if is_memoized {
+                        if let Some(node) = state.identifiers.get_mut(id) {
+                            node.memoized = true;
+                        }
+                        memoized.insert(id);
+                        pending.push(Pending::Scopes(scopes.into_iter()));
+                    }
+                }
+                Pending::Scopes(scopes) => match scopes.next() {
+                    Some(scope) => {
+                        force_memoize_scope_dependencies(scope, &mut state, &mut pending)?;
+                    }
+                    None => {
+                        pending.pop();
+                    }
+                },
+                Pending::Scope(dependencies) => match dependencies.next() {
+                    Some(dep) => visit(dep, true, &mut state, &mut pending)?,
+                    None => {
+                        pending.pop();
+                    }
+                },
+            }
+        }
     }
 
     Ok(memoized)

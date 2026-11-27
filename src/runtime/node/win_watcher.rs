@@ -99,11 +99,6 @@ impl PathWatcher {
         events: c_int,
         status: uv::ReturnCode,
     ) {
-        // SAFETY: libuv guarantees `event` is the handle we registered.
-        if unsafe { (*event).data }.is_null() {
-            bun_core::debug_warn!("uvEventCallback called with null data");
-            return;
-        }
         // SAFETY: event points to PathWatcher.handle; recover the parent via offset_of.
         let this: *mut PathWatcher =
             unsafe { bun_core::from_field_ptr!(PathWatcher, handle, event) };
@@ -111,6 +106,10 @@ impl PathWatcher {
         // uv_close fires; only shared access is taken and `me` is not used past
         // any call that can free it.
         let me = unsafe { &*this };
+        if me.handle.data.is_null() {
+            bun_core::debug_warn!("uvEventCallback called with null data");
+            return;
+        }
         #[cfg(debug_assertions)]
         {
             debug_assert!(me.handle.data == this.cast::<c_void>());

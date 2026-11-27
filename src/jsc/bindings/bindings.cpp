@@ -5677,12 +5677,6 @@ void JSC__VM__setModuleFetchesOnHold(JSC::VM* vm, bool areOnHold)
     vm->m_areFetchesOfHostOnHold = areOnHold;
 }
 
-void JSC__VM__holdAPILock(JSC::VM* arg0, void* ctx, void (*callback)(void* arg0))
-{
-    JSC::JSLockHolder locker(arg0);
-    callback(ctx);
-}
-
 // The following two functions are copied 1:1 from JSLockHolder to provide a
 // new, more ergonomic binding for interacting with the lock from native code
 // https://github.com/WebKit/WebKit/blob/main/Source/JavaScriptCore/runtime/JSLock.cpp

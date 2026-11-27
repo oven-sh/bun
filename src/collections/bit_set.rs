@@ -674,11 +674,9 @@ pub struct DynamicBitSetList {
 
 impl DynamicBitSetList {
     pub fn init_empty(n: usize, bit_length: u32) -> Result<Self, AllocError> {
-        let buf = Box::try_new_zeroed_slice(num_masks_for(bit_length as usize) * n)
-            .map_err(|_| AllocError)?;
+        let buf = bun_core::vec::try_zeroed(num_masks_for(bit_length as usize) * n)?;
         Ok(Self {
-            // SAFETY: zero is a valid `usize`.
-            buf: unsafe { buf.assume_init() },
+            buf: buf.into_boxed_slice(),
             bit_length,
         })
     }

@@ -22,7 +22,7 @@ use bun_ptr::BackRef;
 use bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
-use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
+use bun_resolver::package_json::PackageJSON;
 use bun_sys::{self, Dir, Fd, File, OpenDirOptions};
 use bun_threading::Guarded;
 use bun_threading::unbounded_queue::{self, UnboundedQueue};
@@ -233,7 +233,7 @@ impl RuntimeTranspilerStore {
 
     /// Fulfil one completed job's module promise. The others stay on the queue, each with a posted
     /// task of its own: what this one runs may turn the event loop until one of them is fulfilled.
-    pub fn run_from_js_thread(&self, event_loop: &EventLoop) -> JsResult<()> {
+    pub fn run_from_js_thread(&self, event_loop: &EventLoop, vm: &VirtualMachine) -> JsResult<()> {
         let Some(mut job) = NonNull::new(self.queue.pop()) else {
             self.tasks_without_job.update(|n| n + 1);
             return Ok(());
@@ -242,7 +242,7 @@ impl RuntimeTranspilerStore {
             event_loop.enqueue_task(Task::init(ptr::from_ref(self).cast_mut()));
         }
         // SAFETY: `job` is a live job popped from the intrusive queue.
-        let fulfilled = unsafe { job.as_mut().run_from_js_thread() };
+        let fulfilled = unsafe { job.as_mut().run_from_js_thread(vm) };
         self.jobs_completed.update(|n| n + 1);
         fulfilled
     }
@@ -325,7 +325,7 @@ impl RuntimeTranspilerStore {
         }
         self.jobs_scheduled.update(|n| n + 1);
         // SAFETY: job fully initialized above
-        unsafe { (*job).schedule() };
+        unsafe { (*job).schedule(vm) };
         promise.cast::<c_void>()
     }
 }
@@ -459,9 +459,7 @@ impl TranspilerJob {
         ticket.post(ConcurrentTask::create_from(transpiler_store.cast_mut()));
     }
 
-    fn run_from_js_thread(&mut self) -> JsResult<()> {
-        // SAFETY: the VM outlives the job, and this is its thread.
-        let vm = unsafe { &*self.vm };
+    fn run_from_js_thread(&mut self, vm: &VirtualMachine) -> JsResult<()> {
         let promise = self.promise.swap();
         let module_loader = self.module_loader.swap();
         // Copy the BackRef out (it is `Copy`) so the borrow of `*self` ends
@@ -499,7 +497,7 @@ impl TranspilerJob {
             }
         };
 
-        // SAFETY: `self` came from this store and is not used again.
+        // SAFETY: `self` came from the store of this thread's only VM and is not used again.
         unsafe {
             vm.transpiler_store
                 .store
@@ -530,9 +528,8 @@ impl TranspilerJob {
         )
     }
 
-    fn schedule(&mut self) {
-        // SAFETY: JS thread; the VM owns the store this slot lives in.
-        self.ticket = Some(unsafe { (*self.vm).ticket() });
+    fn schedule(&mut self, vm: &VirtualMachine) {
+        self.ticket = Some(vm.ticket());
         WorkPool::schedule(&raw mut self.work_task);
     }
 
@@ -645,19 +642,6 @@ impl TranspilerJob {
         // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
         let is_node_override = strings::has_prefix_comptime(specifier, node_fallbacks::IMPORT_PATH);
 
-        // SAFETY: leaf scalar field read on `*vm`; see `vm` note above.
-        let macro_remappings =
-            if !unsafe { (*vm).has_any_macro_remappings.get() } || is_node_override {
-                MacroRemap::default()
-            } else {
-                // The inner maps have only a fallible `clone()`.
-                let mut m = MacroRemap::default();
-                for (k, v) in transpiler.options.macro_remap.iter() {
-                    m.insert(k, bun_core::handle_oom(v.clone()));
-                }
-                m
-            };
-
         // Only
         // initialised on the `is_node_override` branch and only read through
         // `parse_options.virtual_source`.
@@ -679,7 +663,7 @@ impl TranspilerJob {
             dirname_fd: Fd::INVALID,
             file_descriptor: None,
             opened_file: Some(&mut input_file),
-            macro_remappings,
+            macro_remappings: Default::default(),
             macro_js_ctx: transpiler::default_macro_js_value(),
             macro_load_states: &macro_load_states,
             jsx: transpiler.options.jsx.clone(),

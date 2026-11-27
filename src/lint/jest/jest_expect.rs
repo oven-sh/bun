@@ -1,6 +1,7 @@
 //! The logic of the `jest` and `vitest` rules about where and how `expect` is called. Each module is a port of one file
 //! in oxlint's `rules/shared/jest_vitest`. See [`jest`](crate::jest).
 
+use crate::bun::await_fixes;
 use crate::jest::{
     Arguments, AstKind, Ctx, EnclosingFunctions, ExpectError, JestFnKind, JestGeneralFnKind,
     KnownMemberExpressionParentKind, PossibleJestNode, Runner, Scopes, convert_pattern,
@@ -209,6 +210,14 @@ pub(crate) mod valid_expect {
             else {
                 return;
             };
+            if ctx.runner == Runner::Bun && is_discarded(final_node) {
+                let message = match func.is_async() {
+                    true => ADD_AWAIT,
+                    false => ADD_AWAIT_AND_ASYNC,
+                };
+                report.suggest(message, |fixer| await_fixes(fixer, final_node));
+                return;
+            }
             let needs_async = !func.is_async() && fixed_function_expression.insert(func);
             report.suggest(
                 if needs_async {

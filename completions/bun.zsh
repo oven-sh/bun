@@ -863,6 +863,7 @@ _bun_lint_completion() {
         '--report-unused-disable-directives[Report eslint-disable comments that disable nothing]' \
         '--print-config[Print the config for a file and exit]:print-config:_files' \
         '--doctor[Show which rules run natively and which packages you can remove]' \
+        '--upgrade[Find code that breaks in this version of Bun, without reading your config]' \
         '--allow-unsupported[Warn instead of failing when the config has a rule or file that is not supported]' \
         '--staged[Only lint files that are staged in git]' \
         '--changed[Only lint files that differ from a branch or commit (default\: the default branch)]' \

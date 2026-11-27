@@ -51,6 +51,10 @@ const inPage = (it: Case): Case => ({
   ...(typeof it === "string" ? { code: it } : it),
 });
 
+const bunTest = `import { describe, expect, expectTypeOf, it, jest, mock, setDefaultTimeout, test, vi, xdescribe, xit, xtest } from "bun:test";\n`;
+const vitest = `import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, it, test, vi } from "vitest";\n`;
+const loads = `import { load } from "./b";\nload();\n`;
+
 const rules: Record<string, Case[]> = {
   "no-eager-dynamic-import": [
     `const a = «import("a")»;`,
@@ -1327,6 +1331,8 @@ const rules: Record<string, Case[]> = {
     // The emitter is discarded.
     `${processes}«spawn»("a");`,
     `${processes}«fork»("./a.js");`,
+    `${processes}const a = «spawn»("a");\na.onerror = handle;`,
+    `${files}«createReadStream»("a").addEventListener("error", handle);`,
     `${files}«createReadStream»("a");`,
     `${files}«createWriteStream»("a");`,
     `${files}«watch»("a", listener);`,
@@ -1557,11 +1563,639 @@ const rules: Record<string, Case[]> = {
     { code: `import type { UserId } from "../ids";\nconst a = text as UserId;`, options: [] },
     { code: `import { toUserId } from "../ids";`, options: [{ branded: [] }] },
   ].map(inPage),
+
+  "await-async-expect": [
+    ...[
+      [
+        `test("a", () => {\n  «expect(a).resolves.toBe(1)»;\n});`,
+        `test("a", async () => {\n  await expect(a).resolves.toBe(1);\n});`,
+      ],
+      [
+        `it("a", function () {\n  «expect(a).rejects.toThrow()»;\n});`,
+        `it("a", async function () {\n  await expect(a).rejects.toThrow();\n});`,
+      ],
+      [
+        `test("a", async () => {\n  «expect(a).resolves.not.toBe(1)»;\n});`,
+        `test("a", async () => {\n  await expect(a).resolves.not.toBe(1);\n});`,
+      ],
+      [
+        `beforeEach(() => {\n  «expect(a).resolves.toBe(1)»;\n});`,
+        `beforeEach(async () => {\n  await expect(a).resolves.toBe(1);\n});`,
+      ],
+      [
+        `test("a", { retry: 1 }, () => {\n  «expect(a).resolves.toBe(1)»;\n});`,
+        `test("a", { retry: 1 }, async () => {\n  await expect(a).resolves.toBe(1);\n});`,
+      ],
+      [
+        `test.skipIf(b)("a", () => {\n  «expect(a).resolves.toBe(1)»;\n});`,
+        `test.skipIf(b)("a", async () => {\n  await expect(a).resolves.toBe(1);\n});`,
+      ],
+      [
+        `test.each([1])("a", n => {\n  «expect(a).resolves.toBe(n)»;\n});`,
+        `test.each([1])("a", async n => {\n  await expect(a).resolves.toBe(n);\n});`,
+      ],
+      [
+        `test("a", done => {\n  «expect(a).resolves.toBe(1)»;\n  done();\n});`,
+        `test("a", async done => {\n  await expect(a).resolves.toBe(1);\n  done();\n});`,
+      ],
+      [
+        `test("a", (): void => {\n  «expect(a).resolves.toBe(1)»;\n});`,
+        `test("a", async (): Promise<void> => {\n  await expect(a).resolves.toBe(1);\n});`,
+      ],
+      [
+        `test("a", (): Promise<void> => {\n  «expect(a).resolves.toBe(1)»;\n  return b;\n});`,
+        `test("a", async (): Promise<void> => {\n  await expect(a).resolves.toBe(1);\n  return b;\n});`,
+      ],
+      [
+        `test("a", () => {\n  («expect(a).resolves.toBe(1)»);\n});`,
+        `test("a", async () => {\n  await (expect(a).resolves.toBe(1));\n});`,
+      ],
+      [
+        `test("a", () => {\n  «expect(a).resolves.toBe(1).then(b)»;\n});`,
+        `test("a", async () => {\n  await expect(a).resolves.toBe(1).then(b);\n});`,
+      ],
+      [
+        `test("a", () => {\n  «Promise.all([expect(a).resolves.toBe(1), expect(b).resolves.toBe(2)])»;\n});`,
+        `test("a", async () => {\n  await Promise.all([expect(a).resolves.toBe(1), expect(b).resolves.toBe(2)]);\n});`,
+      ],
+      [`«expect(a).resolves.toBe(1)»;`, `await expect(a).resolves.toBe(1);`],
+      // One pass fixes the first. The function is async in the next one.
+      [
+        `test("a", () => {\n  «expect(a).resolves.toBe(1)»;\n  «expect(b).resolves.toBe(2)»;\n});`,
+        `test("a", async () => {\n  await expect(a).resolves.toBe(1);\n  expect(b).resolves.toBe(2);\n});`,
+      ],
+      // toThrow
+      [
+        `test("a", () => {\n  «expect(async () => b()).toThrow()»;\n});`,
+        `test("a", async () => {\n  await expect(async () => b()).toThrow();\n});`,
+      ],
+      [
+        `test("a", () => {\n  «expect(async function () {}).not.toThrowError()»;\n});`,
+        `test("a", async () => {\n  await expect(async function () {}).not.toThrowError();\n});`,
+      ],
+      [
+        `test("a", () => {\n  «expect(() => expect(a).resolves.toBe(1)).toThrow()»;\n});`,
+        `test("a", async () => {\n  await expect(() => expect(a).resolves.toBe(1)).toThrow();\n});`,
+      ],
+      // Helpers
+      [
+        `function h() {\n  «expect(a).resolves.toBe(1)»;\n}\ntest("a", () => {\n  h();\n  h();\n});\ntest("b", () => h());\ntest("c", h);`,
+        `async function h() {\n  await expect(a).resolves.toBe(1);\n}\ntest("a", async () => {\n  await h();\n  await h();\n});\ntest("b", () => h());\ntest("c", h);`,
+      ],
+      [
+        `const h = (): void => {\n  «expect(a).resolves.toBe(1)»;\n};\nconst g = () => {\n  h();\n};\ntest("a", async () => {\n  g();\n  await g();\n});`,
+        `const h = async (): Promise<void> => {\n  await expect(a).resolves.toBe(1);\n};\nconst g = async () => {\n  await h();\n};\ntest("a", async () => {\n  await g();\n  await g();\n});`,
+      ],
+      [
+        `function h(n) {\n  «expect(a).resolves.toBe(1)»;\n  if (n) h(n - 1);\n}\ntest("a", () => {\n  h(1);\n});`,
+        `async function h(n) {\n  await expect(a).resolves.toBe(1);\n  if (n) await h(n - 1);\n}\ntest("a", async () => {\n  await h(1);\n});`,
+      ],
+      [
+        `export async function h() {\n  «expect(a).resolves.toBe(1)»;\n}\ntest("a", () => {\n  h().then(b);\n});\nrun(h);`,
+        `export async function h() {\n  await expect(a).resolves.toBe(1);\n}\ntest("a", async () => {\n  await h().then(b);\n});\nrun(h);`,
+      ],
+      [
+        `class A {\n  async h() {\n    «expect(a).resolves.toBe(1)»;\n  }\n}`,
+        `class A {\n  async h() {\n    await expect(a).resolves.toBe(1);\n  }\n}`,
+      ],
+      [
+        `test("a", async () => {\n  await within(async () => {\n    «expect(a).resolves.toBe(1)»;\n  });\n});`,
+        `test("a", async () => {\n  await within(async () => {\n    await expect(a).resolves.toBe(1);\n  });\n});`,
+      ],
+      [
+        `test("a", async () => {\n  await Promise.all(b.map(async c => {\n    «expect(c).resolves.toBe(1)»;\n  }));\n});`,
+        `test("a", async () => {\n  await Promise.all(b.map(async c => {\n    await expect(c).resolves.toBe(1);\n  }));\n});`,
+      ],
+      [
+        `const it = b ? test.skip : test;\nit.c("a", async () => {\n  «expect(a).resolves.toBe(1)»;\n});`,
+        `const it = b ? test.skip : test;\nit.c("a", async () => {\n  await expect(a).resolves.toBe(1);\n});`,
+      ].map(it => `{\n${it}\n}`),
+      [
+        `function h() {\n  «expect(a).resolves.toBe(1)»;\n}\nconst g = () => h();\ntest("a", () => {\n  g();\n});`,
+        `async function h() {\n  await expect(a).resolves.toBe(1);\n}\nconst g = async () => await h();\ntest("a", async () => {\n  await g();\n});`,
+      ],
+      [
+        `function h() {\n  «expect(a).resolves.toBe(1)»;\n}\nasync function g() {\n  return h();\n}\ntest("a", () => {\n  g();\n});`,
+        `async function h() {\n  await expect(a).resolves.toBe(1);\n}\nasync function g() {\n  return await h();\n}\ntest("a", async () => {\n  await g();\n});`,
+      ],
+      [
+        `async function h() {\n  «expect(a).resolves.toBe(1)»;\n}\ntest("a", async () => {\n  await within(() => h());\n});`,
+        `async function h() {\n  await expect(a).resolves.toBe(1);\n}\ntest("a", async () => {\n  await within(() => h());\n});`,
+      ],
+      [
+        `async function h() {\n  await b;\n  «expect(a).resolves.toBe(1)»;\n}\ntest("a", () => h());`,
+        `async function h() {\n  await b;\n  await expect(a).resolves.toBe(1);\n}\ntest("a", () => h());`,
+      ],
+      // The cleanup runs before a returned promise settles.
+      [
+        `function h() {\n  «expect(a).resolves.toBe(1)»;\n}\ntest("a", () => {\n  using b = c();\n  return h();\n});`,
+        `async function h() {\n  await expect(a).resolves.toBe(1);\n}\ntest("a", async () => {\n  using b = c();\n  return await h();\n});`,
+      ],
+      [
+        `function h() {\n  «expect(a).resolves.toBe(1)»;\n}\ntest("a", () => {\n  try {\n    return h();\n  } finally {\n    b();\n  }\n});`,
+        `async function h() {\n  await expect(a).resolves.toBe(1);\n}\ntest("a", async () => {\n  try {\n    return await h();\n  } finally {\n    b();\n  }\n});`,
+      ],
+      [
+        `test("a", () => {\n  {\n    using b = c();\n    return «expect(a).resolves.toBe(1)»;\n  }\n});`,
+        `test("a", async () => {\n  {\n    using b = c();\n    return await expect(a).resolves.toBe(1);\n  }\n});`,
+      ],
+      [
+        `test("a", async () => {\n  try {\n    return «expect(a).resolves.toBe(1)»;\n  } catch {}\n});`,
+        `test("a", async () => {\n  try {\n    return await expect(a).resolves.toBe(1);\n  } catch {}\n});`,
+      ],
+      // forEach
+      [
+        `test("a", () => {\n  b.split(",").map(c).forEach(n => «expect(a).resolves.toBe(n)»);\n});`,
+        `test("a", async () => {\n  for (const n of b.split(",").map(c)) await expect(a).resolves.toBe(n);\n});`,
+      ],
+      [
+        `test("a", () => {\n  [1, 2].forEach(n => {\n    «expect(a(n)).resolves.toBe(n)»;\n  });\n});`,
+        `test("a", async () => {\n  for (const n of [1, 2]) {\n    await expect(a(n)).resolves.toBe(n);\n  }\n});`,
+      ],
+      [
+        `test("a", () => {\n  [1, 2].forEach(n => «expect(a(n)).resolves.toBe(n)»);\n});`,
+        `test("a", async () => {\n  for (const n of [1, 2]) await expect(a(n)).resolves.toBe(n);\n});`,
+      ],
+      [
+        `const all = [1] as const;\ntest("a", () => {\n  all.forEach(async (n: number) => {\n    n++;\n    «expect(a).resolves.toBe(n)»;\n  });\n});`,
+        `const all = [1] as const;\ntest("a", async () => {\n  for (let n of all) {\n    n++;\n    await expect(a).resolves.toBe(n);\n  }\n});`,
+      ],
+      [
+        `test("a", () => {\n  Object.entries(b).forEach(([k, v]) => {\n    «expect(a(k)).resolves.toBe(v)»;\n  });\n});`,
+        `test("a", async () => {\n  for (const [k, v] of Object.entries(b)) {\n    await expect(a(k)).resolves.toBe(v);\n  }\n});`,
+      ],
+      [
+        `function h(n) {\n  «expect(a).resolves.toBe(n)»;\n}\ntest("a", () => {\n  [1].forEach(n => h(n));\n});`,
+        `async function h(n) {\n  await expect(a).resolves.toBe(n);\n}\ntest("a", async () => {\n  for (const n of [1]) await h(n);\n});`,
+      ],
+    ].map(([code, output]) => ({ code: bunTest + code, output: bunTest + output })),
+    ...[
+      // The test wouldn't wait for it.
+      `export function h() {\n  «expect(a).resolves.toBe(1)»;\n}`,
+      `function h() {\n  «expect(a).resolves.toBe(1)»;\n}\nexport { h };`,
+      `function h() {\n  «expect(a).resolves.toBe(1)»;\n}\nrun(h);`,
+      `function h() {\n  «expect(a).resolves.toBe(1)»;\n  return 1;\n}\ntest("a", () => {\n  use(h());\n});`,
+      `function h() {\n  «expect(a).resolves.toBe(1)»;\n}\nconst g = () => h();\nrun(g);`,
+      `test("a", done => {\n  «expect(a).resolves.toBe(1)»;\n  setTimeout(done);\n});`,
+      `test.each([1])("a", (n, done) => {\n  «expect(a).resolves.toBe(n)»;\n  setTimeout(done);\n});`,
+      `function h() {\n  «expect(a).resolves.toBe(1)»;\n}\ntest("a", done => {\n  setTimeout(done);\n  return h();\n});`,
+      `function h() {\n  «expect(a).resolves.toBe(1)»;\n}\ntest("a", () => {\n  b.on("c", () => {\n    h();\n  });\n});`,
+      `function h() {\n  «expect(a).resolves.toBe(1)»;\n}\ntest("a", () => {\n  new h();\n});`,
+      `let h = () => {\n  «expect(a).resolves.toBe(1)»;\n};\nh = other;`,
+      `const h: Check = () => {\n  «expect(a).resolves.toBe(1)»;\n};`,
+      `function h(b): asserts b {\n  «expect(a).resolves.toBe(1)»;\n}`,
+      `function* h() {\n  «expect(a).resolves.toBe(1)»;\n}`,
+      `class A {\n  h() {\n    «expect(a).resolves.toBe(1)»;\n  }\n}`,
+      `class A {\n  static {\n    «expect(a).resolves.toBe(1)»;\n  }\n}`,
+      `const a = {\n  h() {\n    «expect(a).resolves.toBe(1)»;\n  },\n};`,
+      `namespace N {\n  «expect(a).resolves.toBe(1)»;\n}`,
+      `describe("a", () => {\n  «expect(a).resolves.toBe(1)»;\n});`,
+      `test("a", () => {\n  b.on("c", async () => {\n    «expect(a).resolves.toBe(1)»;\n  });\n});`,
+      `test("a", () => new Promise(async done => {\n  «expect(a).resolves.toBe(1)»;\n}));`,
+      `test("a", () => {\n  expect(() => {\n    «expect(a).resolves.toBe(1)»;\n  }).toThrow();\n});`,
+      // The caller doesn't wait for the rest of the function, which may wait for the caller.
+      `async function h() {\n  «expect(a).resolves.toBe(1)»;\n  await gate;\n}\ntest("a", () => {\n  h();\n  open();\n});`,
+      `async function h() {\n  «expect(a).resolves.toBe(1)»;\n  for await (const b of c);\n}\ntest("a", () => {\n  h();\n  open();\n});`,
+      `async function h() {\n  «expect(a).resolves.toBe(1)»;\n  await using b = c;\n}\ntest("a", () => {\n  h();\n  open();\n});`,
+      // for..of wouldn't do the same.
+      `test("a", () => {\n  stream.map(c).forEach(n => {\n    «expect(a).resolves.toBe(n)»;\n  });\n});`,
+      `test("a", () => {\n  [1, , 2].forEach(n => {\n    «expect(a).resolves.toBe(n)»;\n  });\n});`,
+      `const b = [1];\ntest("a", () => {\n  b.forEach(n => {\n    b.push(n);\n    «expect(a).resolves.toBe(n)»;\n  });\n});`,
+      `const b = b.map(c);\ntest("a", () => {\n  b.forEach(n => {\n    «expect(a).resolves.toBe(n)»;\n  });\n});`,
+      `test("a", () => {\n  [1].forEach(async n => {\n    «expect(a).resolves.toBe(n)»;\n    await gate;\n  });\n});`,
+      `test("a", () => {\n  map.forEach(n => {\n    «expect(a).resolves.toBe(n)»;\n  });\n});`,
+      `test("a", () => {\n  [1].forEach((n, i) => {\n    «expect(a).resolves.toBe(i)»;\n  });\n});`,
+      `test("a", () => {\n  [1].forEach((n = 1) => {\n    «expect(a).resolves.toBe(n)»;\n  });\n});`,
+      `test("a", () => {\n  [1].forEach(n => {\n    if (n) return;\n    «expect(a).resolves.toBe(n)»;\n  });\n});`,
+      `test("a", () => {\n  [1].forEach(n => {\n    var b;\n    «expect(a).resolves.toBe(n)»;\n  });\n});`,
+      `test("a", () => {\n  [1].forEach(function (n) {\n    «expect(this).resolves.toBe(n)»;\n  });\n});`,
+      `test("a", () => {\n  [n].forEach(n => {\n    «expect(a).resolves.toBe(n)»;\n  });\n});`,
+      `test("a", () => {\n  [1].forEach(/* b */ n => {\n    «expect(a).resolves.toBe(n)»;\n  });\n});`,
+      `test("a", () => {\n  b?.map(c).forEach(n => {\n    «expect(a).resolves.toBe(n)»;\n  });\n});`,
+
+      `test("a", async () => {\n  await expect(a).resolves.toBe(1);\n});`,
+      `test("a", () => expect(a).resolves.toBe(1));`,
+      `test("a", () => {\n  return expect(a).resolves.toBe(1);\n});`,
+      `test("a", () => {\n  const b = expect(a).resolves.toBe(1);\n});`,
+      `test("a", () => {\n  all.push(expect(a).resolves.toBe(1));\n});`,
+      `test("a", () => {\n  void expect(a).resolves.toBe(1);\n});`,
+      `test("a", () => {\n  expect(() => b()).toThrow();\n});`,
+      `test("a", () => {\n  expect(async function* () {}).toThrow();\n});`,
+      `test("a", () => {\n  expect(async () => {}).toBeFunction();\n});`,
+      `test("a", () => {\n  expect(a).toEqual(expect.resolvesTo.anything());\n});`,
+    ].map(it => bunTest + it),
+    // The other ways to get `expect`.
+    ...[
+      `import { expect, test } from "vitest";\n`,
+      `import { expect, test } from "@jest/globals";\n`,
+      `import { mock } from "bun:test";\nimport { expect, test } from "vitest";\n`,
+      `import { test } from "bun:test";\nimport { expect } from "vitest";\n`,
+      `import { mock } from "bun:test";\nimport { vi } from "vitest";\n`,
+      `const { expect, test } = require("bun:test");\n`,
+      ``,
+    ].map(head => ({
+      code: `${head}test("a", () => {\n  «expect(a).resolves.toBe(1)»;\n});`,
+      output: `${head}test("a", async () => {\n  await expect(a).resolves.toBe(1);\n});`,
+    })),
+    {
+      code: `import { expect as e, test as t } from "bun:test";\nt("a", () => {\n  «e(a).resolves.toBe(1)»;\n});`,
+      output: `import { expect as e, test as t } from "bun:test";\nt("a", async () => {\n  await e(a).resolves.toBe(1);\n});`,
+    },
+    // Jest rejects an async test that takes `done`, and a script has no top-level await.
+    `test("a", done => {\n  «expect(a).resolves.toBe(1)»;\n  done();\n});`,
+    `«expect(a).resolves.toBe(1)»;`,
+    `import { expect, test } from "@playwright/test";\ntest("a", () => {\n  expect(a).resolves.toBe(1);\n});`,
+  ],
+
+  "no-vitest-done-callback": [
+    ...[
+      [`test("a", «done» => {\n  b();\n  done();\n});`, `test("a", () => {\n  b();\n});`],
+      [`test("a", async «done» => {\n  await b();\n  done();\n});`, `test("a", async () => {\n  await b();\n});`],
+      [
+        `test("a", «done» => {\n  b(() => done());\n});`,
+        `test("a", () => new Promise<void>(done => {\n  b(() => done());\n}));`,
+      ],
+      [
+        `it("a", («finish»: () => void) => {\n  b(() => finish());\n}, 100);`,
+        `it("a", () => new Promise<void>(finish => {\n  b(() => finish());\n}), 100);`,
+      ],
+      [
+        `test("a", «done» => setTimeout(done, 10));`,
+        `test("a", () => new Promise<void>(done => setTimeout(done, 10)));`,
+      ],
+      [
+        `test("a", function («done») {\n  b(() => done());\n});`,
+        `test("a", function () { return new Promise<void>(done => {\n  b(() => done());\n}); });`,
+      ],
+      [
+        `test("a", «done» => {\n  if (b) return done();\n  c(() => done());\n});`,
+        `test("a", () => new Promise<void>(done => {\n  if (b) return done();\n  c(() => done());\n}));`,
+      ],
+      [
+        `afterAll(«done» => server.close(done));`,
+        `afterAll(() => new Promise<void>((resolve, reject) => { const done = (error?: unknown) => (error ? reject(error) : resolve()); server.close(done); }));`,
+      ],
+      [
+        `beforeEach(«done» => {\n  // b\n  b(error => done(error));\n});`,
+        `beforeEach(() => new Promise<void>((resolve, reject) => {\n  const done = (error?: unknown) => (error ? reject(error) : resolve());\n  // b\n  b(error => done(error));\n}));`,
+      ],
+    ].map(([code, output]) => ({ code: vitest + code, output: vitest + output })),
+    {
+      file: "a.test.js",
+      code: `${vitest}test.only("a", «cb» => {\n  b(cb);\n});`,
+      output: `${vitest}test.only("a", () => new Promise((resolve, reject) => {\n  const cb = error => (error ? reject(error) : resolve());\n  b(cb);\n}));`,
+    },
+    ...[
+      `test("a", async «done» => {\n  await b();\n  c(() => done());\n});`,
+      `test("a", «done» => {\n  return b().then(() => done());\n});`,
+      `test("a", «done» => {\n  b(done, resolve);\n});`,
+      `test("a", («done»): void => {\n  b(() => done());\n});`,
+      `test("a", («done» /* b */) => {\n  b(() => done());\n});`,
+
+      `test("a", context => {\n  context.skip();\n});`,
+      `test("a", context => {\n  b(context);\n});`,
+      `test("a", done => {\n  done.skip();\n});`,
+      `test("a", done => {});`,
+      `test("a", ({ expect }) => {\n  expect(1);\n});`,
+      `test.each([b])("a", done => {\n  done();\n});`,
+      `test.for([b])("a", done => {\n  done();\n});`,
+      `describe("a", done => {\n  done();\n});`,
+      `other("a", done => {\n  done();\n});`,
+    ].map(it => vitest + it),
+    `${bunTest}test("a", done => {\n  done();\n});`,
+    `import { test } from "@jest/globals";\ntest("a", done => {\n  done();\n});`,
+    `import type { Mock } from "vitest";\ntest("a", done => {\n  done();\n});`,
+  ],
+
+  "no-mock-returned-from-hook": [
+    ...[
+      [`beforeEach(() => «a.mockClear()»);`, `beforeEach(() => { a.mockClear(); });`],
+      [
+        `beforeAll(async () => «vi.spyOn(a, "b").mockReturnValue(1)»);`,
+        `beforeAll(async () => { vi.spyOn(a, "b").mockReturnValue(1); });`,
+      ],
+      [`beforeEach(() => («a = vi.fn()»));`, `beforeEach(() => { a = vi.fn(); });`],
+      [`beforeEach(() => (/* b */ «a = vi.fn()»));`, `beforeEach(() => { (/* b */ a = vi.fn()); });`],
+      [
+        `beforeEach(() => {\n  b();\n  return «a.mockReset()»;\n});`,
+        `beforeEach(() => {\n  b();\n  a.mockReset();\n});`,
+      ],
+      [
+        `beforeEach(() => {\n  b();\n  return «(a as Mock).mockReset()»;\n});`,
+        `beforeEach(() => {\n  b();\n  (a as Mock).mockReset();\n});`,
+      ],
+    ].map(([code, output]) => ({ code: vitest + code, output: vitest + output })),
+    ...[
+      `beforeEach(() => {\n  if (b) return «a.mockReset()»;\n  c();\n});`,
+      `beforeEach((): Mock => «a.mockClear()»);`,
+      `beforeEach(() => {\n  b()\n  return «(a as Mock).mockReset()»\n})`,
+
+      `beforeEach(() => {\n  a.mockClear();\n});`,
+      `beforeEach(() => vi.clearAllMocks());`,
+      `beforeEach(() => () => a.mockClear());`,
+      `beforeEach(() => connect());`,
+      `beforeEach(() => other.fn());`,
+      `afterEach(() => a.mockClear());`,
+      `test("a", () => a.mockClear());`,
+    ].map(it => vitest + it),
+    `${bunTest}beforeEach(() => a.mockClear());`,
+    `beforeEach(() => a.mockClear());`,
+  ],
+
+  "no-unhoisted-mock-variables": [
+    ...[
+      [
+        `const a = vi.fn();\nvi.mock("./b", () => ({ «a», c: a }));`,
+        `const a = vi.hoisted(() => vi.fn());\nvi.mock("./b", () => ({ a, c: a }));`,
+      ],
+      [
+        `let a: A = { c: 1 } as A;\nvi.mock("./b", () => «a»);`,
+        `let a: A = vi.hoisted(() => ({ c: 1 } as A));\nvi.mock("./b", () => a);`,
+      ],
+      [`var a = 1;\nvi.mock("./b", () => ({ «a» }));`, `var a = vi.hoisted(() => 1);\nvi.mock("./b", () => ({ a }));`],
+      [
+        `const { a } = { a: vi.fn() };\nvi.mock("./b", async () => ({ «a» }));`,
+        `const { a } = vi.hoisted(() => ({ a: vi.fn() }));\nvi.mock("./b", async () => ({ a }));`,
+      ],
+      [
+        `const c = new Map(), d = 1;\nconst e = [];\nconst a = { e, f: () => c };\nvi.mock("./b", () => «a»);`,
+        `const c = new Map(), d = 1;\nconst e = vi.hoisted(() => []);\nconst a = vi.hoisted(() => ({ e, f: () => c }));\nvi.mock("./b", () => a);`,
+      ],
+      [
+        `const a = class {};\nvi.mock("./b", () => class extends «a» {});`,
+        `const a = vi.hoisted(() => class {});\nvi.mock("./b", () => class extends a {});`,
+      ],
+      [
+        `const a = vi.fn(() => load());\na.mockName("a");\nvi.mock("./b", () => ({ «a» }));`,
+        `const a = vi.hoisted(() => vi.fn(() => load()));\na.mockName("a");\nvi.mock("./b", () => ({ a }));`,
+      ],
+      [
+        `const c = {};\nconst a = [1].map(d => [c, d]);\nvi.mock("./b", () => ({ «a» }));`,
+        `const c = vi.hoisted(() => ({}));\nconst a = vi.hoisted(() => [1].map(d => [c, d]));\nvi.mock("./b", () => ({ a }));`,
+      ],
+      [
+        `const c = vi.fn();\nconst a = () => ({ c });\nvi.mock("./b", «a»);`,
+        `const c = vi.hoisted(() => vi.fn());\nconst a = vi.hoisted(() => () => ({ c }));\nvi.mock("./b", a);`,
+      ],
+      [
+        `const c = vi.fn();\nconst a = { d: () => c };\nvi.mock("./b", () => «a».d());`,
+        `const c = vi.hoisted(() => vi.fn());\nconst a = vi.hoisted(() => ({ d: () => c }));\nvi.mock("./b", () => a.d());`,
+      ],
+      [
+        `const a = vi.fn();\nfunction c() {\n  return { «a» };\n}\nvi.mock("./b", c);`,
+        `const a = vi.hoisted(() => vi.fn());\nfunction c() {\n  return { a };\n}\nvi.mock("./b", c);`,
+      ],
+    ].map(([code, output]) => ({ code: vitest + loads + code, output: vitest + loads + output })),
+    ...[
+      `const a = load;\nvi.mock("./b", () => ({ «a» }));`,
+      `function c() {}\nconst a = c();\nvi.mock("./b", () => ({ «a» }));`,
+      `const a = await c();\nvi.mock("./b", () => ({ «a» }));`,
+      `const a = require("./c");\nvi.mock("./b", () => ({ «a» }));`,
+      `const a = vi.fn(), c = vi.fn();\nvi.mock("./b", () => ({ «a» }));`,
+      `export const a = vi.fn();\nvi.mock("./b", () => ({ «a» }));`,
+      `let a;\nvi.mock("./b", () => ({ «a» }));`,
+      `class A {}\nvi.mock("./b", () => ({ «A» }));`,
+      `enum A { c }\nvi.mock("./b", () => ({ «A» }));`,
+      `const a = [1].map(c => load(c));\nvi.mock("./b", () => ({ «a» }));`,
+      `const a = (() => load())();\nvi.mock("./b", () => ({ «a» }));`,
+      `const a = () => load();\nvi.mock("./b", «a»);`,
+      // The value would be another one.
+      `const a = process.env.A;\nvi.mock("./b", () => ({ «a» }));`,
+      `const a = import.meta.env.A;\nvi.mock("./b", () => ({ «a» }));`,
+      `const c = { d: 0 };\nc.d = 1;\nconst a = [c.d];\nvi.mock("./b", () => ({ «a» }));`,
+      `let a = {};\na = { ...a, c: 1 };\nvi.mock("./b", () => ({ «a» }));`,
+      // Imports
+      `vi.mock("./b", () => ({ «load» }));`,
+      `import * as all from "./b";\nvi.mock("./b", () => ({ ...«all» }));`,
+      `import { a } from "./c";\nvi.mock("./b", () => ({ «a» }));`,
+      `import path from "node:path";\nvi.mock(«path».join("a", "b"));`,
+
+      `const a = vi.hoisted(() => vi.fn());\nvi.mock("./b", () => ({ a }));`,
+      `const { a } = await vi.hoisted(async () => ({ a: 1 }));\nvi.mock("./b", () => ({ a }));`,
+      `const a = "c", d = -1;\nvi.mock("./b", () => ({ a, d }));`,
+      `const a = vi.fn();\nvi.mock("./b", () => ({ a: () => a() }));`,
+      `const a = vi.fn();\nvi.mock("./b", () => ({ get a() { return a; } }));`,
+      `const a = vi.fn();\nvi.mock("./b", () => class { c = a; });`,
+      `const a = vi.fn();\nvi.mock("./b", () => ({}) as typeof a);`,
+      `function a() {}\nvi.mock("./b", () => ({ a }));`,
+      `const a = vi.fn();\nvi.doMock("./b", () => ({ a }));`,
+      `const a = vi.fn();\n{\n  vi.mock("./b", () => ({ a }));\n}`,
+      `const a = vi.fn();\nother.mock("./b", () => ({ a }));`,
+      `const a = vi.fn();\njest.mock("./b", () => ({ a }));`,
+      `vi.mock("./b", () => {\n  const a = vi.fn();\n  return { a };\n});`,
+    ].map(it => vitest + loads + it),
+    `${vitest}import { a } from "./c";\n${loads}vi.mock("./b", () => ({ a }));`,
+    `${vitest}${loads}import { a } from "./c";\nvi.mock("./b", () => ({ a: () => a() }));`,
+    `${vitest}${loads}import { file } from "bun";\nvi.mock("./b", () => ({ file }));`,
+    // Nothing loads the module before the variable is initialized.
+    `${vitest}const a = vi.fn();\nvi.mock("./b", () => ({ a }));\nconst b = await import("./b");`,
+    `${vitest}import fs from "node:fs";\nconst a = vi.fn(fs.c);\nvi.mock("./b", () => ({ a }));`,
+    `${vitest}import { c } from "c";\nconst a = vi.fn(c);\nvi.mock("b", () => ({ a }));`,
+    `${vitest}import { B } from "./b";\nconst a: B = vi.fn();\nvi.mock("./b", () => ({ a }));`,
+    ...[
+      [`import fs from "node:fs";\nfs.c();\n`, `"node:fs"`],
+      [`import fs from "fs";\nfs.c();\n`, `"node:fs"`],
+      [`import "./c";\n`, `"./b"`],
+      [`import "@/c";\n`, `"b"`],
+      [`const b = require("./b");\n`, `"./b"`],
+      [`export * from "./b";\n`, `"./b"`],
+    ].map(([head, module]) => ({
+      code: `${vitest}${head}const a = vi.fn();\nvi.mock(${module}, () => ({ «a» }));`,
+      output: `${vitest}${head}const a = vi.hoisted(() => vi.fn());\nvi.mock(${module}, () => ({ a }));`,
+    })),
+    // The arguments themselves are read right away.
+    {
+      code: `${vitest}const a = () => ({});\nvi.mock("./b", «a»);`,
+      output: `${vitest}const a = vi.hoisted(() => () => ({}));\nvi.mock("./b", a);`,
+    },
+    {
+      code: `import { jest } from "bun:test";\n${loads}const a = jest.fn();\njest.mock("./c").mock("./b", () => «a»);`,
+      output: `import { jest, vi } from "bun:test";\n${loads}const a = vi.hoisted(() => jest.fn());\njest.mock("./c").mock("./b", () => a);`,
+    },
+    {
+      code: `import { vi as v } from "vitest";\n${loads}const a = v.fn();\nv.mock("./b", () => «a»);`,
+      output: `import { vi as v } from "vitest";\n${loads}const a = v.hoisted(() => v.fn());\nv.mock("./b", () => a);`,
+    },
+    {
+      code: `${loads}const a = jest.fn();\njest.mock("./b", () => «a»);`,
+      suggestions: [`${loads}const a = vi.hoisted(() => jest.fn());\njest.mock("./b", () => a);`],
+    },
+  ],
+
+  "prefer-string-containing": [
+    ...[`"a (b)"`, `"a+b"`, `"a("`, "`[error] a`", `"$5 off"`].map(it => ({
+      code: `${bunTest}expect(a).toEqual(expect.stringMatching(«${it}»));`,
+      output: `${bunTest}expect(a).toEqual(expect.stringContaining(${it}));`,
+    })),
+    {
+      code: `${bunTest}expect(a).toEqual(expect.not.stringMatching(«"a (b)"»));`,
+      output: `${bunTest}expect(a).toEqual(expect.not.stringContaining("a (b)"));`,
+    },
+    ...[vitest, ``].map(head => ({
+      code: `${head}expect(a).toEqual(expect.stringMatching(«"a (b)"»));`,
+      suggestions: [`${head}expect(a).toEqual(expect.stringContaining("a (b)"));`],
+    })),
+    ...[
+      `"a"`,
+      `"a.b"`,
+      `"why?"`,
+      `"^a"`,
+      `"a$"`,
+      `"a.*b"`,
+      `"\\\\d+"`,
+      `"(a|b)c"`,
+      `"[a-z]x"`,
+      `"(ab)+c"`,
+      `/a (b)/`,
+      `b`,
+    ].map(it => `${bunTest}expect(a).toEqual(expect.stringMatching(${it}));`),
+    `${bunTest}other.stringMatching("a (b)");`,
+  ],
+
+  "no-legacy-fetch-error-codes": [
+    ...[
+      `if (error.code === «"ConnectionRefused"») retry();`,
+      `if («'ConnectionRefused'» != error?.code) retry();`,
+      `switch (code) {\n  case «"ConnectionRefused"»:\n}`,
+      `expect(error.code).not.toBe(«"ConnectionRefused"»);`,
+      `assert.strictEqual(error.code, «"ConnectionRefused"»);`,
+      `expect(error).toMatchObject({ code: «"ConnectionRefused"» });`,
+      `await expect(a).rejects.toHaveProperty("code", «"ConnectionRefused"»);`,
+      `const retried = new Set(["ECONNRESET", «"ConnectionRefused"»]);`,
+      `[«"ConnectionRefused"»].includes(error.code);`,
+    ].map(it => ({
+      code: `fetch(url);\n${it}`,
+      output: `fetch(url);\n${it.replace(/[«»]/g, "").replace("ConnectionRefused", "ECONNREFUSED")}`,
+    })),
+    {
+      code: `Bun.fetch(url);\na.code === «"ConnectionRefused"»;\nb.code === «"ConnectionRefused"»;\n() => c.code === "ECONNREFUSED";`,
+      output: `Bun.fetch(url);\na.code === "ECONNREFUSED";\nb.code === "ECONNREFUSED";\n() => c.code === "ECONNREFUSED";`,
+    },
+    ...[
+      ``,
+      `export default { fetch() {} };\n`,
+      `fetch(url);\nBun.s3.file(a);\n`,
+      `fetch(url);\nBun.file("s3://a");\n`,
+    ].map(head => ({
+      code: `${head}error.code === «"ConnectionRefused"»;`,
+      suggestions: [`${head}error.code === "ECONNREFUSED";`],
+    })),
+
+    `new S3Client();\nerror.code === "ConnectionRefused";`,
+    `fetch(url);\nerror.code === "ConnectionRefused" || error.code === "ECONNREFUSED";`,
+    `fetch(url);\nerror.code = "ConnectionRefused";\nerror.code === "ConnectionRefused";`,
+    `fetch(url);\nthrow { code: "ConnectionRefused" };`,
+    `fetch(url);\ntype Code = "ConnectionRefused";\nerror.code === "ConnectionRefused";`,
+    `fetch(url);\nconst codes = { ConnectionRefused: 1 };\nerror.code === "ConnectionRefused";`,
+    `fetch(url);\nerror.code === "FailedToOpenSocket";`,
+    `fetch(url);\nstate === "ConnectionRefused";`,
+    `fetch(url);\nconst names = ["Timeout", "ConnectionRefused"];`,
+  ],
+
+  "no-renamed-env-vars": [
+    ...[
+      `process.env.«BUN_JSC_useSharedArrayBuffer» = "0";`,
+      `env["«BUN_JSC_useSharedArrayBuffer»"] = "0";`,
+      `spawn(a, { env: { «BUN_JSC_useSharedArrayBuffer»: "0" } });`,
+      `spawn(a, { env: { "«BUN_JSC_useSharedArrayBuffer»": "0" } });`,
+    ].map(code => ({ code, output: code.replace(/«BUN_JSC_use(.*)»/, "BUN_JSC_alwaysUse$1") })),
+    {
+      code: `a({ «BUN_JSC_useSharedArrayBuffer» });`,
+      output: `a({ BUN_JSC_alwaysUseSharedArrayBuffer: BUN_JSC_useSharedArrayBuffer });`,
+    },
+
+    `delete env.BUN_JSC_useSharedArrayBuffer;`,
+    `env.BUN_JSC_useSharedArrayBuffer = env.BUN_JSC_alwaysUseSharedArrayBuffer;`,
+    `env.BUN_JSC_useJIT = "0";`,
+  ],
+
+  "tls-require-request-cert": [
+    ...[
+      `Bun.serve({ tls: { key, «ca» } });`,
+      `Bun.serve({ key, «ca: a», fetch });`,
+      `Bun.serve({ tls: [{ «ca» }, { key }] });`,
+      `Bun.listen({ tls: { «ca» } as TLSOptions });`,
+      `const tls = { «ca» };\nBun.serve({ tls });\nBun.listen({ tls });`,
+      `import { serve } from "bun";\nserve({ tls: { «ca» } });`,
+      `export default { fetch() {}, tls: { «ca» } };`,
+    ].map(code => ({ code, suggestions: [code.replace(/«(.*)»/, "$1, requestCert: true")] })),
+
+    `Bun.serve({ tls: { ca, requestCert: true } });`,
+    `Bun.serve({ tls: { ca, requestCert: false } });`,
+    `Bun.serve({ tls: { ca, ...more } });`,
+    `Bun.serve({ tls: { ca: undefined } });`,
+    `Bun.serve({ tls: { key } });\nuse(ca);`,
+    `Bun.connect({ tls: { ca } });`,
+    `fetch(url, { tls: { ca } });`,
+    `export default { tls: { ca } };`,
+    `import tls from "node:tls";\ntls.createServer({ ca });`,
+  ],
+
+  "fetch-require-servername": [
+    `fetch("https://10.0.0.5/", { headers: { «Host: "a.example"» } });`,
+    "fetch(`https://${ip}/`, { headers: { «host» } });",
+    `fetch("https://10.0.0.5/", { headers: new Headers({ «"Host": a» }) });`,
+    `const headers = { «Host: a» };\nfetch("https://10.0.0.5/", { headers, tls: { ca } });`,
+    `fetch(url, { headers: { «Host: a» }, tls: { ca } });`,
+
+    `fetch("https://10.0.0.5/", { headers: { Host: a }, tls: { servername: a } });`,
+    `fetch("https://10.0.0.5/", { headers: { Host: a }, tls: { serverName: a } });`,
+    `fetch("https://10.0.0.5/", { headers: { Host: a }, tls: { rejectUnauthorized: false } });`,
+    `fetch("https://10.0.0.5/", { headers: { Host: a }, tls });`,
+    `fetch("https://10.0.0.5/", { headers: { Host: a }, ...more });`,
+    `fetch("https://a.example:8443/b", { headers: { Host: "a.example:8443" } });`,
+    `fetch("http://10.0.0.5/", { headers: { Host: a } });`,
+    `fetch(url, { headers: { Host: a } });`,
+    `fetch("https://10.0.0.5/", { headers: { Accept: host } });`,
+    `import fetch from "other";\nfetch("https://10.0.0.5/", { headers: { Host: a } });`,
+  ],
+
+  "sql-require-array-type": [
+    ...[
+      `import { sql } from "bun";\n«sql.array(a)»;`,
+      `import { sql as db } from "bun";\n«db.array(a)»;`,
+      `«Bun.sql.array(a)»;`,
+      `import { SQL } from "bun";\nconst db = new SQL(url);\n«db.array(a)»;`,
+      `const db = new Bun.SQL(url);\ndb.begin(tx => «tx.array(a)»);`,
+    ].map(code => ({ code, suggestions: [code.replace(/«(.*)\)»/, `$1, "JSON")`)] })),
+
+    `import { sql } from "bun";\nsql.array(a, "TEXT");`,
+    `import { sql } from "bun";\nsql.array(...a);`,
+    `import sql from "./db";\nsql.array(a);`,
+    `import { sql } from "bun";\nz.array(a);`,
+  ],
+
+  "websocket-close-code": [
+    `const ws = new WebSocket(url);\nws.onclose = event => event.code === «1000»;\nws.close();`,
+    `new WebSocket(url).onclose = ({ code }) => {\n  switch (code) {\n    case «1000»:\n  }\n};`,
+    `Bun.serve({ websocket: { close(ws, code) {\n  expect(code).toBe(«1000»);\n} } });`,
+
+    `const ws = new WebSocket(url);\nws.onclose = event => event.code === 1000;\nws.close(1000);`,
+    `const ws = new WebSocket(url);\nws.onclose = ({ code }) => code === 1000 || code === 1005;\nws.close();`,
+    `const ws = new WebSocket(url);\nif (delay === 1000) ws.close();`,
+    `if (error.code === 1000) file.close();`,
+  ],
+
+  "ws-require-error-listener": [
+    `import WebSocket from "ws";\n«new WebSocket(url)»;`,
+    `import { WebSocket } from "ws";\nconst ws = «new WebSocket(url)»;\nws.on("message", a);`,
+    `const WebSocket = require("ws");\n«new WebSocket(url)».on("open", a);`,
+    `import { WebSocketServer } from "ws";\nconst server = new WebSocketServer(a);\nserver.on("connection", «ws» => {\n  ws.send(b);\n});`,
+    `import WebSocket from "ws";\nnew WebSocket.Server(a).on("error", b).once("connection", function («ws») {});`,
+
+    `import WebSocket from "ws";\nnew WebSocket(url).on("error", a);`,
+    `import WebSocket from "ws";\nconst ws = new WebSocket(url);\nws.onerror = a;`,
+    `import WebSocket from "ws";\nconst ws = new WebSocket(url);\nws.addEventListener("error", a);`,
+    `import WebSocket from "ws";\nconst connect = () => new WebSocket(url);`,
+    `import { WebSocketServer } from "ws";\nnew WebSocketServer(a).on("connection", ws => {\n  ws.on("error", b);\n});`,
+    `import { WebSocketServer } from "ws";\nnew WebSocketServer(a).on("connection", ws => {\n  clients.add(ws);\n});`,
+    `import { WebSocketServer } from "ws";\nnew WebSocketServer(a).on("connection", handle);`,
+    `const ws = new WebSocket(url);`,
+  ],
 };
 
 // The `bun:test/..` rules are oxlint's Jest and Vitest rules, whose cases are in conformance/. These cases cover what's
 // specific to Bun.
-const bunTest = `import { describe, expect, expectTypeOf, it, jest, mock, setDefaultTimeout, test, vi, xdescribe, xit, xtest } from "bun:test";\n`;
 const inBunTest = (it: Case): Case => {
   const { code, output, suggestions, ...rest } = typeof it === "string" ? { code: it } : it;
   return {
@@ -1687,6 +2321,14 @@ const testRules: Record<string, Case[]> = {
     inTest(`«expect()».toBe(1);`),
     inTest(`«expect(1, 2, 3)».toBe(1);`),
     { code: inTest(`«expect(a).resolves.toBe(1)»;`), suggestions: [inTest(`await expect(a).resolves.toBe(1);`)] },
+    {
+      code: `function h(): void {\n  «expect(a).resolves.toBe(1)»;\n}\ntest("a", () => {\n  h();\n});`,
+      suggestions: [
+        `async function h(): Promise<void> {\n  await expect(a).resolves.toBe(1);\n}\ntest("a", async () => {\n  await h();\n});`,
+      ],
+    },
+    // The test wouldn't wait for it.
+    inTest(`b.on("c", () => {\n    «expect(a).resolves.toBe(1)»;\n  });`),
 
     inTest(`expect(1).toBe(1);`),
     inTest(`expect(1, "why").toBe(1);`),
@@ -2295,7 +2937,7 @@ describe.concurrent.each(tables)("%s/", (plugin, rules) => {
       using dir = tempDir("bun-rules", {
         "eslint.config.mjs": `export default [
           {
-            files: ["**/*.tsx", "**/*.ts"],
+            files: ["**/*.tsx", "**/*.ts", "**/*.js"],
             languageOptions: {
               parser: { meta: { name: "typescript-eslint/parser" } },
               parserOptions: { ecmaFeatures: { jsx: true } },
@@ -2361,6 +3003,179 @@ const reported = (stdout: string, file = "a.js") =>
   (JSON.parse(stdout) as { filePath: string; messages: (Message & { message: string })[] }[])
     .filter(it => basename(it.filePath) === file)
     .flatMap(it => it.messages.map(it => `${it.line} ${it.ruleId}`));
+
+describe.concurrent("--upgrade", () => {
+  const broken = `${bunTest}test("a", () => {\n  expect(a).resolves.toBe(1);\n});\n`;
+  const found = ["3 bun/await-async-expect"];
+
+  test.each([
+    ["no config", {}],
+    ["eslint.config.js", { "eslint.config.js": `throw new Error("it was loaded");` }],
+    [".eslintrc.json", { ".eslintrc.json": `{ "root": true, "rules": { "no-undef": "error" } }` }],
+    [".oxlintrc.json", { ".oxlintrc.json": `{ "ignorePatterns": ["*"] }` }],
+    [".eslintignore", { ".eslintignore": "src\n" }],
+    ["a nested config", { "src/eslint.config.js": `throw new Error("it was loaded");` }],
+    ["a dependency on oxlint", { "package.json": `{ "devDependencies": { "oxlint": "*" } }` }],
+    ["bunfig.toml", { "bunfig.toml": `[lint.rules]\n"no-undef" = "error"\n"bun/await-async-expect" = "off"\n` }],
+    [
+      "suppressions",
+      { "eslint-suppressions.json": JSON.stringify({ "src/a.test.ts": { "bun/await-async-expect": { count: 5 } } }) },
+    ],
+  ])("runs its own rules with %s", async (_, files) => {
+    const { stdout, stderr, exitCode } = await lint({ ...files, "src/a.test.ts": broken }, ["--upgrade", "-f", "json"]);
+    expect(reported(stdout, "a.test.ts")).toEqual(found);
+    expect(stderr).not.toContain("note");
+    expect(exitCode).toBe(1);
+  });
+
+  test("turns on a rule for each breaking change, and --rule turns one off", async () => {
+    const [all, fewer] = await Promise.all([
+      lint({}, ["--upgrade", "--print-config", "a.ts"]),
+      lint({ "a.test.ts": broken }, ["--upgrade", "--rule", "bun/await-async-expect: off"]),
+    ]);
+    expect(JSON.parse(all.stdout).rules).toEqual({
+      "bun/await-async-expect": [2],
+      "bun/fetch-require-servername": [1],
+      "bun/no-legacy-fetch-error-codes": [2],
+      "bun/no-mock-returned-from-hook": [2],
+      "bun/no-renamed-env-vars": [2],
+      "bun/no-unhoisted-mock-variables": [2],
+      "bun/no-vitest-done-callback": [2],
+      "bun/prefer-string-containing": [2],
+      "bun/sql-require-array-type": [1],
+      "bun/tls-require-request-cert": [2],
+      "bun/websocket-close-code": [1],
+      "bun/ws-require-error-listener": [1],
+    });
+    expect(fewer.exitCode).toBe(0);
+  });
+
+  test("skips ignored files", async () => {
+    const files = {
+      ".gitignore": "built\n",
+      "bunfig.toml": `[lint]\nignorePatterns = ["vendor"]\n`,
+      "built/a.test.ts": broken,
+      "vendor/a.test.ts": broken,
+      "node_modules/b/a.test.ts": broken,
+      "src/a.test.ts": broken,
+    };
+    const { stdout } = await lint(files, ["--upgrade", "-f", "json"]);
+    expect(reported(stdout, "a.test.ts")).toEqual(found);
+  });
+
+  test("names the files that don't parse, without failing", async () => {
+    const files = Object.fromEntries(["a", "b", "c", "d", "e"].map(it => [`src/${it}.js`, "let let = (;"]));
+    const { stderr, exitCode } = await lint(files, ["--upgrade"]);
+    expect(stderr).toContain("warn: Skipped what doesn't parse: src/a.js, src/b.js, src/c.js and 2 more\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("knows require() in a module", async () => {
+    const code = `import "a";\nconst { serve } = require("bun");\nserve({ tls: { ca } });`;
+    const { stdout } = await lint({ "a.ts": code }, ["--upgrade", "-f", "json"]);
+    expect(reported(stdout, "a.ts")).toEqual(["3 bun/tls-require-request-cert"]);
+  });
+
+  test.each([
+    [`{ code: "ConnectionRefused" }`, `{ code: "ECONNREFUSED" }`],
+    [`{ BUN_JSC_useSharedArrayBuffer: 1 }`, `{ BUN_JSC_alwaysUseSharedArrayBuffer: 1 }`],
+  ])("--fix replaces %s where another rule's fix overlaps", async (before, after) => {
+    const code = (value: string, async: string, wait: string) =>
+      `${bunTest}test("a", ${async}() => {\n  expect(b).toEqual(${value});\n  ${wait}expect(fetch(a)).resolves.toBe(1);\n  expect(c).toEqual(${value});\n});\n`;
+    const files = { "a.test.ts": code(before, "", "") };
+    const { stdout } = await lint(files, ["--upgrade", "--fix-dry-run", "-f", "json"]);
+    expect(JSON.parse(stdout)[0].output).toBe(code(after, "async ", "await "));
+  });
+
+  test("--fix leaves everything else alone", async () => {
+    const comments = `/* eslint no-var: error */\n// eslint-disable-next-line no-console, other/rule\nvar b = 1;\n`;
+    const { stdout } = await lint({ "a.test.ts": comments + broken }, ["--upgrade", "--fix-dry-run", "-f", "json"]);
+    const [{ messages, output }] = JSON.parse(stdout);
+    expect(messages).toEqual([]);
+    expect(output).toBe(comments + broken.replace("() =>", "async () =>").replace("  expect", "  await expect"));
+  });
+
+  test.each([["--config", "a.json"], ["--flavor", "eslint"], ["--suppress-all"], ["--prune-suppressions"], ["--init"]])(
+    "rejects %s",
+    async (...args) => {
+      const { stderr, exitCode } = await lint({ "a.json": "{}" }, ["--upgrade", ...args]);
+      expect(stderr).toContain("The --upgrade option doesn't use a config or suppressions");
+      expect(exitCode).toBe(2);
+    },
+  );
+
+  test("--fix makes the same tests pass and fail as before Bun 1.5", async () => {
+    const later = `const later = value => new Promise(resolve => setImmediate(resolve, value));\n`;
+    using dir = tempDir("bun-rules", {
+      "dependency.js": `export const value = 1;`,
+      "await.test.js": `import { expect, test } from "bun:test";\n${later}
+        function helper(value) {
+          expect(later(1)).resolves.toBe(value);
+        }
+        test("passes: order", () => {
+          let settled = false;
+          expect(later().then(() => (settled = true))).resolves.toBe(true);
+          expect(async () => { await later(); throw new Error("a"); }).toThrow("a");
+          expect(settled).toBe(true);
+        });
+        test("passes: try", () => {
+          let caught = false;
+          try { helper(2); } catch { caught = true; }
+          expect(caught).toBe(true);
+        });
+        test("fails: helper", () => {
+          helper(2);
+        });
+        test("fails: forEach", () => {
+          [1, 2].forEach(value => { helper(value); });
+        });
+        test("passes: substring", () => {
+          expect("total (net)").toEqual(expect.stringMatching("l (n"));
+        });`,
+      "vitest.test.js": `import { beforeEach, expect, test, vi } from "vitest";
+        import { value } from "./dependency.js";
+        const mocked = { a: 1 };
+        vi.mock("./dependency.js", () => ({ value: mocked }));
+        const never = vi.fn(() => { throw new Error("called as teardown"); });
+        beforeEach(() => never.mockClear());
+        test("passes: mock", () => {
+          expect(value).toBe(mocked);
+        });
+        test("passes: done", done => {
+          setImmediate(() => done());
+        });
+        test("fails: done", done => {
+          setImmediate(() => { expect(1).toBe(2); done(); });
+        });
+        test("fails: done(error)", done => {
+          setImmediate(done, new Error("a"));
+        });`,
+    });
+    const run = async (...cmd: string[]) => {
+      await using proc = spawn({
+        cmd: [bunExe(), ...cmd],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { results: [...new Set(stderr.match(/^\((pass|fail)\) \w+: [\w()]+/gm))].toSorted(), exitCode };
+    };
+    expect((await run("lint", "--upgrade", "--fix")).exitCode).toBe(0);
+    expect((await run("test")).results).toEqual([
+      "(fail) fails: done",
+      "(fail) fails: done(error)",
+      "(fail) fails: forEach",
+      "(fail) fails: helper",
+      "(pass) passes: done",
+      "(pass) passes: mock",
+      "(pass) passes: order",
+      "(pass) passes: substring",
+      "(pass) passes: try",
+    ]);
+  });
+});
 
 describe.concurrent("the bun plugin", () => {
   const name = "bun/no-eager-dynamic-import";

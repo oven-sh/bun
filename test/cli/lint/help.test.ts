@@ -34,6 +34,7 @@ describe.concurrent.each([
       "max-warnings",
       "init",
       "doctor",
+      "upgrade",
       "no-script",
     ],
     headings: [
@@ -172,23 +173,23 @@ describe.concurrent.each([
   });
 
   // No other tool has these flags, and the migration guides send people here who still have "lint": "eslint .".
-  test.each([["--doctor"], ...(command === "lint" ? [["--explain", "no-var"], ["--explain=no-var"]] : [])])(
-    "%s %s isn't passed to the package.json script with that name",
-    async (...args) => {
-      const scripts = (name: string) => ({
-        "package.json": JSON.stringify({ scripts: { [name]: "echo the script" } }),
-      });
-      const [here, elsewhere] = await Promise.all([
-        runIn(scripts(command), command, ...args),
-        runIn(scripts("other"), command, ...args),
-      ]);
-      expect(here.stderr).not.toContain("echo the script");
-      expect({ stdout: here.stdout, exitCode: here.exitCode }).toEqual({
-        stdout: elsewhere.stdout,
-        exitCode: elsewhere.exitCode,
-      });
-    },
-  );
+  test.each([
+    ["--doctor"],
+    ...(command === "lint" ? [["--explain", "no-var"], ["--explain=no-var"], ["--upgrade"]] : []),
+  ])("%s %s isn't passed to the package.json script with that name", async (...args) => {
+    const scripts = (name: string) => ({
+      "package.json": JSON.stringify({ scripts: { [name]: "echo the script" } }),
+    });
+    const [here, elsewhere] = await Promise.all([
+      runIn(scripts(command), command, ...args),
+      runIn(scripts("other"), command, ...args),
+    ]);
+    expect(here.stderr).not.toContain("echo the script");
+    expect({ stdout: here.stdout, exitCode: here.exitCode }).toEqual({
+      stdout: elsewhere.stdout,
+      exitCode: elsewhere.exitCode,
+    });
+  });
 });
 
 describe.concurrent.each(["lint", "fmt", "check"])("bun %s", command => {

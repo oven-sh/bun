@@ -743,6 +743,7 @@ const LINT: Table = Table {
         b"changed",
         b"print-config",
         b"doctor",
+        b"upgrade",
         b"rules",
         b"explain",
         b"list-files",

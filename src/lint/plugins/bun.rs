@@ -3,7 +3,7 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::eslint_utils::{Mode, ReferenceKind, ReferenceTracker, Trace, TraceMap};
-use bun_lint_oxlint::ast_util::is_global_reference;
+use bun_lint_oxlint::ast_util::{get_const_variable_initializer, is_global_reference};
 
 /// True for `(function () {})()`, `new (function () {})()` and `(function () {}).call(this)`, where the body runs
 /// immediately. A generator's body doesn't.
@@ -109,7 +109,7 @@ impl<'m> Trace<'m> for Each<'m> {
     }
 }
 
-/// The calls that match the trace map `modules`, whether the module is imported or required. Each comes with the last
+/// The calls and `new` expressions that match the trace map `modules`, whether the module is imported or required. Each comes with the last
 /// name on its path.
 pub(crate) fn module_calls<'a, 'm>(
     file: &'a File<'a>,
@@ -121,7 +121,7 @@ pub(crate) fn module_calls<'a, 'm>(
         .into_iter()
         .chain(tracker.iterate_cjs_references(modules));
     found
-        .filter(|it| it.kind == ReferenceKind::Call)
+        .filter(|it| it.kind != ReferenceKind::Read)
         .filter_map(|it| Some((it.expr()?, *it.path.last()?)))
         .collect()
 }
@@ -143,6 +143,62 @@ pub(crate) fn bun_calls<'a>(
     file.exprs_of_kind(ExprTag::Call)
         .filter_map(|e| Some((e, name_of(e)?)))
         .collect()
+}
+
+/// `e` without type assertions, or the value of the `const` that it names.
+pub(crate) fn value_of(e: Expr<'_>) -> Expr<'_> {
+    let e = e.skip_type_wrappers();
+    match e.tag() {
+        ExprTag::Ident => get_const_variable_initializer(e).map_or(e, Expr::skip_type_wrappers),
+        _ => e,
+    }
+}
+
+/// The last property called `name`.
+pub(crate) fn property<'a>(properties: List<'a, Prop<'a>>, name: &str) -> Option<Prop<'a>> {
+    (properties.iter().rev()).find(|it| it.key().is_some_and(|key| key.is(name)))
+}
+
+/// True if a spread or a computed key can add any property.
+pub(crate) fn has_unknown_properties<'a>(properties: List<'a, Prop<'a>>) -> bool {
+    (properties.iter()).any(|it| it.key().and_then(Key::name).is_none())
+}
+
+/// `error.code`, `code`, `closeCode`
+pub(crate) fn is_named_code(e: Expr) -> bool {
+    let e = e.skip_type_wrappers();
+    let name = e.as_ident().or_else(|| e.member_name().map(Ident::name));
+    name.is_some_and(|it| it.is("code") || it.bytes().ends_with(b"Code"))
+}
+
+/// The value that `literal` is compared with: `a === literal`, `switch (a) { case literal: }`,
+/// `expect(a).toBe(literal)`, `assert.equal(a, literal)`.
+pub(crate) fn compared_with(literal: Expr<'_>) -> Option<Expr<'_>> {
+    const EQUALITY: [BinOp; 4] = [BinOp::EqEq, BinOp::EqEqEq, BinOp::NotEq, BinOp::NotEqEq];
+    let parent = match literal.parent() {
+        Node::Case(case) => return Some(case.parent().as_stmt()?.as_switch()?.0),
+        parent => parent.as_expr()?,
+    };
+    if let Some((op, left, right)) = parent.as_binary() {
+        let other = if left == literal { right } else { left };
+        return EQUALITY.contains(&op).then_some(other);
+    }
+    let call = parent.as_call()?;
+    let (mut object, name, _) = call.callee().as_dot()?;
+    if name.name().is_any(&["equal", "strictEqual"]) && call.args().get(1) == Some(literal) {
+        return call.args().first();
+    }
+    if !name.name().is_any(&["toBe", "toEqual", "toStrictEqual"]) {
+        return None;
+    }
+    while let Some((inner, ..)) = object.as_dot() {
+        object = inner;
+    }
+    let expect = object.as_call()?;
+    expect
+        .args()
+        .first()
+        .filter(|_| expect.callee().is_ident("expect"))
 }
 
 /// How a process is started.

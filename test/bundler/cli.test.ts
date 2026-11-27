@@ -974,6 +974,7 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
   const utf8BomData = Buffer.concat([utf8Bom, Buffer.from("data")]);
   const utf16BomData = Buffer.from([0xff, 0xfe, 0x5a, 0x5a]);
 
+  /** The time in the summary becomes `{time}`. */
   async function build(cwd: string, args: string[]) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--no-bundle", ...args],
@@ -983,7 +984,16 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
+    return { stdout: stdout.replace(/in \d+ms/, "in {time}ms"), stderr, exitCode };
+  }
+
+  /** What `build` gives when it wrote these files. Each has a name, a number of bytes, and a kind if it is not an asset. */
+  function wrote(...files: [name: string, bytes: number, kind?: "chunk"][]) {
+    const rows = files.map(([name, bytes, kind = "asset"]) => [name, `${bytes} bytes`, kind]);
+    const nameWidth = Math.max(...rows.map(row => row[0].length)) + 2;
+    const sizeWidth = Math.max(...rows.map(row => row[1].length)) + 2;
+    const lines = rows.map(([name, size, kind]) => `  ${name.padEnd(nameWidth)}${size.padEnd(sizeWidth)}(${kind})\n`);
+    return { stdout: `Transpiled file in {time}ms\n\n${lines.join("")}\n`, stderr: "", exitCode: 0 };
   }
 
   /** Every file below `dir`, by its `/`-separated path. */
@@ -1000,12 +1010,11 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
   test("copies a .wasm entry point into --outdir and lists it in the summary", async () => {
     using dir = tempDir("no-bundle-copy-wasm", { "src/x.wasm": wasm });
 
-    const { stdout, stderr, exitCode } = await build(String(dir), ["./src/x.wasm", "--outdir=dist"]);
-    expect(stderr).toBe("");
-    expect(stdout.replace(/in \d+ms/, "in {time}ms")).toBe(
-      "Transpiled file in {time}ms\n\n  x.wasm  11 bytes  (asset)\n\n",
-    );
-    expect(exitCode).toBe(0);
+    expect(await build(String(dir), ["./src/x.wasm", "--outdir=dist"])).toEqual({
+      stdout: "Transpiled file in {time}ms\n\n  x.wasm  11 bytes  (asset)\n\n",
+      stderr: "",
+      exitCode: 0,
+    });
 
     expect(readTree(String(dir))).toEqual({ "dist/x.wasm": wasm, "src/x.wasm": wasm });
   });
@@ -1015,15 +1024,9 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
     async loader => {
       using dir = tempDir("no-bundle-copy-loader", { "src/x.zz": wasm });
 
-      const { stdout, stderr, exitCode } = await build(String(dir), [
-        "--loader",
-        `.zz:${loader}`,
-        "./src/x.zz",
-        "--outdir=dist",
-      ]);
-      expect(stderr).toBe("");
-      expect(stdout).toContain("x.zz  11 bytes  (asset)");
-      expect(exitCode).toBe(0);
+      expect(await build(String(dir), ["--loader", `.zz:${loader}`, "./src/x.zz", "--outdir=dist"])).toEqual(
+        wrote(["x.zz", 11]),
+      );
 
       expect(readTree(String(dir))).toEqual({ "dist/x.zz": wasm, "src/x.zz": wasm });
     },
@@ -1032,15 +1035,11 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
   test("refuses an entry point that --loader maps to html, as it refuses a .html entry point", async () => {
     using dir = tempDir("no-bundle-copy-html", { "src/x.zz": wasm });
 
-    const { stdout, stderr, exitCode } = await build(String(dir), [
-      "--loader",
-      ".zz:html",
-      "./src/x.zz",
-      "--outdir=dist",
-    ]);
-    expect(stderr).toBe("error: HTML imports are only supported when bundling\n");
-    expect(stdout).toBe("");
-    expect(exitCode).toBe(1);
+    expect(await build(String(dir), ["--loader", ".zz:html", "./src/x.zz", "--outdir=dist"])).toEqual({
+      stdout: "",
+      stderr: "error: HTML imports are only supported when bundling\n",
+      exitCode: 1,
+    });
 
     expect(readTree(String(dir))).toEqual({ "src/x.zz": wasm });
   });
@@ -1057,15 +1056,9 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
     const names = Object.keys(files);
     using dir = tempDir("no-bundle-copy-bytes", Object.fromEntries(names.map(name => [`src/${name}`, files[name]])));
 
-    const { stdout, stderr, exitCode } = await build(String(dir), [
-      ...names.map(name => `./src/${name}`),
-      "--loader",
-      ".db:sqlite",
-      "--outdir=dist",
-    ]);
-    expect(stderr).toBe("");
-    expect(names.filter(name => !stdout.includes(name))).toEqual([]);
-    expect(exitCode).toBe(0);
+    expect(
+      await build(String(dir), [...names.map(name => `./src/${name}`), "--loader", ".db:sqlite", "--outdir=dist"]),
+    ).toEqual(wrote(...names.map((name): [string, number] => [name, files[name].length])));
 
     expect(readTree(path.join(String(dir), "dist"))).toEqual(files);
     expect(readTree(path.join(String(dir), "src"))).toEqual(files);
@@ -1075,10 +1068,7 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
   test.each(["Makefile", ".env", "a.tar.gz", ...(isWindows ? [] : ["foo."])])("keeps the name %s", async name => {
     using dir = tempDir("no-bundle-copy-name", { [`src/${name}`]: png });
 
-    const { stdout, stderr, exitCode } = await build(String(dir), [`./src/${name}`, "--outdir=dist"]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain(`  ${name}  9 bytes  (asset)`);
-    expect(exitCode).toBe(0);
+    expect(await build(String(dir), [`./src/${name}`, "--outdir=dist"])).toEqual(wrote([name, 9]));
 
     expect(readTree(String(dir))).toEqual({ [`dist/${name}`]: png, [`src/${name}`]: png });
   });
@@ -1089,9 +1079,9 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
     fs.chmodSync(path.join(String(dir), "src", "run.sh"), 0o755);
     fs.chmodSync(path.join(String(dir), "src", "data.bin"), 0o644);
 
-    const { stderr, exitCode } = await build(String(dir), ["./src/run.sh", "./src/data.bin", "--outdir=dist"]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+    expect(await build(String(dir), ["./src/run.sh", "./src/data.bin", "--outdir=dist"])).toEqual(
+      wrote(["run.sh", 18], ["data.bin", 9]),
+    );
 
     const mode = (name: string) => fs.statSync(path.join(String(dir), "dist", name)).mode & 0o777;
     const allowed = 0o777 & ~process.umask();
@@ -1105,12 +1095,11 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
     const source = `export const a: number = 1;\n`;
     using dir = tempDir("no-bundle-copy-mixed", { "src/a.ts": source, "src/x.wasm": wasm });
 
-    const { stdout, stderr, exitCode } = await build(String(dir), ["./src/a.ts", "./src/x.wasm", "--outdir=dist"]);
-    expect(stderr).toBe("");
-    expect(stdout.replace(/in \d+ms/, "in {time}ms")).toBe(
-      "Transpiled file in {time}ms\n\n  a.js    20 bytes  (chunk)\n  x.wasm  11 bytes  (asset)\n\n",
-    );
-    expect(exitCode).toBe(0);
+    expect(await build(String(dir), ["./src/a.ts", "./src/x.wasm", "--outdir=dist"])).toEqual({
+      stdout: "Transpiled file in {time}ms\n\n  a.js    20 bytes  (chunk)\n  x.wasm  11 bytes  (asset)\n\n",
+      stderr: "",
+      exitCode: 0,
+    });
 
     expect(readTree(String(dir))).toEqual({
       "dist/a.js": Buffer.from("export const a = 1;\n"),
@@ -1123,15 +1112,9 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
   test("keeps the directories below the common root, so files of one name do not collide", async () => {
     using dir = tempDir("no-bundle-copy-dirs", { "src/a/x.wasm": wasm, "src/b/x.wasm": png });
 
-    const { stdout, stderr, exitCode } = await build(String(dir), [
-      "./src/a/x.wasm",
-      "./src/b/x.wasm",
-      "--outdir=dist",
-    ]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("a/x.wasm");
-    expect(stdout).toContain("b/x.wasm");
-    expect(exitCode).toBe(0);
+    expect(await build(String(dir), ["./src/a/x.wasm", "./src/b/x.wasm", "--outdir=dist"])).toEqual(
+      wrote(["a/x.wasm", 11], ["b/x.wasm", 9]),
+    );
 
     expect(readTree(path.join(String(dir), "dist"))).toEqual({ "a/x.wasm": wasm, "b/x.wasm": png });
   });
@@ -1139,10 +1122,9 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
   test("creates the directories that --root implies", async () => {
     using dir = tempDir("no-bundle-copy-root", { "src/nested/x.wasm": wasm });
 
-    const { stdout, stderr, exitCode } = await build(String(dir), ["--root=.", "./src/nested/x.wasm", "--outdir=dist"]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("src/nested/x.wasm");
-    expect(exitCode).toBe(0);
+    expect(await build(String(dir), ["--root=.", "./src/nested/x.wasm", "--outdir=dist"])).toEqual(
+      wrote(["src/nested/x.wasm", 11]),
+    );
 
     expect(readTree(path.join(String(dir), "dist"))).toEqual({ "src/nested/x.wasm": wasm });
   });
@@ -1150,15 +1132,9 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
   test("does not leave --outdir for an entry point outside --root", async () => {
     using dir = tempDir("no-bundle-copy-outside-root", { "src/a.wasm": wasm, "other/b.wasm": png });
 
-    const { stdout, stderr, exitCode } = await build(String(dir), [
-      "--root=src",
-      "./src/a.wasm",
-      "./other/b.wasm",
-      "--outdir=dist",
-    ]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("_.._/other/b.wasm");
-    expect(exitCode).toBe(0);
+    expect(await build(String(dir), ["--root=src", "./src/a.wasm", "./other/b.wasm", "--outdir=dist"])).toEqual(
+      wrote(["a.wasm", 11], ["_.._/other/b.wasm", 9]),
+    );
 
     expect(readTree(String(dir))).toEqual({
       "dist/_.._/other/b.wasm": png,
@@ -1172,7 +1148,7 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
     const withBom = Buffer.concat([utf8Bom, wasm]);
     using dir = tempDir("no-bundle-copy-hash", { "a.wasm": wasm, "b.wasm": withBom, "c.wasm": wasm });
 
-    const { stdout, stderr, exitCode } = await build(String(dir), [
+    const built = await build(String(dir), [
       "./a.wasm",
       "./b.wasm",
       "./c.wasm",
@@ -1180,8 +1156,7 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
       "--entry-naming",
       "[name]-[hash].[ext]",
     ]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
 
     const written = readTree(path.join(String(dir), "dist"));
     const names = Object.keys(written).sort();
@@ -1190,7 +1165,7 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
       expect.stringMatching(/^b-[0-9a-z]{8}\.wasm$/),
       expect.stringMatching(/^c-[0-9a-z]{8}\.wasm$/),
     ]);
-    expect(names.filter(name => !stdout.includes(name))).toEqual([]);
+    expect(built).toEqual(wrote([names[0], 11], [names[1], 14], [names[2], 11]));
     expect(names.map(name => written[name])).toEqual([wasm, withBom, wasm]);
     // The hash is of the file as it is, so the BOM changes it.
     const [a, b, c] = names.map(name => name.slice(2, -".wasm".length));
@@ -1204,16 +1179,9 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
   ])("fills [target] in --entry-naming with %s", async (expected, targetArgs) => {
     using dir = tempDir("no-bundle-copy-target", { "x.wasm": wasm });
 
-    const { stdout, stderr, exitCode } = await build(String(dir), [
-      ...targetArgs,
-      "./x.wasm",
-      "--outdir=dist",
-      "--entry-naming",
-      "[target]/[name].[ext]",
-    ]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain(`${expected}/x.wasm`);
-    expect(exitCode).toBe(0);
+    expect(
+      await build(String(dir), [...targetArgs, "./x.wasm", "--outdir=dist", "--entry-naming", "[target]/[name].[ext]"]),
+    ).toEqual(wrote([`${expected}/x.wasm`, 11]));
 
     expect(readTree(path.join(String(dir), "dist"))).toEqual({ [`${expected}/x.wasm`]: wasm });
   });
@@ -1221,10 +1189,9 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
   test("copies to the path that --outfile names", async () => {
     using dir = tempDir("no-bundle-copy-outfile", { "src/x.wasm": wasm });
 
-    const { stdout, stderr, exitCode } = await build(String(dir), ["./src/x.wasm", "--outfile=out/renamed.wasm"]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("renamed.wasm  11 bytes  (asset)");
-    expect(exitCode).toBe(0);
+    expect(await build(String(dir), ["./src/x.wasm", "--outfile=out/renamed.wasm"])).toEqual(
+      wrote(["renamed.wasm", 11]),
+    );
 
     expect(readTree(String(dir))).toEqual({ "out/renamed.wasm": wasm, "src/x.wasm": wasm });
   });
@@ -1232,10 +1199,11 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
   test("does not copy a file without --outdir or --outfile", async () => {
     using dir = tempDir("no-bundle-copy-no-output-path", { "x.wasm": wasm });
 
-    const { stdout, stderr, exitCode } = await build(String(dir), ["./x.wasm"]);
-    expect(stderr).toBe('error: Must use --outdir or --outfile to copy "x.wasm"\n');
-    expect(stdout).toBe("");
-    expect(exitCode).toBe(1);
+    expect(await build(String(dir), ["./x.wasm"])).toEqual({
+      stdout: "",
+      stderr: 'error: Must use --outdir or --outfile to copy "x.wasm"\n',
+      exitCode: 1,
+    });
 
     expect(readTree(String(dir))).toEqual({ "x.wasm": wasm });
   });
@@ -1244,26 +1212,13 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
     const source = `export const a: number = 1;\n`;
     using dir = tempDir("no-bundle-copy-naming-flags", { "src/a.ts": source, "src/x.wasm": wasm });
 
-    const others = await build(String(dir), [
-      "./src/a.ts",
-      "./src/x.wasm",
-      "--outdir=other",
-      "--asset-naming",
-      "assets/[name]-[hash].[ext]",
-      "--chunk-naming",
-      "chunks/[name]-[hash].[ext]",
-    ]);
-    expect(others.stderr).toBe("");
-    expect(others.exitCode).toBe(0);
-    const entry = await build(String(dir), [
-      "./src/a.ts",
-      "./src/x.wasm",
-      "--outdir=entry",
-      "--entry-naming",
-      "[name].mjs",
-    ]);
-    expect(entry.stderr).toBe("");
-    expect(entry.exitCode).toBe(0);
+    const others = ["--asset-naming", "assets/[name]-[hash].[ext]", "--chunk-naming", "chunks/[name]-[hash].[ext]"];
+    expect(await build(String(dir), ["./src/a.ts", "./src/x.wasm", "--outdir=other", ...others])).toEqual(
+      wrote(["a.js", 20, "chunk"], ["x.wasm", 11]),
+    );
+    expect(
+      await build(String(dir), ["./src/a.ts", "./src/x.wasm", "--outdir=entry", "--entry-naming", "[name].mjs"]),
+    ).toEqual(wrote(["a.mjs", 20, "chunk"], ["x.mjs", 11]));
 
     const transpiled = Buffer.from("export const a = 1;\n");
     expect(readTree(String(dir))).toEqual({
@@ -1300,10 +1255,7 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
     using dir = tempDir("no-bundle-copy-in-place", { "src/x.wasm": wasm });
     const source = oldSource(String(dir));
 
-    const { stdout, stderr, exitCode } = await build(path.join(String(dir), cwd), args);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("x.wasm  11 bytes  (asset)");
-    expect(exitCode).toBe(0);
+    expect(await build(path.join(String(dir), cwd), args)).toEqual(wrote(["x.wasm", 11]));
 
     expect(readTree(String(dir))).toEqual({ "src/x.wasm": wasm });
     expect(source()).toEqual(untouched);
@@ -1341,10 +1293,8 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
     prepare(String(dir));
     const source = oldSource(String(dir));
 
-    const { stdout, stderr, exitCode } = await build(String(dir), ["./src/x.wasm", ...args]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("x.wasm  11 bytes  (asset)");
-    expect(exitCode).toBe(0);
+    const name = args.includes("--entry-naming") ? "../src/x.wasm" : "x.wasm";
+    expect(await build(String(dir), ["./src/x.wasm", ...args])).toEqual(wrote([name, 11]));
 
     expect(fs.readdirSync(path.join(String(dir), "src"))).toEqual(["x.wasm"]);
     expect(source()).toEqual(untouched);
@@ -1361,10 +1311,8 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
     fs.symlinkSync(path.join("real", "sub"), path.join(String(dir), "link"));
     const source = oldSource(String(dir));
 
-    const { stdout, stderr, exitCode } = await build(String(dir), ["./src/x.wasm", ...args]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("x.wasm  11 bytes  (asset)");
-    expect(exitCode).toBe(0);
+    const name = args.includes("--entry-naming") ? "../src/x.wasm" : "x.wasm";
+    expect(await build(String(dir), ["./src/x.wasm", ...args])).toEqual(wrote([name, 11]));
 
     expect(readTree(String(dir))).toEqual({ "real/src/x.wasm": wasm, "src/x.wasm": wasm });
     expect(source()).toEqual(untouched);
@@ -1378,18 +1326,12 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
     });
     const source = oldSource(String(dir));
 
-    const { stdout, stderr, exitCode } = await build(String(dir), [
-      "./src/a.js",
-      "./src/s.css",
-      "./src/x.wasm",
-      "--outdir",
-      "src",
-    ]);
-    expect(stderr).toBe("");
-    expect(stdout.replace(/in \d+ms/, "in {time}ms")).toBe(
-      "Transpiled file in {time}ms\n\n  a.js    20 bytes  (chunk)\n  s.css   21 bytes  (chunk)\n  x.wasm  11 bytes  (asset)\n\n",
-    );
-    expect(exitCode).toBe(0);
+    expect(await build(String(dir), ["./src/a.js", "./src/s.css", "./src/x.wasm", "--outdir", "src"])).toEqual({
+      stdout:
+        "Transpiled file in {time}ms\n\n  a.js    20 bytes  (chunk)\n  s.css   21 bytes  (chunk)\n  x.wasm  11 bytes  (asset)\n\n",
+      stderr: "",
+      exitCode: 0,
+    });
 
     expect(readTree(String(dir))).toEqual({
       "src/a.js": Buffer.from("export const a = 1;\n"),
@@ -1411,9 +1353,11 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("a.css  33 bytes  (asset)");
-    expect(exitCode).toBe(0);
+    expect({ stdout: stdout.replace(/in \d+ms/, "in {time}ms"), stderr, exitCode }).toEqual({
+      stdout: "Bundled 1 module in {time}ms\n\n  a.css  33 bytes  (asset)\n\n",
+      stderr: "",
+      exitCode: 0,
+    });
 
     expect(readTree(String(dir))).toEqual({ "a.css": Buffer.from("/* a.css */\n.x {\n  color: red;\n}\n") });
   });
@@ -1428,10 +1372,8 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
       const cwd = through === "drive" ? path.join(drive.root, "w") : path.join(String(dir), "link");
       const source = oldSource(path.join(String(dir), "w"));
 
-      const copied = await build(cwd, ["./src/x.wasm", "--outdir=out"]);
-      expect({ stderr: copied.stderr, exitCode: copied.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-      const inPlace = await build(cwd, ["./src/x.wasm", "--outdir", "src"]);
-      expect({ stderr: inPlace.stderr, exitCode: inPlace.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect(await build(cwd, ["./src/x.wasm", "--outdir=out"])).toEqual(wrote(["x.wasm", 11]));
+      expect(await build(cwd, ["./src/x.wasm", "--outdir", "src"])).toEqual(wrote(["x.wasm", 11]));
 
       expect(readTree(path.join(String(dir), "w"))).toEqual({ "out/x.wasm": wasm, "src/x.wasm": wasm });
       expect(source()).toEqual(untouched);
@@ -1443,10 +1385,7 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
     using dir = tempDir("no-bundle-copy-read-only", { "x.wasm": wasm });
     fs.chmodSync(path.join(String(dir), "x.wasm"), 0o444);
 
-    const { stdout, stderr, exitCode } = await build(String(dir), ["./x.wasm", "--outdir", "."]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("x.wasm  11 bytes  (asset)");
-    expect(exitCode).toBe(0);
+    expect(await build(String(dir), ["./x.wasm", "--outdir", "."])).toEqual(wrote(["x.wasm", 11]));
 
     expect(readTree(String(dir))).toEqual({ "x.wasm": wasm });
   });
@@ -1456,10 +1395,11 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
     using dir = tempDir("no-bundle-copy-unreadable", { "src/x.wasm": wasm });
     fs.chmodSync(path.join(String(dir), "src", "x.wasm"), 0o000);
 
-    const { stdout, stderr, exitCode } = await build(String(dir), ["./src/x.wasm", "--outdir=dist"]);
-    expect(stderr).toBe('error: EACCES reading "src/x.wasm"\n');
-    expect(stdout).toBe("");
-    expect(exitCode).toBe(1);
+    expect(await build(String(dir), ["./src/x.wasm", "--outdir=dist"])).toEqual({
+      stdout: "",
+      stderr: 'error: EACCES reading "src/x.wasm"\n',
+      exitCode: 1,
+    });
 
     expect(fs.readdirSync(String(dir), { recursive: true }).sort()).toEqual(["src", path.join("src", "x.wasm")]);
   });
@@ -1512,10 +1452,7 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
     using dir = tempDir("no-bundle-copy-long-path", {});
     const file = deepFile(String(dir), 1016);
 
-    const { stdout, stderr, exitCode } = await build(String(dir), [`./${file}`, "--outdir=dist"]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("x.wasm  11 bytes  (asset)");
-    expect(exitCode).toBe(0);
+    expect(await build(String(dir), [`./${file}`, "--outdir=dist"])).toEqual(wrote(["x.wasm", 11]));
 
     // On macOS a recursive `readdirSync` does not list a file this deep, so the source is read by its path.
     expect(readTree(path.join(String(dir), "dist"))).toEqual({ "x.wasm": wasm });
@@ -1527,10 +1464,7 @@ describe.concurrent("--no-bundle with entry points that are copied", () => {
     using dir = tempDir("no-bundle-copy-longer-path", {});
     const file = deepFile(String(dir), 2100);
 
-    const { stdout, stderr, exitCode } = await build(String(dir), [`./${file}`, "--outdir=dist"]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("x.wasm  11 bytes  (asset)");
-    expect(exitCode).toBe(0);
+    expect(await build(String(dir), [`./${file}`, "--outdir=dist"])).toEqual(wrote(["x.wasm", 11]));
 
     expect(readTree(String(dir))).toEqual({ "dist/x.wasm": wasm, [file]: wasm });
   });

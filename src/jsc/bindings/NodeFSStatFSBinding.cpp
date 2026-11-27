@@ -60,19 +60,12 @@ public:
 
     static JSStatFSPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSStatFSPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSStatFSPrototype))) JSStatFSPrototype(vm, structure);
+        JSStatFSPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSStatFSPrototype>(vm)) JSStatFSPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
     }
 
     DECLARE_INFO;
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStatFSPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
@@ -97,19 +90,12 @@ public:
 
     static JSBigIntStatFSPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSBigIntStatFSPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSBigIntStatFSPrototype))) JSBigIntStatFSPrototype(vm, structure);
+        JSBigIntStatFSPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSBigIntStatFSPrototype>(vm)) JSBigIntStatFSPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
     }
 
     DECLARE_INFO;
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBigIntStatFSPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {

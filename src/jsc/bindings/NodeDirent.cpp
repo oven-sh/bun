@@ -60,18 +60,12 @@ public:
 
     static JSDirentPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSDirentPrototype* prototype = new (NotNull, JSC::allocateCell<JSDirentPrototype>(vm)) JSDirentPrototype(vm, structure);
+        JSDirentPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSDirentPrototype>(vm)) JSDirentPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
     }
 
     DECLARE_INFO;
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
-    }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {

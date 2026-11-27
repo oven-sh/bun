@@ -19,18 +19,12 @@ public:
 
     static CallSitePrototype* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject)
     {
-        CallSitePrototype* callSitePrototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(CallSitePrototype))) CallSitePrototype(vm, structure);
+        CallSitePrototype* callSitePrototype = new (NotNull, Bun::allocatePlainObjectCell<CallSitePrototype>(vm)) CallSitePrototype(vm, structure);
         callSitePrototype->finishCreation(vm, globalObject);
         return callSitePrototype;
     }
 
     DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(CallSitePrototype, Base);
-        return &vm.plainObjectSpace();
-    }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {

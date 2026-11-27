@@ -235,16 +235,16 @@ class PlainObjectCell : public JSC::JSNonFinalObject {
 public:
     template<typename, JSC::SubspaceAccess> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm) { return &vm.plainObjectSpace(); }
 };
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(PlainObjectCell, JSC::JSNonFinalObject);
 
 void putToStringTagWithoutTransition(JSC::VM& vm, JSC::JSObject* object, const JSC::ClassInfo* classInfo)
 {
     object->putDirectWithoutTransition(vm, vm.propertyNames->toStringTagSymbol, JSC::jsNontrivialString(vm, classInfo->className), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
 }
 
-void* allocatePlainObjectCell(JSC::VM& vm, size_t size)
+void* PlainObjectSpace::allocate(JSC::VM& vm)
 {
-    ASSERT(size == sizeof(JSC::JSNonFinalObject));
-    return JSC::allocateCell<PlainObjectCell>(vm, size);
+    return JSC::allocateCell<PlainObjectCell>(vm);
 }
 
 } // namespace Bun

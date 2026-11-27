@@ -379,7 +379,7 @@ const ClassInfo JSMIMEParamsPrototype::s_info = { "MIMEParams"_s, &Base::s_info,
 
 JSMIMEParamsPrototype* JSMIMEParamsPrototype::create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
 {
-    JSMIMEParamsPrototype* prototype = new (NotNull, allocateCell<JSMIMEParamsPrototype>(vm)) JSMIMEParamsPrototype(vm, structure);
+    JSMIMEParamsPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSMIMEParamsPrototype>(vm)) JSMIMEParamsPrototype(vm, structure);
     prototype->finishCreation(vm);
     return prototype;
 }

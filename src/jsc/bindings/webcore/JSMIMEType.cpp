@@ -320,7 +320,7 @@ const ClassInfo JSMIMETypePrototype::s_info = { "MIMEType"_s, &Base::s_info, nul
 
 JSMIMETypePrototype* JSMIMETypePrototype::create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
 {
-    JSMIMETypePrototype* prototype = new (NotNull, allocateCell<JSMIMETypePrototype>(vm)) JSMIMETypePrototype(vm, structure);
+    JSMIMETypePrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSMIMETypePrototype>(vm)) JSMIMETypePrototype(vm, structure);
     prototype->finishCreation(vm);
     return prototype;
 }

@@ -14,15 +14,9 @@ public:
 
     static JSECDHPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSECDHPrototype* prototype = new (NotNull, JSC::allocateCell<JSECDHPrototype>(vm)) JSECDHPrototype(vm, structure);
+        JSECDHPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSECDHPrototype>(vm)) JSECDHPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
-    }
-
-    template<typename, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
     }
 
     DECLARE_INFO;

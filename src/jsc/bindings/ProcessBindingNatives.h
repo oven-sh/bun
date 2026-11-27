@@ -17,13 +17,6 @@ public:
     static ProcessBindingNatives* create(JSC::VM& vm, JSC::Structure* structure);
     static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(ProcessBindingNatives, Base);
-        return &vm.plainObjectSpace();
-    }
-
 private:
     void finishCreation(JSC::VM& vm);
 

@@ -623,7 +623,7 @@ RequireResolveFunctionPrototype* RequireResolveFunctionPrototype::create(JSC::JS
     auto& vm = JSC::getVM(globalObject);
 
     auto* structure = RequireResolveFunctionPrototype::createStructure(vm, globalObject);
-    RequireResolveFunctionPrototype* prototype = new (NotNull, JSC::allocateCell<RequireResolveFunctionPrototype>(vm)) RequireResolveFunctionPrototype(vm, structure);
+    RequireResolveFunctionPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<RequireResolveFunctionPrototype>(vm)) RequireResolveFunctionPrototype(vm, structure);
     prototype->finishCreation(vm);
     return prototype;
 }
@@ -634,7 +634,7 @@ RequireFunctionPrototype* RequireFunctionPrototype::create(
     auto& vm = JSC::getVM(globalObject);
 
     auto* structure = RequireFunctionPrototype::createStructure(vm, globalObject);
-    RequireFunctionPrototype* prototype = new (NotNull, JSC::allocateCell<RequireFunctionPrototype>(vm)) RequireFunctionPrototype(vm, structure);
+    RequireFunctionPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<RequireFunctionPrototype>(vm)) RequireFunctionPrototype(vm, structure);
     prototype->finishCreation(vm);
 
     prototype->putDirect(vm, vm.propertyNames->resolve, uncheckedDowncast<Zig::GlobalObject>(globalObject)->requireResolveFunctionUnbound(), 0);
@@ -1010,7 +1010,7 @@ public:
         JSC::VM& vm,
         JSC::Structure* structure)
     {
-        JSCommonJSModulePrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSCommonJSModulePrototype))) JSCommonJSModulePrototype(vm, structure);
+        JSCommonJSModulePrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSCommonJSModulePrototype>(vm)) JSCommonJSModulePrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
     }
@@ -1032,13 +1032,6 @@ public:
         JSC::Structure* structure)
         : Base(vm, structure)
     {
-    }
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCommonJSModulePrototype, Base);
-        return &vm.plainObjectSpace();
     }
 
     void finishCreation(JSC::VM& vm)

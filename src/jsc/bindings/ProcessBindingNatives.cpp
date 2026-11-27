@@ -1,6 +1,7 @@
 // Modelled off of https://github.com/nodejs/node/blob/main/src/node_constants.cc
 // Note that if you change any of this code, you probably also have to change NodeConstantsModule.h
 #include "ProcessBindingNatives.h"
+#include "BunClientData.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 
 namespace Bun {
@@ -172,7 +173,7 @@ const ClassInfo ProcessBindingNatives::s_info = { "ProcessBindingNatives"_s, &Ba
 
 ProcessBindingNatives* ProcessBindingNatives::create(VM& vm, Structure* structure)
 {
-    ProcessBindingNatives* obj = new (NotNull, allocateCell<ProcessBindingNatives>(vm)) ProcessBindingNatives(vm, structure);
+    ProcessBindingNatives* obj = new (NotNull, Bun::allocatePlainObjectCell<ProcessBindingNatives>(vm)) ProcessBindingNatives(vm, structure);
     obj->finishCreation(vm);
     return obj;
 }

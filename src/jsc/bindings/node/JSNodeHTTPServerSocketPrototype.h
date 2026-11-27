@@ -14,15 +14,9 @@ public:
 
     static JSNodeHTTPServerSocketPrototype* create(JSC::VM& vm, JSC::Structure* structure)
     {
-        JSNodeHTTPServerSocketPrototype* prototype = new (NotNull, JSC::allocateCell<JSNodeHTTPServerSocketPrototype>(vm)) JSNodeHTTPServerSocketPrototype(vm, structure);
+        JSNodeHTTPServerSocketPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSNodeHTTPServerSocketPrototype>(vm)) JSNodeHTTPServerSocketPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
-    }
-
-    template<typename, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
     }
 
     DECLARE_INFO;

@@ -13,12 +13,6 @@ public:
     static ProcessBindingHTTPParser* create(JSC::VM&, JSC::Structure* structure);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*);
 
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
-    }
-
     DECLARE_INFO;
 
 private:

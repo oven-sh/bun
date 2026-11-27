@@ -45,7 +45,7 @@ const ClassInfo ProcessBindingHTTPParser::s_info = { "ProcessBindingHTTPParser"_
 
 ProcessBindingHTTPParser* ProcessBindingHTTPParser::create(VM& vm, Structure* structure)
 {
-    ProcessBindingHTTPParser* binding = new (NotNull, allocateCell<ProcessBindingHTTPParser>(vm)) ProcessBindingHTTPParser(vm, structure);
+    ProcessBindingHTTPParser* binding = new (NotNull, Bun::allocatePlainObjectCell<ProcessBindingHTTPParser>(vm)) ProcessBindingHTTPParser(vm, structure);
     binding->finishCreation(vm);
     return binding;
 }

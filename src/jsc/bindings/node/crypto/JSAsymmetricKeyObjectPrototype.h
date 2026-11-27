@@ -17,15 +17,9 @@ public:
 
     static JSAsymmetricKeyObjectPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSAsymmetricKeyObjectPrototype* prototype = new (NotNull, JSC::allocateCell<JSAsymmetricKeyObjectPrototype>(vm)) JSAsymmetricKeyObjectPrototype(vm, structure);
+        JSAsymmetricKeyObjectPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSAsymmetricKeyObjectPrototype>(vm)) JSAsymmetricKeyObjectPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
-    }
-
-    template<typename, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
     }
 
     DECLARE_INFO;

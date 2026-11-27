@@ -728,16 +728,9 @@ public:
 
     static ImportMetaObjectPrototype* create(JSC::VM& vm, JSC::Structure* structure, bool isBake = false)
     {
-        ImportMetaObjectPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(ImportMetaObjectPrototype))) ImportMetaObjectPrototype(vm, structure);
+        ImportMetaObjectPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<ImportMetaObjectPrototype>(vm)) ImportMetaObjectPrototype(vm, structure);
         prototype->finishCreation(vm, isBake);
         return prototype;
-    }
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(ImportMetaObjectPrototype, Base);
-        return &vm.plainObjectSpace();
     }
 
     void finishCreation(JSC::VM& vm, bool isBake)

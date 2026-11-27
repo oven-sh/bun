@@ -653,13 +653,6 @@ public:
         | JSC::GetOwnPropertySlotMayBeWrongAboutDontEnum
         | JSC::ProhibitsPropertyCaching;
 
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSharedEnvMap, Base);
-        return &vm.plainObjectSpace();
-    }
-
     DECLARE_INFO;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -669,7 +662,7 @@ public:
 
     static JSSharedEnvMap* create(JSC::VM& vm, JSC::Structure* structure)
     {
-        JSSharedEnvMap* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSSharedEnvMap))) JSSharedEnvMap(vm, structure);
+        JSSharedEnvMap* ptr = new (NotNull, Bun::allocatePlainObjectCell<JSSharedEnvMap>(vm)) JSSharedEnvMap(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }

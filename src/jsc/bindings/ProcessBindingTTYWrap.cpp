@@ -343,16 +343,9 @@ public:
 
     static TTYWrapPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        TTYWrapPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(TTYWrapPrototype))) TTYWrapPrototype(vm, structure);
+        TTYWrapPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<TTYWrapPrototype>(vm)) TTYWrapPrototype(vm, structure);
         prototype->finishCreation(vm, globalObject);
         return prototype;
-    }
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(TTYWrapPrototype, Base);
-        return &vm.plainObjectSpace();
     }
 
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

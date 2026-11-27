@@ -73,15 +73,12 @@ public:
 
     static JSWebViewPrototype* create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
     {
-        JSWebViewPrototype* prototype = new (NotNull, allocateCell<JSWebViewPrototype>(vm)) JSWebViewPrototype(vm, structure);
+        JSWebViewPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSWebViewPrototype>(vm)) JSWebViewPrototype(vm, structure);
         prototype->finishCreation(vm, globalObject);
         return prototype;
     }
 
     DECLARE_INFO;
-
-    template<typename, SubspaceAccess>
-    static GCClient::IsoSubspace* subspaceFor(VM& vm) { return &vm.plainObjectSpace(); }
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {

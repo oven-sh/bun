@@ -28,6 +28,7 @@ use std::sync::Arc;
 
 use bun_core::{from_field_ptr, heap};
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
+use bun_event_loop::{Task, Taskable};
 use bun_io::{JsKeepAlive, KeepAlive};
 #[cfg(windows)]
 use bun_iocp::blocking::CancelToken;
@@ -437,20 +438,6 @@ struct Pooled<S, R> {
     task: WorkPoolTask,
 }
 
-impl<C: OwnedJob> bun_event_loop::Taskable for Job<C> {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AnyTaskJob;
-    /// Reached through the header (`release_unrun_erased`): the tag is shared.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract; JS thread with the heap alive.
-        drop(unsafe { Self::take(this, VirtualMachine::get()) })
-    }
-    /// `JobHeader::context`.
-    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
-        // SAFETY: fn contract.
-        unsafe { (*this).header.context }
-    }
-}
-
 impl<C: OwnedJob> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
     #[track_caller]
@@ -473,7 +460,7 @@ impl<C: OwnedJob> Job<C> {
                 complete: |p, cx| unsafe { Self::complete(p.cast::<Self>(), cx) },
                 // SAFETY: as above.
                 release_unrun: |p| unsafe {
-                    <Self as bun_event_loop::Taskable>::release_unrun(p.cast::<Self>())
+                    drop(Self::take(p.cast::<Self>(), VirtualMachine::get()))
                 },
                 // SAFETY: linked ⇒ live, and no thread borrows `shared` mutably.
                 cancel: |p, reason| unsafe {
@@ -654,10 +641,10 @@ impl<C: OwnedJob> Running<C> {
     /// thread may free the job the moment it is queued) and is dropped here.
     pub fn finish(self) {
         let job = self.job.hand_on();
-        // SAFETY: nothing else touches the node of a job that is not finished, and the job is
-        // freed after its task left the queue.
-        let node = unsafe { (*job).concurrent_task.from(job) };
-        self.ticket.post_intrusive(NonNull::from(node));
+        let task = Task::new::<FinishedJob>(FinishedJob(job.cast()));
+        // SAFETY: nothing else touches the node of a job that is not finished, and `task` owns the job.
+        let node = unsafe { ConcurrentTask::in_place(&raw mut (*job).concurrent_task, task) };
+        self.ticket.post(node);
     }
 }
 
@@ -707,44 +694,45 @@ impl<T> Drop for Unfinished<T> {
     }
 }
 
-/// Event-loop dispatch for every `Job<C>` (one tag): run its completion.
-///
-/// # Safety
-/// `ptr` is a `Job<C>` posted by its `Running` (for some `C`).
-pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult<()> {
-    let header = ptr.cast::<JobHeader>();
-    let vm = global.bun_vm();
-    // One scheduled by a file `bun test --isolate` has since retired: the swap was that file's
-    // exit, and a `then` that calls back directly (node:crypto's callback forms) would run its
-    // script under the next file.
-    // SAFETY: `Job<C>` is `#[repr(C)]` with the header first.
-    let (generation, context) = unsafe { ((*header).generation, (*header).context) };
-    if generation != vm.test_isolation_generation.get() && context != crate::ContextId::NONE {
-        // SAFETY: as below; released exactly once, here.
-        unsafe { ((*header).release_unrun)(header) };
-        return Ok(());
+/// Owns a `Job<C>` of any `C` (one tag) that its [`Running`] has posted.
+pub struct FinishedJob(*mut JobHeader);
+
+impl Taskable for FinishedJob {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AnyTaskJob;
+    type Payload = Self;
+    fn release_unrun(job: Self) {
+        // SAFETY: `job` owns it; JS thread with the heap alive.
+        unsafe { ((*job.0).release_unrun)(job.0) }
     }
-    // The completion continues the script that scheduled the job, except with `OUTLIVES_SCRIPT`.
-    let context = match context {
-        crate::ContextId::NONE => vm.root_context(),
-        context => vm.context_of(context),
-    };
-    // SAFETY: as above.
-    unsafe { ((*header).complete)(header, &global.js_thread(context)) }
+    fn context(job: &Self) -> crate::ContextId {
+        // SAFETY: `job` owns it, and the field is not written after `create`.
+        unsafe { (*job.0).context }
+    }
 }
 
-/// Teardown's release for a queued, never-dispatched `Job<C>` completion
-/// (JS thread, heap alive).
-///
-/// # Safety
-/// As [`complete_erased`].
-pub unsafe fn release_unrun_erased(ptr: *mut ()) {
-    let header = ptr.cast::<JobHeader>();
-    // SAFETY: as above.
-    unsafe { ((*header).release_unrun)(header) }
+impl FinishedJob {
+    pub fn complete(self, global: &JSGlobalObject) -> JsResult<()> {
+        let vm = global.bun_vm();
+        // One scheduled by a file `bun test --isolate` has since retired: the swap was that file's
+        // exit, and a `then` that calls back directly (node:crypto's callback forms) would run its
+        // script under the next file.
+        // SAFETY: `self` owns the job.
+        let (generation, context) = unsafe { ((*self.0).generation, (*self.0).context) };
+        if generation != vm.test_isolation_generation.get() && context != crate::ContextId::NONE {
+            Self::release_unrun(self);
+            return Ok(());
+        }
+        // The completion continues the script that scheduled the job, except with `OUTLIVES_SCRIPT`.
+        let context = match context {
+            crate::ContextId::NONE => vm.root_context(),
+            context => vm.context_of(context),
+        };
+        // SAFETY: as above.
+        unsafe { ((*self.0).complete)(self.0, &global.js_thread(context)) }
+    }
 }
 
-// The erased dispatchers above cast `*mut Job<C>` to `*mut JobHeader`.
+// `Running::finish` casts `*mut Job<C>` to `*mut JobHeader`.
 const _: () = assert!(core::mem::offset_of!(Job<Never>, header) == 0);
 
 #[doc(hidden)]

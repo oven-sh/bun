@@ -1,7 +1,7 @@
 //! `crate::dispatch` — the §Dispatch hot-path payoff.
 //!
 //! Per `docs/PORTING.md` §Dispatch, low-tier crates store
-//! `Task = { tag: TaskTag, ptr: *mut () }` and never name a variant type. This
+//! `Task = { tag: TaskTag, payload: one word }` and never name a variant type. This
 //! crate (highest tier) owns **every** variant type, so the actual `match`
 //! loop lives here, and LLVM inlines the per-arm direct calls.
 //!
@@ -15,13 +15,14 @@
 //!
 //! **Adding a variant** (do all four):
 //!   1. tag constant in `bun_event_loop::task_tag` (or a `bun_io::PollTag`);
-//!   2. `impl bun_event_loop::BoxedTask for YourType` if it is queued as a `Box`, `RefTask` as an `Arc` or `RefPtr`, otherwise `Taskable`;
+//!   2. `impl bun_event_loop::BoxedTask for YourType` if it is queued as a `Box`, otherwise `Taskable`;
 //!   3. a `run_task` arm and a `release_task_unrun` arm here, both through `in_features!` if only code of removable features (`src/trim/features`) queues it;
 //!   4. bump the `task_tag::COUNT` assertion below.
 
 use std::rc::Rc;
 
-use bun_event_loop::{BoxedTask, RefTask, Task, task_tag};
+use bun_event_loop::AnyTaskWithExtraContext::MiniTask as _;
+use bun_event_loop::{Task, Taskable, task_tag};
 use bun_ptr::RefPtr;
 
 #[cfg(not(windows))]
@@ -33,7 +34,9 @@ use bun_event_loop::EventLoopTimer::{EventLoopTimer, Tag as EventLoopTimerTag};
 
 use bun_jsc::event_loop::{EventLoop, Stopped};
 use bun_jsc::task::report_error_or_terminate;
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{
+    DeadContextStopAgain, GraphContextStopAgain, GraphContextStopAndFree, VirtualMachine,
+};
 use bun_jsc::{JSGlobalObject, JsResult};
 
 /// Runs `$body` in a function of its own, which records itself as a part of each feature listed.
@@ -53,50 +56,30 @@ macro_rules! in_features {
     }};
 }
 
-/// The box of a [`BoxedTask`], in the arm of its tag.
-macro_rules! boxed {
-    ($task:ident, $Payload:ty) => {
+/// What `$task` owns, in the arm of its tag.
+macro_rules! payload {
+    ($task:ident, $Name:ty) => {
         // SAFETY: §Dispatch — the tag identifies the type, and the task left its queue once.
-        unsafe { $task.into_boxed::<$Payload>() }
+        unsafe { $task.into_payload::<$Name>() }
     };
 }
 
-/// [`in_features!`] for an arm that needs only that box, as `$payload: Box<$Payload>`.
-macro_rules! boxed_arm {
+/// [`in_features!`] for an arm that needs only the payload, as `$payload`.
+macro_rules! task_arm {
     (
         $task:ident,
         $features:tt,
         // `$payload` repeats so that `mut name` matches.
-        |$($payload:ident)+: $Payload:ty| $(-> $Result:ty)? $body:block
+        |$($payload:ident)+: $Name:ty| $(-> $Result:ty)? $body:block
     ) => {
         in_features!(
             $features,
-            (boxed: Box<$Payload> = boxed!($task, $Payload))
+            (payload: <$Name as Taskable>::Payload = payload!($task, $Name))
             $(-> $Result)?
             {
-                let $($payload)+ = boxed;
+                let $($payload)+ = payload;
                 $body
             }
-        )
-    };
-}
-
-/// The reference of a [`RefTask`], in the arm of its tag.
-macro_rules! counted {
-    ($task:ident, $Name:ty) => {
-        // SAFETY: as `boxed!`.
-        unsafe { $task.into_ref::<$Name>() }
-    };
-}
-
-/// [`in_features!`] for an arm that needs only that reference, as `$payload`.
-macro_rules! counted_arm {
-    ($task:ident, $features:tt, |$payload:ident: $Name:ty| $(-> $Result:ty)? $body:block) => {
-        in_features!(
-            $features,
-            ($payload: <$Name as RefTask>::Ref = counted!($task, $Name))
-            $(-> $Result)?
-            $body
         )
     };
 }
@@ -114,10 +97,10 @@ use crate::shell::builtins::{
     yes::YesTask as ShellYesTask,
 };
 use crate::shell::dispatch_tasks::{ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask};
-use crate::shell::interpreter::{PoolTask, ShellTask};
+use crate::shell::interpreter::PoolTask;
 use crate::shell::io_reader::IOReader as ShellIoReader;
 use crate::shell::io_writer::IOWriter as ShellIoWriter;
-use crate::shell::states::r#async::Async as ShellAsync;
+use crate::shell::states::r#async::ShellAsyncTask;
 use crate::shell::subproc::{PipeReader as ShellPipeReader, ShellSubprocess};
 
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
@@ -136,23 +119,28 @@ use crate::api::cron_os::OsJob;
 use crate::api::js_bundle_completion_task::JSBundleCompletionTask;
 use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
 
-use crate::napi::{NapiFinalizerTask, ThreadSafeFunction, TsfnRefRequest, napi_async_work};
+use crate::napi::{FinishedAsyncWork, NapiFinalizerTask, ThreadSafeFunction, TsfnRefRequest};
 
 use bun_jsc::PosixSignalTask;
 use bun_jsc::RuntimeTranspilerStore;
 use bun_jsc::cpp_task::CppTask;
 use bun_jsc::hot_reloader;
+use bun_jsc::job::FinishedJob;
 use bun_jsc::jsc_scheduler::JSCDeferredWorkTask;
 
 use crate::bake::dev_server::DevServer;
 use crate::bake::dev_server::PendingReloadEvent as BakePendingReloadEvent;
 use crate::bake::dev_server::source_map_store::SourceMapStore;
 
+use crate::node::memory_pressure::MemoryPressureTask;
 use crate::node::node_fs_stat_watcher::StatWatcherScheduler;
 use crate::node::node_fs_watcher::FSWatchTask;
 
 use crate::dns_jsc::Resolver as DNSResolver;
-use crate::server::{FileResponseStream, ServerAllConnectionsClosedTask};
+use crate::server::{
+    DebugHTTPSServer, DebugHTTPServer, FileResponseStream, HTTPSServer, HTTPServer,
+    ServerAllConnectionsClosedTask,
+};
 
 use crate::cli::test::parallel::worker::Worker as TestParallelWorker;
 use crate::cli::{filter_run, multi_run};
@@ -164,12 +152,13 @@ use crate::api::bun_process::Process;
 #[cfg(unix)]
 use crate::api::bun_process::waiter_thread_posix::ResultTask as ProcessWaiterThreadTask;
 
-use bun_bundler::DeferredBatchTask::DeferredBatchTask as BundleV2DeferredBatchTask;
+use bun_bundler::DeferredBatchTask::DeferredBatch;
 type BundleV2ParseTaskResult = bun_bundler::parse_task::Result<'static>;
 
 use crate::socket::upgraded_duplex::UpgradedDuplex;
 #[cfg(windows)]
 use crate::socket::windows_named_pipe::WindowsNamedPipe;
+use crate::socket::{DuplexUpgradeContext, DuplexUpgradeContextFree};
 
 use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
 use bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection as MySQLConnection;
@@ -212,49 +201,19 @@ pub(crate) fn run_task(
     vm: &VirtualMachine,
     global: &JSGlobalObject,
 ) -> JsResult<RunTaskResult> {
-    /// `*(task.ptr as *mut T)` with the SAFETY invariant spelled once.
-    macro_rules! cast {
-        ($ty:ty) => {{
-            // SAFETY: §Dispatch — `task.tag` was set together with `task.ptr`
-            // by `Task::init`; tag uniquely identifies
-            // the pointee type and the pointer is live for this dispatch.
-            unsafe { &mut *task.ptr().cast::<$ty>() }
-        }};
-    }
-    /// Raw `*mut T` (for `heap::take`/self-consuming entry points).
-    macro_rules! cast_ptr {
-        ($ty:ty) => {
-            task.ptr().cast::<$ty>()
-        };
-    }
-    /// [`in_features!`] for an arm that needs only its payload, as `$payload: *mut $Payload`.
-    macro_rules! feature_arm {
-        ($features:tt, |$payload:ident: $Payload:ty| $(-> $Result:ty)? $body:block) => {
-            in_features!(
-                $features,
-                ($payload: *mut $Payload = cast_ptr!($Payload))
-                $(-> $Result)?
-                $body
-            )
-        };
-    }
     // NB: `TaskTag` is `#[derive(PartialEq, Eq)]` over `u8` → structural-match
     // eligible, so const patterns work directly.
     match task.tag() {
         // ── erased-callback tasks (low-tier types — real) ────────────────
-        task_tag::AnyTaskJob => {
-            // SAFETY: §Dispatch — `task.ptr` is a live heap `Job<C>` posted by
-            // its `Running`; the erased entry runs `then` and frees it.
-            unsafe { bun_jsc::job::complete_erased(task.ptr(), global) }?;
-        }
-        task_tag::SendQueueDeferred => counted_arm!(task, [Ipc], |queue: crate::ipc::SendQueue| {
+        task_tag::AnyTaskJob => payload!(task, FinishedJob).complete(global)?,
+        task_tag::SendQueueDeferred => task_arm!(task, [Ipc], |queue: crate::ipc::SendQueue| {
             queue.run_deferred();
         }),
         task_tag::BundleV2PluginResolve => in_features!(
             [Bundler],
             (
                 resolve: Box<bun_bundler::bundle_v2::api::JSBundler::Resolve<'static>> =
-                    boxed!(task, bun_bundler::bundle_v2::api::JSBundler::Resolve),
+                    payload!(task, bun_bundler::bundle_v2::api::JSBundler::Resolve),
                 global: &JSGlobalObject = global,
             ) -> JsResult<()> {
                 // `bun_bundler` is JSC-free; the C++ hop it calls answers the request itself when the plugin throws, but can return early with an exception pending (argument conversion), so check the scope here.
@@ -266,7 +225,7 @@ pub(crate) fn run_task(
             [Bundler],
             (
                 load: Box<bun_bundler::bundle_v2::api::JSBundler::Load<'static>> =
-                    boxed!(task, bun_bundler::bundle_v2::api::JSBundler::Load),
+                    payload!(task, bun_bundler::bundle_v2::api::JSBundler::Load),
                 global: &JSGlobalObject = global,
             ) -> JsResult<()> {
                 // As `BundleV2PluginResolve`.
@@ -274,12 +233,12 @@ pub(crate) fn run_task(
                 Ok(())
             }
         )?,
-        task_tag::JSBundleCompletionTask => boxed_arm!(
+        task_tag::JSBundleCompletionTask => task_arm!(
             task,
             [Bundler],
             |build: JSBundleCompletionTask| -> JsResult<()> { build.on_complete() }
         )?,
-        task_tag::FetchTaskletPromiseSettle => boxed_arm!(
+        task_tag::FetchTaskletPromiseSettle => task_arm!(
             task,
             [Fetch],
             |holder: crate::webcore::fetch::fetch_tasklet::FetchTaskletPromiseSettle|
@@ -288,24 +247,21 @@ pub(crate) fn run_task(
             }
         )?,
         task_tag::DuplexUpgradeContext => {
-            feature_arm!([Sockets], |context: crate::socket::DuplexUpgradeContext| {
-                // SAFETY: tag identifies pointee; the queue owns the live context
-                // until `run_event` (which may free it).
-                unsafe { crate::socket::DuplexUpgradeContext::run_event(context) };
+            task_arm!(task, [Sockets], |context: DuplexUpgradeContext| {
+                context.run_start_tls();
+            })
+        }
+        task_tag::DuplexUpgradeContextFree => {
+            task_arm!(task, [Sockets], |context: DuplexUpgradeContextFree| {
+                drop(context);
             })
         }
         #[cfg(windows)]
         task_tag::WindowsNamedPipeContext => {
-            // Same shape as `DuplexUpgradeContext`: may free the context.
-            // SAFETY: tag identifies the pointee; the queue owns it until here.
-            unsafe {
-                crate::socket::WindowsNamedPipeContext::run_event(cast_ptr!(
-                    crate::socket::WindowsNamedPipeContext
-                ))
-            };
+            drop(payload!(task, crate::socket::WindowsNamedPipeContext));
         }
         task_tag::ValkeyDeferredClose => {
-            boxed_arm!(
+            task_arm!(
                 task,
                 [Valkey],
                 |close: crate::valkey_jsc::js_valkey::ValkeyDeferredClose| {
@@ -313,7 +269,7 @@ pub(crate) fn run_task(
                 }
             )
         }
-        task_tag::StatWatcherTimerUpdate => boxed_arm!(
+        task_tag::StatWatcherTimerUpdate => task_arm!(
             task,
             [NodeFs],
             |update: crate::node::node_fs_stat_watcher::StatWatcherTimerUpdate| {
@@ -324,14 +280,14 @@ pub(crate) fn run_task(
             [NodeFs],
             (
                 copy: Box<crate::node::fs::AsyncCpTask> =
-                    boxed!(task, crate::node::fs::AsyncCpTask),
+                    payload!(task, crate::node::fs::AsyncCpTask),
                 global: &JSGlobalObject = global,
             ) -> JsResult<()> {
                 copy.run_from_js_thread(global)
             }
         )?,
         // With no result the linker folds this arm with the mini loop's callback, and `--trim` keeps the shell.
-        task_tag::ShellAsyncCpTask => boxed_arm!(
+        task_tag::ShellAsyncCpTask => task_arm!(
             task,
             [Shell],
             |copy: crate::node::fs::ShellAsyncCpTask| -> JsResult<()> {
@@ -339,7 +295,7 @@ pub(crate) fn run_task(
                 Ok(())
             }
         )?,
-        task_tag::StatWatcherHop => counted_arm!(
+        task_tag::StatWatcherHop => task_arm!(
             task,
             [NodeFs],
             |watcher: crate::node::node_fs_stat_watcher::StatWatcher| -> JsResult<()> {
@@ -347,136 +303,92 @@ pub(crate) fn run_task(
                 Ok(())
             }
         )?,
-        task_tag::BundleV2PluginResolveAnswered => boxed_arm!(
+        task_tag::BundleV2PluginResolveAnswered => task_arm!(
             task,
             [Bundler],
             |answered: bun_bundler::bundle_v2::api::JSBundler::ResolveAnswered| { answered.run() }
         ),
-        task_tag::BundleV2PluginLoadAnswered => boxed_arm!(
+        task_tag::BundleV2PluginLoadAnswered => task_arm!(
             task,
             [Bundler],
             |answered: bun_bundler::bundle_v2::api::JSBundler::LoadAnswered| { answered.run() }
         ),
         task_tag::BundleV2PluginLoadDeferred => {
-            cast!(bun_bundler::bundle_v2::api::JSBundler::LoadDeferred).run();
+            payload!(task, bun_bundler::bundle_v2::api::JSBundler::LoadDeferred).run();
         }
         task_tag::BundleV2ParseTaskResult => {
-            boxed_arm!(task, [Bundler], |result: BundleV2ParseTaskResult| {
+            task_arm!(task, [Bundler], |result: BundleV2ParseTaskResult| {
                 // SAFETY: posted to the bundle's thread, which uses no borrow of it across a tick.
                 unsafe { bun_bundler::parse_task::on_complete(result) };
             })
         }
-        task_tag::FetchTaskletRequestDrain => counted_arm!(
+        task_tag::FetchTaskletRequestDrain => task_arm!(
             task,
             [Fetch],
             |tasklet: crate::webcore::fetch::FetchTaskletRequestDrain| {
                 FetchTasklet::resume_request_data_stream(&tasklet);
             }
         ),
-        task_tag::FetchTaskletTrace => counted_arm!(
+        task_tag::FetchTaskletTrace => task_arm!(
             task,
             [Fetch],
             |tasklet: crate::webcore::fetch::FetchTaskletTrace| -> JsResult<()> {
                 FetchTasklet::on_trace_events(&tasklet)
             }
         )?,
-        task_tag::HTMLRewriterBackgroundPull => counted_arm!(
+        task_tag::HTMLRewriterBackgroundPull => task_arm!(
             task,
             [HtmlRewriter],
             |pipe: crate::api::html_rewriter::RewriterPipeBackgroundPull| {
                 pipe.run_background_pull();
             }
         ),
-        task_tag::RunTestsTask => boxed_arm!(
+        task_tag::RunTestsTask => task_arm!(
             task,
             [Test],
             |run: crate::test_runner::bun_test::RunTestsTask| -> JsResult<()> { run.call() }
         )?,
-        task_tag::DnsErrorDeferred => boxed_arm!(
+        task_tag::DnsErrorDeferred => task_arm!(
             task,
             [Dns],
             |error: crate::dns_jsc::answer_jsc::ErrorDeferredTask| -> JsResult<()> { error.run() }
         )?,
         task_tag::HandledPromise => {
-            boxed!(task, bun_jsc::virtual_machine_exports::HandledPromiseTask).run();
+            payload!(task, bun_jsc::virtual_machine_exports::HandledPromiseTask).run();
         }
         task_tag::GraphContextStopAgain => {
-            // `ptr` packs the `ContextId`, not a pointer.
-            bun_jsc::virtual_machine::GraphContextStopAgain::run(
-                vm,
-                bun_jsc::ContextId::from_raw(task.ptr() as usize as u32),
-            );
+            GraphContextStopAgain::run(vm, payload!(task, GraphContextStopAgain));
         }
-        task_tag::DeadContextStopAgain => {
-            bun_jsc::virtual_machine::DeadContextStopAgain::run(vm);
-        }
+        task_tag::DeadContextStopAgain => DeadContextStopAgain::run(vm),
         task_tag::GraphContextStopAndFree => {
-            // SAFETY: queued by `release_graph_context`; still registered.
-            unsafe {
-                bun_jsc::virtual_machine::GraphContextStopAndFree::run(
-                    vm,
-                    cast_ptr!(bun_jsc::virtual_machine::GraphContextStopAndFree),
-                )
-            };
+            let context = payload!(task, GraphContextStopAndFree);
+            // SAFETY: no borrow of a released context outlasts a tick.
+            unsafe { context.run(vm) };
         }
         // A server that speaks TLS was given TLS options, which is what retains `TlsSockets`.
-        task_tag::HTTPAppClose => {
-            feature_arm!([Serve], |app: crate::server::AppCloseTask<false>| {
-                crate::server::AppCloseTask::<false>::run(app);
-            })
-        }
-        task_tag::HTTPSAppClose => {
-            feature_arm!([TlsSockets], |app: crate::server::AppCloseTask<true>| {
-                crate::server::AppCloseTask::<true>::run(app);
-            })
-        }
-        task_tag::HTTPServerDeinit => {
-            feature_arm!([Serve], |server: crate::server::ServerDeinitTask<
-                false,
-                false,
-            >| {
-                // SAFETY: the unique owning server pointer `schedule_deinit` queued.
-                unsafe { crate::server::ServerDeinitTask::<false, false>::run(server) };
-            })
-        }
-        task_tag::HTTPSServerDeinit => {
-            feature_arm!([TlsSockets], |server: crate::server::ServerDeinitTask<
-                true,
-                false,
-            >| {
-                // SAFETY: the unique owning server pointer `schedule_deinit` queued.
-                unsafe { crate::server::ServerDeinitTask::<true, false>::run(server) };
-            })
-        }
-        task_tag::DebugHTTPServerDeinit => {
-            feature_arm!([Serve], |server: crate::server::ServerDeinitTask<
-                false,
-                true,
-            >| {
-                // SAFETY: the unique owning server pointer `schedule_deinit` queued.
-                unsafe { crate::server::ServerDeinitTask::<false, true>::run(server) };
-            })
-        }
+        task_tag::HTTPServerDeinit => task_arm!(task, [Serve], |server: HTTPServer| {
+            server.run_scheduled_close();
+        }),
+        task_tag::HTTPSServerDeinit => task_arm!(task, [TlsSockets], |server: HTTPSServer| {
+            server.run_scheduled_close();
+        }),
+        task_tag::DebugHTTPServerDeinit => task_arm!(task, [Serve], |server: DebugHTTPServer| {
+            server.run_scheduled_close();
+        }),
         task_tag::DebugHTTPSServerDeinit => {
-            feature_arm!([TlsSockets], |server: crate::server::ServerDeinitTask<
-                true,
-                true,
-            >| {
-                // SAFETY: the unique owning server pointer `schedule_deinit` queued.
-                unsafe { crate::server::ServerDeinitTask::<true, true>::run(server) };
+            task_arm!(task, [TlsSockets], |server: DebugHTTPSServer| {
+                server.run_scheduled_close();
             })
         }
         #[cfg(windows)]
-        task_tag::ChromePipeEvent => boxed_arm!(
+        task_tag::ChromePipeEvent => task_arm!(
             task,
             [WebView],
             |event: crate::webview::chrome_process::QueuedEvent| -> JsResult<()> {
                 event.deliver()
             }
         )?,
-        task_tag::CppTask => {
-            cast!(CppTask).run(global)?;
-        }
+        task_tag::CppTask => payload!(task, CppTask).run(global)?,
 
         // ── shell interpreter (cold — hoisted to `run_task_cold`) ────────
         task_tag::ShellAsync
@@ -490,41 +402,40 @@ pub(crate) fn run_task(
         | task_tag::ShellRmTask
         | task_tag::ShellRmDirTask
         | task_tag::ShellGlobTask
-        | task_tag::ShellYesTask => run_task_cold(&task),
+        | task_tag::ShellYesTask => run_task_cold(task),
 
         // ── fetch / S3 ───────────────────────────────────────────────────
-        task_tag::FetchTasklet => feature_arm!([Fetch], |tasklet: FetchTasklet| -> JsResult<()> {
-            // SAFETY: §Dispatch — tag identifies pointee.
-            unsafe { FetchTasklet::on_progress_update(tasklet) }
-        })?,
-        task_tag::FetchTaskletDeinit => {
-            feature_arm!(
-                [Fetch],
-                |hop: crate::webcore::fetch::FetchTaskletDeinitHop| {
-                    // SAFETY: posted by `HttpThreadRef` with the last ref.
-                    unsafe { crate::webcore::fetch::FetchTaskletDeinitHop::run(hop) };
-                }
-            )
-        }
-        // `cast_ptr!` yields the heap-allocated S3 task; JS-thread dispatch
-        // is the sole owner here.
-        task_tag::S3HttpSimpleTask => {
-            feature_arm!([S3Client], |request: S3HttpSimpleTask| -> JsResult<()> {
-                S3HttpSimpleTask::on_response(request)?;
-                Ok(())
+        task_tag::FetchTasklet => {
+            task_arm!(task, [Fetch], |js_ref: FetchTasklet| -> JsResult<()> {
+                FetchTasklet::on_progress_update(js_ref)
             })?
         }
+        task_tag::FetchTaskletDeinit => task_arm!(
+            task,
+            [Fetch],
+            |tasklet: crate::webcore::fetch::FetchTaskletDeinitHop| {
+                drop(tasklet);
+            }
+        ),
+        task_tag::S3HttpSimpleTask => task_arm!(
+            task,
+            [S3Client],
+            |request: S3HttpSimpleTask| -> JsResult<()> {
+                request.on_response()?;
+                Ok(())
+            }
+        )?,
         task_tag::S3HttpDownloadStreamingTask => {
-            feature_arm!([S3Client], |download: S3HttpDownloadStreamingTask| {
-                S3HttpDownloadStreamingTask::on_response(download);
+            task_arm!(task, [S3Client], |download: S3HttpDownloadStreamingTask| {
+                download.on_response();
             })
         }
-        task_tag::S3RefusedRequest => boxed_arm!(
+        task_tag::S3RefusedRequest => task_arm!(
             task,
             [S3Client],
             |refused: S3RefusedRequest| -> JsResult<()> { refused.run() }
         )?,
-        task_tag::S3UploadWriterCollected => counted_arm!(
+        task_tag::S3UploadWriterCollected => task_arm!(
             task,
             [S3Client],
             |upload: S3UploadWriterCollected| -> JsResult<()> {
@@ -537,17 +448,16 @@ pub(crate) fn run_task(
         task_tag::NapiAsyncWork => in_features!(
             [NativeAddons],
             (
-                work: *mut napi_async_work = cast_ptr!(napi_async_work),
+                work: FinishedAsyncWork = payload!(task, FinishedAsyncWork),
                 global: &JSGlobalObject = global,
             ) -> JsResult<()> {
-                // SAFETY: §Dispatch — tag identifies pointee, which the pool posted back.
-                unsafe { napi_async_work::run_from_js(work, global) }
+                work.run_from_js(global)
             }
         )?,
         task_tag::ThreadSafeFunction => in_features!(
             [NativeAddons],
             (
-                function: std::sync::Arc<ThreadSafeFunction> = counted!(task, ThreadSafeFunction),
+                function: std::sync::Arc<ThreadSafeFunction> = payload!(task, ThreadSafeFunction),
                 el: &EventLoop = el,
                 vm: &VirtualMachine = vm,
             ) {
@@ -555,11 +465,11 @@ pub(crate) fn run_task(
             }
         ),
         task_tag::ThreadSafeFunctionRefRequest => {
-            boxed_arm!(task, [NativeAddons], |request: TsfnRefRequest| {
+            task_arm!(task, [NativeAddons], |request: TsfnRefRequest| {
                 request.run()
             })
         }
-        task_tag::NapiFinalizerTask => boxed_arm!(
+        task_tag::NapiFinalizerTask => task_arm!(
             task,
             [NativeAddons],
             |napi_task: NapiFinalizerTask| -> JsResult<()> { napi_task.finalizer.run() }
@@ -575,15 +485,14 @@ pub(crate) fn run_task(
             })?;
         }
         task_tag::UvWorkDone => {
-            use crate::napi::uv::UvWork;
+            use crate::napi::uv::WorkRef;
             in_features!(
                 [NativeAddons],
                 (
-                    uv_work: *mut UvWork = cast_ptr!(UvWork),
+                    uv_work: WorkRef = payload!(task, WorkRef),
                     vm: &VirtualMachine = vm,
                 ) -> JsResult<()> {
-                    // SAFETY: the pool posted this request.
-                    unsafe { UvWork::run_done(uv_work, vm) }
+                    uv_work.run_done(vm)
                 }
             )?;
         }
@@ -591,7 +500,7 @@ pub(crate) fn run_task(
         // ── JSC scheduler / module loader ────────────────────────────────
         task_tag::JSCDeferredWorkTask => {
             bun_jsc::mark_binding();
-            cast!(JSCDeferredWorkTask).run(global)?;
+            payload!(task, JSCDeferredWorkTask).run(global)?;
         }
         task_tag::RuntimeTranspilerStore => in_features!(
             [RuntimeTranspiler],
@@ -606,7 +515,7 @@ pub(crate) fn run_task(
 
         // ── hot-reload (early-returns from the drain loop) ───────────────
         task_tag::HotReloadTask => {
-            drop(boxed!(task, hot_reloader::HotReloadTask));
+            drop(payload!(task, hot_reloader::HotReloadTask));
             in_features!([HotReload], (vm: &VirtualMachine = vm) {
                 hot_reloader::HotReloadTask::run(vm);
             });
@@ -614,13 +523,13 @@ pub(crate) fn run_task(
         }
         // ── bake dev-server ──────────────────────────────────────────────
         task_tag::BakePendingReloadEvent => {
-            counted_arm!(task, [Bundler], |event: BakePendingReloadEvent| {
+            task_arm!(task, [Bundler], |event: BakePendingReloadEvent| {
                 // SAFETY: this is the dev server's thread, and no borrow of it outlasts a tick.
                 unsafe { event.run() };
             })
         }
         task_tag::FSWatchTask => {
-            boxed_arm!(task, [NodeFs], |mut watch: FSWatchTask| -> JsResult<()> {
+            task_arm!(task, [NodeFs], |mut watch: FSWatchTask| -> JsResult<()> {
                 watch.run()
             })?
         }
@@ -628,7 +537,7 @@ pub(crate) fn run_task(
         // ── process / signals ────────────────────────────────────────────
         task_tag::ProcessWaiterThreadTask => {
             #[cfg(not(windows))]
-            boxed_arm!(task, [ChildProcess], |result: ProcessWaiterThreadTask<
+            task_arm!(task, [ChildProcess], |result: ProcessWaiterThreadTask<
                 Process,
             >| {
                 result.run_from_js_thread();
@@ -637,28 +546,22 @@ pub(crate) fn run_task(
             unreachable!("posix-only");
         }
         task_tag::PosixSignalTask => {
-            // `ptr` here is *not* a pointer but a packed signal number.
-            let _ = core::marker::PhantomData::<PosixSignalTask>;
-            bun_jsc::posix_signal_handle::PosixSignalTask::run_from_js_thread(
-                task.ptr() as usize as u8,
-                global,
-            );
+            PosixSignalTask::run_from_js_thread(payload!(task, PosixSignalTask), global);
         }
         task_tag::MemoryPressureTask => {
-            // `ptr` is the packed level (NOTE_MEMORYSTATUS_PRESSURE_* bits), not a pointer.
-            crate::node::memory_pressure::emit(global, task.ptr() as usize as i32);
+            crate::node::memory_pressure::emit(global, payload!(task, MemoryPressureTask));
         }
         // One feature for each kind of context a `NativePromiseContext` cell holds.
-        task_tag::NativePromiseContextDeferredDerefTask => in_features!(
+        task_tag::NativePromiseContextDeferredDerefTask => task_arm!(
+            task,
             [Serve, HtmlRewriter, S3Client],
-            (packed: usize = task.ptr() as usize) {
-                // `ptr` packs an int, not a pointer.
-                NativePromiseContextDeferredDerefTask::run_from_js_thread(packed);
+            |deref: NativePromiseContextDeferredDerefTask| {
+                deref.run_from_js_thread();
             }
         ),
 
         // ── server / bundler / streams ───────────────────────────────────
-        task_tag::ServerAllConnectionsClosedTask => boxed_arm!(
+        task_tag::ServerAllConnectionsClosedTask => task_arm!(
             task,
             [Serve],
             |mut closed: ServerAllConnectionsClosedTask| -> JsResult<()> {
@@ -668,24 +571,21 @@ pub(crate) fn run_task(
         task_tag::BundleV2DeferredBatchTask => in_features!(
             [Bundler],
             (
-                batch: *mut BundleV2DeferredBatchTask = cast_ptr!(BundleV2DeferredBatchTask),
+                batch: DeferredBatch = payload!(task, DeferredBatch),
                 global: &JSGlobalObject = global,
             ) -> JsResult<()> {
                 // `bun_bundler` is JSC-free so the exception-scope check is hoisted to this dispatch arm; without it, `JSBundlerPlugin__drainDeferred`'s THROW_SCOPE is left unchecked and trips JSC exception validation at the next `drainMicrotasks` scope.
-                bun_jsc::call_check_slow(global, || {
-                    // SAFETY: §Dispatch — tag identifies pointee; live for this dispatch.
-                    unsafe { &mut *batch }.run_on_js_thread();
-                })?;
+                bun_jsc::call_check_slow(global, || batch.run_on_js_thread())?;
                 Ok(())
             }
         )?,
         // A child's stdin pipe is a `FileSink` too, whether or not the program looks at it.
         task_tag::FlushPendingFileSinkTask => {
-            counted_arm!(task, [FileSink, Spawn, Shell], |sink: FileSink| {
+            task_arm!(task, [FileSink, Spawn, Shell], |sink: FileSink| {
                 sink.run_pending_if_armed();
             })
         }
-        task_tag::StreamPending => boxed_arm!(task, [WebStreams], |pending: StreamPending| {
+        task_tag::StreamPending => task_arm!(task, [WebStreams], |pending: StreamPending| {
             (*pending).run(StreamResult::Done);
         }),
 
@@ -706,33 +606,17 @@ pub(crate) fn run_task(
 /// falls through to `Ok(RunTaskResult::Continue)`.
 #[cold]
 #[inline(never)]
-fn run_task_cold(task: &Task) {
+fn run_task_cold(task: Task) {
     bun_removable_features::removable_definition!(Shell, run_task_cold);
-    /// Raw `*mut T` (for `heap::take`/self-consuming entry points).
-    macro_rules! cast_ptr {
-        ($ty:ty) => {
-            task.ptr().cast::<$ty>()
-        };
-    }
-    /// The wrapper recovers `&mut Interpreter` from the embedded
-    /// `ShellTask.interp` back-ref.
     macro_rules! shell_dispatch {
-        ($ty:ty) => {{
-            // SAFETY: §Dispatch — `t` is a live heap-allocated shell task;
-            // `interp` was set at schedule time and outlives the task.
-            unsafe { ShellTask::run_from_main_thread::<$ty>(cast_ptr!($ty)) };
-        }};
+        ($ty:ty) => {
+            payload!(task, $ty).run_from_main_thread()
+        };
     }
 
     match task.tag() {
         // ── shell interpreter ────────────────────────────────────────────
-        task_tag::ShellAsync => {
-            // SAFETY: §Dispatch — tag identifies pointee.
-            let t = unsafe { &*cast_ptr!(crate::shell::dispatch_tasks::ShellAsyncTask) };
-            // SAFETY: `interp` set at enqueue; outlives task.
-            let interp = unsafe { &*t.interp };
-            ShellAsync::run_from_main_thread(interp, t.node.get());
-        }
+        task_tag::ShellAsync => shell_dispatch!(ShellAsyncTask),
         task_tag::ShellCondExprStatTask => shell_dispatch!(PoolTask<ShellCondExprStatTask>),
         task_tag::ShellCpTask => shell_dispatch!(ShellCpTask),
         task_tag::ShellTouchTask => shell_dispatch!(PoolTask<ShellTouchTask>),
@@ -741,15 +625,9 @@ fn run_task_cold(task: &Task) {
         task_tag::ShellMvBatchedTask => shell_dispatch!(PoolTask<ShellMvBatchedTask>),
         task_tag::ShellMvCheckTargetTask => shell_dispatch!(PoolTask<ShellMvCheckTargetTask>),
         task_tag::ShellRmTask => shell_dispatch!(ShellRmTask),
-        task_tag::ShellRmDirTask => {
-            let t = cast_ptr!(ShellRmDirTask);
-            ShellRmDirTask::run_from_main_thread(t);
-        }
+        task_tag::ShellRmDirTask => shell_dispatch!(ShellRmDirTask),
         task_tag::ShellGlobTask => shell_dispatch!(PoolTask<ShellGlobTask>),
-        task_tag::ShellYesTask => {
-            // SAFETY: §Dispatch — tag identifies pointee; enqueued by `YesTask::enqueue`.
-            unsafe { ShellYesTask::run_from_main_thread(cast_ptr!(ShellYesTask)) };
-        }
+        task_tag::ShellYesTask => shell_dispatch!(ShellYesTask),
 
         // Any tag the hot path mis-routed: producer bug.
         _ => panic!("Unexpected Task tag: {}", task.tag().0),
@@ -760,7 +638,7 @@ fn run_task_cold(task: &Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 72,
+    task_tag::COUNT == 71,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1463,86 +1341,61 @@ fn __bun_tick_queue_with_count(
 /// having decided how it is released. JS thread, JSC heap alive.
 #[unsafe(no_mangle)]
 fn __bun_release_task_unrun(task: bun_event_loop::Task) {
-    use bun_event_loop::{Taskable, task_tag};
-    /// `<T as Taskable>::release_unrun(task.ptr as *mut T)`, SAFETY spelled once.
     macro_rules! release {
-        ($ty:ty) => {{
-            // SAFETY: §Dispatch — `task.tag` was set together with `task.ptr`
-            // through `Taskable`; the tag identifies the pointee type, and the
-            // task just came off the queue and is not used afterwards.
-            unsafe { <$ty as Taskable>::release_unrun(task.ptr().cast::<$ty>()) }
-        }};
+        ($ty:ty) => {
+            <$ty as Taskable>::release_unrun(payload!(task, $ty))
+        };
     }
     /// [`release!`] through [`in_features!`], with the features of the tag's arm in [`run_task`].
     macro_rules! release_in {
         ($features:tt, $ty:ty) => {
-            in_features!($features, (payload: *mut $ty = task.ptr().cast::<$ty>()) {
-                // SAFETY: as `release!`.
-                unsafe { <$ty as bun_event_loop::Taskable>::release_unrun(payload) }
-            })
-        };
-    }
-    /// [`release_in!`] for a [`BoxedTask`].
-    macro_rules! release_boxed_in {
-        ($features:tt, $ty:ty) => {
-            boxed_arm!(task, $features, |payload: $ty| { payload.release_unrun() })
-        };
-    }
-    /// [`release_in!`] for a [`RefTask`].
-    macro_rules! release_counted_in {
-        ($features:tt, $ty:ty) => {
-            counted_arm!(task, $features, |payload: $ty| {
-                <$ty as RefTask>::release_unrun(payload)
+            task_arm!(task, $features, |payload: $ty| {
+                <$ty as Taskable>::release_unrun(payload)
             })
         };
     }
     match task.tag() {
-        task_tag::AnyTaskJob => {
-            // The one erased tag: every payload is a `Job<C>` reached through its header.
-            // SAFETY: as `release!`.
-            unsafe { bun_jsc::job::release_unrun_erased(task.ptr()) }
-        }
-        task_tag::BakePendingReloadEvent => release_counted_in!([Bundler], BakePendingReloadEvent),
-        task_tag::BundleV2DeferredBatchTask => release_in!([Bundler], BundleV2DeferredBatchTask),
+        task_tag::AnyTaskJob => release!(FinishedJob),
+        task_tag::BakePendingReloadEvent => release_in!([Bundler], BakePendingReloadEvent),
+        task_tag::BundleV2DeferredBatchTask => release_in!([Bundler], DeferredBatch),
         task_tag::BundleV2PluginResolve => {
-            release_boxed_in!(
+            release_in!(
                 [Bundler],
                 bun_bundler::bundle_v2::api::JSBundler::Resolve<'static>
             )
         }
         task_tag::BundleV2PluginLoad => {
-            release_boxed_in!(
+            release_in!(
                 [Bundler],
                 bun_bundler::bundle_v2::api::JSBundler::Load<'static>
             )
         }
         task_tag::ShellYesTask => release_in!([Shell], ShellYesTask),
         task_tag::CppTask => release!(CppTask),
-        task_tag::DuplexUpgradeContext => {
-            release_in!([Sockets], crate::socket::DuplexUpgradeContext)
-        }
+        task_tag::DuplexUpgradeContext => release_in!([Sockets], DuplexUpgradeContext),
+        task_tag::DuplexUpgradeContextFree => release_in!([Sockets], DuplexUpgradeContextFree),
         task_tag::FetchTasklet => release_in!([Fetch], FetchTasklet),
         task_tag::FetchTaskletDeinit => {
             release_in!([Fetch], crate::webcore::fetch::FetchTaskletDeinitHop)
         }
         task_tag::FetchTaskletPromiseSettle => {
-            release_boxed_in!(
+            release_in!(
                 [Fetch],
                 crate::webcore::fetch::fetch_tasklet::FetchTaskletPromiseSettle
             )
         }
-        task_tag::FSWatchTask => release_boxed_in!([NodeFs], FSWatchTask),
-        task_tag::HotReloadTask => release_boxed_in!([HotReload], hot_reloader::HotReloadTask),
-        task_tag::JSBundleCompletionTask => release_boxed_in!([Bundler], JSBundleCompletionTask),
+        task_tag::FSWatchTask => release_in!([NodeFs], FSWatchTask),
+        task_tag::HotReloadTask => release_in!([HotReload], hot_reloader::HotReloadTask),
+        task_tag::JSBundleCompletionTask => release_in!([Bundler], JSBundleCompletionTask),
         task_tag::JSCDeferredWorkTask => release!(JSCDeferredWorkTask),
         task_tag::BundleV2PluginResolveAnswered => {
-            release_boxed_in!(
+            release_in!(
                 [Bundler],
                 bun_bundler::bundle_v2::api::JSBundler::ResolveAnswered
             )
         }
         task_tag::BundleV2PluginLoadAnswered => {
-            release_boxed_in!(
+            release_in!(
                 [Bundler],
                 bun_bundler::bundle_v2::api::JSBundler::LoadAnswered
             )
@@ -1553,53 +1406,33 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
                 bun_bundler::bundle_v2::api::JSBundler::LoadDeferred
             )
         }
-        task_tag::BundleV2ParseTaskResult => {
-            release_boxed_in!([Bundler], BundleV2ParseTaskResult)
-        }
+        task_tag::BundleV2ParseTaskResult => release_in!([Bundler], BundleV2ParseTaskResult),
         task_tag::FetchTaskletRequestDrain => {
-            release_counted_in!([Fetch], crate::webcore::fetch::FetchTaskletRequestDrain)
+            release_in!([Fetch], crate::webcore::fetch::FetchTaskletRequestDrain)
         }
         task_tag::FetchTaskletTrace => {
-            release_counted_in!([Fetch], crate::webcore::fetch::FetchTaskletTrace)
+            release_in!([Fetch], crate::webcore::fetch::FetchTaskletTrace)
         }
         task_tag::HTMLRewriterBackgroundPull => {
-            release_counted_in!(
+            release_in!(
                 [HtmlRewriter],
                 crate::api::html_rewriter::RewriterPipeBackgroundPull
             )
         }
-        task_tag::RunTestsTask => {
-            release_boxed_in!([Test], crate::test_runner::bun_test::RunTestsTask)
-        }
+        task_tag::RunTestsTask => release_in!([Test], crate::test_runner::bun_test::RunTestsTask),
         task_tag::DnsErrorDeferred => {
-            release_boxed_in!([Dns], crate::dns_jsc::answer_jsc::ErrorDeferredTask)
+            release_in!([Dns], crate::dns_jsc::answer_jsc::ErrorDeferredTask)
         }
-        task_tag::HandledPromise => {
-            boxed!(task, bun_jsc::virtual_machine_exports::HandledPromiseTask).release_unrun()
-        }
-        task_tag::GraphContextStopAgain => {
-            release!(bun_jsc::virtual_machine::GraphContextStopAgain)
-        }
-        task_tag::DeadContextStopAgain => release!(bun_jsc::virtual_machine::DeadContextStopAgain),
-        task_tag::GraphContextStopAndFree => {
-            release!(bun_jsc::virtual_machine::GraphContextStopAndFree)
-        }
-        task_tag::HTTPAppClose => release_in!([Serve], crate::server::AppCloseTask<false>),
-        task_tag::HTTPSAppClose => release_in!([TlsSockets], crate::server::AppCloseTask<true>),
-        task_tag::HTTPServerDeinit => {
-            release_in!([Serve], crate::server::ServerDeinitTask<false, false>)
-        }
-        task_tag::HTTPSServerDeinit => {
-            release_in!([TlsSockets], crate::server::ServerDeinitTask<true, false>)
-        }
-        task_tag::DebugHTTPServerDeinit => {
-            release_in!([Serve], crate::server::ServerDeinitTask<false, true>)
-        }
-        task_tag::DebugHTTPSServerDeinit => {
-            release_in!([TlsSockets], crate::server::ServerDeinitTask<true, true>)
-        }
-        task_tag::NapiAsyncWork => release_in!([NativeAddons], napi_async_work),
-        task_tag::NapiFinalizerTask => release_boxed_in!([NativeAddons], NapiFinalizerTask),
+        task_tag::HandledPromise => release!(bun_jsc::virtual_machine_exports::HandledPromiseTask),
+        task_tag::GraphContextStopAgain => release!(GraphContextStopAgain),
+        task_tag::DeadContextStopAgain => release!(DeadContextStopAgain),
+        task_tag::GraphContextStopAndFree => release!(GraphContextStopAndFree),
+        task_tag::HTTPServerDeinit => release_in!([Serve], HTTPServer),
+        task_tag::HTTPSServerDeinit => release_in!([TlsSockets], HTTPSServer),
+        task_tag::DebugHTTPServerDeinit => release_in!([Serve], DebugHTTPServer),
+        task_tag::DebugHTTPSServerDeinit => release_in!([TlsSockets], DebugHTTPSServer),
+        task_tag::NapiAsyncWork => release_in!([NativeAddons], FinishedAsyncWork),
+        task_tag::NapiFinalizerTask => release_in!([NativeAddons], NapiFinalizerTask),
         task_tag::NativePromiseContextDeferredDerefTask => {
             release_in!(
                 [Serve, HtmlRewriter, S3Client],
@@ -1607,16 +1440,14 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             )
         }
         task_tag::PosixSignalTask => release!(PosixSignalTask),
-        task_tag::MemoryPressureTask => release!(crate::node::memory_pressure::MemoryPressureTask),
+        task_tag::MemoryPressureTask => release!(MemoryPressureTask),
         task_tag::ProcessWaiterThreadTask => {
             #[cfg(not(windows))]
-            release_boxed_in!([ChildProcess], ProcessWaiterThreadTask<Process>);
+            release_in!([ChildProcess], ProcessWaiterThreadTask<Process>);
             #[cfg(windows)]
             unreachable!("posix-only tag");
         }
-        task_tag::FlushPendingFileSinkTask => {
-            release_counted_in!([FileSink, Spawn, Shell], FileSink)
-        }
+        task_tag::FlushPendingFileSinkTask => release_in!([FileSink, Spawn, Shell], FileSink),
         task_tag::RuntimeTranspilerStore => {
             release_in!([RuntimeTranspiler], RuntimeTranspilerStore)
         }
@@ -1624,15 +1455,13 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release_in!([S3Client], S3HttpDownloadStreamingTask)
         }
         task_tag::S3HttpSimpleTask => release_in!([S3Client], S3HttpSimpleTask),
-        task_tag::S3RefusedRequest => release_boxed_in!([S3Client], S3RefusedRequest),
-        task_tag::S3UploadWriterCollected => {
-            release_counted_in!([S3Client], S3UploadWriterCollected)
-        }
-        task_tag::SendQueueDeferred => release_counted_in!([Ipc], crate::ipc::SendQueue),
+        task_tag::S3RefusedRequest => release_in!([S3Client], S3RefusedRequest),
+        task_tag::S3UploadWriterCollected => release_in!([S3Client], S3UploadWriterCollected),
+        task_tag::SendQueueDeferred => release_in!([Ipc], crate::ipc::SendQueue),
         task_tag::ServerAllConnectionsClosedTask => {
-            release_boxed_in!([Serve], ServerAllConnectionsClosedTask)
+            release_in!([Serve], ServerAllConnectionsClosedTask)
         }
-        task_tag::ShellAsync => release_in!([Shell], crate::shell::dispatch_tasks::ShellAsyncTask),
+        task_tag::ShellAsync => release_in!([Shell], ShellAsyncTask),
         task_tag::ShellCondExprStatTask => release_in!([Shell], PoolTask<ShellCondExprStatTask>),
         task_tag::ShellCpTask => release_in!([Shell], ShellCpTask),
         task_tag::ShellGlobTask => release_in!([Shell], PoolTask<ShellGlobTask>),
@@ -1644,26 +1473,24 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::ShellRmTask => release_in!([Shell], ShellRmTask),
         task_tag::ShellTouchTask => release_in!([Shell], PoolTask<ShellTouchTask>),
         task_tag::StatWatcherTimerUpdate => {
-            release_boxed_in!(
+            release_in!(
                 [NodeFs],
                 crate::node::node_fs_stat_watcher::StatWatcherTimerUpdate
             )
         }
         task_tag::StatWatcherHop => {
-            release_counted_in!([NodeFs], crate::node::node_fs_stat_watcher::StatWatcher)
+            release_in!([NodeFs], crate::node::node_fs_stat_watcher::StatWatcher)
         }
-        task_tag::AsyncCpTask => release_boxed_in!([NodeFs], crate::node::fs::AsyncCpTask),
-        task_tag::ShellAsyncCpTask => release_boxed_in!([Shell], crate::node::fs::ShellAsyncCpTask),
-        task_tag::StreamPending => release_boxed_in!([WebStreams], StreamPending),
-        task_tag::ThreadSafeFunction => release_counted_in!([NativeAddons], ThreadSafeFunction),
-        task_tag::ThreadSafeFunctionRefRequest => {
-            release_boxed_in!([NativeAddons], TsfnRefRequest)
-        }
+        task_tag::AsyncCpTask => release_in!([NodeFs], crate::node::fs::AsyncCpTask),
+        task_tag::ShellAsyncCpTask => release_in!([Shell], crate::node::fs::ShellAsyncCpTask),
+        task_tag::StreamPending => release_in!([WebStreams], StreamPending),
+        task_tag::ThreadSafeFunction => release_in!([NativeAddons], ThreadSafeFunction),
+        task_tag::ThreadSafeFunctionRefRequest => release_in!([NativeAddons], TsfnRefRequest),
         task_tag::UvLoopDispatch => release_in!([NativeAddons], crate::napi::uv::UvLoop),
         task_tag::UvHandleClose => release_in!([NativeAddons], crate::napi::uv::UvHandle),
-        task_tag::UvWorkDone => release_in!([NativeAddons], crate::napi::uv::UvWork),
+        task_tag::UvWorkDone => release_in!([NativeAddons], crate::napi::uv::WorkRef),
         task_tag::ValkeyDeferredClose => {
-            release_boxed_in!([Valkey], crate::valkey_jsc::js_valkey::ValkeyDeferredClose)
+            release_in!([Valkey], crate::valkey_jsc::js_valkey::ValkeyDeferredClose)
         }
         // ── Windows-only producers ───────────────────────────────────────
         task_tag::WindowsNamedPipeContext => {
@@ -1674,7 +1501,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::ChromePipeEvent => {
             #[cfg(windows)]
-            release_boxed_in!([WebView], crate::webview::chrome_process::QueuedEvent);
+            release_in!([WebView], crate::webview::chrome_process::QueuedEvent);
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }

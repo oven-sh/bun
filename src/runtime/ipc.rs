@@ -1192,7 +1192,7 @@ impl SendQueue {
         self.get_global_this()
             .bun_vm()
             .event_loop()
-            .enqueue_task(Task::from_ref::<Self>(queue));
+            .enqueue_task(Task::new::<Self>(queue));
     }
 
     /// `task_tag::SendQueueDeferred` dispatch, under the task's ref: drain the pending flags.
@@ -1962,12 +1962,12 @@ impl WriteHandler for SendQueue {
     fn on_close(&self) {}
 }
 
-impl bun_event_loop::RefTask for SendQueue {
+impl bun_event_loop::Taskable for SendQueue {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::SendQueueDeferred;
-    type Ref = RefPtr<Self>;
-    fn release_unrun(_: Self::Ref) {}
+    type Payload = RefPtr<Self>;
+    fn release_unrun(_: Self::Payload) {}
     /// The channel's own close hop.
-    fn context(_: &Self::Ref) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Payload) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

@@ -1249,7 +1249,7 @@ pub(crate) fn hot_reload_generation() -> f64 {
 /// `only`, just those script of that (stopped) context set.
 /// `timer::All` lives in `bun_runtime`; callers (`global_exit`,
 /// `WebWorker::shutdown`) are in `bun_jsc`, hence the hook.
-fn cancel_timers(vm: &VirtualMachine, only: Option<bun_jsc::ContextId>) {
+fn cancel_timers(vm: &VirtualMachine, only: Option<&bun_jsc::ScriptExecutionContext>) {
     let Some(all) = try_timer_all() else {
         return;
     };
@@ -1267,10 +1267,7 @@ fn cancel_timers(vm: &VirtualMachine, only: Option<bun_jsc::ContextId>) {
     }
     if let Some(context) = only {
         // A graph's context keeps the set of its own live timers.
-        let Some(timers) = vm.timer_context(context).map(|c| c.take_timers()) else {
-            return;
-        };
-        for &timer in timers.keys() {
+        for &timer in context.take_timers().keys() {
             // SAFETY: tracked ⇒ live (each untracks itself when it drops); a
             // discard may free the one it discards, never another tracked one.
             unsafe { timer::discard_js_timer(timer) };

@@ -41,7 +41,7 @@ unsafe extern "C" {
     safe fn Process__emitMemoryPressureEvent(global: &JSGlobalObject, level: i32);
 }
 
-/// `run_task` target for `task_tag::MemoryPressureTask`. `lvl` is the packed
+/// `run_task` target for `task_tag::MemoryPressureTask`. `lvl` is the
 /// task payload (macOS kevent `fflags`, or `level::CRITICAL` elsewhere).
 pub(crate) fn emit(global: &JSGlobalObject, lvl: i32) {
     // macOS can deliver WARN|CRITICAL together under EV_CLEAR; pick the more severe.
@@ -53,21 +53,17 @@ pub(crate) fn emit(global: &JSGlobalObject, lvl: i32) {
     Process__emitMemoryPressureEvent(global, lvl);
 }
 
-/// The queued form of a pressure notification: `Task::ptr` packs the level,
-/// there is no allocation.
+/// The queued form of a pressure notification.
 pub(crate) struct MemoryPressureTask;
 impl bun_event_loop::Taskable for MemoryPressureTask {
     const TAG: bun_event_loop::TaskTag = task_tag::MemoryPressureTask;
-    /// Nothing is owned (`this` is the packed level).
-    unsafe fn release_unrun(_: *mut Self) {}
+    /// The level.
+    type Payload = i32;
+    fn release_unrun(_: i32) {}
     /// The process's memory pressure: listeners of the realm.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &i32) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
-}
-
-fn pressure_task(lvl: i32) -> *mut MemoryPressureTask {
-    lvl as usize as *mut MemoryPressureTask
 }
 
 #[cfg(not(windows))]
@@ -294,7 +290,7 @@ mod posix {
             let _ = fflags;
             super::level::CRITICAL
         };
-        vm.enqueue_task(bun_event_loop::Task::init(super::pressure_task(lvl)));
+        vm.enqueue_task(bun_event_loop::Task::new::<super::MemoryPressureTask>(lvl));
     }
 }
 
@@ -353,9 +349,9 @@ mod windows {
             if rc != WAIT_OBJECT_0 + 1 {
                 break;
             }
-            let task = super::pressure_task(super::level::CRITICAL);
+            let lvl = super::level::CRITICAL;
             if let bun_jsc::vm_handle::Posted::Refused(_) =
-                vm.post(bun_jsc::LoopKind::Regular, task)
+                vm.post::<super::MemoryPressureTask>(bun_jsc::LoopKind::Regular, lvl)
             {
                 // VM torn down: drop the notification.
                 break;

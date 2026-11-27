@@ -1104,7 +1104,10 @@ impl VirtualMachine {
 
     /// The context that tracks the timers set under `id`: a graph's, or the one standing in for
     /// graphs that are gone.
-    pub fn timer_context(&self, id: crate::ContextId) -> Option<&crate::ScriptExecutionContext> {
+    pub(crate) fn timer_context(
+        &self,
+        id: crate::ContextId,
+    ) -> Option<&crate::ScriptExecutionContext> {
         if id == self.dead_context.id() {
             return Some(&self.dead_context);
         }
@@ -1223,8 +1226,7 @@ impl VirtualMachine {
     pub(crate) fn stop_graph_context_again(&self, id: crate::ContextId) {
         if id == self.dead_context.id() {
             if !self.dead_context.stop_again_is_queued() {
-                let task = core::ptr::null_mut::<DeadContextStopAgain>();
-                self.enqueue_task(bun_event_loop::Task::init(task));
+                self.enqueue_task(bun_event_loop::Task::new::<DeadContextStopAgain>(()));
             }
             return;
         }
@@ -1232,9 +1234,7 @@ impl VirtualMachine {
             .graph_context(id)
             .is_some_and(|context| !context.stop_again_is_queued())
         {
-            self.enqueue_task(bun_event_loop::Task::init(
-                id.raw() as usize as *mut GraphContextStopAgain
-            ));
+            self.enqueue_task(bun_event_loop::Task::new::<GraphContextStopAgain>(id));
         }
     }
 
@@ -1295,7 +1295,7 @@ impl VirtualMachine {
         };
         self.jobs.get().cancel_of_context(context.id());
         if let Some(hooks) = runtime_hooks() {
-            (hooks.cancel_timers)(self, Some(context.id()));
+            (hooks.cancel_timers)(self, Some(context));
         }
         result
     }
@@ -1316,9 +1316,8 @@ impl VirtualMachine {
             unsafe { self.free_graph_context(released.id()) };
             return;
         }
-        self.enqueue_task(bun_event_loop::Task::init(
-            context.as_ptr().cast::<GraphContextStopAndFree>(),
-        ));
+        let task = GraphContextStopAndFree(released.id());
+        self.enqueue_task(bun_event_loop::Task::new::<GraphContextStopAndFree>(task));
     }
 
     /// # Safety
@@ -2439,15 +2438,15 @@ impl VirtualMachine {
     }
 }
 
-/// [`VirtualMachine::stop_graph_context_again`]'s task for a `Bun.ModuleGraph` context; `ptr`
-/// packs the [`ContextId`](crate::ContextId), nothing is owned.
+/// [`VirtualMachine::stop_graph_context_again`]'s task for a `Bun.ModuleGraph` context.
 pub struct GraphContextStopAgain;
 
 impl bun_event_loop::Taskable for GraphContextStopAgain {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::GraphContextStopAgain;
-    unsafe fn release_unrun(_: *mut Self) {}
+    type Payload = crate::ContextId;
+    fn release_unrun(_: crate::ContextId) {}
     /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &crate::ContextId) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -2461,14 +2460,15 @@ impl GraphContextStopAgain {
     }
 }
 
-/// [`VirtualMachine::stop_graph_context_again`]'s task for the dead context; `ptr` is unused.
+/// [`VirtualMachine::stop_graph_context_again`]'s task for the dead context.
 pub struct DeadContextStopAgain;
 
 impl bun_event_loop::Taskable for DeadContextStopAgain {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::DeadContextStopAgain;
-    unsafe fn release_unrun(_: *mut Self) {}
+    type Payload = ();
+    fn release_unrun((): ()) {}
     /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context((): &()) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -2477,35 +2477,32 @@ impl DeadContextStopAgain {
     pub fn run(vm: &VirtualMachine) {
         let _ = vm.dead_context.stop(crate::StopReason::Disposed);
         if let Some(hooks) = runtime_hooks() {
-            (hooks.cancel_timers)(vm, Some(vm.dead_context.id()));
+            (hooks.cancel_timers)(vm, Some(&vm.dead_context));
         }
     }
 }
 
-/// [`VirtualMachine::release_graph_context`]'s task: same pointer as the context, its own tag.
-#[repr(transparent)]
-pub struct GraphContextStopAndFree(crate::ScriptExecutionContext);
+/// [`VirtualMachine::release_graph_context`]'s task.
+pub struct GraphContextStopAndFree(crate::ContextId);
 
 impl bun_event_loop::Taskable for GraphContextStopAndFree {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::GraphContextStopAndFree;
+    type Payload = Self;
     /// Still registered: dropped with the VM.
-    unsafe fn release_unrun(_: *mut Self) {}
+    fn release_unrun(_: Self) {}
     /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
 
 impl GraphContextStopAndFree {
     /// # Safety
-    /// `this` is the context `release_graph_context` queued.
-    pub unsafe fn run(vm: &VirtualMachine, this: *mut Self) {
-        // SAFETY: still registered, so not freed.
-        unsafe {
-            let context = NonNull::new_unchecked(this.cast::<crate::ScriptExecutionContext>());
-            let _ = vm.stop_graph_context(context, crate::StopReason::Disposed);
-            vm.free_graph_context(context.as_ref().id());
-        }
+    /// Nothing borrows the context.
+    pub unsafe fn run(self, vm: &VirtualMachine) {
+        GraphContextStopAgain::run(vm, self.0);
+        // SAFETY: it has stopped, and fn contract.
+        unsafe { vm.free_graph_context(self.0) };
     }
 }
 
@@ -2722,7 +2719,7 @@ pub struct RuntimeHooks {
     /// `only`: just the timers script of that context set (the context
     /// stopped; the VM keeps running).
     /// Releases `Strong`s, so it runs while the JSC heap is alive.
-    pub cancel_timers: fn(vm: &VirtualMachine, only: Option<crate::ContextId>),
+    pub cancel_timers: fn(vm: &VirtualMachine, only: Option<&crate::ScriptExecutionContext>),
     /// A `--hot` run ends, before `hot_reload_counter` moves on. The timers of the runs before it are kept.
     pub end_hot_run_timers: fn(vm: &VirtualMachine, cancel: CancelHotRunTimers),
     /// Close the per-VM global DNS resolver's client while all that its queries and polls touch is live. No-op when the resolver was

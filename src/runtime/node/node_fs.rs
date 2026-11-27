@@ -13,7 +13,7 @@ use crate::io_order::{self, Key, RetainedFile};
 use crate::webcore;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
 use bun_core::{String as BunString, Utf8WithString, ZBox, ZStr};
-use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
+use bun_event_loop::AnyTaskWithExtraContext::MiniTask;
 use bun_io::JsKeepAlive;
 #[cfg(windows)]
 use bun_iocp::blocking::CancelToken;
@@ -1918,6 +1918,12 @@ mod _async_tasks {
         }
     }
 
+    impl<const IS_SHELL: bool> MiniTask for NewAsyncCpTask<IS_SHELL> {
+        fn run_from_main_thread(self: Box<Self>) {
+            self.report_to_shell();
+        }
+    }
+
     impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         /// May be called from any thread (the subtasks).
         fn record_written(&self, dest: &OSPathSliceZ) {
@@ -2087,15 +2093,14 @@ mod _async_tasks {
                 .poster
                 .take()
                 .expect("fs.cp in flight holds its poster");
-            // Only the shell's task can have a mini loop.
-            if !IS_SHELL || poster.is_js() {
-                poster.post_js(ConcurrentTask::ConcurrentTask::create_boxed(this));
-            } else {
-                let at = AnyTaskWithExtraContext::from_callback_auto_deinit(this, |task, _| {
-                    task.report_to_shell();
+            // Only the shell's task can have a mini loop. Its node is free once a copy has started.
+            if IS_SHELL {
+                poster.post_intrusive(this, |this| {
+                    let shelltask = this.shelltask.as_mut().expect("IS_SHELL ⇒ shelltask");
+                    &mut shelltask.task.concurrent_task
                 });
-                // `from_callback_auto_deinit` heap-allocates; never null.
-                poster.post_mini(core::ptr::NonNull::new(at).expect("heap task"));
+            } else {
+                poster.post_js(ConcurrentTask::ConcurrentTask::create_boxed(this));
             }
         }
 

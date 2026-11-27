@@ -228,7 +228,7 @@ pub fn comptime_string_set_impl(input: TokenStream) -> TokenStream {
 //
 // Custom destructor: `#[ref_count(destroy = Self::deinit)]` on the struct
 // routes the trait's `destroy` to that path instead of the default
-// `drop(Box::from_raw(this))`.
+// `drop(Box::from_raw(this))`. `destroy_box = path` hands `path` that box, as an `AliasableBox<Self>`.
 
 /// Locate the refcount field per the rules above.
 fn find_ref_count_field(fields: &Fields) -> Result<&syn::Ident, syn::Error> {
@@ -263,7 +263,17 @@ fn find_ref_count_field(fields: &Fields) -> Result<&syn::Ident, syn::Error> {
     ))
 }
 
-/// Parse the optional struct-level `#[ref_count(destroy = path)]` attribute.
+/// The `destroy` that `destroy_box = path` stands for.
+fn destroy_box(path: &syn::Expr) -> syn::Expr {
+    syn::parse_quote! {
+        |this| {
+            let destroy: fn(::bun_ptr::AliasableBox<Self>) = #path;
+            destroy(::bun_ptr::AliasableBox::from_non_null(::core::ptr::NonNull::new_unchecked(this)))
+        }
+    }
+}
+
+/// Parse the optional struct-level `#[ref_count(destroy = path)]` or `destroy_box` attribute.
 fn find_destroy_path(attrs: &[syn::Attribute]) -> Result<Option<syn::Expr>, syn::Error> {
     for a in attrs {
         if !a.path().is_ident("ref_count") {
@@ -277,6 +287,9 @@ fn find_destroy_path(attrs: &[syn::Attribute]) -> Result<Option<syn::Expr>, syn:
                 if meta.path.is_ident("destroy") {
                     let value: syn::Expr = meta.value()?.parse()?;
                     out = Some(value);
+                    Ok(())
+                } else if meta.path.is_ident("destroy_box") {
+                    out = Some(destroy_box(&meta.value()?.parse()?));
                     Ok(())
                 } else {
                     Err(meta.error("unknown ref_count attribute key"))
@@ -468,6 +481,7 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
 // Struct-level attribute:
 //   #[ref_count(destroy = <path>)]      — `unsafe fn(*mut Self)`; default is
 //                                         `drop(::bun_core::heap::take(this))`
+//   #[ref_count(destroy_box = <path>)]  — `fn(AliasableBox<Self>)`
 //   #[ref_count(debug_name = "Name")]   — overrides `RefCounted::debug_name()`
 //
 // Field selection follows the shared `find_ref_count_field` rules (a
@@ -480,7 +494,7 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
 // wrappers — emitting inherent fns here would collide.
 
 /// Parse the struct-level `#[ref_count(destroy = …, debug_name = "…")]`
-/// attribute (both keys optional, either order).
+/// attribute (both keys optional, either order), or `destroy_box` for `destroy`.
 fn parse_ref_count_attrs(
     attrs: &[syn::Attribute],
 ) -> Result<(Option<syn::Expr>, Option<LitStr>), syn::Error> {
@@ -494,6 +508,9 @@ fn parse_ref_count_attrs(
             a.parse_nested_meta(|meta| {
                 if meta.path.is_ident("destroy") {
                     destroy = Some(meta.value()?.parse::<syn::Expr>()?);
+                    Ok(())
+                } else if meta.path.is_ident("destroy_box") {
+                    destroy = Some(destroy_box(&meta.value()?.parse()?));
                     Ok(())
                 } else if meta.path.is_ident("debug_name") {
                     debug_name = Some(meta.value()?.parse::<LitStr>()?);

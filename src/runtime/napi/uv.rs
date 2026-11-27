@@ -233,8 +233,7 @@ impl UvLoopShared {
 
     /// Posts the dispatch task. The state is `Pending`, so no other thread posts one.
     fn post_dispatch(&self) {
-        let task = core::ptr::null_mut::<UvLoop>();
-        if let Posted::Refused(_) = self.handle.post(LoopKind::Regular, task) {
+        if let Posted::Refused(()) = self.handle.post::<UvLoop>(LoopKind::Regular, ()) {
             // The VM is gone, so drop the callback like a closed libuv loop does.
             self.dispatch_state
                 .store(DispatchState::Idle as u8, Ordering::SeqCst);
@@ -503,11 +502,12 @@ impl UvLoop {
     }
 }
 
-/// `schedule_dispatch` posts a null pointer: the task is for the loop of the VM that gets it.
 impl Taskable for UvLoop {
     const TAG: TaskTag = task_tag::UvLoopDispatch;
+    /// The task is for the loop of the VM that gets it.
+    type Payload = ();
     /// Drops the pending sends like a closed libuv loop does.
-    unsafe fn release_unrun(_: *mut Self) {
+    fn release_unrun((): ()) {
         runtime_state()
             .uv_loop
             .shared
@@ -515,7 +515,7 @@ impl Taskable for UvLoop {
             .store(DispatchState::Idle as u8, Ordering::SeqCst);
     }
     /// The task covers every addon's handles, so it isn't tied to one context.
-    unsafe fn context(_: *const Self) -> ContextId {
+    fn context((): &()) -> ContextId {
         ContextId::NONE
     }
 }
@@ -1186,17 +1186,18 @@ pub(crate) extern "C" fn uv_update_time(_loop: *mut UvLoop) {}
 // uv_handle_t (functions that accept any handle type)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `uv_close` posts a null pointer: the task is for the handle that [`UvLoop::pop_closing`] returns.
 impl Taskable for UvHandle {
     const TAG: TaskTag = task_tag::UvHandleClose;
+    /// The task is for the handle that [`UvLoop::pop_closing`] returns.
+    type Payload = ();
     /// Still runs `close_cb` because that's where the addon frees the handle. Any JS
     /// it tries to run is refused.
-    unsafe fn release_unrun(_: *mut Self) {
+    fn release_unrun((): ()) {
         // On `Err` the exception is still pending, and the release dispatcher handles it.
         let _ = UvHandle::run_close(VirtualMachine::get().global());
     }
     /// Not tied to one context, like [`UvLoop`]'s task.
-    unsafe fn context(_: *const Self) -> ContextId {
+    fn context((): &()) -> ContextId {
         ContextId::NONE
     }
 }
@@ -1245,8 +1246,7 @@ pub(crate) unsafe extern "C" fn uv_close(handle: HandleRef<'_>, close_cb: Option
     closing.extend(close_cb.map(|close_cb| (AtomicPtr::new(handle.ptr.as_ptr()), close_cb)));
     // The queued task keeps the loop alive until `close_cb` has run, like libuv's
     // closing list. If the VM is gone, the task is refused and `close_cb` never runs.
-    let task = core::ptr::null_mut::<UvHandle>();
-    let _ = shared.handle.post_without_waking(LoopKind::Regular, task);
+    let _ = (shared.handle).post_without_waking::<UvHandle>(LoopKind::Regular, ());
     match any {
         AnyHandle::Async(async_) => {
             async_.body.stop_sends();
@@ -1335,7 +1335,7 @@ enum WorkState {
 }
 
 /// Matches `struct uv_work_s`.
-pub(crate) type UvWork = UvReq<WorkFields>;
+type UvWork = UvReq<WorkFields>;
 
 /// Addons also read the first three fields. `state` replaces libuv's `struct uv__work`.
 #[repr(C)]
@@ -1354,7 +1354,7 @@ const _: () =
 const _: () = assert!(core::mem::size_of::<UvWork>() <= layout::WORK_SIZE);
 
 /// The request that `uv_queue_work` queued, which the addon keeps alive until `after_work_cb` has run.
-struct WorkRef(NonNull<UvWork>);
+pub(crate) struct WorkRef(NonNull<UvWork>);
 
 // SAFETY: libuv's contract lets a pool thread have the request for `work_cb`.
 unsafe impl Send for WorkRef {}
@@ -1363,10 +1363,6 @@ impl WorkRef {
     fn work(&self) -> &WorkFields {
         // SAFETY: `complete` gives up `self` to call `after_work_cb`. Until then only `state` changes.
         unsafe { &(*self.0.as_ptr()).fields.body }
-    }
-
-    fn into_raw(self) -> *mut UvWork {
-        self.0.as_ptr()
     }
 
     fn run(&self) {
@@ -1414,35 +1410,33 @@ impl WorkRef {
         vm.add_keep_alive(LoopKind::Regular, 1);
         FilePool::go(move || {
             self.run();
-            ticket.post(ConcurrentTask::create_from(self.into_raw()));
+            ticket.post(ConcurrentTask::create::<WorkRef>(self));
         });
         0
     }
 }
 
 /// [`WorkRef::schedule_for`] posts the request as a task.
-impl Taskable for UvWork {
+impl Taskable for WorkRef {
     const TAG: TaskTag = task_tag::UvWorkDone;
+    type Payload = Self;
     /// Calls nothing, like [`UvWorkJob`].
-    unsafe fn release_unrun(_: *mut Self) {
+    fn release_unrun(_: Self) {
         VirtualMachine::get().event_loop().unref_keep_alive();
     }
     /// Not tied to one context, like [`UvLoop`]'s task.
-    unsafe fn context(_: *const Self) -> ContextId {
+    fn context(_: &Self) -> ContextId {
         ContextId::NONE
     }
 }
 
-impl UvWork {
-    /// # Safety
-    /// [`WorkRef::schedule_for`] posted the task for `req` to `vm`.
-    pub(crate) unsafe fn run_done(req: *mut UvWork, vm: &VirtualMachine) -> JsResult<()> {
+impl WorkRef {
+    pub(crate) fn run_done(self, vm: &VirtualMachine) -> JsResult<()> {
         vm.event_loop().unref_keep_alive();
         if !vm.script_allowed() {
             return Ok(());
         }
-        // SAFETY: fn contract.
-        WorkRef(unsafe { NonNull::new_unchecked(req) }).complete(vm.global())
+        self.complete(vm.global())
     }
 }
 

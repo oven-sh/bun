@@ -87,12 +87,12 @@ bun_jsc::impl_abort_handle_owner!(NetworkSink, abort_handle, |this, _cause| {
 
 /// Fails the upload of a `writer()` that was collected before `end()`, outside the GC sweep.
 pub(crate) struct WriterCollected;
-impl bun_event_loop::RefTask for WriterCollected {
+impl bun_event_loop::Taskable for WriterCollected {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::S3UploadWriterCollected;
-    type Ref = RefPtr<NetworkSink>;
+    type Payload = RefPtr<NetworkSink>;
     /// The context that stopped fails the upload through `abort_handle`.
-    fn release_unrun(_: Self::Ref) {}
-    fn context(sink: &Self::Ref) -> bun_event_loop::ContextId {
+    fn release_unrun(_: Self::Payload) {}
+    fn context(sink: &Self::Payload) -> bun_event_loop::ContextId {
         sink.context
     }
 }
@@ -415,7 +415,7 @@ impl Drop for NetworkSinkWrapperRef {
     fn drop(&mut self) {
         // Not `Upload::end`: a part answered before the task runs would commit what there is.
         if !self.0.is_ended() {
-            let task = bun_event_loop::Task::from_ref::<WriterCollected>(self.0.clone());
+            let task = bun_event_loop::Task::new::<WriterCollected>(self.0.clone());
             VirtualMachine::get().event_loop().enqueue_task(task);
         }
     }

@@ -2,7 +2,7 @@ use bun_dotenv::Loader as DotEnvLoader;
 use bun_uws::Loop as UwsLoop;
 
 use crate::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
-use crate::ConcurrentTask::{BoxedTask, ConcurrentTask};
+use crate::ConcurrentTask::{BoxedTask, ConcurrentTask, OwnedConcurrentTask, Taskable};
 use crate::MiniEventLoop::MiniEventLoop;
 use crate::{JsEventLoop, JsEventLoopKind};
 
@@ -117,17 +117,29 @@ pub enum EventLoopHandle {
 }
 
 /// Owned storage for either kind of concurrent task.
+#[derive(Default)]
 pub enum EventLoopTask {
+    #[default]
+    Empty,
     Js(ConcurrentTask),
     Mini(AnyTaskWithExtraContext),
 }
 
 impl EventLoopTask {
-    pub fn from_event_loop(loop_: EventLoopHandle) -> EventLoopTask {
-        match loop_ {
-            EventLoopHandle::Js { .. } => EventLoopTask::Js(ConcurrentTask::default()),
-            EventLoopHandle::Mini(_) => EventLoopTask::Mini(AnyTaskWithExtraContext::default()),
-        }
+    pub fn insert_js(&mut self) -> &mut ConcurrentTask {
+        *self = EventLoopTask::Js(ConcurrentTask::default());
+        let EventLoopTask::Js(node) = self else {
+            unreachable!()
+        };
+        node
+    }
+
+    pub fn insert_mini(&mut self) -> &mut AnyTaskWithExtraContext {
+        *self = EventLoopTask::Mini(AnyTaskWithExtraContext::default());
+        let EventLoopTask::Mini(node) = self else {
+            unreachable!()
+        };
+        node
     }
 }
 
@@ -354,23 +366,27 @@ impl EventLoopHandle {
 /// the loop's VM is closed and the caller has the task back to release on this
 /// thread.
 #[must_use = "a refused task must be released by its producer"]
-pub enum Posted<T = Box<ConcurrentTask>> {
+pub enum Posted<T = OwnedConcurrentTask> {
     Queued,
     Refused(T),
 }
 
 pub trait PostToJs: Send + Sync {
-    /// Queue `task` on the VM this poster was created for and wake it, or hand it back if the VM has closed.
-    fn post(&self, task: Box<ConcurrentTask>) -> Posted;
+    /// For `post_task`: queue `task` on this poster's VM and wake it, or hand it back if the VM has closed.
+    fn post(&self, task: OwnedConcurrentTask) -> Posted;
 }
 
 impl dyn PostToJs + '_ {
     /// As [`post`](PostToJs::post). A refused task is dropped on this thread.
-    pub fn post_boxed<T: BoxedTask>(&self, task: Box<T>) {
-        if let Posted::Refused(node) = self.post(ConcurrentTask::create_boxed(task)) {
+    pub fn post_task<T: Taskable>(&self, task: T::Payload) {
+        if let Posted::Refused(node) = self.post(ConcurrentTask::create::<T>(task)) {
             // SAFETY: the task made above.
-            drop(unsafe { node.task.into_boxed::<T>() });
+            drop(unsafe { node.into_task().into_payload::<T>() });
         }
+    }
+
+    pub fn post_boxed<T: BoxedTask>(&self, task: Box<T>) {
+        self.post_task::<T>(task);
     }
 }
 

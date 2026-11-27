@@ -18,7 +18,7 @@ namespace Bun {
 using namespace JSC;
 
 extern "C" void Bun__eventLoop__refKeepAlive(void* bunVM);
-extern "C" bool Bun__queueJSCDeferredWorkTaskConcurrently(const ::BunVmHandleRef*, void* task, BunLoopKind);
+extern "C" void Bun__queueJSCDeferredWorkTaskConcurrently(const ::BunVmHandleRef*, void* task, BunLoopKind);
 
 class JSCDeferredWorkTask {
 public:
@@ -39,9 +39,6 @@ public:
 
     WTF_MAKE_TZONE_ALLOCATED(JSCDeferredWorkTask);
 };
-
-extern "C" void Bun__deleteDeferredWorkTask(JSCDeferredWorkTask*);
-using UnqueuedJob = std::unique_ptr<JSCDeferredWorkTask, decltype([](JSCDeferredWorkTask* job) { Bun__deleteDeferredWorkTask(job); })>;
 
 std::optional<JSCTaskScheduler::PendingWork> JSCTaskScheduler::takePendingWork(WebCore::JSVMClientData* clientData, Ticket* ticket)
 {
@@ -105,9 +102,7 @@ void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, R
     // Outside m_lock (markShuttingDown, on the VM's thread, needs it): a post that
     // still races the shutdown lands on the VM handle, which either queues it for
     // the teardown to release unrun or refuses it.
-    UnqueuedJob job { new JSCDeferredWorkTask(clientData, WTF::move(ticket), WTF::move(task)) };
-    if (Bun__queueJSCDeferredWorkTaskConcurrently(clientData->vmHandle.get(), job.get(), loopKind))
-        job.release();
+    Bun__queueJSCDeferredWorkTaskConcurrently(clientData->vmHandle.get(), new JSCDeferredWorkTask(clientData, WTF::move(ticket), WTF::move(task)), loopKind);
 }
 
 void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, Ticket& ticket)

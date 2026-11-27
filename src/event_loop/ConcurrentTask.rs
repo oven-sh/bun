@@ -8,25 +8,14 @@
 //! If `auto_delete` is true, the task is automatically deallocated when it's finished.
 //! Otherwise, it's expected that the containing struct will deallocate the task.
 
-use std::sync::Arc;
+use core::mem::MaybeUninit;
+use core::ptr::NonNull;
 
-use bun_ptr::{AnyRefCounted, RefPtr};
 use bun_threading::UnboundedQueue;
 use bun_threading::unbounded_queue::{Link, Linked};
 
-// ─── Module-level constructor forwarders ────────────────────────────────────
-// Several callers import this file
-// as a *module* (`use bun_jsc::ConcurrentTask;`) rather than the struct, so
-// `ConcurrentTask::create_from(x)` resolves as a free-function lookup, not an
-// inherent-method call. Provide thin module-level forwarders so both spellings
-// work — the struct's inherent methods remain the canonical impls below.
-#[inline]
-pub fn create_from<T: Taskable>(task: *mut T) -> Box<ConcurrentTask> {
-    ConcurrentTask::create_from(task)
-}
-
 // ─── Task (hot-dispatch tag+ptr, see PORTING.md §Dispatch) ──────────────────
-// Low tier (event_loop) stores `(tag, ptr)`; `bun_runtime::dispatch::run_task`
+// Low tier (event_loop) stores `(tag, payload)`; `bun_runtime::dispatch::run_task`
 // owns the `match` over ~96 variants. Tag constants live in
 // `crate::task_tag::*` below.
 #[repr(transparent)]
@@ -62,7 +51,7 @@ pub mod task_tag {
     tags! {
         AnyTaskJob,               // bun_jsc::Job<C> (typed pool job, one erased tag)
         BakePendingReloadEvent,   // bake::dev_server::PendingReloadEvent
-        BundleV2DeferredBatchTask, // bun.bundle_v2.DeferredBatchTask
+        BundleV2DeferredBatchTask, // bun_bundler::DeferredBatchTask::DeferredBatch
         BundleV2PluginResolve,    // bun.bundle_v2.Resolve (JS-thread hop)
         BundleV2PluginLoad,       // bun.bundle_v2.Load (JS-thread hop)
         BundleV2PluginResolveAnswered, // bun.bundle_v2.Resolve (hop back to the bundle's loop)
@@ -74,6 +63,7 @@ pub mod task_tag {
         ShellYesTask,             // shell.Interpreter.Builtin.Yes.YesTask
         CppTask,
         DuplexUpgradeContext,
+        DuplexUpgradeContextFree,
         FetchTasklet,
         FetchTaskletDeinit,
         FetchTaskletPromiseSettle,
@@ -88,7 +78,7 @@ pub mod task_tag {
         HTMLRewriterBackgroundPull,
         JSBundleCompletionTask,
         JSCDeferredWorkTask,
-        NapiAsyncWork,            // napi_async_work
+        NapiAsyncWork,            // FinishedAsyncWork
         NapiFinalizerTask,
         NativePromiseContextDeferredDerefTask,
         PosixSignalTask,
@@ -107,8 +97,6 @@ pub mod task_tag {
         HTTPSServerDeinit,
         DebugHTTPServerDeinit,
         DebugHTTPSServerDeinit,
-        HTTPAppClose,
-        HTTPSAppClose,
         ShellAsync,
         ShellCondExprStatTask,
         ShellCpTask,
@@ -135,10 +123,10 @@ pub mod task_tag {
     }
 }
 
-/// No `Drop`: a dropped task leaks what `from_boxed` took.
+/// No `Drop`: a dropped task leaks its payload.
 pub struct Task {
     tag: TaskTag,
-    ptr: *mut (),
+    payload: MaybeUninit<*mut ()>,
     // [`Task::context`], in the padding `tag` leaves.
     context: ContextId,
 }
@@ -163,16 +151,9 @@ impl ContextId {
     pub const fn from_raw(raw: u32) -> ContextId {
         ContextId(raw)
     }
-
-    #[inline]
-    pub const fn raw(self) -> u32 {
-        self.0
-    }
 }
 
-/// What it takes to be queued as a [`Task`]: a tag, and how the task is
-/// freed when it will never run. Implement on every type that can be
-/// enqueued by pointer; the impl lives in whatever crate owns the type.
+/// What it takes to be queued as a [`Task`]: a tag, what the task owns, and how that is released unrun.
 ///
 /// A queued task ends one of two ways: it runs (`bun_runtime::dispatch::
 /// run_task`), or its VM stops before running it —
@@ -183,107 +164,48 @@ impl ContextId {
 ///
 /// Re-exported from `bun_jsc` for ergonomics, but defined here (lowest tier on
 /// the hot-dispatch list, see PORTING.md §Dispatch) so that
-/// [`Task::init`] can use it without a dep cycle.
-pub trait Taskable {
+/// [`Task::new`] can use it without a dep cycle.
+pub trait Taskable: 'static {
     /// The tag constant from [`task_tag`] for this type. Both this and the
     /// `bun_runtime::dispatch` match arms MUST agree.
     const TAG: TaskTag;
 
+    /// At most one word.
+    type Payload: 'static;
+
     /// The task is in its VM's queue and will never be dispatched (the VM is
     /// tearing down: script is forbidden and the loop no longer ticks). Free
     /// it and whatever it holds — keep-alives, JS handles, refs, buffers —
-    /// without running it. JS thread, JSC heap still alive. `this` is the
-    /// queued [`Task::ptr`] (for the tags whose `ptr` packs an integer, that
-    /// value). A type that can never be in a queue at that point says so here
+    /// without running it. JS thread, JSC heap still alive. A type that can never be in a queue at that point says so here
     /// with `unreachable!` and the reason.
-    ///
-    /// # Safety
-    /// `this` came off the queue under `Self::TAG` and is not used afterwards.
-    unsafe fn release_unrun(this: *mut Self);
+    fn release_unrun(payload: Self::Payload);
 
     /// Whose script the task continues: the context that was current when the work was started.
-    /// Required, so that no type can be queued without having decided it: [`Task::init`] asks
+    /// Required, so that no type can be queued without having decided it: [`Task::new`] asks
     /// when the task is made and the task carries the answer. The event loop runs the task inside
     /// that context, and [releases it unrun](Self::release_unrun) if the context (a
     /// `Bun.ModuleGraph`'s) has stopped. [`ContextId::NONE`]: no script's. The task runs whenever
     /// the VM runs script, inside nothing: work that serves the whole realm, and a step of a
     /// larger operation that enters its own context before it reaches script (the impl says
     /// which, and where).
-    ///
-    /// # Safety
-    /// `this` is the [`Task::ptr`] about to be queued, live.
-    unsafe fn context(this: *const Self) -> ContextId;
+    fn context(payload: &Self::Payload) -> ContextId;
 }
 
-/// As [`Taskable`], for a type that the queued [`Task`] owns.
+/// The short form of [`Taskable`] for a type that is queued as a `Box`.
 pub trait BoxedTask: 'static {
     const TAG: TaskTag;
-    /// As [`Taskable::release_unrun`]. An empty body drops the box.
     fn release_unrun(self: Box<Self>);
     fn context(&self) -> ContextId;
 }
 
-/// As [`BoxedTask`], for a reference that the queued [`Task`] owns. `Self` names the task.
-pub trait RefTask: 'static {
-    const TAG: TaskTag;
-    type Ref: TaskRef;
-    /// As [`Taskable::release_unrun`]. An empty body drops the reference.
-    fn release_unrun(this: Self::Ref);
-    fn context(this: &Self::Ref) -> ContextId;
-}
-
-/// A counted reference, which waits in [`Task::ptr`].
-pub trait TaskRef {
-    fn into_raw(self) -> *mut ();
-    /// # Safety
-    /// `ptr` came from `into_raw`, and is not used afterwards.
-    unsafe fn from_raw(ptr: *mut ()) -> Self;
-}
-
-impl<T> TaskRef for Arc<T> {
-    fn into_raw(self) -> *mut () {
-        Arc::into_raw(self).cast_mut().cast()
+impl<T: BoxedTask> Taskable for T {
+    const TAG: TaskTag = <T as BoxedTask>::TAG;
+    type Payload = Box<T>;
+    fn release_unrun(task: Box<T>) {
+        task.release_unrun();
     }
-    unsafe fn from_raw(ptr: *mut ()) -> Self {
-        // SAFETY: fn contract.
-        unsafe { Arc::from_raw(ptr.cast()) }
-    }
-}
-
-impl<T: AnyRefCounted> TaskRef for RefPtr<T> {
-    fn into_raw(self) -> *mut () {
-        RefPtr::into_raw(self).cast()
-    }
-    unsafe fn from_raw(ptr: *mut ()) -> Self {
-        // SAFETY: fn contract.
-        unsafe { RefPtr::from_raw(ptr.cast()) }
-    }
-}
-
-/// What holds a task until a queue that can refuse it has taken it.
-pub trait IntoTask {
-    const TAG: TaskTag;
-    fn into_task(self) -> Task;
-}
-
-impl<T: Taskable> IntoTask for *mut T {
-    const TAG: TaskTag = T::TAG;
-    fn into_task(self) -> Task {
-        Task::init(self)
-    }
-}
-
-impl<T: BoxedTask> IntoTask for Box<T> {
-    const TAG: TaskTag = T::TAG;
-    fn into_task(self) -> Task {
-        Task::from_boxed(self)
-    }
-}
-
-impl<T: RefTask<Ref = Self>> IntoTask for Arc<T> {
-    const TAG: TaskTag = T::TAG;
-    fn into_task(self) -> Task {
-        Task::from_ref::<T>(self)
+    fn context(task: &Box<T>) -> ContextId {
+        task.context()
     }
 }
 
@@ -302,18 +224,29 @@ impl TaskTag {
 
 impl Task {
     #[inline]
-    const fn new(tag: TaskTag, ptr: *mut (), context: ContextId) -> Task {
-        Task { tag, ptr, context }
+    pub fn new<T: Taskable>(payload: T::Payload) -> Task {
+        const {
+            assert!(size_of::<T::Payload>() <= size_of::<*mut ()>());
+            assert!(align_of::<T::Payload>() <= align_of::<*mut ()>());
+        }
+        let mut task = Task {
+            tag: T::TAG,
+            payload: MaybeUninit::uninit(),
+            context: T::context(&payload),
+        };
+        // SAFETY: it fits, see above.
+        unsafe {
+            task.payload
+                .as_mut_ptr()
+                .cast::<T::Payload>()
+                .write(payload)
+        };
+        task
     }
 
     #[inline]
     pub const fn tag(&self) -> TaskTag {
         self.tag
-    }
-
-    #[inline]
-    pub const fn ptr(&self) -> *mut () {
-        self.ptr
     }
 
     /// Whose script the task continues: what its type's `context` said when the task
@@ -323,44 +256,18 @@ impl Task {
         self.context
     }
 
-    /// The type→tag table is the [`Taskable`] trait; the per-type impl
-    /// supplies `T::TAG`, and says whose script the task continues.
-    // Takes `*mut T` directly; `&mut T` coerces at call sites.
-    // The precondition is the queue's own: the event loop dereferences `ptr` when it runs the task.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    #[inline]
-    pub fn init<T: Taskable>(ptr: *mut T) -> Task {
-        // SAFETY: `ptr` is what is about to be queued, which is all `Taskable::context` asks for
-        // (a task is made to be queued: its type's fields are set by then).
-        Task::new(T::TAG, ptr.cast::<()>(), unsafe { T::context(ptr) })
-    }
-
     #[inline]
     pub fn from_boxed<T: BoxedTask>(task: Box<T>) -> Task {
-        let context = task.context();
-        Task::new(T::TAG, bun_core::heap::into_raw(task).cast(), context)
+        Task::new::<T>(task)
     }
 
     /// # Safety
-    /// `self` came from `from_boxed::<T>`, and no bitwise copy of it is used.
+    /// `self` came from `new::<T>`, and no bitwise copy of it is used.
     #[inline]
-    pub unsafe fn into_boxed<T: BoxedTask>(self) -> Box<T> {
+    pub unsafe fn into_payload<T: Taskable>(self) -> T::Payload {
         debug_assert!(self.tag == T::TAG);
         // SAFETY: fn contract.
-        unsafe { bun_core::heap::take(self.ptr.cast()) }
-    }
-
-    pub fn from_ref<T: RefTask>(task: T::Ref) -> Task {
-        let context = T::context(&task);
-        Task::new(T::TAG, task.into_raw(), context)
-    }
-
-    /// # Safety
-    /// `self` came from `from_ref::<T>`, and no bitwise copy of it is used.
-    pub unsafe fn into_ref<T: RefTask>(self) -> T::Ref {
-        debug_assert!(self.tag == T::TAG);
-        // SAFETY: fn contract.
-        unsafe { T::Ref::from_raw(self.ptr) }
+        unsafe { self.payload.as_ptr().cast::<T::Payload>().read() }
     }
 }
 
@@ -368,24 +275,30 @@ impl Task {
 
 #[repr(C)]
 pub struct ConcurrentTask {
-    pub task: Task,
+    task: Task,
     /// Intrusive MPSC link for [`Queue`]. Plain `AtomicPtr` so the enqueue hot
     /// path (`atomic_store_next`, called once per completed work-pool task via
-    /// `enqueue_task_concurrent`) is a single release-store — no read-modify-write.
-    pub next: Link<ConcurrentTask>,
+    /// `Queue::push`) is a single release-store — no read-modify-write.
+    next: Link<ConcurrentTask>,
     /// If `true`, the task is heap-owned and freed by the event loop after
     /// dispatch. Immutable after construction; read only on the consumer thread,
     /// so it does not need to share a word with the contended `next` link.
-    pub auto_delete: bool,
+    auto_delete: bool,
 }
 
 impl Default for ConcurrentTask {
     fn default() -> Self {
-        Self {
-            // A placeholder: the caller must set a real task before use.
-            task: Task::new(TaskTag(0), core::ptr::null_mut(), ContextId::NONE),
-            next: Link::new(),
-            auto_delete: false,
+        const {
+            Self {
+                // A placeholder: no queue takes a node before `in_place` has filled it.
+                task: Task {
+                    tag: TaskTag(0),
+                    payload: MaybeUninit::zeroed(),
+                    context: ContextId::NONE,
+                },
+                next: Link::new(),
+                auto_delete: false,
+            }
         }
     }
 }
@@ -416,50 +329,153 @@ unsafe impl Linked for ConcurrentTask {
         unsafe { core::ptr::addr_of!((*item).next) }
     }
 }
-pub type Queue = UnboundedQueue<ConcurrentTask>;
+
+/// A node that is in no [`Queue`]. No `Drop`, as [`Task`].
+pub struct OwnedConcurrentTask(NonNull<ConcurrentTask>);
 
 impl ConcurrentTask {
-    pub fn create(task: Task) -> Box<ConcurrentTask> {
-        Box::new(ConcurrentTask {
-            task,
+    pub fn create<T: Taskable>(payload: T::Payload) -> OwnedConcurrentTask {
+        OwnedConcurrentTask(bun_core::heap::alloc_nn(ConcurrentTask {
+            task: Task::new::<T>(payload),
             next: Link::new(),
             auto_delete: true,
-        })
+        }))
     }
 
-    pub fn create_from<T: Taskable>(task: *mut T) -> Box<ConcurrentTask> {
-        bun_core::mark_binding!();
-        Self::create(Task::init(task))
+    pub fn create_boxed<T: BoxedTask>(task: Box<T>) -> OwnedConcurrentTask {
+        Self::create::<T>(task)
     }
 
-    pub fn create_boxed<T: BoxedTask>(task: Box<T>) -> Box<ConcurrentTask> {
-        Self::create(Task::from_boxed(task))
+    /// For a task that `node` returns a field of.
+    pub fn in_box<T: BoxedTask>(
+        task: Box<T>,
+        node: impl FnOnce(&mut T) -> &mut ConcurrentTask,
+    ) -> OwnedConcurrentTask {
+        let task = Task::from_boxed(task);
+        // SAFETY: the box that `task` owns, which nothing else can reach before `task` has left the node.
+        unsafe { Self::in_place(node(&mut *task.payload.assume_init().cast()), task) }
     }
 
-    /// For a node that is a field of what it carries.
-    pub fn from<T: Taskable>(&mut self, of: *mut T) -> &mut ConcurrentTask {
-        bun_core::mark_binding!();
-        *self = ConcurrentTask {
-            task: Task::init(of),
-            next: Link::new(),
-            auto_delete: false,
-        };
-        self
-    }
-
-    /// Consuming thread: unwrap the payload, freeing the carrier if it was
-    /// heap-allocated (`create*`); an intrusive carrier stays with its container.
-    ///
     /// # Safety
-    /// `this` came off a queue and is not used afterwards.
-    pub unsafe fn into_task(this: core::ptr::NonNull<ConcurrentTask>) -> Task {
+    /// `node` is live, and nothing uses or frees it until `task` runs or is released.
+    pub unsafe fn in_place(node: *mut ConcurrentTask, task: Task) -> OwnedConcurrentTask {
         // SAFETY: fn contract.
         unsafe {
-            let task = core::ptr::read(&raw const (*this.as_ptr()).task);
-            if this.as_ref().auto_delete {
-                drop(bun_core::heap::take(this.as_ptr()));
+            *node = ConcurrentTask {
+                task,
+                next: Link::new(),
+                auto_delete: false,
+            };
+            OwnedConcurrentTask(NonNull::new_unchecked(node))
+        }
+    }
+}
+
+impl OwnedConcurrentTask {
+    pub fn tag(&self) -> TaskTag {
+        // SAFETY: live until `self` is consumed.
+        unsafe { self.0.as_ref() }.task.tag
+    }
+
+    /// Frees the node if `create` made it.
+    pub(crate) fn into_task(self) -> Task {
+        // SAFETY: as `tag`, and nothing reads the node's copy of the task afterwards.
+        unsafe {
+            let task = core::ptr::read(&raw const (*self.0.as_ptr()).task);
+            if self.0.as_ref().auto_delete {
+                bun_core::heap::destroy(self.0.as_ptr());
             }
             task
         }
+    }
+}
+
+#[derive(Default)]
+pub struct Queue(UnboundedQueue<ConcurrentTask>);
+
+impl Queue {
+    pub fn push(&self, OwnedConcurrentTask(node): OwnedConcurrentTask) {
+        self.0.push(node);
+    }
+
+    pub fn pop_batch(&self) -> impl ExactSizeIterator<Item = Task> + use<> {
+        let batch = self.0.pop_batch();
+        let mut nodes = batch.iterator();
+        (0..batch.count).map(move |_| {
+            // SAFETY: the batch holds `count` nodes, and the iterator is past the one it returns.
+            OwnedConcurrentTask(unsafe { NonNull::new_unchecked(nodes.next()) }).into_task()
+        })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    struct Level;
+    impl Taskable for Level {
+        const TAG: TaskTag = TaskTag(1);
+        type Payload = u8;
+        fn release_unrun(_: u8) {}
+        fn context(level: &u8) -> ContextId {
+            ContextId::from_raw((*level).into())
+        }
+    }
+
+    struct Boxed {
+        node: ConcurrentTask,
+        alive: Arc<()>,
+    }
+    impl BoxedTask for Boxed {
+        const TAG: TaskTag = TaskTag(2);
+        fn release_unrun(self: Box<Self>) {}
+        fn context(&self) -> ContextId {
+            ContextId::NONE
+        }
+    }
+
+    #[test]
+    fn payload_smaller_than_a_word() {
+        let task = Task::new::<Level>(7);
+        assert!(task.tag() == Level::TAG);
+        assert_eq!(task.context(), ContextId::from_raw(7));
+        // SAFETY: made above.
+        assert_eq!(unsafe { task.into_payload::<Level>() }, 7);
+    }
+
+    #[test]
+    fn queue_hands_over_what_other_threads_push() {
+        let (queue, alive) = (Queue::default(), Arc::new(()));
+        let boxed = || {
+            Box::new(Boxed {
+                node: ConcurrentTask::default(),
+                alive: Arc::clone(&alive),
+            })
+        };
+        let mut left = 4;
+        std::thread::scope(|scope| {
+            for _ in 0..2 {
+                scope.spawn(|| {
+                    queue.push(ConcurrentTask::create_boxed(boxed()));
+                    queue.push(ConcurrentTask::in_box(boxed(), |task| &mut task.node));
+                });
+            }
+            while left > 0 {
+                for task in queue.pop_batch() {
+                    // SAFETY: nothing else is pushed.
+                    let task = unsafe { task.into_payload::<Boxed>() };
+                    assert!(Arc::ptr_eq(&task.alive, &alive));
+                    left -= 1;
+                }
+                std::thread::yield_now();
+            }
+        });
+        assert!(queue.is_empty());
+        assert_eq!(Arc::strong_count(&alive), 1);
     }
 }

@@ -488,7 +488,8 @@ non-transferring path UAFs at GC.
 a property key (`Identifier::fromString`) atomizes a non-atom impl _in place_
 into the current thread's atom table, and the last `deref()` of an atom removes
 it from the _current_ thread's table (`RELEASE_ASSERT(wasRemoved)`). The lazily
-computed hash/flags word is also unsynchronized. Rules:
+computed hash/flags word is updated atomically only while the impl has more than
+one reference (`StringImpl::setMutableFlags()`). Rules:
 
 - Handing a value to one other thread (work pool, HTTP thread):
   `String::thread_isolated_copy()`, `ThreadIsolated<T>`, or own bytes

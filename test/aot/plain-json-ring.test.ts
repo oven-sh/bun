@@ -8,6 +8,8 @@ import { test } from "./harness/default-timeout";
 const program = `
 const ringAt = depth => { const top = { a: 1 }; let at = top; for (let i = 1; i < depth; i++) at = at.m = { a: i }; at.m = top; return top; };
 const arrayRing = () => { const top = [1]; top.push([2, top]); return top; };
+const item = a => ({ a, m: null });
+const withList = a => ({ a, list: [] });
 const shapes = {
   "depth 1, indent 2": [300, () => JSON.stringify(ringAt(1), null, 2)],
   "depth 1, indent 2, many": [30000, () => JSON.stringify(ringAt(1), null, 2)],
@@ -26,6 +28,8 @@ const shapes = {
   "toJSON inside the ring, indent 2": [300, () => { const top = { a: 1, toJSON() { return { inner: top.held }; } }; top.held = { top }; return JSON.stringify(top, null, 2); }],
   "behind long texts, indent 2": [30, () => { const top = { list: Array.from({ length: 3000 }, (_, i) => "text " + i) }; top.self = { inner: top }; return JSON.stringify(top, null, 2); }],
   "behind long texts, no indent": [30, () => { const top = { list: Array.from({ length: 3000 }, (_, i) => "text " + i) }; top.self = { inner: top }; return JSON.stringify(top); }],
+  "objects of one shape, indent 2": [300, () => { const ring = item(3); ring.m = ring; return JSON.stringify([item(1), item(2), ring], null, 2); }],
+  "an object of one shape and its list, indent 2": [300, () => { const top = withList(3); top.list.push(top); return JSON.stringify([withList(1), withList(2), top], null, 2); }],
 };
 for (const [name, [rounds, stringify]] of Object.entries(shapes)) {
   const before = process.cpuUsage(); let thrown = 0;
@@ -54,7 +58,7 @@ test("plain Bun finds a ring in JSON.stringify early", async () => {
     .split("\n")
     .filter(Boolean)
     .map(line => JSON.parse(line) as { name: string; rounds: number; thrown: number; millisecondsEach: number });
-  expect({ stderr, exitCode, shapes: lines.length }).toEqual({ stderr: "", exitCode: 0, shapes: 17 });
+  expect({ stderr, exitCode, shapes: lines.length }).toEqual({ stderr: "", exitCode: 0, shapes: 19 });
   expect(lines.filter(line => line.thrown !== line.rounds)).toEqual([]);
   // With what finds the ring: 2 ms a call at most. Without it: 1,000.
   expect(lines.filter(line => line.millisecondsEach > 100)).toEqual([]);

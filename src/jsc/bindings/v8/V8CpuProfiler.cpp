@@ -234,8 +234,8 @@ static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, int64_t start
             if (it == nodeByKey.end()) {
                 auto owned = makeUnique<CpuProfileNodeImpl>();
                 owned->id = nextNodeId++;
-                owned->functionName = functionName.utf8();
-                owned->scriptResourceName = url.utf8();
+                owned->functionName = makeUTF8CString(functionName);
+                owned->scriptResourceName = makeUTF8CString(url);
                 owned->scriptId = scriptId;
                 owned->lineNumber = line;
                 owned->columnNumber = column;

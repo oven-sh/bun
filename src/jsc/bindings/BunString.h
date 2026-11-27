@@ -23,7 +23,7 @@ public:
             result.m_borrowed = view;
             return result;
         }
-        auto utf8 = view.tryGetUTF8();
+        auto utf8 = tryMakeUTF8CString(view);
         if (!utf8) [[unlikely]]
             return std::nullopt;
         result.m_converted = WTF::move(utf8.value());

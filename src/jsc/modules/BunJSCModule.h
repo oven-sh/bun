@@ -770,7 +770,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         JSObject* result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
         Bun::putDirectNamed(vm, result, "functions"_s, jsString(vm, topFunctions.toString()));
         Bun::putDirectNamed(vm, result, "bytecodes"_s, jsString(vm, byteCodes.toString()));
-        Bun::putDirectNamed(vm, result, "stackTraces"_s, stackTraces);
+        Bun::putDirectNamed(vm, result, "stackTraces"_s, stackTraces.isEmpty() ? jsNull() : stackTraces);
 
         return result;
     };

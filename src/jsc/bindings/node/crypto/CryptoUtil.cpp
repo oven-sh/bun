@@ -87,7 +87,7 @@ struct Hasher;
 extern "C" Hasher* Bun__CryptoHasherExtern__getByName(const char* name, size_t nameLen);
 HasherPointer getByName(const StringView& name)
 {
-    auto utf8 = name.tryGetUTF8();
+    auto utf8 = tryMakeUTF8CString(name);
     if (!utf8) [[unlikely]]
         return nullptr;
     auto bytes = byteCast<char>(utf8->span());
@@ -800,10 +800,12 @@ std::optional<EVPKeyPointer::PKEncodingType> parseKeyType(JSGlobalObject* global
         return std::nullopt;
     }
 
+    WTF::String keyTypeString;
     WTF::StringView keyTypeView = WTF::nullStringView();
     if (!keyTypeValue.isUndefined()) {
-        keyTypeView = keyTypeValue.toWTFString(globalObject);
+        keyTypeString = keyTypeValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
+        keyTypeView = keyTypeString;
     }
 
     if (typeValue.isString()) {

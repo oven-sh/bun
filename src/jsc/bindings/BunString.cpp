@@ -343,9 +343,7 @@ static constexpr unsigned int kMinCrossThreadShareableLength = 256;
 // BroadcastChannel fans a single SerializedScriptValue out to N contexts, each
 // of which deserializes the same stored string — so the copy needs the same
 // pre-hash + never-atomize treatment as a directly-shared original. Otherwise
-// the receivers race the lazy m_hashAndFlags update (debug: ASSERT(!hasHash())
-// in setHash; e.g. two workers switch()ing on the same BroadcastChannel
-// message). Static strings are immortal, pre-hashed and safe to share as-is.
+// a receiver atomizes it into its own thread's table, or writes the flags word, which StringImpl::setMutableFlags() stores atomically only above one reference. Static strings are immortal, pre-hashed and safe to share as-is.
 Ref<WTF::StringImpl> threadShareableCopy(const WTF::StringImpl& impl)
 {
     Ref<WTF::StringImpl> copy = impl.isolatedCopy();
@@ -362,7 +360,7 @@ Ref<WTF::StringImpl> makeThreadShareable(WTF::StringImpl& impl)
         return threadShareableCopy(impl);
     if (!impl.isStatic()) {
         impl.hash();
-        // Already set means other threads may hold this impl; don't write the flags word.
+        // Already set means other threads may hold this impl, and there is nothing to write.
         if (impl.canBecomeAtom())
             impl.setNeverAtomize();
     }

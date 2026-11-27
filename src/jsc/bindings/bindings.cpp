@@ -1091,7 +1091,7 @@ private:
     // Building the hash table only pays off from about 45 names on.
     static constexpr size_t maxSizeToScan = 32;
     std::span<const Identifier> m_names;
-    UncheckedKeyHashSet<UniquedStringImpl*> m_set;
+    HashSet<UniquedStringImpl*> m_set;
 };
 
 static NEVER_INLINE bool unpairedPropertiesOfSecondEqual(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSObject* o1, const PropertyNameArrayBuilder& names1, JSObject* o2, const PropertyNameArrayBuilder& names2, size_t inSameOrder)

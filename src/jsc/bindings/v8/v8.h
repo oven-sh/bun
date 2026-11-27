@@ -8,7 +8,7 @@
             "You're using a module which calls a V8 function \""_s,                                                 \
             WTF::ASCIILiteral::fromLiteralUnsafe(__PRETTY_FUNCTION__),                                              \
             "\" that Bun does not yet implement. Track progress at https://github.com/oven-sh/bun/issues/4290."_s); \
-        auto utf8 = str.utf8();                                                                                     \
+        auto utf8 = WTF::makeUTF8CString(str);                                                                      \
         auto bytes = byteCast<char>(utf8.span());                                                                   \
         Bun__panic(bytes.data(), bytes.size());                                                                     \
     } while (0)

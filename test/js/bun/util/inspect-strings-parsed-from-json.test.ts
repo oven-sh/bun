@@ -61,12 +61,12 @@ describe("Bun.inspect of a list of strings parsed from JSON", () => {
     for (const first of ["a", "é", "中", "😀"]) expect(Bun.inspect([first, long, "o"])).toBe(oneLine(first));
   });
 
-  test("strings of up to 16 characters, and strings written with escapes alone", () => {
+  test("strings of up to 16 characters, and strings written with escapes", () => {
     const short = "y".repeat(16);
     expect(Bun.inspect(JSON.parse(JSON.stringify(["中", short, short, short, "o"])))).toBe(
       `[ "中", "${short}", "${short}", "${short}", "o" ]`,
     );
-    expect(Bun.inspect(JSON.parse(`["中","${"\\u0078".repeat(40)}","o"]`))).toBe(oneLine("中"));
+    expect(Bun.inspect(JSON.parse(`["中","${"\\u0078".repeat(40)}","o"]`))).toBe(twoLines("中"));
     expect(Bun.inspect(JSON.parse(`["中","${long.slice(2)}\\u0078x","o"]`))).toBe(twoLines("中"));
   });
 

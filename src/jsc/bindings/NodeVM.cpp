@@ -1141,7 +1141,7 @@ void NodeVMGlobalObject::drainOwnMicrotasks()
 
     VM& vm = this->vm();
     // Same drain mode as VM::drainMicrotasks so process.nextTick interop
-    // (onEachMicrotaskTick) keeps working inside the checkpoint.
+    // (the microtask tick callback) keeps working inside the checkpoint.
     microtaskQueue().performMicrotaskCheckpoint</* useCallOnEachMicrotask */ true>(vm, [](JSGlobalObject*, JSGlobalObject*) {});
 }
 

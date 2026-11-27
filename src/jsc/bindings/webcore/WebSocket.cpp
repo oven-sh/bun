@@ -492,7 +492,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
 
     // Check NO_PROXY even for explicitly-provided proxies
     if (hasProxy) {
-        auto hostUtf8 = m_url.host().toString().utf8();
+        auto hostUtf8 = makeUTF8CString(m_url.host().toString());
         auto host = byteCast<char>(hostUtf8.span());
         // The effective port, so a `host:443` entry matches a default-port URL.
         if (Bun__isNoProxy(host.data(), host.size(), port)) {
@@ -590,20 +590,21 @@ ExceptionOr<void> WebSocket::sendFrame(Opcode opcode, const Payload& payload, ui
         // A socket that is closing or closed ignores the call, whatever the payload is.
         if (m_state != OPEN)
             return {};
+        size_t payloadSize = text ? utf8Length(*text) : bytes.size();
+        if (payloadSize > maxControlFramePayloadSize)
+            return controlFramePayloadTooLargeException(payloadSize);
         UTF8CString utf8;
         if (text) {
-            utf8 = text->utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+            utf8 = makeUTF8CString(*text);
             bytes = byteCast<uint8_t>(utf8.span());
         }
-        if (bytes.size() > maxControlFramePayloadSize)
-            return controlFramePayloadTooLargeException(bytes.size());
         sendWebSocketData(bytes, opcode, flags);
         return {};
     }
 
     // No exception is raised if the connection was once established but has subsequently been closed.
     if (m_state != OPEN) {
-        m_bufferedAmount = saturateAdd(m_bufferedAmount, text ? text->utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD).length() : bytes.size());
+        m_bufferedAmount = saturateAdd(m_bufferedAmount, text ? utf8Length(*text) : bytes.size());
         return {};
     }
 
@@ -637,9 +638,10 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
     UTF8CString utf8Reason;
     if (!reason.isEmpty()) {
         // The limit is on the UTF-8 encoding of the reason, not its UTF-16 length.
-        utf8Reason = reason.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
-        if (utf8Reason.length() > maxReasonSizeInBytes)
-            return Exception { SyntaxError, makeString("The close reason must not be greater than "_s, maxReasonSizeInBytes, " UTF-8 bytes. Received "_s, utf8Reason.length(), " bytes."_s) };
+        size_t reasonSize = utf8Length(reason);
+        if (reasonSize > maxReasonSizeInBytes)
+            return Exception { SyntaxError, makeString("The close reason must not be greater than "_s, maxReasonSizeInBytes, " UTF-8 bytes. Received "_s, reasonSize, " bytes."_s) };
+        utf8Reason = makeUTF8CString(reason);
     }
 
     if (m_state == CLOSING || m_state == CLOSED)

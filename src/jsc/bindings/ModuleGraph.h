@@ -83,7 +83,7 @@ private:
     JSC::WriteBarrier<JSC::JSObject> m_onError;
     JSC::WriteBarrier<JSModuleGraph> m_maker;
     JSC::WriteBarrier<JSC::JSString> m_mainPath;
-    WTF::UncheckedKeyHashSet<JSC::CodeBlock*> m_commonJSWrappers; // cellLock()
+    WTF::HashSet<JSC::CodeBlock*> m_commonJSWrappers; // cellLock()
     WTF::Vector<std::pair<JSC::ModuleProgramExecutable*, RefPtr<WTF::UniquedStringImpl>>> m_moduleExecutables; // cellLock()
     unsigned m_overlayShape { 0 };
 };

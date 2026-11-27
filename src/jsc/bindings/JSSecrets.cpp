@@ -261,7 +261,7 @@ struct SecretsJobOptions {
             RELEASE_AND_RETURN(scope, nullptr);
         }
 
-        RELEASE_AND_RETURN(scope, makeUnique<SecretsJobOptions>(operation, service.utf8(), name.utf8(), password.utf8(), allowUnrestrictedAccess, persist));
+        RELEASE_AND_RETURN(scope, makeUnique<SecretsJobOptions>(operation, makeUTF8CString(service), makeUTF8CString(name), makeUTF8CString(password), allowUnrestrictedAccess, persist));
     }
 };
 

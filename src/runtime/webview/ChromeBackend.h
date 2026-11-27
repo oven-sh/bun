@@ -202,7 +202,7 @@ public:
             }
         }
         // Non-ASCII path: transcode. The NUL terminator is the frame delimiter.
-        auto utf8 = m_sb.toString().utf8();
+        auto utf8 = WTF::makeUTF8CString(m_sb.toString());
         auto bytes = byteCast<char>(utf8.spanIncludingNullTerminator());
         sink(bytes.data(), bytes.size());
     }

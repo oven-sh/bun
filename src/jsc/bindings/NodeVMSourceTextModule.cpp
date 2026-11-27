@@ -221,11 +221,11 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         auto type = ScriptFetchParameters::Type::JavaScript;
         if (attributesList) {
             for (auto [key, value] : attributesList->attributes()) {
-                if (*key == vm.propertyNames->type)
-                    type = ScriptFetchParameters::parseType(value->impl()).value_or(type);
+                if (key == vm.propertyNames->type.impl())
+                    type = ScriptFetchParameters::parseType(value).value_or(type);
             }
         }
-        attributesLists.add(ModuleMapKey { importDeclaration->moduleName()->moduleName().impl(), type }, attributesList);
+        attributesLists.add(ModuleMapKey { importDeclaration->moduleName()->moduleName(), type }, attributesList);
     }
 
     for (unsigned i = 0; i < requests.size(); ++i) {
@@ -278,8 +278,8 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
 
         if (ImportAttributesListNode* attributesList = attributesLists.get(ModuleMapKey { request.m_specifier.impl(), request.m_attributes ? request.m_attributes->type() : ScriptFetchParameters::Type::JavaScript })) {
             for (auto [key, value] : attributesList->attributes()) {
-                attributeMap.set(key->string(), value->string());
-                attributesObject->putDirectMayBeIndex(globalObject, *key, JSC::jsString(vm, value->string()));
+                attributeMap.set(String(key), String(value));
+                attributesObject->putDirectMayBeIndex(globalObject, Identifier::fromUid(vm, key), JSC::jsString(vm, String(value)));
                 RETURN_IF_EXCEPTION(scope, {});
             }
         }

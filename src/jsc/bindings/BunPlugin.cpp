@@ -1290,7 +1290,7 @@ static void returnTurn(Zig::GlobalObject*, JSModuleMock*);
 template<typename Functor>
 static bool anyUnevaluatedImport(JSC::AbstractModuleRecord* start, const Functor& functor)
 {
-    UncheckedKeyHashSet<JSC::AbstractModuleRecord*> seen;
+    HashSet<JSC::AbstractModuleRecord*> seen;
     Vector<JSC::AbstractModuleRecord*> work { start };
     while (!work.isEmpty()) {
         for (auto& loaded : work.takeLast()->loadedModules().values()) {
@@ -2267,7 +2267,7 @@ void JSModuleMock::detach(Zig::GlobalObject* globalObject)
     returnTurn(globalObject, this);
 }
 
-static bool readsModuleExports(JSC::JSGlobalObject* globalObject, JSObject* object, const String& key, UncheckedKeyHashSet<JSObject*>& seen)
+static bool readsModuleExports(JSC::JSGlobalObject* globalObject, JSObject* object, const String& key, HashSet<JSObject*>& seen)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2382,7 +2382,7 @@ void JSModuleMock::settle(Zig::GlobalObject* globalObject, JSValue value)
 #endif
     String key = specifier->value(globalObject);
     RETURN_IF_EXCEPTION(scope, );
-    UncheckedKeyHashSet<JSObject*> seen;
+    HashSet<JSObject*> seen;
     bool readsItself = readsModuleExports(globalObject, esmExports, key, seen);
     RETURN_IF_EXCEPTION(scope, );
     if (readsItself) {
@@ -2638,7 +2638,7 @@ __attribute__((noinline, minsize)) static void rankWaitingModuleMocks(Zig::Globa
     plugins.hasNewLoad = false;
 
     Vector<JSC::Identifier> keys;
-    UncheckedKeyHashMap<UniquedStringImpl*, size_t> indexOf;
+    HashMap<UniquedStringImpl*, size_t> indexOf;
     for (size_t i = 0; i < plugins.waitingModuleMocks.size(); ++i) {
         plugins.waitingModuleMocks[i].rank = 0;
         plugins.waitingModuleMocks[i].load = String();
@@ -2751,7 +2751,7 @@ __attribute__((noinline, minsize)) static void rankWaitingModuleMocks(Zig::Globa
     auto join = [&](Vector<size_t>& group, size_t load, size_t other) {
         group[first(group, other)] = first(group, load);
     };
-    UncheckedKeyHashMap<UniquedStringImpl*, size_t> seen;
+    HashMap<UniquedStringImpl*, size_t> seen;
     Vector<std::pair<JSC::CyclicModuleRecord*, size_t>> stack;
     Vector<std::pair<size_t, size_t>> found;
     Vector<bool> isBeingFetched;
@@ -2760,7 +2760,7 @@ __attribute__((noinline, minsize)) static void rankWaitingModuleMocks(Zig::Globa
         if (load == loads.size() && !hasOtherLoads && found.size() + directlyRequested < mockKeyCount) {
             // The imports of a test file or a preload, which import() didn't ask for: they start at a module that nothing unfinished imports.
             hasOtherLoads = true;
-            UncheckedKeyHashSet<UniquedStringImpl*> imported;
+            HashSet<UniquedStringImpl*> imported;
             for (auto& [key, entry] : loader->moduleMap()) {
                 auto* record = unfinishedRecord(entry.get());
                 if (!record)
@@ -3316,7 +3316,7 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
     }
 }
 
-using ModuleImporters = UncheckedKeyHashMap<String, Vector<String>>;
+using ModuleImporters = HashMap<String, Vector<String>>;
 
 static void addImporter(ModuleImporters& importersOf, const String& importer, const String& imported)
 {
@@ -3324,7 +3324,7 @@ static void addImporter(ModuleImporters& importersOf, const String& importer, co
 }
 
 // After moveLoadedModule() a module's filename is not its key in the require cache.
-using RequireKeys = UncheckedKeyHashMap<Bun::JSCommonJSModule*, String>;
+using RequireKeys = HashMap<Bun::JSCommonJSModule*, String>;
 
 // `importer` is null if the requirer's object has been collected. Then it isn't in the require cache, and `importerFilename` is its key.
 static void addRequirer(Zig::GlobalObject* globalObject, ModuleImporters& importersOf, const RequireKeys& requireKeys, Bun::JSCommonJSModule* importer, JSValue importerFilename, JSValue importedValue)
@@ -3427,7 +3427,7 @@ static bool isGivenToPendingLoad(Zig::GlobalObject* globalObject, const String& 
         if (other->record() && pendingLoadOf(globalObject, other.get()))
             work.append(other->record());
     }
-    UncheckedKeyHashSet<JSC::AbstractModuleRecord*> seen;
+    HashSet<JSC::AbstractModuleRecord*> seen;
     while (!work.isEmpty()) {
         auto* record = work.takeLast();
         if (!seen.add(record).isNewEntry)
@@ -3619,7 +3619,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     auto& waitedFor = plugins.modulesToEvictOnceLoaded;
     for (auto& key : waitedFor)
         keys.append(key);
-    UncheckedKeyHashSet<String> staysInRegistry, staysInRequireCache;
+    HashSet<String> staysInRegistry, staysInRequireCache;
     for (auto& key : evict.patchedESModules) {
         staysInRegistry.add(key);
         keys.append(key);
@@ -3630,12 +3630,12 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     }
 
     ModuleImporters importersOf;
-    UncheckedKeyHashMap<String, JSC::JSPromise*> loading;
+    HashMap<String, JSC::JSPromise*> loading;
     MarkedArgumentBuffer pendingLoads;
     Vector<std::pair<JSC::AbstractModuleRecord*, JSC::JSPromise*>> asking;
-    UncheckedKeyHashSet<JSC::AbstractModuleRecord*> asks;
+    HashSet<JSC::AbstractModuleRecord*> asks;
     // After moveLoadedModule() a record's own key is not the one it is registered under.
-    UncheckedKeyHashMap<JSC::AbstractModuleRecord*, String> registeredKeys;
+    HashMap<JSC::AbstractModuleRecord*, String> registeredKeys;
     for (auto& [mapKey, entry] : loader->moduleMap()) {
         if (auto* record = entry->record())
             registeredKeys.add(record, String(mapKey.first));
@@ -3753,7 +3753,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     }
 
     // A patched-in-place module that imports an evicted one goes after all, and is walked again for the rest of its importers.
-    UncheckedKeyHashSet<String> evicted;
+    HashSet<String> evicted;
     keys.removeAllMatching([&](const String& key) { return !evicted.add(key).isNewEntry; });
     for (size_t i = 0; i < keys.size(); ++i) {
         String key = keys[i];
@@ -3835,7 +3835,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             requirersOfOriginals.append(*file);
     }
 #endif
-    UncheckedKeyHashSet<JSC::JSPromise*> awaited;
+    HashSet<JSC::JSPromise*> awaited;
     WTF::ListHashSet<String> stay;
     for (auto& key : keys) {
         if (JSC::JSPromise* pendingLoad = loading.get(key)) {
@@ -6983,7 +6983,7 @@ bool reinstallBodyMocks(Zig::GlobalObject* globalObject, const WTF::ScopedLambda
 
 #if ENABLE(AOT)
 // Undoes the mocks of the test file that ended. Those installed by the body of a compiled module are replayed for the next test file that imports it.
-static void scheduleBodyMockReplay(Zig::GlobalObject* globalObject, const WTF::UncheckedKeyHashSet<String>& mockingModules, const String& testFile)
+static void scheduleBodyMockReplay(Zig::GlobalObject* globalObject, const WTF::HashSet<String>& mockingModules, const String& testFile)
 {
     auto& recorded = globalObject->onLoadPlugins.bodyMocks;
     std::optional<JSC::AOT::ModuleID> testFileModule = Bun::compiledModuleForPath(testFile);
@@ -8140,7 +8140,7 @@ __attribute__((minsize)) static JSValue evaluateModuleMock(Zig::GlobalObject* gl
 
     JSModuleMock* mock = registeredModuleMock(globalObject, specifier);
     if (!mock) {
-        UncheckedKeyHashSet<JSObject*> seen;
+        HashSet<JSObject*> seen;
         bool readsItself = record->liveExportsSource() || readsModuleExports(globalObject, dependency, specifier, seen);
         RETURN_IF_EXCEPTION(scope, {});
         if (!readsItself)
@@ -8209,7 +8209,7 @@ __attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globa
 
     ModuleImporters importersOf;
     Vector<String> waiting;
-    UncheckedKeyHashSet<String> seen;
+    HashSet<String> seen;
     auto add = [&](const String& key) {
         if (!seen.add(key).isNewEntry)
             return;
@@ -9202,7 +9202,7 @@ __attribute__((minsize)) static bool haveUnfinishedImporterInCommon(Zig::GlobalO
         }
     }
     auto importersAbove = [&](const String& key) {
-        UncheckedKeyHashSet<String> above;
+        HashSet<String> above;
         Vector<String> queue { key };
         for (size_t i = 0; i < queue.size(); ++i) {
             auto importers = importersOf.find(queue[i]);

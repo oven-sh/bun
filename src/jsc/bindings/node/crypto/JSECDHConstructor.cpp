@@ -46,7 +46,7 @@ JSC_DEFINE_HOST_FUNCTION(callECDH, (JSC::JSGlobalObject * lexicalGlobalObject, J
 // utf8() asserts on failure. A name too long to convert isn't a curve.
 static int curveNidFromShortName(const WTF::String& name)
 {
-    auto nameUtf8 = name.tryGetUTF8();
+    auto nameUtf8 = tryMakeUTF8CString(name);
     if (!nameUtf8) [[unlikely]]
         return NID_undef;
     return OBJ_sn2nid(nameUtf8->legacyCStringPointer());

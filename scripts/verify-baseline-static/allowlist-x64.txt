@@ -12,8 +12,10 @@
 
 # ----------------------------------------------------------------------------
 # simdutf AVX2 (Haswell). Gate: set_best() dispatcher — CPUID at first call, cached in atomic ptr.
-# (93 symbols)
+# (98 symbols)
 # ----------------------------------------------------------------------------
+_ZN7simdutf7haswell12_GLOBAL__N_116encode_base64_12ILb0EEEvPhPKh                                                                                                 [AVX, AVX2]
+_ZN7simdutf7haswell12_GLOBAL__N_116encode_base64_12ILb1EEEvPhPKh                                                                                                 [AVX, AVX2]
 _ZN7simdutf7haswell12_GLOBAL__N_128convert_masked_utf8_to_utf16ILNS_10endiannessE0EEEmPKcmRPDs                                                                   [AVX, AVX2]
 _ZN7simdutf7haswell12_GLOBAL__N_128convert_masked_utf8_to_utf16ILNS_10endiannessE1EEEmPKcmRPDs                                                                   [AVX, AVX2]
 _ZN7simdutf7haswell12_GLOBAL__N_128convert_masked_utf8_to_utf32EPKcmRPDi                                                                                         [AVX, AVX2]
@@ -78,6 +80,7 @@ _ZNK7simdutf7haswell14implementation25utf32_length_from_utf16beEPKDsm           
 _ZNK7simdutf7haswell14implementation25utf32_length_from_utf16leEPKDsm                                                                                            [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation25validate_utf16be_as_asciiEPKDsm                                                                                            [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation25validate_utf16le_as_asciiEPKDsm                                                                                            [AVX, AVX2]
+_ZNK7simdutf7haswell14implementation25validate_utf8_with_countsEPKcm                                                                                             [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation25validate_utf8_with_errorsEPKcm                                                                                             [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation26validate_ascii_with_errorsEPKcm                                                                                            [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation26validate_utf32_with_errorsEPKDim                                                                                           [AVX, AVX2]
@@ -105,13 +108,15 @@ _ZNK7simdutf7haswell14implementation36convert_utf32_to_utf16be_with_errorsEPKDim
 _ZNK7simdutf7haswell14implementation36convert_utf32_to_utf16le_with_errorsEPKDimPDs                                                                              [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation37convert_utf16be_to_latin1_with_errorsEPKDsmPc                                                                              [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation37convert_utf16le_to_latin1_with_errorsEPKDsmPc                                                                              [AVX, AVX2]
+_ZNK7simdutf7haswell14implementation40convert_utf16be_to_utf8_with_replacementEPKDsmPc                                                                           [AVX, AVX2]
+_ZNK7simdutf7haswell14implementation40convert_utf16le_to_utf8_with_replacementEPKDsmPc                                                                           [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation4findEPKDsS3_Ds                                                                                                              [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation4findEPKcS3_c                                                                                                                [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------
 # simdutf AVX-512 (Icelake). Same dispatcher.
-# (95 symbols)
+# (100 symbols)
 # ----------------------------------------------------------------------------
 _ZN7simdutf7icelake12_GLOBAL__N_121utf16_to_utf8_avx512iILNS_10endiannessE0EEEmPKDsmPhPm                                                                  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]
 _ZN7simdutf7icelake12_GLOBAL__N_121utf16_to_utf8_avx512iILNS_10endiannessE1EEEmPKDsmPhPm                                                                  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]
@@ -130,6 +135,8 @@ _ZN7simdutf7icelake12_GLOBAL__N_122compress_decode_base64ILb1ELb1ELb0EDsEENS_11f
 _ZN7simdutf7icelake12_GLOBAL__N_122compress_decode_base64ILb1ELb1ELb0EcEENS_11full_resultEPcPKT2_mNS_14base64_optionsENS_27last_chunk_handling_optionsE   [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]
 _ZN7simdutf7icelake12_GLOBAL__N_122convert_utf16_to_utf32ILNS_10endiannessE0EEESt5tupleIJPKDsPDibEES6_mS7_                                                [AVX, AVX512BW, AVX512F, BMI2]
 _ZN7simdutf7icelake12_GLOBAL__N_122convert_utf16_to_utf32ILNS_10endiannessE1EEESt5tupleIJPKDsPDibEES6_mS7_                                                [AVX, AVX512BW, AVX512F, BMI2]
+_ZN7simdutf7icelake12_GLOBAL__N_129convert_utf16_to_utf32_maskedILNS_10endiannessE0EEEmPKDsS5_PDij                                                        [AVX, AVX512BW, AVX512F, BMI1, BMI2]
+_ZN7simdutf7icelake12_GLOBAL__N_129convert_utf16_to_utf32_maskedILNS_10endiannessE1EEEmPKDsS5_PDij                                                        [AVX, AVX512BW, AVX512F, BMI1, BMI2]
 _ZNK7simdutf7icelake14implementation10count_utf8EPKcm                                                                                                     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VPOPCNTDQ]
 _ZNK7simdutf7icelake14implementation13count_utf16beEPKDsm                                                                                                 [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZNK7simdutf7icelake14implementation13count_utf16leEPKDsm                                                                                                 [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
@@ -177,8 +184,9 @@ _ZNK7simdutf7icelake14implementation25utf32_length_from_utf16beEPKDsm           
 _ZNK7simdutf7icelake14implementation25utf32_length_from_utf16leEPKDsm                                                                                     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZNK7simdutf7icelake14implementation25validate_utf16be_as_asciiEPKDsm                                                                                     [AVX, AVX512BW, AVX512F, BMI2]
 _ZNK7simdutf7icelake14implementation25validate_utf16le_as_asciiEPKDsm                                                                                     [AVX, AVX512BW, AVX512F, BMI2]
+_ZNK7simdutf7icelake14implementation25validate_utf8_with_countsEPKcm                                                                                      [AVX, AVX512BW, AVX512F, BMI2]
 _ZNK7simdutf7icelake14implementation25validate_utf8_with_errorsEPKcm                                                                                      [AVX, AVX512BW, AVX512F, BMI2]
-_ZNK7simdutf7icelake14implementation26validate_ascii_with_errorsEPKcm                                                                                     [AVX, AVX512BW, BMI2]
+_ZNK7simdutf7icelake14implementation26validate_ascii_with_errorsEPKcm                                                                                     [AVX, AVX512BW, AVX512F, BMI2]
 _ZNK7simdutf7icelake14implementation26validate_utf32_with_errorsEPKDim                                                                                    [AVX, AVX512BW, AVX512F, BMI2]
 _ZNK7simdutf7icelake14implementation27binary_to_base64_with_linesEPKcmPcmNS_14base64_optionsE                                                             [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]
 _ZNK7simdutf7icelake14implementation27convert_valid_utf8_to_utf32EPKcmPDi                                                                                 [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI2]
@@ -206,6 +214,8 @@ _ZNK7simdutf7icelake14implementation36convert_utf32_to_utf16be_with_errorsEPKDim
 _ZNK7simdutf7icelake14implementation36convert_utf32_to_utf16le_with_errorsEPKDimPDs                                                                       [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI2, BMI1, BMI2]
 _ZNK7simdutf7icelake14implementation37convert_utf16be_to_latin1_with_errorsEPKDsmPc                                                                       [AVX, AVX512BW, AVX512F, BMI2]
 _ZNK7simdutf7icelake14implementation37convert_utf16le_to_latin1_with_errorsEPKDsmPc                                                                       [AVX, AVX512BW, AVX512F, BMI2]
+_ZNK7simdutf7icelake14implementation40convert_utf16be_to_utf8_with_replacementEPKDsmPc                                                                    [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]
+_ZNK7simdutf7icelake14implementation40convert_utf16le_to_utf8_with_replacementEPKDsmPc                                                                    [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]
 _ZNK7simdutf7icelake14implementation4findEPKDsS3_Ds                                                                                                       [AVX, AVX512BW, BMI2]
 _ZNK7simdutf7icelake14implementation4findEPKcS3_c                                                                                                         [AVX, AVX512BW, BMI2]
 

@@ -280,7 +280,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_aotNameClass, (JSC::JSGlobalObject * globalO
     auto text = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 #if ENABLE(AOT)
-    auto utf8 = text.utf8();
+    auto utf8 = makeUTF8CString(text);
     auto nameClass = JSC::AOT::Typed::classifyName(byteCast<uint8_t>(utf8.span()));
     return JSValue::encode(jsNontrivialString(vm, String(JSC::AOT::Typed::nameOf(nameClass))));
 #else

@@ -33,7 +33,7 @@ class BunInspectorConnection;
 
 static WebCore::ScriptExecutionContext* debuggerScriptExecutionContext = nullptr;
 static WTF::Lock inspectorConnectionsLock = WTF::Lock();
-static WTF::UncheckedKeyHashMap<ScriptExecutionContextIdentifier, Vector<RefPtr<BunInspectorConnection>, 8>>* inspectorConnections = nullptr;
+static WTF::HashMap<ScriptExecutionContextIdentifier, Vector<RefPtr<BunInspectorConnection>, 8>>* inspectorConnections = nullptr;
 
 // When the inspected JS thread is paused at a breakpoint (inside runWhilePaused),
 // it waits on this condition for the debugger thread to deliver new messages or
@@ -579,7 +579,7 @@ extern "C" unsigned int Bun__createJSDebugger(Zig::GlobalObject* globalObject)
     {
         Locker<Lock> locker(inspectorConnectionsLock);
         if (inspectorConnections == nullptr) {
-            inspectorConnections = new WTF::UncheckedKeyHashMap<ScriptExecutionContextIdentifier, Vector<RefPtr<BunInspectorConnection>, 8>>();
+            inspectorConnections = new WTF::HashMap<ScriptExecutionContextIdentifier, Vector<RefPtr<BunInspectorConnection>, 8>>();
         }
 
         inspectorConnections->add(globalObject->scriptExecutionContext()->identifier(), Vector<RefPtr<BunInspectorConnection>, 8>());

@@ -209,7 +209,7 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
         if (element.isString()) {
             auto string = element.toWTFString(g);
             RETURN_IF_EXCEPTION(innerScope, );
-            inputs.append(string.utf8());
+            inputs.append(makeUTF8CString(string));
             return;
         }
         if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(element)) {
@@ -330,7 +330,7 @@ JSC_DEFINE_HOST_FUNCTION(selectServerName, (JSC::JSGlobalObject * globalObject, 
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
-        tree.add(view->utf8().legacyCStringPointer(), values.size());
+        tree.add(makeUTF8CString(view.data).legacyCStringPointer(), values.size());
     }
     auto* selected = tree.find(byteCast<char>(servername.spanIncludingNullTerminator()).data());
     return JSValue::encode(selected ? values.at(*selected - 1) : jsUndefined());

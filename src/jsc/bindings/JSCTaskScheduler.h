@@ -58,8 +58,8 @@ public:
 private:
     Lock m_lock;
     bool m_isShuttingDown WTF_GUARDED_BY_LOCK(m_lock) { false };
-    UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, PendingWork> m_pendingTicketsKeepingEventLoopAlive;
-    UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, PendingWork> m_pendingTicketsOther;
+    HashMap<Ref<JSC::DeferredWorkTimer::Ticket>, PendingWork> m_pendingTicketsKeepingEventLoopAlive;
+    HashMap<Ref<JSC::DeferredWorkTimer::Ticket>, PendingWork> m_pendingTicketsOther;
 };
 
 }

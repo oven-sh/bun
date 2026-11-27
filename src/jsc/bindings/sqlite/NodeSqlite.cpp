@@ -2431,10 +2431,12 @@ static EncodedJSValue statementStepRun(VM& vm, JSGlobalObject* globalObject, Thr
     sqlite3_int64 changes = sqlite3_changes64(db);
     sqlite3_int64 rowid = sqlite3_last_insert_rowid(db);
     if (self->useBigInts()) {
-        Bun::putDirectNamed(vm, result, "changes"_s, JSBigInt::createFrom(globalObject, static_cast<int64_t>(changes)));
+        JSValue changesValue = JSBigInt::createFrom(globalObject, static_cast<int64_t>(changes));
         RETURN_IF_EXCEPTION(scope, {});
-        Bun::putDirectNamed(vm, result, "lastInsertRowid"_s, JSBigInt::createFrom(globalObject, static_cast<int64_t>(rowid)));
+        Bun::putDirectNamed(vm, result, "changes"_s, changesValue);
+        JSValue rowidValue = JSBigInt::createFrom(globalObject, static_cast<int64_t>(rowid));
         RETURN_IF_EXCEPTION(scope, {});
+        Bun::putDirectNamed(vm, result, "lastInsertRowid"_s, rowidValue);
     } else {
         Bun::putDirectNamed(vm, result, "changes"_s, jsNumber(static_cast<double>(changes)));
         Bun::putDirectNamed(vm, result, "lastInsertRowid"_s, jsNumber(static_cast<double>(rowid)));

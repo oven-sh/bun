@@ -118,7 +118,7 @@ void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, 
 void JSCTaskScheduler::cancelWorkOfDeadRealms(WebCore::JSVMClientData* clientData, JSC::VM& vm)
 {
     auto& scheduler = clientData->deferredWorkTimer;
-    UncheckedKeyHashSet<JSGlobalObject*> deadRealms;
+    HashSet<JSGlobalObject*> deadRealms;
     {
         Locker<Lock> holder { scheduler.m_lock };
         auto collect = [&](auto& pendingTickets) {

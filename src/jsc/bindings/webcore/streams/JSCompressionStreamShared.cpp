@@ -145,7 +145,7 @@ static std::optional<std::span<const uint8_t>> bufferSourceBytes(JSGlobalObject*
     if (chunk.isString()) {
         WTF::String s = asString(chunk)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        scratch = s.utf8();
+        scratch = makeUTF8CString(s);
         return std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(scratch.data()), scratch.length());
     }
     Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "chunk"_s, "BufferSource"_s, chunk);

@@ -27,7 +27,7 @@ using namespace JSC;
 
 class BunPlugin {
 public:
-    using VirtualModuleMap = WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSObject>>;
+    using VirtualModuleMap = WTF::HashMap<String, JSC::Strong<JSC::JSObject>>;
 
     // This is a list of pairs of regexps and functions to match against
     class Group {
@@ -100,20 +100,20 @@ public:
             JSC::Strong<JSC::JSObject> mock;
             // The factory's source file, and every module imported from it (transitively) since the factory was called.
             String file;
-            WTF::UncheckedKeyHashSet<String> importChain;
+            WTF::HashSet<String> importChain;
             // importChain keys that have a query, with it stripped, because import() names its importer without the query.
-            WTF::UncheckedKeyHashSet<String> importChainWithoutQuery;
+            WTF::HashSet<String> importChainWithoutQuery;
             // Chain modules with an import redirected to the original or a copy. Evicted once the factory stops running.
             Vector<String> givenTheOriginal;
             // isWaitingForModule()'s cache.
-            WTF::UncheckedKeyHashSet<String> waitingModules;
+            WTF::HashSet<String> waitingModules;
             // importChain for imports by compiled code, which the loader does not see.
             WTF::BitVector compiledImportChain = {};
             // givenTheOriginal for compiled files that required the mocked file.
             WTF::Vector<uint32_t, 2> compiledRequirersGivenOriginal = {};
         };
         // givenTheOriginal for compiled modules, by the specifier of the mock. They are evicted when the mock ends.
-        WTF::UncheckedKeyHashMap<String, WTF::Vector<uint32_t, 2>> compiledModulesGivenOriginal = {};
+        WTF::HashMap<String, WTF::Vector<uint32_t, 2>> compiledModulesGivenOriginal = {};
         Vector<RunningModuleMock> runningModuleMocks = {};
         // Numbers the import() calls of compiled code and the factory calls, in order.
         uint32_t moduleMockSequenceNumber = 0;
@@ -140,36 +140,36 @@ public:
         bool willGiveTurns = false;
         // Something has happened that the ranks don't know of: a mock or a factory asks for a module, or a module has left the registry.
         bool ranksAreStale = false;
-        WTF::UncheckedKeyHashSet<String> modulesGivenTimeToRequestImports = {};
+        WTF::HashSet<String> modulesGivenTimeToRequestImports = {};
         // The first module of each load that import() or a factory started, oldest first.
         WTF::ListHashSet<String> loadRoots = {};
         // Those of them that a factory's file, but not the factory, called import() for while the factory ran.
-        WTF::UncheckedKeyHashSet<String> loadRootsDuringFactories = {};
+        WTF::HashSet<String> loadRootsDuringFactories = {};
         // Fetch promises for those modules, kept until JSC registers them.
-        WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSObject>> loadRootFetches = {};
+        WTF::HashMap<String, JSC::Strong<JSC::JSObject>> loadRootFetches = {};
         // Preload mocks that the running test file replaced or removed. Restored when the file ends.
         Vector<JSC::Strong<JSC::JSObject>> displacedPreloadModuleMocks = {};
         // Modules a preload loaded that the running test file evicted. Restored when the file ends.
-        WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSCell>> evictedPreloadModules = {};
-        WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSCell>> evictedPreloadCommonJSModules = {};
+        WTF::HashMap<String, JSC::Strong<JSC::JSCell>> evictedPreloadModules = {};
+        WTF::HashMap<String, JSC::Strong<JSC::JSCell>> evictedPreloadCommonJSModules = {};
         // Starts at 1 so that a missing testFileOfModule entry (0) means a preload fetched the module.
         unsigned testFile = 1;
         // The modules that have called mock.module(), vi.mock() and the like since the running test file started.
-        WTF::UncheckedKeyHashSet<String> mockingModules = {};
-        WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
+        WTF::HashSet<String> mockingModules = {};
+        WTF::HashMap<String, unsigned> testFileOfModule = {};
         // Data files that a reset has evicted under a mock whose end restores their original, with the test file in which their next load does not show it yet.
-        WTF::UncheckedKeyHashMap<String, unsigned> dataFilesResetUnderMocks = {};
+        WTF::HashMap<String, unsigned> dataFilesResetUnderMocks = {};
         WTF::ListHashSet<String> modulesToEvictOnceLoaded = {};
         // The pending loads those modules are waiting for. Each gets exactly one reaction. Weak, so a load that never settles doesn't keep its global object alive.
-        WTF::UncheckedKeyHashMap<JSC::JSPromise*, JSC::Weak<JSC::JSPromise>> loadsOfModulesToEvict = {};
+        WTF::HashMap<JSC::JSPromise*, JSC::Weak<JSC::JSPromise>> loadsOfModulesToEvict = {};
         // The mock a fetch in flight keeps resolving to, even if the mock is replaced or removed meanwhile (keepInFlightModuleMock).
         VirtualModuleMap moduleMocksBeingLoaded = {};
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
-        WTF::UncheckedKeyHashSet<String> loadedByImportActual = {};
+        WTF::HashSet<String> loadedByImportActual = {};
         // Files whose module under the original's key became the original of a mock, with the test file that has the mock.
-        WTF::UncheckedKeyHashMap<String, unsigned> filesWithRestoredOriginal = {};
+        WTF::HashMap<String, unsigned> filesWithRestoredOriginal = {};
         // Files that were mocked while an earlier module was under the original's key, with the test file that mocked them. When it ends, `bun test` gives that module the key back.
-        WTF::UncheckedKeyHashMap<String, unsigned> filesWithEarlierOriginal = {};
+        WTF::HashMap<String, unsigned> filesWithEarlierOriginal = {};
 
         struct Matches {
             JSC::JSString* path { nullptr };
@@ -267,7 +267,7 @@ public:
         };
         WTF::Vector<CompiledImporterLinkedBeforeMock> compiledImportersLinkedBeforeMocks;
         // The specifiers of the mocks that may not be in the registry, by the file that they name.
-        WTF::UncheckedKeyHashMap<uint32_t, WTF::Vector<WTF::String, 1>, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> mocksOutsideRegistry;
+        WTF::HashMap<uint32_t, WTF::Vector<WTF::String, 1>, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> mocksOutsideRegistry;
         WTF::BitVector filesMockedOutsideRegistry;
         uint64_t compiledFactoryCallCount { 0 };
         // By module, whether or not the call is still in the list above.

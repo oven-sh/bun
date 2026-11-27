@@ -1725,7 +1725,7 @@ static const EVP_MD* findDigestByName(const WTF::StringView name)
     }
 
     // utf8() asserts on failure. A name too long to convert isn't a digest.
-    auto nameUtf8 = name.tryGetUTF8();
+    auto nameUtf8 = tryMakeUTF8CString(name);
     if (!nameUtf8) [[unlikely]]
         return nullptr;
     return EVP_get_digestbyname(nameUtf8->legacyCStringPointer());
@@ -1733,7 +1733,7 @@ static const EVP_MD* findDigestByName(const WTF::StringView name)
 
 const EVP_CIPHER* getCipherByName(const WTF::StringView name)
 {
-    auto nameUtf8 = name.tryGetUTF8();
+    auto nameUtf8 = tryMakeUTF8CString(name);
     if (!nameUtf8) [[unlikely]]
         return nullptr;
     return EVP_get_cipherbyname(nameUtf8->legacyCStringPointer());
@@ -3683,7 +3683,7 @@ DataPointer Cipher::recover(const EVPKeyPointer& key,
 
 int Ec::GetCurveIdFromName(WTF::StringView name)
 {
-    auto nameUtf8 = name.tryGetUTF8();
+    auto nameUtf8 = tryMakeUTF8CString(name);
     if (!nameUtf8) [[unlikely]]
         return NID_undef;
     int nid = EC_curve_nist2nid(nameUtf8->legacyCStringPointer());

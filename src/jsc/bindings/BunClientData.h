@@ -306,7 +306,7 @@ public:
     // downcasts on lookup. Values hold strong refs by design: this map is the
     // only owner once the previous global is GC'd, so a weak map would empty
     // after every swap.
-    WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
+    WTF::HashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
     Vector<Bun::IsolatedInternalModule> isolationInternalModules;
 
     void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope) final;

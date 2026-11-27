@@ -153,6 +153,10 @@ test("the protocol snapshot in packages/bun-inspector-protocol matches what bun 
   failed.catch(() => {});
 
   const problems: string[] = [];
+  let internalProperties: unknown[] = [];
+  let internalPropertiesBelowGetter: unknown[] = [];
+  const nativeGetters: Record<string, string[]> = {};
+  let getterCalls: unknown;
   const eventsSeen = new Set<string>();
   const scriptTypes: Record<string, unknown> = {};
   const eventWaiters = new Map<string, (params: any) => void>();
@@ -228,6 +232,48 @@ test("the protocol snapshot in packages/bun-inspector-protocol matches what bun 
     const { callFrames } = await paused;
 
     await send("Runtime.evaluate", { expression: "({ a: [1, 'two', null] })", generatePreview: true });
+    // A preview reads each header as an internal property. The header "0" has the name of an index.
+    const headers = await send("Runtime.evaluate", {
+      expression: "new Headers({ '0': 'a', b: 'c' })",
+      generatePreview: true,
+    });
+    internalProperties = headers.result.preview.properties.filter(
+      (property: { internal?: boolean }) => property.internal,
+    );
+    // The snapshot that a preview lists has the program's Object.prototype. No name of it is an entry, and no getter of it is called.
+    await send("Runtime.evaluate", {
+      expression:
+        "globalThis.getterCalls = 0; Object.defineProperty(Object.prototype, 'p', { get() { getterCalls++; return 42; }, enumerable: true, configurable: true }); 0",
+    });
+    const belowGetter = await send("Runtime.evaluate", {
+      expression: "new Headers({ b: 'c' })",
+      generatePreview: true,
+    });
+    await send("Runtime.evaluate", { expression: "delete Object.prototype.p" });
+    internalPropertiesBelowGetter = belowGetter.result.preview.properties.filter(
+      (property: { internal?: boolean }) => property.internal,
+    );
+    // A property list calls a getter only where JSInjectedScriptHost::isNativeFunction() says that it is native: a host
+    // getter and a getter of a private built-in are. A getter of one of Bun's JavaScript modules or a bound function is not.
+    for (const [name, expression] of [
+      ["Readable", "new (process.getBuiltinModule('node:stream').Readable)({ read() {} })"],
+      ["Buffer", "Buffer.from('a')"],
+      ["URL", "new URL('https://example.com/a')"],
+      [
+        "bound",
+        "Object.defineProperty({}, 'b', { get: (function () { getterCalls++; }).bind(null), enumerable: true })",
+      ],
+    ]) {
+      const made = await send("Runtime.evaluate", { expression, generatePreview: true });
+      const { properties } = await send("Runtime.getDisplayableProperties", {
+        objectId: made.result.objectId,
+        generatePreview: true,
+      });
+      nativeGetters[name] = properties
+        .filter((property: { nativeGetter?: boolean }) => property.nativeGetter)
+        .map((property: { name: string }) => property.name);
+    }
+    getterCalls = (await send("Runtime.evaluate", { expression: "getterCalls", returnByValue: true })).result.value;
     await send("Debugger.evaluateOnCallFrame", { callFrameId: callFrames[0].callFrameId, expression: "globalThis" });
     await send("LifecycleReporter.getModuleGraph");
 
@@ -239,6 +285,21 @@ test("the protocol snapshot in packages/bun-inspector-protocol matches what bun 
   }
 
   expect([...new Set(problems)]).toEqual([]);
+  expect(internalProperties).toEqual([
+    { name: "0", type: "string", value: "a", internal: true },
+    { name: "b", type: "string", value: "c", internal: true },
+  ]);
+  expect(internalPropertiesBelowGetter).toEqual([{ name: "b", type: "string", value: "c", internal: true }]);
+  expect(nativeGetters).toEqual({
+    Readable: [],
+    Buffer: ["offset", "parent", "buffer", "byteLength", "byteOffset", "length"],
+    URL: [
+      ...["href", "origin", "protocol", "username", "password", "host", "hostname", "port", "pathname", "hash"],
+      ...["search", "searchParams"],
+    ],
+    bound: [],
+  });
+  expect(getterCalls).toBe(0);
   // JavaScriptCore's own domains plus the agents bun registers in src/jsc/bindings/BunDebugger.cpp.
   expect(protocol.domains.map(domain => domain.domain)).toEqual([
     "Audit",

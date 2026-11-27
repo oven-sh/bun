@@ -26,7 +26,7 @@ static void CookieMap__writeFetchHeadersToUWSResponse(CookieMap* cookie_map, JSC
             propagateException(*global_this, scope, header.releaseException());
             return;
         }
-        auto utf8 = header.returnValue().tryGetUTF8();
+        auto utf8 = tryMakeUTF8CString(header.returnValue());
         if (!utf8) [[unlikely]] {
             throwOutOfMemoryError(global_this, scope);
             return;

@@ -122,7 +122,7 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
                         expires = static_cast<int64_t>(parsed);
                     }
                 } else {
-                    auto nullTerminated = attributeValue.utf8();
+                    auto nullTerminated = makeUTF8CString(attributeValue);
                     double parsed = WTF::parseDate(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(nullTerminated.data()), nullTerminated.length()));
                     if (std::isfinite(parsed)) {
                         expires = static_cast<int64_t>(parsed);

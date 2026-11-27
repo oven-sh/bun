@@ -7,7 +7,7 @@
 
 # ----------------------------------------------------------------------------
 # simdutf. MSVC-mangled names.
-# (172 symbols)
+# (188 symbols)
 # ----------------------------------------------------------------------------
 simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<0,0,0,char16_t>  [AVX, AVX2, BMI1]
 simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<0,0,0,char>      [AVX, AVX2, BMI1]
@@ -21,6 +21,8 @@ simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<1,0,0,ch
 simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<1,0,0,char>      [AVX, AVX2, BMI1]
 simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<1,1,0,char16_t>  [AVX, AVX2, BMI1]
 simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<1,1,0,char>      [AVX, AVX2, BMI1]
+simdutf::haswell::`anonymous namespace'::encode_base64_12<0>                             [AVX, AVX2]
+simdutf::haswell::`anonymous namespace'::encode_base64_12<1>                             [AVX, AVX2]
 simdutf::haswell::implementation::binary_to_base64                                       [AVX, AVX2]
 simdutf::haswell::implementation::binary_to_base64_with_lines                            [AVX, AVX2]
 simdutf::haswell::implementation::change_endianness_utf16                                [AVX, AVX2]
@@ -34,12 +36,14 @@ simdutf::haswell::implementation::convert_utf16be_to_utf32                      
 simdutf::haswell::implementation::convert_utf16be_to_utf32_with_errors                   [AVX, AVX2]
 simdutf::haswell::implementation::convert_utf16be_to_utf8                                [AVX, AVX2]
 simdutf::haswell::implementation::convert_utf16be_to_utf8_with_errors                    [AVX, AVX2]
+simdutf::haswell::implementation::convert_utf16be_to_utf8_with_replacement               [AVX, AVX2]
 simdutf::haswell::implementation::convert_utf16le_to_latin1                              [AVX, AVX2]
 simdutf::haswell::implementation::convert_utf16le_to_latin1_with_errors                  [AVX, AVX2]
 simdutf::haswell::implementation::convert_utf16le_to_utf32                               [AVX, AVX2]
 simdutf::haswell::implementation::convert_utf16le_to_utf32_with_errors                   [AVX, AVX2]
 simdutf::haswell::implementation::convert_utf16le_to_utf8                                [AVX, AVX2]
 simdutf::haswell::implementation::convert_utf16le_to_utf8_with_errors                    [AVX, AVX2]
+simdutf::haswell::implementation::convert_utf16le_to_utf8_with_replacement               [AVX, AVX2]
 simdutf::haswell::implementation::convert_utf32_to_latin1                                [AVX, AVX2]
 simdutf::haswell::implementation::convert_utf32_to_latin1_with_errors                    [AVX, AVX2]
 simdutf::haswell::implementation::convert_utf32_to_utf16be                               [AVX, AVX2]
@@ -96,6 +100,7 @@ simdutf::haswell::implementation::validate_utf16le_with_errors                  
 simdutf::haswell::implementation::validate_utf32                                         [AVX, AVX2]
 simdutf::haswell::implementation::validate_utf32_with_errors                             [AVX, AVX2]
 simdutf::haswell::implementation::validate_utf8                                          [AVX, AVX2]
+simdutf::haswell::implementation::validate_utf8_with_counts                              [AVX, AVX2]
 simdutf::haswell::implementation::validate_utf8_with_errors                              [AVX, AVX2]
 simdutf::icelake::`anonymous namespace'::compress_decode_base64<0,0,0,char16_t>          [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]
 simdutf::icelake::`anonymous namespace'::compress_decode_base64<0,0,0,char>              [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]
@@ -109,6 +114,8 @@ simdutf::icelake::`anonymous namespace'::compress_decode_base64<1,0,0,char16_t> 
 simdutf::icelake::`anonymous namespace'::compress_decode_base64<1,0,0,char>              [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]
 simdutf::icelake::`anonymous namespace'::compress_decode_base64<1,1,0,char16_t>          [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]
 simdutf::icelake::`anonymous namespace'::compress_decode_base64<1,1,0,char>              [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]
+simdutf::icelake::`anonymous namespace'::convert_utf16_to_utf32_masked<0>                [AVX, AVX512BW, AVX512F, BMI1, BMI2]
+simdutf::icelake::`anonymous namespace'::convert_utf16_to_utf32_masked<1>                [AVX, AVX512BW, AVX512F, BMI1, BMI2]
 simdutf::icelake::implementation::binary_to_base64                                       [AVX, AVX512BW, AVX512F, AVX512_VBMI, BMI2]
 simdutf::icelake::implementation::binary_to_base64_with_lines                            [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]
 simdutf::icelake::implementation::change_endianness_utf16                                [AVX, AVX512BW, AVX512F, BMI2]
@@ -122,12 +129,14 @@ simdutf::icelake::implementation::convert_utf16be_to_utf32                      
 simdutf::icelake::implementation::convert_utf16be_to_utf32_with_errors                   [AVX, AVX512BW, AVX512F, BMI2]
 simdutf::icelake::implementation::convert_utf16be_to_utf8                                [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]
 simdutf::icelake::implementation::convert_utf16be_to_utf8_with_errors                    [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]
+simdutf::icelake::implementation::convert_utf16be_to_utf8_with_replacement               [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]
 simdutf::icelake::implementation::convert_utf16le_to_latin1                              [AVX, AVX512BW, AVX512F, BMI2]
 simdutf::icelake::implementation::convert_utf16le_to_latin1_with_errors                  [AVX, AVX512BW, AVX512F, BMI2]
 simdutf::icelake::implementation::convert_utf16le_to_utf32                               [AVX, AVX512BW, AVX512F, BMI2]
 simdutf::icelake::implementation::convert_utf16le_to_utf32_with_errors                   [AVX, AVX512BW, AVX512F, BMI2]
 simdutf::icelake::implementation::convert_utf16le_to_utf8                                [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]
 simdutf::icelake::implementation::convert_utf16le_to_utf8_with_errors                    [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]
+simdutf::icelake::implementation::convert_utf16le_to_utf8_with_replacement               [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]
 simdutf::icelake::implementation::convert_utf32_to_latin1                                [AVX, AVX512BW, AVX512F, BMI2]
 simdutf::icelake::implementation::convert_utf32_to_latin1_with_errors                    [AVX, AVX512BW, AVX512F, BMI2]
 simdutf::icelake::implementation::convert_utf32_to_utf16be                               [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI2, BMI2]
@@ -176,7 +185,7 @@ simdutf::icelake::implementation::utf8_length_from_utf16le                      
 simdutf::icelake::implementation::utf8_length_from_utf16le_with_replacement              [AVX, AVX512BW, AVX512F, BMI2]
 simdutf::icelake::implementation::utf8_length_from_utf32                                 [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 simdutf::icelake::implementation::validate_ascii                                         [AVX, AVX512BW, AVX512F, BMI2]
-simdutf::icelake::implementation::validate_ascii_with_errors                             [AVX, AVX512BW, BMI2]
+simdutf::icelake::implementation::validate_ascii_with_errors                             [AVX, AVX512BW, AVX512F, BMI2]
 simdutf::icelake::implementation::validate_utf16be                                       [AVX, AVX512BW, AVX512F, BMI2]
 simdutf::icelake::implementation::validate_utf16be_as_ascii                              [AVX, AVX512BW, AVX512F, BMI2]
 simdutf::icelake::implementation::validate_utf16be_with_errors                           [AVX, AVX512BW, AVX512F, BMI1, BMI2]
@@ -186,6 +195,7 @@ simdutf::icelake::implementation::validate_utf16le_with_errors                  
 simdutf::icelake::implementation::validate_utf32                                         [AVX, AVX512BW, AVX512F, BMI2]
 simdutf::icelake::implementation::validate_utf32_with_errors                             [AVX, AVX512BW, AVX512F, BMI2]
 simdutf::icelake::implementation::validate_utf8                                          [AVX, AVX512BW, AVX512F, BMI2]
+simdutf::icelake::implementation::validate_utf8_with_counts                              [AVX, AVX512BW, AVX512F, BMI2]
 simdutf::icelake::implementation::validate_utf8_with_errors                              [AVX, AVX512BW, AVX512F, BMI2]
 
 

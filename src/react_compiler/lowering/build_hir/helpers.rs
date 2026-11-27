@@ -9,7 +9,7 @@ use bun_ast::expr::Data;
 use bun_ast::{self as ast, Expr, G, OpCode, OptionalChain, Ref};
 use smallvec::SmallVec;
 
-use crate::lowering::hir_builder::{HirBuilder, convert_loc};
+use crate::lowering::hir_builder::{HirBuilder, WipBlock, convert_loc};
 
 use super::expr::lower_reorderable_expression;
 use super::lower_expression;
@@ -1297,26 +1297,44 @@ pub(super) fn lower_optional_member_expression(
     })
 }
 
-/// Returns (object, value_place) pair.
-fn lower_optional_member_expression_impl(
+/// A member of an optional chain whose test block was entered, and is the current block until the test block of the
+/// member that this one reads from is entered.
+struct OptionalMember<'a> {
+    member: &'a Expr,
+    loc: Option<SourceLocation>,
+    /// Where the value of the member is stored.
+    place: Place,
+    continuation: WipBlock,
+    consequent: WipBlock,
+    test: BlockId,
+    /// The block that was current before the test block.
+    outer: WipBlock,
+}
+
+/// What an error from inside the test block of a member is outside of it: its first diagnostic alone, as for a block
+/// that [`HirBuilder::try_enter`] enters.
+fn out_of_test_block<E: Into<CompilerError>>(error: E) -> CompilerError {
+    let error: CompilerError = error.into();
+    CompilerDiagnostic::from(error).into()
+}
+
+/// Lowers `member`, a member of an optional chain, up to the start of its test block, where the object that it reads
+/// from is lowered. `alternate` is the block that the chain goes to when one of its objects is nullish: the outermost
+/// member of a chain has none yet, and it is made here. Returns the member and that block.
+fn enter_optional_member<'a>(
     builder: &mut HirBuilder,
-    expr: &Expr,
-    parent_alternate: Option<BlockId>,
-) -> Result<(Place, Place), CompilerError> {
-    if !builder.environment().has_stack() {
-        return Err(crate::lowering::nested_too_deeply().into());
-    }
-    let optional = matches!(optional_chain_of(expr), Some(OptionalChain::Start));
-    let loc = convert_loc(expr.loc);
+    member: &'a Expr,
+    alternate: Option<BlockId>,
+) -> Result<(OptionalMember<'a>, BlockId), CompilerDiagnostic> {
+    let loc = convert_loc(member.loc);
     let place = build_temporary_place(builder, loc);
-    let continuation_block = builder.reserve(builder.current_block_kind());
-    let continuation_id = continuation_block.id;
+    let continuation = builder.reserve(builder.current_block_kind());
+    let continuation_id = continuation.id;
     let consequent = builder.reserve(BlockKind::Value);
 
-    let alternate = if let Some(parent_alt) = parent_alternate {
-        parent_alt
-    } else {
-        builder.try_enter(BlockKind::Value, |builder, _block_id| {
+    let alternate = match alternate {
+        Some(alternate) => alternate,
+        None => builder.try_enter(BlockKind::Value, |builder, _block_id| {
             let temp = lower_value_to_temporary(
                 builder,
                 InstructionValue::Primitive {
@@ -1342,45 +1360,56 @@ fn lower_optional_member_expression_impl(
                 id: EvaluationOrder(0),
                 loc,
             })
-        })?
+        })?,
     };
 
-    let mut object: Option<Place> = None;
-    let test_block = builder.try_enter(BlockKind::Value, |builder, _block_id| {
-        let obj_expr = member_object(expr);
-        let is_same_chain =
-            optional_chain_of(obj_expr).is_some() && !is_chain_of_its_own(builder, obj_expr);
-        match &obj_expr.data {
-            Data::EDot(_) | Data::EIndex(_) if is_same_chain => {
-                let (_obj, value) =
-                    lower_optional_member_expression_impl(builder, obj_expr, Some(alternate))?;
-                object = Some(value);
-            }
-            Data::ECall(_) if is_same_chain => {
-                let value =
-                    lower_optional_call_expression_impl(builder, obj_expr, Some(alternate))?;
-                let value_place = lower_value_to_temporary(builder, value)?;
-                object = Some(value_place);
-            }
-            _ => {
-                object = Some(lower_expression_to_temporary(builder, obj_expr)?);
-            }
-        }
-        let test_place = object.as_ref().unwrap().clone();
-        Ok(Terminal::Branch {
-            test: test_place,
+    let test = builder.reserve(BlockKind::Value);
+    let test_id = test.id;
+    let outer = builder.enter(test);
+    let entered = OptionalMember {
+        member,
+        loc,
+        place,
+        continuation,
+        consequent,
+        test: test_id,
+        outer,
+    };
+    Ok((entered, alternate))
+}
+
+/// Lowers the rest of a member that [`enter_optional_member`] entered. `object` is what it reads from, lowered in its
+/// test block, which ends here. Returns the place of the member's value.
+fn leave_optional_member(
+    builder: &mut HirBuilder,
+    entered: OptionalMember<'_>,
+    object: &Place,
+    alternate: BlockId,
+) -> Result<Place, CompilerDiagnostic> {
+    let OptionalMember {
+        member,
+        loc,
+        place,
+        continuation,
+        consequent,
+        test,
+        outer,
+    } = entered;
+    let continuation_id = continuation.id;
+    builder.leave(
+        outer,
+        Terminal::Branch {
+            test: object.clone(),
             consequent: consequent.id,
             alternate,
             fallthrough: continuation_id,
             id: EvaluationOrder(0),
             loc,
-        })
-    })?;
-
-    let obj = object.unwrap();
+        },
+    );
 
     builder.try_enter_reserved(consequent, |builder| {
-        let lowered = lower_member_expression(builder, expr, Some(obj.clone()))?;
+        let lowered = lower_member_expression(builder, member, Some(object.clone()))?;
         let temp = lower_value_to_temporary(builder, lowered.value)?;
         lower_value_to_temporary(
             builder,
@@ -1404,16 +1433,60 @@ fn lower_optional_member_expression_impl(
 
     builder.terminate_with_continuation(
         Terminal::Optional {
-            optional,
-            test: test_block,
+            optional: matches!(optional_chain_of(member), Some(OptionalChain::Start)),
+            test,
             fallthrough: continuation_id,
             id: EvaluationOrder(0),
             loc,
         },
-        continuation_block,
+        continuation,
     );
 
-    Ok((obj, place))
+    Ok(place)
+}
+
+/// Returns (object, value_place) pair. The members of one chain are entered in a loop and left in another, in the
+/// order in which a function that calls itself for the object of each member comes to them, so the stack is no limit
+/// to the length of a chain.
+fn lower_optional_member_expression_impl(
+    builder: &mut HirBuilder,
+    expr: &Expr,
+    parent_alternate: Option<BlockId>,
+) -> Result<(Place, Place), CompilerError> {
+    if !builder.environment().has_stack() {
+        return Err(crate::lowering::nested_too_deeply().into());
+    }
+    let (outermost, alternate) = enter_optional_member(builder, expr, parent_alternate)?;
+    let mut inner: SmallVec<[OptionalMember<'_>; 2]> = SmallVec::new();
+    let mut member = expr;
+    let mut object = loop {
+        let obj_expr = member_object(member);
+        let is_same_chain =
+            optional_chain_of(obj_expr).is_some() && !is_chain_of_its_own(builder, obj_expr);
+        match &obj_expr.data {
+            Data::EDot(_) | Data::EIndex(_) if is_same_chain => {
+                let (entered, _) = enter_optional_member(builder, obj_expr, Some(alternate))
+                    .map_err(out_of_test_block)?;
+                inner.push(entered);
+                member = obj_expr;
+            }
+            Data::ECall(_) if is_same_chain => {
+                let value = lower_optional_call_expression_impl(builder, obj_expr, Some(alternate))
+                    .map_err(out_of_test_block)?;
+                break lower_value_to_temporary(builder, value).map_err(out_of_test_block)?;
+            }
+            _ => {
+                break lower_expression_to_temporary(builder, obj_expr)
+                    .map_err(out_of_test_block)?;
+            }
+        }
+    };
+    while let Some(entered) = inner.pop() {
+        object = leave_optional_member(builder, entered, &object, alternate)
+            .map_err(out_of_test_block)?;
+    }
+    let place = leave_optional_member(builder, outermost, &object, alternate)?;
+    Ok((object, place))
 }
 
 pub(super) fn lower_optional_call_expression(

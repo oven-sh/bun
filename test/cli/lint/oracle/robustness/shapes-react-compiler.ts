@@ -87,7 +87,12 @@ export const cases: Case[] = [
   heavy(compiled("a sum of 100 terms", () => wideShapes["rc-binary.jsx"](100))),
   tooDeep("a sum of 20,000 terms", () => wideShapes["rc-binary.jsx"](20_000)),
   heavy(compiled("a chain of 100 properties", () => wideShapes["rc-dots.jsx"](100))),
-  tooDeep("a chain of 20,000 properties", () => wideShapes["rc-dots.jsx"](20_000)),
+  // A chain is converted and lowered in a loop, so it's oxc's limit of 500 members that rejects this one.
+  {
+    ...tooDeep("a chain of 20,000 properties", () => wideShapes["rc-dots.jsx"](20_000)),
+    matches:
+      /^\{ "diagnostics": \[\{"message": "Support member expression chains longer than 500 members","code": "react\(todo\)",.*\}\],$/m,
+  },
   { ...compiled("", () => components(1_000)), name: "1,000 components", isHeavy: true },
   // Up to oxlint 1.94, react/rule-suppression reported each comment for each component: 3,600 and 160,000 reports.
   // oxlint 1.95 doesn't look for the comments, and compiles the components.

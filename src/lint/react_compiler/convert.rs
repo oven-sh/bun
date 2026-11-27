@@ -176,6 +176,24 @@ enum Body {
     Nested,
 }
 
+/// The `.name` or `[index]` of a member.
+#[derive(Copy, Clone)]
+enum Property<'a> {
+    Name(Ident<'a>),
+    Index(Expr<'a>),
+}
+
+/// A member whose object is being converted.
+#[derive(Copy, Clone)]
+struct Link<'a> {
+    member: Expr<'a>,
+    property: Property<'a>,
+    chain: Chain,
+    loc: Loc,
+    /// The [`Converter::body`] that the member is in.
+    body: Body,
+}
+
 pub(crate) struct Converter<'a, 'x> {
     file: &'a File<'a>,
     arena: &'x Arena,
@@ -215,6 +233,9 @@ pub(crate) struct Converter<'a, 'x> {
     /// parameter, a `with` statement.
     is_unread: bool,
     lone_surrogate_keys: Vec<Span>,
+    /// The members of the chains being converted, outermost first. A chain is converted in a loop, so its length is
+    /// not limited by the stack.
+    links: Vec<Link<'a>>,
     stack: bun_core::StackCheck,
 }
 
@@ -255,6 +276,7 @@ pub(crate) fn convert<'a>(
         is_target: false,
         is_unread: false,
         lone_surrogate_keys: Vec::new(),
+        links: Vec::new(),
         stack,
     };
     converter.create_element = converter.new_symbol(b"createElement", SymbolKind::Unbound, true);
@@ -1212,9 +1234,71 @@ impl<'a> Converter<'a, '_> {
 
     pub(crate) fn expr(&mut self, expr: Expr<'a>) -> Converts<JsExpr> {
         let converted = self.nested(|this| this.expr_at(expr, expr.span()))?;
+        self.in_parentheses(expr, converted.loc);
+        Ok(converted)
+    }
+
+    /// Records the parentheses around `expr`, which was converted to what is at `converted`.
+    fn in_parentheses(&mut self, expr: Expr<'a>, converted: Loc) {
         if self.flavor == Flavor::Oxlint && expr.is_parenthesized() {
             let whole = self.loc(expr.outer_span());
-            self.parentheses.push((converted.loc, whole));
+            self.parentheses.push((converted, whole));
+        }
+    }
+
+    /// Converts `outermost`, a member, and the members that it's chained to. It does in a loop what [`Self::expr`]
+    /// would do by calling itself for the object of each, in the same order.
+    fn members(&mut self, outermost: Expr<'a>) -> Converts<JsExpr> {
+        let first = self.links.len();
+        let mut object = outermost;
+        loop {
+            let (obj, property, chain) = match object.kind() {
+                ExprKind::Dot { obj, name, chain } => (obj, Property::Name(name), chain),
+                ExprKind::Index { obj, index, chain } => (obj, Property::Index(index), chain),
+                _ => break,
+            };
+            let loc = self.loc(object.span());
+            let body = self.body;
+            self.links.push(Link {
+                member: object,
+                property,
+                chain,
+                loc,
+                body,
+            });
+            // The object is converted as `Self::in_operand` would have it.
+            if chain != Chain::No && body == Body::Compiled {
+                self.body = Body::Operand;
+            }
+            object = obj;
+        }
+        let mut converted = self.expr(object)?;
+        while self.links.len() > first {
+            let Some(link) = self.links.pop() else { break };
+            self.body = link.body;
+            let is_chained = link.chain != Chain::No;
+            converted = match link.property {
+                Property::Name(name) => self.dot(converted, name, link.chain, link.loc),
+                Property::Index(index) => {
+                    let index = self.in_operand(is_chained, |this| this.expr(index))?;
+                    if is_chained {
+                        self.block_ends();
+                    }
+                    JsExpr::init(
+                        E::Index {
+                            target: converted,
+                            index,
+                            optional_chain: Self::chain(link.chain),
+                            is_import_property_use: false,
+                        },
+                        link.loc,
+                    )
+                }
+            };
+            // `Self::expr` records those of `outermost`.
+            if self.links.len() > first {
+                self.in_parentheses(link.member, converted.loc);
+            }
         }
         Ok(converted)
     }
@@ -1247,6 +1331,9 @@ impl<'a> Converter<'a, '_> {
         }
         if let ExprKind::Fn(func) = expr.kind() {
             return self.function_expr(func, span);
+        }
+        if matches!(expr.kind(), ExprKind::Dot { .. } | ExprKind::Index { .. }) {
+            return self.members(expr);
         }
         let loc = self.loc(span);
         Ok(match expr.kind() {
@@ -1324,24 +1411,6 @@ impl<'a> Converter<'a, '_> {
                 loc,
             ),
             ExprKind::Class(class) => JsExpr::init(self.class(class)?, loc),
-            ExprKind::Dot { obj, name, chain } => self.dot(obj, name, chain, loc)?,
-            ExprKind::Index { obj, index, chain } => {
-                let is_chained = chain != Chain::No;
-                let target = self.in_operand(is_chained, |this| this.expr(obj))?;
-                let index = self.in_operand(is_chained, |this| this.expr(index))?;
-                if is_chained {
-                    self.block_ends();
-                }
-                JsExpr::init(
-                    E::Index {
-                        target,
-                        index,
-                        optional_chain: Self::chain(chain),
-                        is_import_property_use: false,
-                    },
-                    loc,
-                )
-            }
             ExprKind::Call(call) | ExprKind::New(call)
                 if self.flavor == Flavor::Oxlint
                     && self.body != Body::Nested
@@ -1510,6 +1579,8 @@ impl<'a> Converter<'a, '_> {
             ExprKind::NewTarget => JsExpr::init(E::NewTarget { range: Range::NONE }, loc),
             // Handled above.
             ExprKind::Fn(_)
+            | ExprKind::Dot { .. }
+            | ExprKind::Index { .. }
             | ExprKind::As { .. }
             | ExprKind::Satisfies { .. }
             | ExprKind::AsConst(_)
@@ -1518,8 +1589,8 @@ impl<'a> Converter<'a, '_> {
         })
     }
 
-    fn dot(&mut self, obj: Expr<'a>, name: Ident<'a>, chain: Chain, loc: Loc) -> Converts<JsExpr> {
-        let target = self.in_operand(chain != Chain::No, |this| this.expr(obj))?;
+    /// `target.name`, at `loc`.
+    fn dot(&mut self, target: JsExpr, name: Ident<'a>, chain: Chain, loc: Loc) -> JsExpr {
         if chain != Chain::No {
             self.block_ends();
         }
@@ -1527,7 +1598,7 @@ impl<'a> Converter<'a, '_> {
         let optional_chain = Self::chain(chain);
         if name.bytes().starts_with(b"#") {
             let ref_ = self.ref_of_name(Named::Private, name.name());
-            return Ok(JsExpr::init(
+            return JsExpr::init(
                 E::Index {
                     target,
                     index: JsExpr::init(E::PrivateIdentifier { ref_ }, name_loc),
@@ -1535,9 +1606,9 @@ impl<'a> Converter<'a, '_> {
                     is_import_property_use: false,
                 },
                 loc,
-            ));
+            );
         }
-        Ok(JsExpr::init(
+        JsExpr::init(
             E::Dot {
                 target,
                 name: StoreStr::new(name.bytes()),
@@ -1546,7 +1617,7 @@ impl<'a> Converter<'a, '_> {
                 ..E::Dot::default()
             },
             loc,
-        ))
+        )
     }
 
     /// A tagged template keeps its raw text, unless the text has an escape. Bun's lowering rejects

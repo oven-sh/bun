@@ -553,9 +553,21 @@ impl<'h> HirBuilder<'h> {
         wip: WipBlock,
         f: impl FnOnce(&mut Self) -> Result<Terminal, CompilerDiagnostic>,
     ) -> Result<(), CompilerDiagnostic> {
-        let prev = std::mem::replace(&mut self.current, wip);
+        let outer = self.enter(wip);
         let terminal = f(self)?;
-        let completed_wip = std::mem::replace(&mut self.current, prev);
+        self.leave(outer, terminal);
+        Ok(())
+    }
+
+    /// The first half of [`Self::try_enter_reserved`], for what enters blocks in a loop and not by calling itself:
+    /// makes `wip` the current block and returns the one that was. [`Self::leave`] is the second half.
+    pub(crate) fn enter(&mut self, wip: WipBlock) -> WipBlock {
+        std::mem::replace(&mut self.current, wip)
+    }
+
+    /// Ends the current block with `terminal` and makes `outer`, which [`Self::enter`] returned, current again.
+    pub(crate) fn leave(&mut self, outer: WipBlock, terminal: Terminal) {
+        let completed_wip = std::mem::replace(&mut self.current, outer);
         self.completed.insert(
             completed_wip.id,
             BasicBlock {
@@ -567,7 +579,6 @@ impl<'h> HirBuilder<'h> {
                 phis: AstAlloc::vec(),
             },
         );
-        Ok(())
     }
 
     pub(crate) fn try_enter(

@@ -518,6 +518,27 @@ fn refs_in_class(builder: &HirBuilder, class: &G::Class, in_function: bool, on_r
     refs_in_properties(builder, class.properties.slice(), in_function, on_ref);
 }
 
+/// [`refs_in_expr`] of the member `outermost`: of the object that it and the members it is chained to start from, then
+/// of each index. A loop finds them, so the stack is no limit to the length of a chain.
+fn refs_in_members(builder: &HirBuilder, outermost: &Expr, in_function: bool, on_ref: OnRef) {
+    let mut indexes: SmallVec<[&Expr; 4]> = SmallVec::new();
+    let mut object = outermost;
+    loop {
+        object = match &object.data {
+            ExprData::EDot(d) => &d.target,
+            ExprData::EIndex(i) => {
+                indexes.push(&i.index);
+                &i.target
+            }
+            _ => break,
+        };
+    }
+    refs_in_expr(builder, object, in_function, on_ref);
+    for index in indexes.into_iter().rev() {
+        refs_in_expr(builder, index, in_function, on_ref);
+    }
+}
+
 fn refs_in_expr(builder: &HirBuilder, e: &Expr, in_function: bool, on_ref: OnRef) {
     if !builder.environment().has_stack() {
         return;
@@ -548,10 +569,8 @@ fn refs_in_expr(builder: &HirBuilder, e: &Expr, in_function: bool, on_ref: OnRef
             refs_in_expr(builder, &c.yes, in_function, on_ref);
             refs_in_expr(builder, &c.no, in_function, on_ref);
         }
-        ExprData::EDot(d) => refs_in_expr(builder, &d.target, in_function, on_ref),
-        ExprData::EIndex(i) => {
-            refs_in_expr(builder, &i.target, in_function, on_ref);
-            refs_in_expr(builder, &i.index, in_function, on_ref);
+        ExprData::EDot(_) | ExprData::EIndex(_) => {
+            refs_in_members(builder, e, in_function, on_ref);
         }
         ExprData::ECall(c) => {
             refs_in_expr(builder, &c.target, in_function, on_ref);

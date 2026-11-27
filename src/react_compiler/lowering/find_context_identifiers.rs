@@ -402,6 +402,27 @@ impl<'a> ContextIdentifierVisitor<'a> {
         }
     }
 
+    /// [`Self::walk_expr`] of the member `outermost`: of the object that it and the members it is chained to start
+    /// from, then of each index. A loop finds them, so the stack is no limit to the length of a chain.
+    fn walk_members(&mut self, outermost: &Expr) {
+        let mut indexes: smallvec::SmallVec<[&Expr; 4]> = smallvec::SmallVec::new();
+        let mut object = outermost;
+        loop {
+            object = match &object.data {
+                Data::EDot(d) => &d.target,
+                Data::EIndex(i) => {
+                    indexes.push(&i.index);
+                    &i.target
+                }
+                _ => break,
+            };
+        }
+        self.walk_expr(object);
+        for index in indexes.into_iter().rev() {
+            self.walk_expr(index);
+        }
+    }
+
     #[allow(
         clippy::large_unopt_stack_frames,
         reason = "expr::Data variants are arena-backed StoreRef; live residency is bounded"
@@ -486,11 +507,7 @@ impl<'a> ContextIdentifierVisitor<'a> {
                 self.walk_expr(&c.yes);
                 self.walk_expr(&c.no);
             }
-            Data::EDot(d) => self.walk_expr(&d.target),
-            Data::EIndex(i) => {
-                self.walk_expr(&i.target);
-                self.walk_expr(&i.index);
-            }
+            Data::EDot(_) | Data::EIndex(_) => self.walk_members(e),
             Data::ECall(c) => {
                 self.walk_expr(&c.target);
                 for a in c.args.iter() {

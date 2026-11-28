@@ -6,12 +6,16 @@ import { reportsToTheRunnerAlone, throughAtOnce } from "./without-core-dump";
 
 const { watch } = endAtMemoryLimitTogether();
 
-/** Runs a command to completion. With `limit`, kills it after that many milliseconds and returns what it printed so far. */
+/**
+ * Runs a command to completion. With `limit`, kills it after that many milliseconds and returns what it printed so far.
+ * `hasChildren`: the memory of what the command starts counts as its own, as that of the workers of `bun test --parallel`.
+ */
 export async function run(
   cmd: string[],
   cwd?: string,
   env: Record<string, string | undefined> = bunEnv,
   limit?: number,
+  hasChildren = false,
 ) {
   await using proc = Bun.spawn({
     cmd: throughAtOnce(cmd),
@@ -21,7 +25,7 @@ export async function run(
     stderr: "pipe",
     ...(limit && { timeout: limit, killSignal: "SIGKILL" as const }),
   });
-  using held = watch(proc);
+  using held = watch(proc, hasChildren);
   // A program with a small heap fills it in a second or two. One that goes on for much longer says where its threads are.
   using _where = hasSmallHeap(env) ? saysWhereItIs(proc.pid, cmd) : undefined;
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

@@ -135,26 +135,72 @@ ${asks === "package" ? `  const settled = await Promise.race([second.then(() => 
 `;
 }
 
-async function said(dir: string, ...flagsAndFiles: string[]) {
+// Where a test file that mocked ends, `bun test` goes through the modules of every test file that its process has run (evictModulesAndTheirImporters() in BunPlugin.cpp): the more
+// test files a process has run, the longer the next one takes. So each run deals its test files to workers. A worker keeps one realm for its files, as a run of one process does.
+// The compiled run is still one build, of every test file.
+const inWorkers = ["--parallel=8", "--no-isolate"];
+
+async function said(dir: string, ...flags: string[]) {
+  const isCompiled = flags.includes("--aot");
   // A thread that reads the texts may come behind what a case waits for: plain Bun then has two answers.
-  const oneThread = flagsAndFiles.includes("--aot") ? "0" : "1";
-  const env = { ...bunEnv, NO_COLOR: "1", BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: oneThread };
-  const { stdout, stderr } = await run([bunExe(), "test", ...flagsAndFiles], dir, env);
-  const lines = new Map<string, string>();
-  for (const line of (stdout + "\n" + stderr).split("\n")) {
-    const found = line.match(/^\| (\S+): (.*)$/);
-    if (found) lines.set(found[1], found[2]);
-  }
-  return lines;
+  const oneThread = isCompiled ? "0" : "1";
+  const env = {
+    ...bunEnv,
+    NO_COLOR: "1",
+    BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: oneThread,
+    BUN_DEBUG_TEST_AOT_WORDS: "TestRunSaysItsForm",
+  };
+  // The workers hold nearly all the memory of a run: what they hold counts as the run's own, and is held to the limit of ./harness/memory-limit.ts.
+  const withWorkers = true;
+  const command = [bunExe(), "test", ...flags, ...inWorkers, "./t"];
+  const { stdout, stderr, exitCode } = await run(command, dir, env, undefined, withWorkers);
+  // What a run that failed says beside the answers, the passes and the names of the test files.
+  const beside = stderr.split("\n").filter(line => !/^(\| |\(pass\) |t\/|$)/.test(line));
+  if (exitCode !== 0) console.error(beside.slice(-200).join("\n"));
+  const lines = [...(stdout + "\n" + stderr).matchAll(/^\| (\S+): (.*)$/gm)];
+  const count = (found: RegExp) => Number(found.exec(stderr)?.[1]);
+  return {
+    answers: new Map(lines.map(([, name, answer]) => [name, answer])),
+    ran: {
+      lines: lines.length,
+      pass: count(/^ *(\d+) pass$/m),
+      fail: count(/^ *(\d+) fail$/m),
+      exitCode,
+      ...(isCompiled && { compiled: count(/^AOT test run \| one program \| test files (\d+)$/m) }),
+    },
+  };
 }
 
 const dir = tempDir("aot-mock-factories", files);
 afterAll(() => dir[Symbol.dispose]());
+// The limit is for a debug build on few processors: on three the case takes 261 s.
 test("what each case prints", async () => {
-  const [plain, compiled] = [await said(String(dir), "./t"), await said(String(dir), "--aot", "./t")];
-  expect(plain.size).toBe(numberOfCases);
-  const report = [...plain]
-    .filter(([name, expected]) => compiled.get(name) !== expected)
-    .map(([name, expected]) => `${name}: ${expected} > ${compiled.get(name) ?? "nothing"}`);
+  const [plain, compiled] = [await said(String(dir)), await said(String(dir), "--aot")];
+  expect(plain.answers.size).toBe(numberOfCases);
+  // The import of the test gives what the first factory ends with, whatever the second factory finds.
+  const ofTheTest = (name: string) => (name.endsWith("-fails") ? "threw the first factory fails" : "first");
+  expect([...plain.answers].filter(([name, answer]) => !answer.startsWith(`${ofTheTest(name)} | second `))).toEqual([]);
+  const report = [...plain.answers]
+    .filter(([name, expected]) => compiled.answers.get(name) !== expected)
+    .map(([name, expected]) => `${name}: ${expected} > ${compiled.answers.get(name) ?? "nothing"}`);
   expect(report).toEqual([]);
+  // How many cases give each answer. A number that changes is a change of what `bun test` does where two factories run at once.
+  const howMany: Record<string, number> = {};
+  for (const answer of plain.answers.values()) howMany[answer] = (howMany[answer] ?? 0) + 1;
+  expect(howMany).toEqual({
+    "first | second with first": 615,
+    "first | second with real first": 243,
+    "first | second with real first ahead of the gate": 84,
+    "first | second with over saw first": 10,
+    "first | second with over saw real first": 26,
+    "first | second threw TypeError": 24,
+    "threw the first factory fails | second with threw the first factory fails": 126,
+    "threw the first factory fails | second with real first": 78,
+  });
+  // Every test file ran once and passed, the compiled ones as one program, and no run ended with an error of its own or by a signal.
+  const whole = { lines: numberOfCases, pass: numberOfCases, fail: 0, exitCode: 0 };
+  expect({ plain: plain.ran, compiled: compiled.ran }).toEqual({
+    plain: whole,
+    compiled: { ...whole, compiled: numberOfCases },
+  });
 }, 600_000);

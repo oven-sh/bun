@@ -1020,9 +1020,7 @@ impl FetchTasklet {
             if self.reject_unauthorized && !self.enforce_server_identity_verdict(verdict) {
                 bun_output::scoped_log!(FetchTasklet, "onProgressUpdate: aborted due certError");
                 drop(certificate_info);
-                // `check_server_identity` already set abort_reason / aborted /
-                // result.fail and scheduled the shutdown of the parked
-                // socket; all that is left is rejecting the promise.
+                // The shutdown of the parked socket is scheduled; all that is left is rejecting the promise.
                 let promise_value = self.promise.value_or_empty();
                 if promise_value.is_empty_or_undefined_or_null() {
                     bun_output::scoped_log!(
@@ -1158,8 +1156,7 @@ impl FetchTasklet {
     }
 
     /// `Ok` when the callback approved the certificate; `Err(Some(error))`
-    /// with the reason when it did not; `Err(None)` when there was no
-    /// certificate to show it.
+    /// with the reason when it did not; `Err(None)` when it gave no verdict.
     fn run_check_server_identity(
         &mut self,
         certificate_info: &CertificateInfo,
@@ -1188,6 +1185,9 @@ impl FetchTasklet {
             Ok(v) => v,
             Err(e) => return Err(Some(global_object.take_exception(e))),
         };
+        if check_server_identity.call_may_have_been_dropped(&global_object) {
+            return Err(None);
+        }
 
         // > Returns <Error> object [...] on failure
         // Any object counts: a DOMException or a util.inherits() error is not an ErrorInstance cell.
@@ -1215,26 +1215,18 @@ impl FetchTasklet {
 
     /// Fail the request for a rejected certificate. Returns whether it may proceed.
     fn enforce_server_identity_verdict(&mut self, verdict: Result<(), Option<JSValue>>) -> bool {
-        match verdict {
-            Ok(()) => true,
-            Err(Some(reason)) => {
-                let global_object = self.global_this;
-                // mark to wait until deinit
-                self.is_waiting_abort = self.result.has_more;
-                self.abort_reason.set(&global_object, reason);
-                self.abort_task();
-                self.result.fail = Some(http::Error::ERR_TLS_CERT_ALTNAME_INVALID);
-                false
-            }
-            Err(None) => {
-                // Every false return must have scheduled the parked socket's shutdown.
-                if let Some(id) = self.async_http_id {
-                    http::HTTPThread::schedule_shutdown(id);
-                }
-                self.result.fail = Some(http::Error::ERR_TLS_CERT_ALTNAME_INVALID);
-                false
-            }
+        let Err(reason) = verdict else {
+            return true;
+        };
+        if let Some(reason) = reason {
+            let global_object = self.global_this;
+            self.abort_reason.set(&global_object, reason);
         }
+        // mark to wait until deinit
+        self.is_waiting_abort = self.result.has_more;
+        self.abort_task();
+        self.result.fail = Some(http::Error::ERR_TLS_CERT_ALTNAME_INVALID);
+        false
     }
 
     /// The request's own `checkServerIdentity`, else its session's.

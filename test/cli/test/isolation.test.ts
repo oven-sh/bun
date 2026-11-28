@@ -2335,6 +2335,54 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
     expect(exitCode).toBe(0);
   });
 
+  test("fetch() refuses the server when its checkServerIdentity is a function of a finished file's realm", async () => {
+    // Built-in modules are shared under --isolate=modules, so `fs` carries the function over.
+    const check = `
+      import { test } from "bun:test";
+      import fs from "node:fs";
+      test("fetch", async () => {
+        let heard = 0;
+        await using server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          tls: ${JSON.stringify(tls)},
+          fetch: () => (heard++, new Response()),
+        });
+        const tls = { ca: ${JSON.stringify(tls.cert)}, checkServerIdentity: fs.approve };
+        const results = [];
+        for (const request of [() => fetch(server.url, { tls }), () => new Bun.FetchSession({ tls }).fetch(server.url)]) {
+          results.push(await request().then(response => response.status, error => error.code));
+        }
+        console.log(JSON.stringify({ results, heard, asked: fs.asked }));
+      });
+    `;
+    using dir = tempDir("isolate-late-identity", {
+      "a.test.ts": `
+        import vm from "node:vm";
+        ${check}
+        fs.asked = 0;
+        fs.approve = vm.runInNewContext("() => { fs.asked++; }", { fs });
+      `,
+      "b.test.ts": check,
+    });
+    const { stdout, stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate=modules", "--timeout=30000"],
+      ["./a.test.ts", "./b.test.ts"],
+    );
+    expect(
+      stdout
+        .split("\n")
+        .filter(line => line.startsWith("{"))
+        .map(line => JSON.parse(line)),
+    ).toEqual([
+      { results: [200, 200], heard: 2, asked: 2 },
+      { results: ["ERR_TLS_CERT_ALTNAME_INVALID", "ERR_TLS_CERT_ALTNAME_INVALID"], heard: 0, asked: 2 },
+    ]);
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   // A FinalizationRegistry cleanup that a finished file created reaches none of
   // the checks above: JSC calls it directly from a DeferredWorkTimer job, not
   // through a microtask, a Job or run_callback. The cleanup ran in the retired

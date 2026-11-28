@@ -11,7 +11,6 @@ use bun_paths::{self, SEP, fs as PFs};
 use bun_core::strings;
 use bun_resolver as resolver;
 use bun_resolver::fs as Fs;
-use bun_sys::Fd;
 use bun_url::URL;
 
 use crate::options::{self, BundleOptions, ImportPathFormat};
@@ -129,51 +128,6 @@ impl Linker {
         // first `intern_path()` / `relative_paths_list()` call, so no eager
         // poke is needed (it would be startup overhead for non-bundling code paths).
         Self { log }
-    }
-
-    // ── getModKey / getHashedFilename ────────────────────────────────────
-    // `ModKey` lives at module scope (`bun_resolver::fs::ModKey`)
-    // alongside `RealFS`. `file_path` is typed `PFs::Path` (not `Fs::Path`)
-    // so `get_hashed_filename` — whose callers all build `PFs::Path` — can
-    // forward directly; only `.text` (a `&[u8]`) is read.
-    pub(crate) fn get_mod_key(
-        &mut self,
-        file_path: &PFs::Path<'_>,
-        fd: Option<Fd>,
-    ) -> crate::Result<Fs::ModKey> {
-        // Borrow the cached fd; own the freshly-opened one.
-        let _owned: Option<bun_sys::File>;
-        let raw_fd = match fd {
-            Some(f) => {
-                _owned = None;
-                f
-            }
-            None => {
-                let f = bun_sys::open_file(file_path.text, bun_sys::OpenFlags::READ_ONLY)?;
-                let raw = f.handle();
-                _owned = Some(f);
-                raw
-            }
-        };
-        let file = bun_sys::File::borrow(&raw_fd);
-        Fs::FileSystem::set_max_fd(file.handle().native());
-        // spec called `Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs,
-        // path, file)`; both leading args are unread (fs.rs:1386). The inline
-        // `bun_resolver::fs::RealFS` and the full-port
-        // `fs_full::RealFS` are distinct types, so route through the
-        // RealFS-agnostic `from_file` wrapper added alongside the `ModKey`
-        // re-export.
-        Ok(Fs::ModKey::from_file(file)?)
-    }
-
-    pub(crate) fn get_hashed_filename(
-        &mut self,
-        file_path: &PFs::Path<'_>,
-        fd: Option<Fd>,
-    ) -> crate::Result<&'static [u8]> {
-        let modkey = self.get_mod_key(file_path, fd)?;
-        let mut hash_name_buf = [0u8; 1024];
-        Ok(dupe(modkey.hash_name(file_path.text, &mut hash_name_buf)?))
     }
 
     /// This modifies the Ast in-place! It rewrites the import records of builtins

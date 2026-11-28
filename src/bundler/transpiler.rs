@@ -2480,9 +2480,6 @@ impl<'a> Transpiler<'a> {
         let mut by_dest_path: bun_collections::StringArrayHashMap<Vec<usize>> = Default::default();
         let mut has_duplicates = false;
         for (index, file) in self.output_files.iter().enumerate() {
-            if file.dest_path.is_empty() {
-                continue;
-            }
             let entry = by_dest_path.get_or_put(&file.dest_path)?;
             has_duplicates |= entry.found_existing;
             entry.value_ptr.push(index);
@@ -2558,7 +2555,8 @@ impl<'a> Transpiler<'a> {
         output_file.side = None;
         output_file.entry_point_index = None;
 
-        match loader {
+        // Each arm gives the bytes of the output and its extension with the dot.
+        let (bytes, ext): (Box<[u8]>, &[u8]) = match loader {
             options::Loader::Jsx
             | options::Loader::Tsx
             | options::Loader::Js
@@ -2655,7 +2653,7 @@ impl<'a> Transpiler<'a> {
                 // `result.ast` above. (`bun build` is one-shot — `self.arena`
                 // here is `cli_arena()` and lives for the process.)
                 let print_arena: &Arena = self.arena;
-                output_file.size = match self.options.target {
+                let printed = match self.options.target {
                     options::Target::Browser | options::Target::Node => {
                         self.print(print_arena, result, &mut writer, js_printer::Format::Esm)?
                     }
@@ -2668,9 +2666,9 @@ impl<'a> Transpiler<'a> {
                         js_printer::Format::EsmAscii,
                     )?,
                 };
-                output_file.value = crate::output_file::Value::Buffer {
-                    bytes: writer.ctx.written().to_vec().into_boxed_slice(),
-                };
+                let bytes = writer.ctx.written().to_vec().into_boxed_slice();
+                debug_assert_eq!(printed, bytes.len());
+                (bytes, b".js")
             }
             options::Loader::Dataurl | options::Loader::Base64 => {
                 self.log_mut().add_error_fmt(
@@ -2683,36 +2681,44 @@ impl<'a> Transpiler<'a> {
                 );
                 return Ok(None);
             }
+            options::Loader::Html => {
+                self.log_mut().add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!("HTML imports are only supported when bundling"),
+                );
+                return Ok(None);
+            }
             options::Loader::Css => {
-                match self.build_css_output(
+                let Some(bytes) = self.build_css_output(
                     file_path_text,
                     resolve_result.dirname_fd,
                     file_path.pretty,
-                ) {
-                    Some(v) => {
-                        if let crate::output_file::Value::Buffer { bytes } = &v {
-                            output_file.size = bytes.len();
-                        }
-                        output_file.value = v;
-                    }
-                    None => return Ok(None),
-                }
+                ) else {
+                    return Ok(None);
+                };
+                (bytes, b".css")
             }
-            options::Loader::Html
-            | options::Loader::Bunsh
+            options::Loader::Bunsh
             | options::Loader::SqliteEmbedded
             | options::Loader::Sqlite
             | options::Loader::Wasm
             | options::Loader::File
             | options::Loader::Napi => {
-                output_file.value = self.build_copied_file_output(file_path_text, file_path_ext)?;
+                let Some((bytes, is_executable)) =
+                    self.read_copied_file(file_path_text, file_path.pretty)
+                else {
+                    return Ok(None);
+                };
+                output_file.output_kind = options::OutputKind::Asset;
+                output_file.is_executable = is_executable;
+                (bytes, file_path_ext)
             }
-        }
+        };
 
-        if let crate::output_file::Value::Buffer { bytes } = &output_file.value {
-            output_file.dest_path = self.transform_only_dest_path(file_path_text, loader, bytes);
-        }
-
+        output_file.size = bytes.len();
+        output_file.dest_path = self.transform_only_dest_path(file_path_text, ext, &bytes);
+        output_file.value = crate::output_file::Value::Buffer { bytes };
         Ok(Some(output_file))
     }
 
@@ -2728,17 +2734,11 @@ impl<'a> Transpiler<'a> {
     fn transform_only_dest_path(
         &self,
         file_path_text: &[u8],
-        loader: options::Loader,
+        ext: &[u8],
         output: &[u8],
     ) -> Box<[u8]> {
         let rel_to_root = bun_paths::Path::relative(&self.options.root_dir, file_path_text);
         let pathname = Fs::PathName::init(&rel_to_root);
-
-        let ext: &[u8] = if loader == options::Loader::Css {
-            b"css"
-        } else {
-            b"js"
-        };
 
         let mut template = self.entry_naming_template();
         template.placeholder.dir = pathname.dir.into();
@@ -2746,7 +2746,7 @@ impl<'a> Transpiler<'a> {
             template.resolve_dir(&self.options.root_dir);
         }
         template.placeholder.name = pathname.base.into();
-        template.placeholder.ext = ext.into();
+        template.placeholder.set_ext_of_name(ext);
         if template.needs(options::PlaceholderField::Target) {
             template.placeholder.target = self.options.target.naming_placeholder().into();
         }
@@ -2776,7 +2776,7 @@ impl<'a> Transpiler<'a> {
         file_path_text: &'static [u8],
         dirname_fd: FD,
         file_path_pretty: &'static [u8],
-    ) -> Option<crate::output_file::Value> {
+    ) -> Option<Box<[u8]>> {
         use crate::bun_css;
 
         let entry = match self.resolver.caches.fs.read_file_with_allocator(
@@ -2862,32 +2862,46 @@ impl<'a> Transpiler<'a> {
                 return None;
             }
         };
-        Some(crate::output_file::Value::Buffer {
-            bytes: result.code.into_boxed_slice(),
-        })
+        Some(result.code.into_boxed_slice())
     }
 
-    /// Cold path: `bun build` of a non-JS asset copied verbatim (`.html`,
-    /// `.wasm`, `.node`, sqlite, bunsh, generic `file`). Split out so it
-    /// isn't interleaved (post-LTO) with the hot JS/TS transpile path.
+    /// Cold path like `build_css_output`. Not read through the resolver's file cache, which removes a BOM.
     #[cold]
     #[inline(never)]
-    fn build_copied_file_output(
+    fn read_copied_file(
         &mut self,
-        file_path_text: &'static [u8],
-        file_path_ext: &[u8],
-    ) -> crate::Result<crate::output_file::Value> {
-        let hashed_name = self
-            .linker
-            .get_hashed_filename(&bun_paths::fs::Path::init(file_path_text), None)?;
-        let mut pathname = Vec::with_capacity(hashed_name.len() + file_path_ext.len());
-        pathname.extend_from_slice(hashed_name);
-        pathname.extend_from_slice(file_path_ext);
-        Ok(crate::output_file::Value::Copy(
-            crate::output_file::FileOperation {
-                pathname: pathname.into_boxed_slice(),
-            },
-        ))
+        file_path_text: &[u8],
+        file_path_pretty: &[u8],
+    ) -> Option<(Box<[u8]>, bool)> {
+        // One `fstat` gives the mode and the size to reserve, as `File::read_to_end` reserves it.
+        let read = || -> bun_sys::Maybe<(Vec<u8>, bool)> {
+            let file = bun_sys::File::openat(FD::cwd(), file_path_text, bun_sys::O::RDONLY, 0)?;
+            let stat = file.stat()?;
+            let mut bytes = Vec::new();
+            if bytes
+                .try_reserve_exact((stat.st_size as usize).saturating_add(16))
+                .is_err()
+            {
+                return Err(bun_sys::Error::oom());
+            }
+            file.read_to_end_with_array_list(&mut bytes, bun_sys::SizeHint::ProbablySmall)?;
+            Ok((bytes, stat.st_mode as u32 & 0o111 != 0))
+        };
+        match read() {
+            Ok((bytes, is_executable)) => Some((bytes.into_boxed_slice(), is_executable)),
+            Err(err) => {
+                self.log_mut().add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "{} reading \"{}\"",
+                        bstr::BStr::new(err.name()),
+                        bstr::BStr::new(file_path_pretty),
+                    ),
+                );
+                None
+            }
+        }
     }
 }
 

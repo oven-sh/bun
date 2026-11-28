@@ -188,6 +188,25 @@ pub(crate) fn check_entry_points_are_kept<'a>(
     }
 }
 
+/// Whether `path` in `dir` and `other` are one file, by device and inode. `false` if either does not exist.
+pub(crate) fn is_same_file_at(dir: Fd, path: &[u8], other: &[u8]) -> bool {
+    let Ok(found) = bun_sys::fstatat(dir, &ZBox::from_bytes(path)) else {
+        return false;
+    };
+    let Ok(expected) = bun_sys::stat(&ZBox::from_bytes(other)) else {
+        return false;
+    };
+    let real_path_in_dir = || {
+        // The working directory has no descriptor to ask for its path.
+        if dir == Fd::cwd() {
+            return real_path(path);
+        }
+        let dir = bun_sys::get_fd_path_owned(dir).ok()?;
+        real_path(&Path::from_parts(&[dir.as_bytes(), path]))
+    };
+    identify(&found, real_path_in_dir).is_same_file(&identify(&expected, || real_path(other)))
+}
+
 /// The regular file that writing `path` replaces. `None` for a symlink, which is replaced itself.
 fn find_replaced_file(path: &[u8]) -> Option<Vec<u8>> {
     let stat = bun_sys::lstat(&ZBox::from_bytes(path)).ok()?;

@@ -40,7 +40,7 @@ pub(crate) fn add_typed_files(
         OutputFileValue::Saved(_) => {
             bun_sys::File::read_from(bun_core::Fd::cwd(), &path_of(file)).ok()
         }
-        OutputFileValue::Copy(_) | OutputFileValue::Noop => None,
+        OutputFileValue::Noop => None,
     };
     struct Written<'f> {
         path: Vec<u8>,
@@ -153,7 +153,7 @@ fn drop_source_maps(outdir: &[u8], output_files: &mut Vec<OutputFile>) {
                     bun_sys::File::write_file(bun_core::Fd::cwd(), &path, text).ok()?;
                     Some(text.len())
                 }),
-            OutputFileValue::Copy(_) | OutputFileValue::Noop => None,
+            OutputFileValue::Noop => None,
         };
         if let Some(length) = length {
             (file.size, file.size_without_sourcemap) = (length, length);

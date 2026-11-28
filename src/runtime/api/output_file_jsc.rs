@@ -62,27 +62,6 @@ impl OutputFileJsc for OutputFile {
         let mime = self.loader.to_mime_type(&[mime_hint]);
 
         match value {
-            OutputFileValue::Copy(copy) => {
-                let file_blob = match BlobStore::init_file(
-                    PathOrFileDescriptor::Path(PathLike::owned(copy.pathname.to_vec())),
-                    Some(mime),
-                ) {
-                    Ok(b) => b,
-                    Err(err) => Output::panic(format_args!(
-                        "error: Unable to create file blob: \"{}\"",
-                        err.name()
-                    )),
-                };
-
-                BuildArtifact {
-                    blob: Blob::init_with_store(file_blob, global_object),
-                    hash: self.hash,
-                    loader: self.input_loader,
-                    output_kind: self.output_kind,
-                    path: Box::<[u8]>::from(copy.pathname.as_ref()),
-                }
-                .to_js(global_object)
-            }
             OutputFileValue::Saved(_) => {
                 let path_to_use: &[u8] = owned_pathname.unwrap_or(&self.src_path);
 
@@ -147,13 +126,6 @@ impl OutputFileJsc for OutputFile {
             .to_mime_type(&[self.dest_path.as_ref(), &self.src_path]);
 
         match value {
-            OutputFileValue::Copy(copy) => {
-                let file_blob = BlobStore::init_file(
-                    PathOrFileDescriptor::Path(PathLike::owned(copy.pathname.to_vec())),
-                    Some(mime),
-                )?;
-                Ok(Blob::init_with_store(file_blob, global_this))
-            }
             OutputFileValue::Saved(_) => {
                 let file_blob = BlobStore::init_file(
                     PathOrFileDescriptor::Path(PathLike::owned(self.src_path.to_vec())),

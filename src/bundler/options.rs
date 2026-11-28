@@ -2259,6 +2259,12 @@ impl Placeholder {
             }
         }
     }
+
+    /// `ext` is as `PathName::ext` gives it: with its dot, or empty for a name without an extension.
+    pub(crate) fn set_ext_of_name(&mut self, ext: &[u8]) {
+        self.ext = ext.strip_prefix(b".").unwrap_or(ext).into();
+        self.has_no_ext = ext.is_empty();
+    }
 }
 
 // Shared body for PathTemplate::needs / PathTemplateConst::needs (D064).
@@ -2343,6 +2349,7 @@ fn path_template_print<W: bun_io::Write>(
     dir: &[u8],
     name: &[u8],
     ext: &[u8],
+    has_no_ext: bool,
     hash: Option<bun_core::fmt::ContentHash>,
     target: &[u8],
     sanitize_parent_dirs: bool,
@@ -2350,7 +2357,7 @@ fn path_template_print<W: bun_io::Write>(
     let mut remain: &[u8] = data;
     while let Some(j) = strings::index_of_char(remain, b'[') {
         let j = j as usize;
-        PathTemplate::write_replacing_slashes_on_windows(writer, &remain[0..j])?;
+        let literal = &remain[0..j];
         remain = &remain[j + 1..];
 
         let mut count: isize = 1;
@@ -2371,6 +2378,7 @@ fn path_template_print<W: bun_io::Write>(
 
         if count != 0 {
             // No matching `]`: emit `[` and fall through to write `remain` literally.
+            PathTemplate::write_replacing_slashes_on_windows(writer, literal)?;
             writer.write_all(b"[")?;
             break;
         }
@@ -2379,12 +2387,20 @@ fn path_template_print<W: bun_io::Write>(
 
         let Some((field, hash_len)) = placeholder_field(placeholder) else {
             // Unknown placeholder: keep `[placeholder]` verbatim in the output.
+            PathTemplate::write_replacing_slashes_on_windows(writer, literal)?;
             writer.write_all(b"[")?;
             PathTemplate::write_replacing_slashes_on_windows(writer, placeholder)?;
             writer.write_all(b"]")?;
             remain = &remain[end_len + 1..];
             continue;
         };
+
+        // `[name].[ext]` is `Makefile` for a name without an extension, not `Makefile.`.
+        let literal = match field {
+            PlaceholderField::Ext if has_no_ext => literal.strip_suffix(b".").unwrap_or(literal),
+            _ => literal,
+        };
+        PathTemplate::write_replacing_slashes_on_windows(writer, literal)?;
 
         match field {
             PlaceholderField::Dir => {
@@ -2477,7 +2493,10 @@ fn path_template_print_tolerates_malformed_brackets() {
     fn run(template: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
         let hash = Some(bun_core::fmt::ContentHash::short(0));
-        path_template_print(&mut out, template, b"D", b"N", b"E", hash, b"T", false).unwrap();
+        path_template_print(
+            &mut out, template, b"D", b"N", b"E", false, hash, b"T", false,
+        )
+        .unwrap();
         out
     }
     // Unterminated known placeholder: used to slice one past the end.
@@ -2519,6 +2538,50 @@ fn path_template_print_tolerates_malformed_brackets() {
     assert_eq!(find_unterminated_placeholder(b"]"), None);
     assert_eq!(find_unterminated_placeholder(b"[dir]/[name].[ext]"), None);
     assert_eq!(find_unterminated_placeholder(b"[foo]-[name].[ext]"), None);
+}
+
+#[cfg(test)]
+#[test]
+fn path_template_print_drops_the_dot_before_the_ext_of_a_name_without_one() {
+    fn run(template: &[u8], ext: &[u8]) -> Vec<u8> {
+        let mut template = PathTemplate {
+            data: template.into(),
+            placeholder: Placeholder {
+                dir: b"D".as_slice().into(),
+                name: b"N".as_slice().into(),
+                ..Default::default()
+            },
+        };
+        template.placeholder.set_ext_of_name(ext);
+        let mut out = Vec::new();
+        template.print(&mut out, false).unwrap();
+        out
+    }
+    assert_eq!(run(b"[dir]/[name].[ext]", b""), b"D/N");
+    assert_eq!(run(b"[name]-[hash].[ext]", b""), b"N-");
+    assert_eq!(run(b"[name].[ext].gz", b""), b"N.gz");
+    // Only a `.` that touches `[ext]` goes.
+    assert_eq!(run(b"[name]-[ext]", b""), b"N-");
+    assert_eq!(run(b"[ext]/[name]", b""), b"/N");
+    // `foo.` and `foo.js` have an extension.
+    assert_eq!(run(b"[dir]/[name].[ext]", b"."), b"D/N.");
+    assert_eq!(run(b"[dir]/[name].[ext]", b".js"), b"D/N.js");
+
+    // An `ext` that is only assigned keeps the dot: bundle mode names `Makefile-<hash>.` so.
+    let mut assigned = PathTemplate {
+        data: b"[name].[ext]".as_slice().into(),
+        placeholder: Placeholder {
+            name: b"N".as_slice().into(),
+            ..Default::default()
+        },
+    };
+    let mut out = Vec::new();
+    assigned.print(&mut out, false).unwrap();
+    assert_eq!(out, b"N.");
+    assigned.placeholder.ext = b"js".as_slice().into();
+    out.clear();
+    assigned.print(&mut out, false).unwrap();
+    assert_eq!(out, b"N.js");
 }
 
 impl PathTemplate {
@@ -2623,6 +2686,7 @@ impl PathTemplate {
             &self.placeholder.dir,
             &self.placeholder.name,
             &self.placeholder.ext,
+            self.placeholder.has_no_ext,
             self.placeholder.hash,
             &self.placeholder.target,
             sanitize_parent_dirs,
@@ -2663,6 +2727,8 @@ pub struct Placeholder {
     pub(crate) dir: Box<[u8]>,
     pub(crate) name: Box<[u8]>,
     pub(crate) ext: Box<[u8]>,
+    /// Set for a name without an extension: the `.` directly before `[ext]` is not printed.
+    pub(crate) has_no_ext: bool,
     pub(crate) hash: Option<bun_core::fmt::ContentHash>,
     pub(crate) target: Box<[u8]>,
 }
@@ -2720,6 +2786,7 @@ impl PathTemplateConst {
             self.placeholder.dir,
             self.placeholder.name,
             self.placeholder.ext,
+            false,
             self.placeholder.hash,
             self.placeholder.target,
             sanitize_parent_dirs,
@@ -2751,6 +2818,7 @@ impl From<PathTemplateConst> for PathTemplate {
                 dir: Box::from(c.placeholder.dir),
                 name: Box::from(c.placeholder.name),
                 ext: Box::from(c.placeholder.ext),
+                has_no_ext: false,
                 hash: c.placeholder.hash,
                 target: Box::from(c.placeholder.target),
             },

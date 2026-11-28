@@ -345,6 +345,33 @@ describe.concurrent("bun compile --library", () => {
     expect(written.main).toBe("./index.js");
   });
 
+  test("--no-bundle: an entry point that is not code is copied and is one of the `files`", async () => {
+    const wasm = Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0xff, 0xfe, 0x80]);
+    using dir = tempDir("library-no-bundle-copy", {
+      "tsconfig.json": tsconfig,
+      "package.json": JSON.stringify({ name: "shapes", version: "1.0.0" }),
+      "src/a.ts": `export const a: number = 1;\n`,
+      "src/x.wasm": wasm,
+    });
+    const built = await bun(String(dir), "compile", "--library", "--no-bundle", "src/a.ts", "src/x.wasm");
+    expect(built.stderr).toBe(NO_TYPED_FILES_WITHOUT_BUNDLING);
+    expect(built.exitCode).toBe(0);
+    expect(filesIn(String(dir))).toEqual([
+      "dist/a.d.ts",
+      "dist/a.js",
+      "dist/package.json",
+      "dist/x.wasm",
+      "package.json",
+      "src/a.ts",
+      "src/x.wasm",
+      "tsconfig.json",
+    ]);
+    expect(readFileSync(join(String(dir), "dist/x.wasm"))).toEqual(wasm);
+    const written = json(join(String(dir), "dist/package.json"));
+    expect(written.files).toEqual(["a.d.ts", "a.js", "x.wasm"]);
+    expect(written.exports).toEqual({ ".": untypedConditions("a"), "./package.json": "./package.json" });
+  });
+
   test("a source outside the root directory has no place for its declaration file", async () => {
     using dir = tempDir("library-outside-the-root", {
       "tsconfig.json": tsconfig,

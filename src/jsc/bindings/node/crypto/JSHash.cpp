@@ -14,6 +14,8 @@
 #include <JavaScriptCore/Error.h>
 #include "NodeValidator.h"
 #include <JavaScriptCore/FunctionPrototype.h>
+#include <unicode/utf16.h>
+#include <wtf/SIMDUTF.h>
 
 namespace Bun {
 
@@ -160,6 +162,34 @@ void JSHashPrototype::finishCreation(JSC::VM& vm)
     Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
+// Piece by piece on the stack: nothing can throw once a piece is in the hash.
+static bool updateWithUTF8(JSHash& hash, StringView text)
+{
+    constexpr size_t maximumUnits = 4096;
+    std::array<char, 3 * maximumUnits> bytes;
+    while (!text.isEmpty()) {
+        size_t units = std::min<size_t>(text.length(), maximumUnits);
+        size_t written;
+        if (text.is8Bit())
+            written = simdutf::convert_latin1_to_utf8(byteCast<char>(text.span8()).data(), units, bytes.data());
+        else {
+            if (units < text.length() && U16_IS_LEAD(text.span16()[units - 1]))
+                units--;
+            auto result = simdutf::convert_utf16le_to_utf8_with_errors(text.span16().data(), units, bytes.data());
+            written = result.count;
+            if (result.error != simdutf::error_code::SUCCESS) {
+                std::array<char16_t, maximumUnits> wellFormed;
+                simdutf::to_well_formed_utf16le(text.span16().data(), units, wellFormed.data());
+                written = simdutf::convert_valid_utf16le_to_utf8(wellFormed.data(), units, bytes.data());
+            }
+        }
+        if (!hash.update(byteCast<uint8_t>(std::span { bytes }.first(written))))
+            return false;
+        text = text.substring(units);
+    }
+    return true;
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
@@ -207,6 +237,13 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
 
         if (encoding == WebCore::BufferEncodingType::utf8 && inputView->is8Bit() && WTF::charactersAreAllASCII(inputView->span8())) {
             if (!hash->update(byteCast<uint8_t>(inputView->span8()))) {
+                return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
+            }
+            return JSValue::encode(hashWrapper);
+        }
+
+        if (encoding == WebCore::BufferEncodingType::utf8) {
+            if (!updateWithUTF8(*hash, inputView)) {
                 return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
             }
             return JSValue::encode(hashWrapper);

@@ -226,10 +226,33 @@ fn append_keywords_to_language_tag(
     Ok(())
 }
 
+fn append_subtags_to_language_tag(parsed: &Subtags, sink: &mut ByteSink) {
+    let (language, script, region) = (parsed.language(), parsed.script(), parsed.region());
+    sink.add_all(if ultag_is_language_subtag(&language) {
+        find_row::<3, _>(DEPRECATEDLANGS, &language).unwrap_or(&language)
+    } else {
+        LANG_UND
+    });
+    if !script.is_empty() {
+        append_subtag(sink, SEP, &script);
+    }
+    if ultag_is_region_subtag(&region) {
+        let current = find_row::<2, _>(DEPRECATEDREGIONS, &region);
+        append_subtag(sink, SEP, current.unwrap_or(&region));
+    }
+}
+
 pub(crate) fn ulocimp_to_language_tag_to(
     locale_id: &[u8],
     sink: &mut ByteSink,
 ) -> Result<(), UErrorCode> {
+    if let Ok(parsed) = Subtags::parse(locale_id)
+        && parsed.is_plain()
+    {
+        append_subtags_to_language_tag(&parsed, sink);
+        return Ok(());
+    }
+
     let mut canonical = SmallChars::new();
     fail_on_oom(|| ulocimp_canonicalize_to(locale_id, &mut canonical))?;
     if canonical.first() == Some(&b'@')
@@ -247,19 +270,7 @@ pub(crate) fn ulocimp_to_language_tag_to(
 
     // A canonical ID always parses. Only its variant can be too long, after a POSIX variant (`@euro`) was appended.
     let parsed = Subtags::parse(&canonical).ok().soft_unwrap();
-    let (language, script, region) = (parsed.language(), parsed.script(), parsed.region());
-    sink.add_all(if ultag_is_language_subtag(&language) {
-        find_row::<3, _>(DEPRECATEDLANGS, &language).unwrap_or(&language)
-    } else {
-        LANG_UND
-    });
-    if !script.is_empty() {
-        append_subtag(sink, SEP, &script);
-    }
-    if ultag_is_region_subtag(&region) {
-        let current = find_row::<2, _>(DEPRECATEDREGIONS, &region);
-        append_subtag(sink, SEP, current.unwrap_or(&region));
-    }
+    append_subtags_to_language_tag(&parsed, sink);
 
     let mut variant =
         via_byte_sink(|sink| parsed.variant().map(|(variant, _)| variant.append_to(sink)))?;

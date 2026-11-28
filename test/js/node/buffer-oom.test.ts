@@ -198,7 +198,7 @@ describe.skipIf(!isASAN && !isLinux)("TextDecoder reports an allocation that fai
   });
 });
 
-// A UTF-8 input with a non-ASCII character is transcoded into a Rust-owned
+// A UTF-8 input with a character above Latin-1 is transcoded into a Rust-owned
 // UTF-16 buffer, and a large base64 output is encoded into a Rust-owned byte
 // buffer; both are adopted by JSC afterwards. ASAN's per-allocation cap makes
 // those allocations fail: the 36 MiB input fits under the 40 MiB cap while the
@@ -208,7 +208,7 @@ describe.skipIf(!isASAN)("a Rust-allocated string whose allocation fails is repo
   const env = envWithAsanCap(40);
   const inputs = `
     const ascii = Buffer.alloc(${SIZE}, "a");
-    const nonAscii = Buffer.alloc(${SIZE}, "a"); nonAscii[0] = 0xc3; nonAscii[1] = 0xa9;
+    const nonAscii = Buffer.alloc(${SIZE}, "a"); nonAscii[0] = 0xc4; nonAscii[1] = 0x80;
     // '"' + '\\u00e9' + 'a'.repeat(${SIZE} - 4) + '"': a valid JSON string literal.
     const json = Buffer.alloc(${SIZE}, "a");
     json[0] = 0x22; json[1] = 0xc3; json[2] = 0xa9; json[${SIZE} - 1] = 0x22;

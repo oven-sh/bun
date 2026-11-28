@@ -1730,13 +1730,21 @@ static int64_t indexOfString(JSC::JSGlobalObject* lexicalGlobalObject, bool last
 
     auto view = str->view(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, -1);
-    JSC::EncodedJSValue encodedBuffer = constructFromEncoding(lexicalGlobalObject, view, encoding);
-    RETURN_IF_EXCEPTION(scope, -1);
-
-    auto* arrayValue = uncheckedDowncast<JSC::JSUint8Array>(JSC::JSValue::decode(encodedBuffer));
-    size_t needleLength = arrayValue->byteLength();
-
     const bool isUTF16 = isUTF16Encoding(encoding);
+
+    // Where the string's own bytes are its encoding, they are searched for in place.
+    std::span<const uint8_t> needle;
+    if (view->is8Bit() && (encoding == BufferEncodingType::latin1 || encoding == BufferEncodingType::ascii || (encoding == BufferEncodingType::utf8 && WTF::charactersAreAllASCII(view->span8())))) {
+        needle = byteCast<uint8_t>(view->span8());
+    } else if (!view->is8Bit() && isUTF16) {
+        needle = asBytes(view->span16());
+    } else {
+        JSC::EncodedJSValue encodedBuffer = constructFromEncoding(lexicalGlobalObject, view, encoding);
+        RETURN_IF_EXCEPTION(scope, -1);
+        needle = uncheckedDowncast<JSC::JSUint8Array>(JSC::JSValue::decode(encodedBuffer))->typedSpan();
+    }
+    size_t needleLength = needle.size();
+
     // Node's IndexOfString rounds haystack_length down to even for UCS2 before
     // IndexOfOffset (unlike IndexOfBuffer, which uses the raw byte length).
     size_t haystackLength = isUTF16 ? byteLength & ~static_cast<size_t>(1) : byteLength;
@@ -1747,7 +1755,7 @@ static int64_t indexOfString(JSC::JSGlobalObject* lexicalGlobalObject, bool last
     if (!computeIndexOfRange(haystackLength, byteOffsetD, endD, needleLength, !last, isUTF16, &byteOffset, &searchEnd, &immediateResult))
         return immediateResult;
 
-    const uint8_t* typedVectorValue = arrayValue->typedVector();
+    const uint8_t* typedVectorValue = needle.data();
     if (isUTF16) {
         return last ? lastIndexOf16(typedVector, searchEnd, typedVectorValue, needleLength, byteOffset)
                     : indexOf16(typedVector, searchEnd, typedVectorValue, needleLength, byteOffset);

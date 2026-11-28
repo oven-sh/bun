@@ -1,4 +1,5 @@
 import { Buffer, SlowBuffer, isAscii, isUtf8, kMaxLength } from "buffer";
+import { heapStats } from "bun:jsc";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gc, isASAN, isDebug, nodeExe, tempDir, withoutAggressiveGC } from "harness";
 import { createHash } from "node:crypto";
@@ -2429,6 +2430,35 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(Buffer.from("ab").indexOf(Buffer.alloc(0))).toBe(0);
         expect(Buffer.from("ab").indexOf(Buffer.alloc(0), 5)).toBe(2);
         expect(Buffer.from("ab").lastIndexOf("")).toBe(2);
+      });
+
+      it("indexOf/lastIndexOf/includes find a string as they find its encoding", () => {
+        const needles = ["\n", "ab", "\xe9", "a\xe9", "\u3042", "a\u3042", "xxab".slice(2), ["a", "b"].join("") + "ab"];
+        for (const encoding of ["utf8", "latin1", "ascii", "utf16le"]) {
+          const haystack = Buffer.from("zz" + needles.join("-").repeat(2), encoding);
+          for (const needle of needles) {
+            const bytes = Buffer.from(needle, encoding);
+            for (const offset of [0, 4, -6, 1000]) {
+              expect(haystack.indexOf(needle, offset, encoding)).toBe(haystack.indexOf(bytes, offset, encoding));
+              expect(haystack.lastIndexOf(needle, offset, encoding)).toBe(
+                haystack.lastIndexOf(bytes, offset, encoding),
+              );
+              expect(haystack.includes(needle, offset, encoding)).toBe(haystack.includes(bytes, offset, encoding));
+            }
+          }
+        }
+      });
+
+      it("indexOf makes no Buffer of a string whose bytes are its encoding", () => {
+        const haystack = Buffer.from("a line\n");
+        Bun.gc(true);
+        const before = heapStats().objectTypeCounts.Uint8Array;
+        for (let i = 0; i < 100; i++) {
+          haystack.indexOf("\n");
+          haystack.lastIndexOf("\xe9", 0, "latin1");
+          haystack.includes("\u3042", 0, "utf16le");
+        }
+        expect(heapStats().objectTypeCounts.Uint8Array - before).toBeLessThan(10);
       });
 
       it("indexOf", () => {

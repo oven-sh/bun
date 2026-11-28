@@ -458,13 +458,17 @@ impl String {
     }
 
     /// UTF-8 `bytes` → external WTF-backed string: adopts the allocation as
-    /// Latin-1 when all-ASCII, otherwise adopts a UTF-16 transcode of it.
+    /// Latin-1 when all-ASCII, otherwise adopts a transcode of it.
     /// `DEAD` when longer than [`Self::max_length`], `OUT_OF_MEMORY` when the
     /// transcode could not allocate.
     pub fn from_owned_utf8(bytes: Vec<u8>) -> Self {
-        match strings::to_utf16_alloc(&bytes, false, false) {
-            Ok(None) => Self::create_external_globally_allocated_latin1(bytes),
-            Ok(Some(utf16)) => Self::create_external_globally_allocated_utf16(utf16),
+        use strings::DecodedUtf8;
+        match strings::decode_utf8_alloc(&bytes, false) {
+            Ok(DecodedUtf8::Ascii) => Self::create_external_globally_allocated_latin1(bytes),
+            Ok(DecodedUtf8::Latin1(latin1)) => {
+                Self::create_external_globally_allocated_latin1(latin1)
+            }
+            Ok(DecodedUtf8::Utf16(utf16)) => Self::create_external_globally_allocated_utf16(utf16),
             Err(_) => Self::utf16_transcode_failure(&bytes),
         }
     }

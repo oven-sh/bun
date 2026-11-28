@@ -226,6 +226,19 @@ impl<'a> Subtags<'a> {
         Ok((subtags, variant, rest))
     }
 
+    /// Whether `canonicalize` does to the ID only what `language`, `script` and `region` do.
+    pub(crate) fn is_plain(&self) -> bool {
+        let is_plain_region = match *self.region {
+            [] => true,
+            [a, b] => a.is_ascii_alphabetic() && b.is_ascii_alphabetic(),
+            _ => self.region.iter().all(u8::is_ascii_digit),
+        };
+        self.rest.is_empty()
+            && (2..=3).contains(&self.language.len())
+            && self.language.iter().all(u8::is_ascii_alphabetic)
+            && is_plain_region
+    }
+
     pub(crate) fn language(&self) -> Language {
         normalize_language(self.language)
     }

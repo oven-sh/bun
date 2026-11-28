@@ -399,17 +399,15 @@ fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
             str
         }
         Encoding::Buffer | Encoding::Utf8 => {
-            let converted = match strings::to_utf16_alloc(input, false, false) {
-                Ok(v) => v,
-                Err(_) => return BunString::utf16_transcode_failure(input),
-            };
-            if let Some(utf16) = converted {
-                return create_external_globally_allocated_utf16(utf16);
+            use strings::DecodedUtf8;
+            match strings::decode_utf8_alloc(input, false) {
+                Ok(DecodedUtf8::Ascii) => BunString::clone_latin1(input),
+                Ok(DecodedUtf8::Latin1(latin1)) => {
+                    create_external_globally_allocated_latin1(latin1)
+                }
+                Ok(DecodedUtf8::Utf16(utf16)) => create_external_globally_allocated_utf16(utf16),
+                Err(_) => BunString::utf16_transcode_failure(input),
             }
-
-            // If we get here, it means we can safely assume the string is 100% ASCII characters
-            // For this, we rely on WebKit to manage the memory.
-            BunString::clone_latin1(input)
         }
         Encoding::Ucs2 | Encoding::Utf16le => {
             // Avoid incomplete characters

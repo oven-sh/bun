@@ -214,6 +214,17 @@ impl<'a> JsHeap<'a> {
         })
     }
 
+    /// A string that takes over the allocation of `latin1`. Its error is not thrown: a `&mut self` method can call it.
+    #[inline]
+    pub fn create_latin1_string_from_vec(
+        &self,
+        latin1: Vec<u8>,
+    ) -> Result<'a, JsLocal<'a, JSString>> {
+        crate::bun_string_jsc::try_owned_latin1_into_js(self.global_object(), latin1)
+            .map(JsLocal::from_raw)
+            .ok_or_else(|| self.string_too_long())
+    }
+
     /// A string that takes over the allocation of `utf16`. Its error is not thrown: a `&mut self` method can call it.
     #[inline]
     pub fn create_utf16_string_from_vec(

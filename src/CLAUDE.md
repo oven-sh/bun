@@ -150,7 +150,7 @@ or bytes that really are Latin-1; `utf16(units)`.
 `String::to_encoded_slice()` borrows any `String` as one;
 `EncodedSlice::to_utf8() -> Utf8Bytes<'a>`; `bun_jsc::EncodedSliceJsc` adds
 `to_js`, `to_error_instance` / `to_syntax_error_instance`, `to_json_object`, and
-`to_external_value` / `external` (hand a globally-allocated buffer to JSC).
+`try_to_external_value` / `external` (hand a globally-allocated buffer to JSC).
 
 Bytes → JS string: `bun_string_jsc::create_utf8_for_js(global, bytes)?`
 (copies; ASCII stays 8-bit). An owned `Vec<u8>` that JS should adopt:

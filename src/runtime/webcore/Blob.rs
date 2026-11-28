@@ -2082,6 +2082,12 @@ impl BlobExt for Blob {
         // SAFETY: fn contract.
         match decode_text::<true>(self, global, unsafe { &*raw_bytes })? {
             Text::Decoded(value) => Ok(value),
+            Text::Latin1(external) => {
+                if LIFETIME == Lifetime::Transfer {
+                    self.detach();
+                }
+                bun_string_jsc::owned_latin1_into_js(global, external)
+            }
             Text::Utf16(external) => {
                 if LIFETIME == Lifetime::Transfer {
                     self.detach();
@@ -5041,6 +5047,7 @@ fn could_be_all_ascii(blob: &Blob) -> Option<bool> {
 
 enum Text<'a> {
     Decoded(JSValue),
+    Latin1(Vec<u8>),
     Utf16(Vec<u16>),
     /// Without its BOM.
     Ascii(&'a [u8]),
@@ -5063,12 +5070,16 @@ fn decode_text<'a, const IN_STORE: bool>(
     if could_be_all_ascii(blob) == Some(true) {
         return Ok(Text::Ascii(buf));
     }
-    let converted = strings::to_utf16_alloc(buf, false, false)
-        .map_err(|_| bun_string_jsc::throw_utf16_transcode_failure(global, buf))?;
+    let text = match strings::decode_utf8_alloc(buf, false) {
+        Ok(strings::DecodedUtf8::Ascii) => Text::Ascii(buf),
+        Ok(strings::DecodedUtf8::Latin1(latin1)) => Text::Latin1(latin1),
+        Ok(strings::DecodedUtf8::Utf16(utf16)) => Text::Utf16(utf16),
+        Err(_) => return Err(bun_string_jsc::throw_utf16_transcode_failure(global, buf)),
+    };
     if IN_STORE {
-        blob.set_is_ascii_flag(converted.is_none());
+        blob.set_is_ascii_flag(matches!(text, Text::Ascii(_)));
     }
-    Ok(converted.map_or(Text::Ascii(buf), Text::Utf16))
+    Ok(text)
 }
 
 // Marker types for static fn dispatch through do_read_file/do_read_from_s3.
@@ -5082,6 +5093,10 @@ impl read_file::ReadFileToJs for ToStringWithBytesFn {
     fn from_owned(b: &Blob, g: &JSGlobalObject, by: Box<[u8]>) -> JsResult<JSValue> {
         match decode_text::<false>(b, g, &by)? {
             Text::Decoded(value) => Ok(value),
+            Text::Latin1(external) => {
+                drop(by);
+                bun_string_jsc::owned_latin1_into_js(g, external)
+            }
             Text::Utf16(external) => {
                 drop(by);
                 bun_string_jsc::owned_utf16_into_js(g, external)
@@ -5544,9 +5559,14 @@ impl Internal {
         if bom_len == 0 {
             return bun_string_jsc::owned_utf8_into_js(global_this, bytes);
         }
-        match strings::to_utf16_alloc(&bytes[bom_len..], false, false) {
-            Ok(Some(utf16)) => bun_string_jsc::owned_utf16_into_js(global_this, utf16),
-            Ok(None) => {
+        match strings::decode_utf8_alloc(&bytes[bom_len..], false) {
+            Ok(strings::DecodedUtf8::Latin1(latin1)) => {
+                bun_string_jsc::owned_latin1_into_js(global_this, latin1)
+            }
+            Ok(strings::DecodedUtf8::Utf16(utf16)) => {
+                bun_string_jsc::owned_utf16_into_js(global_this, utf16)
+            }
+            Ok(strings::DecodedUtf8::Ascii) => {
                 bytes.drain(..bom_len);
                 bun_string_jsc::owned_latin1_into_js(global_this, bytes)
             }

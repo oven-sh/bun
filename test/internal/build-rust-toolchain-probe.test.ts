@@ -12,9 +12,10 @@
  * runs a pre-flight.
  */
 import { afterEach, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
-import { chmodSync, readFileSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { chmodSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { probeRustToolchain } from "../../scripts/build/tools.ts";
 
@@ -28,6 +29,39 @@ afterEach(() => {
     else process.env[key] = value;
   }
 });
+
+// The real-executable alias uses a file symlink, which requires extra privileges on Windows.
+test.skipIf(isWindows)(
+  "codegen keeps its selected Bun when another real installation has the same version",
+  async () => {
+    const tools = pathToFileURL(join(repoRoot, "scripts/build/tools.ts")).href;
+    using dir = tempDir("build-selected-bun", {
+      ".bun/bin/.keep": "",
+      "probe.mjs": ({ root }) => /* js */ `
+      import assert from "node:assert/strict";
+      import { mock } from "bun:test";
+      import * as os from "node:os";
+      const originalOS = { ...os };
+      mock.module("node:os", () => ({ ...originalOS, homedir: () => ${JSON.stringify(root)} }));
+      const { findBun } = await import(${JSON.stringify(tools)});
+      assert.equal(findBun(process.platform), process.execPath);
+      console.log("selected runtime preserved");
+    `,
+    });
+    // Both candidates are the real executable, with identical bytes and versions.
+    symlinkSync(bunExe(), join(String(dir), ".bun/bin/bun"));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "probe.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "selected runtime preserved\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.skipIf(isWindows)("the configure-time rustc probe pins the rustup proxy to the pinned channel", () => {
   using dir = tempDir("build-rustc-probe", {

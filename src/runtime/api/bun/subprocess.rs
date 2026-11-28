@@ -398,9 +398,7 @@ impl Subprocess<'_> {
         }
         self.observable_getters
             .set(self.observable_getters.get() | ObservableGetter::Stderr);
-        let exited = self.has_exited();
-        // The stream is the script's that reads the property.
-        self.stderr.with_mut(|s| s.to_js(&cx.js_thread(), exited))
+        self.output_to_js(&self.stderr, cx)
     }
 
     pub(crate) fn get_stdin(self: &RefPtr<Self>, cx: &mut JsScope<'_>) -> JSValue {
@@ -425,9 +423,17 @@ impl Subprocess<'_> {
         // NOTE: ownership of internal buffers is transferred to the JSValue, which
         // gets cached on JSSubprocess (created via bindgen). This makes it
         // re-accessable to JS code but not via `self.stdout`, which is now `.closed`.
+        self.output_to_js(&self.stdout, cx)
+    }
+
+    /// `stdout` or `stderr` as the script reads it.
+    fn output_to_js(&self, output: &JsCell<Readable>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let exited = self.has_exited();
         // The stream is the script's that reads the property.
-        self.stdout.with_mut(|s| s.to_js(&cx.js_thread(), exited))
+        let stream = output.with_mut(|s| s.to_js(&cx.js_thread(), exited));
+        // A pipe that is the stream's now does not end in `on_output_read`, which would let go of the wrapper.
+        self.update_has_pending_activity();
+        stream
     }
 
     pub(crate) fn async_dispose(

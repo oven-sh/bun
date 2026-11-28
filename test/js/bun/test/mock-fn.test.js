@@ -1498,6 +1498,21 @@ describe("spyOn", () => {
       expect(Bar.prototype()).toBe(7);
       expect(fn).not.toHaveBeenCalled();
     });
+
+    test.each([
+      ["new", Made => new Made()],
+      ["Reflect.construct()", Made => Reflect.construct(Object, [], Made)],
+    ])("%s makes objects of a spy on the prototype, and of the prototype again once it is restored", (_, construct) => {
+      for (const isConstructedBefore of [true, false]) {
+        function Made() {}
+        const original = (Made.prototype = function original() {});
+        if (isConstructedBefore) construct(Made);
+        const spy = spyOn(Made, "prototype");
+        expect(Object.getPrototypeOf(construct(Made))).toBe(spy);
+        spy.mockRestore();
+        expect(Object.getPrototypeOf(construct(Made))).toBe(original);
+      }
+    });
   }
 
   test("restoring a spy on an inherited method removes the own property", () => {
@@ -2244,6 +2259,244 @@ describe("spyOn", () => {
       });
     }
   });
+
+  // Vitest allows a getter spy on these two, Jest throws "does not have access type".
+  if (isBun) {
+    describe("the length and name of a function, which bind() reads", () => {
+      // The key, what the spy answers, and that key of `fn.bind(null, 1)` under the spy.
+      const keys = [
+        ["length", 9, 8],
+        ["name", "spied", "bound spied"],
+      ];
+      const make = () => function original(a, b) {};
+      // One spy to a function: where bind() reads one key off the function, it reads the other off it too.
+      const forEachKey = rows =>
+        rows.flatMap(([title, ...row]) => keys.map(([key, ...values]) => [title, key, ...row, ...values]));
+
+      test.each(
+        forEachKey([
+          ["spyOn", spyOn],
+          ["jest.spyOn", jest.spyOn],
+          ["vi.spyOn", vi.spyOn],
+        ]),
+      )("%s of `%s` as a getter, as a value and as a setter", (_, key, spyOn, answer, spied) => {
+        const [getter, value, setter] = [make(), make(), make()];
+        spyOn(getter, key, "get").mockReturnValue(answer);
+        spyOn(value, key).mockReturnValue(answer);
+        spyOn(setter, key, "set");
+        // Whatever a setter spy leaves the function to answer, bind() reads that: a length that is no number counts as 0, a name that is no string as "".
+        const left = setter[key];
+        const ofLeft = {
+          length: typeof left === "number" ? left - 1 : 0,
+          name: `bound ${typeof left === "string" ? left : ""}`,
+        };
+        expect([getter, value, setter].map(fn => fn.bind(null, 1)[key])).toEqual([spied, spied, ofLeft[key]]);
+      });
+
+      test.each(
+        forEachKey([
+          ["a function", make],
+          ["an arrow function", () => (a, b) => {}],
+          ["an async function", () => async function original(a, b) {}],
+          ["a generator", () => function* original(a, b) {}],
+          ["a class", () => class original { constructor(a, b) {} }], // prettier-ignore
+          ["a method", () => ({ original(a, b) {} }).original],
+          ["a native function", () => vm.runInNewContext("Math.max")],
+          ["a built-in written in JavaScript", () => vm.runInNewContext("Array.prototype.map")],
+          ["a bound function", () => make().bind(null)],
+          ["a frozen function", () => Object.freeze(make())],
+          ["a Proxy of a function", () => new Proxy(make(), {})],
+        ]),
+      )("%s: a spy on `%s`, then the function as it was", (_, key, makeKind, answer, spied) => {
+        const fn = makeKind();
+        const own = Object.getOwnPropertyDescriptor(fn, key);
+        const original = fn.bind(null, 1)[key];
+        const spy = spyOn(fn, key, "get").mockReturnValue(answer);
+        expect(fn.bind(null, 1)[key]).toBe(spied);
+        spy.mockRestore();
+        expect(fn.bind(null, 1)[key]).toBe(original);
+        expect(Object.getOwnPropertyDescriptor(fn, key)).toEqual(own);
+      });
+
+      test.each(keys)(
+        "a function that only inherits its `%s` has none of its own after the spy",
+        (key, answer, spied) => {
+          for (const spyOnKey of [fn => spyOn(fn, key), fn => spyOn(fn, key, "get")]) {
+            const fn = make();
+            delete fn[key];
+            const inherited = fn.bind(null, 1)[key];
+            const spy = spyOnKey(fn).mockReturnValue(answer);
+            expect(fn.bind(null, 1)[key]).toBe(spied);
+            spy.mockRestore();
+            expect([Object.hasOwn(fn, key), fn.bind(null, 1)[key]]).toEqual([false, inherited]);
+          }
+        },
+      );
+
+      // Such a spy is stored as a value, not as an accessor.
+      test.each(keys)("a spy on an inherited method named `%s` is gone after the restore", key => {
+        class Parent {
+          static length() {}
+          static name() {}
+        }
+        class Child extends Parent {}
+        delete Child[key];
+        const spy = spyOn(Child, key);
+        const under = Object.getOwnPropertyDescriptor(Child, key);
+        spy.mockRestore();
+        expect([under, Object.hasOwn(Child, key), Child[key]]).toEqual([
+          { value: spy, writable: true, enumerable: false, configurable: true },
+          false,
+          Parent[key],
+        ]);
+      });
+
+      // Only a function is asked to record the spy. The traps of a sandbox are JavaScript, and none may run where the spy is stored.
+      test.each(keys)("a spy on `%s` asks the sandbox of a node:vm context what a spy on any other key asks", key => {
+        const asked = [key, "other"].map(key => {
+          const traps = [];
+          const handler = {};
+          for (const trap of Object.getOwnPropertyNames(Reflect)) {
+            handler[trap] = (...args) => {
+              if (args[1] === key) traps.push(trap);
+              return Reflect[trap](...args);
+            };
+          }
+          const global = vm.runInContext("this", vm.createContext(new Proxy({}, handler)));
+          traps.length = 0;
+          spyOn(global, key).mockRestore();
+          return traps;
+        });
+        expect(asked[0]).toEqual(asked[1]);
+      });
+
+      // Both of a pair: the length of `counted` and the name of `named`.
+      function pair() {
+        const counted = function counted(a, b) {};
+        const named = function named() {};
+        return {
+          counted,
+          named,
+          spy: () => [
+            spyOn(counted, "length", "get").mockReturnValue(9),
+            spyOn(named, "name", "get").mockReturnValue("spied"),
+          ],
+          bind: () => [counted.bind(null, 1), named.bind(null)],
+          read: ([counted, named]) => [counted.length, named.name],
+        };
+      }
+
+      test("a bound function keeps what bind() read", () => {
+        const { spy, bind, read } = pair();
+        const before = bind();
+        const [length, name] = spy();
+        const first = bind();
+        length.mockReturnValue(4);
+        name.mockReturnValue("again");
+        const second = bind();
+        // Made before the spies, read for the first time under them.
+        expect(read(before)).toEqual([1, "bound named"]);
+        length.mockRestore();
+        name.mockRestore();
+        // Made under the spies, read for the first time after them.
+        expect([first, second].map(read)).toEqual([
+          [8, "bound spied"],
+          [3, "bound again"],
+        ]);
+        expect(read([first[0].bind(null, 1), first[1].bind(null)])).toEqual([7, "bound bound spied"]);
+        expect(read(bind())).toEqual([1, "bound named"]);
+      });
+
+      test("bind() calls the spy once, and throws what the spy throws", () => {
+        const { counted, named, bind, read } = pair();
+        // A getter spy without an implementation answers what the function had.
+        const spies = [spyOn(counted, "length", "get"), spyOn(named, "name", "get")];
+        expect(read(bind())).toEqual([1, "bound named"]);
+        expect(spies.map(spy => spy.mock.calls)).toEqual([[[]], [[]]]);
+
+        const thrown = new RangeError("thrown by the spy");
+        for (const spy of spies) {
+          spy.mockImplementation(() => {
+            throw thrown;
+          });
+        }
+        expect(() => counted.bind(null)).toThrow(thrown);
+        expect(() => named.bind(null)).toThrow(thrown);
+      });
+
+      test.each([
+        ["mockRestore()", spies => spies.forEach(spy => spy.mockRestore())],
+        ["mockRestore() in the other order", spies => spies.toReversed().forEach(spy => spy.mockRestore())],
+        ["Symbol.dispose", spies => spies.forEach(spy => spy[Symbol.dispose]())],
+        ["restoreAllMocks()", () => jest.restoreAllMocks()],
+      ])("after %s the function is as it was, and takes a spy again", (_, restore) => {
+        const { counted, named, spy, bind, read } = pair();
+        const own = () => [
+          Object.getOwnPropertyDescriptor(counted, "length"),
+          Object.getOwnPropertyDescriptor(named, "name"),
+        ];
+        const original = own();
+        for (let turn = 0; turn < 2; turn++) {
+          const spies = [...spy(), spyOn(counted, "length", "set"), spyOn(named, "name", "set")];
+          expect(read(bind())).toEqual([8, "bound spied"]);
+          restore(spies);
+          expect(own()).toEqual(original);
+          expect(read(bind())).toEqual([1, "bound named"]);
+        }
+      });
+
+      // A program of its own for each row, so that a row finds code that no other row has optimized. The compiler runs on the
+      // program's thread there, so a number of turns says when it is done.
+      test.each([
+        ["under the spies", true],
+        ["before the spies", false],
+      ])("bind() in code that was optimized %s", async (_, isSpiedFirst) => {
+        const { bunEnv, bunExe } = require("harness");
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+            import { noInline, numberOfDFGCompiles, reoptimizationRetryCount } from "bun:jsc";
+            const { spyOn } = Bun.jest(import.meta.path);
+            const counted = function counted(a, b) {};
+            const named = function named() {};
+            const spy = () => [
+              spyOn(counted, "length", "get").mockReturnValue(9),
+              spyOn(named, "name", "get").mockReturnValue("spied"),
+            ];
+            const bindOne = fn => fn.bind(null, 1);
+            // Inlined into its caller, it would never be compiled on its own.
+            noInline(bindOne);
+            const bindBoth = () => [bindOne(counted).length, bindOne(named).name];
+            let spies = ${isSpiedFirst} ? spy() : [];
+            let turns = 0;
+            // Without a JIT the number is above 0 as soon as the function has run.
+            for (; turns < 10_000 && !numberOfDFGCompiles(bindOne); turns++) bindBoth();
+            // Optimized code that has not been thrown away.
+            const isOptimized = numberOfDFGCompiles(bindOne) > reoptimizationRetryCount(bindOne);
+            if (!${isSpiedFirst}) {
+              spies = spy();
+              turns = 0;
+            }
+            const read = new Set();
+            for (let i = 0; i < 100; i++, turns++) read.add(JSON.stringify(bindBoth()));
+            const callsPerBind = spies.map(spy => spy.mock.calls.length / turns);
+            console.log(JSON.stringify({ isOptimized, read: [...read].map(JSON.parse), callsPerBind }));
+            `,
+          ],
+          env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: `{"isOptimized":true,"read":[[8,"bound spied"]],"callsPerBind":[1,1]}\n`,
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    });
+  }
 });
 
 if (isBun) {

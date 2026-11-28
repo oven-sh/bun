@@ -1610,6 +1610,7 @@
     "aot/the-frame-around-a-disposal-that-throws-points-at-the-resource.test.ts",
     "aot/the-runner-points-where-what-is-thrown-ends.test.ts",
     "aot/the-suites-of-the-test-runner-run-compiled.test.ts",
+    "aot/a-spy-on-what-a-compiled-function-answers-for-but-does-not-store.test.ts",
     "aot/records-expected-beside-a-promise-are-asked-for-the-sight-of-the-file-too.test.ts",
     "aot/what-a-suspended-generator-let-go-of-is-collected.test.ts",
     "aot/where-nothing-else-is-expected-of-a-parameter-the-names-of-its-type-name-the-record.test.ts",

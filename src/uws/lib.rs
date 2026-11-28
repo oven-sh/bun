@@ -154,11 +154,10 @@ pub mod ssl_wrapper {
             SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
             SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_SESSION,
             SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_do_handshake,
-            SSL_get_error, SSL_get_shutdown, SSL_get_verify_result, SSL_is_init_finished, SSL_new,
-            SSL_pending, SSL_read, SSL_renegotiate, SSL_set_accept_state, SSL_set_bio,
-            SSL_set_connect_state, SSL_set_renegotiate_mode, SSL_set_session_id_context,
-            SSL_set_verify, SSL_shutdown, SSL_write, X509_STORE_CTX, ssl_renegotiate_explicit,
-            ssl_renegotiate_never,
+            SSL_get_error, SSL_get_shutdown, SSL_is_init_finished, SSL_new, SSL_pending, SSL_read,
+            SSL_renegotiate, SSL_set_accept_state, SSL_set_bio, SSL_set_connect_state,
+            SSL_set_renegotiate_mode, SSL_set_session_id_context, SSL_set_verify, SSL_shutdown,
+            SSL_write, X509_STORE_CTX, ssl_renegotiate_explicit, ssl_renegotiate_never,
         };
     }
 
@@ -947,8 +946,8 @@ pub mod ssl_wrapper {
             let Some(ssl) = self.ssl.get() else {
                 return us_bun_verify_error_t::default();
             };
-            // SAFETY: ssl is a live SSL*; uSockets helper reads the verify result off it.
-            unsafe { us_ssl_socket_verify_error_from_ssl(ssl.as_ptr()) }
+            // SAFETY: ssl is a live SSL*.
+            us_ssl_socket_verify_error_from_ssl(unsafe { ssl.as_ref() })
         }
 
         /// Why the `SSL_*` call that just returned failed. Clears the thread's queue.
@@ -1007,7 +1006,7 @@ pub mod ssl_wrapper {
             // Only the final verdict rejects: an alternate chain can recover a per-depth failure.
             if self.callbacks.inline_reject.get()
                 && self.callbacks.verify_failed.get()
-                && boring_sys::SSL_get_verify_result(ssl) != 0
+                && us_ssl_socket_verify_error_from_ssl(ssl).error_no != 0
             {
                 boring_sys::ERR_clear_error();
                 // Not only skipped below: a re-entered `handle_traffic` flushes the queue and never gets here.
@@ -1401,7 +1400,7 @@ pub mod ssl_wrapper {
     pub fn check_server_identity(ssl: &mut boring_sys::SSL, host: &[u8]) -> bool {
         // SAFETY: `ssl` is live.
         if unsafe { us_ssl_identity_checked(ssl) } != 0 {
-            return boring_sys::SSL_get_verify_result(ssl) == 0;
+            return us_ssl_socket_verify_error_from_ssl(ssl).error_no == 0;
         }
         bun_boringssl::check_server_identity(ssl, host)
     }
@@ -1442,9 +1441,9 @@ pub mod ssl_wrapper {
             ssl: *mut boring_sys::SSL,
             ctx: *mut boring_sys::SSL_CTX,
         );
-        /// Implemented in uSockets C; reads
-        /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
-        fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;
+        /// openssl.cpp: the verdict on the peer's chain. It can verify a resumed session again, which clears the error queue.
+        safe fn us_ssl_socket_verify_error_from_ssl(ssl: &boring_sys::SSL)
+        -> us_bun_verify_error_t;
         /// openssl.cpp: 1 when the verify step of this handshake asked the owner for the server's name.
         fn us_ssl_identity_checked(ssl: *mut boring_sys::SSL) -> c_int;
         /// openssl.cpp: formats the reason into `reason[..length]`, NUL-terminated. 0 when nothing is queued.

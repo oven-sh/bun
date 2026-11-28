@@ -33,8 +33,6 @@ struct us_cert_file_bio {
   us_unique_ptr<BIO, BIO_free> bio;
 };
 
-static void us_x509_crl_stack_free(STACK_OF(X509_CRL) *crls) { sk_X509_CRL_pop_free(crls, X509_CRL_free); }
-
 static void us_cert_file_into_bio(void *ctx, const uint8_t *data, size_t len) {
   us_cert_file_bio *file = static_cast<us_cert_file_bio *>(ctx);
   file->data.reset(static_cast<uint8_t *>(malloc(len ? len : 1)));
@@ -226,7 +224,7 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
 
     us_crypto_buffers certs;
     us_x509_stack_ptr trusted{sk_X509_new_null()};
-    us_unique_ptr<STACK_OF(X509_CRL), us_x509_crl_stack_free> crls{sk_X509_CRL_new_null()};
+    us_x509_crl_stack_ptr crls{sk_X509_CRL_new_null()};
     bool ok = trusted != nullptr && crls != nullptr;
     while (ok) {
       us_pem_block block;

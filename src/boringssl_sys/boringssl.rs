@@ -1357,6 +1357,7 @@ unsafe extern "C" {
     pub safe fn SSL_CTX_use_certificate(ctx: &SSL_CTX, x509: &X509) -> c_int;
     pub safe fn SSL_CTX_use_PrivateKey(ctx: &SSL_CTX, pkey: &EVP_PKEY) -> c_int;
 
+    /// Not for a context that uSockets built, where success has a second value: see `us_ssl_get_verify_result`.
     pub safe fn SSL_get_verify_result(ssl: &SSL) -> c_long;
 
     /// Reads the next PEM block whose type is `expected_name` (e.g. `c"CERTIFICATE"`), skipping others, and

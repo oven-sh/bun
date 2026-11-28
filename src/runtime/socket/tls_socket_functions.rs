@@ -18,7 +18,9 @@ use crate::api::bun_x509 as X509;
 // ──────────────────────────────────────────────────────────────────────────
 #[allow(non_upper_case_globals)]
 pub(super) mod ffi {
-    use super::boringssl::{OwnedX509Store, SSL, SSL_CIPHER, SSL_CTX, SSL_SESSION, X509};
+    use super::boringssl::{
+        OwnedX509Store, SSL, SSL_CIPHER, SSL_CTX, SSL_SESSION, X509, struct_stack_st_X509,
+    };
     use core::ffi::{c_char, c_int, c_void};
 
     // ssl.h
@@ -130,6 +132,7 @@ pub(super) mod ffi {
         // The process-wide default root store.
         pub(crate) safe fn us_get_shared_default_ca_store() -> Option<OwnedX509Store>;
         pub(crate) safe fn us_ssl_ctx_has_user_ca(ctx: &SSL_CTX) -> c_int;
+        pub(crate) safe fn us_ssl_get0_other_path(ssl: &mut SSL) -> Option<&struct_stack_st_X509>;
         // Returns X509_V_OK (0) when `issuer` could have issued `subject`.
         pub(crate) safe fn X509_check_issued(issuer: &X509, subject: &X509) -> c_int;
     }
@@ -283,6 +286,24 @@ impl TLSSocket {
                 Some(cert) => X509::to_js(cert, global),
                 None => Ok(JSValue::UNDEFINED),
             };
+        }
+
+        // Applications pin this chain, and names lead along a path that was refused.
+        if let Some(path) = ffi::us_ssl_get0_other_path(ssl)
+            && let Some(mut last) = boringssl::sk_X509_value(path, 0)
+        {
+            let first_obj = X509::to_js(last, global)?;
+            let mut prev_obj = first_obj;
+            for issuer in (1..).map_while(|i| boringssl::sk_X509_value(path, i)) {
+                let obj = X509::to_js(issuer, global)?;
+                prev_obj.put(global, b"issuerCertificate", obj);
+                prev_obj = obj;
+                last = issuer;
+            }
+            if ffi::X509_check_issued(last, last) == 0 {
+                prev_obj.put(global, b"issuerCertificate", prev_obj);
+            }
+            return Ok(first_obj);
         }
 
         let cert = if is_server_ssl {

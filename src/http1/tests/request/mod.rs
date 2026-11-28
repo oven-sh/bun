@@ -2,7 +2,7 @@ use std::fmt::Write;
 
 use bun_http1::request::{
     Connection, Field, Outcome, Request, RequestError, RequestOptions, RequestParser,
-    parse_trailers, read,
+    parse_trailers, read, read_for_node,
 };
 
 use super::{is_content, is_token, paddings, show, ways_to_read};
@@ -126,6 +126,8 @@ impl Connection for &mut Server {
             let then = self.setup.after_data;
             return self.then(then);
         }
+        // `closeIdleConnections()` from the `end` listener of the request takes the connection.
+        assert!(!self.setup.is_node || !self.parser().has_incomplete_body());
         if self.setup.takes_trailers {
             let trailers = self.parser().take_trailers();
             let trailers = parse_trailers(&trailers, self.setup.has_lenient_values);
@@ -159,10 +161,10 @@ impl Setup {
         }
     }
 
-    fn read(self, connection: impl Connection, bytes: &[u8]) -> Outcome {
+    fn read(self, server: &mut Server, bytes: &[u8]) -> Outcome {
         match self.is_node {
-            true => read::<true>(connection, bytes, &self.options()),
-            false => read::<false>(connection, bytes, &self.options()),
+            true => read_for_node(server, bytes, &self.options()),
+            false => read::<false>(server, bytes, &self.options()),
         }
     }
 
@@ -172,7 +174,12 @@ impl Setup {
         for (i, read) in reads.iter().enumerate() {
             match self.read(&mut server, read) {
                 Outcome::Consumed => {}
-                Outcome::Failed(error) => return format!("{}!{error:?}", server.log),
+                Outcome::Failed(error) => {
+                    // `closeIdleConnections()` leaves a rejected request alone. Bytes behind the last request begin none.
+                    let is_kept = server.parser.unwrap().has_incomplete_body();
+                    assert!(!self.is_node || is_kept == (error != RequestError::ClosedConnection));
+                    return format!("{}!{error:?}", server.log);
+                }
                 Outcome::Stopped { consumed } => {
                     let rest = [&read[consumed..], &reads[i + 1..].concat()].concat();
                     return format!("{}+{}", server.log, show(&rest));
@@ -236,7 +243,11 @@ impl Setup {
                 unreachable!()
             }
         }
-        let outcome = self.read(Once(RequestParser::new(1024), check), head);
+        let once = Once(RequestParser::new(1024), check);
+        let outcome = match self.is_node {
+            true => read::<true>(once, head, &self.options()),
+            false => read::<false>(once, head, &self.options()),
+        };
         assert!(matches!(outcome, Outcome::Stopped { .. }), "{outcome:?}");
     }
 }

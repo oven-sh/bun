@@ -109,6 +109,7 @@ impl RequestParser {
         !self.partial_head.is_empty()
     }
 
+    /// Also once `read_for_node` rejected a request: that request never completes.
     pub fn has_incomplete_body(&self) -> bool {
         !matches!(self.body, Body::None | Body::AfterTrailers)
     }
@@ -160,6 +161,22 @@ pub fn read<const IS_NODE: bool>(
         max_head_len,
     };
     read.run(connection).err().unwrap_or(Outcome::Consumed)
+}
+
+/// `read::<true>` for `node:http`, which keeps the connection of a request that was rejected.
+pub fn read_for_node<C>(connection: &mut C, bytes: &[u8], options: &RequestOptions) -> Outcome
+where
+    for<'a> &'a mut C: Connection,
+{
+    let outcome = read::<true>(&mut *connection, bytes, options);
+    // Bytes behind the last request of a connection begin no request.
+    if let Outcome::Failed(error) = outcome
+        && error != RequestError::ClosedConnection
+    {
+        let mut connection = connection;
+        connection.parser().body = Body::Failed(error);
+    }
+    outcome
 }
 
 struct Read<'a, const IS_NODE: bool> {

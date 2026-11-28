@@ -5,6 +5,7 @@ use core::mem::{MaybeUninit, offset_of};
 
 use bun_http1::request::{
     Connection, Outcome, Request, RequestOptions, RequestParser, read as read_requests,
+    read_for_node,
 };
 
 const _: () = assert!(
@@ -120,7 +121,7 @@ unsafe extern "C" fn Bun__RequestParser__readForNode(
 ) -> ReadResult {
     // SAFETY: forwarded.
     let bytes = unsafe { bun_core::ffi::slice(data, len) };
-    read_requests::<true>(socket, bytes, options).into()
+    read_for_node(socket, bytes, options).into()
 }
 
 #[unsafe(no_mangle)]

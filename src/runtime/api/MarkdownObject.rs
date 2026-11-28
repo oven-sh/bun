@@ -225,7 +225,7 @@ pub(crate) fn render<'a>(
     let options = parser_options!(options);
 
     // Create JS callback renderer
-    let mut js_renderer = match JsCallbackRenderer::init(global_this, input, options.heading_ids) {
+    let mut js_renderer = match JsCallbackRenderer::init(global_this, options.heading_ids) {
         Ok(r) => r,
         Err(_) => return Err(global_this.throw_out_of_memory()),
     };
@@ -306,16 +306,11 @@ fn render_ast(
         None => buffer.slice(),
     };
 
-    let mut renderer = match ParseRenderer::init(
-        global_this,
-        input,
-        marked_args,
-        options.heading_ids,
-        react_version,
-    ) {
-        Ok(r) => r,
-        Err(_) => return Err(global_this.throw_out_of_memory()),
-    };
+    let mut renderer =
+        match ParseRenderer::init(global_this, marked_args, options.heading_ids, react_version) {
+            Ok(r) => r,
+            Err(_) => return Err(global_this.throw_out_of_memory()),
+        };
 
     if let Some(components) = components {
         renderer.extract_components(components);
@@ -345,7 +340,6 @@ struct ParseRenderer<'a> {
     // Note: JSValue in Vec is safe here — every entry.children is also appended to self.marked_args (GC root).
     stack: Vec<ParseStackEntry>,
     stack_check: StackCheck,
-    src_text: &'a [u8],
     heading_tracker: md::helpers::HeadingIdTracker,
     components: Components,
     react_version: Option<u8>,
@@ -399,7 +393,6 @@ struct Components {
 struct ParseStackEntry {
     children: JSValue,
     data: u32,
-    flags: u32,
     // Owned copies of the span detail: reference-style links hand us
     // slices into temporaries that drop before `leave_span` runs.
     href: Box<[u8]>,
@@ -411,7 +404,6 @@ impl Default for ParseStackEntry {
         Self {
             children: JSValue::ZERO,
             data: 0,
-            flags: 0,
             href: Box::default(),
             title: Box::default(),
         }
@@ -426,13 +418,17 @@ impl<'a> md::types::RendererImpl for ParseRenderer<'a> {
         &mut self,
         block_type: md::BlockType,
         data: u32,
-        flags: u32,
+        _flags: u32,
     ) -> md::types::JsResult<()> {
-        self.enter_block_impl(block_type, data, flags)
+        self.enter_block_impl(block_type, data)
             .map_err(js_to_parser_err)
     }
-    fn leave_block(&mut self, block_type: md::BlockType, data: u32) -> md::types::JsResult<()> {
-        self.leave_block_impl(block_type, data)
+    fn leave_block(&mut self, block_type: md::BlockType, _data: u32) -> md::types::JsResult<()> {
+        self.leave_block_impl(block_type, b"")
+            .map_err(js_to_parser_err)
+    }
+    fn leave_fenced_code(&mut self, code: md::FencedCode<'_>) -> md::types::JsResult<()> {
+        self.leave_block_impl(md::BlockType::Code, code.language())
             .map_err(js_to_parser_err)
     }
     fn enter_span(
@@ -454,7 +450,6 @@ impl<'a> md::types::RendererImpl for ParseRenderer<'a> {
 impl<'a> ParseRenderer<'a> {
     fn init(
         global_object: &'a JSGlobalObject,
-        src_text: &'a [u8],
         marked_args: &'a mut MarkedArgumentBuffer,
         heading_ids: bool,
         react_version: Option<u8>,
@@ -464,7 +459,6 @@ impl<'a> ParseRenderer<'a> {
             marked_args,
             stack: Vec::new(),
             stack_check: StackCheck::init(),
-            src_text,
             heading_tracker: md::helpers::HeadingIdTracker::init(heading_ids),
             components: Components::default(),
             react_version,
@@ -575,12 +569,7 @@ impl<'a> ParseRenderer<'a> {
     // Block callbacks
     // ========================================
 
-    fn enter_block_impl(
-        &mut self,
-        block_type: md::BlockType,
-        data: u32,
-        flags: u32,
-    ) -> JsResult<()> {
+    fn enter_block_impl(&mut self, block_type: md::BlockType, data: u32) -> JsResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(self.global_object.throw_stack_overflow());
         }
@@ -597,13 +586,14 @@ impl<'a> ParseRenderer<'a> {
         self.stack.push(ParseStackEntry {
             children: array,
             data,
-            flags,
             ..Default::default()
         });
         Ok(())
     }
 
-    fn leave_block_impl(&mut self, block_type: md::BlockType, _: u32) -> JsResult<()> {
+    // Inlined into its two callers: as a call, it costs every block about 15 instructions.
+    #[inline(always)]
+    fn leave_block_impl(&mut self, block_type: md::BlockType, language: &[u8]) -> JsResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(self.global_object.throw_stack_overflow());
         }
@@ -649,11 +639,8 @@ impl<'a> ParseRenderer<'a> {
                 }
             }
             md::BlockType::Code => {
-                if entry.flags & md::BLOCK_FENCED_CODE != 0 {
-                    let lang = extract_language(self.src_text, entry.data);
-                    if !lang.is_empty() {
-                        props_count += 1;
-                    }
+                if !language.is_empty() {
+                    props_count += 1;
                 }
             }
             md::BlockType::Th | md::BlockType::Td => {
@@ -697,11 +684,12 @@ impl<'a> ParseRenderer<'a> {
                 }
             }
             md::BlockType::Code => {
-                if entry.flags & md::BLOCK_FENCED_CODE != 0 {
-                    let lang = extract_language(self.src_text, entry.data);
-                    if !lang.is_empty() {
-                        props.put(g, b"language", bun_string_jsc::create_utf8_for_js(g, lang)?);
-                    }
+                if !language.is_empty() {
+                    props.put(
+                        g,
+                        b"language",
+                        bun_string_jsc::create_utf8_for_js(g, language)?,
+                    );
                 }
             }
             md::BlockType::Th | md::BlockType::Td => {
@@ -939,7 +927,6 @@ impl<'a> ParseRenderer<'a> {
 struct JsCallbackRenderer<'a> {
     global_object: &'a JSGlobalObject,
     // Note: #allocator field dropped — global mimalloc.
-    src_text: &'a [u8],
     stack: Vec<CallbackStackEntry>,
     /// Indices into `stack` of the entries that collect output, innermost last.
     collecting: Vec<usize>,
@@ -980,7 +967,6 @@ struct CallbackStackEntry {
     buffer: Vec<u8>,
     block_type: md::BlockType,
     data: u32,
-    flags: u32,
     /// For ul/ol: number of li children seen so far (next li's index).
     /// For li: this item's 0-based index within its parent list.
     child_index: u32,
@@ -996,7 +982,6 @@ impl Default for CallbackStackEntry {
             buffer: Vec::new(),
             block_type: md::BlockType::Doc,
             data: 0,
-            flags: 0,
             child_index: 0,
             href: Box::default(),
             title: Box::default(),
@@ -1009,14 +994,17 @@ impl<'a> md::types::RendererImpl for JsCallbackRenderer<'a> {
         &mut self,
         block_type: md::BlockType,
         data: u32,
-        flags: u32,
+        _flags: u32,
     ) -> md::types::JsResult<()> {
-        self.enter_block_impl(block_type, data, flags)
+        self.enter_block_impl(block_type, data)
             .map_err(js_to_parser_err)
     }
     fn leave_block(&mut self, block_type: md::BlockType, data: u32) -> md::types::JsResult<()> {
         self.leave_block_impl(block_type, data)
             .map_err(js_to_parser_err)
+    }
+    fn leave_fenced_code(&mut self, code: md::FencedCode<'_>) -> md::types::JsResult<()> {
+        self.leave_fenced_code_impl(code).map_err(js_to_parser_err)
     }
     fn enter_span(
         &mut self,
@@ -1037,12 +1025,10 @@ impl<'a> md::types::RendererImpl for JsCallbackRenderer<'a> {
 impl<'a> JsCallbackRenderer<'a> {
     fn init(
         global_object: &'a JSGlobalObject,
-        src_text: &'a [u8],
         heading_ids: bool,
     ) -> Result<JsCallbackRenderer<'a>, bun_alloc::AllocError> {
         let mut self_ = JsCallbackRenderer {
             global_object,
-            src_text,
             stack: Vec::new(),
             collecting: Vec::new(),
             list_depth: 0,
@@ -1174,12 +1160,7 @@ impl<'a> JsCallbackRenderer<'a> {
     // RendererImpl bodies
     // ========================================
 
-    fn enter_block_impl(
-        &mut self,
-        block_type: md::BlockType,
-        data: u32,
-        flags: u32,
-    ) -> JsResult<()> {
+    fn enter_block_impl(&mut self, block_type: md::BlockType, data: u32) -> JsResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(self.global_object.throw_stack_overflow());
         }
@@ -1204,7 +1185,6 @@ impl<'a> JsCallbackRenderer<'a> {
             CallbackStackEntry {
                 block_type,
                 data,
-                flags,
                 child_index,
                 ..Default::default()
             },
@@ -1228,11 +1208,8 @@ impl<'a> JsCallbackRenderer<'a> {
             }
             None
         } else {
-            let (data, flags) = self
-                .stack
-                .last()
-                .map_or((0, 0), |top| (top.data, top.flags));
-            self.create_block_meta(block_type, data, flags)?
+            let data = self.stack.last().map_or(0, |top| top.data);
+            self.create_block_meta(block_type, data)?
         };
         self.pop_and_callback(callback, meta)?;
 
@@ -1240,6 +1217,19 @@ impl<'a> JsCallbackRenderer<'a> {
             self.heading_tracker.clear_after_heading();
         }
         Ok(())
+    }
+
+    fn leave_fenced_code_impl(&mut self, code: md::FencedCode<'_>) -> JsResult<()> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(self.global_object.throw_stack_overflow());
+        }
+        let callback = self.callbacks.code;
+        let meta = if callback.is_empty() {
+            None
+        } else {
+            self.create_code_meta(code.language())?
+        };
+        self.pop_and_callback(callback, meta)
     }
 
     fn enter_span_impl(
@@ -1398,11 +1388,25 @@ impl<'a> JsCallbackRenderer<'a> {
         None
     }
 
+    /// The `meta` of a fenced code block. None if it names no language.
+    fn create_code_meta(&self, language: &[u8]) -> JsResult<Option<JSValue>> {
+        if language.is_empty() {
+            return Ok(None);
+        }
+        let g = self.global_object;
+        let obj = JSValue::create_empty_object(g, 1);
+        obj.put(
+            g,
+            b"language",
+            bun_string_jsc::create_utf8_for_js(g, language)?,
+        );
+        Ok(Some(obj))
+    }
+
     fn create_block_meta(
         &mut self,
         block_type: md::BlockType,
         data: u32,
-        flags: u32,
     ) -> JsResult<Option<JSValue>> {
         let g = self.global_object;
         match block_type {
@@ -1433,17 +1437,6 @@ impl<'a> JsCallbackRenderer<'a> {
                     JSValue::UNDEFINED,
                     self.list_depth.saturating_sub(1),
                 )))
-            }
-            md::BlockType::Code => {
-                if flags & md::BLOCK_FENCED_CODE != 0 {
-                    let lang = extract_language(self.src_text, data);
-                    if !lang.is_empty() {
-                        let obj = JSValue::create_empty_object(g, 1);
-                        obj.put(g, b"language", bun_string_jsc::create_utf8_for_js(g, lang)?);
-                        return Ok(Some(obj));
-                    }
-                }
-                Ok(None)
             }
             md::BlockType::Th | md::BlockType::Td => {
                 let alignment = md::types::alignment_from_data(data);
@@ -1524,22 +1517,6 @@ impl<'a> JsCallbackRenderer<'a> {
             _ => Ok(None),
         }
     }
-}
-
-/// Slice the language token out of a fenced-code info string.
-fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
-    let mut lang_end = info_beg;
-    while (lang_end as usize) < src_text.len() {
-        let c = src_text[lang_end as usize];
-        if c == b' ' || c == b'\t' || c == b'\n' || c == b'\r' {
-            break;
-        }
-        lang_end += 1;
-    }
-    if lang_end > info_beg {
-        return &src_text[info_beg as usize..lang_end as usize];
-    }
-    b""
 }
 
 /// Cached tag string indices — must match `BunMarkdownTagStrings.h`.

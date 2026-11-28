@@ -1,6 +1,6 @@
 // `--trim --trim-locales de` keeps the data of German and removes the other languages'. A program that asks for a language that was removed ends with exit code 70.
-// ICU also opens the data of its own default locale, which it takes from the host: the first date format of a process makes a calendar in it. No program sees that locale
-// (Bun's default is en-US on every host), so the language of the host decides nothing: not where it was removed, and not where the host has none (LANG=C is en_US_POSIX to ICU).
+// ICU also opens the data of its own default locale: the first date format of a process makes a calendar in it, and a date with number rules makes number symbols in it.
+// Bun sets that locale itself (bun_icu_default_locale.cpp): en_US, or the root locale where the data of en was removed. So the language of the host decides nothing.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { statSync } from "node:fs";
@@ -45,17 +45,28 @@ console.log(when.toLocaleString("de", { timeZone: "UTC", dateStyle: "full", time
 console.log(new Intl.DateTimeFormat("de", { timeZone: "Europe/Berlin", weekday: "long", month: "long", timeZoneName: "long" }).format(when));
 console.log(new Intl.NumberFormat("de").format(1234.5), new Intl.PluralRules("de").select(1), ["z", "ä"].sort(new Intl.Collator("de").compare).join());
 console.log(new Intl.RelativeTimeFormat("de").format(-1, "day"), new Intl.ListFormat("de").format(["a", "b"]));`,
+  // The number rules of these calendars, and a locale without data, make ICU open curr/<its default locale>.res.
+  "calendars.ts": `
+const when = new Date(Date.UTC(2024, 0, 15, 3, 4, 5));
+for (const tag of ["ja-JP-u-ca-japanese", "he-u-ca-hebrew", "zh-u-ca-chinese"]) console.log(when.toLocaleDateString(tag, { timeZone: "UTC", dateStyle: "full" }));
+const la = new Intl.Locale("la");
+console.log(la.getHourCycles().join(), la.getCollations().join(), la.getNumberingSystems().join(), la.getTextInfo().direction);`,
   // The locale comes with the command line: of a locale that the build can read, --aot makes the pattern itself, and the program asks for no data.
   "removed.ts": `console.log(new Date(0).toLocaleDateString(process.argv[2], { timeZone: "UTC" }));`,
 };
+// A program, and a list of locales that has every locale of the program and not en.
+const kept = [
+  ["kept", "de"],
+  ["calendars", "he,ja,zh"],
+];
 
 (canTrim ? describe.concurrent : describe.skip)("--trim-locales", () => {
   for (const flags of [[], ["--aot"]]) {
     const how = ["--compile", ...flags].join(" ");
 
-    test.skipIf(flags.length > 0 && !!unsupported)(
-      `${how}: what is formatted in a locale that was kept does not depend on the locale of the host`,
-      async () => {
+    test.skipIf(flags.length > 0 && !!unsupported).each(kept)(
+      `${how}: what %s.ts formats in the kept locales %s does not depend on the locale of the host`,
+      async (program, locales) => {
         using dir = tempDir("compile-trim-locales", programs);
         const folder = String(dir);
         expect(
@@ -67,20 +78,20 @@ console.log(new Intl.RelativeTimeFormat("de").format(-1, "day"), new Intl.ListFo
               ...flags,
               ...withoutDebugInformation,
               "--trim",
-              "--trim-locales=de",
-              "kept.ts",
+              `--trim-locales=${locales}`,
+              `${program}.ts`,
               "--outfile",
-              "kept",
+              program,
             ],
             folder,
           ),
         ).toMatchObject({ exitCode: 0 });
-        const expected = await run([bunExe(), "kept.ts"], folder);
+        const expected = await run([bunExe(), `${program}.ts`], folder);
         expect(expected).toMatchObject({ stderr: "", exitCode: 0 });
         const answers = await Promise.all(
           hosts.map(async host => ({
             host,
-            ...(await run([join(folder, "kept")], folder, { ...bunEnv, LANG: host, LC_ALL: host, LC_MESSAGES: host })),
+            ...(await run([join(folder, program)], folder, { ...bunEnv, LANG: host, LC_ALL: host, LC_MESSAGES: host })),
           })),
         );
         expect(answers).toEqual(hosts.map(host => ({ host, ...expected })));

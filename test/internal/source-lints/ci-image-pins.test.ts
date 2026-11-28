@@ -4,6 +4,7 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { nightlyPlist } from "../../../scripts/agent.ts";
 import { locations, pins } from "../../../scripts/build/ci-images/spec.ts";
 
 const root = join(import.meta.dir, "../../..");
@@ -55,6 +56,40 @@ test("scripts/darwin-ci, which is copied to its hosts, names the agent and the L
 
 test("scripts/agent.ts, which runs on the machines alone, puts the spec's Rust directory on a Mac's PATH", () => {
   expect(readFileSync(join(root, "scripts/agent.ts"), "utf8")).toContain(`<string>${locations.rust.darwin}/bin:`);
+});
+
+// Not a pin. The nightly wipes the machine it runs on and reboots it, so no test runs it: its text is read.
+test("scripts/agent.ts: a Mac's nightly waits for the agent's job and unloads the agent before it wipes and reboots", () => {
+  const plist = nightlyPlist("/Users/administrator/Library/Services/buildkite-agent", "administrator");
+  const script = plist.slice(plist.indexOf("<![CDATA[") + "<![CDATA[".length, plist.indexOf("]]>"));
+  expect(script.split("\n")).toEqual([
+    "PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    `BASE_PREFIX=$([ "$(uname -m)" = "arm64" ] && echo "/opt/homebrew" || echo "/usr/local")`,
+    "if pkill -TERM -f '[b]uildkite-agent start'; then",
+    "  sleep 2",
+    "  waited=2",
+    "  while pgrep -f '[b]uildkite-agent start' >/dev/null && [ $waited -lt 3900 ]; do",
+    "    sleep 10",
+    "    waited=$((waited + 10))",
+    "  done",
+    "fi",
+    "launchctl bootout system/buildkite-agent",
+    "if pkill -QUIT -f '[b]uildkite-agent start'; then",
+    "  waited=0",
+    "  while pgrep -x buildkite-agent >/dev/null && [ $waited -lt 60 ]; do",
+    "    sleep 5",
+    "    waited=$((waited + 5))",
+    "  done",
+    "fi",
+    "if ! pgrep -x buildkite-agent >/dev/null; then",
+    "  { rm -rf $BASE_PREFIX/{var,etc}/buildkite-agent/{builds,cache}/* /Users/administrator/Library/Services/buildkite-agent/{builds,cache}/* /tmp/* /var/tmp/* || true; } &&",
+    "  { chown -R administrator:admin $BASE_PREFIX/var/buildkite-agent $BASE_PREFIX/etc/buildkite-agent || true; } &&",
+    "  { chmod -R 755 $BASE_PREFIX/var/buildkite-agent $BASE_PREFIX/etc/buildkite-agent || true; }",
+    "fi",
+    "shutdown -r now || reboot",
+    "sleep 600",
+    "launchctl bootstrap system /Library/LaunchDaemons/buildkite-agent.plist",
+  ]);
 });
 
 test("the Node-API tests build against the headers of the Node.js the CI images install, with their clang", () => {

@@ -443,7 +443,6 @@ declare const $requireMap: Map<string, JSCommonJSModule> & {
   $traceRequire: ((parent: JSCommonJSModule, id: string, options: unknown) => unknown) | undefined;
 };
 declare const $internalModuleRegistry: InternalFieldObject<any[]>;
-declare function $resolve(name: string, from: string): Promise<string>;
 declare function $resolveSync(
   name: string,
   from: string,

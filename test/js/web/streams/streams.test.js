@@ -23,6 +23,7 @@ import { mkfifo } from "mkfifo";
 import { closeSync, createReadStream, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
+import * as webStreams from "node:stream/web";
 import {
   consumers as directConsumers,
   expected as directExpected,
@@ -2372,6 +2373,156 @@ it("pipeTo and pipeThrough into a locked WritableStream fail with ERR_INVALID_ST
   expect(() => new ReadableStream().pipeThrough({ readable: new ReadableStream(), writable: destination })).toThrow(
     invalidState("Invalid state: The WritableStream is locked"),
   );
+});
+
+// The WHATWG members that return a promise refuse a wrong `this` with a rejected promise (WebIDL).
+// The TypeError carries Node's ERR_INVALID_THIS code and message (node compatibility).
+// Bun's own text(), json(), bytes(), blob() and readMany() throw on a wrong `this`. They are no subject here.
+it("the stream members that reject a wrong `this` reject with ERR_INVALID_THIS", async () => {
+  const instances = {
+    ReadableStream: () => new ReadableStream(),
+    ReadableStreamDefaultReader: () => new ReadableStream().getReader(),
+    ReadableStreamBYOBReader: () => new ReadableStream({ type: "bytes" }).getReader({ mode: "byob" }),
+    WritableStream: () => new WritableStream(),
+    WritableStreamDefaultWriter: () => new WritableStream().getWriter(),
+  };
+  const rejecting = [];
+  for (const [className, constructor] of Object.entries(webStreams)) {
+    if (typeof constructor !== "function") continue;
+    const prototype = constructor.prototype;
+    const instance = instances[className];
+    const wrongReceivers = [
+      {},
+      Object.create(null),
+      new Proxy({}, {}),
+      Object.create(prototype),
+      prototype,
+      7,
+      "text",
+      undefined,
+      null,
+      // An instance of another stream class.
+      constructor === ReadableStream ? new WritableStream() : new ReadableStream(),
+      // A Proxy of an instance, and an object that inherits from one. Node.js accepts these two:
+      // its brand check reads a symbol, which both forward. WebIDL refuses them.
+      ...(instance ? [new Proxy(instance(), {}), Object.create(instance())] : []),
+    ];
+    const invalidThis = {
+      status: "rejected",
+      reason: expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_THIS",
+        message: `Value of "this" must be of type ${className}`,
+      }),
+    };
+    for (const key of Reflect.ownKeys(prototype)) {
+      if (key === "constructor") continue;
+      const { get, value } = Object.getOwnPropertyDescriptor(prototype, key);
+      const member = get ?? value;
+      if (typeof member !== "function") continue;
+      // The first receiver gets a second call. A member that throws on a wrong `this` is no subject of this test.
+      const promises = [];
+      for (const receiver of [...wrongReceivers, wrongReceivers[0]]) {
+        try {
+          const result = member.call(receiver);
+          if (result instanceof Promise) promises.push(result);
+        } catch {}
+      }
+      if (promises.length === 0) continue;
+      const name = `${className}.${String(key)}`;
+      rejecting.push(name);
+      for (const outcome of await Promise.allSettled(promises)) {
+        expect({ member: name, ...outcome }).toEqual({ member: name, ...invalidThis });
+      }
+      // Every receiver got a promise, and the second call got its own.
+      expect({ member: name, promises: new Set(promises).size }).toEqual({
+        member: name,
+        promises: wrongReceivers.length + 1,
+      });
+    }
+  }
+  // Without this list the loop above passes when no member returns a promise.
+  expect(rejecting.sort()).toEqual([
+    "ReadableStream.cancel",
+    "ReadableStream.pipeTo",
+    "ReadableStreamBYOBReader.cancel",
+    "ReadableStreamBYOBReader.closed",
+    "ReadableStreamBYOBReader.read",
+    "ReadableStreamDefaultReader.cancel",
+    "ReadableStreamDefaultReader.closed",
+    "ReadableStreamDefaultReader.read",
+    "WritableStream.abort",
+    "WritableStream.close",
+    "WritableStreamDefaultWriter.abort",
+    "WritableStreamDefaultWriter.close",
+    "WritableStreamDefaultWriter.closed",
+    "WritableStreamDefaultWriter.ready",
+    "WritableStreamDefaultWriter.write",
+  ]);
+});
+
+// A byte stream refuses a chunk or view that is not an ArrayBufferView with a TypeError that carries
+// Node's ERR_INVALID_ARG_TYPE code and message (node compatibility). A missing argument is `undefined`.
+describe("a byte stream refuses a value that is not an ArrayBufferView with ERR_INVALID_ARG_TYPE", () => {
+  const notViews = [
+    [undefined, "undefined"],
+    [null, "null"],
+    [5, "type number (5)"],
+    ["x", "type string ('x')"],
+    [{}, "an instance of Object"],
+    [[], "an instance of Array"],
+    [new ArrayBuffer(1), "an instance of ArrayBuffer"],
+  ];
+  const invalidArgType = (argument, received) =>
+    expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "${argument}" argument must be an instance of Buffer, TypedArray, or DataView. Received ${received}`,
+    });
+
+  it("ReadableStreamBYOBReader.prototype.read() rejects", async () => {
+    const reader = new ReadableStream({ type: "bytes" }).getReader({ mode: "byob" });
+    const reads = [reader.read(), ...notViews.map(([value]) => reader.read(value))];
+    expect(await Promise.allSettled(reads)).toEqual(
+      ["undefined", ...notViews.map(([, received]) => received)].map(received => ({
+        status: "rejected",
+        reason: invalidArgType("view", received),
+      })),
+    );
+  });
+
+  // The message describes the value, and that reads its `constructor`. What the read throws is the rejection.
+  it("ReadableStreamBYOBReader.prototype.read() rejects with what a getter of the value throws", async () => {
+    const reader = new ReadableStream({
+      type: "bytes",
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2]));
+      },
+    }).getReader({ mode: "byob" });
+    const error = new RangeError("from the constructor getter");
+    const promise = reader.read({
+      get constructor() {
+        throw error;
+      },
+    });
+    expect(promise).toBeInstanceOf(Promise);
+    await expect(promise).rejects.toBe(error);
+    expect(await reader.read(new Uint8Array(2))).toEqual({ value: new Uint8Array([1, 2]), done: false });
+  });
+
+  it("ReadableByteStreamController.prototype.enqueue() throws", () => {
+    let controller;
+    new ReadableStream({
+      type: "bytes",
+      start(c) {
+        controller = c;
+      },
+    });
+    expect(() => controller.enqueue()).toThrow(invalidArgType("buffer", "undefined"));
+    for (const [value, received] of notViews) {
+      expect(() => controller.enqueue(value)).toThrow(invalidArgType("buffer", received));
+    }
+  });
 });
 
 it("new Response(stream).arrayBuffer() (bytes)", async () => {

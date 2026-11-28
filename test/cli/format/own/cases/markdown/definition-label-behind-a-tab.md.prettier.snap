@@ -1,0 +1,27 @@
+------------------
+{ printWidth: 80 }
+------------------
+[fooo bar]: /url
+Heading
+===
+
+[baz qux]: /other
+Another
+---
+
+[fooo bar] and [baz qux]
+
+-------------------
+{ printWidth: 100 }
+-------------------
+[fooo bar]: /url
+Heading
+===
+
+[baz qux]: /other
+Another
+---
+
+[fooo bar] and [baz qux]
+
+===================== End =====================

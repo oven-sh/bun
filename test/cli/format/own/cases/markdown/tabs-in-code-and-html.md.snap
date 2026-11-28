@@ -1,0 +1,69 @@
+------------------
+{ printWidth: 80 }
+------------------
+> ```make
+> build:
+> 	cc -o app main.c
+> ```
+>
+>       indented code behind two tabs
+>
+> <div>
+> 	html
+> </div>
+
+- ```go
+  func main() {
+  	fmt.Println("a")
+  }
+  ```
+
+        indented code in an item
+
+  <pre>
+  	html in an item
+  </pre>
+
+1. ```
+   	tab
+   ```
+
+   <div>
+   	html
+   </div>
+
+-------------------
+{ printWidth: 100 }
+-------------------
+> ```make
+> build:
+> 	cc -o app main.c
+> ```
+>
+>       indented code behind two tabs
+>
+> <div>
+> 	html
+> </div>
+
+- ```go
+  func main() {
+  	fmt.Println("a")
+  }
+  ```
+
+        indented code in an item
+
+  <pre>
+  	html in an item
+  </pre>
+
+1. ```
+   	tab
+   ```
+
+   <div>
+   	html
+   </div>
+
+===================== End =====================

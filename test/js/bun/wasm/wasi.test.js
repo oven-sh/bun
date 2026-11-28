@@ -110,6 +110,141 @@ it("path_open reports the host errno to the guest when the open fails", () => {
   expect(wasi.FD_MAP.has(4)).toBe(false);
 });
 
+it("path_* hostcalls answer EINVAL for an empty path and do not act on the directory of the descriptor", () => {
+  using dir = tempDir("wasi-empty-path", { "preopen/file.txt": "x" });
+  const preopen = path.join(String(dir), "preopen");
+  const sub = path.join(preopen, "sub");
+  const emptyPreopen = path.join(String(dir), "empty");
+  fs.mkdirSync(sub);
+  fs.mkdirSync(emptyPreopen);
+  const wasi = new WASI({ version: "preview1", preopens: { "/": preopen, "/empty": emptyPreopen } });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const memory = Buffer.from(wasi.memory.buffer);
+  const view = new DataView(wasi.memory.buffer);
+
+  const WASI_ESUCCESS = 0;
+  const WASI_EINVAL = 28;
+  const WASI_FILESTAT_SET_ATIM = 1 << 0;
+  const WASI_FILESTAT_SET_MTIM = 1 << 2;
+  const WASI_O_DIRECTORY = 1 << 1;
+  const WASI_RIGHT_FD_READ = BigInt(2);
+  const WASI_RIGHT_FD_READDIR = BigInt(16384);
+  const WASI_RIGHT_PATH_FILESTAT_GET = BigInt(262144);
+  const WASI_RIGHT_PATH_REMOVE_DIRECTORY = BigInt(33554432);
+  const preopenFd = 3;
+  const emptyPreopenFd = 4;
+  const emptyPtr = 1024;
+  const filePtr = 1536;
+  const otherPtr = 2048;
+  const subPtr = 2560;
+  const outPtr = 8192;
+  const statPtr = 16384;
+  const sentinel = 0x12345678;
+  const fileLen = memory.write("file.txt", filePtr);
+  const otherLen = memory.write("other", otherPtr);
+  const subLen = memory.write("sub", subPtr);
+  const w = wasi.wasiImport;
+
+  expect(
+    w.path_open(
+      preopenFd,
+      0,
+      subPtr,
+      subLen,
+      WASI_O_DIRECTORY,
+      WASI_RIGHT_FD_READDIR | WASI_RIGHT_PATH_FILESTAT_GET | WASI_RIGHT_PATH_REMOVE_DIRECTORY,
+      BigInt(0),
+      0,
+      outPtr,
+    ),
+  ).toBe(WASI_ESUCCESS);
+  const subFd = view.getUint32(outPtr, true);
+
+  view.setUint32(outPtr, sentinel, true);
+  const mtimeBefore = fs.statSync(preopen).mtimeMs;
+  const fdsBefore = wasi.FD_MAP.size;
+
+  expect({
+    path_create_directory: w.path_create_directory(preopenFd, emptyPtr, 0),
+    path_filestat_get: w.path_filestat_get(preopenFd, 0, emptyPtr, 0, outPtr),
+    path_filestat_get_subdirectory: w.path_filestat_get(subFd, 0, emptyPtr, 0, outPtr),
+    path_filestat_set_times: w.path_filestat_set_times(
+      preopenFd,
+      0,
+      emptyPtr,
+      0,
+      BigInt(0),
+      BigInt(0),
+      WASI_FILESTAT_SET_ATIM | WASI_FILESTAT_SET_MTIM,
+    ),
+    path_link_old: w.path_link(preopenFd, 0, emptyPtr, 0, preopenFd, otherPtr, otherLen),
+    path_link_new: w.path_link(preopenFd, 0, filePtr, fileLen, preopenFd, emptyPtr, 0),
+    path_open: w.path_open(preopenFd, 0, emptyPtr, 0, 0, WASI_RIGHT_FD_READ, BigInt(0), 0, outPtr),
+    path_readlink: w.path_readlink(preopenFd, emptyPtr, 0, outPtr + 64, 64, outPtr),
+    path_remove_directory: w.path_remove_directory(emptyPreopenFd, emptyPtr, 0),
+    path_remove_directory_subdirectory: w.path_remove_directory(subFd, emptyPtr, 0),
+    path_rename_old: w.path_rename(preopenFd, emptyPtr, 0, preopenFd, otherPtr, otherLen),
+    path_rename_new: w.path_rename(preopenFd, filePtr, fileLen, preopenFd, emptyPtr, 0),
+    path_symlink_target: w.path_symlink(emptyPtr, 0, preopenFd, otherPtr, otherLen),
+    path_symlink_new: w.path_symlink(filePtr, fileLen, preopenFd, emptyPtr, 0),
+    path_unlink_file: w.path_unlink_file(preopenFd, emptyPtr, 0),
+  }).toEqual({
+    path_create_directory: WASI_EINVAL,
+    path_filestat_get: WASI_EINVAL,
+    path_filestat_get_subdirectory: WASI_EINVAL,
+    path_filestat_set_times: WASI_EINVAL,
+    path_link_old: WASI_EINVAL,
+    path_link_new: WASI_EINVAL,
+    path_open: WASI_EINVAL,
+    path_readlink: WASI_EINVAL,
+    path_remove_directory: WASI_EINVAL,
+    path_remove_directory_subdirectory: WASI_EINVAL,
+    path_rename_old: WASI_EINVAL,
+    path_rename_new: WASI_EINVAL,
+    path_symlink_target: WASI_EINVAL,
+    path_symlink_new: WASI_EINVAL,
+    path_unlink_file: WASI_EINVAL,
+  });
+
+  expect({
+    out: view.getUint32(outPtr, true),
+    fds: wasi.FD_MAP.size,
+    emptyPreopenExists: fs.existsSync(emptyPreopen),
+    preopenMtime: fs.statSync(preopen).mtimeMs,
+    preopenEntries: fs.readdirSync(preopen).sort(),
+  }).toEqual({
+    out: sentinel,
+    fds: fdsBefore,
+    emptyPreopenExists: true,
+    preopenMtime: mtimeBefore,
+    preopenEntries: ["file.txt", "sub"],
+  });
+
+  // A path that names the directory itself is not empty. "/" is one: RESOLVE_PATH puts an absolute path under the directory.
+  const statOf = guestPath => w.path_filestat_get(preopenFd, 0, otherPtr, memory.write(guestPath, otherPtr), statPtr);
+  expect({
+    ".": statOf("."),
+    "./": statOf("./"),
+    "/": statOf("/"),
+    "sub/": statOf("sub/"),
+    "sub/..": statOf("sub/.."),
+  }).toEqual({
+    ".": WASI_ESUCCESS,
+    "./": WASI_ESUCCESS,
+    "/": WASI_ESUCCESS,
+    "sub/": WASI_ESUCCESS,
+    "sub/..": WASI_ESUCCESS,
+  });
+
+  if (!isWindows) {
+    // A link target of one byte is not empty.
+    const targetLen = memory.write("f", filePtr);
+    const linkLen = memory.write("lnk", otherPtr);
+    expect(w.path_symlink(filePtr, targetLen, preopenFd, otherPtr, linkLen)).toBe(WASI_ESUCCESS);
+    expect(fs.readlinkSync(path.join(preopen, "lnk"))).toBe("f");
+  }
+});
+
 it("path_* syscalls cannot escape the preopened directory", () => {
   using dir = tempDir("wasi-sandbox", {
     "secret.txt": "outside",

@@ -1,5 +1,4 @@
-// Where the code that makes process.stdout or process.stderr throws, `bun run` reports the error as one that nobody caught, and the
-// property is undefined from then on. An executable that holds the streams without most of their members does the same.
+// A failed first read throws without caching a value, so a later read can construct the stream with room on the stack.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
@@ -42,9 +41,9 @@ describe("the stack is full where a standard stream is first read", () => {
           built(await spawned([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], folder, env));
           const compiled = await ran([join(folder, "app")], folder);
           expect(compiled).toEqual({
-            stdout: "the read answers undefined\nlater undefined\n",
-            reported: ["RangeError: Maximum call stack size exceeded."],
-            exitCode: 1,
+            stdout: "the read throws true\nlater object\n",
+            reported: [],
+            exitCode: 0,
           });
           expect(compiled).toEqual(await ran([bunExe(), "app.ts"], folder));
         }),

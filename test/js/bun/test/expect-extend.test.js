@@ -640,7 +640,8 @@ describe("MatcherContext", () => {
       ).toThrow(thrown);
     });
 
-    test.each(["EXPECTED_COLOR", "RECEIVED_COLOR"])("%s adds color without quoting or formatting the text", name => {
+    const colors = ["EXPECTED_COLOR", "RECEIVED_COLOR", "INVERTED_COLOR", "DIM_COLOR", "BOLD_WEIGHT"];
+    test.each(colors)("%s adds color without quoting or formatting the text", name => {
       const color = (...args) => Bun.stripANSI(utils[name](...args));
       expect([
         color("text"),
@@ -655,6 +656,12 @@ describe("MatcherContext", () => {
         color({ a: "b" }),
         color([1, "x"]),
         color("a", "b", 1),
+        color("café"),
+        color("日本語"),
+        color("a😀b"),
+        color("a\ud800b"),
+        // jest-extended colors the two halves of a surrogate pair in two calls.
+        color("\ud83d") + color("\ude00"),
       ]).toEqual([
         "text",
         '"quoted"',
@@ -668,6 +675,11 @@ describe("MatcherContext", () => {
         "[object Object]",
         "1,x",
         "a b 1",
+        "café",
+        "日本語",
+        "a😀b",
+        "a\ud800b",
+        "😀",
       ]);
     });
 
@@ -811,6 +823,8 @@ describe("MatcherContext", () => {
       ]);
     });
 
+    // Like chalk, a style ends with the code that turns off only that style, so that one style can wrap another.
+    // Expected values measured on jest-matcher-utils 30.5.1, but for the last two.
     test("colors", async () => {
       using dir = tempDir("matcher-utils-colors", {
         "colors.test.js": `
@@ -818,7 +832,8 @@ describe("MatcherContext", () => {
           test("colors", () => {
             expect.extend({
               _toPrintColors() {
-                const { matcherHint, EXPECTED_COLOR, RECEIVED_COLOR } = this.utils;
+                const { matcherHint, printExpected, printReceived, diff } = this.utils;
+                const { EXPECTED_COLOR, RECEIVED_COLOR, INVERTED_COLOR, DIM_COLOR, BOLD_WEIGHT } = this.utils;
                 console.log(
                   JSON.stringify([
                     matcherHint("toX"),
@@ -827,6 +842,32 @@ describe("MatcherContext", () => {
                     EXPECTED_COLOR("a"),
                     RECEIVED_COLOR("a"),
                     EXPECTED_COLOR(""),
+                    INVERTED_COLOR("a"),
+                    DIM_COLOR("a"),
+                    BOLD_WEIGHT("a"),
+                    printExpected("a"),
+                    printReceived("a"),
+                    diff("a", "a"),
+                    diff({ a: 1 }, { a: 1 }),
+                    diff(1, "1"),
+                    INVERTED_COLOR(EXPECTED_COLOR("a")),
+                    EXPECTED_COLOR("a" + INVERTED_COLOR("b") + "c"),
+                    EXPECTED_COLOR("a" + BOLD_WEIGHT("b") + "c"),
+                    INVERTED_COLOR("a" + RECEIVED_COLOR("b") + "c"),
+                    EXPECTED_COLOR("a" + RECEIVED_COLOR("b") + "c"),
+                    BOLD_WEIGHT("a" + DIM_COLOR("b") + "c"),
+                    DIM_COLOR("a" + BOLD_WEIGHT("b") + "c" + BOLD_WEIGHT("d") + "e"),
+                    INVERTED_COLOR("a" + INVERTED_COLOR("b") + "c"),
+                    EXPECTED_COLOR(RECEIVED_COLOR("a")),
+                    matcherHint("toX", "a" + EXPECTED_COLOR("b") + "c"),
+                    matcherHint("toX", "r", "e", { comment: "x " + BOLD_WEIGHT("y") + " z" }),
+                    matcherHint(".toHaveClass", "element", printExpected("a b")),
+                    printReceived(new Error("a" + RECEIVED_COLOR("b") + "c")),
+                    printExpected(Symbol("a" + EXPECTED_COLOR("b") + "c")),
+                    EXPECTED_COLOR("a\\ud800b"),
+                    INVERTED_COLOR(EXPECTED_COLOR("\\ud83d")),
+                    RECEIVED_COLOR("a\\n  b"),
+                    diff("a", "b"),
                   ]),
                 );
                 return { pass: true };
@@ -836,33 +877,72 @@ describe("MatcherContext", () => {
           });
         `,
       });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "colors.test.js"],
-        cwd: String(dir),
-        env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: undefined },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const [dim, red, green, reset] = ["\x1b[2m", "\x1b[31m", "\x1b[32m", "\x1b[0m"];
-      expect({
-        printed: stdout
+      const run = async env => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", "colors.test.js"],
+          cwd: String(dir),
+          env: { ...bunEnv, ...env },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const printed = stdout
           .split("\n")
           .filter(line => line.startsWith("["))
-          .map(line => JSON.parse(line))[0],
-        stderr,
-      }).toEqual({
-        printed: [
-          `${dim}expect(${reset}${red}received${reset}${dim}).${reset}toX${dim}(${reset}${green}expected${reset}${dim})${reset}`,
-          `${dim}expect(${reset}${red}element${reset}${dim}).toX()${reset}`,
-          `${dim}expect(${reset}${red}r${reset}${dim}).${reset}resolves${dim}.${reset}not${dim}.${reset}toX${dim}(${reset}${green}e${reset}${dim}, ${reset}${green}s${reset}${dim}) // c${reset}`,
-          `${green}a${reset}`,
-          `${red}a${reset}`,
-          "",
-        ],
+          .map(line => JSON.parse(line))[0];
+        return { printed, stderr, exitCode };
+      };
+      const [colored, plain] = await Promise.all([run({ FORCE_COLOR: "1", NO_COLOR: undefined }), run({})]);
+
+      const [bold, dim, inverted, red, green] = ["\x1b[1m", "\x1b[2m", "\x1b[7m", "\x1b[31m", "\x1b[32m"];
+      // The codes that turn them off. Bold and dim share one code, and so do the two colors.
+      const [weightOff, invertedOff, colorOff, reset] = ["\x1b[22m", "\x1b[27m", "\x1b[39m", "\x1b[0m"];
+      const printed = [
+        `${dim}expect(${weightOff}${red}received${colorOff}${dim}).${weightOff}toX${dim}(${weightOff}${green}expected${colorOff}${dim})${weightOff}`,
+        `${dim}expect(${weightOff}${red}element${colorOff}${dim}).toX()${weightOff}`,
+        `${dim}expect(${weightOff}${red}r${colorOff}${dim}).${weightOff}resolves${dim}.${weightOff}not${dim}.${weightOff}toX${dim}(${weightOff}${green}e${colorOff}${dim}, ${weightOff}${green}s${colorOff}${dim}) // c${weightOff}`,
+        `${green}a${colorOff}`,
+        `${red}a${colorOff}`,
+        "",
+        `${inverted}a${invertedOff}`,
+        `${dim}a${weightOff}`,
+        `${bold}a${weightOff}`,
+        `${green}"a"${colorOff}`,
+        `${red}"a"${colorOff}`,
+        `${dim}Compared values have no visual difference.${weightOff}`,
+        `${dim}Compared values have no visual difference.${weightOff}`,
+        `  Comparing two different types of values. Expected ${green}number${colorOff} but received ${red}string${colorOff}.`,
+        // What jest-extended calls.
+        `${inverted}${green}a${colorOff}${invertedOff}`,
+        // The outer style continues after the inner one.
+        `${green}a${inverted}b${invertedOff}c${colorOff}`,
+        `${green}a${bold}b${weightOff}c${colorOff}`,
+        `${inverted}a${red}b${colorOff}c${invertedOff}`,
+        // The inner style ends with the code that also turns off the outer one, which is turned on again.
+        `${green}a${red}b${colorOff}${green}c${colorOff}`,
+        `${bold}a${dim}b${weightOff}${bold}c${weightOff}`,
+        `${dim}a${bold}b${weightOff}${dim}c${bold}d${weightOff}${dim}e${weightOff}`,
+        `${inverted}a${inverted}b${invertedOff}${inverted}c${invertedOff}`,
+        `${green}${red}a${colorOff}${green}${colorOff}`,
+        `${dim}expect(${weightOff}${red}a${green}b${colorOff}${red}c${colorOff}${dim}).${weightOff}toX${dim}(${weightOff}${green}expected${colorOff}${dim})${weightOff}`,
+        `${dim}expect(${weightOff}${red}r${colorOff}${dim}).${weightOff}toX${dim}(${weightOff}${green}e${colorOff}${dim}) // x ${bold}y${weightOff}${dim} z${weightOff}`,
+        `${dim}expect(${weightOff}${red}element${colorOff}${dim}).toHaveClass(${weightOff}${green}${green}"a b"${colorOff}${green}${colorOff}${dim})${weightOff}`,
+        `${red}[Error: a${red}b${colorOff}${red}c]${colorOff}`,
+        `${green}Symbol(a${green}b${colorOff}${green}c)${colorOff}`,
+        // Half of a surrogate pair stays what it is.
+        `${green}a\ud800b${colorOff}`,
+        `${inverted}${green}\ud83d${colorOff}${invertedOff}`,
+        // Unlike chalk, a line break does not end the style.
+        `${red}a\n  b${colorOff}`,
+        // The lines of a diff come from the printer of the built-in matchers, which ends a color with a reset.
+        `Expected: ${reset}${green}a${reset}\nReceived: ${reset}${red}b${reset}`,
+      ];
+      expect(colored).toEqual({ printed, stderr: expect.any(String), exitCode: 0 });
+      expect(plain).toEqual({
+        printed: printed.map(text => Bun.stripANSI(text)),
         stderr: expect.any(String),
+        exitCode: 0,
       });
-      expect(exitCode).toBe(0);
     });
   });
 });

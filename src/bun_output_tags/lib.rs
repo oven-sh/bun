@@ -29,6 +29,12 @@ pub mod ansi {
     pub const BRIGHT_WHITE: &str = "\x1b[97m";
     pub(crate) const BG_RED: &str = "\x1b[41m";
     pub(crate) const BG_GREEN: &str = "\x1b[42m";
+    /// Ends [`BOLD`] and [`DIM`], and nothing else.
+    pub const NORMAL_INTENSITY: &str = "\x1b[22m";
+    /// Ends [`INVERT`], and nothing else.
+    pub const INVERT_OFF: &str = "\x1b[27m";
+    /// Ends the text colour, and nothing else.
+    pub const DEFAULT_COLOR: &str = "\x1b[39m";
 }
 
 /// Byte-slice views of [`ansi`] for callers that write into `&[u8]` buffers

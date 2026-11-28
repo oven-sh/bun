@@ -283,6 +283,9 @@ export const printExpected = b.fn({ ...utility("printExpected", "print_expected"
 export const printReceived = b.fn({ ...utility("printReceived", "print_received"), args: { value: b.any } });
 export const expectedColor = b.fn({ ...utility("expectedColor", "expected_color"), args: { texts: b.any.variadic } });
 export const receivedColor = b.fn({ ...utility("receivedColor", "received_color"), args: { texts: b.any.variadic } });
+export const invertedColor = b.fn({ ...utility("invertedColor", "inverted_color"), args: { texts: b.any.variadic } });
+export const dimColor = b.fn({ ...utility("dimColor", "dim_color"), args: { texts: b.any.variadic } });
+export const boldWeight = b.fn({ ...utility("boldWeight", "bold_weight"), args: { texts: b.any.variadic } });
 export const matcherHint = b.fn({ ...utility("matcherHint", "matcher_hint"), args: { values: b.any.variadic } });
 export const printWithType = b.fn({
   ...utility("printWithType", "print_with_type"),

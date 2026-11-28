@@ -27,12 +27,6 @@ impl crate::types::Indexed for TsSymbol<'_> {
         self.id.0
     }
 }
-impl std::hash::Hash for TsSymbol<'_> {
-    #[inline]
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
-    }
-}
 impl std::fmt::Debug for TsSymbol<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "TsSymbol({})", bstr::BStr::new(self.name()))

@@ -379,12 +379,6 @@ impl<'t, 'a: 't> From<Token<'a>> for TokenOrText<'t> {
         TokenOrText::Token(token.kind(), token.text())
     }
 }
-impl<'t, 'a: 't> From<&Token<'a>> for TokenOrText<'t> {
-    #[inline]
-    fn from(token: &Token<'a>) -> Self {
-        TokenOrText::Token(token.kind(), token.text())
-    }
-}
 impl<'t> From<&'t str> for TokenOrText<'t> {
     #[inline]
     fn from(text: &'t str) -> Self {

@@ -1,4 +1,3 @@
-use core::fmt;
 use std::borrow::Cow;
 
 use crate::Error;
@@ -19,6 +18,7 @@ use crate::bun_json::{Expr, ExprData};
 use crate::dependency::{Behavior, Dependency, DependencyExt as _};
 use crate::install::{DependencyID, ExternalStringList};
 use crate::lockfile::Lockfile;
+use crate::lockfile::bun_lock::{Stringifier, WriteError, Writer};
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::tree;
 use crate::resolution;
@@ -263,53 +263,46 @@ impl Bin {
         Ok(Bin::default())
     }
 
-    pub(crate) fn to_json<W: fmt::Write, const STYLE: ToJsonStyle>(
+    pub(crate) fn to_json<const STYLE: ToJsonStyle>(
         &self,
         indent: Option<&mut u32>,
         buf: &[u8],
         extern_strings: &[ExternalString],
-        writer: &mut W,
-        write_indent: fn(&mut W, &mut u32) -> fmt::Result,
-    ) -> fmt::Result {
+        writer: &mut Writer,
+    ) -> Result<(), WriteError> {
         debug_assert!(self.tag != Tag::None);
         if STYLE == ToJsonStyle::SingleLine {
             match self.tag {
                 Tag::None => {}
                 Tag::File => {
-                    write!(writer, "{}", self.file().fmt_json(buf, Default::default()))?;
+                    writer.string(self.file().slice(buf))?;
                 }
                 Tag::NamedFile => {
-                    writer.write_char('{')?;
-                    write!(
-                        writer,
-                        " {}: {} ",
-                        self.named_file()[0].fmt_json(buf, Default::default()),
-                        self.named_file()[1].fmt_json(buf, Default::default()),
+                    writer.write_all(b"{ ")?;
+                    writer.entry(
+                        self.named_file()[0].slice(buf),
+                        self.named_file()[1].slice(buf),
                     )?;
-                    writer.write_char('}')?;
+                    writer.write_all(b" }")?;
                 }
                 Tag::Dir => {
-                    write!(writer, "{}", self.dir().fmt_json(buf, Default::default()))?;
+                    writer.string(self.dir().slice(buf))?;
                 }
                 Tag::Map => {
-                    writer.write_char('{')?;
+                    writer.write_byte(b'{')?;
                     let list = self.map().get(extern_strings);
                     let mut first = true;
                     let mut i: usize = 0;
                     while i < list.len() {
                         if !first {
-                            writer.write_char(',')?;
+                            writer.write_byte(b',')?;
                         }
                         first = false;
-                        write!(
-                            writer,
-                            " {}: {}",
-                            list[i].value.fmt_json(buf, Default::default()),
-                            list[i + 1].value.fmt_json(buf, Default::default()),
-                        )?;
+                        writer.write_byte(b' ')?;
+                        writer.entry(list[i].value.slice(buf), list[i + 1].value.slice(buf))?;
                         i += 2;
                     }
-                    writer.write_str(" }")?;
+                    writer.write_all(b" }")?;
                 }
             }
 
@@ -321,27 +314,26 @@ impl Bin {
         match self.tag {
             Tag::None => {}
             Tag::File => {
-                write!(writer, "{}", self.file().fmt_json(buf, Default::default()))?;
+                writer.string(self.file().slice(buf))?;
             }
             Tag::NamedFile => {
-                writer.write_str("{\n")?;
+                writer.write_all(b"{\n")?;
                 *indent += 1;
-                write_indent(writer, indent)?;
-                writeln!(
-                    writer,
-                    "{}: {},",
-                    self.named_file()[0].fmt_json(buf, Default::default()),
-                    self.named_file()[1].fmt_json(buf, Default::default()),
+                Stringifier::write_indent(writer, *indent)?;
+                writer.entry(
+                    self.named_file()[0].slice(buf),
+                    self.named_file()[1].slice(buf),
                 )?;
+                writer.write_all(b",\n")?;
                 *indent -= 1;
-                write_indent(writer, indent)?;
-                writer.write_char('}')?;
+                Stringifier::write_indent(writer, *indent)?;
+                writer.write_byte(b'}')?;
             }
             Tag::Dir => {
-                write!(writer, "{}", self.dir().fmt_json(buf, Default::default()))?;
+                writer.string(self.dir().slice(buf))?;
             }
             Tag::Map => {
-                writer.write_char('{')?;
+                writer.write_byte(b'{')?;
                 *indent += 1;
 
                 let list = self.map().get(extern_strings);
@@ -350,26 +342,22 @@ impl Bin {
                 while i < list.len() {
                     if !any {
                         any = true;
-                        writer.write_char('\n')?;
+                        writer.write_byte(b'\n')?;
                     }
-                    write_indent(writer, indent)?;
-                    writeln!(
-                        writer,
-                        "{}: {},",
-                        list[i].value.fmt_json(buf, Default::default()),
-                        list[i + 1].value.fmt_json(buf, Default::default()),
-                    )?;
+                    Stringifier::write_indent(writer, *indent)?;
+                    writer.entry(list[i].value.slice(buf), list[i + 1].value.slice(buf))?;
+                    writer.write_all(b",\n")?;
                     i += 2;
                 }
                 if !any {
-                    writer.write_char('}')?;
+                    writer.write_byte(b'}')?;
                     *indent -= 1;
                     return Ok(());
                 }
 
                 *indent -= 1;
-                write_indent(writer, indent)?;
-                writer.write_char('}')?;
+                Stringifier::write_indent(writer, *indent)?;
+                writer.write_byte(b'}')?;
             }
         }
         Ok(())

@@ -21,6 +21,8 @@ pub struct JSONOptions {
     pub was_originally_macro: bool,
     pub guess_indentation: bool,
     pub record_value_locs: bool,
+    /// A string with an escape keeps its bytes that are in no UTF-8 sequence, as one without an escape does. Off where `js_printer` prints the string again: it needs WTF-8.
+    pub keep_ill_formed_bytes: bool,
 }
 
 impl JSONOptions {
@@ -32,6 +34,7 @@ impl JSONOptions {
         was_originally_macro: false,
         guess_indentation: false,
         record_value_locs: false,
+        keep_ill_formed_bytes: false,
     };
 }
 
@@ -399,6 +402,18 @@ impl ParsedJson {
         log: &mut bun_ast::Log,
     ) -> crate::Result<ParsedJson> {
         parse_to_rows(source, log, PACKAGE_JSON_OPTS, false)
+    }
+
+    /// bun.lock: the syntax of package.json, and every string is the bytes that the lockfile writer was given.
+    pub fn parse_bun_lock(
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+    ) -> crate::Result<ParsedJson> {
+        const BUN_LOCK_OPTS: JSONOptions = JSONOptions {
+            keep_ill_formed_bytes: true,
+            ..PACKAGE_JSON_OPTS
+        };
+        parse_to_rows(source, log, BUN_LOCK_OPTS, false)
     }
 
     /// A document fetched from an npm registry: strict JSON with no duplicate-key warnings.

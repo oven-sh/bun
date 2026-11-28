@@ -1,6 +1,7 @@
 use crate::lockfile::package::PackageColumns as _;
 
 use bun_collections::index_sort;
+use bun_core::printer::write_json_string_body_keeping_bytes;
 use bun_core::strings;
 use bun_semver::String as SemverString;
 
@@ -26,6 +27,18 @@ pub(crate) fn print(
     write!(writer, " {}\n\n", lockfile.fmt_meta_hash())?;
 
     packages(lockfile, writer)
+}
+
+/// `text` with the escapes of a JSON string and all of its bytes, like the strings that yarn.lock has without quotes.
+fn write_escaped(
+    writer: &mut impl bun_io::Write,
+    escaped: &mut Vec<u8>,
+    text: &[u8],
+) -> Result<(), crate::Error> {
+    escaped.clear();
+    write_json_string_body_keeping_bytes(text, escaped);
+    writer.write_all(escaped)?;
+    Ok(())
 }
 
 fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
@@ -105,6 +118,7 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
     }
 
     let mut dependencies: Vec<DependencyID> = Vec::new();
+    let mut escaped: Vec<u8> = Vec::new();
 
     // When printing, we start at 1
     for &i in alphabetized_names.iter() {
@@ -149,14 +163,7 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
 
                 if needs_quote {
                     writer.write_all(b"\"")?;
-                    write!(
-                        writer,
-                        "{}",
-                        bun_core::fmt::format_json_string_utf8(
-                            name,
-                            bun_core::fmt::JSONFormatterUTF8Options { quote: false }
-                        ),
-                    )?;
+                    write_escaped(writer, &mut escaped, name)?;
                 } else {
                     writer.write_all(name)?;
                 }
@@ -165,14 +172,7 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
                     writer.write_all(b"^")?;
                     version_formatter.write_to(writer)?;
                 } else if needs_quote {
-                    write!(
-                        writer,
-                        "{}",
-                        bun_core::fmt::format_json_string_utf8(
-                            version_name,
-                            bun_core::fmt::JSONFormatterUTF8Options { quote: false }
-                        ),
-                    )?;
+                    write_escaped(writer, &mut escaped, version_name)?;
                 } else {
                     writer.write_all(version_name)?;
                 }
@@ -193,11 +193,9 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
 
             // Version is always quoted
             version_formatter.write_to(&mut quoted_buf)?;
-            writeln!(
-                writer,
-                "{}",
-                bun_core::fmt::format_json_string_utf8(&quoted_buf, Default::default()),
-            )?;
+            writer.write_all(b"\"")?;
+            write_escaped(writer, &mut escaped, &quoted_buf)?;
+            writer.write_all(b"\"\n")?;
 
             writer.write_all(b"  resolved ")?;
 
@@ -206,11 +204,9 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
             // Resolved URL is always quoted
             quoted_buf.clear();
             url_formatter.write_to(&mut quoted_buf)?;
-            writeln!(
-                writer,
-                "{}",
-                bun_core::fmt::format_json_string_utf8(&quoted_buf, Default::default()),
-            )?;
+            writer.write_all(b"\"")?;
+            write_escaped(writer, &mut escaped, &quoted_buf)?;
+            writer.write_all(b"\"\n")?;
 
             if meta.integrity.tag != integrity::Tag::UNKNOWN {
                 // Integrity is...never quoted?
@@ -241,25 +237,15 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
                     let needs_quote = strings::must_escape_yaml_string(dependency_name);
 
                     if needs_quote {
-                        write!(
-                            writer,
-                            "{}",
-                            bun_core::fmt::format_json_string_utf8(
-                                dependency_name,
-                                Default::default()
-                            ),
-                        )?;
+                        writer.write_all(b"\"")?;
+                        write_escaped(writer, &mut escaped, dependency_name)?;
+                        writer.write_all(b"\"")?;
                     } else {
                         writer.write_all(dependency_name)?;
                     }
-                    writeln!(
-                        writer,
-                        " {}",
-                        bun_core::fmt::format_json_string_utf8(
-                            dep.version.literal.slice(string_buf),
-                            Default::default()
-                        ),
-                    )?;
+                    writer.write_all(b" \"")?;
+                    write_escaped(writer, &mut escaped, dep.version.literal.slice(string_buf))?;
+                    writer.write_all(b"\"\n")?;
                 }
             }
         }

@@ -2085,9 +2085,19 @@ pub mod printer {
 
     const MALFORMED: i32 = -1;
 
+    /// What the escaper writes for bytes that are in no UTF-8 sequence.
+    #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
+    enum IllFormedBytes {
+        /// U+FFFD, so the output is UTF-8.
+        Replace,
+        /// The bytes, so a reader that takes bytes gets the input back.
+        Keep,
+    }
+
     /// Same algorithm as `bun_js_printer::write_pre_quoted_string`, except malformed UTF-8 becomes U+FFFD.
     /// PERF: (quote_char, ascii_only, json, encoding) are runtime params —
     /// profile if it shows up on a hot path.
+    #[inline]
     pub fn write_pre_quoted_string<W: PrinterWriter + ?Sized>(
         text_in: &[u8],
         writer: &mut W,
@@ -2096,7 +2106,36 @@ pub mod printer {
         json: bool,
         encoding: StrEncoding,
     ) -> crate::CrateResult<()> {
+        write_pre_quoted_string_as::<W, { IllFormedBytes::Replace }>(
+            text_in, writer, quote_char, ascii_only, json, encoding,
+        )
+    }
+
+    /// [`write_pre_quoted_string`] for JSON in a lockfile: bytes that are in no UTF-8 sequence stay, so `out` is UTF-8 only if `text` is.
+    pub fn write_json_string_body_keeping_bytes(text: &[u8], out: &mut Vec<u8>) {
+        let (ascii_only, json) = (false, true);
+        // A `Vec` does not fail to write.
+        let _ = write_pre_quoted_string_as::<_, { IllFormedBytes::Keep }>(
+            text,
+            out,
+            b'"',
+            ascii_only,
+            json,
+            StrEncoding::Utf8,
+        );
+    }
+
+    fn write_pre_quoted_string_as<W: PrinterWriter + ?Sized, const ILL_FORMED: IllFormedBytes>(
+        text_in: &[u8],
+        writer: &mut W,
+        quote_char: u8,
+        ascii_only: bool,
+        json: bool,
+        encoding: StrEncoding,
+    ) -> crate::CrateResult<()> {
+        let keep = matches!(ILL_FORMED, IllFormedBytes::Keep);
         debug_assert!(!json || quote_char == b'"');
+        debug_assert!(!keep || (!ascii_only && encoding == StrEncoding::Utf8));
         // utf16 view over the same bytes (only used when encoding == Utf16).
         // Callers pass 2-byte-aligned even-length input for Utf16; `cast_slice`
         // panics (rather than UB) if that contract is violated.
@@ -2142,7 +2181,9 @@ pub mod printer {
             };
 
             if c == MALFORMED {
-                if ascii_only {
+                if keep {
+                    writer.write_all(&text_in[i..i + 1])?;
+                } else if ascii_only {
                     writer.write_all(&bmp_escape(0xFFFD))?;
                 } else {
                     writer.write_all("\u{FFFD}".as_bytes())?;
@@ -2236,6 +2277,18 @@ pub mod printer {
                     i += 1;
                 }
                 _ => {
+                    // Two escapes side by side read back as one code point above U+FFFF, which is other bytes.
+                    if keep
+                        && (0xD800..=0xDBFF).contains(&c)
+                        && matches!(
+                            text_in.get(i + 3..i + 6),
+                            Some([0xED, 0xB0..=0xBF, 0x80..=0xBF])
+                        )
+                    {
+                        writer.write_all(&text_in[i..i + 6])?;
+                        i += 6;
+                        continue;
+                    }
                     i += width as usize;
                     if c <= 0xFF && !json {
                         let h = hex2_upper(c as u8);

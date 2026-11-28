@@ -364,36 +364,52 @@ pub struct Formatter<'a> {
     repository: &'a Repository,
 }
 
+impl<'a> Formatter<'a> {
+    /// The text in order: the label, the strings of the lockfile and the ASCII between them.
+    fn parts(&self) -> [&'a [u8]; 6] {
+        debug_assert!(!self.label.is_empty());
+        let repository = self.repository;
+        let owner = repository.owner.slice(self.buf);
+        let repo = repository.repo.slice(self.buf);
+        let after_owner: &[u8] = if !owner.is_empty() {
+            b"/"
+        } else if Dependency::is_scp_like_path(repo) {
+            b"ssh://"
+        } else {
+            b""
+        };
+        let (hash, commit): (&[u8], _) = if !repository.resolved.is_empty() {
+            (b"#", repository.resolved_commit(self.buf))
+        } else if !repository.committish.is_empty() {
+            (b"#", repository.committish.slice(self.buf))
+        } else {
+            (b"", b"" as &[u8])
+        };
+        [
+            self.label.as_bytes(),
+            owner,
+            after_owner,
+            repo,
+            hash,
+            commit,
+        ]
+    }
+
+    /// For text that is saved to a file: `Display` writes U+FFFD for a byte that is not UTF-8.
+    pub(crate) fn write_to<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
+    where
+        W: bun_core::io::Write + ?Sized,
+    {
+        self.parts()
+            .into_iter()
+            .try_for_each(|part| writer.write_all(part))
+    }
+}
+
 impl<'a> fmt::Display for Formatter<'a> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        debug_assert!(!self.label.is_empty());
-        writer.write_str(self.label)?;
-
-        let repo = self.repository.repo.slice(self.buf);
-        if !self.repository.owner.is_empty() {
-            write!(
-                writer,
-                "{}",
-                BStr::new(self.repository.owner.slice(self.buf))
-            )?;
-            writer.write_str("/")?;
-        } else if Dependency::is_scp_like_path(repo) {
-            writer.write_str("ssh://")?;
-        }
-        write!(writer, "{}", BStr::new(repo))?;
-
-        if !self.repository.resolved.is_empty() {
-            writer.write_str("#")?;
-            let resolved = self.repository.resolved_commit(self.buf);
-            write!(writer, "{}", BStr::new(resolved))?;
-        } else if !self.repository.committish.is_empty() {
-            writer.write_str("#")?;
-            write!(
-                writer,
-                "{}",
-                BStr::new(self.repository.committish.slice(self.buf))
-            )?;
-        }
-        Ok(())
+        self.parts()
+            .into_iter()
+            .try_for_each(|part| write!(writer, "{}", BStr::new(part)))
     }
 }

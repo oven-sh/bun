@@ -278,20 +278,6 @@ pub mod semver_string {
             Formatter { buf, str: self }
         }
 
-        /// Escapes for json. Defaults to quoting the string.
-        #[inline]
-        pub fn fmt_json<'a>(
-            &'a self,
-            buf: &'a [u8],
-            opts: JsonFormatterOptions,
-        ) -> JsonFormatter<'a> {
-            JsonFormatter {
-                buf,
-                str: self,
-                opts,
-            }
-        }
-
         #[inline]
         pub fn fmt_store_path<'a>(&'a self, buf: &'a [u8]) -> StorePathFormatter<'a> {
             fmt_store_path(self.slice(buf))
@@ -620,39 +606,6 @@ pub mod semver_string {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             let str = self.str;
             write!(f, "{}", bstr::BStr::new(str.slice(self.buf)))
-        }
-    }
-
-    // ── String.JsonFormatter ──────────────────────────────────────────────
-    #[derive(Copy, Clone)]
-    pub struct JsonFormatterOptions {
-        pub quote: bool,
-    }
-
-    impl Default for JsonFormatterOptions {
-        fn default() -> Self {
-            Self { quote: true }
-        }
-    }
-
-    pub struct JsonFormatter<'a> {
-        pub(crate) str: &'a String,
-        pub(crate) buf: &'a [u8],
-        pub(crate) opts: JsonFormatterOptions,
-    }
-
-    impl<'a> fmt::Display for JsonFormatter<'a> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write!(
-                f,
-                "{}",
-                bun_core::fmt::format_json_string_utf8(
-                    self.str.slice(self.buf),
-                    bun_core::fmt::JSONFormatterUTF8Options {
-                        quote: self.opts.quote
-                    },
-                ),
-            )
         }
     }
 

@@ -1,0 +1,148 @@
+---
+title: Deploy a Bun application on ZopDay
+description: Deploy a Bun application to ZopDay from a GitHub repository or a Docker image, on managed ZopCloud or in your own AWS, GCP or Azure account
+sidebarTitle: Deploy on ZopDay
+mode: center
+---
+
+[ZopDay](https://zop.dev/zopday) deploys applications from a GitHub repository or a container image. It runs them on ZopCloud, which is fully managed, or inside your own AWS, GCP or Azure account, and gives each service an HTTPS URL.
+
+This guide deploys a Bun HTTP server that ZopDay builds from a `Dockerfile`. You can either follow this guide step-by-step or deploy a ready-made Bun starter app ([source](https://github.com/muskanbandta23/bun-zopday-starter)) with one click:
+
+<a
+  href="https://zop.dev/zopday/app/deploy?image=ghcr.io/muskanbandta23/bun-zopday-starter:latest&port=3000&name=bun-app&utm_source=github&utm_medium=one_click&utm_content=bun"
+  target="_blank"
+>
+  <img src="https://zop.dev/deploytozopday-inkhard.svg" alt="Deploy to ZopDay" />
+</a>
+
+---
+
+**Prerequisites**:
+
+- A Bun application ready for deployment
+- A [ZopDay account](https://zop.dev/zopday)
+- A GitHub account (for the repository method)
+- Docker (for the Docker image method)
+
+---
+
+## Prepare your application
+
+<Steps>
+<Step title="Step 1">
+Make sure your server listens on a fixed port. This guide uses `3000`. Reading `PORT` first keeps it configurable.
+
+```ts index.ts icon="/icons/typescript.svg"
+const server = Bun.serve({
+  port: Number(process.env.PORT) || 3000,
+  routes: {
+    "/": new Response("Hello from Bun!"),
+  },
+});
+
+console.log(`Listening on ${server.url}`);
+```
+
+</Step>
+<Step title="Step 2">
+Add a `Dockerfile` to the root of your project. ZopDay builds your service from it.
+
+```docker Dockerfile icon="docker"
+FROM oven/bun:1-alpine
+WORKDIR /usr/src/app
+
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile --production
+
+COPY . .
+
+ENV NODE_ENV=production
+USER bun
+EXPOSE 3000/tcp
+CMD ["bun", "run", "index.ts"]
+```
+
+Add a `.dockerignore` with `node_modules` in it so your local dependencies aren't copied into the image. For a multi-stage build that runs your tests first, see [Containerize a Bun application with Docker](/guides/ecosystem/docker).
+
+</Step>
+</Steps>
+
+---
+
+## Method 1: Deploy from a GitHub repository
+
+<Steps>
+<Step title="Step 1">
+Push your project, including the `Dockerfile` and `bun.lock`, to a GitHub repository.
+
+</Step>
+<Step title="Step 2">
+Create a project
+
+1. Go to the [ZopDay dashboard](https://zop.dev/zopday/app) and click **"+ New Project"**
+2. Enter a project name
+3. Under **"Where do you want to deploy?"**, choose **"ZopCloud"**, or **"Your own cloud"** to deploy into a connected AWS, GCP or Azure account
+4. Click **"Create project"**
+
+</Step>
+<Step title="Step 3">
+Add a service from your repository
+
+1. Click **"+ Add service"** and enter a service name
+2. Under **"Where is your code?"**, choose **"Repository"**
+3. Connect your GitHub account and select your repository and branch, or click **"Or deploy a public repo URL"** and paste the repository URL
+4. Click **"Continue"**
+
+</Step>
+<Step title="Step 4">
+Review and deploy
+
+ZopDay inspects the repository and shows what it detected. Check that **Build** says **"Dockerfile (from repo)"** and the port is `3000`, add any environment variables, then click **"Deploy"**.
+
+</Step>
+</Steps>
+
+Once the service is **Active**, open its **"Overview"** tab and use the URL under **"How to access"**. For a repository connected through GitHub, keep **"Auto-deploy on push"** on to build and roll out every push to the selected branch.
+
+---
+
+## Method 2: Deploy a Docker image
+
+<Steps>
+<Step title="Step 1">
+Build your image and push it to a registry, such as Docker Hub or GitHub Container Registry. This guide uses a public image.
+
+```bash terminal icon="terminal"
+docker build -t ghcr.io/<username>/my-bun-app:latest .
+docker push ghcr.io/<username>/my-bun-app:latest
+```
+
+</Step>
+<Step title="Step 2">
+Open a deploy link with your image, port and service name.
+
+```txt
+https://zop.dev/zopday/app/deploy?image=ghcr.io/<username>/my-bun-app:latest&port=3000&name=my-bun-app
+```
+
+You can also start from a project: click **"+ Add service"** and choose **"Docker image"**.
+
+</Step>
+<Step title="Step 3">
+Keep **"ZopCloud"** selected, or choose **"Your own cloud"**, then click **"Deploy"**.
+
+</Step>
+</Steps>
+
+Your app is now live at the URL under **"How to access"** in the service's **"Overview"** tab. The same deploy link works as a one-click deploy button in your own README.
+
+---
+
+## Configuration (Optional)
+
+- **Resources**: new services start with 0.15 vCPU and 250 MB of memory, which is enough for a small Bun server. Change them under **"Advanced settings"** before deploying, or in the service's **"Settings"** tab afterwards.
+- **Environment variables**: add them on the review step or in the service's **"Settings"** tab. A deploy link can preset them with `&env=KEY=VALUE`.
+- **Your own cloud**: choose **"Your own cloud"** when you create the project to run the service in your own AWS, GCP or Azure account instead of ZopCloud.
+
+For more, see the [ZopDay documentation](https://zop.dev/zopday).

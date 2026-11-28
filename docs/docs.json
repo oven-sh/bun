@@ -396,7 +396,8 @@
               "/guides/deployment/render",
               "/guides/deployment/aws-lambda",
               "/guides/deployment/digital-ocean",
-              "/guides/deployment/google-cloud-run"
+              "/guides/deployment/google-cloud-run",
+              "/guides/deployment/zopday"
             ]
           },
           {

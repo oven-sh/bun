@@ -229,6 +229,7 @@ bun upgrade --canary
   - [Deploy to AWS Lambda](https://bun.com/guides/deployment/aws-lambda)
   - [Deploy to DigitalOcean](https://bun.com/guides/deployment/digital-ocean)
   - [Deploy to Google Cloud Run](https://bun.com/guides/deployment/google-cloud-run)
+  - [Deploy to ZopDay](https://bun.com/guides/deployment/zopday)
 
 - Binary
   - [Convert a Blob to a string](https://bun.com/guides/binary/blob-to-string)

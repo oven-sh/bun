@@ -561,6 +561,11 @@ function getDefaults() {
       __proto__: require("node:path"),
       join: $bindgen("node_path.bind.ts", "joinWithOriginalNormalize"),
       resolve: $bindgen("node_path.bind.ts", "resolveWithRealCwd"),
+      // Both arguments are resolved.
+      relative:
+        process.platform === "win32"
+          ? $bindgen("node_path.bind.ts", "tryRelativeWin32")
+          : $bindgen("node_path.bind.ts", "tryRelativePosix"),
     } as unknown as WASIBindings["path"],
   };
 
@@ -655,7 +660,7 @@ class WASI {
           inheriting: RIGHTS_DIRECTORY_INHERITING,
         },
         fakePath: k,
-        path: (v as unknown) instanceof String ? String(v) : v,
+        path: require("node:util/types").isStringObject(v) ? String(v) : v,
       });
     }
     const getiovs = (iovs: number, iovsLen: number) => {

@@ -15,6 +15,8 @@ const CLOSE: u8 = b'}';
 const COMMA: u8 = b',';
 /// Stands in for `escOpen` and `escClose`.
 const ESCAPED_BRACE: u8 = BACKSLASH;
+/// Precedes a class that [`Numbers::AsDigitClasses`] has made. No result has both this and an escaped brace.
+const DIGIT_CLASS_MARK: u8 = BACKSLASH;
 
 const EXPANSION_MAX: usize = 100_000;
 const EXPANSION_MAX_LENGTH: usize = 4_000_000;
@@ -30,7 +32,7 @@ fn check_limits(count: usize, total_len: usize) -> Result<(), Abort> {
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum Numbers {
     Listed,
-    /// `{8..25}` is `{[8-9],1[0-9],2[0-5]}`, for a pattern without brackets and parentheses.
+    /// `{8..25}` is `{[8-9],1[0-9],2[0-5]}`.
     AsDigitClasses,
 }
 
@@ -74,9 +76,74 @@ impl Expansions {
         (self.ends.iter()).map(move |&end| &self.units[core::mem::replace(&mut start, end)..end])
     }
 
-    pub(super) fn has_bracket(&self) -> bool {
-        scan::index_of(&self.units, b'[').is_some()
+    fn reversed(&self) -> Result<Self, Abort> {
+        let mut reversed = Expansions::default();
+        for index in (0..self.len()).rev() {
+            reversed.push(&[self.get(index)])?;
+        }
+        Ok(reversed)
     }
+
+    pub(super) fn has_digit_class(&self) -> bool {
+        has_digit_class(&self.units)
+    }
+}
+
+pub(super) fn has_digit_class(expansion: &[u16]) -> bool {
+    scan::index_of(expansion, DIGIT_CLASS_MARK).is_some()
+}
+
+pub(super) struct UnmarkedPart {
+    pub(super) with_digit_classes: Vec<u16>,
+    /// The first of the parts that it stands for.
+    pub(super) first_listed: Vec<u16>,
+}
+
+/// `None` if a digit class may be inside of an extglob or of another class, or follow `!()`, which looks ahead.
+pub(super) fn unmark_digit_classes(mut part: &[u16]) -> Option<UnmarkedPart> {
+    let (mut with_digit_classes, mut first_listed) = (Vec::<u16>::new(), Vec::new());
+    let mut may_be_in_group = false;
+    while let [unit, ref rest @ ..] = *part {
+        part = rest;
+        match unit.to_u8_saturating() {
+            DIGIT_CLASS_MARK if may_be_in_group => return None,
+            DIGIT_CLASS_MARK => {
+                let class;
+                (class, part) = rest.split_at_checked("[0-9]".len())?;
+                with_digit_classes.extend_from_slice(class);
+                first_listed.push(class[1]);
+                continue;
+            }
+            b'[' => may_be_in_group = may_be_in_group || !ends_at_first_bracket(rest),
+            b'(' => match first_listed.last().map(|it: &u16| it.to_u8_saturating()) {
+                Some(b'!') => may_be_in_group = true,
+                Some(b'?' | b'+' | b'*' | b'@') => {
+                    may_be_in_group = may_be_in_group || !ends_at_first_parenthesis(rest);
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+        with_digit_classes.push(unit);
+        first_listed.push(unit);
+    }
+    Some(UnmarkedPart {
+        with_digit_classes,
+        first_listed,
+    })
+}
+
+/// Whether what follows a "[" is like `a-z]` or `!a]`.
+fn ends_at_first_bracket(class: &[u16]) -> bool {
+    let members = &class[usize::from(matches!(byte_at(class, 0), b'!' | b'^'))..];
+    let is_bracket = |unit: &u16| matches!(unit.to_u8_saturating(), b'[' | b']' | DIGIT_CLASS_MARK);
+    (members.iter().position(is_bracket)).is_some_and(|at| at != 0 && members[at].eq_ascii(b']'))
+}
+
+/// Whether what follows a "@(" is like `a|b)`.
+fn ends_at_first_parenthesis(extglob: &[u16]) -> bool {
+    let mut bytes = extglob.iter().map(|unit| unit.to_u8_saturating());
+    bytes.find(|byte| matches!(*byte, b'(' | b')' | b'[' | DIGIT_CLASS_MARK)) == Some(b')')
 }
 
 /// `/\{(?:(?!\{).)*\}/.test(pattern)`
@@ -105,10 +172,11 @@ pub(super) fn brace_expand(
     let checkpoint = budget.bytes_in_use();
     let mut expander = Expander::new(pattern, numbers);
     let mut expansions = expander.expand_all(Scope::Top, budget)?;
-    if numbers == Numbers::AsDigitClasses && expander.has_listed_bracket {
-        return Ok(None);
-    }
     budget.settle_memory(checkpoint, expansions.memory_cost())?;
+    if expander.has_digit_class {
+        let has_escaped_brace = starts_with_empty_braces || expander.has_escaped_brace;
+        return Ok((!has_escaped_brace).then_some(expansions));
+    }
     strings::replace_char_in_place(&mut expansions.units, ESCAPED_BRACE, CLOSE);
     if starts_with_empty_braces {
         let mut start = 0;
@@ -239,8 +307,8 @@ struct Expander {
     /// One per index of `text` and one for its end. Not updated when a brace is escaped.
     lookahead: Vec<Lookahead>,
     numbers: Numbers,
-    /// `{A..z}` has one.
-    has_listed_bracket: bool,
+    has_digit_class: bool,
+    has_escaped_brace: bool,
 }
 
 impl Expander {
@@ -272,7 +340,8 @@ impl Expander {
             text,
             lookahead,
             numbers,
-            has_listed_bracket: false,
+            has_digit_class: false,
+            has_escaped_brace: false,
         }
     }
 
@@ -342,6 +411,7 @@ impl Expander {
                     }
                     // `{a},b}` is `{a\},b}`.
                     self.text[close] = ESCAPED_BRACE.into();
+                    self.has_escaped_brace = true;
                     is_top = true;
                     may_have_unmatched_close &= post.unmatched_close != NOT_FOUND;
                     body_has_escaped_close = may_have_unmatched_close;
@@ -359,7 +429,7 @@ impl Expander {
                 let values = match sequence {
                     Some(sequence) => {
                         let values = sequence.expand(self.numbers, budget)?;
-                        self.has_listed_bracket |= sequence.is_alpha && values.has_bracket();
+                        self.has_digit_class |= values.has_digit_class();
                         values
                     }
                     None => {
@@ -420,7 +490,8 @@ impl Expander {
         for text in inner.iter() {
             let mut expander = Expander::new(embrace(text), numbers);
             let expanded = expander.expand_all(Scope::Embraced, budget)?;
-            self.has_listed_bracket |= expander.has_listed_bracket;
+            self.has_digit_class |= expander.has_digit_class;
+            self.has_escaped_brace |= expander.has_escaped_brace;
             push_all(expanded, checkpoint, budget)?;
         }
         Ok(values)
@@ -511,9 +582,7 @@ impl Sequence {
             && !self.is_alpha
             && self.step == 1.0
             && low >= 0.0
-            && high <= MAX_SAFE_INTEGER
-            // `{10..9}` has no class, so it keeps its order.
-            && high - low >= 2.0;
+            && high <= MAX_SAFE_INTEGER;
         let reverse = self.last < self.first && !as_digit_classes;
         let mut step = if reverse { -self.step } else { self.step };
         let mut value = if reverse { high } else { low };
@@ -541,6 +610,9 @@ impl Sequence {
             }
             value += step;
         }
+        if as_digit_classes && self.last < self.first {
+            return values.reversed();
+        }
         Ok(values)
     }
 }
@@ -559,12 +631,16 @@ fn widen_last_digits(digits: &mut Vec<u16>, max_count: u64) -> u64 {
     let any_digits = digits.len() - 1 - at;
     if count > 1 {
         digits.truncate(at);
-        append_ascii(digits, &[b'[', first, b'-', first + count as u8 - 1, b']']);
+        append_digit_class(digits, first, first + count as u8 - 1);
     } else {
         digits.truncate(at + 1);
     }
     for _ in 0..any_digits {
-        append_ascii(digits, b"[0-9]");
+        append_digit_class(digits, b'0', b'9');
     }
     count * place_value
+}
+
+fn append_digit_class(text: &mut Vec<u16>, first: u8, last: u8) {
+    append_ascii(text, &[DIGIT_CLASS_MARK, b'[', first, b'-', last, b']']);
 }

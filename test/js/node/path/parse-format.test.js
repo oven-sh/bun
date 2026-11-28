@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import assert from "node:assert";
 import path from "node:path";
+import { runInNewContext } from "node:vm";
 
 describe("path.parse", () => {
   test("general", () => {
@@ -232,7 +233,9 @@ describe("path.format", () => {
     }
     const inputs = [{}, { dir: "d", name: "n", ext: ".e" }, { root: "r", base: "b" }, { __proto__: { base: "b" } }];
     const proxy = new Proxy({}, { get: (_, key) => (key === "base" ? "p" : ""), getPrototypeOf: () => proxy });
-    const ask = () => [...inputs, new Parts(), proxy].flatMap(it => [path.posix.format(it), path.win32.format(it)]);
+    const context = runInNewContext("this", { __proto__: { __proto__: null, base: "c" } });
+    const all = [...inputs, new Parts(), proxy, context];
+    const ask = () => all.flatMap(it => [path.posix.format(it), path.win32.format(it)]);
     let formatted;
     Object.defineProperty(Object.prototype, added, { value: "added", configurable: true });
     try {
@@ -240,7 +243,7 @@ describe("path.format", () => {
     } finally {
       delete Object.prototype[added];
     }
-    expect(formatted).toEqual(["", "", "d/n.e", "d\\n.e", "rb", "rb", "b", "b", "n", "n", "p", "p"]);
+    expect(formatted).toEqual(["", "", "d/n.e", "d\\n.e", "rb", "rb", "b", "b", "n", "n", "p", "p", "c", "c"]);
   });
 
   test("formats { dir, name, ext } with a dot-less ext when the result exceeds the platform path limit", async () => {

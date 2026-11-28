@@ -43,9 +43,11 @@ test.each([
   [{ constructor: { name: 1 } }, "[Object]"],
   [{ constructor: { name: Symbol() } }, "[Object]"],
   [{ constructor: { name: { toString: null } } }, "[Object]"],
+  [new Proxy({ __proto__: null, [Symbol.for("nodejs.util.inspect.custom")]: () => "custom" }, {}), "custom"],
   // Node names the kind of these.
   [namespace, "[Object]"],
   [new Proxy({ a: 1 }, { get: () => undefined }), "[Object]"],
+  [new Proxy({ a: 1 }, { get: (_, key) => (typeof key === "symbol" ? () => "trap" : undefined) }), "[Object]"],
   [Object.assign(new Map([[1, 2]]), { constructor: undefined }), "[Object]"],
 ])("object %#", (value, expected) => {
   expect(received(value)).toBe(expected);

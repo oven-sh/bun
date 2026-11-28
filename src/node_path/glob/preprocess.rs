@@ -7,7 +7,7 @@ use bun_core::w;
 use super::braces::Numbers;
 use super::budget::{Abort, Budget, cost};
 use super::slash_split;
-use crate::{Platform, byte_at};
+use crate::{Platform, SLASH, byte_at};
 
 /// Parts with the same text have the same id.
 pub(super) type PartId = u32;
@@ -49,7 +49,7 @@ pub(super) fn preprocess<'t>(
             continue;
         }
         let mut parts = Vec::new();
-        slash_split(glob, platform, |range| {
+        slash_split(glob, platform, SLASH, |range| {
             let text = &glob[range];
             parts.push(*ids.entry(text).or_insert_with(|| {
                 texts.push(text);

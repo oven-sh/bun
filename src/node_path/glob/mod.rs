@@ -56,15 +56,24 @@ fn append_ascii(text: &mut Vec<u16>, ascii: &[u8]) {
     text.extend(ascii.iter().map(|&byte| u16::from(byte)));
 }
 
-/// On win32 `\` separates too: <https://github.com/nodejs/node/blob/v26.12.1/deps/minimatch/index.js#L1878-L1902>
+/// What separates the parts of a path besides `/`.
+#[inline(always)]
+fn other_sep(platform: Platform) -> u8 {
+    match platform {
+        Platform::Win32 => BACKSLASH,
+        Platform::Posix => SLASH,
+    }
+}
+
+/// <https://github.com/nodejs/node/blob/v26.12.1/deps/minimatch/index.js#L1878-L1902>
 #[inline(always)]
 fn slash_split<U: CodeUnit>(
     path: &[U],
     platform: Platform,
+    other_sep: u8,
     mut callback: impl FnMut(Range<usize>),
 ) {
     let is_win32 = platform == Platform::Win32;
-    let other_sep = if is_win32 { BACKSLASH } else { SLASH };
     let mut start = 0;
     for (index, block) in path.chunks(scan::BLOCK).enumerate() {
         let mut separators = scan::either_bits(block, SLASH, other_sep);
@@ -248,18 +257,36 @@ enum OutlinedMatcher {
     RegExp(Box<RegExp>),
 }
 
-/// The `nocase` under which `glob`, which has digit classes, matches what the globs that it stands for match.
-fn nocase_with_digit_classes(glob: &[u16], nocase: bool) -> Option<bool> {
-    let is_wildcard = |unit: &u16| matches!(unit.to_u8_saturating(), b'*' | b'?');
-    let lowercases_like_regexp = |&unit: &u16| unit < 0x80 && unit | 0x20 != u16::from(b'k');
-    if !nocase || !glob.iter().any(is_wildcard) {
-        return Some(false);
-    }
-    // `*1.k` is a `PartMatcher::Suffix`, and `*[1-2].k` is not.
-    (!is_wildcard(&glob[0]) || glob.iter().all(lowercases_like_regexp)).then_some(true)
-}
-
 impl PartMatcher {
+    /// `None` if the numbers have to be listed.
+    fn parse_with_digit_classes(
+        glob: &[u16],
+        mut nocase: bool,
+        budget: &mut Budget<'_>,
+    ) -> Result<Option<Self>, Error> {
+        let Some(mut part) = braces::unmark_digit_classes(glob) else {
+            return Ok(None);
+        };
+        if nocase {
+            let checkpoint = budget.bytes_in_use();
+            match Self::parse(&part.first_listed, nocase, budget)? {
+                PartMatcher::Literal(_) => nocase = false,
+                // It compares in lower case, and a RegExp in upper case.
+                PartMatcher::Suffix { .. } if glob.iter().all(|&unit| unit < 0x80) => {
+                    let is_k = |unit: &u16| matches!(unit.to_u8_saturating(), b'k' | b'K');
+                    let pieces: Vec<_> = part.with_digit_classes.split(is_k).collect();
+                    let kelvin_sign = [unicode::KELVIN_SIGN as u16];
+                    let class = [w!("[k"), &kelvin_sign, w!("]")].concat();
+                    part.with_digit_classes = pieces.join(&class[..]);
+                }
+                PartMatcher::Suffix { .. } => return Ok(None),
+                PartMatcher::Outlined(_) => {}
+            }
+            budget.settle_memory(checkpoint, 0)?;
+        }
+        Self::parse(&part.with_digit_classes, nocase, budget).map(Some)
+    }
+
     /// <https://github.com/nodejs/node/blob/v26.12.1/deps/minimatch/index.js#L1790-L1815>
     fn parse(glob: &[u16], nocase: bool, budget: &mut Budget<'_>) -> Result<Self, Error> {
         let may_be_magic =
@@ -497,7 +524,8 @@ impl SetEntry {
 struct Minimatch {
     platform: Platform,
     empty: bool,
-    numbers: Numbers,
+    /// Whether `set[0]` has no digit class.
+    is_first_listed: bool,
     matchers: Box<[PartMatcher]>,
     set: Box<[SetEntry]>,
 }
@@ -512,21 +540,19 @@ impl Minimatch {
         if pattern.len() > MAX_PATTERN_LENGTH {
             return Err(Error::PatternTooLong);
         }
-        let budget = &mut Budget::to_compile(should_continue);
         let mut pattern: Vec<u16> = match pattern {
             CodeUnits::U8(latin1) => latin1.iter().map(|&unit| unit.into()).collect(),
             CodeUnits::U16(utf16) => utf16.to_vec(),
         };
         strings::replace_char_in_place(&mut pattern, BACKSLASH, SLASH);
-        let opens_group = |unit: &u16| matches!(unit.to_u8_saturating(), b'[' | b'(');
-        if !pattern.iter().any(opens_group)
-            && let Some(it) = Self::try_compile(&pattern, options, Numbers::AsDigitClasses, budget)?
-        {
-            return Ok(it);
-        }
-        budget.settle_memory(0, 0)?;
-        let compiled = Self::try_compile(&pattern, options, Numbers::Listed, budget)?;
-        Ok(compiled.expect("the numbers are listed"))
+        let mut compile = |numbers| {
+            let budget = &mut Budget::to_compile(should_continue);
+            Self::try_compile(&pattern, options, numbers, budget)
+        };
+        Ok(match compile(Numbers::AsDigitClasses)? {
+            Some(compiled) => compiled,
+            None => compile(Numbers::Listed)?.expect("the numbers are listed"),
+        })
     }
 
     /// `None` if the numbers have to be listed.
@@ -539,7 +565,7 @@ impl Minimatch {
         let Some(glob_set) = braces::brace_expand(pattern, numbers, budget)? else {
             return Ok(None);
         };
-        if !glob_set.has_bracket() {
+        if !glob_set.has_digit_class() {
             numbers = Numbers::Listed;
         }
         let Some(GlobParts { texts, globs }) =
@@ -548,9 +574,9 @@ impl Minimatch {
             return Ok(None);
         };
         let text = |part: PartId| texts[part as usize];
-        let has_digit_class = |part: PartId| {
-            numbers == Numbers::AsDigitClasses && scan::index_of(text(part), b'[').is_some()
-        };
+        let has_digit_class = |&part: &PartId| braces::has_digit_class(text(part));
+        let may_be_magic_outside_root =
+            |&part: &PartId| text(part) == w!("?") || scan::index_of(text(part), b'(').is_some();
 
         let mut matchers = Vec::new();
         let mut matcher_of_part = vec![None; texts.len()];
@@ -562,8 +588,11 @@ impl Minimatch {
             if platform == Platform::Win32 && nocase {
                 no_magic_root_len = self::no_magic_root_len(glob, text);
                 let is_in_doubt = match glob[..] {
-                    [preprocess::EMPTY, preprocess::EMPTY, _, share, ..] => has_digit_class(share),
-                    _ => no_magic_root_len != 0 && has_digit_class(glob[0]),
+                    [preprocess::EMPTY, preprocess::EMPTY, ref unc @ ..] => {
+                        unc.iter().take(2).any(has_digit_class)
+                            && unc.iter().take(2).any(may_be_magic_outside_root)
+                    }
+                    _ => no_magic_root_len != 0 && has_digit_class(&glob[0]),
                 };
                 if is_in_doubt {
                     return Ok(None);
@@ -584,14 +613,20 @@ impl Minimatch {
                 } else {
                     budget.spend(cost::build(text(part).len()))?;
                     let checkpoint = budget.bytes_in_use();
-                    let nocase = if !has_digit_class(part) {
-                        nocase
-                    } else if let Some(nocase) = nocase_with_digit_classes(text(part), nocase) {
-                        nocase
+                    let matcher = if has_digit_class(&part) {
+                        PartMatcher::parse_with_digit_classes(text(part), nocase, budget)
                     } else {
+                        PartMatcher::parse(text(part), nocase, budget).map(Some)
+                    };
+                    // The message has the source of the first part that is invalid.
+                    if matches!(matcher, Err(Error::InvalidRegExp { .. }))
+                        && numbers == Numbers::AsDigitClasses
+                    {
+                        return Ok(None);
+                    }
+                    let Some(matcher) = matcher? else {
                         return Ok(None);
                     };
-                    let matcher = PartMatcher::parse(text(part), nocase, budget)?;
                     budget.settle_memory(checkpoint, matcher.memory_cost())?;
                     *compiled.insert(push_matcher(&mut matchers, matcher))
                 });
@@ -616,7 +651,9 @@ impl Minimatch {
         Ok(Some(Minimatch {
             platform,
             empty: pattern.is_empty(),
-            numbers,
+            is_first_listed: !globs
+                .first()
+                .is_some_and(|it| it.iter().any(has_digit_class)),
             matchers: matchers.into(),
             set: set.into(),
         }))
@@ -667,7 +704,7 @@ impl Minimatch {
             heap.spare_capacity_mut()
         });
         let mut any_starts_with_dot = false;
-        slash_split(path, self.platform, |part| {
+        slash_split(path, self.platform, other_sep(self.platform), |part| {
             any_starts_with_dot |= byte_at(path, part.start) == DOT;
             parts
                 .unfilled()
@@ -692,7 +729,7 @@ impl Minimatch {
         };
         let mut part_set = None;
         for (index, entry) in self.set.iter().enumerate().skip(first) {
-            let drive = if index == 0 && self.numbers == Numbers::Listed {
+            let drive = if index == 0 && self.is_first_listed {
                 drive_before
             } else {
                 drive_after
@@ -738,7 +775,7 @@ const fn max_parts(path_len: usize) -> usize {
 #[inline(never)]
 fn count_parts<U: CodeUnit>(path: &[U], platform: Platform) -> usize {
     let mut count = 0;
-    slash_split(path, platform, |_| count += 1);
+    slash_split(path, platform, other_sep(platform), |_| count += 1);
     count
 }
 

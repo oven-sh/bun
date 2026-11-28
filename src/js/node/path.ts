@@ -54,11 +54,14 @@ function formatExt(ext: any) {
 
 const ObjectPrototype = $getPrototypeOf({})!;
 
-/** `object[name]`, unless it comes from `Object.prototype`. A proxy answers for itself. */
+/** `object[name]`, unless it is inherited from `Object.prototype`. A proxy answers for itself. */
 function memberOf(object: any, name: string) {
-  for (let holder = object; holder !== null && holder !== ObjectPrototype; holder = $getPrototypeOf(holder)) {
-    if ($isProxyObject(holder) || $Object.$getOwnPropertyDescriptor(holder, name)) return object[name];
+  let holder = object;
+  while (holder !== null && !$isProxyObject(holder) && !$Object.$getOwnPropertyDescriptor(holder, name)) {
+    holder = $getPrototypeOf(holder);
+    if (holder === ObjectPrototype) return undefined;
   }
+  return object[name];
 }
 
 function _format(sep: string, pathObject: any) {

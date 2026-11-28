@@ -783,8 +783,11 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Messa
                 builder.append(view);
                 return;
             }
-        } else if (cell->type() != JSC::ProxyObjectType) {
-            customInspect = value.get(globalObject, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)));
+        } else {
+            auto* inspected = cell->getObject();
+            while (auto* proxy = dynamicDowncast<JSC::ProxyObject>(inspected))
+                inspected = proxy->target();
+            customInspect = inspected->get(globalObject, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)));
             RETURN_IF_EXCEPTION(scope, void());
         }
         // util.inspect(value, { depth: -1 }), as in Node: nothing that the object holds is printed, except by its custom inspect function.

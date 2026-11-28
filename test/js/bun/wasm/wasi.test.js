@@ -3,6 +3,7 @@ import { expect, it } from "bun:test";
 import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
+import { runInNewContext } from "node:vm";
 import { WASI } from "node:wasi";
 
 it("Should support printing 'hello world'", () => {
@@ -170,13 +171,16 @@ it("a relative preopen does not depend on what a script has replaced", () => {
     "second/data/second.txt": "",
   });
   const { cwd } = process;
-  const { normalize } = path;
+  const { normalize, resolve } = path;
   const originalCwd = cwd();
   const second = path.join(String(dir), "second");
   try {
     process.chdir(path.join(String(dir), "first"));
     process.cwd = () => second;
     path.normalize = () => second;
+    path.resolve = () => {
+      throw new Error("replaced");
+    };
     const wasi = new WASI({ preopens: { "/": "data" } });
     wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
     const memory = Buffer.from(wasi.memory.buffer);
@@ -193,7 +197,7 @@ it("a relative preopen does not depend on what a script has replaced", () => {
     expect(fs.readdirSync("data").sort()).toEqual(["first.txt", "made.txt"]);
   } finally {
     process.cwd = cwd;
-    path.normalize = normalize;
+    Object.assign(path, { normalize, resolve });
     process.chdir(originalCwd);
   }
 });
@@ -203,10 +207,10 @@ it("the first instance does not keep a function of node:path that was replaced a
   const script = `
     import path from "node:path";
     import { WASI } from "node:wasi";
-    const { relative } = path;
-    path.relative = () => "..";
+    const { isAbsolute } = path;
+    path.isAbsolute = () => true;
     new WASI({});
-    path.relative = relative;
+    path.isAbsolute = isAbsolute;
     const wasi = new WASI({ preopens: { "/": "." } });
     wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
     const length = Buffer.from(wasi.memory.buffer).write("file.txt", 1024);
@@ -214,9 +218,12 @@ it("the first instance does not keep a function of node:path that was replaced a
   expect(await bunRun(["--cwd", String(dir), "-e", script])).toSpawn("0");
 });
 
-it("a preopen can be a String object", () => {
+it.each([
+  ["this realm", String],
+  ["another realm", runInNewContext("String")],
+])("a preopen can be a String object of %s", (_, StringOfRealm) => {
   using dir = tempDir("wasi-string-object-preopen", { "file.txt": "" });
-  const wasi = new WASI({ preopens: { "/": new String(dir) } });
+  const wasi = new WASI({ preopens: { "/": new StringOfRealm(dir) } });
   wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
   const memory = Buffer.from(wasi.memory.buffer);
   expect(wasi.wasiImport.path_filestat_get(3, 0, 1024, memory.write("file.txt", 1024), 8192)).toBe(0);

@@ -140,7 +140,7 @@ it.each(
     "16-bit": (text: string) => ("\u65e5" + text).slice(1),
   }),
 )("returns the results recorded from Node.js, with %s strings", (_, form) => {
-  expect(nodeResults).toHaveLength(1234);
+  expect(nodeResults).toHaveLength(1294);
   const different: unknown[] = [];
   for (const [glob, flags, matching, others = []] of nodeResults) {
     const actual = (pathname: string) => {
@@ -277,6 +277,31 @@ describe("numeric ranges", () => {
     expect(matchesGlob("9007199254740991", "{0..9007199254740991}")).toBe(true);
     expect(matchesGlob("9007199254740991", "{0..9007199254740990}")).toBe(false);
     expect(matchesGlob("9007199254740992", "{9007199254740992..9007199254740992}")).toBe(true);
+  });
+
+  it.each([
+    ["a/150000", "[ab]/{1..200000}"],
+    ["a150000", "[ab]{1..200000}"],
+    ["150000.a", "{1..200000}.[ab]"],
+    ["150000.a", "{1..200000}.@(a|b)"],
+    ["a150000", "@(a|b){1..200000}"],
+    ["a (150000)", "a ({1..200000})"],
+    ["-150000.mkv", "*-{1..200000}.mkv"],
+    ["//a150000/b/c", "//a{1..200000}/b/*"],
+    ["//a/b150000/c", "//a/b{1..200000}/*"],
+  ])("do not count towards it: %s in %s", (pathname, glob) => {
+    for (const isWin32AndNocase of [false, true]) {
+      const matches = (it: string) => matchesGlobForTesting(it, glob, isWin32AndNocase, isWin32AndNocase);
+      expect([matches(pathname), matches(pathname.replace("1", "2"))]).toEqual([true, false]);
+    }
+  });
+
+  // Compiling takes more than half of what is allowed, and the numbers turn out to need listing at the end.
+  it.skipIf(isDebug || isASAN)("do not use up the limit when they have to be listed after all", () => {
+    const many = "{a,b}".repeat(16) + "[[:alpha:]]".repeat(4);
+    expect(matchesGlob("2", `{${many},@({1..3})}`)).toBe(true);
+    expect(() => matchesGlob("2", `{${many},[[:alpha:]]-}`)).toThrow(SyntaxError);
+    expect(matchesGlobForTesting("1b", `{1..3}!(${"|".repeat(64)}a)${"x".repeat(60_000)}`, false, true)).toBe(false);
   });
 });
 

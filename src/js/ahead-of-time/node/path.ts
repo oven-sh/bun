@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/path.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 77651cdd4bedc6dd3be1ff68a728a053897e32440423e082d060d64120c82c29.
+// Written against that file with the SHA-256 8d6a23bacab67c3321206f429c1444c031eb6a6c131025d5026d6cbe74b2edcf.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:path"
@@ -109,11 +109,14 @@ function formatExt(ext: any) {
 
 const ObjectPrototype = $getPrototypeOf({})!;
 
-/** `object[name]`, unless it comes from `Object.prototype`. A proxy answers for itself. */
+/** `object[name]`, unless it is inherited from `Object.prototype`. A proxy answers for itself. */
 function memberOf(object: any, name: string) {
-  for (let holder = object; holder !== null && holder !== ObjectPrototype; holder = $getPrototypeOf(holder)) {
-    if ($isProxyObject(holder) || $Object.$getOwnPropertyDescriptor(holder, name)) return object[name];
+  let holder = object;
+  while (holder !== null && !$isProxyObject(holder) && !$Object.$getOwnPropertyDescriptor(holder, name)) {
+    holder = $getPrototypeOf(holder);
+    if (holder === ObjectPrototype) return undefined;
   }
+  return object[name];
 }
 
 function _format(sep: string, pathObject: any) {

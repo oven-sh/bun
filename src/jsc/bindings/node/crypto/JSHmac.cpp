@@ -13,6 +13,7 @@
 #include "NodeValidator.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "KeyObject.h"
+#include "UpdateWithUTF8.h"
 
 namespace Bun {
 
@@ -158,6 +159,13 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
 
         auto inputView = inputString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+
+        if (encoding == WebCore::BufferEncodingType::utf8) {
+            if (!updateWithUTF8(*hmac, inputView)) {
+                return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
+            }
+            return JSValue::encode(wrappedHmac);
+        }
 
         JSValue converted = JSValue::decode(WebCore::constructFromEncoding(globalObject, inputView, encoding));
         RETURN_IF_EXCEPTION(scope, {});

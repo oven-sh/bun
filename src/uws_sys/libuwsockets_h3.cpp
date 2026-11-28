@@ -14,8 +14,6 @@
 #include <string.h>
 // clang-format on
 
-extern "C" size_t Bun__formatIpAddress(char (&buffer)[64], bool is_ipv6);
-
 using uWS::H3App;
 using uWS::Http3Request;
 using uWS::Http3Response;
@@ -87,9 +85,9 @@ void uws_h3_app_listen_with_config(uws_h3_app_t* app, const char* host, uint16_t
 }
 
 int uws_h3_listen_socket_port(us_quic_udp_t* ls) { return us_quic_listen_socket_port(ls); }
-int uws_h3_listen_socket_local_address(us_quic_udp_t* ls, char* buf, int len)
+int uws_h3_listen_socket_local_sockaddr(us_quic_udp_t* ls, struct sockaddr_storage* out)
 {
-    return us_quic_listen_socket_local_address(ls, buf, len);
+    return us_quic_listen_socket_local_sockaddr(ls, out);
 }
 void uws_h3_listen_socket_close(us_quic_udp_t* ls) { us_quic_listen_socket_close(ls); }
 
@@ -201,27 +199,10 @@ void uws_h3_res_cork(uws_h3_res_t* res, void* ctx, void (*corker)(void*))
     ((Http3Response*)res)->cork([ctx, corker]() { corker(ctx); });
 }
 
-uint64_t uws_h3_res_get_remote_address_info(uws_h3_res_t* res, const char** dest, int* port, bool* is_ipv6)
+int uws_h3_res_get_remote_sockaddr(uws_h3_res_t* res, struct sockaddr_storage* out)
 {
-    /* Mirror uws_res_get_remote_address_info: the caller gets text, not raw in_addr bytes. */
-    static thread_local char b[64];
-    int len = 0, ipv6 = 0;
     us_quic_socket_t* qs = us_quic_stream_socket((us_quic_stream_t*)res);
-    if (!qs) {
-        *dest = b;
-        *port = 0;
-        *is_ipv6 = false;
-        return 0;
-    }
-    us_quic_socket_remote_address(qs, b, &len, port, &ipv6);
-    if (len == 0) {
-        *dest = b;
-        *is_ipv6 = false;
-        return 0;
-    }
-    *dest = b;
-    *is_ipv6 = len != 4;
-    return Bun__formatIpAddress(b, *is_ipv6);
+    return qs ? us_quic_socket_remote_sockaddr(qs, out) : 0;
 }
 
 /* ───── request ───── */

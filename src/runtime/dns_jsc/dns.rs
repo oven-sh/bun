@@ -40,6 +40,7 @@ use bun_wyhash::hash as wyhash;
 use super::answer_jsc;
 use crate::generated_bindgen::dns::LookupOptions;
 use crate::generated_bindgen::dns_internals::{ResolverOptions, js_DNSResolver};
+use crate::socket::socket_address::parse_ip_address;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 // `sockaddr_storage` / `addrinfo` / `AF_*` / `AI_*` are absent from `libc` on
@@ -1300,8 +1301,9 @@ pub(crate) mod internal {
         (0..len)
             .map(|i| {
                 let address = addresses.get_index(global, i as u32)?.to_utf8(global)?;
-                match bun_core::ip_address::to_ip_address(address.slice()) {
-                    Some(ip) => Ok(Address::from_ip(ip, 0)),
+                // The parse of the connect paths: a `%zone` becomes the scope id.
+                match parse_ip_address(address.slice(), 0) {
+                    Some(addr) => Ok(addr),
                     None => Err(global.throw_invalid_arguments(format_args!(
                         "addresses[{i}] is not an IPv4 or IPv6 literal"
                     ))),
@@ -2409,7 +2411,8 @@ impl Resolver {
 
         let port: u16 = to_port_number(port_value, global_this)?;
 
-        let Some(ip) = ip_address::parse_strict(addr_s) else {
+        // A socket prints a link-local peer with its `%zone`, and the address ends there.
+        let Some(ip) = parse_address(addr_s) else {
             return Err(global_this.throw_invalid_argument_value(
                 b"address",
                 bun_string_jsc::create_utf8_for_js(global_this, addr_s)?,

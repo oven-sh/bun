@@ -72,8 +72,7 @@ std::optional<WebSocket::RemoteAddress> WebSocket::addressOfSocket(us_socket_t* 
     uint16_t port = 0;
     if (!socket || !Bun__WebSocket__addressOfSocket(socket, isLocal, &address, &port))
         return std::nullopt;
-    auto text = address.transferToWTFString();
-    return RemoteAddress { text, port, text.contains(':') };
+    return RemoteAddress { address.transferToWTFString(), port };
 }
 
 JSObject* WebSocket::diagnosticsHook() const

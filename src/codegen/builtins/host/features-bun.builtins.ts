@@ -379,6 +379,8 @@ export default b.declarations(
       "dgramNewSocketFd",
       "disconnect",
       "getFd",
+      "getPeerName",
+      "getSockName",
     ),
   ),
 
@@ -412,7 +414,15 @@ export default b.declarations(
   extendAll(
     ["Sockets"],
     "%Listener%",
-    ...nativeBindings("Bindgen", "socket_body.bind.ts", "getBytesRead", "hasPendingRead", "isNamedPipeSocket"),
+    ...nativeBindings(
+      "Bindgen",
+      "socket_body.bind.ts",
+      "getBytesRead",
+      "getPeerName",
+      "getSockName",
+      "hasPendingRead",
+      "isNamedPipeSocket",
+    ),
     ...nativeBindings("Bindgen", "node_http_binding.bind.ts", "httpConnectionOf"),
   ),
 

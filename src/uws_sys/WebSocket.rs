@@ -22,7 +22,7 @@ use crate::socket::sock_c::us_socket_adopt;
 use crate::socket_group::VTable;
 use crate::{
     CloseCode, InternalLoopData, Loop, Opcode, Request, SendStatus, SocketGroup, SocketKind,
-    UsIoVec, us_socket_t, uws_res,
+    UsIoVec, sockaddr_storage, us_socket_t, uws_res,
 };
 
 pub const SHARED_COMPRESSOR: i32 = 1;
@@ -634,8 +634,9 @@ impl AnyWebSocket {
         c::uws_socket_buffered_amount(self.socket())
     }
 
-    pub fn get_remote_address(self, buf: &mut [u8]) -> Option<&[u8]> {
-        self.socket().remote_address(buf).ok()
+    /// `getpeername()` of the connection. `None` for a unix socket, and when the call fails.
+    pub fn remote_sockaddr(self) -> Option<sockaddr_storage> {
+        self.socket().remote_sockaddr()
     }
 
     /// Run `f` while the socket is corked.

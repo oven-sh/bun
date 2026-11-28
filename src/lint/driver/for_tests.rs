@@ -171,7 +171,7 @@ fn object(entries: Vec<(&[u8], Json)>) -> Json {
     Json::Object(entries.map(|(key, value)| (key.to_vec(), value)).collect())
 }
 
-/// Takes `{ basePath, flavor, config, extended, files, directories }`. Returns the config's verdict for each file
+/// Takes `{ basePath, cwd, flavor, config, extended, files, directories }`. Returns the config's verdict for each file
 /// (`external`, `ignored`, `unconfigured`, or the rules that are on) and whether each directory is ignored.
 fn configuration_case(registry: &Registry, case: &Json) -> Json {
     let text = |key: &[u8]| case.get(key).and_then(Json::as_str);
@@ -225,10 +225,13 @@ fn configuration_case(registry: &Registry, case: &Json) -> Json {
         ),
         _ => Config::from_flat_json(registry, base_path, json),
     };
-    let config = match config {
+    let mut config = match config {
         Ok(config) => config,
         Err(error) => return object(vec![(b"error", Json::String(error.message))]),
     };
+    if let Some(cwd) = text(b"cwd") {
+        config.start_in(cwd);
+    }
     let status = |file: &[u8]| match config.get(registry, file) {
         FileConfig::External => Json::String(b"external".to_vec()),
         FileConfig::Ignored => Json::String(b"ignored".to_vec()),

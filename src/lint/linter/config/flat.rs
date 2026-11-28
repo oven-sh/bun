@@ -1107,6 +1107,7 @@ impl Reader<'_> {
             infers_globals: crate::language::InferGlobals::No,
             lints_all_named_files: false,
             dot_patterns: None,
+            started: None,
             prefers_typescript_rules: self.prefers_typescript_rules,
             has_every_rule: self.has_every_rule,
             oxlintrc_options: Vec::new(),

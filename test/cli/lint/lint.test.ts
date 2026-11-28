@@ -45,7 +45,7 @@ import { filesOf as filesOfMessages, helpsOf, entries as messages, messagesOf } 
 import optionsOfOxlint from "./oracle/plugins/oxlint/options.json";
 import parenthesesExpected from "./oracle/plugins/oxlint/parentheses.expected.json";
 import parentheses from "./oracle/plugins/oxlint/parentheses.json";
-import { labelsOf, projects } from "./oracle/plugins/oxlint/projects";
+import { configOf, labelsOf, projects } from "./oracle/plugins/oxlint/projects";
 
 afterAll(endChildren);
 
@@ -5314,7 +5314,7 @@ maybe(() => { return f; });
           const some = projects.filter(it => !it.typed && it.name !== "no-cycle/many-files");
           const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
           for (const { name, config, files: texts } of some) {
-            files[`${name}/.oxlintrc.json`] = JSON.stringify(config);
+            files[`${name}/.oxlintrc.json`] = configOf({ config });
             for (const [path, text] of Object.entries(texts)) files[`${name}/${path}`] = text;
           }
           const names = some.map(it => it.name);
@@ -5342,7 +5342,7 @@ maybe(() => { return f; });
           const compilerOptions = { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] };
           const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
           for (const { name, config, files: texts } of some) {
-            files[`${name}/.oxlintrc.json`] = JSON.stringify(config);
+            files[`${name}/.oxlintrc.json`] = configOf({ config });
             files[`${name}/tsconfig.json`] = JSON.stringify({ compilerOptions });
             for (const [path, text] of Object.entries(texts)) files[`${name}/${path}`] = text;
           }

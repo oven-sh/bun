@@ -295,6 +295,11 @@ fn oxlint_config_of(
         file.push((b"settings".to_vec(), settings.clone()));
     }
     file.extend([
+        // oxlint's `Tester` lints a file wherever it is.
+        (
+            b"ignorePatterns".to_vec(),
+            Json::Array(vec![text("!**/node_modules/")]),
+        ),
         (b"plugins".to_vec(), Json::Array(plugins)),
         (
             b"categories".to_vec(),

@@ -15,6 +15,7 @@ import {
   type Files,
   long,
   rc,
+  rcWithNodeModules,
   small,
   twoLabels,
 } from "./oracle/react-compiler/inputs";
@@ -92,7 +93,7 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
   test(
     "on oxlint's own test cases",
     async () => {
-      const { diagnostics, files, exit } = await report({ ".oxlintrc.json": rc(), ...expected.cases });
+      const { diagnostics, files, exit } = await report({ ".oxlintrc.json": rcWithNodeModules(), ...expected.cases });
       expect(diagnostics).toEqual(expected.reports.cases.diagnostics);
       // An invalid case has a diagnostic from its rule, and a valid one doesn't.
       for (const path of Object.keys(expected.cases)) {

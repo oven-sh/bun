@@ -82,6 +82,29 @@ async function selected(root: string, cwd: string, args: string[], more?: Env) {
   return names.map(it => relative(root, resolve(cwd, it)).replaceAll("\\", "/")).sort();
 }
 
+// oxlint lints `node_modules` unless an ignore file lists it, and reads the config files inside it.
+test.concurrent(
+  "bun lint --staged with an oxlint config skips node_modules and the config files inside it",
+  async () => {
+    using repo = await repository({ ".oxlintrc.json": "{}", "a.js": "export const a = 1;\n" });
+    const { root } = repo;
+    const loaded = "loaded a dependency's plugin";
+    write(root, "a.js", "export const a = 2;\n");
+    write(root, "node_modules/p/b.js", "export const b = 1;\n");
+    write(root, "node_modules/p/.oxlintrc.json", JSON.stringify({ jsPlugins: ["./plugin.js"] }));
+    write(
+      root,
+      "node_modules/p/plugin.js",
+      `console.error(${JSON.stringify(loaded)}); module.exports = { meta: { name: "p" }, rules: {} };`,
+    );
+    await git(root, "add", "-A", "-f");
+    const { stdout, stderr, exitCode } = await bun(root, ["lint", "--staged", "--list-files"]);
+    expect(stderr).not.toContain(loaded);
+    expect(stdout.split("\n").filter(it => it !== "")).toEqual([join(root, "a.js")]);
+    expect(exitCode).toBe(0);
+  },
+);
+
 const commands = ["lint", "fmt"] as const;
 // Code that both `--fix` and `bun fmt` change, and what each turns it into.
 const before = "let a   = 1;\nexport { a };\n";

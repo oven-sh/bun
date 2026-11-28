@@ -12,6 +12,9 @@ export const rc = (rules: readonly string[] = RULE_NAMES) =>
     rules: Object.fromEntries(rules.map(rule => [rule, "error"])),
   });
 
+/** The same for inputs with files in `node_modules`, which `bun lint` skips unless the config brings it back. */
+export const rcWithNodeModules = () => JSON.stringify({ ...JSON.parse(rc()), ignorePatterns: ["!**/node_modules/"] });
+
 export type Files = Record<string, string>;
 
 const readsRef = (comment: string) => `function Component() {
@@ -645,7 +648,7 @@ function Component(props) {
   },
   lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults },
   node_modules: {
-    ".oxlintrc.json": rc(),
+    ".oxlintrc.json": rcWithNodeModules(),
     "a.jsx": impure,
     "node_modules/package/a.jsx": impure,
     "vendor/node_modules/package/a.jsx": impure,

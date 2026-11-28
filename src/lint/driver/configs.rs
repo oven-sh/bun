@@ -288,6 +288,9 @@ pub(crate) const VITE_CONFIG_NAMES: [&[u8]; 6] = [
     b"vite.config.cjs",
 ];
 
+/// Directory names that never hold a project's own files: Git's, Jujutsu's, and the one for installed packages.
+const WITHOUT_PROJECT_FILES: [&[u8]; 3] = [b".git", b".jj", b"node_modules"];
+
 /// The error for a [`VITE_CONFIG_NAMES`] file passed with `--config` that has no `lint` field. A file found by lookup
 /// is skipped instead.
 const HAS_NO_LINT_FIELD: &[u8] = b"Expected a `lint` field in the default export of ";
@@ -1498,6 +1501,7 @@ impl<'l> Loader<'l> {
         })?;
         self.advise_about_js_plugins(&config, &sources);
         config.infer_globals(self.infers_globals_besides());
+        config.start_in(self.cwd());
         Ok(config)
     }
 
@@ -2682,11 +2686,39 @@ impl<'l> Loader<'l> {
             || (self.named.lock().iter()).any(|it| paths::is_at_or_inside(it, directory))
     }
 
+    /// The Bun or oxlint config that ignores a [`WITHOUT_PROJECT_FILES`] directory at or above `directory`, if any.
+    fn around_left_out(&self, directory: &[u8]) -> Result<Option<Arc<Loaded>>, Fatal> {
+        // A project can itself be in a `node_modules`, so the directories around the working directory don't count.
+        let below = paths::below_shared(self.cwd(), directory);
+        let mut end = directory.len() - below.len();
+        // The outermost one first, because a configuration that leaves out a directory has no say about what's inside.
+        for name in strings::split(below, b"/") {
+            end += name.len();
+            if WITHOUT_PROJECT_FILES.contains(&name) {
+                let left_out = &directory[..end];
+                // Config files apply in `directory`, so the ones above it do too.
+                let around = self.for_applicable_directory(paths::dirname(left_out))?;
+                if matches!(around.flavor, Flavor::Oxlint | Flavor::BuiltIn)
+                    && around.config.leaves_out_directory(left_out)
+                {
+                    return Ok(Some(around));
+                }
+            }
+            end += 1;
+        }
+        Ok(None)
+    }
+
     /// The configuration for the files in `directory`. It's ESLint's `loadConfigArrayForFile`.
     pub(crate) fn for_directory(&self, directory: &[u8]) -> Found {
-        if !self.applies_in(directory) {
-            return self.without_config_file();
+        match self.applies_in(directory) {
+            true => self.for_applicable_directory(directory),
+            false => self.without_config_file(),
         }
+    }
+
+    /// [`Loader::for_directory`] for a directory in which config files [apply](Loader::applies_in), or one above it.
+    fn for_applicable_directory(&self, directory: &[u8]) -> Found {
         if self.is_eslint_8_command_line() {
             if let Some((directory, name)) = self.found(directory) {
                 self.check_eslint_8_flags(directory, name)?;
@@ -2709,6 +2741,9 @@ impl<'l> Loader<'l> {
         } else {
             directory
         };
+        if let Some(around) = self.around_left_out(directory)? {
+            return Ok(around);
+        }
         let mut uncached: Vec<&[u8]> = Vec::new();
         let mut found = None;
         // The number of leading `uncached` entries that use the config of the nearest directory with an ESLint 8 file.
@@ -2779,6 +2814,10 @@ impl<'l> Loader<'l> {
         }
         let picked = match self.pick(directory, names) {
             (Some(_), _) if !await_turn() => return Ok(Arc::clone(inherited)),
+            // The search is only here for the files that a `!` line in `ignorePatterns` keeps.
+            (Some(_), _) if self.around_left_out(directory)?.is_some() => {
+                return Ok(Arc::clone(inherited));
+            }
             // The directory is below an oxlint config, which wins.
             (Some(name), _)
                 if self.tool().is_none()
@@ -2839,12 +2878,23 @@ impl<'l> Loader<'l> {
     }
 
     /// True if a directory called `name`, which `loaded` ignores, can still contain a configuration file that applies.
-    /// Git's and Jujutsu's directories never contain project files.
     pub(crate) fn looks_for_configurations_in(&self, loaded: &Loaded, name: &[u8]) -> bool {
         loaded.flavor == Flavor::Oxlint
             && !self.has_one_configuration()
             && !self.options.disable_nested_config
-            && !matches!(name, b".git" | b".jj")
+            && !WITHOUT_PROJECT_FILES.contains(&name)
+    }
+
+    /// The same for `directory`, where a search starts, so nothing has looked at the directories above it.
+    pub(crate) fn looks_for_configurations_at(
+        &self,
+        loaded: &Loaded,
+        directory: &[u8],
+    ) -> Result<bool, Fatal> {
+        Ok(
+            self.looks_for_configurations_in(loaded, paths::basename(directory))
+                && self.around_left_out(directory)?.is_none(),
+        )
     }
 
     /// True if `loaded` is the fallback for a directory without a configuration file, in a run that uses an

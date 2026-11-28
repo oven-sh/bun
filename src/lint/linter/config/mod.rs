@@ -685,6 +685,8 @@ pub struct Config {
     lints_all_named_files: bool,
     /// The index of the object with the patterns that make ESLint 8 ignore dotfiles.
     dot_patterns: Option<usize>,
+    /// The working directory as [`Config::relative`] returns it, if that isn't the base path.
+    started: Option<Vec<u8>>,
     /// An ESLint rule that typescript-eslint extends means the extension rule, as in oxlint.
     prefers_typescript_rules: bool,
     /// [`ResolvedConfig::has_every_rule`]
@@ -1072,6 +1074,17 @@ impl Config {
         entry: Option<&Entry>,
         dotfiles: Dotfiles,
     ) -> bool {
+        self.is_ignored_globally_with(parts, entry, dotfiles, true)
+    }
+
+    /// The same. See [`IgnoreLines::is_ignored`] for `reads_for_exceptions`.
+    fn is_ignored_globally_with(
+        &self,
+        parts: &Candidate,
+        entry: Option<&Entry>,
+        dotfiles: Dotfiles,
+        reads_for_exceptions: bool,
+    ) -> bool {
         let relative = parts.path();
         let mut is_ignored = false;
         // See `Config::relative`.
@@ -1084,8 +1097,11 @@ impl Config {
             }
             let ignores = object.ignores.as_deref().unwrap_or_default();
             let Some(base_path) = &object.base_path else {
+                let is_elsewhere = is_outside || self.started.is_some();
                 is_ignored = match &object.ignore_lines {
-                    Some(lines) => lines.is_ignored(relative, is_ignored),
+                    Some(lines) => lines.is_ignored(relative, is_ignored, reads_for_exceptions),
+                    // A project can itself be in a `node_modules` that these ignore, with its config file elsewhere.
+                    None if is_elsewhere && self.contains_start(relative) => is_ignored,
                     None => is_ignored_by(ignores, parts, is_ignored),
                 };
                 continue;
@@ -1102,11 +1118,39 @@ impl Config {
                 own.push(b'/');
             }
             is_ignored = match &object.ignore_lines {
-                Some(lines) => lines.is_ignored(&own, is_ignored),
+                Some(lines) => lines.is_ignored(&own, is_ignored, reads_for_exceptions),
                 None => is_ignored_by(ignores, &Candidate::new(&own), is_ignored),
             };
         }
         is_ignored
+    }
+
+    /// Sets the run's working directory, for [`Config::contains_start`].
+    pub fn start_in(&mut self, working_directory: &[u8]) {
+        self.started = Some(self.relative(working_directory)).filter(|it| !it.is_empty());
+    }
+
+    /// True if `relative`, from [`Config::relative`], is a directory at or above where the run started.
+    fn contains_start(&self, relative: &[u8]) -> bool {
+        let Some(directory) = relative.strip_suffix(b"/") else {
+            return false;
+        };
+        // See `Config::relative`. An absolute path has a `/` even before a drive name.
+        let is_outside = |it: &[u8]| it.starts_with(b"/");
+        let drive_at = usize::from(!self.base_path.starts_with(b"/"));
+        // A relative path doesn't show whether it's a Windows path.
+        let style = paths::Style::of(&self.base_path);
+        let contains = |outer: &[u8], path: &[u8]| paths::is_at_or_inside_as(style, outer, path);
+        match self.started.as_deref() {
+            Some(start) if is_outside(start) && is_outside(directory) => {
+                contains(&directory[drive_at..], &start[drive_at..])
+            }
+            Some(start) if !is_outside(directory) => {
+                !is_outside(start) && contains(directory, start)
+            }
+            // A directory outside the base path that contains the working directory also contains the base path.
+            _ => is_outside(directory) && contains(&directory[drive_at..], &self.base_path),
+        }
     }
 
     /// The path that patterns match against for `path`, which is absolute: it's relative to the base path. In oxlint
@@ -1167,6 +1211,16 @@ impl Config {
     /// [`Config::is_directory_ignored`] for a directory inside the base path whose ancestors are known not to be
     /// ignored.
     fn is_directory_ignored_in(&self, directory: &[u8], dotfiles: Dotfiles) -> bool {
+        self.is_directory_ignored_with(directory, dotfiles, true)
+    }
+
+    /// The same. See [`IgnoreLines::is_ignored`] for `reads_for_exceptions`.
+    fn is_directory_ignored_with(
+        &self,
+        directory: &[u8],
+        dotfiles: Dotfiles,
+        reads_for_exceptions: bool,
+    ) -> bool {
         let mut relative = self.relative(directory);
         if relative.is_empty() {
             return false;
@@ -1175,7 +1229,13 @@ impl Config {
             return true;
         }
         relative.push(b'/');
-        self.is_ignored_globally(&relative, dotfiles)
+        let parts = Candidate::new(&relative);
+        self.is_ignored_globally_with(&parts, None, dotfiles, reads_for_exceptions)
+    }
+
+    /// [`Config::is_directory_ignored_in`], but true even if a `!` line could match something inside `directory`.
+    pub fn leaves_out_directory(&self, directory: &[u8]) -> bool {
+        self.is_directory_ignored_with(directory, Dotfiles::AsConfigured, false)
     }
 
     /// True if a file inside the base path is ignored. Assumes the containing directory isn't.

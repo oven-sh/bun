@@ -3,6 +3,7 @@ import { autoInstallTempDir, bunEnv, bunExe, isASAN, isDebug, isWindows, normali
 import {
   chmodSync,
   existsSync,
+  linkSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -2310,7 +2311,12 @@ describe.concurrent("an .oxlintrc.json", () => {
   // With two such links the walk used to double at each level and never finished.
   test("the walk ends with symlinks to a parent directory, to their own directory, and between two packages", async () => {
     const files = {
-      ".oxlintrc.json": JSON.stringify({ ...noVar, categories: { correctness: "off" } }),
+      // The links between the packages are in `node_modules`, which is only searched if the config asks for it.
+      ".oxlintrc.json": JSON.stringify({
+        ...noVar,
+        categories: { correctness: "off" },
+        ignorePatterns: ["!**/node_modules/"],
+      }),
       "real/a/x.js": code,
       "packages/a/index.js": code,
       "packages/a/node_modules/.keep": "",
@@ -2396,6 +2402,23 @@ describe.concurrent("an .oxlintrc.json", () => {
       "src/deep/keep.js:1:1 no-var",
       "src/top.js:1:1 no-var",
     ]);
+  });
+
+  // oxlint 1.94 reports the same files.
+  test("a `!` pattern for a directory doesn't un-ignore what's ignored by default inside it", async () => {
+    const { problems } = await lint({
+      ".oxlintrc.json": JSON.stringify({
+        ...noVar,
+        categories: { correctness: "off" },
+        ignorePatterns: ["dist/", "!dist/keep/", "!src/"],
+      }),
+      "a.js": code,
+      "src/b.min.js": code,
+      "dist/gone.js": code,
+      "dist/keep/c.js": code,
+      "dist/keep/d.min.js": code,
+    });
+    expect(problems).toEqual(["a.js:1:1 no-var", "dist/keep/c.js:1:1 no-var"]);
   });
 
   test("a config file in a directory that a parent config ignores is still used", async () => {
@@ -5790,20 +5813,272 @@ describe.concurrent("oxlint's command line", () => {
     );
   });
 
-  test("node_modules is linted like any other directory unless a .gitignore lists it", async () => {
+  // oxlint lints `node_modules` unless an ignore file lists it.
+  describe("node_modules", () => {
     const files = {
       ".oxlintrc.json": oxlintrc,
       "a.js": code,
       "node_modules/p/b.js": code,
       "fixtures/node_modules/p/c.js": code,
     };
-    expect((await lint(files)).problems).toEqual([
-      "a.js:1:1 no-var",
-      "fixtures/node_modules/p/c.js:1:1 no-var",
-      "node_modules/p/b.js:1:1 no-var",
-    ]);
-    const ignored = await lint({ ...files, ".gitignore": "node_modules\n!fixtures/node_modules\n" });
-    expect(ignored.problems).toEqual(["a.js:1:1 no-var", "fixtures/node_modules/p/c.js:1:1 no-var"]);
+    const ignoring = (...ignorePatterns: string[]) => ({
+      ...files,
+      ".oxlintrc.json": JSON.stringify({ ...JSON.parse(oxlintrc), ignorePatterns }),
+    });
+    const [a, b, c] = ["a.js:1:1 no-var", "node_modules/p/b.js:1:1 no-var", "fixtures/node_modules/p/c.js:1:1 no-var"];
+
+    test("is skipped without a .gitignore", async () => {
+      expect((await lint(files)).problems).toEqual([a]);
+      expect((await lint(files, ["--no-ignore", "."])).problems).toEqual([a]);
+      expect((await lint(files, ["--ignore-pattern", "!**/node_modules/", "."])).problems).toEqual([a]);
+      expect((await lint(files, ["a.js", "node_modules/p/b.js"])).problems).toEqual([a]);
+      // oxlint lints a file passed as an argument even if a `.gitignore` lists it.
+      const gitignore = { ".gitignore": "node_modules\n" };
+      expect((await lint({ ...files, ...gitignore }, ["a.js", "node_modules/p/b.js"])).problems).toEqual([a]);
+      for (const argument of ["node_modules", "node_modules/p/b.js", "node_modules/**/*.js"]) {
+        const { problems, stdout, exitCode } = await lint(files, [argument]);
+        expect({ problems, stdout, exitCode }).toEqual({
+          problems: [],
+          stdout: "No files found to lint. Please check your paths and ignore patterns.",
+          exitCode: 1,
+        });
+      }
+    });
+
+    test("a `!` line in `ignorePatterns` brings it back", async () => {
+      expect((await lint(ignoring("!**/node_modules/"))).problems).toEqual([a, c, b]);
+      expect((await lint(ignoring("!fixtures/node_modules/"))).problems).toEqual([a, c]);
+      // A line that matches a directory above it, or one inside it, doesn't.
+      expect((await lint(ignoring("!fixtures/", "!**/p/"))).problems).toEqual([a]);
+      expect((await lint(ignoring("!**/node_modules/"), ["node_modules/p/b.js"])).problems).toEqual([b]);
+      // A `.gitignore` only adds to what's skipped.
+      const gitignore = { ".gitignore": "node_modules\n!fixtures/node_modules\n" };
+      expect((await lint({ ...files, ...gitignore })).problems).toEqual([a]);
+      expect((await lint({ ...ignoring("!**/node_modules/"), ...gitignore })).problems).toEqual([a, c]);
+    });
+
+    // As in oxlint, the `ignorePatterns` of a file passed with `--config` only reach the file's own directory.
+    test("is skipped with --config, also in a project that is itself inside a node_modules", async () => {
+      const { ".oxlintrc.json": config, ...rest } = files;
+      const project = { ...rest, "config/oxlint.json": config };
+      expect((await lint(project, ["-c", "config/oxlint.json", "."])).problems).toEqual([a]);
+      const inside = Object.fromEntries(
+        Object.entries(project).map(([name, text]) => [`node_modules/project/${name}`, text]),
+      );
+      const { problems } = await lint(inside, ["-c", "config/oxlint.json", "."], { cwd: "node_modules/project" });
+      expect(problems).toEqual(["node_modules/project/a.js:1:1 no-var"]);
+      // The config file can also be outside that node_modules, or in a sibling package.
+      const outside = { ...inside, "shared/oxlint.json": config, "node_modules/shared/oxlint.json": config };
+      for (const path of ["../../shared/oxlint.json", "../shared/oxlint.json"]) {
+        const { problems } = await lint(outside, ["-c", path, "."], { cwd: "node_modules/project" });
+        expect(problems).toEqual(["node_modules/project/a.js:1:1 no-var"]);
+      }
+    });
+
+    // A config file is a program, or refers to programs. The ones in `node_modules` belong to a dependency.
+    describe("a config file inside it", () => {
+      const loaded = "loaded a dependency's plugin";
+      const plugin = `console.error(${JSON.stringify(loaded)}); module.exports = { meta: { name: "p" }, rules: {} };`;
+      const own = JSON.stringify({ jsPlugins: ["./plugin.js"], rules: { "no-var": "error", "eqeqeq": "error" } });
+      const inside = {
+        "node_modules/p/.oxlintrc.json": own,
+        "node_modules/p/plugin.js": plugin,
+        "node_modules/p/deep/.oxlintrc.json": own,
+        "node_modules/p/deep/plugin.js": plugin,
+        "node_modules/p/deep/d.js": code,
+      };
+      test.each([
+        [["."]],
+        [["node_modules"]],
+        [["node_modules/p"]],
+        [["node_modules/p/deep"]],
+        [["node_modules/p/b.js"]],
+        [["node_modules/**/*.js"]],
+        [["--fix", "."]],
+        [["--list-files", "."]],
+        [["--print-config", "node_modules/p/b.js"]],
+      ])("isn't read, so its jsPlugins don't run: %j", async args => {
+        const skipped = await lint({ ...files, ...inside }, args);
+        expect(skipped.stderr).not.toContain(loaded);
+        expect(skipped.problems.filter(it => it.includes("node_modules/"))).toEqual([]);
+        // The same run loads the plugin once the project's config stops ignoring the directory.
+        const included = await lint({ ...ignoring("!**/node_modules/"), ...inside }, args);
+        expect(included.stderr).toContain(loaded);
+      });
+
+      test("isn't read for --stdin-filename, which is reported as ignored", async () => {
+        const args = ["--stdin", "--stdin-filename", "node_modules/p/z.js"];
+        const skipped = await lint({ ...files, ...inside }, args);
+        expect(skipped.stderr).not.toContain(loaded);
+        expect(skipped.raw).toContain(
+          "File ignored by default because it is located under the node_modules directory.",
+        );
+        expect(skipped.problems).toEqual(["node_modules/p/z.js:0:0 -"]);
+        expect((await lint({ ...ignoring("!**/node_modules/"), ...inside }, args)).stderr).toContain(loaded);
+      });
+
+      test("isn't read from a subdirectory of the project, or for an absolute path", async () => {
+        const sibling = Object.fromEntries(Object.entries(inside).map(([name, text]) => [`packages/b/${name}`, text]));
+        const project = { ...files, ...inside, ...sibling, "packages/a/z.js": code };
+        const cwd = "packages/a";
+        const absolute = (dir: string) => [join(dir, "node_modules/p/b.js")];
+        const runs = await Promise.all([
+          lint(project, ["../../node_modules/p/b.js"], { cwd }),
+          lint(project, ["../../node_modules/p"], { cwd }),
+          lint(project, ["../b/node_modules/p/deep/d.js"], { cwd }),
+          lint(project, ["--print-config", "../../node_modules/p/b.js"], { cwd }),
+          lint(project, [], { cwd, args: absolute }),
+          lint(project, ["--stdin", "--stdin-filename"], { cwd, args: absolute }),
+        ]);
+        for (const { stderr, problems } of runs) {
+          expect(stderr).not.toContain(loaded);
+          expect(problems.filter(it => it.split(" ")[1] !== "-")).toEqual([]);
+        }
+        const included = { ...project, ".oxlintrc.json": ignoring("!**/node_modules/")[".oxlintrc.json"] };
+        expect((await lint(included, ["../../node_modules/p/b.js"], { cwd })).stderr).toContain(loaded);
+      });
+
+      test("isn't read in a node_modules inside a node_modules, whichever directory in between a `!` line matches", async () => {
+        const nested = Object.fromEntries(
+          Object.entries(inside).map(([name, text]) => [`node_modules/p/fixtures/${name}`, text]),
+        );
+        const project = { ...ignoring("!**/fixtures/"), ...nested };
+        const runs = await Promise.all(
+          [
+            ["."],
+            ["node_modules/p/fixtures/node_modules/p/deep/d.js"],
+            ["--print-config", "node_modules/p/fixtures/node_modules/p/deep/d.js"],
+          ].map(args => lint(project, args)),
+        );
+        for (const { stderr } of runs) expect(stderr).not.toContain(loaded);
+        expect(runs[0].problems).toEqual([a]);
+      });
+
+      test("isn't read inside .git either", async () => {
+        const hooks = {
+          ...files,
+          ".git/hooks/.oxlintrc.json": own,
+          ".git/hooks/plugin.js": plugin,
+          ".git/hooks/h.js": code,
+        };
+        for (const args of [[".git/hooks"], [".git/hooks/h.js"], ["--print-config", ".git/hooks/h.js"]]) {
+          const { stderr, problems } = await lint(hooks, args);
+          expect(stderr).not.toContain(loaded);
+          expect(problems).toEqual([]);
+        }
+      });
+
+      test("isn't evaluated if it's a program, with a program as the project's config", async () => {
+        const program = (text: string) => `${text}\nexport default ${oxlintrc};\n`;
+        const { ".oxlintrc.json": _, ...rest } = files;
+        const project = {
+          ...rest,
+          "oxlint.config.ts": program(""),
+          "node_modules/p/oxlint.config.ts": program(`console.error(${JSON.stringify(loaded)});`),
+        };
+        const [all, named] = await Promise.all([lint(project), lint(project, ["a.js", "node_modules/p/b.js"])]);
+        for (const { stderr, problems } of [all, named]) {
+          expect(stderr).not.toContain(loaded);
+          expect(problems).toEqual([a]);
+        }
+      });
+
+      // The directory is read for the files that the `!` line keeps, and only for them.
+      test.each([[["**/node_modules/", "!**/*.d.ts"]], [["node_modules", "!*.d.ts"]]])(
+        "isn't read if a `!` line keeps files in a node_modules that `ignorePatterns` lists: %j",
+        async ignorePatterns => {
+          const kept = { "node_modules/p/kept.d.ts": "declare var kept: number;\n" };
+          const all = { ...ignoring(...ignorePatterns), ...inside, ...kept };
+          const { stdout, stderr, exitCode } = await lint(all, ["--list-files", "."]);
+          expect(stderr).not.toContain(loaded);
+          expect(stdout.split("\n").map(it => it.replace("<dir>/", ""))).toEqual(["a.js", "node_modules/p/kept.d.ts"]);
+          expect(exitCode).toBe(0);
+        },
+      );
+
+      test("isn't read for a file passed as an argument without a config file", async () => {
+        const { stdout, stderr } = await lint({ "a.js": code, ...inside, "node_modules/p/b.js": code }, [
+          "node_modules/p/b.js",
+        ]);
+        expect(stderr).not.toContain(loaded);
+        expect(stdout).toContain("File ignored by default because it is located under the node_modules directory.");
+      });
+
+      test("isn't read in a package's own node_modules, which the package's config ignores", async () => {
+        const nested = {
+          ".oxlintrc.json": oxlintrc,
+          "a.js": code,
+          "packages/a/.oxlintrc.json": oxlintrc,
+          "packages/a/b.js": code,
+          ...Object.fromEntries(Object.entries(inside).map(([name, text]) => [`packages/a/${name}`, text])),
+        };
+        const skipped = await lint(nested, [".", "packages/a/node_modules/p/deep/d.js"]);
+        expect(skipped.stderr).not.toContain(loaded);
+        expect(skipped.problems).toEqual([a, "packages/a/b.js:1:1 no-var"]);
+        // A `!` line in the root config doesn't reach into the package, which has its own config.
+        const root = { ...nested, ".oxlintrc.json": ignoring("!**/node_modules/")[".oxlintrc.json"] };
+        expect((await lint(root)).stderr).not.toContain(loaded);
+      });
+    });
+
+    test("a project that is itself inside a node_modules is linted", async () => {
+      const project = Object.fromEntries(
+        Object.entries(files).map(([name, text]) => [`node_modules/project/${name}`, text]),
+      );
+      const { problems } = await lint(project, ["."], { cwd: "node_modules/project" });
+      expect(problems).toEqual(["node_modules/project/a.js:1:1 no-var"]);
+      // Also with its config file above that node_modules, and from a subdirectory.
+      const { "node_modules/project/.oxlintrc.json": config, ...rest } = project;
+      const below = { ...rest, ".oxlintrc.json": config, "node_modules/project/src/d.js": code };
+      const found = ["node_modules/project/a.js:1:1 no-var", "node_modules/project/src/d.js:1:1 no-var"];
+      expect((await lint(below, ["."], { cwd: "node_modules/project" })).problems).toEqual(found);
+      expect((await lint(below, [".."], { cwd: "node_modules/project/src" })).problems).toEqual(found);
+    });
+
+    // Config files apply to a path passed as an argument even if the working directory has none.
+    test("the config of a project elsewhere decides for a file passed as an argument", async () => {
+      const elsewhere = Object.fromEntries(Object.entries(files).map(([name, text]) => [`other/${name}`, text]));
+      const included = { ...elsewhere, "other/.oxlintrc.json": ignoring("!**/node_modules/")[".oxlintrc.json"] };
+      const named = ["../other/node_modules/p/b.js"];
+      const here = { "here/package.json": "{}" };
+      const [skipped, linted] = await Promise.all([
+        lint({ ...elsewhere, ...here }, named, { cwd: "here" }),
+        lint({ ...included, ...here }, named, { cwd: "here" }),
+      ]);
+      expect(skipped.problems).toEqual([]);
+      expect(linted.problems).toEqual(["other/node_modules/p/b.js:1:1 no-var"]);
+    });
+
+    // Where `bun install` hard-links a package's files from its cache, a fix to one of them changes the cache too.
+    test("--fix doesn't rewrite a dependency", async () => {
+      const fixable = "var x = 1;\nx = 2;\n";
+      const project = { ...files, "a.js": fixable, "node_modules/p/b.js": fixable };
+      using dir = tempDir("bun-lint-node-modules-fix", {
+        ...Object.fromEntries(Object.entries(project).map(([name, text]) => [`project/${name}`, text])),
+        "cache/.keep": "",
+      });
+      const [own, dependency, cached] = ["project/a.js", "project/node_modules/p/b.js", "cache/b.js"].map(it =>
+        join(String(dir), it),
+      );
+      linkSync(dependency, cached);
+      await using proc = spawn({
+        cmd: [...command, "--fix", "."],
+        env,
+        cwd: join(String(dir), "project"),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toContain("No problems in 1 file, fixed 1");
+      expect(stderr).toBe("Fixed 1 problem in 1 file\n");
+      expect([own, dependency, cached].map(it => readFileSync(it, "utf8"))).toEqual([
+        "let x = 1;\nx = 2;\n",
+        fixable,
+        fixable,
+      ]);
+      expect(exitCode).toBe(0);
+    });
   });
 });
 
@@ -6624,6 +6899,46 @@ describe.skipIf(!hasRunner)("Windows paths, on every platform", () => {
         { basePath: "C:/proj/config", flavor: "oxlint", config, files: ["C:/proj/src/a.js", "C:/proj/config/a.js"] },
       ]),
     ).toEqual([expected, expected]);
+  });
+
+  // A project can itself be in a `node_modules`, with its config file there, above it, or somewhere else.
+  test("oxlint's `node_modules` ignore doesn't count the directories that contain the working directory", async () => {
+    const config = { ...quiet, ...noVar };
+    const project = (root: string, basePath: string, cwd: string | undefined, spelled = root) => ({
+      basePath: `${root}/${basePath}`,
+      cwd: cwd === undefined ? undefined : `${spelled}/${cwd}`,
+      flavor: "oxlint",
+      config,
+      files: ["pkgs/node_modules/proj/a.js", "pkgs/node_modules/proj/node_modules/dep/b.js", "node_modules/p/c.js"].map(
+        it => `${root}/${it}`,
+      ),
+      directories: ["pkgs/node_modules", "pkgs/node_modules/proj", "pkgs/node_modules/proj/node_modules"].map(
+        it => `${root}/${it}`,
+      ),
+    });
+    const own = { files: [["no-var"], "ignored", "ignored"], directories: [false, false, true] };
+    const all = { files: ["ignored", "ignored", "ignored"], directories: [true, true, true] };
+    for (const root of ["/x", "C:/x", "//server/share/x"]) {
+      expect(
+        await resolveConfigs([
+          project(root, "", "pkgs/node_modules/proj"),
+          project(root, "", "pkgs/node_modules/proj/src"),
+          project(root, "cfg", "pkgs/node_modules/proj"),
+          project(root, "pkgs/node_modules/proj", "pkgs/node_modules/proj/src"),
+          // The working directory is the project's root, or there is none.
+          project(root, "", ""),
+          project(root, "", undefined),
+        ]),
+      ).toEqual([own, own, own, own, all, all]);
+    }
+    // Windows paths are the same in any letter case.
+    expect(
+      await resolveConfigs([
+        project("C:/x", "", "PKGS/node_modules/proj", "c:/X"),
+        project("C:/x", "cfg", "PKGS/node_modules/proj", "c:/X"),
+        project("//server/share/x", "", "PKGS/node_modules/proj", "//SERVER/share/x"),
+      ]),
+    ).toEqual([own, own, own]);
   });
 
   test.each(["oxlint", "eslintrc"])("`extends` in an %s config can use `\\`", async flavor => {

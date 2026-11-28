@@ -31,6 +31,7 @@ import {
   eslintSmall,
   type Files,
   rc,
+  rcWithNodeModules,
   small,
 } from "./inputs.ts";
 import { jsonDocuments, options } from "./shared.ts";
@@ -193,7 +194,7 @@ const withEslint = (files: Files): Files =>
 
 function reportsOf(): Expected["reports"] {
   const reports: Expected["reports"] = {
-    cases: likeOxlint({ ".oxlintrc.json": rc(), ...cases }),
+    cases: likeOxlint({ ".oxlintrc.json": rcWithNodeModules(), ...cases }),
     fixtures: likeOxlint({ ".oxlintrc.json": rc(), ...fixtures }),
   };
   for (const [name, files] of Object.entries(small)) reports[name] = likeOxlint(files);

@@ -1254,10 +1254,11 @@ impl Config {
             files: Some(vec![vec![Pattern::new(LINTED_FILES)]]),
             ..ConfigObject::default()
         });
-        // oxlint's built-in ignores. `node_modules` isn't one of them, because a `.gitignore` covers it.
-        let ignored: [&[u8]; 5] = [
+        // oxlint's built-in ignores, plus `node_modules`: oxlint only skips that if an ignore file lists it.
+        let ignored: [&[u8]; 6] = [
             b"**/.git/",
             b"**/.jj/",
+            b"**/node_modules/",
             b"**/*.min.*",
             b"**/*-min.*",
             b"**/*_min.*",

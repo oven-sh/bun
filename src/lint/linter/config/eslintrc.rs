@@ -2305,6 +2305,7 @@ impl Config {
         Ok(Config {
             lints_all_named_files: !options.ignore,
             dot_patterns: Some(dot_patterns),
+            started: None,
             ..legacy.reader.finish(Semantics {
                 keeps_options: true,
                 accepts_all_plugins: true,

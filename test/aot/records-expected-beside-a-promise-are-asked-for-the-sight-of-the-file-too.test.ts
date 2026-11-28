@@ -4,12 +4,13 @@
 // and a checked file that the package never names, which writes a literal under the type Parcel and so makes the record with all its names, took the typed read out of settle().
 // Beside each neighbor every unit of checks.js is walked and must read as it reads alone. Functions and files are named by where they are written, records by their names.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "node:path";
 import { run as runTestaot } from "./engine/testaot";
 import { without } from "./harness/capabilities";
+import { built, limitOfARun, limitWithASAN, slot } from "./harness/commands";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { test, testOneByOne } from "./supported";
 
 const files = {
   "node_modules/parcels/package.json": `{ "name": "parcels", "version": "1.0.0", "type": "module" }`,
@@ -65,17 +66,29 @@ export const made: Parcel = { value: 1, faults: [], note: "late" };
 `,
 };
 
-async function walkChecks(cwd: string, entry: string) {
-  const [executable, wire] = [join(cwd, `${entry}.exe`), join(cwd, `${entry}.wire`)];
-  const build = [bunExe(), "build", "--compile", "--aot", `--aot-out=${wire}`, entry, "--outfile", executable];
-  expect((await run(build, cwd, bunEnv)).exitCode).toBe(0);
-  expect((await run([executable], cwd, bunEnv)).stdout.trim()).toBe("5");
+// The programs are built, started and walked beside one another. Each command takes a slot, so that no more of them run at once than the machine has processors.
+// A build or a start that hangs is killed at its limit and gives its slot back.
+const limit = isDebug ? 600_000 : isASAN ? limitWithASAN : limitOfARun;
+const inSlot = (command: string[], cwd: string) => slot(() => run(command, cwd, bunEnv, limit));
+
+/** What `testaot` prints of a program. It ends well and says nothing else: a tool that crashed is not taken for a program that reads otherwise. */
+async function asked(...command: string[]) {
+  const { lines, stderr, exitCode } = await slot(() => runTestaot(...command));
+  expect({ asked: command[0], stderr, exitCode }).toEqual({ asked: command[0], stderr: "", exitCode: 0 });
+  return lines;
+}
+
+/** Of what `testaot print` says of a program: where each module, record and function is written, the units of checks.js, and the files of the project. */
+function listedIn(printed: string[]) {
   const places = new Map<string, string>();
   const units: string[] = [];
-  const printed = (await runTestaot("print", wire)).lines;
+  const ownFiles: string[] = [];
   for (const line of printed) {
     const module = /^module (m\d+) path="[^"]*?([^/"]+\/[^/"]+)"/.exec(line);
     if (module) places.set(module[1], module[2]);
+    // A file of the project is shown by its path from the folder of the build. Bun's own modules are not.
+    const ownFile = /^module m\d+ .*?\bdisplayPath="([^"/:][^":]*)"/.exec(line);
+    if (ownFile) ownFiles.push(ownFile[1]);
   }
   for (const line of printed) {
     const record = /^layout (L\d+) (?!kind=)/.exec(line);
@@ -87,7 +100,28 @@ async function walkChecks(cwd: string, entry: string) {
     units.push(`${written[1]}:Body`);
     if (/ flags=\[[^\]]*\bIsAsync\b/.test(line)) units.push(`${written[1]}:CoroutineBody`);
   }
-  const walked = (await runTestaot("walk", wire, ...units, "exclude=CodeOutsideImage")).lines;
+  return { places, units, ownFiles };
+}
+
+/** alone.ts, or an entry point that imports it and one neighbor: built, started and walked in a folder of its own, which is gone when the answer is there. */
+async function walkChecks(neighbor?: string) {
+  const entry = neighbor ? `beside-${neighbor}.ts` : "alone.ts";
+  using dir = tempDir("aot-records-expected-beside-a-promise", {
+    ...files,
+    ...(neighbor && { [neighbor]: neighbors[neighbor], [entry]: `import "./alone.ts";\nimport "./${neighbor}";\n` }),
+  });
+  const cwd = String(dir);
+  const [executable, wire] = [join(cwd, `${entry}.exe`), join(cwd, `${entry}.wire`)];
+  built(
+    await inSlot([bunExe(), "build", "--compile", "--aot", `--aot-out=${wire}`, entry, "--outfile", executable], cwd),
+  );
+  expect(await inSlot([executable], cwd)).toEqual({ stdout: "5\n", stderr: "", exitCode: 0 });
+  const { places, units, ownFiles } = listedIn(await asked("print", wire));
+  // The neighbor is a file of the program that is walked: one that the build left out would have no say either.
+  expect(ownFiles.sort()).toEqual(
+    ["alone.ts", "node_modules/parcels/checks.js", ...(neighbor ? [entry, neighbor] : [])].sort(),
+  );
+  const walked = await asked("walk", wire, ...units, "exclude=CodeOutsideImage");
   return walked.map(line =>
     line
       .replace(/ # .*| traits=\[[^\]]*\]/g, "")
@@ -96,25 +130,35 @@ async function walkChecks(cwd: string, entry: string) {
   );
 }
 
-test.skipIf(!!without("testaot"))(
-  "records expected beside a promise are asked for the sight of the file too, and no neighbor has a say",
+// A debug build of Bun is 1.8 GB, and so is each executable that it writes: there one program follows another.
+const declared = without("testaot") ? test.skip : isDebug ? testOneByOne : test.concurrent;
+let walkOfAlone: Promise<string[]> | undefined;
+let aloneFailed = false;
+/** The program without a neighbor is built once. The first test starts it, and every other one holds its own program against it. */
+const walkedAlone = () =>
+  (walkOfAlone ??= walkChecks().catch(error => {
+    aloneFailed = true;
+    throw error;
+  }));
+
+declared(
+  "records expected beside a promise are asked for the sight of the file too: settle() reads both names off the record that it writes",
   async () => {
-    const entries = Object.keys(neighbors).map(name => [
-      `beside-${name}.ts`,
-      `import "./alone.ts";\nimport "./${name}";\n`,
-    ]);
-    using dir = tempDir("aot-records-expected-beside-a-promise", {
-      ...files,
-      ...neighbors,
-      ...Object.fromEntries(entries),
+    const typedReads = (await walkedAlone()).flatMap(line => {
+      const read = /= GetSlot \S+ key="([^"]*)" receivers=\[([^\]]*)\]/.exec(line);
+      return read ? [`${read[1]} of ${read[2]}`] : [];
     });
-    const cwd = String(dir);
-    const alone = await walkChecks(cwd, "alone.ts");
-    expect(
-      alone.filter(line => /GetSlot .* key="value" receivers=\[L<faults,value>\]/.test(line)).length,
-    ).toBeGreaterThan(0);
-    for (const [entry] of entries)
-      expect({ entry, walked: await walkChecks(cwd, entry) }).toEqual({ entry, walked: alone });
+    expect(typedReads).toEqual(["value of L<faults,value>", "faults of L<faults,value>"]);
+  },
+  600_000,
+);
+
+declared.each(Object.keys(neighbors))(
+  "no neighbor has a say: beside %s every unit of checks.js reads as it reads alone",
+  async neighbor => {
+    // Where the program without a neighbor has failed, this one is not built: it would be held against nothing.
+    if (aloneFailed) await walkedAlone();
+    expect(await walkChecks(neighbor)).toEqual(await walkedAlone());
   },
   600_000,
 );

@@ -24,7 +24,12 @@ import { checkAscii, engineStamp, sourceStamp, writeIfNotChanged, writeIfNotChan
 import { createInternalModuleRegistry, idToEnumName } from "./internal-module-registry-scanner";
 import { encodeLazyFunctionTable, findLazyFunctions } from "./lazy-function-table";
 import { recordedPointer, removableFeatures } from "./removable-entry-points.ts";
-import { assertNoDestructuredGlobalThis, assertNoStoredFunctionBehindComma, define } from "./replacements";
+import {
+  assertNoDestructuredGlobalThis,
+  assertNoStoredFunctionBehindComma,
+  assertNoWeakReferenceMethods,
+  define,
+} from "./replacements";
 
 const builtinUsesFlag = "--builtin-uses=";
 const builtinUses = process.argv.at(-1)!.startsWith(builtinUsesFlag)
@@ -276,6 +281,7 @@ for (const [i, entrypoint] of bundledEntryPoints.entries()) {
   assertNoDestructuredGlobalThis(fs.readFileSync(entrypoint, "utf8"), file_path);
   const written = path.join(BASE, moduleList[i]);
   if (fs.existsSync(written)) assertNoStoredFunctionBehindComma(fs.readFileSync(written, "utf8"), moduleList[i]);
+  assertNoWeakReferenceMethods(output, file_path);
   let captured = `(function (){${output.replace("// @bun\n", "").trim()}})`;
   let usesDebug = output.includes("$debug_log");
   let usesAssert = output.includes("$assert");
@@ -310,6 +316,13 @@ for (const [i, entrypoint] of bundledEntryPoints.entries()) {
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, captured);
   outputs.set(file_path.replace(".js", ""), captured);
+}
+
+// What the compiler reads in place of a module or of a file of functions is not bundled.
+const withoutComments = new Bun.Transpiler({ loader: "ts" });
+for (const file of new Bun.Glob("**/*.{js,ts}").scanSync(path.join(BASE, "ahead-of-time"))) {
+  const text = fs.readFileSync(path.join(BASE, "ahead-of-time", file), "utf8");
+  assertNoWeakReferenceMethods(withoutComments.transformSync(text), `ahead-of-time/${file}`);
 }
 
 mark("Postprocesss modules");

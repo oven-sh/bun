@@ -97,6 +97,8 @@ export default b.declarations(
 
   b.intrinsic("Array", "Value", builtin("Array")),
   b.intrinsic("Buffer", "Value", builtin("Buffer")),
+  b.intrinsic("FinalizationRegistryPrototypeRegister", "Value", builtin("FinalizationRegistry.prototype.register")),
+  b.intrinsic("FinalizationRegistryPrototypeUnregister", "Value", builtin("FinalizationRegistry.prototype.unregister")),
   b.intrinsic("getPrototypeOf", "Call", builtin("Object.getPrototypeOf")),
   b.intrinsic("isArray", "Call", builtin("Array.isArray")),
   b.intrinsic("isArray", "Value", builtin(b.linkTimeConstantPath("isArray"))),
@@ -104,6 +106,7 @@ export default b.declarations(
   b.intrinsic("min", "Call", builtin("Math.min")),
   b.intrinsic("nextOfStepsOverText", "Value", builtin("%CompilerHelpers%.nextOfStepsOverText")),
   b.intrinsic("Promise", "Value", builtin("Promise")),
+  b.intrinsic("WeakRefPrototypeDeref", "Value", builtin("WeakRef.prototype.deref")),
   operation("rejectPromiseWithFirstResolvingFunctionCallCheck", "RejectPromise"),
   operation("resolvePromiseWithFirstResolvingFunctionCallCheck", "ResolvePromise"),
   operation("toLength", "ToLength"),

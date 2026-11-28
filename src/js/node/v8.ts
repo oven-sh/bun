@@ -131,14 +131,19 @@ class GCProfiler {
     this[kGCProfilerStartTime] = DateNow();
     const id = startGCProfiler();
     this[kGCProfilerSession] = id;
-    (gcProfilerRegistry ??= new FinalizationRegistry(discardGCProfiler)).register(this, id, this);
+    $FinalizationRegistryPrototypeRegister.$call(
+      (gcProfilerRegistry ??= new FinalizationRegistry(discardGCProfiler)),
+      this,
+      id,
+      this,
+    );
   }
 
   stop() {
     const session = this[kGCProfilerSession];
     if (session === null) return undefined;
     this[kGCProfilerSession] = null;
-    gcProfilerRegistry!.unregister(this);
+    $FinalizationRegistryPrototypeUnregister.$call(gcProfilerRegistry!, this);
 
     const events = stopGCProfiler(session);
     const statistics = [];

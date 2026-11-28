@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 a0e2a825e8f33b8bbbf8e99ec88171c15fc49cb62a07e8d2329131b02b690eb1.
+// Written against that file with the SHA-256 77d3643e737be3164c59e225265fc6a4dcc8ce75e213d2d7abad19d48e899d5c.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -835,7 +835,7 @@ export function createProcessFinalization(process: NodeJS.Process) {
       return false;
     });
     for (const entry of toRun) {
-      const obj = entry.ref.deref();
+      const obj = $WeakRefPrototypeDeref.$call(entry.ref);
       if (obj !== undefined) entry.fn(obj, event);
     }
   }
@@ -870,7 +870,7 @@ export function createProcessFinalization(process: NodeJS.Process) {
       // Node also drops entries whose target was already collected, so a dead
       // registration stops pinning its callback.
       entries = entries.filter(entry => {
-        const target = entry.ref.deref();
+        const target = $WeakRefPrototypeDeref.$call(entry.ref);
         return target !== undefined && target !== ref;
       });
     },

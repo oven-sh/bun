@@ -187,6 +187,7 @@
 #include "streams/WebStreamsInternals.h"
 #include "SerializedScriptValue.h"
 #include "StructuredClone.h"
+#include "WeakReferenceFunctions.h"
 #include "WebCoreJSBuiltins.h"
 #include "webcrypto/JSCryptoKey.h"
 #include "webcrypto/JSSubtleCrypto.h"
@@ -5502,6 +5503,8 @@ bool NativeGlobals::getOwnPropertySlot(JSC::JSObject* object, JSC::JSGlobalObjec
         return true;
 
     const JSC::HashTableValue* entry = bunGlobalObjectTable.entry(propertyName);
+    if (!entry)
+        entry = engineNativesTable.entry(propertyName);
     if (!entry)
         return false;
 

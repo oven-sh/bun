@@ -738,6 +738,30 @@ describe.each(adapters)("$adapter", entry => {
     }),
   );
 
+  // https://github.com/oven-sh/bun/issues/49616
+  test("reserve() and release() call nothing that the program stored on FinalizationRegistry.prototype", () =>
+    scenario(async ({ sql }) => {
+      const { prototype } = FinalizationRegistry;
+      const { register, unregister } = prototype;
+      const called: string[] = [];
+      prototype.register = function (...operands) {
+        called.push("register");
+        return register.apply(this, operands);
+      };
+      prototype.unregister = function (token) {
+        called.push("unregister");
+        return unregister.call(this, token);
+      };
+      try {
+        const reserved = await sql.reserve();
+        await reserved.unsafe("SELECT 'reserved'");
+        await reserved.release();
+      } finally {
+        Object.assign(prototype, { register, unregister });
+      }
+      expect(called).toEqual([]);
+    }));
+
   test("a query that first runs after the connection dropped rejects with the error of the drop", () =>
     scenario(async ({ sql }) => {
       const reserved = await sql.reserve();

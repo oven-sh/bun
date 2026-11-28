@@ -55,6 +55,7 @@ import {
   applyGlobalReplacements,
   assertNoDestructuredGlobalThis,
   assertNoStoredFunctionBehindComma,
+  assertNoWeakReferenceMethods,
   define,
 } from "./replacements";
 
@@ -358,6 +359,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     }
     let output = (await build.outputs[0].text()).replaceAll("// @bun\n", "");
     assertNoDestructuredGlobalThis(output, `${basename}.ts (${fn.name})`);
+    assertNoWeakReferenceMethods(output, `${basename}.ts (${fn.name})`);
     let usesDebug = output.includes("$debug_log");
     let usesAssert = output.includes("$assert");
     const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];

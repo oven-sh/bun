@@ -385,7 +385,7 @@ function leave(scope: Scope, prepared = false) {
   }
   scope.pool.detachConnectionCloseHandler(connection, scope.onConnectionClosed!);
   if (scope.kind === Kind.reservation) {
-    reservations!.unregister(scope);
+    $FinalizationRegistryPrototypeUnregister.$call(reservations!, scope);
   }
   scope.pool.release(connection, prepared);
 }
@@ -431,7 +431,7 @@ function onConnectionClosed(this: Scope, err: Error) {
   }
   abandon(this, err);
   if (this.kind === Kind.reservation) {
-    reservations!.unregister(this);
+    $FinalizationRegistryPrototypeUnregister.$call(reservations!, this);
   }
   this.pool.release(connection);
 }
@@ -819,7 +819,12 @@ function onReserveConnected(this: PendingReservation, err: Error | null, pooledC
   const scope = new Scope(this.client, Kind.reservation, null, pooledConnection);
   ownConnection(scope);
   const handle = makeHandle(scope);
-  (reservations ??= new FinalizationRegistry(releaseDropped)).register(handle, scope, scope);
+  $FinalizationRegistryPrototypeRegister.$call(
+    (reservations ??= new FinalizationRegistry(releaseDropped)),
+    handle,
+    scope,
+    scope,
+  );
   this.resolve(handle);
 }
 

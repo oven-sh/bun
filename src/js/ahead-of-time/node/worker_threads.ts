@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/worker_threads.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 3df5d2644db4a035b3d4fdc2597dd4def4a570466397f5de1010dd7ad4427d60.
+// Written against that file with the SHA-256 9b768dd59ed231664617dc042574384630745dffd1e5878b81c9ad9f606cca18.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 declare const self: EventTarget & {
@@ -1039,7 +1039,7 @@ class Worker extends EventEmitter {
           URL.revokeObjectURL(url);
         });
       }
-      urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
+      $FinalizationRegistryPrototypeRegister.$call(urlRevokeRegistry, this.#worker, this.#urlToRevoke);
     }
 
     if (workerThreadsChannel.hasSubscribers) {

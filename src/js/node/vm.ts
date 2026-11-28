@@ -150,7 +150,7 @@ function pruneTrackedContexts() {
   let alive = 0;
   for (let i = 0; i < trackedContexts.length; i++) {
     const ref = trackedContexts[i];
-    if (ref.deref() !== undefined) {
+    if ($WeakRefPrototypeDeref.$call(ref) !== undefined) {
       trackedContexts[alive++] = ref;
     }
   }
@@ -265,7 +265,7 @@ function measureMemory(options: { mode?: string; execution?: string } = kEmptyOb
     let aliveCount = 0;
     for (let i = 0; i < trackedContexts.length; i++) {
       const ref = trackedContexts[i];
-      if (ref.deref() !== undefined) {
+      if ($WeakRefPrototypeDeref.$call(ref) !== undefined) {
         trackedContexts[aliveCount++] = ref;
         other.push(measurement());
       }

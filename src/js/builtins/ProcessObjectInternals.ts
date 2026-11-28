@@ -802,7 +802,7 @@ export function createProcessFinalization(process) {
       return false;
     });
     for (const entry of toRun) {
-      const obj = entry.ref.deref();
+      const obj = $WeakRefPrototypeDeref.$call(entry.ref);
       if (obj !== undefined) entry.fn(obj, event);
     }
   }
@@ -837,7 +837,7 @@ export function createProcessFinalization(process) {
       // Node also drops entries whose target was already collected, so a dead
       // registration stops pinning its callback.
       entries = entries.filter(entry => {
-        const target = entry.ref.deref();
+        const target = $WeakRefPrototypeDeref.$call(entry.ref);
         return target !== undefined && target !== ref;
       });
     },

@@ -92,4 +92,14 @@
   WritableStreamDefaultController WritableStreamDefaultControllerConstructorCallback   DontEnum|PropertyCallback
   WritableStreamDefaultWriter     WritableStreamDefaultWriterConstructorCallback       DontEnum|PropertyCallback
 @end
+
+Only `@natives` reads this table: a ...ConstructorCallback row is a bare `WeakRef` in src/js, any other row is `$WeakRefPrototypeDeref` (src/codegen/replacements.ts).
+
+@begin engineNativesTable
+  FinalizationRegistry                    Bun::finalizationRegistryConstructorCallback          PropertyCallback
+  FinalizationRegistryPrototypeRegister   Bun::finalizationRegistryPrototypeRegisterCallback    PropertyCallback
+  FinalizationRegistryPrototypeUnregister Bun::finalizationRegistryPrototypeUnregisterCallback  PropertyCallback
+  WeakRef                                 Bun::weakRefConstructorCallback                       PropertyCallback
+  WeakRefPrototypeDeref                   Bun::weakRefPrototypeDerefCallback                    PropertyCallback
+@end
 */

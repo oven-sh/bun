@@ -493,7 +493,12 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
       this[kClosePromise] = null;
       this[kFlag] = flag;
       if (this[kFd] !== -1) {
-        (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(this, { fd, path }, this);
+        $FinalizationRegistryPrototypeRegister.$call(
+          (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)),
+          this,
+          { fd, path },
+          this,
+        );
       }
     }
 
@@ -788,7 +793,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
         return this[kClosePromise];
       }
 
-      fileHandleRegistry?.unregister(this);
+      if (fileHandleRegistry) $FinalizationRegistryPrototypeUnregister.$call(fileHandleRegistry, this);
 
       if (--this[kRefs] === 0) {
         this[kFd] = -1;
@@ -1573,7 +1578,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
       }
       const fd = this[kFd];
       this[kFd] = -1;
-      fileHandleRegistry?.unregister(this);
+      if (fileHandleRegistry) $FinalizationRegistryPrototypeUnregister.$call(fileHandleRegistry, this);
       require("node:fs").closeSync(fd);
       this.emit("close");
     }
@@ -1586,7 +1591,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
       const fd = this[kFd];
       const flag = this[kFlag];
       this[kFd] = -1;
-      fileHandleRegistry?.unregister(this);
+      if (fileHandleRegistry) $FinalizationRegistryPrototypeUnregister.$call(fileHandleRegistry, this);
       return {
         data: { fd, flag },
         deserializeInfo: "internal/fs/promises:FileHandle",
@@ -1601,7 +1606,8 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
       this[kFd] = fd;
       this[kFlag] = flag;
       if (fd !== -1) {
-        (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(
+        $FinalizationRegistryPrototypeRegister.$call(
+          (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)),
           this,
           { fd, path: undefined },
           this,

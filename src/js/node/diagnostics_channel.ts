@@ -21,7 +21,7 @@ const ArrayPrototypeSlice = Array.prototype.slice;
 const ArrayPrototypeSplice = Array.prototype.splice;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const ErrorCaptureStackTrace = Error.captureStackTrace;
-const FinalizationRegistryPrototypeRegister = FinalizationRegistry.prototype.register;
+const FinalizationRegistryPrototypeRegister = $FinalizationRegistryPrototypeRegister;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectIs = Object.is;
@@ -30,7 +30,7 @@ const SafeError = Error;
 const SafeWeakRef = WeakRef;
 const SymbolDispose: typeof Symbol.dispose = Symbol.dispose;
 const SymbolHasInstance = Symbol.hasInstance;
-const WeakRefPrototypeDeref = WeakRef.prototype.deref;
+const WeakRefPrototypeDeref = $WeakRefPrototypeDeref;
 
 type ChannelName = string | symbol;
 type Subscription = (message: unknown, name: ChannelName) => void;

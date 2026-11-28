@@ -487,6 +487,11 @@ declare function $setStateToMax(target: any, state: number): void;
 /** @deprecated, use new TypeError instead */
 declare function $makeTypeError(message: string): TypeError;
 
+/** The engine's own functions, whatever script has stored on `FinalizationRegistry.prototype` or `WeakRef.prototype`: engineFunctions in src/codegen/replacements.ts. */
+declare const $FinalizationRegistryPrototypeRegister: typeof FinalizationRegistry.prototype.register;
+declare const $FinalizationRegistryPrototypeUnregister: typeof FinalizationRegistry.prototype.unregister;
+declare const $WeakRefPrototypeDeref: typeof WeakRef.prototype.deref;
+
 declare const __internal: unique symbol;
 interface InternalFieldObject<T extends any[]> {
   [__internal]: T;

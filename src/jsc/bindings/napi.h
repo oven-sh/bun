@@ -855,7 +855,6 @@ public:
     const NapiEnv::BoundFinalizer* boundCleanup = nullptr;
     void* nativeObject = nullptr;
     uint32_t refCount = 0;
-    bool releaseOnWeaken = false;
 
 private:
     bool m_isEternal = false;

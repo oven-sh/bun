@@ -41,7 +41,6 @@
   --syntax-orange: #c2410c;
   --syntax-pink: #d60066;
   --syntax-purple: #7048e8;
-  --syntax-red: #c92a2a;
   --syntax-yellow: #946200;
 
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
@@ -87,7 +86,6 @@
     --syntax-orange: #ffb86c;
     --syntax-pink: #ff79c6;
     --syntax-purple: #bd93f9;
-    --syntax-red: #ff5555;
     --syntax-yellow: #f1fa8c;
   }
 }
@@ -440,9 +438,6 @@ footer .version b {
 }
 .syntax-orange {
   color: var(--syntax-orange);
-}
-.syntax-red {
-  color: var(--syntax-red);
 }
 .syntax-green {
   color: var(--syntax-green);

@@ -47,7 +47,6 @@ union OnLoadResultValue {
 struct OnLoadResult {
     OnLoadResultValue value;
     OnLoadResultType type;
-    bool wasMock;
     // Backs `value.sourceText.string` when `contents` is a typed array.
     // No inline capacity, so moving the struct doesn't invalidate the pointer.
     WTF::Vector<uint8_t> sourceTextCopy;

@@ -99,10 +99,6 @@ public:
     bool isAsync() const { return m_isAsync; }
 
     bool hasBytecodeIndex() const { return (m_bytecodeIndex.offset() != UINT_MAX) && !m_isWasmFrame; }
-    JSC::BytecodeIndex bytecodeIndex() const
-    {
-        return m_bytecodeIndex;
-    }
 
     // Returns null if can't retrieve the source positions
     SourcePositions* getSourcePositions();
@@ -182,10 +178,7 @@ public:
     }
 
     size_t size() const { return m_frames.size(); }
-    bool isEmpty() const { return m_frames.isEmpty(); }
     JSCStackFrame& at(size_t i) { return m_frames.at(i); }
-
-    WTF::Vector<JSCStackFrame>&& frames() { return WTF::move(m_frames); }
 
     // Drops private-visibility frames (present when Options::showPrivateScriptsInStackTraces() is on), so the result does not index like existingFrames.
     static JSCStackTrace fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames);

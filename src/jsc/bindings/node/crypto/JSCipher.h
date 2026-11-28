@@ -16,12 +16,6 @@ enum class CipherKind {
     Decipher,
 };
 
-enum class UpdateResult {
-    Success,
-    ErrorMessageSize,
-    ErrorState
-};
-
 enum class AuthTagState {
     AuthTagUnknown,
     AuthTagKnown,

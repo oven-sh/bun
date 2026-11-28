@@ -87,6 +87,12 @@ public:
     WTF::String m_url;
     WTF::String m_title;
     bool m_loading = false;
+    // Chrome: which commit ends the navigation in the slot; all clear when it settles. A commit with no bit set is the page's own.
+    bool m_chromeSettleOnSameDocument = false;
+    bool m_chromeSettleOnLoad = false;
+    bool m_chromeNavigationCommitted = false;
+    // Chrome: the URL of the entry goBack()/goForward() asked for; a same-document commit elsewhere is the page's own.
+    WTF::String m_chromeTraversalUrl;
 
     // Chrome session state. Empty until the Target.createTarget →
     // Target.attachToTarget → Page.enable chain completes (driven by the

@@ -2477,6 +2477,13 @@ impl<'p, 's> Checker<'p, 's> {
     /// `tryGetDeclaredTypeOfSymbol`
     fn declared_type_uncached(&mut self, sym: Sym) -> TypeId {
         let flags = self.files().flags(sym);
+        // `getDeclaredTypeOfAlias`
+        if flags.contains(SymFlags::TRANSIENT)
+            && let Some(target) = self.files().aliased_type_of_combined_symbol(sym)
+        {
+            let target = self.merged_symbol_of_class_or_interface(target);
+            return self.declared_type(target);
+        }
         if flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE) {
             // `getDeclaredTypeOfClassOrInterface`: a reference to itself whose type arguments are
             // its outer type parameters and its own.

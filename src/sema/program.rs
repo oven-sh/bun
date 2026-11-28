@@ -99,6 +99,15 @@ struct TransientSymbol {
     is_combined: bool,
 }
 
+/// What a transient symbol was synthesized from, for the alias `alias`.
+#[derive(Copy, Clone)]
+pub enum Transient {
+    /// `cloneTypeAsModuleType`, from `exportTypeLinks.target`.
+    ModuleClone { alias: Sym, target: Sym },
+    /// `combineValueAndTypeSymbols`, from `type_symbol` and the property `Checker::value_of_combined_symbol` finds.
+    Combined { alias: Sym, type_symbol: Sym },
+}
+
 /// An alias that may need a transient symbol, found by `Files::transient_candidates_of`.
 enum TransientCandidate<'s> {
     /// The alias gets this symbol, which was built without resolving any alias.
@@ -9919,7 +9928,7 @@ impl<'s> Files<'s> {
         )
     }
 
-    /// `getParentOfSymbol`
+    /// `getParentOfSymbol`. `None` for a combined symbol: `Checker::value_of_combined_symbol` has its parent.
     pub fn parent_of_symbol(&self, sym: Sym) -> Option<Sym> {
         let symbol = self.symbol(sym);
         // `mergeSymbolTable` only sets the parent of a transient symbol.
@@ -9944,7 +9953,7 @@ impl<'s> Files<'s> {
             return Some(Sym { file, id });
         }
         // `cloneTypeAsModuleType`: `result.Parent = symbol.Parent`. `combineValueAndTypeSymbols`:
-        // that of the type symbol, if the value symbol has none.
+        // that of the type symbol, if the value symbol has none, which the caller finds out first.
         let created = self.transient_symbol(sym)?;
         self.symbol_parent(created.target)
     }
@@ -11407,15 +11416,40 @@ impl<'s> Files<'s> {
         (!created.is_combined).then_some(created.target)
     }
 
-    /// The alias that `symbol` was synthesized for, and whether `combineValueAndTypeSymbols`
-    /// created it. Otherwise it is `exportTypeLinks.originatingImport`.
-    pub fn alias_of_transient_symbol(&self, symbol: Sym) -> Option<(Sym, bool)> {
+    /// The type symbol of the combined `symbol`, if the module exports it through an alias, which tsc doesn't resolve.
+    pub fn aliased_type_of_combined_symbol(&self, symbol: Sym) -> Option<Sym> {
+        let created = self.transient_symbol(symbol)?;
+        if !created.is_combined {
+            return None;
+        }
+        let alias = Sym {
+            file: symbol.file,
+            id: created.alias,
+        };
+        let (file, decl) = self.declaration_of_alias_symbol(alias)?;
+        let (spec, mode, name) = self.external_module_member_of(file, decl)?;
+        let module = self.module_of_specifier_as(file, spec, mode)?;
+        let from_module = self.module_export(module, name)?;
+        (self.flags(from_module).contains(SymFlags::ALIAS)).then_some(created.target)
+    }
+
+    /// What `symbol` was synthesized from, if it is transient.
+    pub fn transient(&self, symbol: Sym) -> Option<Transient> {
         let created = self.transient_symbol(symbol)?;
         let alias = Sym {
             file: symbol.file,
             id: created.alias,
         };
-        Some((alias, created.is_combined))
+        Some(match created.is_combined {
+            true => Transient::Combined {
+                alias,
+                type_symbol: created.target,
+            },
+            false => Transient::ModuleClone {
+                alias,
+                target: created.target,
+            },
+        })
     }
 
     /// The module that `clone` was created from, unless something was merged into the clone. `getExportsOfModule` does

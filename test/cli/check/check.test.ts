@@ -12431,6 +12431,376 @@ export = obj;
       expect(exitCode).toBe(1);
     });
 
+    // `import { Test } from "./index"`, where `index` has `export = foo`: `Test` is a property of the type of `foo`, and
+    // also a type that the namespace `foo` exports. The parent of the symbol that `combineValueAndTypeSymbols` creates is
+    // the parent of the property, and only without one the namespace. A declaration file names the type through that
+    // parent. `@types/supertest` is written this way: https://github.com/oven-sh/bun/issues/49223
+    describe("a name imported from `export =` that is a property of the value and a type of its namespace", () => {
+      const options = {
+        target: "esnext",
+        module: "nodenext",
+        strict: true,
+        declaration: true,
+        noEmit: true,
+        skipLibCheck: true,
+        rootDir: "src",
+        lib: ["es2022"],
+        types: [],
+      };
+      const test_ = `interface Test { x: number }`;
+      const withStatic = `import make = require("./make");\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  ${test_}\n  interface Static { Test: string; make: typeof make }\n}\nexport = foo;\n`;
+
+      /** A project that imports the package `foo`, whose main file is `index`. */
+      const imports = (index: string, files: Record<string, string> = {}, compilerOptions: object = options) =>
+        tempDir("bun-check", {
+          "package.json": JSON.stringify({ name: "project", private: true, type: "module" }),
+          "tsconfig.json": JSON.stringify({ compilerOptions, include: ["src"] }),
+          "node_modules/foo/package.json": JSON.stringify({ name: "foo", version: "1.0.0", types: "index.d.ts" }),
+          "node_modules/foo/index.d.ts": index,
+          "node_modules/foo/make.d.ts": `import { Test } from "./index";\ndeclare function make(): Test;\nexport = make;\n`,
+          "src/a.mts": `import foo from "foo";\nexport const made = foo.make();\n`,
+          ...files,
+        });
+
+      /** The errors of `bun check`, and if there are none, the declarations that `bun build --dts` writes for `entry`. */
+      async function checked(dir: { toString(): string }, flags: string[] = [], entry = "a.mts") {
+        const cwd = String(dir);
+        const { stdout, exitCode } = await check(dir, flags);
+        const errors = stdout.split("\n").filter(line => line.includes("error TS"));
+        if (exitCode !== 0) return { errors, exitCode };
+        const build = await run(cwd, [
+          "build",
+          "--dts",
+          "--packages=external",
+          "--outdir",
+          join(cwd, "out"),
+          `src/${entry}`,
+        ]);
+        expect({ exitCode: build.exitCode, stderr: build.exitCode === 0 ? "" : build.stderr }).toEqual({
+          exitCode: 0,
+          stderr: "",
+        });
+        const written = entry.replace(/\.(m|c)?ts$/, ".d.$1ts");
+        return { errors, exitCode, declarations: readFileSync(join(cwd, "out", written), "utf8") };
+      }
+
+      const cannotBeNamed = (name: string, module: string) =>
+        `src/a.mts(2,14): error TS4023: Exported variable 'made' has or is using name '${name}' from external module "<dir>/${module}" but cannot be named.`;
+      const named = (declarations: string) => ({ errors: [], exitCode: 0, declarations });
+      const namedThroughFoo = (type: string) => named(`import foo from "foo";\nexport declare const made: ${type};\n`);
+
+      // What is expected is what tsc 7.0.2 says and writes for the same project.
+
+      test("a member of an interface that the namespace exports", async () => {
+        using dir = imports(withStatic);
+        using onOneThread = imports(withStatic);
+        const of = await Promise.all([checked(dir), checked(onOneThread, ["--threads", "1"])]);
+        expect(of[0]).toEqual(namedThroughFoo("foo.Static.Test"));
+        expect(of[1]).toEqual(namedThroughFoo("foo.Static.Test"));
+      });
+
+      test("a member of an interface that is inherited from, generic, or in another file", async () => {
+        using inherited = imports(
+          `import make = require("./make");\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  ${test_}\n  namespace inner { interface Base { Test: string } }\n  interface Static extends inner.Base { make: typeof make }\n}\nexport = foo;\n`,
+        );
+        using generic = imports(
+          `import make = require("./make");\ndeclare const foo: foo.Static<string>;\ndeclare namespace foo {\n  ${test_}\n  interface Static<T> { Test: T; make: typeof make }\n}\nexport = foo;\n`,
+        );
+        using elsewhere = imports(
+          `import other = require("./other");\ndeclare const foo: other.Static;\ndeclare namespace foo {\n  ${test_}\n}\nexport = foo;\n`,
+          {
+            "node_modules/foo/other.d.ts": `export interface Static { Test: string; make: typeof import("./make") }\n`,
+          },
+        );
+        const of = await Promise.all([checked(inherited), checked(generic), checked(elsewhere)]);
+        expect(of[0]).toEqual(namedThroughFoo("foo.inner.Base.Test"));
+        expect(of[1]).toEqual(namedThroughFoo("foo.Static.Test"));
+        expect(of[2]).toEqual(named(`export declare const made: import("foo/other.js").Static.Test;\n`));
+      });
+
+      test("no property of that name: the parent is the namespace", async () => {
+        using dir = imports(withStatic.replace("Test: string", "Other: string"));
+        expect(await checked(dir)).toEqual(namedThroughFoo("foo.Test"));
+      });
+
+      test("a member of a type literal: the variable of that type names it", async () => {
+        using dir = imports(
+          `import make = require("./make");\ndeclare const foo: { Test: string; make: typeof make };\ndeclare namespace foo {\n  ${test_}\n}\nexport = foo;\n`,
+        );
+        expect(await checked(dir)).toEqual(namedThroughFoo("foo.Test"));
+      });
+
+      test("a property without a parent: the parent is the namespace", async () => {
+        // The members of the intersection declare it in two places, and a mapped type declares it nowhere.
+        using intersected = imports(
+          `import make = require("./make");\ndeclare const foo: foo.A & foo.B;\ndeclare namespace foo {\n  ${test_}\n  interface A { Test: string; make: typeof make }\n  interface B { Test: string }\n}\nexport = foo;\n`,
+        );
+        using mapped = imports(
+          `import make = require("./make");\ndeclare const foo: { [K in "Test" | "make"]: K extends "make" ? typeof make : string };\ndeclare namespace foo {\n  ${test_}\n}\nexport = foo;\n`,
+        );
+        const expected = namedThroughFoo(`import("foo").Test`);
+        const of = await Promise.all([checked(intersected), checked(mapped)]);
+        expect(of[0]).toEqual(expected);
+        expect(of[1]).toEqual(expected);
+      });
+
+      test("the members of a union declare the property in one place: that is the parent", async () => {
+        using dir = imports(
+          `import make = require("./make");\ndeclare const foo: foo.Static<1> | foo.Static<2>;\ndeclare namespace foo {\n  ${test_}\n  namespace NS { interface I { i: 1 } }\n  interface Static<T> { Test: T; NS: T; make: typeof make }\n}\nexport = foo;\n`,
+          {
+            "src/a.mts": `import foo, { NS } from "foo";\nexport const made = foo.make();\nexport let x: NS.Missing;\n`,
+          },
+        );
+        expect(await checked(dir)).toEqual({
+          errors: [`src/a.mts(3,18): error TS2694: Namespace 'foo.Static.NS' has no exported member 'Missing'.`],
+          exitCode: 1,
+        });
+      });
+
+      test("a member of a class that nothing exports: the error names the class", async () => {
+        using dir = imports(
+          `import make = require("./make");\ndeclare class K { Test: string; make: typeof make }\ndeclare const foo: K;\ndeclare namespace foo {\n  ${test_}\n}\nexport = foo;\n`,
+        );
+        expect(await checked(dir)).toEqual({
+          errors: [cannotBeNamed("K.Test", "node_modules/foo/index")],
+          exitCode: 1,
+        });
+      });
+
+      test("the class is in another file: the error names the module of the property", async () => {
+        const index = `import other = require("./other");\ndeclare const foo: typeof other.v;\ndeclare namespace foo {\n  ${test_}\n}\nexport = foo;\n`;
+        const other = `declare class K { Test: string; make: typeof import("./make") }\nexport declare const v: K;\n`;
+        // Without `export {}` the class is exported: a declaration file exports all it declares.
+        using exported = imports(index, { "node_modules/foo/other.d.ts": other });
+        using hidden = imports(index, { "node_modules/foo/other.d.ts": `${other}export {};\n` });
+        const of = await Promise.all([checked(exported), checked(hidden)]);
+        expect(of[0]).toEqual(named(`export declare const made: import("foo/other.js").K.Test;\n`));
+        expect(of[1]).toEqual({
+          errors: [cannotBeNamed("K.Test", "node_modules/foo/other")],
+          exitCode: 1,
+        });
+      });
+
+      // The module that exports the name makes it accessible. tsc then writes the class all the same, which `a.mts`
+      // does not have in scope.
+      test("a module exports the name once more: no error", async () => {
+        using dir = imports(
+          `declare class K { Test: string }\ndeclare const foo: K;\ndeclare namespace foo {\n  ${test_}\n}\nexport = foo;\n`,
+          {
+            "node_modules/foo/mk.d.ts": `import { Test } from "./index";\nexport { Test };\nexport declare function make3(): Test;\n`,
+            "src/a.mts": `import { make3 } from "foo/mk.js";\nexport const made = make3();\n`,
+          },
+        );
+        expect(await checked(dir)).toEqual(named(`export declare const made: K.Test;\n`));
+      });
+
+      test("a property of an object literal: only the variable that the literal initializes names it", async () => {
+        const files = (literal: string) => ({
+          "src/lib.cts": `import make = require("./make.cjs");\nconst foo = ${literal};\nnamespace foo { export ${test_} }\nexport = foo;\n`,
+          "src/make.cts": `import { Test } from "./lib.cjs";\ndeclare function make(): Test;\nexport = make;\n`,
+          "src/a.mts": `import foo from "./lib.cjs";\nexport const made = foo.make();\n`,
+        });
+        using initializer = imports("", files(`{ Test: "x", make }`));
+        using asserted = imports("", files(`{ Test: "x", make } as const`));
+        using spread = imports("", files(`{ ...{ Test: "x" }, make }`));
+        const of = await Promise.all([checked(initializer), checked(asserted), checked(spread)]);
+        expect(of[0]).toEqual(named(`import foo from "./lib.cjs";\nexport declare const made: foo.Test;\n`));
+        expect(of[1]).toEqual({ errors: [cannotBeNamed("Test", "src/lib")], exitCode: 1 });
+        expect(of[2]).toEqual({ errors: [cannotBeNamed("Test", "src/lib")], exitCode: 1 });
+      });
+
+      test("a property of an object literal in another file, or exported once more by a module", async () => {
+        const make = `import { Test } from "./lib.cjs";\ndeclare function make(): Test;\nexport = make;\n`;
+        const test_ = `namespace foo { export interface Test { x: number } }`;
+        // The error names the module of the literal, not that of the namespace.
+        using elsewhere = imports("", {
+          "src/other.cts": `export const lit = { Test: "x" } as const;\n`,
+          "src/lib.cts": `import other = require("./other.cjs");\nconst foo = other.lit;\n${test_}\nexport = foo;\n`,
+          "src/make.cts": make,
+          "src/a.mts": `import make from "./make.cjs";\nexport const made = make();\n`,
+        });
+        using exportedOnceMore = imports("", {
+          "src/lib.cts": `const foo = { Test: "x" } as const;\n${test_}\nexport = foo;\n`,
+          "src/mk.cts": `import { Test } from "./lib.cjs";\nexport { Test };\nexport function make3(): Test { return { x: 1 }; }\n`,
+          "src/a.mts": `import { make3 } from "./mk.cjs";\nexport const made = make3();\n`,
+        });
+        const of = await Promise.all([checked(elsewhere), checked(exportedOnceMore)]);
+        expect(of[0]).toEqual({ errors: [cannotBeNamed("Test", "src/other")], exitCode: 1 });
+        expect(of[1]).toEqual(named(`export declare const made: import("./mk.cjs").Test;\n`));
+      });
+
+      test("an error that has nothing to do with declarations names the type the same way", async () => {
+        using dir = imports(
+          withStatic,
+          { "src/a.mts": `import foo from "foo";\ninterface Test { y: string }\nexport const n: Test = foo.make();\n` },
+          { ...options, declaration: false },
+        );
+        expect(await checked(dir)).toEqual({
+          errors: [
+            `src/a.mts(3,14): error TS2741: Property 'y' is missing in type 'import("<dir>/node_modules/foo/index").Static.Test' but required in type 'Test'.`,
+          ],
+          exitCode: 1,
+        });
+      });
+
+      // The declarations of the property come before those of the type, so the name is the property's, as written.
+      test("the property is written in quotes: so is the name", async () => {
+        using member = imports(withStatic.replace("Test: string", `"Test": string`));
+        using ofClass = imports(
+          `import make = require("./make");\ndeclare class K { "Test": string; make: typeof make }\ndeclare const foo: K;\ndeclare namespace foo {\n  ${test_}\n}\nexport = foo;\n`,
+        );
+        using namespace = imports(
+          `import make = require("./make");\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  ${test_}\n  namespace NS { interface I { i: 1 } }\n  interface Static { Test: string; "NS": string; make: typeof make }\n}\nexport = foo;\n`,
+          {
+            "src/a.mts": `import foo, { NS } from "foo";\nexport const made = foo.make();\nexport let x: NS.Missing;\n`,
+          },
+        );
+        // tsc writes this, which is not a type.
+        const of = await Promise.all([checked(member), checked(ofClass), checked(namespace)]);
+        expect(of[0]).toEqual(namedThroughFoo(`foo.Static."Test"`));
+        expect(of[1]).toEqual({
+          errors: [cannotBeNamed(`K["Test"]`, "node_modules/foo/index")],
+          exitCode: 1,
+        });
+        expect(of[2]).toEqual({
+          errors: [`src/a.mts(3,18): error TS2694: Namespace 'foo.Static."NS"' has no exported member 'Missing'.`],
+          exitCode: 1,
+        });
+      });
+
+      // `bindClassLikeDeclaration` gives the `prototype` of a class a parent and no declaration.
+      test("the property is the `prototype` of a class", async () => {
+        const index = `import make = require("./make");\ndeclare class K { static make: typeof make; m(): void }\ndeclare const foo: typeof K;\ndeclare namespace foo { interface prototype { x: number } }\nexport = foo;\n`;
+        const make = `import { prototype } from "./index";\ndeclare function make(): prototype;\nexport = make;\n`;
+        using hidden = imports(index, { "node_modules/foo/make.d.ts": make });
+        using exported = imports(
+          `import other = require("./other");\ndeclare const foo: typeof other.K;\ndeclare namespace foo { interface prototype { x: number } }\nexport = foo;\n`,
+          {
+            "node_modules/foo/make.d.ts": make,
+            "node_modules/foo/other.d.ts": `export class K { static make: typeof import("./make"); m(): void }\n`,
+          },
+        );
+        using value = imports(
+          `declare class K {}\ndeclare const foo: typeof K;\ndeclare namespace foo { type prototype = string }\nexport = foo;\n`,
+          {
+            "src/a.mts": `import { prototype } from "foo";\nexport const made = prototype;\nexport let t: prototype = "x";\nconst bad: number = prototype;\nconst bad2: number = t;\n`,
+          },
+        );
+        const of = await Promise.all([checked(hidden), checked(exported), checked(value)]);
+        expect(of[0]).toEqual({
+          errors: [cannotBeNamed("K.prototype", "node_modules/foo/index")],
+          exitCode: 1,
+        });
+        expect(of[1]).toEqual(named(`export declare const made: import("foo/other.js").K.prototype;\n`));
+        expect(of[2]).toEqual({
+          errors: [
+            `src/a.mts(4,7): error TS2322: Type 'K' is not assignable to type 'number'.`,
+            `src/a.mts(5,7): error TS2322: Type 'string' is not assignable to type 'number'.`,
+          ],
+          exitCode: 1,
+        });
+      });
+
+      // `getTargetOfAliasDeclaration` does not resolve what the module exports, for an import or an export specifier. The
+      // symbol combined from an alias is an alias, and its declared type is that of the interface, which has a parent of
+      // its own.
+      test("the module exports the type through an alias: the type is the one the alias names", async () => {
+        const exportsType = (declared: string, exported: string) =>
+          `import make = require("./make");\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  interface Static { Test: string; make: typeof make }\n}\ninterface ${declared} { x: number }\nexport type { ${exported} };\nexport = foo;\n`;
+        using sameName = imports(exportsType("Test", "Test"));
+        using renamed = imports(exportsType("Inner", "Inner as Test"));
+        using ofNamespace = imports(
+          `import make = require("./make");\ninterface Hidden { Test: string; make: typeof make }\ndeclare const foo: Hidden;\ninterface Inner { x: number }\ndeclare namespace foo { export { Inner as Test } }\nexport = foo;\n`,
+        );
+        // The name comes to `a.mts` through `export { Test } from` in another file.
+        using exportedFrom = imports(
+          `interface Hidden { Test: string }\ndeclare const foo: Hidden;\ninterface Inner { x: number }\ndeclare namespace foo { export { Inner as Test } }\nexport = foo;\n`,
+          {
+            "src/through.mts": `export { Test } from "foo";\n`,
+            "src/a.mts": `import { Test } from "./through.mjs";\nconst value: never = Test;\nconst type: never = null! as Test;\nexport {};\n`,
+          },
+        );
+        const of = await Promise.all([
+          checked(sameName),
+          checked(renamed),
+          checked(ofNamespace),
+          checked(exportedFrom),
+        ]);
+        expect(of[0]).toEqual(named(`export declare const made: import("foo").Test;\n`));
+        expect(of[1]).toEqual(named(`export declare const made: import("foo").Test;\n`));
+        expect(of[2]).toEqual(namedThroughFoo("foo.Test"));
+        expect(of[3]).toEqual({
+          errors: [
+            `src/a.mts(2,7): error TS2322: Type 'string' is not assignable to type 'never'.`,
+            `src/a.mts(3,7): error TS2322: Type 'Inner' is not assignable to type 'never'.`,
+          ],
+          exitCode: 1,
+        });
+      });
+
+      test("the shape of `@types/supertest`, with a return type in a file that does not import the package", async () => {
+        using dir = imports("", {
+          "node_modules/supertest/package.json": JSON.stringify({
+            name: "supertest",
+            version: "7.2.2",
+            main: "index.js",
+          }),
+          "node_modules/supertest/index.js": `module.exports = {};\n`,
+          "node_modules/@types/supertest/package.json": JSON.stringify({
+            name: "@types/supertest",
+            version: "7.2.1",
+            types: "index.d.ts",
+          }),
+          "node_modules/@types/supertest/index.d.ts": `import stAgent = require("./lib/agent");\nimport STest = require("./lib/test");\ndeclare const supertest: supertest.SuperTestStatic;\ndeclare namespace supertest {\n  interface Test extends STest {}\n  interface SuperTestStatic {\n    (app: unknown): stAgent;\n    Test: typeof STest;\n    agent: typeof stAgent & ((app?: unknown) => InstanceType<typeof stAgent>);\n  }\n}\nexport = supertest;\n`,
+          "node_modules/@types/supertest/lib/agent.d.ts": `import { Test } from "../index";\ndeclare class TestAgent<Req extends Test = Test> {\n  constructor(app?: unknown);\n  post(url: string): Req;\n}\nexport = TestAgent;\n`,
+          "node_modules/@types/supertest/lib/test.d.ts": `declare class Test {\n  constructor(app: unknown, method: string, path: string);\n  url: string;\n  expect(status: number): this;\n}\nexport = Test;\n`,
+          "src/server.mts": `import supertest from "supertest";\nexport const createRequest = () => supertest.agent("http://localhost:3000");\n`,
+          "src/a.mts": `import { createRequest } from "./server.mjs";\nexport function postInbox() {\n  return createRequest().post("/inbox");\n}\n`,
+        });
+        // tsc writes `SuperTestStatic.Test`. An importer of the declaration file cannot resolve it: `SuperTestStatic` is
+        // an interface.
+        expect(await checked(dir)).toEqual(
+          named(`export declare function postInbox(): import("supertest").SuperTestStatic.Test;\n`),
+        );
+        expect(await checked(dir, [], "server.mts")).toEqual(
+          named(
+            `import supertest from "supertest";\nexport declare const createRequest: () => import("supertest/lib/agent.js")<supertest.SuperTestStatic.Test>;\n`,
+          ),
+        );
+      });
+
+      test("in JavaScript: a property that a constructor assigns, and a `@typedef`", async () => {
+        using dir = imports("", {
+          "tsconfig.json": JSON.stringify({
+            compilerOptions: { ...options, allowJs: true, checkJs: true },
+            include: ["src"],
+          }),
+          "src/lib.cjs": `const make = require("./make.cjs");\nclass K { constructor() { this.Test = "x"; this.make = make; } }\n/**\n * @template T\n * @typedef {{x:T}} Test\n */\nconst foo = new K();\nmodule.exports = foo;\n`,
+          "src/make.cjs": `const { Test } = require("./lib.cjs");\n/** @returns {Test<number>} */\nfunction make() { return /** @type {any} */ (null); }\nmodule.exports = make;\n`,
+          "src/a.cjs": `const foo = require("./lib.cjs");\n/**\n * @template T\n * @typedef {{y:T}} Test\n */\n/** @type {Test<number>} */\nconst n = foo.make();\nmodule.exports = { n };\n`,
+          "src/a.mts": `export {};\n`,
+        });
+        expect(await checked(dir)).toEqual({
+          errors: [
+            `src/a.cjs(7,7): error TS2741: Property 'y' is missing in type 'K.Test<number>' but required in type 'import("<dir>/src/a").Test<number>'.`,
+          ],
+          exitCode: 1,
+        });
+      });
+
+      // `getFullyQualifiedName` of a property that no import combines follows the same rule.
+      test("a property that `typeof import()` reaches has the parent that the members of its union share", async () => {
+        using dir = imports("", {
+          "src/m.mts": `export interface Base<T> { p: { k: T } }\nexport declare const u: Base<string> | Base<number>;\n`,
+          "src/a.mts": `export type T = typeof import("./m.mjs").u.p.missing;\n`,
+        });
+        expect(await checked(dir)).toEqual({
+          errors: [`src/a.mts(1,46): error TS2694: Namespace '"<dir>/src/m".Base.p' has no exported member 'missing'.`],
+          exitCode: 1,
+        });
+      });
+    });
+
     test("applies augmentations made through a chain of two re-exports", async () => {
       using dir = project({
         "aug1.ts": `export {};

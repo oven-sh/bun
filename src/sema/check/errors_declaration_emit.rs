@@ -15,11 +15,12 @@ use super::print::{
     WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL, YieldModuleSymbol,
 };
 use super::sink::held;
+use super::symbols::PropSymbol;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::config::{change_extension, compare_strings_case_insensitive};
 use crate::json::Json;
-use crate::program::{ReadingTask, get_output_extension, source_file_may_be_emitted};
+use crate::program::{ReadingTask, Transient, get_output_extension, source_file_may_be_emitted};
 use crate::resolve::{
     JsxEmit, ObjectKind, Paths, ancestors, best_pattern, contains_path,
     ensure_path_is_non_module_name, equate_string_case_insensitive, get_base_file_name,
@@ -104,6 +105,13 @@ enum Table {
     Exports(Sym),
     ResolvedExports(Sym),
     Globals,
+}
+
+/// `symbol.Parent`
+enum Container {
+    Symbol(Sym),
+    /// The `__object` symbol of an object literal, which the binder doesn't create.
+    ObjectLiteral(FileId, ExprId),
 }
 
 /// `printer.SymbolAccessibility`
@@ -1125,9 +1133,35 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getParentOfSymbol`
-    fn parent_of_symbol(&self, symbol: Sym) -> Option<Sym> {
-        self.files()
-            .parent_of_symbol(self.target_of_module_clone(symbol))
+    fn parent_of_symbol(&mut self, symbol: Sym) -> Option<Sym> {
+        match self.container_of_symbol(symbol)? {
+            Container::Symbol(parent) => Some(parent),
+            Container::ObjectLiteral(..) => None,
+        }
+    }
+
+    /// `getParentOfSymbol`, which for a property of an object literal is an `__object` symbol.
+    fn container_of_symbol(&mut self, symbol: Sym) -> Option<Container> {
+        let files = self.files();
+        let (alias, type_symbol) = match files.transient(symbol) {
+            None => return files.parent_of_symbol(symbol).map(Container::Symbol),
+            Some(Transient::ModuleClone { target, .. }) => {
+                return files.parent_of_symbol(target).map(Container::Symbol);
+            }
+            Some(Transient::Combined { alias, type_symbol }) => (alias, type_symbol),
+        };
+        let of_value = match self.value_of_combined_symbol(alias) {
+            Some(PropSymbol::Declared(value)) => files.parent_of_symbol(value),
+            Some(PropSymbol::InLiteral(file, property)) => {
+                let literal = self.bound(file).prop_owner[property.idx()];
+                return Some(Container::ObjectLiteral(file, literal));
+            }
+            Some(PropSymbol::PrototypeOf(class)) => Some(class),
+            None => None,
+        };
+        of_value
+            .or_else(|| files.parent_of_symbol(type_symbol))
+            .map(Container::Symbol)
     }
 
     /// `core.Some(symbol.Declarations, hasNonGlobalAugmentationExternalModuleSymbol)`
@@ -1182,12 +1216,21 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `core.FirstNonNil(symbol.Declarations, c.getExternalModuleContainer)`
-    fn external_module_container_of_symbol(&self, symbol: Sym) -> Option<Sym> {
-        if symbol == self.files().global_this_symbol {
+    fn external_module_container_of_symbol(&mut self, symbol: Sym) -> Option<Sym> {
+        let files = self.files();
+        if symbol == files.global_this_symbol {
             return None;
         }
-        let declarations = self.files().decls_of(self.target_of_module_clone(symbol));
-        declarations.iter().find_map(|&(file, decl)| {
+        let (symbol, of_value) = match files.transient(symbol) {
+            None => (symbol, List::default()),
+            Some(Transient::ModuleClone { target, .. }) => (target, List::default()),
+            Some(Transient::Combined { alias, .. }) => {
+                (symbol, self.declarations_of_combined_value(alias))
+            }
+        };
+        let declarations = files.decls_of(symbol);
+        let mut declarations = of_value.iter().chain(declarations.iter());
+        declarations.find_map(|&(file, decl)| {
             let scope = self.bound(file).scope_of_declaration(self.hir(file), decl);
             self.external_module_container(file, scope)
         })
@@ -2361,6 +2404,15 @@ impl<'p, 's> Checker<'p, 's> {
         matches
     }
 
+    /// `reexportContainers` of `getWithAlternativeContainers`
+    fn reexport_containers(&mut self, symbol: Sym, at: Enclosing) -> Rc<Vec<Sym>> {
+        // FOR SPEED: modules don't export members.
+        match at.is_none() || self.is_member_symbol(symbol) {
+            true => Rc::default(),
+            false => self.alternative_containing_modules(symbol, at),
+        }
+    }
+
     /// `getWithAlternativeContainers`
     fn with_alternative_containers(
         &mut self,
@@ -2377,11 +2429,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             additional.push(module);
         }
-        // FOR SPEED: modules don't export members.
-        let reexports = match at.is_none() || self.is_member_symbol(symbol) {
-            true => Rc::default(),
-            false => self.alternative_containing_modules(symbol, at),
-        };
+        let reexports = self.reexport_containers(symbol, at);
         let is_in_scope = !at.is_none()
             && self.flags_of(container).intersects(meaning.left().flags())
             && !self
@@ -2458,10 +2506,26 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getContainersOfSymbol`
     fn containers_of_symbol(&mut self, symbol: Sym, at: Enclosing, meaning: Meaning) -> Vec<Sym> {
-        if let Some(container) = self.parent_of_symbol(symbol)
-            && !self.flags_of(symbol).contains(SymFlags::TYPE_PARAMETER)
-        {
-            return self.with_alternative_containers(container, symbol, at, meaning);
+        match self.container_of_symbol(symbol) {
+            Some(Container::Symbol(container))
+                if !self.flags_of(symbol).contains(SymFlags::TYPE_PARAMETER) =>
+            {
+                return self.with_alternative_containers(container, symbol, at, meaning);
+            }
+            // `getWithAlternativeContainers` of an `__object` symbol: only the variable and the modules name it.
+            Some(Container::ObjectLiteral(file, literal)) => {
+                let literal = Decl::ObjectLiteral(literal);
+                let variable = match meaning.flags().intersects(SymFlags::VALUE) {
+                    true => self.variable_declaration_of_object_literal(file, literal),
+                    false => None,
+                };
+                let reexports = self.reexport_containers(symbol, at);
+                return variable
+                    .into_iter()
+                    .chain(reexports.iter().copied())
+                    .collect();
+            }
+            _ => {}
         }
         let files = self.files();
         let mut candidates: Vec<Sym> = Vec::new();

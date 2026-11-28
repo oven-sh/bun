@@ -1,7 +1,19 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isBroken,
+  isLinux,
+  isMacOS,
+  isWindows,
+  libcPathForDlopen,
+  pidNamespace,
+  raiseDoesNothing,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import {
   copyFileSync,
   readdirSync,
@@ -12,7 +24,9 @@ import {
   rmSync,
   symlinkSync,
 } from "node:fs";
+import { constants } from "node:os";
 import { basename, join } from "node:path";
+import { withoutCoreDump } from "../../aot/harness/without-core-dump";
 
 let watchee: Subprocess;
 
@@ -503,6 +517,242 @@ for (const killSignal of ["SIGINT", "SIGTERM"]) {
     );
   }
 }
+
+// Another process sends the signal. That process has ended when spawnSync() returns.
+const getSignal = (signal: string) =>
+  `require("node:child_process").spawnSync("kill", ["-${signal.slice(3)}", String(process.pid)]);`;
+// Both scripts end by themselves, so that a process that a failed test leaves does not stay.
+const inKillSignalListener = (statement: string) => `
+  process.on("SIGTERM", () => {
+    ${getSignal("SIGTERM")}
+    ${statement}
+  });
+  console.log("ready");
+  setTimeout(() => process.exit(1), 30_000);
+`;
+// `then` runs when the signals have arrived, and before the script is busy.
+const whileBusy = (signals: string[], then = "") => `
+  const listener = () => {};
+  ${signals.map(signal => `process.on("${signal}", listener);`).join("\n  ")}
+  ${signals.map(getSignal).join("\n  ")}
+  ${then}
+  console.log("ready");
+  const end = Date.now() + 30_000;
+  while (Date.now() < end) {}
+  process.exit(1);
+`;
+// The signal that ends the process, how the process starts again before a listener has seen it, the kill signal, the script.
+const unseenAtRestart: [signal: keyof typeof constants.signals, how: string, killSignal: string, script: string][] = [
+  ["SIGTERM", "the listener of the kill signal returns", "SIGTERM", inKillSignalListener("")],
+  [
+    "SIGTERM",
+    "the listener of the kill signal calls process.exit()",
+    "SIGTERM",
+    inKillSignalListener("process.exit();"),
+  ],
+  ["SIGTERM", "the watcher's thread restarts a busy script", "SIGINT", whileBusy(["SIGTERM"])],
+  ["SIGTERM", "the grace timer's thread restarts a busy script", "SIGTERM", whileBusy(["SIGTERM"])],
+  ["SIGHUP", "the watcher's thread restarts a busy script", "SIGINT", whileBusy(["SIGHUP"])],
+  ["SIGINT", "the watcher's thread restarts a busy script", "SIGTERM", whileBusy(["SIGINT"])],
+  ["SIGQUIT", "the watcher's thread restarts a busy script", "SIGINT", whileBusy(["SIGQUIT"])],
+  // Of two signals, the one with the lower number ends the process.
+  [
+    "SIGQUIT",
+    "the watcher's thread restarts a busy script that a SIGTERM has also reached",
+    "SIGINT",
+    whileBusy(["SIGTERM", "SIGQUIT"]),
+  ],
+  [
+    "SIGHUP",
+    "the watcher's thread restarts a busy script that has removed its listener",
+    "SIGINT",
+    whileBusy(["SIGHUP"], `process.off("SIGHUP", listener);`),
+  ],
+];
+// bun:ffi calls no function on the other platforms.
+if (isLinux || isMacOS)
+  unseenAtRestart.push([
+    "SIGHUP",
+    "the watcher's thread restarts a busy script whose native code ignores the signal by now",
+    "SIGINT",
+    whileBusy(
+      ["SIGHUP"],
+      `require("bun:ffi").dlopen(${JSON.stringify(libcPathForDlopen())}, { signal: { args: ["int", "usize"], returns: "usize" } }).symbols.signal(${constants.signals.SIGHUP}, 1);`,
+    ),
+  ]);
+
+// How a test starts its command. The default action of SIGQUIT also dumps core, so a process that may die of a signal is
+// started through withoutCoreDump(): it keeps the core from a file and from a program that the kernel hands cores to.
+type StartsCommand = (cmd: string[]) => string[];
+const asItIs: StartsCommand = cmd => cmd;
+const asFirstProcess: StartsCommand = cmd => [...pidNamespace.asFirstProcess, ...cmd];
+
+// Saves the script again when it has printed `ready`, and waits until the process has ended or the script is ready again.
+async function restartOnce(
+  script: string,
+  killSignal: string,
+  started: StartsCommand,
+  { shim, preload = [], ready = "ready\n" }: { shim?: string; preload?: string[]; ready?: string } = {},
+) {
+  using dir = tempDir("watch-unseen-signal", { "script.js": script, ...(shim && { "shim.c": shim }) });
+  if (shim) preload = [await compileShim(String(dir)), ...preload];
+  await using proc = spawn({
+    cmd: started([bunExe(), "--watch", "--watch-kill-signal", killSignal, "--no-clear-screen", "script.js"]),
+    cwd: String(dir),
+    env: { ...bunEnv, LD_PRELOAD: [...preload, bunEnv.LD_PRELOAD].filter(Boolean).join(":") || undefined },
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+    killSignal: "SIGKILL",
+  });
+  const { waitFor, release, output } = stdoutWaiter(proc);
+  await waitFor(ready);
+  await Bun.write(join(String(dir), "script.js"), script + "\n");
+  await waitFor(ready + "ready\n").catch(() => proc.exited);
+  release();
+  return { output: output(), exitCode: proc.exitCode, signalCode: proc.signalCode };
+}
+// The kernel drops a signal whose action is the default one if its target is the first process of a PID namespace, which
+// the command of a container with no init is. That process cannot die of the signal: it exits with 128 + the signal's number.
+const exitedWith128Plus = (signal: keyof typeof constants.signals, output = "ready\n") => ({
+  output,
+  exitCode: 128 + constants.signals[signal],
+  signalCode: null,
+});
+
+it.concurrent.skipIf(!pidNamespace.available).each(unseenAtRestart)(
+  "as the first process of a PID namespace, a %s that no listener has seen ends --watch when %s",
+  async (signal, _, killSignal, script) => {
+    expect(await restartOnce(script, killSignal, asFirstProcess)).toEqual(exitedWith128Plus(signal));
+  },
+);
+
+it.concurrent.skipIf(!raiseDoesNothing.available).each(unseenAtRestart)(
+  "where raise() does nothing, a %s that no listener has seen ends --watch when %s",
+  async (signal, _, killSignal, script) => {
+    const preload = [await raiseDoesNothing.shim()];
+    expect(await restartOnce(script, killSignal, withoutCoreDump, { preload })).toEqual(exitedWith128Plus(signal));
+  },
+);
+
+// A process that can die of the signal does. The tests of SIGTERM are above.
+it.concurrent.skipIf(isWindows).each(unseenAtRestart.filter(([signal]) => signal !== "SIGTERM"))(
+  "a %s that no listener has seen ends --watch when %s",
+  async (signal, _, killSignal, script) => {
+    expect(await restartOnce(script, killSignal, withoutCoreDump)).toEqual({
+      output: "ready\n",
+      exitCode: null,
+      signalCode: signal,
+    });
+  },
+);
+
+// Only the signals that ask the process to end do that.
+it.concurrent.skipIf(isWindows)("a SIGUSR2 that no listener has seen does not stop the restart", async () => {
+  expect(await restartOnce(whileBusy(["SIGUSR2"]), "SIGINT", asItIs)).toEqual({
+    output: "ready\nready\n",
+    exitCode: null,
+    signalCode: null,
+  });
+});
+
+// The handler of the signal can also run while another thread restarts the process: after that thread has reset the
+// actions and found nothing to act on. The shim makes that order. It holds bun's handler back, on the main thread, until
+// the watcher's thread calls execve(), and it holds execve() back until bun's handler has returned.
+const HANDLER_RUNS_DURING_THE_RESTART_C = (signal: number) => /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <signal.h>
+#include <stdatomic.h>
+#include <sys/syscall.h>
+#include <time.h>
+#include <unistd.h>
+${NO_CORE_C}
+static void (*handler_of_bun)(int);
+static atomic_int in_handler, restarting, handler_returned;
+
+static long seconds(void) {
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  return now.tv_sec;
+}
+/* A process that nothing restarts ends by itself. */
+static void handler(int sig) {
+  atomic_store(&in_handler, 1);
+  (void)!write(1, "in handler\\n", 11);
+  for (long end = seconds() + 30; !atomic_load(&restarting);)
+    if (seconds() > end) _exit(1);
+  handler_of_bun(sig);
+  atomic_store(&handler_returned, 1);
+}
+int sigaction(int sig, const struct sigaction *action, struct sigaction *previous) {
+  static int (*next)(int, const struct sigaction *, struct sigaction *);
+  if (!next) next = dlsym(RTLD_NEXT, "sigaction");
+  struct sigaction copy;
+  if (sig == ${signal} && action && action->sa_handler != SIG_DFL && action->sa_handler != SIG_IGN) {
+    copy = *action;
+    handler_of_bun = action->sa_handler;
+    copy.sa_handler = handler;
+    action = &copy;
+  }
+  return next(sig, action, previous);
+}
+int execve(const char *path, char *const argv[], char *const envp[]) {
+  static int (*next)(const char *, char *const[], char *const[]);
+  if (!next) next = dlsym(RTLD_NEXT, "execve");
+  if (atomic_load(&in_handler) && syscall(SYS_gettid) != getpid()) {
+    atomic_store(&restarting, 1);
+    while (!atomic_load(&handler_returned)) usleep(100);
+  }
+  return next(path, argv, envp);
+}
+/* process.kill(process.pid, 0) of the script gives the signal to the thread that calls, so the handler runs inside the call. */
+int kill(pid_t pid, int sig) {
+  static int (*next)(pid_t, int);
+  if (!next) next = dlsym(RTLD_NEXT, "kill");
+  if (sig == 0 && pid == getpid() && handler_of_bun) return syscall(SYS_tgkill, pid, syscall(SYS_gettid), ${signal});
+  return next(pid, sig);
+}
+`;
+async function restartWhileHandlerRuns(signal: "SIGQUIT" | "SIGTERM", started: StartsCommand, preload: string[] = []) {
+  const script = `
+    process.on("${signal}", () => {});
+    console.log("ready");
+    process.kill(process.pid, 0);
+    setTimeout(() => process.exit(1), 30_000);
+  `;
+  const shim = HANDLER_RUNS_DURING_THE_RESTART_C(constants.signals[signal]);
+  return await restartOnce(script, "SIGINT", started, { shim, preload, ready: "ready\nin handler\n" });
+}
+
+it.concurrent.skipIf(!pidNamespace.available || !cc).each(["SIGQUIT", "SIGTERM"] as const)(
+  "as the first process of a PID namespace, a %s whose handler runs while the watcher's thread restarts ends --watch",
+  async signal => {
+    expect(await restartWhileHandlerRuns(signal, asFirstProcess)).toEqual(
+      exitedWith128Plus(signal, "ready\nin handler\n"),
+    );
+  },
+);
+
+it.concurrent.skipIf(!raiseDoesNothing.available)(
+  "where raise() does nothing, a SIGTERM whose handler runs while the watcher's thread restarts ends --watch",
+  async () => {
+    expect(await restartWhileHandlerRuns("SIGTERM", asItIs, [await raiseDoesNothing.shim()])).toEqual(
+      exitedWith128Plus("SIGTERM", "ready\nin handler\n"),
+    );
+  },
+);
+
+it.concurrent.skipIf(!isLinux || !cc)(
+  "a SIGTERM whose handler runs while the watcher's thread restarts ends --watch",
+  async () => {
+    expect(await restartWhileHandlerRuns("SIGTERM", asItIs)).toEqual({
+      output: "ready\nin handler\n",
+      exitCode: null,
+      signalCode: "SIGTERM",
+    });
+  },
+);
 
 // A script that registers a SIGTERM handler and then spins in synchronous
 // code must still restart on file change: the watcher thread posts the reload

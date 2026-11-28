@@ -2712,6 +2712,70 @@ export const dtUnknownReaddir = {
   },
 };
 
+let canMakePidNamespace: boolean | undefined;
+
+/**
+ * `asFirstProcess` goes in front of a command, which then runs as the first
+ * process of a new PID namespace, as the command of a container with no init
+ * does. For that process the kernel drops each signal whose action is the
+ * default one, also a signal that the process sends to itself. The list has no
+ * `--kill-child`, which the `unshare` of BusyBox does not know: what a test
+ * starts this way has to end by itself.
+ */
+export const pidNamespace = {
+  asFirstProcess: ["unshare", "--user", "--map-root-user", "--pid", "--fork", "--mount-proc"],
+  /** Linux where this user may make the namespace; `skipIf(!pidNamespace.available)`. */
+  get available(): boolean {
+    return (canMakePidNamespace ??=
+      isLinux &&
+      !!which("unshare") &&
+      spawnSync({ cmd: [...pidNamespace.asFirstProcess, "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0);
+  },
+};
+
+let raiseDoesNothingShim: Promise<string> | undefined;
+
+async function compileRaiseDoesNothingShim(cc = which("cc") || which("clang") || which("gcc")): Promise<string> {
+  if (!cc) throw new Error("raiseDoesNothing: no C compiler (cc/clang/gcc) found in $PATH");
+  const shim = join(tmpdirSync("raise-does-nothing-"), "shim.so");
+  const source = join(import.meta.dir, "fixtures", "raise-does-nothing-shim.c");
+  const proc = Bun.spawn({
+    cmd: [cc, "-shared", "-fPIC", "-o", shim, source],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0)
+    throw new Error(`raiseDoesNothing: compiling the shim failed (exit ${exitCode}):\n${stderr || stdout}`);
+  return shim;
+}
+
+/**
+ * Runs bun as if the kernel dropped each signal that bun raises at itself,
+ * which the kernel does for the first process of a PID namespace, without
+ * needing such a namespace: `env()` preloads a `raise()` that does nothing.
+ */
+export const raiseDoesNothing = {
+  /** Linux with a C compiler in $PATH; `skipIf(!raiseDoesNothing.available)`. */
+  get available(): boolean {
+    return isLinux && !!(which("cc") || which("clang") || which("gcc"));
+  },
+  /**
+   * Compiles the shim the first time it is called, and resolves to its path.
+   * A test that skips itself by another check than `available` names in `cc`
+   * the compiler which that check found.
+   */
+  shim(cc?: string): Promise<string> {
+    return (raiseDoesNothingShim ??= compileRaiseDoesNothingShim(cc));
+  },
+  /** Spawn bun with the returned env. `cc` is as for `shim()`. */
+  async env(cc?: string): Promise<NodeJS.Dict<string>> {
+    const shim = await raiseDoesNothing.shim(cc);
+    return { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim };
+  },
+};
+
 /**
  * Hexadecimal, octal and binary integers as text, each with its exact value. Most lie between two
  * doubles: 600 from a fixed seed, then ties, neighbours of ties and the edge of `Infinity`.

@@ -138,17 +138,19 @@ static UNSEEN_SIGNALS: AtomicU32 = AtomicU32::new(0);
 #[cfg(unix)]
 static SIGNALS_SENT_BY_SCRIPT: AtomicU32 = AtomicU32::new(0);
 
+/// The first unseen one in this order ends the process at a restart.
 #[cfg(unix)]
 const END_SIGNALS: [i32; 4] = [libc::SIGHUP, libc::SIGINT, libc::SIGQUIT, libc::SIGTERM];
 
 #[cfg(unix)]
+#[inline(never)]
 fn send_unseen_signals_again() {
     let unseen =
         UNSEEN_SIGNALS.load(Ordering::SeqCst) & !SIGNALS_SENT_BY_SCRIPT.load(Ordering::SeqCst);
     for number in END_SIGNALS {
         if unseen & (1 << number) != 0 {
-            // SAFETY: both are async-signal-safe and take no pointers.
-            unsafe { libc::kill(libc::getpid(), number) };
+            // Not kill(): it returns when the kernel drops the signal (PID 1) and when another thread takes it.
+            bun_core::Global::raise_default_action(number);
         }
     }
 }

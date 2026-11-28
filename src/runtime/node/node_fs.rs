@@ -7067,19 +7067,16 @@ impl NodeFS {
         };
         let mut heap_buffer: Vec<u8> = Vec::new();
         let pre_stat_max = args.max_size.map_or(usize::MAX, |v| v as usize);
-        let mut pre_stat_buf = match &mut scratch {
-            Some(scratch) => {
-                let scratch = scratch.as_mut_slice();
-                let len = scratch.len().min(pre_stat_max);
-                BorrowedBuf::from(&mut scratch[..len])
-            }
+        let pre_stat_buf = match &mut scratch {
+            Some(scratch) => scratch.empty_buffer(),
             None => {
                 let _ = heap_buffer.try_reserve_exact(256 * 1024);
-                let spare = heap_buffer.spare_capacity_mut();
-                let len = spare.len().min(pre_stat_max);
-                BorrowedBuf::from(&mut spare[..len])
+                &mut heap_buffer
             }
         };
+        let spare = pre_stat_buf.spare_capacity_mut();
+        let len = spare.len().min(pre_stat_max);
+        let mut pre_stat_buf = BorrowedBuf::from(&mut spare[..len]);
         while pre_stat_buf.len() < pre_stat_buf.capacity() {
             if read_descriptor(file.fd(), pre_stat_buf.unfilled())? == 0 {
                 did_succeed = true;

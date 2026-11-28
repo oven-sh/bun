@@ -33,6 +33,10 @@ pub struct ByteStream {
     pub(crate) sink_paused: Cell<bool>,
     pub(crate) size_hint: Cell<blob::SizeType>,
     pub(crate) buffer_action: JsCell<Option<BufferAction>>,
+    /// Up to this many bytes that do not fit the view of the next pull come back in an array of their own.
+    next_pull_limit: Cell<usize>,
+    /// The `next_pull_limit` of the pull that is parked.
+    pending_limit: Cell<usize>,
 }
 
 impl Default for ByteStream {
@@ -49,6 +53,8 @@ impl Default for ByteStream {
             sink_paused: Cell::new(false),
             size_hint: Cell::new(0),
             buffer_action: JsCell::new(None),
+            next_pull_limit: Cell::new(0),
+            pending_limit: Cell::new(0),
         }
     }
 }
@@ -146,6 +152,11 @@ impl Buffered {
 
 /// ReadableStream source backed by a ByteStream.
 pub(crate) type Source = readable_stream::NewSource<ByteStream>;
+
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__ByteStream__setNextPullLimit(source: &Source, limit: usize) {
+    source.context.next_pull_limit.set(limit);
+}
 
 /// A network body producer's (fetch, S3) hold on the stream it feeds: a counted ref on the stream's
 /// `Source`, so delivery and unhooking go through memory the producer keeps alive rather than the
@@ -299,8 +310,21 @@ impl readable_stream::SourceContext for ByteStream {
         debug_assert!(!buffer.is_empty());
         debug_assert!(self.buffer_action.get().is_none());
 
+        let limit = self.next_pull_limit.replace(0);
+
         if !self.buffered.is_empty() {
             debug_assert!(self.value().is_empty()); // == .zero
+            let wanted = self.buffered.len().min(limit);
+            let mut own = Vec::new();
+            if wanted > buffer.len() && own.try_reserve_exact(wanted).is_ok() {
+                own.resize(wanted, 0);
+                self.buffered.copy_out(&mut own);
+                if self.buffered.is_empty() {
+                    self.signal_drained();
+                }
+                return streams::Result::Owned(own);
+            }
+
             let to_write = self.buffered.copy_out(buffer);
             // Both sides are non-empty, so the copy moved at least one byte.
             debug_assert!(to_write > 0);
@@ -324,6 +348,7 @@ impl readable_stream::SourceContext for ByteStream {
         }
 
         self.set_value(view);
+        self.pending_limit.set(limit);
         streams::Result::Pending(&self.pending)
     }
 
@@ -685,24 +710,43 @@ impl ByteStream {
                 .and_then(|view| view.as_array_buffer(global))
                 .unwrap_or_default();
             let pending_buf = pending_view.slice_mut();
-            let to_copy_len = chunk.len().min(pending_buf.len());
-            let pending_buffer_len = pending_buf.len();
+            let wanted = chunk.len().min(self.pending_limit.replace(0));
+            let mut own = Vec::new();
+            let outgrows_view = !pending_buf.is_empty()
+                && wanted > pending_buf.len()
+                && own.try_reserve_exact(wanted).is_ok();
+            let to_copy_len = if outgrows_view {
+                wanted
+            } else {
+                chunk.len().min(pending_buf.len())
+            };
             debug_assert!(pending_buf.as_ptr() != chunk.as_ptr());
-            pending_buf[..to_copy_len].copy_from_slice(&chunk[..to_copy_len]);
+            if outgrows_view {
+                own.extend_from_slice(&chunk[..to_copy_len]);
+            } else {
+                pending_buf[..to_copy_len].copy_from_slice(&chunk[..to_copy_len]);
+            }
             let has_remaining = chunk.len() > to_copy_len;
             if has_remaining {
                 let stream = core::mem::replace(&mut stream, streams::Result::Done);
                 self.append(stream, to_copy_len)?;
             }
 
-            let is_really_done =
-                self.has_received_last_chunk.get() && to_copy_len <= pending_buffer_len;
+            let is_really_done = self.has_received_last_chunk.get();
 
             let into_array = || IntoArray {
                 value: self.value(),
                 len: to_copy_len as blob::SizeType, // @truncate
             };
-            let result = if is_really_done {
+            let result = if outgrows_view {
+                let _ = self.value();
+                if is_really_done {
+                    self.done.set(true);
+                    streams::Result::OwnedAndDone(own)
+                } else {
+                    streams::Result::Owned(own)
+                }
+            } else if is_really_done {
                 self.done.set(true);
 
                 if to_copy_len > 0 {

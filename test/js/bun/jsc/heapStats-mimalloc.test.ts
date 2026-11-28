@@ -309,4 +309,48 @@ describe("heapStats() mimalloc integration", () => {
       expect(perRequest).toBeLessThan(20);
     },
   );
+
+  // Linux only: reads /proc/self/smaps_rollup, as RssAnon is inexact on some kernels. Not ASAN: malloc is not mimalloc there.
+  test.concurrent.skipIf(!isLinux || isASAN)(
+    "the scratch of fs.readFileSync is resident only where it was written",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+        const fs = require("fs");
+        const page = Buffer.alloc(4096);
+        const anonymous = () => {
+          const fd = fs.openSync("/proc/self/smaps_rollup", "r");
+          const status = page.latin1Slice(0, fs.readSync(fd, page));
+          fs.closeSync(fd);
+          return Number(/^Anonymous:\\s+(\\d+) kB/m.exec(status)[1]);
+        };
+        // Leaves free blocks of the scratch's size that were used and given back: a zeroed allocation writes all of one.
+        let buffers = Array.from({ length: 48 }, () => new Uint8Array(256 * 1024).fill(1));
+        globalThis.kept = buffers.filter((_, index) => index % 6 === 0);
+        const full = anonymous();
+        buffers = null;
+        Bun.gc(true);
+        const deadline = performance.now() + 3000;
+        let before;
+        while (full - (before = anonymous()) < 256 * 20 && performance.now() < deadline) await Bun.sleep(20);
+        fs.readFileSync("/proc/self/status");
+        console.log(JSON.stringify({ purged: full - before, added: anonymous() - before }));
+        `,
+        ],
+        env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1", MIMALLOC_PURGE_HOLES_LARGE_FLOOR: "0" },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toMatch(/^\{.*\}\n$/);
+      const { purged, added } = JSON.parse(stdout);
+      // Half of the freed blocks: not every build gives all of them back.
+      expect(purged).toBeGreaterThanOrEqual(256 * 20);
+      expect(added).toBeLessThan(128);
+      expect(exitCode).toBe(0);
+    },
+  );
 });

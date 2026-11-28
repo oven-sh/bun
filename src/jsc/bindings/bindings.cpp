@@ -3975,6 +3975,45 @@ extern "C" uint32_t JSC__JSString__firstCharacters(const JSC::JSString* string, 
     return count;
 }
 
+// How many pieces the rope has. 0 for no rope or a substring (resolving it copies nothing), more than `capacity` pieces, or a surrogate pair that may be split.
+extern "C" uint32_t JSC__JSString__leavesOfRope(const JSC::JSString* string, BunString* leaves, uint32_t capacity)
+{
+    if (!string->isRope() || string->isSubstring())
+        return 0;
+    static_assert(JSC::JSRopeString::CompactFibers::offsetOfLength() == 0 && JSC::JSRopeString::s_maxInternalRopeLength == 3);
+    // Not a LeafIterator over the whole rope, which goes all the way down a deep one for its first piece.
+    WTF::Vector<const JSC::JSString*, 16> pending;
+    pending.append(string);
+    uint32_t count = 0;
+    while (!pending.isEmpty()) {
+        // Each pending string has at least one piece.
+        if (count + pending.size() > capacity)
+            return 0;
+        const JSC::JSString* next = pending.takeLast();
+        if (next->isRope() && !next->isSubstring()) {
+            auto* cell = std::bit_cast<const uint8_t*>(next);
+            auto* fibers = std::bit_cast<const JSC::JSRopeString::CompactFibers*>(cell + JSC::JSRopeString::offsetOfLength());
+            auto fiber0 = *std::bit_cast<const uintptr_t*>(cell + JSC::JSString::offsetOfValue()) & JSC::JSRopeString::stringMask;
+            for (const JSC::JSString* fiber : { fibers->fiber2(), fibers->fiber1(), std::bit_cast<JSC::JSString*>(fiber0) }) {
+                if (fiber)
+                    pending.append(fiber);
+            }
+            continue;
+        }
+        WTF::StringView leaf = JSC::JSRopeString::LeafIterator { next }.next();
+        if (!pending.isEmpty() && !leaf.isEmpty() && U16_IS_LEAD(leaf[leaf.length() - 1]))
+            return 0;
+        leaves[count++] = Bun::toStringView(leaf);
+    }
+    return count;
+}
+
+// Another one after each collection. Until then, no string is made at the address of another.
+extern "C" uint32_t JSC__JSString__addressVersion(const JSC::JSString* string)
+{
+    return string->vm().heap.objectSpace().newlyAllocatedVersion();
+}
+
 extern "C" JSC::EncodedJSValue JSC__JSString__singleLatin1Character(JSC::JSGlobalObject* globalObject, uint8_t character)
 {
     return JSC::JSValue::encode(JSC::jsSingleCharacterString(JSC::getVM(globalObject), Latin1Character { character }));

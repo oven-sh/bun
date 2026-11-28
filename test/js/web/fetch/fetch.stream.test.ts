@@ -1,4 +1,5 @@
 import { Socket } from "bun";
+import { heapStats } from "bun:jsc";
 import { describe, expect, it, test } from "bun:test";
 import { createReadStream, readFileSync } from "fs";
 import { bunEnv, bunExe, gcTick, isWindows, tempDirWithFilesAnon } from "harness";
@@ -1507,6 +1508,124 @@ test.concurrent("a body that fails after a partial read rejects the next read in
   expect(stderr).toBe("");
   expect(stdout).toBe("ok\n");
   expect(exitCode).toBe(0);
+});
+
+// An HTMLRewriter emits the output of one input chunk in one piece, so the sizes are the same on every run.
+function nativeBody() {
+  let input!: ReadableStreamDefaultController;
+  const response = new HTMLRewriter()
+    .on("nothing", { element() {} })
+    .transform(new Response(new ReadableStream({ start: controller => void (input = controller) })));
+  return { input, response };
+}
+
+test.each([
+  [
+    [100, 200],
+    [100, 200],
+  ],
+  [
+    [16383, 16384, 16385],
+    [16383, 16384, 16385],
+  ],
+  [
+    [16384, 100_000],
+    [16384, 65536, 34464],
+  ],
+  [
+    [20_000, 100],
+    [20_000, 100],
+  ],
+  [
+    [100, 20_000, 100],
+    [100, 20_000, 100],
+  ],
+  [
+    [100, 100_000],
+    [100, 65536, 34464],
+  ],
+  [
+    [200_000, 100],
+    [200_000, 100],
+  ],
+  [
+    [262144, 100],
+    [262144, 100],
+  ],
+  [
+    [1_000_000, 100],
+    [262144, 524288, 213568, 100],
+  ],
+])("a native body that is sent %j is read as %j", async (sent, expected) => {
+  for (const mode of ["bytes", "text"]) {
+    const { input, response } = nativeBody();
+    const reader = (mode === "text" ? response.textStream() : response.body!).getReader();
+    const sizes: number[] = [];
+    let got = "";
+    let want = "";
+    for (const [index, size] of sent.entries()) {
+      const read = reader.read();
+      const text = Buffer.alloc(size, "abcdefghijklmnopqrstuvwxyz0123456789".slice(index)).toString();
+      want += text;
+      input.enqueue(Buffer.from(text));
+      for (let { value } = await read; ; { value } = await reader.read()) {
+        sizes.push(value.length);
+        got += mode === "text" ? value : Buffer.from(value).toString();
+        if (got.length >= want.length) break;
+      }
+    }
+    input.close();
+    expect((await reader.read()).done).toBe(true);
+    expect(got === want).toBe(true);
+    if (mode === "bytes") expect(sizes).toEqual(expected);
+  }
+});
+
+// What is sent before the reader is there has arrived by the first pull, which takes it at once. A larger first slab gives the same sizes.
+test.each([
+  [16384, [16384]],
+  [16385, [16385]],
+  [100_000, [100_000]],
+  [262144, [262144]],
+  [300_000, [262144, 37856]],
+  [1_000_000, [262144, 524288, 213568]],
+])("a native body that has %j bytes before its first pull is read as %j", async (size, expected) => {
+  for (const mode of ["bytes", "text"]) {
+    const { input, response } = nativeBody();
+    const want = Buffer.alloc(size, "abcdefghijklmnopqrstuvwxyz0123456789").toString();
+    input.enqueue(Buffer.from(want));
+    // Attached any later, the reader would get all of it without a pull.
+    await null;
+    const reader = (mode === "text" ? response.textStream() : response.body!).getReader();
+    const sizes: number[] = [];
+    let got = "";
+    while (got.length < size) {
+      const { value } = await reader.read();
+      sizes.push(value.length);
+      got += mode === "text" ? value : Buffer.from(value).toString();
+    }
+    input.close();
+    expect((await reader.read()).done).toBe(true);
+    expect(got === want).toBe(true);
+    if (mode === "bytes") expect(sizes).toEqual(expected);
+  }
+});
+
+test("a native body that waits for its first bytes holds a small buffer", async () => {
+  const count = 64;
+  Bun.gc(true);
+  const before = heapStats().extraMemorySize;
+  const bodies = Array.from({ length: count }, () => {
+    const { input, response } = nativeBody();
+    return { input, read: response.body!.getReader().read() };
+  });
+  // The first pull follows the start of the stream by a microtask.
+  await new Promise(resolve => setImmediate(resolve));
+  Bun.gc(true);
+  const held = heapStats().extraMemorySize - before;
+  for (const { input } of bodies) input.close();
+  for (const { read } of bodies) expect((await read).done).toBe(true);
+  expect(held / count).toBeLessThan(64 * 1024);
 });
 
 // https://github.com/oven-sh/bun/issues/41439

@@ -7,7 +7,7 @@
 //! encoders. Only buffered bodies reach this — streams and sendfile are
 //! filtered out on the JS thread.
 
-use crate::http_thread::LibdeflateState;
+use crate::http_thread::{LIBDEFLATE_SHARED_BUFFER_LEN, LibdeflateState};
 use bun_deflate::{Compressor, Format, Level, Output};
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -95,7 +95,7 @@ fn compress_libdeflate_fast(
     format: Format,
     level: Option<i32>,
 ) -> Option<usize> {
-    if bun_deflate::compress_bound(input.len(), format) > state.shared_buffer.len() {
+    if bun_deflate::compress_bound(input.len(), format) > LIBDEFLATE_SHARED_BUFFER_LEN {
         return None;
     }
 
@@ -105,7 +105,11 @@ fn compress_libdeflate_fast(
         DEFAULT_DEFLATE_LEVEL => &mut state.compressor,
         _ => &mut Compressor::default(),
     };
-    let output = Output::Slice(&mut state.shared_buffer[..]);
+    state.shared_buffer.clear();
+    let output = Output::Vec {
+        vec: &mut state.shared_buffer,
+        limit: LIBDEFLATE_SHARED_BUFFER_LEN,
+    };
     compressor
         .compress(input, format, Level::new(level)?, output)
         .ok()
@@ -153,14 +157,15 @@ fn compress_brotli(
     spill: &mut Vec<u8>,
 ) -> crate::Result<CompressOutput> {
     use bun_brotli::{EncodeError, EncodeStatus, Encoder, Operation};
-    use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
+    use bun_core::vec::{BorrowedCursor, append_with};
     let bound = bun_brotli::max_compressed_size(input.len());
     let mut encoder = Encoder::with_quality(level.unwrap_or(DEFAULT_BROTLI_QUALITY));
-    let mut compress =
+    let compress =
         |output: BorrowedCursor<'_, u8>| encoder.compress(Operation::Finish, &mut input, output);
-    let (result, output) = if bound <= state.shared_buffer.len() {
-        let mut shared = BorrowedBuf::from(&mut state.shared_buffer[..]);
-        let result = compress(shared.unfilled());
+    let (result, output) = if bound <= LIBDEFLATE_SHARED_BUFFER_LEN {
+        let shared = &mut state.shared_buffer;
+        shared.clear();
+        let result = append_with(shared, usize::MAX, compress);
         (result, CompressOutput::Shared(shared.len()))
     } else {
         spill
@@ -183,9 +188,11 @@ fn compress_zstd(
 ) -> crate::Result<CompressOutput> {
     let level = level.unwrap_or(DEFAULT_ZSTD_LEVEL);
     let bound = bun_zstd::compress_bound(input.len());
-    let result = if bound.is_some_and(|bound| bound <= state.shared_buffer.len()) {
-        let mut out = bun_zstd::Output::slice(&mut state.shared_buffer[..]);
-        bun_zstd::compress(input, &mut out, level).map(|()| CompressOutput::Shared(out.written()))
+    let result = if bound.is_some_and(|bound| bound <= LIBDEFLATE_SHARED_BUFFER_LEN) {
+        let shared = &mut state.shared_buffer;
+        shared.clear();
+        bun_zstd::compress_append(shared, input, level)
+            .map(|()| CompressOutput::Shared(shared.len()))
     } else {
         bun_zstd::compress_append(spill, input, level).map(|()| CompressOutput::Spilled)
     };

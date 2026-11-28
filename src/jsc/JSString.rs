@@ -32,6 +32,12 @@ unsafe extern "C" {
         substrings: *mut JSValue,
     );
     fn JSC__JSString__firstCharacters(this: &JSString, characters: *mut u16, capacity: u32) -> u32;
+    safe fn JSC__JSString__addressVersion(this: &JSString) -> u32;
+    fn JSC__JSString__leavesOfRope<'a>(
+        this: &'a JSString,
+        leaves: *mut StringView<'a>,
+        capacity: u32,
+    ) -> u32;
     safe fn JSC__JSString__singleLatin1Character(global: &JSGlobalObject, character: u8)
     -> JSValue;
     fn JSC__JSString__tryCreateUninitializedLatin1(
@@ -182,6 +188,37 @@ impl JSString {
             JSC__JSString__firstCharacters(self, characters.as_mut_ptr(), characters.len() as u32)
                 as usize
         }
+    }
+
+    /// The UTF-8 of a long rope of a few pieces, which stays unresolved. `None` for any other string, or without memory for it.
+    /// `None` too for an ASCII rope that was asked for not long ago: whoever resolves it can share the string from then on.
+    pub fn rope_to_utf8(&self, global: &JSGlobalObject) -> Option<Vec<u8>> {
+        // It takes no longer to resolve a shorter one.
+        if self.length() < 16 * 1024 {
+            return None;
+        }
+        let mut leaves: [StringView<'_>; 8] = [const { StringView::EMPTY }; 8];
+        // SAFETY: at most `leaves.len()` of them are written.
+        let count =
+            unsafe { JSC__JSString__leavesOfRope(self, leaves.as_mut_ptr(), leaves.len() as u32) };
+        // Nothing here runs JS or allocates a cell, so the pieces stay where they are.
+        let leaves = leaves.get(..count as usize).filter(|it| !it.is_empty())?;
+        let is_ascii = |leaf: &StringView<'_>| {
+            leaf.is_8bit() && bun_core::strings::is_all_ascii(leaf.latin1())
+        };
+        let last_ropes = &global.bun_vm().rare_data().last_ropes;
+        if last_ropes.remember(self) && leaves.iter().all(is_ascii) {
+            return None;
+        }
+        bun_core::strings::try_concat_to_utf8(leaves)
+    }
+
+    /// Of one string since the last collection, and of no other.
+    pub(crate) fn address_and_version(&self) -> (usize, u32) {
+        (
+            std::ptr::from_ref(self).addr(),
+            JSC__JSString__addressVersion(self),
+        )
     }
 
     /// `length` characters of this string from `offset` on, sharing them with it.

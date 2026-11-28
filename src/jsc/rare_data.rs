@@ -1,4 +1,4 @@
-use core::cell::OnceCell;
+use core::cell::{Cell, OnceCell};
 use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::sync::atomic::Ordering;
@@ -245,6 +245,7 @@ pub struct RareData {
     spawn_sync_event_loop_: OnceCell<Box<SpawnSyncEventLoop>>,
 
     pub path_buf: JsCell<PathBuf>,
+    pub(crate) last_ropes: LastRopes,
 }
 
 #[cfg(not(windows))]
@@ -275,7 +276,26 @@ impl Default for RareData {
             tls_default_ciphers: JsCell::new(None),
             spawn_sync_event_loop_: OnceCell::new(),
             path_buf: JsCell::default(),
+            last_ropes: LastRopes::default(),
         }
+    }
+}
+
+/// Some of the strings that [`Self::remember`] was called for. Keeps none of them alive.
+pub(crate) struct LastRopes([Cell<(usize, u32)>; 64]);
+
+impl Default for LastRopes {
+    fn default() -> Self {
+        Self([const { Cell::new((0, 0)) }; 64])
+    }
+}
+
+impl LastRopes {
+    /// Whether `string` was remembered. False if a string with the same place took over, or after a collection.
+    pub(crate) fn remember(&self, string: &crate::JSString) -> bool {
+        let key = string.address_and_version();
+        // A rope takes 32 bytes.
+        self.0[key.0 / 32 % self.0.len()].replace(key) == key
     }
 }
 
@@ -284,19 +304,19 @@ impl Default for RareData {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Reusable heap buffer for path.resolve, path.relative, and path.toNamespacedPath.
-/// Three fixed-size tiers, lazily allocated on first use. Safe because JS is single-threaded.
+/// Three tiers, lazily allocated on first use. Safe because JS is single-threaded.
 #[derive(Default)]
 pub struct PathBuf {
     pub(crate) small: Option<Box<[u8; 2 * MAX_PATH_BYTES]>>,
     pub(crate) medium: Option<Box<[u8; 8 * MAX_PATH_BYTES]>>,
-    pub(crate) large: Option<Box<[u8; 32 * MAX_PATH_BYTES]>>,
+    /// As long as the longest use so far: what is behind that is neither zeroed nor resident.
+    pub(crate) large: Vec<u8>,
 }
 
 impl PathBuf {
     const S: usize = MAX_PATH_BYTES;
 
-    /// Returns the smallest lazily-allocated tier buffer that fits `min_len`.
-    // Revisit caller semantics for inputs exceeding the large tier.
+    /// Returns the smallest lazily-allocated tier buffer that fits `min_len`, which may be no longer than that.
     pub fn get(&mut self, min_len: usize) -> &mut [u8] {
         if min_len <= 2 * Self::S {
             &mut **self
@@ -307,14 +327,15 @@ impl PathBuf {
                 .medium
                 .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 8 * MAX_PATH_BYTES]>)
         } else {
-            &mut **self
-                .large
-                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 32 * MAX_PATH_BYTES]>)
+            if self.large.len() < min_len {
+                let spare = (32 * Self::S).saturating_sub(self.large.len());
+                self.large.reserve_exact(spare);
+                self.large.resize(min_len, 0);
+            }
+            &mut self.large
         }
     }
 }
-
-// Drop is automatic for Option<Box<...>> fields — no explicit deinit needed.
 
 /// One max-size HTTP/2 PADDED DATA frame payload (pad-length byte + data + padding).
 pub type H2PaddedFrameBuffer = [u8; 16384];

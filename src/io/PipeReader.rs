@@ -565,26 +565,23 @@ impl PosixBufferedReader {
         self.read_once(file_type, fd, BorrowedBuf::from(&mut buf[..len]).unfilled())
     }
 
-    /// Reads into `scratch` until it is worth delivering; returns bytes filled and why it stopped (`None`: deliver and keep going).
-    fn fill_scratch(
-        &self,
-        file_type: FileType,
-        fd: Fd,
-        scratch: &mut [u8],
-    ) -> (usize, Option<Stop>) {
-        let mut filled = 0;
-        while scratch.len() - filled > 16 * 1024 && filled < scratch.len() / 2 {
-            match self.read_once_into(file_type, fd, &mut scratch[filled..]) {
-                ReadOnce::Read(n, stop) => {
-                    filled += n;
+    /// Reads into the empty `scratch` until it is worth delivering; returns why it stopped (`None`: deliver and keep going).
+    fn fill_scratch(&self, file_type: FileType, fd: Fd, scratch: &mut Vec<u8>) -> Option<Stop> {
+        let capacity = scratch.capacity();
+        while capacity - scratch.len() > 16 * 1024 && scratch.len() < capacity / 2 {
+            let read = bun_core::vec::append_with(scratch, self.clamp_len(usize::MAX), |spare| {
+                self.read_once(file_type, fd, spare)
+            });
+            match read {
+                ReadOnce::Read(_, stop) => {
                     if stop.is_some() || file_type == FileType::Pipe {
-                        return (filled, stop);
+                        return stop;
                     }
                 }
-                ReadOnce::Stop(stop) => return (filled, Some(stop)),
+                ReadOnce::Stop(stop) => return Some(stop),
             }
         }
-        (filled, None)
+        None
     }
 
     /// Reads into `buffer` until it is worth delivering (streaming) or exhausted (buffering).
@@ -697,10 +694,9 @@ impl<'a> ReadLoop<'a> {
         let mut from_scratch: &[u8] = &[];
         match &mut self.scratch {
             Some(scratch) if buffer.is_empty() && (streaming || buffer.capacity() == 0) => {
-                let scratch = scratch.as_mut_slice();
-                let filled;
-                (filled, self.stop) = reader.fill_scratch(self.file_type, self.fd, scratch);
-                from_scratch = &scratch[..filled];
+                let scratch = scratch.empty_buffer();
+                self.stop = reader.fill_scratch(self.file_type, self.fd, scratch);
+                from_scratch = scratch;
             }
             _ => self.stop = reader.fill_buffer(self.file_type, self.fd, &mut buffer, streaming),
         }

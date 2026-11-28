@@ -745,18 +745,21 @@ impl Linux {
         Output::Source::configure_named_thread(zstr!("fs.watch"));
         let manager = DEFAULT_MANAGER.wait();
         // Large enough for a burst of events; inotify guarantees whole events per read.
-        let mut buf: Box<[u8; 64 * 1024]> = bun_core::boxed_zeroed();
+        let mut buf: Vec<u8> = Vec::with_capacity(64 * 1024);
         let mut rel_path = path::Path::new();
 
         loop {
-            let rc = sys::linux::read(fd.native(), &mut *buf);
-            match sys::get_errno(rc) {
-                E::SUCCESS => {}
-                E::EAGAIN | E::EINTR => continue,
-                errno => {
+            buf.clear();
+            let read =
+                bun_core::vec::append_with(&mut buf, usize::MAX, |spare| sys::read_buf(fd, spare));
+            match read {
+                Ok(0) => continue,
+                Ok(_) => {}
+                Err(err) if matches!(err.get_errno(), E::EAGAIN | E::EINTR) => continue,
+                Err(err) => {
                     // Fatal: surface to every watcher, then exit the thread.
                     let err = sys::Error {
-                        errno: errno as u16,
+                        errno: err.errno,
                         syscall: Tag::read,
                         ..Default::default()
                     };
@@ -766,10 +769,6 @@ impl Linux {
                     }
                     return;
                 }
-            }
-            let n = rc as usize;
-            if n == 0 {
-                continue;
             }
 
             let mut locked = manager.lock();
@@ -781,7 +780,7 @@ impl Linux {
             // Track which PathWatchers got at least one event so we flush() each once.
             let mut touched: ArrayHashMap<WatcherId, ()> = ArrayHashMap::default();
 
-            for ev in InotifyEventIterator(&buf[..n]) {
+            for ev in InotifyEventIterator(&buf) {
                 let wd = ev.watch_descriptor;
 
                 // Queue hit fs.inotify.max_queued_events and the kernel dropped

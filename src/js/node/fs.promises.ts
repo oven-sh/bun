@@ -8,7 +8,9 @@ const {
   validateObject,
   validateAbortSignal,
   validateEncoding,
+  validateBuffer,
 } = require("internal/validators");
+const { validateReadPosition, validateReadRange } = require("internal/fs/read-write");
 
 const constants = $processBindingConstants.fs;
 
@@ -588,40 +590,44 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
       const fd = this[kFd];
       throwEBADFIfNecessary("read", fd);
 
-      let buffer = bufferOrParams;
-      if (!types.isArrayBufferView(buffer)) {
-        // This is fh.read(params)
-        if (bufferOrParams !== undefined) {
-          // validateObject(bufferOrParams, 'options', kValidateObjectAllowNullable);
-          if (typeof bufferOrParams !== "object" || $isArray(bufferOrParams)) {
-            throw $ERR_INVALID_ARG_TYPE("options", "object", bufferOrParams);
-          }
-        }
-        ({
-          buffer = Buffer.alloc(16384),
-          offset = 0,
-          length = buffer.byteLength - offset,
-          position = null,
-        } = bufferOrParams ?? kEmptyObject);
-      }
-
-      if (offset !== null && typeof offset === "object") {
-        // This is fh.read(buffer, options)
-        ({ offset = 0, length = buffer?.byteLength - offset, position = null } = offset);
-      }
-
-      if (offset == null) {
-        offset = 0;
-      } else {
-        validateInteger(offset, "offset", 0);
-      }
-
-      length ??= buffer?.byteLength - offset;
-
+      this[kRef]();
       try {
-        this[kRef]();
+        let buffer = bufferOrParams;
+        if (!types.isArrayBufferView(buffer)) {
+          // This is fh.read(params)
+          if (bufferOrParams !== undefined) {
+            // validateObject(bufferOrParams, 'options', kValidateObjectAllowNullable);
+            if (typeof bufferOrParams !== "object" || $isArray(bufferOrParams)) {
+              throw $ERR_INVALID_ARG_TYPE("options", "object", bufferOrParams);
+            }
+          }
+          ({
+            buffer = Buffer.alloc(16384),
+            offset = 0,
+            length = buffer.byteLength - offset,
+            position = null,
+          } = bufferOrParams ?? kEmptyObject);
+          validateBuffer(buffer);
+        }
+
+        if (offset !== null && typeof offset === "object") {
+          // This is fh.read(buffer, options)
+          ({ offset = 0, length = buffer?.byteLength - offset, position = null } = offset);
+        }
+
+        if (offset == null) {
+          offset = 0;
+        } else {
+          validateInteger(offset, "offset", 0);
+        }
+
+        length ??= buffer?.byteLength - offset;
+        validateReadPosition(position, length);
+        if (length === 0) return { __proto__: null, bytesRead: 0, buffer };
+        validateReadRange(buffer, offset, length);
+
         const bytesRead = await read(fd, buffer, offset, length, position);
-        return { buffer, bytesRead };
+        return { __proto__: null, buffer, bytesRead };
       } finally {
         this[kUnref]();
       }

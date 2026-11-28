@@ -901,7 +901,7 @@ fn only_this_user_can_write(path: &[u8]) -> bool {
     let user = unsafe { libc::geteuid() };
     // The group of administrators, who can become root.
     let administrators = if cfg!(target_os = "macos") { 80 } else { 0 };
-    // Where each user has a group of the same number, umask 002 is usual. With an access control list the bits of the group are those of everyone in the list.
+    // Where each user has a group of the same number, umask 002 is usual.
     let is_group_of_user_alone =
         |it: &bun_sys::Stat| cfg!(target_os = "linux") && it.st_gid == user && user != 0;
     let is_safe = |it: &bun_sys::Stat, may_be_sticky: bool| {
@@ -951,7 +951,7 @@ fn only_this_user_can_write(path: &[u8]) -> bool {
             // In a sticky folder others can make files, but not replace this one. Nothing is loaded out of one.
             let folder = bun_core::ZBox::from_bytes(&at[..parent.max(1)]);
             if !is_safe(&stat, is_folder)
-                || is_group_of_user_alone(&stat) && has_access_control_list(&name)
+                || has_access_control_list(&name)
                 || !is_folder && !bun_sys::lstat(&folder).is_ok_and(|it| is_safe(&it, false))
             {
                 return false;
@@ -982,6 +982,7 @@ fn only_this_user_can_write(path: &[u8]) -> bool {
 #[cfg(windows)]
 use bun_sys::windows::private_folder::only_this_user_can_write;
 
+/// Whether a list gives other users rights that the mode does not tell. On Linux the bits of the group are then the most that anyone in the list has.
 #[cfg(target_os = "linux")]
 fn has_access_control_list(path: &bun_core::ZBox) -> bool {
     // SAFETY: both strings are NUL-terminated; a size of 0 asks for the length alone.
@@ -995,7 +996,40 @@ fn has_access_control_list(path: &bun_core::ZBox) -> bool {
     }
 }
 
-#[cfg(all(unix, not(target_os = "linux")))]
+/// A list that only denies, as every home folder has one, gives nobody anything.
+#[cfg(target_os = "macos")]
+fn has_access_control_list(path: &bun_core::ZBox) -> bool {
+    use core::ffi::{c_char, c_int, c_void};
+    unsafe extern "C" {
+        fn acl_get_link_np(path: *const c_char, kind: c_int) -> *mut c_void;
+        fn acl_get_entry(acl: *mut c_void, which: c_int, entry: *mut *mut c_void) -> c_int;
+        fn acl_get_tag_type(entry: *mut c_void, tag: *mut c_int) -> c_int;
+        fn acl_free(acl: *mut c_void) -> c_int;
+    }
+    const ACL_TYPE_EXTENDED: c_int = 0x100;
+    const ACL_EXTENDED_DENY: c_int = 2;
+    const ACL_FIRST_ENTRY: c_int = 0;
+    const ACL_NEXT_ENTRY: c_int = -1;
+    // SAFETY: `path` is NUL-terminated, the list is freed below, and its entries are only used before that.
+    unsafe {
+        let list = acl_get_link_np(path.as_ptr(), ACL_TYPE_EXTENDED);
+        if list.is_null() {
+            return false;
+        }
+        let mut entry = core::ptr::null_mut();
+        let mut which = ACL_FIRST_ENTRY;
+        let mut only_denies = true;
+        while acl_get_entry(list, which, &mut entry) == 0 {
+            let mut tag = 0;
+            only_denies &= acl_get_tag_type(entry, &mut tag) == 0 && tag == ACL_EXTENDED_DENY;
+            which = ACL_NEXT_ENTRY;
+        }
+        acl_free(list);
+        !only_denies
+    }
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
 fn has_access_control_list(_path: &bun_core::ZBox) -> bool {
     false
 }

@@ -57,6 +57,42 @@ test("build time is linear in the number of pieces that are appended to one stri
   expect(withMany / withFew).toBeLessThan(6);
 }, 240_000);
 
+// The helpers as esbuild writes them.
+const helpers = `
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+`;
+
+// Each call of __toCommonJS read every expression of the file.
+test("a call that copies an object of getters does not read the rest of the file", async () => {
+  const copies = rows(
+    isSlowBuild ? 500 : 2_000,
+    index => `var x${index} = {}; __export(x${index}, { a: () => a }); var y${index} = __toCommonJS(x${index});`,
+  );
+  const numbers = Buffer.alloc(isSlowBuild ? 2_000_000 : 4_000_000, "1,").toString();
+  const copiesAlone = await processorSecondsOfCheck("main.cjs", `${helpers}${copies}\nvar a = 1;\n`);
+  const numbersAlone = await processorSecondsOfCheck("main.cjs", `${helpers}var b = [${numbers}];\n`);
+  const both = await processorSecondsOfCheck("main.cjs", `${helpers}${copies}\nvar a = 1, b = [${numbers}];\n`);
+  const ratio = both / (copiesAlone + numbersAlone);
+  reads("both together", ratio, 1.3, "times the processor seconds of each alone");
+  expect(ratio).toBeLessThan(1.3);
+}, 240_000);
+
 // The text of the last member would be 2 ** 59 letters long.
 test("the members of an enum that name one another twice do not double for ever", async () => {
   const members = rows(59, index => `m${index + 1} = \`\${m${index}}\${m${index}}\`,`);

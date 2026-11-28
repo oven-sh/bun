@@ -148,7 +148,8 @@ pub(crate) fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<S
 }
 
 // ─── AnyRoute ────────────────────────────────────────────────────────────────
-/// The route table's ref on each route.
+/// The route table's ref on each route. A clone is another ref on the same route.
+#[derive(Clone)]
 pub(crate) enum AnyRoute {
     /// Serve a static file — `"/robots.txt": new Response(...)`
     Static(bun_ptr::RefPtr<StaticRoute>),
@@ -3682,15 +3683,32 @@ impl AnyServer {
         any_server_dispatch!(self, |s| s.get_or_load_plugins(callback))
     }
 
-    pub(crate) fn append_static_route(
+    /// The route of a file the bundler wrote, under its name and under each spelling a client requests for it.
+    pub(crate) fn append_bundled_file_route(
         &self,
         path: &[u8],
         route: AnyRoute,
         method: server_config::MethodOptional,
-    ) -> Result<(), crate::Error> {
-        any_server_dispatch!(self, |s| s
-            .config
-            .with_mut(|config| config.append_static_route(path, route, method)))
+    ) {
+        any_server_dispatch!(self, |s| s.config.with_mut(|config| {
+            server_config::StaticRouteEntry::push_bundled_file(
+                &mut config.static_routes,
+                path,
+                route,
+                method,
+            )
+        }))
+    }
+
+    /// The built page under the name of its own output file. Nothing the bundler writes names it, so it gets no other spelling.
+    pub(crate) fn append_own_name_route(&self, path: &[u8], route: AnyRoute) {
+        any_server_dispatch!(self, |s| s.config.with_mut(|config| {
+            config.static_routes.push(server_config::StaticRouteEntry {
+                path: path.into(),
+                route,
+                method: server_config::MethodOptional::Any,
+            })
+        }))
     }
 
     pub(crate) fn reload_static_routes(&self) -> Result<bool, crate::Error> {

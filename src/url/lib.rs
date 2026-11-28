@@ -1349,6 +1349,33 @@ impl From<DecodeError> for crate::Error {
 }
 
 impl PercentEncoding {
+    /// Whether a URL parser writes `byte` of a path as `%XX`: <https://url.spec.whatwg.org/#path-percent-encode-set>.
+    pub const fn in_path_percent_encode_set(byte: u8) -> bool {
+        !byte.is_ascii_graphic()
+            || matches!(
+                byte,
+                b'"' | b'#' | b'<' | b'>' | b'?' | b'^' | b'`' | b'{' | b'}'
+            )
+    }
+
+    /// `input` with each byte that `escape` picks written as `%XX`, or `None` if it picks none.
+    pub fn encode(input: &[u8], escape: impl Fn(u8) -> bool) -> Option<Box<[u8]>> {
+        let escaped = input.iter().filter(|&&byte| escape(byte)).count();
+        if escaped == 0 {
+            return None;
+        }
+        let mut out = Vec::with_capacity(input.len() + 2 * escaped);
+        for &byte in input {
+            if escape(byte) {
+                let hex = bun_fmt::hex2_upper(byte);
+                out.extend_from_slice(&[b'%', hex[0], hex[1]]);
+            } else {
+                out.push(byte);
+            }
+        }
+        Some(out.into_boxed_slice())
+    }
+
     pub(crate) fn decode(
         writer: &mut impl bun_core::io::Write,
         input: &[u8],
@@ -1724,7 +1751,7 @@ impl<'a> Scanner<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::URL;
+    use super::{PercentEncoding, URL};
 
     const ORIGIN: &[u8] = b"http://localhost:3000";
 
@@ -1841,5 +1868,32 @@ mod tests {
     fn join_longer_than_a_path_buffer() {
         let path = vec![b'a'; bun_paths::MAX_PATH_BYTES + 1];
         assert_eq!(join(b"dir/", &path), [ORIGIN, b"/dir/", &path].concat());
+    }
+
+    #[test]
+    fn the_path_percent_encode_set_is_the_set_of_the_url_standard() {
+        let in_set: Vec<u8> = (0..=u8::MAX)
+            .filter(|&byte| PercentEncoding::in_path_percent_encode_set(byte))
+            .collect();
+        // The C0 controls and the space, these nine, and every byte from DEL up.
+        let standard: Vec<u8> = (0x00..=0x20)
+            .chain(*b"\"#<>?^`{}")
+            .chain(0x7F..=0xFF)
+            .collect();
+        assert_eq!(in_set, standard);
+    }
+
+    #[test]
+    fn encode_escapes_the_picked_bytes_in_upper_case() {
+        let in_set = PercentEncoding::in_path_percent_encode_set;
+        assert_eq!(PercentEncoding::encode(b"/a-b_c.d~e/f%20g|h", in_set), None);
+        assert_eq!(
+            PercentEncoding::encode("/my img/\u{fc}n\u{ef} 100%.png".as_bytes(), in_set).as_deref(),
+            Some(&b"/my%20img/%C3%BCn%C3%AF%20100%.png"[..])
+        );
+        assert_eq!(
+            PercentEncoding::encode(b"/a|b", |byte| byte == b'|' || in_set(byte)).as_deref(),
+            Some(&b"/a%7Cb"[..])
+        );
     }
 }

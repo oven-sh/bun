@@ -551,7 +551,7 @@ impl Route {
                     let static_route = StaticRoute::new(blob, headers, Some(server), 200);
 
                     let mut route_path: &[u8] = &output_files[i].dest_path;
-                    // The route path gets cloned inside of appendStaticRoute.
+                    // The route path gets cloned inside of append_bundled_file_route.
                     if bun_paths::without_leading_dot_slash(route_path) != route_path {
                         route_path = &route_path[1..];
                     }
@@ -561,21 +561,20 @@ impl Route {
                         continue;
                     }
 
-                    bun_core::handle_oom(server.append_static_route(
+                    server.append_bundled_file_route(
                         route_path,
                         AnyRoute::Static(RefPtr::new(static_route)),
                         MethodOptional::Any,
-                    ));
+                    );
                 }
 
                 let (mut html_route, html_route_path) =
                     this_html_route.expect("the loop above visited html_index");
                 let html_route_clone = html_route.clone(global_this);
-                bun_core::handle_oom(server.append_static_route(
+                server.append_own_name_route(
                     &html_route_path,
                     AnyRoute::Static(RefPtr::new(html_route)),
-                    MethodOptional::Any,
-                ));
+                );
                 self.state.set(State::Html(html_route_clone));
 
                 if !bun_core::handle_oom(server.reload_static_routes()) {

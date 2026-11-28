@@ -1114,6 +1114,112 @@ describe("Bun.file in serve routes", () => {
   });
 });
 
+// A Bun.file() stream opens its file on first use. When the open fails, the stream is left errored.
+// These cases pin what a handler sees after that, for each way it can react.
+describe("a handler that consumes a Bun.file() stream that fails to open", () => {
+  const missing = () => Bun.file(join(import.meta.dir, "does-not-exist.txt")).stream();
+  const notFound = () => new Response("not found", { status: 404 });
+
+  // Two requests: the second shows that the server is still up. error() answers 500.
+  async function ask(handler: () => Response | Promise<Response>) {
+    const errors: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch: handler,
+      error(error: NodeJS.ErrnoException) {
+        errors.push(String(error.code));
+        return new Response("error()", { status: 500 });
+      },
+    });
+    const statuses = [(await fetch(server.url)).status, (await fetch(server.url)).status];
+    return { statuses, errors };
+  }
+
+  // cancel() on the errored stream rejects with the open error, and that promise is already handled.
+  it("cancel() in the handler's catch: a dropped promise is ignored, an awaited one rejects", async () => {
+    const dropped = await ask(() => {
+      const stream = missing();
+      try {
+        return new Response(stream.pipeThrough(new TransformStream()));
+      } catch {
+        stream.cancel();
+        return notFound();
+      }
+    });
+    const awaited = await ask(async () => {
+      const stream = missing();
+      try {
+        return new Response(stream.pipeThrough(new TransformStream()));
+      } catch {
+        await stream.cancel();
+        return notFound();
+      }
+    });
+    expect({ dropped, awaited }).toEqual({
+      dropped: { statuses: [404, 404], errors: [] },
+      awaited: { statuses: [500, 500], errors: ["ENOENT", "ENOENT"] },
+    });
+  });
+
+  // A whole-body reader returns a promise. The open error is its rejection, so a try/catch around the call does not see it.
+  it.each(["bytes", "text"] as const)(
+    "stream.%s() rejects: .catch() answers, a try/catch around the call does not",
+    async method => {
+      const chained = await ask(() =>
+        missing()
+          [method]()
+          .then(body => new Response(body))
+          .catch(notFound),
+      );
+      const wrapped = await ask(() => {
+        try {
+          return missing()
+            [method]()
+            .then(body => new Response(body));
+        } catch {
+          return notFound();
+        }
+      });
+      expect({ chained, wrapped }).toEqual({
+        chained: { statuses: [404, 404], errors: [] },
+        wrapped: { statuses: [500, 500], errors: ["ENOENT", "ENOENT"] },
+      });
+    },
+  );
+
+  // pipeTo() aborts its destination with the open error. A fallback that writes to the same destination needs preventAbort.
+  async function pipeWithFallback(options?: StreamPipeOptions) {
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch() {
+        const { readable, writable } = new TransformStream();
+        missing()
+          .pipeTo(writable, options)
+          .catch(async () => {
+            const writer = writable.getWriter();
+            await writer.write(new TextEncoder().encode("fallback"));
+            await writer.close();
+          })
+          .catch(() => {});
+        return new Response(readable);
+      },
+    });
+    // Awaited here: the server must stay up until the response has ended.
+    return await fetch(server.url)
+      .then(response => response.text())
+      .catch(() => "no response");
+  }
+
+  it("pipeTo() into the writable side of the body aborts the response unless preventAbort", async () => {
+    expect({
+      default: await pipeWithFallback(),
+      preventAbort: await pipeWithFallback({ preventAbort: true }),
+    }).toEqual({ default: "no response", preventAbort: "fallback" });
+  });
+});
+
 // What If-Range is for: the client has part of a file, and the file changes on
 // disk before the client asks for the rest. A 206 here would splice the old
 // first half onto the new second half.

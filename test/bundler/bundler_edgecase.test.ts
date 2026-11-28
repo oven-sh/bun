@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readdirSync, writeFileSync } from "node:fs";
+import { cpSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/commands";
 import { type BundlerTestInput, decodeSourceMappingsLine, itBundled } from "./expectBundled";
@@ -3054,6 +3054,520 @@ describe("bundler", () => {
     entryPoints: ["/entry.js"],
     target: "bun",
     run: { stdout: "before\nEFFECT1\n2\nEFFECT2\n3" },
+  });
+  // ──────────────────────────────────────────────────────────────────────
+  // `import()` of an async module that is still running its first
+  // synchronous part. `init_a()` is `undefined` there, because a static
+  // import of `a` must not wait for it. An `import()` whose value is read
+  // settles when the wrapper of that module ends.
+  // ──────────────────────────────────────────────────────────────────────
+
+  // The minified case goes through the CLI, the others through `Bun.build`.
+  for (const minify of [false, true]) {
+    const options = minify
+      ? ({ minifyWhitespace: true, minifyIdentifiers: true, minifySyntax: true, backend: "cli" } as const)
+      : {};
+    // b runs inside the first synchronous part of a.
+    itBundled(`edgecase/DynamicImportOfEvaluatingAsyncParent${minify ? "Minified" : ""}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import "./a.js";
+          console.log("entry done");
+        `,
+        "/a.js": /* js */ `
+          import "./b.js";
+          console.log("a before await");
+          await 0;
+          console.log("a after await");
+          export const a = 1;
+        `,
+        "/b.js": /* js */ `
+          console.log("eval b");
+          import("./a.js").then(ns => console.log("dyn a ok", ns.a), e => console.log("dyn a ERR", e.message));
+          export const b = 2;
+        `,
+      },
+      format: "esm",
+      ...options,
+      run: {
+        stdout: `
+          eval b
+          a before await
+          a after await
+          entry done
+          dyn a ok 1
+        `,
+      },
+    });
+  }
+  // The module calls `import()` on itself.
+  itBundled("edgecase/ImportCallOfItselfFromAsyncModule", {
+    files: {
+      "/entry.js": /* js */ `
+        import("./entry.js").then(() => console.log("ok"), e => console.log("ERR", e.message));
+        await 0;
+        console.log("end");
+      `,
+    },
+    format: "esm",
+    target: "bun",
+    run: { stdout: "end\nok" },
+  });
+  // With `--splitting`, a CommonJS entry gives t.js a wrapper in its own
+  // chunk, and the `import()` of t.js inside that chunk is the same call.
+  itBundled("edgecase/ImportCallOfItselfFromAsyncModuleSplitting", {
+    files: {
+      "/entry.js": /* js */ `module.exports = import("./t.js");`,
+      "/t.js": /* js */ `
+        import("./t.js").then(ns => console.log("self ok", ns.t), e => console.log("self ERR", e.message));
+        console.log("t start");
+        await 0;
+        export const t = 1;
+        console.log("t end");
+      `,
+    },
+    format: "esm",
+    target: "bun",
+    splitting: true,
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "t start\nt end\nself ok 1" },
+  });
+  // a calls `import()` on p while p is still at its imports. The call settles when p ends.
+  itBundled("edgecase/ImportCallOfImporterFromAsyncDependency", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./p.js";
+        console.log("entry end");
+      `,
+      "/p.js": /* js */ `
+        import "./a.js";
+        export const pv = 1;
+        console.log("p body");
+        await 0;
+        console.log("p end");
+      `,
+      "/a.js": /* js */ `
+        import("./p.js").then(ns => console.log("a got p.pv =", ns.pv));
+        console.log("a body");
+        await 0;
+        console.log("a end");
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        a body
+        a end
+        p body
+        p end
+        entry end
+        a got p.pv = 1
+      `,
+    },
+  });
+  // a has no top-level await of its own. Its wrapper is async because tla.js has one.
+  itBundled("edgecase/ImportCallOfImporterThatIsAsyncThroughDependency", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./a.js";
+        console.log("entry end");
+      `,
+      "/a.js": /* js */ `
+        import "./b.js";
+        import "./tla.js";
+        export const a = ["a"].join();
+        console.log("a body");
+      `,
+      "/b.js": /* js */ `
+        import("./a.js").then(ns => console.log("b got", ns.a));
+        console.log("b body");
+      `,
+      "/tla.js": /* js */ `
+        console.log("tla start");
+        await 0;
+        console.log("tla end");
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        b body
+        tla start
+        tla end
+        a body
+        entry end
+        b got a
+      `,
+    },
+  });
+  // The `import()` is in a function of b, and a calls it. The namespace is
+  // read after a has ended: `late`.
+  itBundled("edgecase/ImportCallInFunctionCalledByRunningAsyncModule", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./a.js";
+        console.log("entry end");
+      `,
+      "/a.js": /* js */ `
+        import { load } from "./b.js";
+        export let value = "early";
+        load().then(ns => console.log("loaded, value =", ns.value));
+        await 0;
+        await 0;
+        await 0;
+        value = "late";
+        console.log("a end");
+      `,
+      "/b.js": /* js */ `export const load = () => import("./a.js");`,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        a end
+        entry end
+        loaded, value = late
+      `,
+    },
+  });
+  // t.js reaches the `import()` through a callback. t.js imports nothing, so
+  // no import path leads from t.js to hooks.js, and hooks.js has no wrapper.
+  itBundled("edgecase/ImportCallInCallbackCalledByRunningAsyncModule", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./hooks.js";
+        import "./t.js";
+        console.log("entry end");
+      `,
+      "/hooks.js": /* js */ `
+        globalThis.onBoot = () =>
+          import("./t.js").then(ns => console.log("hook got", ns.t), e => console.log("hook ERR", e.message));
+      `,
+      "/t.js": /* js */ `
+        console.log("t start");
+        globalThis.onBoot();
+        await 0;
+        export const t = 1;
+        console.log("t end");
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        t start
+        t end
+        entry end
+        hook got 1
+      `,
+    },
+  });
+  // Two calls in one synchronous run give the same namespace object.
+  itBundled("edgecase/TwoImportCallsOfRunningAsyncModuleGiveOneNamespace", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./a.js";
+        console.log("entry end");
+      `,
+      "/a.js": /* js */ `
+        import { both } from "./b.js";
+        export const a = 1;
+        both();
+        await 0;
+        console.log("a end");
+      `,
+      "/b.js": /* js */ `
+        export function both() {
+          const first = import("./a.js");
+          const second = import("./a.js");
+          Promise.all([first, second]).then(([x, y]) => console.log("same namespace:", x === y, x.a));
+        }
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        a end
+        entry end
+        same namespace: true 1
+      `,
+    },
+  });
+  // a fails after its await. The `import()` that b made rejects with that error.
+  itBundled("edgecase/ImportCallOfRunningAsyncModuleRejectsWithItsError", {
+    files: {
+      "/entry.js": /* js */ `import("./a.js").catch(() => {});`,
+      "/a.js": /* js */ `
+        import "./b.js";
+        await 0;
+        throw new Error("a failed");
+      `,
+      "/b.js": /* js */ `
+        import("./a.js").then(
+          () => console.log("b: a loaded"),
+          error => console.log("b caught:", error.message),
+        );
+      `,
+    },
+    format: "esm",
+    run: { stdout: "b caught: a failed" },
+  });
+  // An `import()` statement whose value nothing reads stays `init_a();`.
+  itBundled("edgecase/UnusedImportCallOfAsyncModuleKeepsBareCall", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./a.js";
+        console.log("entry end");
+      `,
+      "/a.js": /* js */ `
+        import "./b.js";
+        await 0;
+        export const a = 1;
+        console.log("a end");
+      `,
+      "/b.js": /* js */ `
+        import("./a.js");
+        import("./a.js").then(ns => console.log("b got", ns.a));
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        a end
+        entry end
+        b got 1
+      `,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("\n  init_a();\n  (init_a() || Promise.resolve().then(init_a)).then(");
+    },
+  });
+  // a waits for b, and b awaits the `import()` of a. The source does not
+  // settle on node (exit 13) or on bun, and the bundle does the same.
+  itBundled("edgecase/AwaitedImportCallOfWaitingImporterStaysUnsettled", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./a.js";
+        console.log("entry end");
+      `,
+      "/a.js": /* js */ `
+        import "./b.js";
+        console.log("a body");
+      `,
+      "/b.js": /* js */ `
+        console.log("b start");
+        await import("./a.js");
+        console.log("b end");
+      `,
+    },
+    format: "esm",
+    target: "node",
+    run: { runtime: "node", exitCode: 13, stdout: "b start" },
+  });
+  // A known difference from node and from `bun` on the source. The bundle
+  // starts page.js inside the `import()` call of app.js, before
+  // `globalThis.app` is set, so page.js awaits the `import()` of app.js while
+  // app.js awaits page.js. node and `bun` start page.js after the synchronous
+  // code of app.js, and the source completes. The `try` does not end the
+  // wait: that `import()` does not throw.
+  itBundled("edgecase/AwaitedImportCallOfCallerFromModuleStartedInsideImportCallStaysUnsettled", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./app.js";
+        console.log("entry end");
+      `,
+      "/app.js": /* js */ `
+        console.log("app start");
+        const page = import("./page.js");
+        globalThis.app = { ready: true };
+        const { render } = await page;
+        render();
+        console.log("app end");
+      `,
+      "/page.js": /* js */ `
+        console.log("page start, app:", typeof globalThis.app);
+        if (!globalThis.app) {
+          try {
+            await import("./app.js");
+            console.log("page: app loaded");
+          } catch (error) {
+            console.log("page: caught", error.constructor.name);
+          }
+        }
+        export const render = () => console.log("render, app ready:", globalThis.app?.ready);
+        console.log("page end");
+      `,
+    },
+    format: "esm",
+    target: "node",
+    run: { runtime: "node", exitCode: 13, stdout: "app start\npage start, app: undefined" },
+  });
+
+  // A known difference from node. q and r import each other, and the entry
+  // imports r. s calls `import()` on q while q runs. The promise settles when
+  // the wrapper of q ends, before r has set `rv`. node waits for r, the module
+  // of the import cycle that started first, and prints `r-ready`. The bundle
+  // does the same when the `import()` comes after the first synchronous part of q.
+  itBundled("edgecase/ImportCallOfRunningImportCycleMemberSettlesBeforeTheCycleEnds", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./r.js";
+        console.log("entry end");
+      `,
+      "/q.js": /* js */ `
+        import "./s.js";
+        import { rv } from "./r.js";
+        export const q = () => rv;
+        console.log("q body");
+      `,
+      "/r.js": /* js */ `
+        import { q } from "./q.js";
+        console.log("r start");
+        for (let i = 0; i < 8; i++) await 0;
+        export const rv = ["r", "ready"].join("-");
+        console.log("r end");
+      `,
+      "/s.js": /* js */ `
+        import("./q.js").then(ns => console.log("s got q() =", ns.q()), e => console.log("s ERR", e.message));
+        console.log("s body");
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        s body
+        q body
+        r start
+        s got q() = undefined
+        r end
+        entry end
+      `,
+    },
+  });
+  // The next cases pass without the retry. They hold what it must not move:
+  // the module still starts inside the `import()` call, and a call that finds
+  // the module not running adds no job.
+  // a awaits the `import()` of x, and x imports a back. x starts inside the
+  // call, while a is still in its first synchronous part, so x does not wait
+  // for a. node leaves the source unsettled.
+  itBundled("edgecase/AwaitedImportCallOfModuleThatImportsCallerSettles", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./a.js";
+        console.log("entry end");
+      `,
+      "/a.js": /* js */ `
+        export const v = 42;
+        const p = import("./x.js");
+        globalThis.after = true;
+        const m = await p;
+        console.log("a got", m.get());
+      `,
+      "/x.js": /* js */ `
+        import { v } from "./a.js";
+        console.log("x sees after:", globalThis.after);
+        export const get = () => v + 1;
+      `,
+    },
+    format: "esm",
+    run: { stdout: "x sees after: true\na got 43\nentry end" },
+  });
+  // plugin.js waits for registry.js with a static import. It continues when
+  // registry.js ends, before the entry that awaits the `import()` of registry.js.
+  itBundled("edgecase/ImporterOfAsyncModuleContinuesBeforeImportCallback", {
+    files: {
+      "/entry.js": /* js */ `
+        const registry = import("./registry.js");
+        import("./plugin.js");
+        const { plugins } = await registry;
+        console.log("plugins:", JSON.stringify(plugins));
+      `,
+      "/plugin.js": /* js */ `
+        import { plugins } from "./registry.js";
+        import { tag } from "./util.js";
+        plugins.push(tag("p1"));
+      `,
+      "/registry.js": /* js */ `
+        export const plugins = [];
+        await 0;
+      `,
+      "/util.js": /* js */ `
+        const seen = new Map(Object.entries({}));
+        export const tag = name => (seen.set(name, true), "plugin:" + name);
+      `,
+    },
+    format: "esm",
+    run: { stdout: `plugins: ["plugin:p1"]` },
+  });
+  // The entry calls `import()` on a and sets a global behind the call. a has a
+  // top-level await, and a and b import each other. b reads the global.
+  itBundled("edgecase/ImportCallOfImportCycleReadsGlobalSetAfterTheCall", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log("entry-start");
+        import("./a.js").then(() => console.log("loaded"));
+        globalThis.cfg = "set";
+        console.log("entry-end");
+      `,
+      "/a.js": /* js */ `
+        import "./b.js";
+        console.log("a");
+        await 0;
+      `,
+      "/b.js": /* js */ `
+        import "./a.js";
+        console.log("b-sees-cfg=" + globalThis.cfg);
+      `,
+    },
+    format: "esm",
+    run: { stdout: "entry-start\nentry-end\nb-sees-cfg=set\na\nloaded" },
+  });
+  // test/aot/parallel/modules/import-while-evaluating is a program about
+  // `import()` of a module that runs or waits: a module imports itself, its
+  // parent and its grandparent, with the top-level await in each place and
+  // with an ancestor that throws. The bundle prints what `bun` prints on the
+  // source. The last scenario of that program is not here: a module that is
+  // past its first await awaits the `import()` of modules that import it, and
+  // that bundle does not settle.
+  test.concurrent("edgecase/ImportWhileEvaluatingProgramRunsLikeItsSource", async () => {
+    const scenarios = [
+      "no-await",
+      "child-awaits",
+      "child-awaits-first",
+      "parent-awaits",
+      "grandparent-awaits",
+      "parent-throws",
+      "parent-throws-after-await",
+      "grandparent-throws",
+    ];
+    using dir = tempDir("import-while-evaluating", {});
+    const root = String(dir);
+    cpSync(join(import.meta.dir, "../aot/parallel/modules/import-while-evaluating"), root, { recursive: true });
+    writeFileSync(
+      join(root, "entry.mjs"),
+      [
+        `import { scenario } from "./events.mjs";`,
+        ...scenarios.map(name => `await scenario("${name}", () => import("./${name}/grandparent.mjs"));`),
+      ].join("\n"),
+    );
+    const run = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        cwd: root,
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
+    const source = await run("entry.mjs");
+    expect(source.stdout).toContain("grandparent-throws: rejected, thrown by the grandparent");
+    expect(source.stdout.match(/^\S.*$/gm)).toHaveLength(scenarios.length);
+
+    const build = await run("build", "entry.mjs", "--outfile=out.mjs", "--target=bun");
+    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+    expect(await run("out.mjs")).toEqual(source);
   });
   // https://github.com/oven-sh/bun/issues/30269
   // Same bug for a nested `let` binding instead of a function parameter.

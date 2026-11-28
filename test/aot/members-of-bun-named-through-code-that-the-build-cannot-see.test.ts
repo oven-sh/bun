@@ -1,26 +1,36 @@
 // A read of Bun under a key that nobody knows may be a read under any name: every member may be used, however the read is written. So it is where the program hands Bun to code
 // that the build cannot see. A text that is handed nothing may name any member itself: that is a name known only at run time, and for --trim it does not count.
+// Each read is a program of its own: the report says once for a program that Bun escapes, so beside another read one that no longer lets Bun go would be hidden.
+// Such a program is open, and its build compiles all of Bun's library, which is what a case costs. The library stays in: without it a build counts fewer members for the reads
+// through import() and require().
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
+/** The members of Bun that the report counts as used by a program, and how the check ended. */
 async function membersUsed(program: string) {
   using dir = tempDir("aot-members-of-bun-named-through-unseen-code", { "program.mjs": program });
-  const { stderr } = await run(
+  const { stdout, stderr, exitCode } = await run(
     [bunExe(), "check", "--aot", "--no-pretty", "--explain=trim", "program.mjs"],
     String(dir),
     { ...bunEnv, NO_COLOR: "1" },
   );
   const prefix = "aot: trim: uses Bun ";
-  return stderr
+  const used = stderr
     .split("\n")
     .filter(line => line.startsWith(prefix))
     .map(line => line.slice(prefix.length));
+  // A check that fails makes no report: all that it says on stderr is why it failed.
+  return { used, stdout, exitCode, ...(exitCode !== 0 && { stderr }) };
 }
+
+// An error or a warning of the build would stand on stdout.
+const cleanly = { stdout: "", exitCode: 0 };
 
 const launder = `const launder = Function("value", process.argv[9] ?? "return value");\n`;
 const everyMember = "(escapes, so any member may be used)";
+const members = Object.getOwnPropertyNames(Bun);
 
 const reads: [string, string, string][] = [
   ["Reflect.get", "", `Reflect.get(Bun, process.argv[2])`],
@@ -55,25 +65,26 @@ const reads: [string, string, string][] = [
 ];
 
 test.concurrent.each(reads)("read by %s", async (_, first, read) => {
-  const used = await membersUsed(`${first}console.log(typeof (${read}));\n`);
+  const { used, ...ended } = await membersUsed(`${first}console.log(typeof (${read}));\n`);
+  expect(ended).toEqual(cleanly);
   expect(used).toContain(everyMember);
-  // What native code makes, and what code of Bun makes.
-  expect(used).toEqual(expect.arrayContaining(["deepMatch", "$", "sql"]));
+  // Every member counts as used: what native code makes, and what code of Bun makes.
+  expect(members.filter(name => !used.includes(name))).toEqual([]);
 });
 
 test.concurrent.each([
   ["written in place", `Bun["deepMatch"]`],
   ["in a constant", `(() => {\n  const key = "deepMatch";\n  return Bun[key];\n})()`],
 ])("a key that the build can read, %s, names one member", async (_, read) => {
-  const used = await membersUsed(`console.log(typeof (${read}));\n`);
-  expect(used).toContain("deepMatch");
-  expect(used).not.toContain(everyMember);
-  expect(used).not.toContain("deepEquals");
+  expect(await membersUsed(`console.log(typeof (${read}));\n`)).toEqual({ used: ["deepMatch"], ...cleanly });
 });
 
 test.concurrent("a text from run time may name any member itself, and no such name counts as a use", async () => {
-  const used = await membersUsed(`${launder}console.log(launder(1), typeof Bun.version);\n`);
+  const { used, ...ended } = await membersUsed(`${launder}console.log(launder(1), typeof Bun.version);\n`);
+  expect(ended).toEqual(cleanly);
   expect(used).toContain("version");
   expect(used).not.toContain("deepMatch");
   expect(used).not.toContain("sql");
+  // The text opens the program, and an open program holds Bun's library, whose own code names a few members.
+  expect(used.length).toBeLessThan(members.length / 4);
 });

@@ -204,7 +204,9 @@ pub(crate) struct OsJob {
 bun_spawn::link_impl_ProcessExit! {
     Cron for OsJob => |this| {
         // SAFETY: a live job installed the handler, and its handle detaches it.
-        on_process_exit(status, _rusage) => RefPtr::init_ref(this).on_process_exit(status),
+        on_process_exit(status, _rusage) => removable_body_behind_value!(Cron, {
+            RefPtr::init_ref(this).on_process_exit(status)
+        }),
     }
 }
 

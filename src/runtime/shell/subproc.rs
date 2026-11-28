@@ -637,7 +637,13 @@ impl ShellSubprocess {
 
     /// # Safety
     /// `this` must be live and unborrowed; the Yield run here may free it.
+    #[inline(never)]
     unsafe fn on_process_exit(this: *mut Self, status: &Status) {
+        // `bun run`, `bun exec`, `bun create` and the package manager run their scripts in this shell too.
+        bun_removable_features::removable_definition!(Shell, Self::on_process_exit);
+        bun_removable_features::removable_definition!(Tools, Self::on_process_exit);
+        bun_removable_features::removable_definition!(Install, Self::on_process_exit);
+        bun_removable_features::removable_definition!(Create, Self::on_process_exit);
         log!("onProcessExit({:x})", this as usize);
         // SAFETY: caller contract; the borrow ends at the `;`.
         let interrupted = unsafe { (*this).ctrl_c_child.take() }.is_some()

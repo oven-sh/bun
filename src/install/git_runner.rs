@@ -1494,7 +1494,8 @@ impl GitSubprocess {
 bun_spawn::link_impl_ProcessExit! {
     InstallGit for GitSubprocess => |this| {
         // SAFETY: `this` is the live runner installed via `set_exit_owner`.
-        on_process_exit(status, rusage) =>
-            RefPtr::init_ref(this).on_process_exit(status, rusage),
+        on_process_exit(status, rusage) => bun_removable_features::removable_body_behind_value!(Install, {
+            RefPtr::init_ref(this).on_process_exit(status, rusage)
+        }),
     }
 }

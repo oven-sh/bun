@@ -273,12 +273,12 @@ impl<'a> ProcessHandle<'a> {
 bun_spawn::link_impl_ProcessExit! {
     FilterRunHandle for ProcessHandle<'static> => |this| {
         // The Process is never freed; the program exits when all scripts finish.
-        on_process_exit(status, _rusage) => {
+        on_process_exit(status, _rusage) => bun_removable_features::removable_body_behind_value!(Tools, {
             let info = (*this).process.as_mut().unwrap();
             info.status = status;
             info.end_time = Some(Instant::now());
             (*this).output.shared.has_exits.set(true);
-        },
+        }),
     }
 }
 

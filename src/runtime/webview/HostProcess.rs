@@ -112,7 +112,9 @@ bun_spawn::link_impl_ProcessExit! {
         // Child died (EVFILT_PROC). Socket onClose may or may not have fired
         // already (clean FIN vs SIGKILL/SIGSEGV). Tell C++ to reject any
         // pending promises and mark the host dead.
-        on_process_exit(status, _rusage) => HostProcess::on_exit(this, &status),
+        on_process_exit(status, _rusage) => bun_removable_features::removable_body_behind_value!(WebView, {
+            HostProcess::on_exit(this, &status)
+        }),
     }
 }
 

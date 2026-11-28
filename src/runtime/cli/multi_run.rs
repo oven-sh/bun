@@ -286,7 +286,7 @@ impl<'a> ProcessHandle<'a> {
 
 bun_spawn::link_impl_ProcessExit! {
     MultiRunHandle for ProcessHandle<'static> => |this| {
-        on_process_exit(status, _rusage) => {
+        on_process_exit(status, _rusage) => bun_removable_features::removable_body_behind_value!(Tools, {
             let (shared, slot) = ((*this).shared, (*this).process.as_mut().unwrap());
             if !status.is_ok() {
                 shared.has_failure.set(true);
@@ -294,7 +294,7 @@ bun_spawn::link_impl_ProcessExit! {
             shared.has_exits.set(true);
             slot.status = status;
             slot.end_time = Some(Instant::now());
-        },
+        }),
     }
 }
 

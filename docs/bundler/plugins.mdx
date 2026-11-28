@@ -257,13 +257,13 @@ import { plugin } from "bun";
 plugin({
   name: "track imports",
   setup(build) {
-    const transpiler = new Bun.Transpiler();
+    const transpiler = new Bun.Transpiler({ loader: "ts" });
 
     let trackedImports: Record<string, number> = {};
 
     // Each module that goes through this onLoad callback
     // will record its imports in `trackedImports`
-    build.onLoad({ filter: /\.ts/ }, async ({ path }) => {
+    build.onLoad({ filter: /\.ts$/ }, async ({ path }) => {
       const contents = await Bun.file(path).arrayBuffer();
 
       const imports = transpiler.scanImports(contents);
@@ -275,7 +275,7 @@ plugin({
       return undefined;
     });
 
-    build.onLoad({ filter: /stats\.json/ }, async ({ defer }) => {
+    build.onLoad({ filter: /[\\/]stats\.json$/ }, async ({ defer }) => {
       // Wait for all files to be loaded, ensuring
       // that every file goes through the above `onLoad()` function
       // and their imports tracked

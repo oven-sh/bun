@@ -144,6 +144,8 @@ struct Migrator<'a> {
     manager: &'a mut PackageManager,
     entries: &'a [E::PropertyJSON],
     workspace_map: Option<&'a WorkspaceMap>,
+    /// The root's name in package.json, empty when it has none. `None`: use `packages[""].name`.
+    root_name: Option<&'a [u8]>,
     index: StringHashMap<u32>,
     link_entries: DynamicBitSet,
     shadowed: DynamicBitSet,
@@ -191,6 +193,7 @@ pub(super) fn migrate_packages(
     source: &bun_ast::Source,
     packages_properties: &[E::PropertyJSON],
     workspace_map: Option<&WorkspaceMap>,
+    root_name: Option<&[u8]>,
     lockfile_name: &'static str,
 ) -> Result<(), Error> {
     debug_assert!(!packages_properties.is_empty() && packages_properties[0].key.slice().is_empty());
@@ -209,6 +212,7 @@ pub(super) fn migrate_packages(
         manager,
         entries: packages_properties,
         workspace_map,
+        root_name,
         index,
         link_entries: DynamicBitSet::init_empty(entry_count)?,
         shadowed: DynamicBitSet::init_empty(entry_count)?,
@@ -367,6 +371,8 @@ impl<'a> Migrator<'a> {
 
         let name: &[u8] = if let Some(ws) = workspace_entry {
             &ws.name
+        } else if let Some(root_name) = self.root_name.filter(|_| j == 0) {
+            root_name
         } else if let Some(set_name) = pkg.get(b"name").and_then(|n| n.as_str()) {
             set_name
         } else if let Some(folder) = folder_in_dependent {
@@ -374,7 +380,12 @@ impl<'a> Migrator<'a> {
         } else {
             package_name_from_path(key)
         };
-        let name_hash = string_hash(name);
+        // A nameless root has hash 0, as `Package::parse` leaves it.
+        let name_hash = if j == 0 && name.is_empty() {
+            0
+        } else {
+            string_hash(name)
+        };
         let name_string = self.this.string_buf().append_with_hash(name, name_hash)?;
 
         if !self.silent

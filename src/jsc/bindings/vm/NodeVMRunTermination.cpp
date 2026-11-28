@@ -25,8 +25,10 @@ NodeVMRunTermination::NodeVMRunTermination(JSGlobalObject* realm, std::optional<
         SigintWatcher::get().registerReceiver(this);
         m_listeningForSigint = true;
     }
-    if (m_timeout)
-        m_deadline = m_vm.addTerminationDeadline(MonotonicTime::now() + *m_timeout);
+    if (m_timeout) {
+        m_deadlineTime = MonotonicTime::now() + *m_timeout;
+        m_deadline = m_vm.addTerminationDeadline(m_deadlineTime);
+    }
 }
 
 NodeVMRunTermination::~NodeVMRunTermination()
@@ -48,6 +50,7 @@ void NodeVMRunTermination::disarm()
 void NodeVMRunTermination::finish(ThrowScope& scope)
 {
     ASSERT(!std::exchange(m_finished, true));
+    checkTimeout(m_vm);
     // The caller has observed whatever the run left on `scope` (this satisfies the exception-check validator
     // for it); what happens to it is decided below.
     std::ignore = scope.exception();
@@ -82,6 +85,30 @@ void NodeVMRunTermination::finish(ThrowScope& scope)
     // That error is then just what the enclosing script sees while it unwinds.
     if (enclosingRunCutShort())
         vm.notifyNeedTermination();
+}
+
+void NodeVMRunTermination::checkTimeout(VM& vm)
+{
+    bool expired = false;
+    for (auto* run = s_innermostRunOnThisThread; run; run = run->m_enclosing) {
+        if (&run->m_vm != &vm || !run->m_deadline)
+            continue;
+        // Timer delivery may lag behind native execution. Do not cancel an elapsed deadline as unfired.
+        if (run->timedOut() || MonotonicTime::now() >= run->m_deadlineTime) {
+            run->m_deadlineElapsed = true;
+            expired = true;
+        }
+    }
+    if (expired)
+        vm.notifyNeedTermination();
+}
+
+// Advance only this run's deadline. The normal timer and every other VM trap stay armed.
+void NodeVMRunTermination::expireCurrentDeadlineForTesting(VM& vm)
+{
+    auto* run = s_innermostRunOnThisThread;
+    if (run && &run->m_vm == &vm && run->m_deadline)
+        run->m_deadlineTime = MonotonicTime::now();
 }
 
 const NodeVMRunTermination* NodeVMRunTermination::enclosingRunCutShort() const

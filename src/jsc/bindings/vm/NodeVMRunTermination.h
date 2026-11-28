@@ -33,6 +33,10 @@ public:
     // caller's to propagate. Either way the caller follows with RETURN_IF_EXCEPTION.
     void finish(JSC::ThrowScope&);
 
+    // Native calls must poll before giving up resources needed to unwind a timed-out run.
+    static void checkTimeout(JSC::VM&);
+    static void expireCurrentDeadlineForTesting(JSC::VM&);
+
     // After finish(): the run was unwound by the termination of a run it is nested in (that run's deadline
     // fired or its SIGINT arrived while this one was on the stack). The termination is that run's and stays
     // pending; a caller that keeps state past the unwind (a module mid-evaluation) records this error for it.
@@ -44,7 +48,7 @@ public:
 
 private:
     void disarm(); // stop listening: nothing of this run's can fire once it returns
-    bool timedOut() const { return m_deadline && m_deadline->didFire(); }
+    bool timedOut() const { return m_deadlineElapsed || (m_deadline && m_deadline->didFire()); }
     bool wasCutShort() const { return timedOut() || m_sigintReceived; }
     const NodeVMRunTermination* enclosingRunCutShort() const;
 
@@ -53,6 +57,8 @@ private:
     const std::optional<Seconds> m_timeout;
     std::atomic<bool> m_sigintReceived { false }; // read on this thread only once disarm()ed
     RefPtr<JSC::TerminationDeadline> m_deadline;
+    MonotonicTime m_deadlineTime { MonotonicTime::infinity() };
+    bool m_deadlineElapsed { false };
     bool m_listeningForSigint { false };
     // The run this one is nested in, if any: runs nest on the stack, so the innermost is tracked per thread.
     NodeVMRunTermination* const m_enclosing;

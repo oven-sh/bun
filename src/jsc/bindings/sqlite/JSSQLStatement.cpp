@@ -13,6 +13,7 @@
 #include "JavaScriptCore/JSType.h"
 
 #include "JSSQLStatement.h"
+#include "../vm/NodeVMRunTermination.h"
 #include "ScriptExecutionContext.h"
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/MathCommon.h>
@@ -2127,6 +2128,7 @@ static NEVER_INLINE void throwStepError(JSC::JSGlobalObject* lexicalGlobalObject
 static ALWAYS_INLINE int step(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, sqlite3_stmt* stmt)
 {
     int status = sqlite3_step(stmt);
+    Bun::NodeVMRunTermination::checkTimeout(JSC::getVM(lexicalGlobalObject));
     if (status != SQLITE_ROW && status != SQLITE_DONE) [[unlikely]]
         throwStepError(lexicalGlobalObject, scope, stmt);
     return status;

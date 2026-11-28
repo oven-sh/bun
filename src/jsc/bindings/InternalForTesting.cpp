@@ -10,6 +10,7 @@
 #include "webcore/JSWebSocket.h"
 #include "webcore/WebSocket.h"
 #include "node/JSNodeHTTPServerSocket.h"
+#include "vm/NodeVMRunTermination.h"
 #include <wtf/StackTrace.h>
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/MakeString.h>
@@ -42,6 +43,12 @@ extern "C" void BunString__makeThreadShareable(BunString* str);
 namespace Bun {
 
 using namespace JSC;
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_expireCurrentVMDeadline, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    NodeVMRunTermination::expireCurrentDeadlineForTesting(globalObject->vm());
+    return JSValue::encode(jsUndefined());
+}
 
 // Exercises WebCore::lowercaseHeaderName — the Highway-SIMD-backed header-name
 // lowercasing used by the Headers iterator — directly from JS so a test can

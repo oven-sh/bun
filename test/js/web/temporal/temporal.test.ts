@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { hasVersion as hasBunIcu } from "../intl/intl-golden/observe";
 
 // https://github.com/oven-sh/bun/issues/15853
 // The default-on/opt-out subprocess tests live in
@@ -85,4 +86,55 @@ describe("Temporal core operations", () => {
     expect(() => structuredClone(Temporal.PlainDate.from("2024-06-15"))).toThrow(DOMException);
     expect(() => structuredClone(Temporal.Instant.from("2024-06-15T00:00Z"))).toThrow(DOMException);
   });
+});
+
+// https://github.com/oven-sh/bun/issues/49579
+// Each amount is 2^32 days, to the nearest month. A day count that is truncated to 32 bits gives a date
+// in 2023. ICU4C truncates it, so a Bun that has the system's ICU does too (macOS, and Linux with a local
+// WebKit). oven-sh/WebKit#598 takes these calendars off `ucal_add`.
+describe.each(["islamic-civil", "islamic-tbla", "islamic-umalqura"])("a far date of the %s calendar", calendar => {
+  const date = Temporal.PlainDate.from({ year: 1445, month: 1, day: 1, calendar });
+  const dateTime = date.toPlainDateTime();
+  const yearMonth = Temporal.PlainYearMonth.from({ year: 1445, month: 1, calendar });
+  const zoned = dateTime.toZonedDateTime("UTC");
+
+  describe.each([{ years: -12120122 }, { months: 145441464 }])("%j", duration => {
+    const negated = Temporal.Duration.from(duration).negated();
+
+    test.todoIf(!hasBunIcu).each([
+      ["PlainDate", date],
+      ["PlainDateTime", dateTime],
+      ["PlainYearMonth", yearMonth],
+      ["ZonedDateTime", zoned],
+    ])("%s add and subtract throw", (_, start) => {
+      expect(() => start.add(duration)).toThrow(RangeError);
+      expect(() => start.add(duration, { overflow: "reject" })).toThrow(RangeError);
+      expect(() => start.subtract(negated)).toThrow(RangeError);
+      expect(() => start.subtract(negated, { overflow: "reject" })).toThrow(RangeError);
+    });
+
+    test.todoIf(!hasBunIcu)("Duration with relativeTo throws", () => {
+      const far = Temporal.Duration.from(duration);
+      expect(() => far.total({ unit: "days", relativeTo: date })).toThrow(RangeError);
+      expect(() => far.round({ largestUnit: "years", relativeTo: zoned })).toThrow(RangeError);
+      expect(() => Temporal.Duration.compare(far, { days: 1 }, { relativeTo: date })).toThrow(RangeError);
+    });
+  });
+
+  test.todoIf(!hasBunIcu)("until and since with a far rounding increment throw", () => {
+    const years = { smallestUnit: "years", roundingIncrement: 12120122, roundingMode: "expand" } as const;
+    const months = { smallestUnit: "months", roundingIncrement: 145441464, roundingMode: "expand" } as const;
+    expect(() => date.until(date.subtract({ years: 1 }), years)).toThrow(RangeError);
+    expect(() => date.since(date.subtract({ years: 1 }), years)).toThrow(RangeError);
+    expect(() => date.until(date.add({ months: 1 }), months)).toThrow(RangeError);
+    expect(() => date.add({ months: 1 }).since(date, months)).toThrow(RangeError);
+    expect(() => dateTime.until(dateTime.add({ months: 1 }), months)).toThrow(RangeError);
+  });
+});
+
+test("dates of the islamic-civil calendar near the limits stay", () => {
+  const date = Temporal.PlainDate.from({ year: 1445, month: 1, day: 1, calendar: "islamic-civil" });
+  expect(date.add({ years: -280000 }).toString()).toBe("-269639-02-11[u-ca=islamic-civil]");
+  expect(date.add({ years: 280000 }).toString()).toBe("+273685-12-24[u-ca=islamic-civil]");
+  expect(date.add({ months: -3360000 }).toString()).toBe("-269639-02-11[u-ca=islamic-civil]");
 });

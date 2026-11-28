@@ -17,6 +17,7 @@ type Handle = *mut c_void;
 type Status = i32;
 type Result<T> = std::result::Result<T, Status>;
 
+const ILLEGAL_ARGUMENT: Status = 1;
 const MISSING_RESOURCE: Status = 2;
 const MEMORY_ALLOCATION: Status = 7;
 const UNSUPPORTED: Status = 16;
@@ -36,10 +37,13 @@ declare! {
     u_strToUpper(*mut u16, i32, *const u16, i32, *const c_char, *mut Status) -> i32;
     ubrk_open(i32, *const c_char, *const u16, i32, *mut Status) -> Handle;
     ucal_add(Handle, i32, i32, *mut Status);
+    ucal_clear(Handle);
     ucal_clone(Handle, *mut Status) -> Handle;
     ucal_close(Handle);
     ucal_get(Handle, i32, *mut Status) -> i32;
+    ucal_getMillis(Handle, *mut Status) -> f64;
     ucal_open(*const u16, i32, *const c_char, i32, *mut Status) -> Handle;
+    ucal_set(Handle, i32, i32);
     ucal_setMillis(Handle, f64, *mut Status);
     ucfpos_close(Handle);
     ucfpos_constrainField(Handle, i32, i32, *mut Status);
@@ -584,6 +588,85 @@ fn calendars() -> Result<()> {
         drop(calendar);
         let fields = [MONTH, DATE, HOUR_OF_DAY].map(|field| get(&copy, field));
         assert_eq!(fields, [Ok(12), Ok(5), Ok(5)]);
+    }
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "reads the clock, which isolation forbids")]
+fn a_day_that_32_bits_do_not_hold_is_refused() -> Result<()> {
+    const MONTH: i32 = 2;
+    const DATE: i32 = 5;
+    const EXTENDED_YEAR: i32 = 19;
+    const DAY: f64 = 86_400_000.0;
+    // 19 July 2023, which is the first day of the Islamic year 1445.
+    const START: f64 = 19_557.0 * DAY;
+    set_up();
+    let (zone, length) = utf16("UTC");
+    // SAFETY: as above.
+    unsafe {
+        let open_calendar = |locale: &CStr| {
+            open(ucal_close, |status| {
+                ucal_open(zone.as_ptr(), length, locale.as_ptr(), 0, status)
+            })
+        };
+        let millis = |calendar: &Open| call(|status| ucal_getMillis(calendar.0, status));
+
+        for locale in [
+            c"en@calendar=islamic-civil",
+            c"en@calendar=islamic-tbla",
+            c"en@calendar=islamic-umalqura",
+        ] {
+            let calendar = open_calendar(locale)?;
+            // Each amount is 2^32 days, to the nearest month.
+            for (field, amount) in [(EXTENDED_YEAR, -12_120_122), (MONTH, 145_441_464)] {
+                call(|status| ucal_setMillis(calendar.0, START, status))?;
+                let added = call(|status| ucal_add(calendar.0, field, amount, status));
+                assert_eq!(added, Err(ILLEGAL_ARGUMENT), "{locale:?} {field}");
+                assert_eq!(millis(&calendar), Err(ILLEGAL_ARGUMENT));
+                ucal_clear(calendar.0);
+            }
+            call(|status| ucal_setMillis(calendar.0, START, status))?;
+            call(|status| ucal_add(calendar.0, EXTENDED_YEAR, -280_000, status))?;
+            let year = call(|status| ucal_get(calendar.0, EXTENDED_YEAR, status));
+            assert_eq!(year, Ok(1445 - 280_000));
+        }
+
+        for locale in [
+            c"en@calendar=coptic",
+            c"en@calendar=indian",
+            c"en@calendar=persian",
+            c"en@calendar=gregorian",
+            c"en@calendar=buddhist",
+            c"en@calendar=roc",
+            c"en@calendar=iso8601",
+        ] {
+            let calendar = open_calendar(locale)?;
+            call(|status| ucal_setMillis(calendar.0, START, status))?;
+            ucal_set(calendar.0, EXTENDED_YEAR, -12_000_000);
+            let read = [millis(&calendar), millis(&calendar)];
+            assert_eq!(read, [Err(ILLEGAL_ARGUMENT); 2], "{locale:?}");
+        }
+
+        let calendar = open_calendar(c"en@calendar=gregorian")?;
+        let millis_of = |year, month, date| {
+            call(|status| ucal_setMillis(calendar.0, START, status))?;
+            for (field, value) in [(EXTENDED_YEAR, year), (MONTH, month), (DATE, date)] {
+                ucal_set(calendar.0, field, value);
+            }
+            millis(&calendar)
+        };
+        // The Julian day of 1 January 2023 is 2459946, and that of the year -5884202 is -2147483722.
+        let last = i32::MAX - 2_459_945;
+        assert_eq!(millis_of(2023, 0, last), Ok(2_145_043_059.0 * DAY));
+        assert_eq!(millis_of(2023, 0, last + 1), Err(ILLEGAL_ARGUMENT));
+        assert_eq!(millis_of(-5_877_000, 0, 1), Ok(-2_147_293_780.0 * DAY));
+        assert_eq!(millis_of(-5_884_202, 0, 1), Err(ILLEGAL_ARGUMENT));
+        // The day after 4 October 1582, which follows the Julian rules, is 15 October.
+        assert_eq!(millis_of(1582, 9, 4), Ok(-141_428.0 * DAY));
+        assert_eq!(millis_of(1582, 9, 15), Ok(-141_427.0 * DAY));
+        assert_eq!(millis_of(1581, 11, 31), Ok(-141_705.0 * DAY));
+        assert_eq!(millis_of(1583, 0, 1), Ok(-141_349.0 * DAY));
     }
     Ok(())
 }

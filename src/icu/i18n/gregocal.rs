@@ -2,7 +2,7 @@
 
 use crate::common::umutex::OnceBox;
 use crate::common::utypes::*;
-use crate::i18n::calendar::{Calendar, Field, checked_add32};
+use crate::i18n::calendar::{Calendar, Field};
 use crate::i18n::erarules::EraRules;
 use crate::i18n::gregoimp::*;
 use bun_core::{getenv_z, zstr};
@@ -46,7 +46,7 @@ impl Cutover {
         month: i32,
         day: i32,
         is_day_of_year: bool,
-    ) -> Result<i32, UErrorCode> {
+    ) -> i64 {
         let by_rules = |is_gregorian| {
             let (shift, is_leap) = if is_gregorian {
                 (grego::gregorian_shift(year), grego::is_leap_year(year))
@@ -54,20 +54,17 @@ impl Cutover {
                 (0, year % 4 == 0)
             };
             let before = shift + grego::days_before_month(is_leap, month);
-            checked_add32(
-                day,
-                (grego::julian_year_start(year) + i64::from(before)) as i32,
-            )
+            grego::julian_year_start(year) + i64::from(before) + i64::from(day)
         };
         let is_gregorian = year >= self.year;
-        let julian_day = by_rules(is_gregorian)?;
-        if is_gregorian != (julian_day >= self.julian_day) {
+        let julian_day = by_rules(is_gregorian);
+        if is_gregorian != (julian_day >= i64::from(self.julian_day)) {
             by_rules(!is_gregorian)
         } else if is_day_of_year && year == self.year {
             // The days of this year count from the Julian 1 January.
-            Ok(julian_day.wrapping_sub(grego::gregorian_shift(year)))
+            julian_day - i64::from(grego::gregorian_shift(year))
         } else {
-            Ok(julian_day)
+            julian_day
         }
     }
 }

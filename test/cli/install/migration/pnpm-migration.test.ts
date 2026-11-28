@@ -340,6 +340,160 @@ snapshots:
   });
 });
 
+// bun keeps one package for a name and version. pnpm-lock.yaml can have it more than once: for a
+// named registry (`no-deps@work:1.0.1`), or with a peer suffix in a pruned `packages:`. The entry
+// that stands first used to decide the tarball and the integrity of all of them.
+describe.concurrent("entries of pnpm-lock.yaml that become one package", () => {
+  const integrity = async () =>
+    "sha512-" +
+    new Bun.CryptoHasher("sha512")
+      .update(await file(join(verdaccio.packagesPath, "no-deps", "no-deps-1.0.1.tgz")).bytes())
+      .digest("base64");
+  const otherIntegrity = "sha512-" + Buffer.alloc(64, 7).toString("base64");
+
+  async function run(files: Record<string, string>, ...args: string[]) {
+    const { packageDir } = await verdaccio.createTestDir({ bunfigOpts: { linker: "hoisted" }, files });
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: packageDir,
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const bunLock = file(join(packageDir, "bun.lock"));
+    return {
+      stderr,
+      exitCode,
+      installed: nodeModulesPackages(packageDir),
+      bunLock: (await bunLock.exists()) ? await bunLock.text() : null,
+    };
+  }
+
+  const resolution = (integrity: string) => (integrity ? `{integrity: ${integrity}}` : `{}`);
+  const twoRegistries = (work: string, workIntegrity: string, plainIntegrity: string) => ({
+    "package.json": JSON.stringify({
+      name: "two-registries",
+      dependencies: { "aliased": "npm:no-deps@^1.0.0", "no-deps": "^1.0.0" },
+    }),
+    "pnpm-workspace.yaml": `namedRegistries:\n  work: ${work}\n`,
+    "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      aliased:
+        specifier: npm:no-deps@^1.0.0
+        version: no-deps@work:1.0.1
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.1
+
+packages:
+
+  no-deps@work:1.0.1:
+    resolution: ${resolution(workIntegrity)}
+
+  no-deps@1.0.1:
+    resolution: ${resolution(plainIntegrity)}
+
+snapshots:
+
+  no-deps@work:1.0.1: {}
+
+  no-deps@1.0.1: {}
+`,
+  });
+  const onePackage = (what: string) =>
+    `error: pnpm-lock.yaml packages 'no-deps@work:1.0.1' and 'no-deps@1.0.1' are one package in bun.lock, with a different ${what}\n`;
+
+  test("two registries with a different integrity for one version fail the migration", async () => {
+    const result = await run(
+      twoRegistries(verdaccio.registryUrl(), await integrity(), otherIntegrity),
+      "install",
+      "--frozen-lockfile",
+    );
+    expect(result.stderr).toContain(onePackage("integrity"));
+    expect(result).toMatchObject({ exitCode: 1, installed: "", bunLock: null });
+  });
+
+  test("two registries for one version, one without an integrity, fail the migration", async () => {
+    const result = await run(
+      twoRegistries(`http://127.0.0.1:${verdaccio.port}/`, await integrity(), ""),
+      "install",
+      "--frozen-lockfile",
+    );
+    expect(result.stderr).toContain(onePackage("tarball URL"));
+    expect(result).toMatchObject({ exitCode: 1, installed: "", bunLock: null });
+  });
+
+  test("two registries with one tarball are one package", async () => {
+    const named = `http://127.0.0.1:${verdaccio.port}/`;
+    const result = await run(twoRegistries(named, await integrity(), await integrity()), "install");
+    expect(result.stderr).not.toContain("error:");
+    expect(result.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+    const row = `["no-deps@1.0.1", "${named}no-deps/-/no-deps-1.0.1.tgz", {}, "${await integrity()}"]`;
+    expect(result.bunLock).toContain(`"aliased": ${row}`);
+    expect(result.bunLock).toContain(`"no-deps": ${row}`);
+    expect(result).toMatchObject({
+      exitCode: 0,
+      installed: "node_modules/aliased/no-deps@1.0.1\nnode_modules/no-deps/no-deps@1.0.1",
+    });
+  });
+
+  const twoKeys = (first: string, firstIntegrity: string, second: string, secondIntegrity: string) => ({
+    "package.json": JSON.stringify({ name: "two-packages-keys", dependencies: { "no-deps": "^1.0.0" } }),
+    "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.1
+
+packages:
+
+  ${first}:
+    resolution: {integrity: ${firstIntegrity}}
+
+  ${second}:
+    resolution: {integrity: ${secondIntegrity}}
+
+snapshots:
+
+  no-deps@1.0.1: {}
+`,
+  });
+
+  // pnpm reads `packages:` by the key without a suffix.
+  test.each(["before", "after"])("a peer-suffixed packages key %s the plain one is not the package", async position => {
+    const suffixed = ["'no-deps@1.0.1(a-dep@1.0.1)'", otherIntegrity] as const;
+    const plain = ["no-deps@1.0.1", await integrity()] as const;
+    const result = await run(
+      position === "before" ? twoKeys(...suffixed, ...plain) : twoKeys(...plain, ...suffixed),
+      "install",
+    );
+    expect(result.stderr).not.toContain("error:");
+    expect(result.bunLock).toContain(
+      `"no-deps": ["no-deps@1.0.1", "${verdaccio.registryUrl()}no-deps/-/no-deps-1.0.1.tgz", {}, "${await integrity()}"]`,
+    );
+    expect(result).toMatchObject({ exitCode: 0, installed: "node_modules/no-deps/no-deps@1.0.1" });
+  });
+
+  test("a packages key that is there twice fails the migration", async () => {
+    const result = await run(
+      twoKeys("no-deps@1.0.1", await integrity(), "no-deps@1.0.1", otherIntegrity),
+      "install",
+      "--frozen-lockfile",
+    );
+    expect(result.stderr).toContain("error: pnpm-lock.yaml has the 'packages' key 'no-deps@1.0.1' twice\n");
+    expect(result).toMatchObject({ exitCode: 1, installed: "", bunLock: null });
+  });
+});
+
 describe.todo("overrides", () => {
   test("basic", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({

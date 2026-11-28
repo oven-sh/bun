@@ -1574,6 +1574,369 @@ describe.concurrent("an invalid integrity in bun.lock", () => {
   });
 });
 
+// bun.lock has one entry for each path a package is installed at, and loading makes them one package
+// again. The tarball URL and the integrity of the entry that stands first in the file used to apply to
+// every path of the package, whatever the other entries say. Entries with one integrity are one
+// tarball. Any other two have to name one tarball URL and git ref, and must not have two hashes of one
+// algorithm: an error from lockfileVersion 2 on, a warning below it.
+describe.concurrent("entries of one package in bun.lock", () => {
+  const build = (says: string) =>
+    tarball({ "package.json": Buffer.from(JSON.stringify({ name: "pkg", version: "1.0.0", says })) });
+  const sri = (bytes: Buffer, algorithm = "sha512") =>
+    `${algorithm}-` + createHash(algorithm).update(bytes).digest("base64");
+  const [tgz, otherTgz] = [build("pinned"), build("other")];
+  const [integrity, otherIntegrity] = [sri(tgz), sri(otherTgz)];
+  const aliases = { a: "npm:pkg@1.0.0", b: "npm:pkg@1.0.0" };
+  const frozen = ["install", "--frozen-lockfile"];
+  const quiet = expect.not.stringMatching(/^(warn|error):/m);
+
+  type Hosts = { registry: string; mirror: string; elsewhere: string };
+  type Packages = Record<string, readonly unknown[]>;
+
+  /**
+   * `registry` and `mirror` have `pkg@1.0.0` with the pinned bytes. `elsewhere` answers with the other bytes.
+   * `says` is what got installed for the first dependency.
+   */
+  async function run(
+    lockfileVersion: number,
+    dependencies: Record<string, string>,
+    packages: (hosts: Hosts) => Packages,
+    ...args: string[]
+  ) {
+    const requests: string[] = [];
+    const serve = (name: string, bytes: Buffer) => {
+      const server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const { pathname } = new URL(req.url);
+          requests.push(name + pathname);
+          if (pathname !== "/pkg") return new Response(bytes);
+          const dist = { tarball: `${server.url}pkg/-/pkg-1.0.0.tgz`, integrity: sri(bytes) };
+          return Response.json({
+            name: "pkg",
+            "dist-tags": { latest: "1.0.0" },
+            versions: { "1.0.0": { name: "pkg", version: "1.0.0", dist } },
+          });
+        },
+      });
+      return server;
+    };
+    await using registry = serve("registry", tgz);
+    await using mirror = serve("mirror", tgz);
+    await using elsewhere = serve("elsewhere", otherTgz);
+    const hosts = { registry: registry.url.href, mirror: mirror.url.href, elsewhere: elsewhere.url.href };
+    const lockfile = JSON.stringify(
+      {
+        lockfileVersion,
+        configVersion: 1,
+        workspaces: { "": { name: "app", dependencies } },
+        packages: packages(hosts),
+      },
+      null,
+      2,
+    );
+    using dir = tempDir("lockfile-entries", {
+      "package.json": JSON.stringify({ name: "app", dependencies }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: hosts.registry, cache: false } }),
+      "pkg.tgz": tgz,
+      "bun.lock": lockfile,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: { ...env, GITHUB_API_URL: hosts.registry },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const installed = file(join(String(dir), "node_modules", Object.keys(dependencies)[0], "package.json"));
+    return {
+      // The excerpts of bun.lock have the ports of this run in them.
+      stderr: stderr.replaceAll(/http:\/\/localhost:\d+/g, "http://localhost"),
+      exitCode,
+      requests,
+      says: (await installed.exists()) ? (await installed.json()).says : null,
+      lockfile: (await file(join(String(dir), "bun.lock")).text()) === lockfile ? "unchanged" : "changed",
+    };
+  }
+
+  // One added line, under a key that nothing refers to. The package's own entry does not change.
+  describe.each(["before", "after"] as const)("an entry on another host, added %s the package's own,", position => {
+    const packages = ({ elsewhere }: Hosts) => {
+      const own = { pkg: ["pkg@1.0.0", "", {}, integrity] };
+      const added = { abc: ["pkg@1.0.0", `${elsewhere}x.tgz`, {}, otherIntegrity] };
+      return position === "before" ? { ...added, ...own } : { ...own, ...added };
+    };
+    const names = position === "before" ? `"abc" and "pkg"` : `"pkg" and "abc"`;
+    const message = `${names} lock pkg@1.0.0 with a different integrity\n`;
+
+    it("fails a frozen install before any request", async () => {
+      const result = await run(2, { pkg: "1.0.0" }, packages, ...frozen);
+      expect(result.stderr).toContain(`error: ${message}`);
+      expect(result).toMatchObject({ exitCode: 1, requests: [], says: null, lockfile: "unchanged" });
+    });
+
+    it("is reported, and not used, by an install that may resolve again", async () => {
+      const result = await run(2, { pkg: "1.0.0" }, packages, "install");
+      expect(result.stderr).toContain(`error: ${message}`);
+      expect(result.stderr).toContain("Ignoring lockfile");
+      expect(result).toMatchObject({
+        exitCode: 0,
+        requests: ["registry/pkg", "registry/pkg/-/pkg-1.0.0.tgz"],
+        says: "pinned",
+        lockfile: "changed",
+      });
+    });
+
+    it("is a warning in a lockfile from before version 2, where the first entry is used as before", async () => {
+      const result = await run(1, { pkg: "1.0.0" }, packages, ...frozen);
+      expect(result.stderr).toContain(`warn: ${message}`);
+      expect(result.stderr).not.toContain("error:");
+      expect(result).toMatchObject({
+        exitCode: 0,
+        requests: [position === "before" ? "elsewhere/x.tgz" : "registry/pkg/-/pkg-1.0.0.tgz"],
+        says: position === "before" ? "other" : "pinned",
+        lockfile: "unchanged",
+      });
+    });
+  });
+
+  describe.each([
+    ["npm package", "npm:pkg@1.0.0", (hash: string) => ["pkg@1.0.0", "", {}, hash]],
+    ["file: tarball", "file:pkg.tgz", (hash: string) => ["pkg@pkg.tgz", {}, hash]],
+    [
+      "GitHub package",
+      "github:owner/pkg#abc1234",
+      (hash: string) => ["pkg@github:owner/pkg#abc1234", {}, "owner-pkg-abc1234", hash],
+    ],
+  ] as const)("%s", (_, dependency, row) => {
+    it.each([
+      ["the pinned one first", integrity, otherIntegrity],
+      ["the other one first", otherIntegrity, integrity],
+    ])("two entries with a different integrity fail a frozen install, %s", async (_, first, second) => {
+      const result = await run(
+        2,
+        { a: dependency, b: dependency },
+        () => ({ a: row(first), b: row(second) }),
+        ...frozen,
+      );
+      expect(result.stderr).toContain(`error: "a" and "b" lock ${row("")[0]} with a different integrity\n`);
+      expect(result).toMatchObject({ exitCode: 1, requests: [], says: null, lockfile: "unchanged" });
+    });
+  });
+
+  // Before 1.4.0 the package-lock.json migration wrote one entry for each copy that package-lock.json
+  // has of a package: a sha1 beside a sha512, or one sha512 on two hosts. Those files have to load.
+  describe.each([1, 2])("lockfileVersion %d:", lockfileVersion => {
+    const [kind, exitCode] = lockfileVersion === 2 ? ["error", 1] : ["warn", 0];
+    const npm = (url: string, hash: string) => ["pkg@1.0.0", url, {}, hash];
+    const ordered = (swapped: boolean, a: readonly unknown[], b: readonly unknown[]) =>
+      swapped ? { a: b, b: a } : { a, b };
+
+    it.each([
+      ["the sha1 entry first", false],
+      ["the sha512 entry first", true],
+    ] as const)(
+      "a sha1 and a sha512 entry of one tarball are one package, checked against the sha512, %s",
+      async (_, swapped) => {
+        const packages = (sha512: string) => (hosts: Hosts) => {
+          const url = `${hosts.registry}pkg/-/pkg-1.0.0.tgz`;
+          return ordered(swapped, npm(url, sri(tgz, "sha1")), npm(url, sha512));
+        };
+        const [loaded, refused] = await Promise.all([
+          run(lockfileVersion, aliases, packages(integrity), ...frozen),
+          run(lockfileVersion, aliases, packages(otherIntegrity), ...frozen),
+        ]);
+        expect(loaded).toMatchObject({ stderr: quiet, exitCode: 0, says: "pinned", lockfile: "unchanged" });
+        expect(refused.stderr).toContain("error: Integrity check failed for tarball: pkg\n");
+        expect(refused).toMatchObject({ exitCode: 1, says: null });
+      },
+    );
+
+    it.each([
+      ["mirror", "registry", "mirror"],
+      ["registry", "mirror", "registry"],
+      // "" is the registry of whoever reads the file.
+      ["", "mirror", "registry"],
+    ] as const)(
+      "entries with one integrity on %j and %j are one package, fetched from the %s",
+      async (first, second, from) => {
+        const url = (hosts: Hosts, host: keyof Hosts | "") => (host ? `${hosts[host]}pkg/-/pkg-1.0.0.tgz` : "");
+        const result = await run(
+          lockfileVersion,
+          aliases,
+          hosts => ({ a: npm(url(hosts, first), integrity), b: npm(url(hosts, second), integrity) }),
+          ...frozen,
+        );
+        expect(result).toMatchObject({
+          stderr: quiet,
+          exitCode: 0,
+          requests: [`${from}/pkg/-/pkg-1.0.0.tgz`],
+          says: "pinned",
+          lockfile: "unchanged",
+        });
+      },
+    );
+
+    it.each([
+      ["the sha1 entry first", false],
+      ["the sha512 entry first", true],
+    ] as const)("a sha1 and a sha512 entry that name two tarball URLs are not one package, %s", async (_, swapped) => {
+      const result = await run(
+        lockfileVersion,
+        aliases,
+        ({ registry, mirror }) =>
+          ordered(
+            swapped,
+            npm(`${mirror}pkg/-/pkg-1.0.0.tgz`, sri(tgz, "sha1")),
+            npm(`${registry}pkg/-/pkg-1.0.0.tgz`, integrity),
+          ),
+        ...frozen,
+      );
+      expect(result.stderr).toContain(`${kind}: "a" and "b" lock pkg@1.0.0 with a different tarball URL\n`);
+      expect(result).toMatchObject({ exitCode, lockfile: "unchanged" });
+    });
+
+    // The registry has other bytes than `otherIntegrity`, so an install that still has the pin fails.
+    it.each([
+      ["before", false],
+      ["after", true],
+    ] as const)("an entry without an integrity %s another entry does not remove its pin", async (_, swapped) => {
+      const result = await run(
+        lockfileVersion,
+        aliases,
+        () => ordered(swapped, npm("", ""), npm("", otherIntegrity)),
+        ...frozen,
+      );
+      expect(result.stderr).toContain("error: Integrity check failed for tarball: pkg\n");
+      expect(result).toMatchObject({
+        exitCode: 1,
+        requests: ["registry/pkg/-/pkg-1.0.0.tgz"],
+        says: null,
+        lockfile: "unchanged",
+      });
+    });
+
+    it("two GitHub entries of one commit without an integrity that name two refs are not one package", async () => {
+      const row = (ref: string) => [`pkg@github:owner/pkg#${ref}`, {}, "owner-pkg-abc1234"];
+      const result = await run(
+        lockfileVersion,
+        { a: "github:owner/pkg#abc1234", b: "github:owner/pkg#main" },
+        () => ({ a: row("abc1234"), b: row("main") }),
+        "install",
+        "--frozen-lockfile",
+        "--dry-run",
+      );
+      expect(result.stderr).toContain(`${kind}: "a" and "b" lock pkg@github:owner/pkg#main with a different git ref\n`);
+      expect(result).toMatchObject({ exitCode, requests: [], lockfile: "unchanged" });
+    });
+  });
+
+  // The two hosts have different bytes here, so the integrity of the second entry does not fit the
+  // tarball of the first.
+  it("a lockfileVersion 1 file with a warning is installed from its first entry, unchanged", async () => {
+    const result = await run(
+      1,
+      aliases,
+      ({ registry, elsewhere }) => ({
+        a: ["pkg@1.0.0", `${elsewhere}pkg/-/pkg-1.0.0.tgz`, {}, sri(otherTgz, "sha1")],
+        b: ["pkg@1.0.0", `${registry}pkg/-/pkg-1.0.0.tgz`, {}, integrity],
+      }),
+      ...frozen,
+    );
+    expect(result.stderr).toContain(`warn: "a" and "b" lock pkg@1.0.0 with a different tarball URL\n`);
+    expect(result.stderr).not.toContain("error:");
+    expect(result).toMatchObject({
+      exitCode: 0,
+      requests: ["elsewhere/pkg/-/pkg-1.0.0.tgz"],
+      says: "other",
+      lockfile: "unchanged",
+    });
+  });
+
+  // From lockfileVersion 2 on, a git entry without a commit is refused by itself.
+  it("two git entries of one ref, one without a commit, are a warning in a lockfileVersion 1 file", async () => {
+    const dependency = "git+https://127.0.0.1:1/repo.git#main";
+    const row = (commit: string) => [`pkg@${dependency}`, {}, commit];
+    const result = await run(
+      1,
+      { a: dependency, b: dependency },
+      () => ({ a: row(""), b: row("0123456789abcdef0123456789abcdef01234567") }),
+      "install",
+      "--frozen-lockfile",
+      "--dry-run",
+    );
+    expect(result.stderr).toContain(`warn: "a" and "b" lock pkg@${dependency} with a different git ref\n`);
+    expect(result).toMatchObject({ exitCode: 0, requests: [], lockfile: "unchanged" });
+  });
+
+  it("names the entry whose integrity differs, and every pair that does, in one run", async () => {
+    const [one, two] = [1, 2].map(fill => "sha512-" + Buffer.alloc(64, fill).toString("base64"));
+    const result = await run(
+      2,
+      { pkg: "1.0.0", tar: "file:pkg.tgz" },
+      () => ({
+        // `aaa` has no integrity: it takes the one of `bbb`, and `pkg` differs from that.
+        aaa: ["pkg@1.0.0", "", {}, ""],
+        bbb: ["pkg@1.0.0", "", {}, one],
+        pkg: ["pkg@1.0.0", "", {}, two],
+        tar: ["pkg@pkg.tgz", {}, one],
+        zzz: ["pkg@pkg.tgz", {}, two],
+      }),
+      ...frozen,
+    );
+    const messages = result.stderr.split("\n").filter(line => /^(error|warn|note):|^ +at /.test(line));
+    expect(messages.join("\n")).toMatchInlineSnapshot(`
+      "error: "bbb" and "pkg" lock pkg@1.0.0 with a different integrity
+          at bun.lock:30:7
+      note: The other entry is here
+         at bun.lock:24:7
+      note: Make both entries identical, or run 'bun pm migrate --force' to write bun.lock again from another lockfile
+      error: "tar" and "zzz" lock pkg@pkg.tgz with a different integrity
+          at bun.lock:40:7
+      note: The other entry is here
+         at bun.lock:35:7
+      note: Make both entries identical, or run 'bun pm migrate --force' to write bun.lock again from another lockfile
+      warn: Ignoring lockfile
+      error: lockfile had changes, but lockfile is frozen"
+    `);
+    expect(result).toMatchObject({ exitCode: 1, requests: [], lockfile: "unchanged" });
+  });
+
+  // bun.lockb keeps two packages of one name and version apart. This one was written by bun 1.3.14
+  // from a package-lock.json with two copies of pkg@1.0.0 that have two sha512.
+  it("a bun.lockb with two packages that bun.lock makes one is saved as a bun.lock that loads", async () => {
+    using dir = tempDir("lockb-two-integrities", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { a: "1.0.0", b: "1.0.0", pkg: "2.0.0" },
+      }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: "http://127.0.0.1:1/", cache: false } }),
+    });
+    const bun = async (...args: string[]) => {
+      await using proc = spawn({ cmd: [bunExe(), ...args], cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stderr, exitCode };
+    };
+    await Bun.write(
+      join(String(dir), "bun.lockb"),
+      file(join(import.meta.dir, "fixtures", "two-integrities-one-package.lockb")),
+    );
+
+    expect(await bun("install", "--save-text-lockfile", "--frozen-lockfile", "--lockfile-only")).toMatchObject({
+      exitCode: 0,
+    });
+    const lockfile = await file(join(String(dir), "bun.lock")).text();
+    expect(lockfile.match(/"pkg@1\.0\.0", .*"(sha512-.{8})/g)?.length).toBe(2);
+    expect(lockfile).toContain(`"lockfileVersion": 1,`);
+
+    const loaded = await bun("install", "--frozen-lockfile", "--dry-run");
+    expect(loaded.stderr).toContain(`warn: "a/pkg" and "b/pkg" lock pkg@1.0.0 with a different integrity\n`);
+    expect(loaded).toMatchObject({ stderr: expect.not.stringContaining("error:"), exitCode: 0 });
+  });
+});
+
 describe.concurrent.each(["hoisted", "isolated"] as const)("tarball download failure (%s)", linker => {
   it("should fail (not hang) when registry returns 404 for tarball", async () => {
     await withContext({ linker }, async ctx => {

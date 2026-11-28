@@ -708,7 +708,7 @@ pub(crate) fn migrate_pnpm_lockfile(
         )?;
         parse_manifest_bin(lockfile, &mut pkg, &workspace_root)?;
 
-        let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
+        let (pkg_id, _) = lockfile.append_package_dedupe(&mut pkg)?;
 
         let entry = pkg_map.get_or_put(abs_path.as_bytes())?;
         if entry.found_existing {
@@ -803,7 +803,7 @@ pub(crate) fn migrate_pnpm_lockfile(
                 ),
                 ..Default::default()
             };
-            *pkg_entry.value_ptr = lockfile.append_package_dedupe(&mut pkg)?;
+            *pkg_entry.value_ptr = lockfile.append_package_dedupe(&mut pkg)?.0;
         }
     }
 
@@ -817,7 +817,8 @@ pub(crate) fn migrate_pnpm_lockfile(
         );
     }
 
-    let mut packages_by_key: StringArrayHashMap<Expr> = StringArrayHashMap::new();
+    // `true`: the key is written without a suffix.
+    let mut packages_by_key: StringArrayHashMap<(Expr, bool)> = StringArrayHashMap::new();
 
     for (key, package_obj) in props(&packages_obj.unwrap_or_default()) {
         let key_str = as_str(key).ok_or(InvalidPnpmLockfile)?;
@@ -826,9 +827,17 @@ pub(crate) fn migrate_pnpm_lockfile(
         }
 
         // Pruned lockfiles (`turbo prune`) can leave peer-suffixed keys in `packages:`.
-        let entry = packages_by_key.get_or_put(remove_suffix(key_str))?;
-        if !entry.found_existing {
-            *entry.value_ptr = *package_obj;
+        let stripped = remove_suffix(key_str);
+        let is_exact = stripped.len() == key_str.len();
+        let entry = packages_by_key.get_or_put(stripped)?;
+        if !entry.found_existing || (is_exact && !entry.value_ptr.1) {
+            *entry.value_ptr = (*package_obj, is_exact);
+        } else if is_exact {
+            bail!(
+                log,
+                "pnpm-lock.yaml has the 'packages' key '{}' twice",
+                for_terminal(BStr::new(key_str))
+            );
         }
     }
 
@@ -878,7 +887,7 @@ pub(crate) fn migrate_pnpm_lockfile(
         }
 
         let package_obj: Expr = match packages_by_key.get(key_str) {
-            Some(obj) => *obj,
+            Some((obj, _)) => *obj,
             // Like pnpm, only a `file:` directory is rebuilt when its `packages:` entry was pruned.
             None if res_str
                 .strip_prefix(b"file:")
@@ -1049,7 +1058,19 @@ pub(crate) fn migrate_pnpm_lockfile(
         )?;
         pkg.resolution = res.copy();
 
-        let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
+        let (pkg_id, conflict) = lockfile.append_package_dedupe(&mut pkg)?;
+        if let Some(what) = conflict {
+            let first = (pkg_map.iter())
+                .find(|(_, id)| **id == pkg_id)
+                .map_or(&b""[..], |(key, _)| &**key);
+            bail!(
+                log,
+                "pnpm-lock.yaml packages '{}' and '{}' are one package in bun.lock, with a different {}",
+                for_terminal(BStr::new(first)),
+                for_terminal(BStr::new(key_str)),
+                what.noun()
+            );
+        }
         if has_unbound_peers {
             packages_with_unbound_peers.put(pkg_id, ())?;
         }

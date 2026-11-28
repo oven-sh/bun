@@ -1357,6 +1357,7 @@ impl<'a> Transpiler<'a> {
 
                 // we'll just always enable top-level await
                 // this is incorrect for Node.js files which are CommonJS modules
+                // (`Parser::read_as_script` reads a `.cjs` file that fails to parse once more, as a script)
                 opts.features.top_level_await = true;
 
                 opts.features.is_macro_runtime = target == crate::options_impl::Target::BunMacro;

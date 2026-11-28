@@ -2102,6 +2102,7 @@ function f() { for (async of []) {} }
 function f() { var await; var yield; }
 function f(await, yield) {}
 var yield = 1; yield;
+var await = 1; await;
 //// early-errors/await-and-yield.accepted.js
 // await at the top level of a module and in async functions, yield in generators.
 await 1;
@@ -2826,7 +2827,7 @@ var let = 1;
 var public = 1, static = 2, yield = 3;
 function f(eval, arguments) {}
 var implements, interface, package, private, protected;
-// Not listed: eval = 1; arguments = 1; var await; "\01"; ECMAScript allows them in sloppy mode code and bun run's parser rejects them.
+// Not listed: eval = 1; arguments = 1; "\01"; ECMAScript allows them in sloppy mode code and bun run's parser rejects them.
 // ECMAScript rejects the next five. bun run starts them: its transpiler prints the value of a legacy octal literal or escape and of "\8".
 function f() { "use strict"; 010; }
 "use strict"; 010;

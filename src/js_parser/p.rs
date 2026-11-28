@@ -3278,10 +3278,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, loc_module_scope)?;
         self.fn_or_arrow_data_visit.is_outside_fn_or_arrow = true;
         self.module_scope = self.current_scope;
-        self.has_es_module_syntax = self.has_es_module_syntax
-            || self.esm_import_keyword.len > 0
-            || self.esm_export_keyword.len > 0
-            || self.top_level_await_keyword.len > 0;
+        self.has_es_module_syntax = self.parsed_es_module_syntax();
 
         if let Some(factory) = self.lexer.jsx_pragma.jsx() {
             // `Span.text` is a `StoreStr` into lexer-owned source; valid for 'a.
@@ -4898,6 +4895,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub(crate) fn is_strict_mode_output_format(&self) -> bool {
         self.options.bundle && self.options.output_format.is_esm()
+    }
+
+    /// After the parse pass: an `import` statement, `import.meta`, an `export`, or the `await` operator at the top level.
+    pub(crate) fn parsed_es_module_syntax(&self) -> bool {
+        self.has_es_module_syntax
+            || self.esm_import_keyword.len > 0
+            || self.esm_export_keyword.len > 0
+            || self.top_level_await_keyword.len > 0
+    }
+
+    /// True if a reading as a script may differ: the runtime loads a file named `.cjs` that has the word `await`.
+    pub(crate) fn may_name_top_level_await(&self) -> bool {
+        let path = &self.source.path;
+        // Not `options.module_type`: for a file that an `import` loads, it is the `"type"` of the package alone.
+        let is_named_cjs = path.name().ext == b".cjs";
+        // A `data:` URL has no file name. What follows its last "." is part of the module's text.
+        let is_file = !path.text.starts_with(b"data:");
+        let text = self.source.contents();
+        // `\u` is for the word written with an escape.
+        (self.options.features.commonjs_at_runtime && is_named_cjs && is_file)
+            && (strings::contains(text, b"await") || strings::contains(text, b"\\u"))
     }
 
     /// Declare an ambient symbol resolvable BY NAME via [`Self::find_symbol`]

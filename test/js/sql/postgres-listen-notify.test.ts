@@ -9,7 +9,7 @@
 
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, describeWithContainer, tempDir } from "harness";
+import { bunEnv, bunExe, describeWithContainer, isASAN, tempDir } from "harness";
 import net from "node:net";
 import path from "node:path";
 import {
@@ -450,9 +450,11 @@ describe.concurrent("in a subprocess", () => {
     expect(result.exitCode).toBe(0);
     const growth = JSON.parse(result.stdout);
     // Steady state moves by a few MiB between passes; a leak adds ~24 MiB.
+    // With ASAN the steady state of the large payloads sometimes rises once, by
+    // 6 to 7 MiB, and stays there over more passes.
     expect(growth).toEqual({ small: expect.any(Number), large: expect.any(Number) });
     expect(growth.small, JSON.stringify(growth)).toBeLessThan(6);
-    expect(growth.large, JSON.stringify(growth)).toBeLessThan(6);
+    expect(growth.large, JSON.stringify(growth)).toBeLessThan(isASAN ? 12 : 6);
   }, 30_000);
 });
 

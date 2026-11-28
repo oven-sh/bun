@@ -721,6 +721,45 @@ describe("many route params", () => {
   });
 });
 
+describe("more than 65,535 route parameter names", () => {
+  // "/big" has the names a0 to a65536. "/last" comes after them.
+  const nameCount = 65_537;
+  let server: Server<undefined>;
+
+  beforeAll(() => {
+    // One join() of numbers. A debug build takes seconds to make 65,537 strings one at a time.
+    const names = Array.from({ length: nameCount }, (_, i) => i).join("/:a");
+    const routes: Record<string, (req: BunRequest) => Response> = {
+      [`/big/:a${names}`]: req =>
+        Response.json({
+          nameCount: Object.keys(req.params).length,
+          a0: req.params.a0,
+          a65536: req.params.a65536,
+        }),
+      "/last/:id/:slug": req => Response.json(req.params),
+    };
+    server = Bun.serve({ port: 0, routes });
+    server.unref();
+  });
+
+  afterAll(() => {
+    server.stop(true);
+  });
+
+  it("a route after them keeps its own names", async () => {
+    const res = await fetch(new URL("/last/7/x", server.url));
+    expect(await res.json()).toEqual({ id: "7", slug: "x" });
+  });
+
+  it("one route keeps all of its names", async () => {
+    // The router matches the first 100 segments of a route, so the request is "/big" and 99 values.
+    const values = Array.from({ length: 99 }, (_, i) => `v${i}`);
+    const res = await fetch(new URL(`/big/${values.join("/")}`, server.url));
+    // "a65536" is the first name past a 16-bit index. It has no value, and must not take the value of "a0".
+    expect(await res.json()).toEqual({ nameCount, a0: "v0", a65536: "" });
+  });
+});
+
 it("throws a validation error when a route parameter name starts with a number", () => {
   expect(() => {
     Bun.serve({

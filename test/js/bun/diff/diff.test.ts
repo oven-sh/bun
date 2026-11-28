@@ -502,6 +502,44 @@ describe("maxEditLength", () => {
     expect(diff.arrays(a, b, { maxEditLength: count - 1 })).toBeUndefined();
     expect(diff.arrays(a, b, { maxEditLength: count >> 1 })).toBeUndefined();
   });
+
+  test.each([
+    ["the same length", repeat("xxy", 3000), repeat("xyy", 3000), 6000],
+    ["lengths that differ", repeat("xxy", 3000), repeat("xyyy", 3000), 9000],
+  ])("is exact if the counts of the tokens show all edits: %s", (_, a, b, count) => {
+    const found = (from: string, to: string) =>
+      [count - 1, count, Infinity].map(maxEditLength => diff.chars(from, to, { maxEditLength }));
+    const expected = [undefined, count, count];
+    expect([found(a, b), found(b, a)].map(all => all.map(it => it && edits(it)))).toEqual([expected, expected]);
+  });
+
+  // Too long for rows of bits, so only the search finds the shortest script.
+  test.skipIf(isDebug)("is exact if the counts show all edits and the search just reaches them", () => {
+    const next = random(3);
+    const parts = Array.from({ length: 5 }, () => Array.from({ length: 20_000 }, () => next(4)));
+    const [zeros, ones] = [Array(3000).fill(0), Array(3000).fill(1)];
+    const a = [parts[0], zeros, parts[1], parts[2], zeros, parts[3], parts[4]].flat();
+    const b = [parts[0], parts[1], ones, parts[2], parts[3], ones, parts[4]].flat();
+    const found = [11_999, 12_000].map(maxEditLength => diff.arrays(a, b, { maxEditLength }));
+    expect(found.map(it => it && edits(it))).toEqual([undefined, 12_000]);
+  });
+
+  // About 0.3 of the time without a limit on texts that the counts say nothing about, and 10 times it if searched.
+  test.skipIf(isDebug)("does not search if the counts show too many edits", () => {
+    const next = random(4);
+    const text = (letters: string) => Array.from({ length: 100_000 }, () => letters[next(letters.length)]).join("");
+    const time = (a: string, b: string, maxEditLength: number) => {
+      const times = [0, 1, 2].map(() => {
+        const start = performance.now();
+        diff.chars(a, b, { maxEditLength });
+        return performance.now() - start;
+      });
+      return Math.min(...times);
+    };
+    const letters = "abcdefghijklmnopqrstuvwxyz";
+    const ratio = time(text("aab"), text("abb"), 20_000) / time(text(letters), text(letters), Infinity);
+    expect(ratio).toBeLessThan(2);
+  });
 });
 
 describe("options that ignore a difference", () => {

@@ -517,6 +517,9 @@ impl Loc {
 // Location
 // ───────────────────────────────────────────────────────────────────────────
 
+/// A line up to this many bytes is stored whole in [`Location::line_text`], so `column` indexes it if it is valid UTF-8.
+pub const MAX_WHOLE_LINE_LEN: usize = 1000;
+
 /// Owns its bytes: a diagnostic outlives the [`Source`] it describes.
 #[derive(Clone)]
 pub struct Location {
@@ -527,19 +530,23 @@ pub struct Location {
     pub line_text: Option<Box<[u8]>>,
     /// Number of bytes this location should highlight.
     /// 0 to just point at a single character
-    pub length: usize,
+    pub length: u32,
     // TODO: document or remove
     pub offset: usize,
+    /// The byte offset of the error in `line_text`, plus one, when [`Location::excerpt`] is to cut `line_text` around it.
+    pub cut_around: Option<core::num::NonZeroU32>,
 
     /// 1-based line number.
     /// Line <= 0 means there is no line and column information.
     // TODO: move to `bun.Ordinal`
     pub line: i32,
     // TODO: figure out how this is interpreted, convert to `bun.Ordinal`
-    // original docs: 0-based, in bytes.
-    // but there is a place where this is emitted in output, implying one based character offset
+    // 1-based, in UTF-16 code units, from `init_or_null`.
     pub column: i32,
 }
+
+// `length` and `cut_around` share one word, so the new field adds no bytes.
+const _: () = assert!(core::mem::size_of::<Location>() == 72);
 
 impl Default for Location {
     fn default() -> Self {
@@ -549,13 +556,70 @@ impl Default for Location {
             line_text: None,
             length: 0,
             offset: 0,
+            cut_around: None,
             line: 0,
             column: 0,
         }
     }
 }
 
+/// The excerpt of `line` around the byte at `offset`: 40 bytes before it and 80 from it, on UTF-8 boundaries.
+fn excerpt_range(line: &[u8], offset: usize) -> core::ops::Range<usize> {
+    let mut lo = offset.saturating_sub(40);
+    let mut hi = (offset + 80).min(line.len());
+    while lo > 0 && !bun_core::strings::is_utf8_char_boundary(line[lo]) {
+        lo -= 1;
+    }
+    while hi < line.len() && !bun_core::strings::is_utf8_char_boundary(line[hi]) {
+        hi += 1;
+    }
+    lo..hi
+}
+
+/// Splits the text of a location into the lines in front of the line of the error, and that line.
+fn split_error_line(text: &[u8]) -> (&[u8], &[u8]) {
+    let text = bun_core::trim_left(bun_core::trim_right(text, b" \r\n\t"), b"\n\r");
+    match bun_core::strings::last_index_of_char(text, b'\n') {
+        Some(at) => (&text[..at], &text[at + 1..]),
+        None => (&[], text),
+    }
+}
+
 impl Location {
+    /// What a display shows of `line_text`, and the UTF-16 code units of the line that are in front of that part.
+    pub fn excerpt(&self) -> (&[u8], usize) {
+        let text = self.line_text.as_deref().unwrap_or_default();
+        let Some(around) = self.cut_around else {
+            return self.excerpt_around_column(text);
+        };
+        let offset = (around.get() as usize - 1).min(text.len());
+        let kept = excerpt_range(text, offset);
+        // Same counter as `column`, over the bytes that are shown in front of the error.
+        let mut shown = ErrorPositionState::default();
+        shown.advance(text, kept.start, offset);
+        let column = usize::try_from(self.column).unwrap_or(0);
+        (&text[kept], column.saturating_sub(shown.column_number))
+    }
+
+    /// `excerpt` of a location without `cut_around`: a line over [`MAX_WHOLE_LINE_LEN`] is cut around `column`.
+    fn excerpt_around_column<'a>(&self, text: &'a [u8]) -> (&'a [u8], usize) {
+        if text.len() <= MAX_WHOLE_LINE_LEN {
+            return (text, 0);
+        }
+        // The lines in front of a short line are context that their creator chose, and they stay.
+        let (_, line) = split_error_line(text);
+        if line.len() <= MAX_WHOLE_LINE_LEN {
+            return (text, 0);
+        }
+        let units = u32::try_from(self.column.saturating_sub(1)).unwrap_or(0);
+        let offset = bun_core::strings::wtf8_offset_of_utf16_index(line, units);
+        let kept = excerpt_range(line, offset);
+        let shown = bun_core::strings::wtf8_codepoints(&line[kept.start..offset])
+            .map(|(_, codepoint)| bun_core::strings::codepoint_len_utf16(codepoint))
+            .sum();
+        (&line[kept], units.saturating_sub(shown) as usize)
+    }
+
     /// Writes `at file:line:column` on its own line, under a message of `kind`. Writes nothing if there's no file.
     pub fn write_place<const ENABLE_ANSI_COLORS: bool>(
         &self,
@@ -629,6 +693,7 @@ impl Location {
                     length: 0,
                     line_text: Some(Box::default()),
                     offset: 0,
+                    cut_around: None,
                 });
             }
             let data = match tracker {
@@ -636,24 +701,22 @@ impl Location {
                 None => source.init_error_position(r.loc),
             };
             let mut full_line = &source.contents[data.line_start..data.line_end];
-            // Window a long line to ~120 bytes around the error. Bounds are
-            // BYTE offsets; the gate keeps the original shape (no left trim for
-            // an error in the last 80 bytes) so `write_format`'s caret aligns.
-            let offset_in_line = clamp_error_offset(&source.contents, r.loc)
+            let mut offset_in_line = clamp_error_offset(&source.contents, r.loc)
                 .saturating_sub(data.line_start)
                 .min(full_line.len());
-            if full_line.len() > 80 + offset_in_line {
-                let mut lo = offset_in_line.saturating_sub(40);
-                let mut hi = (offset_in_line + 80).min(full_line.len());
-                while lo > 0 && !bun_core::strings::is_utf8_char_boundary(full_line[lo]) {
-                    lo -= 1;
+            let mut cut_around = None;
+            let is_long = full_line.len() > MAX_WHOLE_LINE_LEN;
+            let has_more = full_line.len() > 80 + offset_in_line;
+            // An error in the last 80 bytes of a long line keeps the line whole, and a display cuts it.
+            if is_long || has_more {
+                // A longer line is stored as its excerpt: a one-line bundle can have thousands of diagnostics.
+                if is_long && has_more {
+                    let kept = excerpt_range(full_line, offset_in_line);
+                    offset_in_line -= kept.start;
+                    full_line = &full_line[kept];
                 }
-                while hi < full_line.len()
-                    && !bun_core::strings::is_utf8_char_boundary(full_line[hi])
-                {
-                    hi += 1;
-                }
-                full_line = &full_line[lo..hi];
+                let around = u32::try_from(offset_in_line + 1).expect("int cast");
+                cut_around = core::num::NonZeroU32::new(around);
             }
 
             return Some(Location {
@@ -662,12 +725,13 @@ impl Location {
                 line: usize2loc(data.line_count).start,
                 column: usize2loc(data.column_count).start,
                 length: if r.len > -1 {
-                    u32::try_from(r.len).expect("int cast") as usize
+                    u32::try_from(r.len).expect("int cast")
                 } else {
                     1
                 },
-                line_text: Some(Box::from(bun_core::trim_left(full_line, b"\n\r"))),
+                line_text: Some(Box::from(full_line)),
                 offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
+                cut_around,
             });
         }
         None
@@ -708,6 +772,7 @@ impl Data {
         to: &mut impl fmt::Write,
         kind: Kind,
         redact_sensitive_information: bool,
+        as_stored: bool,
     ) -> fmt::Result {
         if self.text.is_empty() {
             return Ok(());
@@ -743,17 +808,27 @@ impl Data {
         };
 
         if let Some(location) = &self.location {
-            if let Some(line_text_) = location.line_text.as_deref() {
-                let line_text_right_trimmed = bun_core::trim_right(line_text_, b" \r\n\t");
-                let line_text = bun_core::trim_left(line_text_right_trimmed, b"\n\r");
+            if let Some(stored) = location.line_text.as_deref() {
+                // Above the limit a redacted line is shown as it is stored: a cut there could be without the key that marks a secret.
+                let is_redacted_long =
+                    redact_sensitive_information && stored.len() > MAX_WHOLE_LINE_LEN;
+                let (line_text_, units_in_front) = if as_stored || is_redacted_long {
+                    (stored, 0)
+                } else {
+                    location.excerpt()
+                };
                 // The creator of the location may have included the lines preceding its own line.
-                let mut lines_before: Vec<&[u8]> =
-                    bun_core::strings::split(line_text, b"\n").collect();
-                let line_text = lines_before.pop().unwrap_or_default();
+                let (before, line_text) = split_error_line(line_text_);
+                let lines_before: Vec<&[u8]> = match before {
+                    [] => Vec::new(),
+                    _ => bun_core::strings::split(before, b"\n").collect(),
+                };
                 if location.column > 0 && !line_text.is_empty() {
                     let mut line_offset_for_second_line: usize = width_before(
                         line_text,
-                        usize::try_from(location.column - 1).expect("int cast"),
+                        usize::try_from(location.column - 1)
+                            .expect("int cast")
+                            .saturating_sub(units_in_front),
                     );
                     let gutter = bun_core::fmt::digit_count(location.line);
                     for (line, text) in
@@ -958,10 +1033,27 @@ impl Msg {
         &self,
         to: &mut impl fmt::Write,
     ) -> fmt::Result {
+        self.write_format_impl::<ENABLE_ANSI_COLORS>(to, false)
+    }
+
+    /// `write_format` for a caller with its own rule for a long line: each source line is shown as it is stored.
+    pub fn write_format_as_stored<const ENABLE_ANSI_COLORS: bool>(
+        &self,
+        to: &mut impl fmt::Write,
+    ) -> fmt::Result {
+        self.write_format_impl::<ENABLE_ANSI_COLORS>(to, true)
+    }
+
+    fn write_format_impl<const ENABLE_ANSI_COLORS: bool>(
+        &self,
+        to: &mut impl fmt::Write,
+        as_stored: bool,
+    ) -> fmt::Result {
         self.data.write_format::<ENABLE_ANSI_COLORS>(
             to,
             self.kind,
             self.redact_sensitive_information,
+            as_stored,
         )?;
 
         if !self.notes.is_empty() {
@@ -974,6 +1066,7 @@ impl Msg {
                 to,
                 Kind::Note,
                 self.redact_sensitive_information,
+                as_stored,
             )?;
         }
         Ok(())
@@ -2124,11 +2217,7 @@ impl ErrorPositionState {
 
     fn to_error_position(self, line_end: usize) -> ErrorPosition {
         ErrorPosition {
-            line_start: if self.line_start > 0 {
-                self.line_start - 1
-            } else {
-                self.line_start
-            },
+            line_start: self.line_start,
             line_end,
             line_count: self.line_count,
             column_count: self.column_number,
@@ -3042,6 +3131,140 @@ mod location_tests {
             })
             .collect();
         assert_eq!(lines, [1, -1, -1]);
+    }
+
+    #[test]
+    fn the_excerpt_is_cut_around_the_byte_of_the_error() {
+        let mixed = "a\u{e9}\u{540d}\u{1f600}";
+        let long = format!("{}{mixed}", "\u{1f600}".repeat(251));
+        let long_offsets = (0..=long.len()).filter(|at| at % 97 == 0 || long.len() - at < 84);
+        let short = mixed.repeat(13);
+        let every_offset: Vec<usize> = (0..=short.len()).collect();
+        // After a lone CR the column is one too small, and so is the start of the excerpt.
+        for (line, offsets, line_break, column_fault) in [
+            (short.as_bytes(), every_offset.clone(), b"\n", 0),
+            (long.as_bytes(), long_offsets.collect(), b"\n", 0),
+            (short.as_bytes(), every_offset, b"\r", 1),
+        ] {
+            let contents = [b"first", &line_break[..], line, line_break, b"last"].concat();
+            let source = Source::init_path_string(b"excerpt.js" as &[u8], contents.as_slice());
+            let mut tracker = LineColumnTracker::default();
+            for offset in offsets {
+                let range = Range {
+                    loc: usize2loc(b"first\n".len() + offset),
+                    len: 1,
+                };
+                let location =
+                    Location::init_or_null_tracked(Some(&source), range, &mut tracker).unwrap();
+                let is_long = line.len() > MAX_WHOLE_LINE_LEN;
+                let has_more = line.len() > 80 + offset;
+                let (mut shown, mut front) = (line, 0);
+                // As on main, but for a line over the limit: 80 bytes or less from the error to the end are not cut.
+                if is_long || has_more {
+                    let mut lo = offset.saturating_sub(40);
+                    let mut hi = (offset + 80).min(line.len());
+                    while line[lo] & 0xC0 == 0x80 {
+                        lo -= 1;
+                    }
+                    while hi < line.len() && line[hi] & 0xC0 == 0x80 {
+                        hi += 1;
+                    }
+                    shown = &line[lo..hi];
+                    let units = str::from_utf8(&line[..lo]).unwrap().encode_utf16().count();
+                    front = units.saturating_sub(column_fault);
+                }
+                assert_eq!(location.excerpt(), (shown, front), "offset {offset}");
+                let stored = location.line_text.as_deref().unwrap();
+                let is_cut = is_long && has_more;
+                assert_eq!(stored, if is_cut { shown } else { line }, "offset {offset}");
+            }
+        }
+    }
+
+    fn made_by_other_code(line_text: &[u8], column: i32) -> Location {
+        Location {
+            file: Box::from(b"made.css".as_slice()),
+            line: 7,
+            column,
+            line_text: Some(Box::from(line_text)),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_location_that_other_code_made_is_cut_above_1000_bytes() {
+        let whole = [&[b'a'; 500][..], b"]", &[b'b'; 499]].concat();
+        assert_eq!(made_by_other_code(&whole, 501).excerpt(), (&whole[..], 0));
+        let long = [&[b'a'; 500][..], b"]", &[b'b'; 500]].concat();
+        assert_eq!(
+            made_by_other_code(&long, 501).excerpt(),
+            (&long[460..580], 460)
+        );
+        // An error at the end of the line: the 40 bytes in front of it and the rest.
+        assert_eq!(
+            made_by_other_code(&long, 1001).excerpt(),
+            (&long[960..], 960)
+        );
+        // The line breaks and blanks at the end of the text are not part of the line.
+        let with_end = [&long[..], b" \t\r\n"].concat();
+        assert_eq!(
+            made_by_other_code(&with_end, 501).excerpt(),
+            (&long[460..580], 460)
+        );
+    }
+
+    #[test]
+    fn a_column_outside_the_line_cuts_at_the_nearest_end_of_the_line() {
+        let line = [&[b'a'; 1200][..], b"]"].concat();
+        for column in [1, 0, -1, i32::MIN] {
+            assert_eq!(
+                made_by_other_code(&line, column).excerpt(),
+                (&line[..80], 0),
+                "{column}"
+            );
+        }
+        // The caret is 40 cells in, directly after the text that is shown.
+        for column in [1202, 5000, i32::MAX] {
+            let units_in_front = column as usize - 1 - 40;
+            assert_eq!(
+                made_by_other_code(&line, column).excerpt(),
+                (&line[1161..], units_in_front),
+                "{column}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_excerpt_around_a_column_counts_utf16_code_units() {
+        // U+1F600 is 4 bytes and 2 units. Unit 401 is the second half of the character at byte 800.
+        let pairs = format!("{}]", "\u{1f600}".repeat(300));
+        let location = made_by_other_code(pairs.as_bytes(), 402);
+        assert_eq!(location.excerpt(), (&pairs.as_bytes()[760..880], 401 - 20));
+        // U+2028 is 3 bytes and 1 unit. It does not end a line of CSS, so the column counts it.
+        let separator = format!(
+            "{}\u{2028}{}]{}",
+            "a".repeat(1000),
+            "b".repeat(20),
+            "c".repeat(200)
+        );
+        let location = made_by_other_code(separator.as_bytes(), 1022);
+        assert_eq!(
+            location.excerpt(),
+            (&separator.as_bytes()[983..1103], 1021 - 38)
+        );
+    }
+
+    #[test]
+    fn lines_in_front_of_a_short_line_stay_and_lines_in_front_of_a_long_line_go() {
+        let context = [&[b'x'; 900][..], b"\n", &[b'y'; 900], b"\n"].concat();
+        let short = [&context[..], b"let a = ];"].concat();
+        assert_eq!(made_by_other_code(&short, 9).excerpt(), (&short[..], 0));
+        let line = [&[b'a'; 600][..], b"]", &[b'b'; 600]].concat();
+        let long = [&context[..], &line].concat();
+        assert_eq!(
+            made_by_other_code(&long, 601).excerpt(),
+            (&line[560..680], 560)
+        );
     }
 }
 

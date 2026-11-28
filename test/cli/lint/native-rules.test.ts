@@ -1520,6 +1520,23 @@ export default { meta: { name: "demo" }, rules: { one: rule, two: rule } };\n`;
     });
   });
 
+  test("the error shows an excerpt of a line of bunfig.toml of more than 1,000 bytes", async () => {
+    // The 40 bytes before the key, and the rest of the line.
+    const bunfig = `[[lint.overrides]]\nfiles = ["*.js"]\nrules = {${Buffer.alloc(1200, " ")}"unicorn/*" = "off" }\n`;
+    const { stderr, exitCode } = await lint({
+      "a.js": "export {};\n",
+      "eslint.config.js": `export default [{ rules: { "no-debugger": "error" } }];\n`,
+      "bunfig.toml": bunfig,
+    });
+    expect(stderr).toBe(
+      `3 | ${Buffer.alloc(40, " ")}"unicorn/*" = "off" }\n${Buffer.alloc(4 + 40, " ")}^\n` +
+        `error: "unicorn/*" only works with Bun's own lint config\n` +
+        `  This run uses eslint.config.js, an ESLint config.\n` +
+        `    at bunfig.toml:3:1210\n`,
+    );
+    expect(exitCode).toBe(2);
+  });
+
   test("--no-config-lookup is rejected too, and the error doesn't mention a file", async () => {
     const { stderr, exitCode } = await lint({ "a.js": "export {};\n" }, [
       "--no-config-lookup",

@@ -1716,7 +1716,7 @@ pub mod parse_worker {
 
         fn append(&self, log: &mut Log, namespace: &[u8]) {
             let source_line_text = self.source_line_text();
-            let length = (self.column_end - self.column).max(0) as usize;
+            let length = (self.column_end - self.column).max(0) as u32;
             let location = Location {
                 file: Box::from(self.path()),
                 namespace: Box::from(namespace),
@@ -1724,7 +1724,8 @@ pub mod parse_worker {
                 column: self.column.max(-1),
                 length,
                 line_text: (!source_line_text.is_empty()).then(|| Box::from(source_line_text)),
-                offset: length,
+                offset: length as usize,
+                cut_around: None,
             };
             let mut msg = Msg {
                 data: bun_ast::Data {

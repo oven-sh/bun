@@ -405,10 +405,9 @@ fn write_like_bun_error(
     });
     let to = &mut Appender(out);
     let _ = match meta.color {
-        true => {
-            (message.write_format::<true>(to)).and_then(|()| position.write_place::<true>(to, kind))
-        }
-        false => (message.write_format::<false>(to))
+        true => (message.write_format_as_stored::<true>(to))
+            .and_then(|()| position.write_place::<true>(to, kind)),
+        false => (message.write_format_as_stored::<false>(to))
             .and_then(|()| position.write_place::<false>(to, kind)),
     };
 }

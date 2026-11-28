@@ -19,10 +19,12 @@ export interface BundlerMessage {
 export interface BundlerMessageLocation {
   /** One-based */
   line: number;
-  /** One-based */
+  /** One-based. 0 when the message has a line but no column; nothing is underlined then. */
   column: number;
   /** Byte length */
   length: number;
+  /** The UTF-16 code units of the line that are in front of `lineText`, which is an excerpt of a long line. */
+  lineTextColumnOffset: number;
   lineText: string;
 }
 
@@ -71,12 +73,14 @@ function readBundlerMessageLocationOrNull(r: DataViewReader): BundlerMessageLoca
 
   const column = r.u32();
   const length = r.u32();
+  const lineTextColumnOffset = r.u32();
   const lineText = r.string32();
 
   return {
     line,
     column,
     length,
+    lineTextColumnOffset,
     lineText,
   };
 }

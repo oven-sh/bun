@@ -83,6 +83,7 @@ impl Binary {
         {
             let me = interp.as_binary_mut(this);
             me.currently_executing = None;
+            me.base.shell_mut().last_exit_code = exit_code;
             if me.left.is_none() && !stop {
                 me.left = Some(exit_code);
             } else {

@@ -1327,8 +1327,7 @@ pub(crate) mod strings_impl {
         if slice.len() <= 32 {
             return slice.iter().all(|&b| b < 0x80);
         }
-        // SAFETY: FFI reads exactly slice.len() bytes.
-        unsafe { simdutf::simdutf__validate_ascii(slice.as_ptr(), slice.len()) }
+        simdutf::validate::ascii(slice)
     }
 
     /// Byte index of the first non-ASCII byte, or None if all-ASCII.

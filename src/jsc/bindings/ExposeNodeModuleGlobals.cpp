@@ -171,7 +171,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__applyStackTraceLimitOption(Zig::Glo
 // Creates a CommonJS module object rooted at the given directory so require() resolves correctly.
 extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__REPL__setupGlobalRequire(
     Zig::GlobalObject* globalObject,
-    const unsigned char* cwdPtr,
+    [[ZIG_NONNULL]] const unsigned char* cwdPtr,
     size_t cwdLen)
 {
     using namespace JSC;

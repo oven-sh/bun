@@ -746,7 +746,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// The body ignores both arguments so a single non-generic shim suffices.
-    fn on_timeout_for_idle_warn(_: *mut c_void, _: &mut uws_sys::NewAppResponse<SSL>) {
+    fn on_timeout_for_idle_warn(_: *mut c_void, _: uws::AnyResponse) {
         if DEBUG && !Self::did_send_idletimeout_warning_once().load(Ordering::Relaxed) {
             if !crate::cli::Command::get().debug.silent {
                 Self::did_send_idletimeout_warning_once().store(true, Ordering::Relaxed);
@@ -931,7 +931,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
                 resp_ref.on_data(
                     |u: *mut ServerRequestContext<SSL, DEBUG>,
-                     _: &mut uws_sys::NewAppResponse<SSL>,
+                     _: uws_sys::AnyResponse,
                      chunk: &[u8],
                      last: bool| {
                         ServerRequestContext::<SSL, DEBUG>::on_buffered_body_chunk(u, chunk, last)
@@ -1849,7 +1849,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // `bun_analytics`. No-op until it is.
     }
 
-    pub(crate) fn app(&self) -> Option<*mut uws_sys::NewApp<SSL>> {
+    fn app(&self) -> Option<*mut uws_sys::NewApp<SSL>> {
         self.app.get().as_ref().map(|app| app.as_ptr())
     }
 
@@ -2313,7 +2313,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // SAFETY: `dev` is the live `*mut DevServer` snapshotted from
             // `self.dev_server` above; no other `&mut` to it is live.
             has_dev_server_for_star_path =
-                bun_core::handle_oom(unsafe { &mut *dev }.set_routes::<SSL, DEBUG>(self));
+                bun_core::handle_oom(unsafe { &mut *dev }.set_routes(self, app));
             if has_dev_server_for_star_path {
                 // Assume dev server "/*" covers all methods if it exists
                 star_methods_covered_by_user = http_method::Set::all();

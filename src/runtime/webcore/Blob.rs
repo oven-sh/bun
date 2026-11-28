@@ -5,7 +5,7 @@
 //! basic file copy instead of a naive read write loop.
 
 use core::cell::Cell;
-use core::ffi::{c_char, c_void};
+use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
@@ -17,7 +17,9 @@ use crate::webcore::jsc::{
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core as bun;
 use bun_core::Output;
-use bun_core::{EncodedSlice, String as BunString, Utf8Bytes, WTFStringImplExt as _, strings};
+use bun_core::{
+    CStrRef, EncodedSlice, String as BunString, Utf8Bytes, WTFStringImplExt as _, strings,
+};
 use bun_http_types::MimeType::MimeType;
 use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, bun_string_jsc};
 use bun_ptr::RefPtr;
@@ -4850,24 +4852,20 @@ pub(crate) unsafe extern "C" fn Blob__fromBytes(
     Blob::new(Blob::init_with_store(store, global_this))
 }
 
-/// Same as Blob__fromBytes but stamps content_type. `mime` must be a
-/// string literal with process lifetime (not freed by deinit — the caller
-/// passes one of the image/* constants).
+/// Same as Blob__fromBytes but stamps content_type with a copy of `mime`.
 ///
 /// # Safety
-/// `[ptr, ptr+len)` must be a valid readable byte range and `mime` a
-/// NUL-terminated `'static` C string.
+/// `[ptr, ptr+len)` must be a valid readable byte range.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Blob__fromBytesWithType(
     global_this: &JSGlobalObject,
     ptr: *const u8,
     len: usize,
-    mime: *const c_char,
+    mime: CStrRef<'_>,
 ) -> RefPtr<Blob> {
     // SAFETY: forwarded from caller's contract.
     let blob = unsafe { Blob__fromBytes(global_this, ptr, len) };
-    // SAFETY: caller guarantees `mime` is a NUL-terminated 'static C string.
-    let mime_slice = unsafe { bun_core::ffi::cstr(mime) }.to_bytes();
+    let mime_slice = mime.to_cstr().to_bytes();
     if !mime_slice.is_empty() {
         blob.content_type
             .set(BlobContentType::Owned(mime_slice.into()));
@@ -4880,14 +4878,13 @@ pub(crate) unsafe extern "C" fn Blob__fromBytesWithType(
 ///
 /// # Safety
 /// `[ptr, ptr+len)` must be a valid page-aligned mmap'd region whose ownership
-/// is transferred to the returned Blob, and `mime` a NUL-terminated `'static`
-/// C string.
+/// is transferred to the returned Blob.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Blob__fromMmapWithType(
     global_this: &JSGlobalObject,
     ptr: *mut u8,
     len: usize,
-    mime: *const c_char,
+    mime: CStrRef<'_>,
 ) -> RefPtr<Blob> {
     #[cfg(not(unix))]
     {
@@ -4908,8 +4905,7 @@ pub(crate) unsafe extern "C" fn Blob__fromMmapWithType(
             bun_http_types::MimeType::NONE,
         ));
         let blob = Blob::init_with_store(store, global_this);
-        // SAFETY: caller (C++) passes a valid NUL-terminated C string.
-        let mime_slice = unsafe { bun_core::ffi::cstr(mime) }.to_bytes();
+        let mime_slice = mime.to_cstr().to_bytes();
         if !mime_slice.is_empty() {
             blob.content_type
                 .set(BlobContentType::Owned(mime_slice.into()));

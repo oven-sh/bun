@@ -44,8 +44,8 @@ unsafe extern "C" {
     safe fn DevServerSourceProvider__getSourceMapJSON(
         this: &DevServerSourceProvider,
     ) -> DevServerSourceMapData;
-    safe fn BakeGlobalObject__isBakeGlobalObject(global: &JSGlobalObject) -> bool;
-    fn BakeGlobalObject__getPerThreadData(global: &JSGlobalObject) -> *mut c_void;
+    /// Null if `global` is not a `Bake::GlobalObject`.
+    safe fn BakeGlobalObject__getPerThreadData(global: &JSGlobalObject) -> *mut c_void;
 }
 
 impl SourceProvider for BakeSourceProvider {
@@ -71,11 +71,7 @@ impl SourceProvider for BakeSourceProvider {
                 .global
                 .get()
         };
-        if !BakeGlobalObject__isBakeGlobalObject(global) {
-            return None;
-        }
-        // SAFETY: `global` is a `Bake::GlobalObject` (checked above).
-        let pt = unsafe { BakeGlobalObject__getPerThreadData(global) };
+        let pt = BakeGlobalObject__getPerThreadData(global);
         if pt.is_null() {
             // `m_perThreadData` is null between VM init and `PerThread::attach`;
             // no bundled outputs exist yet, so fall back to disk.

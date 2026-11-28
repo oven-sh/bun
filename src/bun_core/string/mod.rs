@@ -1339,19 +1339,13 @@ impl<'a> EncodedSlice<'a> {
         if self.is_16bit() {
             return crate::strings::element_length_utf16_into_utf8(self.utf16_slice());
         }
-        let s = self.slice();
-        // SAFETY: s describes a valid byte slice.
-        unsafe { bun_simdutf_sys::simdutf::simdutf__utf8_length_from_latin1(s.as_ptr(), s.len()) }
+        bun_simdutf_sys::simdutf::length::utf8::from::latin1(self.slice())
     }
 
     /// Number of bytes the UTF-16LE encoding of this string would occupy.
     pub(crate) fn utf16_byte_length(self) -> usize {
         if self.is_utf8() {
-            let s = self.slice();
-            // SAFETY: s describes a valid byte slice.
-            return unsafe {
-                bun_simdutf_sys::simdutf::simdutf__utf16_length_from_utf8(s.as_ptr(), s.len())
-            } * 2;
+            return crate::strings::element_length_utf8_into_utf16(self.slice()) * 2;
         }
         if self.is_16bit() {
             return self.len * 2;

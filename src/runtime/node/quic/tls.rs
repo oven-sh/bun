@@ -174,32 +174,26 @@ pub(super) fn early_data_info(ssl: &ssl::SSL) -> (bool, bool) {
     const SSL_EARLY_DATA_UNKNOWN: c_int = 0;
     const SSL_EARLY_DATA_DISABLED: c_int = 1;
     const SSL_EARLY_DATA_NO_SESSION_OFFERED: c_int = 5;
-    unsafe extern "C" {
-        safe fn SSL_early_data_accepted(ssl: &ssl::SSL) -> c_int;
-        safe fn SSL_get_early_data_reason(ssl: &ssl::SSL) -> c_int;
-    }
-    let accepted = SSL_early_data_accepted(ssl) != 0;
+    let accepted = ssl::SSL_early_data_accepted(ssl) != 0;
+    let reason = ssl::SSL_get_early_data_reason(ssl);
     let attempted = accepted
         || !matches!(
-            SSL_get_early_data_reason(ssl),
+            reason,
             SSL_EARLY_DATA_UNKNOWN | SSL_EARLY_DATA_DISABLED | SSL_EARLY_DATA_NO_SESSION_OFFERED
         );
     (attempted, accepted)
 }
 
-/// SAFETY: `ctx` is not shared yet.
-unsafe fn load_cert_chain(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
+fn load_cert_chain(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
     let bio = ssl::MemBio::new(pem).ok_or("failed to allocate BIO for certificate")?;
     let leaf = bio
         .read_x509_aux()
         .ok_or("failed to parse certificate PEM")?;
-    // SAFETY: fn contract.
-    if unsafe { ssl::SSL_CTX_use_certificate(ctx, &leaf) } != 1 {
+    if ssl::SSL_CTX_use_certificate(ctx, &leaf) != 1 {
         return Err("failed to install certificate");
     }
     while let Some(extra) = bio.read_x509() {
-        // SAFETY: fn contract.
-        if unsafe { ssl::SSL_CTX_add1_chain_cert(ctx, &extra) } != 1 {
+        if ssl::SSL_CTX_add1_chain_cert(ctx, &extra) != 1 {
             return Err("failed to add chain certificate");
         }
     }
@@ -207,14 +201,12 @@ unsafe fn load_cert_chain(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static
     Ok(())
 }
 
-/// SAFETY: `ctx` is not shared yet.
-unsafe fn load_private_key(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
+fn load_private_key(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
     let bio = ssl::MemBio::new(pem).ok_or("failed to allocate BIO for key")?;
     let pkey = bio
         .read_private_key()
         .ok_or("failed to parse private key PEM")?;
-    // SAFETY: fn contract.
-    if unsafe { ssl::SSL_CTX_use_PrivateKey(ctx, &pkey) } != 1 {
+    if ssl::SSL_CTX_use_PrivateKey(ctx, &pkey) != 1 {
         return Err("failed to install private key");
     }
     Ok(())
@@ -271,8 +263,7 @@ impl TlsConfig {
         let config = self;
         // SAFETY: the context is live, and is not shared before this returns.
         unsafe {
-            let Some(owned) = ssl::OwnedSslCtx::from_raw(ssl::SSL_CTX_new(ssl::TLS_method()))
-            else {
+            let Some(owned) = ssl::SSL_CTX_new(ssl::TLS_method()) else {
                 return Err("failed to allocate SSL_CTX");
             };
             let ctx = owned.as_ptr();
@@ -330,10 +321,7 @@ impl TlsConfig {
             if config.keylog {
                 bun_quic_tls::enable_key_log(&owned);
             }
-            let id = config.session_context();
-            if ssl::SSL_CTX_set_session_id_context(ctx, id.as_ptr(), id.len()) != 1 {
-                return Err("failed to set the session ID context");
-            }
+            owned.set_session_id_context(&config.session_context());
             if config.is_server {
                 if config.verify_client {
                     // SSL_VERIFY_PEER alone matches Node's TLS 1.3 semantics (see QuicSession::maybe_report_handshake).
@@ -413,19 +401,9 @@ impl TlsConfig {
     }
 }
 
-pub(super) fn negotiated_alpn(ssl: &ssl::SSL) -> Option<Vec<u8>> {
-    let (mut data, mut len) = (core::ptr::null(), 0);
-    // SAFETY: BoringSSL points `data` at `len` bytes that `ssl` owns.
-    let alpn = unsafe {
-        ssl::SSL_get0_alpn_selected(ssl, &raw mut data, &raw mut len);
-        bun_core::ffi::slice(data, len as usize)
-    };
-    (!alpn.is_empty()).then(|| alpn.to_vec())
-}
-
 unsafe extern "C" {
     /// `X509_V_ERR_*` -> node's code name; see ncrypto.cpp.
-    safe fn Bun__X509__validationErrorCode(err: i32) -> *const core::ffi::c_char;
+    safe fn Bun__X509__validationErrorCode(err: i32) -> bun_core::CStrRef<'static>;
     /// openssl.cpp: the signature algorithms every other TLS context of Bun accepts from a peer.
     fn us_ssl_ctx_set_verify_signature_algorithms(ctx: *mut ssl::SSL_CTX) -> c_int;
     /// openssl.cpp: the blocked public keys every other TLS context of Bun rejects in a peer's chain.
@@ -439,30 +417,14 @@ pub(super) const X509_V_ERR_UNSPECIFIED: i32 = 1;
 /// The `(code name, reason)` pair node reports as
 /// `validationErrorCode` / `validationErrorReason`.
 pub(super) fn validation_error_strings(code: i32) -> (&'static str, &'static str) {
-    let name = Bun__X509__validationErrorCode(code);
-    let name = if name.is_null() {
-        "UNSPECIFIED"
-    } else {
-        // SAFETY: every arm of the C++ switch returns a string literal.
-        unsafe {
-            core::ffi::CStr::from_ptr(name)
-                .to_str()
-                .unwrap_or("UNSPECIFIED")
-        }
-    };
-    let s = ssl::X509_verify_cert_error_string(code as _);
-    let reason = if s.is_null() {
-        ""
-    } else {
-        // SAFETY: a static string owned by BoringSSL.
-        unsafe { core::ffi::CStr::from_ptr(s).to_str().unwrap_or("") }
-    };
-    (name, reason)
+    let name = Bun__X509__validationErrorCode(code).to_cstr();
+    let name = name.to_str().unwrap_or("UNSPECIFIED");
+    let reason = ssl::X509_verify_cert_error_string(code as _).to_cstr();
+    (name, reason.to_str().unwrap_or(""))
 }
 
 pub(super) fn validation_error(ssl: &ssl::SSL) -> Option<(&'static str, &'static str)> {
-    // SAFETY: `ssl` is live.
-    let code = unsafe { ssl::SSL_get_verify_result(ssl) };
+    let code = ssl::SSL_get_verify_result(ssl);
     if code == 0 {
         return None;
     }
@@ -472,18 +434,11 @@ pub(super) fn validation_error(ssl: &ssl::SSL) -> Option<(&'static str, &'static
 pub(super) fn ephemeral_key_info(
     ssl: &ssl::SSL,
 ) -> Option<(&'static str, Option<&'static str>, u32)> {
-    // SAFETY: `ssl` is live.
-    let group = unsafe { ssl::SSL_get_group_id(ssl) };
+    let group = ssl::SSL_get_group_id(ssl);
     if group == 0 {
         return None;
     }
-    let name_ptr = ssl::SSL_get_group_name(group);
-    let name = if name_ptr.is_null() {
-        None
-    } else {
-        // SAFETY: a static string owned by BoringSSL.
-        unsafe { core::ffi::CStr::from_ptr(name_ptr).to_str().ok() }
-    };
+    let name = ssl::SSL_get_group_name(group).and_then(|name| name.to_cstr().to_str().ok());
     // Named-group sizes (RFC 8446 §4.2.7 / Node's GetEphemeralKey).
     let bits = match group {
         ssl::SSL_GROUP_X25519 => 253,
@@ -500,11 +455,8 @@ pub(super) fn local_certificate_der(ssl: &ssl::SSL) -> Option<Vec<u8>> {
     // `load_cert_chain` only installs certificates on the context. The context parses its
     // leaf once, but `SSL_get_certificate` parses a copy for each SSL.
     // SAFETY: returns a borrowed X509 owned by `ssl`'s context.
-    let cert = unsafe { ssl::SSL_CTX_get0_certificate(ssl::SSL_get_SSL_CTX(ssl)) };
-    if cert.is_null() {
-        return None;
-    }
-    Some(ssl::X509::opaque_ref(cert).to_der()?.to_vec())
+    let cert = unsafe { ssl::SSL_CTX_get0_certificate(ssl::SSL_get_SSL_CTX(ssl)).as_ref() }?;
+    Some(cert.to_der()?.to_vec())
 }
 
 pub(super) fn peer_certificate_der(ssl: &ssl::SSL) -> Option<Vec<u8>> {

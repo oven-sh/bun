@@ -131,7 +131,7 @@ fn prebuilt_ssl_ctx(
     // The context is served as it is: its trust store would not be the `ca` written next to `requestCert`.
     if is_server
         && config.ssl.as_ref().is_some_and(|ssl| ssl.request_cert != 0)
-        && !crate::socket::server_ctx_requests_cert(Some(sc.ctx.as_ptr()))
+        && !crate::socket::server_ctx_requests_cert(Some(&sc.ctx))
     {
         return Err(global
             .err(
@@ -580,7 +580,7 @@ impl Listener {
     fn accepted_socket_flags(&self) -> SocketFlags {
         let mut flags = SocketFlags::empty();
         // Also what the context in use was built with: `tls.secureContext` need not come with the options again.
-        let ctx = self.secure_ctx.get().as_ref().map(|ctx| ctx.as_ptr());
+        let ctx = self.secure_ctx.get().as_deref();
         flags.set(
             SocketFlags::REJECT_UNAUTHORIZED,
             self.reject_unauthorized || crate::socket::server_ctx_rejects_unauthorized(ctx),
@@ -743,7 +743,7 @@ impl Listener {
             return Ok(());
         };
 
-        super::socket_body::install_sni_alpn_selector(&sni_ctx);
+        super::socket_body::install_alpn_selector(&sni_ctx);
 
         // The C SNI tree SSL_CTX_up_ref()s; ours drops here.
         // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
@@ -1739,7 +1739,7 @@ fn decode_sni_result(
         return core::ptr::null_mut();
     }
     if let Some(sc) = result.as_class_ref::<SecureContext>() {
-        super::socket_body::install_sni_alpn_selector(&sc.ctx);
+        super::socket_body::install_alpn_selector(&sc.ctx);
         // The C dispatcher frees this +1 after `SSL_set_SSL_CTX` takes its own.
         return sc.ctx.clone().into_raw().cast();
     }

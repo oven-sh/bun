@@ -80,7 +80,7 @@ pub unsafe trait OpaqueHandle: Sized {
 /// Thin re-export of [`bun_core::ffi::conjure_zst`] kept for the shorter
 /// `thunk::zst::<H>()` spelling at the ~20 uWS trampoline call sites.
 #[inline(always)]
-pub(crate) fn zst<H>() -> H {
+pub(crate) fn zst<H: Copy>() -> H {
     bun_core::ffi::conjure_zst::<H>()
 }
 

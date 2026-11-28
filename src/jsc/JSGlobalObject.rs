@@ -1,4 +1,4 @@
-use core::ffi::{c_char, c_void};
+use core::ffi::c_void;
 use core::fmt::Arguments;
 
 use crate::EncodedSliceJsc as _;
@@ -516,17 +516,7 @@ impl JSGlobalObject {
         bun_boringssl::c::ERR_clear_error();
         if err != 0 {
             let mut buf = [0u8; 256];
-            // SAFETY: FFI — `buf` is a 256-byte stack buffer; `len` matches its capacity;
-            // ERR_error_string_n NUL-terminates within `len` bytes.
-            unsafe {
-                bun_boringssl::c::ERR_error_string_n(
-                    err,
-                    buf.as_mut_ptr().cast::<c_char>(),
-                    buf.len(),
-                )
-            };
-            // Slice up to the NUL terminator.
-            let msg = bun_core::slice_to_nul(&buf);
+            let msg = bun_boringssl::c::error_string(err, &mut buf);
             return self
                 .err(
                     JscError::CRYPTO_INVALID_SCRYPT_PARAMS,

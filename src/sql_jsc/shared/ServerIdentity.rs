@@ -1,13 +1,12 @@
 //! `tls.checkServerIdentity(hostname, cert)` for the SQL drivers and the Redis client.
 
 use crate::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine, bun_string_jsc};
-use bun_boringssl_sys::X509;
+use bun_boringssl_sys::{SSL, X509};
 use bun_jsc::ErrorCode;
-use bun_uws::AnySocket;
 
 unsafe extern "C" {
     // Also declared in `bun_runtime::api::bun::x509`, which is above this crate.
-    safe fn Bun__X509__toJSLegacyEncoding(cert: &mut X509, global: &JSGlobalObject) -> JSValue;
+    safe fn Bun__X509__toJSLegacyEncoding(cert: &X509, global: &JSGlobalObject) -> JSValue;
 }
 
 pub fn callback_of(global: &JSGlobalObject, tls: JSValue) -> JsResult<Option<JSValue>> {
@@ -25,15 +24,15 @@ pub fn callback_of(global: &JSGlobalObject, tls: JSValue) -> JsResult<Option<JSV
     }
 }
 
-/// `Err` is what the connection fails with. Runs user code, which can close the connection.
+/// `Err` is what the connection fails with. Last uses `ssl` before it runs user code, which can close the connection.
 pub fn check(
     global: &JSGlobalObject,
     callback: JSValue,
-    socket: &AnySocket,
+    ssl: Option<&mut SSL>,
     hostname: &[u8],
 ) -> Result<(), JSValue> {
     let _entered = VirtualMachine::get().enter_event_loop_scope();
-    match verdict(global, callback, socket, hostname) {
+    match verdict(global, callback, ssl, hostname) {
         Ok(None) => Ok(()),
         Ok(Some(reason)) => Err(reason),
         Err(thrown) => Err(global.take_exception(thrown)),
@@ -44,13 +43,10 @@ pub fn check(
 fn verdict(
     global: &JSGlobalObject,
     callback: JSValue,
-    socket: &AnySocket,
+    ssl: Option<&mut SSL>,
     hostname: &[u8],
 ) -> JsResult<Option<JSValue>> {
-    let AnySocket::SocketTls(tls) = socket else {
-        return Ok(Some(no_verdict(global)));
-    };
-    let Some(cert) = tls.ssl_mut().and_then(|ssl| ssl.peer_leaf_certificate()) else {
+    let Some(cert) = ssl.and_then(SSL::peer_leaf_certificate) else {
         return Ok(Some(no_verdict(global)));
     };
     let cert = bun_jsc::from_js_host_call(global, || Bun__X509__toJSLegacyEncoding(cert, global))?;

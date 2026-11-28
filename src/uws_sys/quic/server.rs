@@ -33,7 +33,7 @@ bun_opaque::opaque_ffi! {
 }
 
 unsafe extern "C" {
-    fn us_quic_create_server_ssl_ctx(
+    safe fn us_quic_create_server_ssl_ctx(
         options: &BunSocketContextOptions,
         default_ctx: Option<&SSL_CTX>,
     ) -> Option<OwnedSslCtx>;
@@ -218,12 +218,10 @@ fn create_tls(
     options: &BunSocketContextOptions,
     default_ctx: Option<&SSL_CTX>,
 ) -> Option<OwnedSslCtx> {
-    // SAFETY: C++ fills in the options, and nothing else has the new context.
-    unsafe {
-        let ctx = us_quic_create_server_ssl_ctx(options, default_ctx)?;
-        bun_quic_tls::enable_alpn(&ctx);
-        Some(ctx)
-    }
+    let ctx = us_quic_create_server_ssl_ctx(options, default_ctx)?;
+    // SAFETY: nothing else has the new context.
+    unsafe { bun_quic_tls::enable_alpn(&ctx) };
+    Some(ctx)
 }
 
 #[unsafe(no_mangle)]

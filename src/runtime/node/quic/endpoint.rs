@@ -1365,14 +1365,14 @@ impl QuicEndpoint {
         let config = config_from_js(global, options, Side::Client, is_http3)?;
         let ctx =
             (tls_config.create_context()).map_err(|e| global.throw(format_args!("tls: {e}")))?;
-        let (Some(mut tls), Some(local)) = (
+        let (Some(tls), Some(local)) = (
             bun_quic_tls::Session::new(&ctx, Side::Client),
             self.local_addr.get(),
         ) else {
             return Ok(JSValue::UNDEFINED);
         };
         if let Some(name) = tls_config.servername.as_deref().filter(|it| it.len() > 1)
-            && !(tls.ssl_mut()).set_servername(bun_core::ZStr::from_slice_with_nul(name))
+            && !(tls.ssl()).set_servername(bun_core::ZStr::from_slice_with_nul(name))
         {
             return Ok(JSValue::UNDEFINED);
         }

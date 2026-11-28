@@ -316,7 +316,7 @@ for (const { dir, crate } of scanRoots) {
       // Type tokens are copied verbatim into the thunk; `crate::` in a
       // bun_jsc-sourced impl would resolve as `bun_runtime::` in the
       // generated module. Rewrite to the source crate's name so
-      // `*mut crate::cpp_task::CppTask` etc. round-trip.
+      // `crate::cpp_task::CppTask` etc. round-trip.
       const srcCrate = fm ? fm.crate : crate;
       const cratePrefix = srcCrate !== "bun_runtime" ? `${srcCrate}::` : "crate::";
       const rewriteTy = (t: string) => t.replace(/\bcrate::/g, cratePrefix);

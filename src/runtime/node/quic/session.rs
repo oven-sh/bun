@@ -1358,9 +1358,9 @@ impl QuicSession {
         let snapshot = bun_quic_tls::Session::of(conn).map(|session| {
             let ssl = session.ssl();
             HskSnapshot {
-                sni: ssl.servername().map(<[u8]>::to_vec),
+                sni: session.server_name(),
                 cipher: session.cipher_name().map(|it| it.to_bytes().to_vec()),
-                alpn: tls::negotiated_alpn(ssl),
+                alpn: session.protocol(),
                 validation: tls::validation_error(ssl),
                 peer_cert_der: tls::peer_certificate_der(ssl),
                 local_cert_der: tls::local_certificate_der(ssl),

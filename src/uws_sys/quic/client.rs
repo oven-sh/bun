@@ -204,7 +204,7 @@ impl Client {
             origin.reject_unauthorized,
         );
         // Also an address, against RFC 6066 §3, as some servers do not find their certificate otherwise.
-        if !tls.ssl_mut().set_servername(&host) {
+        if !tls.ssl().set_servername(&host) {
             return None;
         }
         tls.offer(Version::V1.http3_alpn())?;

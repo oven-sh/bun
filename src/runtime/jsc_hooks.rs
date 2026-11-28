@@ -4006,7 +4006,7 @@ pub(crate) extern "C" fn Bun__compiledProgramErrorOfRefusedData(
     let location = bun_ast::Location {
         file: Box::from(file),
         line_text: Some(Box::default()),
-        length: refused.length as usize,
+        length: refused.length,
         offset: refused.offset as usize,
         line: refused.line,
         column: refused.column,

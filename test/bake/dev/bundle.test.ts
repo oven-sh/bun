@@ -1131,6 +1131,70 @@ devTest("importing bun on the client", {
     });
   },
 });
+// The overlay shows the 40 bytes before the `]` and the 80 from it. A line of 201 bytes is cut when it is
+// shown, and a line of 1,201 bytes when it is stored. 40 bytes of U+00E9 are 20 characters.
+for (const [title, line, excerpt, underlineStart] of [
+  [
+    "201 bytes",
+    `${Buffer.alloc(100, "a")}]${Buffer.alloc(100, "b")}`,
+    `${Buffer.alloc(40, "a")}]${Buffer.alloc(79, "b")}`,
+    40,
+  ],
+  [
+    "1,201 bytes",
+    `${Buffer.alloc(600, "a")}]${Buffer.alloc(600, "b")}`,
+    `${Buffer.alloc(40, "a")}]${Buffer.alloc(79, "b")}`,
+    40,
+  ],
+  [
+    "401 bytes that is not ASCII",
+    `${Buffer.alloc(200, "\u00E9")}]${Buffer.alloc(200, "\u00E9")}`,
+    `${Buffer.alloc(40, "\u00E9")}]${Buffer.alloc(80, "\u00E9")}`,
+    20,
+  ],
+] as const) {
+  devTest(`error overlay underlines the token in the excerpt of a line of ${title}`, {
+    files: {
+      "index.html": emptyHtmlFile({
+        styles: [],
+        scripts: ["index.ts"],
+      }),
+      "index.ts": `let ok = 1;\n${line}`,
+    },
+    async test(dev) {
+      // The harness reads the column of an error from where its underline starts in what is shown.
+      await using c = await dev.client("/", {
+        errors: [`index.ts:2:${underlineStart + 1}: error: Expected ";" but found "]"`],
+      });
+      const shown = await c.js<{ excerpt: string; underlineStart: number }>`(() => {
+        const msg = document.querySelector("bun-hmr").shadowRoot.querySelector(".b-msg");
+        return {
+          excerpt: msg.querySelector(".view > pre").textContent,
+          underlineStart: msg.querySelector(".highlight-wrap > .space").textContent.length,
+        };
+      })()`;
+      expect(shown).toEqual({ excerpt, underlineStart });
+    },
+  });
+}
+// The first line of a stylesheet is line 0 to the CSS parser. A warning there has no location in the payload.
+devTest("error overlay lists a warning on the first line of a stylesheet next to an error", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      scripts: [],
+    }),
+    "styles.css": `@nest .a { color: red }\n.b { color: red; } .c`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [
+        "styles.css: warn: invalid @ rule encountered: '@nest'",
+        "styles.css:2:22: error: Unexpected end of input",
+      ],
+    });
+  },
+});
 devTest("import.meta.main", {
   files: {
     "index.html": emptyHtmlFile({

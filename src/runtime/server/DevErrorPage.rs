@@ -171,7 +171,7 @@ fn write_message_data(w: &mut Vec<u8>, text: &[u8], location: Option<&Location>)
         w.extend_from_slice(b",\"namespace\":");
         write_string(w, &location.namespace);
         w.extend_from_slice(b",\"line_text\":");
-        write_string(w, location.line_text.as_deref().unwrap_or(b""));
+        write_string(w, location.excerpt().0);
         write!(
             w,
             ",\"line\":{},\"column\":{},\"offset\":{}}}",

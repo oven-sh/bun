@@ -338,7 +338,7 @@ impl StaticRoute {
     fn on_response_start(&self, resp: AnyResponse) {
         if let Some(server) = self.server.get() {
             server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
+            resp.start_timeout();
         }
     }
 
@@ -385,10 +385,6 @@ impl StaticRoute {
     }
 
     fn on_writable(self: RefPtr<Self>, write_offset: u64, resp: AnyResponse) -> bool {
-        if let Some(server) = self.server.get() {
-            resp.timeout(server.config().idle_timeout);
-        }
-
         if !self.on_writable_bytes(write_offset, resp) {
             let _ = self.into_raw(); // the handlers' until the next event
             return false;

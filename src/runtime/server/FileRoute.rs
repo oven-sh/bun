@@ -249,8 +249,8 @@ impl FileRoute {
     pub(crate) fn on(self: RefPtr<Self>, mut req: AnyRequest, resp: AnyResponse, method: Method) {
         debug_assert!(self.server.get().is_some());
         let route = PendingRequest::new(self);
-        if let Some(server) = route.server.get() {
-            resp.timeout(server.config().idle_timeout);
+        if route.server.get().is_some() {
+            resp.start_timeout();
         }
         let store = route.blob.store().unwrap().clone();
         let Some(path) = store.get_path() else {
@@ -285,7 +285,6 @@ impl FileRoute {
                     pollable,
                     offset,
                     length,
-                    idle_timeout: server.config().idle_timeout,
                     owner: StreamOwner::FileRoute(route),
                 });
             }

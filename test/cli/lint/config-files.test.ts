@@ -5626,7 +5626,7 @@ describe.concurrent("oxlint's command line", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("--print-config output matches oxlint's", async () => {
+  test("--print-config output matches oxlint's, except that a rule's options follow its severity in one array", async () => {
     using dir = tempDir("bun-lint-print-config", {
       ".oxlintrc.json": JSON.stringify({
         plugins: ["import", "typescript"],
@@ -5659,7 +5659,7 @@ describe.concurrent("oxlint's command line", () => {
       [
         "rules",
         {
-          eqeqeq: ["warn", ["smart"]],
+          eqeqeq: ["warn", "smart"],
           "no-alert": "deny",
           "no-console": "allow",
           "no-eval": "deny",
@@ -5677,7 +5677,7 @@ describe.concurrent("oxlint's command line", () => {
             env: null,
             globals: null,
             plugins: null,
-            rules: { "no-var": "allow", eqeqeq: ["deny", ["always"]] },
+            rules: { "no-var": "allow", eqeqeq: ["deny", "always"] },
           },
         ],
       ],
@@ -5689,6 +5689,37 @@ describe.concurrent("oxlint's command line", () => {
     expect(settings.react.version).toBe("18.2.0");
     expect(stdout.endsWith("\n}\n")).toBe(true);
     expect(exitCode).toBe(0);
+  });
+
+  test("--print-config output can be loaded with -c and lints the same", async () => {
+    const files = {
+      ".oxlintrc.json": JSON.stringify({
+        categories: { correctness: "off" },
+        rules: { eqeqeq: ["error", "smart"], "no-var": "allow" },
+        overrides: [{ files: ["src/**"], rules: { "no-var": "deny", "no-debugger": ["error"] } }],
+      }),
+      "a.js": code,
+      // `smart` allows `== null`.
+      "c.js": "if (x == null) {}\n",
+      "src/b.js": code,
+    };
+    const first = await lint(files, ["--print-config"]);
+    const printed = JSON.parse(first.raw);
+    expect(printed.rules).toEqual({ eqeqeq: ["deny", "smart"], "no-var": "allow" });
+    expect(printed.overrides[0].rules).toEqual({ "no-var": "deny", "no-debugger": "deny" });
+    expect(first.exitCode).toBe(0);
+    const expected = ["a.js:2:7 eqeqeq", "src/b.js:1:1 no-var", "src/b.js:2:13 no-debugger", "src/b.js:2:7 eqeqeq"];
+    const [before, reloaded, again] = await Promise.all([
+      lint(files),
+      lint({ ...files, "printed.json": first.raw }, ["-c", "printed.json", "."]),
+      lint({ ...files, ".oxlintrc.json": first.raw }, ["--print-config"]),
+    ]);
+    expect(before.problems).toEqual(expected);
+    expect(before.exitCode).toBe(1);
+    expect(reloaded.stderr).toBe("");
+    expect(reloaded.problems).toEqual(expected);
+    expect(reloaded.exitCode).toBe(1);
+    expect(again.raw).toBe(first.raw);
   });
 
   test("--threads=0 is accepted", async () => {

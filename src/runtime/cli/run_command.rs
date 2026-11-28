@@ -1014,8 +1014,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.preload.set(std::mem::take(&mut ctx.preloads));
         // `vm.dns_result_order` is a `u8` until the b2-cycle widens
         // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is exact.
-        vm.dns_result_order
-            .set(bun_dns::Order::from_string_or_die(&ctx.runtime_options.dns_result_order) as u8);
+        let dns_order = bun_dns::Order::from_string_or_die(&ctx.runtime_options.dns_result_order);
+        vm.dns_result_order.set(dns_order as u8);
+        crate::dns_jsc::internal::set_default_order(dns_order);
         // `vm.main` is a BACKREF into these bytes and the runner never returns,
         // so the allocation is process-lifetime by construction.
         let (entry, loader): (Option<&'static [u8]>, Option<Loader>) = match main {

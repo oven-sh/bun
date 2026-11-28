@@ -82,6 +82,7 @@ impl ReplCommand {
 
         vm.preload.set(core::mem::take(&mut ctx.preloads));
         vm.dns_result_order.set(dns_order as u8);
+        crate::dns_jsc::internal::set_default_order(dns_order);
 
         // Configure bundler options
         // `BundleOptions.install` is `Option<NonNull<_>>` so no

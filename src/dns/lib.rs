@@ -473,7 +473,23 @@ impl Order {
             bun_core::Global::exit(1)
         })
     }
+
+    /// The connect-path resolver shares its cache across JavaScript threads.
+    pub fn global_default() -> Order {
+        match GLOBAL_DEFAULT_ORDER.load(core::sync::atomic::Ordering::Relaxed) {
+            4 => Order::Ipv4first,
+            6 => Order::Ipv6first,
+            _ => Order::Verbatim,
+        }
+    }
+
+    pub fn set_global_default(order: Order) {
+        GLOBAL_DEFAULT_ORDER.store(order as u8, core::sync::atomic::Ordering::Relaxed);
+    }
 }
+
+static GLOBAL_DEFAULT_ORDER: core::sync::atomic::AtomicU8 =
+    core::sync::atomic::AtomicU8::new(Order::Verbatim as u8);
 
 /// A numeric address, or a host name within the RFC 1035 limits made of the bytes
 /// `bun_dns_client` allows in one or of non-ASCII bytes (UTF-8 mDNS names).

@@ -1054,12 +1054,13 @@ pub(crate) mod internal {
     // interleaved (RFC 8305 §4) so an unroutable family can never fill all
     // CONCURRENT_CONNECTIONS parallel connect attempts. See #4938 / #33278.
     fn process_results<'a>(addrs: impl Iterator<Item = &'a [u8]> + Clone) -> Box<[ResultEntry]> {
-        let mut total = FamilyCounts::default();
+        let order = bun_dns::Order::global_default();
+        let mut total = FamilyCounts::for_order(order);
         for addr in addrs.clone() {
             total.add(addr, 0);
         }
         let mut results = ResultEntry::zeroed_slice(total.first + total.other);
-        let (mut placed, pairs) = (FamilyCounts::default(), total.first.min(total.other));
+        let (mut placed, pairs) = (FamilyCounts::for_order(order), total.first.min(total.other));
         for addr in addrs {
             results[placed.add(addr, pairs)].set_addr(addr);
         }
@@ -1127,6 +1128,15 @@ pub(crate) mod internal {
     }
 
     impl FamilyCounts {
+        fn for_order(order: bun_dns::Order) -> Self {
+            let first_family = match order {
+                bun_dns::Order::Ipv4first => Some(netc::AF_INET),
+                bun_dns::Order::Ipv6first => Some(netc::AF_INET6),
+                bun_dns::Order::Verbatim => None,
+            };
+            Self { first_family, ..Self::default() }
+        }
+
         /// Counts `addr`, and returns its index in a list whose first `pairs` pairs have one of each.
         fn add(&mut self, addr: &[u8], pairs: usize) -> usize {
             let family = family_of(addr);
@@ -1504,6 +1514,31 @@ pub(crate) mod internal {
 
     pub(crate) fn prefetch(loop_: *const Loop, hostname: Option<&[u8]>, port: u16) {
         let _ = getaddrinfo(loop_, hostname, port, None);
+    }
+
+    /// Change the order for future connections and invalidate results packed
+    /// under the previous order. In-flight lookups are invalidated too: they
+    /// may already have packed their result before this call.
+    pub(crate) fn set_default_order(order: bun_dns::Order) {
+        let mut guard = global_cache().lock();
+        if bun_dns::Order::global_default() == order {
+            return;
+        }
+        bun_dns::Order::set_global_default(order);
+
+        let mut i = 0;
+        while i < guard.cache.len() {
+            let unused = {
+                let entry = guard.cache.get(i).unwrap();
+                entry.valid.store(false, Ordering::Relaxed);
+                GlobalCache::is_unused(entry)
+            };
+            if unused {
+                guard.delete_entry_at(i);
+            } else {
+                i += 1;
+            }
+        }
     }
 
     /// `bun_dns::__bun_dns_prefetch` body — declared `extern "Rust"` in the
@@ -2405,5 +2440,12 @@ impl Resolver {
             _ => Order::Verbatim,
         };
         bun::String::static_(<&'static str>::from(order))
+    }
+
+    pub(crate) fn set_runtime_default_result_order_option(order: &[u8]) {
+        if let Some(order) = Order::from_string(order) {
+            VirtualMachine::get().dns_result_order.set(order as u8);
+            internal::set_default_order(order);
+        }
     }
 }

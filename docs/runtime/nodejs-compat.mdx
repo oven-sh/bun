@@ -45,6 +45,8 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 🟢 Fully implemented. Missing `resolveTlsa`.
 
+`dns.setDefaultResultOrder()` also sets the preferred address family for `fetch()` and `Bun.connect()`. Their DNS cache is shared across workers, so this preference applies to the whole process. The `dns.lookup()` default remains local to the calling worker, as in Node.js.
+
 ### [`node:events`](https://nodejs.org/api/events.html)
 
 🟢 Fully implemented. 95% of Node.js's test suite passes. `EventEmitterAsyncResource` uses `AsyncResource` underneath, so its `asyncId` is always `0`.

@@ -233,14 +233,7 @@ const currentFile = import.meta.url;
 Bun.openInEditor(currentFile);
 ```
 
-You can override this with the `debug.editor` setting in your [`bunfig.toml`](/runtime/bunfig).
-
-```toml bunfig.toml icon="settings"
-[debug] # [!code ++]
-editor = "code" # [!code ++]
-```
-
-Or specify an editor with the `editor` param. You can also specify a line and column number.
+To open the file in a specific editor, pass the `editor` param. You can also specify a line and column number.
 
 ```ts
 Bun.openInEditor(import.meta.url, {

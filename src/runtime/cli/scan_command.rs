@@ -30,11 +30,7 @@ impl ScanCommand {
         Output::flush();
 
         let load_result = manager.load_lockfile_from_cwd::<true>();
-        PackageManagerCommand::handle_load_lockfile_errors_for(
-            &load_result,
-            manager.options.log_level,
-            "scan",
-        );
+        PackageManagerCommand::handle_load_lockfile_errors_for(manager, &load_result, "scan");
 
         let security_scan_results =
             match security_scanner::perform_security_scan_for_all(manager, original_cwd) {

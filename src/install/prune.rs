@@ -263,7 +263,7 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
         LoadResult::NotFound => {
             if !quiet {
                 Output::err_generic("missing lockfile, nothing to prune", ());
-                bun_core::note!("run 'bun install' first");
+                manager.print_missing_lockfile_note();
             }
             Global::exit(1);
         }
@@ -652,7 +652,7 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
                 "bun.lock does not match package.json, nothing to {s}",
                 (nothing_to,),
             );
-            bun_core::note!("run 'bun install' first");
+            manager.print_lockfile_note(manager.stale_lockfile_note());
         }
         Global::exit(1);
     }

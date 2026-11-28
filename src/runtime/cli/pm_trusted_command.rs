@@ -285,9 +285,8 @@ impl UntrustedCommand {
         );
         Output::flush();
 
-        let log_level = pm.options.log_level;
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-        PackageManagerCommand::handle_load_lockfile_errors_for(&load_lockfile, log_level, "list");
+        PackageManagerCommand::handle_load_lockfile_errors_for(pm, &load_lockfile, "list");
         let linker = load_lockfile.node_linker(&pm.lockfile, pm.options.node_linker);
         update_lockfile_if_needed(pm, &load_lockfile)?;
 
@@ -431,7 +430,7 @@ impl TrustCommand {
         let dry_run = pm.options.dry_run;
         let max_concurrent = pm.options.max_concurrent_lifecycle_scripts;
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-        PackageManagerCommand::handle_load_lockfile_errors_for(&load_lockfile, log_level, "trust");
+        PackageManagerCommand::handle_load_lockfile_errors_for(pm, &load_lockfile, "trust");
         let linker = load_lockfile.node_linker(&pm.lockfile, pm.options.node_linker);
         update_lockfile_if_needed(pm, &load_lockfile)?;
         let recorded = read_trusted_dependencies(pm);

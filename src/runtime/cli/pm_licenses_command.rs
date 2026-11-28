@@ -96,7 +96,7 @@ impl PmLicensesCommand {
         }
 
         let load = pm.load_lockfile_from_cwd::<true>();
-        PackageManagerCommand::handle_load_lockfile_errors_for(&load, log_level, "list");
+        PackageManagerCommand::handle_load_lockfile_errors_for(pm, &load, "list");
         let isolated =
             load.node_linker(&pm.lockfile, pm.options.node_linker) == NodeLinker::Isolated;
 

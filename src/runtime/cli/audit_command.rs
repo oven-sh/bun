@@ -156,15 +156,8 @@ impl AuditCommand {
             Output::flush();
         }
 
-        {
-            let log_level = manager.options.log_level;
-            let load_lockfile = manager.load_lockfile_from_cwd::<true>();
-            PackageManagerCommand::handle_load_lockfile_errors_for(
-                &load_lockfile,
-                log_level,
-                "audit",
-            );
-        }
+        let load_lockfile = manager.load_lockfile_from_cwd::<true>();
+        PackageManagerCommand::handle_load_lockfile_errors_for(manager, &load_lockfile, "audit");
 
         if fix {
             return Self::audit_fix(

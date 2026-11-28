@@ -5,6 +5,8 @@ description: "Bun's lockfile format and configuration"
 
 `bun install` creates a lockfile called `bun.lock`.
 
+A project with no dependencies and no workspace packages has nothing to lock. `bun install` saves no `bun.lock` for it.
+
 #### Should it be committed to git?
 
 Yes

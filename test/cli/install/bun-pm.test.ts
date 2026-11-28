@@ -3345,7 +3345,16 @@ describe.concurrent("without a package.json", () => {
       HOME: root,
       USERPROFILE: root,
     };
-    for (const key of ["BUN_INSTALL_GLOBAL_DIR", "BUN_INSTALL_BIN", "BUN_INSTALL_CACHE_DIR"]) delete spawnEnv[key];
+    for (const key of [
+      "BUN_INSTALL_GLOBAL_DIR",
+      "BUN_INSTALL_BIN",
+      "BUN_INSTALL_CACHE_DIR",
+      "BUN_CONFIG_SKIP_SAVE_LOCKFILE",
+      "BUN_CONFIG_SKIP_LOAD_LOCKFILE",
+      "BUN_CONFIG_YARN_LOCKFILE",
+    ]) {
+      delete spawnEnv[key];
+    }
     return {
       root,
       bunInstall,
@@ -3410,6 +3419,19 @@ describe.concurrent("without a package.json", () => {
       stdout: `${project.globalDir} node_modules (0 installed)\n`,
       stderr: "",
       exitCode: 0,
+    });
+  });
+
+  // `bun install -g` is `bun add -g`, which needs a package to add. It is never the remedy for a missing global bun.lock.
+  test("bun pm hash -g says that no global package is installed after the last one was removed", async () => {
+    using project = fresh("pm-hash-global-removed");
+    expect(await project.run("add", "-g", join(project.root, "pkg"))).toMatchObject({ exitCode: 0 });
+    expect(await project.run("remove", "-g", "pkg")).toMatchObject({ exitCode: 0 });
+    expect(await readdirSorted(project.globalDir)).toEqual(["node_modules", "package.json"]);
+    expect(await project.run("pm", "hash", "-g")).toEqual({
+      stdout: "",
+      stderr: "error: missing lockfile, nothing to hash\nnote: no global packages are installed\n",
+      exitCode: 1,
     });
   });
 

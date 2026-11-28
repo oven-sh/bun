@@ -1885,6 +1885,655 @@ describe.concurrent("a bun.lock that does not parse", () => {
   });
 });
 
+// `bun install` saves no lockfile for a project that has nothing to lock, and none where a setting turns saving off.
+// A command that needs the lockfile names `bun install` only where an install leaves a lockfile that it can load.
+describe.concurrent("a command that finds no lockfile", () => {
+  const RUN_INSTALL = "note: run 'bun install' first";
+  const NO_DEPENDENCIES = `note: "<dir>/package.json" has no dependencies`;
+  const SAVE_IS_FALSE = "note: saving the lockfile is disabled: save = false under [install.lockfile] in bunfig.toml";
+  const SKIP_SAVE = "note: saving the lockfile is disabled: BUN_CONFIG_SKIP_SAVE_LOCKFILE is set";
+  const SKIP_LOAD = "note: loading the lockfile is disabled: BUN_CONFIG_SKIP_LOAD_LOCKFILE is set";
+  const FROZEN = "note: lockfile is frozen: frozenLockfile = true under [install] in bunfig.toml";
+  const DRY_RUN = "note: install is a dry run: dryRun = true under [install] in bunfig.toml, or dry-run=true in .npmrc";
+
+  type Files = Record<string, string>;
+  const json = (manifest: unknown) => JSON.stringify(manifest);
+  const dep: Files = { "dep/package.json": json({ name: "dep", version: "1.0.0" }) };
+  const dep2: Files = { "dep2/package.json": json({ name: "dep2", version: "1.0.0" }) };
+  const oneDependency: Files = { "package.json": json({ name: "root", dependencies: { dep: "file:./dep" } }), ...dep };
+  const twoDependencies = json({ name: "root", dependencies: { dep: "file:./dep", dep2: "file:./dep2" } });
+  const noDependencies: Files = { "package.json": json({ name: "zero", version: "1.0.0" }) };
+  const bunfig = (toml: string): Files => ({ "bunfig.toml": toml });
+  const SAVE_FALSE_TOML = "[install.lockfile]\nsave = false\n";
+  const saveIsFalse: Files = { ...oneDependency, ...bunfig(SAVE_FALSE_TOML) };
+  const workspaces = (value: unknown, members: Files = {}): Files => ({
+    "package.json": json({ name: "root", workspaces: value }),
+    ...members,
+  });
+  const PNPM_WORKSPACE: Files = { "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n' };
+  const memberWithoutName: Files = {
+    "packages/x/package.json": json({ dependencies: { dep: "file:../../dep" } }),
+    ...dep,
+  };
+
+  // The notes depend on these variables. A value from the shell that runs the tests must not reach a command.
+  const cleanEnv: NodeJS.Dict<string> = { ...env };
+  for (const key of ["BUN_CONFIG_SKIP_SAVE_LOCKFILE", "BUN_CONFIG_SKIP_LOAD_LOCKFILE", "BUN_CONFIG_YARN_LOCKFILE"]) {
+    delete cleanEnv[key];
+  }
+
+  // `err` is all of stderr.
+  async function run(cwd: string, args: string[], extraEnv: Record<string, string> = {}) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...cleanEnv, ...extraEnv },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err: normalizeBunSnapshot(err, cwd), exitCode };
+  }
+  const failure = async (cwd: string, command: string, extraEnv?: Record<string, string>) => {
+    const { err, exitCode } = await run(cwd, command.split(" "), extraEnv);
+    return { err, exitCode };
+  };
+
+  // `note` is all that `bun pm hash` prints below its error before any install. `install` and `after` are the exit
+  // codes of `bun install` and of `bun pm hash` after it. `reader` and `readerEnv` reach `bun pm hash` alone.
+  // `keeps` says why a row keeps the `bun install` note although the install leaves no lockfile.
+  const projects: {
+    name: string;
+    files: Files;
+    env?: Record<string, string>;
+    reader?: string[];
+    readerEnv?: Record<string, string>;
+    install: number;
+    after: number;
+    note: string;
+    keeps?: string;
+  }[] = [
+    { name: "one dependency", files: oneDependency, install: 0, after: 0, note: RUN_INSTALL },
+    {
+      name: "only a devDependency",
+      files: { "package.json": json({ devDependencies: { dep: "file:./dep" } }), ...dep },
+      install: 0,
+      after: 0,
+      note: RUN_INSTALL,
+    },
+    {
+      name: "an optional peer that only peerDependenciesMeta names",
+      files: { "package.json": json({ peerDependenciesMeta: { dep: { optional: true } } }) },
+      install: 0,
+      after: 0,
+      note: RUN_INSTALL,
+    },
+    {
+      name: "a bun.lockb",
+      files: { ...oneDependency, ...bunfig("[install]\nsaveTextLockfile = false\n") },
+      install: 0,
+      after: 0,
+      note: RUN_INSTALL,
+    },
+
+    { name: "only a name and a version", files: noDependencies, install: 0, after: 1, note: NO_DEPENDENCIES },
+    { name: "an empty object", files: { "package.json": "{}" }, install: 0, after: 1, note: NO_DEPENDENCIES },
+    { name: "an empty file", files: { "package.json": "" }, install: 0, after: 1, note: NO_DEPENDENCIES },
+    {
+      name: "four empty dependency groups",
+      files: {
+        "package.json": json({ dependencies: {}, devDependencies: {}, optionalDependencies: {}, peerDependencies: {} }),
+      },
+      install: 0,
+      after: 1,
+      note: NO_DEPENDENCIES,
+    },
+    {
+      name: "overrides and trustedDependencies, but no dependency",
+      files: { "package.json": json({ overrides: { dep: "1.0.0" }, trustedDependencies: ["dep"] }) },
+      install: 0,
+      after: 1,
+      note: NO_DEPENDENCIES,
+    },
+    {
+      name: "no dependency and a preinstall script that fails",
+      files: { "package.json": json({ scripts: { preinstall: "exit 1" } }) },
+      install: 1,
+      after: 1,
+      note: NO_DEPENDENCIES,
+    },
+    {
+      name: "a dependency that is a number",
+      files: { "package.json": '{"dependencies":{"a":1}}' },
+      install: 1,
+      after: 1,
+      note: RUN_INSTALL,
+    },
+    {
+      name: "a package.json that does not parse",
+      files: { "package.json": "{" },
+      install: 1,
+      after: 1,
+      note: RUN_INSTALL,
+    },
+
+    {
+      name: "a workspaces pattern that matches no folder",
+      files: workspaces(["packages/*"]),
+      install: 0,
+      after: 1,
+      note: NO_DEPENDENCIES,
+    },
+    { name: "an empty workspaces array", files: workspaces([]), install: 0, after: 1, note: NO_DEPENDENCIES },
+    {
+      name: "an empty workspaces.packages array",
+      files: workspaces({ packages: [] }),
+      install: 0,
+      after: 1,
+      note: NO_DEPENDENCIES,
+    },
+    {
+      name: "a workspaces pattern that matches only a package without a name",
+      files: workspaces(["packages/*"], { "packages/a/package.json": "{}" }),
+      install: 0,
+      after: 1,
+      note: NO_DEPENDENCIES,
+    },
+    {
+      name: "a listed workspace without a name",
+      files: workspaces(["packages/a"], { "packages/a/package.json": "{}" }),
+      install: 0,
+      after: 1,
+      note: NO_DEPENDENCIES,
+    },
+    {
+      name: "a workspaces pattern that matches only a package with a dependency and no name",
+      files: workspaces(["packages/*"], memberWithoutName),
+      install: 0,
+      after: 1,
+      note: RUN_INSTALL,
+      keeps: "the install warns that it skips the workspace, and the name is what the project lacks",
+    },
+    {
+      name: "a listed workspace with a dependency and no name",
+      files: workspaces(["packages/x"], memberWithoutName),
+      install: 0,
+      after: 1,
+      note: RUN_INSTALL,
+      keeps: "the install warns that it skips the workspace, and the name is what the project lacks",
+    },
+    {
+      name: "a workspaces pattern that matches a package",
+      files: workspaces(["packages/*"], { "packages/a/package.json": json({ name: "a" }) }),
+      install: 0,
+      after: 0,
+      note: RUN_INSTALL,
+    },
+    {
+      name: "a listed workspace",
+      files: workspaces(["packages/a"], { "packages/a/package.json": json({ name: "a" }) }),
+      install: 0,
+      after: 0,
+      note: RUN_INSTALL,
+    },
+    // `bun install` stops on each of these, and says why.
+    {
+      name: "a listed workspace whose folder is missing",
+      files: workspaces(["packages/a"]),
+      install: 1,
+      after: 1,
+      note: RUN_INSTALL,
+    },
+    {
+      name: "a workspace whose package.json is an empty file",
+      files: workspaces(["packages/*"], { "packages/a/package.json": "" }),
+      install: 1,
+      after: 1,
+      note: RUN_INSTALL,
+    },
+    {
+      name: "a workspaces entry that is not a string",
+      files: workspaces([1]),
+      install: 1,
+      after: 1,
+      note: RUN_INSTALL,
+    },
+    { name: "workspaces that is a string", files: workspaces("packages/*"), install: 1, after: 1, note: RUN_INSTALL },
+    { name: "workspaces that is null", files: workspaces(null), install: 1, after: 1, note: RUN_INSTALL },
+    {
+      name: "workspaces.packages that is a string",
+      files: workspaces({ packages: "packages/*" }),
+      install: 1,
+      after: 1,
+      note: RUN_INSTALL,
+    },
+    {
+      name: "workspaces.selfContained that is a string",
+      files: workspaces({ selfContained: "x" }),
+      install: 1,
+      after: 1,
+      note: RUN_INSTALL,
+    },
+
+    {
+      name: "a pnpm-workspace.yaml that lists a package",
+      files: {
+        "package.json": json({ name: "root" }),
+        ...PNPM_WORKSPACE,
+        "packages/a/package.json": json({ name: "a" }),
+      },
+      install: 0,
+      after: 0,
+      note: RUN_INSTALL,
+    },
+    {
+      name: "a pnpm-workspace.yaml beside workspaces",
+      files: { ...workspaces([]), ...PNPM_WORKSPACE },
+      install: 0,
+      after: 1,
+      note: NO_DEPENDENCIES,
+    },
+    {
+      name: "a pnpm-workspace.yaml that lists no package",
+      files: { "package.json": json({ name: "root" }), ...PNPM_WORKSPACE },
+      install: 0,
+      after: 1,
+      note: RUN_INSTALL,
+      keeps: "only an install copies pnpm-workspace.yaml into package.json, so the note is decided without it",
+    },
+    {
+      name: "a pnpm-workspace.yaml that has no packages key",
+      files: { "package.json": json({ name: "root" }), "pnpm-workspace.yaml": "nodeLinker: hoisted\n" },
+      install: 0,
+      after: 1,
+      note: RUN_INSTALL,
+      keeps: "only an install reads pnpm-workspace.yaml, so the note is decided without it",
+    },
+
+    // A setting is named below the `bun install` note. It never takes the place of that note.
+    { name: "save = false", files: saveIsFalse, install: 0, after: 1, note: `${RUN_INSTALL}\n${SAVE_IS_FALSE}` },
+    {
+      name: "save = false and no dependency",
+      files: { ...noDependencies, ...bunfig(SAVE_FALSE_TOML) },
+      install: 0,
+      after: 1,
+      note: NO_DEPENDENCIES,
+    },
+    {
+      name: "save = true",
+      files: { ...oneDependency, ...bunfig("[install.lockfile]\nsave = true\n") },
+      install: 0,
+      after: 0,
+      note: RUN_INSTALL,
+    },
+    {
+      name: "frozenLockfile = true",
+      files: { ...oneDependency, ...bunfig("[install]\nfrozenLockfile = true\n") },
+      install: 0,
+      after: 1,
+      note: `${RUN_INSTALL}\n${FROZEN}`,
+    },
+    {
+      name: "production = true",
+      files: { ...oneDependency, ...bunfig("[install]\nproduction = true\n") },
+      install: 0,
+      after: 1,
+      note: `${RUN_INSTALL}\nnote: lockfile is frozen: production = true under [install] in bunfig.toml`,
+    },
+    {
+      name: "dryRun = true",
+      files: { ...oneDependency, ...bunfig("[install]\ndryRun = true\n") },
+      install: 0,
+      after: 1,
+      note: `${RUN_INSTALL}\n${DRY_RUN}`,
+    },
+    {
+      name: "dry-run=true in .npmrc",
+      files: { ...oneDependency, ".npmrc": "dry-run=true\n" },
+      install: 0,
+      after: 1,
+      note: `${RUN_INSTALL}\n${DRY_RUN}`,
+    },
+    {
+      name: "frozenLockfile, production and dryRun that are false",
+      files: { ...oneDependency, ...bunfig("[install]\nfrozenLockfile = false\nproduction = false\ndryRun = false\n") },
+      install: 0,
+      after: 0,
+      note: RUN_INSTALL,
+    },
+    {
+      name: "BUN_CONFIG_SKIP_SAVE_LOCKFILE=1",
+      files: oneDependency,
+      env: { BUN_CONFIG_SKIP_SAVE_LOCKFILE: "1" },
+      install: 0,
+      after: 1,
+      note: `${RUN_INSTALL}\n${SKIP_SAVE}`,
+    },
+    {
+      name: "BUN_CONFIG_SKIP_SAVE_LOCKFILE=0 over save = false",
+      files: saveIsFalse,
+      env: { BUN_CONFIG_SKIP_SAVE_LOCKFILE: "0" },
+      install: 0,
+      after: 0,
+      note: RUN_INSTALL,
+    },
+    {
+      name: "BUN_CONFIG_SKIP_SAVE_LOCKFILE=0 beside frozenLockfile = true",
+      files: { ...oneDependency, ...bunfig("[install]\nfrozenLockfile = true\n") },
+      env: { BUN_CONFIG_SKIP_SAVE_LOCKFILE: "0" },
+      install: 0,
+      after: 1,
+      note: `${RUN_INSTALL}\n${FROZEN}`,
+    },
+    {
+      name: "BUN_CONFIG_SKIP_LOAD_LOCKFILE=1, which bun pm hash does not obey",
+      files: oneDependency,
+      env: { BUN_CONFIG_SKIP_LOAD_LOCKFILE: "1" },
+      install: 0,
+      after: 0,
+      note: RUN_INSTALL,
+    },
+
+    // The command alone gets the setting. An install without it saves bun.lock, so the `bun install` note has to stay.
+    {
+      name: "save = false in the file that --config names",
+      files: { ...oneDependency, "alt.toml": SAVE_FALSE_TOML },
+      reader: ["pm", "hash", "--config=alt.toml"],
+      install: 0,
+      after: 0,
+      note: `${RUN_INSTALL}\n${SAVE_IS_FALSE}`,
+    },
+    {
+      name: "BUN_CONFIG_SKIP_SAVE_LOCKFILE=1 in the file that --env-file names",
+      files: { ...oneDependency, "ci.env": "BUN_CONFIG_SKIP_SAVE_LOCKFILE=1\n" },
+      reader: ["--env-file=ci.env", "pm", "hash"],
+      install: 0,
+      after: 0,
+      note: `${RUN_INSTALL}\n${SKIP_SAVE}`,
+    },
+    {
+      name: "BUN_CONFIG_SKIP_SAVE_LOCKFILE=1 for the command alone",
+      files: oneDependency,
+      readerEnv: { BUN_CONFIG_SKIP_SAVE_LOCKFILE: "1" },
+      install: 0,
+      after: 0,
+      note: `${RUN_INSTALL}\n${SKIP_SAVE}`,
+    },
+
+    // An install writes yarn.lock wherever it is told to, and `bun pm hash` then migrates it.
+    {
+      name: 'print = "yarn" and save = false',
+      files: { ...oneDependency, ...bunfig(`${SAVE_FALSE_TOML}print = "yarn"\n`) },
+      install: 0,
+      after: 0,
+      note: `${RUN_INSTALL}\n${SAVE_IS_FALSE}`,
+    },
+    {
+      name: 'print = "yarn" and frozenLockfile = true',
+      files: { ...oneDependency, ...bunfig('[install]\nfrozenLockfile = true\n[install.lockfile]\nprint = "yarn"\n') },
+      install: 0,
+      after: 0,
+      note: `${RUN_INSTALL}\n${FROZEN}`,
+    },
+    {
+      name: 'print = "yarn" and no dependency',
+      files: { ...noDependencies, ...bunfig('[install.lockfile]\nprint = "yarn"\n') },
+      install: 0,
+      after: 0,
+      note: RUN_INSTALL,
+    },
+    {
+      name: "BUN_CONFIG_YARN_LOCKFILE and no dependency",
+      files: noDependencies,
+      env: { BUN_CONFIG_YARN_LOCKFILE: "1" },
+      install: 0,
+      after: 0,
+      note: RUN_INSTALL,
+    },
+    {
+      name: 'print = "yarn", dryRun = true and no dependency',
+      files: { ...noDependencies, ...bunfig('[install]\ndryRun = true\n[install.lockfile]\nprint = "yarn"\n') },
+      install: 0,
+      after: 1,
+      note: NO_DEPENDENCIES,
+    },
+  ];
+
+  it.each(projects)("bun pm hash in a project with $name", async row => {
+    const namesNoDependencies = row.note === NO_DEPENDENCIES;
+    const installHelps = row.install !== 0 || row.after === 0;
+    expect({
+      startsWithTheInstallNote: row.note.startsWith(RUN_INSTALL),
+      namesNoDependenciesWhereTheCommandWorksAfterAnInstall: namesNoDependencies && row.after === 0,
+      keepsTheInstallNoteAloneWhereAnInstallDoesNotHelp: row.note === RUN_INSTALL && !installHelps,
+    }).toEqual({
+      startsWithTheInstallNote: !namesNoDependencies,
+      namesNoDependenciesWhereTheCommandWorksAfterAnInstall: false,
+      keepsTheInstallNoteAloneWhereAnInstallDoesNotHelp: row.keeps !== undefined,
+    });
+
+    using untouched = tempDir("no-lockfile-reader", row.files);
+    using installed = tempDir("no-lockfile-install", row.files);
+    const reader = row.reader ?? ["pm", "hash"];
+    const readerEnv = { ...row.env, ...row.readerEnv };
+    const [before, install] = await Promise.all([
+      run(String(untouched), reader, readerEnv),
+      run(String(installed), ["install"], row.env),
+    ]);
+    const after = await run(String(installed), reader, readerEnv);
+    expect({ before, install: install.exitCode, after: after.exitCode }).toEqual({
+      before: { out: "", err: `error: missing lockfile, nothing to hash\n${row.note}`, exitCode: 1 },
+      install: row.install,
+      after: row.after,
+    });
+    expect(await file(join(String(untouched), "package.json")).text()).toBe(row.files["package.json"]);
+    expect(await readdirSorted(String(untouched))).toEqual(
+      Object.keys(row.files)
+        .map(path => path.split("/")[0])
+        .sort(),
+    );
+  });
+
+  // One command for each place that reports a missing lockfile. `neverInstalled` is all that the command prints for a
+  // project with a dependency that was never installed.
+  const withNote = (error: string) => ({ error, neverInstalled: `${error}\n${RUN_INSTALL}` });
+  const places: { command: string; error: string; neverInstalled: string }[] = [
+    { command: "pm hash", ...withNote("error: missing lockfile, nothing to hash") },
+    { command: "outdated", ...withNote("error: missing lockfile, nothing outdated") },
+    { command: "prune --dry-run", ...withNote("error: missing lockfile, nothing to prune") },
+    { command: "dedupe --check", ...withNote("error: missing lockfile, nothing to dedupe") },
+    {
+      command: "update --dev",
+      error: "error: no bun.lock to match --dev against",
+      neverInstalled: "error: no bun.lock to match --dev against\n    bun install",
+    },
+    {
+      command: "patch --commit node_modules/dep",
+      error: "error: Cannot find lockfile.",
+      neverInstalled: "error: Cannot find lockfile. Install packages with `bun install` before patching them.",
+    },
+  ];
+
+  describe.each(places)("bun $command", ({ command, error, neverInstalled }) => {
+    it.each([
+      ["a dependency that was never installed", oneDependency, neverInstalled],
+      // `bun install` prints a warning for this catalog. The command must not.
+      [
+        "a dependency beside a pnpm-workspace.yaml",
+        { ...oneDependency, "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\ncatalog:\n  react:\n' },
+        neverInstalled,
+      ],
+      ["nothing to lock", noDependencies, `${error}\n${NO_DEPENDENCIES}`],
+      ["lockfile saving turned off", saveIsFalse, `${neverInstalled}\n${SAVE_IS_FALSE}`],
+    ])("%s", async (_, files, err) => {
+      using dir = tempDir("no-lockfile-place", files);
+      expect(await failure(String(dir), command)).toEqual({ err, exitCode: 1 });
+    });
+  });
+
+  // `--dry-run`, `--production`, `--frozen-lockfile` and `--no-save` keep the command that gets them from saving a
+  // lockfile. They say nothing about a later `bun install`.
+  it.each([
+    ["outdated --production", "error: missing lockfile, nothing outdated"],
+    ["audit --prod", "error: missing lockfile, nothing to audit"],
+    ["prune --production --dry-run", "error: missing lockfile, nothing to prune"],
+    ["dedupe --frozen-lockfile", "error: missing lockfile, nothing to dedupe"],
+    ["dedupe --no-save", "error: missing lockfile, nothing to dedupe"],
+    ["dedupe --dry-run", "error: missing lockfile, nothing to dedupe"],
+  ])("bun %s names no setting for a dependency that was never installed", async (command, error) => {
+    using dir = tempDir("no-lockfile-own-flags", oneDependency);
+    expect(await failure(String(dir), command)).toEqual({ err: `${error}\n${RUN_INSTALL}`, exitCode: 1 });
+  });
+
+  it.each([
+    ["pm ls", "error: missing lockfile, nothing to list"],
+    ["list", "error: missing lockfile, nothing to list"],
+    ["pm hash-string", "error: missing lockfile, nothing to hash"],
+    ["pm hash-print", "error: missing lockfile, nothing to hash"],
+    ["pm licenses", "error: missing lockfile, nothing to list"],
+    ["pm why dep", "error: missing lockfile"],
+    ["why dep", "error: missing lockfile"],
+    ["pm untrusted", "bun pm untrusted <version> (<revision>)\n\nerror: missing lockfile, nothing to list"],
+    ["pm trust --all", "bun pm trust <version> (<revision>)\nerror: missing lockfile, nothing to trust"],
+    ["pm cache pack", "error: missing lockfile, nothing to pack"],
+    ["audit", "error: missing lockfile, nothing to audit"],
+    ["audit fix", "error: missing lockfile, nothing to audit"],
+    ["update --recursive", "error: missing lockfile, nothing to update"],
+  ])("bun %s in a project with nothing to lock", async (command, error) => {
+    using dir = tempDir("no-lockfile-nothing-to-lock", noDependencies);
+    expect(await failure(String(dir), command)).toEqual({ err: `${error}\n${NO_DEPENDENCIES}`, exitCode: 1 });
+  });
+
+  it("after bun remove of the last dependency", async () => {
+    using dir = tempDir("no-lockfile-removed", oneDependency);
+    expect(await run(String(dir), ["install"])).toMatchObject({ exitCode: 0 });
+    expect(existsSync(join(String(dir), "bun.lock"))).toBeTrue();
+    const removed = await run(String(dir), ["remove", "dep"]);
+    expect(removed.err).toContain("package.json has no dependencies! Deleted empty lockfile");
+    expect(removed.exitCode).toBe(0);
+
+    expect(await failure(String(dir), "outdated")).toEqual({
+      err: `error: missing lockfile, nothing outdated\n${NO_DEPENDENCIES}`,
+      exitCode: 1,
+    });
+  });
+
+  // `bun prune` reads bun.lock alone, so the yarn.lock that these installs write does not help it.
+  it.each([
+    ["the setting that turns saving off", oneDependency, `${SAVE_FALSE_TOML}print = "yarn"\n`, `\n${SAVE_IS_FALSE}`],
+    ["no cause for a project with nothing to lock", noDependencies, '[install.lockfile]\nprint = "yarn"\n', ""],
+  ])("bun prune names %s where an install writes only yarn.lock", async (_, files, toml, setting) => {
+    using dir = tempDir("no-lockfile-prune-yarn", { ...files, ...bunfig(toml) });
+    const missing = { err: `error: missing lockfile, nothing to prune\n${RUN_INSTALL}${setting}`, exitCode: 1 };
+    expect(await failure(String(dir), "prune --dry-run")).toEqual(missing);
+    expect(await run(String(dir), ["install"])).toMatchObject({ exitCode: 0 });
+    expect({
+      yarn: existsSync(join(String(dir), "yarn.lock")),
+      bun: existsSync(join(String(dir), "bun.lock")),
+    }).toEqual({ yarn: true, bun: false });
+    expect(await failure(String(dir), "prune --dry-run")).toEqual(missing);
+  });
+
+  // Only `bun dedupe` and a `bun update` that selects by group obey the variable.
+  describe.each([
+    ["dedupe --check", `error: missing lockfile, nothing to dedupe\n${RUN_INSTALL}`],
+    ["update --dev", "error: no bun.lock to match --dev against\n    bun install"],
+  ])("bun %s beside a bun.lock that BUN_CONFIG_SKIP_LOAD_LOCKFILE keeps it from", (command, neverInstalled) => {
+    it.each([
+      ["names the variable", ""],
+      ["names the variable and not save = false", SAVE_FALSE_TOML],
+    ])("%s", async (_, toml) => {
+      using dir = tempDir("no-lockfile-skip-load", oneDependency);
+      expect(await run(String(dir), ["install"])).toMatchObject({ exitCode: 0 });
+      expect(existsSync(join(String(dir), "bun.lock"))).toBeTrue();
+      await write(join(String(dir), "bunfig.toml"), toml);
+      expect(await failure(String(dir), command, { BUN_CONFIG_SKIP_LOAD_LOCKFILE: "1" })).toEqual({
+        err: `${neverInstalled}\n${SKIP_LOAD}`,
+        exitCode: 1,
+      });
+    });
+  });
+
+  // A folder without a package.json is no project, so there is nothing to decide the note from.
+  it("bun pm cache pack outside a project", async () => {
+    using dir = tempDir("no-lockfile-no-project", { "README.md": "" });
+    expect(await failure(String(dir), "pm cache pack")).toEqual({
+      err: `error: missing lockfile, nothing to pack\n${RUN_INSTALL}`,
+      exitCode: 1,
+    });
+  });
+
+  describe.each(["prune", "dedupe", "audit fix"])(
+    "bun %s beside a bun.lock that does not match package.json",
+    command => {
+      const stale = `error: bun.lock does not match package.json, nothing to ${command.split(" ").at(-1)}\n${RUN_INSTALL}`;
+      it.each([
+        ["names bun install", "", stale],
+        ["adds the setting that turns saving off", SAVE_FALSE_TOML, `${stale}\n${SAVE_IS_FALSE}`],
+        ["adds the setting that freezes the lockfile", "[install]\nfrozenLockfile = true\n", `${stale}\n${FROZEN}`],
+      ])("%s", async (_, toml, err) => {
+        using dir = tempDir("stale-lockfile", { ...oneDependency, ...dep2 });
+        expect(await run(String(dir), ["install"])).toMatchObject({ exitCode: 0 });
+        await Promise.all([
+          write(join(String(dir), "package.json"), twoDependencies),
+          write(join(String(dir), "bunfig.toml"), toml),
+        ]);
+        expect(await failure(String(dir), command)).toEqual({ err, exitCode: 1 });
+      });
+    },
+  );
+
+  // An install converts a bun.lockb to bun.lock even with `save = false`, so the setting must not take the note's place.
+  it.each(["prune --dry-run", "dedupe --check"])(
+    "bun %s keeps the bun install note beside a stale bun.lockb that an install converts",
+    async command => {
+      using dir = tempDir("stale-lockb", {
+        ...oneDependency,
+        ...dep2,
+        ...bunfig("[install]\nsaveTextLockfile = false\n"),
+      });
+      expect(await run(String(dir), ["install"])).toMatchObject({ exitCode: 0 });
+      expect(existsSync(join(String(dir), "bun.lockb"))).toBeTrue();
+      await Promise.all([
+        write(join(String(dir), "package.json"), twoDependencies),
+        write(join(String(dir), "bunfig.toml"), `[install]\nsaveTextLockfile = true\n${SAVE_FALSE_TOML}`),
+      ]);
+      const nothingTo = command.split(" ")[0];
+      expect(await failure(String(dir), command)).toEqual({
+        err: `error: bun.lock does not match package.json, nothing to ${nothingTo}\n${RUN_INSTALL}\n${SAVE_IS_FALSE}`,
+        exitCode: 1,
+      });
+      expect(await run(String(dir), ["install"])).toMatchObject({ exitCode: 0 });
+      expect(existsSync(join(String(dir), "bun.lock"))).toBeTrue();
+      expect(await run(String(dir), command.split(" "))).toMatchObject({ exitCode: 0 });
+    },
+  );
+
+  // The install is what removes the stale bun.lock. After it the project has nothing to lock, and the note says so.
+  it("bun prune beside a stale bun.lock and a package.json that lost its last dependency", async () => {
+    using dir = tempDir("stale-lockfile-no-dependencies", oneDependency);
+    expect(await run(String(dir), ["install"])).toMatchObject({ exitCode: 0 });
+    await write(join(String(dir), "package.json"), json({ name: "root" }));
+    expect(await failure(String(dir), "prune --dry-run")).toEqual({
+      err: `error: bun.lock does not match package.json, nothing to prune\n${RUN_INSTALL}`,
+      exitCode: 1,
+    });
+    expect(await run(String(dir), ["install"])).toMatchObject({ exitCode: 0 });
+    expect(existsSync(join(String(dir), "bun.lock"))).toBeFalse();
+    expect(await failure(String(dir), "prune --dry-run")).toEqual({
+      err: `error: missing lockfile, nothing to prune\n${NO_DEPENDENCIES}`,
+      exitCode: 1,
+    });
+  });
+
+  // `bun patch --commit` prints its error at every log level.
+  it.each(places.slice(0, 5))("bun $command --silent prints nothing", async ({ command }) => {
+    using dir = tempDir("no-lockfile-silent", noDependencies);
+    expect(await failure(String(dir), `${command} --silent`)).toEqual({ err: "", exitCode: 1 });
+  });
+});
+
 // The same `dependencies` line can be in the lockfile twice. A merge that was resolved by hand can keep it from both
 // sides, and Bun saves it that way if package.json repeats the line.
 describe.concurrent("a new dependency next to a lockfile that repeats a dependency line", () => {

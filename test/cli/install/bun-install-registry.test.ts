@@ -10423,7 +10423,9 @@ describe.concurrent("pm trust", async () => {
       });
 
       let err = await stderr.text();
-      expect(err).toContain("error: missing lockfile, nothing to trust\nnote: run 'bun install' first\n");
+      expect(normalizeBunSnapshot(err, packageDir)).toBe(
+        `bun pm trust <version> (<revision>)\nerror: missing lockfile, nothing to trust\nnote: "<dir>/package.json" has no dependencies`,
+      );
       let out = await stdout.text();
       expect(out).toBeEmpty();
       expect(await exited).toBe(1);

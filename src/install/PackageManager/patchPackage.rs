@@ -20,13 +20,13 @@ use crate::lockfile_real::package::{Package, PackageColumns as _};
 use crate::lockfile_real::{self as lockfile, Lockfile, reachable, tree};
 use crate::package_install::{StagingPath, rename_staging_into_place};
 use crate::package_installer::alias_is_safe_install_target;
-use crate::package_manager_real::PackageManager;
 use crate::package_manager_real::options::{Do, LogLevel, PatchFeatures};
 use crate::package_manager_real::package_json_editor::{edit_patched_dependencies, remove_entry};
 use crate::package_manager_real::package_manager_directories::{
     compute_cache_dir_and_subpath, get_temporary_directory, is_package_in_cache_at,
 };
 use crate::package_manager_real::populate_package_cache::download_pinned_packages;
+use crate::package_manager_real::{LockfileNote, PackageManager};
 use crate::resolution::append_without_url_credentials;
 use crate::{DependencyID, PackageID, PatchTask, Resolution, ResolutionTag, initialize_store};
 
@@ -453,10 +453,21 @@ pub fn do_patch_commit(
     let linker = load_result.node_linker(&lockfile, manager.options.node_linker);
     match load_result {
         lockfile::LoadResult::NotFound => {
-            Output::err_generic(
-                "Cannot find lockfile. Install packages with `<cyan>bun install<r>` before patching them.",
-                (),
-            );
+            match manager.missing_lockfile_note() {
+                LockfileNote::RunInstall(setting) => {
+                    Output::err_generic(
+                        "Cannot find lockfile. Install packages with `<cyan>bun install<r>` before patching them.",
+                        (),
+                    );
+                    if let Some(setting) = setting {
+                        setting.print_note();
+                    }
+                }
+                note => {
+                    Output::err_generic("Cannot find lockfile.", ());
+                    manager.print_lockfile_note(note);
+                }
+            }
             Global::crash();
         }
         lockfile::LoadResult::Err(cause) => {

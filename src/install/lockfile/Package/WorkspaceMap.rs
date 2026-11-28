@@ -60,6 +60,10 @@ impl WorkspaceMap {
         }
     }
 
+    pub(crate) fn skipped_any_with_dependencies(&self) -> bool {
+        !self.skipped_with_dependencies.is_empty()
+    }
+
     pub(crate) fn keys(&self) -> &[Box<[u8]>] {
         self.map.keys()
     }

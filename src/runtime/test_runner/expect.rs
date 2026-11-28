@@ -923,7 +923,7 @@ impl Expect {
             if !value.is_object() {
                 return fail!(m, "<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n");
             }
-            let (matched, with_matchers) = value.jest_deep_match(property_matchers, global_this, true)?;
+            let (matched, with_matchers) = value.jest_deep_match(property_matchers, global_this, Some(true))?;
             if !matched {
                 // TODO: print diff with properties from propertyMatchers
                 return fail!(

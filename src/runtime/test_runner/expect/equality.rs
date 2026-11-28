@@ -70,7 +70,9 @@ impl Expect {
                 "<b>Matcher error<r>: <green>expected<r> value must be a non-null object\n"
             );
         }
-        let (matched, shown) = received.jest_deep_match(expected, m.global, m.not())?;
+        // The message of a failed `.not` shows the expected value alone, so it needs no copy of the received one.
+        let replace_when = if m.not() { None } else { Some(false) };
+        let (matched, shown) = received.jest_deep_match(expected, m.global, replace_when)?;
         if m.passes(matched) { m.pass() } else { m.fail_diff(expected, shown) }
     }
 

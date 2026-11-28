@@ -1,4 +1,4 @@
-An object's own asymmetricMatch() is called where bun test calls it: eleven matchers, five others, ten ways.
+An object's own asymmetricMatch() is called where bun test calls it: eleven matchers, five others, fourteen ways.
 #### asked.test.js
 import { test, expect } from "bun:test";
 
@@ -6,6 +6,7 @@ const calls = [];
 const shape = a => ({ a });
 class Box { constructor(a) { this.a = a; } }
 class Matcher { constructor(a) { this.a = a; } asymmetricMatch(other) { calls.push("class"); return true; } }
+class Holder { #kept; constructor(kept) { this.#kept = kept; } }
 const name = "asymmetric" + String("Match");
 const both = other => (calls.push("both"), false);
 
@@ -38,6 +39,10 @@ const ways = {
   "toStrictEqual": (other, matcher) => expect({ w: other }).toStrictEqual({ w: matcher }),
   "toMatchObject": (other, matcher) => expect({ w: other }).toMatchObject({ w: matcher }),
   "toMatchObject turned round": (other, matcher) => expect({ w: matcher }).toMatchObject({ w: other }),
+  "toMatchObject on the two whole values": (other, matcher) => expect(other).toMatchObject(matcher),
+  "toMatchObject on the two whole values, turned round": (other, matcher) => expect(matcher).toMatchObject(other),
+  "toMatchObject in a private field": (other, matcher) => expect(new Holder(other)).toMatchObject(new Holder(matcher)),
+  "toMatchObject in a private field, turned round": (other, matcher) => expect(new Holder(matcher)).toMatchObject(new Holder(other)),
   "toContainEqual": (other, matcher) => expect([other]).toContainEqual(matcher),
   "toHaveProperty": (other, matcher) => expect({ w: other }).toHaveProperty("w", matcher),
 };

@@ -1490,6 +1490,13 @@ static ALWAYS_INLINE void completeMockResult(JSC::VM& vm, Zig::GlobalObject* glo
     result->putDirectOffset(vm, 1, value);
 }
 
+// A termination is not a value that the implementation threw: the result stays "incomplete".
+static ALWAYS_INLINE void completeMockResultWithException(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSObject* result, JSC::Exception* exception)
+{
+    if (!vm.isTerminationException(exception))
+        completeMockResult(vm, globalObject, result, MockResultType::Throw, exception->value());
+}
+
 static JSMockFunction* createMockFunction(JSC::VM& vm, Zig::GlobalObject* globalObject, bool isVitest)
 {
     auto* mock = JSMockFunction::create(vm, globalObject);
@@ -1765,7 +1772,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
 
     returnValue = runMockImplementation(globalObject, impl, thisValue, args);
     if (auto* exception = scope.exception()) [[unlikely]] {
-        completeMockResult(vm, globalObject, result, MockResultType::Throw, exception->value());
+        completeMockResultWithException(vm, globalObject, result, exception);
         return {};
     }
     completeMockResult(vm, globalObject, result, MockResultType::Return, returnValue);
@@ -1847,7 +1854,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsMockFunctionConstruct, __attribute__(
             mockInstanceMethods(globalObject, fn, asObject(returnValue));
     }
     if (auto* exception = scope.exception()) [[unlikely]] {
-        completeMockResult(vm, globalObject, result, MockResultType::Throw, exception->value());
+        completeMockResultWithException(vm, globalObject, result, exception);
         return {};
     }
     completeMockResult(vm, globalObject, result, MockResultType::Return, resultValue);

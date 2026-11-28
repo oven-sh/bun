@@ -387,6 +387,82 @@ describe("mock()", () => {
     expect(fn).toHaveBeenLastCalledWith(43);
     expect(fn).toHaveBeenCalledWith(43);
   });
+  // What stops the run is not a value that the implementation threw.
+  describe("a node:vm timeout that stops a call leaves its result incomplete", () => {
+    const incomplete = { type: "incomplete", value: undefined };
+
+    // Runs `source` with the globals that makeGlobals(wait) returns, under a timeout that passes inside wait().
+    function stopInWait(source, makeGlobals) {
+      let globals, code, outcome;
+      // The timeout can pass before wait() starts, or after it ends. The next attempt has a longer one.
+      for (let timeout = 50; timeout <= 400 && outcome !== "stopped"; timeout *= 2) {
+        let started = false;
+        let returned = false;
+        globals = makeGlobals(() => {
+          started = true;
+          // The wait ends by itself, so a timeout that stops nothing fails the test.
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, timeout * 5);
+          returned = true;
+        });
+        code = undefined;
+        try {
+          vm.runInContext(source, vm.createContext(globals), { timeout });
+        } catch (error) {
+          code = error.code;
+        }
+        outcome = !started ? "not started" : returned ? "returned" : "stopped";
+      }
+      expect({ outcome, code }).toEqual({ outcome: "stopped", code: "ERR_SCRIPT_EXECUTION_TIMEOUT" });
+      return globals;
+    }
+
+    test.each([
+      ["fn()", "jest.fn", jest.fn],
+      ["new fn()", "jest.fn", jest.fn],
+      // In Bun, new on a vi mock constructs the implementation, and new on a jest mock calls it.
+      ...(vi ? [["new fn()", "vi.fn", vi.fn]] : []),
+    ])("%s on a mock from %s", (source, _, makeMock) => {
+      const { fn } = stopInWait(source, wait => ({
+        fn: makeMock(function () {
+          wait();
+        }),
+      }));
+      expect(fn.mock.results).toEqual([incomplete]);
+      // Jest has no settledResults.
+      if (fn.mock.settledResults) expect(fn.mock.settledResults).toEqual([incomplete]);
+
+      // The engine's message for a termination is a value like any other when the implementation throws it.
+      const message = "JavaScript execution terminated.";
+      fn.mockImplementation(function () {
+        throw message;
+      });
+      expect(() => vm.runInNewContext(source, { fn })).toThrow(message);
+      expect(fn.mock.results).toEqual([incomplete, { type: "throw", value: message }]);
+    });
+
+    test("outer(), a mock that calls the mock fn", () => {
+      const { fn, outer } = stopInWait("outer()", wait => {
+        const fn = jest.fn(wait);
+        return { fn, outer: jest.fn(() => fn()) };
+      });
+      expect([fn.mock.results, outer.mock.results]).toEqual([[incomplete], [incomplete]]);
+    });
+
+    if (isBun) {
+      test("new on an automocked class, while the automock reads a getter of the instance", () => {
+        const { Klass } = stopInWait("new Klass()", wait => {
+          class Klass {
+            constructor() {
+              Object.defineProperty(this, "method", { get: wait });
+            }
+            method() {}
+          }
+          return vi.mockObject({ Klass }, { spy: true });
+        });
+        expect(Klass.mock.results).toEqual([incomplete]);
+      });
+    }
+  });
   test("mockReset works", () => {
     const instance = new Error("foo");
     const fn = jest.fn(f => {

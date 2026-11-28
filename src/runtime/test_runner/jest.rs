@@ -37,6 +37,8 @@ struct FileHeader {
 #[derive(Default)]
 pub(crate) struct CurrentFile {
     unprinted: Cell<Option<FileHeader>>,
+    // No pending heading also means a worker never printed one.
+    has_printed_header: Cell<bool>,
 }
 
 impl CurrentFile {
@@ -49,6 +51,7 @@ impl CurrentFile {
         is_worker: bool,
         reporters: &ReportersConfig,
     ) {
+        self.has_printed_header.set(false);
         if is_worker {
             // Coordinator owns the terminal and prints its own per-test file
             // context; the worker should not emit a header to stderr.
@@ -60,6 +63,7 @@ impl CurrentFile {
         }
 
         Self::print(title, prefix, repeat_count, repeat_index);
+        self.has_printed_header.set(true);
     }
 
     #[optimize(size)]
@@ -94,9 +98,14 @@ impl CurrentFile {
         Output::flush();
     }
 
+    pub(crate) fn has_printed_header(&self) -> bool {
+        self.has_printed_header.get()
+    }
+
     pub(crate) fn print_if_needed(&self) {
         if let Some(header) = self.unprinted.take() {
             Self::print(&header.title, header.prefix, header.repeat_count, header.repeat_index);
+            self.has_printed_header.set(true);
         }
     }
 }

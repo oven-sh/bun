@@ -324,9 +324,17 @@ fn is_hook_name(name: &str) -> bool {
 /// version string.
 fn get_react_compiler_runtime_module(target: Option<&str>) -> &'static str {
     match target {
-        Some("19") => "react/compiler-runtime",
-        Some("17") | Some("18") => "react-compiler-runtime",
+        Some("19") => REACT_19_RUNTIME_MODULE,
+        Some("17") | Some("18") => REACT_17_18_RUNTIME_MODULE,
         // Default to React 19 runtime for unrecognized versions
-        _ => "react/compiler-runtime",
+        _ => REACT_19_RUNTIME_MODULE,
     }
+}
+
+const REACT_19_RUNTIME_MODULE: &str = "react/compiler-runtime";
+const REACT_17_18_RUNTIME_MODULE: &str = "react-compiler-runtime";
+
+/// Whether `module` is the runtime module of a target. Upstream asks for its own target's, and no option sets one here.
+pub(crate) fn is_react_compiler_runtime_module(module: &[u8]) -> bool {
+    module == REACT_19_RUNTIME_MODULE.as_bytes() || module == REACT_17_18_RUNTIME_MODULE.as_bytes()
 }

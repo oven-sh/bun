@@ -323,6 +323,15 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  test("should undo mock.getter() on an accessor that a native class defines", async () => {
+    const { exitCode, stderr } = await runTests(["30-mock-getter-of-native-accessors.mjs"]);
+    expect(stderr).toContain("4 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
 });
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {

@@ -14,6 +14,7 @@ export const Blob = b.class({
   final: false,
   overridesToJS: true,
   rustTraits: ["crate::webcore::blob::BlobExt"],
+  configurable: true,
   estimatedSize: true,
   types: [table.viewType("Blob"), table.viewType("bun.BunFile"), table.exactType("$Bindgen.Blob")],
   lockedMembers: ["prototype"],

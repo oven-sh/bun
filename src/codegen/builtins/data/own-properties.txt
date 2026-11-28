@@ -51,7 +51,7 @@ BigInt64Array.prototype : BYTES_PER_ELEMENT/- constructor/wc
 BigUint64Array : BYTES_PER_ELEMENT/- length/? name/? prototype/-
 BigUint64Array.prototype : BYTES_PER_ELEMENT/- constructor/wc
 Blob : length/c name/c prototype/-
-Blob.prototype : @@toStringTag/c arrayBuffer/w bytes/w constructor/wc delete/w exists/w formData/w image/w json/w lastModified/a name/a size/a slice/w stat/w stream/w text/w type/a unlink/w write/w writer/w
+Blob.prototype : @@toStringTag/c arrayBuffer/wc bytes/wc constructor/wc delete/wc exists/wc formData/wc image/wc json/wc lastModified/ac name/ac size/ac slice/wc stat/wc stream/wc text/wc type/ac unlink/wc write/wc writer/wc
 Boolean : length/? name/? prototype/-
 Boolean.prototype : constructor/wc toString/wc valueOf/wc
 BroadcastChannel.prototype : @@@nodejs.util.inspect.custom/wc
@@ -92,11 +92,11 @@ Float32Array.prototype : BYTES_PER_ELEMENT/- constructor/wc
 Float64Array : BYTES_PER_ELEMENT/- length/? name/? prototype/-
 Float64Array.prototype : BYTES_PER_ELEMENT/- constructor/wc
 FormData : from/- length/c name/c prototype/-
-FormData.prototype : @@iterator/wc @@toStringTag/c append/wc constructor/wc delete/wc entries/wc forEach/wc get/wc getAll/wc has/wc keys/wc length/a set/wc toJSON/- values/wc
+FormData.prototype : @@iterator/wc @@toStringTag/c append/wc constructor/wc delete/wc entries/wc forEach/wc get/wc getAll/wc has/wc keys/wc length/ac set/wc toJSON/- values/wc
 Function : length/? name/? prototype/-
 Function.prototype : @@hasInstance/- apply/wc arguments/ac bind/wc call/wc caller/ac constructor/wc length/c name/c toString/wc
 Headers : length/c name/c prototype/-
-Headers.prototype : @@iterator/wc @@toStringTag/c append/wc constructor/wc count/a delete/wc entries/wc forEach/wc get/wc getAll/wc getSetCookie/wc has/wc keys/wc set/wc toJSON/wc values/wc
+Headers.prototype : @@iterator/wc @@toStringTag/c append/wc constructor/wc count/ac delete/wc entries/wc forEach/wc get/wc getAll/wc getSetCookie/wc has/wc keys/wc set/wc toJSON/wc values/wc
 Int16Array : BYTES_PER_ELEMENT/- length/? name/? prototype/-
 Int16Array.prototype : BYTES_PER_ELEMENT/- constructor/wc
 Int32Array : BYTES_PER_ELEMENT/- length/? name/? prototype/-
@@ -162,9 +162,9 @@ Reflect : @@toStringTag/c apply/wc construct/wc defineProperty/wc deleteProperty
 RegExp : $&/ac $'/ac $*/ac $+/ac $1/ac $2/ac $3/ac $4/ac $5/ac $6/ac $7/ac $8/ac $9/ac $_/ac $`/ac @@species/ac escape/wc input/ac lastMatch/ac lastParen/ac leftContext/ac length/? multiline/ac name/? prototype/- rightContext/ac
 RegExp.prototype : @@match/wc @@matchAll/wc @@replace/wc @@search/wc @@split/wc compile/wc constructor/wc dotAll/ac exec/wc flags/ac global/ac hasIndices/ac ignoreCase/ac multiline/ac source/ac sticky/ac test/wc toString/wc unicode/ac unicodeSets/ac
 Request : length/c name/c prototype/-
-Request.prototype : @@toStringTag/c arrayBuffer/w blob/w body/a bodyUsed/a bytes/w cache/a clone/w constructor/wc credentials/a destination/a formData/w headers/a integrity/a json/w method/a mode/a redirect/a referrer/a referrerPolicy/a signal/a text/w textStream/w url/a
-Response : error/w json/w length/c name/c prototype/- redirect/w
-Response.prototype : @@toStringTag/c arrayBuffer/w blob/w body/a bodyUsed/a bytes/w clone/w constructor/wc formData/w headers/a json/w ok/a redirected/a status/a statusText/a text/w textStream/w type/a url/a
+Request.prototype : @@toStringTag/c arrayBuffer/wc blob/wc body/ac bodyUsed/ac bytes/wc cache/ac clone/wc constructor/wc credentials/ac destination/ac formData/wc headers/ac integrity/ac json/wc method/ac mode/ac redirect/ac referrer/ac referrerPolicy/ac signal/ac text/wc textStream/wc url/ac
+Response : error/wc json/wc length/c name/c prototype/- redirect/wc
+Response.prototype : @@toStringTag/c arrayBuffer/wc blob/wc body/ac bodyUsed/ac bytes/wc clone/wc constructor/wc formData/wc headers/ac json/wc ok/ac redirected/ac status/ac statusText/ac text/wc textStream/wc type/ac url/ac
 Set : @@species/ac length/? name/? prototype/-
 Set.prototype : @@iterator/wc @@toStringTag/c add/wc clear/wc constructor/wc delete/wc difference/wc entries/wc forEach/wc has/wc intersection/wc isDisjointFrom/wc isSubsetOf/wc isSupersetOf/wc keys/wc size/ac symmetricDifference/wc union/wc values/wc
 SharedArrayBuffer : @@species/ac length/? name/? prototype/-
@@ -197,7 +197,7 @@ Temporal.PlainYearMonth : compare/wc from/wc length/? name/? prototype/-
 Temporal.PlainYearMonth.prototype : @@toStringTag/c add/wc calendarId/ac constructor/wc daysInMonth/ac daysInYear/ac equals/wc era/ac eraYear/ac inLeapYear/ac month/ac monthCode/ac monthsInYear/ac since/wc subtract/wc toJSON/wc toLocaleString/wc toPlainDate/wc toString/wc until/wc valueOf/wc with/wc year/ac
 Temporal.ZonedDateTime : compare/wc from/wc length/? name/? prototype/-
 Temporal.ZonedDateTime.prototype : @@toStringTag/c add/wc calendarId/ac constructor/wc day/ac dayOfWeek/ac dayOfYear/ac daysInMonth/ac daysInWeek/ac daysInYear/ac epochMilliseconds/ac epochNanoseconds/ac equals/wc era/ac eraYear/ac getTimeZoneTransition/wc hour/ac hoursInDay/ac inLeapYear/ac microsecond/ac millisecond/ac minute/ac month/ac monthCode/ac monthsInYear/ac nanosecond/ac offset/ac offsetNanoseconds/ac round/wc second/ac since/wc startOfDay/wc subtract/wc timeZoneId/ac toInstant/wc toJSON/wc toLocaleString/wc toPlainDate/wc toPlainDateTime/wc toPlainTime/wc toString/wc until/wc valueOf/wc weekOfYear/ac with/wc withCalendar/wc withPlainTime/wc withTimeZone/wc year/ac yearOfWeek/ac
-TextDecoder.prototype : @@toStringTag/c constructor/wc decode/w encoding/a fatal/a ignoreBOM/a
+TextDecoder.prototype : @@toStringTag/c constructor/wc decode/wc encoding/ac fatal/ac ignoreBOM/ac
 TextDecoderStream.prototype : @@@nodejs.util.inspect.custom/wc
 TextEncoder.prototype : @@toStringTag/c constructor/wc encode/wc encodeInto/wc encoding/ac
 TextEncoderStream.prototype : @@@nodejs.util.inspect.custom/wc
@@ -211,7 +211,7 @@ URIError.prototype : constructor/wc message/wc name/wc
 URL : canParse/wc createObjectURL/wc length/c name/c parse/wc prototype/- revokeObjectURL/wc
 URL.prototype : @@@nodejs.util.inspect.custom/wc @@toStringTag/c constructor/wc hash/ac host/ac hostname/ac href/ac origin/ac password/ac pathname/ac port/ac protocol/ac search/ac searchParams/ac toJSON/wc toString/wc username/ac
 URLSearchParams : length/c name/c prototype/-
-URLSearchParams.prototype : @@@nodejs.util.inspect.custom/wc @@iterator/wc @@toStringTag/c append/wc constructor/wc delete/wc entries/wc forEach/wc get/wc getAll/wc has/wc keys/wc length/a set/wc size/ac sort/wc toJSON/wc toString/wc values/wc
+URLSearchParams.prototype : @@@nodejs.util.inspect.custom/wc @@iterator/wc @@toStringTag/c append/wc constructor/wc delete/wc entries/wc forEach/wc get/wc getAll/wc has/wc keys/wc length/ac set/wc size/ac sort/wc toJSON/wc toString/wc values/wc
 Uint16Array : BYTES_PER_ELEMENT/- length/? name/? prototype/-
 Uint16Array.prototype : BYTES_PER_ELEMENT/- constructor/wc
 Uint32Array : BYTES_PER_ELEMENT/- length/? name/? prototype/-

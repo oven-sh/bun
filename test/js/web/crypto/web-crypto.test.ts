@@ -16,6 +16,62 @@ it("crypto.subtle setter should not throw", () => {
   expect(globalThis.crypto.subtle).toBe(subtle);
 });
 
+// Node.js defines `subtle` together with the rest of Crypto.prototype. Each case is a process of its own, in which
+// nothing has read `crypto` when the script starts.
+describe("Crypto.prototype.subtle", () => {
+  it.concurrent.each([
+    [
+      "is configurable, and is there before crypto is read",
+      `const { get, set, ...attributes } = Object.getOwnPropertyDescriptor(Crypto.prototype, "subtle");
+       console.log(JSON.stringify(attributes), get.call(globalThis.crypto) === globalThis.crypto.subtle);`,
+      `{"enumerable":true,"configurable":true} true`,
+    ],
+    [
+      "keeps a definition that is made before crypto is read",
+      `Object.defineProperty(Crypto.prototype, "subtle", { get: () => "defined", configurable: true });
+       console.log(globalThis.crypto.subtle);`,
+      "defined",
+    ],
+    [
+      "can be deleted",
+      `const subtle = globalThis.crypto.subtle;
+       console.log(delete Crypto.prototype.subtle, globalThis.crypto.subtle, typeof subtle.digest);`,
+      "true undefined function",
+    ],
+    [
+      "can be redefined and put back",
+      `const subtle = globalThis.crypto.subtle;
+       const real = Object.getOwnPropertyDescriptor(Crypto.prototype, "subtle");
+       Object.defineProperty(Crypto.prototype, "subtle", { get: () => "redefined", configurable: true });
+       const redefined = globalThis.crypto.subtle;
+       Object.defineProperty(Crypto.prototype, "subtle", real);
+       console.log(redefined, globalThis.crypto.subtle === subtle);`,
+      "redefined true",
+    ],
+    [
+      "is locked by Object.freeze() of the prototype before crypto is read",
+      `Object.freeze(Crypto.prototype);
+       const { configurable } = Object.getOwnPropertyDescriptor(Crypto.prototype, "subtle");
+       console.log(configurable, typeof globalThis.crypto.subtle.digest, Object.isFrozen(Crypto.prototype));`,
+      "false function true",
+    ],
+    [
+      "throws ERR_INVALID_THIS for another receiver before crypto is read",
+      `const { get } = Object.getOwnPropertyDescriptor(Crypto.prototype, "subtle");
+       try {
+         get.call(Crypto.prototype);
+       } catch (error) {
+         console.log(error.name, error.code);
+       }`,
+      "TypeError ERR_INVALID_THIS",
+    ],
+  ])("%s", async (_, script, printed) => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: printed + "\n", stderr: "", exitCode: 0 });
+  });
+});
+
 it("getRandomValues and randomUUID have the lengths of the IDL", () => {
   expect(crypto.getRandomValues.length).toBe(1);
   expect(crypto.randomUUID.length).toBe(0);

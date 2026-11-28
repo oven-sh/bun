@@ -12,6 +12,7 @@ export const TextDecodeOptions = b.dictionary({ stream: b.bool.loose.default(fal
 
 export const TextDecoder = b.class({
   rustPath: "crate::webcore::TextDecoder",
+  configurable: true,
   construct: {
     args: { label: b.string.loose.utf8.optional, options: TextDecoderOptions.nullable.default({}) },
     expected: { options: ["object"] },

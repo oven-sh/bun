@@ -10,9 +10,6 @@ use bun_ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
 
 pub(crate) struct ConvertESMExportsForHmr<'a> {
     pub last_part: &'a mut js_ast::Part,
-    /// files in node modules will not get hot updates, so the code generation
-    /// can be a bit more concise for re-exports
-    pub is_in_node_modules: bool,
     pub imports_seen: StringArrayHashMap<ImportRef>,
     pub export_star_props: Vec<G::Property>,
     pub export_props: Vec<G::Property>,
@@ -277,14 +274,14 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
                 st.func.flags.remove(bun_ast::flags::Function::IsExport);
 
-                self.visit_ref_to_export(p, st.func.name.unwrap().ref_, None, stmt.loc, false)?;
+                self.visit_ref_to_export(p, st.func.name.unwrap().ref_, None, stmt.loc)?;
 
                 break 'stmt stmt;
             }
             js_ast::StmtData::SExportClause(st) => {
                 for item in st.items.iter() {
                     let ref_ = item.name.ref_;
-                    self.visit_ref_to_export(p, ref_, Some(item.alias), item.name.loc, false)?;
+                    self.visit_ref_to_export(p, ref_, Some(item.alias), item.name.loc)?;
                 }
 
                 return Ok(()); // do not emit a statement here
@@ -314,13 +311,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         import_record_index: deduped.import_record_index,
                         ..Default::default()
                     }));
-                    self.visit_ref_to_export(
-                        p,
-                        ref_,
-                        Some(item.alias),
-                        item.name.loc,
-                        !self.is_in_node_modules, // live binding when this may be replaced
-                    )?;
+                    self.visit_ref_to_export(p, ref_, Some(item.alias), item.name.loc)?;
 
                     // imports and export statements have their alias +
                     // original_name swapped. this is likely a design bug in
@@ -504,7 +495,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         match binding.data {
             B::B::BMissing(_) => {}
             B::B::BIdentifier(id) => {
-                self.visit_ref_to_export(p, id.r#ref, None, binding.loc, false)?;
+                self.visit_ref_to_export(p, id.r#ref, None, binding.loc)?;
             }
             B::B::BArray(array) => {
                 for item in array.items.iter() {
@@ -526,7 +517,6 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         ref_: Ref,
         export_symbol_name: Option<js_ast::StoreStr>,
         loc: bun_ast::Loc,
-        is_live_binding_source: bool,
     ) -> Result<(), AllocError> {
         let (kind, has_been_assigned_to, original_name) = {
             let symbol = &p.symbols[ref_.inner_index() as usize];
@@ -547,10 +537,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         } else {
             Expr::init_identifier(ref_, loc)
         };
-        if is_live_binding_source
-            || (kind == js_ast::symbol::Kind::Import && !self.is_in_node_modules)
-            || has_been_assigned_to
-        {
+        if kind == js_ast::symbol::Kind::Import || has_been_assigned_to {
             // TODO (2024-11-24) instead of requiring getters for live-bindings,
             // a callback propagation system should be considered.  mostly
             // because here, these might not even be live bindings, and
@@ -564,22 +551,6 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 E::EString::init(export_symbol_name.unwrap_or(original_name).slice()),
                 loc,
             );
-
-            // This is technically incorrect in that we've marked this as a
-            // top level symbol. but all we care about is preventing name
-            // collisions, not necessarily the best minificaiton (dev only)
-            let arg1 = p.generate_temp_ref(Some(original_name.slice()));
-            self.last_part
-                .declared_symbols
-                .append(js_ast::DeclaredSymbol {
-                    ref_: arg1,
-                    is_top_level: true,
-                })?;
-            self.last_part
-                .symbol_uses
-                .put_no_clobber(arg1, js_ast::symbol::Use::unscoped(1))?;
-            // SAFETY: `current_scope` is a live arena ptr for the parser lifetime.
-            VecExt::append(&mut p.current_scope_mut().generated, arg1);
 
             // 'get abc() { return abc }'
             let body_stmts = p

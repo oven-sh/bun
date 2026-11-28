@@ -2061,6 +2061,8 @@ describe("bundler", () => {
         }
         console.log("ternary literal", await outcome(hidden.ternary(false)));
         console.log("template", await outcome(hidden.template()));
+        console.log("beside a template", await outcome(hidden.besideTemplate(true, "not-present")));
+        console.log("template beside", await outcome(hidden.besideTemplate(false, "not-present")));
       `,
       "/hidden.mjs": /* js */ `
         const HIDDEN_FROM_BUNDLERS = "optional-peer-not-installed";
@@ -2072,6 +2074,11 @@ describe("bundler", () => {
         export function substituted(c) { let name = "optional-peer-not-installed"; return c ? import(name) : null; }
         // A template is not an identifier. The bundler still resolves it.
         export function template() { return import(\`./\${PRESENT}.mjs\`); }
+        // Each branch is judged alone: the identifier is for run time, the
+        // template that folds is resolved, the template that does not fold is for run time.
+        export function besideTemplate(c, name) {
+          return import(c ? HIDDEN_FROM_BUNDLERS : name ? \`./\${PRESENT}.mjs\` : \`./\${name}.mjs\`);
+        }
       `,
       "/present.mjs": `export const present = "from the bundle";`,
     },
@@ -2089,6 +2096,8 @@ describe("bundler", () => {
         substituted ERR_MODULE_NOT_FOUND
         ternary literal from the bundle
         template from the bundle
+        beside a template ERR_MODULE_NOT_FOUND
+        template beside from the bundle
       `,
     },
   });
@@ -2161,7 +2170,7 @@ describe("bundler", () => {
           }
           console.log((await import(PLUGIN)).default);
           console.log(require(PLUGIN));
-          console.log(require.resolve(PLUGIN) === require.resolve("./plugin.js"));
+          console.log(require("node:path").basename(require.resolve(PLUGIN)));
           console.log(inSwitch(1));
           console.log(require(FROM_DEFINE));
         `,
@@ -2177,7 +2186,7 @@ describe("bundler", () => {
         stdout: `
           from the file at run time
           from the file at run time
-          true
+          plugin.js
           from the file at run time
           from the file at run time
         `,

@@ -1041,10 +1041,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// Whether `TransposeState::is_inlined_const` has to look at the leaves of this `import()`,
-    /// `require()` or `require.resolve()` specifier: when bundling with `const` inlining on, it is
-    /// an identifier, or a ternary with only identifiers and string literals as its leaves. Call
-    /// it before the visit of the specifier.
+    /// Whether `TransposeState::is_inlined_const` can tell the leaves of this `import()`,
+    /// `require()` or `require.resolve()` specifier apart by position: when bundling with `const`
+    /// inlining on, each leaf (the specifier, or each branch of a ternary) is an identifier, a
+    /// string literal or a template with no tag. A template that folds to a string gets its own
+    /// position, which is in the call. A concatenation gets the position of its left operand, and
+    /// a macro call gives a value with any position, so those are not accepted. Call it before
+    /// the visit of the specifier.
     #[inline(never)]
     pub(crate) fn specifier_is_written_as_identifier(&self, specifier: &Expr) -> bool {
         if !self.options.bundle || !self.options.features.inlining {
@@ -1054,6 +1057,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loop {
             match &leaf.data {
                 js_ast::ExprData::EIdentifier(_) | js_ast::ExprData::EString(_) => return true,
+                js_ast::ExprData::ETemplate(template) => return template.tag.is_none(),
                 js_ast::ExprData::EIf(branches) => {
                     if !self.stack_check.is_safe_to_recurse()
                         || !self.specifier_is_written_as_identifier(&branches.yes)

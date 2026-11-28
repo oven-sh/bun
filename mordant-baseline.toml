@@ -5,14 +5,12 @@
 
 [bun_bundler]
 "bound_checked_only_in_debug:src/bundler/Chunk.rs" = 3
-"defaulted_failure:src/bundler/bundle_v2.rs" = 1
 "generic_body_not_generic:src/bundler/Chunk.rs" = 3
 "generic_body_not_generic:src/bundler/ParseTask.rs" = 1
 "generic_body_not_generic:src/bundler/linker_context/generateChunksInParallel.rs" = 1
 "narrowed_two_ways:src/bundler/bundle_v2.rs" = 1
-"safe_fn_returns_shared_mut:src/bundler/ThreadPool.rs" = 2
+"safe_fn_returns_shared_mut:src/bundler/ThreadPool.rs" = 1
 "safe_fn_returns_shared_mut:src/bundler/transpiler.rs" = 1
-"unsafe_send_covers_more_than_pointers:src/bundler/Chunk.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/bundler/LinkerContext.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/bundler/LinkerGraph.rs" = 1
 
@@ -34,7 +32,7 @@
 "generic_body_not_generic:src/dotenv/env_loader.rs" = 1
 
 [bun_errno]
-"unused_pub:src/errno/windows_errno.rs" = 29
+"unused_pub:src/errno/windows_errno.rs" = 28
 
 [bun_format]
 "field_valid_only_when:src/format/css/postcss.rs" = 1
@@ -42,15 +40,14 @@
 [bun_http]
 "freed_while_borrowed:src/http/AsyncHTTP.rs" = 1
 "generic_body_not_generic:src/http/HTTPContext.rs" = 1
-"generic_body_not_generic:src/http/lib.rs" = 2
 "safe_fn_returns_shared_mut:src/http/HTTPContext.rs" = 1
 "safe_fn_returns_shared_mut:src/http/HTTPThread.rs" = 2
-"safe_fn_returns_shared_mut:src/http/h2_client/ClientSession.rs" = 2
+"safe_fn_returns_shared_mut:src/http/h2_client/ClientSession.rs" = 1
 "safe_fn_returns_shared_mut:src/http/h3_client/AltSvc.rs" = 1
 "safe_fn_returns_shared_mut:src/http/h3_client/ClientContext.rs" = 1
-"safe_fn_returns_shared_mut:src/http/h3_client/ClientSession.rs" = 5
+"safe_fn_returns_shared_mut:src/http/h3_client/ClientSession.rs" = 4
 "safe_fn_returns_shared_mut:src/http/h3_client/callbacks.rs" = 2
-"safe_fn_returns_shared_mut:src/http/lib.rs" = 6
+"safe_fn_returns_shared_mut:src/http/lib.rs" = 4
 
 [bun_http_jsc]
 "generic_body_not_generic:src/http_jsc/websocket_client.rs" = 6
@@ -63,12 +60,7 @@
 "generic_body_not_generic:src/install/lockfile/Tree.rs" = 1
 "generic_body_not_generic:src/install/lockfile/printer/Yarn.rs" = 1
 "interchangeable_aliases:src/install/lockfile/Tree.rs" = 1
-"safe_fn_returns_shared_mut:src/install/PackageManager.rs" = 2
-
-[bun_io]
-"generic_body_not_generic:src/io/pipes.rs" = 1
-"safe_fn_returns_shared_mut:src/io/lib.rs" = 2
-"unused_pub:src/io/PipeWriter.rs" = 2
+"safe_fn_returns_shared_mut:src/install/PackageManager.rs" = 1
 
 [bun_js_parser]
 "bound_checked_only_in_debug:src/js_parser/p.rs" = 3
@@ -88,15 +80,13 @@
 "defaulted_failure:src/jsc/ConsoleObject.rs" = 4
 "generic_body_not_generic:src/jsc/ConsoleObject.rs" = 5
 "generic_body_not_generic:src/jsc/JSPropertyIterator.rs" = 1
-"safe_fn_returns_shared_mut:src/jsc/VirtualMachine.rs" = 2
-"safe_fn_returns_shared_mut:src/jsc/event_loop.rs" = 2
 "unsafe_send_covers_more_than_pointers:src/jsc/webcore_types.rs" = 3
 
 [bun_libuv_sys]
 "bound_checked_only_in_debug:src/libuv_sys/libuv.rs" = 1
 "reimplemented_helper:src/libuv_sys/libuv.rs" = 1
 "unused_pub:src/libuv_sys/lib.rs" = 2
-"unused_pub:src/libuv_sys/libuv.rs" = 41
+"unused_pub:src/libuv_sys/libuv.rs" = 39
 "unused_pub:src/libuv_sys/open_handles.rs" = 1
 
 [bun_lint]
@@ -119,7 +109,7 @@
 [bun_resolver]
 "generic_body_not_generic:src/resolver/data_url.rs" = 1
 "generic_body_not_generic:src/resolver/package_json.rs" = 2
-"safe_fn_returns_shared_mut:src/resolver/lib.rs" = 2
+"safe_fn_returns_shared_mut:src/resolver/lib.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/resolver/fs.rs" = 1
 
 [bun_router]
@@ -136,32 +126,27 @@
 "defaulted_failure:src/runtime/test_runner/pretty_format.rs" = 4
 "discarded_error:src/runtime/ffi/mod.rs" = 1
 "error_collapsed_to_bool:src/runtime/api/bun/Terminal.rs" = 1
-"error_collapsed_to_bool:src/runtime/api/bun/h2_frame_parser.rs" = 29
+"error_collapsed_to_bool:src/runtime/api/bun/h2_frame_parser.rs" = 28
 "error_collapsed_to_bool:src/runtime/ffi/ffi_body.rs" = 1
 "field_valid_only_when:src/runtime/node/node_fs.rs" = 1
 "field_valid_only_when:src/runtime/node/zlib/NativeZlib.rs" = 1
 "field_valid_only_when:src/runtime/shell/builtin/rm.rs" = 1
 "field_valid_only_when:src/runtime/socket/udp_socket.rs" = 1
 "freed_while_borrowed:src/runtime/api/bun/subprocess/SubprocessPipeReader.rs" = 2
-"freed_while_borrowed:src/runtime/node/node_fs.rs" = 1
-"freed_while_borrowed:src/runtime/webcore/fetch/FetchTasklet.rs" = 3
-"generic_body_not_generic:src/runtime/api/bun/h2_frame_parser.rs" = 2
+"generic_body_not_generic:src/runtime/api/bun/h2_frame_parser.rs" = 1
 "generic_body_not_generic:src/runtime/bake/dev_server/incremental_graph.rs" = 2
 "generic_body_not_generic:src/runtime/cli/multi_run.rs" = 1
 "generic_body_not_generic:src/runtime/cli/pm_diff_normalize.rs" = 1
 "generic_body_not_generic:src/runtime/cli/test_command.rs" = 3
 "generic_body_not_generic:src/runtime/jsc_hooks.rs" = 1
 "generic_body_not_generic:src/runtime/node/assert/myers_diff.rs" = 1
-"generic_body_not_generic:src/runtime/node/node_fs.rs" = 3
-"generic_body_not_generic:src/runtime/node/node_net_binding.rs" = 1
+"generic_body_not_generic:src/runtime/node/node_fs.rs" = 2
 "generic_body_not_generic:src/runtime/server/NodeHTTPResponse.rs" = 1
 "generic_body_not_generic:src/runtime/server/RequestContext.rs" = 7
 "generic_body_not_generic:src/runtime/server/mod.rs" = 2
 "generic_body_not_generic:src/runtime/server/server_body.rs" = 1
-"generic_body_not_generic:src/runtime/shell/Builtin.rs" = 1
 "generic_body_not_generic:src/runtime/socket/Listener.rs" = 1
 "generic_body_not_generic:src/runtime/socket/socket_body.rs" = 4
-"generic_body_not_generic:src/runtime/test_runner/expect.rs" = 1
 "generic_body_not_generic:src/runtime/webcore/ReadableStream.rs" = 2
 "generic_body_not_generic:src/runtime/webcore/TextDecoder.rs" = 1
 "parallel_bools:src/runtime/shell/IOWriter.rs" = 1
@@ -180,9 +165,6 @@
 "unsafe_send_covers_more_than_pointers:src/runtime/node/node_fs.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/runtime/node/path_watcher.rs" = 1
 
-[bun_sema]
-"parallel_vecs:src/sema/check/mod.rs" = 1
-
 [bun_simdutf_sys]
 "unused_pub:src/simdutf_sys/simdutf.rs" = 1
 
@@ -191,13 +173,7 @@
 "bound_checked_only_in_debug:src/sourcemap/InternalSourceMap.rs" = 4
 
 [bun_spawn]
-"freed_while_borrowed:src/spawn/lib.rs" = 1
-"freed_while_borrowed:src/spawn/process.rs" = 2
-"freed_while_borrowed:src/spawn/static_pipe_writer.rs" = 3
 "unsafe_send_covers_more_than_pointers:src/spawn/process.rs" = 1
-
-[bun_sql_jsc]
-"generic_body_not_generic:src/sql_jsc/postgres/PostgresSQLConnection.rs" = 1
 
 [bun_sys]
 "error_collapsed_to_bool:src/sys/lib.rs" = 4

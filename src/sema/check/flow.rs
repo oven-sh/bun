@@ -837,8 +837,34 @@ enum Start {
     Unassigned,
 }
 
-/// The last node of a `finally` block, and those of `Walk::reduced` that a walk can reach from it.
-type AfterFinallyBlock = (FlowId, SmallVec<[(FlowId, FlowId); 2]>);
+/// The last node of a `finally` block, and the `ReducedLabels` that a walk can reach from it.
+type AfterFinallyBlock = (FlowId, ReducedLabels);
+
+#[derive(Copy, Clone, Default, PartialEq, Eq, Hash)]
+struct ReducedLabels(u64, u64);
+
+impl ReducedLabels {
+    fn of(label: FlowId, instead: FlowId) -> ReducedLabels {
+        let mix = |mut word: u64| {
+            word = (word ^ (word >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            word = (word ^ (word >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            word ^ (word >> 31)
+        };
+        let pair = u64::from(label.0) << 32 | u64::from(instead.0);
+        ReducedLabels(
+            mix(pair.wrapping_add(0x9e37_79b9_7f4a_7c15)),
+            mix(pair.wrapping_mul(0xd1b5_4a32_d192_ed03).wrapping_add(1)),
+        )
+    }
+
+    fn with(self, other: ReducedLabels) -> ReducedLabels {
+        ReducedLabels(self.0.wrapping_add(other.0), self.1.wrapping_add(other.1))
+    }
+
+    fn without(self, other: ReducedLabels) -> ReducedLabels {
+        ReducedLabels(self.0.wrapping_sub(other.0), self.1.wrapping_sub(other.1))
+    }
+}
 
 struct Walk {
     reference: Reference,
@@ -869,6 +895,9 @@ struct Walk {
     /// How many entries of `reduced` have a label that isn't lower than the one below them. Without
     /// a loop there are none: the walk goes back through an outer block first.
     reduced_out_of_order: u32,
+    instead_of: FxHashMap<FlowId, FlowId>,
+    reduced_labels: ReducedLabels,
+    highest_reduced: u32,
     /// See `flow_type_after_finally_block`.
     after_finally_blocks: FxHashMap<AfterFinallyBlock, (FlowType, u32)>,
     /// How many back edges of loops are being followed.
@@ -1400,6 +1429,9 @@ impl Walk {
             first_label_reduced: u32::MAX,
             reduced: Vec::new(),
             reduced_out_of_order: 0,
+            instead_of: FxHashMap::default(),
+            reduced_labels: ReducedLabels::default(),
+            highest_reduced: 0,
             after_finally_blocks: FxHashMap::default(),
             back_edges: 0,
             steps: 0,
@@ -2547,7 +2579,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getQuickTypeOfExpression`, which checks the callee uncached, and in the resolution of a
     /// `...rest`, for which it checks the initializer uncached (`CheckModeRestBindingElement`).
     pub(super) fn is_flow_loop_visible(&self, depth: usize) -> bool {
-        let mut below = self.stack.len();
+        self.is_flow_loop_visible_below(self.stack.len(), depth)
+    }
+
+    /// The same for what asks from `stack[..below]`.
+    pub(super) fn is_flow_loop_visible_below(&self, mut below: usize, depth: usize) -> bool {
         loop {
             let height = self.height_of_nearest_resolution(below);
             if height <= depth {
@@ -3333,6 +3369,24 @@ impl<'p, 's> Checker<'p, 's> {
             }
             _ => None,
         }
+    }
+
+    /// True if `variable` is declared in the function that has the innermost loop in progress.
+    pub(super) fn is_in_function_of_innermost_loop(
+        &self,
+        file: FileId,
+        variable: VarDeclId,
+    ) -> bool {
+        let Some(reference) = self.flow_loops.last().map(|pushed| &pushed.1) else {
+            return false;
+        };
+        let bound = self.bound(file);
+        let statement = bound.var_stmt[variable.idx()];
+        reference.file == file
+            && reference.at.is_some()
+            && statement.is_some()
+            && self.enclosing_fn_of_expr(file, reference.at)
+                == self.enclosing_fn(file, bound.parent_of_stmt(statement))
     }
 
     /// `checkIdentifier`'s `declarationContainer`, for a variable or parameter in `file`.
@@ -7142,7 +7196,7 @@ impl<'p, 's> Checker<'p, 's> {
             let Some(name) = name else { return declared };
             names.push(name);
         };
-        self.narrow_path_of(file, init, &names, declared)
+        self.with_flow_loops_visible(|c| c.narrow_path_of(file, init, &names, declared))
     }
 
     /// `getFlowTypeOfDestructuring` for `e`, an element of an array literal or a property value of
@@ -7810,14 +7864,21 @@ impl<'p, 's> Checker<'p, 's> {
             return self.flow_type(walk, flow);
         }
         let highest = memo.narrowing.max_antecedent[flow.idx()];
-        let mut reduced: SmallVec<[(FlowId, FlowId); 2]> = SmallVec::new();
-        for &(label, instead) in walk.reduced.iter().rev() {
-            if label.0 > highest {
-                if walk.reduced_out_of_order == 0 {
+        let mut reduced = ReducedLabels::default();
+        if walk.highest_reduced <= highest {
+            reduced = walk.reduced_labels;
+        } else if walk.reduced_out_of_order == 0 {
+            for &(label, instead) in walk.reduced.iter().rev() {
+                if label.0 > highest {
                     break;
                 }
-            } else if !reduced.iter().any(|known| known.0 == label) {
-                reduced.push((label, instead));
+                reduced = reduced.with(ReducedLabels::of(label, instead));
+            }
+        } else {
+            for (&label, &instead) in &walk.instead_of {
+                if label.0 <= highest {
+                    reduced = reduced.with(ReducedLabels::of(label, instead));
+                }
             }
         }
         let key = (flow, reduced);
@@ -7843,7 +7904,7 @@ impl<'p, 's> Checker<'p, 's> {
             && root != 0
             && walk.back_edges == 0
             && walk.first_label_reduced > walk.furthest())
-        .then(|| (file, root, walk.reference.path_key(), key.clone()));
+        .then(|| (file, root, walk.reference.path_key(), key));
         if let Some(kept_key) = &kept_key
             && let Some(&known) = self.flow_memo.after_finally_blocks.get(kept_key)
             && known.declared == walk.declared
@@ -8160,7 +8221,20 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     walk.reduced.push((label, instead));
                     walk.first_label_reduced = walk.first_label_reduced.min(label.0);
+                    let (labels, highest) = (walk.reduced_labels, walk.highest_reduced);
+                    let earlier = walk.instead_of.insert(label, instead);
+                    let others = match earlier {
+                        Some(earlier) => labels.without(ReducedLabels::of(label, earlier)),
+                        None => labels,
+                    };
+                    walk.reduced_labels = others.with(ReducedLabels::of(label, instead));
+                    walk.highest_reduced = highest.max(label.0);
                     let t = self.flow_type_after_finally_block(walk, before);
+                    match earlier {
+                        Some(earlier) => walk.instead_of.insert(label, earlier),
+                        None => walk.instead_of.remove(&label),
+                    };
+                    (walk.reduced_labels, walk.highest_reduced) = (labels, highest);
                     walk.reduced.pop();
                     walk.reduced_out_of_order -= u32::from(is_out_of_order);
                     incomplete = t.incomplete;
@@ -8169,7 +8243,11 @@ impl<'p, 's> Checker<'p, 's> {
                 Flow::Label { .. } => {
                     // It may stand for another label in another walk.
                     above_shared_node = pending.len();
-                    let (first_edge, len) = branch_label_edges(bound, flow, &walk.reduced);
+                    let instead = match walk.instead_of.is_empty() {
+                        true => flow,
+                        false => walk.instead_of.get(&flow).copied().unwrap_or(flow),
+                    };
+                    let (first_edge, len) = branch_label_edges(bound, instead, &[]);
                     let antecedents = edges_of(bound, first_edge, len);
                     if let [only] = *antecedents {
                         flow = only;

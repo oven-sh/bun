@@ -43,6 +43,7 @@ impl<'s> Walker<'_, 's> {
             }
             None => self.add_function(FunctionKey::ImplicitConstructor(reference), Some(creator)),
         };
+        self.hold_run_of_test_file(constructor);
         let instance_key = FunctionKey::InstanceInitializer(reference);
         let instance_initializer = self.add_function(instance_key, Some(constructor));
         let static_key = FunctionKey::StaticInitializer(reference);

@@ -388,6 +388,8 @@ static JSValue createBunShell(VM& vm, Zig::GlobalObject* globalObject)
     // An executable of a program that never names `Bun.$` has no code for the function. It reads `process.env` when it runs, so that read is made here.
     if (vm.hasCompiledCode() && scope.exception()) [[unlikely]] {
         if (JSValue standIn = JSC::AOT::takeOmittedFunctionPlaceholder(globalObject, { "BunShell"_s, 1 }, globalObject)) {
+            // Function.prototype is not above the function.
+            asObject(standIn)->setPrototypeDirect(vm, globalObject->objectPrototype());
             JSValue process = globalObject->get(globalObject, Identifier::fromString(vm, "process"_s));
             RETURN_IF_EXCEPTION(scope, {});
             process.get(globalObject, Identifier::fromString(vm, "env"_s));

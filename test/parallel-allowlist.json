@@ -307,6 +307,8 @@
     "bundler/bun-build-compile.test.ts",
     "bundler/bundler_compile.test.ts",
     "bundler/bundler_compile_autoload.test.ts",
+    "bundler/bundler_compile_embedded.test.ts",
+    "bundler/bundler_compile_imports.test.ts",
     "bundler/bundler_edgecase.test.ts",
     "bundler/bundler_html_server.test.ts",
     "bundler/bundler_npm.test.ts",
@@ -717,6 +719,8 @@
     "aot/compile-exec-argv.test.ts",
     "aot/compiled-code-mapping.test.ts",
     "aot/counts-pinned-by-programs.test.ts",
+    "aot/embedded-assets-by-flag.test.ts",
+    "aot/embedded-assets-of-packages.test.ts",
     "aot/embedded-assets.test.ts",
     "aot/entry-point-names.test.ts",
     "aot/entry-points-begin-programs-of-their-own.test.ts",
@@ -1077,6 +1081,7 @@
     "aot/run-parallel-time-limit-message.test.ts",
     "aot/run-time-plugins-and-compiled-modules.test.ts",
     "aot/runner-loads-by-name.test.ts",
+    "aot/require-resolve-of-a-computed-name-gives-the-path-of-the-file.test.ts",
     "aot/runner-suites.test.ts",
     "aot/runs-at-once-1.test.ts",
     "aot/runtime-use-2.test.ts",
@@ -1912,6 +1917,12 @@
     "aot/library-comparisons.test.ts",
     "aot/library-loads.test.ts",
     "aot/a-folder-lists-an-imported-file-at-the-name-of-an-entry-point.test.ts",
-    "aot/the-build-warns-where-the-options-of-a-require-may-name-a-type-that-it-cannot-read.test.ts"
+    "aot/the-build-warns-where-the-options-of-a-require-may-name-a-type-that-it-cannot-read.test.ts",
+    "aot/a-build-reads-the-members-of-one-object-in-linear-time.test.ts",
+    "aot/a-build-of-a-long-row-of-classes-takes-linear-time.test.ts",
+    "aot/resolved-urls-keep-their-queries.test.ts",
+    "aot/one-file-under-several-types-and-queries.test.ts",
+    "aot/a-package-that-a-plugin-makes-is-not-found-by-a-require-of-a-made-name.test.ts",
+    "aot/a-file-behind-one-that-throws-runs-before-an-import-call-settles.test.ts"
   ]
 }

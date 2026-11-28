@@ -1023,9 +1023,23 @@ static JSValue requireModuleKey(Zig::GlobalObject* globalObject, const String& f
     RETURN_IF_EXCEPTION(scope, {});
     if (required)
         return required;
-    if (globalObject->aotInstance() && registeredModuleMock(globalObject, key)) {
-        if (auto compiled = Bun::compiledModuleForPath(key))
-            RELEASE_AND_RETURN(scope, JSC::AOT::requireModule(globalObject, *compiled));
+    bool isMocked = globalObject->aotInstance() && registeredModuleMock(globalObject, key);
+    if (auto compiled = isMocked ? Bun::compiledModuleForPath(key) : std::nullopt)
+        RELEASE_AND_RETURN(scope, JSC::AOT::requireModule(globalObject, *compiled));
+    // The image has no module of this name: the build reads the global object instead.
+    if (vm.hasCompiledCode() && key == "bun"_s && !isMocked) {
+        JSC::JSString* keyString = jsString(vm, key);
+        JSC::JSMap* requireMap = Bun::testFileRequireMap(globalObject);
+        JSValue entry = requireMap->get(globalObject, keyString);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto* loaded = dynamicDowncast<Bun::JSCommonJSModule>(entry);
+        if (!loaded) {
+            loaded = Bun::JSCommonJSModule::create(globalObject, keyString, globalObject->bunObject(), true, jsUndefined());
+            RETURN_IF_EXCEPTION(scope, {});
+            requireMap->set(globalObject, keyString, loaded);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        RELEASE_AND_RETURN(scope, loaded->exportsObject());
     }
 #endif
     JSObject* require = Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, from, Bun::testFileModuleGraph(globalObject));
@@ -3324,7 +3338,16 @@ static void addImporter(ModuleImporters& importersOf, const String& importer, co
 }
 
 // After moveLoadedModule() a module's filename is not its key in the require cache.
-using RequireKeys = UncheckedKeyHashMap<Bun::JSCommonJSModule*, String>;
+struct RequireKeys {
+    UncheckedKeyHashMap<Bun::JSCommonJSModule*, String> ofModules;
+    // The keys that hold a module object that isn't of a compiled file, in a run with compiled code.
+    UncheckedKeyHashSet<String> loadedFromSource;
+};
+
+static bool isModuleObjectOfCompiledFile(Bun::JSCommonJSModule* module)
+{
+    return module->compiledModule != Bun::JSCommonJSModule::noCompiledModule || module->compiledModuleLoadedInto != Bun::JSCommonJSModule::noCompiledModule;
+}
 
 // `importer` is null if the requirer's object has been collected. Then it isn't in the require cache, and `importerFilename` is its key.
 static void addRequirer(Zig::GlobalObject* globalObject, ModuleImporters& importersOf, const RequireKeys& requireKeys, Bun::JSCommonJSModule* importer, JSValue importerFilename, JSValue importedValue)
@@ -3335,15 +3358,17 @@ static void addRequirer(Zig::GlobalObject* globalObject, ModuleImporters& import
     auto* imported = importedValue ? dynamicDowncast<Bun::JSCommonJSModule>(importedValue) : nullptr;
     if (!imported)
         return;
-    String importedKey = requireKeys.get(imported);
-    bool isOfCompiledFile = imported->compiledModule != Bun::JSCommonJSModule::noCompiledModule || imported->compiledModuleLoadedInto != Bun::JSCommonJSModule::noCompiledModule;
-    if (importedKey.isNull() && isOfCompiledFile && imported->filename().isString()) {
+    String importedKey = requireKeys.ofModules.get(imported);
+    if (importedKey.isNull() && isModuleObjectOfCompiledFile(imported) && imported->filename().isString()) {
         importedKey = asString(imported->filename())->value(globalObject);
         RETURN_IF_EXCEPTION(scope, );
+        // The file was loaded again, into another module object.
+        if (requireKeys.loadedFromSource.contains(importedKey))
+            return;
     }
     if (importedKey.isNull())
         return;
-    if (auto importerKey = importer ? requireKeys.find(importer) : requireKeys.end(); importerKey != requireKeys.end()) {
+    if (auto importerKey = importer ? requireKeys.ofModules.find(importer) : requireKeys.ofModules.end(); importerKey != requireKeys.ofModules.end()) {
         addImporter(importersOf, importerKey->value, importedKey);
         return;
     }
@@ -3696,8 +3721,14 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             auto* commonJSModule = dynamicDowncast<Bun::JSCommonJSModule>(value);
             if (!commonJSModule || !requireKey.isString())
                 continue;
-            requireKeys.add(commonJSModule, asString(requireKey)->value(globalObject));
+            requireKeys.ofModules.add(commonJSModule, asString(requireKey)->value(globalObject));
             RETURN_IF_EXCEPTION(scope, );
+#if ENABLE(AOT)
+            if (vm.hasCompiledCode() && !isModuleObjectOfCompiledFile(commonJSModule)) {
+                requireKeys.loadedFromSource.add(asString(requireKey)->value(globalObject));
+                RETURN_IF_EXCEPTION(scope, );
+            }
+#endif
         }
     }
     auto* iterator = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), requireMap, JSC::IterationKind::Entries);
@@ -3733,6 +3764,15 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         }
     }
 
+#if ENABLE(AOT)
+    if (evict.all)
+        plugins.requirersOfCompiledFiles.clear();
+    for (auto& [required, requirer] : plugins.requirersOfCompiledFiles) {
+        if (!requireKeys.loadedFromSource.contains(required))
+            addImporter(importersOf, requirer, required);
+    }
+#endif
+
     // A load stuck behind an abandoned fetch never finishes, so the entries waiting on it don't have to stay.
     Vector<String> neverLoads;
     for (auto& key : evict.abandonedModules) {
@@ -3755,18 +3795,22 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     // A patched-in-place module that imports an evicted one goes after all, and is walked again for the rest of its importers.
     UncheckedKeyHashSet<String> evicted;
     keys.removeAllMatching([&](const String& key) { return !evicted.add(key).isNewEntry; });
+#if ENABLE(AOT)
+    auto evictReleased = [&] {
+        for (String& released : JSC::AOT::takeModulesReleasedSincePass(globalObject)) {
+            if (evicted.add(released).isNewEntry)
+                keys.append(WTF::move(released));
+        }
+    };
+#endif
     for (size_t i = 0; i < keys.size(); ++i) {
         String key = keys[i];
         bool stays = staysInRegistry.contains(key) || staysInRequireCache.contains(key);
 #if ENABLE(AOT)
         // Compiled importers are not registered.
         auto* entry = vm.hasCompiledCode() && !evict.all && !loading.contains(key) ? loader->registryEntry(JSC::Identifier::fromString(vm, key)) : nullptr;
-        if (entry && entry->record() && entry->record()->hasLiveExports() && JSC::AOT::releaseAbsentModuleImporters(globalObject, key, stays && evict.onlyImportersFromEarlierTestFiles)) {
-            for (String& released : JSC::AOT::takeModulesReleasedSincePass(globalObject)) {
-                if (evicted.add(released).isNewEntry)
-                    keys.append(WTF::move(released));
-            }
-        }
+        if (entry && entry->record() && entry->record()->hasLiveExports() && JSC::AOT::releaseAbsentModuleImporters(globalObject, key, stays && evict.onlyImportersFromEarlierTestFiles))
+            evictReleased();
 #endif
         auto importers = importersOf.find(key);
         if (importers == importersOf.end())
@@ -3776,6 +3820,27 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             // It imports the real package whether or not vi.mock() mocks it.
             if (isExternalizedByVitest(globalObject, importer) && (evict.packagesToRestore.contains(key) || evict.packagesToStash.contains(key)))
                 continue;
+#if ENABLE(AOT)
+            // A CommonJS file that required a module that isn't compiled. The original of a compiled file is compiled.
+            auto requirer = vm.hasCompiledCode() && !testFile && !stays && importer != key && !isBuiltinModuleKey(key) && !Bun::compiledModuleForPath(key.endsWith("?actual"_s) ? key.left(key.length() - "?actual"_s.length()) : key) ? Bun::compiledModuleForPath(importer) : std::nullopt;
+            if (requirer && !JSC::AOT::isESModule(*requirer) && !JSC::AOT::wasLoadedInPreload(globalObject, *requirer) && !JSC::AOT::wasRunByPreloadHook(globalObject, *requirer)) {
+                // Like any other patched-in-place module that requires an evicted one.
+                bool stayed = staysInRegistry.remove(importer);
+                stayed |= staysInRequireCache.remove(importer);
+                if (evicted.add(importer).isNewEntry || stayed) {
+                    JSC::AOT::releaseModuleAndImporters(globalObject, *requirer, std::nullopt);
+                    evictReleased();
+                    keys.append(importer);
+                    continue;
+                }
+            }
+            if (auto compiled = vm.hasCompiledCode() && importer != key && !loader->registryEntry(JSC::Identifier::fromString(vm, importer)) ? Bun::compiledModuleForPath(importer) : std::nullopt; compiled && JSC::AOT::isESModule(*compiled) && JSC::AOT::hasInstances(globalObject, *compiled)) {
+                auto loadedBy = JSC::AOT::evaluatedBy(globalObject, *compiled);
+                bool leaves = loadedBy == JSC::AOT::LoadedBy::EarlierTestFile || (loadedBy == JSC::AOT::LoadedBy::ThisTestFile && !(stays && evict.onlyImportersFromEarlierTestFiles));
+                if (leaves && JSC::AOT::releaseModuleAndImporters(globalObject, *compiled, std::nullopt))
+                    evictReleased();
+            }
+#endif
             if (!testFile || importer == key || (stays && evict.onlyImportersFromEarlierTestFiles && testFile == plugins.testFile))
                 continue;
             bool stayed = staysInRegistry.remove(importer);
@@ -3844,6 +3909,11 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             continue;
         }
         bool leavesRegistry = !staysInRegistry.contains(key), leavesRequireCache = !staysInRequireCache.contains(key);
+#if ENABLE(AOT)
+        // A compiled test file that required a mock which isn't compiled.
+        if (auto file = leavesRequireCache && vm.hasCompiledCode() && !evict.all ? Bun::compiledModuleForPath(key) : std::nullopt)
+            JSC::AOT::didEvictTestFile(globalObject, *file);
+#endif
         if (leavesRegistry && !clearsRegistry) {
             auto identifier = JSC::Identifier::fromString(vm, key);
             ASSERT(!loader->registryEntry(identifier) || neverLoads.contains(key) || !pendingLoadOf(globalObject, loader->registryEntry(identifier)));
@@ -3857,6 +3927,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             plugins.loadedByImportActual.remove(key);
         }
         if (leavesRequireCache) {
+            plugins.requirersOfCompiledFiles.remove(key);
             JSString* keyString = jsString(vm, key);
             // Only keep real CommonJS modules. require()'s wrapper for an ES module or a mock gets rebuilt, and may wrap the test file's own mock.
             auto* esModule = plugins.evictedPreloadModules.get(key).get();
@@ -7919,7 +7990,12 @@ extern "C" __attribute__((minsize)) void JSMock__replaceModuleOfTestFile(Zig::Gl
         JSC::AOT::setReplacedTestFile(globalObject, file);
         auto retainedModules = mockingModules;
         for (auto& key : mockingModules) {
-            if (auto module = key != testFile ? Bun::compiledModuleForPath(key) : std::nullopt; module && JSC::AOT::evaluatedBy(globalObject, *module) != JSC::AOT::LoadedBy::Preload && JSC::AOT::releaseModuleAndImporters(globalObject, *module, std::nullopt))
+            auto module = key != testFile ? Bun::compiledModuleForPath(key) : std::nullopt;
+            if (!module || JSC::AOT::evaluatedBy(globalObject, *module) == JSC::AOT::LoadedBy::Preload)
+                continue;
+            // Another test file may have loaded this test file before its own turn.
+            bool runsAgain = JSC::AOT::didEndMocksOfTestFile(globalObject, *module);
+            if (JSC::AOT::releaseModuleAndImporters(globalObject, *module, std::nullopt) || runsAgain)
                 retainedModules.remove(key);
         }
         JSC::AOT::setReplacedTestFile(globalObject, std::nullopt);

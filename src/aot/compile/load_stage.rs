@@ -36,7 +36,7 @@ use crate::statistics::{Stage, StepClock};
 use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
 use bun_options_types::aot_options::DependencyTypeErrors;
 use bun_options_types::aot_options::ExplainSet;
-use bun_sema::atom::{Atom, Interner};
+use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, CommonJsVariable};
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::fold::{Constant, FoldInputs, FoldedValue};
@@ -96,12 +96,83 @@ fn start_asset_readers<'scope>(
     });
 }
 
+const NAMES_SPELLED: usize = 5;
+
+fn spell_first_names(
+    host: &LoadHost<'_>,
+    paths: &mut dyn ExactSizeIterator<Item = &[u8]>,
+) -> Vec<u8> {
+    let count = paths.len();
+    let spelled = paths.take(NAMES_SPELLED);
+    let spelled: Vec<Box<[u8]>> = spelled.map(|it| host.display_path_of(it)).collect();
+    let mut list = spelled.join(&b", "[..]);
+    if count > spelled.len() {
+        list.extend_from_slice(format!(" and {} more", count - spelled.len()).as_bytes());
+    }
+    list
+}
+
+fn warn_about_typed_files(
+    diagnostics: &mut Diagnostics,
+    view: ProgramView<'_, '_>,
+    host: &LoadHost<'_>,
+) {
+    let files = view.files();
+    let taken = host.files_taken_by_types();
+    if taken.is_empty() {
+        return;
+    }
+    for &file in files.compiled_files() {
+        let (analysis, atoms, hir) = (files.analysis(file), files.atoms(), files.hir(file));
+        let folder = host.directory_of(files.file_name(file));
+        let sites = analysis.import_sites.iter();
+        for site in sites.filter(|site| site.kind.loads_module()) {
+            let attributes = site.attributes.some();
+            let Some(written_type) =
+                attributes.and_then(|it| hir.import_attribute(it, known::r#type))
+            else {
+                continue;
+            };
+            for written in analysis.alternatives_of(&site.specifier) {
+                let ImportSpecifier::Pattern { prefix, suffix } = *written else {
+                    continue;
+                };
+                let written_at = [
+                    &folder[..],
+                    atoms.bytes(prefix),
+                    atoms.bytes(suffix),
+                    atoms.bytes(written_type),
+                ];
+                let start = taken.partition_point(|it| it.written_at() < written_at);
+                let length = taken[start..].partition_point(|it| it.written_at() == written_at);
+                let of_site = &taken[start..start + length];
+                if of_site.is_empty() {
+                    continue;
+                }
+                let sizes = of_site.iter().map(|it| host.size_on_disk(&it.path));
+                let size = bun_core::fmt::bytes(sizes.sum::<u64>() as usize);
+                let count = match of_site.len() {
+                    1 => format!("1 file ({size})"),
+                    count => format!("{count} files ({size})"),
+                };
+                let list = spell_first_names(host, &mut of_site.iter().map(|it| &it.path[..]));
+                let node = NodeData::Expr(site.specifier_node);
+                let span = Span::of_node(hir, file, node);
+                let arguments: [&[u8]; 3] = [count.as_bytes(), atoms.bytes(written_type), &list];
+                diagnostics.add(
+                    Some(view),
+                    Diagnostic::new(Code::FilesTakenByType, Some(span), &arguments),
+                );
+            }
+        }
+    }
+}
+
 fn warn_of_files_left_out_by_patterns(
     diagnostics: &mut Diagnostics,
     view: ProgramView<'_, '_>,
     host: &LoadHost<'_>,
 ) {
-    const NAMES_SPELLED: usize = 5;
     const CURES: [&[u8]; 2] = [
         b"Write the extension (`./${lang}.json`) or `with: { type: \"json\" }` to embed them",
         b"A path that isn't a constant never finds a file whose name begins with a dot. Import it by a constant path",
@@ -139,14 +210,7 @@ fn warn_of_files_left_out_by_patterns(
                 [data, with_dot].into_iter().zip(CURES)
             });
             for (left_out, cure) in by_cure.filter(|(left_out, _)| !left_out.is_empty()) {
-                let spelled = left_out.iter().take(NAMES_SPELLED);
-                let spelled: Vec<Box<[u8]>> =
-                    spelled.map(|it| host.display_path_of(&it.path)).collect();
-                let mut list = spelled.join(&b", "[..]);
-                if left_out.len() > spelled.len() {
-                    let more = format!(" and {} more", left_out.len() - spelled.len());
-                    list.extend_from_slice(more.as_bytes());
-                }
+                let list = spell_first_names(host, &mut left_out.iter().map(|it| &it.path[..]));
                 let node = NodeData::Expr(site.specifier_node);
                 let span = Span::of_node(files.hir(file), file, node);
                 let code = Code::FilesLeftOutByPattern;
@@ -971,6 +1035,7 @@ impl<'a> Build<'a> {
         }
         if !options.aot.checks_only && !options.aot.runs_in_place {
             warn_of_files_left_out_by_patterns(&mut self.diagnostics, view, host);
+            warn_about_typed_files(&mut self.diagnostics, view, host);
             warn_of_guesses_left_out(&mut self.diagnostics, view, host);
             warn_of_types_unread_at_requires(&mut self.diagnostics, view);
             if !options.aot.loads_code_from_disk {

@@ -170,6 +170,26 @@ impl FileLeftOutByPattern {
     }
 }
 
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct FileTakenByType {
+    pub folder_of_text: Vec<u8>,
+    pub start: Vec<u8>,
+    pub end: Vec<u8>,
+    pub written_type: Vec<u8>,
+    pub path: Vec<u8>,
+}
+
+impl FileTakenByType {
+    pub(crate) fn written_at(&self) -> [&[u8]; 4] {
+        [
+            &self.folder_of_text,
+            &self.start,
+            &self.end,
+            &self.written_type,
+        ]
+    }
+}
+
 pub(crate) struct LoadHost<'a> {
     disk: &'a Disk,
     input: LoadHostInput<'a>,
@@ -180,6 +200,7 @@ pub(crate) struct LoadHost<'a> {
     outfile: Option<Vec<u8>>,
     other_products: Vec<Vec<u8>>,
     files_left_out_by_patterns: Guarded<FxHashSet<FileLeftOutByPattern>>,
+    files_taken_by_types: Guarded<FxHashSet<FileTakenByType>>,
     guesses_left_out: Guarded<Option<Option<Vec<u8>>>>,
     resolves_whose_folders_bring_nothing: Guarded<FxHashSet<ResolveWhoseFoldersBringNothing>>,
     found_entry_point_paths: Guarded<Vec<Vec<u8>>>,
@@ -255,6 +276,7 @@ fn holds_statements_that_run(path: &[u8], text: &[u8]) -> bool {
         experimental_decorators: false,
         every_file_is_a_module: false,
         reads_jsdoc: false,
+        accepts_legacy_octal: false,
         ignores_pure_comments: false,
     };
     let hir = parse_for_compile(session.arena(), &parse_options, text, &atoms);
@@ -274,6 +296,7 @@ fn parses_as_program(name: &[u8], text: &[u8], loader: Loader) -> bool {
         experimental_decorators: false,
         every_file_is_a_module: false,
         reads_jsdoc: false,
+        accepts_legacy_octal: false,
         ignores_pure_comments: false,
     };
     let hir = parse_for_compile(session.arena(), &parse_options, text, &atoms);
@@ -442,6 +465,7 @@ impl<'a> LoadHost<'a> {
                 .map(|path| from_native(path))
                 .collect(),
             files_left_out_by_patterns: Guarded::new(FxHashSet::default()),
+            files_taken_by_types: Guarded::new(FxHashSet::default()),
             guesses_left_out: Guarded::new(None),
             resolves_whose_folders_bring_nothing: Guarded::new(FxHashSet::default()),
             found_entry_point_paths: Guarded::new(Vec::new()),
@@ -499,6 +523,17 @@ impl<'a> LoadHost<'a> {
         let mut files: Vec<FileLeftOutByPattern> = files.iter().cloned().collect();
         files.shared_sort_unstable();
         files
+    }
+
+    pub(crate) fn files_taken_by_types(&self) -> Vec<FileTakenByType> {
+        let files = self.files_taken_by_types.lock();
+        let mut files: Vec<FileTakenByType> = files.iter().cloned().collect();
+        files.shared_sort_unstable();
+        files
+    }
+
+    pub(crate) fn size_on_disk(&self, path: &[u8]) -> u64 {
+        self.disk.file_stamp(path).map_or(0, |it| it.size)
     }
 
     pub(crate) fn display_path_of(&self, path: &[u8]) -> Box<[u8]> {
@@ -931,6 +966,12 @@ pub(crate) fn log_steps_of_load(project: &'static str) -> Option<Box<dyn FnMut(&
 impl Host for LoadHost<'_> {
     delegate_host_services_to_disk!(disk);
 
+    fn take_unreadable(&self) -> Vec<Vec<u8>> {
+        let mut paths = std::mem::take(&mut *self.unreadable.lock());
+        paths.extend(self.disk.take_unreadable());
+        paths
+    }
+
     fn log_steps_of_load(&self) -> Option<Box<dyn FnMut(&str) + '_>> {
         log_steps_of_load("")
     }
@@ -1255,7 +1296,20 @@ impl CodeHost for LoadHost<'_> {
         let directory = to_native(request.directory);
         let is_left_to_run_time = is_import
             && ((load.runs_tests && contains_char(request.specifier, b'?'))
-                || is_external(&load.externals, request.specifier, request.kind, directory));
+                || is_external(
+                    &load.externals,
+                    request.specifier,
+                    request.kind,
+                    directory,
+                    &|| {
+                        self.input.provider.is_named_by_tsconfig(&FileSearch {
+                            directory: request.directory,
+                            specifier: request.specifier,
+                            kind: request.kind,
+                            prefers_module_field: options.code.prefers_module_field,
+                        })
+                    },
+                ));
         match is_left_to_run_time {
             true => HostResolution::External {
                 specifier: request.specifier.to_vec(),
@@ -1387,6 +1441,25 @@ impl CodeHost for LoadHost<'_> {
                 needs_extension,
                 path: path.to_vec(),
             });
+    }
+
+    fn note_typed_file(&self, request: &ComputedCodeRequest<'_>, path: &[u8]) {
+        let Some(written_type) = request.site.type_attribute else {
+            return;
+        };
+        if !matches!(
+            Loader::from_string(written_type),
+            Some(Loader::Text | Loader::File)
+        ) {
+            return;
+        }
+        self.files_taken_by_types.lock().insert(FileTakenByType {
+            folder_of_text: request.site.folder.to_vec(),
+            start: request.prefix.to_vec(),
+            end: request.suffix.to_vec(),
+            written_type: written_type.to_vec(),
+            path: path.to_vec(),
+        });
     }
 
     fn create_module_from_data_url(&self, url: &[u8]) -> Option<Vec<u8>> {
@@ -1759,6 +1832,7 @@ impl CodeHost for LoadHost<'_> {
                         experimental_decorators: false,
                         every_file_is_a_module: false,
                         reads_jsdoc: false,
+                        accepts_legacy_octal: false,
                         ignores_pure_comments: false,
                     };
                     return ParsedCode {
@@ -1794,6 +1868,7 @@ impl CodeHost for LoadHost<'_> {
                 experimental_decorators: false,
                 every_file_is_a_module: false,
                 reads_jsdoc: false,
+                accepts_legacy_octal: false,
                 ignores_pure_comments: false,
             };
             return ParsedCode {
@@ -1817,6 +1892,7 @@ impl CodeHost for LoadHost<'_> {
                 && !script_kind.is_javascript(),
             every_file_is_a_module: request.options.module_detection == ModuleDetection::Force,
             reads_jsdoc: request.reads_jsdoc,
+            accepts_legacy_octal: load.runs_tests,
             ignores_pure_comments: self.input.options.removable.ignores_pure_annotations
                 || hir::find_transpiled_mark(text).is_some(),
         };

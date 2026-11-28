@@ -209,6 +209,42 @@ mod tests {
         start_regions_until_a_thread_joins(&|| {});
     }
 
+    #[test]
+    fn threads_that_become_idle_join_in_the_middle_of_a_run() {
+        set_up_output();
+        const THREADS: usize = 3;
+        static ALL_BUSY: Barrier = Barrier::new(THREADS);
+        static HAS_BEGUN: Barrier = Barrier::new(THREADS);
+        let pool = pool_without_spare_threads();
+        pool.limit_threads(THREADS);
+        for _ in 1..THREADS {
+            schedule_on(pool, || {
+                ALL_BUSY.wait();
+                HAS_BEGUN.wait();
+            });
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        schedule_on(pool, move || {
+            ALL_BUSY.wait();
+            crate::POOL_OF_TEST.set(Some(pool));
+            let caches = ThreadCaches::default();
+            let starter = std::thread::current().id();
+            let has_joined = AtomicBool::new(false);
+            for_each_parallel_in_runs(&caches, 2, 2, 1, &|_| {
+                if std::thread::current().id() != starter {
+                    return has_joined.store(true, Ordering::SeqCst);
+                }
+                HAS_BEGUN.wait();
+                while !has_joined.load(Ordering::SeqCst) {
+                    crate::ask_idle_threads_to_join();
+                    std::thread::yield_now();
+                }
+            });
+            sender.send(()).unwrap();
+        });
+        receiver.recv().unwrap();
+    }
+
     #[cfg(panic = "unwind")]
     fn panic_message_of(run: impl FnOnce()) -> String {
         let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));

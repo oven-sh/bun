@@ -66,6 +66,9 @@
 //!   gets there. So a task ignores what a task of a later file has stored under a file, if the later task found an error
 //!   there and this task would still report it (`View::hides`). A task only moves forward in program order, so it
 //!   never finds such entries of its own. This covers the entries under nodes, not those under records.
+//! - **A task that finds an error while it prints a message is only trusted if it's first**
+//!   (`Checker::discard_task_unless_first`). tsc drops what it finds two messages deep. The check of an earlier file may
+//!   get there in more messages or in fewer, but not if it finds what the later task has stored.
 //! - **What a task stores about an expression of the file it visits never leaves the task**
 //!   (`crate::table::Location::KEEPS_VISITED_FILE_LOCAL`). That's most of what a check stores, and other tasks rarely
 //!   look it up. It's neither logged nor counted as a `Task::hold_back`.
@@ -81,7 +84,7 @@
 //!   comparisons that follow from either (`Checker::constraints_of_this_task`, `relations_of_this_task`). In a shared
 //!   table the first such result would stick for every task. They stay for the rest of the task, because its other
 //!   tables keep what was derived from them for that long.
-//! - Variances don't wait for a commit either. See `Claims`.
+//! - Variances don't wait for a commit either, unless a query closed a cycle through their measurement. See `Claims`.
 
 use super::task::{Task, tables_of, tables_written_immediately};
 use super::{Checker, Program, Query, Spare};
@@ -106,8 +109,8 @@ pub(super) struct Commits<'s> {
     cycle_commits: Guarded<Vec<CycleCommit>>,
     /// `Files::rank_of_file`, indexed by file.
     ranks_of_files: &'s [u32],
-    /// One bit per file. Set once a task that was checking another file has found an error while evaluating something
-    /// about this file, and has committed. See `View::hides`.
+    /// One bit per file. Set once a task has found an error while evaluating something about this file, and has committed.
+    /// See `View::hides`.
     with_errors: &'s [AtomicU32],
     /// One bit per file. Set until the file's type errors have been collected. See `Checker::needs_argument_check`.
     pending_checks: &'s [AtomicU32],
@@ -367,6 +370,22 @@ impl<'s> Commits<'s> {
         PreparedLog { entries, records }
     }
 
+    /// This comes before the first variances and the first entry, so a task that finds one of them also sees this.
+    fn announce_cycles(
+        &self,
+        ring: Option<CycleCommit>,
+        number: u32,
+        register_variances: impl FnOnce(),
+    ) {
+        if let Some(ring) = ring {
+            self.cycle_commits
+                .lock()
+                .push(CycleCommit { number, ..ring });
+            self.numbers.with_a_cycle.store(number, Ordering::Release);
+        }
+        register_variances();
+    }
+
     /// Stores the entries of commit `number`, in the order described at the top of this file. The caller holds the mutex.
     /// `tables` is indexed by slot. Returns how many entries it stored under records, and how many under nodes and
     /// symbols.
@@ -375,17 +394,9 @@ impl<'s> Commits<'s> {
         tables: &[&dyn Publish<'s>],
         prepared: &PreparedLog,
         number: u32,
-        ring: Option<CycleCommit>,
     ) -> [u64; 2] {
         let mut stored = [0; 2];
         self.numbers.begun.store(number, Ordering::Release);
-        // This comes before the first entry, so a task that finds an entry also sees this.
-        if let Some(ring) = ring {
-            self.cycle_commits
-                .lock()
-                .push(CycleCommit { number, ..ring });
-            self.numbers.with_a_cycle.store(number, Ordering::Release);
-        }
         let (under_records, under_nodes) = prepared.entries.split_at(prepared.records);
         for (entries, stored) in [under_records, under_nodes].into_iter().zip(&mut stored) {
             for &entry in entries {
@@ -997,6 +1008,7 @@ impl<'s> Checker<'_, 's> {
                     continue;
                 };
                 self.instantiations_up_to_a_limit.clear();
+                self.mapped_constraints_up_to_a_limit.clear();
                 let hits = self.instantiation_limit_hits;
                 self.instantiate(ty, mapper);
                 self.instantiations_spent_on_refused += u64::from(self.instantiation_count);
@@ -1021,6 +1033,7 @@ impl<'s> Checker<'_, 's> {
         self.refused_instantiations_tried
             .extend(chains.into_iter().flatten());
         self.instantiations_up_to_a_limit.clear();
+        self.mapped_constraints_up_to_a_limit.clear();
         match has_computed {
             true => RefusedInstantiations::Computed,
             false => RefusedInstantiations::StillRefused,
@@ -1097,6 +1110,9 @@ impl<'s> Checker<'_, 's> {
                 }
                 Query::BaseConstructor(class) => {
                     self.base_constructor_type_of_class(class);
+                }
+                Query::Variances(sym) => {
+                    self.variances_of(sym);
                 }
                 Query::AliasTarget(_)
                 | Query::InitializerIsUndefined(..)
@@ -1201,13 +1217,15 @@ impl<'s> Checker<'_, 's> {
         let number = *committing + 1;
         *committing = number;
         // Set before the commit stores, so a task that finds one of its entries also sees these.
+        self.work_at_last_error = 0;
         for file in self.files_with_errors.drain() {
             if let Some(word) = p.commits.with_errors.get(file.idx() / 32) {
                 word.fetch_or(1 << (file.0 % 32), Ordering::Relaxed);
             }
         }
         p.commits.numbers.ranks.lock().push(rank);
-        p.register_notes(&self.task);
+        p.commits
+            .announce_cycles(ring, number, || p.register_notes(&self.task));
         let task = &self.task;
         // Which of two tasks reports under a query is decided by the order of their commits.
         if !reported.is_empty() {
@@ -1216,7 +1234,7 @@ impl<'s> Checker<'_, 's> {
             });
             p.publish_reported(task.number(), reported);
         }
-        let stored = (p.commits).store(&tables, &prepared, number, ring);
+        let stored = (p.commits).store(&tables, &prepared, number);
         let held = entered.elapsed();
         drop(committing);
         p.commits.note_commit(stored, waited, held);
@@ -1226,6 +1244,8 @@ impl<'s> Checker<'_, 's> {
         task.resume_writing_immediately();
         task.buffer().recycle_log(log);
         task.buffer().recycle_prepared(prepared.entries);
+        self.has_uncommitted_measurement_cycle = false;
+        self.variances_awaiting_commit.get_mut().clear();
         true
     }
 
@@ -1322,7 +1342,32 @@ pub enum RefusedInstantiations {
 
 #[cfg(test)]
 mod tests {
-    use super::{KeyFilter, SortedKeys, with_hashes};
+    use super::{Commits, CycleCommit, KeyFilter, SortedKeys, with_hashes};
+    use crate::session::Session;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn cycles_are_announced_before_variances_are_registered() {
+        let session = Session::new();
+        let commits = Commits::new_in(session.arena());
+        let view = commits.view(1);
+        assert!(!view.overlaps_a_cycle_commit());
+        let ring = CycleCommit {
+            number: 0,
+            record_keys: SortedKeys::new(Vec::new()),
+            node_keys: SortedKeys::new(Vec::new()),
+            files: Vec::new(),
+            members: Vec::new(),
+        };
+        let mut are_registered = false;
+        commits.announce_cycles(Some(ring), 1, || {
+            assert!(view.overlaps_a_cycle_commit());
+            are_registered = true;
+        });
+        assert!(are_registered);
+        assert_eq!(commits.numbers.begun.load(Ordering::Acquire), 0);
+        assert_eq!(commits.cycle_commits.lock()[0].number, 1);
+    }
 
     #[test]
     fn sorted_keys_find_members() {

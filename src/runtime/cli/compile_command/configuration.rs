@@ -552,6 +552,14 @@ fn finish(
     this_transpiler.sync_resolver_opts();
     this_transpiler.resolver.env_loader = NonNull::new(this_transpiler.env);
 
+    if (ctx.bundler_options.aot.as_ref()).is_some_and(|aot| aot.runs_in_place) {
+        let preserves_symlinks = match this_transpiler.env().get(b"NODE_PRESERVE_SYMLINKS") {
+            Some(value) => value == b"1",
+            None => ctx.args.preserve_symlinks == Some(true),
+        };
+        this_transpiler.resolver.opts.preserve_symlinks = preserves_symlinks;
+    }
+
     if ctx.bundler_options.production {
         this_transpiler.options.jsx.development = false;
         this_transpiler.resolver.opts.jsx.development = false;

@@ -119,11 +119,6 @@ function removedFeaturesOf(executable: Build) {
   () => {
     const cantBeUsed = "can't be used with this executable";
     const runsOnlyCompiledCode = `${cantBeUsed} because it only runs code that was compiled into it. Rebuild it with --compile-inspector to load other code`;
-    const noDebugger = {
-      stdout: "",
-      stderr: `error: BUN_INSPECT ${cantBeUsed}. Rebuild it with --compile-inspector\n`,
-      exitCode: 1,
-    };
     const withoutEvaluation = "--disallow-code-generation-from-strings";
 
     test("a program that reads the constructor of a function can still run code from strings; with the interpreter forced out, the error says why", async () => {
@@ -152,15 +147,23 @@ function removedFeaturesOf(executable: Build) {
       }
     });
 
-    test("--preload in BUN_OPTIONS and BUN_INSPECT fail at startup: both need --compile-inspector", async () => {
+    test("--preload and --inspect in BUN_OPTIONS fail at startup, and BUN_INSPECT is ignored: all need --compile-inspector", async () => {
       const { executable } = await build("hello.ts", "--trim");
       expect(await run([executable], folder, { ...bunEnv, BUN_OPTIONS: "--preload ./preloaded.js" })).toEqual({
         stdout: "",
         stderr: `error: --preload ${runsOnlyCompiledCode}\n`,
         exitCode: 1,
       });
-      expect(await run([executable], folder, { ...bunEnv, BUN_INSPECT: "ws://127.0.0.1:0/own" })).toEqual(noDebugger);
-      const inAnEditor = { ...bunEnv, BUN_INSPECT_CONNECT_TO: "unix:///nowhere.sock" };
+      expect(await run([executable], folder, { ...bunEnv, BUN_OPTIONS: "--inspect=127.0.0.1:0" })).toEqual({
+        stdout: "",
+        stderr: `error: --inspect ${cantBeUsed}. Rebuild it with --compile-inspector\n`,
+        exitCode: 1,
+      });
+      const inAnEditor = {
+        ...bunEnv,
+        BUN_INSPECT: "ws://127.0.0.1:0/own",
+        BUN_INSPECT_CONNECT_TO: "unix:///nowhere.sock",
+      };
       expect(await run([executable, "options"], folder, inAnEditor)).toEqual({
         ...saysHello,
         stdout: "hello world\n[]\n",
@@ -170,7 +173,7 @@ function removedFeaturesOf(executable: Build) {
     test("built with --disallow-code-generation-from-strings, it starts no debugger either", async () => {
       const { executable } = await build("hello.ts", withoutEvaluation, "--trim");
       expect(await run([executable], folder, { ...bunEnv, BUN_INSPECT: "ws://127.0.0.1:0/trimmed" })).toEqual(
-        noDebugger,
+        saysHello,
       );
       expect(await run([executable], folder, { ...bunEnv, BUN_INSPECT_CONNECT_TO: "unix:///nowhere.sock" })).toEqual(
         saysHello,

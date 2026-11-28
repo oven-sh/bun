@@ -1271,6 +1271,9 @@ impl ContentsScan<'_, '_> {
         }
         self.look_at_relative_path(expression, text);
         let Some(module) = find_module(self.input, request.atoms, text) else {
+            if is_written_as_value(request, expression) {
+                self.look_at_json_text(request.atoms.bytes(text));
+            }
             return;
         };
         if is_written_as_key(request, expression) {
@@ -1298,6 +1301,27 @@ impl ContentsScan<'_, '_> {
     pub(super) fn look_at_key(&mut self, key: PropKey) {
         let module = find_module_spelled_as_key(self.input, self.request.atoms, key);
         self.found.names.written_as_keys.extend(module);
+    }
+
+    /// What `JSON.parse` makes of a text names the modules that the same data in a file names.
+    fn look_at_json_text(&mut self, text: &[u8]) {
+        if !matches!(text.trim_ascii_start().first(), Some(b'[' | b'{')) {
+            return;
+        }
+        let mut parts = bun_core::strings::split(text, b"\"").skip(1).peekable();
+        while let Some(name) = parts.next() {
+            let is_key = (parts.peek()).is_some_and(|it| it.trim_ascii_start().starts_with(b":"));
+            parts.next();
+            if is_key && is_one_word(name) {
+                continue;
+            }
+            let found = self.input.runtime_modules.resolve_module(name, b"");
+            let Some(RuntimeResolution::Module(module)) = found else {
+                continue;
+            };
+            let module = RuntimeModule::from_registry_id(module.0);
+            self.found.names.written_as_values.extend(module);
+        }
     }
 
     pub(super) fn look_at_text_in_data(&mut self, text: Atom) {

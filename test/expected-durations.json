@@ -16,9 +16,37 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/a-file-behind-one-that-throws-runs-before-an-import-call-settles.test.ts": {
+    "default": 9000,
+    "asan": 36000
+  },
+  "aot/a-package-that-a-plugin-makes-is-not-found-by-a-require-of-a-made-name.test.ts": {
+    "default": 6000,
+    "asan": 24000
+  },
+  "aot/one-file-under-several-types-and-queries.test.ts": {
+    "default": 4000,
+    "asan": 16000
+  },
+  "aot/resolved-urls-keep-their-queries.test.ts": {
+    "default": 4000,
+    "asan": 3300
+  },
+  "aot/a-build-of-a-long-row-of-classes-takes-linear-time.test.ts": {
+    "default": 20000,
+    "asan": 80000
+  },
+  "aot/a-made-type-finds-its-file-behind-a-reset.test.ts": {
+    "default": 3000,
+    "asan": 7800
+  },
+  "aot/a-build-reads-the-members-of-one-object-in-linear-time.test.ts": {
+    "default": 120000,
+    "asan": 480000
+  },
   "aot/the-build-warns-where-the-options-of-a-require-may-name-a-type-that-it-cannot-read.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 21900
   },
   "aot/the-console-and-the-loader-of-an-executable-publish-to-no-diagnostics-channel.test.ts": {
     "default": 3000,
@@ -26,31 +54,31 @@
   },
   "aot/a-folder-lists-an-imported-file-at-the-name-of-an-entry-point.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 4700
   },
   "aot/a-path-leads-to-its-file-where-the-sources-are-gone.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 8400
   },
   "aot/library-class-fields.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 3000
   },
   "aot/library-comparisons.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 3900
   },
   "aot/library-loads.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 3400
   },
   "aot/hardened-icu.test.ts": {
     "default": 2000,
-    "asan": 8000
+    "asan": 400
   },
   "aot/hardened-zstd.test.ts": {
     "default": 2000,
-    "asan": 8000
+    "asan": 400
   },
   "aot/require-resolve-of-a-whole-path-answers-where-the-file-lies.test.ts": {
     "default": 1380,
@@ -58,15 +86,15 @@
   },
   "aot/what-a-build-says-is-written-at-once.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 5300
   },
   "aot/an-import-in-a-text-calls-the-replaced-eval.test.ts": {
     "default": 6200,
-    "asan": 45200
+    "asan": 81900
   },
   "aot/a-file-that-only-asks-about-evaluators-is-built-where-code-from-disk-is-allowed.test.ts": {
     "default": 4800,
-    "asan": 19200
+    "asan": 29500
   },
   "aot/type-errors-that-several-projects-are-asked-about.test.ts": {
     "default": 30000,
@@ -74,7 +102,7 @@
   },
   "aot/order-file.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 343000
   },
   "aot/a-constructor-inside-what-an-entry-exports-keeps-its-features.test.ts": {
     "default": 60000,
@@ -82,7 +110,7 @@
   },
   "aot/options-of-the-run-that-need-nothing.test.ts": {
     "default": 60000,
-    "asan": 26800
+    "asan": 16200
   },
   "aot/cli/frames-of-built-in-modules.test.ts": {
     "default": 60000,
@@ -90,7 +118,7 @@
   },
   "aot/test-runs-without-function-source.test.ts": {
     "default": 60000,
-    "asan": 15700
+    "asan": 5500
   },
   "aot/memory-of-builds-that-follow-a-path.test.ts": {
     "default": 60000,
@@ -102,15 +130,15 @@
   },
   "aot/engine/from-source-49.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 116200
   },
   "aot/engine/from-source-50.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 61400
   },
   "aot/engine/from-source-51.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 170500
   },
   "aot/engine/from-source-52.test.ts": {
     "default": 60000,
@@ -118,7 +146,7 @@
   },
   "aot/engine/from-source-53.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 251700
   },
   "aot/engine/from-source-54.test.ts": {
     "default": 60000,
@@ -126,11 +154,11 @@
   },
   "aot/engine/from-source-55.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 346200
   },
   "aot/engine/from-source-56.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 171600
   },
   "aot/engine/from-source-57.test.ts": {
     "default": 60000,
@@ -142,47 +170,47 @@
   },
   "aot/engine/from-source-59.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 152600
   },
   "aot/engine/from-source-60.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 216600
   },
   "aot/engine/from-source-61.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 171700
   },
   "aot/engine/from-source-62.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 129300
   },
   "aot/engine/from-source-63.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 181000
   },
   "aot/engine/from-source-64.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 117000
   },
   "aot/a-few-of-every-sweep-5.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 370700
   },
   "aot/a-few-of-every-sweep-6.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 342200
   },
   "aot/a-few-of-every-sweep-7.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 631800
   },
   "aot/a-few-of-every-sweep-8.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 502500
   },
   "aot/engine/from-source-33.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 187500
   },
   "aot/engine/from-source-34.test.ts": {
     "default": 60000,
@@ -190,39 +218,39 @@
   },
   "aot/engine/from-source-35.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 207800
   },
   "aot/engine/from-source-36.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 127500
   },
   "aot/engine/from-source-37.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 148600
   },
   "aot/engine/from-source-38.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 222500
   },
   "aot/engine/from-source-39.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 177300
   },
   "aot/engine/from-source-40.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 104300
   },
   "aot/engine/from-source-41.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 219500
   },
   "aot/engine/from-source-42.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 96500
   },
   "aot/engine/from-source-43.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 234100
   },
   "aot/engine/from-source-44.test.ts": {
     "default": 60000,
@@ -230,27 +258,27 @@
   },
   "aot/engine/from-source-45.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 120600
   },
   "aot/engine/from-source-46.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 185900
   },
   "aot/engine/from-source-47.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 153200
   },
   "aot/engine/from-source-48.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 289100
   },
   "aot/a-damaged-list-of-package-names-says-so.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 13000
   },
   "aot/a-birth-that-a-door-interrupts-is-finished-where-the-literal-ends.test.ts": {
     "default": 60000,
-    "asan": 11000
+    "asan": 3900
   },
   "aot/a-build-holds-little-of-the-pairs-that-a-built-in-makes.test.ts": {
     "default": 60000,
@@ -290,7 +318,7 @@
   },
   "aot/a-build-without-a-tsconfig-checks-under-the-defaults-of-tsc.test.ts": {
     "default": 60000,
-    "asan": 15500
+    "asan": 9500
   },
   "aot/a-built-in-kept-under-another-name-is-not-the-spy-on-it.test.ts": {
     "default": 24000,
@@ -298,7 +326,7 @@
   },
   "aot/a-built-in-object-that-a-test-writes-on-is-not-handed-on.test.ts": {
     "default": 25100,
-    "asan": 17200
+    "asan": 22600
   },
   "aot/a-built-in-that-moves-the-bytes-of-a-small-view-has-a-row-that-says-so.test.ts": {
     "default": 60000,
@@ -306,7 +334,7 @@
   },
   "aot/a-built-in-that-refuses-an-operand-asks-the-others-as-plain-bun-does.test.ts": {
     "default": 60000,
-    "asan": 94200
+    "asan": 77900
   },
   "aot/a-built-in-that-the-build-has-folded-by-stays-locked-in-a-test-run.test.ts": {
     "default": 31800,
@@ -318,11 +346,11 @@
   },
   "aot/a-call-for-a-file-that-a-require-has-run-settles-before-a-test-run-ends.test.ts": {
     "default": 60000,
-    "asan": 15100
+    "asan": 6200
   },
   "aot/a-call-of-import-made-where-the-tests-are-done-runs-no-mocked-file.test.ts": {
     "default": 60000,
-    "asan": 9200
+    "asan": 4400
   },
   "aot/a-call-that-a-body-caught-ends-nothing-where-it-is-made-again.test.ts": {
     "default": 60000,
@@ -330,15 +358,15 @@
   },
   "aot/a-call-that-fails-on-a-folder-changes-nothing-below-it.test.ts": {
     "default": 28900,
-    "asan": 18300
+    "asan": 14600
   },
   "aot/a-call-that-spells-one-file-in-several-ways.test.ts": {
     "default": 55100,
-    "asan": 16300
+    "asan": 12200
   },
   "aot/a-capturing-emitter-calls-no-built-in-that-a-test-may-replace.test.ts": {
     "default": 60000,
-    "asan": 14400
+    "asan": 4200
   },
   "aot/a-class-answers-as-plain-bun-however-it-is-made.test.ts": {
     "default": 60000,
@@ -346,7 +374,7 @@
   },
   "aot/a-class-laid-in-the-place-of-map-is-made-safe-by-what-it-owns.test.ts": {
     "default": 60000,
-    "asan": 11900
+    "asan": 17000
   },
   "aot/a-class-of-buns-modules-over-a-constructor-function-names-it-as-its-base.test.ts": {
     "default": 60000,
@@ -354,7 +382,7 @@
   },
   "aot/a-commonjs-file-that-a-module-imports-is-handed-to-nobody-who-asks-by-a-name-made-at-run-time.test.ts": {
     "default": 60000,
-    "asan": 16000
+    "asan": 10500
   },
   "aot/a-commonjs-file-that-begins-with-a-comment-has-the-names-of-the-test-runner.test.ts": {
     "default": 20600,
@@ -362,7 +390,7 @@
   },
   "aot/a-commonjs-test-file-that-takes-names-out-of-bun-test.test.ts": {
     "default": 57400,
-    "asan": 56200
+    "asan": 40000
   },
   "aot/a-comparison-that-the-build-did-not-follow-hands-out-no-object-of-a-private-field.test.ts": {
     "default": 60000,
@@ -374,11 +402,11 @@
   },
   "aot/a-compiled-test-quotes-the-file-where-bun-test-quotes-a-value.test.ts": {
     "default": 60000,
-    "asan": 6200
+    "asan": 3200
   },
   "aot/a-computed-import-embeds-the-data-files-that-its-written-name-asks-for.test.ts": {
     "default": 60000,
-    "asan": 601800
+    "asan": 737400
   },
   "aot/a-constant-literal-holds-a-name-that-its-type-does-not-list.test.ts": {
     "default": 60000,
@@ -394,7 +422,7 @@
   },
   "aot/a-data-file-asked-for-with-a-type-by-a-path-of-the-run-is-another-module-in-a-test-run.test.ts": {
     "default": 26300,
-    "asan": 33400
+    "asan": 13500
   },
   "aot/a-data-file-behind-a-mock-that-has-ended-is-required-afresh.test.ts": {
     "default": 60000,
@@ -406,11 +434,11 @@
   },
   "aot/a-data-file-taken-out-of-the-cache-is-required-afresh-beside-its-other-forms.test.ts": {
     "default": 60000,
-    "asan": 15600
+    "asan": 12200
   },
   "aot/a-data-file-under-a-mock-at-a-reset-is-named-where-its-next-load-shows-another-object.test.ts": {
     "default": 60000,
-    "asan": 23000
+    "asan": 12600
   },
   "aot/a-database-absent-at-the-build-under-a-path-made-of-the-own-folder-is-looked-up-in-that-folder.test.ts": {
     "default": 60000,
@@ -422,7 +450,7 @@
   },
   "aot/a-database-imported-by-a-statement-is-looked-up-where-the-program-was-started.test.ts": {
     "default": 60000,
-    "asan": 35700
+    "asan": 25600
   },
   "aot/a-database-that-the-program-makes-beside-its-file-is-opened-though-it-was-absent-at-the-build.test.ts": {
     "default": 60000,
@@ -430,7 +458,7 @@
   },
   "aot/a-database-under-a-chosen-name-is-opened-where-the-program-runs.test.ts": {
     "default": 60000,
-    "asan": 23400
+    "asan": 15200
   },
   "aot/a-database-under-a-written-path-made-of-the-own-folder-is-the-one-beside-the-file.test.ts": {
     "default": 60000,
@@ -438,11 +466,11 @@
   },
   "aot/a-few-of-every-sweep-1.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 307300
   },
   "aot/a-few-of-every-sweep-2.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 380200
   },
   "aot/a-few-of-every-sweep-3.test.ts": {
     "default": 60000,
@@ -450,7 +478,7 @@
   },
   "aot/a-few-of-every-sweep-4.test.ts": {
     "default": 60000,
-    "asan": 169500
+    "asan": 344700
   },
   "aot/a-few-of-every-sweep-5.test.ts": {
     "default": 60000,
@@ -478,7 +506,7 @@
   },
   "aot/a-file-beside-the-test-file-requires-it-inside-a-require-of-their-importer.test.ts": {
     "default": 60000,
-    "asan": 14000
+    "asan": 4300
   },
   "aot/a-file-of-the-graph-of-a-test-file-requires-a-module-that-imports-the-test-file.test.ts": {
     "default": 60000,
@@ -486,11 +514,11 @@
   },
   "aot/a-file-of-the-product-finds-no-spy-that-the-build-has-not-seen.test.ts": {
     "default": 28900,
-    "asan": 23100
+    "asan": 11500
   },
   "aot/a-file-of-the-product-that-overwrites-a-built-in-throws-as-in-the-executable.test.ts": {
     "default": 38300,
-    "asan": 65800
+    "asan": 44400
   },
   "aot/a-file-of-the-run-that-a-helper-imports-back-is-handed-on-once.test.ts": {
     "default": 23800,
@@ -498,7 +526,7 @@
   },
   "aot/a-file-outside-the-executable-is-read-again-behind-a-deletion-from-require-cache.test.ts": {
     "default": 60000,
-    "asan": 25200
+    "asan": 30000
   },
   "aot/a-file-runs-as-often-as-under-bun-test-where-a-second-mock-follows-one-that-was-imported.test.ts": {
     "default": 60000,
@@ -506,15 +534,15 @@
   },
   "aot/a-file-that-a-hook-of-a-preload-loads-is-named-where-it-runs-again.test.ts": {
     "default": 60000,
-    "asan": 30000
+    "asan": 20500
   },
   "aot/files-run-early-by-star-exports.test.ts": {
     "default": 60000,
-    "asan": 9000
+    "asan": 4300
   },
   "aot/a-file-that-a-plugin-loads-is-the-plugins-for-require-too.test.ts": {
     "default": 31300,
-    "asan": 10800
+    "asan": 6900
   },
   "aot/a-file-that-a-test-has-rewritten-asks-a-standard-stream-for-more.test.ts": {
     "default": 11900,
@@ -530,7 +558,7 @@
   },
   "aot/a-file-that-hands-its-module-object-on-is-compiled-as-in-the-executable.test.ts": {
     "default": 27200,
-    "asan": 22800
+    "asan": 31300
   },
   "aot/a-file-that-many-ways-lead-to-is-asked-once-whether-it-may-leave.test.ts": {
     "default": 60000,
@@ -542,7 +570,7 @@
   },
   "aot/a-file-that-may-start-a-worker.test.ts": {
     "default": 60000,
-    "asan": 80200
+    "asan": 132200
   },
   "aot/a-file-that-one-test-file-alone-reaches-is-compiled-alike-wherever-the-test-file-stands.test.ts": {
     "default": 60000,
@@ -550,7 +578,7 @@
   },
   "aot/a-file-that-the-build-only-guesses-is-left-out-where-it-would-decide-what-another-file-is.test.ts": {
     "default": 60000,
-    "asan": 98200
+    "asan": 60900
   },
   "aot/a-file-that-the-test-runner-is-asked-for-finds-the-names-it-imports.test.ts": {
     "default": 60000,
@@ -562,7 +590,7 @@
   },
   "aot/a-file-that-threw-under-the-loader-of-a-package-runs-again.test.ts": {
     "default": 60000,
-    "asan": 17500
+    "asan": 10600
   },
   "aot/a-file-that-workers-alone-load-has-no-names-of-the-test-runner.test.ts": {
     "default": 8100,
@@ -586,7 +614,7 @@
   },
   "aot/a-free-name-that-a-member-of-the-library-has-too-is-compiled.test.ts": {
     "default": 60000,
-    "asan": 24700
+    "asan": 16100
   },
   "aot/a-function-in-a-field-of-an-object-of-an-earlier-test-file-runs-in-its-own-realm.test.ts": {
     "default": 5400,
@@ -598,19 +626,19 @@
   },
   "aot/a-function-of-node-fs-that-moves-the-bytes-of-a-small-view-has-a-row-that-says-so.test.ts": {
     "default": 60000,
-    "asan": 6900
+    "asan": 1500
   },
   "aot/a-function-that-a-file-on-a-cycle-declares-is-there-ahead-of-its-body-in-a-test-run.test.ts": {
     "default": 12900,
-    "asan": 37300
+    "asan": 28000
   },
   "aot/a-function-that-nobody-reads-or-calls-whose-loops-share-a-counter-builds-in-a-test-run.test.ts": {
     "default": 60000,
-    "asan": 22100
+    "asan": 13600
   },
   "aot/a-generator-driven-by-hand-in-a-test-run.test.ts": {
     "default": 60000,
-    "asan": 17700
+    "asan": 8400
   },
   "aot/a-getter-written-in-a-literal-is-read-by-running-it.test.ts": {
     "default": 60000,
@@ -618,11 +646,11 @@
   },
   "aot/a-global-below-which-the-build-took-a-constant-stays-locked-in-a-test-run.test.ts": {
     "default": 12300,
-    "asan": 22400
+    "asan": 31000
   },
   "aot/a-graph-held-behind-an-earlier-call-is-let-go.test.ts": {
     "default": 60000,
-    "asan": 7300
+    "asan": 3300
   },
   "aot/a-graph-that-is-handed-to-the-loader-costs-the-same-a-module-on-a-larger-cycle.test.ts": {
     "default": 60000,
@@ -674,11 +702,11 @@
   },
   "aot/a-load-written-in-the-product-finds-in-a-test-run-what-it-finds-in-the-executable.test.ts": {
     "default": 60000,
-    "asan": 83700
+    "asan": 60800
   },
   "aot/a-loader-that-a-call-reads-under-a-written-key-loads-files-in-a-test-run.test.ts": {
     "default": 60000,
-    "asan": 33900
+    "asan": 27600
   },
   "aot/a-long-list-mapped-to-numbers-keeps-them-as-numbers.test.ts": {
     "default": 60000,
@@ -686,11 +714,11 @@
   },
   "aot/a-look-for-the-handle-may-send-what-a-response-holds.test.ts": {
     "default": 12100,
-    "asan": 34000
+    "asan": 39200
   },
   "aot/a-made-name-requires-an-es-module-of-the-graph-that-is-being-loaded-where-every-file-is-found-by-name.test.ts": {
     "default": 60000,
-    "asan": 26300
+    "asan": 32000
   },
   "aot/a-manifest-that-lists-a-file-speaks-for-its-side-effects.test.ts": {
     "default": 60000,
@@ -730,31 +758,31 @@
   },
   "aot/a-name-from-the-rows-of-each-and-a-hint-in-a-message-open-no-test-run.test.ts": {
     "default": 13700,
-    "asan": 20700
+    "asan": 15500
   },
   "aot/a-name-is-not-looked-for-below-the-working-directory-of-an-executable.test.ts": {
     "default": 14100,
-    "asan": 9100
+    "asan": 6000
   },
   "aot/a-name-left-out-of-a-file-of-data-refuses-to-be-read.test.ts": {
     "default": 60000,
-    "asan": 24100
+    "asan": 17100
   },
   "aot/a-name-left-to-the-host-is-answered-with-a-file-of-the-image.test.ts": {
     "default": 60000,
-    "asan": 65800
+    "asan": 58700
   },
   "aot/a-name-of-the-runner-that-no-file-imports-opens-no-test-run.test.ts": {
     "default": 9600,
-    "asan": 18400
+    "asan": 24100
   },
   "aot/a-name-read-often-by-key-off-a-barrel-is-the-mocks-in-the-next-test-file.test.ts": {
     "default": 60000,
-    "asan": 15600
+    "asan": 6100
   },
   "aot/a-name-read-out-of-a-json-file-is-read-by-the-build.test.ts": {
     "default": 14100,
-    "asan": 15200
+    "asan": 11300
   },
   "aot/a-name-resolved-from-another-folder-is-not-written-down-under-the-own-one.test.ts": {
     "default": 60000,
@@ -770,7 +798,7 @@
   },
   "aot/a-name-that-a-made-require-only-resolves-leads-where-the-package-says.test.ts": {
     "default": 60000,
-    "asan": 7200
+    "asan": 2900
   },
   "aot/a-name-that-a-test-lays-on-object-prototype-is-read-by-the-library-as-in-bun-test.test.ts": {
     "default": 60000,
@@ -778,15 +806,15 @@
   },
   "aot/a-name-that-an-executable-lacks-is-looked-for-from-the-working-directory-too.test.ts": {
     "default": 60000,
-    "asan": 17600
+    "asan": 33400
   },
   "aot/a-name-that-finds-another-file-on-the-disk-of-the-build.test.ts": {
     "default": 60000,
-    "asan": 27200
+    "asan": 18400
   },
   "aot/a-name-that-only-a-mock-has-comes-through-export-star.test.ts": {
     "default": 11400,
-    "asan": 8200
+    "asan": 4400
   },
   "aot/a-name-that-only-a-package-json-explains-is-found-beside-a-plugin-that-touches-nothing.test.ts": {
     "default": 60000,
@@ -802,7 +830,7 @@
   },
   "aot/a-neighbor-that-treats-its-own-record-changes-nothing-of-a-read-that-finds-nothing.test.ts": {
     "default": 60000,
-    "asan": 68800
+    "asan": 42000
   },
   "aot/a-package-left-out-lies-below-a-cycle-that-the-loader-walks.test.ts": {
     "default": 60000,
@@ -818,39 +846,39 @@
   },
   "aot/a-package-that-asks-whether-jest-is-there-opens-no-export.test.ts": {
     "default": 21400,
-    "asan": 12300
+    "asan": 3600
   },
   "aot/a-package-whose-folder-lay-nearer-on-the-disk-of-the-build.test.ts": {
     "default": 60000,
-    "asan": 105300
+    "asan": 79600
   },
   "aot/a-package-whose-name-is-handed-to-a-helper-that-loads-it-is-in-the-executable.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 386000
   },
   "aot/a-path-made-by-one-climb-out-of-the-root-is-for-the-files-in-the-root.test.ts": {
     "default": 60000,
-    "asan": 13100
+    "asan": 6900
   },
   "aot/a-path-made-from-the-working-directory-names-the-file-on-disk.test.ts": {
     "default": 60000,
-    "asan": 71000
+    "asan": 56500
   },
   "aot/a-path-that-climbs-above-all-that-an-executable-holds-names-nothing.test.ts": {
     "default": 60000,
-    "asan": 9400
+    "asan": 5700
   },
   "aot/a-path-that-is-missing-at-the-build-is-loaded-below-the-file-that-wrote-it.test.ts": {
     "default": 60000,
-    "asan": 18500
+    "asan": 7500
   },
   "aot/a-plain-executable-is-handed-every-word-of-its-command-line.test.ts": {
     "default": 60000,
-    "asan": 8100
+    "asan": 1500
   },
   "aot/a-plugin-that-no-compiled-file-names-is-refused-aloud.test.ts": {
     "default": 60000,
-    "asan": 73200
+    "asan": 64900
   },
   "aot/a-polyfill-behind-a-test-for-its-member-costs-no-second-build.test.ts": {
     "default": 6200,
@@ -874,7 +902,7 @@
   },
   "aot/a-program-that-is-nested-or-chained-very-deeply-ends-no-build-by-a-signal.test.ts": {
     "default": 88500,
-    "asan": 51200
+    "asan": 107800
   },
   "aot/a-public-field-laid-by-the-bundlers-helper-sees-what-a-test-lays-above-every-object.test.ts": {
     "default": 60000,
@@ -882,7 +910,7 @@
   },
   "aot/a-query-behind-a-spelled-path-copies-that-file-alone-in-a-test-run.test.ts": {
     "default": 18200,
-    "asan": 72800
+    "asan": 59700
   },
   "aot/a-query-where-code-may-come-from-disk.test.ts": {
     "default": 60000,
@@ -914,7 +942,7 @@
   },
   "aot/a-require-made-for-another-folder-finds-there-a-file-written-after-a-test-run-was-built.test.ts": {
     "default": 60000,
-    "asan": 6100
+    "asan": 9300
   },
   "aot/a-require-made-for-another-folder-finds-there-a-package-left-outside-the-executable.test.ts": {
     "default": 60000,
@@ -922,7 +950,7 @@
   },
   "aot/a-require-made-for-the-root-of-the-file-system.test.ts": {
     "default": 60000,
-    "asan": 49100
+    "asan": 35900
   },
   "aot/a-require-of-a-patched-file-while-a-later-mock-waits-is-told.test.ts": {
     "default": 60000,
@@ -930,11 +958,11 @@
   },
   "aot/a-require-of-an-es-module-looks-at-what-the-load-threw-before-it-ends-the-load.test.ts": {
     "default": 19400,
-    "asan": 14600
+    "asan": 2400
   },
   "aot/a-require-that-goes-through-the-host-keeps-no-module-object.test.ts": {
     "default": 60000,
-    "asan": 18700
+    "asan": 23500
   },
   "aot/a-requirer-that-is-no-file-of-the-executable-keeps-one-object-for-a-file.test.ts": {
     "default": 60000,
@@ -942,11 +970,11 @@
   },
   "aot/a-resolve-that-lists-folders-finds-what-each-of-them-answers.test.ts": {
     "default": 60000,
-    "asan": 18800
+    "asan": 15500
   },
   "aot/a-row-filled-once-by-a-definition-keeps-what-it-is-held-to.test.ts": {
     "default": 60000,
-    "asan": 20600
+    "asan": 16100
   },
   "aot/a-run-goes-on-without-the-tsconfig-that-the-override-names.test.ts": {
     "default": 5000,
@@ -958,11 +986,11 @@
   },
   "aot/a-server-exported-by-default-keeps-what-its-literal-names.test.ts": {
     "default": 60000,
-    "asan": 29200
+    "asan": 19700
   },
   "aot/a-server-honors-an-option-laid-on-object-prototype.test.ts": {
     "default": 60000,
-    "asan": 11100
+    "asan": 7700
   },
   "aot/a-server-keeps-what-its-handlers-use.test.ts": {
     "default": 60000,
@@ -970,7 +998,7 @@
   },
   "aot/a-slot-that-a-loop-reads-in-front-of-itself-to-test-it-does-not-claim-to-follow-its-store.test.ts": {
     "default": 60000,
-    "asan": 22200
+    "asan": 18100
   },
   "aot/a-spread-lays-null-under-a-name-that-the-literal-writes-behind-it.test.ts": {
     "default": 60000,
@@ -986,7 +1014,7 @@
   },
   "aot/a-spy-or-a-mock-that-is-refused-to-a-file-outside-the-build-names-that-file.test.ts": {
     "default": 60000,
-    "asan": 57200
+    "asan": 67800
   },
   "aot/a-spy-takes-an-accessor-under-an-index-of-an-object-of-compiled-code.test.ts": {
     "default": 60000,
@@ -1002,15 +1030,15 @@
   },
   "aot/a-statement-that-hands-a-name-on-hides-the-name-in-the-stars-of-its-own-file.test.ts": {
     "default": 60000,
-    "asan": 37900
+    "asan": 77000
   },
   "aot/a-store-between-two-reads-of-one-list-is-seen-by-the-second-read.test.ts": {
     "default": 60000,
-    "asan": 19400
+    "asan": 43900
   },
   "aot/a-store-that-nobody-followed-replaces-a-member-above-a-view.test.ts": {
     "default": 60000,
-    "asan": 28000
+    "asan": 43200
   },
   "aot/a-store-through-a-second-name-is-seen-by-the-second-read.test.ts": {
     "default": 60000,
@@ -1018,11 +1046,11 @@
   },
   "aot/a-store-to-exports-beside-module-exports-in-a-declaration-or-on-the-inside.test.ts": {
     "default": 60000,
-    "asan": 18700
+    "asan": 8500
   },
   "aot/a-symbol-of-an-earlier-test-file-is-not-the-symbol-of-this-realm.test.ts": {
     "default": 8800,
-    "asan": 7100
+    "asan": 2500
   },
   "aot/a-test-cannot-lay-symbol-has-instance-on-a-built-in-constructor.test.ts": {
     "default": 60000,
@@ -1050,15 +1078,15 @@
   },
   "aot/a-test-replaces-a-static-that-has-code-in-line.test.ts": {
     "default": 60000,
-    "asan": 15600
+    "asan": 9900
   },
   "aot/a-test-run-has-code-for-the-patterns-that-its-files-put-together.test.ts": {
     "default": 60000,
-    "asan": 12800
+    "asan": 6400
   },
   "aot/a-test-run-holds-none-of-the-runners-own-code.test.ts": {
     "default": 13900,
-    "asan": 9200
+    "asan": 5500
   },
   "aot/a-test-run-holds-of-the-library-what-its-files-mention.test.ts": {
     "default": 60000,
@@ -1070,11 +1098,11 @@
   },
   "aot/a-test-stores-an-entry-in-require-cache-under-a-key-that-it-puts-together.test.ts": {
     "default": 23500,
-    "asan": 62300
+    "asan": 56000
   },
   "aot/a-test-that-replaced-methods-and-classes-counts-the-same-calls-while-a-module-loads.test.ts": {
     "default": 60000,
-    "asan": 21500
+    "asan": 15000
   },
   "aot/a-test-that-requires-a-file-writes-to-a-standard-stream.test.ts": {
     "default": 9600,
@@ -1086,7 +1114,7 @@
   },
   "aot/a-testing-word-lets-a-net-build-a-program-with-type-errors.test.ts": {
     "default": 60000,
-    "asan": 18100
+    "asan": 8200
   },
   "aot/a-text-in-front-of-a-loop-that-runs-no-turn.test.ts": {
     "default": 60000,
@@ -1098,7 +1126,7 @@
   },
   "aot/a-text-that-nobody-has-read-comes-in-and-nothing-is-taken-out.test.ts": {
     "default": 14300,
-    "asan": 24300
+    "asan": 36800
   },
   "aot/a-text-with-a-broken-import.test.ts": {
     "default": 4600,
@@ -1110,7 +1138,7 @@
   },
   "aot/a-tsconfig-that-a-dependency-ships-is-not-the-programs.test.ts": {
     "default": 60000,
-    "asan": 20500
+    "asan": 42100
   },
   "aot/a-type-error-in-a-text-that-the-build-was-given-stops-the-build.test.ts": {
     "default": 60000,
@@ -1118,7 +1146,7 @@
   },
   "aot/a-value-that-the-host-computes-is-held-against-its-row.test.ts": {
     "default": 60000,
-    "asan": 18000
+    "asan": 4000
   },
   "aot/a-vitest-test-file-with-two-imports-is-required-by-another-under-isolate.test.ts": {
     "default": 60000,
@@ -1138,7 +1166,7 @@
   },
   "aot/a-worker-started-by-unseen-code.test.ts": {
     "default": 16100,
-    "asan": 23100
+    "asan": 16700
   },
   "aot/a-worker-starts-from-a-path-made-of-dirname-or-filename.test.ts": {
     "default": 13700,
@@ -1150,19 +1178,19 @@
   },
   "aot/a-written-alternative-without-an-ending-whose-type-the-call-names-is-in-the-program.test.ts": {
     "default": 60000,
-    "asan": 10100
+    "asan": 5400
   },
   "aot/a-written-import-of-a-file-that-was-only-required-while-a-factory-has-yet-to-settle.test.ts": {
     "default": 60000,
-    "asan": 13400
+    "asan": 3800
   },
   "aot/a-written-path-that-is-missing-at-the-build-is-looked-up-when-the-program-runs.test.ts": {
     "default": 60000,
-    "asan": 6600
+    "asan": 9800
   },
   "aot/a-written-whole-path-to-a-file-that-is-not-in-the-program-is-resolved-at-the-run.test.ts": {
     "default": 60000,
-    "asan": 14900
+    "asan": 11300
   },
   "aot/accessors-above-objects-in-test-runs.test.ts": {
     "default": 9300,
@@ -1170,19 +1198,19 @@
   },
   "aot/an-accessor-on-a-request-itself-is-asked-as-often-as-plain-bun-asks-it.test.ts": {
     "default": 60000,
-    "asan": 94400
+    "asan": 80300
   },
   "aot/an-accessor-that-a-test-lays-on-object-prototype-is-handed-the-built-in.test.ts": {
     "default": 60000,
-    "asan": 43600
+    "asan": 22300
   },
   "aot/an-accessor-under-get-color-depth-hears-one-store.test.ts": {
     "default": 60000,
-    "asan": 10500
+    "asan": 7200
   },
   "aot/an-addon-in-the-executable-is-loaded-under-any-name.test.ts": {
     "default": 35500,
-    "asan": 9200
+    "asan": 16700
   },
   "aot/an-alternative-that-is-left-outside-does-not-take-the-written-files-with-it.test.ts": {
     "default": 60000,
@@ -1202,15 +1230,15 @@
   },
   "aot/an-entry-of-require-cache-shows-what-its-file-exports-whoever-reads-it-elsewhere.test.ts": {
     "default": 7900,
-    "asan": 9100
+    "asan": 5200
   },
   "aot/an-entry-of-require-cache-that-the-build-saw-nobody-read-is-refused.test.ts": {
     "default": 60000,
-    "asan": 17400
+    "asan": 10000
   },
   "aot/an-entry-of-the-cache-of-require-shows-its-children-and-its-parent.test.ts": {
     "default": 8000,
-    "asan": 16300
+    "asan": 12800
   },
   "aot/an-entry-point-that-is-data-stands-beside-a-database-that-a-statement-imports.test.ts": {
     "default": 60000,
@@ -1218,15 +1246,15 @@
   },
   "aot/an-entry-point-that-lies-in-a-package-finds-other-packages-by-their-names.test.ts": {
     "default": 60000,
-    "asan": 9300
+    "asan": 5500
   },
   "aot/an-error-in-a-function-that-is-one-long-line-quotes-what-bun-run-quotes.test.ts": {
     "default": 19000,
-    "asan": 24600
+    "asan": 15300
   },
   "aot/an-error-thrown-by-a-function-of-an-earlier-test-file-is-caught-in-this-one.test.ts": {
     "default": 8000,
-    "asan": 6700
+    "asan": 3400
   },
   "aot/an-error-while-a-standard-stream-is-made.test.ts": {
     "default": 60000,
@@ -1258,7 +1286,7 @@
   },
   "aot/an-object-that-only-leads-to-a-loader-hands-on-no-module.test.ts": {
     "default": 14200,
-    "asan": 79300
+    "asan": 40500
   },
   "aot/an-option-of-the-run-that-reads-what-the-executable-lacks-is-refused-at-the-start.test.ts": {
     "default": 60000,
@@ -1266,11 +1294,11 @@
   },
   "aot/an-unhandled-rejection-in-a-file-that-a-test-imports-by-a-call.test.ts": {
     "default": 12700,
-    "asan": 7500
+    "asan": 3300
   },
   "aot/an-update-of-the-table-of-methods-opens-the-pages-that-it-stores-into.test.ts": {
     "default": 60000,
-    "asan": 25200
+    "asan": 5700
   },
   "aot/aot-harden.test.ts": {
     "default": 60000,
@@ -1286,11 +1314,11 @@
   },
   "aot/asset-names.test.ts": {
     "default": 22300,
-    "asan": 18900
+    "asan": 11400
   },
   "aot/assigned-literal-frames.test.ts": {
     "default": 60000,
-    "asan": 21100
+    "asan": 31100
   },
   "aot/augmented-package.test.ts": {
     "default": 20400,
@@ -1302,15 +1330,15 @@
   },
   "aot/browser-target.test.ts": {
     "default": 16600,
-    "asan": 9200
+    "asan": 3100
   },
   "aot/builds-on-one-thread-and-on-several-give-the-same-bytes.test.ts": {
     "default": 60000,
-    "asan": 77400
+    "asan": 276500
   },
   "aot/built-ins-from-packages.test.ts": {
     "default": 11100,
-    "asan": 12900
+    "asan": 19600
   },
   "aot/builtins/a-quiet-row-leaves-the-bytes-of-a-view-where-they-are.test.ts": {
     "default": 60000,
@@ -1318,11 +1346,11 @@
   },
   "aot/builtins/exports.test.ts": {
     "default": 25100,
-    "asan": 100400
+    "asan": 8700
   },
   "aot/builtins/omitted-operands.test.ts": {
     "default": 14700,
-    "asan": 17200
+    "asan": 6600
   },
   "aot/builtins/records-whose-conditions-name-two-objects-stay-two.test.ts": {
     "default": 60000,
@@ -1346,11 +1374,11 @@
   },
   "aot/bun-ignore-comments.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 341300
   },
   "aot/bunfig-preload-ignored.test.ts": {
     "default": 40500,
-    "asan": 38300
+    "asan": 15900
   },
   "aot/byte-literals-in-test-runs.test.ts": {
     "default": 60000,
@@ -1378,27 +1406,27 @@
   },
   "aot/cjs-order.test.ts": {
     "default": 15400,
-    "asan": 26800
+    "asan": 14600
   },
   "aot/class-fields-by-the-tsconfig-that-each-takes.test.ts": {
     "default": 60000,
-    "asan": 163000
+    "asan": 77900
   },
   "aot/cli/an-external-source-map-leaves-names-alone.test.ts": {
     "default": 60000,
-    "asan": 24800
+    "asan": 21800
   },
   "aot/cli/obfuscate-paths.test.ts": {
     "default": 60000,
-    "asan": 157900
+    "asan": 314900
   },
   "aot/closed-bugs-in-test-runs.test.ts": {
     "default": 14200,
-    "asan": 20000
+    "asan": 16000
   },
   "aot/closed-exports-above-root.test.ts": {
     "default": 52000,
-    "asan": 24000
+    "asan": 15200
   },
   "aot/closed-test-run.test.ts": {
     "default": 10100,
@@ -1406,7 +1434,7 @@
   },
   "aot/commonjs-files-below-a-require-run-as-the-loader-makes-them.test.ts": {
     "default": 60000,
-    "asan": 7500
+    "asan": 4200
   },
   "aot/commonjs-originals-stay-under-their-key.test.ts": {
     "default": 60000,
@@ -1422,15 +1450,15 @@
   },
   "aot/compiler/a-written-program-brings-the-options-of-its-build.test.ts": {
     "default": 60000,
-    "asan": 27300
+    "asan": 18500
   },
   "aot/compiler/budgets.test.ts": {
     "default": 2600,
-    "asan": 65400
+    "asan": 124800
   },
   "aot/compiler/determinism.test.ts": {
     "default": 1700,
-    "asan": 46200
+    "asan": 96200
   },
   "aot/compiler/files-that-merely-lie-in-the-folder-change-nothing.test.ts": {
     "default": 60000,
@@ -1438,11 +1466,11 @@
   },
   "aot/compiler/independence.test.ts": {
     "default": 1300,
-    "asan": 157000
+    "asan": 617300
   },
   "aot/compiler/independent-statements-change-places.test.ts": {
     "default": 60000,
-    "asan": 83900
+    "asan": 195400
   },
   "aot/compiler/linear-cost.test.ts": {
     "default": 1700,
@@ -1454,7 +1482,7 @@
   },
   "aot/compiler/names-compared-as-text.test.ts": {
     "default": 27200,
-    "asan": 51200
+    "asan": 74800
   },
   "aot/compiler/names-do-not-decide-how-a-function-is-compiled.test.ts": {
     "default": 60000,
@@ -1474,7 +1502,7 @@
   },
   "aot/computed-load-1.test.ts": {
     "default": 27600,
-    "asan": 24400
+    "asan": 20400
   },
   "aot/computed-load-2.test.ts": {
     "default": 4100,
@@ -1494,7 +1522,7 @@
   },
   "aot/coverage-emitted-helpers.test.ts": {
     "default": 60000,
-    "asan": 6100
+    "asan": 2900
   },
   "aot/coverage-macro.test.ts": {
     "default": 3100,
@@ -1506,7 +1534,7 @@
   },
   "aot/cpu-profile-wasm-traps.test.ts": {
     "default": 60000,
-    "asan": 14500
+    "asan": 5100
   },
   "aot/cpu.test.ts": {
     "default": 1900,
@@ -1518,7 +1546,7 @@
   },
   "aot/dead-code-in-function-source.test.ts": {
     "default": 60000,
-    "asan": 12400
+    "asan": 5500
   },
   "aot/decoded-strings-without-memory.test.ts": {
     "default": 60000,
@@ -1534,11 +1562,11 @@
   },
   "aot/delayed-imports.test.ts": {
     "default": 21500,
-    "asan": 12000
+    "asan": 4000
   },
   "aot/dom-environment.test.ts": {
     "default": 18800,
-    "asan": 34000
+    "asan": 23100
   },
   "aot/dot-folder-paths.test.ts": {
     "default": 23000,
@@ -1554,27 +1582,27 @@
   },
   "aot/engine/answers-1.test.ts": {
     "default": 60000,
-    "asan": 97500
+    "asan": 64300
   },
   "aot/engine/answers-10.test.ts": {
     "default": 60000,
-    "asan": 82700
+    "asan": 115000
   },
   "aot/engine/answers-11.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 113200
   },
   "aot/engine/answers-12.test.ts": {
     "default": 60000,
-    "asan": 84900
+    "asan": 60200
   },
   "aot/engine/answers-13.test.ts": {
     "default": 60000,
-    "asan": 85700
+    "asan": 53400
   },
   "aot/engine/answers-14.test.ts": {
     "default": 60000,
-    "asan": 78400
+    "asan": 24400
   },
   "aot/engine/answers-15.test.ts": {
     "default": 60000,
@@ -1582,55 +1610,55 @@
   },
   "aot/engine/answers-16.test.ts": {
     "default": 60000,
-    "asan": 92600
+    "asan": 121600
   },
   "aot/engine/answers-2.test.ts": {
     "default": 60000,
-    "asan": 63200
+    "asan": 92800
   },
   "aot/engine/answers-3.test.ts": {
     "default": 60000,
-    "asan": 64800
+    "asan": 71400
   },
   "aot/engine/answers-4.test.ts": {
     "default": 60000,
-    "asan": 46500
+    "asan": 54500
   },
   "aot/engine/answers-5.test.ts": {
     "default": 60000,
-    "asan": 59100
+    "asan": 77200
   },
   "aot/engine/answers-6.test.ts": {
     "default": 60000,
-    "asan": 66500
+    "asan": 148500
   },
   "aot/engine/answers-7.test.ts": {
     "default": 60000,
-    "asan": 98500
+    "asan": 80000
   },
   "aot/engine/answers-8.test.ts": {
     "default": 60000,
-    "asan": 74200
+    "asan": 125900
   },
   "aot/engine/answers-9.test.ts": {
     "default": 60000,
-    "asan": 78800
+    "asan": 178800
   },
   "aot/engine/from-source-1.test.ts": {
     "default": 60000,
-    "asan": 184600
+    "asan": 229500
   },
   "aot/engine/from-source-10.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 141000
   },
   "aot/engine/from-source-11.test.ts": {
     "default": 60000,
-    "asan": 149500
+    "asan": 215200
   },
   "aot/engine/from-source-12.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 310500
   },
   "aot/engine/from-source-13.test.ts": {
     "default": 60000,
@@ -1638,11 +1666,11 @@
   },
   "aot/engine/from-source-14.test.ts": {
     "default": 60000,
-    "asan": 186100
+    "asan": 106000
   },
   "aot/engine/from-source-15.test.ts": {
     "default": 60000,
-    "asan": 93300
+    "asan": 113200
   },
   "aot/engine/from-source-16.test.ts": {
     "default": 60000,
@@ -1650,15 +1678,15 @@
   },
   "aot/engine/from-source-17.test.ts": {
     "default": 60000,
-    "asan": 72800
+    "asan": 141200
   },
   "aot/engine/from-source-18.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 318100
   },
   "aot/engine/from-source-19.test.ts": {
     "default": 60000,
-    "asan": 134500
+    "asan": 267600
   },
   "aot/engine/from-source-2.test.ts": {
     "default": 60000,
@@ -1666,43 +1694,43 @@
   },
   "aot/engine/from-source-20.test.ts": {
     "default": 60000,
-    "asan": 121100
+    "asan": 59000
   },
   "aot/engine/from-source-21.test.ts": {
     "default": 60000,
-    "asan": 159800
+    "asan": 216400
   },
   "aot/engine/from-source-22.test.ts": {
     "default": 60000,
-    "asan": 93500
+    "asan": 179600
   },
   "aot/engine/from-source-23.test.ts": {
     "default": 60000,
-    "asan": 82100
+    "asan": 97700
   },
   "aot/engine/from-source-24.test.ts": {
     "default": 60000,
-    "asan": 163700
+    "asan": 228900
   },
   "aot/engine/from-source-25.test.ts": {
     "default": 60000,
-    "asan": 58900
+    "asan": 45700
   },
   "aot/engine/from-source-26.test.ts": {
     "default": 60000,
-    "asan": 71000
+    "asan": 152400
   },
   "aot/engine/from-source-27.test.ts": {
     "default": 60000,
-    "asan": 164700
+    "asan": 298600
   },
   "aot/engine/from-source-28.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 298300
   },
   "aot/engine/from-source-29.test.ts": {
     "default": 60000,
-    "asan": 149900
+    "asan": 267400
   },
   "aot/engine/from-source-3.test.ts": {
     "default": 60000,
@@ -1714,11 +1742,11 @@
   },
   "aot/engine/from-source-31.test.ts": {
     "default": 60000,
-    "asan": 82700
+    "asan": 154200
   },
   "aot/engine/from-source-32.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 292700
   },
   "aot/engine/from-source-33.test.ts": {
     "default": 60000,
@@ -1750,7 +1778,7 @@
   },
   "aot/engine/from-source-4.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 112900
   },
   "aot/engine/from-source-40.test.ts": {
     "default": 60000,
@@ -1794,7 +1822,7 @@
   },
   "aot/engine/from-source-5.test.ts": {
     "default": 60000,
-    "asan": 65800
+    "asan": 176200
   },
   "aot/engine/from-source-50.test.ts": {
     "default": 60000,
@@ -1838,7 +1866,7 @@
   },
   "aot/engine/from-source-6.test.ts": {
     "default": 60000,
-    "asan": 106300
+    "asan": 83000
   },
   "aot/engine/from-source-60.test.ts": {
     "default": 60000,
@@ -1862,35 +1890,35 @@
   },
   "aot/engine/from-source-7.test.ts": {
     "default": 60000,
-    "asan": 185500
+    "asan": 286200
   },
   "aot/engine/from-source-8.test.ts": {
     "default": 60000,
-    "asan": 128400
+    "asan": 241800
   },
   "aot/engine/from-source-9.test.ts": {
     "default": 60000,
-    "asan": 297900
+    "asan": 155700
   },
   "aot/engine/ir-10.test.ts": {
     "default": 60000,
-    "asan": 45700
+    "asan": 139500
   },
   "aot/engine/ir-11.test.ts": {
     "default": 60000,
-    "asan": 55600
+    "asan": 73200
   },
   "aot/engine/ir-12.test.ts": {
     "default": 60000,
-    "asan": 53600
+    "asan": 91200
   },
   "aot/engine/ir-7.test.ts": {
     "default": 60000,
-    "asan": 44200
+    "asan": 144700
   },
   "aot/engine/ir-8.test.ts": {
     "default": 60000,
-    "asan": 41600
+    "asan": 201700
   },
   "aot/engine/ir-9.test.ts": {
     "default": 60000,
@@ -1898,7 +1926,7 @@
   },
   "aot/engine/ir-alone-1.test.ts": {
     "default": 60000,
-    "asan": 446700
+    "asan": 176000
   },
   "aot/engine/ir-alone-2.test.ts": {
     "default": 60000,
@@ -1906,23 +1934,23 @@
   },
   "aot/engine/native-10.test.ts": {
     "default": 14500,
-    "asan": 43100
+    "asan": 21000
   },
   "aot/engine/native-7.test.ts": {
     "default": 11600,
-    "asan": 12300
+    "asan": 19300
   },
   "aot/engine/native-8.test.ts": {
     "default": 11600,
-    "asan": 13400
+    "asan": 23800
   },
   "aot/engine/native-9.test.ts": {
     "default": 11400,
-    "asan": 25600
+    "asan": 9800
   },
   "aot/engine/the-tests-that-run-as-users-build-were-run.test.ts": {
     "default": 60000,
-    "asan": 27900
+    "asan": 49300
   },
   "aot/engine/what-a-todo-of-an-ir-test-stands-for.test.ts": {
     "default": 60000,
@@ -1950,19 +1978,19 @@
   },
   "aot/every-library-module-runs-under-the-checks.test.ts": {
     "default": 60000,
-    "asan": 18200
+    "asan": 14600
   },
   "aot/every-module-of-the-library-loads-from-its-text-where-code-from-disk-asks-for-it.test.ts": {
     "default": 60000,
-    "asan": 8200
+    "asan": 13400
   },
   "aot/every-operator-on-every-pair-of-kinds-of-operands.test.ts": {
     "default": 6300,
-    "asan": 8200
+    "asan": 16700
   },
   "aot/every-read-and-store-of-a-stream-behind-proxies.test.ts": {
     "default": 60000,
-    "asan": 22800
+    "asan": 16500
   },
   "aot/every-shard-deals-alike-whatever-its-own-parallel-says.test.ts": {
     "default": 6500,
@@ -1974,19 +2002,19 @@
   },
   "aot/every-way-to-change-the-prototype-of-a-generator-function.test.ts": {
     "default": 5700,
-    "asan": 10000
+    "asan": 14300
   },
   "aot/everyday-awaiting-programs-1.test.ts": {
     "default": 60000,
-    "asan": 30100
+    "asan": 60300
   },
   "aot/everyday-awaiting-programs-2.test.ts": {
     "default": 60000,
-    "asan": 36300
+    "asan": 54000
   },
   "aot/everyday-awaiting-programs-3.test.ts": {
     "default": 60000,
-    "asan": 28400
+    "asan": 36300
   },
   "aot/everyday-awaiting-programs-4.test.ts": {
     "default": 60000,
@@ -2002,7 +2030,7 @@
   },
   "aot/everyday-failing-tests-2.test.ts": {
     "default": 60000,
-    "asan": 76600
+    "asan": 130700
   },
   "aot/everyday-failing-tests-3.test.ts": {
     "default": 60000,
@@ -2010,43 +2038,43 @@
   },
   "aot/everyday-failing-tests-4.test.ts": {
     "default": 60000,
-    "asan": 53300
+    "asan": 82500
   },
   "aot/everyday-gathering-programs-1.test.ts": {
     "default": 60000,
-    "asan": 29800
+    "asan": 40700
   },
   "aot/everyday-gathering-programs-2.test.ts": {
     "default": 60000,
-    "asan": 30400
+    "asan": 59300
   },
   "aot/everyday-gathering-programs-3.test.ts": {
     "default": 60000,
-    "asan": 26300
+    "asan": 55000
   },
   "aot/everyday-gathering-programs-4.test.ts": {
     "default": 60000,
-    "asan": 28300
+    "asan": 47200
   },
   "aot/everyday-mocks-1.test.ts": {
     "default": 60000,
-    "asan": 72100
+    "asan": 114500
   },
   "aot/everyday-mocks-2.test.ts": {
     "default": 60000,
-    "asan": 55800
+    "asan": 95600
   },
   "aot/everyday-mocks-3.test.ts": {
     "default": 60000,
-    "asan": 68100
+    "asan": 107700
   },
   "aot/everyday-mocks-4.test.ts": {
     "default": 60000,
-    "asan": 62300
+    "asan": 107200
   },
   "aot/everyday-mocks-5.test.ts": {
     "default": 60000,
-    "asan": 88200
+    "asan": 134900
   },
   "aot/everyday-mocks-6.test.ts": {
     "default": 60000,
@@ -2054,11 +2082,11 @@
   },
   "aot/everyday-programs-1.test.ts": {
     "default": 60000,
-    "asan": 47800
+    "asan": 31500
   },
   "aot/everyday-programs-2.test.ts": {
     "default": 60000,
-    "asan": 35000
+    "asan": 42900
   },
   "aot/everyday-programs-3.test.ts": {
     "default": 60000,
@@ -2066,7 +2094,7 @@
   },
   "aot/everyday-programs-4.test.ts": {
     "default": 60000,
-    "asan": 32500
+    "asan": 67000
   },
   "aot/explain-guards.test.ts": {
     "default": 3300,
@@ -2102,7 +2130,7 @@
   },
   "aot/files-above-the-entry-point-start-workers-from-code.test.ts": {
     "default": 60000,
-    "asan": 124500
+    "asan": 163300
   },
   "aot/files-that-load-again-by-module.test.ts": {
     "default": 3200,
@@ -2110,7 +2138,7 @@
   },
   "aot/files-written-by-child-processes.test.ts": {
     "default": 60000,
-    "asan": 44100
+    "asan": 14100
   },
   "aot/fixed-runs-closed.test.ts": {
     "default": 13000,
@@ -2166,7 +2194,7 @@
   },
   "aot/functions-in-a-literal-under-a-name-of-marked-exports-are-expected-in-loops.test.ts": {
     "default": 60000,
-    "asan": 26400
+    "asan": 38800
   },
   "aot/global-code-gets-the-runner-only-where-the-build-sees-it.test.ts": {
     "default": 2300,
@@ -2174,7 +2202,7 @@
   },
   "aot/guessed-worker-files.test.ts": {
     "default": 60000,
-    "asan": 35000
+    "asan": 50100
   },
   "aot/harness/where-a-child-is.test.ts": {
     "default": 60000,
@@ -2198,7 +2226,7 @@
   },
   "aot/helper-loads.test.ts": {
     "default": 5000,
-    "asan": 53900
+    "asan": 92000
   },
   "aot/hoisted-bare-import.test.ts": {
     "default": 1300,
@@ -2226,11 +2254,11 @@
   },
   "aot/import-meta-glob.test.ts": {
     "default": 14200,
-    "asan": 25700
+    "asan": 31300
   },
   "aot/import-order-in-a-test-run.test.ts": {
     "default": 60000,
-    "asan": 13200
+    "asan": 7500
   },
   "aot/import-read-cost-stays-flat.test.ts": {
     "default": 60000,
@@ -2246,11 +2274,11 @@
   },
   "aot/installed-types-that-the-program-leads-to-are-its-own.test.ts": {
     "default": 60000,
-    "asan": 52700
+    "asan": 39300
   },
   "aot/isip-tests-with-one-object-for-each-pattern.test.ts": {
     "default": 60000,
-    "asan": 8900
+    "asan": 5600
   },
   "aot/isolate-doors.test.ts": {
     "default": 2600,
@@ -2274,7 +2302,7 @@
   },
   "aot/known-evaluations-check-level.test.ts": {
     "default": 60000,
-    "asan": 32000
+    "asan": 28200
   },
   "aot/known-name-warnings.test.ts": {
     "default": 3600,
@@ -2286,7 +2314,7 @@
   },
   "aot/large-javascript-files-are-lowered-in-parts.test.ts": {
     "default": 60000,
-    "asan": 35600
+    "asan": 23700
   },
   "aot/late-rejections.test.ts": {
     "default": 10900,
@@ -2294,11 +2322,11 @@
   },
   "aot/leaf-constants-in-test-runs.test.ts": {
     "default": 60000,
-    "asan": 20600
+    "asan": 16600
   },
   "aot/left-import-order.test.ts": {
     "default": 3000,
-    "asan": 5400
+    "asan": 8600
   },
   "aot/library-native-globals.test.ts": {
     "default": 2800,
@@ -2306,11 +2334,11 @@
   },
   "aot/linear-code-for-conditional-reassignments.test.ts": {
     "default": 60000,
-    "asan": 18500
+    "asan": 13700
   },
   "aot/locked-built-in-write-warnings.test.ts": {
     "default": 82200,
-    "asan": 76900
+    "asan": 56200
   },
   "aot/long-flat-texts-asked-as-keys-in-turns.test.ts": {
     "default": 60000,
@@ -2330,11 +2358,11 @@
   },
   "aot/many-barrels-hand-a-made-require-on-build-time.test.ts": {
     "default": 60000,
-    "asan": 9400
+    "asan": 16600
   },
   "aot/many-computed-loads-in-one-file-build-time.test.ts": {
     "default": 60000,
-    "asan": 14400
+    "asan": 18100
   },
   "aot/many-small-files-beside-one-long-file.test.ts": {
     "default": 7300,
@@ -2358,7 +2386,7 @@
   },
   "aot/messages-without-function-source.test.ts": {
     "default": 60000,
-    "asan": 13100
+    "asan": 9000
   },
   "aot/methods-of-instances-of-classes-below-map-and-set.test.ts": {
     "default": 60000,
@@ -2402,7 +2430,7 @@
   },
   "aot/mock-commonjs-sites.test.ts": {
     "default": 7100,
-    "asan": 28400
+    "asan": 41700
   },
   "aot/mock-cost-beside-other-modules.test.ts": {
     "default": 60000,
@@ -2414,15 +2442,15 @@
   },
   "aot/mock-ends.test.ts": {
     "default": 5500,
-    "asan": 15400
+    "asan": 22600
   },
   "aot/mock-factories.test.ts": {
     "default": 60000,
-    "asan": 341000
+    "asan": 425900
   },
   "aot/mock-factory-awaits.test.ts": {
     "default": 2900,
-    "asan": 18100
+    "asan": 8500
   },
   "aot/mock-file-url.test.ts": {
     "default": 2600,
@@ -2442,11 +2470,11 @@
   },
   "aot/mock-lacks-handed-on-name.test.ts": {
     "default": 7000,
-    "asan": 12500
+    "asan": 9100
   },
   "aot/mock-laid-over-1.test.ts": {
     "default": 60000,
-    "asan": 68500
+    "asan": 115200
   },
   "aot/mock-laid-over-10.test.ts": {
     "default": 60000,
@@ -2458,7 +2486,7 @@
   },
   "aot/mock-laid-over-12.test.ts": {
     "default": 60000,
-    "asan": 126200
+    "asan": 152000
   },
   "aot/mock-laid-over-2.test.ts": {
     "default": 60000,
@@ -2470,19 +2498,19 @@
   },
   "aot/mock-laid-over-4.test.ts": {
     "default": 60000,
-    "asan": 181800
+    "asan": 217700
   },
   "aot/mock-laid-over-5.test.ts": {
     "default": 60000,
-    "asan": 123600
+    "asan": 103800
   },
   "aot/mock-laid-over-6.test.ts": {
     "default": 60000,
-    "asan": 162200
+    "asan": 104900
   },
   "aot/mock-laid-over-7.test.ts": {
     "default": 60000,
-    "asan": 101700
+    "asan": 82800
   },
   "aot/mock-laid-over-8.test.ts": {
     "default": 60000,
@@ -2490,7 +2518,7 @@
   },
   "aot/mock-laid-over-9.test.ts": {
     "default": 60000,
-    "asan": 61400
+    "asan": 45700
   },
   "aot/mock-manual-folder.test.ts": {
     "default": 1000,
@@ -2502,7 +2530,7 @@
   },
   "aot/mock-namespace.test.ts": {
     "default": 9800,
-    "asan": 11500
+    "asan": 6800
   },
   "aot/mock-originals-share-file.test.ts": {
     "default": 2800,
@@ -2542,7 +2570,7 @@
   },
   "aot/mock-star-clash.test.ts": {
     "default": 1900,
-    "asan": 7600
+    "asan": 2400
   },
   "aot/mock-unspelled-names.test.ts": {
     "default": 2900,
@@ -2554,7 +2582,7 @@
   },
   "aot/mock-ways.test.ts": {
     "default": 60000,
-    "asan": 395800
+    "asan": 134800
   },
   "aot/mock-without-default.test.ts": {
     "default": 4200,
@@ -2574,15 +2602,15 @@
   },
   "aot/mocks-from-one-test-file-to-the-next-1.test.ts": {
     "default": 60000,
-    "asan": 144300
+    "asan": 108400
   },
   "aot/mocks-from-one-test-file-to-the-next-2.test.ts": {
     "default": 60000,
-    "asan": 147000
+    "asan": 124000
   },
   "aot/mocks-from-one-test-file-to-the-next-3.test.ts": {
     "default": 60000,
-    "asan": 175500
+    "asan": 124100
   },
   "aot/mocks-from-one-test-file-to-the-next-4.test.ts": {
     "default": 60000,
@@ -2594,7 +2622,7 @@
   },
   "aot/mocks-in-a-chain-2.test.ts": {
     "default": 60000,
-    "asan": 45700
+    "asan": 67500
   },
   "aot/mocks-in-a-chain-3.test.ts": {
     "default": 60000,
@@ -2602,7 +2630,7 @@
   },
   "aot/mocks-in-a-chain-4.test.ts": {
     "default": 60000,
-    "asan": 87300
+    "asan": 61200
   },
   "aot/mocks-in-run-text.test.ts": {
     "default": 2000,
@@ -2610,7 +2638,7 @@
   },
   "aot/mocks-laid-twice.test.ts": {
     "default": 60000,
-    "asan": 89000
+    "asan": 55500
   },
   "aot/mocks-of-deferred-imports.test.ts": {
     "default": 60000,
@@ -2618,75 +2646,75 @@
   },
   "aot/mocks-over-failing-module-1.test.ts": {
     "default": 60000,
-    "asan": 62200
+    "asan": 71000
   },
   "aot/mocks-over-failing-module-10.test.ts": {
     "default": 60000,
-    "asan": 100800
+    "asan": 53800
   },
   "aot/mocks-over-failing-module-11.test.ts": {
     "default": 60000,
-    "asan": 120100
+    "asan": 48300
   },
   "aot/mocks-over-failing-module-12.test.ts": {
     "default": 60000,
-    "asan": 81600
+    "asan": 52500
   },
   "aot/mocks-over-failing-module-2.test.ts": {
     "default": 60000,
-    "asan": 124600
+    "asan": 66200
   },
   "aot/mocks-over-failing-module-3.test.ts": {
     "default": 60000,
-    "asan": 84300
+    "asan": 53700
   },
   "aot/mocks-over-failing-module-4.test.ts": {
     "default": 60000,
-    "asan": 89700
+    "asan": 78000
   },
   "aot/mocks-over-failing-module-5.test.ts": {
     "default": 60000,
-    "asan": 65900
+    "asan": 58100
   },
   "aot/mocks-over-failing-module-6.test.ts": {
     "default": 60000,
-    "asan": 48700
+    "asan": 69500
   },
   "aot/mocks-over-failing-module-7.test.ts": {
     "default": 60000,
-    "asan": 65300
+    "asan": 99000
   },
   "aot/mocks-over-failing-module-8.test.ts": {
     "default": 60000,
-    "asan": 98600
+    "asan": 75300
   },
   "aot/mocks-over-failing-module-9.test.ts": {
     "default": 60000,
-    "asan": 90600
+    "asan": 48900
   },
   "aot/module-identity-1.test.ts": {
     "default": 60000,
-    "asan": 176100
+    "asan": 85900
   },
   "aot/module-identity-10.test.ts": {
     "default": 60000,
-    "asan": 156100
+    "asan": 86700
   },
   "aot/module-identity-11.test.ts": {
     "default": 60000,
-    "asan": 151900
+    "asan": 93800
   },
   "aot/module-identity-12.test.ts": {
     "default": 60000,
-    "asan": 71100
+    "asan": 164600
   },
   "aot/module-identity-13.test.ts": {
     "default": 60000,
-    "asan": 155200
+    "asan": 105700
   },
   "aot/module-identity-14.test.ts": {
     "default": 60000,
-    "asan": 148600
+    "asan": 84800
   },
   "aot/module-identity-15.test.ts": {
     "default": 60000,
@@ -2694,31 +2722,31 @@
   },
   "aot/module-identity-16.test.ts": {
     "default": 60000,
-    "asan": 166000
+    "asan": 207500
   },
   "aot/module-identity-2.test.ts": {
     "default": 60000,
-    "asan": 138100
+    "asan": 79600
   },
   "aot/module-identity-3.test.ts": {
     "default": 60000,
-    "asan": 190500
+    "asan": 129900
   },
   "aot/module-identity-4.test.ts": {
     "default": 60000,
-    "asan": 150300
+    "asan": 129800
   },
   "aot/module-identity-5.test.ts": {
     "default": 60000,
-    "asan": 114900
+    "asan": 80600
   },
   "aot/module-identity-6.test.ts": {
     "default": 60000,
-    "asan": 188400
+    "asan": 156400
   },
   "aot/module-identity-7.test.ts": {
     "default": 60000,
-    "asan": 111600
+    "asan": 84500
   },
   "aot/module-identity-8.test.ts": {
     "default": 60000,
@@ -2726,7 +2754,7 @@
   },
   "aot/module-identity-9.test.ts": {
     "default": 60000,
-    "asan": 103400
+    "asan": 78600
   },
   "aot/module-identity-held-1.test.ts": {
     "default": 60000,
@@ -2734,11 +2762,11 @@
   },
   "aot/module-identity-held-2.test.ts": {
     "default": 60000,
-    "asan": 73200
+    "asan": 104200
   },
   "aot/module-identity-held-3.test.ts": {
     "default": 60000,
-    "asan": 105600
+    "asan": 64000
   },
   "aot/module-identity-held-4.test.ts": {
     "default": 60000,
@@ -2746,23 +2774,23 @@
   },
   "aot/modules-above-an-evicted-file-are-checked-once.test.ts": {
     "default": 4500,
-    "asan": 18000
+    "asan": 9000
   },
   "aot/modules-run-in-the-order-of-plain-bun.test.ts": {
     "default": 138300,
-    "asan": 30500
+    "asan": 41700
   },
   "aot/more-places-want-a-wide-record-than-the-room-holds.test.ts": {
     "default": 60000,
-    "asan": 17700
+    "asan": 5100
   },
   "aot/names-behind-the-last-column.test.ts": {
     "default": 60000,
-    "asan": 18800
+    "asan": 4900
   },
   "aot/names-left-to-the-loader-load-as-one-graph.test.ts": {
     "default": 60000,
-    "asan": 29500
+    "asan": 10700
   },
   "aot/names-of-the-generated-tables-end-in-the-executable.test.ts": {
     "default": 60000,
@@ -2774,11 +2802,11 @@
   },
   "aot/names-read-in-a-loop-find-the-one-layout-that-a-file-in-sight-writes.test.ts": {
     "default": 60000,
-    "asan": 6400
+    "asan": 2100
   },
   "aot/narrow-references-across-awaits.test.ts": {
     "default": 60000,
-    "asan": 7300
+    "asan": 2300
   },
   "aot/natives-find-what-tests-replace.test.ts": {
     "default": 109000,
@@ -2786,11 +2814,11 @@
   },
   "aot/new-target-written-with-an-escape-stops-the-build.test.ts": {
     "default": 60000,
-    "asan": 8800
+    "asan": 2200
   },
   "aot/node-http-calls-what-another-file-laid-over-a-method-of-a-request.test.ts": {
     "default": 60000,
-    "asan": 149200
+    "asan": 165500
   },
   "aot/objects-of-an-earlier-test-file-find-what-that-file-has-replaced.test.ts": {
     "default": 60000,
@@ -2798,11 +2826,11 @@
   },
   "aot/of-what-a-turn-hands-to-a-copy-only-the-lists-that-it-reads-by-key-are-read-in-front.test.ts": {
     "default": 60000,
-    "asan": 6000
+    "asan": 2900
   },
   "aot/one-file-asked-for-under-two-types-by-a-name-made-at-the-run-is-the-module-that-came-first.test.ts": {
     "default": 60000,
-    "asan": 21100
+    "asan": 15800
   },
   "aot/one-object-one-entry.test.ts": {
     "default": 700,
@@ -2814,19 +2842,19 @@
   },
   "aot/options-that-are-no-literal-keep-what-they-name.test.ts": {
     "default": 60000,
-    "asan": 137700
+    "asan": 67000
   },
   "aot/originals-ask-load-plugins.test.ts": {
     "default": 60000,
-    "asan": 21200
+    "asan": 14100
   },
   "aot/originals-come-from-disk.test.ts": {
     "default": 60000,
-    "asan": 9200
+    "asan": 5600
   },
   "aot/originals-of-mocks-are-named.test.ts": {
     "default": 60000,
-    "asan": 26300
+    "asan": 44700
   },
   "aot/originals-of-mocks-run-compiled.test.ts": {
     "default": 60000,
@@ -2834,7 +2862,7 @@
   },
   "aot/originals-outlive-later-runs.test.ts": {
     "default": 60000,
-    "asan": 12400
+    "asan": 5500
   },
   "aot/package-worker-compiled.test.ts": {
     "default": 1000,
@@ -2842,11 +2870,11 @@
   },
   "aot/package-worker-file.test.ts": {
     "default": 6200,
-    "asan": 18200
+    "asan": 13000
   },
   "aot/packages-of-code-from-disk.test.ts": {
     "default": 60000,
-    "asan": 24100
+    "asan": 13700
   },
   "aot/pages-64k.test.ts": {
     "default": 300,
@@ -2858,7 +2886,7 @@
   },
   "aot/parts-unseen-types.test.ts": {
     "default": 2200,
-    "asan": 21600
+    "asan": 10500
   },
   "aot/paths-into-packages.test.ts": {
     "default": 12000,
@@ -2914,11 +2942,11 @@
   },
   "aot/plain-json-ring.test.ts": {
     "default": 4500,
-    "asan": 18000
+    "asan": 42100
   },
   "aot/plain-write-to-defined-field.test.ts": {
     "default": 60000,
-    "asan": 14400
+    "asan": 7300
   },
   "aot/plugin-resolves-name.test.ts": {
     "default": 4400,
@@ -2930,11 +2958,11 @@
   },
   "aot/plugins-by-name.test.ts": {
     "default": 6900,
-    "asan": 19600
+    "asan": 11200
   },
   "aot/preload-back.test.ts": {
     "default": 2200,
-    "asan": 15900
+    "asan": 26500
   },
   "aot/preload-imports.test.ts": {
     "default": 1000,
@@ -2946,7 +2974,7 @@
   },
   "aot/prototype-lookups-keep-flow-monotone.test.ts": {
     "default": 60000,
-    "asan": 39600
+    "asan": 14700
   },
   "aot/prototype-store-cost-stays-flat.test.ts": {
     "default": 60000,
@@ -2954,11 +2982,11 @@
   },
   "aot/quoted-source-at-top-level.test.ts": {
     "default": 60000,
-    "asan": 20100
+    "asan": 8000
   },
   "aot/quoted-source-in-compressed-blocks.test.ts": {
     "default": 60000,
-    "asan": 26300
+    "asan": 17900
   },
   "aot/quoted-string-cache-hits.test.ts": {
     "default": 60000,
@@ -2966,7 +2994,7 @@
   },
   "aot/react-compiler-2.test.ts": {
     "default": 60000,
-    "asan": 8000
+    "asan": 4600
   },
   "aot/react-compiler-hooks-called-early.test.ts": {
     "default": 3600,
@@ -2986,23 +3014,23 @@
   },
   "aot/record-retired-mid-load.test.ts": {
     "default": 1100,
-    "asan": 7400
+    "asan": 3100
   },
   "aot/records-expected-beside-a-promise-are-asked-for-the-sight-of-the-file-too.test.ts": {
     "default": 60000,
-    "asan": 351100
+    "asan": 134100
   },
   "aot/records-written-in-the-files-that-a-file-imports-are-expected-there.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 102200
   },
   "aot/reflect-set-prototype-of-throws-in-a-test-run-where-a-built-in-refuses.test.ts": {
     "default": 60000,
-    "asan": 9300
+    "asan": 4600
   },
   "aot/refusal-note.test.ts": {
     "default": 11700,
-    "asan": 60200
+    "asan": 68500
   },
   "aot/refused-spies-and-mocks.test.ts": {
     "default": 4200,
@@ -3014,15 +3042,15 @@
   },
   "aot/repeated-import-calls-in-a-test-run.test.ts": {
     "default": 60000,
-    "asan": 12400
+    "asan": 6400
   },
   "aot/replaced-constructor-prototypes.test.ts": {
     "default": 91300,
-    "asan": 26200
+    "asan": 18700
   },
   "aot/reports-of-a-failure-behind-requires-that-gave-up.test.ts": {
     "default": 60000,
-    "asan": 14200
+    "asan": 6000
   },
   "aot/require-cost-beside-other-modules.test.ts": {
     "default": 60000,
@@ -3030,7 +3058,7 @@
   },
   "aot/require-in-vm.test.ts": {
     "default": 28100,
-    "asan": 25100
+    "asan": 36300
   },
   "aot/rerun-import-back.test.ts": {
     "default": 1000,
@@ -3046,7 +3074,7 @@
   },
   "aot/result-freshness-check.test.ts": {
     "default": 60000,
-    "asan": 16000
+    "asan": 26000
   },
   "aot/rope-reads-without-memory-throw.test.ts": {
     "default": 60000,
@@ -3058,7 +3086,7 @@
   },
   "aot/run-parallel-time-limit-message.test.ts": {
     "default": 18900,
-    "asan": 41900
+    "asan": 67100
   },
   "aot/runner-globals.test.ts": {
     "default": 900,
@@ -3082,39 +3110,39 @@
   },
   "aot/runner-suites.test.ts": {
     "default": 105200,
-    "asan": 60200
+    "asan": 96400
   },
   "aot/runner-suites/bun-test-1.test.ts": {
     "default": 61700,
-    "asan": 99600
+    "asan": 120200
   },
   "aot/runner-suites/bun-test-2.test.ts": {
     "default": 44200,
-    "asan": 176800
+    "asan": 148300
   },
   "aot/runner-suites/bun-test-3.test.ts": {
     "default": 76600,
-    "asan": 121100
+    "asan": 215900
   },
   "aot/runner-suites/bundler-10.test.ts": {
     "default": 3700,
-    "asan": 141800
+    "asan": 120400
   },
   "aot/runner-suites/bundler-11.test.ts": {
     "default": 21200,
-    "asan": 40300
+    "asan": 31500
   },
   "aot/runner-suites/bundler-8.test.ts": {
     "default": 800,
-    "asan": 108100
+    "asan": 128900
   },
   "aot/runner-suites/coverage.test.ts": {
     "default": 63000,
-    "asan": 91300
+    "asan": 120000
   },
   "aot/runner-suites/expect.test.ts": {
     "default": 10000,
-    "asan": 29200
+    "asan": 73100
   },
   "aot/runner-suites/isolation.test.ts": {
     "default": 60000,
@@ -3122,23 +3150,23 @@
   },
   "aot/runner-suites/mock-module-1.test.ts": {
     "default": 18900,
-    "asan": 75600
+    "asan": 53800
   },
   "aot/runner-suites/mock-module-2.test.ts": {
     "default": 18900,
-    "asan": 55800
+    "asan": 115100
   },
   "aot/runner-suites/mock-module-3.test.ts": {
     "default": 19300,
-    "asan": 77200
+    "asan": 100200
   },
   "aot/runner-suites/mock-module-4.test.ts": {
     "default": 25700,
-    "asan": 47800
+    "asan": 111000
   },
   "aot/runner-suites/mock-module-5.test.ts": {
     "default": 21800,
-    "asan": 117000
+    "asan": 73600
   },
   "aot/runner-suites/mock-module-6.test.ts": {
     "default": 39500,
@@ -3150,23 +3178,23 @@
   },
   "aot/runner-suites/mock-module-runs-2.test.ts": {
     "default": 22900,
-    "asan": 55300
+    "asan": 74300
   },
   "aot/runner-suites/mock-module-runs-3.test.ts": {
     "default": 18500,
-    "asan": 153500
+    "asan": 114700
   },
   "aot/runner-suites/mock-module-runs-4.test.ts": {
     "default": 22200,
-    "asan": 88800
+    "asan": 78400
   },
   "aot/runner-suites/mock-module-runs-5.test.ts": {
     "default": 16900,
-    "asan": 67600
+    "asan": 74800
   },
   "aot/runner-suites/mock-module-runs-6.test.ts": {
     "default": 40800,
-    "asan": 90300
+    "asan": 77400
   },
   "aot/runner-suites/others.test.ts": {
     "default": 4100,
@@ -3174,11 +3202,11 @@
   },
   "aot/runner-suites/plugins-1.test.ts": {
     "default": 900,
-    "asan": 32600
+    "asan": 36800
   },
   "aot/runner-suites/plugins-2.test.ts": {
     "default": 900,
-    "asan": 43100
+    "asan": 92600
   },
   "aot/runner-suites/plugins-3.test.ts": {
     "default": 1700,
@@ -3186,11 +3214,11 @@
   },
   "aot/runner-suites/plugins-4.test.ts": {
     "default": 1300,
-    "asan": 47100
+    "asan": 67200
   },
   "aot/runner-suites/programs-1.test.ts": {
     "default": 36200,
-    "asan": 144800
+    "asan": 84100
   },
   "aot/runner-suites/programs-2.test.ts": {
     "default": 147600,
@@ -3198,11 +3226,11 @@
   },
   "aot/runner-suites/programs-3.test.ts": {
     "default": 13600,
-    "asan": 16300
+    "asan": 36900
   },
   "aot/runner-suites/programs-4.test.ts": {
     "default": 22200,
-    "asan": 108100
+    "asan": 122700
   },
   "aot/runner-suites/programs-of-the-fake-timers.test.ts": {
     "default": 60000,
@@ -3210,23 +3238,23 @@
   },
   "aot/runner-suites/programs-of-the-matchers.test.ts": {
     "default": 60000,
-    "asan": 153100
+    "asan": 76900
   },
   "aot/runner-suites/vi-utils.test.ts": {
     "default": 16700,
-    "asan": 117600
+    "asan": 102800
   },
   "aot/runner-suites/vitest-flavor-1.test.ts": {
     "default": 13100,
-    "asan": 99400
+    "asan": 85200
   },
   "aot/runner-suites/vitest-flavor-2.test.ts": {
     "default": 10500,
-    "asan": 87700
+    "asan": 113900
   },
   "aot/runs-at-once-1.test.ts": {
     "default": 6100,
-    "asan": 9200
+    "asan": 12200
   },
   "aot/runs-without-tests.test.ts": {
     "default": 60000,
@@ -3246,47 +3274,47 @@
   },
   "aot/setters-above-stop-stores.test.ts": {
     "default": 60000,
-    "asan": 6500
+    "asan": 2100
   },
   "aot/shards-are-dealt-by-what-the-test-files-reach.test.ts": {
     "default": 10700,
-    "asan": 14900
+    "asan": 20800
   },
   "aot/sites-that-can-never-be-filled-take-no-room-from-the-others.test.ts": {
     "default": 60000,
-    "asan": 174000
+    "asan": 156000
   },
   "aot/sites-that-run-once-take-no-room-from-the-others.test.ts": {
     "default": 60000,
-    "asan": 105500
+    "asan": 82000
   },
   "aot/small-generated-functions-answer-as-plain-bun.test.ts": {
     "default": 16600,
-    "asan": 35600
+    "asan": 41100
   },
   "aot/sources-removed-by-child-processes.test.ts": {
     "default": 60000,
-    "asan": 61400
+    "asan": 16800
   },
   "aot/spies-in-joined-text.test.ts": {
     "default": 3300,
-    "asan": 8100
+    "asan": 11900
   },
   "aot/spies-in-written-code.test.ts": {
     "default": 3000,
-    "asan": 12000
+    "asan": 20200
   },
   "aot/spies-of-files-loaded-after-a-reset.test.ts": {
     "default": 60000,
-    "asan": 13700
+    "asan": 8600
   },
   "aot/spies-of-files-with-top-level-await.test.ts": {
     "default": 60000,
-    "asan": 20100
+    "asan": 12000
   },
   "aot/spies-on-native-modules.test.ts": {
     "default": 60000,
-    "asan": 13000
+    "asan": 5300
   },
   "aot/spy-fixed-members.test.ts": {
     "default": 1000,
@@ -3302,15 +3330,15 @@
   },
   "aot/star-exports-cost-the-same-beside-mocks.test.ts": {
     "default": 60000,
-    "asan": 19100
+    "asan": 22500
   },
   "aot/star-rings.test.ts": {
     "default": 1900,
-    "asan": 7600
+    "asan": 2800
   },
   "aot/stored-strings-of-an-executable.test.ts": {
     "default": 60000,
-    "asan": 57000
+    "asan": 43300
   },
   "aot/strict-functions.test.ts": {
     "default": 1600,
@@ -3318,7 +3346,7 @@
   },
   "aot/strings-of-builtin-methods.test.ts": {
     "default": 60000,
-    "asan": 6600
+    "asan": 10000
   },
   "aot/strings-of-doubles-are-kept.test.ts": {
     "default": 60000,
@@ -3350,7 +3378,7 @@
   },
   "aot/tail-calls-with-lists-in-test-runs.test.ts": {
     "default": 2600,
-    "asan": 23400
+    "asan": 26800
   },
   "aot/test-extend.test.ts": {
     "default": 600,
@@ -3366,19 +3394,19 @@
   },
   "aot/test-run-class-source-parameter-properties.test.ts": {
     "default": 60000,
-    "asan": 12100
+    "asan": 2800
   },
   "aot/test-run-doors.test.ts": {
     "default": 1300,
-    "asan": 8900
+    "asan": 12000
   },
   "aot/test-run-function-source-bun-pragma.test.ts": {
     "default": 60000,
-    "asan": 8100
+    "asan": 2400
   },
   "aot/test-run-function-source-enum-namespace.test.ts": {
     "default": 60000,
-    "asan": 9000
+    "asan": 3400
   },
   "aot/test-run-function-source-enum-read.test.ts": {
     "default": 60000,
@@ -3386,47 +3414,47 @@
   },
   "aot/test-runs-in-folders-1.test.ts": {
     "default": 60000,
-    "asan": 413100
+    "asan": 194300
   },
   "aot/test-runs-in-folders-10.test.ts": {
     "default": 60000,
-    "asan": 313100
+    "asan": 187200
   },
   "aot/test-runs-in-folders-11.test.ts": {
     "default": 60000,
-    "asan": 344100
+    "asan": 391800
   },
   "aot/test-runs-in-folders-12.test.ts": {
     "default": 60000,
-    "asan": 422000
+    "asan": 580000
   },
   "aot/test-runs-in-folders-13.test.ts": {
     "default": 60000,
-    "asan": 342400
+    "asan": 414700
   },
   "aot/test-runs-in-folders-14.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 410900
   },
   "aot/test-runs-in-folders-15.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 404500
   },
   "aot/test-runs-in-folders-16.test.ts": {
     "default": 60000,
-    "asan": 356700
+    "asan": 644800
   },
   "aot/test-runs-in-folders-17.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 190500
   },
   "aot/test-runs-in-folders-18.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 511000
   },
   "aot/test-runs-in-folders-19.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 348300
   },
   "aot/test-runs-in-folders-2.test.ts": {
     "default": 60000,
@@ -3434,15 +3462,15 @@
   },
   "aot/test-runs-in-folders-20.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 213800
   },
   "aot/test-runs-in-folders-21.test.ts": {
     "default": 60000,
-    "asan": 189100
+    "asan": 230200
   },
   "aot/test-runs-in-folders-22.test.ts": {
     "default": 60000,
-    "asan": 180700
+    "asan": 264800
   },
   "aot/test-runs-in-folders-23.test.ts": {
     "default": 60000,
@@ -3454,7 +3482,7 @@
   },
   "aot/test-runs-in-folders-3.test.ts": {
     "default": 60000,
-    "asan": 317700
+    "asan": 357200
   },
   "aot/test-runs-in-folders-4.test.ts": {
     "default": 60000,
@@ -3466,19 +3494,19 @@
   },
   "aot/test-runs-in-folders-6.test.ts": {
     "default": 60000,
-    "asan": 376000
+    "asan": 328300
   },
   "aot/test-runs-in-folders-7.test.ts": {
     "default": 60000,
-    "asan": 409100
+    "asan": 354900
   },
   "aot/test-runs-in-folders-8.test.ts": {
     "default": 60000,
-    "asan": 340900
+    "asan": 442700
   },
   "aot/test-runs-in-folders-9.test.ts": {
     "default": 60000,
-    "asan": 410600
+    "asan": 336800
   },
   "aot/test-setup-import.test.ts": {
     "default": 600,
@@ -3506,7 +3534,7 @@
   },
   "aot/texts-matched-across-awaits.test.ts": {
     "default": 60000,
-    "asan": 5800
+    "asan": 1400
   },
   "aot/texts-nothing-can-run.test.ts": {
     "default": 600,
@@ -3518,15 +3546,15 @@
   },
   "aot/the-build-has-to-read-a-name-that-a-test-adds-to-object-prototype.test.ts": {
     "default": 60000,
-    "asan": 11500
+    "asan": 4200
   },
   "aot/the-build-points-at-a-deletion-from-require-cache-only-where-the-key-may-name-a-file-of-the-program.test.ts": {
     "default": 60000,
-    "asan": 57500
+    "asan": 51600
   },
   "aot/the-cells-that-never-die-are-kept-over-many-pages.test.ts": {
     "default": 60000,
-    "asan": 6300
+    "asan": 3000
   },
   "aot/the-default-of-a-mocked-built-in-module-is-the-mocks.test.ts": {
     "default": 1300,
@@ -3542,7 +3570,7 @@
   },
   "aot/the-end-of-a-test-run-names-every-file-that-did-not-run-again-behind-a-mock.test.ts": {
     "default": 60000,
-    "asan": 38400
+    "asan": 43600
   },
   "aot/the-error-for-a-workers-file-that-is-not-in-the-executable-names-the-cure.test.ts": {
     "default": 1800,
@@ -3550,15 +3578,15 @@
   },
   "aot/the-factories-of-two-mocks-begin-in-the-order-of-bun-test-where-one-takes-its-original.test.ts": {
     "default": 60000,
-    "asan": 10300
+    "asan": 3800
   },
   "aot/the-features-of-a-class-are-kept-by-whoever-makes-an-instance.test.ts": {
     "default": 60000,
-    "asan": 13700
+    "asan": 7000
   },
   "aot/the-files-that-a-file-has-asked-for-are-all-shown-behind-a-script-that-is-cut-short.test.ts": {
     "default": 60000,
-    "asan": 29400
+    "asan": 10500
   },
   "aot/the-first-error-of-every-form-costs-the-same-in-one-long-line-of-a-test-run.test.ts": {
     "default": 3400,
@@ -3566,23 +3594,23 @@
   },
   "aot/the-first-read-of-a-standard-stream-finds-no-descriptor-left.test.ts": {
     "default": 3900,
-    "asan": 10500
+    "asan": 15200
   },
   "aot/the-first-tick-of-each-isolated-test-file-runs-right-behind-its-file.test.ts": {
     "default": 60000,
-    "asan": 10400
+    "asan": 5800
   },
   "aot/the-first-warning-of-an-executable-asks-no-replaced-basename.test.ts": {
     "default": 60000,
-    "asan": 25400
+    "asan": 10200
   },
   "aot/the-form-of-a-descriptor-is-planned-only-on-a-layout-that-the-definition-may-come-to.test.ts": {
     "default": 60000,
-    "asan": 26700
+    "asan": 5500
   },
   "aot/the-frame-around-a-disposal-that-throws-points-at-the-resource.test.ts": {
     "default": 60000,
-    "asan": 7500
+    "asan": 4000
   },
   "aot/the-frames-of-a-stack-trace-are-not-held-to-plain-bun.test.ts": {
     "default": 8600,
@@ -3590,7 +3618,7 @@
   },
   "aot/the-functions-of-a-written-object-are-asked-once-whether-they-can-see-it.test.ts": {
     "default": 60000,
-    "asan": 8000
+    "asan": 3000
   },
   "aot/the-global-object-that-goes-somewhere-opens-no-test-run.test.ts": {
     "default": 1600,
@@ -3598,27 +3626,27 @@
   },
   "aot/the-late-failure-of-a-factory-is-reported-as-often-as-under-bun-test.test.ts": {
     "default": 60000,
-    "asan": 9300
+    "asan": 4500
   },
   "aot/the-length-of-a-view-that-is-as-its-class-made-it-is-read-by-its-type.test.ts": {
     "default": 60000,
-    "asan": 11000
+    "asan": 5800
   },
   "aot/the-library-calls-the-same-built-ins-compiled-as-plain.test.ts": {
     "default": 60000,
-    "asan": 11600
+    "asan": 7700
   },
   "aot/the-library-compiled-from-the-texts-that-bun-run-evaluates.test.ts": {
     "default": 60000,
-    "asan": 41800
+    "asan": 17200
   },
   "aot/the-library-is-written-in-forms-that-the-schema-names.test.ts": {
     "default": 60000,
-    "asan": 23900
+    "asan": 16900
   },
   "aot/the-listener-for-the-size-of-a-terminal.test.ts": {
     "default": 60000,
-    "asan": 33500
+    "asan": 21900
   },
   "aot/the-memory-of-the-machine-does-not-choose-the-patterns-of-an-image.test.ts": {
     "default": 60000,
@@ -3626,27 +3654,27 @@
   },
   "aot/the-module-object-of-a-file-that-turns-to-the-host-takes-its-exports-along.test.ts": {
     "default": 60000,
-    "asan": 31000
+    "asan": 14600
   },
   "aot/the-names-behind-layers-of-files-that-take-a-name-back-are-gathered-in-one-walk.test.ts": {
     "default": 60000,
-    "asan": 107200
+    "asan": 30500
   },
   "aot/the-namespaces-of-a-ring-of-mocked-files-of-a-package-lack-no-name.test.ts": {
     "default": 60000,
-    "asan": 14500
+    "asan": 8200
   },
   "aot/the-original-of-a-partial-mock-runs-compiled.test.ts": {
     "default": 60000,
-    "asan": 19100
+    "asan": 13900
   },
   "aot/the-plain-stores-into-a-written-object-are-gathered-in-time-that-grows-with-their-number.test.ts": {
     "default": 60000,
-    "asan": 105700
+    "asan": 48300
   },
   "aot/the-reason-of-a-signal-brings-no-class-that-nobody-made.test.ts": {
     "default": 60000,
-    "asan": 7100
+    "asan": 2100
   },
   "aot/the-report-of-a-build-comes-with-the-stage-log-alone.test.ts": {
     "default": 1200,
@@ -3654,31 +3682,31 @@
   },
   "aot/the-runner-points-where-what-is-thrown-ends.test.ts": {
     "default": 60000,
-    "asan": 4800
+    "asan": 1200
   },
   "aot/the-setter-of-self-says-so-where-it-is-refused.test.ts": {
     "default": 2200,
-    "asan": 8800
+    "asan": 13300
   },
   "aot/the-short-dispatcher-of-node-http-hears-what-is-laid-on-the-server-object.test.ts": {
     "default": 60000,
-    "asan": 23600
+    "asan": 15700
   },
   "aot/the-short-roads-of-node-http-stand-under-a-tracing-patch.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 200800
   },
   "aot/the-size-of-a-map-or-a-set-read-closed.test.ts": {
     "default": 60000,
-    "asan": 10300
+    "asan": 6200
   },
   "aot/the-socket-of-an-http-server-names-the-socket-of-net-as-its-base.test.ts": {
     "default": 60000,
-    "asan": 43500
+    "asan": 37600
   },
   "aot/the-sorted-keys-of-a-record-are-laid-under-the-list-again.test.ts": {
     "default": 60000,
-    "asan": 11500
+    "asan": 2300
   },
   "aot/the-source-of-a-file-imported-with-options-is-held-only-where-a-type-may-ask-for-it.test.ts": {
     "default": 60000,
@@ -3698,19 +3726,19 @@
   },
   "aot/the-text-of-a-compiled-entry-point-is-not-read-as-data.test.ts": {
     "default": 60000,
-    "asan": 16200
+    "asan": 11700
   },
   "aot/the-ticks-of-a-burst-are-let-go-as-they-run.test.ts": {
     "default": 60000,
-    "asan": 8100
+    "asan": 3500
   },
   "aot/the-two-texts-of-a-library-file-read-the-same-names.test.ts": {
     "default": 60000,
-    "asan": 5800
+    "asan": 700
   },
   "aot/the-types-of-a-file-do-not-depend-on-which-file-was-lowered-before-it.test.ts": {
     "default": 60000,
-    "asan": 30700
+    "asan": 17200
   },
   "aot/the-validators-answer-alike-on-either-side-of-what-they-pass-at-once.test.ts": {
     "default": 60000,
@@ -3718,23 +3746,23 @@
   },
   "aot/the-values-of-a-long-written-table-are-gathered-in-time-that-grows-with-its-length.test.ts": {
     "default": 60000,
-    "asan": 41100
+    "asan": 8600
   },
   "aot/the-variables-of-a-file-that-may-run-again-hang-on-its-scope-in-a-heap-snapshot.test.ts": {
     "default": 60000,
-    "asan": 7100
+    "asan": 3000
   },
   "aot/the-variables-that-a-turn-of-a-loop-stores-first-are-found-in-time-that-grows-with-their-number.test.ts": {
     "default": 60000,
-    "asan": 113100
+    "asan": 88600
   },
   "aot/the-warnings-of-a-rejection-come-where-nothing-names-promise.test.ts": {
     "default": 60000,
-    "asan": 146900
+    "asan": 173900
   },
   "aot/the-word-unlikely-is-read-in-the-modules-of-bun-alone.test.ts": {
     "default": 60000,
-    "asan": 7700
+    "asan": 2700
   },
   "aot/the-words-of-a-test-run-reach-the-checks-of-the-compiler.test.ts": {
     "default": 60000,
@@ -3742,11 +3770,11 @@
   },
   "aot/thirteen-files-that-hand-a-name-on-from-their-barrel-end-in-the-error-of-a-missing-name.test.ts": {
     "default": 60000,
-    "asan": 5400
+    "asan": 2200
   },
   "aot/throw-below-many-evaluations.test.ts": {
     "default": 60000,
-    "asan": 88300
+    "asan": 69900
   },
   "aot/tool-loads-a-plugin.test.ts": {
     "default": 1200,
@@ -3754,11 +3782,11 @@
   },
   "aot/trim-keeps-a-native-module-whose-name-is-written-out.test.ts": {
     "default": 60000,
-    "asan": 52800
+    "asan": 65900
   },
   "aot/trim-keeps-the-test-runner-only-when-named.test.ts": {
     "default": 60000,
-    "asan": 44300
+    "asan": 30600
   },
   "aot/trim-report-counts-by-blocker.test.ts": {
     "default": 60000,
@@ -3774,7 +3802,7 @@
   },
   "aot/turns-of-three-statements-1.test.ts": {
     "default": 60000,
-    "asan": 88100
+    "asan": 61600
   },
   "aot/turns-of-three-statements-2.test.ts": {
     "default": 60000,
@@ -3782,7 +3810,7 @@
   },
   "aot/turns-of-three-statements-3.test.ts": {
     "default": 60000,
-    "asan": 61700
+    "asan": 49500
   },
   "aot/turns-of-three-statements-4.test.ts": {
     "default": 60000,
@@ -3790,7 +3818,7 @@
   },
   "aot/turns-of-three-statements-by-name.test.ts": {
     "default": 60000,
-    "asan": 390900
+    "asan": 265800
   },
   "aot/two-calls-left-in-flight-where-the-mock-is-taken-away-share-one-run-of-the-file.test.ts": {
     "default": 60000,
@@ -3798,11 +3826,11 @@
   },
   "aot/two-dropped-names-that-hand-on-to-each-other-do-not-end-the-process.test.ts": {
     "default": 60000,
-    "asan": 14700
+    "asan": 3500
   },
   "aot/type-errors-in-any-check-order.test.ts": {
     "default": 60000,
-    "asan": 14300
+    "asan": 5800
   },
   "aot/type-errors-of-untyped-imports.test.ts": {
     "default": 60000,
@@ -3814,15 +3842,15 @@
   },
   "aot/typescript-that-tsc-rejects.test.ts": {
     "default": 60000,
-    "asan": 4800
+    "asan": 1700
   },
   "aot/under-the-inspector-the-console-changes-what-is-public-and-no-record-of-an-internal-file.test.ts": {
     "default": 60000,
-    "asan": 19100
+    "asan": 9700
   },
   "aot/under-the-inspector-the-console-is-refused-what-the-program-never-does.test.ts": {
     "default": 60000,
-    "asan": 22900
+    "asan": 11000
   },
   "aot/unloadable-file-report.test.ts": {
     "default": 1100,
@@ -3834,7 +3862,7 @@
   },
   "aot/unread-library-import.test.ts": {
     "default": 2400,
-    "asan": 9600
+    "asan": 12800
   },
   "aot/unsorted-function-source-entries.test.ts": {
     "default": 60000,
@@ -3846,11 +3874,11 @@
   },
   "aot/values-held-across-many-calls.test.ts": {
     "default": 60000,
-    "asan": 31500
+    "asan": 18000
   },
   "aot/verifier-rejects-hole-as-nan.test.ts": {
     "default": 60000,
-    "asan": 37800
+    "asan": 46400
   },
   "aot/vitest-globals.test.ts": {
     "default": 1400,
@@ -3874,7 +3902,7 @@
   },
   "aot/wasm-nested-build.test.ts": {
     "default": 60000,
-    "asan": 34100
+    "asan": 39400
   },
   "aot/wasm-same-bytes.test.ts": {
     "default": 300,
@@ -3882,11 +3910,11 @@
   },
   "aot/what-a-constant-of-the-build-rules-out-is-not-in-the-executable.test.ts": {
     "default": 35900,
-    "asan": 37700
+    "asan": 92300
   },
   "aot/what-a-data-file-holds-and-what-a-script-declares-is-checked-as-tsc-checks-it.test.ts": {
     "default": 60000,
-    "asan": 17600
+    "asan": 4100
   },
   "aot/what-a-factory-that-ended-its-own-mock-over-a-preloads-returned-stays-out-of-the-next-test-file.test.ts": {
     "default": 60000,
@@ -3894,11 +3922,11 @@
   },
   "aot/what-a-file-served-by-a-run-time-plugin-imports-has-run.test.ts": {
     "default": 3700,
-    "asan": 10700
+    "asan": 13900
   },
   "aot/what-a-folder-on-disk-does-not-hold-is-not-looked-for-in-the-executable.test.ts": {
     "default": 60000,
-    "asan": 36700
+    "asan": 11100
   },
   "aot/what-a-function-that-calls-itself-wraps-lies-at-every-depth.test.ts": {
     "default": 60000,
@@ -3910,19 +3938,19 @@
   },
   "aot/what-a-package-left-out-of-an-executable-reaches-of-the-program.test.ts": {
     "default": 60000,
-    "asan": 25100
+    "asan": 18100
   },
   "aot/what-a-program-takes-grows-with-its-data.test.ts": {
     "default": 60000,
-    "asan": 8800
+    "asan": 5100
   },
   "aot/what-a-promise-of-the-host-settles-with-is-asked-before-a-typed-place-takes-it.test.ts": {
     "default": 60000,
-    "asan": 23000
+    "asan": 19000
   },
   "aot/what-a-suspended-generator-let-go-of-is-collected.test.ts": {
     "default": 60000,
-    "asan": 6900
+    "asan": 3900
   },
   "aot/what-a-test-file-requires-at-its-top-stands-in-require-cache-as-in-plain.test.ts": {
     "default": 1000,
@@ -3930,7 +3958,7 @@
   },
   "aot/what-an-operator-gives-may-be-a-bigint-that-the-environment-warns-about.test.ts": {
     "default": 60000,
-    "asan": 18200
+    "asan": 9600
   },
   "aot/what-await-answers-for-an-import-of-the-library-is-in-sight.test.ts": {
     "default": 2200,
@@ -3938,23 +3966,23 @@
   },
   "aot/what-bun-ffi-deletes-is-gone-for-compiled-code-too-where-code-from-disk-loads-it.test.ts": {
     "default": 60000,
-    "asan": 21800
+    "asan": 13500
   },
   "aot/what-is-bound-as-this-of-a-function-that-never-looks-at-it-goes-nowhere.test.ts": {
     "default": 60000,
-    "asan": 62300
+    "asan": 47700
   },
   "aot/what-is-compiled-only-because-a-worker-may-start-it-stops-no-build.test.ts": {
     "default": 60000,
-    "asan": 31300
+    "asan": 25400
   },
   "aot/what-is-declared-of-a-test-run.test.ts": {
     "default": 60000,
-    "asan": 9600
+    "asan": 4000
   },
   "aot/what-is-laid-above-the-messages-of-a-server-is-honored-in-a-test-run.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 203600
   },
   "aot/what-is-laid-on-a-prototype-is-honored-where-a-server-is-not-listened-to.test.ts": {
     "default": 60000,
@@ -3970,43 +3998,43 @@
   },
   "aot/what-on-answers-stands-below-the-prototype-found-while-node-events-loads.test.ts": {
     "default": 60000,
-    "asan": 11400
+    "asan": 7800
   },
   "aot/what-require-answered-behind-a-mock-of-a-built-in-module-stays-behind-an-import.test.ts": {
     "default": 2900,
-    "asan": 7900
+    "asan": 11200
   },
   "aot/what-require-made-of-a-data-file-stays-with-require-in-a-test-run.test.ts": {
     "default": 60000,
-    "asan": 17900
+    "asan": 8500
   },
   "aot/what-require-resolve-answers-does-not-hang-on-the-working-directory.test.ts": {
     "default": 60000,
-    "asan": 17100
+    "asan": 6700
   },
   "aot/what-rests-on-a-brought-declaration-stops-no-build.test.ts": {
     "default": 60000,
-    "asan": 240000
+    "asan": 153100
   },
   "aot/what-the-build-makes-for-the-folder-of-a-database-shows-nowhere.test.ts": {
     "default": 60000,
-    "asan": 16500
+    "asan": 6300
   },
   "aot/what-the-build-wrote-down-for-a-name-answers-the-question-that-the-build-asked.test.ts": {
     "default": 60000,
-    "asan": 14300
+    "asan": 17800
   },
   "aot/what-the-code-of-a-package-left-out-may-load-is-whole.test.ts": {
     "default": 60000,
-    "asan": 18900
+    "asan": 14100
   },
   "aot/what-the-library-hands-out-looks-and-takes-stores-as-in-plain-bun-where-code-from-disk-is-allowed.test.ts": {
     "default": 60000,
-    "asan": 19100
+    "asan": 8900
   },
   "aot/what-the-program-asks-for-inside-a-request-to-the-host-the-program-asks-for.test.ts": {
     "default": 51500,
-    "asan": 112700
+    "asan": 68500
   },
   "aot/what-this-lane-can.test.ts": {
     "default": 3000,
@@ -4014,7 +4042,7 @@
   },
   "aot/where-nothing-else-is-expected-of-a-parameter-the-names-of-its-type-name-the-record.test.ts": {
     "default": 60000,
-    "asan": 17000
+    "asan": 6000
   },
   "aot/where-nothing-speaks-for-the-product-a-file-is-the-tests.test.ts": {
     "default": 2600,
@@ -4030,7 +4058,7 @@
   },
   "aot/whoever-lists-require-cache-or-compares-what-an-entry-exports-asks-for-no-export.test.ts": {
     "default": 1800,
-    "asan": 20900
+    "asan": 25600
   },
   "aot/wide-lists-in-parts.test.ts": {
     "default": 60000,
@@ -4042,23 +4070,23 @@
   },
   "aot/worker-apart-loads-entry.test.ts": {
     "default": 1300,
-    "asan": 5200
+    "asan": 8300
   },
   "aot/worker-behind-dead-code.test.ts": {
     "default": 27400,
-    "asan": 34300
+    "asan": 16500
   },
   "aot/worker-module-by-parameter.test.ts": {
     "default": 42200,
-    "asan": 30500
+    "asan": 5700
   },
   "aot/workers-that-loaded-a-data-file-end-where-a-sweep-overwrites-dead-cells.test.ts": {
     "default": 60000,
-    "asan": 14500
+    "asan": 11400
   },
   "aot/write-unknown-key.test.ts": {
     "default": 3900,
-    "asan": 11800
+    "asan": 16000
   },
   "aot/a-build-that-stops-says-where.test.ts": {
     "default": 1100,
@@ -4069,7 +4097,7 @@
   },
   "aot/a-built-in-runs-the-same-traps-however-it-is-called.test.ts": {
     "default": 10200,
-    "asan": 36400,
+    "asan": 5100,
     "musl": 7800,
     "windows": 2600,
     "windows-aarch64": 2600
@@ -4097,7 +4125,7 @@
   },
   "aot/a-file-that-is-no-program-fails-where-it-is-loaded.test.ts": {
     "default": 8800,
-    "asan": 29100,
+    "asan": 18100,
     "musl": 10500,
     "windows": 5800,
     "windows-aarch64": 5600
@@ -4111,7 +4139,7 @@
   },
   "aot/a-getter-of-the-table-of-built-ins-that-adds-a-name-to-its-receiver-says-so.test.ts": {
     "default": 2700,
-    "asan": 27800,
+    "asan": 15800,
     "musl": 6400,
     "windows": 100,
     "windows-aarch64": 100
@@ -4146,7 +4174,7 @@
   },
   "aot/a-module-that-has-run-keeps-no-record.test.ts": {
     "default": 2800,
-    "asan": 30800,
+    "asan": 35900,
     "musl": 5400,
     "windows": 7800,
     "windows-aarch64": 8500
@@ -4160,7 +4188,7 @@
   },
   "aot/a-program-that-starts-itself-as-a-worker-ends-every-time.test.ts": {
     "default": 10200,
-    "asan": 9400,
+    "asan": 12400,
     "musl": 4300,
     "windows": 5200,
     "windows-aarch64": 7000
@@ -4195,7 +4223,7 @@
   },
   "aot/a-worker-in-a-loop-is-terminated-under-any-inherited-signal-mask.test.ts": {
     "default": 2500,
-    "asan": 7600,
+    "asan": 3100,
     "musl": 600,
     "windows": 200,
     "windows-aarch64": 100
@@ -4209,7 +4237,7 @@
   },
   "aot/addons-named-by-the-platform.test.ts": {
     "default": 22700,
-    "asan": 24400,
+    "asan": 13700,
     "musl": 21000,
     "windows": 26500,
     "windows-aarch64": 19800
@@ -4223,7 +4251,7 @@
   },
   "aot/an-executable-does-not-tell-where-it-was-built.test.ts": {
     "default": 1800,
-    "asan": 17200,
+    "asan": 4300,
     "musl": 700,
     "windows": 2700,
     "windows-aarch64": 2700
@@ -4237,7 +4265,7 @@
   },
   "aot/an-executable-whose-image-header-names-a-range-outside-its-code-segment-does-not-start.test.ts": {
     "default": 2100,
-    "asan": 18300,
+    "asan": 21700,
     "musl": 1100,
     "windows": 4400,
     "windows-aarch64": 4200
@@ -4265,14 +4293,18 @@
   },
   "aot/aot-flag-runs-from-source.test.ts": {
     "default": 21900,
-    "asan": 39800,
+    "asan": 49200,
     "musl": 13900,
     "windows": 13400,
     "windows-aarch64": 16400
   },
+  "aot/require-resolve-of-a-computed-name-gives-the-path-of-the-file.test.ts": {
+    "default": 9000,
+    "asan": 36000
+  },
   "aot/arguments-of-a-call-that-returns-early.test.ts": {
     "default": 1600,
-    "asan": 7000,
+    "asan": 3000,
     "musl": 1400,
     "windows": 3400,
     "windows-aarch64": 2200
@@ -4307,49 +4339,49 @@
   },
   "aot/backend-packages/dd-trace.test.ts": {
     "default": 76300,
-    "asan": 107600,
+    "asan": 39400,
     "musl": 91000,
     "windows": 46500,
     "windows-aarch64": 53500
   },
   "aot/backend-packages/fastify-plugins.test.ts": {
     "default": 20400,
-    "asan": 22600,
+    "asan": 15900,
     "musl": 45200,
     "windows": 18000,
     "windows-aarch64": 28000
   },
   "aot/backend-packages/newrelic.test.ts": {
     "default": 67600,
-    "asan": 60000,
+    "asan": 31400,
     "musl": 114400,
     "windows": 47500,
     "windows-aarch64": 58400
   },
   "aot/backend-packages/opentelemetry.test.ts": {
     "default": 45200,
-    "asan": 46000,
+    "asan": 25800,
     "musl": 47000,
     "windows": 21300,
     "windows-aarch64": 32500
   },
   "aot/backend-packages/programs.test.ts": {
     "default": 47300,
-    "asan": 83400,
+    "asan": 35000,
     "musl": 73100,
     "windows": 62000,
     "windows-aarch64": 58600
   },
   "aot/backend-packages/sentry.test.ts": {
     "default": 13400,
-    "asan": 11100,
+    "asan": 14500,
     "musl": 41800,
     "windows": 19300,
     "windows-aarch64": 17200
   },
   "aot/backend-packages/small-tools.test.ts": {
     "default": 26700,
-    "asan": 33500,
+    "asan": 14900,
     "musl": 36700,
     "windows": 15600,
     "windows-aarch64": 24600
@@ -4363,7 +4395,7 @@
   },
   "aot/backend/backend-with-a-database.test.ts": {
     "default": 8600,
-    "asan": 39600,
+    "asan": 30900,
     "musl": 28800,
     "windows": 100,
     "windows-aarch64": 600
@@ -4377,7 +4409,7 @@
   },
   "aot/blocks-freed-between-live-ones-leave-a-bounded-number-of-mappings.test.ts": {
     "default": 3900,
-    "asan": 18300,
+    "asan": 33900,
     "musl": 2500,
     "windows": 600,
     "windows-aarch64": 300
@@ -4433,7 +4465,7 @@
   },
   "aot/build-plugins-aliases-and-odd-names.test.ts": {
     "default": 6900,
-    "asan": 10000,
+    "asan": 71500,
     "musl": 9100,
     "windows": 7700,
     "windows-aarch64": 5500
@@ -4454,7 +4486,7 @@
   },
   "aot/build-plugins-assets.test.ts": {
     "default": 6400,
-    "asan": 21800,
+    "asan": 27100,
     "musl": 4100,
     "windows": 4600,
     "windows-aarch64": 3800
@@ -4475,7 +4507,7 @@
   },
   "aot/build-plugins-external-code.test.ts": {
     "default": 12300,
-    "asan": 6000,
+    "asan": 9300,
     "musl": 14000,
     "windows": 7800,
     "windows-aarch64": 6700
@@ -4489,7 +4521,7 @@
   },
   "aot/build-plugins-load.test.ts": {
     "default": 10400,
-    "asan": 11100,
+    "asan": 16200,
     "musl": 11400,
     "windows": 14500,
     "windows-aarch64": 10600
@@ -4517,7 +4549,7 @@
   },
   "aot/build-resolves-packages-as-a-bundle-does.test.ts": {
     "default": 3600,
-    "asan": 7900,
+    "asan": 12300,
     "musl": 2600,
     "windows": 6400,
     "windows-aarch64": 5000
@@ -4573,7 +4605,7 @@
   },
   "aot/built-in-functions-by-use.test.ts": {
     "default": 18700,
-    "asan": 24100,
+    "asan": 17900,
     "musl": 24600,
     "windows": 19700,
     "windows-aarch64": 26700
@@ -4615,7 +4647,7 @@
   },
   "aot/builtins/native-contract.test.ts": {
     "default": 45400,
-    "asan": 273500,
+    "asan": 126600,
     "musl": 36200,
     "windows": 36200,
     "windows-aarch64": 49800
@@ -4643,7 +4675,7 @@
   },
   "aot/builtins/realm-agreement.test.ts": {
     "default": 8200,
-    "asan": 19700,
+    "asan": 11200,
     "musl": 7800,
     "windows": 4100,
     "windows-aarch64": 3500
@@ -4685,7 +4717,7 @@
   },
   "aot/channel-of-process-by-use.test.ts": {
     "default": 33800,
-    "asan": 19400,
+    "asan": 10200,
     "musl": 26000,
     "windows": 15800,
     "windows-aarch64": 15900
@@ -4706,7 +4738,7 @@
   },
   "aot/checker-queries-diagnostics.test.ts": {
     "default": 4600,
-    "asan": 11800,
+    "asan": 17300,
     "musl": 9100,
     "windows": 2400,
     "windows-aarch64": 3000
@@ -4720,21 +4752,21 @@
   },
   "aot/checker-queries-narrowing.test.ts": {
     "default": 8200,
-    "asan": 8500,
+    "asan": 15300,
     "musl": 5900,
     "windows": 2600,
     "windows-aarch64": 3400
   },
   "aot/checker-queries-shapes.test.ts": {
     "default": 12400,
-    "asan": 11900,
+    "asan": 16300,
     "musl": 10800,
     "windows": 3700,
     "windows-aarch64": 4200
   },
   "aot/checker-queries-types.test.ts": {
     "default": 7600,
-    "asan": 22000,
+    "asan": 31800,
     "musl": 13300,
     "windows": 4200,
     "windows-aarch64": 3900
@@ -4762,21 +4794,21 @@
   },
   "aot/cli/compile-command.test.ts": {
     "default": 3400,
-    "asan": 33800,
+    "asan": 77900,
     "musl": 3200,
     "windows": 8300,
     "windows-aarch64": 6900
   },
   "aot/cli/entry-points-that-are-not-text.test.ts": {
     "default": 3300,
-    "asan": 20600,
+    "asan": 26100,
     "musl": 3000,
     "windows": 4000,
     "windows-aarch64": 3300
   },
   "aot/cli/executable-record.test.ts": {
     "default": 2200,
-    "asan": 20400,
+    "asan": 30900,
     "musl": 2500,
     "windows": 9200,
     "windows-aarch64": 8500
@@ -4804,7 +4836,7 @@
   },
   "aot/cli/obfuscate.test.ts": {
     "default": 8900,
-    "asan": 45500,
+    "asan": 23000,
     "musl": 1000,
     "windows": 4200,
     "windows-aarch64": 3400
@@ -4825,7 +4857,7 @@
   },
   "aot/cli/written-names-with-an-external-source-map.test.ts": {
     "default": 2100,
-    "asan": 92300,
+    "asan": 69600,
     "musl": 1500,
     "windows": 2900,
     "windows-aarch64": 2800
@@ -4913,7 +4945,7 @@
   },
   "aot/declarations-of-one-entry-point-asked-from-another.test.ts": {
     "default": 4400,
-    "asan": 7700,
+    "asan": 4500,
     "musl": 6200,
     "windows": 2400,
     "windows-aarch64": 2700
@@ -4960,12 +4992,26 @@
     "windows": 800,
     "windows-aarch64": 800
   },
+  "aot/embedded-assets-by-flag.test.ts": {
+    "default": 2800,
+    "asan": 60700,
+    "musl": 3200,
+    "windows": 2500,
+    "windows-aarch64": 2000
+  },
+  "aot/embedded-assets-of-packages.test.ts": {
+    "default": 2800,
+    "asan": 86400,
+    "musl": 3200,
+    "windows": 2500,
+    "windows-aarch64": 2000
+  },
   "aot/embedded-assets.test.ts": {
-    "default": 8600,
-    "asan": 234200,
-    "musl": 9600,
-    "windows": 7700,
-    "windows-aarch64": 6200
+    "default": 2800,
+    "asan": 94900,
+    "musl": 3200,
+    "windows": 2500,
+    "windows-aarch64": 2000
   },
   "aot/engine-tests.test.ts": {
     "default": 400,
@@ -4976,35 +5022,35 @@
   },
   "aot/engine/ir-1.test.ts": {
     "default": 29300,
-    "asan": 36400,
+    "asan": 116400,
     "musl": 28700,
     "windows": 31100,
     "windows-aarch64": 41000
   },
   "aot/engine/ir-2.test.ts": {
     "default": 24000,
-    "asan": 95600,
+    "asan": 62300,
     "musl": 29400,
     "windows": 43500,
     "windows-aarch64": 30600
   },
   "aot/engine/ir-3.test.ts": {
     "default": 24400,
-    "asan": 71900,
+    "asan": 89600,
     "musl": 27200,
     "windows": 49400,
     "windows-aarch64": 41100
   },
   "aot/engine/ir-4.test.ts": {
     "default": 36600,
-    "asan": 107200,
+    "asan": 64000,
     "musl": 28100,
     "windows": 34100,
     "windows-aarch64": 29300
   },
   "aot/engine/ir-5.test.ts": {
     "default": 27000,
-    "asan": 80100,
+    "asan": 51700,
     "musl": 71200,
     "windows": 34700,
     "windows-aarch64": 41100
@@ -5018,14 +5064,14 @@
   },
   "aot/engine/native-1.test.ts": {
     "default": 35300,
-    "asan": 69400,
+    "asan": 156400,
     "musl": 25200,
     "windows": 71300,
     "windows-aarch64": 43500
   },
   "aot/engine/native-2.test.ts": {
     "default": 17800,
-    "asan": 16400,
+    "asan": 23000,
     "musl": 30200,
     "windows": 29000,
     "windows-aarch64": 21500
@@ -5039,28 +5085,28 @@
   },
   "aot/engine/native-4.test.ts": {
     "default": 12600,
-    "asan": 20000,
+    "asan": 73600,
     "musl": 16200,
     "windows": 21400,
     "windows-aarch64": 21100
   },
   "aot/engine/native-5.test.ts": {
     "default": 24500,
-    "asan": 16400,
+    "asan": 32400,
     "musl": 27900,
     "windows": 30700,
     "windows-aarch64": 28100
   },
   "aot/engine/native-6.test.ts": {
     "default": 10800,
-    "asan": 19900,
+    "asan": 29100,
     "musl": 19200,
     "windows": 39200,
     "windows-aarch64": 23000
   },
   "aot/entry-point-names.test.ts": {
     "default": 8600,
-    "asan": 28100,
+    "asan": 51500,
     "musl": 10600,
     "windows": 15400,
     "windows-aarch64": 12200
@@ -5137,7 +5183,7 @@
   },
   "aot/explain.test.ts": {
     "default": 2000,
-    "asan": 15600,
+    "asan": 12100,
     "musl": 1200,
     "windows": 900,
     "windows-aarch64": 700
@@ -5158,7 +5204,7 @@
   },
   "aot/fastify-validators-written-to-files.test.ts": {
     "default": 32500,
-    "asan": 11000,
+    "asan": 23200,
     "musl": 25400,
     "windows": 12300,
     "windows-aarch64": 11800
@@ -5221,7 +5267,7 @@
   },
   "aot/frameworks/next.test.ts": {
     "default": 72000,
-    "asan": 125300,
+    "asan": 139600,
     "musl": 128600,
     "windows": 100,
     "windows-aarch64": 81500
@@ -5235,7 +5281,7 @@
   },
   "aot/frameworks/sveltekit.test.ts": {
     "default": 34600,
-    "asan": 64500,
+    "asan": 38800,
     "musl": 20700,
     "windows": 11300,
     "windows-aarch64": 13400
@@ -5249,7 +5295,7 @@
   },
   "aot/fuzzer-judging.test.ts": {
     "default": 23400,
-    "asan": 167700,
+    "asan": 426400,
     "musl": 31300,
     "windows": 27700,
     "windows-aarch64": 27600
@@ -5312,7 +5358,7 @@
   },
   "aot/heap-limit-worker-console.test.ts": {
     "default": 5400,
-    "asan": 17000,
+    "asan": 22000,
     "musl": 6100,
     "windows": 5400,
     "windows-aarch64": 5200
@@ -5333,7 +5379,7 @@
   },
   "aot/in-place-executables.test.ts": {
     "default": 48900,
-    "asan": 25800,
+    "asan": 32400,
     "musl": 35300,
     "windows": 54300,
     "windows-aarch64": 43700
@@ -5389,7 +5435,7 @@
   },
   "aot/library-from-npm.test.ts": {
     "default": 5700,
-    "asan": 31300,
+    "asan": 27300,
     "musl": 6200,
     "windows": 16900,
     "windows-aarch64": 13300
@@ -5410,7 +5456,7 @@
   },
   "aot/literal-types-in-executables.test.ts": {
     "default": 3500,
-    "asan": 12200,
+    "asan": 20300,
     "musl": 1600,
     "windows": 5400,
     "windows-aarch64": 3200
@@ -5452,7 +5498,7 @@
   },
   "aot/load/macros.test.ts": {
     "default": 4600,
-    "asan": 4200,
+    "asan": 8000,
     "musl": 2800,
     "windows": 14500,
     "windows-aarch64": 8500
@@ -5473,7 +5519,7 @@
   },
   "aot/load/runtime-modules-and-user-flags.test.ts": {
     "default": 7500,
-    "asan": 105100,
+    "asan": 11100,
     "musl": 8800,
     "windows": 7800,
     "windows-aarch64": 7000
@@ -5487,7 +5533,7 @@
   },
   "aot/loader-access-in-unreachable-code.test.ts": {
     "default": 9600,
-    "asan": 21600,
+    "asan": 40800,
     "musl": 6800,
     "windows": 6500,
     "windows-aarch64": 5600
@@ -5592,7 +5638,7 @@
   },
   "aot/loader/what-steers-the-search.test.ts": {
     "default": 3800,
-    "asan": 15500,
+    "asan": 11900,
     "musl": 4400,
     "windows": 10400,
     "windows-aarch64": 8400
@@ -5662,7 +5708,7 @@
   },
   "aot/memory-deny-write-execute-is-inherited.test.ts": {
     "default": 10600,
-    "asan": 24300,
+    "asan": 33700,
     "musl": 11800,
     "windows": 100,
     "windows-aarch64": 100
@@ -5697,7 +5743,7 @@
   },
   "aot/missing-bun-types.test.ts": {
     "default": 33800,
-    "asan": 66600,
+    "asan": 42100,
     "musl": 9100,
     "windows": 13800,
     "windows-aarch64": 11800
@@ -5739,21 +5785,21 @@
   },
   "aot/names-that-only-types-spell-in-executables.test.ts": {
     "default": 4400,
-    "asan": 25100,
+    "asan": 42000,
     "musl": 5000,
     "windows": 3900,
     "windows-aarch64": 3300
   },
   "aot/nans-of-every-pattern-of-bits-in-fields.test.ts": {
     "default": 11600,
-    "asan": 16400,
+    "asan": 13100,
     "musl": 11900,
     "windows": 6800,
     "windows-aarch64": 5200
   },
   "aot/napi-addon.test.ts": {
     "default": 8200,
-    "asan": 24200,
+    "asan": 15200,
     "musl": 8300,
     "windows": 9400,
     "windows-aarch64": 14100
@@ -5781,7 +5827,7 @@
   },
   "aot/no-leak-records-at-exit.test.ts": {
     "default": 100,
-    "asan": 15900,
+    "asan": 27900,
     "musl": 100,
     "windows": 100,
     "windows-aarch64": 100
@@ -5837,7 +5883,7 @@
   },
   "aot/paths-of-the-tsconfigs-above-a-file.test.ts": {
     "default": 4800,
-    "asan": 13600,
+    "asan": 8500,
     "musl": 1700,
     "windows": 2400,
     "windows-aarch64": 2000
@@ -5900,7 +5946,7 @@
   },
   "aot/plugin-answer-timing.test.ts": {
     "default": 10000,
-    "asan": 100200,
+    "asan": 87800,
     "musl": 7400,
     "windows": 10600,
     "windows-aarch64": 8400
@@ -5914,7 +5960,7 @@
   },
   "aot/process-platform-run-and-compile.test.ts": {
     "default": 3000,
-    "asan": 28400,
+    "asan": 15300,
     "musl": 2100,
     "windows": 3200,
     "windows-aarch64": 5600
@@ -5935,7 +5981,7 @@
   },
   "aot/react-compiler.test.ts": {
     "default": 26500,
-    "asan": 214200,
+    "asan": 181500,
     "musl": 4400,
     "windows": 6200,
     "windows-aarch64": 5300
@@ -5963,7 +6009,7 @@
   },
   "aot/realms-share-the-executables-of-host-functions.test.ts": {
     "default": 6700,
-    "asan": 18500,
+    "asan": 8500,
     "musl": 7600,
     "windows": 6100,
     "windows-aarch64": 3300
@@ -5984,7 +6030,7 @@
   },
   "aot/reexport-only-modules-in-place.test.ts": {
     "default": 7400,
-    "asan": 22100,
+    "asan": 10100,
     "musl": 6200,
     "windows": 3300,
     "windows-aarch64": 2700
@@ -6110,7 +6156,7 @@
   },
   "aot/roads-to-members-of-the-runtime.test.ts": {
     "default": 8000,
-    "asan": 20300,
+    "asan": 16700,
     "musl": 7200,
     "windows": 7400,
     "windows-aarch64": 6600
@@ -6131,21 +6177,21 @@
   },
   "aot/run-aot-array-subclass-constructor-inlined.test.ts": {
     "default": 1900,
-    "asan": 18800,
+    "asan": 7200,
     "musl": 1800,
     "windows": 1100,
     "windows-aarch64": 1300
   },
   "aot/run-aot-fails-file-with-type-error.test.ts": {
     "default": 71700,
-    "asan": 32300,
+    "asan": 8300,
     "musl": 2200,
     "windows": 2600,
     "windows-aarch64": 2300
   },
   "aot/run-aot-same-messages-every-iteration.test.ts": {
     "default": 2300,
-    "asan": 127000,
+    "asan": 106800,
     "musl": 4600,
     "windows": 2300,
     "windows-aarch64": 2900
@@ -6159,14 +6205,14 @@
   },
   "aot/run-aot.test.ts": {
     "default": 11900,
-    "asan": 35500,
+    "asan": 51300,
     "musl": 8900,
     "windows": 10000,
     "windows-aarch64": 7900
   },
   "aot/run-time-plugins-and-compiled-modules.test.ts": {
     "default": 19200,
-    "asan": 9600,
+    "asan": 12800,
     "musl": 5600,
     "windows": 1900,
     "windows-aarch64": 1900
@@ -6243,21 +6289,21 @@
   },
   "aot/servers/budgets-of-hono.test.ts": {
     "default": 5900,
-    "asan": 19900,
+    "asan": 36000,
     "musl": 100,
     "windows": 100,
     "windows-aarch64": 100
   },
   "aot/servers/bun.test.ts": {
     "default": 5900,
-    "asan": 18200,
+    "asan": 25800,
     "musl": 9400,
     "windows": 12700,
     "windows-aarch64": 43700
   },
   "aot/servers/express.test.ts": {
     "default": 25600,
-    "asan": 54800,
+    "asan": 79300,
     "musl": 38600,
     "windows": 14200,
     "windows-aarch64": 19600
@@ -6271,14 +6317,14 @@
   },
   "aot/servers/node.test.ts": {
     "default": 17200,
-    "asan": 25300,
+    "asan": 34300,
     "musl": 19700,
     "windows": 9900,
     "windows-aarch64": 16300
   },
   "aot/servers/thin.test.ts": {
     "default": 7900,
-    "asan": 76500,
+    "asan": 22000,
     "musl": 14600,
     "windows": 9400,
     "windows-aarch64": 16400
@@ -6348,7 +6394,7 @@
   },
   "aot/symbols-of-compiled-functions.test.ts": {
     "default": 600,
-    "asan": 20400,
+    "asan": 30100,
     "musl": 1000,
     "windows": 100,
     "windows-aarch64": 200
@@ -6369,14 +6415,14 @@
   },
   "aot/test-runner-names-without-an-import.test.ts": {
     "default": 8300,
-    "asan": 14400,
+    "asan": 28400,
     "musl": 3100,
     "windows": 5400,
     "windows-aarch64": 5800
   },
   "aot/texts-that-tell-builds-apart.test.ts": {
     "default": 1000,
-    "asan": 7400,
+    "asan": 3300,
     "musl": 1500,
     "windows": 100,
     "windows-aarch64": 100
@@ -6649,7 +6695,7 @@
   },
   "aot/typed-packages.test.ts": {
     "default": 7700,
-    "asan": 12800,
+    "asan": 18000,
     "musl": 4800,
     "windows": 6000,
     "windows-aarch64": 5900
@@ -6684,14 +6730,14 @@
   },
   "aot/what-minified-syntax-leaves-out-of-executables.test.ts": {
     "default": 600,
-    "asan": 18100,
+    "asan": 11200,
     "musl": 600,
     "windows": 1700,
     "windows-aarch64": 1300
   },
   "aot/wide-references.test.ts": {
     "default": 1700,
-    "asan": 23500,
+    "asan": 30000,
     "musl": 1600,
     "windows": 2600,
     "windows-aarch64": 2300
@@ -6705,14 +6751,14 @@
   },
   "aot/without-executable-memory.test.ts": {
     "default": 5700,
-    "asan": 45000,
+    "asan": 39300,
     "musl": 4900,
     "windows": 9900,
     "windows-aarch64": 7600
   },
   "aot/work-that-data-causes.test.ts": {
     "default": 9100,
-    "asan": 65600,
+    "asan": 51400,
     "musl": 12500,
     "windows": 3900,
     "windows-aarch64": 3300
@@ -6726,7 +6772,7 @@
   },
   "aot/workers-from-embedded-files.test.ts": {
     "default": 19200,
-    "asan": 41800,
+    "asan": 58100,
     "musl": 20200,
     "windows": 22400,
     "windows-aarch64": 20400
@@ -6929,7 +6975,7 @@
   },
   "bundler/bun-build-api.test.ts": {
     "default": 12200,
-    "asan": 41000,
+    "asan": 46300,
     "musl": 11900,
     "windows": 15400,
     "windows-aarch64": 15800
@@ -6978,7 +7024,7 @@
   },
   "bundler/bundler_barrel.test.ts": {
     "default": 900,
-    "asan": 10200,
+    "asan": 14300,
     "musl": 1100,
     "windows": 2200,
     "windows-aarch64": 2800
@@ -6999,14 +7045,14 @@
   },
   "bundler/bundler_bytecode_portable.test.ts": {
     "default": 9900,
-    "asan": 30000,
+    "asan": 23900,
     "musl": 8500,
     "windows": 12000,
     "windows-aarch64": 11200
   },
   "bundler/bundler_cjs.test.ts": {
     "default": 600,
-    "asan": 14400,
+    "asan": 21400,
     "musl": 800,
     "windows": 1800,
     "windows-aarch64": 2200
@@ -7026,11 +7072,11 @@
     "windows-aarch64": 800
   },
   "bundler/bundler_compile.test.ts": {
-    "default": 34100,
-    "asan": 101700,
-    "musl": 40800,
-    "windows": 78400,
-    "windows-aarch64": 63000
+    "default": 10600,
+    "asan": 31500,
+    "musl": 12600,
+    "windows": 24300,
+    "windows-aarch64": 19500
   },
   "bundler/bundler_compile_aot.test.ts": {
     "default": 2300,
@@ -7046,9 +7092,23 @@
     "windows": 21600,
     "windows-aarch64": 16000
   },
+  "bundler/bundler_compile_embedded.test.ts": {
+    "default": 13000,
+    "asan": 38600,
+    "musl": 15500,
+    "windows": 29800,
+    "windows-aarch64": 23900
+  },
+  "bundler/bundler_compile_imports.test.ts": {
+    "default": 10600,
+    "asan": 31500,
+    "musl": 12600,
+    "windows": 24300,
+    "windows-aarch64": 19500
+  },
   "bundler/bundler_compile_splitting.test.ts": {
     "default": 13300,
-    "asan": 46600,
+    "asan": 55200,
     "musl": 11500,
     "windows": 31900,
     "windows-aarch64": 21400
@@ -7634,7 +7694,7 @@
   },
   "bundler/transpiler/decorators.test.ts": {
     "default": 500,
-    "asan": 12300,
+    "asan": 19200,
     "musl": 400,
     "windows": 500,
     "windows-aarch64": 400
@@ -7648,7 +7708,7 @@
   },
   "bundler/transpiler/es-decorators.test.ts": {
     "default": 800,
-    "asan": 18400,
+    "asan": 15400,
     "musl": 800,
     "windows": 2000,
     "windows-aarch64": 2700
@@ -7830,14 +7890,14 @@
   },
   "cli/aot-builtin-modules-and-where-a-global-goes.test.ts": {
     "default": 2800,
-    "asan": 16200,
+    "asan": 8000,
     "musl": 8200,
     "windows": 2800,
     "windows-aarch64": 3700
   },
   "cli/aot-builtin-modules-of-a-small-program.test.ts": {
     "default": 1300,
-    "asan": 33900,
+    "asan": 39800,
     "musl": 1600,
     "windows": 1800,
     "windows-aarch64": 2100
@@ -7921,7 +7981,7 @@
   },
   "cli/compile/compile-library-ecosystem.test.ts": {
     "default": 8300,
-    "asan": 37200,
+    "asan": 56600,
     "musl": 15400,
     "windows": 14300,
     "windows-aarch64": 12700
@@ -7949,7 +8009,7 @@
   },
   "cli/crash-if-interpreter-is-used.test.ts": {
     "default": 32800,
-    "asan": 49600,
+    "asan": 60800,
     "musl": 21900,
     "windows": 200,
     "windows-aarch64": 800
@@ -8943,7 +9003,7 @@
   },
   "cli/run/run-aot.test.ts": {
     "default": 27200,
-    "asan": 99800,
+    "asan": 112000,
     "musl": 29600,
     "windows": 18500,
     "windows-aarch64": 17700
@@ -10336,7 +10396,7 @@
   },
   "js/bun/http/proxy.test.ts": {
     "default": 2400,
-    "asan": 15000,
+    "asan": 11500,
     "musl": 2100,
     "windows": 3000,
     "windows-aarch64": 3600
@@ -10581,7 +10641,7 @@
   },
   "js/bun/ini/ini.test.ts": {
     "default": 600,
-    "asan": 10000,
+    "asan": 15900,
     "musl": 900,
     "windows": 1400,
     "windows-aarch64": 1800
@@ -10644,7 +10704,7 @@
   },
   "js/bun/jsc/domjit.test.ts": {
     "default": 1600,
-    "asan": 37300,
+    "asan": 7100,
     "musl": 1400,
     "windows": 2200,
     "windows-aarch64": 2000
@@ -10756,7 +10816,7 @@
   },
   "js/bun/jsonc/jsonc.test.ts": {
     "default": 900,
-    "asan": 4800,
+    "asan": 8900,
     "musl": 1200,
     "windows": 1800,
     "windows-aarch64": 3400
@@ -12261,7 +12321,7 @@
   },
   "js/bun/test/failure-skip.test.ts": {
     "default": 300,
-    "asan": 4600,
+    "asan": 10000,
     "musl": 400,
     "windows": 700,
     "windows-aarch64": 700
@@ -13360,7 +13420,7 @@
   },
   "js/bun/util/bun-file-fd-read.test.ts": {
     "default": 100,
-    "asan": 100,
+    "asan": 6400,
     "musl": 100,
     "windows": 100,
     "windows-aarch64": 100
@@ -13444,7 +13504,7 @@
   },
   "js/bun/util/error-gc-test.test.js": {
     "default": 4300,
-    "asan": 16800,
+    "asan": 20800,
     "musl": 4600,
     "windows": 9800,
     "windows-aarch64": 13400
@@ -13738,7 +13798,7 @@
   },
   "js/bun/util/zstd.test.ts": {
     "default": 5300,
-    "asan": 14600,
+    "asan": 18700,
     "musl": 5200,
     "windows": 6700,
     "windows-aarch64": 5900
@@ -14193,7 +14253,7 @@
   },
   "js/node/buffer-jit.test.ts": {
     "default": 800,
-    "asan": 25000,
+    "asan": 20700,
     "musl": 1000,
     "windows": 900,
     "windows-aarch64": 900
@@ -14494,7 +14554,7 @@
   },
   "js/node/diagnostics_channel/diagnostics_channel.test.ts": {
     "default": 100,
-    "asan": 600,
+    "asan": 22500,
     "musl": 100,
     "windows": 200,
     "windows-aarch64": 100
@@ -41950,7 +42010,7 @@
   },
   "js/node/tls/test-use-system-ca.test.ts": {
     "default": 500,
-    "asan": 14400,
+    "asan": 6900,
     "musl": 600,
     "windows": 500,
     "windows-aarch64": 1000
@@ -42482,7 +42542,7 @@
   },
   "js/node/zlib/zlib.test.js": {
     "default": 4300,
-    "asan": 16400,
+    "asan": 22500,
     "musl": 4200,
     "windows": 5700,
     "windows-aarch64": 5600
@@ -44064,7 +44124,7 @@
   },
   "js/web/fetch/blob-oom.test.ts": {
     "default": 100,
-    "asan": 21500,
+    "asan": 17100,
     "musl": 30300,
     "windows": 28200,
     "windows-aarch64": 14200
@@ -44225,7 +44285,7 @@
   },
   "js/web/fetch/fetch-gzip.test.ts": {
     "default": 3600,
-    "asan": 6700,
+    "asan": 13000,
     "musl": 3200,
     "windows": 3300,
     "windows-aarch64": 2600
@@ -44351,7 +44411,7 @@
   },
   "js/web/fetch/fetch-syscall-fault.test.ts": {
     "default": 100,
-    "asan": 4000,
+    "asan": 7200,
     "musl": 100,
     "windows": 100,
     "windows-aarch64": 100
@@ -44582,7 +44642,7 @@
   },
   "js/web/request/request-method-getter.test.ts": {
     "default": 500,
-    "asan": 13800,
+    "asan": 17700,
     "musl": 600,
     "windows": 900,
     "windows-aarch64": 600
@@ -44652,14 +44712,14 @@
   },
   "js/web/streams/streams-string-limit.test.ts": {
     "default": 100,
-    "asan": 8200,
+    "asan": 11300,
     "musl": 4700,
     "windows": 8200,
     "windows-aarch64": 3000
   },
   "js/web/streams/streams.test.js": {
     "default": 2300,
-    "asan": 18100,
+    "asan": 23600,
     "musl": 2800,
     "windows": 7000,
     "windows-aarch64": 7400
@@ -45583,7 +45643,7 @@
   },
   "regression/brotli-reset-leak.test.ts": {
     "default": 100,
-    "asan": 1300,
+    "asan": 4800,
     "musl": 100,
     "windows": 100,
     "windows-aarch64": 100
@@ -48570,7 +48630,7 @@
   },
   "aot/builtins/differential.test.ts": {
     "default": 145400,
-    "asan": 146600,
+    "asan": 67000,
     "musl": 2100
   },
   "aot/the-build-under-test-is-the-one-its-step-names.test.ts": {
@@ -48594,7 +48654,7 @@
   },
   "bundler/bundler_compile_prelinked.test.ts": {
     "default": 25500,
-    "asan": 106600,
+    "asan": 118200,
     "musl": 13000,
     "windows": 54300,
     "windows-aarch64": 37200
@@ -48940,7 +49000,7 @@
   },
   "cli/compile/compile-library-aot-condition.test.ts": {
     "default": 11700,
-    "asan": 14600,
+    "asan": 30900,
     "musl": 4600,
     "windows": 9100,
     "windows-aarch64": 8400
@@ -49185,7 +49245,7 @@
   },
   "cli/install/migration/npm-arborist.test.ts": {
     "default": 900,
-    "asan": 22200,
+    "asan": 15800,
     "musl": 800,
     "windows": 2200,
     "windows-aarch64": 3100
@@ -49549,14 +49609,14 @@
   },
   "internal/builtins-table/direct-functions-belong-to-their-features.test.ts": {
     "default": 19500,
-    "asan": 38800,
+    "asan": 73600,
     "musl": 10400,
     "windows": 11900,
     "windows-aarch64": 12400
   },
   "internal/builtins-table/every-build-configuration.test.ts": {
     "default": 18800,
-    "asan": 55600,
+    "asan": 121700,
     "musl": 10700,
     "windows": 13900,
     "windows-aarch64": 12100
@@ -49780,35 +49840,35 @@
   },
   "internal/trim/link-coff-freestanding.test.ts": {
     "default": 53300,
-    "asan": 327900,
+    "asan": 160100,
     "musl": 46300,
     "windows": 200,
     "windows-aarch64": 100
   },
   "internal/trim/link-elf-graph.test.ts": {
     "default": 16100,
-    "asan": 11400,
+    "asan": 16100,
     "musl": 10100,
     "windows": 100,
     "windows-aarch64": 100
   },
   "internal/trim/link-elf-reach.test.ts": {
     "default": 11500,
-    "asan": 24200,
+    "asan": 17200,
     "musl": 13800,
     "windows": 100,
     "windows-aarch64": 100
   },
   "internal/trim/link-elf.test.ts": {
     "default": 40400,
-    "asan": 69500,
+    "asan": 114600,
     "musl": 43800,
     "windows": 100,
     "windows-aarch64": 100
   },
   "internal/trim/link-macho-layout.test.ts": {
     "default": 12900,
-    "asan": 51800,
+    "asan": 31400,
     "musl": 10600,
     "windows": 100,
     "windows-aarch64": 100
@@ -49822,7 +49882,7 @@
   },
   "internal/trim/link-macho.test.ts": {
     "default": 28700,
-    "asan": 85000,
+    "asan": 58400,
     "musl": 22600,
     "windows": 100,
     "windows-aarch64": 100
@@ -50011,7 +50071,7 @@
   },
   "js/bun/jsonl/json-from-utf8-bytes.test.ts": {
     "default": 5100,
-    "asan": 47800,
+    "asan": 38600,
     "musl": 7000,
     "windows": 7000,
     "windows-aarch64": 7300
@@ -50214,7 +50274,7 @@
   },
   "js/bun/util/json-stringify-quoting.test.ts": {
     "default": 1800,
-    "asan": 16800,
+    "asan": 9800,
     "musl": 1900,
     "windows": 1900,
     "windows-aarch64": 1600
@@ -50634,7 +50694,7 @@
   },
   "js/node/http/node-http-receivers-that-are-no-messages.test.ts": {
     "default": 400,
-    "asan": 6900,
+    "asan": 11000,
     "musl": 400,
     "windows": 400,
     "windows-aarch64": 400
@@ -51404,7 +51464,7 @@
   },
   "aot/a-program-that-a-signal-ends-is-judged-at-once.test.ts": {
     "default": 4200,
-    "asan": 16400,
+    "asan": 27800,
     "musl": 3300,
     "windows": 100,
     "windows-aarch64": 100
@@ -51426,11 +51486,11 @@
   },
   "aot/asking-about-a-function-keeps-none-of-its-code.test.ts": {
     "default": 11000,
-    "asan": 10600
+    "asan": 15200
   },
   "aot/code-for-foreign-calls-is-in-an-executable-that-can-use-it.test.ts": {
     "default": 24300,
-    "asan": 25400
+    "asan": 39000
   },
   "aot/early-error-under-nested-tsconfig.test.ts": {
     "default": 2100,
@@ -51438,15 +51498,15 @@
   },
   "aot/fields-under-names-past-the-front-table.test.ts": {
     "default": 91600,
-    "asan": 130800
+    "asan": 172800
   },
   "aot/loops-inside-a-try-that-fill-the-memory.test.ts": {
     "default": 9800,
-    "asan": 59000
+    "asan": 45800
   },
   "aot/the-driver-of-generated-programs-judges-what-waits.test.ts": {
     "default": 10800,
-    "asan": 73300
+    "asan": 167500
   },
   "cli/watch/restart-after-crash.test.ts": {
     "default": 100,
@@ -51476,7 +51536,7 @@
   },
   "aot/a-commonjs-file-loaded-by-import-and-by-require-beside-an-entry-in-require-cache.test.ts": {
     "default": 66800,
-    "asan": 18000
+    "asan": 11800
   },
   "aot/a-commonjs-file-mocked-before-it-is-loaded.test.ts": {
     "default": 2400,
@@ -51496,11 +51556,11 @@
   },
   "aot/a-computed-import-in-a-project-with-tsconfig-paths-2.test.ts": {
     "default": 74300,
-    "asan": 38700
+    "asan": 17400
   },
   "aot/a-computed-import-in-a-project-with-tsconfig-paths.test.ts": {
     "default": 74300,
-    "asan": 32400
+    "asan": 17000
   },
   "aot/a-computed-import-means-every-file-that-matches.test.ts": {
     "default": 29200,
@@ -51516,7 +51576,7 @@
   },
   "aot/a-file-loaded-under-a-query-spies-on-an-export.test.ts": {
     "default": 9100,
-    "asan": 19100
+    "asan": 10600
   },
   "aot/a-file-nested-too-deeply-costs-a-test-run-one-test.test.ts": {
     "default": 17900,
@@ -51524,11 +51584,11 @@
   },
   "aot/a-file-that-a-test-writes-and-loads-by-a-made-path-may-spy.test.ts": {
     "default": 48700,
-    "asan": 19200
+    "asan": 9700
   },
   "aot/a-file-that-is-not-what-its-import-attribute-says.test.ts": {
     "default": 32700,
-    "asan": 10200
+    "asan": 6100
   },
   "aot/a-file-that-loads-again-from-disk-calls-what-stands-on-the-global-object.test.ts": {
     "default": 10200,
@@ -51548,7 +51608,7 @@
   },
   "aot/a-helper-that-imports-a-missing-file-fails-its-test-file-alone.test.ts": {
     "default": 7800,
-    "asan": 18800
+    "asan": 7100
   },
   "aot/a-key-of-require-cache-that-a-file-spells-opens-its-node-module.test.ts": {
     "default": 9500,
@@ -51560,7 +51620,7 @@
   },
   "aot/a-loader-that-is-read-off-an-object-loads-files-where-code-from-disk-is-allowed.test.ts": {
     "default": 108800,
-    "asan": 53000
+    "asan": 91200
   },
   "aot/a-map-made-from-pairs-that-the-program-writes.test.ts": {
     "default": 1300,
@@ -51568,7 +51628,7 @@
   },
   "aot/a-mock-in-a-file-that-a-preload-imports.test.ts": {
     "default": 24200,
-    "asan": 9200
+    "asan": 4100
   },
   "aot/a-mock-of-a-built-in-module-keeps-the-real-module-from-running.test.ts": {
     "default": 13300,
@@ -51576,11 +51636,11 @@
   },
   "aot/a-mock-of-a-built-in-module-that-import-alone-reaches-is-what-runs.test.ts": {
     "default": 104300,
-    "asan": 25800
+    "asan": 18600
   },
   "aot/a-mock-of-a-built-in-module-that-was-required-first-is-what-require-answers.test.ts": {
     "default": 76500,
-    "asan": 96800
+    "asan": 31500
   },
   "aot/a-mock-of-a-commonjs-file-waits-for-its-first-load.test.ts": {
     "default": 16800,
@@ -51592,7 +51652,7 @@
   },
   "aot/a-mock-of-a-module-that-the-bundler-imports.test.ts": {
     "default": 29800,
-    "asan": 14800
+    "asan": 18200
   },
   "aot/a-mock-that-goes-somewhere-as-a-value-still-mocks.test.ts": {
     "default": 21100,
@@ -51600,15 +51660,15 @@
   },
   "aot/a-mocked-commonjs-file-keeps-its-own-exports.test.ts": {
     "default": 32100,
-    "asan": 17200
+    "asan": 9300
   },
   "aot/a-module-that-a-test-writes-imports-compiled-files.test.ts": {
     "default": 84700,
-    "asan": 14700
+    "asan": 8900
   },
   "aot/a-module-that-exists-only-as-a-mock-is-found-wherever-mock-comes-from.test.ts": {
     "default": 87900,
-    "asan": 12100
+    "asan": 7900
   },
   "aot/a-module-whose-link-fails-imports-what-other-files-import.test.ts": {
     "default": 87700,
@@ -51616,7 +51676,7 @@
   },
   "aot/a-name-that-a-preload-adds-to-the-global-object-is-there-in-every-test-file.test.ts": {
     "default": 21200,
-    "asan": 5300
+    "asan": 8700
   },
   "aot/a-native-function-that-refuses-its-argument-quotes-the-call.test.ts": {
     "default": 15400,
@@ -51632,11 +51692,11 @@
   },
   "aot/a-program-of-thousands-of-files-loads-any-of-them-by-name.test.ts": {
     "default": 35200,
-    "asan": 36800
+    "asan": 29100
   },
   "aot/a-proxy-is-described-and-defined-on-by-its-traps.test.ts": {
     "default": 37300,
-    "asan": 88800
+    "asan": 64100
   },
   "aot/a-row-of-thousands-of-classes-builds-and-runs.test.ts": {
     "default": 28400,
@@ -51656,11 +51716,11 @@
   },
   "aot/a-spy-or-mock-reaches-the-branches-of-the-file-whose-exports-it-replaces.test.ts": {
     "default": 6200,
-    "asan": 6700
+    "asan": 2500
   },
   "aot/a-spy-that-no-file-names-still-spies.test.ts": {
     "default": 54000,
-    "asan": 33200
+    "asan": 48400
   },
   "aot/a-sqlite-file-exports-its-database-as-db-too.test.ts": {
     "default": 2400,
@@ -51672,7 +51732,7 @@
   },
   "aot/a-store-to-what-says-which-runtime-this-is-throws-in-sloppy-code-too.test.ts": {
     "default": 6800,
-    "asan": 15700
+    "asan": 5200
   },
   "aot/a-store-under-a-symbol-changes-no-prototype.test.ts": {
     "default": 10300,
@@ -51680,11 +51740,11 @@
   },
   "aot/a-test-file-binds-to-what-the-loader-holds.test.ts": {
     "default": 106000,
-    "asan": 21800
+    "asan": 13300
   },
   "aot/a-test-file-names-the-file-of-a-worker-that-the-project-starts.test.ts": {
     "default": 57300,
-    "asan": 21200
+    "asan": 34200
   },
   "aot/a-test-file-that-a-helper-imports-back-is-the-main-module.test.ts": {
     "default": 77300,
@@ -51704,7 +51764,7 @@
   },
   "aot/a-test-replaces-a-member-through-the-receiver-of-reflect-set.test.ts": {
     "default": 21300,
-    "asan": 16600
+    "asan": 4800
   },
   "aot/a-test-run-compiles-what-an-executable-compiles.test.ts": {
     "default": 8600,
@@ -51712,7 +51772,7 @@
   },
   "aot/a-test-run-has-no-module-in-front-of-an-entry-point.test.ts": {
     "default": 37800,
-    "asan": 14300
+    "asan": 8000
   },
   "aot/a-test-run-reports-the-peak-memory-of-a-worker-from-an-earlier-file.test.ts": {
     "default": 9800,
@@ -51720,15 +51780,15 @@
   },
   "aot/a-test-run-says-when-it-reaches-each-step.test.ts": {
     "default": 22500,
-    "asan": 11600
+    "asan": 3400
   },
   "aot/a-test-run-that-starts-workers-loads-its-files-once.test.ts": {
     "default": 23100,
-    "asan": 93600
+    "asan": 46600
   },
   "aot/a-test-run-with-a-proxy-above-a-prototype-keeps-the-elements-of-arrays.test.ts": {
     "default": 6800,
-    "asan": 13900
+    "asan": 8600
   },
   "aot/a-test-stores-into-bun-main-under-a-key-that-the-build-cannot-read.test.ts": {
     "default": 3700,
@@ -51736,15 +51796,15 @@
   },
   "aot/a-test-that-replaced-built-in-functions-sees-the-same-calls-while-a-module-loads.test.ts": {
     "default": 19800,
-    "asan": 8500
+    "asan": 12700
   },
   "aot/a-todo-for-one-platform-counts-there-alone.test.ts": {
     "default": 1300,
-    "asan": 15700
+    "asan": 9600
   },
   "aot/a-typescript-module-is-linked-without-the-exports-that-find-nothing.test.ts": {
     "default": 59800,
-    "asan": 27100
+    "asan": 11400
   },
   "aot/an-accessor-that-a-test-puts-in-place-of-proto-answers-for-built-in-objects.test.ts": {
     "default": 22700,
@@ -51756,7 +51816,7 @@
   },
   "aot/an-entry-stored-in-require-cache-under-the-name-of-a-node-module.test.ts": {
     "default": 94800,
-    "asan": 21200
+    "asan": 11100
   },
   "aot/an-executable-finds-what-lay-beside-its-source.test.ts": {
     "default": 14300,
@@ -51767,7 +51827,7 @@
   },
   "aot/an-export-statement-that-finds-nothing-in-a-built-in-module-names-the-module-as-plain-bun-does.test.ts": {
     "default": 9800,
-    "asan": 10600
+    "asan": 7500
   },
   "aot/an-export-that-only-a-mock-has.test.ts": {
     "default": 11600,
@@ -51775,7 +51835,7 @@
   },
   "aot/an-import-call-gets-what-the-statement-of-a-test-file-made-beside-a-plugin.test.ts": {
     "default": 21200,
-    "asan": 5400
+    "asan": 8800
   },
   "aot/an-import-that-names-no-module-gets-its-syntax-error.test.ts": {
     "default": 11800,
@@ -51787,7 +51847,7 @@
   },
   "aot/bun-test-isolate-compiled.test.ts": {
     "default": 67700,
-    "asan": 20800
+    "asan": 42900
   },
   "aot/carrier-with-much-behind-the-payload.test.ts": {
     "default": 7300,
@@ -51827,7 +51887,7 @@
   },
   "aot/each-load-of-a-commonjs-file-keeps-its-own-exports.test.ts": {
     "default": 35000,
-    "asan": 13800
+    "asan": 9800
   },
   "aot/engine/a-native-test-that-starts-many-processes-is-not-taken-for-hung.test.ts": {
     "default": 200,
@@ -51854,7 +51914,7 @@
   },
   "aot/functions-that-call-one-another-in-a-long-ring-answer-as-in-plain-bun.test.ts": {
     "default": 16000,
-    "asan": 37900
+    "asan": 27900
   },
   "aot/hardened-libraries-loaded-late.test.ts": {
     "default": 200,
@@ -51873,15 +51933,15 @@
   },
   "aot/heavy-test-files-run-apart.test.ts": {
     "default": 31900,
-    "asan": 22800
+    "asan": 15200
   },
   "aot/helpers-that-a-test-file-reaches-by-other-ways.test.ts": {
     "default": 28900,
-    "asan": 26400
+    "asan": 16900
   },
   "aot/import-attributes-of-files-outside-the-program.test.ts": {
     "default": 24100,
-    "asan": 6700
+    "asan": 9800
   },
   "aot/jsx-in-a-test-file-without-react.test.ts": {
     "default": 500,
@@ -51897,7 +51957,7 @@
   },
   "aot/mock-module-of-compiled-modules.test.ts": {
     "default": 64300,
-    "asan": 45800
+    "asan": 41100
   },
   "aot/mock-module-of-data-files.test.ts": {
     "default": 2000,
@@ -51909,19 +51969,19 @@
   },
   "aot/modules-in-a-test-run.test.ts": {
     "default": 194200,
-    "asan": 50200
+    "asan": 60400
   },
   "aot/names-made-at-run-time-out-of-dirname-find-the-files-of-the-executable.test.ts": {
     "default": 13400,
-    "asan": 16300
+    "asan": 21700
   },
   "aot/odd-files-cost-a-test-run-what-they-cost-plain.test.ts": {
     "default": 21900,
-    "asan": 27100
+    "asan": 6200
   },
   "aot/one-file-imported-under-two-types-beside-a-plugin-of-another-test-file.test.ts": {
     "default": 31600,
-    "asan": 24100
+    "asan": 13500
   },
   "aot/one-file-under-two-spellings-that-may-be-taken-out-of-require-cache.test.ts": {
     "default": 20700,
@@ -51946,11 +52006,11 @@
   },
   "aot/require-cache-in-test-runs-2.test.ts": {
     "default": 92100,
-    "asan": 32800
+    "asan": 25500
   },
   "aot/require-cache-in-test-runs-3.test.ts": {
     "default": 92100,
-    "asan": 38400
+    "asan": 23700
   },
   "aot/require-cache-in-test-runs-4.test.ts": {
     "default": 92100,
@@ -51958,7 +52018,7 @@
   },
   "aot/require-cache-in-test-runs.test.ts": {
     "default": 92100,
-    "asan": 26000
+    "asan": 32200
   },
   "aot/require-of-a-data-file-in-a-test-run.test.ts": {
     "default": 16000,
@@ -51978,15 +52038,15 @@
   },
   "aot/spies-on-exports.test.ts": {
     "default": 63900,
-    "asan": 35800
+    "asan": 13200
   },
   "aot/spies-through-helpers.test.ts": {
     "default": 77200,
-    "asan": 12000
+    "asan": 8100
   },
   "aot/stored-programs-as-test-files.test.ts": {
     "default": 31700,
-    "asan": 23700
+    "asan": 19500
   },
   "aot/test-file-that-cannot-build-fails-alone.test.ts": {
     "default": 18400,
@@ -51994,7 +52054,7 @@
   },
   "aot/test-run-calls-another-program-with-very-many-arguments.test.ts": {
     "default": 11900,
-    "asan": 8100
+    "asan": 4400
   },
   "aot/test-run-in-parts-failures.test.ts": {
     "default": 93800,
@@ -52006,15 +52066,15 @@
   },
   "aot/test-run-in-parts.test.ts": {
     "default": 61900,
-    "asan": 19900
+    "asan": 10100
   },
   "aot/test-run-mocks-a-module-that-is-on-no-disk.test.ts": {
     "default": 28300,
-    "asan": 9400
+    "asan": 4700
   },
   "aot/test-run-over-a-shared-program.test.ts": {
     "default": 51000,
-    "asan": 18400
+    "asan": 33300
   },
   "aot/test-run-query-gives-fresh-instance.test.ts": {
     "default": 100400,
@@ -52026,7 +52086,7 @@
   },
   "aot/test-runs-load-as-plain.test.ts": {
     "default": 15500,
-    "asan": 19900
+    "asan": 12000
   },
   "aot/tests-put-their-own-list-in-the-place-of-the-arguments.test.ts": {
     "default": 1900,
@@ -52034,11 +52094,11 @@
   },
   "aot/tests-replace-members-of-built-ins.test.ts": {
     "default": 87800,
-    "asan": 56700
+    "asan": 46900
   },
   "aot/text-made-at-run-time-opens-no-export-where-files-are-loaded-by-name.test.ts": {
     "default": 9200,
-    "asan": 3500
+    "asan": 6600
   },
   "aot/the-default-time-limit-never-lowers-what-the-runner-gave.test.ts": {
     "default": 100,
@@ -52046,11 +52106,11 @@
   },
   "aot/the-file-of-a-worker-goes-through-a-class-require-or-a-package.test.ts": {
     "default": 101600,
-    "asan": 22800
+    "asan": 45300
   },
   "aot/the-file-of-a-worker-is-named-by-a-url-elsewhere.test.ts": {
     "default": 12000,
-    "asan": 17100
+    "asan": 10800
   },
   "aot/the-first-error-at-a-place-costs-the-same-in-a-longer-file.test.ts": {
     "default": 50000,
@@ -52058,7 +52118,7 @@
   },
   "aot/the-first-read-of-a-standard-stream-calls-what-a-test-has-replaced.test.ts": {
     "default": 20000,
-    "asan": 23200
+    "asan": 14800
   },
   "aot/the-first-require-behind-a-mock-of-a-data-file-gets-the-mock.test.ts": {
     "default": 16200,
@@ -52066,11 +52126,11 @@
   },
   "aot/the-main-module-of-a-test-run.test.ts": {
     "default": 88100,
-    "asan": 33000
+    "asan": 11900
   },
   "aot/three-layers-agree.test.ts": {
     "default": 96800,
-    "asan": 146000
+    "asan": 264000
   },
   "aot/what-a-preload-stores-on-built-in-objects.test.ts": {
     "default": 30300,
@@ -52078,11 +52138,11 @@
   },
   "aot/what-a-preload-stores-on-the-global-object.test.ts": {
     "default": 22500,
-    "asan": 8600
+    "asan": 5400
   },
   "aot/what-a-test-file-lays-on-an-object-of-the-host-is-there-for-the-project.test.ts": {
     "default": 26600,
-    "asan": 24300
+    "asan": 13700
   },
   "aot/what-an-int32-error-says-to-write-keeps-the-program.test.ts": {
     "default": 1400,
@@ -52090,7 +52150,7 @@
   },
   "aot/what-lives-in-the-realm-used-alone-in-a-test-file.test.ts": {
     "default": 14800,
-    "asan": 11600
+    "asan": 8000
   },
   "aot/what-was-imported-from-a-file-stays-when-the-file-loads-again.test.ts": {
     "default": 9100,

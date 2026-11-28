@@ -38,11 +38,23 @@ impl Walker<'_, '_> {
         Some(id)
     }
 
+    /// The table of closures keeps a function that captures nothing, with its prototype. A constructor of a test file that
+    /// may run again captures the instance, so it goes when the run goes.
+    pub(super) fn hold_run_of_test_file(&mut self, constructor: WalkedFunctionId) {
+        let (modules, file) = (self.input.modules, self.input.file);
+        if modules.is_test_file(file) && modules.has_instances(file) {
+            self.record_slot_use(constructor, self.file_scope, ScopeSlot::ModuleInstance);
+        }
+    }
+
     fn push_function(&mut self, function: FnId, id: WalkedFunctionId) {
         let context = self.enter_unit(id, self.bound.fns[function.idx()].scope);
         self.push_task(Task::MarkCreated(id), context);
         let flags = self.hir[function].flags;
         let can_be_suspended = flags.intersects(Flags::ASYNC | Flags::GENERATOR);
+        if !can_be_suspended && matches!(self.hir[function].kind, FnKind::Decl | FnKind::Expr) {
+            self.hold_run_of_test_file(id);
+        }
         let is_strict = self.bound.is_strict_scope(context.lexical_scope);
         let is_arrow = self.hir.runtime_function_kind(function) == FnKind::Arrow;
         if can_be_suspended && is_strict && !is_arrow {

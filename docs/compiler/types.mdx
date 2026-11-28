@@ -102,6 +102,6 @@ class Cursor {
 }
 ```
 
-The build has to prove that every value you store in an `int32` is a whole number in range. Where it can't, it stops (`TS100031`), and the error says what to write. That's usually `| 0`.
+The build has to prove that every value you store in an `int32` is a whole number in range. Where it can't, it stops (`TS100031`), and the error says what to write. That's usually `| 0`. Like TypeScript, it takes an assertion such as `value as 1 | 2` or `value!` at its word, and a test that a later call undoes. Where that word doesn't hold, the value is what it is under `bun run`.
 
 `int32` only counts as the whole type of a variable, field, parameter or return value. Inside `int32[]` or `Map<string, int32>` it's a `number`.

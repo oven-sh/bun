@@ -1,4 +1,4 @@
-use crate::{Options, Scratch};
+use crate::{Options, Rejection, Scratch};
 use bun_sema::atom::{Atom, Intern};
 use bun_sema::hir::*;
 use bun_sema::resolve::Dialect;
@@ -296,5 +296,80 @@ fn stray_no_break_space_is_blank_in_compiled_jsx_text() {
         with_parsed(text, options, |file, bytes| {
             assert_eq!(jsx_texts(file, bytes), [REPLACEMENT_CHARACTER]);
         });
+    }
+}
+
+/// Options of a file of a test run, in the strict parser or in the one that recovers.
+fn test_run(recovers: bool) -> Options {
+    Options {
+        compiles: true,
+        accepts_legacy_octal: true,
+        recovers,
+        ..Default::default()
+    }
+}
+
+fn errors_in(text: &str, options: Options) -> Result<Vec<u32>, Rejection> {
+    let mut scratch = Scratch::default();
+    let parsed = crate::parse_with_own_atoms(text.as_bytes(), options, &mut scratch);
+    let file = parsed.map_err(|it| it.why)?.file;
+    Ok(file.diagnostics.iter().map(|it| it.code).collect())
+}
+
+#[test]
+fn escapes_that_are_no_octal_escapes_are_errors_in_templates_without_a_tag() {
+    // "Hexadecimal digit expected." or, behind the braces, "An extended Unicode escape value must be between ...".
+    let cases: &[(&str, &[u32])] = &[
+        (r"`\xZZ`", &[1125]),
+        (r"`\x1`", &[1125]),
+        (r"`\x`", &[1125]),
+        (r"`\u{}`", &[1125]),
+        (r"`\u12`", &[1125]),
+        (r"`\u{110000}`", &[1198]),
+        (r"`a${b}\xZZ`", &[1125]),
+        (r"`\x1 \x2`", &[1125, 1125]),
+        (r"`\1 \xZZ`", &[1125]),
+    ];
+    for &(text, expected) in cases {
+        let untagged = errors_in(text, test_run(true));
+        assert_eq!(untagged, Ok(expected.to_vec()), "{text}");
+        assert_eq!(
+            errors_in(text, test_run(false)),
+            Err(Rejection::Reported),
+            "{text}"
+        );
+        let tagged = errors_in(&format!("f{text}"), test_run(true));
+        assert_eq!(tagged, Ok(vec![]), "tagged {text}");
+    }
+}
+
+#[test]
+fn octal_escapes_in_templates_without_a_tag_have_no_errors_in_test_runs() {
+    let cases = [
+        r"`\1a`",
+        r"`a${b}\101`",
+        r"`\8`",
+        r"`\101${b}`",
+        r"`\1$b`",
+        r"`\8${b}`",
+        r"f`\1${b}`",
+    ];
+    for text in cases {
+        assert_eq!(errors_in(text, test_run(true)), Ok(vec![]), "{text}");
+    }
+}
+
+#[test]
+fn an_octal_escape_at_the_end_of_a_template_piece_is_reported_in_test_runs() {
+    let cases = [
+        r"`\1`",
+        r"`\1${b}`",
+        r"`\12${b}`",
+        r"`a${b}\7${c}`",
+        r"`a${b}\7`",
+        r"`\18`",
+    ];
+    for text in cases {
+        assert_eq!(errors_in(text, test_run(true)), Ok(vec![1487]), "{text}");
     }
 }

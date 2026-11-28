@@ -1566,6 +1566,7 @@ impl Checker<'_, '_> {
         ) else {
             return;
         };
+        let sym = files.export_symbol_of_value_symbol_if_exported(sym);
         let report = |c: &mut Self, equals: u32, default: u32| {
             let code = if is_export_equals { equals } else { default };
             c.error_at(

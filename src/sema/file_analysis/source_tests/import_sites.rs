@@ -324,17 +324,17 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
     (
         "a.mts",
         r#"import { createRequire } from "node:module"; import.meta.url = other; createRequire(import.meta.url)("a");"#,
-        &[],
+        &["a"],
     ),
     (
         "a.mts",
         r#"import { createRequire } from "node:module"; const meta = import.meta; createRequire(import.meta.url)("a");"#,
-        &[],
+        &["a"],
     ),
     (
         "a.mts",
         r#"import { createRequire } from "node:module"; import.meta.tag`x`; createRequire(import.meta.url)("a");"#,
-        &[],
+        &["a"],
     ),
     (
         "a.mts",
@@ -789,7 +789,7 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
     (
         "a.cjs",
         r#"var m = require("module"); m.createRequire(other || __filename)("a");"#,
-        &["module"],
+        &["module", "a"],
     ),
     (
         "a.cjs",
@@ -1210,7 +1210,19 @@ const BINDINGS_OF_IMPORT_META_REQUIRE: &[(&str, &[&str])] = &[
         r#"function f(load) { load("a"); } f(import.meta.require);"#,
         &[],
     ),
-    (r#"const { require: load } = import.meta; load("a");"#, &[]),
+    (
+        r#"const { require: load } = import.meta; load("a");"#,
+        &["a"],
+    ),
+    (r#"const meta = import.meta; meta.require("a");"#, &["a"]),
+    (
+        r#"let { require: load } = import.meta; load = other; load("a");"#,
+        &[],
+    ),
+    (
+        r#"let meta = import.meta; meta = other; meta.require("a");"#,
+        &[],
+    ),
     (r#"const load = import.meta.resolve; load("a");"#, &[]),
     (r#"const load = other.require; load("a");"#, &[]),
     (
@@ -4099,6 +4111,29 @@ fn property_values_are_known_on_endless_parent_paths() {
                 .any(|&(_, path)| s.workspace.text(path) == "./a/a.txt")
         );
     });
+}
+
+#[test]
+fn finds_every_file_of_a_list_that_is_pushed_to_many_times() {
+    for (count, guard) in [(12, ""), (13, ""), (13, "if (c) "), (400, "")] {
+        let pushes: String = (0..count)
+            .map(|it| format!("{guard}files.push(path.join(import.meta.dirname, 'f{it}.txt'));\n"))
+            .collect();
+        let text = format!(
+            "import fs from 'node:fs'; import path from 'node:path'; const files = [];\n{pushes}for (const file of files) fs.readFileSync(file);"
+        );
+        with_workspace(|w| {
+            let s = &w.analyze(&Source::new("a.mjs", &text), &w.fold_inputs(&TARGET));
+            let read = s.analysis.module_relative_reads.iter();
+            let mut paths: Vec<String> = read
+                .map(|&(_, path)| s.workspace.text(path).to_string())
+                .collect();
+            let mut expected: Vec<String> = (0..count).map(|it| format!("./f{it}.txt")).collect();
+            paths.sort();
+            expected.sort();
+            assert_eq!(paths, expected, "{count} pushes {guard}");
+        });
+    }
 }
 
 #[test]

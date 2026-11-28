@@ -230,7 +230,12 @@ impl RunContents {
 
     pub(crate) fn plan_of_files(&self) -> TestRunPlan {
         let whose = self.whose.iter();
+        let mut is_test_file = vec![false; self.whose.len()];
+        for file in &self.test_files {
+            is_test_file[file.idx()] = true;
+        }
         TestRunPlan {
+            is_test_file,
             has_read_only_builtins: whose.map(|&it| it == WhoseFile::OfProduct).collect(),
             rejects_uncompiled_code: self.rejects_uncompiled_code.clone(),
             ..TestRunPlan::default()
@@ -587,6 +592,7 @@ pub(crate) fn collect_run_contents(
 
 #[derive(Default)]
 pub(crate) struct TestRunPlan {
+    pub is_test_file: Vec<bool>,
     pub has_read_only_builtins: Vec<bool>,
     pub rejects_uncompiled_code: Vec<bool>,
     pub is_changed_on_disk_by_run: Vec<bool>,

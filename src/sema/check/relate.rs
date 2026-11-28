@@ -529,6 +529,8 @@ const MANY_TARGETS: usize = 512;
 struct LiteralWalk<'p> {
     ahead: &'p [TypeId],
     only_literals: bool,
+    /// All that is ahead, literals or not, until a type of the other union is not among it.
+    members: &'p [TypeId],
 }
 
 /// How many types `a` and `b` have in common from the start.
@@ -3044,6 +3046,18 @@ impl<'p, 's> Checker<'p, 's> {
         self.task.stop_writing_immediately();
     }
 
+    #[inline]
+    fn close_cycle_through_measurement(&mut self, sym: Sym) {
+        let measurements = &self.unfinished_measurements;
+        let is_inside = measurements
+            .last()
+            .is_some_and(|innermost| self.stack.len() > innermost.stack_height);
+        let of_sym = measurements.iter().rfind(|it| it.sym == sym);
+        if is_inside && let Some(&of_sym) = of_sym {
+            self.close_cycle_of_measurement(of_sym);
+        }
+    }
+
     /// `getVariancesWorker`. The caller's cache lookup of `sym` missed.
     fn variances_worker(&mut self, sym: Sym) -> &'s [u8] {
         if Some(sym) == self.global_type_of_arity(known::Array, 1)
@@ -3053,6 +3067,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if self.variances_marked_empty.contains(&sym) {
             self.note_variance_cycle();
+            self.close_cycle_through_measurement(sym);
             return &[];
         }
         // TypeScript 7.1: variances measured inside a cycle of generic types depend on which type was measured first.
@@ -3086,13 +3101,17 @@ impl<'p, 's> Checker<'p, 's> {
             // `links.variances = []VarianceFlags{}`: `sym` reads as empty until its in-progress measurement finishes.
             return known.unwrap_or_else(|| {
                 self.variances_marked_empty.push(sym);
+                self.close_cycle_through_measurement(sym);
                 &[]
             });
         }
         // This has the value from the first valid commit, and what finished measurements have
         // shared. See `commit::Claims`.
+        let measures_again = self.measures_again(sym);
         let serial = self.p.serial_variances.lock().get(&sym).copied();
-        if let Some(variances) = serial {
+        if let Some(variances) = serial
+            && !measures_again
+        {
             return self.take_shared_variances(sym, variances);
         }
         let (cuts, outermost) = (
@@ -3109,7 +3128,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // Only a thread that isn't measuring claims or waits. See `commit::Claims` for why.
         let mut has_claim = false;
-        if self.task.commits() && !self.in_variance_computation {
+        if self.task.commits() && !self.in_variance_computation && !measures_again {
             match self.p.claim_variances(sym, cuts == 0) {
                 VarianceClaim::Known(variances) => {
                     return self.take_shared_variances(sym, variances);
@@ -3120,6 +3139,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let before = self.sharing_blockers();
         self.variances_in_progress.push(sym);
+        self.unfinished_measurements.push(UnfinishedMeasurement {
+            sym,
+            stack_height: self.stack.len(),
+        });
         let was_computing = std::mem::replace(&mut self.in_variance_computation, true);
         // `resolutionStart`: resolutions in progress when the outermost variance computation began
         // are restarted if needed, and the computation in progress stops them from recursing
@@ -3188,6 +3211,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.in_variance_computation = was_computing;
         self.resolution_start = resolution_start;
         self.variances_in_progress.pop();
+        self.unfinished_measurements.pop();
         self.variances_marked_empty.retain(|&it| it != sym);
         // It stays allocated until the check ends, published or not. It's only a few bytes.
         let variances: &'s [u8] = self.arena.alloc_slice_copy(&variances);
@@ -3246,11 +3270,15 @@ impl<'p, 's> Checker<'p, 's> {
     ///
     /// `variances_measured` has what was stored since it began: the variances of `sym` and of the symbols
     /// measured inside it. Each is valid for every caller in this task (`end_scope`), which is what lets
-    /// the task commit it. It's shared now, with running tasks, only if both of these also hold:
+    /// the task commit it. It's shared now, with running tasks, only if all of these also hold:
     /// - Nothing was reported. A thread that takes the result doesn't evaluate the code that reported it.
     /// - Nothing was used that could make the next commit find this task invalid, and the task
     ///   isn't discarded. What such a task computed is dropped, and what's shared can't be
     ///   retracted. What happens to the task later doesn't matter, because the measurement is over.
+    /// - The task has committed every cycle through a measurement. A thread that takes the variances evaluates the query
+    ///   in the cycle with them and closes no cycle, so they wait for the commit that has the query's result.
+    ///   `share_variances_awaiting_commit` is the exception: if a limit discards the visit of the first file in program
+    ///   order that isn't checked yet, its commit won't come, and it shares the measurements that it has finished.
     ///
     /// A value that isn't shared is recorded (`OrderDependent`) as if every variance in it had been used.
     /// The next commit compares it with the entry in `serial_variances` at that point, and registers it
@@ -3258,8 +3286,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// register a different value, and it would go unnoticed that this task used its own.
     ///
     /// A thread that takes the flags instead of measuring misses out on two things:
-    /// - The entries of `relations` for the marker types and for what was compared inside. They're plain
-    ///   results, so a thread that needs one computes it. Each has its own `REPORTS_UNMEASURABLE` and
+    /// - The entries of `relations` for the marker types and for what was compared inside. Without such a cycle they're
+    ///   plain results, so a thread that needs one computes it. Each has its own `REPORTS_UNMEASURABLE` and
     ///   `REPORTS_UNRELIABLE`, every hit adds them to `reliability`, and the code that sets them checks
     ///   the type (`HAS_MARKER`), not whether a measurement is in progress. So a later measurement gets
     ///   the same marks from an entry as from the comparison. The only test of `in_variance_computation`,
@@ -3276,9 +3304,18 @@ impl<'p, 's> Checker<'p, 's> {
         let now = self.sharing_blockers();
         let reason = match () {
             _ if (now.0, now.1) != (before.0, before.1) => Some(NotShared::Diagnostic),
-            _ if now.2 != before.2 || self.task.was_discarded() => Some(NotShared::Notes),
+            _ if now.2 != before.2
+                || self.has_uncommitted_measurement_cycle
+                || self.task.overlaps_a_cycle_commit()
+                || self.task.was_discarded() =>
+            {
+                Some(NotShared::Notes)
+            }
             _ => None,
         };
+        if reason == Some(NotShared::Notes) && self.has_uncommitted_measurement_cycle {
+            self.note_variances_awaiting_commit();
+        }
         let measured = &self.variances_measured[..];
         let may_share = reason.is_none();
         // What was measured inside can be complete even if the outermost result isn't.
@@ -3300,6 +3337,39 @@ impl<'p, 's> Checker<'p, 's> {
                 inferred: 0,
             });
         }
+    }
+
+    fn note_variances_awaiting_commit(&mut self) {
+        let awaiting = self.variances_awaiting_commit.get_mut();
+        let uses_no_others =
+            (self.order_dependent.keys()).all(|noted| awaiting.iter().any(|(sym, _)| sym == noted));
+        if uses_no_others
+            && self.task.is_trusted_about_every_cycle()
+            && !self.task.overlaps_a_cycle_commit()
+            && !self.task.was_discarded()
+        {
+            awaiting.extend_from_slice(&self.variances_measured);
+        }
+    }
+
+    pub(super) fn share_variances_awaiting_commit(&self) {
+        let awaiting = self.variances_awaiting_commit.take();
+        if !awaiting.is_empty() && !self.task.is_trusted() && !self.task.was_discarded() {
+            self.p.share_variances(&awaiting, true, None);
+            if let Some(file) = self.task.file {
+                let mut by_file = self.p.variances_of_discarded_visits.lock();
+                by_file.extend(awaiting.iter().map(|&(sym, _)| (sym, file)));
+            }
+        }
+    }
+
+    /// True if a visit of this file that a limit discarded shared the variances of `sym`. The last visit measures them
+    /// again, because the queries in the measurement's cycles get their results from it.
+    fn measures_again(&self, sym: Sym) -> bool {
+        self.task.is_trusted()
+            && self.task.file.is_some_and(|file| {
+                self.p.variances_of_discarded_visits.lock().get(&sym) == Some(&file)
+            })
     }
 
     /// Call right after `relate_variances` on the type arguments `sources` and `targets` of `sym`.
@@ -4134,7 +4204,7 @@ impl<'p, 's> Checker<'p, 's> {
         } = self.undefined_stripped_target_if_needed(sources, target);
         let (mut walk, in_common) = self.begin_literal_walk(sources, target);
         for (i, &t) in sources.iter().enumerate().skip(in_common) {
-            if self.is_literal_ahead(&mut walk, t) {
+            if self.is_ahead(&mut walk, t) {
                 continue;
             }
             // Many unions are mappings of one another, so the members at the same index are related.
@@ -4174,8 +4244,19 @@ impl<'p, 's> Checker<'p, 's> {
         let walk = LiteralWalk {
             ahead: &targets[in_common..],
             only_literals,
+            members: targets,
         };
         (walk, in_common)
+    }
+
+    /// True if `walk` has `t` ahead of it. The members of a filtered union are met on one way through the union.
+    fn is_ahead(&self, walk: &mut LiteralWalk<'p>, t: TypeId) -> bool {
+        if self.is_literal_ahead(walk, t) {
+            return true;
+        }
+        let found = walk.members.iter().position(|&member| member == t);
+        walk.members = found.map_or(&[], |at| &walk.members[at + 1..]);
+        found.is_some()
     }
 
     /// True if `t` is a literal that `walk` has ahead of it. The walk moves behind `t`, or to where it would be.
@@ -4686,6 +4767,7 @@ impl<'p, 's> Checker<'p, 's> {
         let variance_reads = self.in_progress_variance_reads;
         let scope = self.begin_scope();
         let cuts = self.comparisons_of_deeply_nested_types;
+        let any_returns = self.any_returns_in_resolution;
         r.push_maybe_key(key);
         let save_expanding = r.expanding;
         // A member of a union or a constraint is pushed on one stack only, so an index doesn't give the push order.
@@ -4732,9 +4814,14 @@ impl<'p, 's> Checker<'p, 's> {
         {
             self.task.hold_back();
         }
+        let has_any_for_return =
+            self.any_returns_in_resolution != any_returns && self.lowest_taint == self.frames.len();
         let stored = self.end_scope(scope).ok();
         let replaces = self.in_progress_variance_reads != variance_reads;
         let propagating = self.reliability;
+        if has_any_for_return && !r.is_for_query && !r.overflow {
+            self.keep_any_return_comparison(key, result, propagating);
+        }
         self.reliability |= save_reliability;
         if recursion & REC_SOURCE != 0 {
             r.source_stack.pop();
@@ -4836,6 +4923,34 @@ impl<'p, 's> Checker<'p, 's> {
             self.insert_relation(key, entry, stored);
         } else {
             (self.p.relations).rewrite(&self.task, key, entry, stored);
+        }
+    }
+
+    /// `getNonCircularReturnTypeOfSignature`, for the comparisons of `r`.
+    fn return_type_to_compare(&mut self, r: &Relater, sig: SigId) -> TypeId {
+        if let Some(cached_type) = self.cached_return_type(sig) {
+            return cached_type;
+        }
+        let waiting = self.comparisons_waiting_for_returns.len();
+        (self.comparisons_waiting_for_returns).extend_from_slice(&r.maybe_keys);
+        let ty = self.non_circular_return_type_of_signature(sig);
+        self.comparisons_waiting_for_returns.truncate(waiting);
+        ty
+    }
+
+    /// `relation.set(key, entry)` for a comparison that read `any` for a return type another comparison waits for. Nothing
+    /// replaces the entry, unless that one compares the same types. It's only valid for the task, which began there.
+    #[cold]
+    #[inline(never)]
+    fn keep_any_return_comparison(&mut self, key: Key, result: Ternary, propagating: u8) {
+        let entry = match result {
+            Ternary::TRUE => SUCCEEDED,
+            _ if result.holds() => return,
+            _ => FAILED,
+        };
+        if !self.comparisons_waiting_for_returns.contains(&key) {
+            let entries = &mut self.relations_of_this_task;
+            entries.entry(key).or_insert(entry | propagating);
         }
     }
 
@@ -7162,7 +7277,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Same, for two properties that may be copies of a member. A spread copies a member with other modifiers, and the
     /// copy is another symbol.
     pub(super) fn is_same_uninstantiated_member(&mut self, a: &Prop, b: &Prop) -> bool {
-        let differing = (a.flags ^ b.flags).difference(PropFlags::THISLESS);
+        let differing = (a.flags ^ b.flags).difference(PropFlags::OF_INHERITANCE);
         differing.is_empty() && self.have_same_uninstantiated_symbol(a, b)
     }
 
@@ -7181,7 +7296,8 @@ impl<'p, 's> Checker<'p, 's> {
             return true;
         }
         let (own_a, own_b) = (self.mapper_of_prop(a.0), self.mapper_of_prop(b.0));
-        let (a, b) = (self.compose(own_a, a.1), self.compose(own_b, b.1));
+        let a = self.compose_for_member(a.0, own_a, a.1);
+        let b = self.compose_for_member(b.0, own_b, b.1);
         // A mapper stores `H.this -> H.this`, which maps nothing.
         let types = &self.types();
         let changed_pairs = |m| types.mapping(m).iter().filter(|pair| pair.0 != pair.1);
@@ -8262,11 +8378,11 @@ impl<'p, 's> Checker<'p, 's> {
         if check_mode & IGNORE_RETURN_TYPES != 0 {
             return result;
         }
-        let target_return = self.non_circular_return_type_of_signature(target);
+        let target_return = self.return_type_to_compare(r, target);
         if target_return == TypeId::VOID || target_return == TypeId::ANY {
             return result;
         }
-        let source_return = self.non_circular_return_type_of_signature(source);
+        let source_return = self.return_type_to_compare(r, source);
         if let Some(expected) = self.sig_predicate(target) {
             match self.sig_predicate(source) {
                 Some(actual) => {

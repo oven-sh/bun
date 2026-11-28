@@ -782,7 +782,8 @@ fn in_a_test_run_a_file_notes_the_names_that_a_named_object_is_asked_for_and_doe
 
 #[test]
 fn replaced_member_receivers_are_exposed() {
-    const IMPORTS: &str = "import { jest, mock, spyOn, vi } from 'bun:test'; ";
+    const IMPORTS: &str =
+        "import { afterEach, beforeEach, expect, jest, mock, spyOn, vi } from 'bun:test'; ";
     for source in [
         "Object.defineProperty(process, 'exit', { value() { return super.valueOf(); } });",
         "Object.defineProperty(process, 'exit', { value() { return (() => this)(); } });",
@@ -797,6 +798,36 @@ fn replaced_member_receivers_are_exposed() {
         "jest.spyOn(process, 'exit').mockReturnThis();",
         "const spy = vi.spyOn(process, 'exit'); f(spy.mock.contexts[0]);",
         "let spy; spy = spyOn(process, 'exit'); f(spy.mock.instances);",
+        "const spy = spyOn(process, 'exit'); f(spy.mock);",
+        "const spy = spyOn(process, 'exit'); const state = () => spy.mock;",
+        "const spy = spyOn(process, 'exit'); spy.mock[key];",
+        "const spy = spyOn(process, 'exit'); const state = spy.mock; f(state);",
+        "const spy = spyOn(process, 'exit'); try { throw spy.mock; } catch (state) { f(state); }",
+        "const spy = spyOn(process, 'exit'); export default spy.mock;",
+        "const spy = spyOn(process, 'exit'); const { mock: state = f() } = spy; f(state);",
+        "const state = ({ mock }) => mock; f(state(spyOn(process, 'exit')));",
+        "const [{ mock: state }] = [spyOn(process, 'exit')]; f(state);",
+        "const { mock: { contexts } } = spyOn(process, 'exit'); f(contexts);",
+        "const { mock: { calls, ...rest } } = spyOn(process, 'exit'); f(rest);",
+        "let state; ({ mock: state } = spyOn(process, 'exit')); f(state);",
+        "for (const { mock } of [spyOn(process, 'exit')]) f(mock);",
+        "f(spyOn(process, 'exit'));",
+        "const spy = spyOn(process, 'exit'); f(spy);",
+        "export const spy = spyOn(process, 'exit');",
+        "const spy = spyOn(process, 'exit'); export { spy };",
+        "export const make = () => spyOn(process, 'exit');",
+        "mock.module('./other', () => spyOn(process, 'exit'));",
+        "f(jest.fn(() => spyOn(process, 'exit')));",
+        "let g = () => {}; g = f; spyOn(process, 'exit').mockImplementation(g);",
+        "let a, b; a = spyOn(process, 'exit'); b = a; f(b);",
+        "const spy = spyOn(process, 'exit'); spy.mockImplementation.call(spy, f);",
+        "const { mockImplementation } = spyOn(process, 'exit'); f(mockImplementation);",
+        "const { mockReturnThis } = spyOn(process, 'exit'); f(mockReturnThis);",
+        "const give = g => spyOn(process, 'exit').mockImplementation(g); f(give);",
+        "spyOn(process, 'exit').mockImplementation([f][0]);",
+        "const give = undefined => spyOn(process, 'exit').mockImplementation(undefined); f(give);",
+        "Object.defineProperty(process, 'exit', { ...f, configurable: true });",
+        "Object.assign(process, { ...f });",
     ] {
         let source = format!("{IMPORTS}{source}");
         with_case(TEST_RUN, &source, |case| {
@@ -817,6 +848,16 @@ fn replaced_member_receivers_are_exposed() {
         "spyOn(process, 'exit'); mock().mockImplementation(function () { return this; });",
         "spyOn(process, 'exit'); jest.fn().mockName('a').mockImplementation(function () { return this; });",
         "const spy = spyOn(process, 'exit'); f(spy.mock.calls, spy.mock.results, g.instances);",
+        "const spy = spyOn(process, 'exit'); if (spy.mock) f(spy.mock['calls'], typeof spy.mock);",
+        "spyOn(process, 'exit'); jest.mock('./other', () => ({})); f(mock().mock);",
+        "const { mock: { calls } } = spyOn(process, 'exit'); f(calls);",
+        "let spy; beforeEach(() => { spy = spyOn(process, 'exit').mockImplementation(() => {}); }); afterEach(() => spy.mockRestore());",
+        "const spy = spyOn(process, 'exit'); expect(spy).toHaveBeenCalled(); expect(spy.mock.calls.length).toBe(1);",
+        "const spy = spyOn(process, 'exit').mockReturnValue(1).mockName('a'); spy.mockClear(); spy();",
+        "beforeEach(() => spyOn(process, 'exit').mockImplementation(() => {}));",
+        "let a, b; a = spyOn(process, 'exit'); b = a; b.mockRestore();",
+        "function quiet() {} spyOn(process, 'exit').mockImplementation(quiet);",
+        "spyOn(process, 'exit').mockImplementation(undefined);",
     ] {
         let source = format!("{IMPORTS}{source}");
         with_case(TEST_RUN, &source, |case| {

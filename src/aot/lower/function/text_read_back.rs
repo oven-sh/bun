@@ -3,7 +3,7 @@ use bun_sema::atom::Interner;
 use bun_sema::erasure::{ReplacedText, TypeRanges};
 use bun_sema::fold::Decisions;
 use bun_sema::hir::{
-    Branches, ExprId, ExprKind, File, FileKind, Flags, MemberId, StmtId, StmtKind, UnOp,
+    Branches, Expr, ExprId, ExprKind, File, FileKind, Flags, MemberId, StmtId, StmtKind, UnOp,
     end_of_expr, start_of,
 };
 use bun_sema::node::{Node, NodeData};
@@ -11,6 +11,7 @@ use bun_sema::resolve::ScriptKind;
 use bun_sema::session::Session;
 use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 
+use crate::load::objects_created_below::is_created_below;
 use crate::load::test_runner_names::{skip_to_written_use, written_name_of_local};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -203,7 +204,17 @@ fn describe_expression<'t>(
     atoms: &'t Interner<'_>,
     expression: ExprId,
 ) -> Option<Part<'t>> {
-    let (what, named) = match file[expression].kind {
+    let Expr { kind, pos, end, .. } = file[expression];
+    if is_created_below(file, expression) {
+        return Some(Part {
+            what: What::Call,
+            name: b"create",
+            start: pos,
+            end,
+            depth: None,
+        });
+    }
+    let (what, named) = match kind {
         ExprKind::Call(call) => (What::Call, Some(file[call].callee)),
         ExprKind::New(call) => (What::Construction, Some(file[call].callee)),
         ExprKind::TaggedTemplate(call) => (What::TaggedTemplate, Some(file[call].callee)),
@@ -224,8 +235,8 @@ fn describe_expression<'t>(
     Some(Part {
         what,
         name: named.map_or(&b""[..], |named| find_name(file, atoms, named)),
-        start: file[expression].pos,
-        end: file[expression].end,
+        start: pos,
+        end,
         depth: None,
     })
 }
@@ -307,6 +318,16 @@ fn find_parts<'t>(file: &File<'_>, atoms: &'t Interner<'_>, texts: &Stretches) -
                 depth: Some(starts_around.len() - outside),
                 ..part
             });
+            if let NodeData::Expr(expression) = file.data(node)
+                && is_created_below(file, expression)
+            {
+                parts.push(Part {
+                    what: What::Name,
+                    name: b"Object",
+                    depth: None,
+                    ..part
+                });
+            }
         }
         starts_around.extend(start_of_level);
         let first = open.len();
@@ -400,6 +421,7 @@ pub(super) fn find_difference_in_kept_texts(
             experimental_decorators: hir.legacy_decorators,
             every_file_is_a_module: hir.is_forced_module,
             reads_jsdoc: false,
+            accepts_legacy_octal: true,
             ignores_pure_comments: false,
         },
     };
@@ -533,6 +555,7 @@ mod tests {
             experimental_decorators: false,
             every_file_is_a_module: false,
             reads_jsdoc: false,
+            accepts_legacy_octal: false,
             ignores_pure_comments: false,
         };
         let mut hir = parse_for_compile(session.arena(), &options, text_of_tree.as_bytes(), &atoms);

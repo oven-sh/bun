@@ -1036,12 +1036,22 @@ static void requireCompiledModuleInto(Zig::GlobalObject* globalObject, JSCommonJ
     if (referrer)
         target->compiledModule = module.index();
     bool isAdopted = false;
+    String required;
+    String requiredBy;
     // Test runs manage their own entries of the require map.
     bool isOwnRequire = referrer && !reloadsFilesFromDisk() && requirer->compiledModule == referrer->index();
     if (requirer && (!referrer || isOwnRequire)) {
         if (!referrer) {
             target->compiledModuleLoadedInto = module.index();
             AOT::willRequireFromUncompiledCode(globalObject, module, requirer);
+            JSValue filename = isBunTest && AOT::evaluatedBy(globalObject, module) == AOT::LoadedBy::Nobody ? requirer->filename() : JSValue();
+            RETURN_IF_EXCEPTION(scope, void());
+            if (filename && filename.isString()) {
+                required = key->value(globalObject);
+                RETURN_IF_EXCEPTION(scope, void());
+                requiredBy = asString(filename)->value(globalObject);
+                RETURN_IF_EXCEPTION(scope, void());
+            }
         }
         isAdopted = tryAdoptModuleObject(globalObject, target, module, key);
         RETURN_IF_EXCEPTION(scope, void());
@@ -1061,12 +1071,14 @@ static void requireCompiledModuleInto(Zig::GlobalObject* globalObject, JSCommonJ
     }
     bool readsExportsOffVariable = tryBindExportsVariable(globalObject, target, module);
     RETURN_IF_EXCEPTION(scope, void());
-    if (readsExportsOffVariable || isAdopted) {
-        scope.release();
+    bool isBooked = !required.isNull() && globalObject->onLoadPlugins.requirersOfCompiledFiles.add(required, requiredBy).isNewEntry;
+    if (readsExportsOffVariable || isAdopted)
         AOT::requireModule(globalObject, module, referrer, AOT::ReadsExports::No);
-        return;
-    }
-    RELEASE_AND_RETURN(scope, requireInto(globalObject, target, module, referrer));
+    else
+        requireInto(globalObject, target, module, referrer);
+    // `bun test` takes the object of a file that failed away from its requirer, too.
+    if (scope.exception() && isBooked) [[unlikely]]
+        globalObject->onLoadPlugins.requirersOfCompiledFiles.remove(required);
 }
 
 JSObject* loaderOfCompiledESModule(Zig::GlobalObject* globalObject, const String& path, bool hasImportAttributes)
@@ -2402,6 +2414,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &isLoadingUnderVitest,
     &evictCachedSource,
     &printsDataFileAsJavaScript,
+    nullptr,
     &didDiscardModuleEvaluation,
     &isPatchPending,
     &hasRunningFactory,
@@ -2426,7 +2439,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &isESModuleInNode,
 };
 // A member missing from the initializer is null, which tells the engine that the host does not support it.
-static_assert(sizeof(AOT::ModuleHost) == 68 * sizeof(void*));
+static_assert(sizeof(AOT::ModuleHost) == 69 * sizeof(void*));
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);
 bool recordAddonLoadedFromDisk(JSGlobalObject*, const String& path);

@@ -13,6 +13,8 @@ pub struct CompileParseOptions<'a> {
     pub experimental_decorators: bool,
     pub every_file_is_a_module: bool,
     pub reads_jsdoc: bool,
+    /// The octal forms of JavaScript are accepted in TypeScript, as `bun run` does.
+    pub accepts_legacy_octal: bool,
     pub ignores_pure_comments: bool,
 }
 
@@ -74,6 +76,7 @@ pub fn parse_for_compile_in<'s>(
         attach_comments: false,
         compiles: true,
         reads_as_bun_run: true,
+        accepts_legacy_octal: options.accepts_legacy_octal,
         ignores_pure_comments: options.ignores_pure_comments,
         skips_function_blocks: false,
         reads_module_statements_alone: false,

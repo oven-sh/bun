@@ -1433,7 +1433,8 @@ impl<'p> Printer<'_, 'p, '_> {
                     .into_iter()
                     .map(|parameter| self.c.type_param(file, parameter))
                     .collect();
-                let outer_scope = self.enter_new_scope(&[], &infer_type_parameters, None, false);
+                let mapper = MapperId::IDENTITY;
+                let outer_scope = self.enter_new_scope(&[], &infer_type_parameters, None, mapper);
                 let extends = self.visit_existing_type_node(file, extends, 0);
                 let yes = self.visit_existing_type_node(file, yes, 0);
                 self.leave_scope(&outer_scope);
@@ -1462,7 +1463,7 @@ impl<'p> Printer<'_, 'p, '_> {
             TypeNodeKind::Mapped(m) => {
                 let mapped = hir[m];
                 let key = self.c.type_param(file, mapped.param);
-                let outer_scope = self.enter_new_scope(&[], &[key], None, false);
+                let outer_scope = self.enter_new_scope(&[], &[key], None, MapperId::IDENTITY);
                 let name = self.type_parameter_to_name(key);
                 // The node builder sets `EFSingleLine` on its copy, not on what is inside. The
                 // transformer leaves the node unchanged.
@@ -1600,7 +1601,7 @@ impl<'p> Printer<'_, 'p, '_> {
             .iter()
             .map(|tp| self.c.declared_type_of_type_parameter(file, tp))
             .collect();
-        self.enter_new_scope(&parameters, &type_parameters, None, false)
+        self.enter_new_scope(&parameters, &type_parameters, None, MapperId::IDENTITY)
     }
 
     /// `trackExistingEntityName(node.Name())` for the `TypeParameterDeclaration` `tp`. A missing
@@ -2087,8 +2088,13 @@ impl<'p> Printer<'_, 'p, '_> {
             .rev()
             .find(|local| local.0 == first && meaning == SymFlags::VALUE);
         let there = match parameter {
-            Some(&(_, Some(parameter))) => Some(parameter),
-            Some(&(_, None)) => return here.is_some(),
+            Some(&(_, Some(parameter), _)) => Some(parameter),
+            Some(&(_, None, is_expanded)) => {
+                if here.is_some() && !is_expanded {
+                    self.report_entity_name(file, node);
+                }
+                return here.is_some();
+            }
             None => {
                 self.c
                     .note_use_of_tracked_name(at.file, at.scope, first, meaning);
@@ -2108,7 +2114,7 @@ impl<'p> Printer<'_, 'p, '_> {
             }
             (Some(there), None) => there,
             _ => {
-                self.report_inference_fallback(file, node);
+                self.report_entity_name(file, node);
                 return true;
             }
         };
@@ -2117,11 +2123,27 @@ impl<'p> Printer<'_, 'p, '_> {
             return false;
         }
         if !self.c.is_symbol_accessible_at(symbol, meaning, true, at) {
-            self.report_inference_fallback(file, node);
+            self.report_entity_name(file, node);
             return true;
         }
         self.track_symbol(symbol, meaning);
         false
+    }
+
+    /// `ReportInferenceFallback` for the entity name `node`. The parameter name in a type predicate isn't a node here, and
+    /// then `node` is the predicate.
+    fn report_entity_name(&mut self, file: FileId, node: hir::Node) {
+        let hir = self.c.hir(file);
+        match hir.data(node) {
+            NodeData::Type(predicate)
+                if matches!(hir[predicate].kind, TypeNodeKind::Predicate { .. }) =>
+            {
+                if let Some(tracker) = self.tracker.as_deref_mut() {
+                    tracker.report_predicate_parameter(self.c, file, predicate);
+                }
+            }
+            _ => self.report_inference_fallback(file, node),
+        }
     }
 
     /// `serializeTypeName` for the entity name `names` in `scope` of `file`. Returns `None` if its

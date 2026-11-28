@@ -442,14 +442,14 @@ fn configure_debugger(vm: &VirtualMachine, cli_flag: &bun_options_types::context
         CliDebugger::Enable(_) => Some("--inspect"),
         CliDebugger::Unspecified => None,
     };
-    let asked_by = flag.unwrap_or("BUN_INSPECT");
     if !crate::cli::startup_options::is_debugger_admitted() {
-        // `BUN_INSPECT_CONNECT_TO` does not say that anybody asked to debug this process: see below.
-        if debugger.mode != Mode::Connect {
+        // The variables may be set for every process of a terminal. Only a flag is meant for this one.
+        if let Some(flag) = flag {
             crate::cli::startup_options::exit_for_unadmitted_debugger(flag);
         }
         return;
     }
+    let asked_by = flag.unwrap_or("BUN_INSPECT");
     if bun_removable_features::is_removed(bun_removable_features::Feature::Inspector) {
         if debugger.mode != Mode::Connect {
             bun_core::warn!(
@@ -3518,6 +3518,7 @@ fn loader_refusal_error<const DATA_ONLY: bool>(
     let is_read_from_disk = loader.is_java_script_like()
         && lr.virtual_source.is_none()
         && !lr.path.text.starts_with(b"data:")
+        && !bun_options_types::standalone_path::is_bun_standalone_file_path(lr.path.text)
         && !bun_jsc::compiled_program::is_compiled_module(lr.path.text);
     if is_read_from_disk
         && let Some(error) = unreadable_file_error(global, specifier, referrer, log, lr.path.text)

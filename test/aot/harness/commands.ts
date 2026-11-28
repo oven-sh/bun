@@ -60,7 +60,13 @@ export const moreBuildFlags = (process.env.AOT_BUILD_FLAGS ?? "").split(" ").fil
 export const limitOfARun = 90_000;
 export const limitWithASAN = 240_000;
 
-export async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined>, limit?: number) {
+export async function spawned(
+  cmd: string[],
+  cwd: string,
+  env: Record<string, string | undefined>,
+  limit?: number,
+  hasOwnConsole = false,
+) {
   const behindTheFlag = cmd.indexOf("--aot") + 1 || (cmd[1] === "compile" && !cmd.includes("--library") ? 2 : 0);
   if (moreBuildFlags.length && behindTheFlag) cmd = cmd.toSpliced(behindTheFlag, 0, ...moreBuildFlags);
   // Where collections are forced a sweep overwrites dead cells.
@@ -84,6 +90,7 @@ export async function spawned(cmd: string[], cwd: string, env: Record<string, st
     stderr: "pipe",
     timeout,
     killSignal: "SIGKILL",
+    windowsHide: hasOwnConsole,
   });
   // A build that is asked to end says what each of its threads is still compiling. One that is killed says nothing.
   const secondsToAnswer = 3;

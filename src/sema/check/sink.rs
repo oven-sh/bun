@@ -12,7 +12,8 @@
 //! `QueryFrame::reported_from`. `Checker::leave` calls `settle_reported` for them:
 //! - If the result is final, they move to `Task::diagnostics`, tagged with the query.
 //! - If the result depends on a cycle, a trial or a rejected query (`drops_reported`), they're
-//!   dropped. The next evaluation reports them again.
+//!   dropped. The next evaluation reports them again. If a loop that's being analyzed is part of the cycle there's no such
+//!   evaluation, and they stay.
 //! - If the result depends on an incomplete flow-loop type (`taint_from`), they stay and belong to
 //!   the enclosing frame.
 //!
@@ -291,7 +292,8 @@ fn is_task_independent(q: Query) -> bool {
         | Query::InitializerIsUndefined(..)
         | Query::AliasTarget(_)
         | Query::WriteType(..)
-        | Query::Comparison(_) => true,
+        | Query::Comparison(_)
+        | Query::Variances(_) => true,
         Query::ReturnOfSignature(_)
         | Query::Shape(_)
         | Query::Properties(_)
@@ -556,13 +558,25 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// Records the files whose own tasks must evaluate whatever led to an error in `file`: `file` itself, and the files
-    /// the queries in progress are about. See `View::hides`.
+    /// Records the files about which the tasks of earlier files must evaluate whatever led to an error in `file`: `file`
+    /// itself, and the files the queries in progress are about. See `View::hides`.
     #[cold]
     pub(super) fn note_error_in(&mut self, file: FileId) {
-        let about = self.stack.iter().filter_map(|q| q.syntax());
-        let others = about.chain([file]).filter(|&it| self.task.file != Some(it));
-        self.files_with_errors.extend(others);
+        self.files_with_errors.insert(file);
+        let mut last = file;
+        for (q, frame) in self.stack.iter().zip(&self.frames).rev() {
+            // The last error was found under this one too.
+            if frame.serial <= self.work_at_last_error {
+                break;
+            }
+            if let Some(about) = q.syntax()
+                && about != last
+            {
+                self.files_with_errors.insert(about);
+                last = about;
+            }
+        }
+        self.work_at_last_error = self.work;
     }
 
     /// True if this task doesn't report an error in `file` because it checks a later file. tsc never collects such an
@@ -602,8 +616,31 @@ impl Checker<'_, '_> {
             self.mark_tainted_from(0);
             return self.discarded.insert(diagnostic);
         }
+        if self.serialization_level != 0 {
+            self.discard_task_unless_first();
+        }
+        self.note_reported();
         self.reported.push(diagnostic);
         self.reported.last_mut().unwrap()
+    }
+
+    /// Call when `serialization_level` decides whether an error is reported. The check of an earlier file may get there in
+    /// another number of messages, but not if it finds what this task has stored.
+    #[cold]
+    pub(super) fn discard_task_unless_first(&self) {
+        let innermost = self.stack.len().saturating_sub(1);
+        self.task.discard_unless_first(|| {
+            (self.task.file).is_some_and(|file| self.files().module(file).is_closed)
+                && self.is_reachable_only_by_importers(innermost)
+        });
+    }
+
+    /// Call when something is reported that belongs to the innermost query.
+    #[inline]
+    pub(super) fn note_reported(&mut self) {
+        if let Some(frame) = self.frames.last_mut() {
+            frame.has_reported = true;
+        }
     }
 
     /// `checkExpression` doesn't store its result, so running it again recreates a discarded
@@ -670,7 +707,7 @@ impl Checker<'_, '_> {
 
     /// True if checking `whole` checks `part`, going only through expressions and object literal
     /// members.
-    fn is_part_of(&self, part: Query, whole: Query) -> bool {
+    pub(super) fn is_part_of(&self, part: Query, whole: Query) -> bool {
         use crate::bind::Parent;
         let (file, mut parent) = match part {
             Query::Expr(file, e) => (file, self.bound(file).parent_of_expr(e)),
@@ -755,6 +792,14 @@ impl Checker<'_, '_> {
     #[cold]
     pub(super) fn settle_reported(&mut self, frame: QueryFrame, q: Query) {
         let from = frame.reported_from as usize;
+        // Nothing is checked again with the types that a loop has collected so far. A trial, or a cycle that doesn't go
+        // through the loop, has nothing to do with them.
+        if frame.marks.drops_reported()
+            && let Some(loop_at) = self.flow_loop_pushed_at()
+            && self.lowest_taint_since(frame.serial) <= loop_at
+        {
+            return;
+        }
         if frame.marks.drops_reported() {
             self.reported.truncate(from);
         } else if !frame.marks.tainted() {
@@ -801,7 +846,7 @@ impl Checker<'_, '_> {
         if self.serialization_level >= MAX_SERIALIZATION_LEVEL
             && self.task.file == Some(diagnostic.file)
         {
-            return;
+            return self.discard_task_unless_first();
         }
         // Only the check of that file or an earlier one reports a cycle, and to do that it has to go around the cycle
         // itself. So it must not find what this task stored along the way.

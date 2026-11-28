@@ -507,13 +507,23 @@ fn answer_require_with_what_the_loader_holds(
             }
         }
     }
+    // require() of a text file as text answers with the file that an import has loaded without a type.
+    let mut is_required_as_text = is_required.clone();
+    for &(file, form) in forms {
+        is_required_as_text[file.idx()] |= is_required[form.idx()]
+            && stands_for_string(input, file)
+            && stands_for_string(input, form);
+    }
     for &file in compiled_files {
         let is_named_both_ways = (is_any_imported || is_imported[file.idx()])
-            && (is_any_required || is_required[file.idx()]);
+            && (is_any_required || is_required_as_text[file.idx()]);
         let is_text = stands_for_string(input, file);
         let is_value = is_text
-            || parsed_source(input.files, file)
-                .is_some_and(|it| parses_text_as_data(it.loader) || it.loader == Loader::Css);
+            || parsed_source(input.files, file).is_some_and(|it| {
+                parses_text_as_data(it.loader)
+                    || it.loader == Loader::Css
+                    || input.runs_in_place && it.loader == Loader::Wasm
+            });
         if let Some(interop) = interops[file.idx()].as_mut().filter(|it| {
             is_named_both_ways
                 && is_value
@@ -609,7 +619,8 @@ fn keeps_entries_of_module_cache(input: &BindInput<'_, '_>, compiled_files: &[Fi
     })
 }
 
-/// The CommonJS files that are ES modules too where an import loads them, each with that module.
+/// The CommonJS files that are ES modules too where an import loads them, each with that module. In a test run also the ES modules that an import loads
+/// under a type of code: while nothing has loaded such a file without a type, a require() is answered with that module.
 fn find_module_forms(
     input: &BindInput<'_, '_>,
     compiled_files: &[FileId],
@@ -639,7 +650,10 @@ fn find_module_forms(
         return Vec::new();
     }
     let files = compiled_files.iter().copied();
-    let files = files.filter(|&file| is_kind(file, ModuleKind::CommonJs));
+    let files = files.filter(|&file| {
+        is_kind(file, ModuleKind::CommonJs)
+            || (input.runs_tests && is_kind(file, ModuleKind::SourceText))
+    });
     let file_by_path: FxHashMap<&[u8], FileId> = files.map(|it| (path_of(it), it)).collect();
     let forms = forms.into_iter();
     forms

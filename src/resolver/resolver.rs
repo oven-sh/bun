@@ -972,6 +972,18 @@ impl<'a> Resolver<'a> {
         self.match_tsconfig_paths(&tsconfig, import_path, kind, kind.is_entry_point(), out)
     }
 
+    /// The enclosing tsconfig's `paths` lead from `import_path` to a file on disk.
+    pub fn is_named_by_tsconfig(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> bool {
+        let mut found = MatchResult::default();
+        self.resolve_via_tsconfig_paths(source_dir, import_path, kind, &mut found)
+            .is_success()
+    }
+
     pub(crate) fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> crate::CrateResult<()> {
         // NOTE: capture `log` before partially borrowing `self.debug_logs`
         // so the method call doesn't conflict with the field borrow (`log()`
@@ -1094,9 +1106,11 @@ impl<'a> Resolver<'a> {
         }
         let followed = graph.compiled_program().and_then(|program| {
             let public_root = graph.base_public_path_with_default_suffix();
+            // A path that the program has from `__filename` is of the build machine.
+            let known_to_program = program.public_path_of_source(public_root, source_dir);
             program.find_name_that_build_followed(
                 public_root,
-                source_dir,
+                known_to_program.as_deref().unwrap_or(source_dir),
                 import_path,
                 is_require(kind),
             )

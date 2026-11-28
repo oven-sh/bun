@@ -233,8 +233,15 @@ impl Checker<'_, '_> {
         );
     }
 
-    /// `checkVariableLikeDeclaration` for a variable, starting at "validate the initializer".
-    pub(super) fn check_variable_initializer(&mut self, file: FileId, d: VarDeclId) {
+    /// `checkVariableLikeDeclaration` for a variable, starting at "validate the initializer". `type_of_name` is what
+    /// `getTypeOfSymbol` returned. `links.resolvedType` may be another type, if a loop's back edge led here again and assigned
+    /// it from what the loop had collected until then.
+    pub(super) fn check_variable_initializer(
+        &mut self,
+        file: FileId,
+        d: VarDeclId,
+        type_of_name: Option<TypeId>,
+    ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let strict = self.p.files.options.strict_null_checks;
         let decl = &hir[d];
@@ -271,7 +278,10 @@ impl Checker<'_, '_> {
         if self.is_binding_pattern_in_ambient_or_type_node(file, decl.pat) {
             return;
         }
-        let target = self.type_of_pat(file, decl.pat);
+        let target = match type_of_name {
+            Some(ty) => ty,
+            None => self.type_of_pat(file, decl.pat),
+        };
         let target = self.convert_auto_to_any(target);
         let source = self.type_of_expr(file, decl.init);
         // `getESSymbolLikeTypeForNode`, `isValidESSymbolDeclaration`: for a `const` with an identifier name, in its own
@@ -338,6 +348,7 @@ impl Checker<'_, '_> {
         file: FileId,
         pat: PatId,
         default: ExprId,
+        type_of_name: Option<TypeId>,
     ) {
         if default.is_none() || self.is_in_parameter_without_body(file, pat) {
             return;
@@ -363,7 +374,10 @@ impl Checker<'_, '_> {
             && !matches!(hir[pat].kind, PatKind::Missing)
             && !(strict && Self::is_pattern_without_names(hir, pat))
         {
-            let target = self.type_of_pat(file, pat);
+            let target = match type_of_name {
+                Some(ty) => ty,
+                None => self.type_of_pat(file, pat),
+            };
             let at = (file, hir[pat].pos, self.end_of_pat(file, pat));
             self.check_initializer(file, default, target, at);
         }

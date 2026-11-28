@@ -261,6 +261,7 @@ impl Checker<'_, '_> {
         self.checked_type_references.0 = None;
         self.instantiation_limit_hits = 0;
         self.instantiations_up_to_a_limit.clear();
+        self.mapped_constraints_up_to_a_limit.clear();
         self.relations_cut_short.clear();
         self.variances_cut_short.clear();
         self.generic_mapped_types_cut_short.clear();
@@ -490,7 +491,7 @@ impl Checker<'_, '_> {
             self.resolve_span_end(d);
         }
         let never_checked = self.never_checked.take();
-        if self.files.brings_declarations() {
+        if self.files.is_compile_build() {
             self.never_checked_in_last_file.clone_from(&never_checked);
         }
         Checked {

@@ -2620,7 +2620,14 @@ bool Bun__deepMatch(
     }
 
     PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
-    subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
+#if ENABLE(AOT)
+    bool mayHavePrivateFieldsOfCompiledClasses = vm.aotState().someClassHasPrivateNames;
+    JSC::AOT::PropertyWalk::ObjectsOnChain chainOfSubset;
+    if (mayHavePrivateFieldsOfCompiledClasses) [[unlikely]]
+        JSC::AOT::PropertyWalk::getPropertyNames(globalObject, subsetObj, subsetProps, DontEnumPropertiesMode::Exclude, chainOfSubset);
+    else
+#endif
+        subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(throwScope, false);
 
     // TODO: add fast paths for:
@@ -2638,15 +2645,21 @@ bool Bun__deepMatch(
             return false;
         }
         PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
-        obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
+#if ENABLE(AOT)
+        JSC::AOT::PropertyWalk::ObjectsOnChain chainOfObject;
+        if (mayHavePrivateFieldsOfCompiledClasses) [[unlikely]]
+            JSC::AOT::PropertyWalk::getPropertyNames(globalObject, obj, objProps, DontEnumPropertiesMode::Exclude, chainOfObject);
+        else
+#endif
+            obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, false);
         size_t objCount = objProps.size();
         size_t subsetCount = subsetProps.size();
 #if ENABLE(AOT)
-        if (vm.aotState().someClassHasPrivateNames) [[unlikely]] {
-            objCount += JSC::AOT::PropertyWalk::countPrivateFieldsOfCompiledClasses(globalObject, obj);
+        if (mayHavePrivateFieldsOfCompiledClasses) [[unlikely]] {
+            objCount += JSC::AOT::PropertyWalk::countPrivateFieldsOfCompiledClasses(globalObject, obj, chainOfObject);
             RETURN_IF_EXCEPTION(throwScope, false);
-            subsetCount += JSC::AOT::PropertyWalk::countPrivateFieldsOfCompiledClasses(globalObject, subsetObj);
+            subsetCount += JSC::AOT::PropertyWalk::countPrivateFieldsOfCompiledClasses(globalObject, subsetObj, chainOfSubset);
             RETURN_IF_EXCEPTION(throwScope, false);
         }
 #endif
@@ -2746,8 +2759,8 @@ bool Bun__deepMatch(
 
 #if ENABLE(AOT)
     // No list shows the private fields that compiled classes laid. The engine hands over what each holds, beside what the same field of the other object holds.
-    if (vm.aotState().someClassHasPrivateNames) [[unlikely]] {
-        bool matched = JSC::AOT::PropertyWalk::matchPrivateFieldsOfCompiledClasses(globalObject, obj, subsetObj, [&](JSValue prop, JSValue subsetProp) -> bool {
+    if (mayHavePrivateFieldsOfCompiledClasses) [[unlikely]] {
+        bool matched = JSC::AOT::PropertyWalk::matchPrivateFieldsOfCompiledClasses(globalObject, obj, subsetObj, chainOfSubset, [&](JSValue prop, JSValue subsetProp) -> bool {
             return matchesPrivateFieldOfCompiledClass<enableAsymmetricMatchers>(globalObject, throwScope, state, isMatchingObjectContaining, prop, subsetProp);
         });
         RETURN_IF_EXCEPTION(throwScope, false);

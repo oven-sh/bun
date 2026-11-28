@@ -12,7 +12,7 @@ use crate::builtins::table::{
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
     AssignmentTarget, Binding, BindingInitializer, BindingStability, Decl, Parent, PatParent,
-    StoreKind,
+    StoreKind, SymbolId,
 };
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
@@ -20,7 +20,7 @@ use bun_sema::hir::{
     PatId, PatKind, PropKey, PropKind, StmtKind,
 };
 use bun_sema::import_sites::{ImportSiteKind, find_values_of_parameter};
-use bun_sema::util::{FxHashSet, SharedSort};
+use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use smallvec::{SmallVec, smallvec};
 use std::sync::OnceLock;
 
@@ -60,6 +60,8 @@ struct NamesOfWriters {
     set_system_time: Option<BuiltinName>,
     isolate_modules: [Option<BuiltinName>; 2],
     mock_module: [Option<BuiltinName>; 3],
+    /// Nobody gets what the functions that these are given return.
+    hooks: [Option<BuiltinName>; 7],
 }
 
 fn names_of_writers() -> &'static NamesOfWriters {
@@ -77,6 +79,15 @@ fn names_of_writers() -> &'static NamesOfWriters {
             table::find_name(b"mock"),
             table::find_name(b"doMock"),
         ],
+        hooks: [
+            table::find_name(b"beforeAll"),
+            table::find_name(b"beforeEach"),
+            table::find_name(b"afterAll"),
+            table::find_name(b"afterEach"),
+            table::find_name(b"onTestFinished"),
+            table::find_name(b"test"),
+            table::find_name(b"it"),
+        ],
     })
 }
 
@@ -92,6 +103,13 @@ fn is_of_test_runner(id: BuiltinId) -> bool {
         table::entry(table::root_of(id)).module,
         Some(RuntimeModule::BunTest | RuntimeModule::BunTestVitest)
     )
+}
+
+fn is_test_hook(id: BuiltinId) -> bool {
+    is_of_test_runner(id)
+        && names_of_writers()
+            .hooks
+            .contains(&Some(table::entry(id).name))
 }
 
 fn mocks_modules(object: BuiltinId) -> bool {
@@ -389,26 +407,38 @@ pub(super) fn find_what_opens_where_handed_on(
 
 impl Resolver<'_, '_> {
     /// Whether code of the program gets the object as `this` when it calls the member that the call replaces.
-    pub(super) fn exposes_first_operand(&self, call: CallId, function: BuiltinId) -> bool {
+    pub(super) fn exposes_first_operand(
+        &self,
+        call: CallId,
+        operand: ExprId,
+        function: BuiltinId,
+    ) -> bool {
         let hir = self.input.hir;
         let mut operands = hir.ids(hir[call].args).skip(1);
         match find_writer(function) {
             Some(Writer::Spy) => {
-                *(self.exposes_spy_receivers).get_or_init(|| self.spies_expose_receivers())
+                let operand = self.outermost_assertion_of(operand);
+                let stays = match self.input.bound.parent_of_expr(operand) {
+                    Parent::Expr(spy) => self.spy_stays_in_sight(spy, &mut SmallVec::new()),
+                    _ => false,
+                };
+                !stays
+                    || *(self.exposes_spy_receivers).get_or_init(|| self.spies_expose_receivers())
             }
-            Some(Writer::MemberOfOperand) => operands
-                .nth(1)
-                .is_some_and(|descriptor| self.describes_function_reading_this(descriptor)),
+            Some(Writer::MemberOfOperand) => operands.nth(1).is_some_and(|descriptor| {
+                self.describes_function_reading_this(descriptor) || self.has_spread(descriptor)
+            }),
             Some(Writer::MemberOfReceiverOperand) => operands
                 .nth(1)
                 .is_some_and(|value| self.is_function_reading_this(value)),
             Some(Writer::KeysOfOperands) => operands.any(|operand| {
-                self.any_written_property(operand, |_, value| match function {
-                    BuiltinId::ObjectDefineProperties => {
-                        self.describes_function_reading_this(value)
-                    }
-                    _ => self.is_function_reading_this(value),
-                })
+                self.has_spread(operand)
+                    || self.any_written_property(operand, |_, value| match function {
+                        BuiltinId::ObjectDefineProperties => {
+                            self.describes_function_reading_this(value) || self.has_spread(value)
+                        }
+                        _ => self.is_function_reading_this(value),
+                    })
             }),
             _ => false,
         }
@@ -586,11 +616,288 @@ impl Resolver<'_, '_> {
         })
     }
 
+    fn has_spread(&self, object: ExprId) -> bool {
+        let hir = self.input.hir;
+        match hir[hir.skip_type_assertions(object)].kind {
+            ExprKind::Object(properties) => {
+                let mut kinds = properties.iter().map(|property| hir[property].kind);
+                kinds.any(|kind| kind == PropKind::Spread)
+            }
+            _ => false,
+        }
+    }
+
     fn describes_function_reading_this(&self, descriptor: ExprId) -> bool {
         self.any_written_property(descriptor, |key, value| {
             matches!(key, PropKey::Name(known::value | known::get | known::set))
                 && self.is_function_reading_this(value)
         })
+    }
+
+    /// Whether every use of the spy that `spy` gives is one that hands nobody the receivers of its calls.
+    fn spy_stays_in_sight(&self, spy: ExprId, followed: &mut SmallVec<[SymbolId; 4]>) -> bool {
+        let hir = self.input.hir;
+        let value = self.outermost_assertion_of(spy);
+        match self.input.bound.parent_of_expr(value) {
+            Parent::Stmt(statement) => matches!(
+                hir[statement].kind,
+                StmtKind::Expr(_)
+                    | StmtKind::If { .. }
+                    | StmtKind::While { .. }
+                    | StmtKind::DoWhile { .. }
+                    | StmtKind::For { .. }
+            ),
+            Parent::VarInit(declaration) => self.pattern_keeps_spy(hir[declaration].pat, followed),
+            Parent::FnBody(function) => self.is_handed_to_hook(function),
+            Parent::Expr(user) => match hir[user].kind {
+                ExprKind::Unary { .. } => true,
+                ExprKind::Binary { op, .. } => !matches!(
+                    op,
+                    BinOp::And
+                        | BinOp::Or
+                        | BinOp::Nullish
+                        | BinOp::Comma
+                        | BinOp::In
+                        | BinOp::Instanceof
+                ),
+                ExprKind::Await(_) => self.spy_stays_in_sight(user, followed),
+                ExprKind::Assign { target, .. } if target == value => true,
+                ExprKind::Assign {
+                    op: None, target, ..
+                } => {
+                    let statement = self
+                        .input
+                        .bound
+                        .parent_of_expr(self.outermost_assertion_of(user));
+                    matches!(statement, Parent::Stmt(it) if matches!(hir[it].kind, StmtKind::Expr(_)))
+                        && self.target_keeps_spy(target, followed)
+                }
+                ExprKind::Call(call) if hir[call].callee == value => true,
+                ExprKind::Call(call) => {
+                    let callee = hir.skip_type_assertions(hir[call].callee);
+                    match mentioned_id(self.state(callee)).map(table::canonical_id) {
+                        Some(BuiltinId::Expect) => true,
+                        Some(function) if is_of_test_runner(function) => {
+                            self.spy_stays_in_sight(user, followed)
+                        }
+                        _ => false,
+                    }
+                }
+                _ => match hir.member_key(user) {
+                    Some((object, MemberKey::Name(name)))
+                        if hir.skip_type_assertions(object) == hir.skip_type_assertions(value) =>
+                    {
+                        self.member_keeps_spy(user, name, followed)
+                    }
+                    _ => false,
+                },
+            },
+            _ => false,
+        }
+    }
+
+    fn member_keeps_spy(
+        &self,
+        member: ExprId,
+        name: Atom,
+        followed: &mut SmallVec<[SymbolId; 4]>,
+    ) -> bool {
+        let hir = self.input.hir;
+        let whole = self.outermost_assertion_of(member);
+        let call = match self.input.bound.parent_of_expr(whole) {
+            Parent::Expr(user) => match hir[user].kind {
+                ExprKind::Call(call) if hir[call].callee == whole => Some((user, call)),
+                _ => None,
+            },
+            _ => None,
+        };
+        match name {
+            known::mock => {
+                let read = match self.input.bound.parent_of_expr(whole) {
+                    Parent::Expr(user) => hir.member_key(user).map(|(_, key)| key),
+                    _ => None,
+                };
+                !self.is_handed_on_whole(member)
+                    && !matches!(
+                        read,
+                        Some(MemberKey::Name(known::contexts | known::instances))
+                    )
+            }
+            known::mockReturnThis => false,
+            known::mockImplementation
+            | known::mockImplementationOnce
+            | known::withImplementation => call.is_some_and(|(made, call)| {
+                let implementation = hir.ids(hir[call].args).next();
+                implementation.is_none_or(|it| self.is_function_in_sight(it))
+                    && self.spy_stays_in_sight(made, followed)
+            }),
+            _ => call.is_none_or(|(made, _)| self.spy_stays_in_sight(made, followed)),
+        }
+    }
+
+    fn pattern_keeps_spy(&self, pattern: PatId, followed: &mut SmallVec<[SymbolId; 4]>) -> bool {
+        let hir = self.input.hir;
+        match hir[pattern].kind {
+            PatKind::Ident(_) => {
+                let variable = self.input.bound.declared_symbol(Decl::Var(pattern));
+                !variable.is_none() && self.variable_keeps_spy(variable, followed)
+            }
+            PatKind::Object(properties) => properties.iter().all(|property| {
+                let property = &hir[property];
+                match property.key {
+                    _ if property.is_rest => false,
+                    PropKey::Name(known::mock) => match hir[property.value].kind {
+                        PatKind::Object(state) => state.iter().all(|read| {
+                            let read = &hir[read];
+                            !read.is_rest
+                                && matches!(read.key, PropKey::Name(name) if !matches!(name, known::contexts | known::instances))
+                        }),
+                        _ => false,
+                    },
+                    PropKey::Name(name) => !matches!(
+                        name,
+                        known::mockImplementation
+                            | known::mockImplementationOnce
+                            | known::withImplementation
+                            | known::mockReturnThis
+                    ),
+                    _ => false,
+                }
+            }),
+            PatKind::Array(_) | PatKind::Missing => false,
+        }
+    }
+
+    fn target_keeps_spy(&self, target: ExprId, followed: &mut SmallVec<[SymbolId; 4]>) -> bool {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let target = hir.skip_type_assertions(target);
+        match hir[target].kind {
+            ExprKind::Ident(_) => match bound.binding(target) {
+                Binding::Symbol(variable) => self.variable_keeps_spy(variable, followed),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    fn variable_keeps_spy(
+        &self,
+        variable: SymbolId,
+        followed: &mut SmallVec<[SymbolId; 4]>,
+    ) -> bool {
+        if followed.contains(&variable) {
+            return true;
+        }
+        followed.push(variable);
+        let bound = self.input.bound;
+        if !matches!(*bound.symbol(variable).decls, [Decl::Var(_)])
+            || self.is_exported(variable)
+            || self.is_named_outside(variable)
+            || bound.is_visible_to_eval(variable)
+        {
+            return false;
+        }
+        let uses = self.uses_of_variables.get_or_init(|| {
+            let mut uses: FxHashMap<SymbolId, Vec<ExprId>> = FxHashMap::default();
+            for expr in self.evaluated_exprs() {
+                if matches!(self.input.hir[expr].kind, ExprKind::Ident(_))
+                    && !matches!(bound.parent_of_expr(expr), Parent::None)
+                    && let Binding::Symbol(name) = bound.binding(expr)
+                {
+                    uses.entry(name).or_default().push(expr);
+                }
+            }
+            uses
+        });
+        let uses = uses.get(&variable).map_or(&[][..], |uses| &uses[..]);
+        uses.iter()
+            .all(|&used| self.spy_stays_in_sight(used, followed))
+    }
+
+    /// `beforeEach(() => spyOn(process, "exit"))`
+    fn is_handed_to_hook(&self, function: FnId) -> bool {
+        let hir = self.input.hir;
+        let values = self.values_of_functions.get_or_init(|| {
+            let written = self
+                .evaluated_exprs()
+                .filter_map(|expr| match hir[expr].kind {
+                    ExprKind::Fn(function) => Some((function, expr)),
+                    _ => None,
+                });
+            written.collect()
+        });
+        let Some(&value) = values.get(&function) else {
+            return false;
+        };
+        let value = self.outermost_assertion_of(value);
+        let Parent::Expr(user) = self.input.bound.parent_of_expr(value) else {
+            return false;
+        };
+        match hir[user].kind {
+            ExprKind::Call(call) if hir[call].callee != value => {
+                let callee = hir.skip_type_assertions(hir[call].callee);
+                mentioned_id(self.state(callee))
+                    .map(table::canonical_id)
+                    .is_some_and(is_test_hook)
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether the value is a function written in this file that doesn't read `this`, or an imported one, which is looked at where it is written.
+    fn is_function_in_sight(&self, value: ExprId) -> bool {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let is_imported = |name: ExprId| match bound.binding(name) {
+            Binding::Symbol(name) => matches!(
+                *bound.symbol(name).decls,
+                [Decl::ImportSpec(_) | Decl::ImportDefault(_) | Decl::ImportNamespace(_)]
+            ),
+            _ => false,
+        };
+        if self.is_function_reading_this(value) {
+            return false;
+        }
+        let mut value = hir.skip_type_assertions(value);
+        for _ in 0..=MOST_VARIABLES_FOLLOWED {
+            match hir[value].kind {
+                ExprKind::Fn(_) | ExprKind::Null => return true,
+                ExprKind::Ident(_) if is_imported(value) => return true,
+                ExprKind::Ident(_) => {}
+                ExprKind::Call(call) => {
+                    let callee = hir.skip_type_assertions(hir[call].callee);
+                    return mentioned_id(self.state(callee)).is_some_and(is_of_test_runner)
+                        && hir
+                            .ids(hir[call].args)
+                            .all(|operand| self.is_function_in_sight(operand));
+                }
+                _ => {
+                    return match hir.member_key(value) {
+                        Some((object, MemberKey::Name(_))) => {
+                            let object = hir.skip_type_assertions(object);
+                            matches!(hir[object].kind, ExprKind::Ident(_)) && is_imported(object)
+                        }
+                        _ => false,
+                    };
+                }
+            }
+            let Binding::Symbol(name) = bound.binding(value) else {
+                return self.value_of(value).is_some() || self.is_nullish_constant(value);
+            };
+            match *bound.symbol(name).decls {
+                [Decl::Fn(_)] => return bound.binding_stability(name) == BindingStability::Stable,
+                [Decl::Var(pattern)] => match bound.pat_parent[pattern.idx()] {
+                    PatParent::Var(declaration)
+                        if hir[declaration].init.is_some()
+                            && bound.binding_stability(name) == BindingStability::Stable =>
+                    {
+                        value = hir.skip_type_assertions(hir[declaration].init);
+                    }
+                    _ => return false,
+                },
+                _ => return false,
+            }
+        }
+        false
     }
 
     /// A spy calls its implementation with the receiver, and lists the receivers as mock.contexts and mock.instances.
@@ -606,6 +913,9 @@ impl Resolver<'_, '_> {
                     let read = hir.member_key(object).map(|(_, key)| key);
                     matches!(read, Some(MemberKey::Name(known::mock)))
                 }
+                known::mock => {
+                    self.is_handed_on_whole(member) && !self.is_mock_of_another_object(object)
+                }
                 known::mockReturnThis => !self.is_mock_of_another_object(object),
                 known::mockImplementation
                 | known::mockImplementationOnce
@@ -616,6 +926,33 @@ impl Resolver<'_, '_> {
                 _ => false,
             }
         })
+    }
+
+    /// Whether more is done with the value of `member` than to call it, to compare it or to read a name off it.
+    fn is_handed_on_whole(&self, member: ExprId) -> bool {
+        let hir = self.input.hir;
+        let value = self.outermost_assertion_of(member);
+        match self.input.bound.parent_of_expr(value) {
+            Parent::Expr(user) => match hir[user].kind {
+                ExprKind::Call(call) | ExprKind::New(call) => hir[call].callee != value,
+                ExprKind::Assign { target, .. } => target != value,
+                ExprKind::Binary { op, .. } => matches!(
+                    op,
+                    BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma | BinOp::In
+                ),
+                ExprKind::Unary { .. } => false,
+                _ => !matches!(hir.member_key(user), Some((_, MemberKey::Name(_)))),
+            },
+            Parent::Stmt(statement) => matches!(
+                hir[statement].kind,
+                StmtKind::Return(_)
+                    | StmtKind::Throw(_)
+                    | StmtKind::ExportDefault(_)
+                    | StmtKind::ExportAssign(_)
+                    | StmtKind::With { .. }
+            ),
+            _ => true,
+        }
     }
 
     fn is_given_function_reading_this(&self, method: ExprId) -> bool {

@@ -645,10 +645,12 @@ pub(super) fn find_test_files_that_ask_loader(
 }
 
 /// The CommonJS files that `bun test` may evict with a mocked module: the files that a mock names, and those that import
-/// or require one of them, directly or through other files. The requirer of a mocked built-in module stays loaded.
+/// or require one of them or an absent module that a mock names, directly or through other files. The requirer of a mocked
+/// built-in module stays loaded.
 pub(super) fn find_reloadable_commonjs_files(
     input: &BindInput<'_, '_>,
     scans: &Scans,
+    absent: &[ModuleRef],
     is_reloadable: &[bool],
 ) -> Vec<FileId> {
     let files = input.files;
@@ -696,7 +698,9 @@ pub(super) fn find_reloadable_commonjs_files(
             match target {
                 _ if !binds_importer_to_module(site.kind) => {}
                 ModuleRef::File(target) => importers.push((target, file)),
-                _ if is_es_module && named.contains(&target) => to_follow.push(file),
+                _ if absent.contains(&target) || (is_es_module && named.contains(&target)) => {
+                    to_follow.push(file);
+                }
                 _ => {}
             }
         }

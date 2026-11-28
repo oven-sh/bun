@@ -49,6 +49,7 @@ const MOST_TEXTS_MADE: u32 = 4096;
 const MOST_VALUES_JOINED: usize = 256;
 /// The same of a variable. Every mention of it makes a path of each.
 const MOST_VALUES_ASSIGNED: usize = 16;
+const MOST_VALUES_KEPT_FOR_READ: usize = 64;
 const MOST_STORES_FOLLOWED: u32 = 1 << 16;
 /// How many expressions of one file are followed for what other code passes or makes.
 const MOST_PASSED_IN_FILE: u32 = 1 << 16;
@@ -329,6 +330,13 @@ fn with(values: Values, value: Held) -> Values {
 
 fn with_undefined(values: Values) -> Values {
     with(values, Held::Primitive(Constant::Undefined))
+}
+
+fn read_absent(key: &[u8]) -> Held {
+    match is_member_of_every_object(key) {
+        true => Held::Other,
+        false => Held::Primitive(Constant::Undefined),
+    }
 }
 
 fn keep_last_of_each_key(written: &mut Vec<(Vec<u8>, ExprId)>) {
@@ -703,6 +711,8 @@ enum FollowedKey {
     Expr(ExprId),
     Symbol(SymbolId),
     Property(ExprId, Atom),
+    /// All that the object literal holds.
+    AnyProperty(ExprId),
     /// The name of a method, and the place of its argument. `None` for a setter.
     Passed(Atom, Option<u32>),
 }
@@ -768,19 +778,29 @@ struct Findings {
     asked_who_takes: FxHashMap<(ExprId, u32), bool>,
     objects_asked_whether_their_functions_see_them:
         FxHashMap<ExprId, Option<Rc<FxHashSet<Vec<u8>>>>>,
-    stored_under_keys: FxHashMap<ExprId, Vec<(Vec<u8>, ExprId)>>,
+    stored_under_keys: FxHashMap<ExprId, StoredUnderKeys>,
     stores_known: FxHashSet<(ExprId, ExprId)>,
-    members_of_objects: FxHashMap<ExprId, MembersOfObject>,
+    /// By the object literal, and whether what is passed is followed.
+    written_by_key: FxHashMap<(ExprId, bool), Option<Rc<WrittenByKey>>>,
     /// The expressions that were left where following this used them all up.
     ran_out_from: FxHashMap<(u32, FollowedKey), u32>,
     calls_of_resolvers: RefCell<FxHashMap<Vec<u8>, CallsUnderName>>,
     passed_spent: u32,
 }
 
-#[derive(Clone)]
-struct MembersOfObject {
-    by_key: Option<Rc<FxHashMap<Vec<u8>, Vec<ExprId>>>>,
-    stores: usize,
+/// What an object literal writes, as far as its syntax and constants tell.
+#[derive(Default)]
+struct WrittenByKey {
+    /// The place among the properties and the value of the last one under each key.
+    by_key: FxHashMap<Vec<u8>, (usize, ExprId)>,
+    /// The place, the key and the value of those whose key isn't a constant.
+    computed: Vec<(usize, ExprId, ExprId)>,
+}
+
+#[derive(Default)]
+struct StoredUnderKeys {
+    in_order: Vec<(Vec<u8>, ExprId)>,
+    by_key: FxHashMap<Vec<u8>, Vec<ExprId>>,
 }
 
 #[derive(Default)]
@@ -811,6 +831,8 @@ struct Follower<'i, 'a, 's> {
     /// The argument is a list, and what is asked for is what it holds.
     needs_elements: bool,
     has_read_data_file: Cell<bool>,
+    /// The last read was of many objects, each of whose properties is kept.
+    has_read_kept_objects: Cell<bool>,
     findings_of_file: Option<&'i FindingsOfFile>,
     findings: Findings,
     followed: FxHashMap<(u32, FollowedKey), Followed>,
@@ -897,6 +919,7 @@ impl<'i, 'a, 's> Follower<'i, 'a, 's> {
             follows_fields: false,
             needs_elements: false,
             has_read_data_file: Cell::new(false),
+            has_read_kept_objects: Cell::new(false),
             findings_of_file: None,
             findings: Findings::default(),
             followed: FxHashMap::default(),
@@ -1172,12 +1195,18 @@ pub(super) fn find_caller_relative_alternatives(
     argument: ExprId,
     mention: ExprId,
     property: Option<Atom>,
+    findings_of_file: &FindingsOfFile,
 ) -> Option<Found> {
     let Binding::Symbol(parameter) = inputs.bound.binding(mention) else {
         return None;
     };
+    let folder = Folder::OfFile;
+    let of_any_caller = Follower::new(inputs, written_names, data_file_queries, false, folder);
     let folder = Folder::OfCaller;
     let mut follower = Follower::new(inputs, written_names, data_file_queries, false, folder);
+    if let Some(findings) = findings_of_file.0.borrow().get(&of_any_caller.mode()) {
+        (follower.findings.kept_as_written).clone_from(&findings.kept_as_written);
+    }
     follower.stand_in = Some(parameter);
     follower.stand_in_property = property;
     follower.keeps_known_alternatives = true;
@@ -1473,10 +1502,12 @@ impl Follower<'_, '_, '_> {
         }
         for (literal, value) in self.stored_since.drain(..).rev() {
             self.findings.stores_known.remove(&(literal, value));
-            if let Some(stored) = self.findings.stored_under_keys.get_mut(&literal) {
-                stored.pop();
+            if let Some(stored) = self.findings.stored_under_keys.get_mut(&literal)
+                && let Some((key, _)) = stored.in_order.pop()
+                && let Some(values) = stored.by_key.get_mut(&key)
+            {
+                values.pop();
             }
-            self.findings.members_of_objects.remove(&literal);
         }
     }
 
@@ -1765,10 +1796,12 @@ impl Follower<'_, '_, '_> {
         let met_before = std::mem::replace(&mut self.met_in_progress, MetInProgress::NONE);
         let had_run_out = self.has_run_out.replace(false);
         let did_read_data_file = self.has_read_data_file.replace(false);
+        let did_read_kept_objects = self.has_read_kept_objects.replace(false);
         let values = match key.1 {
             FollowedKey::Expr(written) => self.values_of_written(written),
             FollowedKey::Symbol(symbol) => self.values_of_symbol(mention, symbol),
             FollowedKey::Property(literal, key) => self.values_of_property(literal, key),
+            FollowedKey::AnyProperty(literal) => self.values_of_any_property(literal),
             FollowedKey::Passed(member, place) => self.values_passed_under_member(member, place),
         };
         let values =
@@ -1783,7 +1816,16 @@ impl Follower<'_, '_, '_> {
         let is_asking = !self.needs_no_contents_proof()
             && (!self.asked_while_open.is_empty()
                 || !self.functions_whose_answers_are_asked.is_empty());
-        if met.function >= functions && !self.has_run_out.get() && !is_asking {
+        // What is made of properties that are kept is made of them again instead of being kept for each expression that reads it.
+        let is_read_again = self.has_read_kept_objects.replace(did_read_kept_objects)
+            && self.reads_member(key.1)
+            && values
+                .as_ref()
+                .is_some_and(|it| it.len() > MOST_VALUES_KEPT_FOR_READ);
+        if is_read_again {
+            self.visited.remove(&key.1);
+        }
+        if met.function >= functions && !self.has_run_out.get() && !is_asking && !is_read_again {
             let followed = Followed {
                 values: values.clone(),
                 open_parameter: self.open_parameters.get(opened).copied(),
@@ -1811,6 +1853,11 @@ impl Follower<'_, '_, '_> {
         self.has_read_data_file
             .set(did_read_data_file || self.has_read_data_file.get());
         values
+    }
+
+    fn reads_member(&self, key: FollowedKey) -> bool {
+        matches!(key, FollowedKey::Expr(e)
+            if matches!(expr_kind(self.inputs.hir, e), Some(ExprKind::Dot { .. } | ExprKind::Index { .. })))
     }
 
     /// What `e` holds wherever it stands.
@@ -3716,7 +3763,9 @@ impl Follower<'_, '_, '_> {
         if !self.is_initialized_with_list(symbol) {
             return Some(values);
         }
-        let mut values = Distinct::from(values);
+        let mut lists = Distinct::from(values);
+        let mut elements: Option<Distinct<Held>> = None;
+        let mut paid = 0;
         for mention in self.mentions_of(symbol) {
             let Some((pushing, call)) = self.find_push(mention) else {
                 continue;
@@ -3727,16 +3776,41 @@ impl Follower<'_, '_, '_> {
             let Held::List(pushed) = self.values_of_list(call.args)?.pop()? else {
                 return None;
             };
-            self.pay_for(values.len())?;
-            for index in 0..values.len() {
-                let Held::List(places) = &values[index] else {
+            let left = self.texts_left.get();
+            let count = u32::try_from(lists.len()).unwrap_or(u32::MAX);
+            if elements.is_none() && count > left {
+                self.texts_left.set(left + paid);
+                let mut held = Distinct::new();
+                for list in &lists.all {
+                    let Held::List(places) = list else {
+                        return None;
+                    };
+                    places
+                        .iter()
+                        .flatten()
+                        .for_each(|it| add(&mut held, it.clone()));
+                }
+                elements = Some(held);
+            }
+            if let Some(elements) = &mut elements {
+                let pushed = pushed.into_iter().flatten();
+                pushed.for_each(|it| add(elements, it));
+                continue;
+            }
+            self.pay_for(lists.len())?;
+            paid += count;
+            for index in 0..lists.len() {
+                let Held::List(places) = &lists[index] else {
                     return None;
                 };
                 let longer = places.iter().chain(&pushed).cloned().collect();
-                add(&mut values, Held::List(longer));
+                add(&mut lists, Held::List(longer));
             }
         }
-        Some(values.all)
+        Some(match elements {
+            Some(elements) => vec![Held::ListOf(elements.all)],
+            None => lists.all,
+        })
     }
 
     fn is_exported(&self, symbol: SymbolId) -> bool {
@@ -3833,9 +3907,8 @@ impl Follower<'_, '_, '_> {
             let Held::Object(literal) = *held else {
                 return None;
             };
-            let under_keys = self.find_members(literal).by_key?;
             for key in &keys {
-                if !under_keys.contains_key(&key[..]) {
+                if self.values_under_key(literal, key)?.is_empty() {
                     return None;
                 }
                 let key = self.inputs.atoms.intern(key);
@@ -4798,7 +4871,8 @@ impl Follower<'_, '_, '_> {
         if self.findings.stores_known.insert((literal, value)) {
             self.stored_since.push((literal, value));
             let stored = self.findings.stored_under_keys.entry(literal).or_default();
-            stored.push((key.to_vec(), value));
+            stored.in_order.push((key.to_vec(), value));
+            (stored.by_key.entry(key.to_vec()).or_default()).push(value);
         }
     }
 
@@ -5623,20 +5697,38 @@ impl Follower<'_, '_, '_> {
         keys: Option<&[Vec<u8>]>,
         chain: Chain,
     ) -> Option<Values> {
+        let is_object = |it: &Held| matches!(it, Held::Object(_));
+        if objects.len() > MOST_VALUES_KEPT_FOR_READ
+            || keys.is_none() && objects.iter().any(is_object)
+        {
+            self.has_read_kept_objects.set(true);
+        }
         let mut values = Distinct::new();
         let mut beside_spreads = Vec::new();
         let looks_beside_spreads = self.follows_fields && self.keeps_known_alternatives;
+        let mut adds_what_is_absent = true;
         for object in objects {
             let read = match object {
                 Held::Object(literal)
-                    if looks_beside_spreads
-                        && keys.is_some()
-                        && self.find_members(*literal).by_key.is_none() =>
+                    if keys.is_some_and(|keys| self.writes_none_of(*literal, keys)) =>
                 {
-                    beside_spreads.push(*literal);
-                    continue;
+                    if !std::mem::take(&mut adds_what_is_absent) {
+                        continue;
+                    }
+                    let absent = keys.unwrap_or_default().iter();
+                    absent.map(|key| read_absent(key)).collect()
                 }
-                Held::Object(literal) => self.read_property(*literal, keys)?,
+                Held::Object(literal) => match self.read_property(*literal, keys) {
+                    Some(read) => read,
+                    None if looks_beside_spreads
+                        && keys.is_some()
+                        && !self.lists_what_it_writes(*literal) =>
+                    {
+                        beside_spreads.push(*literal);
+                        continue;
+                    }
+                    None => return None,
+                },
                 Held::List(places) => read_place(places, keys)?,
                 Held::ListOf(held) => {
                     let read = read_place(std::slice::from_ref(held), None)?;
@@ -5825,58 +5917,123 @@ impl Follower<'_, '_, '_> {
         }
         keep_last_of_each_key(&mut written);
         if let Some(stored) = self.findings.stored_under_keys.get(&literal) {
-            written.extend(stored.iter().cloned());
+            written.extend(stored.in_order.iter().cloned());
         }
         Some(written)
     }
 
-    fn find_members(&mut self, literal: ExprId) -> MembersOfObject {
+    /// What `properties_of` has under `key`, or `None` if that lists nothing. Only keys that aren't constants are followed again.
+    fn values_under_key(&mut self, literal: ExprId, key: &[u8]) -> Option<Vec<ExprId>> {
+        let written = self.list_written(literal)?;
+        let mut last = written.by_key.get(key).copied();
+        for &(place, computed, value) in &written.computed {
+            let keys = self.keys_of(MemberKey::Computed(computed))??;
+            let [found] = &keys[..] else {
+                return None;
+            };
+            if matches!(&found[..], b"toString" | b"valueOf") {
+                return None;
+            }
+            if &found[..] == key && last.is_none_or(|it| it.0 < place) {
+                last = Some((place, value));
+            }
+        }
         let stored = self.findings.stored_under_keys.get(&literal);
-        let stores = stored.map_or(0, Vec::len);
-        let known = self.findings.members_of_objects.get(&literal);
-        if let Some(known) = known.filter(|it| it.stores == stores) {
+        let stored = stored.and_then(|it| it.by_key.get(key));
+        Some(
+            (last.map(|it| it.1).into_iter())
+                .chain(stored.into_iter().flatten().copied())
+                .collect(),
+        )
+    }
+
+    fn lists_what_it_writes(&mut self, literal: ExprId) -> bool {
+        self.list_written(literal).is_some_and(|written| {
+            written.computed.is_empty() || self.values_under_key(literal, b"").is_some()
+        })
+    }
+
+    fn list_written(&mut self, literal: ExprId) -> Option<Rc<WrittenByKey>> {
+        let known_as = (literal, self.is_following_passed);
+        if let Some(known) = self.findings.written_by_key.get(&known_as) {
             return known.clone();
         }
-        let by_key = self.properties_of(literal).map(|written| {
-            let mut by_key: FxHashMap<Vec<u8>, Vec<ExprId>> = FxHashMap::default();
-            for (key, value) in written {
-                by_key.entry(key).or_default().push(value);
-            }
-            Rc::new(by_key)
-        });
-        let members = MembersOfObject { by_key, stores };
-        let hir = self.inputs.hir;
-        let varies = match expr_kind(hir, literal) {
-            Some(ExprKind::Object(properties)) => properties.iter().any(|id| {
-                matches!(hir.runtime_property_key(id), PropKey::Computed(_))
-                    || matches!(hir[id].kind, PropKind::Getter | PropKind::Setter)
-            }),
-            _ => false,
+        let written = self.list_written_uncached(literal).map(Rc::new);
+        (self.findings.written_by_key).insert(known_as, written.clone());
+        written
+    }
+
+    fn list_written_uncached(&self, literal: ExprId) -> Option<WrittenByKey> {
+        let &ScanInputs {
+            hir,
+            atoms,
+            decisions,
+            ..
+        } = self.inputs;
+        let Some(ExprKind::Object(properties)) = expr_kind(hir, literal) else {
+            return None;
         };
-        if !varies {
-            (self.findings.members_of_objects).insert(literal, members.clone());
+        let mut written = WrittenByKey::default();
+        for (place, id) in properties.iter().enumerate() {
+            let property = &hir[id];
+            let is_value = match property.kind {
+                PropKind::Init | PropKind::Shorthand | PropKind::Method => true,
+                PropKind::Getter => self.is_following_passed,
+                PropKind::Setter if self.is_following_passed => continue,
+                PropKind::Setter | PropKind::Spread => false,
+            };
+            if !is_value || is_proto_setter(property) {
+                return None;
+            }
+            let key = match hir.runtime_property_key(id) {
+                PropKey::Name(name) => atoms.bytes(name),
+                PropKey::Computed(key) => match decisions.constant(hir, key) {
+                    FoldedValue::Constant(Constant::String(text)) => atoms.bytes(text),
+                    _ => {
+                        written.computed.push((place, key, property.value));
+                        continue;
+                    }
+                },
+                PropKey::None | PropKey::Private(_) => return None,
+            };
+            if matches!(key, b"toString" | b"valueOf") {
+                return None;
+            }
+            (written.by_key).insert(key.to_vec(), (place, property.value));
         }
-        members
+        Some(written)
+    }
+
+    fn writes_none_of(&mut self, literal: ExprId, keys: &[Vec<u8>]) -> bool {
+        !self.findings.stored_under_keys.contains_key(&literal)
+            && self.list_written(literal).is_some_and(|written| {
+                written.computed.is_empty()
+                    && !keys.iter().any(|key| written.by_key.contains_key(key))
+            })
     }
 
     fn read_property(&mut self, literal: ExprId, keys: Option<&[Vec<u8>]>) -> Option<Values> {
         let Some(keys) = keys else {
-            let written = self.properties_of(literal)?;
-            let values = self.values_of_any(written.iter().map(|it| it.1))?;
-            return Some(with_undefined(values));
+            let key = (self.call_context(), FollowedKey::AnyProperty(literal));
+            return self.follow_once(key, literal);
         };
-        let under_keys = self.find_members(literal).by_key?;
+        let written = self.list_written(literal)?;
+        if keys.is_empty() && !written.computed.is_empty() {
+            self.values_under_key(literal, b"")?;
+        }
+        let may_have_others =
+            !written.computed.is_empty() || self.findings.stored_under_keys.contains_key(&literal);
         let mut values = Distinct::new();
         for key in keys {
-            match under_keys.contains_key(&key[..]) {
+            let may_be_there = may_have_others || written.by_key.contains_key(key);
+            match may_be_there && !self.values_under_key(literal, key)?.is_empty() {
                 true => {
                     let key = self.inputs.atoms.intern(key);
                     for value in self.values_of_property_once(literal, key)? {
                         add(&mut values, value);
                     }
                 }
-                false if is_member_of_every_object(key) => add(&mut values, Held::Other),
-                false => add(&mut values, Held::Primitive(Constant::Undefined)),
+                false => add(&mut values, read_absent(key)),
             }
         }
         Some(values.all)
@@ -5897,9 +6054,19 @@ impl Follower<'_, '_, '_> {
         self.follow_once(key, literal)
     }
 
+    fn values_of_any_property(&mut self, literal: ExprId) -> Option<Values> {
+        let written = self.properties_of(literal)?;
+        let values = self.values_of_any(written.iter().map(|it| it.1))?;
+        Some(with_undefined(values))
+    }
+
     fn values_of_property(&mut self, literal: ExprId, key: Atom) -> Option<Values> {
-        let under_keys = self.find_members(literal).by_key?;
-        let held = under_keys.get(self.inputs.atoms.bytes(key))?;
+        let atoms = self.inputs.atoms;
+        let under_key = self.values_under_key(literal, atoms.bytes(key))?;
+        let held = &under_key[..];
+        if held.is_empty() {
+            return None;
+        }
         let place = Place::Property(literal, key);
         let index = self.places_in_progress.len();
         let (mut apart, mut all) = (Distinct::new(), Distinct::new());

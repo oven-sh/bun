@@ -10389,14 +10389,26 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(aware.exitCode).toBe(0);
     });
 
-    test.concurrent("--type-check fails a file in which the type checker ran out of stack", async () => {
+    test.concurrent("--type-check has the stack for calls nested 4,000 deep", async () => {
       const nested = Buffer.alloc(8_000, "f(").toString() + "1" + Buffer.alloc(4_000, ")").toString();
-      const project = { ...unchecked, "a.ts": `declare function f<T>(x: T): T;\nexport const a = ${nested};\n` };
+      const project = {
+        ...unchecked,
+        "a.ts": `declare function f<T>(x: T): T;\nexport const a = ${nested};\nexport const wrong: string = 1;\n`,
+      };
       const { raw, exitCode } = await lint(project, ["--type-aware", "--type-check", "-f", "unix", "a.ts"]);
-      // Where the frames are larger, the parser is the first to run out.
-      expect(raw).toMatch(
-        /a\.ts:1:1: (The type checker ran out of stack|The code is nested too deeply for the type checker|Parsing error: The code is nested too deeply)/,
-      );
+      // Where the frames are larger, the parser or the type checker runs out of stack.
+      if (!isDebug && !isASAN) expect(raw).not.toMatch(/ran out of stack|nested too deeply/);
+      expect(raw).toMatch(/a\.ts:(3:14: Type 'number' is not assignable|1:1: .*(ran out of stack|nested too deeply))/);
+      expect(exitCode).toBe(1);
+    });
+
+    // It takes all the stack that there is, a quarter of a gigabyte, so nothing runs beside it.
+    test.serial("--type-check fails a file in which the type checker ran out of stack", async () => {
+      const nested = Buffer.alloc(2_000_000, "[]").toString();
+      const project = { ...unchecked, "a.ts": `export type A = number${nested};\nexport const wrong: string = 1;\n` };
+      const { raw, exitCode } = await lint(project, ["--type-aware", "--type-check", "-f", "unix", "a.ts"]);
+      expect(raw).toContain("a.ts:1:1: The type checker ran out of stack. Type errors in this file may be missing.");
+      expect(raw).toContain("a.ts:2:14: Type 'number' is not assignable to type 'string'.");
       expect(exitCode).toBe(1);
     });
 

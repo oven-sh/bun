@@ -301,52 +301,19 @@ test/bundler/bun-build-compile.test.ts: ELF section > compiled binary preserves 
 test/bundler/bundler_bun.test.ts: bundler > bun/TargetBunNoSourcemapMessage
 test/bundler/bundler_bun.test.ts: bundler > bun/TargetBunSourcemapInline
 test/bundler/bundler_bun.test.ts: bundler > bun/UnknownBunSpecifierDoesNotLoadThePackageNamedLikeItsSuffix-esm
-test/bundler/bundler_compile.test.ts: bundler > ESM bytecode cache is used at runtime
 test/bundler/bundler_compile.test.ts: bundler > compile/BannerNonAsciiUTF8
-test/bundler/bundler_compile.test.ts: bundler > compile/Bun.embeddedFiles
-test/bundler/bundler_compile.test.ts: bundler > compile/Bun.isStandaloneExecutable
-test/bundler/bundler_compile.test.ts: bundler > compile/CanRequireLocalPackages
-test/bundler/bundler_compile.test.ts: bundler > compile/DynamicImport
-test/bundler/bundler_compile.test.ts: bundler > compile/DynamicImportEmbeddedEntryPoint
-test/bundler/bundler_compile.test.ts: bundler > compile/DynamicRequire
 test/bundler/bundler_compile.test.ts: bundler > compile/ESMBytecode+ExternalImportInCommonJSWrapper
 test/bundler/bundler_compile.test.ts: bundler > compile/ESMBytecode+ExternalImportInCommonJSWrapper+minify
 test/bundler/bundler_compile.test.ts: bundler > compile/ESMBytecode+ReExportExternalFromEntryPoint
 test/bundler/bundler_compile.test.ts: bundler > compile/ESMBytecode+ReExportExternalFromEntryPoint+minify
-test/bundler/bundler_compile.test.ts: bundler > compile/EmbeddedFileNamesPerThread
-test/bundler/bundler_compile.test.ts: bundler > compile/EmbeddedResolveMisses
-test/bundler/bundler_compile.test.ts: bundler > compile/EmbeddedResolvePrecedence
 test/bundler/bundler_compile.test.ts: bundler > compile/FooterNonAsciiUTF8
 test/bundler/bundler_compile.test.ts: bundler > compile/HelloWorldBytecode
 test/bundler/bundler_compile.test.ts: bundler > compile/HelloWorldWithProcessVersionsBun
 test/bundler/bundler_compile.test.ts: bundler > compile/HelloWorldWithProcessVersionsBunAPI
 test/bundler/bundler_compile.test.ts: bundler > compile/ImportDeferBytecode+cjs
 test/bundler/bundler_compile.test.ts: bundler > compile/ImportDeferBytecode+esm
-test/bundler/bundler_compile.test.ts: bundler > compile/ImportMetaMain
-test/bundler/bundler_compile.test.ts: bundler > compile/NoAutoInstall
 test/bundler/bundler_compile.test.ts: bundler > compile/NonAsciiChunkReadsBackAsUTF8
-test/bundler/bundler_compile.test.ts: bundler > compile/ReactSSR+bytecode+cjs+minify
-test/bundler/bundler_compile.test.ts: bundler > compile/ReactSSR+bytecode+esm
-test/bundler/bundler_compile.test.ts: bundler > compile/ReactSSR+bytecode+esm+minify
-test/bundler/bundler_compile.test.ts: bundler > compile/ReactSSR+cjs
-test/bundler/bundler_compile.test.ts: bundler > compile/ReactSSR+cjs+minify
-test/bundler/bundler_compile.test.ts: bundler > compile/ReactSSR+esm
-test/bundler/bundler_compile.test.ts: bundler > compile/ReactSSR+esm+minify
-test/bundler/bundler_compile.test.ts: bundler > compile/ResolveEmbeddedFileOutfile
 test/bundler/bundler_compile.test.ts: bundler > compile/RuntimeRequireEmbeddedCJS+bytecode
-test/bundler/bundler_compile.test.ts: bundler > compile/SourceMap
-test/bundler/bundler_compile.test.ts: bundler > compile/SourceMapBigFile
-test/bundler/bundler_compile.test.ts: bundler > compile/TextImport
-test/bundler/bundler_compile.test.ts: bundler > compile/TextImportBytecode
-test/bundler/bundler_compile.test.ts: bundler > compile/TextImportBytecodeESM
-test/bundler/bundler_compile.test.ts: bundler > compile/TextImportClientChunkStaysInline
-test/bundler/bundler_compile.test.ts: bundler > compile/VariousBunAPIs
-test/bundler/bundler_compile.test.ts: bundler > compile/WorkerRelativePathTSExtensionBytecode
-test/bundler/bundler_compile.test.ts: bundler > compile/pathToFileURLWorks
-test/bundler/bundler_compile.test.ts: bundler > compile/sqlite-file
-test/bundler/bundler_compile.test.ts: compile --compile-executable-path rejects a Mach-O template whose __BUN segment offsets exceed the file bounds
-test/bundler/bundler_compile.test.ts: compile --compile-executable-path rejects a Mach-O template whose __LINKEDIT offsets would pass 4 GiB once the bundle is embedded
-test/bundler/bundler_compile.test.ts: compile --compile-executable-path rejects a template shorter than the executable-format header
 test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadBothTsconfigAndPackageJson
 test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadBunfigDefault
 test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadBunfigEnabled
@@ -356,6 +323,39 @@ test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadPackage
 test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadPackageJsonExportsEnabled
 test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadTsconfigPathsCLI
 test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadTsconfigPathsEnabled
+test/bundler/bundler_compile_embedded.test.ts: bundler > compile/Bun.embeddedFiles
+test/bundler/bundler_compile_embedded.test.ts: bundler > compile/Bun.isStandaloneExecutable
+test/bundler/bundler_compile_embedded.test.ts: bundler > compile/DynamicImportEmbeddedEntryPoint
+test/bundler/bundler_compile_embedded.test.ts: bundler > compile/EmbeddedFileNamesPerThread
+test/bundler/bundler_compile_embedded.test.ts: bundler > compile/EmbeddedResolveMisses
+test/bundler/bundler_compile_embedded.test.ts: bundler > compile/EmbeddedResolvePrecedence
+test/bundler/bundler_compile_embedded.test.ts: bundler > compile/ReactSSR+bytecode+cjs+minify
+test/bundler/bundler_compile_embedded.test.ts: bundler > compile/ReactSSR+bytecode+esm
+test/bundler/bundler_compile_embedded.test.ts: bundler > compile/ReactSSR+bytecode+esm+minify
+test/bundler/bundler_compile_embedded.test.ts: bundler > compile/ReactSSR+cjs
+test/bundler/bundler_compile_embedded.test.ts: bundler > compile/ReactSSR+cjs+minify
+test/bundler/bundler_compile_embedded.test.ts: bundler > compile/ReactSSR+esm
+test/bundler/bundler_compile_embedded.test.ts: bundler > compile/ReactSSR+esm+minify
+test/bundler/bundler_compile_embedded.test.ts: bundler > compile/ResolveEmbeddedFileOutfile
+test/bundler/bundler_compile_embedded.test.ts: bundler > compile/VariousBunAPIs
+test/bundler/bundler_compile_embedded.test.ts: bundler > compile/WorkerRelativePathTSExtensionBytecode
+test/bundler/bundler_compile_embedded.test.ts: bundler > compile/pathToFileURLWorks
+test/bundler/bundler_compile_imports.test.ts: bundler > ESM bytecode cache is used at runtime
+test/bundler/bundler_compile_imports.test.ts: bundler > compile/CanRequireLocalPackages
+test/bundler/bundler_compile_imports.test.ts: bundler > compile/DynamicImport
+test/bundler/bundler_compile_imports.test.ts: bundler > compile/DynamicRequire
+test/bundler/bundler_compile_imports.test.ts: bundler > compile/ImportMetaMain
+test/bundler/bundler_compile_imports.test.ts: bundler > compile/NoAutoInstall
+test/bundler/bundler_compile_imports.test.ts: bundler > compile/SourceMap
+test/bundler/bundler_compile_imports.test.ts: bundler > compile/SourceMapBigFile
+test/bundler/bundler_compile_imports.test.ts: bundler > compile/TextImport
+test/bundler/bundler_compile_imports.test.ts: bundler > compile/TextImportBytecode
+test/bundler/bundler_compile_imports.test.ts: bundler > compile/TextImportBytecodeESM
+test/bundler/bundler_compile_imports.test.ts: bundler > compile/TextImportClientChunkStaysInline
+test/bundler/bundler_compile_imports.test.ts: bundler > compile/sqlite-file
+test/bundler/bundler_compile_imports.test.ts: compile --compile-executable-path rejects a Mach-O template whose __BUN segment offsets exceed the file bounds
+test/bundler/bundler_compile_imports.test.ts: compile --compile-executable-path rejects a Mach-O template whose __LINKEDIT offsets would pass 4 GiB once the bundle is embedded
+test/bundler/bundler_compile_imports.test.ts: compile --compile-executable-path rejects a template shorter than the executable-format header
 test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/BannerFooter/ImportMeta
 test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/BannerFooter/TopLevelAwait
 test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/DefaultAndNamed

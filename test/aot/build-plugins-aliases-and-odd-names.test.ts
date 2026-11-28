@@ -38,6 +38,160 @@ buildBothWays("compile/aot/aliases and odd names from the plugins of Bun.build",
     ],
     prints: "picked inner picked deep\n",
   },
+  // As `bun run` with the plugin: the name is the path of the module. Without `aot` an executable holds nothing under the path.
+  "a name made at run time is the path of a module of a plugin that ends in a type, import()": {
+    files: {
+      "main.ts": `// @ts-nocheck
+import written from "./notes.md?text";
+const name = ["./notes.md", String(globalThis.nothing ?? "text")].join("?");
+console.log(written, await import(name).then(found => found.default === written, error => error.code));`,
+      "notes.md": "on the disk",
+    },
+    plugins: [
+      `build.onResolve({ filter: /\\.md\\?text$/ }, (args: any) => ({ path: join(args.resolveDir, args.path) }));
+build.onLoad({ filter: /\\.md\\?text$/ }, () => ({ contents: "made by the plugin", loader: "text" }));`,
+    ],
+    differs: { exitCode: 0, stdout: "made by the plugin true\n" },
+  },
+  "a name made at run time is the path of a module of a plugin that ends in a type, require()": {
+    files: {
+      "main.cjs": `const textOf = found => (typeof found === "string" ? found : found.default);
+const written = require("./notes.md?text");
+const name = ["./notes.md", String(globalThis.nothing ?? "text")].join("?");
+try {
+  console.log(textOf(written), textOf(require(name)) === textOf(written));
+} catch (error) {
+  console.log(textOf(written), error.code);
+}`,
+      "notes.md": "on the disk",
+    },
+    options: `entrypoints: ["./main.cjs"]`,
+    plugins: [
+      `build.onResolve({ filter: /\\.md\\?text$/ }, (args: any) => ({ path: join(args.resolveDir, args.path) }));
+build.onLoad({ filter: /\\.md\\?text$/ }, () => ({ contents: "made by the plugin", loader: "text" }));`,
+    ],
+    differs: { exitCode: 0, stdout: "made by the plugin true\n" },
+  },
+  "import() of names made at run time that are the paths of texts of a plugin under queries": {
+    files: {
+      "main.ts": `// @ts-nocheck
+import a from "./icon.svg?raw";
+import b from "./icon.svg?inline";
+import c from "./icon.svg?text";
+import d from "./part.js?raw";
+import e from "./part.js?text";
+const which = name => String(globalThis.nothing ?? name);
+for (const [file, query, written] of [["./icon.svg", "raw", a], ["./icon.svg", "inline", b], ["./icon.svg", "text", c], ["./part.js", "raw", d], ["./part.js", "text", e]]) {
+  const name = [file, which(query)].join("?");
+  console.log("composed " + name, await import(name).then(found => found.default === written, error => error.code));
+}
+console.log("template ./icon.svg?raw", await import(\`./\${which("icon")}.svg?raw\`).then(found => found.default === a, error => error.code));
+console.log("template ./icon.svg?inline", await import(\`./\${which("icon")}.svg?inline\`).then(found => found.default === b, error => error.code));
+console.log("template ./icon.svg?text", await import(\`./\${which("icon")}.svg?text\`).then(found => found.default === c, error => error.code));
+console.log("template ./part.js?raw", await import(\`./\${which("part")}.js?raw\`).then(found => found.default === d, error => error.code));
+console.log("template ./part.js?text", await import(\`./\${which("part")}.js?text\`).then(found => found.default === e, error => error.code));
+console.log("written", (await import("./icon.svg?raw")).default === a, a);`,
+      "icon.svg": "<svg>on the disk</svg>",
+      "part.js": "export default 'on the disk';",
+    },
+    plugins: [
+      `build.onResolve({ filter: /\\.(svg|js)\\?(raw|inline|text)$/ }, (args: any) => ({ path: join(args.resolveDir, args.path) }));
+build.onLoad({ filter: /\\.(svg|js)\\?(raw|inline|text)$/ }, (args: any) => ({ contents: "made of " + basename(args.path), loader: "text" }));`,
+    ],
+    differs: {
+      exitCode: 0,
+      stdout:
+        "composed ./icon.svg?raw true\ncomposed ./icon.svg?inline true\ncomposed ./icon.svg?text true\ncomposed ./part.js?raw true\ncomposed ./part.js?text true\ntemplate ./icon.svg?raw true\ntemplate ./icon.svg?inline true\ntemplate ./icon.svg?text true\ntemplate ./part.js?raw true\ntemplate ./part.js?text true\nwritten true made of icon.svg?raw\n",
+    },
+  },
+  "require() of names made at run time that are the paths of texts of a plugin under queries": {
+    files: {
+      "main.cjs": `const which = name => String(globalThis.nothing ?? name);
+const textOf = found => (typeof found === "string" ? found : found.default);
+const a = require("./icon.svg?raw");
+const b = require("./icon.svg?inline");
+const c = require("./icon.svg?text");
+const d = require("./part.js?raw");
+const e = require("./part.js?text");
+const outcome = (name, written) => {
+  try {
+    return textOf(require(name)) === textOf(written);
+  } catch (error) {
+    return error.code;
+  }
+};
+for (const [file, query, written] of [["./icon.svg", "raw", a], ["./icon.svg", "inline", b], ["./icon.svg", "text", c], ["./part.js", "raw", d], ["./part.js", "text", e]]) {
+  const name = [file, which(query)].join("?");
+  console.log("composed " + name, outcome(name, written));
+}
+console.log("written", textOf(require("./icon.svg?raw")) === textOf(a), textOf(a));`,
+      "icon.svg": "<svg>on the disk</svg>",
+      "part.js": "exports.value = 'on the disk';",
+    },
+    options: `entrypoints: ["./main.cjs"]`,
+    plugins: [
+      `build.onResolve({ filter: /\\.(svg|js)\\?(raw|inline|text)$/ }, (args: any) => ({ path: join(args.resolveDir, args.path) }));
+build.onLoad({ filter: /\\.(svg|js)\\?(raw|inline|text)$/ }, (args: any) => ({ contents: "made of " + basename(args.path), loader: "text" }));`,
+    ],
+    differs: {
+      exitCode: 0,
+      stdout:
+        "composed ./icon.svg?raw true\ncomposed ./icon.svg?inline true\ncomposed ./icon.svg?text true\ncomposed ./part.js?raw true\ncomposed ./part.js?text true\nwritten true made of icon.svg?raw\n",
+    },
+  },
+  "import() of a name made at run time that is the path of code of a plugin under a query": {
+    files: {
+      "main.ts": `// @ts-nocheck
+import written from "./icon.svg?url";
+const name = ["./icon.svg", String(globalThis.nothing ?? "url")].join("?");
+console.log(written, await import(name).then(found => found.default === written, error => error.code));`,
+      "icon.svg": "<svg>on the disk</svg>",
+    },
+    plugins: [
+      `build.onResolve({ filter: /\\.svg\\?url$/ }, (args: any) => ({ path: join(args.resolveDir, args.path) }));
+build.onLoad({ filter: /\\.svg\\?url$/ }, () => ({ contents: "export default 'made by the plugin'", loader: "js" }));`,
+    ],
+    differs: { exitCode: 0, stdout: "made by the plugin true\n" },
+  },
+  "require() behind import() of a name made at run time that is the path of data of a plugin under a query": {
+    files: {
+      "main.ts": `// @ts-nocheck
+import { createRequire } from "node:module";
+import * as text from "./one.txt?json";
+import * as code from "./notes.js?a&b=1";
+const load = createRequire(import.meta.url);
+const which = name => String(globalThis.nothing ?? name);
+const values = [JSON.stringify(text.default), JSON.stringify(code.default)];
+for (const [index, name] of [{ one: "./one.txt?json" }[which("one")], ["nothing", ".js?a&b=1"].map(end => "./notes" + end)[Number(which("1"))]].entries()) {
+  const imported = await import(name).then(found => JSON.stringify(found.default), error => error.code);
+  const required = JSON.stringify(load(name).default);
+  console.log(name, imported === values[index], required === values[index]);
+}
+const outcome = async name => [await import(name).then(found => JSON.stringify(found.default), error => error.code), JSON.stringify(load(name).default)];
+console.log(await outcome(\`./one.txt?\${which("json")}\`).then(found => found.every(value => value === values[0]), error => error.code));
+console.log(await outcome(["./notes.js", which("a&b=1")].join("?")).then(found => found.every(value => value === values[1]), error => error.code));`,
+      "one.txt": "on the disk",
+      "notes.js": "export default 'on the disk';",
+    },
+    plugins: [
+      `build.onResolve({ filter: /\\?(json|a&b=1)$/ }, (args: any) => ({ path: join(args.resolveDir, args.path) }));
+build.onLoad({ filter: /\\?(json|a&b=1)$/ }, (args: any) => ({ contents: JSON.stringify({ made: basename(args.path) }), loader: "json" }));`,
+    ],
+    differs: {
+      exitCode: 0,
+      stdout: "./one.txt?json true true\n./notes.js?a&b=1 true true\ntrue\ntrue\n",
+    },
+  },
+  "a file is imported under a type and under a query that spells the type": {
+    files: {
+      "main.ts": `// @ts-nocheck
+import text from "./part.mjs" with { type: "text" };
+const made = "./part.mjs?" + ["te", "xt"].join("");
+console.log(typeof text, (await import(made)).value);`,
+      "part.mjs": `export const value = 1;`,
+    },
+    refused: "two modules have the path",
+  },
   "a query string that a plugin takes": {
     files: {
       "main.ts": `// @ts-nocheck\nimport raw from "./code.ts?raw"; import { value } from "./code.ts"; import again from "./code.ts?raw"; console.log(JSON.stringify(raw), value, raw === again);`,

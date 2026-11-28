@@ -27,6 +27,11 @@ const withoutTypes = (library: string) =>
     files: ["main.ts"],
   });
 
+const installedTypesOfBun = {
+  "node_modules/@types/bun/package.json": `{ "name": "@types/bun", "version": "1.3.0", "types": "index.d.ts" }\n`,
+  "node_modules/@types/bun/index.d.ts": `declare module "bun" {\n  export const version: string;\n}\n`,
+};
+
 const scriptWithTypesOfBunInstalled = (more: string) => ({
   "main.ts": `/// <reference path="./shared.d.ts" />
 class Crate {
@@ -59,11 +64,10 @@ declare enum Grade {
     },
     files: ["main.ts"],
   }),
-  "node_modules/@types/bun/package.json": `{ "name": "@types/bun", "version": "1.3.0", "types": "index.d.ts" }\n`,
-  "node_modules/@types/bun/index.d.ts": `declare module "bun" {\n  export const version: string;\n}\n`,
+  ...installedTypesOfBun,
 });
 
-// tsc reads the declarations of such a package, and a build reads the source. The project has not installed Bun's types.
+// tsc reads the declarations of such a package, and a build reads the source.
 const packageWithAotSource = (main: string, declarations: string, source: string) => ({
   "main.ts": main,
   "tsconfig.json": JSON.stringify({
@@ -506,6 +510,23 @@ for (const [name, [text, stdout]] of Object.entries(provided)) {
   rows[`a package.json and one file: ${name}`] = {
     files: { "package.json": `{ "name": "plainest" }\n`, "main.ts": text },
     errors: [],
+    stdout,
+  };
+}
+
+const nameTypesOfBun = (config: string) => {
+  const { compilerOptions, ...rest } = JSON.parse(config);
+  return JSON.stringify({ compilerOptions: { ...compilerOptions, types: ["bun"] }, ...rest });
+};
+for (const [name, { files, errors, stdout }] of Object.entries(rows)) {
+  if (!("node_modules/made-up/types.d.ts" in files) || name.includes("for lack of Bun's types")) continue;
+  const named = Object.entries(files).map(([path, text]) => [
+    path,
+    path.endsWith("tsconfig.json") ? nameTypesOfBun(text) : text,
+  ]);
+  rows[`${name}, with Bun's types installed`] = {
+    files: { ...Object.fromEntries(named), ...installedTypesOfBun },
+    errors,
     stdout,
   };
 }

@@ -386,6 +386,12 @@ fn names_own_file_behind(
         .any(|e| is_written_as_own_file(text, e, conversions_left, left))
 }
 
+fn is_import_meta_path(hir: &File<'_>, e: ExprId) -> bool {
+    matches!(hir.member_key(e), Some((object, MemberKey::Name(name)))
+        if (name == known::url || name == known::meta_filename || name == known::path)
+            && matches!(expr_kind(hir, hir.skip_type_assertions(object)), Some(ExprKind::ImportMeta)))
+}
+
 fn is_written_as_own_file(
     text: Text<'_, '_, '_, '_>,
     e: ExprId,
@@ -396,10 +402,7 @@ fn is_written_as_own_file(
     if is_free_common_js(hir, bound, e, CommonJsVariable::Filename) {
         return !may_be_modified(hir, bound, CommonJsVariable::Filename);
     }
-    let is_import_meta_member = matches!(hir.member_key(e), Some((object, MemberKey::Name(name)))
-        if (name == known::url || name == known::meta_filename || name == known::path)
-            && matches!(expr_kind(hir, hir.skip_type_assertions(object)), Some(ExprKind::ImportMeta)));
-    if is_import_meta_member {
+    if is_import_meta_path(hir, e) {
         return !bound.import_meta_may_be_modified();
     }
     let Some(conversions_left) = conversions_left.checked_sub(1) else {
@@ -776,14 +779,28 @@ fn find_value_written_under(hir: &File<'_>, object: ExprId, key: Atom) -> Option
 fn find_require_made_for_choice(
     text: Text<'_, '_, '_, '_>,
     call: ExprId,
-    holder: Option<SymbolId>,
     left: StepsLeft,
 ) -> Option<OwnRequire> {
-    let holder = holder.filter(|_| left.passes_choices)?;
-    let arguments = find_arguments_of_create_require(text, call, left)?;
-    let base = text.hir.ids(arguments).next()?;
-    may_name_own_file(text, base, LONGEST_CHAIN_OF_BINDINGS, left)
-        .then_some(OwnRequire::MadeForChoice(holder))
+    may_use_own_file(text, call, left, true).then_some(OwnRequire::MadeForChoice)
+}
+
+/// `asks_run`: where something may modify `import.meta`, the run asks whether the base is the own file.
+fn may_use_own_file(
+    text: Text<'_, '_, '_, '_>,
+    call: ExprId,
+    left: StepsLeft,
+    asks_run: bool,
+) -> bool {
+    let Text { hir, bound, .. } = text;
+    let is_held = find_name_that_takes(hir, bound, call).is_some();
+    let base = find_arguments_of_create_require(text, call, left)
+        .and_then(|arguments| hir.ids(arguments).next());
+    left.passes_choices
+        && (is_held || asks_run)
+        && base.is_some_and(|base| {
+            let steps = LONGEST_CHAIN_OF_BINDINGS;
+            may_name_own_file(text, base, steps, left, (is_held, asks_run))
+        })
 }
 
 fn may_name_own_file(
@@ -791,13 +808,16 @@ fn may_name_own_file(
     e: ExprId,
     steps_left: usize,
     left: StepsLeft,
+    (converts, asks_run): (bool, bool),
 ) -> bool {
     let Text { hir, bound, .. } = text;
     let Some(steps_left) = steps_left.checked_sub(1) else {
         return false;
     };
     settled_chain(hir, bound, e).any(|e| {
-        if is_written_as_own_file(text, e, LONGEST_CHAIN_OF_BINDINGS, left) {
+        if (asks_run && is_import_meta_path(hir, e))
+            || is_written_as_own_file(text, e, LONGEST_CHAIN_OF_BINDINGS, left)
+        {
             return true;
         }
         let only_argument = |call: Call| (call.args.len() == 1).then(|| hir.id_at(call.args, 0));
@@ -807,7 +827,13 @@ fn may_name_own_file(
                 [Some(yes), Some(no)]
             }
             Some(ExprKind::Binary {
-                op: BinOp::Or | BinOp::Nullish | BinOp::And | BinOp::Comma | BinOp::Add,
+                op: BinOp::Or | BinOp::Nullish | BinOp::And | BinOp::Comma,
+                left: first,
+                right: second,
+            }) => [Some(first), Some(second)],
+            _ if !converts => [None, None],
+            Some(ExprKind::Binary {
+                op: BinOp::Add,
                 left: first,
                 right: second,
             }) => [Some(first), Some(second)],
@@ -824,7 +850,7 @@ fn may_name_own_file(
             _ => [None, None],
         };
         let mut parts = parts.into_iter().flatten();
-        parts.any(|part| may_name_own_file(text, part, steps_left, left))
+        parts.any(|part| may_name_own_file(text, part, steps_left, left, (converts, asks_run)))
     })
 }
 
@@ -893,39 +919,17 @@ fn is_written_out_of_texts(text: Text<'_, '_, '_, '_>, e: ExprId, parts_left: us
     }
 }
 
-pub fn find_holder_of_require_made_for_choice(
-    hir: &File<'_>,
-    bound: &Bound<'_>,
-    call: ExprId,
-) -> Option<(SymbolId, usize)> {
-    let mut initializer = call;
-    while let Parent::Expr(parent) = bound.parent_of_expr(initializer)
-        && hir.type_assertion_operand(parent).is_some()
-    {
-        initializer = parent;
-    }
-    let Parent::VarInit(declaration) = bound.parent_of_expr(initializer) else {
-        return None;
-    };
-    let pattern = hir[declaration].pat;
-    if !matches!(hir[pattern].kind, PatKind::Ident(_)) {
-        return None;
-    }
-    let holder = bound.declared_symbol(Decl::Var(pattern));
-    if bound.binding_stability(holder) != BindingStability::Stable {
-        return None;
-    }
+pub fn find_chosen_require_base(hir: &File<'_>, bound: &Bound<'_>, call: ExprId) -> Option<usize> {
     let text = Text::of(hir, bound, None);
     let given = find_arguments_of_create_require(text, call, StepsLeft::ALL)?;
     if find_made_require(text, call, StepsLeft::ALL).is_some() {
         return None;
     }
-    find_require_made_for_choice(text, call, Some(holder), StepsLeft::ALL)?;
+    find_require_made_for_choice(text, call, StepsLeft::ALL)?;
     let ExprKind::Call(written) = expr_kind(hir, call)? else {
         return None;
     };
-
-    Some((holder, (given.start - hir[written].args.start) as usize))
+    Some((given.start - hir[written].args.start) as usize)
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -933,7 +937,7 @@ pub enum OwnRequire {
     OfFile,
     Made,
     MadeForPath(ExprId),
-    MadeForChoice(SymbolId),
+    MadeForChoice,
     OfOtherFile(Atom),
     MadeInOtherFile(Atom),
 }
@@ -1258,7 +1262,8 @@ fn is_followed_to_every_call(text: Text<'_, '_, '_, '_>, made: ExprId) -> bool {
     if goes_out_of_sight(hir, bound, made) {
         return false;
     }
-    let is_base_read = find_made_require(text, made, StepsLeft::ALL).is_some();
+    let is_base_read = find_made_require(text, made, StepsLeft::ALL).is_some()
+        || may_use_own_file(text, made, StepsLeft::ALL, false);
     let Some(holder) = find_name_that_takes(hir, bound, made) else {
         let written = outermost_cast(hir, bound, made);
         return is_base_read
@@ -1267,9 +1272,7 @@ fn is_followed_to_every_call(text: Text<'_, '_, '_, '_>, made: ExprId) -> bool {
                 if matches!(hir[statement].kind, StmtKind::Expr(_)));
     };
     if bound.is_stable_binding(holder) {
-        let is_made_for_choice =
-            || find_require_made_for_choice(text, made, Some(holder), StepsLeft::ALL).is_some();
-        return (is_base_read || is_made_for_choice())
+        return is_base_read
             && (is_exported(bound, holder) || !has_escaping_use(hir, bound, holder));
     }
     if IS_ASKING_WHOLE_FILE.replace(true) {
@@ -1642,7 +1645,6 @@ fn follow_each_side_once(
         })
     };
     let mut e = hir.skip_type_assertions(e);
-    let mut holder = None;
     let mut holders = [None; LONGEST_CHAIN_OF_BINDINGS];
     let are_only_called = |holders: &[Option<SymbolId>]| {
         let mut holders = holders.iter().flatten();
@@ -1748,7 +1750,11 @@ fn follow_each_side_once(
                     && is_made_or_nothing
                     && found.contains(&Some(OwnRequire::Made))
                     && !lets_made_requires_out_of_sight(text);
-                return is_made.then_some(OwnRequire::Made);
+                if is_made {
+                    return Some(OwnRequire::Made);
+                }
+                let mut found = found.into_iter().flatten();
+                return found.find(|&it| it == OwnRequire::MadeForChoice);
             }
         }
         if let Some((object, MemberKey::Name(known::require))) = hir.member_key(e)
@@ -1766,7 +1772,7 @@ fn follow_each_side_once(
             if let Some(made) = find_made_require(text, e, left) {
                 return Some(made);
             }
-            if let Some(made) = find_require_made_for_choice(text, e, holder, left) {
+            if let Some(made) = find_require_made_for_choice(text, e, left) {
                 return Some(made);
             }
             let fewer = StepsLeft { bindings, ..left };
@@ -1783,8 +1789,7 @@ fn follow_each_side_once(
             }
             return is_parameter_with_require_of_file(e).then_some(OwnRequire::OfFile);
         };
-        holder = settled_symbol(hir, bound, e);
-        holders[bindings.min(LONGEST_CHAIN_OF_BINDINGS - 1)] = holder;
+        holders[bindings.min(LONGEST_CHAIN_OF_BINDINGS - 1)] = settled_symbol(hir, bound, e);
         e = source;
     }
     None
@@ -1864,7 +1869,7 @@ fn find_require_written_as(
             (!may_be_modified(hir, bound, CommonJsVariable::Require)).then_some((None, false))
         }
         OwnRequire::Made => Some((None, true)),
-        OwnRequire::MadeForPath(_) | OwnRequire::MadeForChoice(_) => None,
+        OwnRequire::MadeForPath(_) | OwnRequire::MadeForChoice => None,
         OwnRequire::OfOtherFile(path) => Some((Some(path), false)),
         OwnRequire::MadeInOtherFile(path) => Some((Some(path), true)),
     }
@@ -2002,16 +2007,21 @@ pub(super) fn follow_settled_bindings(hir: &File<'_>, bound: &Bound<'_>, e: Expr
 }
 
 pub fn holds_import_meta_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
-    if !bound.may_name_own_require()
-        || !matches!(
-            expr_kind(hir, hir.skip_type_assertions(e)),
-            Some(ExprKind::Ident(_))
-        )
-    {
+    if !bound.may_name_own_require() || is_import_meta_require(hir, e) {
         return false;
     }
-    let mut held = settled_chain(hir, bound, e).skip(1);
-    held.any(|e| is_import_meta_require(hir, e))
+    let is_import_meta = |e: ExprId| {
+        let held = follow_settled_bindings(hir, bound, e);
+        matches!(expr_kind(hir, held), Some(ExprKind::ImportMeta))
+    };
+    settled_chain(hir, bound, e).any(|e| {
+        if let Some((object, MemberKey::Name(known::require))) = hir.member_key(e) {
+            return is_import_meta(object);
+        }
+        let held = settled_symbol(hir, bound, e).map(|it| bound.binding_initializer(hir, it));
+        matches!(held, Some(BindingInitializer::PatternProperty { source, path })
+            if path[..] == [known::require] && is_import_meta(source))
+    })
 }
 
 pub fn is_made_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {

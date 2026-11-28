@@ -53,7 +53,7 @@ diagnostic_codes! {
         FilesLeftOutByPattern = 100089, Warning, "The executable doesn't embed {0}, which this path may name. {1}";
         ModuleMayBeNamedAtRunTime = 100094, Warning, "This call may load a module, and the build can't work out its name. If it names code that isn't in the executable, the call throws at run time. Import the module by its name to keep it, or build with --aot-allow-code-from-disk";
         FoldersOfResolveAreNotRead = 100095, Warning, "The build can't work out the folders that this call looks in, so what they hold may not be in the executable. The call may then find a module of the same name in a folder above them, or none. Write the list of folders in the call, each as a path from __dirname or import.meta.dirname";
-        MadeRequireGoesOutOfSight = 100096, Warning, "The build can't follow the require() that is made here to every call of it. If such a call names code that isn't in the executable, it throws at run time. Make it for the file's own path or URL, keep it in a const and call it by that name, or build with --aot-allow-code-from-disk";
+        MadeRequireGoesOutOfSight = 100096, Warning, "The build can't follow the require() that is made here to every call of it. If such a call names code that isn't in the executable, or a compiled file by a path that the build doesn't know, it throws at run time. Make it for the file's own path or URL, keep it in a const and call it by that name, pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk to load code that isn't in the executable";
         SearchGoesOnAboveListedFolder = 100097, Warning, "One of the folders that this call looks in isn't there or doesn't hold the module, so the search goes on in the folders above it and finds {0}. In an executable the search doesn't go on above a listed folder, so the call may find another module of the same name, or none. List the folder that holds the module";
         ResolvedFileNotEmbedded = 100099, Warning, "This path names {0}, which isn't in the executable, so the call throws at run time. Pass the file to bun compile as another entry point";
         IgnoreCommentSilencesNothing = 100073, Warning, "This comment silences nothing: {0}";
@@ -94,6 +94,7 @@ diagnostic_codes! {
         EntryPointIsExternal = 100162, Error, "The entry point \"{0}\" cannot be marked as external";
         FileIsNotAProgram = 100163, Error, "\"{0}\" is loaded as JavaScript, because nothing says what else it is, and it isn't JavaScript: {1}";
         DataFileIsRefused = 100164, Error, "\"{0}\" could not be parsed as {1}: {2}";
+        FilesTakenByType = 100179, Warning, "The executable embeds {0} for this path. It names no folder, and `type: \"{1}\"` reads files of any kind: {2}. Write the folder or the extension in the path to embed fewer";
         FileEmbeddedImplicitly = 100166, Note, "The executable embeds \"{0}\" because this reads it";
         WorkerFileFoundByName = 100167, Note, "The executable holds \"{0}\", which this names, because a Worker may start from it";
         WorkerFilesFoundByName = 100168, Note, "The build can't tell which file each Worker starts from, so the executable holds these files, which the program names: {0}";
@@ -105,6 +106,7 @@ diagnostic_codes! {
         SearchMissesPackageJson = 100174, Warning, "This hands on \"{0}\", and the executable doesn't hold the package.json that a search from there finds first. Once it's moved, the search finds another one or none";
         FolderListedInPart = 100175, Warning, "This hands on \"{0}\" to code that may list it, and the executable holds some of its files alone. Once it's moved, the list is shorter. Embed the folder with --asset {0}";
         NamedFilesEmbedded = 100176, Note, "The executable embeds what this path leads to: {0}";
+        TextOfCodeEmbedded = 100178, Note, "The executable embeds the text of \"{0}\" ({1} bytes) because this reads it";
         RequiredTypeIsNotRead = 100177, Warning, "The build can't work out the type that these options name, so this require() gives the file as its extension says. Write the type out, as in require(\"./a.json\", { type: \"file\" })";
         FileBehindAssetSymlink = 100165, Warning, "This reads \"{0}\", but the executable has no file at that path: --asset follows no links inside a folder. Embed it with --asset {1}";
     }

@@ -159,7 +159,11 @@ enum SigParent {
 pub(super) struct ResolvedMeanwhile {
     pub(super) file: FileId,
     pub(super) call: ExprId,
-    resolved: ResolvedCall,
+    pub(super) resolved: ResolvedCall,
+    /// The height of `Checker::stack` when this was pushed.
+    pub(super) height: usize,
+    /// The errors of the call are being reported.
+    is_report: bool,
     /// What `Checker::resolved_meanwhile_of_class` held for the class of the call when this was pushed.
     next_of_class: u32,
 }
@@ -443,12 +447,15 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         call: ExprId,
         resolved: ResolvedCall,
+        is_report: bool,
     ) {
         let innermost = &mut self.resolved_meanwhile_of_class[class_of_call(file, call)];
         self.resolved_meanwhile.push(ResolvedMeanwhile {
             file,
             call,
             resolved,
+            height: self.stack.len(),
+            is_report,
             next_of_class: *innermost,
         });
         *innermost = self.resolved_meanwhile.len() as u32;
@@ -460,17 +467,40 @@ impl<'p, 's> Checker<'p, 's> {
             entry.next_of_class;
     }
 
-    /// Returns what the innermost entry of `resolved_meanwhile` for the call holds.
-    fn find_resolved_meanwhile(&self, file: FileId, call: ExprId) -> Option<ResolvedCall> {
+    /// Returns the position of the innermost entry of `resolved_meanwhile` for the call.
+    fn find_resolved_meanwhile(&self, file: FileId, call: ExprId) -> Option<usize> {
         let mut next = self.resolved_meanwhile_of_class[class_of_call(file, call)];
         while next != 0 {
             let entry = self.resolved_meanwhile[next as usize - 1];
             if entry.file == file && entry.call == call {
-                return Some(entry.resolved);
+                return Some(next as usize - 1);
             }
             next = entry.next_of_class;
         }
         None
+    }
+
+    /// `enter` for a resolution of `call`. Returns whether `call` was in progress, or `None` if it's rejected.
+    fn enter_call(&mut self, file: FileId, call: ExprId) -> Option<bool> {
+        // `resolvingSignature`
+        let in_progress_at = match self.may_be_in_flight(Query::Call(file, call)) {
+            true => self.position_in_progress(Query::Call(file, call), 0),
+            false => None,
+        };
+        let resolution_start = self.resolution_start;
+        // There's no re-entrancy guard. A call that a back edge of a loop reaches while it's being
+        // resolved is resolved again, any number of times. See `recheck_in_flow_loop`. A call
+        // that's re-entered through a resolution is also resolved again, because that resolution is
+        // the guard.
+        if in_progress_at.is_some_and(|at| {
+            self.flow_loop_pushed_since(at).is_some()
+                || self.stack[at..].iter().any(|&q| self.is_resolution(q))
+        }) {
+            self.resolution_start = self.stack.len();
+        }
+        let entered = self.enter(Query::Call(file, call));
+        self.resolution_start = resolution_start;
+        entered.then_some(in_progress_at.is_some())
     }
 
     pub fn resolved_signature(&mut self, file: FileId, call: ExprId) -> ResolvedCall {
@@ -485,8 +515,8 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.cached_resolved_signature(file, call) {
             return known;
         }
-        if let Some(resolved) = self.find_resolved_meanwhile(file, call) {
-            return resolved;
+        if let Some(at) = self.find_resolved_meanwhile(file, call) {
+            return self.resolved_meanwhile[at].resolved;
         }
         if let Some(raw) = self.provisional(Query::Call(file, call)) {
             return crate::table::Packed::unpack(raw);
@@ -496,31 +526,13 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return known;
         }
-        // `resolvingSignature`
-        let in_progress_at = match self.may_be_in_flight(Query::Call(file, call)) {
-            true => self.position_in_progress(Query::Call(file, call), 0),
-            false => None,
-        };
-        let is_in_progress = in_progress_at.is_some();
         let resolution_start = self.resolution_start;
-        // There's no re-entrancy guard. A call that a back edge of a loop reaches while it's being
-        // resolved is resolved again, any number of times. See `recheck_in_flow_loop`. A call
-        // that's re-entered through a resolution is also resolved again, because that resolution is
-        // the guard.
-        if in_progress_at.is_some_and(|at| {
-            self.flow_loop_pushed_since(at).is_some()
-                || self.stack[at..].iter().any(|&q| self.is_resolution(q))
-        }) {
-            self.resolution_start = self.stack.len();
-        }
-        let entered = self.enter(Query::Call(file, call));
-        self.resolution_start = resolution_start;
-        if !entered {
+        let Some(is_in_progress) = self.enter_call(file, call) else {
             return ResolvedCall {
                 sig: None,
                 ret: TypeId::UNRESOLVED,
             };
-        }
+        };
         // `getResolvedSignature`: "temporarily reset the resolution stack", for a caller that
         // queries something in an argument whose type depends on the call it's an argument of. It's
         // queried again, this time with the call in progress. If that reaches the call as an
@@ -541,7 +553,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.is_call_re_resolved = is_re_resolved;
         let reported = std::mem::replace(&mut self.call_resolution_errors, outer_errors);
         self.resolution_start = resolution_start;
-        self.push_resolved_meanwhile(file, call, resolved);
+        self.push_resolved_meanwhile(file, call, resolved, false);
         let resolved = self.with_return_type(resolved);
         self.pop_resolved_meanwhile();
         // `getResolvedSignature`: `links.resolvedSignature != c.resolvingSignature`, "this inner
@@ -611,6 +623,9 @@ impl<'p, 's> Checker<'p, 's> {
         {
             // `len(c.flowLoopStack) != 0`: the signature isn't stored, and the errors that
             // `resolveCall` reported from the temporary types stay.
+            if !reported.is_empty() {
+                self.note_reported();
+            }
             self.reported.extend(reported);
         }
         resolved
@@ -652,7 +667,7 @@ impl<'p, 's> Checker<'p, 's> {
         let resolved = self.resolve_signature(file, call);
         self.call_resolution_errors = outer_errors;
         self.resolution_start = resolution_start;
-        self.push_resolved_meanwhile(file, call, resolved);
+        self.push_resolved_meanwhile(file, call, resolved, false);
         let resolved = self.with_return_type(resolved);
         self.pop_resolved_meanwhile();
         let _ = self.leave(Query::Call(file, call));
@@ -1473,7 +1488,7 @@ impl<'p, 's> Checker<'p, 's> {
         let resolved = self.resolved_to(file, call, sig, expects_return);
         if !is_chosen {
             // `resolvedSignature = result`, before the errors are reported.
-            self.push_resolved_meanwhile(file, call, resolved);
+            self.push_resolved_meanwhile(file, call, resolved, true);
             let since = self.reported.len();
             self.report_call_resolution_errors(&s, signatures, head_message);
             self.pop_resolved_meanwhile();
@@ -1510,6 +1525,38 @@ impl<'p, 's> Checker<'p, 's> {
                 TypeId::ANY
             },
         }
+    }
+
+    /// `checkCallExpression`: `getResolvedSignature(node)`, then `getReturnTypeOfSignature(signature)`.
+    /// Inlined, because a chain of functions without return types recurses through it at each level.
+    #[inline(always)]
+    pub(super) fn resolved_call_with_return(&mut self, file: FileId, call: ExprId) -> ResolvedCall {
+        let resolved = self.resolved_signature(file, call);
+        // Only a call that was assigned its signature while it's in progress has no return type yet.
+        if resolved.ret == TypeId::UNRESOLVED {
+            return self.return_of_call_in_progress(file, call, resolved);
+        }
+        resolved
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn return_of_call_in_progress(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        resolved: ResolvedCall,
+    ) -> ResolvedCall {
+        // The call hides the resolutions below it (`resolution_start`), so `on_reentry` may not see that this path is a cycle. It
+        // only counts as one if the errors of a call on the path are being reported: the functions of valid programs lead back
+        // to calls too, with the same result wherever they were entered.
+        if let Some(at) = self.find_resolved_meanwhile(file, call)
+            && self.resolved_meanwhile[at..].iter().any(|it| it.is_report)
+        {
+            let height = self.resolved_meanwhile[at].height;
+            self.close_ring_from(height.saturating_sub(1));
+        }
+        self.with_return_type(resolved)
     }
 
     /// `checkCallExpression`: `getReturnTypeOfSignature(signature)`. It runs after

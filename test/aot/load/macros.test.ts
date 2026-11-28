@@ -1,5 +1,6 @@
-// An import of a macro stops a build with --aot: docs/compiler/compatibility.mdx. Every form of such an import is refused by name, the macro is not run, and no
+// A call of a macro stops a build with --aot: docs/compiler/compatibility.mdx. Every form of such an import is refused by name, the macro is not run, and no
 // executable is written. Without --aot the same program builds, runs its macro and prints what its row says: so the program is right, and the refusal is about the macro.
+// An import of a macro that nothing calls is no error, and brings no name.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, readFileSync } from "node:fs";
@@ -230,6 +231,48 @@ describe.concurrent("compile/aot/load/macros", () => {
       600_000,
     );
   }
+
+  test(
+    "an import that nothing calls brings no name: its typeof is undefined, and a read of it throws",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-load-macros", {
+          "tsconfig.json": tsconfig(),
+          "macros.ts": MACROS,
+          "main.mjs": `import { number, inner } from "./macros.ts" with { type: "macro" };
+import * as macros from "./macros.ts" with { type: "macro" };
+const say = read => {
+  try {
+    return String(read());
+  } catch (error) {
+    return error.name + ": " + error.message;
+  }
+};
+console.log(say(() => typeof number), say(() => typeof inner), say(() => typeof macros));
+console.log(say(() => number));
+console.log(say(() => macros.number));
+`,
+        });
+        const folder = String(dir);
+        for (const mode of [[], ["--aot"]]) {
+          const program = join(folder, exe(mode.length ? "compiled" : "bundled"));
+          const build = [bunExe(), "build", "--compile", ...mode, "main.mjs", "--outfile", program];
+          const ran = await buildAndRun(build, program, folder);
+          expect({ mode, ...ran, ranMacro: existsSync(join(folder, markOfMacro)) }).toEqual({
+            mode,
+            stdout: `undefined undefined undefined
+ReferenceError: number is not defined
+ReferenceError: macros is not defined
+`,
+            stderr: "",
+            exitCode: 0,
+            signal: null,
+            ranMacro: false,
+          });
+        }
+      }),
+    600_000,
+  );
 
   test(
     "is refused by name, and nothing is written: in a component file, built by Bun.build()",

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ad923e4196fa9f814ff9f0491837a9cbf9070997d0570b77c2118a411a94f7d3.
+// Written against that file with the SHA-256 814b3b2c88936eb80625e52c6fc6c83cac51ca70bfb6b2da6eb1198583c9ab2a.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -518,6 +518,7 @@ interface UVErrnos {
   UV_ECANCELED: number;
   UV_EISCONN: number;
   UV_ENOBUFS: number;
+  UV_ENOMEM: number;
   UV_ETIMEDOUT: number;
 }
 let uvBinding: UVErrnos | undefined;
@@ -732,6 +733,8 @@ function failWrite(self: $Node.Socket, negErrno: number, callback: WriteCallback
 // The TLS engine ended the write side only. It reads what the peer sent, then closes, and the write fails with that close.
 function holdRejectedWrite(self: $Node.Socket, handle: SocketHandle, negErrno: number, callback: WriteCallback) {
   if (!self.encrypted || self[kclosed]) return false;
+  // The engine has not ended anything where memory ran out.
+  if (negErrno === uv().UV_ENOMEM) return false;
   if (self[kupgraded] && !(self[kupgraded] instanceof Socket)) return false;
   self._pendingData = null;
   self[kwriteCallback] = callback;

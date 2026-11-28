@@ -373,6 +373,8 @@ function failWrite(self, negErrno, callback) {
 // The TLS engine ended the write side only. It reads what the peer sent, then closes, and the write fails with that close.
 function holdRejectedWrite(self, handle, negErrno, callback) {
   if (!self.encrypted || self[kclosed]) return false;
+  // The engine has not ended anything where memory ran out.
+  if (negErrno === uv().UV_ENOMEM) return false;
   if (self[kupgraded] && !(self[kupgraded] instanceof Socket)) return false;
   self._pendingData = null;
   self[kwriteCallback] = callback;

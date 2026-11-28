@@ -8,7 +8,7 @@
 use super::enclosing_declaration::Enclosing;
 use super::errors::is_close;
 use super::*;
-use crate::bind::{PatParent, ScopeId};
+use crate::bind::{PatParent, ScopeId, SymbolId};
 
 impl Checker<'_, '_> {
     pub(super) fn check_names_and_exports(&mut self, file: FileId) {
@@ -100,9 +100,11 @@ impl Checker<'_, '_> {
                 if !files.flags(resolved).contains(SymFlags::ALIAS) {
                     return None;
                 }
-                let target = files.canonical(files.alias_target(resolved)?);
+                // The target of a circular alias is `unknownSymbol`, which has no exports.
+                let links = files.alias_links(resolved);
+                let target = links.immediate_target.filter(|_| !links.is_circular)?;
                 let target = files.resolve_alias_as(
-                    target,
+                    files.canonical(target),
                     SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE,
                 )?;
                 files
@@ -269,8 +271,28 @@ impl Checker<'_, '_> {
         // Indexed by symbol, allocated lazily when the first name is checked. Each symbol is examined once, however
         // often it's used. 0 means not computed yet, 1 means nothing is reported.
         let mut inspected: Vec<u8> = Vec::new();
-        for &(e, _) in &bound.alias_idents {
-            let local = bound.symbol_of_expr(e);
+        // What an import shares with an exported value is a local symbol that names the value's own.
+        let shared = SymFlags::ALIAS | SymFlags::EXPORT_VALUE;
+        let locals = bound
+            .scopes
+            .first()
+            .map_or(&[][..], |it| bound.table(it.locals));
+        let shared_locals: smallvec::SmallVec<[(SymbolId, SymbolId); 2]> = (locals.iter())
+            .filter(|it| bound.symbol_flags(it.1) & (shared | SymFlags::VALUE) == shared)
+            .map(|it| (bound.export_symbol_of_value_symbol_if_exported(it.1), it.1))
+            .collect();
+        let index = (!shared_locals.is_empty()).then(|| self.exprs_by_kind(file));
+        let idents = index.as_ref().map_or(&[][..], |it| it.of(ExprTag::Ident));
+        let named = idents.iter().filter_map(|&e| {
+            let symbol = bound.symbol_of_expr(e);
+            let found = shared_locals.iter().find(|it| it.0 == symbol)?;
+            Some((e, found.1))
+        });
+        let aliases = bound.alias_idents.iter();
+        for (e, local) in aliases
+            .map(|it| (it.0, bound.symbol_of_expr(it.0)))
+            .chain(named)
+        {
             if local.is_none() || bound.is_unchecked(e.idx()) {
                 continue;
             }
@@ -282,11 +304,12 @@ impl Checker<'_, '_> {
                 continue;
             }
             let sym = files.sym(file, local);
-            // `getSymbol`: it resolves as a value. An unresolved alias matches the value meaning like any other
-            // meaning.
-            let type_only = files
-                .type_only_alias_declaration_ex(sym)
-                .filter(|_| self.get_symbol_flags(sym).intersects(SymFlags::VALUE));
+            // `getSymbol`: it's an exported value or resolves as a value. An unresolved alias matches the value meaning
+            // like any other meaning.
+            let type_only = files.type_only_alias_declaration_ex(sym).filter(|_| {
+                symbol.flags.contains(SymFlags::EXPORT_VALUE)
+                    || self.get_symbol_flags(sym).intersects(SymFlags::VALUE)
+            });
             inspected[local.idx()] = 1 + u8::from(type_only.is_some());
             let Some(type_only) = type_only else {
                 continue;

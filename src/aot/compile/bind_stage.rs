@@ -598,6 +598,30 @@ fn find_folders_entered(
     entered
 }
 
+/// Whether the function of the program that `callee` names may read a path that it is given.
+fn may_read_where_called(
+    files: &Files<'_>,
+    graph: &ModuleGraph,
+    file: FileId,
+    callee: ExprId,
+) -> bool {
+    let function = match files.bound(file).binding(callee) {
+        Binding::Symbol(id) => match graph.import_binding(file, id) {
+            ImportBinding::Variable(function) => function,
+            _ => Sym { file, id },
+        },
+        _ => match graph.member_binding(file, callee) {
+            Some(ImportBinding::Variable(function)) => function,
+            _ => return false,
+        },
+    };
+    files.compiled(function.file).is_some_and(|it| {
+        (it.analysis.reading_functions)
+            .binary_search(&function.id)
+            .is_ok()
+    })
+}
+
 fn list_file_reads(
     files: &Files<'_>,
     graph: &ModuleGraph,
@@ -625,24 +649,8 @@ fn list_file_reads(
     });
     let read = analysis.module_relative_reads.iter();
     let read = read.map(move |&(operand, path)| (operand, path, is_query(operand)));
-    let is_read_by_function_called = move |callee: ExprId| {
-        let function = match files.bound(file).binding(callee) {
-            Binding::Symbol(id) => match graph.import_binding(file, id) {
-                ImportBinding::Variable(function) => function,
-                _ => Sym { file, id },
-            },
-            _ => match graph.member_binding(file, callee) {
-                Some(ImportBinding::Variable(function)) => function,
-                _ => return false,
-            },
-        };
-        let called = files.compiled(function.file);
-        called.is_some_and(|it| {
-            (it.analysis.reading_functions)
-                .binary_search(&function.id)
-                .is_ok()
-        })
-    };
+    let is_read_by_function_called =
+        move |callee| may_read_where_called(files, graph, file, callee);
     let given = analysis.named_paths.iter();
     let given = given.filter(move |it| it.callee.is_some_and(is_read_by_function_called));
     let given = given.map(|it| (it.operand, it.path, false));
@@ -670,15 +678,13 @@ fn list_file_reads(
 fn is_within_other_read(
     files: &Files<'_>,
     file: FileId,
-    reads: &[FileRead],
+    read_by: &FxHashSet<(ExprId, &[u8])>,
     read: &FileRead,
 ) -> bool {
     let bound = files.bound(file);
     let mut inner = read.operand;
     while let Parent::Expr(outer) = bound.parent_of_expr(inner) {
-        let is_around =
-            |it: &FileRead| it.operand == outer && it.path == read.path && !it.is_ruled_out;
-        if reads.iter().any(is_around) {
+        if read_by.contains(&(outer, &read.path)) {
             return true;
         }
         inner = outer;
@@ -875,7 +881,9 @@ fn warn_about_unembedded_reads(
         for read in list_reads(file) {
             let path = read.path;
             let is_query = read.is_query && !provider.is_searched_for(to_native(&path));
-            let is_code = (files.by_path.get(&path)).is_some_and(|found| !sources.is_data(found));
+            // `node:fs` says of compiled code that it is there, and doesn't have its text.
+            let is_code = (is_query || read.is_listing)
+                && (files.by_path.get(&path)).is_some_and(|found| !sources.is_data(found));
             if let (false, Some(entry)) = (is_code, entry)
                 && !is_in_left_out_code(files, left_out, file, read.operand)
             {
@@ -952,11 +960,14 @@ fn warn_about_unembedded_reads(
         let folder = parent_directory(files.module(file).file_name());
         let mut names_build_paths = None;
         let reads = list_reads(file);
+        let mut read_by = None;
         for read in &reads {
             let (operand, path) = (read.operand, &read.path);
             let is_query = read.is_query && !provider.is_searched_for(to_native(path));
-            let is_code = (files.by_path.get(path)).is_some_and(|found| !sources.is_data(found));
-            if !is_code && provider.is_embedded_implicitly(to_native(path), is_query) {
+            let code = files.by_path.get(path).filter(|it| !sources.is_data(*it));
+            let is_code = code.is_some();
+            let is_text = !(is_code && (is_query || read.is_listing));
+            if is_text && provider.is_embedded_implicitly(to_native(path), is_query) {
                 if !lists_files || is_in_left_out_code(files, left_out, file, operand) {
                     continue;
                 }
@@ -966,8 +977,15 @@ fn warn_about_unembedded_reads(
                 }
                 let span = Span::of_node(files.hir(file), file, NodeData::Expr(operand));
                 let name = compute_display_path(project_root, to_native(path));
-                let code = Code::FileEmbeddedImplicitly;
-                diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[&name]));
+                let size = code.map(|it| sources.byte_count(it).to_string());
+                let note = match &size {
+                    Some(size) => {
+                        let code = Code::TextOfCodeEmbedded;
+                        Diagnostic::new(code, Some(span), &[&name, size.as_bytes()])
+                    }
+                    None => Diagnostic::new(Code::FileEmbeddedImplicitly, Some(span), &[&name]),
+                };
+                diagnostics.add(Some(view), note);
                 noted.insert(to_native(path).to_vec());
                 continue;
             }
@@ -1000,7 +1018,11 @@ fn warn_about_unembedded_reads(
             if is_in_left_out_code(files, left_out, file, operand) {
                 continue;
             }
-            if is_within_other_read(files, file, &reads, read) {
+            let read_by = read_by.get_or_insert_with(|| {
+                let run = reads.iter().filter(|it| !it.is_ruled_out);
+                run.map(|it| (it.operand, &it.path[..])).collect()
+            });
+            if is_within_other_read(files, file, read_by, read) {
                 continue;
             }
             let span = Span::of_node(files.hir(file), file, NodeData::Expr(operand));
@@ -1023,7 +1045,7 @@ fn warn_about_unembedded_reads(
             }
         }
         let analysis = files.analysis(file);
-        let mut named = find_excluded_named_paths(view, left_out, file, &reads, provider);
+        let mut named = find_excluded_named_paths(view, graph, left_out, file, &reads, provider);
         named.extend(find_searches_missing_manifests(
             files, graph, left_out, file, provider,
         ));
@@ -1223,6 +1245,7 @@ fn find_searches_missing_manifests(
 /// Paths that a file of the project passes to code which may read them: `express.static(path.join(import.meta.dirname, "public"))`.
 fn find_excluded_named_paths(
     view: ProgramView<'_, '_>,
+    graph: &ModuleGraph,
     left_out: &LeftOutCode,
     file: FileId,
     reads: &[FileRead],
@@ -1233,34 +1256,95 @@ fn find_excluded_named_paths(
     let is_of_project = provider.is_own_module_of_project(to_native(module));
     let folder = parent_directory(module);
     let mut found = Vec::new();
-    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
-    for named in files.analysis(file).named_paths {
+    let mut seen: FxHashSet<&[u8]> = FxHashSet::default();
+    let all_named = files.analysis(file).named_paths;
+    let mut paths: FxHashMap<Atom, Vec<u8>> = FxHashMap::default();
+    for named in all_named {
+        (paths.entry(named.path))
+            .or_insert_with(|| from_argument(folder, files.atoms.bytes(named.path)));
+    }
+    let mut paths_of_calls: FxHashMap<ExprId, Vec<&[u8]>> = FxHashMap::default();
+    for named in all_named {
+        if let Some(callee) = named.callee {
+            let of_call = paths_of_calls.entry(callee).or_default();
+            of_call.push(&paths[&named.path]);
+        }
+    }
+    for of_call in paths_of_calls.values_mut() {
+        of_call.sort_unstable();
+    }
+    let read_paths = |is_asked: fn(&FileRead) -> bool| -> FxHashSet<&[u8]> {
+        let asked = reads.iter().filter(|it| is_asked(it));
+        asked.map(|it| &it.path[..]).collect()
+    };
+    let (mut listed_paths, mut run_paths) = (None, None);
+    for named in all_named {
+        let path = &paths[&named.path][..];
+        if seen.contains(path) {
+            continue;
+        }
+        // Where the call says which file of the folder it is, that file is a read.
+        let names_folder_alone = || {
+            let of_call = named.callee.and_then(|it| paths_of_calls.get(&it));
+            let mut first_below = path.to_vec();
+            if !path.ends_with(b"/") {
+                first_below.push(b'/');
+            }
+            !of_call.is_some_and(|of_call| {
+                let at = of_call.partition_point(|it| *it < &first_below[..]);
+                let mut from = of_call[at..].iter().skip_while(|it| **it == path);
+                from.next().is_some_and(|it| it.starts_with(&first_below))
+            })
+        };
+        let is_read_below = !named.is_needed_on_disk
+            && !named.is_passed_to_package
+            && is_of_project
+            && named
+                .callee
+                .is_some_and(|it| may_read_where_called(files, graph, file, it))
+            && names_folder_alone();
         let code = match (named.is_needed_on_disk, named.is_passed_to_package) {
             (true, _) => Code::PathNeededOnDisk,
             (false, true) if is_of_project => Code::NamedPathNotEmbedded,
+            _ if is_read_below => Code::NamedPathNotEmbedded,
             _ => continue,
         };
-        let path = from_argument(folder, files.atoms.bytes(named.path));
-        let is_code = (files.by_path.get(&path)).is_some_and(|found| !sources.is_data(found));
-        let is_around_module = is_at_or_below(module, &path) && !named.becomes_working_folder;
-        if is_around_module || is_code || !seen.insert(path.clone()) {
+        let is_code = (files.by_path.get(path)).is_some_and(|found| !sources.is_data(found));
+        let is_around_module = is_at_or_below(module, path) && !named.becomes_working_folder;
+        if is_around_module || is_code || !seen.insert(path) {
             continue;
         }
         let is_left_out = match code {
-            Code::PathNeededOnDisk => provider.is_on_disk(to_native(module), to_native(&path)),
+            Code::PathNeededOnDisk => provider.is_on_disk(to_native(module), to_native(path)),
             _ => {
                 let holds_files = || {
-                    let listed = provider.list_excluded_folder(to_native(&path));
+                    let listed = provider.list_excluded_folder(to_native(path));
                     listed.is_some_and(|it| !it.is_empty())
-                        && is_excluded_folder(files, sources, provider, &path, None)
+                        && is_excluded_folder(files, sources, provider, path, None)
                 };
-                !reads.iter().any(|it| it.path == path && !it.is_ruled_out)
-                    && (provider.is_embeddable_only_by_asset(to_native(module), to_native(&path))
-                        || holds_files())
+                match is_read_below {
+                    true => {
+                        let is_asset = |it: &Vec<u8>| provider.is_in_asset(it);
+                        let listed = provider.list_excluded_folder(to_native(path));
+                        let listed_paths =
+                            listed_paths.get_or_insert_with(|| read_paths(|it| it.is_listing));
+                        !listed_paths.contains(path)
+                            && !listed.unwrap_or_default().iter().any(is_asset)
+                            && holds_files()
+                    }
+                    false => {
+                        let run_paths =
+                            run_paths.get_or_insert_with(|| read_paths(|it| !it.is_ruled_out));
+                        !run_paths.contains(path)
+                            && (provider
+                                .is_embeddable_only_by_asset(to_native(module), to_native(path))
+                                || holds_files())
+                    }
+                }
             }
         };
         if is_left_out && !is_in_left_out_code(files, left_out, file, named.operand) {
-            found.push((named.operand, path, code));
+            found.push((named.operand, path.to_vec(), code));
         }
     }
     found

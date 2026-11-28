@@ -1,0 +1,2 @@
+[test]
+preload = ["./write.mjs", "./hook.mjs"]

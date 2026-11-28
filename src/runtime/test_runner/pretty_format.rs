@@ -569,6 +569,7 @@ impl Tag {
             JSType::WeakSet | JSType::Set => Tag::Set,
             JSType::JSDate => Tag::JSON,
             JSType::JSPromise => Tag::Promise,
+            JSType::Object if value.is_compiled_generator() => Tag::JSON,
             JSType::Object
             | JSType::FinalObject
             | JSType::CompiledObject

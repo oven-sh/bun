@@ -4,6 +4,7 @@ use super::runtime_reach::{
     find_reached_runtime_code, find_uses_of_kept_code,
 };
 use super::{BoundBuild, Build, LoadedBuild, LoadedProject};
+use crate::builtins::id::BuiltinId;
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{
     DiagnosticBuffer, Diagnostics, InternalError, describe_first_fold_error, syntax_errors_of,
@@ -398,9 +399,7 @@ impl Build<'_> {
             files_to_lower.retain(|&file| {
                 left_out.files.binary_search(&file).is_err() || graph.is_placeholder(file)
             });
-            let files = project.loaded.files();
-            let keeps_unchecked_ranges =
-                id == ProjectId::Application && files.brings_declarations();
+            let keeps_unchecked_ranges = id == ProjectId::Application;
             DecidedProject {
                 unchecked_ranges: keeps_unchecked_ranges.then(|| Guarded::new(Vec::new())),
                 first_reported_early_errors: find_first_reported_early_errors(&roles),
@@ -591,9 +590,11 @@ impl Build<'_> {
         }
         let mut found = checked.diagnostics;
         // A project that has Bun's declarations installed is held to them, as by tsc. What differs there too: a file that is a
-        // script for the project is a module for the build.
+        // script for the project is a module for the build, and a package is read by its source for a build. A warning is as
+        // the build sees it: in a run of tests each would ask anew.
         let files = loaded.project(project).loaded.files();
         let brings_declarations = files.brings_declarations();
+        let type_errors_warn = self.options.aot.type_errors_warn;
         let host = loaded.project(project).host;
         let held_in_memory = &self.options.load.in_memory_files;
         let read_texts_of_build = || {
@@ -619,8 +620,7 @@ impl Build<'_> {
         };
         let program = loaded.project(project).loaded;
         let is_own_module = |file: FileId| {
-            brings_declarations
-                && program.origin(file) == FileOrigin::ProgramSource
+            program.origin(file) == FileOrigin::ProgramSource
                 && roles.role(file) == FileRole::Checked
                 && !files.hir(file).is_script_for_project
                 && !left_out_bodies.contains_file(file)
@@ -645,6 +645,7 @@ impl Build<'_> {
         self.keep_what_project_itself_reports(&mut found, &views, |it| {
             let file = it.diagnostic.file;
             brings_declarations
+                || it.effect == Effect::StopsBuild && !type_errors_warn
                 || REPEATED_NAME_CODES.contains(&it.diagnostic.code)
                 || file.is_some_and(|file| files.hir(file).is_script_for_project)
         });
@@ -1152,9 +1153,12 @@ fn reads_source_paths(files: &Files<'_>, sources: &Sources, in_parallel: InParal
             return false;
         }
         let decisions = &files.analysis(file).decisions;
+        let asks_for_file_names = parsed_source(files, file).is_some_and(|it| {
+            (it.builtins.mentioned()).contains(&BuiltinId::NodeModule_resolveFilename)
+        });
         let mut names = files.bound(file).ident_bindings().iter();
         let mut sites = files.analysis(file).import_sites.iter();
-        names.any(|&(name, binding)| {
+        asks_for_file_names || names.any(|&(name, binding)| {
             matches!(
                 binding,
                 Binding::CommonJs(CommonJsVariable::Filename | CommonJsVariable::Dirname)

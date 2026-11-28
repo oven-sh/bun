@@ -1,5 +1,5 @@
 use super::super::*;
-use super::{Builder, MemberBinding, MembersInPlace, Resolved};
+use super::{Builder, Composed, MemberBinding, MembersInPlace, Resolved};
 use smallvec::SmallVec;
 
 #[derive(Copy, Clone)]
@@ -375,7 +375,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         b.reserve(count);
         for (members, to_class) in above {
-            let mut composed = (MapperId::IDENTITY, true, to_class);
+            let mut composed = Composed::new(to_class);
             for prop in &members.shape.props {
                 if !b.has(prop.name) {
                     let prop = self.copy_for_heir(prop, to_class, &mut composed);
@@ -520,7 +520,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         while let Some((heir, mapper)) = heirs.pop() {
             if let Some(prop) = found {
-                let mut composed = (MapperId::IDENTITY, true, mapper);
+                let mut composed = Composed::new(mapper);
                 let copy = self.copy_for_heir(prop, mapper, &mut composed);
                 found = Some(self.arena.alloc(copy));
             }

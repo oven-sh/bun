@@ -2030,8 +2030,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     return (TypeId::SILENT_NEVER, false);
                 }
-                let resolved = self.resolved_signature(file, e);
-                let resolved = self.with_return_type(resolved);
+                let resolved = self.resolved_call_with_return(file, e);
                 let call = &hir[c];
                 let may_short_circuit = match call.chain {
                     Chain::No => false,
@@ -2124,8 +2123,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.template_type(&texts, &types)
             }
             ExprKind::TaggedTemplate(_) | ExprKind::New(_) => {
-                let resolved = self.resolved_signature(file, e);
-                self.with_return_type(resolved).ret
+                self.resolved_call_with_return(file, e).ret
             }
             ExprKind::Array(items) => {
                 self.push_cached_contextual_type(file, e);
@@ -5121,7 +5119,9 @@ impl<'p, 's> Checker<'p, 's> {
         self.precheck_binding_name(file, name);
         if initializer.is_some() && !self.is_binding_pattern_in_ambient_or_type_node(file, name) {
             self.type_of_expr(file, initializer);
-            self.precheck_with(|c| c.check_binding_element_initializer(file, name, initializer));
+            self.precheck_with(|c| {
+                c.check_binding_element_initializer(file, name, initializer, None);
+            });
         }
     }
 

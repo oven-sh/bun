@@ -785,6 +785,8 @@ function loadAllOfNodeHttp() {
   if (CAN_LOAD_CODE_AT_RUN_TIME) require("node:http");
 }
 
+const nop = () => {};
+
 export {
   METHODS,
   STATUS_CODES,
@@ -836,6 +838,7 @@ export {
   kWaitForProxyTunnel,
   loadAllOfNodeHttp,
   noBodySymbol,
+  nop,
   onDataIncomingMessage,
   optionsSymbol,
   parseProxyConfigFromEnv,

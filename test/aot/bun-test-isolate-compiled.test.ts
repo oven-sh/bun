@@ -402,23 +402,21 @@ test("nothing", () => { expect(1).toBe(1); });`,
   expect({ summary, exitCode }).toEqual({ summary: [" 3 pass", " 0 fail"], exitCode: 0 });
 });
 
-test("a stand-in does not keep the test file that read it", async () => {
-  const { summary, exitCode } = await runTests(["--isolate", "./d.test.ts", "./e.test.ts", "./f.test.ts"], {
-    "d.test.ts": `
+test("a stand-in of a built-in module says under --isolate that it was not compiled", async () => {
+  const text = `
 import { expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-${mark}
 const hidden = (text: string) => new Function(JSON.parse(JSON.stringify(text)))();
 test("reads what no code that the compiler can follow reads", () => {
-  // node:fs is in the image without its getter \`promises\`, which nothing calls: a stand-in lies in its place. The stand-in, a read that calls it, and the error of each.
   const getter = hidden('return Object.getOwnPropertyDescriptor(process.getBuiltinModule("node:fs"), "promises").get');
   expect(typeof getter).toBe("function");
   expect(() => getter()).toThrow("was not compiled into this executable");
   expect(() => hidden('return process.getBuiltinModule("node:fs").promises')).toThrow("was not compiled into this executable");
   expect(existsSync(".")).toBe(true);
-});`,
-    "e.test.ts": fileThatDoesNothing,
-    "f.test.ts": lastFile(""),
+});`;
+  const { summary, exitCode } = await runTests(["--isolate", "./d.test.ts", "./e.test.ts"], {
+    "d.test.ts": text,
+    "e.test.ts": text,
   });
-  expect({ summary, exitCode }).toEqual({ summary: [" 3 pass", " 0 fail"], exitCode: 0 });
+  expect({ summary, exitCode }).toEqual({ summary: [" 2 pass", " 0 fail"], exitCode: 0 });
 });

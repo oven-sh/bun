@@ -171,6 +171,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             BindingRead::TypeOf => match bindings::normalize_binding(self.file, binding) {
                 Binding::Free => self.emit_free_name_get(name, true),
                 Binding::CommonJs(variable) => self.get_commonjs_variable_for_typeof(variable),
+                Binding::Symbol(symbol)
+                    if self.file.scopes.form(symbol) == BindingForm::NotAValue =>
+                {
+                    self.builder.undefined()
+                }
                 Binding::Symbol(_) | Binding::Arguments(_) => self.get_binding(binding, name),
             },
         }

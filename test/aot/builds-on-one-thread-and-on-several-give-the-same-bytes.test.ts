@@ -81,6 +81,28 @@ function writeSidesOfUnion(order: "union first" | "union last", weight: "Grams" 
   };
 }
 
+function writeRingOfVariances() {
+  const files: Record<string, string> = {
+    "tsconfig.json": `{ "compilerOptions": { "strict": true, "target": "esnext", "module": "preserve", "moduleResolution": "bundler", "noEmit": true, "skipLibCheck": true }, "files": ["entry.ts"] }`,
+    "ring.ts": `export type Peel<X> = X extends Wrap<number> ? { n: number } : { n: string };
+export abstract class Schema<O> { private made: ((x: O) => void) | null = null; readonly out!: O; check(x: O): boolean { return this.made === null; } opt(): Wrap<this["out"]> { return new Wrap<this["out"]>(null); } }
+export class Wrap<T> extends Schema<T | undefined> { private own: T | null = null; readonly kind: Peel<Wrap<string>>; set: ((x: T) => void) | null = null; constructor(k: any) { super(); this.kind = k; } }
+export class Text extends Schema<string> { private n = 1; }
+`,
+    "entry.ts": "",
+  };
+  for (let index = 0; index < 16; index++) {
+    files[`alias${index}.ts`] =
+      `import type { Peel, Wrap } from "./ring";\nexport const alias: { n: string } | undefined = null as unknown as Peel<Wrap<string>>;\nconsole.log("alias${index}");\n`;
+    files[`member${index}.ts`] =
+      `import { Wrap } from "./ring";\nfunction sum${index}(x: Wrap<string>) { const list = []; for (let i = 0; i < 4; i++) list.push({ v: x.kind.n }); let o: any = 0; for (const e of list) o += e.v; return o; }\nconsole.log(sum${index}(new Wrap<string>({ n: 2 })), sum${index}(new Wrap<string>({ n: "z" })));\n`;
+    files[`assigned${index}.ts`] =
+      `import { Text, type Schema } from "./ring";\nexport const wide: Schema<any> = new Text().opt();\nexport const own: Schema<string | undefined> = new Text().opt();\nconsole.log(typeof Text);\n`;
+    files["entry.ts"] += ["alias", "member", "assigned"].map(name => `import "./${name}${index}";\n`).join("");
+  }
+  return files;
+}
+
 describe.skipIf(!!unsupported)("compile/aot/builds-on-one-thread-and-on-several-give-the-same-bytes", () => {
   const folder = String(tempDir("aot-same-bytes-by-threads", sources));
   const folderOfNamedTypes = String(tempDir("aot-same-bytes-by-threads-named-types", sourcesOfNamedTypes));
@@ -93,8 +115,16 @@ describe.skipIf(!!unsupported)("compile/aot/builds-on-one-thread-and-on-several-
   const folderOfOwnAlias = String(
     tempDir("aot-same-bytes-by-threads-own-alias", writeSidesOfUnion("union first", "number")),
   );
+  const folderOfVariances = String(tempDir("aot-same-bytes-by-threads-variances", writeRingOfVariances()));
   afterAll(() => {
-    for (const each of [folder, folderOfNamedTypes, folderOfUnionFirst, folderOfUnionLast, folderOfOwnAlias])
+    for (const each of [
+      folder,
+      folderOfNamedTypes,
+      folderOfUnionFirst,
+      folderOfUnionLast,
+      folderOfOwnAlias,
+      folderOfVariances,
+    ])
       rmSync(each, { recursive: true, force: true });
   });
 
@@ -176,6 +206,13 @@ describe.skipIf(!!unsupported)("compile/aot/builds-on-one-thread-and-on-several-
   test("builds of types that name each other are equal on one thread and on many", async () => {
     await slot(async () => {
       const hashes = await hashBuilds(folderOfNamedTypes, "./entry.ts", [1, 4, 16, 32]);
+      expect(hashes).toEqual(hashes.map(() => hashes[0]));
+    });
+  }, 600_000);
+
+  test("builds of a type that asks for the variances measured around it are equal on one thread and on many", async () => {
+    await slot(async () => {
+      const hashes = await hashBuilds(folderOfVariances, "./entry.ts", [1, 8, 16, 32]);
       expect(hashes).toEqual(hashes.map(() => hashes[0]));
     });
   }, 600_000);

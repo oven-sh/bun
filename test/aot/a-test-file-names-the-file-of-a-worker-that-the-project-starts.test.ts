@@ -55,7 +55,7 @@ import { Worker as WorkerOfNode } from "node:worker_threads";
 import { askOfNode, startOfNode } from "./src/spawn-of-node";
 const inVariable = new URL("./src/worker/w7.ts", import.meta.url);
 test("the Workers answer", async () => {
-  // A file that was compiled answers with what it said when the build read it.
+  // A file that runs from its text trips the wire. A file that the test itself writes over is read from disk, as under plain bun test.
   for (let n = 1; process.env.WRITES_OVER_WORKERS && n <= ${count}; n++) {
     const file = new URL("./src/worker/w" + n + ".ts", import.meta.url);
     writeFileSync(file, readFileSync(file, "utf8").replace('"w' + n + ' "', '"from disk "'));
@@ -109,15 +109,21 @@ test("each Worker answers under plain bun test", () => {
   expect(plain).toEqual({ seen: asWritten, taken: [], exitCode: 0 });
 });
 
-// Both cases build the same program, so they read one run: the one that writes over the files.
+// Both cases build the same program, so they read one run: the one that trips where a file runs from its text.
 for (const words of ["TestRunLayers:0"]) {
-  const env = { BUN_DEBUG_TEST_AOT_WORDS: words, WRITES_OVER_WORKERS: "1", BUN_JSC_logAOTPhaseTimes: "1" };
+  const layers = { BUN_DEBUG_TEST_AOT_WORDS: words };
   let ran: ReturnType<typeof see> | undefined;
-  const overWrittenFiles = () => (ran ??= see(["--aot"], env));
+  const compiledOnly = () =>
+    (ran ??= see(["--aot"], { ...layers, BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_JSC_logAOTPhaseTimes: "1" }));
   test(`each Worker answers as under plain bun test (${words})`, async () => {
-    expect({ ...(await overWrittenFiles()), taken: plain.taken }).toEqual(plain);
+    expect({ ...(await compiledOnly()), taken: plain.taken }).toEqual(plain);
   });
   test(`each Worker runs compiled (${words})`, async () => {
-    expect(await overWrittenFiles()).toEqual({ ...plain, taken: [count + 1] });
+    expect(await compiledOnly()).toEqual({ ...plain, taken: [count + 1] });
+  });
+  test(`each Worker runs what the test wrote over its file, as under plain bun test (${words})`, async () => {
+    const writtenOver = await see([], { WRITES_OVER_WORKERS: "1" });
+    expect(writtenOver).toEqual({ ...plain, seen: Object.keys(ways).map(name => `SEEN ${name} | from disk 42`) });
+    expect(await see(["--aot"], { ...layers, WRITES_OVER_WORKERS: "1" })).toEqual(writtenOver);
   });
 }

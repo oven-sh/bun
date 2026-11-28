@@ -126,7 +126,7 @@ fn has_fixed_callee(
                 | OwnRequire::OfOtherFile(_)
                 | OwnRequire::MadeInOtherFile(_),
             ) => true,
-            Some(OwnRequire::MadeForChoice(_)) => false,
+            Some(OwnRequire::MadeForChoice) => false,
             None => match hir.member_key(callee) {
                 Some((_, MemberKey::Name(name))) if name == known::require => holds_require(),
                 Some((object, _)) => {

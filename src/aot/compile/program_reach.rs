@@ -1778,6 +1778,9 @@ impl<'a, 's> FileScan<'a, 's> {
                 }
                 None => interests.push(Interest::EveryExport(target)),
             }
+            if !graph.forms_require_checks_first(target).is_empty() {
+                interests.push(Interest::AnswerOfLoader(target));
+            }
         }
     }
 
@@ -3657,6 +3660,19 @@ impl Reacher<'_, '_, '_> {
     }
 
     fn reach_answer_of_loader(&mut self, module: ModuleRef) {
+        self.reach_names_loader_looks_for(module);
+        let graph = self.walk.input.graph;
+        for &(_, form) in graph.forms_require_checks_first(module) {
+            let form = ModuleRef::File(form);
+            // Code at the path answers with all of its exports if something else has loaded it.
+            if graph.interop(form).kind != ModuleKind::Data {
+                self.reach_names_loader_looks_for(form);
+                self.look_at(form);
+            }
+        }
+    }
+
+    fn reach_names_loader_looks_for(&mut self, module: ModuleRef) {
         self.give_module_object(module);
         let input = self.walk.input;
         let atoms = &input.files.atoms;

@@ -208,6 +208,8 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
     return result;
 }
 
+extern "C" JSC::EncodedJSValue ResolveMessage__createModuleNotFound(JSC::JSGlobalObject*, const BunString* specifier, const BunString* referrer, bool isForRequire);
+
 // require() hands a native addon to process.dlopen without asking the module loader, and it answers a module that has run from its cache.
 static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC::JSValue resolvedPath, JSC::JSValue written, JSC::JSValue from)
 {
@@ -225,8 +227,23 @@ static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC:
         RETURN_IF_EXCEPTION(scope, );
         // The asker chooses the words of the refusal alone.
         JSC::AOT::ModuleRequesterScope requesterScope(globalObject, Bun::requesterForImporter(requesterPath));
-        scope.release();
-        JSC::AOT::checkModuleAccess(globalObject, *module);
+        if (Bun::runsCompiledModules() || isAbsolutePath(resolved) || Bun::isBuiltinModule(resolved) || !written.isString()) {
+            scope.release();
+            JSC::AOT::checkModuleAccess(globalObject, *module);
+            return;
+        }
+        // Only a plugin of the build gives this module a name, so `bun build --compile` finds nothing under it.
+        {
+            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+            JSC::AOT::checkModuleAccess(globalObject, *module);
+            if (!catchScope.exception() || !catchScope.clearExceptionExceptTermination())
+                return;
+        }
+        WTF::String specifier = asString(written)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+        BunString specifierString = Bun::toString(specifier);
+        BunString referrer = Bun::toString(requesterPath);
+        JSC::throwException(globalObject, scope, JSC::JSValue::decode(ResolveMessage__createModuleNotFound(globalObject, &specifierString, &referrer, true)));
         return;
     }
     // Module._resolveFilename() answers with where the file lay when the program was built.

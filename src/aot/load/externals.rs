@@ -8,12 +8,14 @@ pub(crate) fn is_external(
     specifier: &[u8],
     kind: CodeImportKind,
     directory: &[u8],
+    is_named_by_tsconfig: &dyn Fn() -> bool,
 ) -> bool {
     if matches_pattern(&externals.patterns, specifier) {
         return true;
     }
     if is_package_path(specifier) {
-        return externals.are_all_packages || matches_package(&externals.packages, specifier);
+        return matches_package(&externals.packages, specifier)
+            || externals.are_all_packages && !is_named_by_tsconfig();
     }
     matches_path(&externals.paths, specifier, kind, directory)
 }
@@ -86,14 +88,26 @@ mod tests {
 
     fn assert_external(externals: &Externals, directory: &[u8], specifiers: &[&[u8]]) {
         for specifier in specifiers {
-            let is_external = is_external(externals, specifier, CodeImportKind::Import, directory);
+            let is_external = is_external(
+                externals,
+                specifier,
+                CodeImportKind::Import,
+                directory,
+                &|| false,
+            );
             assert!(is_external, "{} is not external", BStr::new(specifier));
         }
     }
 
     fn assert_not_external(externals: &Externals, directory: &[u8], specifiers: &[&[u8]]) {
         for specifier in specifiers {
-            let is_external = is_external(externals, specifier, CodeImportKind::Import, directory);
+            let is_external = is_external(
+                externals,
+                specifier,
+                CodeImportKind::Import,
+                directory,
+                &|| false,
+            );
             assert!(!is_external, "{} is external", BStr::new(specifier));
         }
     }

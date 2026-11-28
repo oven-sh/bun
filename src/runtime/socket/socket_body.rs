@@ -2380,6 +2380,16 @@ impl<const SSL: bool> NewSocket<SSL> {
         res
     }
 
+    fn try_buffer_for_node_net(&self, data: &[u8]) -> bool {
+        self.buffered_data_for_node_net.with_mut(|b| {
+            if b.try_reserve(data.len()).is_err() {
+                return false;
+            }
+            b.extend_from_slice(data);
+            true
+        })
+    }
+
     pub(crate) fn write_buffered(
         &self,
         cx: &mut JsScope<'_>,
@@ -2549,11 +2559,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                         self.buffered_data_for_node_net
                             .with_mut(|b| b.drain_front(written));
 
-                        if !remaining_in_input_data.is_empty() {
-                            // Result intentionally discarded
-                            let _ = self
-                                .buffered_data_for_node_net
-                                .with_mut(|b| b.append_slice(remaining_in_input_data));
+                        if !self.try_buffer_for_node_net(remaining_in_input_data) {
+                            self.buffered_data_for_node_net
+                                .with_mut(|b| b.clear_and_free());
+                            break 'brk -sys::UV_E::NOMEM;
                         }
 
                         break 'brk rc;
@@ -2562,10 +2571,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
 
             // slower-path: clone the data, do one write.
-            // Result intentionally discarded
-            let _ = self
-                .buffered_data_for_node_net
-                .with_mut(|b| b.append_slice(buffer.slice()));
+            if !self.try_buffer_for_node_net(buffer.slice()) {
+                self.buffered_data_for_node_net
+                    .with_mut(|b| b.clear_and_free());
+                break 'brk -sys::UV_E::NOMEM;
+            }
             // R-2: `write_maybe_corked` takes `&self` and does not touch
             // `buffered_data_for_node_net`, so a `JsCell::get()` projection
             // is valid for the duration of the call.
@@ -2785,11 +2795,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         let wrote = self.write_maybe_corked(bytes);
         let uwrote: usize = usize::try_from(wrote.max(0)).expect("int cast");
         if buffer_unwritten_data {
-            let remaining = &bytes[uwrote..];
-            if !remaining.is_empty() {
-                let _ = self
-                    .buffered_data_for_node_net
-                    .with_mut(|b| b.append_slice(remaining)); // OOM/capacity: fire-and-forget
+            // A part may be sent, and the rest cannot follow: JS fails the write.
+            if !self.try_buffer_for_node_net(&bytes[uwrote..]) {
+                return WriteResult::Success {
+                    wrote: -sys::UV_E::NOMEM,
+                    total: bytes.len(),
+                };
             }
         }
 

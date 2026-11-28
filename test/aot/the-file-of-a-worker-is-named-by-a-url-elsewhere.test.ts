@@ -58,14 +58,14 @@ self.onmessage = (event: any) => { self.postMessage("w${n} " + double(event.data
 `;
 }
 
-// In a test run a file that was compiled answers with what it said when the build read it: the test writes over each Worker's file before it starts the Workers.
+// A file that runs from its text trips the wire. A file that the test itself writes over is read from disk, as under plain bun test.
 const testFiles: Record<string, string> = {
   "workers.test.ts":
     `import { expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import * as spawn from "./src/spawning/spawn";
-test("the Workers run as they were compiled", async () => {
-  for (let n = 1; n <= 7; n++) {
+test("the Workers answer", async () => {
+  for (let n = 1; process.env.WRITES_OVER_WORKERS && n <= 7; n++) {
     const file = new URL("./src/worker/w" + n + ".ts", import.meta.url);
     writeFileSync(file, readFileSync(file, "utf8").replace('"w' + n + ' "', '"from disk "'));
   }
@@ -79,14 +79,30 @@ test("the Workers run as they were compiled", async () => {
   "other.test.ts": `import { expect, test } from "bun:test";\ntest("another file", () => { expect(1).toBe(1); });\n`,
 };
 
-test("a test run runs the file of each Worker compiled", async () => {
+const see = async (flags: string[], more: Record<string, string>) => {
   using dir = tempDir("aot-worker-named-by-a-url", { ...files, ...testFiles });
-  const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" };
-  const ran = await run([bunExe(), "test", "--timeout=60000", "--aot", "--isolate"], String(dir), env);
-  const seen = ran.stdout.split("\n").filter(line => line.startsWith("SEEN "));
-  const expected = Object.keys(ways).map((name, index) => `SEEN ${name} | w${index + 1} 42`);
-  const said = ran.exitCode === 0 ? "" : ran.stderr;
-  expect({ seen, exitCode: ran.exitCode, said }).toEqual({ seen: expected, exitCode: 0, said: "" });
+  const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0", ...more };
+  const ran = await run([bunExe(), "test", "--timeout=60000", ...flags, "--isolate"], String(dir), env);
+  return {
+    seen: ran.stdout.split("\n").filter(line => line.startsWith("SEEN ")),
+    exitCode: ran.exitCode,
+    said: ran.exitCode === 0 ? "" : ran.stderr,
+  };
+};
+const answers = (say: (n: number) => string) => ({
+  seen: Object.keys(ways).map((name, index) => `SEEN ${name} | ${say(index + 1)} 42`),
+  exitCode: 0,
+  said: "",
+});
+
+test("a test run runs the file of each Worker compiled", async () => {
+  expect(await see([], {})).toEqual(answers(n => `w${n}`));
+  expect(await see(["--aot"], { BUN_JSC_crashIfInterpreterIsUsed: "1" })).toEqual(answers(n => `w${n}`));
+}, 120_000);
+
+test("each Worker runs what the test wrote over its file, as under plain bun test", async () => {
+  expect(await see([], { WRITES_OVER_WORKERS: "1" })).toEqual(answers(() => "from disk"));
+  expect(await see(["--aot"], { WRITES_OVER_WORKERS: "1" })).toEqual(answers(() => "from disk"));
 }, 120_000);
 
 test("the file of each Worker is in the executable", async () => {

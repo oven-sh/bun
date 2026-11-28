@@ -4372,7 +4372,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 found.members.write_out_order();
                 is_as_assumed = *found == **assumed;
                 if !is_as_assumed {
-                    found.merge(&mut Walk::new(u64::MAX), assumed);
+                    // New names come behind those of the round before: if each round had an order of its own, two orders
+                    // could take turns without an end.
+                    let of_round = std::mem::replace(found, (**assumed).clone());
+                    found.merge(&mut Walk::new(u64::MAX), &of_round);
                     if found.is_incomplete() {
                         found.forget_parts();
                     }

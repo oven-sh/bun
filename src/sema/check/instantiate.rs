@@ -199,6 +199,11 @@ impl ActiveMappers {
         self.mappers.iter().rposition(|&m| m == mapper)
     }
 
+    /// 0 if there is none.
+    pub(super) fn serial_of_outermost(&self) -> u32 {
+        self.activations.first().map_or(0, |it| it.serial)
+    }
+
     /// True if an `instantiate_cached` with `mapper` is in progress.
     #[inline]
     pub(super) fn is_active(&self, mapper: MapperId) -> bool {
@@ -394,6 +399,150 @@ impl<'p, 's> Checker<'p, 's> {
             return first;
         }
         self.compose_two(first, second)
+    }
+
+    /// `compose` of the mapper of an inherited member and that of the type that has the member.
+    /// `resolveObjectTypeMembers` instantiates one base type after another. If each has an argument with one level more than
+    /// the one before, `T[][]..`, all levels are never instantiated at once, so they don't count as depth.
+    #[inline]
+    pub(super) fn compose_for_member(
+        &mut self,
+        prop: &Prop,
+        first: MapperId,
+        second: MapperId,
+    ) -> MapperId {
+        match prop.flags.contains(PropFlags::HAS_DEEP_MAPPER) {
+            false => self.compose(first, second),
+            true => self.compose_by_levels(first, second),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn compose_by_levels(&mut self, first: MapperId, second: MapperId) -> MapperId {
+        if first == MapperId::IDENTITY || second == MapperId::IDENTITY {
+            return self.compose(first, second);
+        }
+        if self.index_infos_in_instantiation.is_empty()
+            && let Some(known) = self.composed_by_levels.get(first.0, second.0)
+        {
+            return MapperId(known);
+        }
+        let (scope, hits) = (self.begin_scope(), self.instantiation_limit_hits);
+        let mut pairs = self.mapping_by_levels(first, second);
+        for &(param, value) in self.types().mapping(second) {
+            if self.types().map(first, param).is_none() {
+                pairs.push((param, value));
+            }
+        }
+        let composed = self.types().mapper_of(&pairs);
+        let is_final = self.end_scope_of_levels(scope, hits);
+        // Same rule as for `recent_instantiations`.
+        if is_final && (first.is_local() || second.is_local() || !composed.is_local()) {
+            (self.composed_by_levels).put(first.0, second.0, composed.0);
+        }
+        composed
+    }
+
+    /// True if nothing provisional was read since `scope` began, when `instantiation_limit_hits` was `hits`.
+    fn end_scope_of_levels(&mut self, scope: Scope, hits: u64) -> bool {
+        self.end_scope_by_counters(scope).is_ok()
+            && self.instantiation_limit_hits == hits
+            && self.index_infos_in_instantiation.is_empty()
+    }
+
+    /// `map_mapper`, as `compose_for_member`.
+    pub(super) fn map_mapper_for_member(
+        &mut self,
+        first: MapperId,
+        second: MapperId,
+        is_first_deep: bool,
+    ) -> MapperId {
+        if second == MapperId::IDENTITY || !is_first_deep {
+            return self.map_mapper(first, second);
+        }
+        let pairs = self.mapping_by_levels(first, second);
+        self.types().mapper_of(&pairs)
+    }
+
+    /// True if `mapper` maps to a type reference with so many levels that `instantiationDepth` might reach its limit.
+    pub(super) fn maps_to_deep_references(&self, mapper: MapperId) -> bool {
+        (self.types().mapping(mapper).iter()).any(|&(_, value)| {
+            let next = |&ty: &TypeId| {
+                let mut args = self.arguments_of_open_reference(ty)?.iter().copied();
+                args.find(|&arg| self.arguments_of_open_reference(arg).is_some())
+            };
+            std::iter::successors(Some(value), next).nth(32).is_some()
+        })
+    }
+
+    /// The arguments of a type reference that mentions type parameters, if it's instantiated by its arguments alone.
+    fn arguments_of_open_reference(&self, ty: TypeId) -> Option<&'p [TypeId]> {
+        if self.types().instantiation_class(ty) != InstantiationClass::Other {
+            return None;
+        }
+        match self.data(ty) {
+            TypeData::Ref { args, .. } if self.stored_alias(ty).is_none() => args.actual(),
+            _ => None,
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn mapping_by_levels(
+        &mut self,
+        first: MapperId,
+        second: MapperId,
+    ) -> SmallVec<[(TypeId, TypeId); 8]> {
+        let mapping = self.mapping_in_declaration_order(first);
+        let mut instantiated = FxHashMap::default();
+        (mapping.iter())
+            .map(|&(param, value)| {
+                let new = match value == param {
+                    true => self.types().map(second, param).unwrap_or(param),
+                    false => self.instantiate_by_levels(value, second, &mut instantiated),
+                };
+                (param, new)
+            })
+            .collect()
+    }
+
+    /// `instantiate` from the innermost level of nested type references outward.
+    fn instantiate_by_levels(
+        &mut self,
+        ty: TypeId,
+        mapper: MapperId,
+        instantiated: &mut FxHashMap<TypeId, TypeId>,
+    ) -> TypeId {
+        let TypeData::Ref { target, .. } = self.data(ty) else {
+            return self.instantiate(ty, mapper);
+        };
+        let args = match self.arguments_of_open_reference(ty) {
+            Some(args) if !self.is_stack_low() => args,
+            _ => return self.instantiate(ty, mapper),
+        };
+        if self.index_infos_in_instantiation.is_empty()
+            && let Some(known) = self.instantiated_by_levels.get(ty.0, mapper.0)
+        {
+            return TypeId(known);
+        }
+        if let Some(&known) = instantiated.get(&ty) {
+            return known;
+        }
+        let (scope, hits) = (self.begin_scope(), self.instantiation_limit_hits);
+        let new_args: SmallVec<[TypeId; 8]> = (args.iter())
+            .map(|&arg| self.instantiate_by_levels(arg, mapper, instantiated))
+            .collect();
+        let new = self.intern_key(TypeKey::Ref {
+            target: *target,
+            args: &new_args,
+        });
+        let is_final = self.end_scope_of_levels(scope, hits);
+        if is_final && (ty.is_local() || mapper.is_local() || !new.is_local()) {
+            (self.instantiated_by_levels).put(ty.0, mapper.0, new.0);
+        }
+        instantiated.insert(ty, new);
+        new
     }
 
     /// `compose` of two mappers that aren't the identity.
@@ -638,7 +787,7 @@ impl<'p, 's> Checker<'p, 's> {
                     false => PropInstantiation::MapperWithKey(composed),
                 }
             }
-            _ => PropInstantiation::Mapper(self.compose(prop.mapper, mapper)),
+            _ => PropInstantiation::Mapper(self.compose_for_member(prop, prop.mapper, mapper)),
         }
     }
 

@@ -659,3 +659,80 @@ fn task_numbers_differ_between_passes() {
         });
     }
 }
+
+#[test]
+fn variances_measured_around_a_type_that_asks_for_them_are_not_shared_before_the_commit() {
+    let files = [
+        (
+            "main.ts",
+            "import \"./ring\";\nimport \"./alias\";\nimport \"./member\";\nimport \"./assigned\";\n",
+        ),
+        (
+            "ring.ts",
+            "export type Is<X> = X extends Crate<number> ? { yes: 1 } : { no: 2 };\n\
+             export interface Crate<T> { put: (x: T) => void; kind: Is<Crate<string>>; }\n",
+        ),
+        (
+            "alias.ts",
+            "import type { Is, Crate } from \"./ring\";\n\
+             export const alias: { no: 2 } | null = null as unknown as Is<Crate<string>>;\n",
+        ),
+        (
+            "member.ts",
+            "import type { Crate } from \"./ring\";\n\
+             export const member: { yes: 1 } = null! as Crate<string>[\"kind\"];\n",
+        ),
+        (
+            "assigned.ts",
+            "import type { Crate } from \"./ring\";\n\
+             export function assigned(wide: Crate<string | number>): Crate<string> { return wide; }\n",
+        ),
+    ];
+    with_program(&files, &["./main.ts"], 4, |program| {
+        let ring = program.file("ring.ts");
+        let readers =
+            ["alias.ts", "member.ts", "assigned.ts"].map(|path| (path, program.file(path)));
+        let found = Guarded::new(Vec::new());
+        let mut to_check: Vec<FileId> = (0..program.files().modules.len() as u32)
+            .map(FileId)
+            .collect();
+        to_check.shared_sort_by_key(|&file| program.files().rank_of_file(file));
+        let report = run_queue(
+            program.loaded,
+            program.host,
+            program.request,
+            to_check,
+            &FileWork {
+                requested: &|_| Requested::All,
+                after_file: Some(&|_, file, parts| {
+                    if file != ring {
+                        return;
+                    }
+                    let check_reader = |checker: &mut Checker<'_, '_>, part: usize| {
+                        let (path, reader) = readers[part];
+                        checker.set_first_in_order(false, false);
+                        checker.set_requested(Requested::All);
+                        drop(checker.check_file(reader));
+                        found.lock().push((path, checker.was_discarded()));
+                    };
+                    parts.run(readers.len(), &check_reader, &mut || {});
+                }),
+                after_commit: &|_| {},
+                frees_tree: &|_| false,
+                is_last_pass: &|| false,
+                note_cycles_entered: None,
+                cycles_entered_before: &Default::default,
+                first_round: LOWERING_ROUNDS,
+                left_out_bodies: None,
+            },
+        );
+        let mut found: Vec<(&str, bool)> = found.lock().clone();
+        found.shared_sort_unstable();
+        let expected = ["alias.ts", "assigned.ts", "member.ts"].map(|path| (path, true));
+        assert_eq!(found, expected);
+        for (path, reader) in readers {
+            assert_eq!(codes_reported(&report, reader), [0; 0], "{path}");
+        }
+        assert_eq!(codes_reported(&report, ring), [0; 0]);
+    });
+}

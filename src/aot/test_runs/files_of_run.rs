@@ -92,6 +92,7 @@ impl Manifests {
             experimental_decorators: false,
             every_file_is_a_module: false,
             reads_jsdoc: false,
+            accepts_legacy_octal: false,
             ignores_pure_comments: false,
         };
         let literal = [b"(", text, b");"].concat();
@@ -481,6 +482,7 @@ fn read_what_file_writes_by(
         experimental_decorators: false,
         every_file_is_a_module: false,
         reads_jsdoc: false,
+        accepts_legacy_octal: true,
         ignores_pure_comments: false,
     };
     let text: &[u8] = arena.alloc_slice_copy(text);

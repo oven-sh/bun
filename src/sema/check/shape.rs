@@ -770,6 +770,30 @@ impl<'s> IntersectionBuilder<'s> {
     }
 }
 
+/// What `copy_for_heir` keeps from one property of a base type, whose members have the mapper `mapper`, to the next.
+struct Composed {
+    /// The mapper of the most recent property that had its own mapper, and whether that property is a member.
+    from: MapperId,
+    is_member: bool,
+    /// That mapper's composition with `mapper`, and whether `maps_to_deep_references` holds for it.
+    both: MapperId,
+    is_deep: bool,
+    /// Whether it holds for `mapper`, if that was asked.
+    is_base_deep: Option<bool>,
+}
+
+impl Composed {
+    fn new(mapper: MapperId) -> Composed {
+        Composed {
+            from: MapperId::IDENTITY,
+            is_member: true,
+            both: mapper,
+            is_deep: false,
+            is_base_deep: None,
+        }
+    }
+}
+
 impl<'p, 's> Checker<'p, 's> {
     /// `getTypeArguments` for a reference to a class or interface, an array type or a tuple type.
     #[inline]
@@ -2115,13 +2139,16 @@ impl<'p, 's> Checker<'p, 's> {
         let mut group_indexes = FxHashMap::<Atom, usize>::default();
         for m in members.iter() {
             let member = &hir[m];
-            if (has_static_side && member.flags.contains(Flags::STATIC)) != want_static {
+            let is_constructor = member.kind == MemberKind::Constructor;
+            let is_static = member.flags.contains(Flags::STATIC);
+            // `bindParameter` declares the properties of a constructor for the instance, also where it's `static`.
+            if (has_static_side && is_static && !is_constructor) != want_static {
                 continue;
             }
             let is_dynamic = matches!(member.key, PropKey::Computed(e) if is_dynamic_name(hir, e));
             // `getResolvedMembersOrExportsOfSymbol`: `isStatic == HasStaticModifier(member)`, no
             // matter what declares the member.
-            if is_dynamic && (early || member.flags.contains(Flags::STATIC) != want_static) {
+            if is_dynamic && (early || is_static != want_static) {
                 continue;
             }
             // `getDeclarationName`: a private name outside every class is `InternalSymbolNameMissing`, and
@@ -2236,10 +2263,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
                 MemberKind::Constructor => {
-                    if want_static {
-                        continue;
-                    }
-                    b.has_non_property_symbols = true;
+                    b.has_non_property_symbols |= !is_static;
                     for p in hir[member.func].params.iter() {
                         let param = &hir[p];
                         if !param.flags.contains(Flags::PARAMETER_PROPERTY) {
@@ -2929,9 +2953,7 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(members) = members else { return };
         let mapper = members.mapper;
         b.reserve(members.shape().props.len());
-        // The mapper of the most recent property that had its own mapper, whether that property is
-        // a member, and the mapper's composition with `mapper`.
-        let mut composed = (MapperId::IDENTITY, true, mapper);
+        let mut composed = Composed::new(mapper);
         for prop in &members.shape().props {
             if b.has(prop.name) {
                 continue;
@@ -2964,19 +2986,19 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The copy of `prop` that an heir gets. `prop` is a property of a base type whose members have `mapper`. `composed`
-    /// is described in `inherit`.
+    /// is for the properties of that base type.
     #[inline]
     fn copy_for_heir(
         &mut self,
         prop: &Prop,
         mapper: MapperId,
-        composed: &mut (MapperId, bool, MapperId),
+        composed: &mut Composed,
     ) -> Prop<'s> {
         let mut prop = prop.clone_in(self.arena);
         if self.types().separate_key(&prop).is_some() {
             self.compose_mapper_of_prop(&mut prop, mapper);
             // The composed mapper includes the property's key, so no other property shares it.
-            *composed = (MapperId::IDENTITY, true, mapper);
+            *composed = Composed::new(mapper);
             return prop;
         }
         match &mut prop.source {
@@ -2993,19 +3015,30 @@ impl<'p, 's> Checker<'p, 's> {
                 let is_member = matches!(source, PropSource::Symbol(_));
                 if prop.mapper == MapperId::IDENTITY {
                     prop.mapper = mapper;
+                    if is_member {
+                        let is_deep = *(composed.is_base_deep)
+                            .get_or_insert_with(|| self.maps_to_deep_references(mapper));
+                        prop.flags.set(PropFlags::HAS_DEEP_MAPPER, is_deep);
+                    }
                 } else {
-                    if (prop.mapper, is_member) != (composed.0, composed.1) {
+                    if (prop.mapper, is_member) != (composed.from, composed.is_member) {
                         // A member's mapper maps the type parameters of the class or interface
                         // that declares it, and `mapper` maps those of `base`, which the
                         // declaration can't mention. A plain composition would grow with every
                         // level.
+                        // No level gets lost where what it refers to is instantiated.
+                        let is_deep = prop.flags.contains(PropFlags::HAS_DEEP_MAPPER);
                         let both = match is_member {
-                            true => self.map_mapper(prop.mapper, mapper),
+                            true => self.map_mapper_for_member(prop.mapper, mapper, is_deep),
                             false => self.compose(prop.mapper, mapper),
                         };
-                        *composed = (prop.mapper, is_member, both);
+                        composed.is_deep =
+                            is_member && (is_deep || self.maps_to_deep_references(both));
+                        (composed.from, composed.is_member) = (prop.mapper, is_member);
+                        composed.both = both;
                     }
-                    prop.mapper = composed.2;
+                    prop.mapper = composed.both;
+                    prop.flags.set(PropFlags::HAS_DEEP_MAPPER, composed.is_deep);
                 }
             }
         }
@@ -5274,7 +5307,7 @@ impl<'p, 's> Checker<'p, 's> {
             members_seen.clear();
             list.retain(|it| match it.source {
                 PropSource::Symbol(sym) if self.is_uninstantiated_member(it, sym) => {
-                    members_seen.insert((sym, it.flags.difference(PropFlags::THISLESS)))
+                    members_seen.insert((sym, it.flags.difference(PropFlags::OF_INHERITANCE)))
                 }
                 _ => true,
             });
@@ -5928,7 +5961,7 @@ impl<'p, 's> Checker<'p, 's> {
         let ty = if is_instantiated {
             // `getTypeOfInstantiatedSymbol`: for an inherited member, the mapper of the base type
             // that `resolveObjectTypeMembers` has instantiated.
-            let mapper = self.compose(own_mapper, outer);
+            let mapper = self.compose_for_member(prop, own_mapper, outer);
             self.type_of_instantiated_symbol(base, mapper)
         } else {
             base
@@ -6077,7 +6110,14 @@ impl<'p, 's> Checker<'p, 's> {
         let (type_params, owner) = match bound.member_owner[m.idx()] {
             MemberOwner::Class(c) => (hir[c].type_params, bound.class_symbol[c.idx()]),
             MemberOwner::Interface(i) => (hir[i].type_params, bound.interface_symbol[i.idx()]),
-            _ => return false,
+            // Its mapper has the same sources in every instantiation.
+            MemberOwner::TypeLiteral(literal) => {
+                let declared = self.type_from_node(file, literal);
+                return matches!(*self.data(declared), TypeData::Anon { mapper, .. }
+                    if self.maps_this_only(mapper))
+                    && self.is_thisless(sym);
+            }
+            MemberOwner::None => return false,
         };
         if !type_params.is_empty() || owner.is_none() {
             return false;
@@ -6087,7 +6127,7 @@ impl<'p, 's> Checker<'p, 's> {
             && self.outer_type_params_of_symbol(owner).is_empty()
     }
 
-    /// `isThisless`, for a member of a class or interface.
+    /// `isThisless`, for a member of a class, an interface or a type literal.
     fn is_thisless(&mut self, sym: Sym) -> bool {
         let declarations = self.declarations_of_property(sym);
         let [(file, Decl::Member(m))] = declarations[..] else {
@@ -6819,7 +6859,7 @@ impl<'p, 's> Checker<'p, 's> {
             return self.type_of_prop(prop, outer);
         };
         let ty = self.write_type_of_accessors(prop, (file, node), name_pos);
-        let mapper = self.compose(prop.mapper, outer);
+        let mapper = self.compose_for_member(prop, prop.mapper, outer);
         self.instantiate(ty, mapper)
     }
 
@@ -8469,7 +8509,7 @@ impl<'p, 's> Checker<'p, 's> {
             && matches!(single.source, PropSource::Symbol(_))
             && single.source == prop.source
             && (single.flags ^ prop.flags)
-                .difference(PropFlags::THISLESS)
+                .difference(PropFlags::OF_INHERITANCE)
                 .is_empty()
     }
 

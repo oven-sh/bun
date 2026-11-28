@@ -148,6 +148,11 @@ pub trait SourceProvider: Sync {
         find_file_plainly(host, search)
     }
 
+    /// The "paths" of the nearest `tsconfig.json` lead from the name to a file.
+    fn is_named_by_tsconfig(&self, _search: &FileSearch<'_>) -> bool {
+        false
+    }
+
     fn has_resolve_plugins(&self) -> bool {
         true
     }

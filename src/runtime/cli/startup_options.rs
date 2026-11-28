@@ -622,15 +622,11 @@ pub(crate) fn is_debugger_admitted() -> bool {
     build_of_this_executable().is_none_or(|build| build.admits_inspector)
 }
 
-/// `flag`: the option that asks for the debugger, `None` where `BUN_INSPECT` does.
 #[cold]
 #[inline(never)]
-pub(crate) fn exit_for_unadmitted_debugger(flag: Option<&'static str>) -> ! {
+pub(crate) fn exit_for_unadmitted_debugger(flag: &'static str) -> ! {
     exit_for(&UnusableOption {
-        origin: match flag {
-            Some(flag) => OptionOrigin::Flag(Box::from(flag.as_bytes())),
-            None => OptionOrigin::EnvironmentVariable("BUN_INSPECT"),
-        },
+        origin: OptionOrigin::Flag(Box::from(flag.as_bytes())),
         obstacle: Obstacle::BuiltWithoutInspector,
     })
 }

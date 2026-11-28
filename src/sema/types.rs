@@ -713,6 +713,11 @@ bitflags::bitflags! {
         /// Set on a member that a class or an interface inherited, if `instantiateSymbol` returned the
         /// member itself (`m.MapsThisOnly() && isThisless(symbol)`). It then does so for every heir.
         const THISLESS = 1 << 18;
+        /// Set on a member that a class or an interface inherited, if the member's mapper maps to type references with so
+        /// many levels that instantiating them might reach the limit of depth. See `compose_for_member`.
+        const HAS_DEEP_MAPPER = 1 << 19;
+        /// What `THISLESS` and `HAS_DEEP_MAPPER` say doesn't distinguish two copies of a member.
+        const OF_INHERITANCE = Self::THISLESS.bits() | Self::HAS_DEEP_MAPPER.bits();
         /// A property without any of these is accessible everywhere except through `super`
         /// (`checkPropertyAccessibilityAtLocation`). For accessors it depends on which accessor is
         /// used, so they're always inspected.

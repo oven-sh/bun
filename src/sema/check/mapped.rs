@@ -10,6 +10,9 @@ use crate::resolve::{is_cased_since_unicode_16, to_lowercase_unicode_15, to_uppe
 use crate::util::SharedSort;
 use smallvec::SmallVec;
 
+/// How much stack `isGenericMappedType` of types from one declaration takes before it counts as having no end.
+const MOST_STACK_OF_GENERIC_MAPPED_TYPES: isize = 12 << 20;
+
 /// `accessNode` of `getIndexedAccessTypeOrUndefined`. `None` is an access produced by instantiation
 /// or by a constraint. `Other` is a name in a pattern, where nothing is reported yet.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -287,8 +290,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // In `{ [K in "a" as Z<T[]>]: 1 }`, every level is a different type from the same declaration.
         let is_in_progress = (self.generic_mapped_types_in_progress).contains(&(file, node));
+        if self.generic_mapped_types_in_progress.is_empty() {
+            self.stack_below_generic_mapped_types = self.stack_in_use();
+        }
         self.generic_mapped_types_in_progress.push((file, node));
-        let name = if is_in_progress && self.is_half_of_stack_in_use() {
+        let used = self.stack_in_use() - self.stack_below_generic_mapped_types;
+        let is_endless =
+            used > MOST_STACK_OF_GENERIC_MAPPED_TYPES.min(self.stack_limit as isize / 2);
+        let name = if is_in_progress && is_endless {
             self.generic_mapped_types_cut_short.push(ty);
             self.instantiation_count = 5_000_000;
             self.instantiation_too_deep()
@@ -2118,9 +2127,35 @@ impl<'p, 's> Checker<'p, 's> {
             self.links.note_circular_mapped_constraint();
             return TypeId::ERROR;
         }
+        let outermost = self.active_mappers.serial_of_outermost();
+        if self.instantiation_limit_hits != 0
+            && let Some(&(under, known)) = self.mapped_constraints_up_to_a_limit.get(&key)
+            && (under == 0 || under == outermost)
+        {
+            // A cache hit records the same marks as recomputing it would.
+            self.instantiation_limit_hits += 1;
+            if under != 0 {
+                self.note_limit();
+                self.mark_tainted_from(0);
+            }
+            return match (self.p.circular_mapped_constraints).get(&self.task, &key) {
+                Some(()) => TypeId::ERROR,
+                None => known,
+            };
+        }
+        let (hits, limits, cycles) = (self.instantiation_limit_hits, self.limits, self.cycles);
         self.mapped_constraints_in_progress
             .push((key, self.stack.len(), false));
         let constraint = self.instantiated_constraint_of_mapped_param(file, node, mapper);
+        let is_tainted = self.limits != limits;
+        if self.instantiation_limit_hits != hits
+            && self.instantiation_count < 5_000_000
+            && self.cycles == cycles
+            && (!is_tainted || outermost != 0)
+        {
+            let under = if is_tainted { outermost } else { 0 };
+            (self.mapped_constraints_up_to_a_limit).insert(key, (under, constraint));
+        }
         // `!popTypeResolution()` in `getResolvedBaseConstraint`
         if (self.mapped_constraints_in_progress.pop()).is_some_and(|it| it.2) {
             (self.p.circular_mapped_constraints).insert(&self.task, key, (), Stored::new());

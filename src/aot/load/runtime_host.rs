@@ -79,6 +79,10 @@ impl RuntimeHost<'_> {
 impl Host for RuntimeHost<'_> {
     delegate_host_services_to_disk!(disk);
 
+    fn take_unreadable(&self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut *self.unreadable.lock())
+    }
+
     fn log_steps_of_load(&self) -> Option<Box<dyn FnMut(&str) + '_>> {
         log_steps_of_load("library: ")
     }
@@ -192,6 +196,7 @@ impl CodeHost for RuntimeHost<'_> {
             experimental_decorators: request.options.experimental_decorators,
             every_file_is_a_module: request.options.module_detection == ModuleDetection::Force,
             reads_jsdoc: request.reads_jsdoc,
+            accepts_legacy_octal: false,
             ignores_pure_comments: false,
         };
         let source = ParsedSource::new(self.source_kind(path), loader_by_name(path));

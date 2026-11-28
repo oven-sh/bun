@@ -1742,7 +1742,7 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
                 ("setup.cjs", NO_KIND),
             ],
             "setup.cjs",
-            Esm,
+            CommonJs,
         ),
         (
             &[
@@ -2247,7 +2247,14 @@ export interface Told { "node:http2": 9 }"#;
 
 #[test]
 fn text_made_by_folding_is_written_as_a_value() {
-    let texts: [(&str, &[RuntimeModule]); 4] = [
+    let texts: [(&str, &[RuntimeModule]); 8] = [
+        (r#"JSON.parse('["node:dgram"]')"#, &[NodeDgram]),
+        (
+            r#"JSON.parse('{ "node:dgram": 1, "os" : 2 }')"#,
+            &[NodeDgram],
+        ),
+        (r#"JSON.parse('{ "held": "dgram" }')"#, &[NodeDgram]),
+        (r#"JSON.parse('"node:dgram" [') "#, &[]),
         (r#"["node:d", "gram"].join("")"#, &[NodeDgram]),
         (r#"["node", "dgram"].join(":")"#, &[NodeDgram]),
         (r#"["node:d", process.argv[2]].join("")"#, &[]),

@@ -417,12 +417,28 @@ impl<'s> Task<'s> {
             self.cycle_members_added
                 .set(self.cycle_members_added.get() + added);
         }
-        if self.is_first_in_order.get()
-            || self.is_trusted
-            || self.is_first_in_component.get() && is_reachable_only_by_importers()
-        {
+        if self.is_first(is_reachable_only_by_importers) {
             self.keep_results_of_cycle(from);
         } else {
+            self.discard_until_recheck();
+        }
+    }
+
+    /// True if no check of an earlier file can still get to where the task is. For `is_reachable_only_by_importers`, see
+    /// `close_cycle`.
+    fn is_first(&self, is_reachable_only_by_importers: impl FnOnce() -> bool) -> bool {
+        self.is_first_in_order.get()
+            || self.is_trusted
+            || self.is_first_in_component.get() && is_reachable_only_by_importers()
+    }
+
+    /// For what is different if the check of an earlier file gets there first. Another task rechecks the file once the
+    /// earlier files are final.
+    pub(super) fn discard_unless_first(
+        &self,
+        is_reachable_only_by_importers: impl FnOnce() -> bool,
+    ) {
+        if !self.was_discarded() && !self.is_first(is_reachable_only_by_importers) {
             self.discard_until_recheck();
         }
     }

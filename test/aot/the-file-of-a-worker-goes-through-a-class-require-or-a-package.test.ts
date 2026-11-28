@@ -160,7 +160,7 @@ const testFiles: Record<string, string> = {
     `import { expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 ${imports}test("the Workers answer", async () => {
-  // A file that was compiled answers with what it said when the build read it.
+  // A file that runs from its text trips the wire. A file that the test itself writes over is read from disk, as under plain bun test.
   for (let n = 1; process.env.WRITES_OVER_WORKERS && n <= ${count}; n++) {
     const file = new URL("./src/worker/w" + n + ".ts", import.meta.url);
     writeFileSync(file, readFileSync(file, "utf8").replace('"w' + n + ' "', '"from disk "'));
@@ -185,6 +185,7 @@ self.onmessage = (event: any) => { self.postMessage("w${n} " + double(event.data
 }
 
 const asWritten = ways.map(([name], index) => `SEEN ${name} | w${index + 1} 42`);
+const asWrittenOver = ways.map(([name]) => `SEEN ${name} | from disk 42`);
 
 async function see(flags: string[], env: Record<string, string>) {
   using dir = tempDir("aot-worker-behind-a-class-require-or-a-package", { ...files, ...testFiles });
@@ -209,10 +210,13 @@ test("each Worker answers as under plain bun test, and runs compiled", async () 
   const plain = await see([], {});
   expect(plain).toEqual({ seen: asWritten, taken: [], exitCode: 0, stderr: "" });
   expect(await see(["--aot"], {})).toEqual(plain);
-  expect(await see(["--aot"], { WRITES_OVER_WORKERS: "1", BUN_JSC_logAOTPhaseTimes: "1" })).toEqual({
+  expect(await see(["--aot"], { BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_JSC_logAOTPhaseTimes: "1" })).toEqual({
     ...plain,
     taken: [count + 2],
   });
+  const writtenOver = await see([], { WRITES_OVER_WORKERS: "1" });
+  expect(writtenOver).toEqual({ ...plain, seen: asWrittenOver });
+  expect(await see(["--aot"], { WRITES_OVER_WORKERS: "1" })).toEqual(writtenOver);
 }, 240_000);
 
 test("the file of each Worker is in the executable", async () => {

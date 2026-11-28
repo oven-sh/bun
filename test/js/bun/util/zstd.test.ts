@@ -549,19 +549,41 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
     });
   });
 
+  it.concurrent.each(["net", "tls"])("a socket write whose rest cannot be kept (%s)", async transport => {
+    const results = await runCapped(
+      { key: Buffer.from(tls.key), cert: Buffer.from(tls.cert) },
+      /* js */ `
+        import { once } from "node:events";
+        import { connect, createServer } from "node:${transport}";
+        const { promise, resolve } = Promise.withResolvers();
+        const server = createServer({ key: inputs.key, cert: inputs.cert }, socket => {
+          socket.on("error", error => resolve(error.code));
+          socket.write(Buffer.alloc(32 * 1024 * 1024));
+        });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const client = connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false }).on("error", () => {}).pause();
+        results.write = await promise;
+        client.destroy();
+        server.close();
+      `,
+    );
+    expect(results).toEqual({ write: "ENOMEM" });
+  });
+
   it.concurrent("response bodies without a length", async () => {
     const results = await runCapped(
       { zstd: zstdCompressSync(Buffer.alloc(11 * MiB)) },
       /* js */ `
         import { once } from "node:events";
         import { createServer } from "node:net";
-        const plain = Buffer.alloc(11 * 1024 * 1024);
+        import { Readable } from "node:stream";
+        const pieces = Array(11).fill(Buffer.alloc(1024 * 1024));
         const server = createServer(socket =>
           socket.on("error", () => {}).once("data", request => {
             const isPlain = request.includes("/plain");
             const status = request.includes("/error") ? "500 Error" : "200 OK";
             socket.write("HTTP/1.1 " + status + "\\r\\n" + (isPlain ? "" : "Content-Encoding: zstd\\r\\n") + "\\r\\n");
-            if (isPlain) socket.write(plain);
+            if (isPlain) Readable.from(pieces).pipe(socket, { end: false });
             else socket.end(inputs.zstd);
           }),
         );

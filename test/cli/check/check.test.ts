@@ -3375,33 +3375,41 @@ after/src/reader.ts(2,14): error TS2322: Type '"second"' is not assignable to ty
     });
 
     // One project checks the shared global file while the others wait for the result. There is no result to share here.
-    test("every project reports running out of stack in a global file they share", async () => {
-      const names = ["a", "b", "c", "d", "e"];
-      const files: Record<string, string> = {
-        "tsconfig.json": JSON.stringify({ files: [], references: names.map(name => ({ path: `./${name}` })) }),
-        "shared/deep.d.ts": `type Deep = number${repeat("[]", 100_000)};\ndeclare const one: 1;\n`,
-      };
-      for (const name of names) {
-        files[`${name}/tsconfig.json`] = JSON.stringify({
-          compilerOptions: { ...options, rootDir: "..", skipLibCheck: false },
-          files: ["../shared/deep.d.ts", "index.ts"],
-        });
-        files[`${name}/index.ts`] = `export const wrong: 2 = one;\n`;
-      }
-      using dir = project(files);
-      for (const threads of ["1", "2", "8"]) {
-        const { stdout, stderr, exitCode } = await check(dir, ["--threads", threads]);
-        expect({ stdout, exitCode }).toEqual({
-          stdout: names
-            .map(name => `${name}/index.ts(1,14): error TS2322: Type '1' is not assignable to type '2'.`)
-            .join("\n"),
-          exitCode: 1,
-        });
-        expect(stderr.split("\n").filter(line => line.includes("ran out of stack in shared/deep.d.ts"))).toHaveLength(
-          5,
-        );
-      }
-    });
+    // The last round has the stack for the first, in a release build without sanitizers. Nothing has it for the second.
+    test.each([
+      [100_000, 0],
+      [1_000_000, 5],
+    ])(
+      "an array type nested %d deep in a global file: %d of five projects run out of stack",
+      async (depth, reports) => {
+        if (reports === 0 && (isDebug || isASAN)) return;
+        const names = ["a", "b", "c", "d", "e"];
+        const files: Record<string, string> = {
+          "tsconfig.json": JSON.stringify({ files: [], references: names.map(name => ({ path: `./${name}` })) }),
+          "shared/deep.d.ts": `type Deep = number${repeat("[]", depth)};\ndeclare const one: 1;\n`,
+        };
+        for (const name of names) {
+          files[`${name}/tsconfig.json`] = JSON.stringify({
+            compilerOptions: { ...options, rootDir: "..", skipLibCheck: false },
+            files: ["../shared/deep.d.ts", "index.ts"],
+          });
+          files[`${name}/index.ts`] = `export const wrong: 2 = one;\n`;
+        }
+        using dir = project(files);
+        for (const threads of ["1", "2", "8"]) {
+          const { stdout, stderr, exitCode } = await check(dir, ["--threads", threads]);
+          expect({ stdout, exitCode }).toEqual({
+            stdout: names
+              .map(name => `${name}/index.ts(1,14): error TS2322: Type '1' is not assignable to type '2'.`)
+              .join("\n"),
+            exitCode: 1,
+          });
+          expect(stderr.split("\n").filter(line => line.includes("ran out of stack in shared/deep.d.ts"))).toHaveLength(
+            reports,
+          );
+        }
+      },
+    );
 
     // The directories share one check of the lib files, except the one that redeclares `Array`.
     test("directories checked together report what each reports on its own, including errors in lib files", async () => {
@@ -7015,9 +7023,19 @@ const wrong: number = "";
     });
 
     // The parser reads a run of `[]` in a loop, so nothing bounds the depth of the type.
-    test("reports running out of stack, and the file's other error, for an array type nested 100,000 deep", async () => {
+    test.skipIf(isDebug || isASAN)("has the stack for an array type nested 100,000 deep", async () => {
       using dir = project({
         "a.ts": `export type T = number${repeat("[]", 100_000)};\nexport const wrong: number = "";\n`,
+      });
+      const { stdout, stderr, exitCode } = await check(dir);
+      expect(stdout).toBe(`a.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
+      expect(stderr.split("\n")[0]).toBe("Found 1 error in 1 file, checked 1 file [time]");
+      expect(exitCode).toBe(1);
+    });
+
+    test("reports running out of stack, and the file's other error, for an array type nested 1,000,000 deep", async () => {
+      using dir = project({
+        "a.ts": `export type T = number${repeat("[]", 1_000_000)};\nexport const wrong: number = "";\n`,
       });
       const { stdout, stderr, exitCode } = await check(dir);
       expect(stdout).toBe(`a.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.`);

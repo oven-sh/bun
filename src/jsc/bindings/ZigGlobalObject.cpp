@@ -936,6 +936,10 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     setDefaultGlobalObject(vm, globalObject);
     JSC::gcProtect(globalObject);
 
+#ifdef FUZZILLI_ENABLED
+    Bun__REPRL__registerFuzzilliFunctions(globalObject);
+#endif
+
     // NapiEnv holds a raw Zig::GlobalObject*; deferred napi finalizers for
     // the old global's objects run on the next event-loop tick — after this
     // function returns and the old global is collectable — and would write
@@ -5393,7 +5397,7 @@ extern "C" void Zig__GlobalObject__forbidExecution(Zig::GlobalObject* globalObje
 
 void GlobalObject::addDerivedRealm(JSC::JSGlobalObject* realm)
 {
-    if (!isBunTest)
+    if (!Bun__VM__isTestIsolationEnabled(bunVM()))
         return;
     if (m_derivedRealms.size() == m_derivedRealms.capacity())
         m_derivedRealms.removeAllMatching([](auto& derived) { return !derived; });

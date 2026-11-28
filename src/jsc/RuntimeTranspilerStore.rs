@@ -764,6 +764,7 @@ impl TranspilerJob {
         // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming
         // `&VirtualMachine`.
         let use_isolation_source_provider_cache = unsafe { (*vm).test_isolation_enabled.get() }
+            && crate::virtual_machine::isBunTest.load(core::sync::atomic::Ordering::Relaxed)
             && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
                 .unwrap_or(false);
 

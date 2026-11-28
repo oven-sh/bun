@@ -81,22 +81,12 @@ function assertValidFrame(frame: unknown): boolean {
   return true;
 }
 
-// Only run during debug
-function debugFormatContextValue(frame: Frame | undefined) {
-  if (frame === undefined) return "undefined";
-  let str = "{";
-  for (var f: Frame | undefined = frame; f !== undefined; f = f.prev) {
-    str += ` ${(f.storage as any).__id__}: ${typeof f.value};`;
-  }
-  return str + " }";
-}
-
 // Bumped whenever disable() masks a frame in place, so run() can tell that the
 // chain it installed changed under it even though its identity did not.
 let frameMutations = 0;
 
 function get(): Frame | undefined {
-  $debug("get", debugFormatContextValue($getInternalField($asyncContext, 0)));
+  $debug("get");
   return $getInternalField($asyncContext, 0);
 }
 
@@ -117,7 +107,7 @@ function constructorRunsForFirstTime() {
 
 function set(frame: Frame | undefined) {
   $assert(assertValidFrame(frame));
-  $debug("set", debugFormatContextValue(frame));
+  $debug("set");
   if (IS_COMPILED_AHEAD_OF_TIME && !isTrackingEnabled && frame !== undefined) {
     isTrackingEnabled = true;
     setAsyncHooksEnabled(true);
@@ -244,15 +234,7 @@ class AsyncLocalStorage<T = any> {
     if (!IS_COMPILED_AHEAD_OF_TIME) setAsyncHooksEnabled(true);
     else if (!hasConstructorRun) constructorRunsForFirstTime();
 
-    // In debug mode assign every AsyncLocalStorage a unique ID
-    if (IS_BUN_DEVELOPMENT) {
-      const uid = Math.random().toString(36).slice(2, 8);
-      const source = require("bun:jsc").callerSourceOrigin();
-
-      (this as any).__id__ = uid + "@" + require("node:path").basename(source!);
-
-      $debug("new AsyncLocalStorage uid=", (this as any).__id__, source);
-    }
+    $debug("new AsyncLocalStorage");
   }
 
   static bind(fn: (...args: any[]) => unknown, ...args: any) {
@@ -285,7 +267,7 @@ class AsyncLocalStorage<T = any> {
   }
 
   run<R>(store_value: T | undefined, callback: (...args: any[]) => R, ...args: unknown[]): R {
-    $debug("run " + (this as any).__id__);
+    $debug("run");
     var prior = get();
     var bound = find(prior, this);
     var beforeValue = bound !== undefined && !isMasked(prior, this) ? bound.value : this.#defaultValue;
@@ -333,7 +315,7 @@ class AsyncLocalStorage<T = any> {
   }
 
   disable() {
-    $debug("disable " + (this as any).__id__);
+    $debug("disable");
     // Node deletes the key from the current frame object: continuations holding
     // that exact frame (and frames later pushed onto it) lose the binding, older
     // ones keep it. Mask it on the current frame rather than unlinking shared
@@ -350,7 +332,7 @@ class AsyncLocalStorage<T = any> {
   }
 
   getStore(): T | undefined {
-    $debug("getStore " + (this as any).__id__);
+    $debug("getStore");
     var start = get();
     if (start === undefined || isMasked(start, this)) return this.#defaultValue;
     for (var f: Frame | undefined = start; f !== undefined; f = f.prev) {
@@ -370,16 +352,6 @@ class AsyncLocalStorage<T = any> {
   // Node.js internal function. In Bun's implementation, calling this is not
   // observable from outside the AsyncLocalStorage implementation.
   _propagate(_resource, _triggerResource, _type) {}
-}
-
-if (IS_BUN_DEVELOPMENT) {
-  AsyncLocalStorage.prototype[Bun.inspect.custom] = function (depth: number, options) {
-    if (depth < 0) return `AsyncLocalStorage { ${Bun.inspect((this as any).__id__, options)} }`;
-    return `AsyncLocalStorage { [${options.stylize("debug id", "special")}]: ${Bun.inspect(
-      (this as any).__id__,
-      options,
-    )} }`;
-  };
 }
 
 class AsyncResource {

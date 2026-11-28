@@ -1581,6 +1581,36 @@ test.each([
   }
 });
 
+// What is sent before the reader is there has arrived by the first pull, which takes it at once. A larger first slab gives the same sizes.
+test.each([
+  [16384, [16384]],
+  [16385, [16385]],
+  [100_000, [100_000]],
+  [262144, [262144]],
+  [300_000, [262144, 37856]],
+  [1_000_000, [262144, 524288, 213568]],
+])("a native body that has %j bytes before its first pull is read as %j", async (size, expected) => {
+  for (const mode of ["bytes", "text"]) {
+    const { input, response } = nativeBody();
+    const want = Buffer.alloc(size, "abcdefghijklmnopqrstuvwxyz0123456789").toString();
+    input.enqueue(Buffer.from(want));
+    // Attached any later, the reader would get all of it without a pull.
+    await null;
+    const reader = (mode === "text" ? response.textStream() : response.body!).getReader();
+    const sizes: number[] = [];
+    let got = "";
+    while (got.length < size) {
+      const { value } = await reader.read();
+      sizes.push(value.length);
+      got += mode === "text" ? value : Buffer.from(value).toString();
+    }
+    input.close();
+    expect((await reader.read()).done).toBe(true);
+    expect(got === want).toBe(true);
+    if (mode === "bytes") expect(sizes).toEqual(expected);
+  }
+});
+
 test("a native body that waits for its first bytes holds a small buffer", async () => {
   const count = 64;
   Bun.gc(true);

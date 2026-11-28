@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { jscInternals } from "bun:internal-for-testing";
+import { describe, expect, it, jest } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -1187,6 +1188,451 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     );
     expect(stderr).not.toContain("AddressSanitizer");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("a quoted string prints the same in 8-bit and 16-bit storage", () => {
+  // The same characters in 16-bit storage. A string that is used as a property key can be swapped
+  // for an equal atom of the other width, so each test asserts the widths that it depends on.
+  const wide = s => Buffer.from(s, "utf16le").toString("utf16le");
+  const fill = (n, character) => Buffer.alloc(n, character, "latin1").toString("latin1");
+  const repeated = (n, text) => Buffer.alloc(n * Buffer.byteLength(text), text).toString();
+  // The strings of a list that are in the other storage. One matcher call for a list: with the collector
+  // that CI runs at each matcher call, a call for each string takes seconds.
+  const notLatin1 = strings => strings.filter(s => !jscInternals.isLatin1String(s));
+  const notUTF16 = strings => strings.filter(s => !jscInternals.isUTF16String(s));
+
+  // What a character up to U+00FF prints as inside the quotes.
+  const short = { 8: "\\b", 9: "\\t", 10: "\\n", 12: "\\f", 13: "\\r", 34: '\\"', 92: "\\\\" };
+  const escapeOf = code =>
+    short[code] ?? (code < 0x20 ? "\\u" + code.toString(16).toUpperCase().padStart(4, "0") : String.fromCharCode(code));
+  // The whole string. A character above U+00FF prints as it is, half a surrogate pair as a `\u` escape in
+  // lower case.
+  const quoted = s =>
+    '"' +
+    s.replace(/[\x00-\x1f"\\]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, character => {
+      const code = character.charCodeAt(0);
+      return code > 0xff ? "\\u" + code.toString(16) : escapeOf(code);
+    }) +
+    '"';
+
+  it.each([
+    ["x", 0x78],
+    ["é", 0xe9],
+  ])("a list of two strings of %s breaks at the same length", (_, code) => {
+    const narrow = Array.from({ length: 61 }, (_, i) => fill(30 + i, code));
+    const twins = narrow.map(wide);
+    const expected = narrow.map(s => (s.length < 76 ? `[ "${s}", "o" ]` : `[ "${s}",\n  "o"\n]`));
+    expect(narrow.map(s => Bun.inspect([s, "o"]))).toEqual(expected);
+    expect(twins.map(s => Bun.inspect([s, "o"]))).toEqual(expected);
+    expect(notLatin1(narrow)).toEqual([]);
+    expect(notUTF16(twins)).toEqual([]);
+  });
+
+  it("a list breaks by the columns of its strings", () => {
+    const x40 = fill(40, "x");
+    expect(Bun.inspect(JSON.parse(JSON.stringify(["中", x40, "o"])))).toBe(`[ "中", "${x40}", "o" ]`);
+    expect(Bun.inspect(["中", wide(x40), "o"])).toBe(`[ "中", "${x40}", "o" ]`);
+
+    const cjk = repeated(20, "中");
+    expect(Bun.inspect([cjk, cjk, cjk, "o"])).toBe(`[ "${cjk}", "${cjk}",\n  "${cjk}", "o"\n]`);
+
+    // A list breaks where the list of ASCII strings of the same columns does. The second number is the
+    // columns of the character. Each is one unit, but 😀 is two.
+    const rows = list =>
+      Bun.inspect(list)
+        .split("\n")
+        .map(line => Bun.stringWidth(line));
+    const printed = {};
+    const expected = {};
+    for (const [character, columns] of [
+      ["中", 2],
+      ["あ", 2],
+      ["한", 2],
+      ["Ａ", 2],
+      ["、", 2],
+      ["￥", 2],
+      ["⭐", 2],
+      ["😀", 2],
+      ["ж", 1],
+      ["ω", 1],
+      ["→", 1],
+      ["…", 1],
+      ["€", 1],
+    ]) {
+      for (const [count, length] of [
+        [4, 20],
+        [12, 10],
+        [30, 3],
+      ]) {
+        const name = `${count} strings of ${length} ${character}`;
+        printed[name] = rows(Array.from({ length: count }, () => repeated(length, character)));
+        expected[name] = rows(Array.from({ length: count }, () => fill(length * columns, "x")));
+      }
+    }
+    expect(printed).toEqual(expected);
+
+    // A wide character counts wherever it is in the string.
+    const breaks = s => Bun.inspect([s, "o"]).includes("\n");
+    const counts = Array.from({ length: 11 }, (_, i) => 15 + i);
+    expect(counts.map(n => breaks(fill(33, "x") + repeated(n, "、")))).toEqual(
+      counts.map(n => breaks(fill(33 + 2 * n, "x"))),
+    );
+  });
+
+  it("every character up to U+00FF has the same escape", () => {
+    const codes = Array.from({ length: 256 }, (_, code) => code);
+    const narrow = codes.map(code => "a" + String.fromCharCode(code) + "b");
+    const expected = codes.map(code => `"a${escapeOf(code)}b"`);
+    expect(narrow.map(s => Bun.inspect(s))).toEqual(expected);
+    const twins = narrow.map(wide);
+    expect(twins.map(s => Bun.inspect(s))).toEqual(expected);
+    expect(notLatin1(narrow)).toEqual([]);
+    expect(notUTF16(twins)).toEqual([]);
+    // With half a surrogate pair in it, a string is written one unit at a time.
+    expect(codes.map(code => Bun.inspect("\ud800" + String.fromCharCode(code)))).toEqual(
+      codes.map(code => `"\\ud800${escapeOf(code)}"`),
+    );
+  });
+
+  describe("as a value", () => {
+    const narrow = '\x1b[31m \x00\x0b\x0e\x1f "q" \\ \n é \x7f';
+    const twin = wide(narrow);
+    const text = '"\\u001B[31m \\u0000\\u000B\\u000E\\u001F \\"q\\" \\\\ \\n é \x7f"';
+
+    it.each([
+      ["at the top level", s => Bun.inspect(s), text],
+      ["in an array", s => Bun.inspect([s]), `[ ${text} ]`],
+      [
+        "in an array that breaks",
+        s => Bun.inspect([s, s, s, s, s]),
+        `[ ${text}, ${text}, ${text}, ${text},\n  ${text}\n]`,
+      ],
+      ["as the value of a property", s => Bun.inspect({ k: s }), `{\n  k: ${text},\n}`],
+      [
+        "in a nested array",
+        s => Bun.inspect({ a: [{ b: [s] }] }),
+        `{\n  a: [\n    {\n      b: [ ${text} ],\n    }\n  ],\n}`,
+      ],
+      ["as a String object", s => Bun.inspect(new String(s)), text],
+      ["in a Map", s => Bun.inspect(new Map([[s, s]])), `Map(1) {\n  ${text}: ${text},\n}`],
+      ["in a Set", s => Bun.inspect(new Set([s])), `Set(1) {\n  ${text},\n}`],
+      ["with colors", s => Bun.inspect([s], { colors: true }), `[ \x1b[0m\x1b[32m${text}\x1b[0m\x1b[0m ]`],
+      [
+        "as a property of an error",
+        s =>
+          Bun.inspect(Object.assign(new Error("message"), { detail: s }))
+            .split("\n")
+            .map(line => line.trim())
+            .filter(line => line.startsWith("detail:")),
+        [`detail: ${text},`],
+      ],
+      ["in a cell of a table", s => Bun.inspect.table([{ k: [s] }]).split("\n")[3], `│ 0 │ [ ${text} ] │`],
+    ])("%s", (_, print, expected) => {
+      expect(print(narrow)).toEqual(expected);
+      expect(print(twin)).toEqual(expected);
+      // Nothing above swapped the 16-bit string for the 8-bit one.
+      expect(narrow).toBeLatin1String();
+      expect(twin).toBeUTF16String();
+    });
+
+    it("in the message of a failed matcher", () => {
+      const message = value => {
+        try {
+          expect(value).toBe(0);
+        } catch (error) {
+          return Bun.stripANSI(error.message);
+        }
+      };
+      const expected = `expect(received).toBe(expected)\n\nExpected: 0\nReceived: [ ${text} ]\n`;
+      expect(message([narrow])).toBe(expected);
+      expect(message([twin])).toBe(expected);
+    });
+
+    it.concurrent("with console.log", async () => {
+      const source = `
+        const narrow = ${JSON.stringify(narrow)};
+        for (const s of [narrow, Buffer.from(narrow, "utf16le").toString("utf16le")]) {
+          console.log([s]);
+          console.log(new String(s));
+          console.log("%o", [s]);
+          console.log({ k: s });
+        }
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", source],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = `[ ${text} ]\n[String: ${text}]\n[ ${text} ]\n{\n  k: ${text},\n}\n`;
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: lines + lines, stderr: "", exitCode: 0 });
+    });
+  });
+
+  it("text that only 16-bit storage can hold", () => {
+    expect(Bun.inspect("\x1b é 日本 😎 \u{10334}")).toBe('"\\u001B é 日本 😎 \u{10334}"');
+    expect(Bun.inspect(["a\u2028b\u2029c\ufeffd"])).toBe('[ "a\u2028b\u2029c\ufeffd" ]');
+    expect(Bun.inspect(["\ud800", "\udc00x", "x\ud800"])).toBe('[ "\\ud800", "\\udc00x", "x\\ud800" ]');
+    // Half a surrogate pair is escaped, a whole pair is one character.
+    expect(Bun.inspect("\ud83d\ude0e\ude0e\ud83d\ud83d\ude0e")).toBe('"😎\\ude0e\\ud83d😎"');
+  });
+
+  it("a long string prints whole", () => {
+    // The printer takes the string 256 units at a time, and hands the writer 32 KB at a time.
+    const a = n => fill(n, "a");
+    const strings = [];
+    for (const n of [0, 1, 2, 14, 15, 16, 17, 254, 255, 256, 257, 510, 511, 512, 513]) {
+      strings.push(
+        wide(a(n + 2)),
+        a(n) + "😀" + a(300),
+        a(n) + "\ud83d" + a(300),
+        a(n) + "\ude00" + a(300),
+        a(n) + "中\ud83d",
+        a(n) + "\ud83d\ud83d\ude00\ude00" + a(300),
+        a(n) + '中\n"' + a(300),
+        wide(a(n) + "\x1b" + a(300)),
+        wide(a(n) + "é\\" + a(300)),
+      );
+    }
+    for (const n of [32764, 32765, 32766, 32767, 32768, 32769]) {
+      strings.push(wide(a(n + 2)), a(n) + "😀\n" + a(3), a(n) + "\ud83d" + a(3));
+    }
+    expect(notUTF16(strings).length).toBe(0);
+    // A failure names the strings that print wrong, and does not show them all.
+    expect(
+      strings.flatMap((s, index) => (Bun.inspect(s) === quoted(s) ? [] : [`string ${index} of ${s.length} units`])),
+    ).toEqual([]);
+
+    for (const [s, printed] of [
+      [wide(fill(40000, "\n")), repeated(40000, "\\n")],
+      [wide(fill(40000, '"')), repeated(40000, '\\"')],
+      [wide(fill(40000, "\x1f")), repeated(40000, "\\u001F")],
+      [wide(fill(40000, "é")), repeated(40000, "é")],
+      [Buffer.alloc(12000 * 2, "\ud800", "utf16le").toString("utf16le"), repeated(12000, "\\ud800")],
+      [Buffer.alloc(12000 * 2, "\udc00", "utf16le").toString("utf16le"), repeated(12000, "\\udc00")],
+      [repeated(40000, "中"), repeated(40000, "中")],
+      [repeated(20000, "😀"), repeated(20000, "😀")],
+      [repeated(20000, "😀\n"), repeated(20000, "😀\\n")],
+    ]) {
+      expect(s).toBeUTF16String();
+      expect(Bun.inspect(s)).toBe(`"${printed}"`);
+    }
+  });
+
+  it("a long string prints whole where the writer takes text", () => {
+    // `Headers` and the message of a matcher print into text. Such a writer takes each buffer of the printer
+    // as text of its own, so no buffer can end inside a character.
+    const accents = fill(22, "a") + fill(22000, 'é"');
+    const headers = `Headers {\n  "x-a": "${fill(22, "a")}${repeated(11000, 'é\\"')}",\n}`;
+    expect(Bun.inspect(new Headers({ "x-a": accents }))).toBe(headers);
+    expect(Bun.inspect(new Headers({ "x-a": wide(accents) }))).toBe(headers);
+
+    const message = value => {
+      try {
+        expect(value).toBeNull();
+      } catch (error) {
+        return Bun.stripANSI(error.message);
+      }
+    };
+    for (const [s, text] of [
+      [repeated(6000, '中"a'), repeated(6000, '中\\"a')],
+      [repeated(60, "a\n" + repeated(254, "中")), repeated(60, "a\\n" + repeated(254, "中"))],
+    ]) {
+      expect(s).toBeUTF16String();
+      expect(message(s)).toBe(`expect(received).toBeNull()\n\nReceived: "${text}"\n`);
+    }
+  });
+
+  it.concurrent("console.log of a long string writes all of it", async () => {
+    const source = `
+      console.log([Buffer.from(Buffer.alloc(40000, "a").toString(), "utf16le").toString("utf16le")]);
+      console.log([Buffer.alloc(20000 * 3, "中").toString()]);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`[ "${fill(40000, "a")}" ]\n[ "${Buffer.alloc(20000 * 3, "中")}" ]\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  it("does not call toJSON of a String object", () => {
+    const toJSON = jest.fn(() => "from toJSON");
+    class Tagged extends String {
+      toJSON() {
+        return toJSON();
+      }
+    }
+    const own = new String("😎");
+    own.toJSON = toJSON;
+    String.prototype.toJSON = toJSON;
+    try {
+      expect(Bun.inspect([new String("😎"), new String("x"), own, new Tagged("😎"), new Tagged("x")])).toBe(
+        '[ "😎", "x", "😎", "😎", "x" ]',
+      );
+    } finally {
+      delete String.prototype.toJSON;
+    }
+    expect(toJSON).not.toHaveBeenCalled();
+  });
+
+  it("converts a String object to a string once", () => {
+    const counted = new String("😎");
+    counted.toString = jest.fn(() => "😎 once");
+    expect(Bun.inspect([counted])).toBe('[ "😎 once" ]');
+    expect(counted.toString).toHaveBeenCalledTimes(1);
+  });
+
+  it("the code of an error", () => {
+    // The lines of the message, of the properties and of the code.
+    const lines = error =>
+      Bun.inspect(error)
+        .split("\n")
+        .map(line => line.trim())
+        .filter(line => /^(detail|code|other): |message$/.test(line));
+    const own = (code, message) => Object.assign(new Error(message), { detail: 1, code, other: 2 });
+    // A code that is no enumerable property of the error itself.
+    const hidden = code => Object.defineProperty(new Error("message"), "code", { value: code });
+    const inherited = code => {
+      class Coded extends Error {}
+      Coded.prototype.code = code;
+      return new Coded("message");
+    };
+    const printed = code => ({
+      own: lines(own(code, "message")),
+      named: lines(own(code, code + ": message")),
+      hidden: lines(hidden(code)),
+      inherited: lines(inherited(code)),
+    });
+    const ascii = ["ERR", "WITH", "A", "LONG", "NAME"].join("_");
+    const accented = ["ERR", "CAFÉ", "\\"].join("_");
+    const twins = [wide(ascii), wide(accented)];
+    for (const code of [ascii, twins[0]]) {
+      expect(printed(code)).toEqual({
+        own: ["error: message", "detail: 1,", "other: 2,", 'code: "ERR_WITH_A_LONG_NAME"'],
+        named: ["ERR_WITH_A_LONG_NAME: message", "detail: 1,", "other: 2,", 'code: "ERR_WITH_A_LONG_NAME"'],
+        hidden: ["error: message", 'code: "ERR_WITH_A_LONG_NAME"'],
+        inherited: ["error: message", 'code: "ERR_WITH_A_LONG_NAME"'],
+      });
+    }
+    for (const code of [accented, twins[1]]) {
+      expect(printed(code)).toEqual({
+        own: ["error: message", "detail: 1,", "other: 2,", 'code: "ERR_CAFÉ_\\\\"'],
+        named: ["error: ERR_CAFÉ_\\: message", "detail: 1,", "other: 2,", 'code: "ERR_CAFÉ_\\\\"'],
+        hidden: ["error: message", 'code: "ERR_CAFÉ_\\\\"'],
+        inherited: ["error: message", 'code: "ERR_CAFÉ_\\\\"'],
+      });
+    }
+    expect(printed("ERR_日本")).toEqual({
+      own: ["error: message", "detail: 1,", "other: 2,", 'code: "ERR_日本"'],
+      named: ["error: ERR_日本: message", "detail: 1,", "other: 2,", 'code: "ERR_日本"'],
+      hidden: ["error: message", 'code: "ERR_日本"'],
+      inherited: ["error: message", 'code: "ERR_日本"'],
+    });
+    expect(notLatin1([ascii, accented])).toEqual([]);
+    expect(notUTF16(twins)).toEqual([]);
+  });
+
+  it.concurrent.each([
+    ["8-bit", ""],
+    ["16-bit", `detail = Buffer.from(detail, "utf16le").toString("utf16le");`],
+  ])("a property of an uncaught error, %s", async (_, widen) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `let detail = ["\\x1b[31m", '"q"', "\\\\", "é"].join(" "); ${widen} throw Object.assign(new Error("message"), { detail });`,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout,
+      detail: stderr
+        .split("\n")
+        .map(line => line.trim())
+        .filter(line => line.startsWith("detail:")),
+      exitCode,
+    }).toEqual({ stdout: "", detail: ['detail: "\\u001B[31m \\"q\\" \\\\ é",'], exitCode: 1 });
+  });
+
+  describe("a quoted key", () => {
+    // Built from parts: a string literal of the whole key leaves an equal 8-bit atom behind.
+    const parts = ["key", '"', "\x1b", "\n", "\\", "é"];
+    const text = '"key \\" \\u001B \\n \\\\ é"';
+
+    it("that is a 16-bit string of characters up to U+00FF", () => {
+      const key = wide(parts.join(" "));
+      expect(key).toBeUTF16String();
+      expect(Bun.inspect({ [key]: 1 })).toBe(`{\n  ${text}: 1,\n}`);
+      // Still 16-bit, so the 16-bit string was printed.
+      expect(key).toBeUTF16String();
+    });
+
+    it("whose equal 8-bit string was a key first", () => {
+      const narrow = parts.join(", ");
+      expect(Bun.inspect({ [narrow]: 1 })).toBe('{\n  "key, \\", \\u001B, \\n, \\\\, é": 1,\n}');
+      const key = wide(narrow);
+      expect(key).toBeUTF16String();
+      expect(Bun.inspect({ [key]: 1 })).toBe('{\n  "key, \\", \\u001B, \\n, \\\\, é": 1,\n}');
+      // As a key, the 16-bit string was swapped for the 8-bit one, and that is what was printed.
+      expect(notLatin1([narrow, key])).toEqual([]);
+    });
+
+    it("for every character up to U+00FF", () => {
+      const codes = Array.from({ length: 256 }, (_, code) => code);
+      // "-" is in no identifier, so each key prints with quotes. Equal keys are one atom of one width: the
+      // second letter keeps the 8-bit key and the 16-bit key of a character apart.
+      const narrow = codes.map(code => "-n" + String.fromCharCode(code));
+      const twins = codes.map(code => wide("-w" + String.fromCharCode(code)));
+      const printed = key => Bun.inspect({ [key]: 1 });
+      expect(narrow.map(printed)).toEqual(codes.map(code => `{\n  "-n${escapeOf(code)}": 1,\n}`));
+      expect(twins.map(printed)).toEqual(codes.map(code => `{\n  "-w${escapeOf(code)}": 1,\n}`));
+      expect(notLatin1(narrow)).toEqual([]);
+      expect(notUTF16(twins)).toEqual([]);
+    });
+
+    it("with characters above U+00FF", () => {
+      expect(Bun.inspect({ '日本 "q" \x1b \\': 1 })).toBe('{\n  "日本 \\"q\\" \\u001B \\\\": 1,\n}');
+      expect(Bun.inspect(JSON.parse('{"日本\\nline two":1}'))).toBe('{\n  "日本\\nline two": 1,\n}');
+      expect(Bun.inspect({ "a\u2028\u2029\ufeff 😎": 1, "\ud800b\udc00": 2 })).toBe(
+        '{\n  "a\u2028\u2029\ufeff 😎": 1,\n  "\\ud800b\\udc00": 2,\n}',
+      );
+      expect(Bun.inspect({ 笑: 1, "笑 ": 2 })).toBe('{\n  "笑": 1,\n  "笑 ": 2,\n}');
+    });
+
+    it("with colors", () => {
+      const key = wide(parts.join("; "));
+      expect(key).toBeUTF16String();
+      expect(Bun.inspect({ [key]: 1 }, { colors: true })).toBe(
+        '{\n  \x1b[0m\x1b[32m"key; \\"; \\u001B; \\n; \\\\; é"\x1b[0m\x1b[2m:\x1b[0m \x1b[0m\x1b[33m1\x1b[0m\x1b[0m\x1b[2m,\x1b[0m\n}',
+      );
+      expect(key).toBeUTF16String();
+    });
+
+    // The key printer of bun:test is another one, and a stored snapshot keeps its text.
+    it("is stored as it is in a snapshot of bun:test", () => {
+      expect({ ['日本 "q"\n\\ end']: 1 }).toMatchInlineSnapshot(`
+        {
+          "日本 "q"
+        \\ end": 1,
+        }
+      `);
+    });
+
+    it("of URLSearchParams and FormData", () => {
+      const name = 'k"\x1b\\ 日本 😎';
+      const printed = '"k\\"\\u001B\\\\ 日本 😎"';
+      expect(Bun.inspect(new URLSearchParams([[name, "v"]]))).toBe(`URLSearchParams {\n  ${printed}: "v",\n}`);
+      const form = new FormData();
+      form.append(name, "v");
+      expect(Bun.inspect(form)).toBe(`FormData {\n  ${printed}: "v",\n}`);
+    });
   });
 });
 

@@ -1,4 +1,5 @@
-import { bench, run } from "../runner.mjs";
+import { Buffer } from "node:buffer";
+import { bench, group, run } from "../runner.mjs";
 
 const json = {
   login: "wongmjane",
@@ -44,5 +45,42 @@ bench("big json object", () => {
 bench("inspect big json object", () => {
   console.error(inspect(json));
 });
+
+// A string in a list, and a string as a key that needs quotes, in 8-bit and in 16-bit storage of the engine.
+// `JSON.parse`, `node:path` and `Buffer#toString` return 16-bit strings of text that 8 bits can hold.
+const wide = text => Buffer.from(text, "utf16le").toString("utf16le");
+const texts = {
+  "ASCII": "abc-",
+  "accents": "é",
+  "lines": "a line of some text, 40 characters long\n",
+  "line feeds": "\n",
+  "CJK": "中",
+  "emoji": "😀",
+  "CJK lines": "中 and a line of some more text, 40 long\n",
+  "CJK path": "C:\\日本\\ファイル\\",
+  "Japanese": "吾輩は猫である。名前はまだ無い。\n",
+  "curly quotes": "“It’s a line of some text,” she said…\n",
+  "an unpaired surrogate": "abcdefghijklmno\ud800",
+};
+for (const [name, text] of Object.entries(texts)) {
+  group(name, () => {
+    for (const units of [8, 40, 1024, 100_000]) {
+      const narrow = text.repeat(Math.ceil(units / text.length)).slice(0, units);
+      // An 8-bit string cannot hold a character above U+00FF.
+      const storages = /^[\x00-\xff]*$/.test(narrow)
+        ? { "8-bit": narrow, "16-bit": wide(narrow) }
+        : { "16-bit": narrow };
+      for (const [storage, string] of Object.entries(storages)) {
+        const list = [string];
+        bench(`${storage} value, ${units} units`, () => inspect(list));
+        if (units > 1024) continue;
+        // Equal keys are one atom of one storage, so each storage has its own key. The engine makes an 8-bit
+        // atom of a rope where the characters fit, so the 16-bit key is a flat string.
+        const keyed = { [storage === "16-bit" ? wide(string + storage) : string + storage]: 1 };
+        bench(`${storage} key, ${units} units`, () => inspect(keyed));
+      }
+    }
+  });
+}
 
 await run();

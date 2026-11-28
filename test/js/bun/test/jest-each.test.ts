@@ -283,6 +283,28 @@ describe.concurrent("titles", () => {
     });
   });
 
+  it("%p prints a string and a key the same in 8-bit and 16-bit storage", async () => {
+    expect(
+      await titlesOf(
+        [
+          ["%p", `[["\\x1b[31mred"], [wide("\\x1b[31mred")]]`],
+          ["%p", `[[{ ['-a"b\\\\']: 1 }], [keyed]]`],
+        ],
+        [
+          `import { jscInternals } from "bun:internal-for-testing";`,
+          `const wide = (text: string) => Buffer.from(text, "utf16le").toString("utf16le");`,
+          // Built from parts: a string literal of the whole key leaves an equal 8-bit atom behind.
+          `const key = wide(["-a", '"c', "\\\\"].join(""));`,
+          `const keyed = { [key]: 1 };`,
+          `if (!jscInternals.isUTF16String(key)) throw new Error("the key is not in 16-bit storage");`,
+        ].join("\n"),
+      ),
+    ).toEqual({
+      titles: ['"\\u001B[31mred"', '"\\u001B[31mred"', '{ "-a\\"b\\\\": 1 }', '{ "-a\\"c\\\\": 1 }'],
+      exitCode: 0,
+    });
+  });
+
   it("%#, %$ and %% take no value, and anything else after a % is kept", async () => {
     expect(
       await titlesOf([

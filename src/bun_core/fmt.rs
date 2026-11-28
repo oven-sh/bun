@@ -500,14 +500,14 @@ pub fn substitute_named(template: &[u8], args: &[(&[u8], &[u8])]) -> Vec<u8> {
 // Shared temp buffer (threadlocal)
 // ───────────────────────────────────────────────────────────────────────────
 
-type SharedTempBuffer = [u8; 32 * 1024];
+pub(crate) type SharedTempBuffer = [u8; 32 * 1024];
 
 thread_local! {
     static SHARED_TEMP_BUFFER: Cell<Option<Box<SharedTempBuffer>>> = const { Cell::new(None) };
 }
 
 /// Lends `f` the thread's temp buffer. The cell is empty meanwhile, so a recursive call allocates its own.
-fn with_shared_temp_buffer(f: impl FnOnce(&mut SharedTempBuffer) -> fmt::Result) -> fmt::Result {
+pub(crate) fn with_shared_temp_buffer<R>(f: impl FnOnce(&mut SharedTempBuffer) -> R) -> R {
     let mut buffer = SHARED_TEMP_BUFFER
         .with(|cell| cell.take())
         .unwrap_or_else(crate::boxed_zeroed);

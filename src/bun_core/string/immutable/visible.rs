@@ -8,6 +8,16 @@
 
 pub mod visible {
     pub mod width {
+        unsafe extern "C" {
+            fn Bun__wideUnitCount_utf16(ptr: *const u16, len: usize) -> usize;
+        }
+
+        /// How many of the UTF-16 units are two terminal columns wide. Half a surrogate pair never is.
+        pub fn wide_units_utf16(input: &[u16]) -> usize {
+            // SAFETY: `input` is a live slice for the duration of the call.
+            unsafe { Bun__wideUnitCount_utf16(input.as_ptr(), input.len()) }
+        }
+
         pub mod exclude_ansi_colors {
             unsafe extern "C" {
                 fn Bun__visibleWidthExcludeANSI_latin1(

@@ -2030,8 +2030,13 @@ pub const WTF_STRING_MAX_LENGTH: usize = i32::MAX as usize;
 // pure-string `quoteForJSON` here.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod printer {
+    use core::mem::MaybeUninit;
+
+    use bun_simdutf_sys::simdutf::{self, WithUtf8Len};
+
     use crate::string::immutable::{self as strings, Encoding as StrEncoding};
     use crate::string::mutable_string::MutableString;
+    use crate::vec::BorrowedBuf;
 
     use crate::fmt::{hex_byte_lower, hex2_upper, hex4_upper};
 
@@ -2249,6 +2254,218 @@ pub mod printer {
             }
         }
         Ok(())
+    }
+
+    /// The bytes of UTF-8 that [`write_json_string_utf16`] writes as they are: all but the C0 controls, `"` and `\`.
+    static JSON_PLAIN: strings::ByteSet =
+        strings::ByteSet::new(&[0x20..=0x21, 0x23..=0x5B, 0x5D..=0xFF]);
+
+    /// What [`write_json_string_utf16`] writes for a byte of UTF-8: the bytes from the low end, their count on top.
+    static JSON_BYTES: [u64; 256] = {
+        let mut table = [0; 256];
+        let mut byte = 0;
+        while byte < table.len() {
+            let short = match byte as u8 {
+                0x08 => b'b',
+                0x09 => b't',
+                0x0A => b'n',
+                0x0C => b'f',
+                0x0D => b'r',
+                b'"' | b'\\' => byte as u8,
+                _ => 0,
+            };
+            let [a, b, c, d, e, f] = bmp_escape(byte as u32);
+            table[byte] = u64::from_le_bytes(if short != 0 {
+                [b'\\', short, 0, 0, 0, 0, 0, 2]
+            } else if byte < 0x20 {
+                [a, b, c, d, e, f, 0, 6]
+            } else {
+                [byte as u8, 0, 0, 0, 0, 0, 0, 1]
+            });
+            byte += 1;
+        }
+        table
+    };
+
+    /// Writes the [`JSON_BYTES`] entry of `byte` at `out[len..]`, which needs 8 free bytes, and returns its length.
+    #[inline(always)]
+    fn json_byte(out: &mut [u8], len: usize, byte: u8) -> usize {
+        let entry = JSON_BYTES[usize::from(byte)];
+        out[len..len + 8].copy_from_slice(&entry.to_le_bytes());
+        (entry >> 56) as usize
+    }
+
+    /// Unpaired surrogates this close go a unit at a time: a transcoder call for each stretch between two costs more.
+    const NEAR: usize = 16;
+
+    /// How many bytes of UTF-8 go through [`JSON_BYTES`] at a time.
+    const BLOCK: usize = 16;
+
+    /// Where to end a part of about `len` units at the start of `text`: no surrogate pair is cut in two.
+    fn cut_utf16(text: &[u16], len: usize) -> usize {
+        debug_assert!(len > 0);
+        match text.get(len - 1..=len) {
+            Some(&[lead, trail]) if strings::decode_surrogate_pair(lead, trail).is_some() => {
+                len - 1
+            }
+            _ => len.min(text.len()),
+        }
+    }
+
+    /// The pieces of a quoted string on their way to the writer, which gets a buffer of them in one call.
+    struct JsonPieces<'a> {
+        writer: &'a mut dyn PrinterWriter,
+        buffer: &'a mut [u8],
+        len: usize,
+    }
+
+    impl JsonPieces<'_> {
+        /// Room for a piece. Pieces are whole characters, so each buffer is UTF-8 alone, as a `fmt::Write` needs.
+        fn reserve(&mut self, room: usize) -> crate::CrateResult<()> {
+            if self.buffer.len() - self.len < room {
+                self.flush()?;
+            }
+            Ok(())
+        }
+
+        fn flush(&mut self) -> crate::CrateResult<()> {
+            self.writer.write_all(&self.buffer[..self.len])?;
+            self.len = 0;
+            Ok(())
+        }
+
+        fn push(&mut self, piece: &[u8]) -> crate::CrateResult<()> {
+            debug_assert!(strings::is_valid_utf8(piece));
+            self.reserve(piece.len())?;
+            self.buffer[self.len..self.len + piece.len()].copy_from_slice(piece);
+            self.len += piece.len();
+            Ok(())
+        }
+
+        /// At most `BLOCK` bytes of whole characters through [`JSON_BYTES`]. Returns how many bytes longer they get.
+        fn push_block(&mut self, text: &[u8]) -> crate::CrateResult<usize> {
+            debug_assert!(text.len() <= BLOCK && strings::is_valid_utf8(text));
+            // A byte is at most six, and `json_byte` writes eight at a time.
+            self.reserve(BLOCK * 6 + 8)?;
+            let start = self.len;
+            for &byte in text {
+                self.len += json_byte(self.buffer, self.len, byte);
+            }
+            Ok(self.len - start - text.len())
+        }
+
+        /// `text` is UTF-8.
+        fn push_escaped(&mut self, mut text: &[u8]) -> crate::CrateResult<()> {
+            // A block of the table that grows by less than this ends a turn through the table.
+            let mut dense = 2;
+            while !text.is_empty() {
+                let plain = JSON_PLAIN.prefix_len(text);
+                if plain >= BLOCK || plain == text.len() {
+                    // A long run with no escape is copied as it is. Then come the escapes at its end, often one.
+                    self.push(&text[..plain])?;
+                    text = &text[plain..];
+                    let is_escape = |byte: &&u8| !JSON_PLAIN.contains(**byte);
+                    let escapes = text.iter().take(BLOCK).take_while(is_escape).count();
+                    if escapes > 0 {
+                        self.push_block(&text[..escapes])?;
+                        text = &text[escapes..];
+                    }
+                    dense = 2;
+                    continue;
+                }
+                // An escape is near: the table beats a search per short run, while a block grows by `dense` bytes.
+                loop {
+                    let head = strings::truncate_to_char_boundary(text, BLOCK);
+                    let longer = self.push_block(head)?;
+                    text = &text[head.len()..];
+                    if text.is_empty() || longer < dense {
+                        break;
+                    }
+                }
+                // No long run since the last turn, as in short lines: now one escape in a block is dense enough.
+                dense = 1;
+            }
+            Ok(())
+        }
+
+        /// Near an unpaired surrogate: a unit at a time until `NEAR` in a row have none. Returns the units taken.
+        fn push_units(&mut self, text: &[u16]) -> crate::CrateResult<usize> {
+            let (mut at, mut clean) = (0, 0);
+            while at < text.len() && clean < NEAR {
+                // What a unit is written as is at most six bytes, and `json_byte` writes eight at a time.
+                self.reserve(8)?;
+                if text[at] < 0x80 {
+                    self.len += json_byte(self.buffer, self.len, text[at] as u8);
+                    at += 1;
+                    clean += 1;
+                    continue;
+                }
+                let (code_point, width) = strings::decode_wtf16_raw(&text[at..]);
+                at += usize::from(width);
+                if matches!(code_point, 0xD800..=0xDFFF) {
+                    let [high, low] = (code_point as u16).to_be_bytes().map(hex_byte_lower);
+                    self.buffer[self.len..self.len + 6]
+                        .copy_from_slice(&[b'\\', b'u', high[0], high[1], low[0], low[1]]);
+                    self.len += 6;
+                    clean = 0;
+                } else {
+                    let mut bytes = [0; 4];
+                    let encoded = strings::encode_wtf8_rune(&mut bytes, code_point);
+                    self.buffer[self.len..self.len + 4].copy_from_slice(&bytes);
+                    self.len += encoded;
+                    clean += usize::from(width);
+                }
+            }
+            Ok(at)
+        }
+
+        fn push_utf16(&mut self, text: &[u16]) -> crate::CrateResult<()> {
+            const CHUNK: usize = 256;
+            // A unit is at most three bytes of UTF-8.
+            let mut chunk = [MaybeUninit::<u8>::uninit(); CHUNK * 3];
+            let mut rest = text;
+            let mut limit = CHUNK;
+            while !rest.is_empty() {
+                let (units, tail) = rest.split_at(cut_utf16(rest, limit));
+                limit = CHUNK;
+                let mut utf8 = BorrowedBuf::from(&mut chunk[..]);
+                let input = WithUtf8Len::utf16_worst_case(units, utf8.capacity())
+                    .expect("a chunk fits its buffer");
+                let result =
+                    simdutf::convert::utf16::to::utf8::with_errors::le(input, utf8.unfilled());
+                if result.is_successful() {
+                    self.push_escaped(utf8.filled())?;
+                    rest = tail;
+                } else if result.count >= NEAR {
+                    // `count` is the index of an unpaired surrogate. What is before it is well formed.
+                    limit = result.count;
+                } else {
+                    let taken = self.push_units(rest)?;
+                    rest = &rest[taken..];
+                }
+            }
+            Ok(())
+        }
+    }
+
+    /// Quotes `text`: units up to U+00FF as the Latin-1 JSON arm of [`write_pre_quoted_string`], others as `JSON.stringify`.
+    #[inline(never)]
+    pub fn write_json_string_utf16(
+        text: &[u16],
+        writer: &mut dyn PrinterWriter,
+    ) -> crate::CrateResult<()> {
+        // 32 KB at a time: a descriptor's writer passes a write that large straight on, so few write(2) for long text.
+        crate::fmt::with_shared_temp_buffer(|buffer| {
+            let mut pieces = JsonPieces {
+                writer,
+                buffer,
+                len: 0,
+            };
+            pieces.push(b"\"")?;
+            pieces.push_utf16(text)?;
+            pieces.push(b"\"")?;
+            pieces.flush()
+        })
     }
 
     /// `JSON.stringify(text)`, appended to `out`, byte for byte as JavaScript writes it. Unlike

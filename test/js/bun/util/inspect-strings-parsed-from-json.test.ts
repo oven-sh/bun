@@ -4,7 +4,6 @@ import { join, posix, win32 } from "node:path";
 
 const long = "x".repeat(40);
 const oneLine = (first: string) => `[ ${JSON.stringify(first)}, "${long}", "o" ]`;
-const twoLines = (first: string) => `[ ${JSON.stringify(first)}, "${long}",\n  "o"\n]`;
 const textOf = (first: string) => JSON.stringify([first, long, "o"]);
 const bytesOf = (first: string) => new TextEncoder().encode(textOf(first));
 
@@ -21,7 +20,7 @@ describe("Bun.inspect of a list of strings parsed from JSON", () => {
       expect(Bun.inspect(await parse(textOf(first)))).toBe(oneLine(first));
     });
     test.each(["中", "😀"])(`${name} of a text with another character: %s`, async first => {
-      expect(Bun.inspect(await parse(textOf(first)))).toBe(twoLines(first));
+      expect(Bun.inspect(await parse(textOf(first)))).toBe(oneLine(first));
     });
   }
 
@@ -38,7 +37,7 @@ describe("Bun.inspect of a list of strings parsed from JSON", () => {
       expect(Bun.inspect(await parse(bytesOf("a")))).toBe(oneLine("a"));
     });
     test.each(["é", "中", "😀"])(`${name} of bytes with another character: %s`, async first => {
-      expect(Bun.inspect(await parse(bytesOf(first)))).toBe(twoLines(first));
+      expect(Bun.inspect(await parse(bytesOf(first)))).toBe(oneLine(first));
     });
   }
 
@@ -53,8 +52,8 @@ describe("Bun.inspect of a list of strings parsed from JSON", () => {
       Bun.inspect(require(join(String(dir), name))),
     ];
     expect(await printed("ascii.json")).toEqual([oneLine("a"), oneLine("a")]);
-    expect(await printed("accent.json")).toEqual([twoLines("é"), twoLines("é")]);
-    expect(await printed("wide.json")).toEqual([twoLines("中"), twoLines("中")]);
+    expect(await printed("accent.json")).toEqual([oneLine("é"), oneLine("é")]);
+    expect(await printed("wide.json")).toEqual([oneLine("中"), oneLine("中")]);
   });
 
   test("the same list written in the program", () => {
@@ -67,18 +66,18 @@ describe("Bun.inspect of a list of strings parsed from JSON", () => {
       `[ "中", "${short}", "${short}", "${short}", "o" ]`,
     );
     expect(Bun.inspect(JSON.parse(`["中","${"\\u0078".repeat(40)}","o"]`))).toBe(oneLine("中"));
-    expect(Bun.inspect(JSON.parse(`["中","${long.slice(2)}\\u0078x","o"]`))).toBe(twoLines("中"));
+    expect(Bun.inspect(JSON.parse(`["中","${long.slice(2)}\\u0078x","o"]`))).toBe(oneLine("中"));
   });
 
   test("inside objects", () => {
-    expect(Bun.inspect(JSON.parse(`{"name":${textOf("中")}}`))).toBe(`{\n  name: [ "中", "${long}",\n    "o"\n  ],\n}`);
+    expect(Bun.inspect(JSON.parse(`{"name":${textOf("中")}}`))).toBe(`{\n  name: [ "中", "${long}", "o" ],\n}`);
     expect(Bun.inspect(JSON.parse(`{"name":${textOf("é")}}`))).toBe(`{\n  name: [ "é", "${long}", "o" ],\n}`);
   });
 
   test("an escape character", () => {
     const text = "\x1b[31m" + "x".repeat(30);
     expect(Bun.inspect(JSON.parse(JSON.stringify(["a", text]))[1])).toBe(`"\\u001B[31m${"x".repeat(30)}"`);
-    expect(Bun.inspect(JSON.parse(JSON.stringify(["中", text]))[1])).toBe(`"\\u001b[31m${"x".repeat(30)}"`);
+    expect(Bun.inspect(JSON.parse(JSON.stringify(["中", text]))[1])).toBe(`"\\u001B[31m${"x".repeat(30)}"`);
   });
 });
 
@@ -91,24 +90,24 @@ describe("Bun.inspect of a list of paths", () => {
     const printed = (made: string) => Bun.inspect([made, "o"]).includes("\n");
     expect(printed(path.join(long, "a"))).toBe(false);
     expect(printed(path.basename("/a/" + long))).toBe(false);
-    expect(printed(path.join(accented, "a"))).toBe(true);
-    expect(printed(path.normalize(accented + "/./a"))).toBe(true);
-    expect(printed(path.resolve("/" + accented))).toBe(true);
-    expect(printed(path.basename("/a/" + accented))).toBe(true);
-    expect(printed(path.dirname("/" + accented + "/a"))).toBe(true);
-    expect(printed(path.parse("/a/" + accented + ".txt").name)).toBe(true);
+    expect(printed(path.join(accented, "a"))).toBe(false);
+    expect(printed(path.normalize(accented + "/./a"))).toBe(false);
+    expect(printed(path.resolve("/" + accented))).toBe(false);
+    expect(printed(path.basename("/a/" + accented))).toBe(false);
+    expect(printed(path.dirname("/" + accented + "/a"))).toBe(false);
+    expect(printed(path.parse("/a/" + accented + ".txt").name)).toBe(false);
     expect(printed(path.parse("/" + accented + "/" + long + ".txt").base)).toBe(false);
-    expect(printed(path.relative("/a", "/a/" + accented))).toBe(true);
-    expect(printed(path.format({ dir: "/" + accented, base: "b" }))).toBe(true);
-    expect(printed(path.normalize("/" + accented + "/a"))).toBe(true);
-    expect(printed(path.join("/" + accented))).toBe(true);
-    expect(printed(path.join("/a", "../" + accented))).toBe(true);
-    expect(printed(path.resolve("/a", "../" + accented))).toBe(true);
-    expect(printed(path.resolve(accented).slice(-40))).toBe(true);
-    expect(printed(path.relative("/a/b", "/a/" + accented))).toBe(true);
-    expect(printed(path.relative("/a/./b", "/a/" + accented))).toBe(true);
-    expect(printed(path.extname("/a/b." + accented))).toBe(true);
-    expect(printed(path.basename("/a/" + accented + ".txt", ".txt"))).toBe(true);
+    expect(printed(path.relative("/a", "/a/" + accented))).toBe(false);
+    expect(printed(path.format({ dir: "/" + accented, base: "b" }))).toBe(false);
+    expect(printed(path.normalize("/" + accented + "/a"))).toBe(false);
+    expect(printed(path.join("/" + accented))).toBe(false);
+    expect(printed(path.join("/a", "../" + accented))).toBe(false);
+    expect(printed(path.resolve("/a", "../" + accented))).toBe(false);
+    expect(printed(path.resolve(accented).slice(-40))).toBe(false);
+    expect(printed(path.relative("/a/b", "/a/" + accented))).toBe(false);
+    expect(printed(path.relative("/a/./b", "/a/" + accented))).toBe(false);
+    expect(printed(path.extname("/a/b." + accented))).toBe(false);
+    expect(printed(path.basename("/a/" + accented + ".txt", ".txt"))).toBe(false);
     expect(printed(path.basename("/" + accented + "/" + long))).toBe(false);
     expect(printed(path.basename("/" + accented + "/" + long + ".txt", ".txt"))).toBe(false);
     expect(printed(path.dirname("/" + long + "/" + accented))).toBe(false);

@@ -1,5 +1,3 @@
-use core::ffi::c_void;
-
 use crate::{JSGlobalObject, JSValue, JsResult};
 
 bun_opaque::opaque_ffi! {
@@ -23,22 +21,11 @@ impl JSUint8Array {
     }
 
     pub fn from_bytes_copy(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
-        // SAFETY: C++ copies `len` bytes out of `ptr`; it does not retain the pointer.
-        crate::call_zero_is_throw(global, || unsafe {
-            Bun__createUint8ArrayForCopy(
-                global,
-                bytes.as_ptr().cast::<c_void>(),
-                bytes.len(),
-                false,
-            )
-        })
+        crate::cpp::Bun__createUint8ArrayForCopy(global, bytes, false)
     }
 
     pub fn create_empty(global: &JSGlobalObject) -> JsResult<JSValue> {
-        // SAFETY: null/0 is the documented "empty" input for this FFI entrypoint.
-        crate::call_zero_is_throw(global, || unsafe {
-            Bun__createUint8ArrayForCopy(global, core::ptr::null(), 0, false)
-        })
+        crate::cpp::Bun__createUint8ArrayForCopy(global, &[], false)
     }
 }
 
@@ -47,12 +34,5 @@ unsafe extern "C" {
         global: *const JSGlobalObject,
         ptr: *mut u8,
         len: usize,
-    ) -> JSValue;
-
-    fn Bun__createUint8ArrayForCopy(
-        global: *const JSGlobalObject,
-        ptr: *const c_void,
-        len: usize,
-        buffer: bool,
     ) -> JSValue;
 }

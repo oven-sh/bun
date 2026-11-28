@@ -612,13 +612,11 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         self.get_native_handle().map(|h| h.cast())
     }
 
-    /// The socket's `SSL` handle as a borrow (`SSL` is a zero-sized opaque,
-    /// so this is the safe spelling of [`ssl`](Self::ssl)).
+    /// SAFETY: the socket is detached, connecting, or open with TLS attached. The borrow is last used before it closes or anything else touches its `SSL`.
     #[inline]
-    pub fn ssl_mut(&self) -> Option<&mut bun_boringssl_sys::SSL> {
-        self.ssl()
-            .filter(|p| !p.is_null())
-            .map(bun_opaque::opaque_deref_mut)
+    pub unsafe fn ssl_mut<'a>(&self) -> Option<&'a mut bun_boringssl_sys::SSL> {
+        // SAFETY: fn contract; every transport reports a null handle as `None`.
+        self.ssl().map(|ssl| unsafe { &mut *ssl })
     }
 
     /// `*SSL` when `IS_SSL`, raw fd-as-ptr otherwise. Type-erased to
@@ -967,6 +965,13 @@ impl AnySocket {
         match self {
             AnySocket::SocketTcp(s) => &s.socket,
             AnySocket::SocketTls(s) => &s.socket,
+        }
+    }
+
+    pub fn as_tls(&self) -> Option<&SocketTLS> {
+        match self {
+            AnySocket::SocketTcp(_) => None,
+            AnySocket::SocketTls(s) => Some(s),
         }
     }
 

@@ -2,7 +2,7 @@
 //!
 //! Several shell task types collapsed into the NodeId-arena state machine
 //! (`interpreter.rs`); the rest are gated behind `interpreter_body_gated.rs`.
-//! The high-tier dispatcher must still cast the erased `Task.ptr` to a
+//! The high-tier dispatcher must still cast the erased `Task` payload to a
 //! concrete type and call the per-type entry point, so the shapes are
 //! declared here. Bodies that already exist elsewhere re-export through this
 //! module; the rest carry the body inline (mostly `run_from_main_thread()` →
@@ -10,14 +10,6 @@
 
 use crate::shell::interpreter::{Interpreter, NodeId, PoolTask, ShellTask, ShellWork};
 use crate::shell::yield_::Yield;
-/// Task payload for [`ShellAsync`](crate::shell::states::r#async::Async)'s
-/// bounce back to the main thread. The state lives in `interp.nodes`, so
-/// the enqueued payload is `(interp, node)`.
-#[repr(C)]
-pub(crate) struct ShellAsyncTask {
-    pub interp: *mut Interpreter,
-    pub node: core::cell::Cell<NodeId>,
-}
 
 /// Stat task backing shell conditional expressions (`[ -f x ]` etc.).
 pub(crate) struct ShellCondExprStatTask {
@@ -43,9 +35,6 @@ pub(crate) struct ShellGlobTask {
     pub result: Vec<Vec<u8>>,
     pub err: Option<ShellGlobErr>,
 }
-
-// SAFETY: the walker owns its pattern and buffers; nothing in it is thread-affine.
-unsafe impl Send for ShellGlobTask {}
 
 impl ShellWork for ShellGlobTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellGlobTask;
@@ -111,6 +100,5 @@ impl ShellGlobTask {
 /// A child node in the
 /// recursive rm tree-walk; posts back to main when its subtree is empty.
 /// Re-export: the real DirTask lives in `builtins::rm` (full recursive
-/// tree-walk node). `dispatch.rs` calls `ShellRmDirTask::run_from_main_thread`
-/// for the verbose-write bounce-back.
+/// tree-walk node). `dispatch.rs` runs it for the verbose-write bounce-back.
 pub(crate) use crate::shell::builtins::rm::DirTask as ShellRmDirTask;

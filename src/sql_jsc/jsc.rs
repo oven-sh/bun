@@ -85,20 +85,9 @@ pub use bun_jsc::system_error::verify_error_to_js;
 fn boringssl_err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
     bun_boringssl_sys::ERR_clear_error();
 
-    const PREFIX: &[u8] = b"BoringSSL ";
-    let mut outbuf = [0u8; 128 + 1 + PREFIX.len()];
-    outbuf[..PREFIX.len()].copy_from_slice(PREFIX);
-    let message_buf = &mut outbuf[PREFIX.len()..];
-    // SAFETY: `message_buf` is a valid writable buffer of `message_buf.len()` bytes.
-    unsafe {
-        bun_boringssl_sys::ERR_error_string_n(
-            err_code,
-            message_buf.as_mut_ptr().cast::<core::ffi::c_char>(),
-            message_buf.len(),
-        );
-    }
-    let error_message: &[u8] = bun_core::slice_to_nul(&outbuf[..]);
-    if error_message.len() == PREFIX.len() {
+    let mut outbuf = [0u8; 128 + 1];
+    let error_message = bun_boringssl_sys::error_string(err_code, &mut outbuf);
+    if error_message.is_empty() {
         return global
             .err(
                 ErrorCode::BORINGSSL,
@@ -109,7 +98,7 @@ fn boringssl_err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
     global
         .err(
             ErrorCode::BORINGSSL,
-            format_args!("{}", bstr::BStr::new(error_message)),
+            format_args!("BoringSSL {}", bstr::BStr::new(error_message)),
         )
         .to_js()
 }
@@ -368,7 +357,7 @@ pub mod api {
             /// itself). Returns `Default` for the empty/`tls:true` config.
             pub(crate) fn as_usockets_for_client_verification(
                 &self,
-            ) -> bun_uws::us_bun_socket_context_options_t {
+            ) -> bun_uws::us_bun_socket_context_options_t<'_> {
                 match &self.0 {
                     None => bun_uws::us_bun_socket_context_options_t {
                         request_cert: 1,

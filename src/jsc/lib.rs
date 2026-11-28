@@ -846,7 +846,7 @@ pub use self::resolved_source_tag::ResolvedSourceTag;
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "FetchHeaders.rs"]
 pub mod fetch_headers;
-pub use self::fetch_headers::{FetchHeaders, HTTPHeaderName};
+pub use self::fetch_headers::{FetchHeaders, HTTPHeaderName, HeadersRef};
 
 /// `BuiltinName` — fast-path property keys preallocated as `JSC::Identifier`s
 /// in C++ (`BunBuiltinNames.h`). Passed to `JSValue::fast_get` as a `u8` index
@@ -1220,9 +1220,9 @@ pub mod event_loop;
 pub use self::event_loop as EventLoop;
 pub mod job;
 pub use self::event_loop::{
-    AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask, DeferredTaskQueue,
-    EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop, PosixSignalTask,
-    Stopped, Task, WorkPool, WorkPoolTask,
+    ConcurrentCppTask, ConcurrentTask, CppTask, DeferredTaskQueue, EventLoopHandle, EventLoopTask,
+    GarbageCollectionController, MiniEventLoop, PosixSignalTask, Stopped, Task, WorkPool,
+    WorkPoolTask,
 };
 pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread};
 #[cfg(unix)]

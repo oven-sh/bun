@@ -299,7 +299,6 @@ name = "bun_boringssl_sys"
 version = "0.0.0"
 dependencies = [
  "bun_core",
- "bun_opaque",
 ]
 
 [[package]]

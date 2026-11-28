@@ -100,7 +100,7 @@ pub struct NqVtable {
     pub lookup_cert: unsafe extern "C" fn(
         owner: *mut c_void,
         local: *const sockaddr,
-        sni: *const c_char,
+        sni: Option<bun_core::CStrRef<'_>>,
     ) -> *mut SSL_CTX,
     pub packets_out:
         unsafe extern "C" fn(owner: *mut c_void, specs: *const lsquic_out_spec, n: c_uint) -> c_int,

@@ -179,85 +179,89 @@ pub(crate) fn take_held(cell: JSValue) -> JSValue {
 /// deinit() which aborts signals, unrefs bodies, and calls back into
 /// the server — all of which may unprotect JS values or allocate. We must
 /// defer that work to the event loop.
+///
+/// SAFETY: `ctx` and `tag` are what [`create`] gave the cell, which gives the ref up.
 #[inline(never)]
 #[unsafe(no_mangle)]
-extern "C" fn Bun__NativePromiseContext__destroy(ctx: *mut c_void, tag: u8) {
+unsafe extern "C" fn Bun__NativePromiseContext__destroy(ctx: *mut c_void, tag: u8) {
     bun_removable_features::removable_definition!(Serve, Bun__NativePromiseContext__destroy);
     bun_removable_features::removable_definition!(HtmlRewriter, Bun__NativePromiseContext__destroy);
     bun_removable_features::removable_definition!(S3Client, Bun__NativePromiseContext__destroy);
-    let tag = Tag::from_raw(tag);
-    clear_remembered_cell(ctx, tag);
-    DeferredDerefTask::schedule(ctx, tag);
+    // SAFETY: fn contract.
+    let claim = unsafe { Claim::from_raw(ctx, Tag::from_raw(tag)) };
+    claim.clear_remembered_cell();
+    DeferredDerefTask::schedule(claim);
 }
 
-/// The cell dies with its claim intact, so the context's `promise_cell` field
-/// still points at it and is about to dangle. Clear it before `on_abort` can
-/// read it again. A plain field write, safe during sweep; the unreleased
-/// claim keeps `ctx` alive through this call.
-fn clear_remembered_cell(ctx: *mut c_void, tag: Tag) {
-    // SAFETY: `tag` names the concrete type `ctx` was created with, and the
-    // claim being released is a live ref on it.
-    unsafe {
-        match tag {
-            Tag::HTTPServerRequestContext => {
-                (*ctx.cast::<HTTPServerRequestContext>()).promise_cell_collected()
-            }
-            Tag::HTTPSServerRequestContext => {
-                (*ctx.cast::<HTTPSServerRequestContext>()).promise_cell_collected()
-            }
-            Tag::DebugHTTPServerRequestContext => {
-                (*ctx.cast::<DebugHTTPServerRequestContext>()).promise_cell_collected()
-            }
-            Tag::DebugHTTPSServerRequestContext => {
-                (*ctx.cast::<DebugHTTPSServerRequestContext>()).promise_cell_collected()
-            }
-            Tag::HTTPServerMuxRequestContext => {
-                (*ctx.cast::<HTTPServerMuxRequestContext>()).promise_cell_collected()
-            }
-            Tag::HTTPSServerMuxRequestContext => {
-                (*ctx.cast::<HTTPSServerMuxRequestContext>()).promise_cell_collected()
-            }
-            Tag::DebugHTTPServerMuxRequestContext => {
-                (*ctx.cast::<DebugHTTPServerMuxRequestContext>()).promise_cell_collected()
-            }
-            Tag::DebugHTTPSServerMuxRequestContext => {
-                (*ctx.cast::<DebugHTTPSServerMuxRequestContext>()).promise_cell_collected()
-            }
-            Tag::HTMLRewriterSuspension | Tag::HTMLRewriterPipeFree | Tag::S3UploadStream => {}
+macro_rules! claims {
+    ($($Request:ident),*; $($Tag:ident($Type:ty)),*) => {
+        /// One ref on what the [`Tag`] of the same name stands for.
+        pub(crate) enum Claim {
+            $($Request(RefPtr<$Request>),)*
+            $($Tag(RefPtr<$Type>),)*
         }
-    }
+
+        impl Claim {
+            /// SAFETY: `ctx` is a ref on what `tag` stands for, which the caller gives up.
+            unsafe fn from_raw(ctx: *mut c_void, tag: Tag) -> Self {
+                // SAFETY: fn contract.
+                unsafe {
+                    match tag {
+                        $(Tag::$Request => Self::$Request(RefPtr::from_raw(ctx.cast())),)*
+                        $(Tag::$Tag => Self::$Tag(RefPtr::from_raw(ctx.cast())),)*
+                    }
+                }
+            }
+
+            fn into_raw(self) -> (*mut c_void, Tag) {
+                match self {
+                    $(Self::$Request(ctx) => (ctx.into_raw().cast(), Tag::$Request),)*
+                    $(Self::$Tag(ctx) => (ctx.into_raw().cast(), Tag::$Tag),)*
+                }
+            }
+
+            /// `promise_cell` is about to dangle, and `on_abort` reads it. A plain field write, safe during sweep.
+            fn clear_remembered_cell(&self) {
+                match self {
+                    $(Self::$Request(ctx) => ctx.promise_cell_collected(),)*
+                    $(Self::$Tag(_) => {})*
+                }
+            }
+        }
+
+        $(const _: () = assert!(align_of::<$Request>() > DeferredDerefTask::TAG_MASK);)*
+        $(const _: () = assert!(align_of::<$Type>() > DeferredDerefTask::TAG_MASK);)*
+    };
+}
+claims! {
+    HTTPServerRequestContext,
+    HTTPSServerRequestContext,
+    DebugHTTPServerRequestContext,
+    DebugHTTPSServerRequestContext,
+    HTTPServerMuxRequestContext,
+    HTTPSServerMuxRequestContext,
+    DebugHTTPServerMuxRequestContext,
+    DebugHTTPSServerMuxRequestContext;
+    HTMLRewriterSuspension(html_rewriter::RewriterPipe),
+    HTMLRewriterPipeFree(html_rewriter::RewriterPipe),
+    S3UploadStream(NetworkSink)
 }
 
 /// Defers the GC-triggered deref to the next event-loop tick so it runs
 /// outside the sweep phase.
 ///
-/// Zero-allocation: the ctx pointer and our Tag are packed into the task's
-/// `ptr` slot (pointer in high bits, tag in low 4 bits — the target types
-/// are all 16-byte aligned, see their `#[repr(align(16))]`). See PosixSignalTask for the same trick with
-/// signal numbers.
-///
-/// Layout of `Task.ptr` (read back as `usize` in dispatch):
-///
-/// ```text
-/// bits 63..4           bits 3..0
-/// ┌────────────────────┬─────────┐
-/// │ ctx ptr (aligned)  │ our Tag │
-/// └────────────────────┴─────────┘
-/// ```
-///
-/// `Task` stores `{ tag, ptr }` as separate fields, so the discriminant is
-/// carried in `Task.tag` and only the ctx|Tag packing remains in `Task.ptr`.
-pub(crate) struct DeferredDerefTask;
+/// A [`Claim`] in one word: the tag is in the pointer's low bits.
+pub(crate) struct DeferredDerefTask(*mut c_void);
 
 impl Taskable for DeferredDerefTask {
     const TAG: TaskTag = task_tag::NativePromiseContextDeferredDerefTask;
-    /// `this` packs a context pointer and tag; the deref it defers is
-    /// script-free, so do it.
-    unsafe fn release_unrun(this: *mut Self) {
-        Self::run_from_js_thread(this as usize);
+    type Payload = Self;
+    /// The deref it defers is script-free, so do it.
+    fn release_unrun(task: Self) {
+        task.run_from_js_thread();
     }
     /// A deferred deref; calls no script.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -265,115 +269,41 @@ impl Taskable for DeferredDerefTask {
 impl DeferredDerefTask {
     const TAG_MASK: usize = 0b1111;
 
-    pub(crate) fn schedule(ctx: *mut c_void, tag: Tag) {
-        // SAFETY: called from the JS thread (GC sweep → C++ destructor); the
-        // thread-local VM is alive for the duration of this call.
+    pub(crate) fn schedule(claim: Claim) {
         let vm = VirtualMachine::get();
         if vm.event_loop().is_closed_for_tasks() {
             // Teardown has forbidden script and released the queue; from here on only GC destructors
             // (possibly mid-sweep in `~VM`) reach this, and theirs is the last use of `ctx` in that
             // frame. A worker's HTMLRewriter pipe would outlive it, so those refs are released now,
             // sweep-safe; a RequestContext's deref is not sweep-safe and dies with the VM instead.
-            match tag {
-                // SAFETY: the destroyed context held the suspension's ref on this live pipe.
-                Tag::HTMLRewriterSuspension => unsafe {
-                    RefPtr::from_raw(ctx.cast::<html_rewriter::RewriterPipe>()).abandon_suspension()
-                },
-                // SAFETY: the detached controller handed over the pipe's last ref (its destructor's
-                // trailing `controller_finalize` is a no-op for this sink).
-                Tag::HTMLRewriterPipeFree => unsafe {
-                    drop(RefPtr::from_raw(ctx.cast::<html_rewriter::RewriterPipe>()))
-                },
-                // SAFETY: the pump's ref. It is the last one only once the upload has finished and holds no JS value.
-                Tag::S3UploadStream => unsafe { drop(RefPtr::from_raw(ctx.cast::<NetworkSink>())) },
-                _ => {}
+            match claim {
+                Claim::HTMLRewriterSuspension(pipe) => pipe.abandon_suspension(),
+                Claim::HTMLRewriterPipeFree(pipe) => drop(pipe),
+                // The last ref only once the upload has finished and holds no JS value.
+                Claim::S3UploadStream(sink) => drop(sink),
+                request => {
+                    request.into_raw();
+                }
             }
             return;
         }
 
-        let addr = ctx as usize;
-        debug_assert!(addr & Self::TAG_MASK == 0);
-
-        // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so
-        // build it directly — dispatch unpacks via `task.ptr as usize`.
-        let task = Task::init((addr | (tag as usize)) as *mut DeferredDerefTask);
-        vm.event_loop().enqueue_task(task);
+        let (ctx, tag) = claim.into_raw();
+        let task = Self(ctx.map_addr(|addr| addr | tag as usize));
+        vm.event_loop().enqueue_task(Task::new::<Self>(task));
     }
 
-    pub(crate) fn run_from_js_thread(packed_ptr: usize) {
-        let tag = Tag::from_raw((packed_ptr & Self::TAG_MASK) as u8);
-        let ctx = (packed_ptr & !Self::TAG_MASK) as *mut c_void;
-        // SAFETY: ctx was packed in `schedule` from a live, non-null pointer
-        // of the type indicated by `tag`, and this task owns one ref on it,
-        // released below. We are on the JS thread.
-        unsafe {
-            match tag {
-                Tag::HTTPServerRequestContext => {
-                    drop(RefPtr::from_raw(ctx.cast::<HTTPServerRequestContext>()))
-                }
-                Tag::HTTPSServerRequestContext => {
-                    drop(RefPtr::from_raw(ctx.cast::<HTTPSServerRequestContext>()))
-                }
-                Tag::DebugHTTPServerRequestContext => drop(RefPtr::from_raw(
-                    ctx.cast::<DebugHTTPServerRequestContext>(),
-                )),
-                Tag::DebugHTTPSServerRequestContext => drop(RefPtr::from_raw(
-                    ctx.cast::<DebugHTTPSServerRequestContext>(),
-                )),
-                Tag::HTTPServerMuxRequestContext => {
-                    drop(RefPtr::from_raw(ctx.cast::<HTTPServerMuxRequestContext>()))
-                }
-                Tag::HTTPSServerMuxRequestContext => {
-                    drop(RefPtr::from_raw(ctx.cast::<HTTPSServerMuxRequestContext>()))
-                }
-                Tag::DebugHTTPServerMuxRequestContext => drop(RefPtr::from_raw(
-                    ctx.cast::<DebugHTTPServerMuxRequestContext>(),
-                )),
-                Tag::DebugHTTPSServerMuxRequestContext => drop(RefPtr::from_raw(
-                    ctx.cast::<DebugHTTPSServerMuxRequestContext>(),
-                )),
-                Tag::HTMLRewriterSuspension => {
-                    RefPtr::from_raw(ctx.cast::<html_rewriter::RewriterPipe>())
-                        .abandon_suspension();
-                }
-                Tag::HTMLRewriterPipeFree => {
-                    drop(RefPtr::from_raw(ctx.cast::<html_rewriter::RewriterPipe>()));
-                }
-                Tag::S3UploadStream => {
-                    // The pump's promise was collected unsettled (the script running it is gone):
-                    // as a rejection with no reason.
-                    let sink = RefPtr::from_raw(ctx.cast::<NetworkSink>());
-                    sink.on_pump_rejected(JSValue::ZERO);
-                }
-            }
+    pub(crate) fn run_from_js_thread(self) {
+        let tag = Tag::from_raw((self.0.addr() & Self::TAG_MASK) as u8);
+        let ctx = self.0.map_addr(|addr| addr & !Self::TAG_MASK);
+        // SAFETY: what `schedule` packed.
+        match unsafe { Claim::from_raw(ctx, tag) } {
+            Claim::HTMLRewriterSuspension(pipe) => pipe.abandon_suspension(),
+            // The pump's promise was collected unsettled: as a rejection with no reason.
+            Claim::S3UploadStream(sink) => sink.on_pump_rejected(JSValue::ZERO),
+            claim => drop(claim),
         }
     }
 }
 
-// Low 4 bits hold the tag; verify both capacity and alignment slack so adding
-// a tag or a packed field can't silently break the packing.
 const _: () = assert!(Tag::COUNT <= DeferredDerefTask::TAG_MASK + 1);
-const _: () =
-    assert!(core::mem::align_of::<HTTPServerRequestContext>() > DeferredDerefTask::TAG_MASK);
-const _: () =
-    assert!(core::mem::align_of::<HTTPSServerRequestContext>() > DeferredDerefTask::TAG_MASK);
-const _: () =
-    assert!(core::mem::align_of::<DebugHTTPServerRequestContext>() > DeferredDerefTask::TAG_MASK);
-const _: () =
-    assert!(core::mem::align_of::<DebugHTTPSServerRequestContext>() > DeferredDerefTask::TAG_MASK);
-const _: () =
-    assert!(core::mem::align_of::<HTTPServerMuxRequestContext>() > DeferredDerefTask::TAG_MASK);
-const _: () = assert!(
-    core::mem::align_of::<DebugHTTPSServerMuxRequestContext>() > DeferredDerefTask::TAG_MASK
-);
-const _: () =
-    assert!(core::mem::align_of::<HTTPSServerMuxRequestContext>() > DeferredDerefTask::TAG_MASK);
-const _: () = assert!(
-    core::mem::align_of::<DebugHTTPServerMuxRequestContext>() > DeferredDerefTask::TAG_MASK
-);
-const _: () =
-    assert!(core::mem::align_of::<html_rewriter::RewriterPipe>() > DeferredDerefTask::TAG_MASK);
-const _: () = assert!(
-    core::mem::align_of::<crate::webcore::s3::multipart::NetworkSink>()
-        > DeferredDerefTask::TAG_MASK
-);

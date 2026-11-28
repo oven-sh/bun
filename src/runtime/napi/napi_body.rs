@@ -10,7 +10,7 @@ use std::sync::Arc;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_core::Unaligned;
-use bun_event_loop::{BoxedTask, Posted, RefTask, TaskTag, Taskable, task_tag};
+use bun_event_loop::{BoxedTask, Posted, TaskTag, Taskable, task_tag};
 use bun_io::{JsKeepAlive, KeepAlive};
 use bun_jsc::StringJsc;
 use bun_jsc::bun_string_jsc;
@@ -46,37 +46,36 @@ impl JSValueNapiExt for JSValue {
     }
 }
 
-impl Taskable for napi_async_work {
+impl Taskable for FinishedAsyncWork {
     const TAG: TaskTag = task_tag::NapiAsyncWork;
+    type Payload = Self;
     /// Work the pool handed back during teardown: its `complete` callback is
     /// how the addon learns the outcome and frees the work (Node calls it from
     /// environment cleanup too); script it tries to run is refused at the boundary.
-    unsafe fn release_unrun(this: *mut Self) {
-        let global = VirtualMachine::get().global();
+    fn release_unrun(work: Self) {
         // `Err` is left pending for the release dispatcher's fold.
-        // SAFETY: fn contract — the addon's live work object the pool posted.
-        let _ = unsafe { Self::run_from_js(this, global) };
+        let _ = work.run_from_js(VirtualMachine::get().global());
     }
     /// An addon's completion always runs (it frees the work there): `NapiEnv::complete_in_context`
     /// enters the context that queued it, and refuses calls into script if that context has stopped.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
-impl RefTask for ThreadSafeFunction {
+impl Taskable for ThreadSafeFunction {
     const TAG: TaskTag = task_tag::ThreadSafeFunction;
-    type Ref = Arc<Self>;
+    type Payload = Arc<Self>;
     /// The env's cleanup hook (`env_teardown`) does what the dispatch would have done.
-    fn release_unrun(_: Self::Ref) {}
-    /// As `napi_async_work`.
-    fn context(_: &Self::Ref) -> bun_event_loop::ContextId {
+    fn release_unrun(_: Self::Payload) {}
+    /// As `FinishedAsyncWork`.
+    fn context(_: &Self::Payload) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
 impl BoxedTask for TsfnRefRequest {
     const TAG: TaskTag = task_tag::ThreadSafeFunctionRefRequest;
     fn release_unrun(self: Box<Self>) {}
-    /// As `napi_async_work`.
+    /// As `FinishedAsyncWork`.
     fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
@@ -1941,7 +1940,7 @@ pub(super) enum AsyncWorkStatus {
 }
 
 /// must be globally allocated
-pub(crate) struct napi_async_work {
+struct napi_async_work {
     /// Only the pool thread uses it between `schedule` and the post back.
     off_thread: UnsafeCell<AsyncWorkOffThread>,
     status: AtomicU32, // AsyncWorkStatus
@@ -2060,10 +2059,14 @@ impl napi_async_work {
         } else {
             let _ = Self::cancel(status);
         }
+        let task = Task::new::<FinishedAsyncWork>(FinishedAsyncWork(this));
         // SAFETY: as above.
-        unsafe { NapiEnv__asyncWorkLeftThreadPool(off_thread.env) };
+        let node = unsafe {
+            NapiEnv__asyncWorkLeftThreadPool(off_thread.env);
+            ConcurrentTask::in_place(&raw mut off_thread.concurrent_task, task)
+        };
         // A VM tearing down runs `complete` from its queue release, as Node does at environment cleanup.
-        ticket.post_intrusive(ptr::NonNull::from(off_thread.concurrent_task.from(this)));
+        ticket.post(node);
     }
 
     fn cancel(status: &AtomicU32) -> bool {
@@ -2076,13 +2079,16 @@ impl napi_async_work {
             )
             .is_ok()
     }
+}
 
-    /// # Safety
-    /// `this` is the work that the pool posted back, on the thread it was posted to.
-    pub(crate) unsafe fn run_from_js(this: *mut Self, global: &JSGlobalObject) -> JsResult<()> {
+/// The work that the pool is done with, which the addon keeps alive until `complete` is called.
+pub(crate) struct FinishedAsyncWork(*const napi_async_work);
+
+impl FinishedAsyncWork {
+    pub(crate) fn run_from_js(self, global: &JSGlobalObject) -> JsResult<()> {
         let (_poll_ref, env, complete, status, data, context) = {
-            // SAFETY: fn contract. The borrow ends here, because `complete` usually deletes the work.
-            let work = unsafe { &*this };
+            // SAFETY: see the type. The borrow ends here, because `complete` usually deletes the work.
+            let work = unsafe { &*self.0 };
             (
                 work.poll_ref.take(),
                 work.env.take(),
@@ -2829,7 +2835,7 @@ impl ThreadSafeFunction {
                 DispatchStep::QueueFinalizer { leftovers } => {
                     this.hand_back(leftovers);
                     js.poll_ref.disable();
-                    event_loop.enqueue_task(Task::from_ref::<Self>(this));
+                    event_loop.enqueue_task(Task::new::<Self>(this));
                     break;
                 }
                 DispatchStep::Finalize => {
@@ -2995,7 +3001,7 @@ impl ThreadSafeFunction {
             // A dispatch is queued or running and will see this, or `env_teardown` will.
             return;
         };
-        if let Posted::Refused(this) = self.js.handle().post(self.loop_kind, this) {
+        if let Posted::Refused(this) = self.js.handle().post::<Self>(self.loop_kind, this) {
             // VM closed before the env cleanup hook ran here: no
             // dispatch will happen; the queued calls are released by the
             // teardown path.
@@ -5264,7 +5270,7 @@ impl NapiFinalizerTask {
             // not the env ref — the env's count is not atomic and the env goes
             // with its VM — as the cleanup-hooks-already-ran case below does.
             let handle = self.finalizer.env.vm_handle();
-            if let Posted::Refused(task) = handle.post(bun_jsc::LoopKind::Regular, self) {
+            if let Posted::Refused(task) = handle.post::<Self>(bun_jsc::LoopKind::Regular, self) {
                 let _ = core::mem::ManuallyDrop::new(task.finalizer.env);
             }
             return;

@@ -4160,34 +4160,54 @@ impl CommonJsExports {
     }
 
     pub fn ignores_this(&self, module: ModuleRef, name: Atom) -> bool {
-        let (mut module, mut name) = (module, name);
-        for _ in 0..=self.modules.len() {
-            let Some(text) = self.text_of(module) else {
+        let mut pending: SmallVec<[(ModuleRef, Atom); 4]> = smallvec![(module, name)];
+        let mut asked: FxHashSet<(ModuleRef, Atom)> = FxHashSet::default();
+        while let Some((module, name)) = pending.pop() {
+            let Some(found) = self.find_text_that_stores(module, name) else {
                 return false;
             };
-            if !text.has_names || self.stored_by_other_files.get(&(module, name)) == Some(&false) {
+            let Some((text, name)) = found else {
+                continue;
+            };
+            let mut creations = text.creations_of(name).iter();
+            if creations.any(|it| it.value == StoredValue::Unknown) {
                 return false;
+            }
+            // Two spreads may lead to one module, and their paths double with each such pair.
+            let spreads = text.spreads.iter().filter(|it| it.names.contains(&name));
+            let sources = spreads.map(|spread| (spread.module, name));
+            pending.extend(sources.filter(|&source| asked.insert(source)));
+        }
+        true
+    }
+
+    /// The module whose stores and spreads make what `module` has under `name`. `Some(None)`: what is there ignores `this`. `None`: it may not.
+    #[allow(clippy::option_option)]
+    fn find_text_that_stores(
+        &self,
+        mut module: ModuleRef,
+        mut name: Atom,
+    ) -> Option<Option<(&ModuleText, Atom)>> {
+        for _ in 0..=self.modules.len() {
+            let text = self.text_of(module)?;
+            if !text.has_names || self.stored_by_other_files.get(&(module, name)) == Some(&false) {
+                return None;
             }
             let alias = text.alias_of(name);
             if let Some(alias) = alias
                 && matches!(alias.target, AliasTarget::Binding(_))
             {
-                return alias.value != StoredValue::Unknown;
+                return (alias.value != StoredValue::Unknown).then_some(None);
             }
             match self.targets.get(&(module, name)) {
                 Some(&Target::Name(owner, owner_name)) => (module, name) = (owner, owner_name),
-                Some(Target::Binding(_)) => return false,
-                Some(Target::Nothing) => return true,
-                None if alias.is_some() => return false,
-                None => {
-                    let mut creations = text.creations_of(name).iter();
-                    let mut spreads = text.spreads.iter().filter(|it| it.names.contains(&name));
-                    return creations.all(|it| it.value != StoredValue::Unknown)
-                        && spreads.all(|spread| self.ignores_this(spread.module, name));
-                }
+                Some(Target::Binding(_)) => return None,
+                Some(Target::Nothing) => return Some(None),
+                None if alias.is_some() => return None,
+                None => return Some(Some((text, name))),
             }
         }
-        false
+        None
     }
 
     pub fn marker(&self, module: ModuleRef) -> Option<bool> {

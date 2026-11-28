@@ -391,6 +391,42 @@ describe("url", () => {
     }
   });
 
+  // https://github.com/oven-sh/bun/issues/28661: right through bun 1.1.4, wrong from 1.1.5.
+  // The host setter of the URL Standard (https://url.spec.whatwg.org/#dom-url-host) sets the port to null
+  // when the value has the default port of the scheme.
+  describe("host setter with a port", () => {
+    const cases = [
+      ["http://localhost:3000/foo", "some-domain:80", "http://some-domain/foo"],
+      ["https://localhost:3000/foo", "some-domain:443", "https://some-domain/foo"],
+      ["ws://example.net:3000/", "example.com:80", "ws://example.com/"],
+      ["wss://example.net:3000/", "example.com:443", "wss://example.com/"],
+      ["ftp://example.net:2121/", "example.com:21", "ftp://example.com/"],
+      ["http://u:p@example.net:8080/p?q#f", "example.com:80", "http://u:p@example.com/p?q#f"],
+      ["http://example.net:8080/", "example.com:00080", "http://example.com/"],
+      ["http://example.net:8080/p?q#f", "[::1]:80", "http://[::1]/p?q#f"],
+      // The old port stays when the value has no port. Another port replaces it, also the default port of another scheme.
+      ["http://example.net:8080/", "example.com", "http://example.com:8080/"],
+      ["http://example.net:8080/", "example.com:", "http://example.com:8080/"],
+      ["http://example.net:8080/", "example.com:81", "http://example.com:81/"],
+      ["https://example.net:8080/", "example.com:80", "https://example.com:80/"],
+      ["foo://example.net:8080/", "example.com:80", "foo://example.com:80/"],
+      // After an IPv6 address the port starts at the first ":" and ends at the next one. A file URL takes no port.
+      ["http://example.net:8080/p", "[::1]:9000:80", "http://[::1]:9000/p"],
+      ["http://example.net:8080/p", "[::1]:9000:81", "http://[::1]:9000/p"],
+      ["http://example.net:8080/p", "[::1]:80:9000", "http://[::1]/p"],
+      ["http://example.net:8080/p", "[::1]::80", "http://[::1]:8080/p"],
+      ["https://example.net:8080/p", "[::1]:x:443", "https://[::1]:8080/p"],
+      ["foo://example.net:8080/p", "[::1]:9000:80", "foo://[::1]:9000/p"],
+      ["file:///a/b", "[::1]::80", "file:///a/b"],
+    ] as const;
+
+    it.each(cases)("new URL(%j).host = %j", (href, value, expected) => {
+      const url = new URL(href);
+      url.host = value;
+      expect(url.href).toBe(expected);
+    });
+  });
+
   describe("URL.canParse", () => {
     (
       [

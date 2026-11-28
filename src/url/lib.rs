@@ -18,8 +18,6 @@ pub mod api {
     pub use bun_core::StringPointer;
 }
 
-use bun_core::io::Write as _;
-
 // ── route_param (moved from bun_router) ───────────────────────────────────
 pub mod route_param {
     // name/value borrow from the route template + the live request
@@ -559,8 +557,7 @@ impl<'a> URL<'a> {
             Vec::with_capacity(proto.len() + 3 + self.host.len() + 1 + path.len() + 1);
         buf.extend_from_slice(proto);
         buf.extend_from_slice(b"://");
-        // bun_core::io::Write on Vec<u8> is infallible.
-        let _ = buf.print(format_args!("{}", self.display_host()));
+        self.display_host().write_to(&mut buf);
         buf.push(b'/');
         if !path.is_empty() {
             buf.extend_from_slice(path);

@@ -1181,7 +1181,7 @@ impl core::fmt::Display for String {
 impl core::fmt::Display for EncodedSlice<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if self.is_utf8() {
-            return write!(f, "{}", crate::fmt::s(self.slice()));
+            return write!(f, "{}", bstr::BStr::new(self.slice()));
         }
         if self.is_16bit() {
             return crate::fmt::format_utf16_type(self.utf16_slice(), f);

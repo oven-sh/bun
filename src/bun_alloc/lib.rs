@@ -267,9 +267,7 @@ pub(crate) fn alloc_result<T>(
 /// Number of bytes the formatted args would produce.
 ///
 /// Drives a discarding `fmt::Write` that only sums `s.len()` — no allocation,
-/// no UTF-8 validation beyond what the formatter already did. Lives here in
-/// T0 so higher tiers (`bun_core::fmt::count` re-exports this) and `bun_alloc`
-/// itself can share the single implementation.
+/// no UTF-8 validation beyond what the formatter already did. `bun_core::fmt::count` forwards here.
 #[inline]
 pub fn fmt_count(args: core::fmt::Arguments<'_>) -> usize {
     struct Discarding(usize);
@@ -289,8 +287,7 @@ pub fn fmt_count(args: core::fmt::Arguments<'_>) -> usize {
 /// `core::fmt::Write` adapter over a borrowed `&mut [u8]` — the engine behind
 /// [`buf_print`] / [`buf_print_len`] (and `bun_core::fmt::buf_print_z`).
 ///
-/// Lives at T0 so `bun_alloc` itself can use it (`BSSStringList::print`); T1
-/// `bun_core::fmt` re-exports it and adds an `io::Write` impl for write-only
+/// T1 `bun_core::fmt` re-exports it and adds an `io::Write` impl for write-only
 /// sites.
 pub struct SliceCursor<'a> {
     pub buf: &'a mut [u8],
@@ -1564,27 +1561,16 @@ pub struct BSSStringList<
     pub(crate) mutex: Mutex,
 }
 
-#[derive(Default, Clone, Copy)]
-struct EmptyType {
-    len: usize,
-}
-
 struct LowerCase<'a>(&'a [u8]);
 
 /// Byte sources accepted by the `append*` methods.
 pub trait BSSAppendable {
     /// Total byte length (excluding sentinel).
     fn total_len(&self) -> usize;
-    /// Copy bytes into `dst[..total_len()]`. No-op for `EmptyType`.
+    /// Copy bytes into `dst[..total_len()]`.
     fn copy_into(&self, dst: &mut [u8]);
 }
 
-impl BSSAppendable for EmptyType {
-    fn total_len(&self) -> usize {
-        self.len
-    }
-    fn copy_into(&self, _dst: &mut [u8]) {}
-}
 impl BSSAppendable for LowerCase<'_> {
     fn total_len(&self) -> usize {
         self.0.len()
@@ -1665,12 +1651,11 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // SAFETY: `exists` proved `value` lies inside `backing_buf`, which is
         // never freed or moved (process-lifetime singleton). The caller already
         // holds these bytes as a `&[u8]`, so they are past construction: the only
-        // `&mut` into the buffer (`append_mutable`, crate-private) covers freshly
-        // reserved bytes and ends before `append`/`print` return them shared.
+        // `&mut` into the buffer (`do_append`) covers fresh bytes and ends before they are shared.
         Some(unsafe { core::slice::from_raw_parts(value.as_ptr(), value.len()) })
     }
 
-    /// Append `value` and return a mutable slice over the freshly-reserved bytes.
+    /// Append `value`, returning a stable `&[u8]` over the freshly-reserved bytes.
     ///
     /// Takes `*mut Self` (not `&mut self`) so callers can pass the raw
     /// `bss_string_list!` singleton pointer directly without first
@@ -1678,83 +1663,6 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     /// did so concurrently *before* reaching the inner `self.mutex.lock()`.
     /// The inner mutex is the sole
     /// serialization point, so no caller-side outer lock is needed.
-    ///
-    /// SAFETY: `this` must point to a live, initialized `BSSStringList`
-    /// (typically the `bss_string_list!` singleton). Concurrent callers are
-    /// allowed.
-    pub(crate) unsafe fn append_mutable<'a, A: BSSAppendable>(
-        this: *mut Self,
-        value: &A,
-    ) -> core::result::Result<&'a mut [u8], AllocError> {
-        // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
-        // is sound.
-        let _guard = unsafe { (*this).mutex.lock() };
-        // SAFETY: inner mutex held ⇒ this thread has exclusive access.
-        let (ptr, len) = unsafe { (*this).do_append(value)? };
-        // SAFETY: `ptr` came from `out.as_mut_ptr()` inside `do_append` (write provenance)
-        // and points into storage owned by `*this` (backing_buf or a process-lifetime
-        // mimalloc region); the slot was freshly reserved under the mutex so no other
-        // live borrow of that region exists.
-        Ok(unsafe { core::slice::from_raw_parts_mut(ptr, len) })
-    }
-
-    /// SAFETY: see [`append_mutable`].
-    pub(crate) unsafe fn print_with_type<'a>(
-        this: *mut Self,
-        args: core::fmt::Arguments<'_>,
-    ) -> core::result::Result<&'a [u8], AllocError> {
-        // `core::fmt::write` drives a `dyn fmt::Write` vtable per
-        // argument piece, so a count-then-write double pass pays that dispatch *twice* — the
-        // dominant cost in `extract_tarball::build_url`, which is called once
-        // per lockfile package with 6+ args.
-        //
-        // Single-pass instead: format into a stack scratch (one `core::fmt`
-        // drive), then memcpy the exact bytes into the store via `append`
-        // (which adds the trailing NUL itself, matching the original `len + 1`
-        // reservation). 512 B covers every current caller (npm tarball URLs,
-        // interned dirnames); longer outputs fall through to the original
-        // count-then-reserve path below.
-        const STACK: usize = 512;
-        let mut scratch = [MaybeUninit::<u8>::uninit(); STACK];
-        // SAFETY: `SliceCursor::write_str` only *writes* into `buf[at..end]`
-        // via `copy_from_slice` and never reads it, so forming `&mut [u8]` over
-        // uninit bytes is sound here — every byte in `[..c.at]` is initialized
-        // before being observed below. Same pattern as `do_append`'s
-        // `backing_buf` slice formation.
-        let mut c = crate::SliceCursor::new(unsafe {
-            core::slice::from_raw_parts_mut(scratch.as_mut_ptr().cast::<u8>(), STACK)
-        });
-        if core::fmt::write(&mut c, args).is_ok() {
-            let written: &[u8] = &c.buf[..c.at];
-            // SAFETY: forwarded — see `append`.
-            return unsafe { Self::append(this, &written) };
-        }
-
-        // Overflow (> STACK bytes — rare): count exactly, reserve, re-format.
-        let len = crate::fmt_count(args);
-        // SAFETY: forwarded — see `append_mutable`.
-        let buf = unsafe { Self::append_mutable(this, &EmptyType { len: len + 1 })? };
-        let buf_len = buf.len();
-        buf[buf_len - 1] = 0;
-        let written = crate::buf_print_len(&mut buf[..buf_len - 1], args).expect("counted length");
-        Ok(&buf[..written])
-    }
-
-    /// SAFETY: see [`append_mutable`].
-    pub unsafe fn print<'a>(
-        this: *mut Self,
-        args: core::fmt::Arguments<'_>,
-    ) -> core::result::Result<&'a [u8], AllocError> {
-        // SAFETY: forwarded — see `append_mutable`.
-        unsafe { Self::print_with_type(this, args) }
-    }
-
-    /// Append `value`, returning a stable `&[u8]` over the freshly-reserved bytes.
-    ///
-    /// Takes `*mut Self` (not `&mut self`) so callers can pass the raw
-    /// `bss_string_list!` singleton pointer directly without first
-    /// materializing a `&mut Self` — see [`append_mutable`] for the full
-    /// rationale. The inner mutex is the sole serialization point.
     ///
     /// SAFETY: `this` must point to a live, initialized `BSSStringList`
     /// (typically the `bss_string_list!` singleton). Concurrent callers are
@@ -1789,9 +1697,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 
     /// Returns `(ptr, len)` of the freshly-appended payload (excluding the trailing NUL),
     /// where `ptr` carries write provenance (`out.as_mut_ptr()`). Callers reconstruct a
-    /// `&[u8]` (`append`) or `&mut [u8]` (`append_mutable`) from it; returning raw parts
-    /// avoids the `&self.backing_buf` ↔ `&mut self.slice_buf` borrowck conflict and
-    /// `&[u8] → &mut [u8]` provenance laundering.
+    /// `&[u8]` from it; returning raw parts avoids the `&self.backing_buf` ↔ `&mut self.slice_buf` borrowck conflict.
     #[inline]
     fn do_append<A: BSSAppendable>(
         &mut self,

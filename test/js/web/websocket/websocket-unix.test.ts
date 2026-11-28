@@ -90,6 +90,39 @@ describe.skipIf(isWindows)("WebSocket over unix domain socket", () => {
     expect(seenHost).toBe("localhost");
   });
 
+  // The Host header leaves out the scheme's default port and keeps any other.
+  test.each([
+    ["ws+unix", ["h.test", "h.test", "h.test:443", "h.test:8080", "[::1]", "[::1]:8080"]],
+    ["wss+unix", ["h.test", "h.test:80", "h.test", "h.test:8080", "[::1]", "[::1]:8080"]],
+  ])("%s:// sends the URL host and a port that is not the default as Host", async (scheme, hosts) => {
+    const unix = sockPath(scheme === "ws+unix" ? "host" : "hosts");
+    const seen: string[] = [];
+    await using server = Bun.serve({
+      unix,
+      tls: scheme === "wss+unix" ? tlsCert : undefined,
+      fetch(req, server) {
+        seen.push(req.headers.get("host") ?? "");
+        if (server.upgrade(req)) return;
+        return new Response("not a websocket", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          ws.close();
+        },
+        message() {},
+      },
+    });
+
+    for (const authority of ["h.test", "h.test:80", "h.test:443", "h.test:8080", "[::1]", "[::1]:8080"]) {
+      const ws = new WebSocket(`${scheme}://${authority}${unix}`, { tls: { rejectUnauthorized: false } });
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      ws.onerror = e => reject(e);
+      ws.onclose = () => resolve();
+      await promise;
+    }
+    expect(seen).toEqual(hosts);
+  });
+
   test("ws+unix:// sends binary data", async () => {
     const unix = sockPath("bin");
     await using server = Bun.serve({

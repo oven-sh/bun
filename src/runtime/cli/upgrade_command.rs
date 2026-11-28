@@ -836,14 +836,13 @@ impl UpgradeCommand {
                 #[cfg(windows)]
                 {
                     // Run a powershell script to unzip the file
-                    let mut unzip_script = Vec::new();
-                    write!(
-                        &mut unzip_script,
-                        "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path \"{}\" \"{}\" -Force",
-                        bun_fmt::escape_powershell(bstr::BStr::new(tmpname.as_bytes())),
-                        bun_fmt::escape_powershell(bstr::BStr::new(tmpdir_z.as_bytes())),
-                    )
-                    .expect("oom");
+                    let mut unzip_script =
+                        b"$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path \""
+                            .to_vec();
+                    bun_fmt::escape_powershell(&mut unzip_script, tmpname.as_bytes());
+                    unzip_script.extend_from_slice(b"\" \"");
+                    bun_fmt::escape_powershell(&mut unzip_script, tmpdir_z.as_bytes());
+                    unzip_script.extend_from_slice(b"\" -Force");
 
                     let powershell_path = match which(
                         bun_core::env_var::PATH.get().unwrap_or(b""),

@@ -79,6 +79,24 @@ describe("bun <file.md>", () => {
     expect(await runMd(["```", "plain text", "no highlighting", "```", ""].join("\n"))).toMatchSnapshot();
   });
 
+  test("renders a byte that is not UTF-8 in a highlighted JS code block as U+FFFD", async () => {
+    // The highlighter writes "x\xFF" as an identifier and "\xFF" as a string, by two different paths.
+    using dir = tempDir("md-non-utf8-", { "doc.md": Buffer.from('```js\nx\xFF = "\xFF";\n```\n', "latin1") });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "./doc.md"],
+      env: { ...bunEnv, FORCE_COLOR: "1", TERM: "xterm-256color" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+    // Latin-1 keeps every byte. `.text()` reads a raw 0xFF as U+FFFD. E2 94 82 is the box line, EF BF BD is U+FFFD.
+    expect(Buffer.from(stdout).toString("latin1").split("\n")[1]).toBe(
+      '\x1b[2m\xe2\x94\x82 \x1b[0mx\xef\xbf\xbd = \x1b[0m\x1b[32m"\xef\xbf\xbd"\x1b[0m\x1b[0m\x1b[2m;\x1b[0m',
+    );
+    expect(exitCode).toBe(0);
+  });
+
   test("renders link text with url fallback when no TTY", async () => {
     // runMd() spawns Bun with stdout:"pipe", so Output.isStdoutTTY() is
     // false and hyperlinks fall back to `text (url)`. The OSC 8 path fires

@@ -2518,13 +2518,14 @@ where
             let prefix: Option<Vec<u8>> = ReqLike::header(req, b"host")
                 .filter(|host| Request::is_valid_host_header(host))
                 .map(|host| {
-                    let fmt = bun_fmt::HostFormatter {
+                    let scheme: &[u8] = if SSL { b"https://" } else { b"http://" };
+                    let mut s = scheme.to_vec();
+                    bun_fmt::HostFormatter {
                         is_https: SSL,
                         host,
                         port: None,
-                    };
-                    let mut s = Vec::new();
-                    let _ = write!(&mut s, "{}://{}", if SSL { "https" } else { "http" }, fmt);
+                    }
+                    .write_to(&mut s);
                     s
                 });
             let path = ReqLike::url(req);

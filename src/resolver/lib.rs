@@ -113,14 +113,6 @@ pub mod fs {
                     unsafe { bun_alloc::BSSStringList::append($backing(), &parts) }
                         .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
                 }
-                /// Format directly into the store's tail; no intermediate `String`.
-                pub fn print(
-                    &self,
-                    args: core::fmt::Arguments<'_>,
-                ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-                    // SAFETY: see `append_slice`.
-                    unsafe { bun_alloc::BSSStringList::print($backing(), args) }
-                }
                 /// `value` with the store's lifetime, if it already points into the store.
                 #[inline]
                 pub fn as_interned(&self, value: &[u8]) -> Option<&'static [u8]> {

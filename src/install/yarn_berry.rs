@@ -889,6 +889,7 @@ pub(crate) fn migrate_yarn_berry_lockfile(
 
     // -- 3. third-party packages -----------------------------------------------
     let mut entry_of_package: Vec<Option<usize>> = Vec::new();
+    let mut tarball_url: Vec<u8> = Vec::new();
     for i in 0..entries.len() {
         if entries[i].kind != EntryKind::Package {
             continue;
@@ -924,13 +925,15 @@ pub(crate) fn migrate_yarn_berry_lockfile(
                 }
                 None => {
                     let registry = registry_for(manager, log, &yarnrc, name)?;
-                    let url = crate::extract_tarball::build_url(
+                    tarball_url.clear();
+                    crate::extract_tarball::append_url(
+                        &mut tarball_url,
                         &registry,
                         name,
                         version,
                         string_bytes!(this),
-                    )?;
-                    sbuf!(this).append(url)?
+                    );
+                    sbuf!(this).append(&tarball_url)?
                 }
             };
             Resolution::init(TaggedValue::Npm(VersionedURLType { version, url }))

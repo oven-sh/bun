@@ -775,12 +775,15 @@ impl NetworkTask {
             // `for_tarball` is only reached for npm tarball downloads
             // (callers gate on `resolution.tag == .npm`).
             let version = tarball_.resolution.npm().version;
-            Box::from(extract_tarball::build_url(
+            let mut url = Vec::new();
+            extract_tarball::append_url(
+                &mut url,
                 scope.url.href(),
                 tarball_.name.slice(),
                 version,
                 pm.lockfile.buffers.string_bytes.as_slice(),
-            )?)
+            );
+            url.into_boxed_slice()
         } else {
             // Owning the copy (rather than aliasing `tarball.url`)
             // avoids a self-reference into `callback` (see `url_buf` field doc).

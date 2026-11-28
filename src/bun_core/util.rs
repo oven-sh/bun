@@ -1451,12 +1451,6 @@ pub mod io {
             }
         }
 
-        /// Alias for [`write_fmt`](Write::write_fmt).
-        #[inline]
-        fn print(&mut self, args: fmt::Arguments<'_>) -> crate::CrateResult<()> {
-            self.write_fmt(args)
-        }
-
         /// Write an integer in little-endian byte order.
         #[inline]
         fn write_int_le<I: IntLe>(&mut self, val: I) -> crate::CrateResult<()>

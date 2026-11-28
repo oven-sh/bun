@@ -82,26 +82,26 @@ impl PackageManager {
 /// message that the user sees.
 #[derive(thiserror::Error, Debug)]
 pub enum DirectoryError {
-    #[error("cannot write files: {}", bun_fmt::s(.0.name()))]
+    #[error("cannot write files: {}", bstr::BStr::new(.0.name()))]
     OpenCache(sys::Error),
-    #[error("cannot access tempdir: {}", bun_fmt::s(.0.name()))]
+    #[error("cannot access tempdir: {}", bstr::BStr::new(.0.name()))]
     OpenTemporary(sys::Error),
     #[error(
         "{} accessing temporary directory. set $BUN_TMPDIR or $BUN_INSTALL",
-        bun_fmt::s(.0.name())
+        bstr::BStr::new(.0.name())
     )]
     ProbeTemporary(sys::Error),
     #[error(
         "cannot write files to cache directory \"{}\": {}",
-        bun_fmt::s(.cache),
-        bun_fmt::s(.err.name())
+        bstr::BStr::new(.cache),
+        bstr::BStr::new(.err.name())
     )]
     WriteCache { cache: Box<[u8]>, err: sys::Error },
     #[cfg(windows)]
     #[error(
         "{}: failed to read temporary directory path: '{}'",
-        bun_fmt::s(.err.name()),
-        bun_fmt::s(.path)
+        bstr::BStr::new(.err.name()),
+        bstr::BStr::new(.path)
     )]
     TemporaryPath {
         path: &'static [u8],
@@ -113,10 +113,10 @@ pub enum DirectoryError {
     OpenGlobal(crate::Error),
     #[error(
         "{}: failed to open global link dir node_modules at '{global_dir}'",
-        bun_fmt::s(.err.name())
+        bstr::BStr::new(.err.name())
     )]
     OpenGlobalLink { global_dir: Fd, err: sys::Error },
-    #[error("{}: failed to get full path of global directory", bun_fmt::s(.0.name()))]
+    #[error("{}: failed to get full path of global directory", bstr::BStr::new(.0.name()))]
     GlobalLinkPath(sys::Error),
 }
 
@@ -253,7 +253,7 @@ fn get_temporary_directory_run(
                     if verbose_install() {
                         bun_core::pretty_errorln!(
                             "<r><yellow>warn<r>: cannot access tempdir: {}, using fallback",
-                            bun_fmt::s(err2.name())
+                            bstr::BStr::new(err2.name())
                         );
                     }
 
@@ -281,7 +281,7 @@ fn get_temporary_directory_run(
                     if verbose_install() {
                         bun_core::pretty_errorln!(
                             "<r><d>info<r>: cannot move files from tempdir: {}, using fallback",
-                            bun_fmt::s(err.name())
+                            bstr::BStr::new(err.name())
                         );
                     }
 
@@ -306,7 +306,7 @@ fn get_temporary_directory_run(
             };
             bun_core::pretty_errorln!(
                 "<r><yellow>warn<r>: Slow filesystem detected. If {} is a network drive, consider setting $BUN_INSTALL_CACHE_DIR to a local folder.",
-                bun_fmt::s(cache_dir_path)
+                bstr::BStr::new(cache_dir_path)
             );
         }
     }
@@ -455,7 +455,7 @@ impl CacheEntryKind {
 }
 
 // PERF: an earlier version used `core::fmt::write` over a `format_args!` of
-// `bun_fmt::s` / `hex_int_*` pieces. In Rust that is *dynamic* dispatch — every `{}` argument is a
+// byte-slice and `hex_int_*` pieces. In Rust that is *dynamic* dispatch: every `{}` argument is a
 // `&dyn Display` whose vtable lives in `.data.rel.ro`, and every
 // `core::fmt::write` call drags in `Formatter` padding/alignment machinery
 // plus a panic-format landing pad for the trailing `.expect("unreachable")`.
@@ -1059,7 +1059,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
         Output::err(
             "ENAMETOOLONG",
             "folder path for package <b>{}<r> is too long",
-            (bun_fmt::s(name),),
+            (bstr::BStr::new(name),),
         );
         Global::exit(1)
     };
@@ -1110,7 +1110,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
                 Output::err_generic(
                     "no integrity in lockfile for <b>{}@{}<r>, run <cyan>bun install<r> first",
                     (
-                        bun_fmt::s(name),
+                        bstr::BStr::new(name),
                         bun_fmt::for_terminal(resolution.fmt(
                             manager.lockfile.buffers.string_bytes.as_slice(),
                             bun_fmt::PathSep::Posix,
@@ -1187,7 +1187,7 @@ pub(crate) fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
         Err(err) => {
             bun_core::pretty_errorln!(
                 "<r><red>error:<r> {} create package.json",
-                bun_fmt::s(err.name())
+                bstr::BStr::new(err.name())
             );
             Global::crash();
         }

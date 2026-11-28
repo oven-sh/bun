@@ -131,7 +131,7 @@ pub fn warn(payload: impl PrettyFmtInput) {
 pub fn pretty_errorln(payload: impl PrettyFmtInput) {
     let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
     write_bytes(Destination::Stderr, &buf);
-    if buf.0.last() != Some(&b'\n') {
+    if buf.last() != Some(&b'\n') {
         write_bytes(Destination::Stderr, b"\n");
     }
 }
@@ -1434,7 +1434,7 @@ pub fn pretty(payload: impl PrettyFmtInput) {
 pub fn prettyln(payload: impl PrettyFmtInput) {
     let buf = payload.into_pretty_buf(enable_ansi_colors_stdout());
     write_bytes(Destination::Stdout, &buf);
-    if buf.0.last() != Some(&b'\n') {
+    if buf.last() != Some(&b'\n') {
         write_bytes(Destination::Stdout, b"\n");
     }
 }
@@ -1451,7 +1451,7 @@ pub fn prettyln(payload: impl PrettyFmtInput) {
 /// tested against it).
 pub use bun_core_macros::pretty_fmt;
 
-/// Input accepted by [`pretty_fmt`]: either a `&str`/`&[u8]` template or a
+/// Input accepted by [`pretty_fmt`]: either a `&str` template or a
 /// pre-formatted `&fmt::Arguments<'_>` (which is first rendered to a string
 /// then `<tag>`-rewritten — used by `Custom Inspect`-style call sites that
 /// build the template via `format_args!`).
@@ -1461,13 +1461,7 @@ pub trait PrettyFmtInput {
 impl PrettyFmtInput for &str {
     #[inline]
     fn into_pretty_buf(self, is_enabled: bool) -> PrettyBuf {
-        PrettyBuf(pretty_fmt_runtime(self.as_bytes(), is_enabled))
-    }
-}
-impl PrettyFmtInput for &[u8] {
-    #[inline]
-    fn into_pretty_buf(self, is_enabled: bool) -> PrettyBuf {
-        PrettyBuf(pretty_fmt_runtime(self, is_enabled))
+        PrettyBuf::new(self, is_enabled)
     }
 }
 impl PrettyFmtInput for &fmt::Arguments<'_> {
@@ -1475,7 +1469,7 @@ impl PrettyFmtInput for &fmt::Arguments<'_> {
     fn into_pretty_buf(self, is_enabled: bool) -> PrettyBuf {
         // Render the `Arguments` first, then rewrite `<tag>` markers.
         let rendered = std::format!("{}", self);
-        PrettyBuf(pretty_fmt_runtime(rendered.as_bytes(), is_enabled))
+        PrettyBuf::new(&rendered, is_enabled)
     }
 }
 impl PrettyFmtInput for fmt::Arguments<'_> {
@@ -1507,7 +1501,14 @@ pub fn pretty_fmt_rt(input: impl PrettyFmtInput, is_enabled: bool) -> PrettyBuf 
 /// `write_all(&buf)` directly, and implements `Display` so it can be used in
 /// `write!(w, "{}", pretty_fmt::<true>("…"))`.
 #[repr(transparent)]
-pub struct PrettyBuf(pub Vec<u8>);
+pub struct PrettyBuf(Vec<u8>);
+impl PrettyBuf {
+    /// The only constructor: `AsRef<str>` relies on `template` being a `str`.
+    #[inline]
+    fn new(template: &str, is_enabled: bool) -> Self {
+        Self(pretty_fmt_runtime(template.as_bytes(), is_enabled))
+    }
+}
 impl core::ops::Deref for PrettyBuf {
     type Target = [u8];
     #[inline]
@@ -1524,9 +1525,7 @@ impl AsRef<[u8]> for PrettyBuf {
 impl AsRef<str> for PrettyBuf {
     #[inline]
     fn as_ref(&self) -> &str {
-        // SAFETY: contents are ANSI escape bytes (pure ASCII) interleaved with
-        // verbatim runs of a `&'static str` template — both UTF-8 by
-        // construction.
+        // SAFETY: only `new` builds one, from a `str`; `pretty_fmt_runtime` cuts it and inserts ASCII only at ASCII bytes, never inside a character.
         unsafe { core::str::from_utf8_unchecked(&self.0) }
     }
 }
@@ -1610,12 +1609,8 @@ impl_fmt_tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G, 7 H);
 /// Substitute `{}` / `{s}` / `{d}` / `{any}` / `{f}` placeholders in `template`
 /// with successive entries from `args`. `{{` / `}}` are emitted as literal
 /// braces. The spec inside any other `{...}` is ignored.
-fn substitute_template(
-    template: &[u8],
-    args: &dyn FmtTuple,
-    f: &mut dyn fmt::Write,
-) -> fmt::Result {
-    let t = template;
+fn substitute_template(template: &str, args: &dyn FmtTuple, f: &mut dyn fmt::Write) -> fmt::Result {
+    let t = template.as_bytes();
     let mut i = 0usize;
     let mut argi = 0usize;
     while i < t.len() {
@@ -1652,20 +1647,12 @@ fn substitute_template(
             i += 2;
             continue;
         }
-        // Literal run: copy raw bytes verbatim up to the next brace, no UTF-8
-        // processing. Templates are not required to be valid UTF-8; the bytes
-        // pass through to the sink unchanged.
+        // `i` and `j` are each at an ASCII brace, right after one, or at an end of `template`, so the slice is on character boundaries.
         let mut j = i + 1;
         while j < t.len() && t[j] != b'{' && t[j] != b'}' {
             j += 1;
         }
-        let run = &t[i..j];
-        // SAFETY: not actually guaranteed — templates may contain non-UTF-8
-        // bytes and we deliberately pass them through unvalidated, accepting
-        // the technically-invalid `&str`. Every sink below this Display impl
-        // forwards `write_str` bytes untouched, so the bytes reach the fd
-        // verbatim; do not add a UTF-8-inspecting sink to this path.
-        f.write_str(unsafe { std::str::from_utf8_unchecked(run) })?;
+        f.write_str(&template[i..j])?;
         i = j;
     }
     Ok(())
@@ -1673,12 +1660,12 @@ fn substitute_template(
 
 /// `Display` adapter pairing a runtime template with a [`FmtTuple`].
 pub struct TemplateDisplay<'a> {
-    template: Vec<u8>,
+    template: PrettyBuf,
     args: &'a dyn FmtTuple,
 }
 impl fmt::Display for TemplateDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        substitute_template(&self.template, self.args, f)
+        substitute_template(self.template.as_ref(), self.args, f)
     }
 }
 
@@ -1694,7 +1681,7 @@ pub(crate) fn pretty_fmt_args<'a>(
     args: &'a dyn FmtTuple,
 ) -> TemplateDisplay<'a> {
     TemplateDisplay {
-        template: pretty_fmt_runtime(fmt.as_bytes(), is_enabled),
+        template: PrettyBuf::new(fmt, is_enabled),
         args,
     }
 }

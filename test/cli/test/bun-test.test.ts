@@ -703,6 +703,24 @@ describe("bun test", () => {
         /^::error file=.*,line=\d+,col=\d+,title=error: before 😋 after::second 😋 line%0A {6}at /,
       );
     });
+    test("should write CR LF as a newline and leave out colors and other control characters", () => {
+      // Only the three bytes after `ESC [` are searched for the `m`, so of `ESC [ 1 ; 3 1 m` two bytes are left out.
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          test("fail", () => {
+            throw "title\\n\\nkept\\ttab\\r\\ncrlf \\x1b[31mred\\x1b[0m lone\\rcr \\x1b esc \\x01 ctl \\x7f del \\x1b[1;31mtoo long\\x1b[ open é 日本 😋 then a run of plain text that is longer than thirty-one bytes\\r";
+          });
+        `,
+        env: {
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
+      expect(annotation).toMatch(
+        /^::error file=.*,line=\d+,col=\d+,title=error: title::kepttab%0Acrlf red lonecr  esc  ctl \x7f del 1;31mtoo long open é 日本 😋 then a run of plain text that is longer than thirty-one bytes%0A {6}at /,
+      );
+    });
     test("should percent-encode metacharacters in the annotation file property", () => {
       const stderr = runTest({
         input: [

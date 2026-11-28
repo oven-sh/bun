@@ -605,6 +605,32 @@ describe.concurrent("bun check", () => {
     `);
   });
 
+  // Only Linux allows a file name that isn't UTF-8. Both lines print the byte as U+FFFD, which is EF BF BD.
+  test.skipIf(!isLinux)("prints a GitHub Actions annotation for a non-UTF-8 file name as valid UTF-8", async () => {
+    using dir = project({});
+    writeFileSync(
+      Buffer.concat([Buffer.from(String(dir) + "/n"), Buffer.from([0xff]), Buffer.from(".ts")]),
+      `export const a: string = 1;\n`,
+    );
+    expect(readdirSync(String(dir), "latin1")).toContain("n\xff.ts");
+    await using proc = spawn({
+      cmd: [bunExe(), "check"],
+      cwd: String(dir),
+      env: { ...env, GITHUB_ACTIONS: "true" },
+      timeout: longLimit,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // `.text()` would read a raw FF as U+FFFD too.
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+    expect(Buffer.from(stdout).toString("latin1").split("\n")).toEqual([
+      "n\xef\xbf\xbd.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.",
+      "::error file=n\xef\xbf\xbd.ts,line=1,col=14,endLine=1,endColumn=15,title=TS2322::Type 'number' is not assignable to type 'string'.",
+      "",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
   test("prints the message chain of an error", async () => {
     using dir = project({
       "index.ts": `interface A { a: { b: { c: number } } }\nconst x = { a: { b: { c: "no" } } };\nconst y: A = x;\nexport { y };\n`,

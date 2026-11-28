@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { readdirSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/commands";
 import { type BundlerTestInput, decodeSourceMappingsLine, itBundled } from "./expectBundled";
@@ -3859,6 +3859,39 @@ describe("bundler", () => {
       expect(out).toContain("require_foo_bar");
       expect(out).not.toContain("require_foo\u2014bar");
     },
+  });
+  // A byte that is not UTF-8 is a gap in the wrapper name, like any character an identifier cannot hold.
+  // Only Linux lets a file name hold such a byte.
+  test.skipIf(!isLinux)("edgecase/NonUtf8PathDerivedWrapperName", async () => {
+    using dir = tempDir("non-utf8-wrapper-name", {});
+    const root = String(dir);
+    writeFileSync(
+      Buffer.concat([Buffer.from(root + "/a"), Buffer.from([0xff]), Buffer.from("b.js")]),
+      `module.exports = 42;\nconsole.log("ran");\n`,
+    );
+
+    // A JS string cannot put the byte in argv, so the shell's printf writes it.
+    await using build = Bun.spawn({
+      cmd: ["sh", "-c", `exec "$0" build "$(printf './a\\377b.js')" --outfile=out.js`, bunExe()],
+      cwd: root,
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect({ stderr, exitCode, signalCode: build.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+
+    const bundle = readFileSync(join(root, "out.js"));
+    // Latin-1 keeps every byte, so a stray byte in a wrapper name shows up in the diff.
+    expect(bundle.toString("latin1").match(/\brequire_[^\s=(]*/g)).toEqual(["require_a_b", "require_a_b"]);
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), "out.js"],
+      cwd: root,
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, runStderr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect({ stdout, stderr: runStderr, exitCode: runExit }).toEqual({ stdout: "ran\n", stderr: "", exitCode: 0 });
   });
   // `delete (null ?? ns.x)` evaluates its operand to a value, so the result is
   // `true` with no side effect. When bundling rewrites `ns.x` to the local

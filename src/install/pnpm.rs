@@ -832,6 +832,7 @@ pub(crate) fn migrate_pnpm_lockfile(
         }
     }
 
+    let mut tarball_url: Vec<u8> = Vec::new();
     for (key, snapshot_obj) in props(&snapshots_obj.unwrap_or_default()) {
         let key_str = as_str(key).ok_or(InvalidPnpmLockfile)?;
         if !snapshot_obj.is_object() {
@@ -1007,13 +1008,15 @@ pub(crate) fn migrate_pnpm_lockfile(
             res.npm_mut().url = match recorded {
                 Some(url) => sbuf!(lockfile).append(url)?,
                 None => {
-                    let url = crate::extract_tarball::build_url(
+                    tarball_url.clear();
+                    crate::extract_tarball::append_url(
+                        &mut tarball_url,
                         registry,
                         name.slice(string_bytes!(lockfile)),
                         res.npm().version,
                         string_bytes!(lockfile),
-                    )?;
-                    sbuf!(lockfile).append(url)?
+                    );
+                    sbuf!(lockfile).append(&tarball_url)?
                 }
             };
         }

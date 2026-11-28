@@ -340,7 +340,7 @@ impl Display for RedactedSourceFormatter<'_> {
         let mut i: usize = 0;
         while i < self.text.len() {
             if let Some((offset, len)) = strings::starts_with_secret(&self.text[i..]) {
-                write_bytes(f, &self.text[i..][..offset])?;
+                write_lossy(f, &self.text[i..][..offset])?;
                 splat_byte_all(f, b'*', len)?;
                 i += offset + len;
                 continue;
@@ -355,7 +355,7 @@ impl Display for RedactedSourceFormatter<'_> {
             {
                 next += 1;
             }
-            write_bytes(f, &self.text[i..next])?;
+            write_lossy(f, &self.text[i..next])?;
             i = next;
         }
         Ok(())
@@ -367,28 +367,19 @@ pub(crate) fn redacted_source(str: &[u8]) -> RedactedSourceFormatter<'_> {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// DependencyUrlFormatter
+// append_dependency_url
 // https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/node_modules/npm-package-arg/lib/npa.js#L163
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct DependencyUrlFormatter<'a> {
-    pub(crate) url: &'a [u8],
-}
-
-impl Display for DependencyUrlFormatter<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let mut remain = self.url;
-        while let Some(slash) = crate::strings::index_of_char_usize(remain, b'/') {
-            write_bytes(f, &remain[..slash])?;
-            f.write_str("%2f")?;
-            remain = &remain[slash + 1..];
-        }
-        write_bytes(f, remain)
+/// Appends the package `name` to `out` as one path segment: each `/` becomes `%2f`.
+pub fn append_dependency_url(out: &mut Vec<u8>, name: &[u8]) {
+    let mut remain = name;
+    while let Some(slash) = crate::strings::index_of_char_usize(remain, b'/') {
+        out.extend_from_slice(&remain[..slash]);
+        out.extend_from_slice(b"%2f");
+        remain = &remain[slash + 1..];
     }
-}
-
-pub fn dependency_url(url: &[u8]) -> DependencyUrlFormatter<'_> {
-    DependencyUrlFormatter { url }
+    out.extend_from_slice(remain);
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -526,12 +517,12 @@ pub fn format_utf16_type(slice_: &[u16], writer: &mut impl fmt::Write) -> fmt::R
         let mut slice = slice_;
 
         while !slice.is_empty() {
-            let result = strings::copy_utf16_into_utf8(chunk, slice);
-            if result.read == 0 || result.written == 0 {
+            let (text, read) = strings::copy_utf16_into_str(chunk, slice);
+            if read == 0 || text.is_empty() {
                 break;
             }
-            write_bytes(writer, &chunk[..result.written])?;
-            slice = &slice[result.read..];
+            writer.write_str(text)?;
+            slice = &slice[read..];
         }
         Ok(())
     })
@@ -546,19 +537,18 @@ pub(crate) fn format_utf16_type_with_path_options(
         let mut slice = slice_;
 
         while !slice.is_empty() {
-            let result = strings::copy_utf16_into_utf8(chunk, slice);
-            if result.read == 0 || result.written == 0 {
+            let (to_write, read) = strings::copy_utf16_into_str(chunk, slice);
+            if read == 0 || to_write.is_empty() {
                 break;
             }
 
-            let to_write = &chunk[..result.written];
             if !opts.escape_backslashes && opts.path_sep == PathSep::Any {
-                write_bytes(writer, to_write)?;
+                writer.write_str(to_write)?;
             } else {
                 let mut ptr = to_write;
-                while let Some(i) = crate::strings::index_of_any(ptr, b"\\/") {
-                    let sep = opts.path_sep.apply(ptr[i]);
-                    write_bytes(writer, &ptr[..i])?;
+                while let Some(i) = crate::strings::index_of_any(ptr.as_bytes(), b"\\/") {
+                    let sep = opts.path_sep.apply(ptr.as_bytes()[i]);
+                    writer.write_str(&ptr[..i])?;
                     writer.write_char(sep as char)?;
                     if opts.escape_backslashes && sep == b'\\' {
                         writer.write_char(sep as char)?;
@@ -566,9 +556,9 @@ pub(crate) fn format_utf16_type_with_path_options(
 
                     ptr = &ptr[i + 1..];
                 }
-                write_bytes(writer, ptr)?;
+                writer.write_str(ptr)?;
             }
-            slice = &slice[result.read..];
+            slice = &slice[read..];
         }
         Ok(())
     })
@@ -599,31 +589,28 @@ impl Display for FormatUTF16<'_> {
 
 pub struct FormatUTF8<'a> {
     pub(crate) buf: &'a [u8],
-    pub(crate) path_fmt_opts: Option<PathFormatOptions>,
+    pub(crate) path_fmt_opts: PathFormatOptions,
 }
 
 impl Display for FormatUTF8<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        if let Some(opts) = self.path_fmt_opts {
-            if opts.path_sep == PathSep::Any && !opts.escape_backslashes {
-                return write!(f, "{}", bstr::BStr::new(self.buf));
-            }
-
-            let mut ptr = self.buf;
-            while let Some(i) = crate::strings::index_of_any(ptr, b"\\/") {
-                let sep = opts.path_sep.apply(ptr[i]);
-                write!(f, "{}", bstr::BStr::new(&ptr[..i]))?;
-                f.write_char(sep as char)?;
-                if opts.escape_backslashes && sep == b'\\' {
-                    f.write_char(sep as char)?;
-                }
-                ptr = &ptr[i + 1..];
-            }
-
-            return write!(f, "{}", bstr::BStr::new(ptr));
+        let opts = self.path_fmt_opts;
+        if opts.path_sep == PathSep::Any && !opts.escape_backslashes {
+            return write!(f, "{}", bstr::BStr::new(self.buf));
         }
 
-        write_bytes(f, self.buf)
+        let mut ptr = self.buf;
+        while let Some(i) = crate::strings::index_of_any(ptr, b"\\/") {
+            let sep = opts.path_sep.apply(ptr[i]);
+            write!(f, "{}", bstr::BStr::new(&ptr[..i]))?;
+            f.write_char(sep as char)?;
+            if opts.escape_backslashes && sep == b'\\' {
+                f.write_char(sep as char)?;
+            }
+            ptr = &ptr[i + 1..];
+        }
+
+        write!(f, "{}", bstr::BStr::new(ptr))
     }
 }
 
@@ -672,16 +659,20 @@ pub type FormatOSPath<'a> = FormatUTF8<'a>;
 
 // TYPE_ONLY: bun_paths::OSPathSlice → bun_core (move-in pass).
 pub fn fmt_os_path(buf: crate::OSPathSlice<'_>, options: PathFormatOptions) -> FormatOSPath<'_> {
-    FormatOSPath {
-        buf,
-        path_fmt_opts: Some(options),
+    #[cfg(windows)]
+    {
+        fmt_path_u16(buf, options)
+    }
+    #[cfg(not(windows))]
+    {
+        fmt_path_u8(buf, options)
     }
 }
 
 pub fn fmt_path_u8(path: &[u8], options: PathFormatOptions) -> FormatUTF8<'_> {
     FormatUTF8 {
         buf: path,
-        path_fmt_opts: Some(options),
+        path_fmt_opts: options,
     }
 }
 pub fn fmt_path_u16(path: &[u16], options: PathFormatOptions) -> FormatUTF16<'_> {
@@ -698,29 +689,8 @@ pub fn fmt_path(path: &[u8], options: PathFormatOptions) -> FormatUTF8<'_> {
     fmt_path_u8(path, options)
 }
 
-/// Non-validating `Display` adapter for a `&[u8]` known to be valid UTF-8.
-///
-/// Writes the bytes straight through with no codepoint check. `bstr::BStr`'s `Display` impl walks
-/// the input via `Utf8Chunks` to substitute U+FFFD on invalid sequences, which
-/// shows up in install-hot-path profiles (registry hosts, package names, semver
-/// pre/build tags — all pre-validated ASCII). Use this where the bytes are
-/// already known-good and you just want `f.write_str` semantics.
-///
-/// Prefer the [`s`] alias at call sites.
-#[derive(Copy, Clone)]
-#[repr(transparent)]
-pub struct Raw<'a>(pub &'a [u8]);
-impl fmt::Display for Raw<'_> {
-    #[inline(always)]
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        // SAFETY: caller contract — `self.0` is valid UTF-8 (in practice ASCII:
-        // npm package names, registry URLs, semver tags).
-        f.write_str(unsafe { core::str::from_utf8_unchecked(self.0) })
-    }
-}
-
 // Canonical `SliceCursor` / `buf_print` / `buf_print_len` live in T0
-// `bun_alloc` so that crate can use them too; re-exported here for the
+// `bun_alloc`; re-exported here for the
 // `bun_core::fmt::` callers and extended with an `io::Write` face so the same
 // struct also serves as a fixed-buffer write sink for write-only sites.
 pub use bun_alloc::{SliceCursor, buf_print, buf_print_len};
@@ -1178,25 +1148,20 @@ pub fn parse_ascii<T: core::str::FromStr>(s: &[u8]) -> Option<T> {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub fn format_latin1(slice_: &[u8], writer: &mut impl fmt::Write) -> fmt::Result {
+    if let Some(ascii) = slice_.as_ascii() {
+        return writer.write_str(ascii.as_str());
+    }
     with_shared_temp_buffer(|chunk| {
         let mut slice = slice_;
 
-        while let Some(i) = crate::strings::first_non_ascii_usize(slice) {
-            if i > 0 {
-                write_bytes(writer, &slice[..i])?;
-                slice = &slice[i..];
-            }
+        while !slice.is_empty() {
             let take = chunk.len().min(slice.len());
-            let result = strings::copy_latin1_into_utf8(chunk, &slice[..take]);
-            if result.read == 0 || result.written == 0 {
+            let (text, read) = strings::copy_latin1_into_str(chunk, &slice[..take]);
+            if read == 0 || text.is_empty() {
                 break;
             }
-            write_bytes(writer, &chunk[..result.written])?;
-            slice = &slice[result.read..];
-        }
-
-        if !slice.is_empty() {
-            write_bytes(writer, slice)?; // write the remaining bytes
+            writer.write_str(text)?;
+            slice = &slice[read..];
         }
         Ok(())
     })
@@ -1249,7 +1214,7 @@ impl Display for URLFormatter<'_> {
             if needs_brackets {
                 write!(f, "[{}]", bstr::BStr::new(hostname))?;
             } else {
-                write_bytes(f, hostname)?;
+                write_lossy(f, hostname)?;
             }
         } else {
             f.write_str("localhost")?;
@@ -1292,22 +1257,18 @@ impl HostFormatter<'_> {
         };
         crate::strings::contains_char(after_brackets, b':')
     }
-}
 
-impl Display for HostFormatter<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write_bytes(f, self.host)?;
+    pub fn write_to(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.host);
         if self.host_has_port() {
-            return Ok(());
+            return;
         }
 
-        let is_port_optional = self.port.is_none()
-            || (self.is_https && self.port == Some(443))
-            || (!self.is_https && self.port == Some(80));
-        if !is_port_optional {
-            write!(f, ":{}", self.port.unwrap())?;
+        let default_port = if self.is_https { 443 } else { 80 };
+        if let Some(port) = self.port.filter(|&port| port != default_port) {
+            out.push(b':');
+            out.extend_from_slice(itoa(&mut ItoaBuf::new(), port));
         }
-        Ok(())
     }
 }
 
@@ -1320,9 +1281,9 @@ pub fn fmt_identifier(name: &[u8]) -> FormatValidIdentifier<'_> {
     FormatValidIdentifier { name }
 }
 
-/// Format a string to an ECMAScript identifier.
-/// Different implementation than string_mutable because string_mutable may avoid allocating
-/// This will always allocate
+/// Format a string to an ECMAScript identifier, for the names Bun derives from a path or an alias.
+/// `MutableString::ensure_valid_identifier` is the copy for names from source. It keeps a byte that
+/// starts no UTF-8 sequence if the identifier tables hold its value, and this writes `_` for it.
 pub struct FormatValidIdentifier<'a> {
     pub name: &'a [u8],
 }
@@ -1331,7 +1292,16 @@ impl Display for FormatValidIdentifier<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         use crate::string::lexer as js_lexer;
 
-        let mut iterator = strings::CodepointIterator::init(self.name);
+        // Width 1 and not ASCII: a failed decode, or a stray byte, which comes as its own value and can pass the tables.
+        let is_stray = |cursor: strings::Cursor| cursor.c >= 0x80 && cursor.width == 1;
+        let write_run = |f: &mut Formatter<'_>, run: &[u8]| {
+            // SAFETY: a run is ASCII and decoded sequences that passed the tables, which hold no surrogate.
+            f.write_str(unsafe { core::str::from_utf8_unchecked(run) })
+        };
+
+        // Cursor counts bytes in a u32: in a longer name it wraps, and a run is no longer the bytes that were decoded.
+        let name = &self.name[..self.name.len().min(u32::MAX as usize)];
+        let mut iterator = strings::CodepointIterator::init(name);
         let mut cursor = strings::Cursor::default();
 
         let mut has_needed_gap = false;
@@ -1343,11 +1313,11 @@ impl Display for FormatValidIdentifier<'_> {
         }
 
         // Common case: no gap necessary. No allocation necessary.
-        needs_gap = !js_lexer::is_identifier_start(cursor.c as u32);
+        needs_gap = is_stray(cursor) || !js_lexer::is_identifier_start(cursor.c as u32);
         if !needs_gap {
             // Are there any non-alphanumeric chars at all?
             while iterator.next(&mut cursor) {
-                if !js_lexer::is_identifier_continue(cursor.c as u32) {
+                if is_stray(cursor) || !js_lexer::is_identifier_continue(cursor.c as u32) {
                     needs_gap = true;
                     start_i = cursor.i as usize;
                     break;
@@ -1358,25 +1328,25 @@ impl Display for FormatValidIdentifier<'_> {
         if needs_gap {
             needs_gap = false;
             if start_i > 0 {
-                write_bytes(f, &self.name[..start_i])?;
+                write_run(f, &name[..start_i])?;
             } else {
                 // the first letter can be a non-identifier start
                 // https://github.com/oven-sh/bun/issues/2946
                 f.write_str("_")?;
             }
-            let slice = &self.name[start_i..];
+            let slice = &name[start_i..];
             iterator = strings::CodepointIterator::init(slice);
             cursor = strings::Cursor::default();
 
             while iterator.next(&mut cursor) {
-                if js_lexer::is_identifier_continue(cursor.c as u32) {
+                if !is_stray(cursor) && js_lexer::is_identifier_continue(cursor.c as u32) {
                     if needs_gap {
                         f.write_str("_")?;
                         needs_gap = false;
                         has_needed_gap = true;
                     }
                     let i = cursor.i as usize;
-                    write_bytes(f, &slice[i..i + cursor.width as usize])?;
+                    write_run(f, &slice[i..i + cursor.width as usize])?;
                 } else if !needs_gap {
                     needs_gap = true;
                     // skip the code point, replace it with a single _
@@ -1393,7 +1363,7 @@ impl Display for FormatValidIdentifier<'_> {
             return Ok(());
         }
 
-        write_bytes(f, self.name)
+        write_run(f, name)
     }
 }
 
@@ -1406,52 +1376,41 @@ impl Display for FormatValidIdentifier<'_> {
 ///   https://github.com/actions/toolkit/issues/193#issuecomment-605394935
 /// - Strips ANSI output as it will appear malformed.
 pub(crate) fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::Result {
+    // Every C0 control ends a run: LF and CR LF become %0A, `ESC [ .. m` and any other are dropped.
+    static NOT_C0_CONTROL: strings::ByteSet =
+        strings::ByteSet::new(core::slice::from_ref(&(b' '..=0xff)));
+
     let mut offset: usize = 0;
-    let end = self_.len() as u32;
-    while (offset as u32) < end {
-        if let Some(i) = crate::strings::index_of_newline_or_non_ascii_or_ansi(self_, offset as u32)
-        {
-            let i = i as usize;
-            let byte = self_[i];
-            if byte > 0x7F {
-                let seq_len = strings::wtf8_byte_sequence_length(byte) as usize;
-                if i + seq_len > end as usize {
-                    // Truncated trailing sequence; emit the pending ASCII and stop
-                    // rather than hand an invalid slice to from_utf8_unchecked.
-                    write_bytes(writer, &self_[offset..i])?;
-                    break;
-                }
-                write_bytes(writer, &self_[offset..i + seq_len])?;
-                offset = i + seq_len;
-                continue;
-            }
-            if i > 0 {
-                write_bytes(writer, &self_[offset..i])?;
-            }
-            let mut n: usize = 1;
-            if byte == b'\n' {
+    let end = self_.len();
+    while offset < end {
+        let i = offset + NOT_C0_CONTROL.prefix_len(&self_[offset..]);
+        if i > offset {
+            write_lossy(writer, &self_[offset..i])?;
+        }
+        if i == end {
+            break;
+        }
+        let byte = self_[i];
+        let mut n: usize = 1;
+        if byte == b'\n' {
+            writer.write_str("%0A")?;
+        } else if (i + 1) < end {
+            let next = self_[i + 1];
+            if byte == b'\r' && next == b'\n' {
+                n += 1;
                 writer.write_str("%0A")?;
-            } else if (i + 1) < end as usize {
-                let next = self_[i + 1];
-                if byte == b'\r' && next == b'\n' {
-                    n += 1;
-                    writer.write_str("%0A")?;
-                } else if byte == 0x1b && next == b'[' {
-                    n += 1;
-                    if (i + 2) < end as usize {
-                        let upper = (i + 5).min(end as usize);
-                        let remain = &self_[(i + 2)..upper];
-                        if let Some(j) = crate::strings::index_of_char_usize(remain, b'm') {
-                            n += j + 1;
-                        }
+            } else if byte == 0x1b && next == b'[' {
+                n += 1;
+                if (i + 2) < end {
+                    let upper = (i + 5).min(end);
+                    let remain = &self_[(i + 2)..upper];
+                    if let Some(j) = crate::strings::index_of_char_usize(remain, b'm') {
+                        n += j + 1;
                     }
                 }
             }
-            offset = i + n;
-        } else {
-            write_bytes(writer, &self_[offset..end as usize])?;
-            break;
         }
+        offset = i + n;
     }
     Ok(())
 }
@@ -1494,14 +1453,14 @@ pub(crate) fn github_action_property_writer(
             }
         };
         if i > start {
-            write_bytes(writer, &self_[start..i])?;
+            write_lossy(writer, &self_[start..i])?;
         }
         writer.write_str(replacement)?;
         i += skip;
         start = i;
     }
     if start < self_.len() {
-        write_bytes(writer, &self_[start..])?;
+        write_lossy(writer, &self_[start..])?;
     }
     Ok(())
 }
@@ -1579,7 +1538,7 @@ pub(crate) fn quoted_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::
         js_printer::write_json_string(self_, writer, strings::Encoding::Utf8)
     } else {
         writer.write_str("\"")?;
-        write_bytes(writer, self_)?;
+        write_lossy(writer, self_)?;
         writer.write_str("\"")
     }
 }
@@ -1968,7 +1927,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             }
                         }
 
-                        write_bytes(writer, &text[..i])?;
+                        write_lossy(writer, &text[..i])?;
                     }
                 }
                 text = &text[i..];
@@ -2299,7 +2258,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             }
                         }
 
-                        write_bytes(writer, &text[..i])?;
+                        writer.write_char('/')?;
                         text = &text[i..];
                     }
                     brace @ (b'}' | b'{') => {
@@ -2538,9 +2497,6 @@ pub fn format_ip<'a>(
 /// No allocation, no UTF-8 validation beyond what the formatter already did.
 #[inline]
 pub fn count(args: fmt::Arguments<'_>) -> usize {
-    // Implementation sunk to T0 so `bun_alloc` (which sits below `bun_core`)
-    // can share it; this stays as the canonical higher-tier entry point so
-    // existing `bun_core::fmt::count` / `bun_fmt::count` callers are unchanged.
     bun_alloc::fmt_count(args)
 }
 
@@ -2999,13 +2955,13 @@ pub struct HexIntFormatter<const LOWER: bool, const NIBBLES: usize> {
 }
 
 impl<const LOWER: bool, const NIBBLES: usize> HexIntFormatter<LOWER, NIBBLES> {
-    pub(crate) fn get_out_buf(value: u64) -> [u8; NIBBLES] {
+    pub(crate) fn get_out_buf(value: u64) -> [core::ascii::Char; NIBBLES] {
         let table = if LOWER {
-            &LOWER_HEX_TABLE
+            const { LOWER_HEX_TABLE.as_ascii().unwrap() }
         } else {
-            &UPPER_HEX_TABLE
+            const { UPPER_HEX_TABLE.as_ascii().unwrap() }
         };
-        let mut buf = [0u8; NIBBLES];
+        let mut buf = [table[0]; NIBBLES];
         for (i, c) in buf.iter_mut().enumerate() {
             // value relative to the current nibble
             let shift = ((NIBBLES - i - 1) * 4) as u32;
@@ -3017,8 +2973,7 @@ impl<const LOWER: bool, const NIBBLES: usize> HexIntFormatter<LOWER, NIBBLES> {
 
 impl<const LOWER: bool, const NIBBLES: usize> Display for HexIntFormatter<LOWER, NIBBLES> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let buf = Self::get_out_buf(self.value);
-        write_bytes(f, &buf)
+        f.write_str(Self::get_out_buf(self.value).as_str())
     }
 }
 
@@ -3031,7 +2986,7 @@ pub fn hex_int_lower<const NIBBLES: usize>(value: u64) -> HexIntFormatter<true, 
 /// want bytes, not a `Display` adapter.
 #[inline]
 pub fn u64_hex_fixed<const LOWER: bool, const N: usize>(v: u64) -> [u8; N] {
-    HexIntFormatter::<LOWER, N>::get_out_buf(v)
+    HexIntFormatter::<LOWER, N>::get_out_buf(v).map(core::ascii::Char::to_u8)
 }
 
 /// Format a 6-byte MAC address as `xx:xx:xx:xx:xx:xx` (lowercase hex,
@@ -3129,67 +3084,43 @@ fn format_duration_one_decimal(
     data: FormatDurationData,
     writer: &mut impl fmt::Write,
 ) -> fmt::Result {
-    // worst case: "-XXXyXXwXXdXXhXXmXX.XXXs".len = 24
-    let mut buf = [0u8; 24];
-    let mut pos: usize = 0;
-    macro_rules! push_str {
-        ($s:expr) => {{
-            let s: &[u8] = $s;
-            buf[pos..pos + s.len()].copy_from_slice(s);
-            pos += s.len();
-        }};
-    }
-    macro_rules! push_fmt {
-        ($($arg:tt)*) => {{
-            use std::io::Write;
-            let mut cursor = std::io::Cursor::new(&mut buf[pos..]);
-            write!(cursor, $($arg)*).expect("unreachable");
-            pos += cursor.position() as usize;
-        }};
-    }
-
     if data.negative {
-        push_str!(b"-");
+        writer.write_char('-')?;
     }
 
     let mut ns_remaining = data.ns;
-    const COARSE: [(u64, u8); 5] = [
-        (365 * NS_PER_DAY, b'y'),
-        (NS_PER_WEEK, b'w'),
-        (NS_PER_DAY, b'd'),
-        (NS_PER_HOUR, b'h'),
-        (NS_PER_MIN, b'm'),
+    const COARSE: [(u64, char); 5] = [
+        (365 * NS_PER_DAY, 'y'),
+        (NS_PER_WEEK, 'w'),
+        (NS_PER_DAY, 'd'),
+        (NS_PER_HOUR, 'h'),
+        (NS_PER_MIN, 'm'),
     ];
     for &(unit_ns, sep) in COARSE.iter() {
         if ns_remaining >= unit_ns {
             let units = ns_remaining / unit_ns;
-            push_fmt!("{}", units);
-            push_str!(&[sep]);
+            write!(writer, "{units}{sep}")?;
             ns_remaining -= units * unit_ns;
             if ns_remaining == 0 {
-                return write_bytes(writer, &buf[..pos]);
+                return Ok(());
             }
         }
     }
 
-    const FINE: [(u64, &[u8]); 3] = [(NS_PER_S, b"s"), (NS_PER_MS, b"ms"), (NS_PER_US, b"us")];
+    const FINE: [(u64, &str); 3] = [(NS_PER_S, "s"), (NS_PER_MS, "ms"), (NS_PER_US, "us")];
     for &(unit_ns, sep) in FINE.iter() {
         let kunits = ns_remaining * 1000 / unit_ns;
         if kunits >= 1000 {
-            push_fmt!("{}", kunits / 1000);
+            write!(writer, "{}", kunits / 1000)?;
             let frac = (kunits % 1000) / 100;
             if frac > 0 {
-                let decimal_buf = [b'.', b'0' + u8::try_from(frac).expect("int cast")];
-                push_str!(&decimal_buf);
+                write!(writer, ".{frac}")?;
             }
-            push_str!(sep);
-            return write_bytes(writer, &buf[..pos]);
+            return writer.write_str(sep);
         }
     }
 
-    push_fmt!("{}", ns_remaining);
-    push_str!(b"ns");
-    write_bytes(writer, &buf[..pos])
+    write!(writer, "{ns_remaining}ns")
 }
 
 /// Return a Formatter for number of nanoseconds according to its magnitude:
@@ -3264,12 +3195,12 @@ impl<T: AsRef<[u8]>> Display for FormatSlice<'_, T> {
         if self.slice.is_empty() {
             return Ok(());
         }
-        write_bytes(f, self.slice[0].as_ref())?;
+        write_lossy(f, self.slice[0].as_ref())?;
         for item in &self.slice[1..] {
             if !self.delim.is_empty() {
                 f.write_str(self.delim)?;
             }
-            write_bytes(f, item.as_ref())?;
+            write_lossy(f, item.as_ref())?;
         }
         Ok(())
     }
@@ -3362,7 +3293,7 @@ impl Display for FormatDouble {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut buf = [0u8; 124];
         let slice = Self::dtoa(&mut buf, self.number);
-        write_bytes(f, slice)
+        write_lossy(f, slice)
     }
 }
 
@@ -3476,7 +3407,7 @@ impl<T: Display> Display for NullableFallback<'_, T> {
         if let Some(value) = &self.value {
             write!(f, "{}", value)
         } else {
-            write_bytes(f, self.null_fallback)
+            write_lossy(f, self.null_fallback)
         }
     }
 }
@@ -3485,27 +3416,15 @@ impl<T: Display> Display for NullableFallback<'_, T> {
 // escapePowershell
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct EscapePowershell<'a>(pub(crate) &'a [u8]);
-
-pub fn escape_powershell(str: &[u8]) -> EscapePowershell<'_> {
-    EscapePowershell(str)
-}
-
-impl Display for EscapePowershell<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        escape_powershell_impl(self.0, f)
-    }
-}
-
-fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Result {
-    let mut remain = str;
+/// Appends `text` with a backtick before each double quote, backtick and dollar sign.
+pub fn escape_powershell(out: &mut Vec<u8>, text: &[u8]) {
+    let mut remain = text;
     while let Some(i) = crate::strings::index_of_any(remain, b"\"`$") {
-        write_bytes(writer, &remain[..i])?;
-        writer.write_str("`")?;
-        writer.write_char(remain[i] as char)?;
+        out.extend_from_slice(&remain[..i]);
+        out.extend_from_slice(&[b'`', remain[i]]);
         remain = &remain[i + 1..];
     }
-    write_bytes(writer, remain)
+    out.extend_from_slice(remain);
 }
 
 /// Escapes C0/C1 control characters, DEL, U+2028-U+202E (line separators, bidirectional overrides)
@@ -3540,17 +3459,8 @@ impl<T: Display> Display for EscapeControlCharsMultiline<T> {
 pub(crate) struct EscapeControlCharsWriter<'a>(pub(crate) &'a mut dyn fmt::Write, pub(crate) bool);
 
 impl fmt::Write for EscapeControlCharsWriter<'_> {
-    /// `Raw` and `write_bytes` pass unvalidated bytes as a `str`, so `s` is validated here before
-    /// it is decoded. Invalid UTF-8 is written as U+FFFD.
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        s.as_bytes().utf8_chunks().try_for_each(|chunk| {
-            self.write_valid(chunk.valid())?;
-            if chunk.invalid().is_empty() {
-                Ok(())
-            } else {
-                self.0.write_char(char::REPLACEMENT_CHARACTER)
-            }
-        })
+        self.write_valid(s)
     }
 }
 
@@ -3630,7 +3540,7 @@ impl Display for NodeNumber {
         f.write_str(&digits[..ungrouped])?;
         for group in digits.as_bytes()[ungrouped..].chunks(3) {
             f.write_char('_')?;
-            write_bytes(f, group)?;
+            write_lossy(f, group)?;
         }
         Ok(())
     }
@@ -3672,7 +3582,7 @@ impl<T: OutOfRangeValue> Display for NewOutOfRangeFormatter<'_, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if !self.field_name.is_empty() {
             f.write_str("The value of \"")?;
-            write_bytes(f, self.field_name)?;
+            write_lossy(f, self.field_name)?;
             f.write_str("\" is out of range. It must be ")?;
         } else {
             if cfg!(debug_assertions) {
@@ -3692,7 +3602,7 @@ impl<T: OutOfRangeValue> Display for NewOutOfRangeFormatter<'_, T> {
         } else if max != i64::MAX {
             write!(f, "<= {}.", max)?;
         } else if !msg.is_empty() {
-            write_bytes(f, msg)?;
+            write_lossy(f, msg)?;
             f.write_char('.')?;
         } else {
             f.write_str("within the range of values for type ")?;
@@ -3760,13 +3670,13 @@ impl Display for TruncatedHash32 {
 }
 
 fn truncated_hash32_impl(int: u64, writer: &mut impl fmt::Write) -> fmt::Result {
-    write_bytes(writer, &truncated_hash32_bytes(int))
+    writer.write_str(truncated_hash32_chars(int).as_str())
 }
 
-/// Const-fn core of [`truncated_hash32`] / [`TruncatedHash32`]: the 8-byte
+/// Const-fn core of [`truncated_hash32`] / [`TruncatedHash32`]: the 8-character
 /// base32-ish encoding (native-endian byte reinterpretation).
-pub const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
-    const CHARS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
+const fn truncated_hash32_chars(int: u64) -> [core::ascii::Char; 8] {
+    const CHARS: &[core::ascii::Char; 32] = b"0123456789abcdefghjkmnpqrstvwxyz".as_ascii().unwrap();
     let b = int.to_ne_bytes();
     [
         CHARS[(b[0] & 31) as usize],
@@ -3817,10 +3727,11 @@ impl ContentHash {
         self.len as usize
     }
 
-    pub const fn bytes(self) -> [u8; Self::MAX_LEN] {
-        const CHARS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
+    const fn chars(self) -> [core::ascii::Char; Self::MAX_LEN] {
+        const CHARS: &[core::ascii::Char; 32] =
+            b"0123456789abcdefghjkmnpqrstvwxyz".as_ascii().unwrap();
         let b = self.value.to_ne_bytes();
-        let mut out = [0u8; Self::MAX_LEN];
+        let mut out = [CHARS[0]; Self::MAX_LEN];
         let mut rest: u32 = 0;
         let mut i = 0;
         while i < 8 {
@@ -3831,6 +3742,17 @@ impl ContentHash {
         while i < Self::MAX_LEN {
             out[i] = CHARS[(rest & 31) as usize];
             rest >>= 5;
+            i += 1;
+        }
+        out
+    }
+
+    pub const fn bytes(self) -> [u8; Self::MAX_LEN] {
+        let chars = self.chars();
+        let mut out = [0u8; Self::MAX_LEN];
+        let mut i = 0;
+        while i < Self::MAX_LEN {
+            out[i] = chars[i].to_u8();
             i += 1;
         }
         out
@@ -3866,25 +3788,24 @@ impl ContentHash {
 
 impl Display for ContentHash {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write_bytes(f, &self.bytes()[..self.len()])
+        f.write_str(self.chars()[..self.len()].as_str())
     }
-}
-
-/// Zero-validation `&[u8] -> impl Display` adapter — short alias of [`raw`]
-/// for terse call sites (`bun_fmt::s(name)`).
-#[inline(always)]
-pub const fn s(bytes: &[u8]) -> Raw<'_> {
-    Raw(bytes)
 }
 
 // ───────────────────────────────────────────────────────────────────────────
 // Internal helpers
 // ───────────────────────────────────────────────────────────────────────────
 
-#[inline]
-fn write_bytes(w: &mut impl fmt::Write, bytes: &[u8]) -> fmt::Result {
-    // SAFETY: see `s()` above — callers feed valid ASCII/UTF-8.
-    w.write_str(unsafe { core::str::from_utf8_unchecked(bytes) })
+/// Text for a reader, from bytes that may not be UTF-8. ASCII is written as it is. Anything else
+/// goes through `bstr::BStr`, which prints U+FFFD for what is not UTF-8. Not for data: a URL or a
+/// file name keeps its bytes only in a byte buffer.
+// One copy: the ASCII scan is about 280 bytes of code wherever it is inlined.
+#[inline(never)]
+pub(crate) fn write_lossy(w: &mut dyn fmt::Write, bytes: &[u8]) -> fmt::Result {
+    match bytes.as_ascii() {
+        Some(ascii) => w.write_str(ascii.as_str()),
+        None => write!(w, "{}", bstr::BStr::new(bytes)),
+    }
 }
 
 #[inline]
@@ -3899,4 +3820,271 @@ fn splat_byte_all(w: &mut impl fmt::Write, byte: u8, count: usize) -> fmt::Resul
 #[inline]
 pub fn encode_json_string(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
     js_printer::write_json_string(s, w, strings::Encoding::Utf8)
+}
+
+#[cfg(test)]
+mod tests {
+    //! `bun run rust:miri` runs these, and Miri cannot call simdutf or a highway scan that has no scalar path: `quote`, `escape_control_chars` and the JSON formatters are not here.
+    use super::*;
+
+    /// A byte that no sequence has, `a` and a lead byte with nothing after it, and a surrogate.
+    const NOT_UTF8: [&[u8]; 3] = [b"\xFF", b"a\xE2", b"\xED\xA0\x80"];
+
+    struct Utf8Only;
+
+    impl fmt::Write for Utf8Only {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            let bytes = s.as_bytes();
+            assert!(
+                core::str::from_utf8(bytes).is_ok(),
+                "{bytes:02x?} was written as a str"
+            );
+            // `count` would not decode: `Chars` counts the bytes that start a character.
+            assert_eq!(s.chars().map(char::len_utf8).sum::<usize>(), s.len());
+            Ok(())
+        }
+    }
+
+    fn writes_utf8(value: impl Display) {
+        write!(Utf8Only, "{value}").unwrap();
+    }
+
+    fn join(parts: &[&[u8]]) -> Vec<u8> {
+        parts.concat()
+    }
+
+    #[test]
+    fn fmt_slice_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(fmt_slice(&[bad, bad], ", "));
+        }
+    }
+
+    #[test]
+    fn github_action_property_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(github_action_property(&join(&[bad, b",", bad])));
+        }
+    }
+
+    #[test]
+    fn github_action_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(github_action(bad));
+            writes_utf8(github_action(&join(&[bad, b"\n", bad])));
+        }
+    }
+
+    #[test]
+    fn fmt_identifier_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(fmt_identifier(bad));
+            // After a letter the name is still in the scan that looks for the first gap.
+            writes_utf8(fmt_identifier(&join(&[b"a", bad])));
+        }
+    }
+
+    #[test]
+    fn url_formatter_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(URLFormatter {
+                hostname: Some(bad),
+                port: Some(3000),
+                ..Default::default()
+            });
+        }
+    }
+
+    #[test]
+    fn fmt_javascript_writes_utf8() {
+        for bad in NOT_UTF8 {
+            for (check_for_unhighlighted_write, redact_sensitive_information) in
+                [(false, false), (false, true), (true, true), (true, false)]
+            {
+                let options = HighlighterOptions {
+                    enable_colors: true,
+                    check_for_unhighlighted_write,
+                    redact_sensitive_information,
+                };
+                writes_utf8(fmt_javascript(bad, options));
+            }
+        }
+    }
+
+    #[test]
+    fn nullable_fallback_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(nullable_fallback(None::<u8>, bad));
+        }
+    }
+
+    #[test]
+    fn out_of_range_writes_utf8() {
+        for bad in NOT_UTF8 {
+            let options = OutOfRangeOptions {
+                field_name: bad,
+                msg: bad,
+                ..Default::default()
+            };
+            writes_utf8(out_of_range(bad, options));
+        }
+    }
+
+    #[test]
+    fn redacted_source_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(redacted_source(bad));
+        }
+    }
+
+    #[test]
+    fn encoded_slice_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(crate::EncodedSlice::from_bytes(bad));
+            writes_utf8(crate::EncodedSlice::latin1(bad));
+        }
+    }
+
+    #[test]
+    fn string_view_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(crate::StringView::from_bytes(bad));
+        }
+    }
+
+    #[test]
+    fn fmt_path_writes_utf8() {
+        let escaped = PathFormatOptions {
+            path_sep: PathSep::Posix,
+            escape_backslashes: true,
+        };
+        for bad in NOT_UTF8 {
+            writes_utf8(fmt_path(bad, PathFormatOptions::default()));
+            writes_utf8(fmt_path(&join(&[bad, b"\\", bad]), escaped));
+        }
+    }
+
+    #[test]
+    fn format_latin1_writes_utf8() {
+        for bad in NOT_UTF8 {
+            format_latin1(bad, &mut Utf8Only).unwrap();
+        }
+    }
+
+    #[test]
+    fn format_escapes_writes_utf8() {
+        for bad in NOT_UTF8 {
+            // After a character that needs no escape, the escaper asks highway where the next stop is.
+            let bad = bad.strip_prefix(b"a").unwrap_or(bad);
+            let flags = strings::QuoteEscapeFormatFlags::default();
+            writes_utf8(strings::format_escapes(bad, flags));
+        }
+    }
+
+    #[test]
+    fn redacted_npm_url_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(redacted_npm_url(bad));
+        }
+    }
+
+    #[test]
+    fn terminal_hyperlink_writes_utf8() {
+        for bad in NOT_UTF8 {
+            writes_utf8(TerminalHyperlink::new(bad, bad, true));
+        }
+    }
+
+    #[test]
+    fn duration_one_decimal_picks_the_unit() {
+        for (ns, text) in [
+            (0, "0ns"),
+            (999, "999ns"),
+            (1_000, "1us"),
+            (1_500, "1.5us"),
+            (999_999, "999.9us"),
+            (1_000_000, "1ms"),
+            (1_250_000, "1.2ms"),
+            (1_000_000_000, "1s"),
+            (59_999_999_999, "59.9s"),
+            (60_000_000_000, "1m"),
+            (90_000_000_000, "1m30s"),
+            (3_661_100_000_000, "1h1m1.1s"),
+            (86_400_000_000_000, "1d"),
+            (694_800_000_000_000, "1w1d1h"),
+            (34_560_000_000_000_000, "1y5w"),
+            (u64::MAX, "584y49w23h34m33.7s"),
+        ] {
+            assert_eq!(fmt_duration_one_decimal(ns).to_string(), text);
+        }
+    }
+
+    #[test]
+    fn conn_timeout_prints_its_length() {
+        // test/js/sql expects these three messages, from a server that only CI starts.
+        for (ms, text) in [
+            (200, "Connection timeout after 200ms"),
+            (500, "Connection timeout after 500ms"),
+            (4_000, "Connection timeout after 4s"),
+        ] {
+            let message = fmt_conn_timeout(ConnTimeoutKind::Connection, ms, "");
+            assert_eq!(message.to_string(), text);
+        }
+    }
+
+    #[test]
+    fn fmt_slice_joins_with_the_delimiter() {
+        let items: [&[u8]; 3] = [b"add", "café".as_bytes(), b"--trust"];
+        for (slice, delimiter, text) in [
+            (&items[..], " ", "add café --trust"),
+            (&items[..], "", "addcafé--trust"),
+            (&items[..1], ", ", "add"),
+            (&items[..0], ", ", ""),
+        ] {
+            assert_eq!(fmt_slice(slice, delimiter).to_string(), text);
+        }
+    }
+
+    #[test]
+    fn nullable_fallback_prints_the_value_or_the_fallback() {
+        for (value, text) in [(Some(1024), "1024"), (None, "<unknown>")] {
+            assert_eq!(nullable_fallback(value, b"<unknown>").to_string(), text);
+        }
+    }
+
+    #[test]
+    fn url_formatter_prints_the_host_as_given() {
+        use URLProto::{Http, Https, Unix};
+        for (proto, hostname, port, text) in [
+            (Http, "127.0.0.1", Some(3000), "http://127.0.0.1:3000/"),
+            (Http, "example.com", Some(80), "http://example.com/"),
+            (Https, "bücher.example", None, "https://bücher.example/"),
+            (Unix, "/tmp/bun.sock", None, "unix:///tmp/bun.sock"),
+        ] {
+            let hostname = Some(hostname.as_bytes());
+            let url = URLFormatter {
+                proto,
+                hostname,
+                port,
+            };
+            assert_eq!(url.to_string(), text);
+        }
+    }
+
+    #[test]
+    fn format_latin1_writes_each_byte_as_its_character() {
+        // Short texts: from 64 bytes on the transcoder is simdutf's, which Miri cannot call.
+        let cases: [(&[u8], &str); 5] = [
+            (b"", ""),
+            (b"plain", "plain"),
+            (b"caf\xE9 cr\xE8me", "café crème"),
+            (b"\xFCber", "über"),
+            (b"\xE9\xE8\xFF", "éèÿ"),
+        ];
+        for (latin1, text) in cases {
+            let mut written = String::new();
+            format_latin1(latin1, &mut written).unwrap();
+            assert_eq!(written, text);
+        }
+    }
 }

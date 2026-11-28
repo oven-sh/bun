@@ -431,18 +431,18 @@ pub mod fs {
             hash: u64,
         ) -> Result<&'b ZStr, bun_errno::SystemErrno> {
             let hex_value: u64 = hash ^ (bun_core::time::nano_timestamp() as u64);
+            let counter = TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed);
 
             // Fixed-width, zero-padded hex (u64 → 16 digits, u32 → 8).
-            bun_core::fmt::buf_print_z(
-                buf,
-                format_args!(
-                    ".{:016x}-{:08X}.{}",
-                    hex_value,
-                    TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
-                    bun_core::fmt::s(extname),
-                ),
-            )
-            .map_err(|_| bun_errno::SystemErrno::ENOSPC)
+            let hex = bun_core::fmt::u64_hex_fixed::<true, 16>(hex_value);
+            let id = bun_core::fmt::u64_hex_fixed::<false, 8>(u64::from(counter));
+            let parts: [&[u8]; 6] = [b".", &hex, b"-", &id, b".", extname];
+            let len: usize = parts.iter().map(|part| part.len()).sum();
+            if len >= buf.len() {
+                return Err(bun_errno::SystemErrno::ENOSPC);
+            }
+            bun_core::concat_into(buf, &parts);
+            Ok(ZStr::nul_terminate(buf, len))
         }
     }
 

@@ -309,6 +309,7 @@ pub use crate::strings_impl::{
     element_length_utf16_into_utf8, encode_surrogate_pair, push_codepoint_utf16, to_utf8_alloc_z,
     to_utf8_from_latin1_z, u16_lead, u16_trail,
 };
+pub(crate) use crate::strings_impl::{copy_latin1_into_str, copy_utf16_into_str};
 
 /// memmem — `highway_memmem` (HWY_DYNAMIC_DISPATCH MemMemImpl), same on all platforms.
 #[inline]
@@ -1145,8 +1146,6 @@ pub fn str_utf8(bytes: &[u8]) -> Option<&str> {
     }
 }
 
-pub use index_of_newline_or_non_ascii as index_of_newline_or_non_ascii_or_ansi;
-
 /// Checks if slice[offset..] has any < 0x20 or > 127 characters
 // PERF: `#[inline]` — this is the predicate of the source-map column-tracking
 // fast path (`Chunk.rs::update_generated_line_and_column`) and the per-rune
@@ -1871,8 +1870,7 @@ impl core::fmt::Display for QuoteEscapeFormat<'_> {
             self.flags.str_encoding,
         )
         .map_err(|_| core::fmt::Error)?;
-        // SAFETY: write_pre_quoted_string emits UTF-8 (escapes + ASCII + WTF-8).
-        f.write_str(unsafe { core::str::from_utf8_unchecked(&buf) })
+        crate::fmt::write_lossy(f, &buf)
     }
 }
 

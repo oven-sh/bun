@@ -27,8 +27,10 @@ macro_rules! returns {
 returns! {
     0: ERR_clear_error ERR_load_BIO_strings SSL_load_error_strings CRYPTO_library_init
         OpenSSL_add_all_algorithms RSA_free;
-    1: SSL_library_init EVP_sha1 EVP_sha256 EVP_Digest EVP_DigestInit EVP_DigestUpdate EVP_DigestFinal
+    1: SSL_library_init EVP_Digest EVP_DigestInit EVP_DigestUpdate EVP_DigestFinal
         EVP_MD_CTX_cleanup BIO_new_mem_buf BIO_free PEM_read_bio_RSA_PUBKEY;
+    // An `&EVP_MD` is pointer-aligned.
+    8: EVP_sha1 EVP_sha256;
     256: RSA_size;
     0xffff_ffff: JSC__parseIndex;
 }
@@ -43,7 +45,7 @@ macro_rules! not_called_by_tests {
 }
 
 not_called_by_tests! {
-    ERR_get_error ERR_error_string ERR_load_ERR_strings ERR_load_crypto_strings
+    ERR_get_error ERR_error_string_n ERR_load_ERR_strings ERR_load_crypto_strings
     mi_malloc mi_realloc mi_free mi_usable_size
 }
 

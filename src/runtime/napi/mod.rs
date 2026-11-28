@@ -8,8 +8,8 @@
 #[path = "napi_body.rs"]
 pub(crate) mod napi_body;
 pub(crate) use napi_body::{
-    NapiFinalizerTask, ThreadSafeFunction, TsfnRefRequest, fix_dead_code_elimination,
-    napi_async_work,
+    FinishedAsyncWork, NapiFinalizerTask, ThreadSafeFunction, TsfnRefRequest,
+    fix_dead_code_elimination,
 };
 
 pub(crate) mod libc_check;

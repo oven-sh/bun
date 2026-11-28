@@ -186,7 +186,7 @@ unsafe extern "C" {
     safe fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: BunString);
     // Also declared in `bun_runtime::api::bun::x509`, which is above this crate.
     safe fn Bun__X509__toJSLegacyEncoding(
-        cert: &mut boringssl::c::X509,
+        cert: &boringssl::c::X509,
         global_object: &JSGlobalObject,
     ) -> JSValue;
     safe fn SSL_total_renegotiations(ssl: &boringssl::c::SSL) -> core::ffi::c_int;

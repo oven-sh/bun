@@ -50,7 +50,10 @@ const PATTERNS: [name: string, re: RegExp][] = [
   ["intrusive_work_task!", /\b(?:bun_threading::)?intrusive_work_task!\s*\(\s*(?:\[[^\]]*\]\s*)?([A-Za-z_]\w*)/g],
   ["VmBound<", /\bVmBound<\s*(\w+)/g],
   ["WorkPool::schedule*", /\bWorkPool::(?:schedule|schedule_new|schedule_owned|go)\b/g],
-  ["worker_pool.schedule(Batch)", /\)\s*\.schedule\(\s*(?:unsafe\s*\{\s*)?(?:bun_threading::thread_pool::)?Batch::from/g],
+  [
+    "worker_pool.schedule(Batch)",
+    /\)\s*\.schedule\(\s*(?:unsafe\s*\{\s*)?(?:bun_threading::thread_pool::)?Batch::from/g,
+  ],
   ["HTTPThread::schedule", /\bHTTPThread::schedule\s*\(/g],
   ["thread spawn", /\bthread::(?:Builder::new\s*\(|spawn\s*\()/g],
   ["uv_queue_work", /(?<!fn\s)\buv_queue_work\s*\(/g],

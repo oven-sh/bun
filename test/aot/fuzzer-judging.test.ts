@@ -17,7 +17,7 @@
 //   where plain Bun gives up on a regular expression, an executable may give up too or find the match, and nothing else
 //   a program over which TypeScript takes too long is skipped, and the fuzzer's one thread goes on meanwhile
 //   a fault of the fuzzer itself is written down and counted, costs no finding where it can be helped, and is the exit code of run.ts
-import { expect, test as one } from "bun:test";
+import { afterAll, expect, test as one } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
@@ -39,6 +39,7 @@ import {
   type Judged,
   type Program,
   type Runner,
+  type Verdict,
 } from "./fuzz/runners";
 import {
   allSources,
@@ -60,6 +61,12 @@ const untilTheCount = 280;
 // The tests run concurrently: each has its own folders, and none waits for the clock.
 const test = one.concurrent;
 const unless = (condition: boolean) => (condition ? one.skip : one.concurrent);
+// The project of `bun init` has Bun's typings installed beside the program. The cases that ask about it need them.
+const typings = bunTypesFolder();
+if (!typings)
+  console.error(
+    `SKIPPED: ${import.meta.file}: the cases about the project of \`bun init\`: Bun's typings are not installed`,
+  );
 /** A folder for one call of a runner, so that calls do not have to wait for each other. */
 const within = (folder: unknown, name: string) => (
   mkdirSync(join(String(folder), name), { recursive: true }),
@@ -77,11 +84,32 @@ function refusesEveryBuild(folder: string, words = "TS2554: Expected 0 arguments
   return path;
 }
 
-unless(isWindows || !typeChecker())(
+// What a program is judged as when its build is refused with those words: a finding where TypeScript accepts the program,
+// skipped where TypeScript refuses it too.
+const refusedByTheBuildAlone: Verdict = {
+  kind: "build refused",
+  detail: "TS2554: Expected 0 arguments, but got 1. | TypeScript accepts the program",
+  signature: "TSN: Expected N arguments, but got N.",
+};
+const refusedByTypeScriptToo: Verdict = { kind: "skipped", why: "type error TS2554, as in TypeScript" };
+
+// The cases that put programs to the real TypeScript ask through one runner. A checker keeps its thread, and what it reads
+// before its first answer (TypeScript, its library files, Bun's typings) is most of what a question costs.
+let asksTypeScript: { runner: ProductRunner; folder: ReturnType<typeof tempDir> } | undefined;
+function runnerThatAsksTypeScript(): ProductRunner {
+  if (!asksTypeScript) {
+    const folder = tempDir("aot-fuzzer-asks-typescript", {});
+    asksTypeScript = { folder, runner: new ProductRunner(refusesEveryBuild(String(folder)), options) };
+  }
+  return asksTypeScript.runner;
+}
+afterAll(() => asksTypeScript?.folder[Symbol.dispose]());
+
+unless(isWindows || !typeChecker() || !typings)(
   "a build rejected for a type error is a finding if TypeScript accepts the program",
   async () => {
     using folder = tempDir("aot-fuzzer-judges", {});
-    const runner = new ProductRunner(refusesEveryBuild(String(folder)), options);
+    const runner = runnerThatAsksTypeScript();
     let asked = 0;
     const judge = async (text: string, flags: string[] = []) =>
       (await runner.judge(within(folder, `question-${asked++}`), [{ text, extension: "ts" }], flags))[0].verdict;
@@ -91,19 +119,17 @@ unless(isWindows || !typeChecker())(
       judge(`const n: number = 1;\nconsole.log(n);\n`),
       judge(`const n: number = "text";\nconsole.log(n);\n`),
       judge(reads, ["--project=no-tsconfig"]),
-      bunTypesFolder() ? judge(reads, ["--project=bun-init"]) : undefined,
+      judge(reads, ["--project=bun-init"]),
       // In a shared build each program is judged separately.
       judge(`console.log(1);\n`, ["--decoy-shapes=1"]),
     ]);
-    expect(accepted).toEqual({
-      kind: "build refused",
-      detail: "TS2554: Expected 0 arguments, but got 1. | TypeScript accepts the program",
-      signature: "TSN: Expected N arguments, but got N.",
+    expect({ accepted, refused, withoutOptions, asBunInitLeavesIt, shared }).toEqual({
+      accepted: refusedByTheBuildAlone,
+      refused: refusedByTypeScriptToo,
+      withoutOptions: refusedByTheBuildAlone,
+      asBunInitLeavesIt: refusedByTypeScriptToo,
+      shared: refusedByTheBuildAlone,
     });
-    expect(refused).toEqual({ kind: "skipped", why: "type error TS2554, as in TypeScript" });
-    expect(withoutOptions.kind).toBe("build refused");
-    if (asBunInitLeavesIt) expect(asBunInitLeavesIt.kind).toBe("skipped");
-    expect(shared.kind).toBe("build refused");
   },
   timeout,
 );
@@ -122,7 +148,7 @@ unless(isWindows)(
     const judge = async (name: string, without: string, more: Partial<Program>) => {
       const where = within(folder, name);
       writeFileSync(join(where, "without"), without);
-      const program = { text: "console.log(1);\n", extension: "js", ...more };
+      const program: Program = { text: "console.log(1);\n", extension: "js", ...more };
       return (await new ProductRunner(path, options).judge(where, [program], []))[0].verdict;
     };
     const follows = { followsExecutableWithoutCompiler: "as without the compiler" };
@@ -131,28 +157,35 @@ unless(isWindows)(
       judge("other", "3", follows),
       judge("not-asked", "2", {}),
     ]);
-    expect(same).toEqual({ kind: "skipped", why: "as without the compiler" });
-    expect(other.kind).toBe("different output");
-    expect(notAsked.kind).toBe("different output");
+    const differs: Verdict = { kind: "different output", detail: `plain "1" compiled "2"`, signature: "values 1 2" };
+    expect({ same, other, notAsked }).toEqual({
+      same: { kind: "skipped", why: "as without the compiler" },
+      other: differs,
+      notAsked: differs,
+    });
   },
   timeout,
 );
 
-unless(isWindows)(
+unless(isWindows || !typings)(
   "--project selects the project files",
   async () => {
     using folder = tempDir("aot-fuzzer-beside", {});
     const runner = new ProductRunner(refusesEveryBuild(String(folder), "it builds nothing"), options);
-    const asked = Object.entries(projects).filter(([, { hasTypings }]) => !hasTypings || bunTypesFolder());
     await Promise.all(
-      asked.map(async ([name, { tsconfig, hasTypings }]) => {
+      Object.entries(projects).map(async ([name, { tsconfig, hasTypings }]) => {
         const where = within(folder, name);
-        await runner.judge(where, [{ text: `console.log(1);\n`, extension: "ts" }], [`--project=${name}`]);
-        const files = readFileSync(join(where, "seen.txt"), "utf8").split("\n");
-        expect([name, files.includes("tsconfig.json"), files.includes("node_modules")]).toEqual([
+        const program: Program = { text: `console.log(1);\n`, extension: "ts" };
+        const [{ verdict }] = await runner.judge(where, [program], [`--project=${name}`]);
+        // What lay beside the program when the build began, without the folder itself and the one above it.
+        const beside = readFileSync(join(where, "seen.txt"), "utf8")
+          .split("\n")
+          .filter(file => /[^.]/.test(file));
+        expect([name, beside.sort(), verdict]).toEqual([
           name,
-          !!tsconfig,
-          !!hasTypings,
+          [...(hasTypings ? ["node_modules"] : []), "program.ts", "seen.txt", ...(tsconfig ? ["tsconfig.json"] : [])],
+          // Its words name no error of TypeScript, so TypeScript is not asked.
+          { kind: "build error", detail: "error: it builds nothing", signature: "error: it builds nothing" },
         ]);
         if (tsconfig) expect(JSON.parse(readFileSync(join(where, "tsconfig.json"), "utf8"))).toEqual(tsconfig);
         if (hasTypings) expect(existsSync(join(where, "node_modules", "@types", "bun", "index.d.ts"))).toBe(true);
@@ -193,10 +226,13 @@ function standIn(judged: (programs: Program[]) => void, seconds = 0, clock = { n
   };
 }
 
+// Before a run of fuzz() draws its first program it lists every stored program, four times over, and ./parallel holds tens
+// of thousands of files. The runs here name their sources, and none of those reads a stored program, so each run is given
+// a place where nothing is stored. Only `every source makes a program` reads ./parallel.
 const settings = (folder: string) => ({
   out: join(folder, "out"),
   work: join(folder, "work"),
-  programsRoot: join(import.meta.dir, "parallel"),
+  programsRoot: join(folder, "stored-programs"),
   known: [],
   minFreeBytes: 0,
   reduceSeconds: 0,
@@ -233,10 +269,36 @@ const asked = (folder: string, runner: Runner) => ({
   programs: 8,
 });
 
-const guiltyOf = (out: string) =>
-  readdirSync(join(out, "findings")).map(
-    name => JSON.parse(readFileSync(join(out, "findings", name, "finding.json"), "utf8")).guilty,
+/** What findings/ holds: of each finding its kind, what differs, and what it goes away without. */
+const storedIn = (out: string) =>
+  readdirSync(join(out, "findings")).map(name => {
+    const { kind, detail, guilty } = JSON.parse(readFileSync(join(out, "findings", name, "finding.json"), "utf8"));
+    return { kind, detail, guilty };
+  });
+/** The faults of the fuzzer itself that a run wrote down. */
+const driverErrorsIn = (out: string) =>
+  existsSync(join(out, "driver-errors.txt")) ? readFileSync(join(out, "driver-errors.txt"), "utf8") : "";
+/**
+ * What a status line counts, under the names it has there. The time of day and the rate, which stand there too, differ
+ * from run to run.
+ */
+const countsOf = (status: string): Record<string, string> =>
+  Object.fromEntries(
+    status
+      .trim()
+      .split(" | ")
+      .flatMap(part => {
+        const named = /^(programs|compiled runs|skipped|findings|reductions|driver errors):? (.*)$/.exec(part);
+        return named ? [[named[1], named[2]] as const] : [];
+      }),
   );
+const waysToCount = ["known", "repeated", "unstable", "only in a shared build", "of the runner", "same without --aot", "not confirmed", "distinct in this run", "distinct stored"] as const; // prettier-ignore
+/** The findings of a run as its status line counts them. A way that is not named here has counted none. */
+const counted = (findings: number, ways: Partial<Record<(typeof waysToCount)[number], number>>) =>
+  `${findings}: ${waysToCount.map(way => `${way} ${ways[way] ?? 0}`).join(", ")}`;
+// One finding is stored, and every other program fails as it does.
+const oneStoredOf = (findings: number) =>
+  counted(findings, { "repeated": findings - 1, "distinct in this run": 1, "distinct stored": 1 });
 
 test(
   "a planted miscompilation ends in findings/ with what it goes away without",
@@ -244,12 +306,20 @@ test(
     using folder = tempDir("aot-fuzzer-planted", {});
     const summary = await fuzz(asked(String(folder), miscompiles()));
     const out = join(String(folder), "out");
-    expect(existsSync(join(out, "driver-errors.txt")) ? readFileSync(join(out, "driver-errors.txt"), "utf8") : "").toBe(
-      "",
-    );
-    expect(summary.driverErrors).toBe(0);
-    expect(guiltyOf(out)).toEqual([["types"]]);
-    expect(summary.distinct.length).toBe(1);
+    expect(driverErrorsIn(out)).toBe("");
+    expect(storedIn(out)).toEqual([{ kind: "different output", detail: "plain 733 compiled 833", guilty: ["types"] }]);
+    expect(summary).toMatchObject({
+      programs: 8,
+      findings: 8,
+      distinct: [expect.stringMatching(/^different-output-types-/)],
+      driverErrors: 0,
+    });
+    // The other seven programs fail alike: each is counted, and none is reduced or stored.
+    expect(countsOf(summary.status)).toMatchObject({
+      "findings": oneStoredOf(8),
+      "reductions": "1",
+      "driver errors": "0",
+    });
   },
   timeout,
 );
@@ -264,10 +334,20 @@ test.each([new Error("the runner cannot say"), new DOMException("the runner cann
     };
     const summary = await fuzz(asked(String(folder), runner));
     const out = join(String(folder), "out");
-    expect(guiltyOf(out)).toEqual([[]]);
-    expect(summary.driverErrors).toBeGreaterThan(0);
-    expect(readFileSync(join(out, "driver-errors.txt"), "utf8")).toContain("the runner cannot say");
-    expect(summary.status).toContain(`driver errors ${summary.driverErrors}`);
+    // The finding is stored as it is without the answer, and the fault is counted once: only one finding is asked about.
+    expect(storedIn(out)).toEqual([{ kind: "different output", detail: "plain 733 compiled 833", guilty: [] }]);
+    expect(driverErrorsIn(out)).toContain("the runner cannot say");
+    expect(summary).toMatchObject({
+      programs: 8,
+      findings: 8,
+      distinct: [expect.stringMatching(/^different-output-no-switch-/)],
+      driverErrors: 1,
+    });
+    expect(countsOf(summary.status)).toMatchObject({
+      "findings": oneStoredOf(8),
+      "reductions": "1",
+      "driver errors": "1",
+    });
   },
   timeout,
 );
@@ -302,7 +382,8 @@ esac
   return path;
 }
 
-async function startedByHand(folder: string) {
+// It draws the one stored program twice. What fails a second time in the same way is counted, and is not looked at again.
+async function startedByHand(folder: string, more: string) {
   await using run = Bun.spawn({
     cmd: [
       bunExe(),
@@ -315,8 +396,8 @@ async function startedByHand(folder: string) {
         "--programs-root",
         join(folder, "stored"),
       ],
-      ..."--sources stored-programs --single-file --batch 1 --programs 4 --jobs 1 --seed 1".split(" "),
-      ...`--seconds ${untilTheCount} --reduce-seconds 60 --min-free-gb 0`.split(" "),
+      ..."--sources stored-programs --single-file --batch 1 --programs 2 --jobs 1 --seed 1".split(" "),
+      ...`--seconds ${untilTheCount} --min-free-gb 0 ${more}`.split(" "),
     ],
     env: bunEnv,
     cwd: folder,
@@ -324,19 +405,26 @@ async function startedByHand(folder: string) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
-  const errors = join(folder, "out", "driver-errors.txt");
-  return { stdout, stderr, exitCode, driverErrors: existsSync(errors) ? readFileSync(errors, "utf8") : "" };
+  return { stdout, stderr, exitCode, driverErrors: driverErrorsIn(join(folder, "out")) };
 }
 
 const storedProgram = { stored: { "prints-a-number.ts": "const count: number = 700 + 33;\nconsole.log(count);\n" } };
+const printsAnother = { kind: "different output", detail: `plain "733" compiled "833"` };
 
 unless(isWindows)(
   "run.ts stores a planted miscompilation and ends with exit code 0",
   async () => {
     using folder = tempDir("aot-fuzzer-by-hand", storedProgram);
-    const { stderr, exitCode, driverErrors } = await startedByHand(String(folder));
+    const { stdout, stderr, exitCode, driverErrors } = await startedByHand(String(folder), "--reduce-seconds 60");
     expect({ stderr, driverErrors }).toEqual({ stderr: "", driverErrors: "" });
-    expect(guiltyOf(join(String(folder), "out"))).toEqual([["types"]]);
+    expect(storedIn(join(String(folder), "out"))).toEqual([{ ...printsAnother, guilty: ["types"] }]);
+    expect(countsOf(stdout)).toMatchObject({
+      "programs": "2 (product stored-programs 2)",
+      "compiled runs": "product default 2, product erased 2",
+      "findings": oneStoredOf(2),
+      "reductions": "1",
+      "driver errors": "0",
+    });
     expect(exitCode).toBe(0);
   },
   timeout,
@@ -348,8 +436,22 @@ unless(isWindows)(
     using folder = tempDir("aot-fuzzer-by-hand-fault", storedProgram);
     // The list of findings cannot be written.
     mkdirSync(join(String(folder), "out", "findings.tsv"), { recursive: true });
-    const { exitCode, driverErrors } = await startedByHand(String(folder));
+    // A finding is put on that list last, whatever was done for it before. So the run is asked for the least: it neither
+    // reduces the program nor asks what the finding goes away without.
+    const least = "--reduce-seconds 0 --no-attribution";
+    const { stdout, stderr, exitCode, driverErrors } = await startedByHand(String(folder), least);
+    expect(stderr).toBe("");
     expect(driverErrors).toContain("findings.tsv");
+    // The finding itself is stored all the same.
+    expect(storedIn(join(String(folder), "out"))).toEqual([{ ...printsAnother, guilty: [] }]);
+    // The fault ends the round of the first program, ahead of its build without the types. The run goes on to the second.
+    expect(countsOf(stdout)).toMatchObject({
+      "programs": "2 (product stored-programs 2)",
+      "compiled runs": "product default 2, product erased 1",
+      "findings": oneStoredOf(2),
+      "reductions": "1",
+      "driver errors": "1",
+    });
     expect(exitCode).toBe(1);
   },
   timeout,
@@ -358,7 +460,9 @@ unless(isWindows)(
 test("where plain Bun gives up on a regular expression, only an executable that finds the match is excused", () => {
   const gaveUp = "0: test true\n1: replaceAll 28, and the language says 2\n";
   const right = "0: test true\n1: replaceAll 2\n";
-  expect(pastTheLimitOfSteps(gaveUp, right)).toBeString();
+  expect(pastTheLimitOfSteps(gaveUp, right)).toBe(
+    "plain Bun gives up at its limit of steps, and the executable finds the match",
+  );
   expect(pastTheLimitOfSteps(right, gaveUp)).toBeUndefined();
   expect(pastTheLimitOfSteps(gaveUp, "0: test true\n1: replaceAll 3, and the language says 2\n")).toBeUndefined();
   expect(pastTheLimitOfSteps(gaveUp, "0: test false, and the language says true\n1: replaceAll 2\n")).toBeUndefined();
@@ -485,9 +589,13 @@ unless(isWindows).each([1, 2])(
     };
     const slowed = ["--run-env=BUN_JSC_slowPathAllocsBetweenGCs=1"];
     const each = (said: string) => Array.from({ length: count }, () => said);
-    expect(await kinds(true, slowed)).toEqual(each("plain Bun does not end under these settings either"));
-    expect(await kinds(false, slowed)).toEqual(each("hang"));
-    expect(await kinds(true, [])).toEqual(each("hang"));
+    // Each of the three has a runner and a folder of its own, and does little but wait two seconds for a run that does not
+    // end. So the three wait at once.
+    expect(await Promise.all([kinds(true, slowed), kinds(false, slowed), kinds(true, [])])).toEqual([
+      each("plain Bun does not end under these settings either"),
+      each("hang"),
+      each("hang"),
+    ]);
   },
   timeout,
 );
@@ -506,6 +614,9 @@ test(
     });
     const isItsOwnWorker = (program: Program) => program.text.includes("new Worker(new URL(import.meta.url)");
     expect(summary.programs).toBe(64);
+    // Each program is in one build.
+    const built = builds.flat();
+    expect([built.length, new Set(built).size]).toEqual([64, 64]);
     expect(builds.filter(build => build.some(isItsOwnWorker)).length).toBeGreaterThan(10);
     expect(builds.filter(build => build.some(isItsOwnWorker) && build.length > 1)).toEqual([]);
     expect(builds.some(build => build.length > 1)).toBe(true);
@@ -535,7 +646,8 @@ test(
     // `lastCall` is a third of the run after its end, so the one build that outlasted the run leaves nothing to
     // confirm.
     expect(notConfirmed).toBe(8);
-    expect(summary.status).toContain("not confirmed 8");
+    expect(countsOf(summary.status).findings).toBe(counted(8, { "not confirmed": 8 }));
+    expect(summary).toMatchObject({ programs: 8, findings: 8, distinct: [], driverErrors: 0 });
     expect(readdirSync(join(out, "findings"))).toEqual([]);
     expect(calls).toBe(1);
   },
@@ -567,10 +679,12 @@ test(
       seconds: 6,
       batch: 8,
     });
-    const [name, ...rest] = readdirSync(join(String(folder), "out", "findings"));
+    const out = join(String(folder), "out");
+    const [name, ...rest] = readdirSync(join(out, "findings"));
     expect(rest).toEqual([]);
     expect(name).toStartWith("crash-not-tried-again-");
-    expect(readFileSync(join(String(folder), "out", "findings", name, "count.txt"), "utf8")).toBe("8");
+    expect(storedIn(out)).toEqual([{ kind: "crash", detail: "stopped", guilty: ["not tried again"] }]);
+    expect(readFileSync(join(out, "findings", name, "count.txt"), "utf8")).toBe("8");
   },
   timeout,
 );
@@ -603,6 +717,9 @@ test(
     });
     expect(summary.programs).toBe(8);
     expect(judged).toBe(8);
+    expect(countsOf(summary.status).skipped).toBe(
+      "base differs 0, plain run failed, not tried in mode erased 8, plain run too slow 8",
+    );
   },
   timeout,
 );
@@ -715,7 +832,7 @@ unless(isWindows || !typeChecker())(
   "a multi-file program gets its own folder and is judged as a whole",
   async () => {
     using folder = tempDir("aot-fuzzer-files", {});
-    const runner = new ProductRunner(refusesEveryBuild(String(folder)), options);
+    const runner = runnerThatAsksTypeScript();
     // The error is in a file that the entry point imports.
     const wrong = twice.replace("return plusOne(n) * 2", `return plusOne("n") * 2`);
     // What another version of TypeScript infers from JavaScript says nothing about the build.
@@ -737,14 +854,18 @@ unless(isWindows || !typeChecker())(
         .split("\n")
         .filter(file => /^\.\/p/.test(file)),
     ).toEqual(["./program/declared-1.ts", "./program/declared-2.ts", "./program/main.ts"]);
-    expect(alone.verdict.kind).toBe("build refused");
-    expect(withAnError.verdict).toEqual({ kind: "skipped", why: "type error TS2554, as in TypeScript" });
+    expect(alone.verdict).toEqual(refusedByTheBuildAlone);
+    expect(withAnError.verdict).toEqual(refusedByTypeScriptToo);
     expect(mixed).toMatchObject({
       plain: { stdout: "twice\n10\n" },
       verdict: { kind: "skipped", why: "type error TS2554, beside JavaScript" },
     });
     expect(shared.map(each => each.plain.stdout)).toEqual(["1\n", "twice\n10\n", "twice\nNaN\n"]);
-    expect(shared.map(each => each.verdict.kind)).toEqual(["build refused", "build refused", "skipped"]);
+    expect(shared.map(each => each.verdict)).toEqual([
+      refusedByTheBuildAlone,
+      refusedByTheBuildAlone,
+      refusedByTypeScriptToo,
+    ]);
     // Nothing of one program is left behind for the next.
     for (const name of ["alone", "wrong", "mixed", "shared"])
       expect(readdirSync(join(String(folder), name)).filter(name => /^p(rogram$|\d)/.test(name))).toEqual([]);
@@ -805,7 +926,9 @@ test("the reducer removes files first, then lines", async () => {
 test(
   "a multi-file finding is first tried as a single file",
   async () => {
-    const sources = await allSources(join(import.meta.dir, "parallel"), new Set(), true);
+    // The sources that are asked here read no stored program either: see `settings`.
+    using nothingStored = tempDir("aot-fuzzer-no-stored-programs", {});
+    const sources = await allSources(String(nothingStored), new Set(), true);
     const source = "number-range-boundaries-multi-file";
     // A runner that only takes single-file programs gets nothing else.
     expect(
@@ -942,10 +1065,12 @@ test(
       stored(() => true),
       stored(program => Object.keys(program.files ?? {}).length > 0),
     ]);
-    expect(anywhere).toMatchObject({ source, failsAsSingleFile: true, reduced: [] });
-    expect(anywhere.files).toContain("reduced.ts");
+    const crash = { source, kind: "crash", detail: "stopped" };
+    expect(anywhere).toMatchObject({ ...crash, failsAsSingleFile: true, reduced: [] });
+    expect(anywhere.files).toEqual(["compiled.txt", "finding.json", "original", "plain.txt", "reduced.ts"]);
     expect(anywhere.original).toBeGreaterThan(1);
-    expect(acrossFiles).toMatchObject({ source, failsAsSingleFile: false });
+    expect(acrossFiles).toMatchObject({ ...crash, failsAsSingleFile: false });
+    expect(acrossFiles.files).toEqual(["compiled.txt", "finding.json", "original", "plain.txt", "reduced"]);
     expect(acrossFiles.reduced).toContain("main.ts");
     expect(acrossFiles.reduced.length).toBe(2);
   },
@@ -1074,7 +1199,9 @@ test(
       seconds: untilTheCount,
       programs: 8,
     });
-    expect(summary.status).toContain("findings 8: known 8,");
+    expect(countsOf(summary.status).findings).toBe(counted(8, { known: 8 }));
+    expect(summary).toMatchObject({ programs: 8, findings: 0, distinct: [], driverErrors: 0 });
+    expect(readdirSync(join(String(folder), "out", "findings"))).toEqual([]);
   },
   timeout,
 );

@@ -339,13 +339,13 @@ describe.each([
 
 ### Argument Passing
 
-How Bun passes arguments to your test function depends on the structure of your test cases:
+How Bun passes arguments to your test function depends on the table as a whole, as in Jest and Vitest:
 
-- If a table row is an array (like `[1, 2, 3]`), Bun passes each element as an individual argument
-- If a row is not an array (like an object), Bun passes it as a single argument
+- If every row is an array (like `[1, 2, 3]`), Bun passes each element of a row as an individual argument
+- If any row is not an array (like an object), Bun passes each row as a single argument, even a row that is an array
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
-// Array items passed as individual arguments
+// Every row is an array: the items are passed as individual arguments
 test.each([
   [1, 2, 3],
   [4, 5, 9],
@@ -359,6 +359,11 @@ test.each([
   { a: 4, b: 5, expected: 9 },
 ])("add($a, $b) = $expected", data => {
   expect(data.a + data.b).toBe(data.expected);
+});
+
+// One row is not an array: each row is a single argument, `[]` too
+test.each([null, "", []])("%p is empty", value => {
+  expect(value?.length ?? 0).toBe(0);
 });
 ```
 

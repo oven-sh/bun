@@ -274,9 +274,7 @@ void ScriptExecutionContext::willDestroyActiveDOMObject(ActiveDOMObject& activeD
 
 static void postThroughHandle(const BunVmHandleRef* handle, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& lambda)
 {
-    auto task = makeUnique<EventLoopTask>(WTF::move(lambda));
-    if (Bun__VmHandle__post(handle, task.get(), loopKind))
-        task.release();
+    Bun__VmHandle__post(handle, new EventLoopTask(WTF::move(lambda)), loopKind);
 }
 
 bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& task)

@@ -1,5 +1,3 @@
-use core::ffi::c_uint;
-
 use bun_boringssl_sys as boringssl;
 use bun_jsc::{JSGlobalObject, JSValue, Job, JobContext, JsResult, JsThread, Strong};
 
@@ -11,22 +9,17 @@ pub(crate) struct PBKDF2 {
     digest: Digest,
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct Digest(core::ptr::NonNull<boringssl::EVP_MD>);
-
-// SAFETY: BoringSSL's `EVP_MD`s are immutable statics. They hold no VM or JS state.
-unsafe impl Send for Digest {}
+type Digest = &'static boringssl::EVP_MD;
 
 unsafe extern "C" {
     /// The lookup of `createHmac()` and the rest of `node:crypto`.
-    fn Bun__getDigestByName(name: *const u8, length: usize) -> *const boringssl::EVP_MD;
+    fn Bun__getDigestByName(name: *const u8, length: usize) -> Option<Digest>;
 }
 
 pub(crate) fn digest_by_name(global_this: &JSGlobalObject, name: &[u8]) -> JsResult<Digest> {
     // SAFETY: `name` is valid for `name.len()` bytes, and the callee does not keep it.
-    let digest = unsafe { Bun__getDigestByName(name.as_ptr(), name.len()) };
-    match core::ptr::NonNull::new(digest.cast_mut()) {
-        Some(digest) => Ok(Digest(digest)),
+    match unsafe { Bun__getDigestByName(name.as_ptr(), name.len()) } {
+        Some(digest) => Ok(digest),
         None => Err(global_this
             .err(
                 bun_jsc::ErrorCode::CRYPTO_INVALID_DIGEST,
@@ -59,36 +52,14 @@ impl PBKDF2 {
     }
 
     pub(crate) fn run(&self, password: &[u8], salt: &[u8], output: &mut [u8]) -> bool {
-        let iteration_count = self.iteration_count;
-        let length = self.length;
-
         output.fill(0);
-        debug_assert!(self.length <= output.len());
+        debug_assert!(self.length == output.len());
         // Node.js (OpenSSL) rejects a zero-length derivation; BoringSSL accepts it.
-        if length == 0 {
+        if output.is_empty() {
             return false;
         }
         boringssl::ERR_clear_error();
-        // SAFETY: password/salt point to valid slices for the given lengths;
-        // the digest is a non-null EVP_MD; output is writable for `length` bytes.
-        let rc = unsafe {
-            boringssl::PKCS5_PBKDF2_HMAC(
-                if !password.is_empty() {
-                    password.as_ptr()
-                } else {
-                    core::ptr::null()
-                },
-                password.len(),
-                salt.as_ptr(),
-                salt.len(),
-                iteration_count as c_uint,
-                self.digest.0.as_ptr(),
-                length,
-                output.as_mut_ptr(),
-            )
-        };
-
-        rc > 0
+        boringssl::pbkdf2_hmac(password, salt, self.iteration_count, self.digest, output)
     }
 }
 

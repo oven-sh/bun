@@ -821,7 +821,7 @@ Every member takes `&self` (or `self: &RefPtr<Self>` if the class is `refCounted
 `bun_jsc::JsClass`, so `value.as_class_ref::<Glob>()` works, and `js_Glob::from_js(&value)` is the struct if `value`
 is an instance. Both return a `WrapperGuard<'_, Glob>`, which borrows `value`, derefs to the struct and keeps the object
 visible to the GC's stack scan until it is dropped. `JsLocal::as_class_ref` does the same for an argument, with the
-lifetime of the call. `js_Glob::from_js_direct(&value)` returns `None` for an instance of a subclass or one with own
+lifetime of the call. `wrapper.payload_guard()` does the same for a `JsWrapper`. `js_Glob::from_js_direct(&value)` returns `None` for an instance of a subclass or one with own
 properties, either of which may override a member. `value.is::<Glob>()` and `value.is_direct::<Glob>()` only test the
 class. `wrapper.payload_ptr()` is the address of the struct, which never changes, and `payload.wrapper_value()` returns
 the object that owns the struct.

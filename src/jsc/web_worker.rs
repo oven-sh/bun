@@ -177,9 +177,7 @@ struct ReservedPages(*mut c_void);
 impl ReservedPages {
     fn try_new(threads_are_ending: bool) -> Option<Self> {
         let mut pages = core::ptr::null_mut();
-        // SAFETY: `pages` is a live local the callee writes once.
-        unsafe { Bun__AOT__tryReservePagesForNewThread(&raw mut pages, threads_are_ending) }
-            .then(|| Self(pages))
+        Bun__AOT__tryReservePagesForNewThread(&mut pages, threads_are_ending).then(|| Self(pages))
     }
 
     fn adopt(self) -> PagesOfThread {
@@ -264,9 +262,9 @@ unsafe extern "C" {
     safe fn WebWorker__postOutOfMemoryError(proxy: *mut c_void);
     safe fn WebWorker__postFailedToStartError(proxy: *mut c_void);
     /// The address space a compiled program's thread needs for its tables, taken
-    /// by the thread that starts it. False: there is none. `pages` may be null.
-    fn Bun__AOT__tryReservePagesForNewThread(
-        pages: *mut *mut c_void,
+    /// by the thread that starts it. False: there is none. `*pages` may be null.
+    safe fn Bun__AOT__tryReservePagesForNewThread(
+        pages: &mut *mut c_void,
         threads_are_ending: bool,
     ) -> bool;
     safe fn Bun__AOT__releasePagesForNewThread(pages: *mut c_void);
@@ -1355,7 +1353,7 @@ fn on_unhandled_rejection(
 ) {
     // Prevent recursion
     vm.on_unhandled_rejection
-        .set(VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value);
+        .set(VirtualMachine::on_quiet_unhandled_rejection_handler);
 
     // The stop was already requested (terminate(), or the worker's own exit):
     // whatever rejects or throws from here on is a consequence of stopping —

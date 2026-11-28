@@ -114,8 +114,7 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
         Some(unsafe { cpp::EncodedSlice__toExternalValue(self, global.as_ptr()) })
     }
     fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        // SAFETY: `self` is a live `&EncodedSlice` for the duration of the call.
-        unsafe { cpp::EncodedSlice__toJSONObject(self, global) }
+        cpp::EncodedSlice__toJSONObject(self, global)
     }
     unsafe fn external(
         &self,

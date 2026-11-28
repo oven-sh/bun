@@ -428,8 +428,6 @@ impl Process {
     extern "C" fn on_exit_uv(process: *mut uv::uv_process_t, exit_status: i64, term_signal: c_int) {
         // SAFETY: libuv passes the live handle; only reads its POD fields.
         let rusage = uv_getrusage(unsafe { &mut *process });
-        // SAFETY: raw read of POD `pid` field on the live handle.
-        let _pid = unsafe { (*process).pid };
         // SAFETY: `data` was set to the owning `*mut Process` before
         // `uv_spawn`; libuv never overwrites it.
         let this = unsafe { &*(*process).data.cast::<Process>() };
@@ -442,7 +440,7 @@ impl Process {
 
         bun_sys::windows::libuv::log!(
             "Process.onExit({}) code: {}, signal: {:?}",
-            _pid,
+            this.pid,
             exit_code,
             signal_code
         );
@@ -471,11 +469,9 @@ impl Process {
 
     #[cfg(windows)]
     extern "C" fn on_close_uv(uv_handle: *mut uv::uv_process_t) {
-        // SAFETY: libuv passes the live handle.
-        let _pid = unsafe { (*uv_handle).pid };
         // SAFETY: adopts the ref that `close` took, through the back-pointer stashed at spawn.
         let this = unsafe { RefPtr::from_raw((*uv_handle).data.cast::<Process>()) };
-        bun_sys::windows::libuv::log!("Process.onClose({})", _pid);
+        bun_sys::windows::libuv::log!("Process.onClose({})", this.pid);
         this.handle_has_closed.set(true);
     }
 
@@ -782,7 +778,7 @@ pub use waiter_thread_posix::WaiterThreadPosix as WaiterThread;
 #[cfg(unix)]
 pub mod waiter_thread_posix {
     use super::*;
-    use bun_event_loop::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New as AnyTaskNew};
+    use bun_event_loop::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, MiniTask};
     use bun_event_loop::ConcurrentTask::TaskTag;
     use bun_event_loop::task_tag;
     use bun_threading::UnboundedQueue;
@@ -859,31 +855,16 @@ pub mod waiter_thread_posix {
         }
     }
 
-    /// Posted to `MiniEventLoop` from the waiter thread. Self-referential via
-    /// the embedded intrusive `task: AnyTaskWithExtraContext` (`.ctx == self`).
-    #[repr(C)]
+    /// Posted to `MiniEventLoop` from the waiter thread.
     pub(crate) struct ResultTaskMini<T: ProcessLike> {
         pub(crate) result: bun_sys::Result<WaitPidResult>,
         pub(crate) subprocess: RefPtr<T>,
         pub(crate) task: AnyTaskWithExtraContext,
     }
 
-    impl<T: ProcessLike> ResultTaskMini<T> {
-        #[inline]
-        pub(crate) fn new(v: ResultTaskMini<T>) -> *mut ResultTaskMini<T> {
-            bun_core::heap::into_raw(Box::new(v))
-        }
-
-        pub(crate) fn run_from_main_thread(self) {
+    impl<T: ProcessLike> MiniTask for ResultTaskMini<T> {
+        fn run_from_main_thread(self: Box<Self>) {
             T::on_wait_pid_from_waiter_thread(self.subprocess, &self.result, &mut rusage_zeroed());
-        }
-
-        /// Stored thunk for `AnyTaskWithExtraContext` (`fn(*mut T, *mut C)`
-        /// shape — `C = ()`). Default Rust ABI.
-        fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
-            // SAFETY: `this` was heap-allocated in `loop_()` below; the mini
-            // event loop hands ownership back here exactly once.
-            unsafe { bun_core::heap::take(this) }.run_from_main_thread();
         }
     }
 
@@ -998,22 +979,12 @@ pub mod waiter_thread_posix {
                 }));
             }
             EventLoopHandle::Mini(mini) => {
-                let out = ResultTaskMini::<T>::new(ResultTaskMini {
+                let task = Box::new(ResultTaskMini {
                     result,
                     subprocess: process,
                     task: AnyTaskWithExtraContext::default(),
                 });
-                // SAFETY: `out` just produced by heap::alloc — non-null.
-                unsafe {
-                    (*out).task = AnyTaskNew::<ResultTaskMini<T>, ()>::init(
-                        out,
-                        ResultTaskMini::<T>::run_from_main_thread_mini,
-                    );
-                    mini.enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(
-                        core::ptr::addr_of_mut!((*out).task),
-                    ));
-                }
-                // `out` is now owned by the mini queue; freed in `run_from_main_thread_mini`.
+                mini.inbox.post_intrusive(task, |task| &mut task.task);
             }
         }
     }
@@ -1450,16 +1421,15 @@ mod spawn_process_body {
     ) -> Result<bun_sys::Result<WindowsSpawnResult>, crate::Error> {
         bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
 
-        // SAFETY: all-zero is a valid uv_process_options_t
-        let mut uv_process_options: uv::uv_process_options_t =
-            unsafe { bun_core::ffi::zeroed_unchecked() };
-
-        uv_process_options.args = argv.as_ptr();
-        // libuv: a null `env` inherits the parent's environment.
-        uv_process_options.env = envp.map_or(core::ptr::null(), CStrList::as_ptr);
         let argv0 = options.argv0.or_else(|| argv.first());
-        uv_process_options.file = argv0.expect("argv[0] is required").as_ptr();
-        uv_process_options.exit_cb = Some(Process::on_exit_uv);
+        let mut uv_process_options = uv::uv_process_options_t {
+            args: argv.as_ptr(),
+            // libuv: a null `env` inherits the parent's environment.
+            env: envp.map_or(core::ptr::null(), CStrList::as_ptr),
+            file: argv0.expect("argv[0] is required").as_ptr(),
+            exit_cb: Some(Process::on_exit_uv),
+            ..Default::default()
+        };
         // `WindowsOptions::default()` leaves a null handle, which `uv_loop()` would dereference.
         assert!(
             !matches!(options.windows.loop_, EventLoopHandle::Js { owner } if owner.owner().is_null()),
@@ -1654,7 +1624,6 @@ mod spawn_process_body {
 
         uv_process_options.stdio = stdio_containers.as_mut_ptr();
         uv_process_options.stdio_count = c_int::try_from(stdio_containers.len()).expect("int cast");
-        uv_process_options.exit_cb = Some(Process::on_exit_uv);
 
         let process = RefPtr::new(Process {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
@@ -1890,7 +1859,7 @@ mod spawn_process_body {
             pending_alloc: Option<Box<[u8]>>,
             pub(crate) pipe: uv::Owned<uv::Pipe>,
             pub(crate) err: bun_sys::E,
-            pub(crate) context: *mut SyncWindowsProcess,
+            context: *const SyncWindowsProcess,
             pub(crate) tag: OutFd,
         }
 
@@ -1995,17 +1964,15 @@ mod spawn_process_body {
                 } else {
                     this.err
                 };
-                // SAFETY: `context` is the live `SyncWindowsProcess` that owns
-                // this reader (set in `spawn_windows_with_pipes`); the callback
-                // is non-reentrant field writes only.
-                unsafe { &mut *this.context }.on_reader_done(this.tag, this.chunks, err);
+                // SAFETY: `context` is the local of `spawn_windows_with_pipes`, which waits for this call.
+                unsafe { &*this.context }.on_reader_done(this.tag, this.chunks, err);
             }
 
             pub(crate) fn start(self) -> Maybe<()> {
-                let this = bun_ptr::AliasableBox::new(self);
-                // SAFETY: just allocated; nothing else borrows it.
-                let pipe = unsafe { &mut (*this.as_ptr()).pipe };
-                pipe.set_data(this.as_ptr().cast());
+                let mut this = bun_ptr::AliasableBox::new(self);
+                let data = this.as_ptr().cast();
+                let pipe = &mut this.pipe;
+                pipe.set_data(data);
                 pipe.ref_();
                 pipe.read_start(Some(Self::uv_alloc_cb), Some(Self::uv_read_cb))
                     .to_result(bun_sys::Tag::listen)?;
@@ -2034,38 +2001,34 @@ mod spawn_process_body {
 
         #[cfg(windows)]
         pub struct SyncWindowsProcess {
-            pub(crate) stderr: Vec<Box<[u8]>>,
-            pub(crate) stdout: Vec<Box<[u8]>>,
-            pub(crate) err: bun_sys::E,
-            pub(crate) waiting_count: u8,
-            pub(crate) status: Option<Status>,
+            stderr: Cell<Vec<Box<[u8]>>>,
+            stdout: Cell<Vec<Box<[u8]>>>,
+            err: Cell<bun_sys::E>,
+            waiting_count: Cell<u8>,
+            status: OnceCell<Status>,
         }
 
         #[cfg(windows)]
         impl SyncWindowsProcess {
-            pub fn on_process_exit(this: *mut SyncWindowsProcess, status: Status) {
-                // SAFETY: `this` is the local of spawn_windows_with_pipes;
-                // single-threaded uv loop, no overlapping borrow of SyncWindowsProcess.
-                unsafe {
-                    (*this).status = Some(status);
-                    (*this).waiting_count -= 1;
-                }
+            pub(crate) fn on_process_exit(&self, status: Status) {
+                let _ = self.status.set(status);
+                self.waiting_count.update(|count| count - 1);
             }
 
             pub(crate) fn on_reader_done(
-                &mut self,
+                &self,
                 tag: OutFd,
                 chunks: Vec<Box<[u8]>>,
                 err: bun_sys::E,
             ) {
                 match tag {
-                    OutFd::Stderr => self.stderr = chunks,
-                    OutFd::Stdout => self.stdout = chunks,
+                    OutFd::Stderr => self.stderr.set(chunks),
+                    OutFd::Stdout => self.stdout.set(chunks),
                 }
                 if err != bun_sys::E::SUCCESS {
-                    self.err = err;
+                    self.err.set(err);
                 }
-                self.waiting_count -= 1;
+                self.waiting_count.update(|count| count - 1);
             }
         }
 
@@ -2126,18 +2089,18 @@ mod spawn_process_body {
                     Err(err) => return Ok(Err(err)),
                     Ok(process) => process,
                 };
-            let mut this = SyncWindowsProcess {
-                stderr: Vec::new(),
-                stdout: Vec::new(),
-                err: bun_sys::E::SUCCESS,
-                waiting_count: 1,
-                status: None,
+            let this = SyncWindowsProcess {
+                stderr: Cell::default(),
+                stdout: Cell::default(),
+                err: Cell::new(bun_sys::E::SUCCESS),
+                waiting_count: Cell::new(1),
+                status: OnceCell::new(),
             };
-            // The only path to `this` until the callbacks are done.
-            let this_ptr = &raw mut this;
+            let this_ptr = &raw const this;
             let process = spawned.to_process_handle(());
             // SAFETY: `this` outlives the dispatch of the exit.
-            let handler = unsafe { ProcessExit::new(ProcessExitKind::SyncWindows, this_ptr) };
+            let handler =
+                unsafe { ProcessExit::new(ProcessExitKind::SyncWindows, this_ptr.cast_mut()) };
             process.set_exit_handler(handler);
             process.enable_keeping_event_loop_alive();
 
@@ -2154,10 +2117,7 @@ mod spawn_process_body {
                         pending_alloc: None,
                         err: bun_sys::E::SUCCESS,
                     };
-                    // SAFETY: sole owner via `this_ptr`; no uv callback has fired yet.
-                    unsafe {
-                        (*this_ptr).waiting_count += 1;
-                    }
+                    this.waiting_count.update(|count| count + 1);
                     match reader.start() {
                         Err(err) => {
                             let _ = process.kill(1);
@@ -2172,18 +2132,17 @@ mod spawn_process_body {
                 }
             }
 
-            // SAFETY: read-only field access between uv ticks; callbacks fired
-            // inside `tick()` write through the same `this_ptr` root.
-            while unsafe { (*this_ptr).waiting_count } > 0 {
+            while this.waiting_count.get() > 0 {
                 loop_.platform_event_loop().tick();
             }
 
             Ok(Ok(Result {
                 status: this
                     .status
+                    .into_inner()
                     .expect("Expected Process to have exited when waiting_count == 0"),
-                stdout: flatten_owned_chunks(this.stdout),
-                stderr: flatten_owned_chunks(this.stderr),
+                stdout: flatten_owned_chunks(this.stdout.into_inner()),
+                stderr: flatten_owned_chunks(this.stderr.into_inner()),
             }))
         }
 

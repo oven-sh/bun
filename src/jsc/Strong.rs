@@ -175,8 +175,8 @@ impl Impl {
     const SLOT_MASK: usize = (1usize << 48) - 1;
 
     #[inline(always)]
-    fn slot_ptr(this: NonNull<Impl>) -> *mut crate::DecodedJSValue {
-        (this.as_ptr() as usize & Self::SLOT_MASK) as *mut crate::DecodedJSValue
+    fn slot_ptr(this: NonNull<Impl>) -> *mut JSValue {
+        (this.as_ptr() as usize & Self::SLOT_MASK) as *mut JSValue
     }
 
     pub(crate) fn init(global: &JSGlobalObject, value: JSValue) -> NonNull<Impl> {
@@ -185,11 +185,10 @@ impl Impl {
     }
 
     #[inline(always)]
-    pub fn get(this: NonNull<Impl>) -> JSValue {
+    fn get(this: NonNull<Impl>) -> JSValue {
         // SAFETY: StrongRef.cpp guarantees the low 48 bits address a live
-        // `JSC::JSValue`-sized slot for the lifetime of the handle;
-        // `DecodedJSValue` is its `#[repr(C)]` ABI mirror.
-        unsafe { (*Self::slot_ptr(this)).encode() }
+        // `WriteBarrier<Unknown>`, which is an `EncodedJSValue`, for the lifetime of the handle.
+        unsafe { *Self::slot_ptr(this) }
     }
 
     pub fn set(this: NonNull<Impl>, global: &JSGlobalObject, value: JSValue) {
@@ -201,7 +200,7 @@ impl Impl {
     pub(crate) fn clear(this: NonNull<Impl>) {
         // SAFETY: same slot-pointer invariant as `get`; clearing holds no
         // barrier (WriteBarrier<Unknown>::clear() just stores encoded 0).
-        unsafe { Self::slot_ptr(this).cast::<i64>().write(0) };
+        unsafe { Self::slot_ptr(this).write(JSValue::ZERO) };
     }
 
     /// SAFETY: `this` must be a valid handle from `init`; consumed here (do not reuse).

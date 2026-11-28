@@ -188,6 +188,8 @@ bitflags::bitflags! {
     #[derive(Default, Clone, Copy)]
     pub struct ServerFlags: u8 {
         const TERMINATED                  = 1 << 1;
+        /// `schedule_deinit` left `app.close()` to its task.
+        const CLOSE_SCHEDULED             = 1 << 2;
     }
 }
 
@@ -209,7 +211,7 @@ bun_jsc::impl_abort_handle_owner!(
 );
 
 #[derive(bun_ptr::RefCounted)]
-#[ref_count(destroy = Self::schedule_deinit)]
+#[ref_count(destroy_box = Self::schedule_deinit)]
 pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// The JS wrapper holds one ref, `open_ref` another.
     ref_count: bun_ptr::RefCount<Self>,
@@ -744,7 +746,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// The body ignores both arguments so a single non-generic shim suffices.
-    fn on_timeout_for_idle_warn(_: *mut c_void, _: &mut uws_sys::NewAppResponse<SSL>) {
+    fn on_timeout_for_idle_warn(_: *mut c_void, _: uws::AnyResponse) {
         if DEBUG && !Self::did_send_idletimeout_warning_once().load(Ordering::Relaxed) {
             if !crate::cli::Command::get().debug.silent {
                 Self::did_send_idletimeout_warning_once().store(true, Ordering::Relaxed);
@@ -793,11 +795,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // (RFC 9114 §4.2 transfer-encoding check is H3-only — skipped here.)
 
         // Resolve once, reuse for both `has_request_body()` here and the
-        // forward to `RequestContext::create` below. With `Method::which` now
-        // a length-gated match (316a83f) the
-        // second call is cheap, but the resolved value is also what `create`
-        // wants — passing `None` made it parse a second time.
+        // forward to `RequestContext::create` below.
         let method = method.or_else(|| bun_http_types::Method::Method::which(req.method()));
+        let resolved_method = method.unwrap_or(bun_http_types::Method::Method::GET);
 
         let request_body_length: Option<usize> = 'len: {
             if method
@@ -841,19 +841,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
         }
 
-        let ctx_slot = self.request_pool.claim();
-        let ctx = ctx_slot.addr().as_ptr();
-        // SAFETY: `claim` hands out an uninitialized slot.
-        let ctx_uninit = unsafe { &mut *ctx.cast::<core::mem::MaybeUninit<_>>() };
-        ServerRequestContext::<SSL, DEBUG>::create(
-            ctx_uninit,
+        let ctx = ServerRequestContext::<SSL, DEBUG>::create(
+            self.request_pool.claim(),
             self,
             std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
             any_response_from::<SSL>(resp),
-            method,
-        );
-        // SAFETY: fully initialized by `create()`.
-        let ctx_ref = request_context::Dispatch::new(unsafe { ctx_slot.assume_init().as_ref() });
+            resolved_method,
+        )
+        .as_ptr();
+        // SAFETY: `create()` just made it, and it holds its base ref.
+        let ctx_ref = request_context::Dispatch::new(unsafe { &*ctx });
 
         self.vm()
             .jsc_vm()
@@ -934,7 +931,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
                 resp_ref.on_data(
                     |u: *mut ServerRequestContext<SSL, DEBUG>,
-                     _: &mut uws_sys::NewAppResponse<SSL>,
+                     _: uws_sys::AnyResponse,
                      chunk: &[u8],
                      last: bool| {
                         ServerRequestContext::<SSL, DEBUG>::on_buffered_body_chunk(u, chunk, last)
@@ -1775,37 +1772,39 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// The last ref is gone: the JS wrapper is collected and the server is drained.
-    fn schedule_deinit(this: *mut Self) {
+    fn schedule_deinit(server: bun_ptr::AliasableBox<Self>) {
         httplog!("scheduleDeinit");
-        // SAFETY: `this` stays allocated until it is freed below, or by the task.
-        let server = unsafe { &*this };
+        let terminated = server.flags.get().contains(ServerFlags::TERMINATED);
 
         if server.vm().is_shutting_down() {
             // No more ticks. `TERMINATED` means `app.close()` already ran, so destroying it can't orphan a keep-alive socket.
-            if server.flags.get().contains(ServerFlags::TERMINATED) && !server.deinit_running.get()
-            {
-                // SAFETY: the box from `init`, and the last ref is gone.
-                unsafe { bun_core::heap::destroy(this) };
+            if !terminated || server.deinit_running.get() {
+                server.into_raw();
             }
             return;
         }
 
-        if !server.flags.get().contains(ServerFlags::TERMINATED) {
+        if !terminated {
             // App.close can cause finalizers to run.
             // scheduleDeinit can be called inside a finalizer.
-            // Therefore, we split it into two tasks.
+            // Therefore, the task does it.
             server
                 .flags
-                .set(server.flags.get() | ServerFlags::TERMINATED);
-            let app = server.app().unwrap();
-            server
-                .vm()
-                .enqueue_task(bun_event_loop::Task::init(app.cast::<AppCloseTask<SSL>>()));
+                .update(|f| f | ServerFlags::TERMINATED | ServerFlags::CLOSE_SCHEDULED);
         }
 
-        server.vm().enqueue_task(bun_event_loop::Task::init(
-            this.cast::<ServerDeinitTask<SSL, DEBUG>>(),
-        ));
+        let vm = server.vm;
+        vm.enqueue_task(bun_event_loop::Task::new::<Self>(server));
+    }
+
+    /// `schedule_deinit`'s task, which then frees the server.
+    pub(crate) fn run_scheduled_close(&self) {
+        if self.flags.get().contains(ServerFlags::CLOSE_SCHEDULED) {
+            // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+            bun_opaque::opaque_deref_mut(self.app().unwrap()).close();
+            // Microtasks that the close queued run before the server is freed.
+            self.vm().drain_microtasks();
+        }
     }
 
     pub(crate) fn on_listen(&self, listener: Option<uws_sys::app::OwnedListenSocket<SSL>>) {
@@ -1850,7 +1849,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // `bun_analytics`. No-op until it is.
     }
 
-    pub(crate) fn app(&self) -> Option<*mut uws_sys::NewApp<SSL>> {
+    fn app(&self) -> Option<*mut uws_sys::NewApp<SSL>> {
         self.app.get().as_ref().map(|app| app.as_ptr())
     }
 
@@ -1885,7 +1884,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             .into_boxed_slice();
         // `base_url` drops on Err automatically.
 
-        let owner = bun_ptr::AliasableBox::new(Self {
+        let mut owner = bun_ptr::AliasableBox::new(Self {
             ref_count: bun_ptr::RefCount::init(),
             open_ref: Cell::new(None),
             global_this: std::ptr::from_ref(global),
@@ -1924,25 +1923,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             ws_package_handler: JsCell::new(None),
             _pin: core::marker::PhantomPinned,
         });
-        let server = owner.as_ptr();
 
         // The packed `AnyServer` is a pure function of the (now-stable) heap
         // address and the const variant tag; cache it so the per-request
         // `node:http` prologue is a plain field load instead of a tag match +
         // `TaggedPtr::init`.
-        // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
-        unsafe {
-            (*server).any_server_packed = AnyServer::from(server.cast_const()).to_packed() as usize;
-        }
+        owner.any_server_packed = AnyServer::from(owner.as_ptr().cast_const()).to_packed() as usize;
 
         // The bake options (`root`, and the arena the transpilers live in) are in
-        // `(*server).config.bake` for the server's lifetime. Initialise
+        // `owner.config.bake` for the server's lifetime. Initialise
         // DevServer AFTER the server box exists so the `Options::arena` borrow
         // points into the heap-allocated config rather than the caller's
         // (since-moved) stack slot. On Err, dropping `owner` frees the
         // half-built server.
-        // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
-        let config = unsafe { (*server).config.get_mut() };
+        let config = owner.config.as_mut();
         if let Some(bake_options) = &mut config.bake {
             let broadcast = config.broadcast_console_log_from_browser_to_server_for_bake;
             let dev = crate::bake::DevServer::init(crate::bake::DevServer::Options {
@@ -1954,8 +1948,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 bundler_options: core::mem::take(&mut bake_options.bundler_options),
                 broadcast_console_log_from_browser_to_server: broadcast,
             })?;
-            // SAFETY: `server` is uniquely owned here.
-            unsafe { (*server).dev_server.set(Some(dev)) };
+            owner.dev_server.set(Some(dev));
         }
 
         if SSL {
@@ -2320,7 +2313,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // SAFETY: `dev` is the live `*mut DevServer` snapshotted from
             // `self.dev_server` above; no other `&mut` to it is live.
             has_dev_server_for_star_path =
-                bun_core::handle_oom(unsafe { &mut *dev }.set_routes::<SSL, DEBUG>(self));
+                bun_core::handle_oom(unsafe { &mut *dev }.set_routes(self, app));
             if has_dev_server_for_star_path {
                 // Assume dev server "/*" covers all methods if it exists
                 star_methods_covered_by_user = http_method::Set::all();
@@ -3856,58 +3849,22 @@ pub(crate) enum SavedRequestUnion<'a> {
     Saved(&'a SavedRequest),
 }
 
-// ─── schedule_deinit's tasks ─────────────────────────────────────────────────
-/// `schedule_deinit`'s first task, `app.close()`: same pointer as the app, one tag per `SSL`.
-#[repr(transparent)]
-pub(crate) struct AppCloseTask<const SSL: bool>(uws_sys::NewApp<SSL>);
-
-impl<const SSL: bool> bun_event_loop::Taskable for AppCloseTask<SSL> {
-    const TAG: bun_event_loop::TaskTag = if SSL {
-        bun_event_loop::task_tag::HTTPSAppClose
-    } else {
-        bun_event_loop::task_tag::HTTPAppClose
-    };
-    /// The app goes with its server.
-    unsafe fn release_unrun(_: *mut Self) {}
-    /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
-        bun_event_loop::ContextId::NONE
-    }
-}
-
-impl<const SSL: bool> AppCloseTask<SSL> {
-    pub(crate) fn run(this: *mut Self) {
-        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-        bun_opaque::opaque_deref_mut(this.cast::<uws_sys::NewApp<SSL>>()).close();
-    }
-}
-
-/// `schedule_deinit`'s second task, the free: same pointer as the server, one tag per
-/// monomorphization.
-#[repr(transparent)]
-pub(crate) struct ServerDeinitTask<const SSL: bool, const DEBUG: bool>(NewServer<SSL, DEBUG>);
-
-impl<const SSL: bool, const DEBUG: bool> bun_event_loop::Taskable for ServerDeinitTask<SSL, DEBUG> {
+// ─── schedule_deinit's task ──────────────────────────────────────────────────
+impl<const SSL: bool, const DEBUG: bool> bun_event_loop::Taskable for NewServer<SSL, DEBUG> {
     const TAG: bun_event_loop::TaskTag = match (SSL, DEBUG) {
         (false, false) => bun_event_loop::task_tag::HTTPServerDeinit,
         (true, false) => bun_event_loop::task_tag::HTTPSServerDeinit,
         (false, true) => bun_event_loop::task_tag::DebugHTTPServerDeinit,
         (true, true) => bun_event_loop::task_tag::DebugHTTPSServerDeinit,
     };
+    type Payload = bun_ptr::AliasableBox<Self>;
     /// Frees nothing: a server whose deinit is still queued when its VM stops stays allocated.
-    unsafe fn release_unrun(_: *mut Self) {}
-    /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
-        bun_event_loop::ContextId::NONE
+    fn release_unrun(server: Self::Payload) {
+        server.into_raw();
     }
-}
-
-impl<const SSL: bool, const DEBUG: bool> ServerDeinitTask<SSL, DEBUG> {
-    /// # Safety
-    /// `this` is the unique owning server pointer `schedule_deinit` queued.
-    pub(crate) unsafe fn run(this: *mut Self) {
-        // SAFETY: caller contract.
-        unsafe { bun_core::heap::destroy(this) };
+    /// Enters no context.
+    fn context(_: &Self::Payload) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

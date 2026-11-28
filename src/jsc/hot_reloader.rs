@@ -216,7 +216,7 @@ impl HotReloader {
         PENDING_RELOADS.fetch_add(1, Ordering::Relaxed);
 
         BunDebugger__willHotReload();
-        let _ = handle.post(crate::LoopKind::Regular, Box::new(HotReloadTask));
+        let _ = handle.post::<HotReloadTask>(crate::LoopKind::Regular, Box::new(HotReloadTask));
 
         // The JS thread emits kill-signal listeners then execve; if it's stuck in sync code it
         // never drains the posted task. Arm a one-shot timer that forces the reload after a
@@ -581,7 +581,7 @@ impl bun_watcher::WatcherContext for HotReloader {
                                         // Probe `.data` under `entries_mutex`; a
                                         // resolver at a newer generation rewrites
                                         // the map in place under that lock. The
-                                        // entry pointer stays valid after unlock
+                                        // entry stays valid after unlock
                                         // (EntryStore-owned).
                                         let looked_up = {
                                             let _entries_lock = rfs.entries_mutex.lock_guard();

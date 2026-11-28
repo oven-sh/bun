@@ -4,6 +4,7 @@ use super::*;
 use crate::timer::OwnedTimer;
 use bun_collections::index_sort;
 use bun_ptr::AliasableBox;
+use core::ffi::c_char;
 use core::ops::DerefMut;
 use core::ptr::NonNull;
 use std::sync::Arc;

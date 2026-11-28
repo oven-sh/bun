@@ -145,7 +145,7 @@ unsafe extern "C" fn SHA256_Final(out: *mut u8, sha: *mut SHA256_CTX) -> c_int {
     1
 }
 
-static SHA256_MARKER: u8 = 0;
+static SHA256_MARKER: usize = 0;
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]

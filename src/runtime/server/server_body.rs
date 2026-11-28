@@ -23,7 +23,7 @@ use crate::webcore::{
     self as WebCore, AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response, request,
 };
 use ::bstr::BStr;
-use bun_collections::HashMap;
+use bun_collections::{HashMap, HiveArrayFallback, HiveSlot};
 use bun_core::scoped::ScopedFlag as _;
 use bun_core::{EncodedSlice, String as BunString, StringView, Utf8Bytes, strings};
 use bun_core::{Output, fmt as bun_fmt};
@@ -58,6 +58,7 @@ macro_rules! ctx_log {
     ($($arg:tt)*) => { bun_output::scoped_log!(RequestContext, $($arg)*) };
 }
 
+use super::request_context::REQUEST_CONTEXT_POOL_CAPACITY;
 use bun_jsc::bun_string_jsc;
 
 // ─── Re-exports ──────────────────────────────────────────────────────────────
@@ -81,27 +82,28 @@ pub(super) use super::static_route::StaticRoute;
 // response handle is a separate generic (`R: RespLike`) at each dispatch
 // entry point: the MUX instantiation serves both `h2::Response` and
 // `h3::Response`.
-trait RequestCtx: super::any_request_context::CtxKind {
+trait RequestCtx: super::any_request_context::CtxKind + Sized {
+    type Server;
     type Req: ReqLike;
     const IS_MUX: bool;
+    fn pool(server: &Self::Server)
+    -> *const HiveArrayFallback<Self, REQUEST_CONTEXT_POOL_CAPACITY>;
 }
-impl<ThisServer, const SSL: bool, const DBG: bool> RequestCtx
-    for NewRequestContext<ThisServer, SSL, DBG, false>
-where
-    ThisServer: super::ServerLike + 'static,
-    NewRequestContext<ThisServer, SSL, DBG, false>: super::any_request_context::CtxKind,
-{
+impl<const SSL: bool, const DBG: bool> RequestCtx for ServerRequestContext<SSL, DBG> {
+    type Server = NewServer<SSL, DBG>;
     type Req = uws_sys::Request;
     const IS_MUX: bool = false;
+    fn pool(server: &Self::Server) -> *const super::RequestPool<SSL, DBG, false> {
+        server.request_pool.as_const_ptr()
+    }
 }
-impl<ThisServer, const SSL: bool, const DBG: bool> RequestCtx
-    for NewRequestContext<ThisServer, SSL, DBG, true>
-where
-    ThisServer: super::ServerLike + 'static,
-    NewRequestContext<ThisServer, SSL, DBG, true>: super::any_request_context::CtxKind,
-{
+impl<const SSL: bool, const DBG: bool> RequestCtx for ServerMuxRequestContext<SSL, DBG> {
+    type Server = NewServer<SSL, DBG>;
     type Req = uws_sys::h3::Request;
     const IS_MUX: bool = true;
+    fn pool(server: &Self::Server) -> *const super::RequestPool<SSL, DBG, true> {
+        server.mux_request_pool.get()
+    }
 }
 
 /// Field/method surface needed on the generic `Ctx` so the bodies of
@@ -109,15 +111,14 @@ where
 /// can be written without naming the concrete `RequestContext<_, SSL, DBG, MUX>`
 /// type. Implemented via blanket impl below for every `NewRequestContext<..>`.
 trait RequestCtxOps: RequestCtx {
-    type Server;
     type Dispatch;
     fn create_in(
-        slot: *mut Self,
+        slot: HiveSlot<'_, Self, REQUEST_CONTEXT_POOL_CAPACITY>,
         server: &Self::Server,
         req: &mut Self::Req,
         resp: uws::AnyResponse,
-        method: Option<http::Method>,
-    );
+        method: http::Method,
+    ) -> NonNull<Self>;
     fn dispatch(&self) -> Self::Dispatch;
     fn respond(
         dispatch: Self::Dispatch,
@@ -155,28 +156,25 @@ trait RequestCtxOps: RequestCtx {
 impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> RequestCtxOps
     for NewRequestContext<ThisServer, SSL, DBG, MUX>
 where
-    Self: RequestCtx,
+    Self: RequestCtx<Server = ThisServer>,
     ThisServer: super::ServerLike + 'static,
 {
-    type Server = ThisServer;
     type Dispatch = Dispatch<ThisServer, SSL, DBG, MUX>;
     #[inline]
     fn create_in(
-        slot: *mut Self,
+        slot: HiveSlot<'_, Self, REQUEST_CONTEXT_POOL_CAPACITY>,
         server: &ThisServer,
         req: &mut Self::Req,
         any_resp: uws::AnyResponse,
-        method: Option<http::Method>,
-    ) {
-        // SAFETY: `slot` points at a fresh HiveArray pool entry; treat as
-        // MaybeUninit for in-place construction — `&mut` scoped to this call.
+        method: http::Method,
+    ) -> NonNull<Self> {
         Self::create(
-            unsafe { &mut *slot.cast::<core::mem::MaybeUninit<Self>>() },
+            slot,
             server,
             std::ptr::from_mut(req).cast(),
             any_resp,
             method,
-        );
+        )
     }
     #[inline]
     fn dispatch(&self) -> Self::Dispatch {
@@ -364,11 +362,7 @@ impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
     fn on_timeout_warn(&mut self, ud: *mut c_void) {
         // The dev-mode idle-timeout warning ignores both args; the user-data
         // pointer is an opaque sentinel (any non-null value satisfies uWS).
-        uws_sys::NewAppResponse::<SSL>::on_timeout(
-            self,
-            |_: *mut c_void, _: &mut uws_sys::NewAppResponse<SSL>| on_timeout_for_idle_warn(),
-            ud,
-        );
+        uws_sys::NewAppResponse::<SSL>::on_timeout(self, |_, _| on_timeout_for_idle_warn(), ud);
     }
     #[inline]
     fn to_any_response(&mut self) -> uws::AnyResponse {
@@ -407,11 +401,7 @@ impl RespLike for uws_sys::h3::Response {
     }
     #[inline]
     fn on_timeout_warn(&mut self, ud: *mut c_void) {
-        uws_sys::h3::Response::on_timeout(
-            self,
-            |_: *mut c_void, _: &mut uws_sys::h3::Response| on_timeout_for_idle_warn(),
-            ud,
-        );
+        uws_sys::h3::Response::on_timeout(self, |_, _| on_timeout_for_idle_warn(), ud);
     }
     #[inline]
     fn to_any_response(&mut self) -> uws::AnyResponse {
@@ -438,11 +428,7 @@ impl RespLike for uws_sys::h2::Response {
     }
     #[inline]
     fn on_timeout_warn(&mut self, ud: *mut c_void) {
-        uws_sys::h2::Response::on_timeout(
-            self,
-            |_: *mut c_void, _: &mut uws_sys::h2::Response| on_timeout_for_idle_warn(),
-            ud,
-        );
+        uws_sys::h2::Response::on_timeout(self, |_, _| on_timeout_for_idle_warn(), ud);
     }
     #[inline]
     fn to_any_response(&mut self) -> uws::AnyResponse {
@@ -1289,17 +1275,14 @@ where
 {
     unsafe fn on_websocket_upgrade(
         this: *mut Self,
-        res: *mut uws_sys::NewAppResponse<SSL>,
+        res: &mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws_sys::Request,
         context: &WebSocketUpgradeContext,
         id: usize,
     ) {
-        // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         // SAFETY: forwarded raw — `this` is only dereferenced after the `id`
         // dispatch inside `on_web_socket_upgrade`.
-        unsafe {
-            Self::on_web_socket_upgrade(this, bun_opaque::opaque_deref_mut(res), req, context, id)
-        };
+        unsafe { Self::on_web_socket_upgrade(this, res, req, context, id) };
     }
 }
 
@@ -1704,7 +1687,8 @@ where
                 options.data,
                 signal,
                 super::server_web_socket::Flags::default(),
-            );
+            )
+            .payload_guard();
             options.data.ensure_still_alive();
 
             resp.clear_aborted();
@@ -1719,14 +1703,13 @@ where
             drop(detached);
 
             if !resp.upgrade(
-                ws,
+                ws.as_ptr(),
                 sec_websocket_key.slice(),
                 sec_websocket_protocol,
                 sec_websocket_extensions.slice(),
                 &upgrade_ctx,
             ) {
-                // SAFETY: `ws` is stored inline in its JS wrapper, which it keeps alive. uWS never stored it.
-                unsafe { &*ws }.discard_unopened();
+                ws.discard_unopened();
                 return;
             }
             upgraded = Ok(true);
@@ -1971,10 +1954,8 @@ where
                     if let Some(headers__) = FetchHeaders::cast_(headers_, global.vm()) {
                         // Copy the headers like `new Request(url, { headers })` does.
                         // S008: `FetchHeaders` is an opaque ZST FFI handle — safe deref.
-                        headers = bun_opaque::opaque_deref_mut(headers__.as_ptr())
-                            .clone_this(global)?
-                            // SAFETY: `clone_this` returns a +1 ref.
-                            .map(|p| unsafe { HeadersRef::adopt(p) });
+                        headers =
+                            FetchHeaders::opaque_ref(headers__.as_ptr()).clone_this(global)?;
                     } else {
                         headers = HeadersRef::create_from_js(global, headers_)?;
                     }
@@ -2444,6 +2425,7 @@ where
         // Resolve once, reuse for both `has_request_body()` and the forward to
         // `Ctx::create`.
         let method = method.or_else(|| http::Method::which(ReqLike::method(req)));
+        let resolved_method = method.unwrap_or(http::Method::GET);
 
         let request_body_length: Option<usize> = 'request_body_length: {
             if method.unwrap_or(http::Method::OPTIONS).has_request_body() {
@@ -2487,35 +2469,16 @@ where
         }
 
         let any_resp = RespLike::to_any_response(resp);
-        // SAFETY: both allocators hand out `*mut RequestContext<_, SSL, DEBUG, _>`; the
-        // const-bool MUX parameter only affects associated consts/types, not layout, so
-        // reinterpreting the slot pointer as the caller's `Ctx` monomorphization is sound.
-        //
-        // `claim()` reserves the slot as a `HiveSlot`; `create_in` does
-        // `MaybeUninit::write` placement-new through the slot's stable
-        // address, after which `assume_init()` consumes the token.
-        // `RequestContext` carries the heaviest drop glue in the codebase, so
-        // a panic inside `create_in` now releases the slot via
-        // `HiveSlot::drop` without running `RequestContext::drop` on garbage.
-        let ctx_slot: *mut Ctx = unsafe {
-            if Ctx::IS_MUX {
-                debug_assert!(
-                    !self.mux_request_pool.get().is_null(),
-                    "HTTP/2 or HTTP/3 request dispatched but mux_request_pool was never allocated"
-                );
-                let slot = (*self.mux_request_pool.get()).claim();
-                Ctx::create_in(slot.addr().as_ptr().cast(), self, req, any_resp, method);
-                // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
-                slot.assume_init().as_ptr().cast()
-            } else {
-                let slot = self.request_pool.claim();
-                Ctx::create_in(slot.addr().as_ptr().cast(), self, req, any_resp, method);
-                // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
-                slot.assume_init().as_ptr().cast()
-            }
-        };
+        let pool = Ctx::pool(self);
+        debug_assert!(
+            !pool.is_null(),
+            "HTTP/2 or HTTP/3 request dispatched but mux_request_pool was never allocated"
+        );
+        // SAFETY: `init()` or `listen()` set it before the app could dispatch, and the VM keeps its pools.
+        let slot = unsafe { &*pool }.claim();
+        let ctx_slot = Ctx::create_in(slot, self, req, any_resp, resolved_method);
         // SAFETY: ctx_slot was just initialized by create_in.
-        let ctx = unsafe { &*ctx_slot };
+        let ctx = unsafe { ctx_slot.as_ref() };
         let dispatch = ctx.dispatch();
 
         self.vm()
@@ -2545,12 +2508,9 @@ where
         // eagerly so the rest of the pipeline never needs to know which
         // transport delivered the bytes.
         if Ctx::IS_MUX {
-            // SAFETY: create_from_h3 returns a +1-ref FetchHeaders; adopt into RAII wrapper.
-            request_object.set_fetch_headers(Some(unsafe {
-                crate::webcore::response::HeadersRef::adopt(FetchHeaders::create_from_h3(
-                    std::ptr::from_mut(req).cast::<c_void>(),
-                ))
-            }));
+            request_object.set_fetch_headers(Some(HeadersRef::create_from_h3(
+                std::ptr::from_mut(req).cast::<c_void>(),
+            )));
             // NOTE: `ReqLike::{url,header}` both borrow `&mut req`; the
             // returned slices alias the same uWS-owned header buffer. Format
             // the `https://{host}` prefix while `host` is borrowed so the
@@ -2611,7 +2571,7 @@ where
                 // we don't waste memory
                 if let Some(body) = ctx.request_body_mut() {
                     *body = BodyValue::Locked(crate::webcore::body::PendingValue {
-                        task: Some(NonNull::new(ctx_slot).unwrap().cast::<c_void>()),
+                        task: Some(ctx_slot.cast::<c_void>()),
                         global: self.global_this,
                         on_start_buffering: Some(Ctx::on_start_buffering_callback),
                         on_start_streaming: Some(Ctx::on_start_streaming_request_body_callback),
@@ -2619,7 +2579,7 @@ where
                             Ctx::on_request_body_readable_stream_available,
                         ),
                         producer: crate::webcore::streams::SourceHandle::ServerRequestBody(
-                            AnyRequestContext::init(ctx_slot),
+                            AnyRequestContext::init(ctx_slot.as_ptr()),
                         ),
                         ..Default::default()
                     });
@@ -2729,15 +2689,16 @@ where
         req.set_yield(false);
         // `claim()` reserves a fresh slot whose `Drop` releases it on panic before init.
         let ctx_slot = this.request_pool.claim();
-        <ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create_in(
-            ctx_slot.addr().as_ptr(),
+        let method = http::Method::which(req.method()).unwrap_or(http::Method::GET);
+        let ctx = <ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create_in(
+            ctx_slot,
             this,
             req,
             RespLike::to_any_response(resp),
-            None,
+            method,
         );
-        // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
-        let ctx = Dispatch::new(unsafe { ctx_slot.assume_init().as_ref() });
+        // SAFETY: `create_in` just made it, and it holds its base ref.
+        let ctx = Dispatch::new(unsafe { ctx.as_ref() });
 
         // Pooled body slot, ref_count = 1.
         let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);

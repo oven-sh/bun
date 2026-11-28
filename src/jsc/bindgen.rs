@@ -771,12 +771,7 @@ impl<'a> JsLatin1<'a> {
                 .owner
                 .substrings_of_resolved(heap.global_object(), &offsets_and_lengths)
         };
-        // SAFETY: `JsLocal` is `repr(transparent)` over `JSValue`.
-        unsafe {
-            (&raw const substrings)
-                .cast::<[JsLocal<'a, JSString>; N]>()
-                .read()
-        }
+        substrings.map(JsLocal::from_raw)
     }
 
     /// `part` as a string: a [`substring`](Self::substring) if it is a slice of [`characters`](Self::characters), a copy if it lies elsewhere.
@@ -1241,6 +1236,14 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
             }
             this
         }
+    }
+
+    /// As [`JsLocal::as_class_ref`], for an object whose class is known.
+    pub fn payload_guard(self) -> WrapperGuard<'a, T> {
+        const { assert!(T::SHARED_THIS) };
+        // SAFETY: a `JsWrapper` is only used from a frame that holds its cell, which holds the payload.
+        // No member takes `&mut self`.
+        unsafe { WrapperGuard::from_parts(self.to_js(), self.payload_ptr()) }
     }
 
     /// # Safety

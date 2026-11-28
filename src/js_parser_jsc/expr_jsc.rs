@@ -228,15 +228,7 @@ pub fn toml_datetime_to_js(
     kind: E::TomlDateTimeKind,
 ) -> bun_jsc::JsResult<JSValue> {
     debug_assert!(text.is_ascii());
-    // SAFETY: `text` is a live slice for the duration of the call.
-    unsafe {
-        bun_jsc::cpp::Bun__Temporal__fromDateTimeLiteral(
-            global,
-            text.as_ptr(),
-            text.len(),
-            kind as u8,
-        )
-    }
+    bun_jsc::cpp::Bun__Temporal__fromDateTimeLiteral(global, text, kind as u8)
 }
 
 fn utf8_bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> Result<JSValue, ToJSError> {

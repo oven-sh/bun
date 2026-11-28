@@ -6,7 +6,7 @@ use core::ffi::CStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 
-use bun_core::SensitiveCString;
+use bun_core::{CStrRef, SensitiveCString};
 use bun_uws as uws;
 // Wyhash final4 variant. NOT `Wyhash11`.
 use bun_threading::Guarded as Mutex;
@@ -165,63 +165,31 @@ impl SSLConfig {
         maybe_shared.map(|s| &raw const **s)
     }
 
-    pub fn as_usockets(&self) -> uws::socket_context::BunSocketContextOptions {
-        let mut ctx_opts = uws::socket_context::BunSocketContextOptions::default();
-
-        if let Some(key_file_name) = &self.key_file_name {
-            ctx_opts.key_file_name = key_file_name.as_ptr();
+    pub fn as_usockets(&self) -> uws::socket_context::BunSocketContextOptions<'_> {
+        uws::socket_context::BunSocketContextOptions {
+            key_file_name: self.key_file_name.as_ref().map(CStrRef::from),
+            cert_file_name: self.cert_file_name.as_ref().map(CStrRef::from),
+            passphrase: self.passphrase.as_ref().map(CStrRef::from),
+            dh_params_file_name: self.dh_params_file_name.as_ref().map(CStrRef::from),
+            ca_file_name: self.ca_file_name.as_ref().map(CStrRef::from),
+            ssl_ciphers: self.ssl_ciphers.as_ref().map(CStrRef::from),
+            ssl_prefer_low_memory_usage: i32::from(self.low_memory_mode),
+            allow_partial_trust_chain: i32::from(self.allow_partial_trust_chain),
+            key: self.key.as_deref().into(),
+            cert: self.cert.as_deref().into(),
+            ca: self.ca.as_deref().into(),
+            secure_options: self.secure_options,
+            ssl_min_version: self.ssl_min_version,
+            ssl_max_version: self.ssl_max_version,
+            reject_unauthorized: self.reject_unauthorized,
+            request_cert: self.request_cert,
+            client_renegotiation_limit: self.client_renegotiation_limit,
+            client_renegotiation_window: self.client_renegotiation_window,
+            session_timeout: self.session_timeout,
+            crl: self.crl.as_deref().into(),
+            sigalgs: self.sigalgs.as_ref().map(CStrRef::from),
+            ecdh_curve: self.ecdh_curve.as_ref().map(CStrRef::from),
         }
-        if let Some(cert_file_name) = &self.cert_file_name {
-            ctx_opts.cert_file_name = cert_file_name.as_ptr();
-        }
-        if let Some(ca_file_name) = &self.ca_file_name {
-            ctx_opts.ca_file_name = ca_file_name.as_ptr();
-        }
-        if let Some(dh_params_file_name) = &self.dh_params_file_name {
-            ctx_opts.dh_params_file_name = dh_params_file_name.as_ptr();
-        }
-        if let Some(passphrase) = &self.passphrase {
-            ctx_opts.passphrase = passphrase.as_ptr();
-        }
-        ctx_opts.ssl_prefer_low_memory_usage = i32::from(self.low_memory_mode);
-
-        if let Some(key) = &self.key {
-            ctx_opts.key = key.as_ptr().cast();
-            ctx_opts.key_count = key.len() as u32;
-        }
-        if let Some(cert) = &self.cert {
-            ctx_opts.cert = cert.as_ptr().cast();
-            ctx_opts.cert_count = cert.len() as u32;
-        }
-        if let Some(ca) = &self.ca {
-            ctx_opts.ca = ca.as_ptr().cast();
-            ctx_opts.ca_count = ca.len() as u32;
-        }
-
-        if let Some(ssl_ciphers) = &self.ssl_ciphers {
-            ctx_opts.ssl_ciphers = ssl_ciphers.as_ptr();
-        }
-        ctx_opts.request_cert = self.request_cert;
-        ctx_opts.reject_unauthorized = self.reject_unauthorized;
-        ctx_opts.ssl_min_version = self.ssl_min_version;
-        ctx_opts.ssl_max_version = self.ssl_max_version;
-        ctx_opts.secure_options = self.secure_options;
-        ctx_opts.client_renegotiation_limit = self.client_renegotiation_limit;
-        ctx_opts.client_renegotiation_window = self.client_renegotiation_window;
-        ctx_opts.session_timeout = self.session_timeout;
-        ctx_opts.allow_partial_trust_chain = i32::from(self.allow_partial_trust_chain);
-        if let Some(sigalgs) = &self.sigalgs {
-            ctx_opts.sigalgs = sigalgs.as_ptr();
-        }
-        if let Some(ecdh_curve) = &self.ecdh_curve {
-            ctx_opts.ecdh_curve = ecdh_curve.as_ptr();
-        }
-        if let Some(crl) = &self.crl {
-            ctx_opts.crl = crl.as_ptr().cast();
-            ctx_opts.crl_count = crl.len() as u32;
-        }
-
-        ctx_opts
     }
 
     /// Returns socket options for client-side TLS with manual verification.
@@ -229,7 +197,7 @@ impl SSLConfig {
     /// (to handle verification manually in handshake callback).
     pub fn as_usockets_for_client_verification(
         &self,
-    ) -> uws::socket_context::BunSocketContextOptions {
+    ) -> uws::socket_context::BunSocketContextOptions<'_> {
         let mut opts = self.as_usockets();
         opts.request_cert = 1;
         opts.reject_unauthorized = 0;

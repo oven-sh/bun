@@ -18,7 +18,7 @@
 //! and the write path can share it.
 //! Windows (no inheritable sockets): two uv_pipe()s driven here instead, see [`PipeEvent`] and `Bun__Chrome__writePipe`.
 
-use core::ffi::{CStr, c_char};
+use core::ffi::CStr;
 #[cfg(windows)]
 use core::sync::atomic::AtomicU32;
 use core::sync::atomic::{AtomicI32, Ordering};
@@ -136,14 +136,12 @@ extern "C" fn Bun__Chrome__retire() {
 /// Returns the parent's socketpair fd (POSIX, owned by usockets from then on), 0 (Windows), or -1 on failure.
 ///
 /// # Safety
-/// `user_data_dir` and `path` must each be null or point to a valid
-/// NUL-terminated string. `extra_argv` must be null or point to
-/// `extra_argv_len` valid NUL-terminated string pointers.
+/// `extra_argv` must be null or point to `extra_argv_len` valid NUL-terminated string pointers.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__Chrome__ensure(
     global: &JSGlobalObject,
-    user_data_dir: *const c_char,   // ?[*:0]const u8
-    path: *const c_char,            // ?[*:0]const u8
+    user_data_dir: Option<CStrRef<'_>>,
+    path: Option<CStrRef<'_>>,
     extra_argv: *const CStrRef<'_>, // ?[*]const [*:0]const u8
     extra_argv_len: u32,
     stdout_inherit: bool,
@@ -161,22 +159,10 @@ unsafe extern "C" fn Bun__Chrome__ensure(
             unsafe { core::slice::from_raw_parts(extra_argv, extra_argv_len as usize) }
         };
         let vm = global.bun_vm();
-        let user_data_dir = if user_data_dir.is_null() {
-            None
-        } else {
-            // SAFETY: caller passes a valid NUL-terminated string when non-null; null is handled above.
-            Some(unsafe { bun_core::ffi::cstr(user_data_dir) })
-        };
-        let path = if path.is_null() {
-            None
-        } else {
-            // SAFETY: caller passes a valid NUL-terminated string when non-null; null is handled above.
-            Some(unsafe { bun_core::ffi::cstr(path) })
-        };
         match spawn(
             vm,
-            user_data_dir,
-            path,
+            user_data_dir.map(CStrRef::to_cstr),
+            path.map(CStrRef::to_cstr),
             extra,
             stdout_inherit,
             stderr_inherit,
@@ -868,8 +854,7 @@ struct WriteReq {
 
 #[cfg(windows)]
 impl WriteReq {
-    /// Safety: `pipe` is the live command pipe of the Chrome with `generation`.
-    unsafe fn submit(pipe: *mut uv::Pipe, chunk: &[u8], generation: u32) -> bool {
+    fn submit(pipe: &mut uv::Owned<uv::Pipe>, chunk: &[u8], generation: u32) -> bool {
         let mut req = Box::new(WriteReq {
             req: bun_core::ffi::zeroed::<uv::uv_write_t>(),
             buf: uv::uv_buf_t::init(b""), // re-init below, once `bytes` has stopped moving
@@ -879,11 +864,11 @@ impl WriteReq {
         req.buf = uv::uv_buf_t::init(&req.bytes);
         let owned = bun_ptr::AliasableBox::from(req);
         let req = owned.as_ptr();
-        // SAFETY: caller contract; `req` stays put until `on_write` reclaims it.
+        // SAFETY: `req` stays put until `on_write` reclaims it, and `uv::Owned` frees an open pipe only once libuv has closed it.
         let rc = unsafe {
             (*req)
                 .req
-                .write(pipe.cast(), &(*req).buf, req, WriteReq::on_write)
+                .write(pipe.as_stream(), &(*req).buf, req, WriteReq::on_write)
         };
         if let Some(err) = rc.to_error(bun_sys::Tag::write) {
             scoped_log!(Chrome, "uv_write failed: {}", err);
@@ -913,15 +898,15 @@ unsafe extern "C" fn Bun__Chrome__writePipe(data: *const u8, len: usize) {
     // SAFETY: caller contract.
     let bytes = unsafe { bun_core::ffi::slice(data, len) };
     unreaped().with_taken(|unreaped| {
-        let Some(chrome) = unreaped.last().filter(|chrome| !chrome.retired) else {
+        let Some(chrome) = unreaped.last_mut().filter(|chrome| !chrome.retired) else {
             return; // Chrome already exited; the Exited event is on its way to C++
         };
-        let pipe = (chrome.pipes.cmd.as_ref()).expect("closed when it is retired");
+        let generation = chrome.generation;
+        let pipe = (chrome.pipes.cmd.as_mut()).expect("closed when it is retired");
         scoped_log!(Chrome, "write {} bytes", len);
         for chunk in bytes.chunks(u32::MAX as usize) {
-            // SAFETY: `pipe` belongs to `chrome`.
-            if !unsafe { WriteReq::submit(pipe.as_ptr(), chunk, chrome.generation) } {
-                PipeEvent::Closed.post(chrome.generation);
+            if !WriteReq::submit(pipe, chunk, generation) {
+                PipeEvent::Closed.post(generation);
                 return;
             }
         }

@@ -11,12 +11,9 @@ use crate::{EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError, JsResult};
 // ── extern decls ────────────────────────────────────────────────────────────
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle and `&String`/
 // `&mut String` are ABI-identical to non-null `*const String`/`*mut String`,
-// so shims that take only those are declared `safe fn`. The (ptr,len) pair
-// shims stay `unsafe fn`.
+// so shims that take only those are declared `safe fn`.
 //
-// `[[ZIG_EXPORT(...)]]`-annotated symbols (`BunString__toJS`, `BunString__fromJS`,
-// `BunString__transferToJS`, `BunString__toJSON`, `BunString__createUTF8ForJS`,
-// `Bun__parseDate`) are NOT redeclared here — route through `crate::cpp::*`,
+// `[[ZIG_EXPORT(...)]]`-annotated symbols are NOT redeclared here — route through `crate::cpp::*`,
 // which owns the canonical extern decl + per-mode exception scope.
 unsafe extern "C" {
     safe fn BunString__toJSDOMURL(global_object: &JSGlobalObject, in_: &String) -> JSValue;
@@ -24,11 +21,6 @@ unsafe extern "C" {
         str: &String,
         global_object: &JSGlobalObject,
         kind: ErrorKind,
-    ) -> JSValue;
-    fn BunString__createArray(
-        global_object: &JSGlobalObject,
-        ptr: *const String,
-        len: usize,
     ) -> JSValue;
 }
 
@@ -67,14 +59,7 @@ impl StringJsc for String {
     fn from_js(value: JSValue, global_object: &JSGlobalObject) -> JsResult<String> {
         crate::validation_scope!(scope, global_object);
         let mut out: String = String::DEAD;
-        // SAFETY: `global_object` is a valid handle; `out` is a live stack out-param.
-        let ok = unsafe {
-            crate::cpp::raw::BunString__fromJS(
-                core::ptr::from_ref(global_object).cast_mut(),
-                value,
-                &raw mut out,
-            )
-        };
+        let ok = crate::cpp::BunString__fromJS(global_object, value, &mut out);
 
         // If there is a pending exception, but stringifying succeeds, we don't return JSError.
         // We do need to always call hasException() to satisfy the need for an exception check.
@@ -89,19 +74,16 @@ impl StringJsc for String {
     }
     #[track_caller]
     fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        // SAFETY: `self` borrows a live `String` for the call duration.
-        unsafe { crate::cpp::BunString__toJS(global_object, self) }
+        crate::cpp::BunString__toJS(global_object, self)
     }
     #[track_caller]
     fn into_js(mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        // SAFETY: C++ moves the ref out of `self` (leaving it Dead) and the cppbind
-        // wrapper opens its own validation scope.
-        unsafe { crate::cpp::BunString__transferToJS(&raw mut self, global_this) }
+        // C++ moves the ref out of `self`, leaving it Dead.
+        crate::cpp::BunString__transferToJS(&mut self, global_this)
     }
     #[track_caller]
     fn to_js_by_parse_json(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        // SAFETY: `self` is a live `&String`.
-        unsafe { crate::cpp::BunString__toJSON(global_object, self) }
+        crate::cpp::BunString__toJSON(global_object, self)
     }
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
         error_instance(self, global, ErrorKind::Error)
@@ -142,24 +124,13 @@ pub fn to_jsdomurl(this: &String, global_object: &JSGlobalObject) -> JsResult<JS
 }
 
 /// calls toJS on all elements of `array`.
-#[track_caller]
 pub fn to_js_array(global_object: &JSGlobalObject, array: &[String]) -> JsResult<JSValue> {
-    // SAFETY: FFI call into JSC; `array` ptr/len from a live slice, global_object borrowed for call duration.
-    crate::from_js_host_call(global_object, || unsafe {
-        BunString__createArray(global_object, array.as_ptr(), array.len())
-    })
+    crate::cpp::BunString__createArray(global_object, array)
 }
 
 #[track_caller]
 pub fn create_utf8_for_js(global_object: &JSGlobalObject, utf8_slice: &[u8]) -> JsResult<JSValue> {
-    // SAFETY: FFI call into JSC; ptr/len from a live &[u8], global_object borrowed for call duration.
-    unsafe {
-        crate::cpp::BunString__createUTF8ForJS(
-            global_object,
-            utf8_slice.as_ptr().cast(),
-            utf8_slice.len(),
-        )
-    }
+    crate::cpp::BunString__createUTF8ForJS(global_object, utf8_slice)
 }
 
 /// UTF-8 `Vec<u8>` → JS string; the allocation (or its transcode) is
@@ -226,8 +197,7 @@ pub fn try_owned_utf16_into_js(global_object: &JSGlobalObject, utf16: Vec<u16>) 
 
 #[track_caller]
 pub fn parse_date(this: &String, global_object: &JSGlobalObject) -> JsResult<f64> {
-    // SAFETY: `this` is a live `&String`; cppbind wrapper opens its own scope.
-    unsafe { crate::cpp::Bun__parseDate(global_object, this) }
+    crate::cpp::Bun__parseDate(global_object, this)
 }
 
 // ── escapeRegExp ────────────────────────────────────────────────────────────

@@ -218,7 +218,6 @@ pub struct VirtualMachine {
     /// counter stays at zero).
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: JsCell<Vec<Box<[u8]>>>,
-    pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
     // Note: layering — the concrete `bun_standalone_graph::Graph` lives
     // in a higher-tier crate. The resolver already broke that cycle with the
     // `bun_resolver::StandaloneModuleGraph` trait; we hold the same trait
@@ -1108,7 +1107,10 @@ impl VirtualMachine {
 
     /// The context that tracks the timers set under `id`: a graph's, or the one standing in for
     /// graphs that are gone.
-    pub fn timer_context(&self, id: crate::ContextId) -> Option<&crate::ScriptExecutionContext> {
+    pub(crate) fn timer_context(
+        &self,
+        id: crate::ContextId,
+    ) -> Option<&crate::ScriptExecutionContext> {
         if id == self.dead_context.id() {
             return Some(&self.dead_context);
         }
@@ -1227,8 +1229,7 @@ impl VirtualMachine {
     pub(crate) fn stop_graph_context_again(&self, id: crate::ContextId) {
         if id == self.dead_context.id() {
             if !self.dead_context.stop_again_is_queued() {
-                let task = core::ptr::null_mut::<DeadContextStopAgain>();
-                self.enqueue_task(bun_event_loop::Task::init(task));
+                self.enqueue_task(bun_event_loop::Task::new::<DeadContextStopAgain>(()));
             }
             return;
         }
@@ -1236,9 +1237,7 @@ impl VirtualMachine {
             .graph_context(id)
             .is_some_and(|context| !context.stop_again_is_queued())
         {
-            self.enqueue_task(bun_event_loop::Task::init(
-                id.raw() as usize as *mut GraphContextStopAgain
-            ));
+            self.enqueue_task(bun_event_loop::Task::new::<GraphContextStopAgain>(id));
         }
     }
 
@@ -1299,7 +1298,7 @@ impl VirtualMachine {
         };
         self.jobs.get().cancel_of_context(context.id());
         if let Some(hooks) = runtime_hooks() {
-            (hooks.cancel_timers)(self, Some(context.id()));
+            (hooks.cancel_timers)(self, Some(context));
         }
         result
     }
@@ -1320,9 +1319,8 @@ impl VirtualMachine {
             unsafe { self.free_graph_context(released.id()) };
             return;
         }
-        self.enqueue_task(bun_event_loop::Task::init(
-            context.as_ptr().cast::<GraphContextStopAndFree>(),
-        ));
+        let task = GraphContextStopAndFree(released.id());
+        self.enqueue_task(bun_event_loop::Task::new::<GraphContextStopAndFree>(task));
     }
 
     /// # Safety
@@ -1677,17 +1675,12 @@ impl VirtualMachine {
         self.event_loop().wakeup();
     }
 
-    pub fn on_quiet_unhandled_rejection_handler_capture_value(
+    pub(crate) fn on_quiet_unhandled_rejection_handler(
         this: &VirtualMachine,
         _: &JSGlobalObject,
-        value: JSValue,
+        _: JSValue,
     ) {
         this.unhandled_error_counter.update(|n| n + 1);
-        value.ensure_still_alive();
-        if let Some(ptr) = this.unhandled_pending_rejection_to_capture {
-            // SAFETY: caller passed &mut stack_var (see LIFETIMES.tsv)
-            unsafe { *ptr = value };
-        }
     }
 
     pub fn unhandled_rejection_scope(&self) -> UnhandledRejectionScope {
@@ -1794,40 +1787,13 @@ impl VirtualMachine {
         let _ = self.event_loop().drain_microtasks();
     }
 
-    /// Routes `f` through `JSC__VM__holdAPILock` via an `OpaqueWrap`-style C
-    /// trampoline so the JSC API lock is held for the full duration of `f()`.
+    /// Holds the JSC API lock for the full duration of `f()`.
     pub fn run_with_api_lock<F, R>(&self, f: F) -> R
     where
         F: FnOnce() -> R,
     {
-        use core::mem::{ManuallyDrop, MaybeUninit};
-
-        // Note: the closure carries its own context, so the trampoline state is
-        // just `{ closure, out-slot }`. `ManuallyDrop` lets us move the `FnOnce`
-        // out by value inside the `extern "C"` body without `Option::take`.
-        struct Trampoline<F, R> {
-            f: ManuallyDrop<F>,
-            result: MaybeUninit<R>,
-        }
-
-        extern "C" fn call<F: FnOnce() -> R, R>(ctx: *mut c_void) {
-            // SAFETY: `ctx` is `&mut Trampoline<F, R>` on the caller's stack;
-            // `JSC__VM__holdAPILock` invokes us exactly once with that pointer.
-            let t = unsafe { bun_ptr::callback_ctx::<Trampoline<F, R>>(ctx) };
-            // SAFETY: single-shot — `f` is taken exactly once.
-            let f = unsafe { ManuallyDrop::take(&mut t.f) };
-            t.result.write(f());
-        }
-
-        let mut t = Trampoline::<F, R> {
-            f: ManuallyDrop::new(f),
-            result: MaybeUninit::uninit(),
-        };
-        // `t` lives on this stack frame for the duration of the FFI call, which
-        // invokes `call` exactly once before returning.
-        JSC__VM__holdAPILock(self.jsc_vm(), (&raw mut t).cast(), call::<F, R>);
-        // SAFETY: `call` wrote `t.result` exactly once above.
-        unsafe { t.result.assume_init() }
+        let _api_lock = self.jsc_vm().get_api_lock();
+        f()
     }
 
     #[cold]
@@ -2209,7 +2175,7 @@ impl VirtualMachine {
         }
         let this = Self::get_mut_ptr();
         // SAFETY: main-thread VM on the main thread; exit handlers have run.
-        let can_drop = unsafe { Self::teardown(this, Teardown::MainThreadExit) };
+        let can_drop = unsafe { self.teardown(Teardown::MainThreadExit) };
         let exit_code = self.exit_handler.exit_code.get();
         if can_drop {
             // SAFETY: no frame of this thread resumes. The allocation stays for signal handlers.
@@ -2232,7 +2198,7 @@ impl VirtualMachine {
         let exit_code = vm.exit_handler.exit_code.get();
         // SAFETY: fn contract; `init` boxed it.
         unsafe {
-            Self::teardown(this, Teardown::Worker);
+            vm.teardown(Teardown::Worker);
             bun_core::heap::destroy(this);
         }
         VMHolder::set_vm(None);
@@ -2285,12 +2251,10 @@ impl VirtualMachine {
     /// Returns whether the VM can be dropped, which a worker's always can.
     ///
     /// # Safety
-    /// `this` is this thread's VM and no other thread can reach it any more
+    /// `self` is this thread's VM and no other thread can reach it any more
     /// (worker: its handle unpublished); `is_shutting_down` is set and
     /// the exit handlers have run.
-    unsafe fn teardown(this: *mut Self, kind: Teardown) -> bool {
-        // SAFETY: per fn contract — sole owner on the owning thread.
-        let vm = unsafe { &*this };
+    unsafe fn teardown(&self, kind: Teardown) -> bool {
         let hooks = runtime_hooks();
 
         // ---- A. no more script; stop phase ------------------------------------
@@ -2300,12 +2264,12 @@ impl VirtualMachine {
         // scope, WebCore's ActiveDOMObject::stop() runs no script — so no
         // 'close'/'error' handler runs after 'exit', and nothing can reopen what
         // a sweep just closed.
-        vm.forbid_script();
-        Zig__GlobalObject__prepareForDestruction(vm.global());
+        self.forbid_script();
+        Zig__GlobalObject__prepareForDestruction(self.global());
         // SAFETY: fn contract.
         let sweep = || unsafe {
-            let _ = Self::stop_phase_sweep(this, kind);
-            let second = Self::stop_phase_sweep(this, kind);
+            let _ = self.stop_phase_sweep(kind);
+            let second = self.stop_phase_sweep(kind);
             debug_assert!(
                 second == SweepResult::Idle,
                 "a native close path registered a stoppable resource during teardown"
@@ -2329,7 +2293,7 @@ impl VirtualMachine {
 
         // ---- B. release ------------------------------------------------------
         #[cfg(windows)]
-        if let Some(t) = vm.event_loop().forever_timer.take() {
+        if let Some(t) = self.event_loop().forever_timer.take() {
             // SAFETY: live usockets timer from `hold_forever_poll`; closed like
             // any us_timer (freed by its close callback when the loop turns).
             unsafe { uws::Timer::close::<true>(t.as_ptr()) };
@@ -2341,19 +2305,19 @@ impl VirtualMachine {
             // (and the loop handle it embeds) stays up: JSC's own RunLoop timers
             // — GC activity callbacks, sweeper, deferred work — are WTFTimers on
             // this heap and keep being scheduled until ~VM returns.
-            (hooks.cancel_timers)(vm, None);
+            (hooks.cancel_timers)(self, None);
             // And unlink every other kind of EventLoopTimer (socket timeouts,
             // reconnect/lifetime timers, schedulers): their owners stay valid
             // and find them CANCELLED, but nothing fires again even where the
             // loop still turns (JSC's timers).
             // SAFETY: fn contract.
-            unsafe { (hooks.disarm_all_timers_for_vm_teardown)(this) };
+            unsafe { (hooks.disarm_all_timers_for_vm_teardown)() };
         }
-        vm.gc_controller.disabled.set(true);
-        crate::web_worker::join_child_workers(vm.child_workers.take());
+        self.gc_controller.disabled.set(true);
+        crate::web_worker::join_child_workers(self.child_workers.take());
         // Children have closed their own; now this VM's sqlite connections
         // checkpoint and close, before finalizers could.
-        vm.close_sqlite_databases_for_exit();
+        self.close_sqlite_databases_for_exit();
         // The one place the invariant is enforced: nothing below runs until
         // everything that left this thread (pool jobs, fetches, uv work, C++
         // work-queue tasks, child threads) has come back. Whatever arrives
@@ -2361,23 +2325,23 @@ impl VirtualMachine {
         // this thread with the heap alive, never run.
         teardown_log!(
             "teardown: waiting for {} ticket(s) held off-thread",
-            vm.handle.tickets_outstanding()
+            self.handle.tickets_outstanding()
         );
         // A released completion can be a native continuation that opens
         // something new (a multipart upload's next part); sweep again so it is
         // cancelled rather than waited out.
-        vm.handle.close_and_wait(|| {
-            vm.release_queued_work();
+        self.handle.close_and_wait(|| {
+            self.release_queued_work();
             // SAFETY: fn contract.
-            let _ = unsafe { Self::stop_phase_sweep(this, kind) };
+            let _ = unsafe { self.stop_phase_sweep(kind) };
         });
         // Node-API finalizers that `NapiEnv::cleanup` held back for an `execute()` on the pool.
-        if let Some(rare) = vm.rare_data.get() {
+        if let Some(rare) = self.rare_data.get() {
             let held_back = rare.cleanup_hooks_after_teardown_wait.take();
             rare.cleanup_hooks.with_mut(|hooks| hooks.extend(held_back));
         }
-        vm.run_cleanup_hooks();
-        vm.stop_watcher();
+        self.run_cleanup_hooks();
+        self.stop_watcher();
         // The exiting main thread now parks the process-wide HTTP thread —
         // after the children it also served are joined and this VM's own
         // requests are back — so it cannot touch what process exit frees. If
@@ -2386,32 +2350,32 @@ impl VirtualMachine {
             teardown_log!("teardown: HTTP thread unresponsive; skipping to process exit");
             return false;
         }
-        if let Some(rare) = vm.rare_data.get() {
+        if let Some(rare) = self.rare_data.get() {
             rare.release_js_handles();
         }
         teardown_log!("teardown: script forbidden, resources cancelled, off-thread work back");
 
         // ---- C. JSC VM -------------------------------------------------------
-        if let Some(worker) = vm.worker_ref() {
+        if let Some(worker) = self.worker_ref() {
             worker.will_wait_for_nothing_more();
         }
-        vm.regular_event_loop.release_without_global();
-        vm.macro_event_loop.release_without_global();
+        self.regular_event_loop.release_without_global();
+        self.macro_event_loop.release_without_global();
         match kind {
-            Teardown::Worker => WebWorker__teardownJSCVM(vm.global()),
+            Teardown::Worker => WebWorker__teardownJSCVM(self.global()),
             Teardown::MainThreadExit => {
-                Zig__GlobalObject__destructOnExit(vm.global());
+                Zig__GlobalObject__destructOnExit(self.global());
                 VMHolder::set_cached_global_object(Some(core::ptr::null_mut()));
             }
         }
         // Finalizers just closed the sockets only they owned; `us_socket_close`
         // queues onto `loop->data.closed_head`, normally freed on the next tick.
-        vm.uws_loop().drain_closed_sockets();
+        self.uws_loop().drain_closed_sockets();
         // Nothing schedules a WTFTimer any more: the timer heap's loop handles
         // can go (Windows uv_timer/uv_idle), before the loop close unlinks them.
         if let Some(hooks) = hooks {
             // SAFETY: fn contract; runtime state still installed.
-            unsafe { (hooks.close_timer_loop_handles_after_vm_destroyed)(this) };
+            unsafe { (hooks.close_timer_loop_handles_after_vm_destroyed)() };
         }
         teardown_log!("teardown: JSC VM destroyed");
 
@@ -2420,11 +2384,11 @@ impl VirtualMachine {
             // Whatever B/C unref'd through the concurrent counter, folded now:
             // on Windows it shares `active_handles` with libuv and a residue
             // would keep the loop close below spinning.
-            vm.event_loop().apply_concurrent_ref_delta();
-            if let Some(rare) = vm.rare_data.get() {
+            self.event_loop().apply_concurrent_ref_delta();
+            if let Some(rare) = self.rare_data.get() {
                 rare.detach_socket_groups_from_loop();
             }
-            let uws_loop = vm.uws_loop();
+            let uws_loop = self.uws_loop();
             uws_loop.internal_loop_data.jsc_vm.set(core::ptr::null());
             // SAFETY: what was on the loop has been closed, and the thread only frees from here on.
             unsafe {
@@ -2464,18 +2428,16 @@ impl VirtualMachine {
     ///
     /// # Safety
     /// As [`teardown`](Self::teardown): sole owner on the owning thread, heap alive.
-    unsafe fn stop_phase_sweep(this: *mut Self, kind: Teardown) -> SweepResult {
-        // SAFETY: fn contract.
-        let vm = unsafe { &*this };
+    unsafe fn stop_phase_sweep(&self, kind: Teardown) -> SweepResult {
         let hooks = runtime_hooks();
         let mut result = SweepResult::Idle;
         // Pool jobs parked on something external (a pipe that never becomes
         // readable): their completions then arrive through the wait.
-        vm.jobs.get().cancel_all();
+        self.jobs.get().cancel_all();
         result = result.and(match hooks {
             // SAFETY: fn contract.
-            Some(hooks) => unsafe { (hooks.stop_active_handles_for_vm_teardown)(this) },
-            None => vm.stop_context_handles(crate::StopReason::VmTeardown),
+            Some(hooks) => unsafe { (hooks.stop_active_handles_for_vm_teardown)(self) },
+            None => self.stop_context_handles(crate::StopReason::VmTeardown),
         });
         // A worker's uv loop is closed in D, so every pipe / tty / child-process
         // handle open on it closes now — through whoever drives it (reader,
@@ -2489,8 +2451,8 @@ impl VirtualMachine {
             bun_sys::windows::libuv::open_handles::stop_all_for_vm_teardown();
         }
         let _ = kind;
-        if vm.rare_data.get().is_some() {
-            result = result.and(RareData::close_all_socket_groups(vm));
+        if self.rare_data.get().is_some() {
+            result = result.and(RareData::close_all_socket_groups(self));
         }
         if let Some(hooks) = hooks {
             result = result.and((hooks.stop_dns_for_vm_teardown)());
@@ -2510,15 +2472,15 @@ impl VirtualMachine {
     }
 }
 
-/// [`VirtualMachine::stop_graph_context_again`]'s task for a `Bun.ModuleGraph` context; `ptr`
-/// packs the [`ContextId`](crate::ContextId), nothing is owned.
+/// [`VirtualMachine::stop_graph_context_again`]'s task for a `Bun.ModuleGraph` context.
 pub struct GraphContextStopAgain;
 
 impl bun_event_loop::Taskable for GraphContextStopAgain {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::GraphContextStopAgain;
-    unsafe fn release_unrun(_: *mut Self) {}
+    type Payload = crate::ContextId;
+    fn release_unrun(_: crate::ContextId) {}
     /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &crate::ContextId) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -2532,14 +2494,15 @@ impl GraphContextStopAgain {
     }
 }
 
-/// [`VirtualMachine::stop_graph_context_again`]'s task for the dead context; `ptr` is unused.
+/// [`VirtualMachine::stop_graph_context_again`]'s task for the dead context.
 pub struct DeadContextStopAgain;
 
 impl bun_event_loop::Taskable for DeadContextStopAgain {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::DeadContextStopAgain;
-    unsafe fn release_unrun(_: *mut Self) {}
+    type Payload = ();
+    fn release_unrun((): ()) {}
     /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context((): &()) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -2548,35 +2511,32 @@ impl DeadContextStopAgain {
     pub fn run(vm: &VirtualMachine) {
         let _ = vm.dead_context.stop(crate::StopReason::Disposed);
         if let Some(hooks) = runtime_hooks() {
-            (hooks.cancel_timers)(vm, Some(vm.dead_context.id()));
+            (hooks.cancel_timers)(vm, Some(&vm.dead_context));
         }
     }
 }
 
-/// [`VirtualMachine::release_graph_context`]'s task: same pointer as the context, its own tag.
-#[repr(transparent)]
-pub struct GraphContextStopAndFree(crate::ScriptExecutionContext);
+/// [`VirtualMachine::release_graph_context`]'s task.
+pub struct GraphContextStopAndFree(crate::ContextId);
 
 impl bun_event_loop::Taskable for GraphContextStopAndFree {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::GraphContextStopAndFree;
+    type Payload = Self;
     /// Still registered: dropped with the VM.
-    unsafe fn release_unrun(_: *mut Self) {}
+    fn release_unrun(_: Self) {}
     /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
 
 impl GraphContextStopAndFree {
     /// # Safety
-    /// `this` is the context `release_graph_context` queued.
-    pub unsafe fn run(vm: &VirtualMachine, this: *mut Self) {
-        // SAFETY: still registered, so not freed.
-        unsafe {
-            let context = NonNull::new_unchecked(this.cast::<crate::ScriptExecutionContext>());
-            let _ = vm.stop_graph_context(context, crate::StopReason::Disposed);
-            vm.free_graph_context(context.as_ref().id());
-        }
+    /// Nothing borrows the context.
+    pub unsafe fn run(self, vm: &VirtualMachine) {
+        GraphContextStopAgain::run(vm, self.0);
+        // SAFETY: it has stopped, and fn contract.
+        unsafe { vm.free_graph_context(self.0) };
     }
 }
 
@@ -2768,9 +2728,7 @@ pub struct RuntimeHooks {
     /// Standalone-graph sourcemap load.
     /// The concrete `bun_standalone_graph::Graph` / `File` / `LazySourceMap`
     /// live above `bun_jsc`; the high tier reaches them via the graph's own
-    /// `UnsafeCell` singleton accessor (NOT by downcasting the resolver trait
-    /// object — that shared-ref provenance is read-only and forming `&mut`
-    /// from it would be UB) and returns the lazily-decoded map (already
+    /// singleton accessor and returns the lazily-decoded map (already
     /// strong-ref'd via the returned `Arc`). [`resolve_source_mapping`]
     /// caches it into `source_mappings` so subsequent lookups hit the fast
     /// path. The caller gates the call on `vm.standalone_module_graph`.
@@ -2795,7 +2753,7 @@ pub struct RuntimeHooks {
     /// `only`: just the timers script of that context set (the context
     /// stopped; the VM keeps running).
     /// Releases `Strong`s, so it runs while the JSC heap is alive.
-    pub cancel_timers: fn(vm: &VirtualMachine, only: Option<crate::ContextId>),
+    pub cancel_timers: fn(vm: &VirtualMachine, only: Option<&crate::ScriptExecutionContext>),
     /// A `--hot` run ends, before `hot_reload_counter` moves on. The timers of the runs before it are kept.
     pub end_hot_run_timers: fn(vm: &VirtualMachine, cancel: CancelHotRunTimers),
     /// Close the per-VM global DNS resolver's client while all that its queries and polls touch is live. No-op when the resolver was
@@ -2807,17 +2765,17 @@ pub struct RuntimeHooks {
     /// with the VM alive right after the WebCore stop phase.
     ///
     /// # Safety
-    /// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
-    pub stop_active_handles_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine) -> SweepResult,
+    /// The JSC heap is alive.
+    pub stop_active_handles_for_vm_teardown: unsafe fn(vm: &VirtualMachine) -> SweepResult,
     /// Teardown only (never on a live VM): unlink every remaining EventLoopTimer.
-    pub disarm_all_timers_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine),
+    pub disarm_all_timers_for_vm_teardown: unsafe fn(),
     /// Teardown-only, after ~VM (JSC's RunLoop timers use the heap until then):
     /// close the loop handles the timer heap embeds (Windows uv_timer/uv_idle)
     /// so the loop close unlinks them before the runtime state is freed.
     ///
     /// # Safety
     /// JS thread; `runtime_state` installed.
-    pub close_timer_loop_handles_after_vm_destroyed: unsafe fn(vm: *mut VirtualMachine),
+    pub close_timer_loop_handles_after_vm_destroyed: unsafe fn(),
 }
 
 bun_io::link_impl_EventLoopCtx! {
@@ -2934,13 +2892,6 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         entry_point: BuiltinEntryPoint,
     ) -> *mut JSInternalPromise;
-    // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `callback`
-    // (never dereferenced as Rust data).
-    safe fn JSC__VM__holdAPILock(
-        vm: &VM,
-        ctx: *mut c_void,
-        callback: extern "C" fn(ctx: *mut c_void),
-    );
     safe fn NodeModuleModule__callOverriddenRunMain(
         global: &JSGlobalObject,
         argv1: JSValue,
@@ -3028,7 +2979,6 @@ impl VirtualMachine {
             event_loop_handle: Cell::new(None),
             pending_unref_counter: Default::default(),
             preload: JsCell::default(),
-            unhandled_pending_rejection_to_capture: None,
             standalone_module_graph: opts.graph,
             finds_entry_points_by_path: opts.graph.is_some_and(|graph| {
                 graph
@@ -5790,7 +5740,7 @@ impl VirtualMachine {
                 );
             }
             // Note: `JSValue::for_each` takes a C-ABI fn
-            // pointer + erased ctx, so thread the captures through a struct.
+            // pointer + ctx, so thread the captures through a struct.
             struct AggCtx<'c, 'a> {
                 formatter: &'c mut crate::console_object::Formatter<'a>,
                 writer: &'c mut dyn bun_io::Write,
@@ -5802,11 +5752,9 @@ impl VirtualMachine {
             extern "C" fn agg_iter(
                 _vm: *mut crate::VM,
                 _global: &JSGlobalObject,
-                ctx: *mut c_void,
+                ctx: &mut AggCtx<'_, '_>,
                 next_value: JSValue,
             ) {
-                // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
-                let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_, '_>>(ctx) };
                 let vm = VirtualMachine::get();
                 let depth = ctx.formatter.depth.saturating_add(1);
                 let mut deeper = SetForScope::new(&mut *ctx.formatter, |f| &mut f.depth, depth);
@@ -5858,10 +5806,7 @@ impl VirtualMachine {
                 allow_side_effects,
                 printed_member: false,
             };
-            if errors
-                .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)
-                .is_err()
-            {
+            if errors.for_each(global_ref, &mut ctx, agg_iter).is_err() {
                 global_ref.clear_exception();
             }
             if ctx.printed_member || members_past_cap {
@@ -7273,12 +7218,9 @@ impl VirtualMachine {
         // dispatch through [`RuntimeHooks::load_standalone_sourcemap`] per
         // §Dispatch (cold path — one-time decode then cached below).
         // Gate only — the hook reaches the concrete graph via its own
-        // `UnsafeCell` singleton (write-provenance), not via this read-only
-        // trait object.
+        // singleton, not via this trait object.
         let _ = self.standalone_module_graph?;
         let hooks = runtime_hooks()?;
-        // JS-thread call; hook mutates only per-`File` lazy caches under the
-        // standalone graph's internal `INIT_LOCK`.
         let map = (hooks.load_standalone_sourcemap)(path)?;
 
         (self.source_mappings).put_parsed(path, std::sync::Arc::clone(&map));

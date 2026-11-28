@@ -1,8 +1,5 @@
 // Authentication methods
 
-#[cfg(debug_assertions)]
-use core::ffi::c_char;
-
 use bun_boringssl as boringssl;
 
 use bun_sha_hmac::{SHA1, SHA256};
@@ -136,22 +133,15 @@ pub(crate) mod caching_sha2_password {
             if rsa.is_null() {
                 #[cfg(debug_assertions)]
                 {
-                    // SAFETY: FFI calls with no preconditions; buf is 256 bytes which is
-                    // the documented minimum for ERR_error_string.
-                    unsafe {
-                        boringssl::c::ERR_load_ERR_strings();
-                        boringssl::c::ERR_load_crypto_strings();
-                        let mut buf = [0u8; 256];
-                        let s = boringssl::c::ERR_error_string(
-                            boringssl::c::ERR_get_error(),
-                            buf.as_mut_ptr().cast::<c_char>(),
-                        );
-                        bun_core::scoped_log!(
-                            Auth,
-                            "Failed to read public key: {}",
-                            bstr::BStr::new(bun_core::ffi::cstr(s).to_bytes())
-                        );
-                    }
+                    boringssl::c::ERR_load_ERR_strings();
+                    boringssl::c::ERR_load_crypto_strings();
+                    let mut buf = [0u8; 256];
+                    let s = boringssl::c::error_string(boringssl::c::ERR_get_error(), &mut buf);
+                    bun_core::scoped_log!(
+                        Auth,
+                        "Failed to read public key: {}",
+                        bstr::BStr::new(s)
+                    );
                 }
                 return Err(AnyMySQLError::InvalidPublicKey);
             }

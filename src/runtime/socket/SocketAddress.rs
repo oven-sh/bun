@@ -10,7 +10,7 @@ use core::mem::{self, MaybeUninit};
 use core::net::{IpAddr, Ipv4Addr};
 
 use bun_core::ip_address::{self, IpText};
-use bun_core::{String as BunString, ZStr, strings};
+use bun_core::{CStrRef, String as BunString, strings};
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{CommonString, JSGlobalObject, JSString, JSValue, JsError, JsResult, StringJsc};
@@ -639,10 +639,10 @@ impl AF {
         }
     }
 
-    pub(crate) fn upper(self) -> &'static ZStr {
+    pub(crate) fn upper(self) -> &'static str {
         match self {
-            AF::INET => bun_core::zstr!("IPv4"),
-            AF::INET6 => bun_core::zstr!("IPv6"),
+            AF::INET => "IPv4",
+            AF::INET6 => "IPv6",
         }
     }
 }
@@ -795,21 +795,17 @@ const _: () = {
     assert!(mem::offset_of!(sockaddr_in, port) == mem::offset_of!(sockaddr_in6, port));
 };
 
-/// Fills `out` with `host`:`port` when `host` is numeric (inet_aton shorthand and `%zone` included) and returns 1, or 0 when it is a name — the one parse behind uSockets' connect paths, so a literal never reaches the resolver; `host` must be NUL-terminated and `out` writable.
+/// Fills `out` with `host`:`port` when `host` is numeric (inet_aton shorthand and `%zone` included) and returns 1, or 0 when it is a name — the one parse behind uSockets' connect paths, so a literal never reaches the resolver.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__parseIpAddress(
-    host: *const core::ffi::c_char,
+pub(crate) extern "C" fn Bun__parseIpAddress(
+    host: Option<CStrRef<'_>>,
     port: u16,
     out: Option<&mut MaybeUninit<bun_sys::posix::sockaddr_storage>>,
 ) -> c_int {
-    if host.is_null() {
-        return 0;
-    }
-    let Some(out) = out else {
+    let (Some(host), Some(out)) = (host, out) else {
         return 0;
     };
-    // SAFETY: caller contract — `host` is a NUL-terminated C string.
-    let bytes = unsafe { core::ffi::CStr::from_ptr(host) }.to_bytes();
+    let bytes = host.to_cstr().to_bytes();
     let Some(ip) = bun_core::ip_address::to_ip_address(bytes) else {
         return 0;
     };

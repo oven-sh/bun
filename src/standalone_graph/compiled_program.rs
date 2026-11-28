@@ -901,11 +901,17 @@ fn only_this_user_can_write(path: &[u8]) -> bool {
     let user = unsafe { libc::geteuid() };
     // The group of administrators, who can become root.
     let administrators = if cfg!(target_os = "macos") { 80 } else { 0 };
+    // Where each user has a group of the same number, umask 002 is usual. With an access control list the bits of the group are those of everyone in the list.
+    let is_group_of_user_alone =
+        |it: &bun_sys::Stat| cfg!(target_os = "linux") && it.st_gid == user && user != 0;
     let is_safe = |it: &bun_sys::Stat, may_be_sticky: bool| {
         let mode = it.st_mode as u32;
         let is_sticky = may_be_sticky && mode & 0o1000 != 0;
         let is_administrators = it.st_gid == 0 || it.st_gid == administrators;
-        let others = if is_administrators { 0o002 } else { 0o022 };
+        let others = match is_administrators || is_group_of_user_alone(it) {
+            true => 0o002,
+            false => 0o022,
+        };
         (it.st_uid == user || it.st_uid == 0) && (is_sticky || mode & others == 0)
     };
     let mut at: Vec<u8> = Vec::new();
@@ -945,6 +951,7 @@ fn only_this_user_can_write(path: &[u8]) -> bool {
             // In a sticky folder others can make files, but not replace this one. Nothing is loaded out of one.
             let folder = bun_core::ZBox::from_bytes(&at[..parent.max(1)]);
             if !is_safe(&stat, is_folder)
+                || is_group_of_user_alone(&stat) && has_access_control_list(&name)
                 || !is_folder && !bun_sys::lstat(&folder).is_ok_and(|it| is_safe(&it, false))
             {
                 return false;
@@ -952,7 +959,13 @@ fn only_this_user_can_write(path: &[u8]) -> bool {
             continue;
         }
         links += 1;
-        if links > 40 || (stat.st_uid != user && stat.st_uid != 0) {
+        let folder = bun_core::ZBox::from_bytes(&at[..parent.max(1)]);
+        // What the library loads is looked for beside the name that it was loaded by.
+        let is_last = pending.is_empty();
+        if links > 40
+            || (stat.st_uid != user && stat.st_uid != 0)
+            || is_last && !bun_sys::lstat(&folder).is_ok_and(|it| is_safe(&it, false))
+        {
             return false;
         }
         let mut buffer = bun_paths::path_buffer_pool::get();
@@ -968,6 +981,24 @@ fn only_this_user_can_write(path: &[u8]) -> bool {
 
 #[cfg(windows)]
 use bun_sys::windows::private_folder::only_this_user_can_write;
+
+#[cfg(target_os = "linux")]
+fn has_access_control_list(path: &bun_core::ZBox) -> bool {
+    // SAFETY: both strings are NUL-terminated; a size of 0 asks for the length alone.
+    unsafe {
+        libc::lgetxattr(
+            path.as_ptr(),
+            c"system.posix_acl_access".as_ptr(),
+            core::ptr::null_mut(),
+            0,
+        ) >= 0
+    }
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn has_access_control_list(_path: &bun_core::ZBox) -> bool {
+    false
+}
 
 /// Which of the two is meant by a source path at which the disk has a file and the executable too.
 #[derive(Copy, Clone, PartialEq, Eq)]

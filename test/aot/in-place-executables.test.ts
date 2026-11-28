@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isRoot, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isRoot, isWindows, tempDir } from "harness";
 import {
   chmodSync,
   chownSync,
@@ -1038,6 +1038,13 @@ console.log(dlopen(name, { number: { args: [], returns: "int" } }).symbols.numbe
     expect(await loads()).toEqual(loaded(2));
     chmodSync(other, 0o777);
     expect(await loads()).toEqual(loaded(1));
+    // The group of the user alone, as umask 002 leaves it on most distributions.
+    if (isLinux && !isRoot && process.getgid!() === process.getuid!()) {
+      rmSync(laid);
+      copyFileSync(other, laid);
+      for (const path of [laid, native, app]) chmodSync(path, 0o775);
+      expect(await loads()).toEqual(loaded(2));
+    }
   },
 );
 

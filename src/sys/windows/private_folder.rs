@@ -76,6 +76,12 @@ unsafe extern "system" {
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn LocalFree(memory: *mut c_void) -> *mut c_void;
+    fn GetFileInformationByHandleEx(
+        handle: HANDLE,
+        class: c_int,
+        information: *mut c_void,
+        size: DWORD,
+    ) -> BOOL;
 }
 
 /// What the system allocated with `LocalAlloc`.
@@ -254,6 +260,25 @@ unsafe fn is_installer_or_owner(sid: PSID) -> bool {
     text == OWNER_RIGHTS || text == INSTALLER
 }
 
+/// Whether it stands for another file. A file in the cloud and a compressed one are reparse points too, and do not.
+fn is_link(handle: HANDLE) -> bool {
+    const FILE_ATTRIBUTE_TAG_INFO: c_int = 9;
+    const NAME_SURROGATE: u32 = 0x2000_0000;
+    let mut attributes_and_tag = [0u32; 2];
+    // SAFETY: the buffer is a `FILE_ATTRIBUTE_TAG_INFO` of the size given.
+    let is_read = unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            FILE_ATTRIBUTE_TAG_INFO,
+            attributes_and_tag.as_mut_ptr().cast(),
+            size_of_val(&attributes_and_tag) as DWORD,
+        )
+    };
+    let [attributes, tag] = attributes_and_tag;
+    is_read == 0
+        || attributes & win32::FILE_ATTRIBUTE_REPARSE_POINT != 0 && tag & NAME_SURROGATE != 0
+}
+
 /// Whether nobody but this user and the system can have laid the file where it is, or can replace it. `path` is absolute. A folder on the way that is a link is an answer of no.
 pub fn only_this_user_can_write(path: &[u8]) -> bool {
     let Some(user) = User::current() else {
@@ -275,10 +300,7 @@ pub fn only_this_user_can_write(path: &[u8]) -> bool {
             return false;
         };
         let handle = handle.as_raw_handle();
-        super::GetFileInformationByHandle(handle).is_ok_and(|found| {
-            found.dwFileAttributes & win32::FILE_ATTRIBUTE_REPARSE_POINT == 0
-                && user.alone_has(handle, rights)
-        })
+        !is_link(handle) && user.alone_has(handle, rights)
     })
 }
 

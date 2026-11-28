@@ -1506,7 +1506,7 @@ impl StandaloneModuleGraph {
         let mut modules = StringArrayHashMap::<File>::new();
         modules.reserve(modules_list_count);
         for (i, record) in modules_list.iter().enumerate() {
-            // SAFETY: `record` has the size of one, and each of its enums holds a value of that enum: `is_sound`.
+            // SAFETY: `record` has the size of one, and each of its enums holds a value of that enum: `are_sound`.
             let module: CompiledModuleGraphFile = unsafe {
                 core::ptr::read_unaligned(record.as_ptr().cast::<CompiledModuleGraphFile>())
             };
@@ -1551,7 +1551,7 @@ impl StandaloneModuleGraph {
                         && (linked_entry_offset.is_some() || !has_linked_bytecode_payload)
                     {
                         // SAFETY: section bytes are a writable 'static allocation; JSC mutates
-                        // bytecode in place. Subrange is (serialized by to_bytes)
+                        // bytecode in place. The subrange was serialized by to_bytes
                         // disjoint from every read-only subslice handed out above — no
                         // `&[u8]` is ever formed over this range.
                         or_corrupted!(unsafe {

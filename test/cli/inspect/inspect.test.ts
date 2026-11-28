@@ -1,7 +1,7 @@
 import { Subprocess, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isPosix, randomPort, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isPosix, randomPort, tempDir } from "harness";
 import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
@@ -16,6 +16,66 @@ const anyPathname = expect.stringMatching(/^\/[a-z0-9-]+$/);
  */
 const randomSocketPathFn = (tempdir: string) => (): string =>
   join(tempdir, Math.random().toString(36).substring(2, 15) + ".sock");
+
+// Keep this test first. When an inspectee aborts, the tests below time out and do not print why.
+// JSC compiles exception-check validation in only when assertions or ASAN are on.
+test.skipIf(!isDebug && !isASAN)("Runtime.evaluate does not trip exception-check validation", async () => {
+  await using child = spawn({
+    cwd: import.meta.dir,
+    cmd: [bunExe(), "--inspect-wait=127.0.0.1:0", "inspectee.js"],
+    env: {
+      ...bunEnv,
+      BUN_JSC_validateExceptionChecks: "1",
+      BUN_JSC_dumpSimulatedThrows: "1",
+    },
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+
+  let stderr = "";
+  const decoder = new TextDecoder();
+  const { promise: urlPromise, resolve: resolveUrl, reject: rejectUrl } = Promise.withResolvers<URL>();
+  const drained = (async () => {
+    for await (const chunk of child.stderr) {
+      stderr += decoder.decode(chunk, { stream: true });
+      // A chunk can end in the middle of the URL, so read complete lines only.
+      for (const line of stderr.split("\n").slice(0, -1)) {
+        const candidate = line.trim();
+        if (candidate.startsWith("ws://") && URL.canParse(candidate)) resolveUrl(new URL(candidate));
+      }
+    }
+  })();
+  // Each way the reader can end settles urlPromise. A read error also fails the test where it awaits drained.
+  drained.then(
+    () => rejectUrl(new Error("inspectee exited before printing inspector URL:\n" + stderr)),
+    cause => rejectUrl(new Error("could not read inspectee stderr:\n" + stderr, { cause })),
+  );
+
+  const ws = new WebSocket(await urlPromise);
+  // Settles with the reply, or with the way the socket ended when the inspectee did not reply.
+  const { promise: outcome, resolve: settle } = Promise.withResolvers<unknown>();
+  ws.addEventListener("open", () => {
+    ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
+  });
+  ws.addEventListener("message", ({ data }) => settle(JSON.parse(String(data))));
+  ws.addEventListener("error", ({ message }) => settle({ error: message }));
+  ws.addEventListener("close", ({ code, reason }) => settle({ closed: { code, reason } }));
+  const reply = await outcome;
+  ws.close();
+  child.kill();
+  await Promise.all([child.exited, drained]);
+
+  // The validator prints the two scopes involved before it ends the process. Keep them in the
+  // comparison so a failure names the call site.
+  const unchecked = stderr
+    .split("\n")
+    .map(line => line.trim())
+    .filter(line => line.startsWith("This scope can throw") || line.startsWith("But the exception was unchecked"));
+  expect({ reply, unchecked }, `inspectee signal: ${child.signalCode}, stderr:\n${stderr}`).toMatchObject({
+    reply: { id: 1, result: { result: { type: "number", value: 2 } } },
+    unchecked: [],
+  });
+});
 
 describe("websocket", () => {
   const tests = [

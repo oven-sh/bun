@@ -6,6 +6,8 @@ use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::json5;
 
+use super::stringify_options::StringifyOptions;
+
 pub(crate) fn stringify<'a>(
     cx: &mut JsScope<'a>,
     value: JsLocal<'a>,
@@ -131,7 +133,7 @@ impl Stringifier {
             stack_check: StackCheck::init(),
             builder: wtf::StringBuilder::init(),
             indent: 0,
-            space: Space::init(global, space_value)?,
+            space: Space::init(global, StringifyOptions::init(global, space_value)?.space)?,
             visiting: HashMap::default(),
         })
     }

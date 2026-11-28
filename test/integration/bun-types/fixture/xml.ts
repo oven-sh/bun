@@ -47,6 +47,9 @@ expectType(
 expectType(XML.stringify(XML.parse("<a/>", { compact: false }))).is<string>();
 // `undefined` when the input is `undefined`, a function, or a symbol.
 expectType(XML.stringify(undefined)).is<string | undefined>();
+expectType(XML.stringify({ a: { b: "x" } }, null, { indent: 2 })).is<string>();
+// @ts-expect-error
+XML.stringify({ a: { b: "x" } }, null, { aliases: false });
 expectType(XML.stringify(Symbol() as unknown)).is<string | undefined>();
 // @ts-expect-error
 XML.stringify({ a: "1" }, (key: string, value: unknown) => value);

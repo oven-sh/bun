@@ -982,6 +982,13 @@ describe("XML.stringify", () => {
     expect(() => XML.stringify(new String("<a/>") as any)).toThrow("expects an object");
   });
 
+  test("space as an options object with indent", () => {
+    const value = { root: { list: { item: ["a", "b"] }, leaf: "x" } };
+    expect(XML.stringify(value, null, { indent: 2 })).toBe(XML.stringify(value, null, 2));
+    expect(XML.stringify(value, null, { indent: "\t" })).toBe(XML.stringify(value, null, "\t"));
+    expect(XML.stringify(value, null, {})).toBe(XML.stringify(value));
+  });
+
   test("space indents element-only content and leaves text content inline", () => {
     // Repeated children inside mixed content stay inline too.
     expect(XML.stringify({ p: { "#text": "hi", b: ["1", "2"] } }, null, 2)).toBe("<p>hi<b>1</b><b>2</b></p>");

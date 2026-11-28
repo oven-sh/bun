@@ -18,6 +18,8 @@ use bun_jsc::bindgen::{JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::xml::{self, XML};
 
+use super::stringify_options::StringifyOptions;
+
 pub(crate) fn parse<'a>(
     cx: &mut JsScope<'a>,
     input: StringOrJsBytes<'a>,
@@ -146,7 +148,7 @@ pub(crate) fn stringify<'a>(
         stack_check: StackCheck::init(),
         builder: wtf::StringBuilder::init(),
         indent: 0,
-        space: Space::init(global, space_value)?,
+        space: Space::init(global, StringifyOptions::init(global, space_value)?.space)?,
         visiting: HashMap::default(),
     };
 

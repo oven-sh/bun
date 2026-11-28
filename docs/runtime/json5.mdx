@@ -138,6 +138,9 @@ The `space` argument can be a number (number of spaces) or a string (used as the
 ```ts
 // Tab indentation
 JSON5.stringify(data, null, "\t");
+
+// The same, as an options object
+JSON5.stringify(data, null, { indent: "\t" });
 ```
 
 #### Special Values

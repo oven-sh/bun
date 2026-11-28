@@ -851,6 +851,15 @@ describe("stringify", () => {
     expect(JSON5.stringify({ a: 1 }, null, new String("") as any)).toEqual(JSON5.stringify({ a: 1 }, null, ""));
   });
 
+  test("space parameter as an options object with indent", () => {
+    const value = { a: [1, { b: 2 }] };
+    expect(JSON5.stringify(value, null, { indent: 2 })).toEqual(JSON5.stringify(value, null, 2));
+    expect(JSON5.stringify(value, null, { indent: "\t" })).toEqual(JSON5.stringify(value, null, "\t"));
+    expect(JSON5.stringify(value, null, { indent: new Number(4) as any })).toEqual(JSON5.stringify(value, null, 4));
+    expect(JSON5.stringify(value, null, {})).toEqual(JSON5.stringify(value));
+    expect(JSON5.stringify(value, null, { indent: 0 })).toEqual(JSON5.stringify(value));
+  });
+
   test("space parameter with all-undefined properties produces empty object", () => {
     expect(JSON5.stringify({ a: undefined, b: undefined }, null, 2)).toEqual("{}");
     expect(JSON5.stringify({ a: () => {}, b: () => {} }, null, 2)).toEqual("{}");

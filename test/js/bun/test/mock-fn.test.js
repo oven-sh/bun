@@ -1700,6 +1700,120 @@ describe("spyOn", () => {
         fn.mockRestore();
         expect(Object.hasOwn(sandbox, "toString")).toBe(false);
       });
+
+      // Where the spy of an index is kept is up to the global. These check what the context reads, and that a restore takes the spy away.
+      describe("an index that the sandbox does not have", () => {
+        // The global inherits a method under 5, or nothing.
+        function makeContextOf(inherits = true) {
+          const made = makeContext(contextify);
+          if (inherits) vm.runInContext(`Object.prototype[5] = function () { return "original"; }`, made.context);
+          const original = vm.runInContext("this[5]", made.context);
+          return { ...made, original, descriptors: Object.getOwnPropertyDescriptors(made.sandbox) };
+        }
+
+        test("a method that the global inherits", () => {
+          if (!isBun) return;
+          const { sandbox, context, global, original, descriptors } = makeContextOf();
+          const fn = spyOn(global, 5);
+          expect(vm.runInContext("this[5]", context)).toBe(fn);
+          expect(vm.runInContext("this[5]()", context)).toBe("original");
+          expect(fn).toHaveBeenCalledTimes(1);
+          fn.mockRestore();
+          expect(vm.runInContext("[this[5], Object.hasOwn(this, 5)]", context)).toEqual([original, false]);
+          expect(Object.getOwnPropertyDescriptors(sandbox)).toEqual(descriptors);
+        });
+
+        test("a property that is missing", () => {
+          if (!isBun) return;
+          const { sandbox, context, global, descriptors } = makeContextOf(false);
+          const fn = spyOn(global, 5).mockReturnValue("spied");
+          expect(vm.runInContext("this[5]", context)).toBe("spied");
+          fn.mockRestore();
+          expect(vm.runInContext("5 in this", context)).toBe(false);
+          expect(Object.getOwnPropertyDescriptors(sandbox)).toEqual(descriptors);
+        });
+
+        test.each(["get", "set"])("a %ster in front of a method that the global inherits", access => {
+          if (!isBun) return;
+          const { sandbox, context, global, original, descriptors } = makeContextOf();
+          const fn = spyOn(global, 5, access);
+          expect(Object.getOwnPropertyDescriptor(global, 5)[access]).toBe(fn);
+          fn.mockRestore();
+          expect([vm.runInContext("this[5]", context), Object.getOwnPropertyDescriptor(global, 5)]).toEqual([
+            original,
+            undefined,
+          ]);
+          expect(Object.getOwnPropertyDescriptors(sandbox)).toEqual(descriptors);
+        });
+
+        test("restoreAllMocks() takes the spy away", () => {
+          if (!isBun) return;
+          const { sandbox, context, global, original, descriptors } = makeContextOf();
+          spyOn(global, 5);
+          jest.restoreAllMocks();
+          expect(vm.runInContext("[this[5], Object.hasOwn(this, 5)]", context)).toEqual([original, false]);
+          expect(Object.getOwnPropertyDescriptors(sandbox)).toEqual(descriptors);
+        });
+      });
+    });
+
+    // The outer context reads the key through its contextified object: the global of the inner context, which inherits it.
+    test.each([
+      ["a name", "inherited"],
+      ["an index", 5],
+    ])("made of the global of another context: spies on that global, for %s", (_, key) => {
+      if (!isBun) return;
+      const quoted = JSON.stringify(String(key));
+      const sandbox = {};
+      const inner = vm.createContext(sandbox);
+      const outer = vm.createContext(vm.runInContext("this", inner));
+      const original = vm.runInContext(`Object.prototype[${quoted}] = function () { return "original"; }`, inner);
+      const fn = spyOn(vm.runInContext("this", outer), key);
+      expect([vm.runInContext(`this[${quoted}]`, outer), vm.runInContext(`this[${quoted}]`, inner)]).toEqual([fn, fn]);
+      fn.mockRestore();
+      expect([
+        vm.runInContext(`this[${quoted}]`, outer),
+        vm.runInContext(`Object.hasOwn(this, ${quoted})`, inner),
+        Object.getOwnPropertyNames(sandbox),
+      ]).toEqual([original, false, []]);
+    });
+
+    // Every global inherits toString(), so each context reads it through its contextified object: the global of the context inside it.
+    describe("made of the global of another context, many times over", () => {
+      function nestContexts(depth) {
+        const sandbox = {};
+        let context = vm.createContext(sandbox);
+        for (let i = 1; i < depth; i++) context = vm.createContext(vm.runInContext("this", context));
+        return { sandbox, context, global: vm.runInContext("this", context) };
+      }
+
+      test("8 contexts: spies on the sandbox of the innermost one", () => {
+        if (!isBun) return;
+        const { sandbox, context, global } = nestContexts(8);
+        const fn = spyOn(global, "toString").mockReturnValue("spied");
+        expect([vm.runInContext("toString()", context), sandbox.toString]).toEqual(["spied", fn]);
+        fn.mockRestore();
+        expect([vm.runInContext("toString", context), Object.getOwnPropertyNames(sandbox)]).toEqual([
+          Object.prototype.toString,
+          [],
+        ]);
+      });
+
+      test("9 contexts: throws, and installs nothing", () => {
+        if (!isBun) return;
+        const { sandbox, context, global } = nestContexts(9);
+        const spy = () => spyOn(global, "toString");
+        expect(spy).toThrow(TypeError);
+        expect(spy).toThrow(
+          new TypeError(
+            "Cannot spy on the `toString` property because it is behind more than 8 node:vm contexts or module mocks. Spy on an object that is closer to the one that holds it",
+          ),
+        );
+        expect([vm.runInContext("toString", context), Object.getOwnPropertyNames(sandbox)]).toEqual([
+          Object.prototype.toString,
+          [],
+        ]);
+      });
     });
 
     // A window of jsdom is such a context, and its addEventListener() is EventTarget.prototype's.
@@ -1758,6 +1872,68 @@ describe("spyOn", () => {
       for (const fn of spies) fn.mockRestore();
       expect(vm.runInContext("[method(), accessor]", context)).toEqual(["original", "original"]);
       expect(describe()).toEqual(descriptors);
+    });
+  });
+
+  // The global of a context asks its sandbox to define an index. On a build with assertions, a trap that ran then ended the process.
+  test("on the global of a node:vm context over a Proxy with traps, or over globalThis", async () => {
+    if (!isBun) return;
+    const { bunEnv, bunExe } = require("harness");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import vm from "node:vm";
+        const { spyOn, jest, vi } = Bun.jest(import.meta.path);
+        const flavors = [["spyOn", spyOn], ["jest.spyOn", jest.spyOn], ["vi.spyOn", vi.spyOn]];
+        // Not "get": with that trap a context reads nothing from its global.
+        const traps = ["defineProperty", "deleteProperty", "set", "has", "getOwnPropertyDescriptor", "ownKeys", "getPrototypeOf"];
+        const handler = Object.fromEntries(traps.map(trap => [trap, (...args) => Reflect[trap](...args)]));
+
+        for (const [flavor, spy] of flavors) {
+          for (const [state, access] of [["method"], ["missing"], ["method", "get"], ["method", "set"]]) {
+            const sandbox = {};
+            const context = vm.createContext(new Proxy(sandbox, handler));
+            const global = vm.runInContext("this", context);
+            if (state === "method") vm.runInContext("Object.prototype[5] = function () {}", context);
+            const read = () => vm.runInContext("this[5]", context);
+            const original = read();
+            const fn = access ? spy(global, 5, access) : spy(global, 5).mockReturnValue("spied");
+            const installed = access ? Object.getOwnPropertyDescriptor(global, 5)[access] === fn : vm.runInContext("typeof this[5] === 'function' ? this[5]() : this[5]", context) === "spied";
+            fn.mockRestore();
+            const restored = read() === original && !vm.runInContext("Object.hasOwn(this, 5)", context);
+            console.log(flavor, state, access ?? "value", JSON.stringify({ installed, restored, sandbox: Object.getOwnPropertyNames(sandbox) }));
+          }
+        }
+
+        Object.prototype.inherited = () => "original";
+        const context = vm.createContext(globalThis);
+        for (const [flavor, spy] of flavors) {
+          const fn = spy(vm.runInContext("this", context), "inherited").mockReturnValue("spied");
+          const seen = [globalThis.inherited(), vm.runInContext("inherited()", context)];
+          fn.mockRestore();
+          console.log(flavor, "over globalThis", JSON.stringify({ seen, restored: [globalThis.inherited(), Object.hasOwn(globalThis, "inherited")] }));
+        }
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const flavors = ["spyOn", "jest.spyOn", "vi.spyOn"];
+    expect({ stdout: stdout.split("\n"), stderr, exitCode }).toEqual({
+      stdout: [
+        ...flavors.flatMap(flavor =>
+          ["method value", "missing value", "method get", "method set"].map(
+            kind => `${flavor} ${kind} {"installed":true,"restored":true,"sandbox":[]}`,
+          ),
+        ),
+        ...flavors.map(flavor => `${flavor} over globalThis {"seen":["spied","spied"],"restored":["original",false]}`),
+        "",
+      ],
+      stderr: "",
+      exitCode: 0,
     });
   });
 

@@ -109,7 +109,17 @@ error: 1 rule did not run because rules that run in JavaScript cannot use type i
   Everything else was linted. Use --allow-unsupported to make this a warning.
 ```
 
-There are two such cases: a JavaScript rule that needs types, and files in [other languages](/lint/plugins#other-languages) when the `eslint` package isn't installed. Pass `--allow-unsupported` to turn the error into a warning.
+This happens, for example, for a rule that neither Bun nor a plugin in your config has, for a JavaScript rule that needs types, and for files in [other languages](/lint/plugins#other-languages) when the `eslint` package isn't installed. Pass `--allow-unsupported` to turn the error into a warning.
+
+`--doctor` marks what it can tell without linting: such a rule in your config, and files that can't be linted. It still exits with code `0`.
+
+```txt
+    1 rule does not run
+        1 is not supported: no-such-rule
+            bun lint exits with code 2 because of it. Use --allow-unsupported to make that a warning
+```
+
+In `bun lint --doctor -f json`, those are `rules.fails_run` and `files.fails_run`. Both are empty under `--allow-unsupported`. The other cases only show up while linting, so empty lists don't promise exit code `0`.
 
 ---
 

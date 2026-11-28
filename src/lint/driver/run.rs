@@ -1542,8 +1542,8 @@ impl Run<'_> {
         }
         let mut unsupported = std::mem::take(&mut *loader.unsupported.lock());
         if options.allow_unsupported {
-            for line in unsupported.drain(..) {
-                self.warn(&line);
+            for it in unsupported.drain(..) {
+                self.warn(&it.line);
             }
         }
         if let Some(rejection) = loader.refused() {
@@ -1873,10 +1873,10 @@ impl Run<'_> {
         if !unsupported.is_empty() {
             let hint: &[u8] =
                 b"\n  Everything else was linted. Use --allow-unsupported to make this a warning.";
-            for (at, line) in unsupported.iter().enumerate() {
+            for (at, it) in unsupported.iter().enumerate() {
                 match at + 1 == unsupported.len() {
-                    true => self.error(&[&line[..], hint].concat()),
-                    false => self.error(line),
+                    true => self.error(&[&it.line[..], hint].concat()),
+                    false => self.error(&it.line),
                 }
             }
             self.out.exit_code = 2;

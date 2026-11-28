@@ -144,7 +144,7 @@ If `bun lint` and oxlint 1.87 disagree about a rule, that's a bug. [Open an issu
 
 - **The rules are oxlint 1.87's**, whatever version you had installed.
 - **No `jsdoc/*` or `vue/*` rules.** If you turn one on by name, the run exits with code `2`. If you only list the plugin, you get a note. To run `eslint-plugin-jsdoc` or `eslint-plugin-vue` instead, add it to [`jsPlugins`](/lint/plugins) under another name, as in oxlint: `{ "name": "jsdoc-js", "specifier": "eslint-plugin-jsdoc" }`.
-- **An unknown rule doesn't stop the run.** oxlint rejects the config. Bun runs the other rules, then exits with code `2`. `--allow-unsupported` turns that into a warning.
+- **An unknown rule doesn't stop the run.** oxlint rejects the config. Bun runs the other rules, then exits with code `2`. `--allow-unsupported` turns that into a warning. `bun lint --doctor` says so below such a rule and exits with code `0`. With `-f json`, `rules.fails_run` lists these rules, and it's empty under `--allow-unsupported`.
 - **Output is sorted** by file and line. oxlint prints files as its threads finish.
 - **Syntax errors can be worded differently.** oxlint also rejects a few programs that Bun lints, such as `let a; let a;`.
 - **Patterns in rule options are JavaScript regular expressions.** oxlint uses Rust's `regex` crate.

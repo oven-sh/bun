@@ -2151,6 +2151,7 @@ pub(crate) fn install_isolated_packages(
             global_store_tmp_suffix: fast_random(),
             summary: crate::package_install::Summary {
                 old_modules,
+                fresh_store: is_new_bun_modules,
                 ..Default::default()
             },
             task_queue: Default::default(),
@@ -2549,6 +2550,8 @@ pub(crate) fn install_isolated_packages(
 
         let mut summary = core::mem::take(&mut installer.summary);
         summary.successfully_installed = Some(core::mem::take(&mut installer.installed));
+        drop(installer);
+        summary.store = Some(store);
 
         return Ok(summary);
     }

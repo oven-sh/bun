@@ -1,6 +1,6 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { lstat, mkdir, readdir, readFile, realpath, unlink } from "fs/promises";
+import { cp, lstat, mkdir, readdir, readFile, realpath, unlink } from "fs/promises";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { join, relative } from "path";
 import { TestRegistry } from "registry";
@@ -164,14 +164,13 @@ test.concurrent("an existing store entry is re-linked when an override re-resolv
 
   await write(join(packageDir, "package.json"), JSON.stringify(oneRangeDep({ "no-deps": "1.0.0" })));
   expect(await install(packageDir)).toEqual(installed("+ one-range-dep@1.0.0\n\n2 packages installed"));
-  // no-deps@1.1.0 is orphaned, not removed
-  const relinked = { ...oneRangeDepLayout("1.0.0"), ...noDepsPackage("1.1.0") };
-  expect(await layout(packageDir)).toEqual(relinked);
+  // The install removes the no-deps@1.1.0 entry that nothing links to anymore.
+  expect(await layout(packageDir)).toEqual(oneRangeDepLayout("1.0.0"));
 
   const linkMtime = (await lstat(link)).mtimeMs;
   expect(await install(packageDir)).toEqual(noChanges);
   expect((await lstat(link)).mtimeMs).toBe(linkMtime);
-  expect(await layout(packageDir)).toEqual(relinked);
+  expect(await layout(packageDir)).toEqual(oneRangeDepLayout("1.0.0"));
 });
 
 test.concurrent("a dependency link deleted from an existing store entry is recreated", async () => {
@@ -210,8 +209,8 @@ test.concurrent("dependency bins are re-linked when a store entry is re-linked",
 
   await write(join(packageDir, "package.json"), JSON.stringify(usesWhatBin({ overrides: { "what-bin": "1.5.0" } })));
   expect(await install(packageDir)).toEqual(installed("+ uses-what-bin@1.0.0\n\n2 packages installed"));
-  // what-bin@1.0.0 is orphaned, not removed
-  expect(await layout(packageDir)).toEqual({ ...usesWhatBinLayout("1.5.0"), ...whatBinPackage("1.0.0") });
+  // The install removes the what-bin@1.0.0 entry that nothing links to anymore.
+  expect(await layout(packageDir)).toEqual(usesWhatBinLayout("1.5.0"));
 });
 
 test.concurrent("re-linking a store entry does not re-run its lifecycle scripts", async () => {
@@ -231,7 +230,7 @@ test.concurrent("re-linking a store entry does not re-run its lifecycle scripts"
     JSON.stringify(usesWhatBin({ trustedDependencies: ["uses-what-bin"], overrides: { "what-bin": "1.5.0" } })),
   );
   expect(await install(packageDir)).toEqual(installed("+ uses-what-bin@1.0.0\n\n2 packages installed"));
-  expect(await layout(packageDir)).toEqual({ ...usesWhatBinLayout("1.5.0"), ...whatBinPackage("1.0.0") });
+  expect(await layout(packageDir)).toEqual(usesWhatBinLayout("1.5.0"));
   // The bin now resolves to what-bin@1.5.0. A re-run of the script would have written that version.
   expect(await file(marker).text()).toBe("what-bin@1.0.0");
   expect((await lstat(marker)).mtimeMs).toBe(markerMtime);
@@ -273,7 +272,7 @@ test.concurrent.skipIf(!isWindows)("junction-mode warm install reports no change
   expect(await layout(packageDir)).toEqual(oneRangeDepLayout("1.1.0"));
 });
 
-test.concurrent("the orphaned store entry survives the re-link until bun prune", async () => {
+test.concurrent("the re-link removes the orphaned store entry, so bun prune has nothing left", async () => {
   using packageDir = project(oneRangeDep());
 
   expect(await install(packageDir)).toEqual(installed("+ one-range-dep@1.0.0\n\n2 packages installed"));
@@ -281,14 +280,13 @@ test.concurrent("the orphaned store entry survives the re-link until bun prune",
 
   await write(join(packageDir, "package.json"), JSON.stringify(oneRangeDep({ "no-deps": "1.0.0" })));
   expect(await install(packageDir)).toEqual(installed("+ one-range-dep@1.0.0\n\n2 packages installed"));
-  expect(await layout(packageDir)).toEqual({ ...oneRangeDepLayout("1.0.0"), ...noDepsPackage("1.1.0") });
+  expect(await layout(packageDir)).toEqual(oneRangeDepLayout("1.0.0"));
 
   const { out, err, exitCode } = await prune(packageDir);
   expect(out).toMatchInlineSnapshot(`
     "bun prune <version> (<revision>)
 
-    - no-deps@1.1.0
-    1 package removed (checked 4 installed packages)"
+    Done! Checked 3 installed packages across 2 folders (nothing to prune)"
   `);
   expect(err).toBe("");
   expect(exitCode).toBe(0);
@@ -297,3 +295,37 @@ test.concurrent("the orphaned store entry survives the re-link until bun prune",
   expect(await install(packageDir)).toEqual(noChanges);
   expect(await layout(packageDir)).toEqual(oneRangeDepLayout("1.0.0"));
 });
+
+// An older Bun named the entry of a package with a peer `<name>@<version>+<hash>`. When a newer Bun
+// names the same package `<name>@<version>`, the install that creates the new entry removes the old one.
+test.concurrent(
+  "an install removes the entry an older Bun named differently, a no-change install does not",
+  async () => {
+    using packageDir = project(oneRangeDep());
+    const store = join(packageDir, "node_modules", ".bun");
+    const oldName = "no-deps@1.1.0+0123456789abcdef";
+    const oldEntry = { [`.bun/${oldName}/node_modules/no-deps`]: "no-deps@1.1.0" };
+
+    expect(await install(packageDir)).toEqual(installed("+ one-range-dep@1.0.0\n\n2 packages installed"));
+    await cp(join(store, "no-deps@1.1.0"), join(store, oldName), { recursive: true });
+    expect(await layout(packageDir)).toEqual({ ...oneRangeDepLayout("1.1.0"), ...oldEntry });
+
+    // Nothing is installed, so nothing can have lost its last link.
+    expect(await install(packageDir)).toEqual(noChanges);
+    expect(await layout(packageDir)).toEqual({ ...oneRangeDepLayout("1.1.0"), ...oldEntry });
+
+    // Adding a package creates an entry, so the install sweeps the store. no-deps@1.1.0 stays linked.
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ ...oneRangeDep(), dependencies: { "one-range-dep": "1.0.0", "basic-1": "1.0.0" } }),
+    );
+    expect(await install(packageDir)).toEqual(installed("+ basic-1@1.0.0\n\n1 package installed"));
+    const basic1 = ".bun/basic-1@1.0.0/node_modules/basic-1";
+    expect(await layout(packageDir)).toEqual({
+      ...oneRangeDepLayout("1.1.0"),
+      "basic-1": `-> ${basic1}`,
+      ".bun/node_modules/basic-1": `-> ${basic1}`,
+      [basic1]: "basic-1@1.0.0",
+    });
+  },
+);

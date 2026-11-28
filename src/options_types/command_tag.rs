@@ -138,6 +138,11 @@ impl Tag {
         )
     }
 
+    /// The package manager, `bun lint` and `bun fmt` do not follow the top-level `logLevel` of bunfig.toml: they have their own flags and keys.
+    pub fn has_own_log_level(self) -> bool {
+        self.is_npm_related() || matches!(self, Tag::LintCommand | Tag::FormatCommand)
+    }
+
     /// Number of variants. Mirrors `enum_map::Enum::LENGTH` so const-array
     /// tables below can size themselves without naming the trait at every use.
     pub(crate) const COUNT: usize = <Self as Enum>::LENGTH;

@@ -1,5 +1,6 @@
 import { expect, mock, test } from "bun:test";
-import { writeFile } from "fs/promises";
+import { writeFileSync } from "fs";
+import { readFile, stat, writeFile } from "fs/promises";
 import { tempDir } from "harness";
 test("fs.promises.writeFile async iterator", async () => {
   await using dir = tempDir("fs-promises-writeFile-async-iterator", {
@@ -50,4 +51,59 @@ test("fs.promises.writeFile async iterator throws on invalid input", async () =>
   };
   await expect(() => writeFile(String(dir), fn as any)).toThrow();
   expect(fn[Symbol.asyncIterator]).not.toBeCalled();
+});
+
+// Issue #47817: a chunk that flushed the bytes buffered before it was counted
+// twice, and the file was resized to that sum, so it ended in zero bytes.
+test.concurrent("fs.promises.writeFile with an iterable of chunks writes exactly the chunks", async () => {
+  await using dir = tempDir("fs-promises-writeFile-async-iterator", {});
+  const path = dir + "/out.bin";
+  writeFileSync(path, Buffer.alloc(100_000, 7));
+
+  const chunks = [new Uint8Array(100).fill(1), new Uint8Array(40_000).fill(2)];
+  await writeFile(path, chunks);
+
+  const bytes = await readFile(path);
+  expect((await stat(path)).size).toBe(40_100);
+  expect(bytes.equals(Buffer.concat(chunks))).toBe(true);
+});
+
+test.concurrent("fs.promises.writeFile keeps the chunks written before the iterable throws", async () => {
+  await using dir = tempDir("fs-promises-writeFile-async-iterator", {});
+  const path = dir + "/partial.bin";
+  writeFileSync(path, Buffer.alloc(100_000, 7));
+
+  const stop = new Error("stop");
+  await expect(
+    writeFile(
+      path,
+      (async function* () {
+        yield Buffer.alloc(10, 1);
+        throw stop;
+      })(),
+    ),
+  ).rejects.toBe(stop);
+
+  expect(await readFile(path)).toEqual(Buffer.alloc(10, 1));
+});
+
+test.concurrent("fs.promises.writeFile keeps the chunks written before an abort", async () => {
+  await using dir = tempDir("fs-promises-writeFile-async-iterator", {});
+  const path = dir + "/aborted.bin";
+  writeFileSync(path, Buffer.alloc(100_000, 7));
+  const ac = new AbortController();
+
+  await expect(
+    writeFile(
+      path,
+      (async function* () {
+        yield Buffer.alloc(10, 1);
+        ac.abort();
+        yield Buffer.alloc(10, 2);
+      })(),
+      { signal: ac.signal },
+    ),
+  ).rejects.toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+
+  expect(await readFile(path)).toEqual(Buffer.alloc(10, 1));
 });

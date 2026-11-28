@@ -8400,14 +8400,26 @@ pub(crate) fn copy_file_z_slow_with_handle(
 ) -> Maybe<()> {
     #[cfg(unix)]
     let st = fstat(in_handle)?;
-    // Unlink dest first — fixes ETXTBUSY on Linux.
-    let _ = unlinkat(to_dir, destination);
-    let dst = Tmpfile::open(
-        to_dir,
-        destination,
-        O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC,
-        0o644,
-    )?;
+    // Never readable to more users than the file that it is a copy of.
+    #[cfg(unix)]
+    let mode = (st.st_mode & 0o777) as Mode;
+    #[cfg(not(unix))]
+    let mode = 0o644;
+    let mut attempts_left = 8;
+    let dst = loop {
+        // Unlink dest first — fixes ETXTBUSY on Linux.
+        // Whoever else can write to the folder may put something there before it is opened: a link of theirs is not followed. In a folder that this user cannot write, a link is the user's choice.
+        let flags = match unlinkat(to_dir, destination).map_err(|e| e.get_errno()) {
+            Ok(()) | Err(E::ENOENT) => O::EXCL,
+            Err(E::EACCES | E::EROFS) => O::TRUNC,
+            Err(_) => O::TRUNC | O::NOFOLLOW,
+        };
+        let flags = O::WRONLY | O::CREAT | O::CLOEXEC | flags;
+        match Tmpfile::open(to_dir, destination, flags, mode) {
+            Err(e) if e.get_errno() == E::EEXIST && attempts_left > 0 => attempts_left -= 1,
+            opened => break opened?,
+        }
+    };
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // Preallocation is best-effort.

@@ -634,25 +634,69 @@ fn has_extend(text: &[u8], prefix: &[u8]) -> bool {
     false
 }
 
-/// Returns the offset of the first unclosed `(` or `[` in `tokens`.
+/// Which `{` the loop that collected the tokens pushed on its bracket stack.
+#[derive(Clone, Copy)]
+enum Braces {
+    /// None: a declaration or a rule.
+    Never,
+    /// One after the `:`: a custom property.
+    AfterColon,
+    /// One inside an open bracket: the params of an at-rule.
+    InBracket,
+}
+
+/// Returns the index of the first unclosed `(`, `[` or `{` in `tokens`.
 #[cold]
-fn unclosed_bracket(tokens: &[Token]) -> u32 {
-    let mut open: Vec<(u8, Token)> = Vec::new();
-    for &token in tokens {
+fn first_unclosed(tokens: &[Token], braces: Braces) -> Option<usize> {
+    let mut open: Vec<(u8, usize)> = Vec::new();
+    let mut colon = false;
+    for (index, token) in tokens.iter().enumerate() {
         match token.kind {
-            TokenKind::Control(b'(') => open.push((b')', token)),
-            TokenKind::Control(b'[') => open.push((b']', token)),
+            TokenKind::Control(b'(') => open.push((b')', index)),
+            TokenKind::Control(b'[') => open.push((b']', index)),
+            TokenKind::Control(b'{')
+                if match braces {
+                    Braces::Never => false,
+                    Braces::AfterColon => colon,
+                    Braces::InBracket => !open.is_empty(),
+                } =>
+            {
+                open.push((b'}', index))
+            }
+            TokenKind::Control(b':') if open.is_empty() => colon = true,
             TokenKind::Control(control) if open.last().is_some_and(|it| it.0 == control) => {
                 open.pop();
             }
             _ => {}
         }
     }
-    let at = open
-        .first()
-        .map(|it| it.1)
-        .or_else(|| tokens.first().copied());
-    at.map_or(0, |it| it.range.start)
+    open.first().map(|it| it.1)
+}
+
+/// Returns the offset of the first unclosed bracket in `tokens`.
+#[cold]
+fn unclosed_bracket(tokens: &[Token], braces: Braces) -> u32 {
+    first_unclosed(tokens, braces)
+        .and_then(|index| tokens.get(index))
+        .or_else(|| tokens.first())
+        .map_or(0, |it| it.range.start)
+}
+
+/// Returns the offset of the bracket that the params of an at-rule leave open at the end of the file, unless only
+/// punctuation, spaces and comments follow it: Prettier formats `scss/no-semicolon/url.scss`, whose `@import` ends in
+/// `(` and a `//` comment, as `(;` and the comment.
+#[cold]
+fn swallowed_by_bracket(params: &[Token]) -> Option<u32> {
+    let index = first_unclosed(params, Braces::InBracket)?;
+    let opener = params.get(index)?;
+    let tail = params.get(index + 1..)?;
+    let swallowed = tail.iter().any(|token| {
+        !matches!(
+            token.kind,
+            TokenKind::Space | TokenKind::Comment | TokenKind::Control(_)
+        )
+    });
+    swallowed.then_some(opener.range.start)
 }
 
 impl<'a> Parser<'a> {
@@ -902,6 +946,14 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // Refused like a declaration (`other_with`). `postcss` formats it: Prettier prints `@media ;` for
+        // `@media (a {\n.b {\n}`, and the text with a `;` after it for another name.
+        if !brackets.is_empty()
+            && let Some(at) = swallowed_by_bracket(&params)
+        {
+            return Err(self.reject(Message::UnclosedBracket, at));
+        }
+
         let between = self.texts.spaces_and_comments_from_end(&mut params);
         self.node(id).between = between;
         if !params.is_empty() {
@@ -988,7 +1040,11 @@ impl<'a> Parser<'a> {
             end = true;
         }
         if !brackets.is_empty() {
-            return Err(self.reject(Message::UnclosedBracket, unclosed_bracket(tokens)));
+            let braces = match custom_property {
+                true => Braces::AfterColon,
+                false => Braces::Never,
+            };
+            return Err(self.reject(Message::UnclosedBracket, unclosed_bracket(tokens, braces)));
         }
         if !(end && colon) {
             return self.unknown_word(tokens);
@@ -1417,7 +1473,12 @@ impl<'a> Parser<'a> {
         let last_paren = tokens
             .iter()
             .rposition(|token| token.is(b')'))
-            .ok_or_else(|| self.reject(Message::UnclosedBracket, unclosed_bracket(tokens)))?;
+            .ok_or_else(|| {
+                self.reject(
+                    Message::UnclosedBracket,
+                    unclosed_bracket(tokens, Braces::Never),
+                )
+            })?;
         let params = self
             .texts
             .range_of(&tokens[first_paren..(first_paren + last_paren).min(tokens.len())]);
@@ -1454,7 +1515,12 @@ impl<'a> Parser<'a> {
             let last_paren = tokens
                 .iter()
                 .rposition(|token| token.is(b')'))
-                .ok_or_else(|| self.reject(Message::UnclosedBracket, unclosed_bracket(tokens)))?;
+                .ok_or_else(|| {
+                    self.reject(
+                        Message::UnclosedBracket,
+                        unclosed_bracket(tokens, Braces::Never),
+                    )
+                })?;
             // This is the end that `postcss-less` computes. It overshoots if more than the name comes before the
             // parenthesis.
             let contents = tokens

@@ -25,6 +25,8 @@
 // includes from root.h for them. MarkedVector.h supplies JSC::MarkedArgumentBuffer.
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSTypedArrays.h>
 #include <JavaScriptCore/MarkedVector.h>
 #include <JavaScriptCore/ThrowScope.h>
@@ -160,6 +162,19 @@ JSC::JSPromise* invokeCallbackReturningPromiseFast(JSC::JSGlobalObject*, JSC::JS
 JSC::JSPromise* promiseResolvedWith(JSC::JSGlobalObject*, JSC::JSValue); // userJS: yes — WebStreamsMisc.cpp
 // promiseResolvedWith for internal reactions: nullptr for a non-object, a vanilla JSPromise unwrapped.
 JSC::JSPromise* promiseResolvedWithFast(JSC::JSGlobalObject*, JSC::JSValue); // userJS: yes — WebStreamsMisc.cpp
+// promiseResolvedWithFast for a JSPromise cell: one whose `then` is not callable comes back as it is.
+JSC::JSPromise* promiseForReactionsSlow(JSC::JSGlobalObject*, JSC::JSPromise*); // userJS: yes — WebStreamsMisc.cpp
+// False for a plain promise of this realm while JSC's watchpoint on Promise.prototype.then holds.
+ALWAYS_INLINE bool promiseMayNeedFollower(JSC::JSGlobalObject* globalObject, JSC::JSPromise* promise)
+{
+    return promise->structure() != globalObject->promiseStructure() || !globalObject->promiseThenWatchpointSet().isStillValid();
+}
+ALWAYS_INLINE JSC::JSPromise* promiseForReactions(JSC::JSGlobalObject* globalObject, JSC::JSPromise* promise)
+{
+    if (!promiseMayNeedFollower(globalObject, promise)) [[likely]]
+        return promise;
+    return promiseForReactionsSlow(globalObject, promise);
+}
 // "a promise rejected with r" (rejection never does a `then` lookup)
 JSC::JSPromise* promiseRejectedWith(JSC::JSGlobalObject*, JSC::JSValue); // userJS: no — WebStreamsMisc.cpp
 

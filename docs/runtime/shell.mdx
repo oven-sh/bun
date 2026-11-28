@@ -22,7 +22,7 @@ await $`cat < ${response} | wc -c`; // 1256
 
 - **Cross-platform**: works on Windows, Linux & macOS. Instead of installing `rimraf` or `cross-env`, you can use Bun Shell. It implements common shell commands like `ls`, `cd`, and `rm` natively.
 - **Familiar**: Bun Shell is a bash-like shell that supports redirection, pipes, and environment variables.
-- **Globs**: Bun Shell supports glob patterns natively, including `**`, `*`, and `{expansion}`.
+- **Globs**: Bun Shell supports glob patterns natively, including `**`, `*`, and `{expansion}`. Bun Shell passes the paths that match a `*` or `**` pattern to the command sorted by byte. The order is the same on every platform: on Windows, `\` ranks as `/`. `part-01` comes before `part-02`, and `B` comes before `a`.
 - **Template literals**: Template literals execute shell commands and interpolate variables and expressions.
 - **Safety**: Bun Shell escapes all strings by default, preventing shell injection attacks.
 - **JavaScript interop**: Use `Response`, `ArrayBuffer`, `Blob`, `Bun.file(path)` and other JavaScript objects as stdin, stdout, and stderr.
@@ -623,6 +623,15 @@ await $`git ls-remote origin ${branch}`;
   **Recommendation**: Always sanitize user-provided input before passing it as an argument to an external command.
   Validating arguments is your application's responsibility.
 </Note>
+
+A glob can produce such an argument too. Bun Shell sorts the matches of a glob by byte, and `-` sorts before letters and digits. In `rm *`, a file named `-rf` comes first, and `rm` reads it as options. Start the pattern with `./` so that every match starts with `./`:
+
+```js
+import { $ } from "bun";
+
+// `rm` reads `./-rf` as a file name, not as options
+await $`rm ./*`;
+```
 
 ---
 

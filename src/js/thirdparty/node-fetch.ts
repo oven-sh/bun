@@ -130,7 +130,7 @@ class Response extends WebResponse {
   // This is a deprecated function in node-fetch
   // but is still used by some libraries and frameworks (like Astro)
   async buffer() {
-    return new $Buffer(await super.arrayBuffer());
+    return new $Buffer.$FastBuffer(await super.arrayBuffer());
   }
 
   get type() {

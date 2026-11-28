@@ -391,7 +391,7 @@ function handleSend(
   let data;
   if (count === 1) {
     const { buffer, byteOffset, byteLength } = list[0];
-    data = new $Buffer(buffer).slice(byteOffset).slice(0, byteLength);
+    data = new $Buffer.$FastBuffer(buffer).slice(byteOffset).slice(0, byteLength);
   } else {
     data = Buffer.concat(list as Uint8Array[]);
   }

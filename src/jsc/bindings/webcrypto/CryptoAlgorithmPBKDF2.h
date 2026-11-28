@@ -31,7 +31,6 @@
 
 namespace WebCore {
 
-class CryptoAlgorithmPbkdf2Params;
 class CryptoKeyRaw;
 
 class CryptoAlgorithmPBKDF2 final : public CryptoAlgorithm {

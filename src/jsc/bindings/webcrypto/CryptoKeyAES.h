@@ -35,7 +35,7 @@
 
 namespace WebCore {
 
-class CryptoAlgorithmParameters;
+struct CryptoAlgorithmParameters;
 
 struct JsonWebKey;
 

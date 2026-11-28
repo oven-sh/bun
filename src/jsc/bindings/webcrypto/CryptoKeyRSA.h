@@ -27,6 +27,8 @@
 
 #include "CryptoKey.h"
 #include "ExceptionOr.h"
+#include <optional>
+#include <wtf/FailureAction.h>
 #include <wtf/Function.h>
 
 #if ENABLE(WEB_CRYPTO)
@@ -69,11 +71,11 @@ public:
     static RefPtr<CryptoKeyRSA> importPkcs8(CryptoAlgorithmIdentifier, std::optional<CryptoAlgorithmIdentifier> hash, Vector<uint8_t>&&, bool extractable, CryptoKeyUsageBitmap, bool* keyTypeMismatch = nullptr);
 
     PlatformRSAKey platformKey() const { return m_platformKey.get(); }
-    JsonWebKey exportJwk() const;
+    std::optional<JsonWebKey> exportJwk() const;
     ExceptionOr<Vector<uint8_t>> exportSpki() const;
     ExceptionOr<Vector<uint8_t>> exportPkcs8() const;
 
-    std::unique_ptr<CryptoKeyRSAComponents> exportData() const;
+    std::unique_ptr<CryptoKeyRSAComponents> exportData(WTF::FailureAction = WTF::FailureAction::Crash) const;
 
     CryptoAlgorithmIdentifier hashAlgorithmIdentifier() const { return m_hash; }
 

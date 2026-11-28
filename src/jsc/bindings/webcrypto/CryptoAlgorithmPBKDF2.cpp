@@ -28,10 +28,7 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "CryptoAlgorithmPbkdf2Params.h"
 #include "CryptoKeyRaw.h"
-#include <JavaScriptCore/JSCJSValueInlines.h>
-#include <wtf/CrossThreadCopier.h>
 
 namespace WebCore {
 
@@ -57,7 +54,7 @@ void CryptoAlgorithmPBKDF2::deriveBits(const CryptoAlgorithmParameters& paramete
     }
 
     dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
-        [parameters = crossThreadCopy(downcast<CryptoAlgorithmPbkdf2Params>(parameters)), baseKey = WTF::move(baseKey), length = *length] {
+        [parameters = std::get<CryptoAlgorithmPbkdf2Params>(parameters.dictionary), baseKey = WTF::move(baseKey), length = *length] {
             return platformDeriveBits(parameters, downcast<CryptoKeyRaw>(baseKey.get()), length);
         });
 }

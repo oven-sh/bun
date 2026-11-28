@@ -28,10 +28,7 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "CryptoAlgorithmAesCbcCfbParams.h"
-#include "CryptoAlgorithmAesKeyParams.h"
 #include "CryptoKeyAES.h"
-#include <wtf/CrossThreadCopier.h>
 
 namespace WebCore {
 
@@ -61,14 +58,14 @@ void CryptoAlgorithmAES_CFB::encrypt(const CryptoAlgorithmParameters& parameters
 {
     using namespace CryptoAlgorithmAES_CFBInternal;
 
-    auto& aesParameters = downcast<CryptoAlgorithmAesCbcCfbParams>(parameters);
-    if (aesParameters.ivVector().size() != IVSIZE) {
+    auto& aesParameters = std::get<CryptoAlgorithmAesCbcCfbParams>(parameters.dictionary);
+    if (aesParameters.iv.size() != IVSIZE) {
         exceptionCallback(OperationError, "algorithm.iv must contain exactly 16 bytes"_s);
         return;
     }
 
     dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
-        [parameters = crossThreadCopy(aesParameters), key = WTF::move(key), plainText = WTF::move(plainText)] {
+        [parameters = aesParameters, key = WTF::move(key), plainText = WTF::move(plainText)] {
             return platformEncrypt(parameters, downcast<CryptoKeyAES>(key.get()), plainText);
         });
 }
@@ -77,21 +74,21 @@ void CryptoAlgorithmAES_CFB::decrypt(const CryptoAlgorithmParameters& parameters
 {
     using namespace CryptoAlgorithmAES_CFBInternal;
 
-    auto& aesParameters = downcast<CryptoAlgorithmAesCbcCfbParams>(parameters);
-    if (aesParameters.ivVector().size() != IVSIZE) {
+    auto& aesParameters = std::get<CryptoAlgorithmAesCbcCfbParams>(parameters.dictionary);
+    if (aesParameters.iv.size() != IVSIZE) {
         exceptionCallback(OperationError, "algorithm.iv must contain exactly 16 bytes"_s);
         return;
     }
 
     dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
-        [parameters = crossThreadCopy(aesParameters), key = WTF::move(key), cipherText = WTF::move(cipherText)] {
+        [parameters = aesParameters, key = WTF::move(key), cipherText = WTF::move(cipherText)] {
             return platformDecrypt(parameters, downcast<CryptoKeyAES>(key.get()), cipherText);
         });
 }
 
 void CryptoAlgorithmAES_CFB::generateKey(const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyOrKeyPairCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext&)
 {
-    const auto& aesParameters = downcast<CryptoAlgorithmAesKeyParams>(parameters);
+    const auto& aesParameters = std::get<CryptoAlgorithmAesKeyParams>(parameters.dictionary);
 
     if (usagesAreInvalidForCryptoAlgorithmAES_CFB(usages)) {
         exceptionCallback(SyntaxError, "Unsupported key usage for an AES key"_s);

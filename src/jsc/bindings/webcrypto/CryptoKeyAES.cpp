@@ -28,8 +28,7 @@
 #include "../wtf-bindings.h"
 #if ENABLE(WEB_CRYPTO)
 
-#include "CryptoAesKeyAlgorithm.h"
-#include "CryptoAlgorithmAesKeyParams.h"
+#include "CryptoAlgorithmParameters.h"
 #include "CryptoAlgorithmRegistry.h"
 #include "ExceptionOr.h"
 #include "JsonWebKey.h"
@@ -108,7 +107,7 @@ JsonWebKey CryptoKeyAES::exportJwk() const
 
 ExceptionOr<std::optional<size_t>> CryptoKeyAES::getKeyLength(const CryptoAlgorithmParameters& parameters)
 {
-    auto& aesParameters = downcast<CryptoAlgorithmAesKeyParams>(parameters);
+    auto& aesParameters = std::get<CryptoAlgorithmAesKeyParams>(parameters.dictionary);
     if (!lengthIsValid(aesParameters.length))
         return Exception { OperationError };
     return aesParameters.length;

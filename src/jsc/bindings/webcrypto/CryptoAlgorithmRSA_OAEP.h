@@ -31,7 +31,6 @@
 
 namespace WebCore {
 
-class CryptoAlgorithmRsaOaepParams;
 class CryptoKeyRSA;
 
 class CryptoAlgorithmRSA_OAEP final : public CryptoAlgorithm {

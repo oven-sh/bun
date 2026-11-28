@@ -28,7 +28,6 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "CryptoAlgorithmRsaOaepParams.h"
 #include "CryptoKeyRSA.h"
 #include "OpenSSLUtilities.h"
 
@@ -73,7 +72,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformEncrypt(const Cryp
     if (EVP_PKEY_CTX_set_rsa_mgf1_md(ctx.get(), md) <= 0)
         return Exception { OperationError };
 
-    if (!setOaepLabel(ctx.get(), parameters.labelVector()))
+    if (!setOaepLabel(ctx.get(), parameters.label))
         return Exception { OperationError };
 
     size_t cipherTextLen;
@@ -110,7 +109,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformDecrypt(const Cryp
     if (EVP_PKEY_CTX_set_rsa_mgf1_md(ctx.get(), md) <= 0)
         return Exception { OperationError };
 
-    if (!setOaepLabel(ctx.get(), parameters.labelVector()))
+    if (!setOaepLabel(ctx.get(), parameters.label))
         return Exception { OperationError };
 
     size_t plainTextLen;

@@ -28,7 +28,6 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "CryptoAlgorithmAeadParams.h"
 #include "CryptoKeyRaw.h"
 #include "OpenSSLUtilities.h"
 #include <openssl/aead.h>
@@ -84,7 +83,7 @@ static std::optional<Vector<uint8_t>> aeadOpen(const Vector<uint8_t>& key, const
 
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmChaCha20Poly1305::platformEncrypt(const CryptoAlgorithmAeadParams& parameters, const CryptoKeyRaw& key, const Vector<uint8_t>& plainText)
 {
-    auto output = aeadSeal(key.key(), parameters.ivVector(), plainText, parameters.additionalDataVector());
+    auto output = aeadSeal(key.key(), parameters.iv, plainText, parameters.additionalData);
     if (!output) {
         // Runs on the work queue; a bad seal must not leave BoringSSL errors
         // for the next operation on this thread (see importAkpKey's convention).
@@ -96,7 +95,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmChaCha20Poly1305::platformEncrypt(co
 
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmChaCha20Poly1305::platformDecrypt(const CryptoAlgorithmAeadParams& parameters, const CryptoKeyRaw& key, const Vector<uint8_t>& cipherText)
 {
-    auto output = aeadOpen(key.key(), parameters.ivVector(), cipherText, parameters.additionalDataVector());
+    auto output = aeadOpen(key.key(), parameters.iv, cipherText, parameters.additionalData);
     if (!output) {
         // A bad tag leaves CIPHER_R_BAD_DECRYPT in the queue on the work-pool
         // thread; clear it like the sibling failure paths.

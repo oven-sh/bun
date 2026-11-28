@@ -91,7 +91,7 @@ const noUnify: readonly string[] = [
 
   // WebKit-derived crypto algorithm impls share file-static helper names
   // (`aesAlgorithm`, `cryptEncrypt`, `ALG128`, `IVSIZE`, ...) — upstream
-  // also compiles these outside unified sources. The remaining ~70
+  // also compiles these outside unified sources. The remaining
   // webcrypto files (JS bindings, key types) bundle cleanly.
   "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CBC.cpp",
   "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CBCOpenSSL.cpp",

@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
 import { createCipheriv, createSecretKey, KeyObject, type webcrypto } from "node:crypto";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
@@ -291,9 +291,7 @@ describe("oversized inputs", () => {
         crypto.subtle.unwrapKey("raw", big, aesKey, { name: "AES-GCM", iv }, { name: "AES-GCM" }, false, ["encrypt"]),
       );
 
-      // BufferSource members of the algorithm dictionaries are copied into
-      // Vectors by the parameter classes' lazy accessors, not by the entry
-      // points, so they need their own guard.
+      // Members of the algorithm dictionaries have their own guard.
       await record(
         "encrypt additionalData",
         crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: big }, aesKey, new Uint8Array(16)),
@@ -346,6 +344,490 @@ describe("oversized inputs", () => {
       });
     }
     expect(exitCode).toBe(0);
+  });
+
+  // A copy that is not made cannot run out of memory. VmHWM: on Linux, a child inherits maxRSS from its parent.
+  describe.skipIf(!isLinux)("peak memory", () => {
+    async function copiesOfBig(setUp: string, calls: string[]) {
+      const script = `
+        const { subtle } = crypto;
+        const big = Buffer.alloc(32 * 1024 * 1024, "a");
+        const small = new Uint8Array(8);
+        const key = await subtle.importKey("raw", small, "PBKDF2", false, ["deriveKey"]);
+        ${setUp}
+        const peak = () => 1024 * /VmHWM:\\s+(\\d+)/.exec(require("fs").readFileSync("/proc/self/status", "utf8"))[1];
+        const results = {};
+        for (const call of ${JSON.stringify(calls)}) {
+          const before = peak();
+          const result = await Promise.resolve(eval(call)).catch(e => e.name);
+          results[call] = { result, copies: Math.round((peak() - before) / big.length) };
+        }
+        console.log(JSON.stringify(results));
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      return JSON.parse(stdout);
+    }
+
+    it.concurrent("namedCurve is not copied by a call that starts no job", async () => {
+      const expected = {
+        'subtle.generateKey({ name: "ECDSA", namedCurve }, true, ["sign"])': { result: "NotSupportedError", copies: 0 },
+        'subtle.importKey("raw", small, { name: "ECDH", namedCurve }, true, [])': { result: "DataError", copies: 0 },
+        'subtle.deriveKey(pbkdf2, key, { name: "ECDH", namedCurve }, true, [])': {
+          result: "NotSupportedError",
+          copies: 0,
+        },
+        'SubtleCrypto.supports("importKey", { name: "ECDH", namedCurve })': { result: true, copies: 0 },
+      };
+      const setUp = `
+        const namedCurve = big.toString("latin1");
+        const pbkdf2 = { name: "PBKDF2", hash: "SHA-256", salt: small, iterations: 1 };
+      `;
+      expect(await copiesOfBig(setUp, Object.keys(expected))).toEqual(expected);
+    });
+
+    it.concurrent("supports copies no member", async () => {
+      const algorithms = {
+        '"encrypt", { name: "AES-GCM", iv: big, additionalData: big }': true,
+        '"decrypt", { name: "ChaCha20-Poly1305", iv: big, additionalData: big }': true,
+        '"encrypt", { name: "AES-CBC", iv: big }': true,
+        '"encrypt", { name: "AES-CTR", counter: big, length: 64 }': true,
+        '"encrypt", { name: "RSA-OAEP", label: big }': true,
+        '"sign", { name: "ML-DSA-44", context: big }': true,
+        '"deriveBits", { name: "HKDF", hash: "SHA-256", salt: big, info: big }, 8': true,
+        '"deriveKey", { name: "PBKDF2", hash: "SHA-256", salt: big, iterations: 1 }, "ChaCha20-Poly1305"': true,
+        '"generateKey", { name: "RSA-PSS", hash: "SHA-256", modulusLength: 1024, publicExponent: big }': true,
+        '"wrapKey", { name: "AES-GCM", iv: big }, "AES-GCM"': true,
+      };
+      const expected = Object.fromEntries(
+        Object.entries(algorithms).map(([args, result]) => [`SubtleCrypto.supports(${args})`, { result, copies: 0 }]),
+      );
+      expect(await copiesOfBig("", Object.keys(expected))).toEqual(expected);
+    });
+
+    it.concurrent("iv is not copied next to an oversized additionalData", async () => {
+      const expected = {
+        'subtle.encrypt({ name: "AES-GCM", iv: big, additionalData }, key, small)': {
+          result: "OperationError",
+          copies: 0,
+        },
+        'subtle.encrypt({ name: "ChaCha20-Poly1305", iv: big, additionalData }, key, small)': {
+          result: "OperationError",
+          copies: 0,
+        },
+        'SubtleCrypto.supports("encrypt", { name: "AES-CBC", iv: additionalData })': { result: false, copies: 0 },
+      };
+      const setUp = `
+        let additionalData;
+        try {
+          additionalData = new Uint8Array(2 ** 31);
+        } catch {
+          console.log('"SKIP"');
+          process.exit(0);
+        }
+      `;
+      const results = await copiesOfBig(setUp, Object.keys(expected));
+      if (results !== "SKIP") expect(results).toEqual(expected);
+    });
+
+    it.concurrent("wrapKey copies a raw key once", async () => {
+      const expected = {
+        'subtle.wrapKey("raw", bigKey, wrapper, { name: "AES-CBC", iv: small })': {
+          result: "OperationError",
+          copies: 1,
+        },
+      };
+      const setUp = `
+        const bigKey = await subtle.generateKey({ name: "HMAC", hash: "SHA-256", length: big.length * 8 }, true, ["sign"]);
+        const wrapper = await subtle.importKey("raw", new Uint8Array(16), "AES-CBC", false, ["wrapKey"]);
+      `;
+      expect(await copiesOfBig(setUp, Object.keys(expected))).toEqual(expected);
+    });
+  });
+
+  it.skipIf(!isDebug && (isASAN || !isLinux))("rejects when a copy cannot be allocated", async () => {
+    const tooLarge = "OperationError: Input data is too large";
+    const failed = "OperationError: The operation failed for an operation-specific reason";
+    const expected = {
+      'subtle.encrypt({ name: "AES-GCM", iv: small }, key, big)': tooLarge,
+      'subtle.encrypt({ name: "AES-GCM", iv: small, additionalData: big }, key, small)': tooLarge,
+      'subtle.digest("SHA-256", big)': tooLarge,
+      "subtle.digest(bigString, small)": "NotSupportedError: Unrecognized algorithm name",
+      'subtle.unwrapKey("raw", small, key, gcm, { name: "ECDH", namedCurve: bigString }, true, [])': tooLarge,
+      'subtle.wrapKey("jwk", hmacKey, key, gcm)': failed,
+      'subtle.wrapKey("jwk", rsaKey, key, gcm)': failed,
+      // The keys fit under the cap of a debug build. A string of their base64 (the cap, plus a header) does not.
+      ...(!isDebug && {
+        'subtle.wrapKey("raw", hmacKey, key, gcm)': failed,
+        'subtle.wrapKey("spki", rsaKey, key, gcm)': failed,
+      }),
+      'SubtleCrypto.supports("encrypt", { name: "AES-GCM", iv: big })': true,
+    };
+    // Debug builds have a cap, which leaves out WebAssembly.Memory and base64 strings. Others use up the address space.
+    const MiB = 1024 * 1024;
+    const limit = (isDebug ? 4 : 16) * MiB;
+    const keySize = (isDebug ? 3 : 24) * MiB;
+    const script = `
+      const { subtle } = crypto;
+      const big = new Uint8Array(new WebAssembly.Memory({ initial: ${(2 * limit) / 65536} }).buffer).fill(0xff);
+      const bigString = Buffer.from(big.buffer).toString("base64");
+      const small = new Uint8Array(16);
+      const gcm = { name: "AES-GCM", iv: small };
+      const key = await subtle.importKey("raw", small, "AES-GCM", false, ["encrypt", "wrapKey", "unwrapKey"]);
+      const keyBytes = Buffer.from(big.buffer, 0, ${keySize});
+      const hmacKey = await subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+      const rsaJwk = { kty: "RSA", n: keyBytes.toString("base64url"), e: "AQAB" };
+      const rsaKey = await subtle.importKey("jwk", rsaJwk, { name: "RSA-PSS", hash: "SHA-256" }, true, ["verify"]);
+      const held = [];
+      Bun.gc(true);
+      try {
+        while (${!isDebug}) held.push(new ArrayBuffer(${limit}));
+      } catch {}
+      const results = {};
+      for (const call of ${JSON.stringify(Object.keys(expected))})
+        results[call] = await Promise.resolve(eval(call)).catch(e => e.name + ": " + e.message);
+      console.log(JSON.stringify(results));
+    `;
+    const launcher = isDebug ? [] : ["sh", "-c", 'ulimit -c 0 && ulimit -v 4194304 && exec "$0" "$@"'];
+    await using proc = Bun.spawn({
+      cmd: [...launcher, bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_JSC_maxSingleAllocationSize: isDebug ? String(limit) : undefined },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim() || stderr).toStartWith("{");
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("dictionary conversion", () => {
+  const { subtle } = crypto;
+  const data = new Uint8Array(16);
+  const someKey = () => subtle.importKey("raw", data, { name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+  const calls: Record<string, (algorithm: any, key: CryptoKey) => Promise<unknown>> = {
+    encrypt: (algorithm, key) => subtle.encrypt(algorithm, key, data),
+    sign: (algorithm, key) => subtle.sign(algorithm, key, data),
+    deriveBits: (algorithm, key) => subtle.deriveBits(algorithm, key, 8),
+    generateKey: algorithm => subtle.generateKey(algorithm, true, []),
+    importKey: algorithm => subtle.importKey("spki", data, algorithm, true, []),
+  };
+  const logReads = (target: object, reads: string[]) =>
+    new Proxy(target, { get: (object: any, name) => (reads.push(String(name)), object[name]) });
+
+  type Member = { value: unknown; requiredAs?: string };
+  const required = (requiredAs: string, value: unknown): Member => ({ value, requiredAs });
+  const optional = (value: unknown): Member => ({ value });
+  const bytes = required("(ArrayBufferView or ArrayBuffer)", data);
+  const hash = required("(object or DOMString)", "SHA-256");
+  const aead = { additionalData: optional(data), iv: bytes, tagLength: optional(128) };
+
+  describe.each([
+    { call: "encrypt", name: "AES-GCM", dictionary: "AesGcmParams", inOrder: aead },
+    { call: "encrypt", name: "ChaCha20-Poly1305", dictionary: "AeadParams", inOrder: aead },
+    { call: "encrypt", name: "AES-CBC", dictionary: "AesCbcCfbParams", inOrder: { iv: bytes } },
+    {
+      call: "encrypt",
+      name: "AES-CTR",
+      dictionary: "AesCtrParams",
+      inOrder: { counter: bytes, length: required("octet", 64) },
+    },
+    { call: "encrypt", name: "RSA-OAEP", dictionary: "RsaOaepParams", inOrder: { label: optional(data) } },
+    { call: "sign", name: "ECDSA", dictionary: "EcdsaParams", inOrder: { hash } },
+    {
+      call: "sign",
+      name: "RSA-PSS",
+      dictionary: "RsaPssParams",
+      inOrder: { saltLength: required("unsigned long", 0) },
+    },
+    { call: "sign", name: "ML-DSA-44", dictionary: "ContextParams", inOrder: { context: optional(data) } },
+    { call: "deriveBits", name: "HKDF", dictionary: "HkdfParams", inOrder: { hash, info: bytes, salt: bytes } },
+    {
+      call: "deriveBits",
+      name: "PBKDF2",
+      dictionary: "Pbkdf2Params",
+      inOrder: { hash, iterations: required("unsigned long", 1), salt: bytes },
+    },
+    {
+      call: "generateKey",
+      name: "AES-KW",
+      dictionary: "AesKeyParams",
+      inOrder: { length: required("unsigned short", 128) },
+    },
+    { call: "generateKey", name: "HMAC", dictionary: "HmacKeyParams", inOrder: { hash, length: optional(128) } },
+    {
+      call: "generateKey",
+      name: "ECDH",
+      dictionary: "EcKeyParams",
+      inOrder: { namedCurve: required("DOMString", "P-1") },
+    },
+    {
+      call: "generateKey",
+      name: "RSA-PSS",
+      dictionary: "RsaHashedKeyGenParams",
+      inOrder: { modulusLength: required("unsigned long", 1), publicExponent: required("Uint8Array", data), hash },
+    },
+    { call: "importKey", name: "RSA-OAEP", dictionary: "RsaHashedImportParams", inOrder: { hash } },
+  ])("$call $name", ({ call, name, dictionary, inOrder }) => {
+    const members = Object.entries(inOrder as Record<string, Member>);
+    const valid = { name, ...Object.fromEntries(members.map(([member, { value }]) => [member, value])) };
+
+    it("reads the members in order", async () => {
+      const reads: string[] = [];
+      await calls[call](logReads(valid, reads), await someKey()).catch(() => {});
+      expect(reads).toEqual(["name", "name", ...Object.keys(inOrder)]);
+    });
+
+    for (const [member, { requiredAs }] of members) {
+      if (!requiredAs) continue;
+      it(`stops at a missing ${member}`, async () => {
+        const reads: string[] = [];
+        await expect(
+          calls[call](logReads({ ...valid, [member]: undefined }, reads), await someKey()),
+        ).rejects.toMatchObject({
+          code: "ERR_MISSING_OPTION",
+          message: `Member ${dictionary}.${member} is required and must be an instance of ${requiredAs}`,
+        });
+        expect(reads.at(-1)).toBe(member);
+      });
+    }
+  });
+
+  describe.each([
+    { name: "ECDH", dictionary: "EcdhKeyDeriveParams" },
+    { name: "X25519", dictionary: "X25519Params" },
+  ])("deriveBits $name", ({ name, dictionary }) => {
+    it.each([
+      { public: null, code: "ERR_INVALID_ARG_TYPE", complaint: "must be" },
+      { public: undefined, code: "ERR_MISSING_OPTION", complaint: "is required and must be" },
+    ])("reads public before it converts name again, then fails with $code", async row => {
+      const reads: string[] = [];
+      const algorithm = { name: { toString: () => (reads.push("toString"), name) }, public: row.public };
+      await expect(calls.deriveBits(logReads(algorithm, reads), await someKey())).rejects.toMatchObject({
+        code: row.code,
+        message: `Member ${dictionary}.publicKey ${row.complaint} an instance of CryptoKey`,
+      });
+      expect(reads).toEqual(["name", "toString", "name", "public", "toString"]);
+    });
+  });
+
+  it.each([
+    { call: "deriveBits", member: "salt", others: { name: "HKDF", info: data } },
+    { call: "deriveBits", member: "info", others: { name: "HKDF", salt: data } },
+    { call: "deriveBits", member: "salt", others: { name: "PBKDF2", iterations: 1 } },
+    { call: "generateKey", member: "publicExponent", others: { name: "RSA-PSS", modulusLength: 1 } },
+  ])("$call $others.name refuses a resizable $member", async ({ call, member, others }) => {
+    const buffer = new ArrayBuffer(8, { maxByteLength: 16 });
+    for (const value of [buffer, new Uint8Array(buffer)]) {
+      const algorithm = { ...others, hash: "SHA-256", [member]: value };
+      await expect(calls[call](algorithm, await someKey())).rejects.toMatchObject({
+        name: "TypeError",
+        message: expect.stringMatching(/cannot be resizable|^Type error$/),
+      });
+    }
+  });
+
+  it.each([
+    { algorithm: { name: "Ed25519" }, written: ["name"] },
+    { algorithm: { name: "AES-GCM", length: 128 }, usage: "encrypt", written: ["name", "length"] },
+    { algorithm: { name: "ECDSA", namedCurve: "P-256" }, written: ["name", "namedCurve"] },
+    { algorithm: { name: "HMAC", hash: "SHA-256" }, written: ["name", "hash", "length"] },
+    {
+      algorithm: { name: "RSA-PSS", hash: "SHA-256", modulusLength: 1024, publicExponent: new Uint8Array([1, 0, 1]) },
+      written: ["name", "modulusLength", "publicExponent", "hash"],
+    },
+  ])("writes the algorithm of a $algorithm.name key in order", async ({ algorithm, usage = "sign", written }) => {
+    const result: any = await subtle.generateKey(algorithm as any, true, [usage as KeyUsage]);
+    if (!(result instanceof CryptoKey)) expect(Object.keys(result)).toEqual(["privateKey", "publicKey"]);
+    expect(Object.keys((result.privateKey ?? result).algorithm)).toEqual(written);
+  });
+
+  it("reads and writes the members of a JWK in the same order", async () => {
+    const order = "alg crv d dp dq e ext k key_ops kty n oth p priv pub q qi use x y".split(" ");
+    const reads: string[] = [];
+    await subtle.importKey("jwk", logReads({}, reads), "AES-GCM", true, ["encrypt"]).catch(() => {});
+    expect(reads).toEqual(order);
+    const { privateKey } = await subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign"]);
+    expect(Object.keys(await subtle.exportKey("jwk", privateKey))).toEqual("crv d ext key_ops kty x y".split(" "));
+  });
+
+  it.each([
+    { oth: [null], missing: "d" },
+    { oth: [{ d: "AQ" }], missing: "r" },
+    { oth: [{ d: "AQ", r: "AQ" }], missing: "t" },
+  ])("requires $missing in the elements of oth", async ({ oth, missing }) => {
+    await expect(subtle.importKey("jwk", { oth } as any, "AES-GCM", true, ["encrypt"])).rejects.toMatchObject({
+      code: "ERR_MISSING_OPTION",
+      message: `Member RsaOtherPrimesInfo.${missing} is required and must be an instance of DOMString`,
+    });
+  });
+});
+
+it("a worker can be terminated while a pending deriveKey holds the last reference to namedCurve", async () => {
+  // deriveKey reads name twice to import (ECDSA has a curve), then for the length. Object.keys makes the curve an atom.
+  const worker = `
+    const key = await crypto.subtle.importKey("raw", new Uint8Array(8), "PBKDF2", false, ["deriveKey"]);
+    const pending = new Int32Array(new SharedArrayBuffer(4)).fill(16);
+    for (let i = 0; i < 16; i++) {
+      let reads = 0;
+      const derived = {
+        get name() { return reads++ < 2 ? "ECDSA" : "AES-GCM"; },
+        namedCurve: Object.keys({ ["curve-" + i]: 1 })[0],
+        length: 128,
+      };
+      const algorithm = { name: "PBKDF2", hash: "SHA-256", salt: new Uint8Array(8), iterations: 50_000 };
+      crypto.subtle.deriveKey(algorithm, key, derived, true, ["encrypt"]).catch(() => Atomics.sub(pending, 0, 1));
+    }
+    Bun.gc(true);
+    postMessage(pending);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const url = URL.createObjectURL(new Blob([${JSON.stringify(worker)}]));
+       (function untilOneWasPending() {
+         const worker = new Worker(url);
+         worker.onmessage = ({ data: pending }) => {
+           worker.addEventListener("close", () => (pending[0] ? console.log("closed") : untilOneWasPending()));
+           worker.terminate();
+         };
+       })();`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "closed\n", stderr: "", exitCode: 0 });
+});
+
+describe("algorithm members are copied when the algorithm is normalized", () => {
+  const { subtle } = crypto;
+  const bytes = (length: number) => new Uint8Array(length).fill(1);
+  const hex = async (key: CryptoKey) => Buffer.from(await subtle.exportKey("raw", key)).toString("hex");
+  type Bytes = Uint8Array<ArrayBuffer>;
+
+  let rsaKeys: Promise<webcrypto.CryptoKeyPair> | undefined;
+
+  describe.each([
+    { what: "overwritten", change: (buffer: Bytes) => void buffer.fill(0xee) },
+    { what: "detached", change: (buffer: Bytes) => void (buffer.byteLength && buffer.buffer.transfer()) },
+  ])("$what later in the same call", ({ change }) => {
+    const pbkdf2Key = "60b95f36d8861995c5e6225b3dcc288a";
+    const hkdfKey = "94cfb5987142541ea82f125c15194d11";
+
+    it.each([
+      { name: "PBKDF2", member: "salt", expected: pbkdf2Key },
+      { name: "HKDF", member: "salt", expected: hkdfKey },
+      { name: "HKDF", member: "info", expected: hkdfKey },
+    ] as const)("deriveKey $name $member", async ({ name, member, expected }) => {
+      const base = await subtle.importKey("raw", new Uint8Array(8).fill(3), name, false, ["deriveKey"]);
+      const algorithm = { name, hash: "SHA-256", salt: bytes(8), info: bytes(8), iterations: 1 };
+      const derived = {
+        name: "AES-GCM",
+        get length() {
+          change(algorithm[member]);
+          return 128;
+        },
+      };
+      expect(await hex(await subtle.deriveKey(algorithm, base, derived, true, ["encrypt"]))).toBe(expected);
+    });
+
+    it("deriveKey HKDF info over 1024 bytes", async () => {
+      const base = await subtle.importKey("raw", bytes(8), "HKDF", false, ["deriveKey"]);
+      const algorithm = { name: "HKDF", hash: "SHA-256", salt: bytes(8), info: bytes(1025) };
+      const derived = {
+        name: "AES-GCM",
+        get length() {
+          change(algorithm.info);
+          return 128;
+        },
+      };
+      await expect(subtle.deriveKey(algorithm, base, derived, true, ["encrypt"])).rejects.toMatchObject({
+        name: "OperationError",
+        message: "algorithm.info must be at most 1024 bytes",
+      });
+    });
+
+    const secretKey = (name: string, format = "raw", length = 16) =>
+      subtle.importKey(format as "raw", bytes(length), name, false, ["wrapKey", "unwrapKey"]);
+
+    const aead = () => ({ iv: bytes(12), additionalData: bytes(4) });
+
+    describe.each([
+      { name: "AES-GCM", members: aead, member: "iv" },
+      { name: "AES-GCM", members: aead, member: "additionalData" },
+      { name: "ChaCha20-Poly1305", members: aead, member: "iv" },
+      { name: "ChaCha20-Poly1305", members: aead, member: "additionalData" },
+      { name: "AES-CBC", members: () => ({ iv: bytes(16) }), member: "iv" },
+      { name: "AES-CFB-8", members: () => ({ iv: bytes(16) }), member: "iv" },
+      { name: "AES-CTR", members: () => ({ counter: bytes(16), length: 64 }), member: "counter" },
+      { name: "RSA-OAEP", members: () => ({ label: bytes(4) }), member: "label" },
+    ] as { name: string; members: () => any; member: string }[])("$name $member", ({ name, members, member }) => {
+      async function setUp() {
+        const secret = await subtle.importKey("raw", new Uint8Array(16).fill(5), "AES-GCM", true, ["encrypt"]);
+        if (name === "RSA-OAEP") {
+          const { publicKey, privateKey } = await (rsaKeys ??= subtle.generateKey(
+            { name, hash: "SHA-1", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]) },
+            false,
+            ["wrapKey", "unwrapKey"],
+          ));
+          return { secret, wrapper: publicKey, unwrapper: privateKey };
+        }
+        const key = await (name === "ChaCha20-Poly1305" ? secretKey(name, "raw-secret", 32) : secretKey(name));
+        return { secret, wrapper: key, unwrapper: key };
+      }
+
+      it("unwrapKey", async () => {
+        const { secret, wrapper, unwrapper } = await setUp();
+        const wrapped = await subtle.wrapKey("raw", secret, wrapper, { name, ...members() });
+        const algorithm = { name, ...members() };
+        const unwrappedAlgorithm = {
+          get name() {
+            change(algorithm[member]);
+            return "AES-GCM";
+          },
+        };
+        const key = await subtle.unwrapKey("raw", wrapped, unwrapper, algorithm, unwrappedAlgorithm, true, ["encrypt"]);
+        expect(await hex(key)).toBe("05050505050505050505050505050505");
+      });
+
+      it("wrapKey", async () => {
+        const { secret, wrapper, unwrapper } = await setUp();
+        const algorithm = { name, ...members() };
+        let promise,
+          calls = 0;
+        (Object.prototype as any).toJSON = function () {
+          calls++;
+          change(algorithm[member]);
+          return this;
+        };
+        try {
+          promise = subtle.wrapKey("jwk", secret, wrapper, algorithm);
+        } finally {
+          delete (Object.prototype as any).toJSON;
+        }
+        expect(calls).toBeGreaterThan(0);
+        const key = await subtle.unwrapKey("jwk", await promise, unwrapper, { name, ...members() }, "AES-GCM", true, [
+          "encrypt",
+        ]);
+        expect(await hex(key)).toBe("05050505050505050505050505050505");
+      });
+    });
+  });
+
+  it("after the getters of the algorithm itself, hash included", async () => {
+    const base = await subtle.importKey("raw", new Uint8Array(8).fill(3), "PBKDF2", false, ["deriveBits"]);
+    const salt = bytes(8);
+    const hash = {
+      get name() {
+        salt.fill(0xee);
+        return "SHA-256";
+      },
+    };
+    const bits = await subtle.deriveBits({ name: "PBKDF2", hash, salt, iterations: 1 }, base, 64);
+    expect(Buffer.from(bits).toString("hex")).toBe("9b378574a42e2e9e");
   });
 });
 

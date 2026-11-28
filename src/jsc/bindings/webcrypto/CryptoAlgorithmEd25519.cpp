@@ -30,7 +30,6 @@
 
 #include "CryptoKeyOKP.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
-#include <wtf/CrossThreadCopier.h>
 
 // -- BUN --
 #include <openssl/curve25519.h>

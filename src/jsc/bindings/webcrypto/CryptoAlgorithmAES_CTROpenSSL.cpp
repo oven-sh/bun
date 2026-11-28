@@ -28,7 +28,6 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "CryptoAlgorithmAesCtrParams.h"
 #include "CryptoKeyAES.h"
 #include "OpenSSLCryptoUniquePtr.h"
 #include "OpenSSLUtilities.h"
@@ -129,7 +128,7 @@ static std::optional<Vector<uint8_t>> crypt(int operation, const Vector<uint8_t>
 
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_CTR::platformEncrypt(const CryptoAlgorithmAesCtrParams& parameters, const CryptoKeyAES& key, const Vector<uint8_t>& plainText)
 {
-    auto output = crypt(1, key.key(), parameters.counterVector(), parameters.length, plainText);
+    auto output = crypt(1, key.key(), parameters.counter, parameters.length, plainText);
     if (!output)
         return Exception { OperationError };
     return WTF::move(*output);
@@ -137,7 +136,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_CTR::platformEncrypt(const Crypt
 
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_CTR::platformDecrypt(const CryptoAlgorithmAesCtrParams& parameters, const CryptoKeyAES& key, const Vector<uint8_t>& cipherText)
 {
-    auto output = crypt(0, key.key(), parameters.counterVector(), parameters.length, cipherText);
+    auto output = crypt(0, key.key(), parameters.counter, parameters.length, cipherText);
     if (!output)
         return Exception { OperationError };
     return WTF::move(*output);

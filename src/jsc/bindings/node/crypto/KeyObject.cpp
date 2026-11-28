@@ -982,14 +982,14 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
         return {};
     };
 
-    auto paramsOrException = WebCore::SubtleCrypto::normalizeImportParameters(*lexicalGlobalObject, WTF::move(algorithm));
+    auto paramsOrException = WebCore::SubtleCrypto::normalizeImportParameters(*lexicalGlobalObject, algorithm);
     RETURN_IF_EXCEPTION(scope, {});
     if (paramsOrException.hasException()) {
         WebCore::propagateException(*lexicalGlobalObject, scope, paramsOrException.releaseException());
         return {};
     }
     auto params = paramsOrException.releaseReturnValue();
-    auto identifier = params->identifier;
+    auto identifier = params.identifier;
 
     RefPtr<WebCore::CryptoKey> result;
     std::optional<WebCore::ExceptionCode> failureCode;
@@ -1024,7 +1024,7 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
         Vector<uint8_t> keyData;
         keyData.appendVector(symmetricKey());
         auto importAlgorithm = WebCore::CryptoAlgorithmRegistry::singleton().create(identifier);
-        importAlgorithm->importKey(format, WebCore::KeyData { WTF::move(keyData) }, *params, extractable, usagesBitmap, WTF::move(keyCallback), WTF::move(exceptionCallback));
+        importAlgorithm->importKey(format, WebCore::KeyData { WTF::move(keyData) }, params, extractable, usagesBitmap, WTF::move(keyCallback), WTF::move(exceptionCallback));
     } else {
         bool isPublic = type() == CryptoKeyType::Public;
         switch (identifier) {
@@ -1043,7 +1043,7 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
                 return throwDOMException(WebCore::OperationError, ""_s);
             }
             auto importAlgorithm = WebCore::CryptoAlgorithmRegistry::singleton().create(identifier);
-            importAlgorithm->importKey(isPublic ? WebCore::CryptoKeyFormat::Spki : WebCore::CryptoKeyFormat::Pkcs8, WebCore::KeyData { WTF::move(*der) }, *params, extractable, usagesBitmap, WTF::move(keyCallback), WTF::move(exceptionCallback));
+            importAlgorithm->importKey(isPublic ? WebCore::CryptoKeyFormat::Spki : WebCore::CryptoKeyFormat::Pkcs8, WebCore::KeyData { WTF::move(*der) }, params, extractable, usagesBitmap, WTF::move(keyCallback), WTF::move(exceptionCallback));
             break;
         }
         case CryptoAlgorithmIdentifier::ML_DSA_44:

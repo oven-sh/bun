@@ -34,7 +34,7 @@
 
 namespace WebCore {
 
-class CryptoAlgorithmParameters;
+struct CryptoAlgorithmParameters;
 struct JsonWebKey;
 
 class CryptoKeyHMAC final : public CryptoKey {

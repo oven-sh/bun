@@ -31,7 +31,6 @@
 
 namespace WebCore {
 
-class CryptoAlgorithmRsaPssParams;
 class CryptoKeyRSA;
 
 class CryptoAlgorithmRSA_PSS final : public CryptoAlgorithm {

@@ -247,7 +247,7 @@ extern "C" double Bun__parseDateTimeString(const Latin1Character* string, size_t
 }
 
 namespace Bun {
-String base64URLEncodeToString(const Vector<uint8_t>& data)
+String base64URLEncodeToString(const Vector<uint8_t>& data, WTF::FailureAction onAllocationFailure)
 {
     auto size = data.size();
     size_t encodedLength = ((size * 4) + 2) / 3;
@@ -259,7 +259,9 @@ String base64URLEncodeToString(const Vector<uint8_t>& data)
         return String();
 
     std::span<Latin1Character> ptr;
-    auto result = String::createUninitialized(encodedLength, ptr);
+    auto result = onAllocationFailure == WTF::FailureAction::Crash ? String::createUninitialized(encodedLength, ptr) : String::tryCreateUninitialized(encodedLength, ptr);
+    if (result.isNull()) [[unlikely]]
+        return result;
 
     encodedLength = WTF__base64URLEncode(reinterpret_cast<const char*>(data.begin()), data.size(), reinterpret_cast<char*>(ptr.data()), encodedLength);
     if (result.length() != encodedLength) {

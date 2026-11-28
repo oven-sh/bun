@@ -24,7 +24,7 @@
 
 #include "JSCryptoKeyAlgorithm.h"
 
-#include "JSDOMConvertStrings.h"
+#include "JSDOMConvertBufferSource.h"
 #include "JSDOMGlobalObject.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -32,22 +32,66 @@
 namespace WebCore {
 using namespace JSC;
 
-#if ENABLE(WEB_CRYPTO)
-
-JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const CryptoKeyAlgorithm& dictionary)
+static JSObject* createAlgorithmObject(JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const String& name)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    auto result = constructEmptyObject(&lexicalGlobalObject, globalObject.objectPrototype());
-
-    auto nameValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, dictionary.name);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, vm.propertyNames->name, nameValue);
+    auto* result = constructEmptyObject(&lexicalGlobalObject, globalObject.objectPrototype());
+    result->putDirect(vm, vm.propertyNames->name, jsStringWithCache(vm, name));
     return result;
 }
 
-#endif
+JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const CryptoKeyAlgorithm& dictionary)
+{
+    return createAlgorithmObject(lexicalGlobalObject, globalObject, dictionary.name);
+}
+
+JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const CryptoAesKeyAlgorithm& dictionary)
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto* result = createAlgorithmObject(lexicalGlobalObject, globalObject, dictionary.name);
+    result->putDirect(vm, vm.propertyNames->length, jsNumber(dictionary.length));
+    return result;
+}
+
+JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const CryptoEcKeyAlgorithm& dictionary)
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto* result = createAlgorithmObject(lexicalGlobalObject, globalObject, dictionary.name);
+    Bun::putDirectNamed(vm, result, "namedCurve"_s, jsStringWithCache(vm, dictionary.namedCurve));
+    return result;
+}
+
+JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const CryptoHmacKeyAlgorithm& dictionary)
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto* result = createAlgorithmObject(lexicalGlobalObject, globalObject, dictionary.name);
+    Bun::putDirectNamed(vm, result, "hash"_s, createAlgorithmObject(lexicalGlobalObject, globalObject, dictionary.hash.name));
+    result->putDirect(vm, vm.propertyNames->length, jsNumber(dictionary.length));
+    return result;
+}
+
+JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const CryptoRsaKeyAlgorithm& dictionary)
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* result = createAlgorithmObject(lexicalGlobalObject, globalObject, dictionary.name);
+    Bun::putDirectNamed(vm, result, "modulusLength"_s, jsNumber(dictionary.modulusLength));
+    auto publicExponent = toJS<IDLUint8Array>(lexicalGlobalObject, globalObject, throwScope, dictionary.publicExponent);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    Bun::putDirectNamed(vm, result, "publicExponent"_s, publicExponent);
+    return result;
+}
+
+JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const CryptoRsaHashedKeyAlgorithm& dictionary)
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    const CryptoRsaKeyAlgorithm& inherited = dictionary;
+    auto* result = convertDictionaryToJS(lexicalGlobalObject, globalObject, inherited);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    Bun::putDirectNamed(vm, result, "hash"_s, createAlgorithmObject(lexicalGlobalObject, globalObject, dictionary.hash.name));
+    return result;
+}
 
 } // namespace WebCore
 

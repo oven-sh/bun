@@ -22,7 +22,6 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "CryptoAlgorithmX25519Params.h"
 #include "CryptoKeyOKP.h"
 #include "ScriptExecutionContext.h"
 #include <openssl/curve25519.h>
@@ -75,8 +74,7 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
         exceptionCallback(ExceptionCode::InvalidAccessError, ""_s);
         return;
     }
-    auto& ecParameters = downcast<CryptoAlgorithmX25519Params>(parameters);
-    ASSERT(ecParameters.publicKey);
+    auto& ecParameters = std::get<CryptoAlgorithmEcdhKeyDeriveParams>(parameters.dictionary);
     if (ecParameters.publicKey->type() != CryptoKey::Type::Public) {
         exceptionCallback(ExceptionCode::InvalidAccessError, ""_s);
         return;
@@ -86,7 +84,7 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
         return;
     }
     auto& ecBaseKey = downcast<CryptoKeyOKP>(baseKey.get());
-    auto& ecPublicKey = downcast<CryptoKeyOKP>(*(ecParameters.publicKey.get()));
+    auto& ecPublicKey = downcast<CryptoKeyOKP>(ecParameters.publicKey.get());
     if (ecBaseKey.namedCurve() != ecPublicKey.namedCurve()) {
         exceptionCallback(ExceptionCode::InvalidAccessError, "Named curve mismatch"_s);
         return;
@@ -118,7 +116,7 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
     workQueue.dispatch(
         context.globalObject(),
         [baseKey = WTF::move(baseKey), publicKey = ecParameters.publicKey, unifiedCallback = WTF::move(unifiedCallback), contextIdentifier = context.identifier(), loopKind = context.currentLoopKind()]() mutable {
-            auto derivedKey = platformDeriveBits(downcast<CryptoKeyOKP>(baseKey.get()), downcast<CryptoKeyOKP>(*publicKey));
+            auto derivedKey = platformDeriveBits(downcast<CryptoKeyOKP>(baseKey.get()), downcast<CryptoKeyOKP>(publicKey.get()));
             ScriptExecutionContext::postTaskTo(contextIdentifier, loopKind, [derivedKey = WTF::move(derivedKey), unifiedCallback = WTF::move(unifiedCallback)](auto&) mutable {
                 unifiedCallback(WTF::move(derivedKey));
             });

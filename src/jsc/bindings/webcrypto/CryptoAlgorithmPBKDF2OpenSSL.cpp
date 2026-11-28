@@ -28,7 +28,6 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "CryptoAlgorithmPbkdf2Params.h"
 #include "CryptoKeyRaw.h"
 #include "OpenSSLUtilities.h"
 #include <openssl/evp.h>
@@ -46,7 +45,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmPBKDF2::platformDeriveBits(const Cry
         return Exception { OperationError };
 
     Vector<uint8_t> output(length / 8);
-    if (PKCS5_PBKDF2_HMAC(reinterpret_cast<const char*>(key.key().begin()), key.key().size(), parameters.saltVector().begin(), parameters.saltVector().size(), parameters.iterations, algorithm, output.size(), output.begin()) <= 0)
+    if (PKCS5_PBKDF2_HMAC(reinterpret_cast<const char*>(key.key().begin()), key.key().size(), parameters.salt.begin(), parameters.salt.size(), parameters.iterations, algorithm, output.size(), output.begin()) <= 0)
         return Exception { OperationError };
 
     return output;

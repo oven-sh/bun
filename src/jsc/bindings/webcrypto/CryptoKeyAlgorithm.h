@@ -25,12 +25,36 @@
 
 #pragma once
 
+#include <JavaScriptCore/Uint8Array.h>
+#include <wtf/RefPtr.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
 struct CryptoKeyAlgorithm {
     String name;
+};
+
+struct CryptoAesKeyAlgorithm : CryptoKeyAlgorithm {
+    unsigned short length; // In bits.
+};
+
+struct CryptoEcKeyAlgorithm : CryptoKeyAlgorithm {
+    String namedCurve;
+};
+
+struct CryptoHmacKeyAlgorithm : CryptoKeyAlgorithm {
+    CryptoKeyAlgorithm hash;
+    unsigned length; // In bits.
+};
+
+struct CryptoRsaKeyAlgorithm : CryptoKeyAlgorithm {
+    unsigned modulusLength; // In bits.
+    RefPtr<Uint8Array> publicExponent;
+};
+
+struct CryptoRsaHashedKeyAlgorithm : CryptoRsaKeyAlgorithm {
+    CryptoKeyAlgorithm hash;
 };
 
 }

@@ -28,6 +28,11 @@
 namespace WebCore {
 
 JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject&, JSDOMGlobalObject&, const CryptoKeyAlgorithm&);
+JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject&, JSDOMGlobalObject&, const CryptoAesKeyAlgorithm&);
+JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject&, JSDOMGlobalObject&, const CryptoEcKeyAlgorithm&);
+JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject&, JSDOMGlobalObject&, const CryptoHmacKeyAlgorithm&);
+JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject&, JSDOMGlobalObject&, const CryptoRsaKeyAlgorithm&);
+JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject&, JSDOMGlobalObject&, const CryptoRsaHashedKeyAlgorithm&);
 
 } // namespace WebCore
 

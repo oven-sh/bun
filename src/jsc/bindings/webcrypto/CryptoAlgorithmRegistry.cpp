@@ -55,8 +55,7 @@ std::optional<CryptoAlgorithmIdentifier> CryptoAlgorithmRegistry::identifier(con
 
     Locker locker { m_lock };
 
-    // FIXME: How is it helpful to call isolatedCopy on the argument to find?
-    auto identifier = m_identifiers.find(name.isolatedCopy());
+    auto identifier = m_identifiers.find(name);
     if (identifier == m_identifiers.end())
         return std::nullopt;
 

@@ -281,7 +281,9 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyRSA::exportSpki() const
     if (len < 0)
         return Exception { OperationError };
 
-    Vector<uint8_t> keyData(len);
+    Vector<uint8_t> keyData;
+    if (!keyData.tryGrow(len))
+        return Exception { OperationError };
     auto ptr = keyData.begin();
     if (i2d_PUBKEY(platformKey(), &ptr) < 0)
         return Exception { OperationError };
@@ -302,7 +304,9 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyRSA::exportPkcs8() const
     if (len < 0)
         return Exception { OperationError };
 
-    Vector<uint8_t> keyData(len);
+    Vector<uint8_t> keyData;
+    if (!keyData.tryGrow(len))
+        return Exception { OperationError };
     auto ptr = keyData.begin();
     if (i2d_PKCS8_PRIV_KEY_INFO(p8inf.get(), &ptr) < 0)
         return Exception { OperationError };
@@ -339,7 +343,7 @@ auto CryptoKeyRSA::algorithm() const -> KeyAlgorithm
     return result;
 }
 
-std::unique_ptr<CryptoKeyRSAComponents> CryptoKeyRSA::exportData() const
+std::unique_ptr<CryptoKeyRSAComponents> CryptoKeyRSA::exportData(WTF::FailureAction onAllocationFailure) const
 {
     RSA* rsa = EVP_PKEY_get0_RSA(platformKey());
     if (!rsa)
@@ -350,12 +354,26 @@ std::unique_ptr<CryptoKeyRSAComponents> CryptoKeyRSA::exportData() const
     const BIGNUM* d;
     RSA_get0_key(rsa, &n, &e, &d);
 
+    bool allocationFailed = false;
+    auto toBytes = [&](const BIGNUM* number) {
+        if (onAllocationFailure == WTF::FailureAction::Crash)
+            return convertToBytes(number);
+        Vector<uint8_t> bytes;
+        if (bytes.tryGrow(BN_num_bytes(number)))
+            BN_bn2bin(number, bytes.begin());
+        else
+            allocationFailed = true;
+        return bytes;
+    };
+
+    std::unique_ptr<CryptoKeyRSAComponents> result;
     switch (type()) {
     case CryptoKeyType::Public:
         // We need the public modulus and exponent for the public key.
         if (!n || !e)
             return nullptr;
-        return CryptoKeyRSAComponents::createPublic(convertToBytes(n), convertToBytes(e));
+        result = CryptoKeyRSAComponents::createPublic(toBytes(n), toBytes(e));
+        break;
     case CryptoKeyType::Private: {
         // We need the public modulus, exponent, and private exponent, as well as p and q prime information.
         const BIGNUM* p;
@@ -366,10 +384,10 @@ std::unique_ptr<CryptoKeyRSAComponents> CryptoKeyRSA::exportData() const
             return nullptr;
 
         CryptoKeyRSAComponents::PrimeInfo firstPrimeInfo;
-        firstPrimeInfo.primeFactor = convertToBytes(p);
+        firstPrimeInfo.primeFactor = toBytes(p);
 
         CryptoKeyRSAComponents::PrimeInfo secondPrimeInfo;
-        secondPrimeInfo.primeFactor = convertToBytes(q);
+        secondPrimeInfo.primeFactor = toBytes(q);
 
         auto context = BNCtxPtr(BN_CTX_new());
 
@@ -380,41 +398,44 @@ std::unique_ptr<CryptoKeyRSAComponents> CryptoKeyRSA::exportData() const
 
         // dmp1 -- d mod (p - 1)
         if (dmp1)
-            firstPrimeInfo.factorCRTExponent = convertToBytes(dmp1);
+            firstPrimeInfo.factorCRTExponent = toBytes(dmp1);
         else {
             auto dmp1New = BIGNUMPtr(BN_new());
             auto pm1 = BIGNUMPtr(BN_dup(p));
             if (BN_sub_word(pm1.get(), 1) == 1 && BN_mod(dmp1New.get(), d, pm1.get(), context.get()) == 1)
-                firstPrimeInfo.factorCRTExponent = convertToBytes(dmp1New.get());
+                firstPrimeInfo.factorCRTExponent = toBytes(dmp1New.get());
         }
 
         // dmq1 -- d mod (q - 1)
         if (dmq1)
-            secondPrimeInfo.factorCRTExponent = convertToBytes(dmq1);
+            secondPrimeInfo.factorCRTExponent = toBytes(dmq1);
         else {
             auto dmq1New = BIGNUMPtr(BN_new());
             auto qm1 = BIGNUMPtr(BN_dup(q));
             if (BN_sub_word(qm1.get(), 1) == 1 && BN_mod(dmq1New.get(), d, qm1.get(), context.get()) == 1)
-                secondPrimeInfo.factorCRTExponent = convertToBytes(dmq1New.get());
+                secondPrimeInfo.factorCRTExponent = toBytes(dmq1New.get());
         }
 
         // iqmp -- q^(-1) mod p
         if (iqmp)
-            secondPrimeInfo.factorCRTCoefficient = convertToBytes(iqmp);
+            secondPrimeInfo.factorCRTCoefficient = toBytes(iqmp);
         else {
             auto iqmpNew = BIGNUMPtr(BN_mod_inverse(nullptr, q, p, context.get()));
             if (iqmpNew)
-                secondPrimeInfo.factorCRTCoefficient = convertToBytes(iqmpNew.get());
+                secondPrimeInfo.factorCRTCoefficient = toBytes(iqmpNew.get());
         }
 
-        return CryptoKeyRSAComponents::createPrivateWithAdditionalData(
-            convertToBytes(n), convertToBytes(e), convertToBytes(d),
+        result = CryptoKeyRSAComponents::createPrivateWithAdditionalData(
+            toBytes(n), toBytes(e), toBytes(d),
             WTF::move(firstPrimeInfo), WTF::move(secondPrimeInfo), Vector<CryptoKeyRSAComponents::PrimeInfo> {});
+        break;
     }
     default:
         ASSERT_NOT_REACHED();
-        return nullptr;
     }
+    if (allocationFailed)
+        return nullptr;
+    return result;
 }
 
 } // namespace WebCore

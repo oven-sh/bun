@@ -25,262 +25,123 @@
 #include "JSJsonWebKey.h"
 
 #include "JSCryptoKeyUsage.h"
-#include "JSDOMConvertBoolean.h"
+#include "JSDOMConvertDictionary.h"
 #include "JSDOMConvertEnumeration.h"
 #include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
+#include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObject.h"
-#include "JSRsaOtherPrimesInfo.h"
-#include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <variant>
+#include <wtf/HashSet.h>
+#include <wtf/text/StringHash.h>
 
 namespace WebCore {
 using namespace JSC;
 
-#if ENABLE(WEB_CRYPTO)
+// Only validated: RSA import refuses any `oth`, and no key is exported with one.
+struct RsaOtherPrimesInfo {};
+
+template<> RsaOtherPrimesInfo convertDictionary<RsaOtherPrimesInfo>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* object = value.getObject();
+    if (!object && !value.isUndefinedOrNull()) [[unlikely]] {
+        throwTypeError(&lexicalGlobalObject, throwScope);
+        return {};
+    }
+    for (auto name : { "d"_s, "r"_s, "t"_s }) {
+        auto member = object ? object->get(&lexicalGlobalObject, Identifier::fromString(vm, name)) : jsUndefined();
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (member.isUndefined()) {
+            throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, name, "RsaOtherPrimesInfo"_s, "DOMString"_s);
+            return {};
+        }
+        convert<IDLDOMString>(lexicalGlobalObject, member);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    return {};
+}
+
+struct JsonWebKeyMember {
+    struct Ext {};
+    struct KeyOps {};
+    struct Oth {};
+
+    ASCIILiteral name;
+    std::variant<String JsonWebKey::*, Ext, KeyOps, Oth> field;
+};
+
+// In the order they are read from an object and put on one.
+static constexpr JsonWebKeyMember jsonWebKeyMembers[] = {
+    { "alg"_s, &JsonWebKey::alg },
+    { "crv"_s, &JsonWebKey::crv },
+    { "d"_s, &JsonWebKey::d },
+    { "dp"_s, &JsonWebKey::dp },
+    { "dq"_s, &JsonWebKey::dq },
+    { "e"_s, &JsonWebKey::e },
+    { "ext"_s, JsonWebKeyMember::Ext {} },
+    { "k"_s, &JsonWebKey::k },
+    { "key_ops"_s, JsonWebKeyMember::KeyOps {} },
+    { "kty"_s, &JsonWebKey::kty },
+    { "n"_s, &JsonWebKey::n },
+    { "oth"_s, JsonWebKeyMember::Oth {} },
+    { "p"_s, &JsonWebKey::p },
+    { "priv"_s, &JsonWebKey::priv },
+    { "pub"_s, &JsonWebKey::pub },
+    { "q"_s, &JsonWebKey::q },
+    { "qi"_s, &JsonWebKey::qi },
+    { "use"_s, &JsonWebKey::use },
+    { "x"_s, &JsonWebKey::x },
+    { "y"_s, &JsonWebKey::y },
+};
+
+// Like Node's validateKeyOps(): an unknown operation is skipped, a repeated one fails the import.
+static void readKeyOps(JSGlobalObject& lexicalGlobalObject, JSValue value, JsonWebKey& key)
+{
+    auto throwScope = DECLARE_THROW_SCOPE(JSC::getVM(&lexicalGlobalObject));
+    auto operations = convert<IDLSequence<IDLDOMString>>(lexicalGlobalObject, value);
+    RETURN_IF_EXCEPTION(throwScope, void());
+    Vector<CryptoKeyUsage> keyOps;
+    HashSet<String> seen;
+    for (auto& operation : operations) {
+        if (!seen.add(operation).isNewEntry)
+            key.hasDuplicateKeyOps = true;
+        else if (auto usage = parseEnumerationFromString<CryptoKeyUsage>(operation))
+            keyOps.append(*usage);
+    }
+    key.key_ops = WTF::move(keyOps);
+}
 
 template<> JsonWebKey convertDictionary<JsonWebKey>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    bool isNullOrUndefined = value.isUndefinedOrNull();
-    auto* object = isNullOrUndefined ? nullptr : value.getObject();
-    if (!isNullOrUndefined && !object) [[unlikely]] {
+    if (value.isUndefinedOrNull())
+        return {};
+    auto* object = value.getObject();
+    if (!object) [[unlikely]] {
         throwTypeError(&lexicalGlobalObject, throwScope);
         return {};
     }
     JsonWebKey result {};
-    JSValue algValue;
-    if (isNullOrUndefined)
-        algValue = jsUndefined();
-    else {
-        algValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "alg"_s));
+    for (auto& [name, field] : jsonWebKeyMembers) {
+        auto member = object->get(&lexicalGlobalObject, Identifier::fromString(vm, name));
         RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!algValue.isUndefined()) {
-        result.alg = convert<IDLDOMString>(lexicalGlobalObject, algValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue crvValue;
-    if (isNullOrUndefined)
-        crvValue = jsUndefined();
-    else {
-        crvValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "crv"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!crvValue.isUndefined()) {
-        result.crv = convert<IDLDOMString>(lexicalGlobalObject, crvValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue dValue;
-    if (isNullOrUndefined)
-        dValue = jsUndefined();
-    else {
-        dValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "d"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!dValue.isUndefined()) {
-        result.d = convert<IDLDOMString>(lexicalGlobalObject, dValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue dpValue;
-    if (isNullOrUndefined)
-        dpValue = jsUndefined();
-    else {
-        dpValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "dp"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!dpValue.isUndefined()) {
-        result.dp = convert<IDLDOMString>(lexicalGlobalObject, dpValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue dqValue;
-    if (isNullOrUndefined)
-        dqValue = jsUndefined();
-    else {
-        dqValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "dq"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!dqValue.isUndefined()) {
-        result.dq = convert<IDLDOMString>(lexicalGlobalObject, dqValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue eValue;
-    if (isNullOrUndefined)
-        eValue = jsUndefined();
-    else {
-        eValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "e"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!eValue.isUndefined()) {
-        result.e = convert<IDLDOMString>(lexicalGlobalObject, eValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue extValue;
-    if (isNullOrUndefined)
-        extValue = jsUndefined();
-    else {
-        extValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "ext"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!extValue.isUndefined()) {
-        result.ext = convert<IDLBoolean>(lexicalGlobalObject, extValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue kValue;
-    if (isNullOrUndefined)
-        kValue = jsUndefined();
-    else {
-        kValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "k"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!kValue.isUndefined()) {
-        result.k = convert<IDLDOMString>(lexicalGlobalObject, kValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue key_opsValue;
-    if (isNullOrUndefined)
-        key_opsValue = jsUndefined();
-    else {
-        key_opsValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "key_ops"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!key_opsValue.isUndefined()) {
-        // A `sequence<DOMString>` in the specification. Like Node's validateKeyOps(), skip an operation that is
-        // not known, and reject a repeated one before the operations are compared with the usages.
-        auto operations = convert<IDLSequence<IDLDOMString>>(lexicalGlobalObject, key_opsValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        Vector<CryptoKeyUsage> keyOps;
-        HashSet<String> seen;
-        for (auto& operation : operations) {
-            if (!seen.add(operation).isNewEntry)
-                result.hasDuplicateKeyOps = true;
-            else if (auto usage = parseEnumerationFromString<CryptoKeyUsage>(operation))
-                keyOps.append(*usage);
-        }
-        result.key_ops = WTF::move(keyOps);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue ktyValue;
-    if (isNullOrUndefined)
-        ktyValue = jsUndefined();
-    else {
-        ktyValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "kty"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!ktyValue.isUndefined()) {
-        result.kty = convert<IDLDOMString>(lexicalGlobalObject, ktyValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue nValue;
-    if (isNullOrUndefined)
-        nValue = jsUndefined();
-    else {
-        nValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "n"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!nValue.isUndefined()) {
-        result.n = convert<IDLDOMString>(lexicalGlobalObject, nValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue othValue;
-    if (isNullOrUndefined)
-        othValue = jsUndefined();
-    else {
-        othValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "oth"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!othValue.isUndefined()) {
-        result.oth = convert<IDLSequence<IDLDictionary<RsaOtherPrimesInfo>>>(lexicalGlobalObject, othValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue pValue;
-    if (isNullOrUndefined)
-        pValue = jsUndefined();
-    else {
-        pValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "p"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!pValue.isUndefined()) {
-        result.p = convert<IDLDOMString>(lexicalGlobalObject, pValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue privValue;
-    if (isNullOrUndefined)
-        privValue = jsUndefined();
-    else {
-        privValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "priv"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!privValue.isUndefined()) {
-        result.priv = convert<IDLDOMString>(lexicalGlobalObject, privValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue pubValue;
-    if (isNullOrUndefined)
-        pubValue = jsUndefined();
-    else {
-        pubValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "pub"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!pubValue.isUndefined()) {
-        result.pub = convert<IDLDOMString>(lexicalGlobalObject, pubValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue qValue;
-    if (isNullOrUndefined)
-        qValue = jsUndefined();
-    else {
-        qValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "q"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!qValue.isUndefined()) {
-        result.q = convert<IDLDOMString>(lexicalGlobalObject, qValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue qiValue;
-    if (isNullOrUndefined)
-        qiValue = jsUndefined();
-    else {
-        qiValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "qi"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!qiValue.isUndefined()) {
-        result.qi = convert<IDLDOMString>(lexicalGlobalObject, qiValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue useValue;
-    if (isNullOrUndefined)
-        useValue = jsUndefined();
-    else {
-        useValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "use"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!useValue.isUndefined()) {
-        result.use = convert<IDLDOMString>(lexicalGlobalObject, useValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue xValue;
-    if (isNullOrUndefined)
-        xValue = jsUndefined();
-    else {
-        xValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "x"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!xValue.isUndefined()) {
-        result.x = convert<IDLDOMString>(lexicalGlobalObject, xValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue yValue;
-    if (isNullOrUndefined)
-        yValue = jsUndefined();
-    else {
-        yValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "y"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!yValue.isUndefined()) {
-        result.y = convert<IDLDOMString>(lexicalGlobalObject, yValue);
+        if (member.isUndefined())
+            continue;
+        std::visit(
+            WTF::makeVisitor(
+                [&](String JsonWebKey::* string) { result.*string = convert<IDLDOMString>(lexicalGlobalObject, member); },
+                [&](JsonWebKeyMember::Ext) { result.ext = member.toBoolean(&lexicalGlobalObject); },
+                [&](JsonWebKeyMember::KeyOps) { readKeyOps(lexicalGlobalObject, member, result); },
+                [&](JsonWebKeyMember::Oth) {
+                    convert<IDLSequence<IDLDictionary<RsaOtherPrimesInfo>>>(lexicalGlobalObject, member);
+                    result.hasOth = true;
+                }),
+            field);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     return result;
@@ -290,113 +151,22 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    auto result = constructEmptyObject(&lexicalGlobalObject, globalObject.objectPrototype());
-
-    if (!IDLDOMString::isNullValue(dictionary.alg)) {
-        auto algValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.alg));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        Bun::putDirectNamed(vm, result, "alg"_s, algValue);
-    }
-    if (!IDLDOMString::isNullValue(dictionary.crv)) {
-        auto crvValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.crv));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        Bun::putDirectNamed(vm, result, "crv"_s, crvValue);
-    }
-    if (!IDLDOMString::isNullValue(dictionary.d)) {
-        auto dValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.d));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        Bun::putDirectNamed(vm, result, "d"_s, dValue);
-    }
-    if (!IDLDOMString::isNullValue(dictionary.dp)) {
-        auto dpValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.dp));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        Bun::putDirectNamed(vm, result, "dp"_s, dpValue);
-    }
-    if (!IDLDOMString::isNullValue(dictionary.dq)) {
-        auto dqValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.dq));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        Bun::putDirectNamed(vm, result, "dq"_s, dqValue);
-    }
-    if (!IDLDOMString::isNullValue(dictionary.e)) {
-        auto eValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.e));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        Bun::putDirectNamed(vm, result, "e"_s, eValue);
-    }
-    if (!IDLBoolean::isNullValue(dictionary.ext)) {
-        auto extValue = toJS<IDLBoolean>(lexicalGlobalObject, throwScope, IDLBoolean::extractValueFromNullable(dictionary.ext));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        Bun::putDirectNamed(vm, result, "ext"_s, extValue);
-    }
-    if (!IDLDOMString::isNullValue(dictionary.k)) {
-        auto kValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.k));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        Bun::putDirectNamed(vm, result, "k"_s, kValue);
-    }
-    if (!IDLSequence<IDLEnumeration<CryptoKeyUsage>>::isNullValue(dictionary.key_ops)) {
-        auto key_opsValue = toJS<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(lexicalGlobalObject, globalObject, throwScope, IDLSequence<IDLEnumeration<CryptoKeyUsage>>::extractValueFromNullable(dictionary.key_ops));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        Bun::putDirectNamed(vm, result, "key_ops"_s, key_opsValue);
-    }
-    if (!IDLDOMString::isNullValue(dictionary.kty)) {
-        auto ktyValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.kty));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        Bun::putDirectNamed(vm, result, "kty"_s, ktyValue);
-    }
-    if (!IDLDOMString::isNullValue(dictionary.n)) {
-        auto nValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.n));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        Bun::putDirectNamed(vm, result, "n"_s, nValue);
-    }
-    if (!IDLSequence<IDLDictionary<RsaOtherPrimesInfo>>::isNullValue(dictionary.oth)) {
-        auto othValue = toJS<IDLSequence<IDLDictionary<RsaOtherPrimesInfo>>>(lexicalGlobalObject, globalObject, throwScope, IDLSequence<IDLDictionary<RsaOtherPrimesInfo>>::extractValueFromNullable(dictionary.oth));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        Bun::putDirectNamed(vm, result, "oth"_s, othValue);
-    }
-    if (!IDLDOMString::isNullValue(dictionary.p)) {
-        auto pValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.p));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        Bun::putDirectNamed(vm, result, "p"_s, pValue);
-    }
-    if (!IDLDOMString::isNullValue(dictionary.priv)) {
-        auto privValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.priv));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        Bun::putDirectNamed(vm, result, "priv"_s, privValue);
-    }
-    if (!IDLDOMString::isNullValue(dictionary.pub)) {
-        auto pubValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.pub));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        Bun::putDirectNamed(vm, result, "pub"_s, pubValue);
-    }
-    if (!IDLDOMString::isNullValue(dictionary.q)) {
-        auto qValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.q));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        Bun::putDirectNamed(vm, result, "q"_s, qValue);
-    }
-    if (!IDLDOMString::isNullValue(dictionary.qi)) {
-        auto qiValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.qi));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        Bun::putDirectNamed(vm, result, "qi"_s, qiValue);
-    }
-    if (!IDLDOMString::isNullValue(dictionary.use)) {
-        auto useValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.use));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        Bun::putDirectNamed(vm, result, "use"_s, useValue);
-    }
-    if (!IDLDOMString::isNullValue(dictionary.x)) {
-        auto xValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.x));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        Bun::putDirectNamed(vm, result, "x"_s, xValue);
-    }
-    if (!IDLDOMString::isNullValue(dictionary.y)) {
-        auto yValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.y));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        Bun::putDirectNamed(vm, result, "y"_s, yValue);
+    auto* result = constructEmptyObject(&lexicalGlobalObject, globalObject.objectPrototype());
+    static_assert(std::variant_size_v<decltype(JsonWebKeyMember::field)> == 4, "Every kind but Oth is written below");
+    for (auto& [name, field] : jsonWebKeyMembers) {
+        if (auto* string = std::get_if<String JsonWebKey::*>(&field)) {
+            if (auto& value = dictionary.**string; !value.isNull())
+                Bun::putDirectNamed(vm, result, name, jsStringWithCache(vm, value));
+        } else if (std::holds_alternative<JsonWebKeyMember::Ext>(field) && dictionary.ext)
+            Bun::putDirectNamed(vm, result, name, jsBoolean(*dictionary.ext));
+        else if (std::holds_alternative<JsonWebKeyMember::KeyOps>(field) && dictionary.key_ops) {
+            auto keyOps = toJS<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(lexicalGlobalObject, globalObject, *dictionary.key_ops);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            Bun::putDirectNamed(vm, result, name, keyOps);
+        }
     }
     return result;
 }
-
-#endif
 
 } // namespace WebCore
 

@@ -31,7 +31,6 @@
 
 namespace WebCore {
 
-class CryptoAlgorithmEcdsaParams;
 class CryptoKeyEC;
 
 class CryptoAlgorithmECDSA final : public CryptoAlgorithm {

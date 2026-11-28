@@ -197,7 +197,8 @@ async function uploadToS3({
     "Cache-Control"?: string;
   };
 }): Promise<void> {
-  const { href } = new URL(key, bucketUrl);
+  // aws4fetch sends the path as it is, but for an S3 host it signs a raw `+` as a space.
+  const href = bucketUrl.href + encodeURIComponent(key).replaceAll("%2F", "/");
   if (dryRun) {
     console.log("Would upload:", key, "to", href);
     return;
@@ -208,7 +209,12 @@ async function uploadToS3({
     headers,
   });
   if (!response.ok) {
-    throw new Error(`Failed to upload to S3: ${response.status} ${response.statusText}`);
+    // The log of this job is public and an S3 error can repeat the signed request, so only its code is printed.
+    const code = /<Code>([^<]*)<\/Code>/.exec(await response.text())?.[1];
+    throw new Error(
+      `Failed to upload ${JSON.stringify(key)} to S3: ${response.status} ${response.statusText}` +
+        (code ? ` (${code})` : ""),
+    );
   }
 }
 

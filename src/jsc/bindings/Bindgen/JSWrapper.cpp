@@ -15,7 +15,7 @@ NEVER_INLINE GCClient::IsoSubspace* createSubspaceForClass(VM& vm, unsigned clas
 {
     return WebCore::subspaceForImplSlow(
         vm,
-        WebCore::SubspaceForInit { static_cast<unsigned>(cellSize), JSDestructibleObject::numberOfLowerTierPreciseCells, WebCore::SubspaceForInit::CellType::Destructible, false },
+        WebCore::SubspaceForInit { static_cast<unsigned>(cellSize), JSDestructibleObject::numberOfLowerTierPreciseCells, WebCore::SubspaceForInit::CellType::Destructible, false, false },
         WebCore::SubspaceSlots {
             OBJECT_OFFSETOF(WebCore::ExtendedDOMClientIsoSubspaces, m_clientSubspaceForBindgenClass) + classIndex * sizeof(GCClient::IsoSubspace*),
             OBJECT_OFFSETOF(WebCore::ExtendedDOMIsoSubspaces, m_subspaceForBindgenClass) + classIndex * sizeof(IsoSubspace*),

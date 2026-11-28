@@ -7,7 +7,7 @@
 use super::cli::Options;
 use super::config::{self, Configs, Flavor};
 use super::files::{Ignored, Kind, Language};
-use super::{Failure, Scratches, format, language_of, tailwind};
+use super::{Failure, Scratches, format, language_of, prettier, tailwind};
 use crate::run::Environment;
 use crate::{fs, paths};
 use bun_core::strings;
@@ -281,6 +281,19 @@ impl<'e> ForRules<'e> {
         {
             resolved.options.tailwind = None;
         }
+        // Without the plugins, as `bun fmt` does for a file whose plugins aren't installed. With them installed,
+        // `bun fmt` hands the file to Prettier, and so does the package's rule.
+        if *allows_unsupported {
+            let cwd = &self.environment.cwd;
+            let packages = std::iter::once(&b"prettier"[..])
+                .chain(configs.plugin_packages(&scope, Some(path)));
+            if !packages
+                .into_iter()
+                .all(|it| prettier::is_installed(cwd, it))
+            {
+                resolved.options.plugin_languages = None;
+            }
+        }
         let mut scratch = self.scratches.lock().pop().unwrap_or_default();
         let names = Session::new();
         let names = (&Interner::new_in(&names) as &dyn Intern, &names);
@@ -295,6 +308,7 @@ impl<'e> ForRules<'e> {
             Ok((text, _)) if text == request.text => Ok(Formatted::Same),
             Ok((text, _)) => Ok(Formatted::Text(text)),
             Err(Failure::Syntax(_)) => Err(Reason::SyntaxError),
+            Err(Failure::NeedsPlugin(_)) => Err(Reason::Plugin),
             Err(Failure::Bug | Failure::Changed(_) | Failure::Unread(_)) => Err(Reason::Unverified),
         }
     }

@@ -318,6 +318,66 @@ Still needed:   prettier, prettier-plugin-astro, prettier-plugin-packagejson, pr
     expect(exitCode).toBe(0);
   });
 
+  // Prettier also prints a plugin's language inside a Markdown or Vue file, so those files go to it too.
+  test("counts a file with code in a plugin's language as one that goes to Prettier", async () => {
+    const pug = "div\n      span hello\n";
+    const project = {
+      ...installed("prettier"),
+      ...installed("@prettier/plugin-pug"),
+      "package.json": dependencies("prettier", "@prettier/plugin-pug"),
+      ".prettierrc": JSON.stringify({ plugins: ["@prettier/plugin-pug"] }),
+      "App.vue": `<template lang="pug">\n${pug}</template>\n`,
+      "README.md": `# Usage\n\n\`\`\`pug\n${pug}\`\`\`\n`,
+      "Other.md": "# Other\n",
+      "a.js": ugly,
+      "b.js": `const d = markdown\`\n\\\`\\\`\\\`pug\n${pug}\\\`\\\`\\\`\n\`;\n`,
+    };
+    const [text, { stdout, exitCode }] = await Promise.all([doctor(project), doctor(project, ["-f", "json"])]);
+    expect(text.stdout).toBe(`Using .prettierrc (Prettier config)
+
+    4 files are formatted natively
+    3 files go to your installed Prettier: 1 *.js, 1 *.md, 1 *.vue
+
+Plugins that use your installed Prettier: @prettier/plugin-pug
+
+Still needed:   @prettier/plugin-pug, prettier (some files go to them)
+`);
+    expect(text.isUntouched).toBe(true);
+    const { files, plugins, packages } = JSON.parse(stdout);
+    expect(files).toEqual({
+      formatted: 4,
+      by_prettier: { "*.js": 1, "*.md": 1, "*.vue": 1 },
+      not_formatted: {},
+      left_for_plugins: 0,
+    });
+    expect(plugins.by_prettier).toEqual(["@prettier/plugin-pug"]);
+    expect(packages.removable).toEqual([]);
+    expect(exitCode).toBe(0);
+
+    // Without the plugin installed, those files are not formatted, and the plugin is still needed.
+    const { [`node_modules/@prettier/plugin-pug/package.json`]: _, ...missing } = project;
+    const skipped = await doctor(missing);
+    expect(skipped.stdout).toBe(`Using .prettierrc (Prettier config)
+
+    4 files are formatted natively
+    3 files cannot be formatted: 1 *.js, 1 *.md, 1 *.vue
+
+Plugins that use your installed Prettier: @prettier/plugin-pug
+Not installed: @prettier/plugin-pug
+
+Still needed:   @prettier/plugin-pug, prettier (some files go to them)
+`);
+    expect(skipped.isUntouched).toBe(true);
+    expect(skipped.exitCode).toBe(0);
+
+    // A named file that no parser covers is no reason to stop, as before.
+    const named = await doctor({ ...project, LICENSE: "MIT\n" }, ["LICENSE", "README.md", "a.js"]);
+    expect(named.stdout).toContain(
+      "    1 file is formatted natively\n    1 file goes to your installed Prettier: 1 *.md\n",
+    );
+    expect(named.exitCode).toBe(0);
+  });
+
   test("lists unsupported plugins and plugins that aren't installed", async () => {
     const project = {
       ...installed("prettier"),

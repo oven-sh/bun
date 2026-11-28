@@ -1,6 +1,6 @@
 //! The fast path of the FCD check, and a cache of checked segments. ICU4C: collationfcd.h
 
-use crate::common::memory::{best_effort, try_box, try_resize};
+use crate::common::memory::{best_effort, drop_out_of_line, try_box, try_resize};
 use crate::common::slice_ext::SliceExt;
 use crate::common::utf16;
 use crate::i18n::collationfcd_data::{LCCC_BITS, LCCC_INDEX, TCCC_BITS, TCCC_INDEX};
@@ -51,6 +51,13 @@ pub(crate) fn is_fcd16_of_tibetan_composite_vowel(fcd16: u16) -> bool {
 /// The last long segments of a text, which discontiguous contraction matching reads again and again.
 #[derive(Default)]
 pub(crate) struct SegmentCache(Option<Box<CachedSegments>>);
+
+impl Drop for SegmentCache {
+    #[inline(always)]
+    fn drop(&mut self) {
+        drop_out_of_line(&mut self.0);
+    }
+}
 
 #[derive(Default)]
 struct CachedSegments {

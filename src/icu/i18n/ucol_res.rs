@@ -177,9 +177,12 @@ impl Loader {
     }
 
     fn load_from_data(&self, data: &UResourceBundle) -> LoadResult {
-        let binary = data.get_by_key(b"%%CollationBin")?;
-        let mut tailoring =
-            collationdatareader::read_tailoring(self.root, binary.get_value().get_binary()?)?;
+        let binary = data.get_by_key(b"%%CollationBin")?.get_value();
+        let mut tailoring = if binary.get_data().is_image {
+            collationdatareader::read_packed_tailoring(self.root, binary.get_binary()?)?
+        } else {
+            collationdatareader::read_tailoring(self.root, binary.get_binary()?)?
+        };
         if let Ok(rules) = data.get_data_string_by_key(b"Sequence") {
             tailoring.rules = rules;
         }

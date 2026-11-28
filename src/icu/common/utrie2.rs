@@ -32,16 +32,16 @@ pub(crate) enum UTrie2ValueBits {
     Bits32 = 1,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct UTrie2<'a> {
     /// The index, followed by the data if that is 16-bit. Offsets of 16-bit data count from the start of the index.
-    index: U16s<'a>,
-    data32: U32s<'a>,
+    pub(crate) index: U16s<'a>,
+    pub(crate) data32: U32s<'a>,
     index_length: usize,
     index2_null_offset: u16,
     data_null_offset: u16,
-    high_start: u32,
-    high_value_index: usize,
+    pub(crate) high_start: u32,
+    pub(crate) high_value_index: usize,
 }
 
 impl<'a> UTrie2<'a> {
@@ -118,14 +118,14 @@ impl<'a> UTrie2<'a> {
     }
 
     #[inline(always)]
-    fn index_from_cp(&self, ascii_offset: usize, c: u32) -> usize {
+    fn index_from_cp(&self, c: u32) -> usize {
         const LSCP: u32 = UTRIE2_LSCP_INDEX_2_OFFSET - (0xd800 >> UTRIE2_SHIFT_2);
         if c < 0xd800 {
             self.index_raw(0, c)
         } else if c <= 0xffff {
             self.index_raw(if c <= 0xdbff { LSCP } else { 0 }, c)
         } else if c > 0x10_ffff {
-            ascii_offset + UTRIE2_BAD_UTF8_DATA_OFFSET
+            self.index_length + UTRIE2_BAD_UTF8_DATA_OFFSET
         } else if c >= self.high_start {
             self.high_value_index
         } else {
@@ -135,7 +135,7 @@ impl<'a> UTrie2<'a> {
 
     #[inline(always)]
     pub(crate) fn get16(&self, c: u32) -> u16 {
-        self.index.at(self.index_from_cp(self.index_length, c))
+        self.index.at(self.index_from_cp(c))
     }
 
     #[inline(always)]
@@ -143,45 +143,9 @@ impl<'a> UTrie2<'a> {
         self.index.at(self.index_raw(0, u32::from(c)))
     }
 
-    #[inline(always)]
-    pub(crate) fn get32(&self, c: u32) -> u32 {
-        self.data32.at(self.index_from_cp(0, c))
-    }
-
-    #[inline(always)]
-    pub(crate) fn get32_from_u16_single_lead(&self, c: u16) -> u32 {
-        self.data32.at(self.index_raw(0, u32::from(c)))
-    }
-
-    #[inline(always)]
-    pub(crate) fn get32_from_supp(&self, c: u32) -> u32 {
-        self.data32.at(if c >= self.high_start {
-            self.high_value_index
-        } else {
-            self.index_from_supp(c)
-        })
-    }
-
-    #[inline(always)]
-    pub(crate) fn get32_from_ascii(&self, c: u8) -> u32 {
-        self.data32.at(usize::from(c))
-    }
-
-    /// Takes a UTF-8 lead byte in `0xc2..=0xdf` and the low six bits of its trail byte.
-    #[inline(always)]
-    pub(crate) fn get32_from_utf8_2b(&self, lead: u8, t1: u8) -> u32 {
-        let block = self
-            .index
-            .at(UTRIE2_UTF8_2B_INDEX_2_OFFSET as usize - 0xc0 + usize::from(lead));
-        self.data32.at(usize::from(block) + usize::from(t1))
-    }
-
-    fn value_at(&self, index: usize) -> u32 {
-        if self.data32.is_empty() {
-            self.index.at(index).into()
-        } else {
-            self.data32.at(index)
-        }
+    /// The first entry is for U+10000.
+    pub(crate) fn index_1(&self) -> U16s<'a> {
+        self.index.slice(UTRIE2_INDEX_1_OFFSET as usize..)
     }
 
     pub(crate) fn add_range_starts(&self, set: &mut UnicodeSet) {
@@ -192,7 +156,7 @@ impl<'a> UTrie2<'a> {
     }
 
     /// Calls `enum_range(start, end, value)` for each range of equal values until it returns false.
-    pub(crate) fn enum_ranges(&self, mut enum_range: impl FnMut(u32, u32, u32) -> bool) {
+    pub(crate) fn enum_ranges(&self, mut enum_range: impl FnMut(u32, u32, u16) -> bool) {
         const LIMIT: u32 = 0x11_0000;
         let mut range = CurrentRange {
             start: 0,
@@ -200,7 +164,7 @@ impl<'a> UTrie2<'a> {
             enum_range: &mut enum_range,
         };
         let null_block = usize::from(self.data_null_offset);
-        let initial_value = self.value_at(null_block);
+        let initial_value = self.index.at(null_block);
         let (mut prev_i2_block, mut prev_block) = (usize::MAX, usize::MAX);
         // A multiple of 0x400 at the start of each round.
         let mut c = 0;
@@ -239,7 +203,7 @@ impl<'a> UTrie2<'a> {
                     range.visit(c, initial_value)
                 } else {
                     (0..UTRIE2_DATA_BLOCK_LENGTH)
-                        .all(|j| range.visit(c + j, self.value_at(block + j as usize)))
+                        .all(|j| range.visit(c + j, self.index.at(block + j as usize)))
                 };
                 if !should_continue {
                     return;
@@ -247,7 +211,7 @@ impl<'a> UTrie2<'a> {
                 c += UTRIE2_DATA_BLOCK_LENGTH;
             }
         }
-        if c >= LIMIT || range.visit(c, self.value_at(self.high_value_index)) {
+        if c >= LIMIT || range.visit(c, self.index.at(self.high_value_index)) {
             (range.enum_range)(range.start, LIMIT - 1, range.value);
         }
     }
@@ -255,14 +219,14 @@ impl<'a> UTrie2<'a> {
 
 struct CurrentRange<'f> {
     start: u32,
-    value: u32,
-    enum_range: &'f mut dyn FnMut(u32, u32, u32) -> bool,
+    value: u16,
+    enum_range: &'f mut dyn FnMut(u32, u32, u16) -> bool,
 }
 
 impl CurrentRange<'_> {
     /// Reports the range and starts a new one at `c` if `value` differs. Returns false if `enum_range` returns false.
     #[inline(always)]
-    fn visit(&mut self, c: u32, value: u32) -> bool {
+    fn visit(&mut self, c: u32, value: u16) -> bool {
         if value == self.value {
             return true;
         }

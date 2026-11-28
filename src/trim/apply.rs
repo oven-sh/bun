@@ -11,7 +11,7 @@ use bun_removable_features::trap::{AARCH64_TRAP, X86_64_BREAKPOINT, X86_64_TRAP}
 use bun_removable_features::{Feature, FeatureSet, RemovableFeatureState, RemovedRange};
 
 use crate::error::{TrimError, TrimInternalError, UnsupportedReason};
-use crate::icu_data::{find_dead_ranges, remove_items};
+use crate::icu_data::{find_dead_range, remove_items};
 use crate::model::{PlannedIcuPackage, PlannedRange, TrimPlan, TrimSummary, UnrequestedCut};
 use crate::table::{REMOVED_RANGES_HEADER_BYTES, encode_removed_ranges, read_u32};
 
@@ -183,18 +183,15 @@ fn remove_icu_items(
         let bytes = editor
             .bytes_at_mut(package.range)
             .ok_or(TrimInternalError::RangeOutsideImage)?;
-        let dead_ranges = remove_items(bytes, &package.removed_items, &package.tombstoned_items)?;
-        icu_ranges.extend(to_removable_bytes(package, dead_ranges));
+        let dead = remove_items(bytes, &package.removed_items, &package.tombstoned_items)?;
+        icu_ranges.extend(to_removable_bytes(package, dead));
     }
     Ok(icu_ranges)
 }
 
-fn to_removable_bytes(
-    package: &PlannedIcuPackage,
-    dead_ranges: Vec<Range<u32>>,
-) -> impl Iterator<Item = RemovableBytes> {
+fn to_removable_bytes(package: &PlannedIcuPackage, dead: Range<u32>) -> Option<RemovableBytes> {
     let start_of_package = package.range.start;
-    dead_ranges.into_iter().map(move |dead| RemovableBytes {
+    (!dead.is_empty()).then(|| RemovableBytes {
         range: AddressRange {
             start: start_of_package + u64::from(dead.start),
             end: start_of_package + u64::from(dead.end),
@@ -220,9 +217,8 @@ fn count_cut_bytes(
         let bytes = editor
             .bytes_at_mut(package.range)
             .ok_or(TrimInternalError::RangeOutsideImage)?;
-        let dead_ranges =
-            find_dead_ranges(bytes, &package.removed_items, &package.tombstoned_items)?;
-        icu_ranges.extend(to_removable_bytes(package, dead_ranges));
+        let dead = find_dead_range(bytes, &package.removed_items, &package.tombstoned_items)?;
+        icu_ranges.extend(to_removable_bytes(package, dead));
     }
     let mut removable = merge_removable_bytes(&plan.ranges, icu_ranges);
     if is_cut_template {
@@ -1528,7 +1524,7 @@ mod tests {
     #[test]
     fn icu_range_over_planned_range_is_malformed_table() {
         let mut executable = toy_elf(EM_X86_64, TABLE_BYTES);
-        let package = package_of(&[("a", 64), ("b", 64)], 32);
+        let package = package_of(&[64, 64]);
         let package_end = 0x8000 + package.len() as u64;
         put(&mut executable, 0x8000, &package);
         let last_bytes = planned(package_end - 16, package_end, false, false, named_feature());

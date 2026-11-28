@@ -17,49 +17,21 @@ export const icuItemClasses = [
   "language-names",
   "region-names",
   "number-spellout",
-  "transliteration",
   "unit",
   "zone",
   "locale",
-  "currency-codes",
-  "gender-list",
   "day-periods",
   "plural-rules",
-  "converter",
-  "string-prep",
-  "confusables",
-  "character-names",
-  "nfkc-simple-case-fold",
-  "windows-zones",
 ] as const;
 
 export type IcuItemClass = (typeof icuItemClasses)[number];
 
-function classOfTopLevelItem(file: string, extension: string): IcuItemClass | undefined {
-  switch (extension) {
-    case "cnv":
-      return "converter";
-    case "spp":
-      return "string-prep";
-    case "cfu":
-      return "confusables";
-  }
+function classOfTopLevelItem(file: string): IcuItemClass | undefined {
   switch (file) {
-    case "cnvalias.icu":
-      return "converter";
-    case "unames.icu":
-      return "character-names";
-    case "nfkc_scf.nrm":
-      return "nfkc-simple-case-fold";
-    case "windowsZones.res":
-      return "windows-zones";
     case "units.res":
+    case "coldUnits.res":
     case "grammaticalFeatures.res":
       return "unit";
-    case "currencyNumericCodes.res":
-      return "currency-codes";
-    case "genderList.res":
-      return "gender-list";
     case "dayPeriods.res":
       return "day-periods";
     case "plurals.res":
@@ -82,7 +54,7 @@ export function classOfIcuItem(name: string): IcuItemClass | undefined {
   const extension = dot < 0 ? "" : file.slice(dot + 1);
   switch (tree) {
     case "":
-      return classOfTopLevelItem(file, extension);
+      return classOfTopLevelItem(file);
     case "brkitr":
       return extension === "res" || (extension === "brk" && stem.startsWith("sent"))
         ? "sentence-break"
@@ -99,44 +71,60 @@ export function classOfIcuItem(name: string): IcuItemClass | undefined {
       return "region-names";
     case "rbnf":
       return "number-spellout";
-    case "translit":
-      return "transliteration";
     case "unit":
       return "unit";
     case "zone":
-      return ["root.res", "pool.res", "en.res"].includes(file) ? undefined : "zone";
+      return ["root.res", "en.res"].includes(file) ? undefined : "zone";
     default:
       return undefined;
   }
 }
 
 export interface IcuItem {
-  name: string;
+  /** The files of ICU's data that it holds. */
+  names: string[];
   size: number;
 }
 
+// src/icu/format/package.rs
+const [keysItem, localesItem, filesItem] = [0, 1, 2];
+const treeOfColumn = ["", "", "zone/", "curr/", "unit/", "lang/", "region/"];
+
+/** The model of a language has the names of its main bundles. `--trim` keeps its bytes while another tree needs them. */
 export function itemsOf(dataPackage: Buffer): IcuItem[] {
   const malformed = (): never => {
     throw new BuildError("ICU's data package is malformed");
   };
-  const isCommonData =
-    dataPackage.length >= 32 &&
-    dataPackage.readUInt16BE(2) === 0xda27 &&
-    dataPackage[8] === 0 &&
-    dataPackage.toString("latin1", 12, 17) === "CmnD\x01";
-  if (!isCommonData) malformed();
-  const contents = dataPackage.subarray(dataPackage.readUInt16LE(0));
-  const count = contents.length >= 4 ? contents.readUInt32LE(0) : malformed();
-  if (4 + count * 8 > contents.length) malformed();
-  const startOf = (index: number) => (index < count ? contents.readUInt32LE(8 + index * 8) : contents.length);
-  return Array.from({ length: count }, (_, index) => {
-    const name = contents.readUInt32LE(4 + index * 8);
-    const end = contents.indexOf(0, name);
-    const size = startOf(index + 1) - startOf(index);
-    if (end < 0 || size < 0 || startOf(index + 1) > contents.length) malformed();
-    const path = contents.toString("latin1", name, end);
-    return { name: path.slice(path.indexOf("/") + 1), size };
+  if (dataPackage.length < 12 || dataPackage.toString("latin1", 0, 4) !== "BICU") malformed();
+  const [firstCell, count] = [dataPackage.readUInt16LE(4), dataPackage.readUInt32LE(8)];
+  if (count <= filesItem || 16 + count * 4 > dataPackage.length) malformed();
+  const startOf = (index: number) => dataPackage.readUInt32LE(12 + index * 4) & 0x3fff_ffff;
+  const items = Array.from({ length: count }, (_, index): IcuItem => {
+    if (startOf(index) > startOf(index + 1) || startOf(index + 1) > dataPackage.length) malformed();
+    return { names: [], size: startOf(index + 1) - startOf(index) };
   });
+  const bytesOf = (index: number) => dataPackage.subarray(startOf(index), startOf(index + 1));
+  const nameAt = (names: Buffer, at: number) => {
+    const end = names.indexOf(0, at);
+    return end < 0 ? malformed() : names.toString("latin1", at, end);
+  };
+  const entriesOf = (directory: Buffer) => {
+    const entries = directory.length >= 2 ? directory.readUInt16LE(0) : malformed();
+    if (2 + entries * 8 > directory.length) malformed();
+    return Array.from({ length: entries }, (_, index) => directory.subarray(2 + index * 8));
+  };
+  for (const entry of entriesOf(bytesOf(filesItem))) {
+    const item = items[entry.readUInt16LE(2) & 0x3fff] ?? malformed();
+    item.names.push(nameAt(bytesOf(filesItem), entry.readUInt16LE(0)));
+  }
+  for (const entry of entriesOf(bytesOf(localesItem))) {
+    const [name, packed] = [nameAt(bytesOf(keysItem), entry.readUInt16LE(0)), entry.readUInt32LE(4)];
+    treeOfColumn.forEach((tree, column) => {
+      const cell = items[firstCell + (packed >>> 23) * treeOfColumn.length + column] ?? malformed();
+      if ((packed >> Math.max(column - 1, 0)) & 1) cell.names.push(`${tree}${name}.res`);
+    });
+  }
+  return items;
 }
 
 export interface IcuRun {
@@ -150,26 +138,27 @@ export interface IcuRun {
 type RemovableClasses = Map<IcuItemClass, { features: number[]; byLocale: boolean }>;
 
 function removalOf(
-  name: string,
+  { names }: IcuItem,
   classes: RemovableClasses,
 ): { features: number[]; language: string | undefined } | undefined {
-  const itemClass = classOfIcuItem(name);
-  const removal = itemClass === undefined ? undefined : classes.get(itemClass);
-  if (removal === undefined) return undefined;
-  return { features: removal.features, language: removal.byLocale ? languageOfIcuItem(name) : undefined };
+  const [first, ...others] = names.map(name => {
+    const itemClass = classOfIcuItem(name);
+    const removal = itemClass === undefined ? undefined : classes.get(itemClass);
+    return removal && { features: removal.features, language: removal.byLocale ? languageOfIcuItem(name) : undefined };
+  });
+  if (others.some(other => other?.features !== first?.features || other?.language !== first?.language)) {
+    throw new BuildError(`${names.join(", ")} share an item of ICU's data package, but are not removed together`);
+  }
+  return first;
 }
 
-export function runsOf(
-  items: IcuItem[],
-  classes: RemovableClasses,
-  groupOfLanguage: Map<string, number> | undefined,
-): IcuRun[] {
+export function runsOf(items: IcuItem[], classes: RemovableClasses, groupOfLanguage: Map<string, number>): IcuRun[] {
   const runs: IcuRun[] = [];
-  items.forEach(({ name, size }, index) => {
-    const removal = removalOf(name, classes);
+  items.forEach((item, index) => {
+    const removal = removalOf(item, classes);
     if (removal === undefined) return;
     const { features, language } = removal;
-    const localeGroup = language === undefined ? undefined : groupOfLanguage?.get(language);
+    const localeGroup = language === undefined ? undefined : groupOfLanguage.get(language);
     const last = runs.at(-1);
     if (
       last !== undefined &&
@@ -178,9 +167,9 @@ export function runsOf(
       last.localeGroup === localeGroup
     ) {
       last.itemCount++;
-      last.bytes += size;
+      last.bytes += item.size;
     } else {
-      runs.push({ firstItem: index, itemCount: 1, features, localeGroup, bytes: size });
+      runs.push({ firstItem: index, itemCount: 1, features, localeGroup, bytes: item.size });
     }
   });
   return runs;
@@ -233,7 +222,7 @@ function collectClassFeatures(model: FeatureModel, format: ObjectFormat): Remova
 }
 
 function findPackages(linked: NamedBytes, graph: SectionGraph): { start: number; end: number; items: IcuItem[] }[] {
-  const starts = linked.symbols.filter(([name]) => /^icudt\d+_dat$/.test(name)).map(([, address]) => address);
+  const starts = linked.symbols.filter(([name]) => name === "bun_icu_package").map(([, address]) => address);
   return [...new Set(starts)].map(start => {
     const node = nodeAt(graph, start);
     if (node < 0) fail("ICU's data package lies in no section");
@@ -246,9 +235,6 @@ function findPackages(linked: NamedBytes, graph: SectionGraph): { start: number;
   });
 }
 
-// The archive of a prebuilt WebKit's data defines this symbol. src/icu passes each item to Bun's hook, which reports a tombstone.
-const hookMarkerSymbol = "bun_icu_zstd_dict";
-
 export function icuPackagesOf(
   linked: NamedBytes | undefined,
   graph: SectionGraph,
@@ -257,15 +243,11 @@ export function icuPackagesOf(
   if (linked === undefined || model.icuData.length === 0) return { packages: [], languages: [] };
   const classes = collectClassFeatures(model, graph.format);
   const found = findPackages(linked, graph);
-  const hasHook = linked.symbols.some(([name]) => name === hookMarkerSymbol);
-  const names = found.flatMap(({ items }) => items.map(({ name }) => name));
-  const languages = hasHook
-    ? groupLanguages(
-        names.flatMap(name => removalOf(name, classes)?.language ?? []),
-        model.icuLanguageGroups,
-      )
-    : [];
-  const groupOfLanguage = hasHook ? new Map(languages.map(({ name, group }) => [name, group])) : undefined;
+  const languages = groupLanguages(
+    found.flatMap(({ items }) => items.flatMap(item => removalOf(item, classes)?.language ?? [])),
+    found.length === 0 ? [] : model.icuLanguageGroups,
+  );
+  const groupOfLanguage = new Map(languages.map(({ name, group }) => [name, group]));
   const packages = found.map(({ start, end, items }) => ({
     start,
     end,

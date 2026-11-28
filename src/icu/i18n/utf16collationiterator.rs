@@ -9,6 +9,7 @@ use crate::common::utypes::*;
 use crate::i18n::collationdata::CollationData;
 use crate::i18n::collationfcd::{self, CacheLookup, SegmentCache};
 use crate::i18n::collationiterator::{BufferId, INPUT_BUFFER, Text};
+use crate::i18n::collationtrie::Mapping;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CheckDirection {
@@ -289,10 +290,10 @@ impl<'a> FcdUtf16Text<'a> {
 
 impl Text for FcdUtf16Text<'_> {
     #[inline(always)]
-    fn next_ce32(&mut self, data: &CollationData) -> Result<Option<(u32, u32)>, UErrorCode> {
+    fn next_ce32(&mut self, data: &CollationData) -> Result<Option<(u32, Mapping)>, UErrorCode> {
         Ok(self
             .next_unit()?
-            .map(|c| (u32::from(c), data.trie.get32_from_u16_single_lead(c))))
+            .map(|c| (u32::from(c), data.trie.mapping_of_u16_single_lead(c))))
     }
 
     fn next_trail_surrogate(&mut self) -> Option<u32> {

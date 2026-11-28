@@ -1,6 +1,6 @@
 import type { IcuLanguage } from "./types.ts";
 
-const localeBundleStem = /^[a-z]{2,3}(_[A-Za-z0-9]+)*$/;
+const localeBundleStem = /^[a-z]{2,3}(_[A-Za-z0-9]*)*$/;
 
 export function languageOfIcuItem(name: string): string | undefined {
   const file = name.slice(name.indexOf("/") + 1);

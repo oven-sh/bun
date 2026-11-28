@@ -17,6 +17,7 @@ mod collationfcd_data;
 mod collationiterator;
 pub(crate) mod collationsets;
 mod collationsettings;
+mod collationtrie;
 mod collunsafe;
 mod datefmt_numbers;
 mod dayperiodrules;

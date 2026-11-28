@@ -3,6 +3,7 @@
 use crate::common::arrayvec::ArrayVec;
 use crate::common::charstr::{CharStrings, SmallChars, Span};
 use crate::common::cstring::{find_byte, split_once};
+use crate::common::linked::is_language_removed;
 use crate::common::loclikely::ulocimp_add_likely_subtags;
 use crate::common::maps::Map;
 use crate::common::memory::{
@@ -535,9 +536,10 @@ fn host_locale() -> Result<&'static Locale, UErrorCode> {
     check_not_default(&name).and_then(|()| intern_locale(&name))
 }
 
-/// Sets the host's locale if `id` is `None`. Does nothing if `id` is ill-formed.
+/// Sets the host's locale if `id` is `None`, unless `--trim` has removed its language. Does nothing if `id` is ill-formed.
 pub(crate) fn uloc_set_default(id: Option<&[u8]>) {
     if let Ok(new) = id.map_or_else(host_locale, |id| intern_locale(&ulocimp_get_name(id)?))
+        && (id.is_some() || !is_language_removed(split_once(new.get_name(), b'@').0))
         && let Ok(latest) = DEFAULT_LOCALE.get_or_try_init(|| Ok(AtomicRef::new(new)))
     {
         latest.set(new);

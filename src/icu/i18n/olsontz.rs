@@ -12,6 +12,7 @@ use crate::i18n::simpletz::SimpleRules;
 use crate::i18n::timezone::{LocalOptions, TimeZone};
 use crate::i18n::tzrule::{TimeZoneRule, TimeZoneTransition};
 use crate::i18n::zonemeta;
+use bun_icu_format::zone;
 use std::ops::Range;
 
 const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
@@ -49,6 +50,17 @@ struct History {
 
 impl History {
     fn new(zone: &UResourceBundle) -> Result<Self, UErrorCode> {
+        if zone.get_value().get_data().is_image {
+            let [type_offsets, pre32, times32, post32, type_map] =
+                zone::parts(zone.get_value_by_key(b"typeMap")?.get_binary()?);
+            return Ok(Self {
+                pre32: pairs(I32s::of(pre32)),
+                times32: words(I32s::of(times32)),
+                post32: pairs(I32s::of(post32)),
+                type_offsets: pairs(I32s::of(type_offsets)),
+                type_map,
+            });
+        }
         let times = |key: &[u8], step| match int_vector(zone, key) {
             Ok(times) if times.len() <= MAX_LENGTH && times.len().is_multiple_of(step) => Ok(times),
             Ok(_) => Err(U_INVALID_FORMAT_ERROR),

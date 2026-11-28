@@ -1,9 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { BuildError } from "../../../scripts/build/error.ts";
 import { readArchive } from "../../../scripts/build/trim/archive.ts";
-import type { Feature, FeatureModel, IcuDataLine } from "../../../scripts/build/trim/features.ts";
+import {
+  loadFeatures,
+  type Feature,
+  type FeatureModel,
+  type IcuDataLine,
+} from "../../../scripts/build/trim/features.ts";
 import {
   createSectionGraph,
   type ObjectFormat,
@@ -36,7 +42,7 @@ import {
   type RemovableRange,
 } from "../../../scripts/build/trim/ranges.ts";
 import { xxh3 } from "../../../scripts/build/trim/xxh3.ts";
-import { packageOf } from "../icu-data-package.ts";
+import { firstFile, packageOf } from "../icu-data-package.ts";
 import { A, feature, modelOf, partitioned, tableOutput } from "./toy-graph.ts";
 
 type Section = [
@@ -588,44 +594,61 @@ describe("the texts of the built-in modules", () => {
 });
 
 describe("the items of ICU's data package", () => {
-  const createItems = (...names: string[]) => names.map(name => ({ name, size: 16 }));
+  const createItems = (...names: string[]) => names.map(name => ({ names: [name], size: 16 }));
 
-  test("an item's name follows the first slash, and its size reaches the next item or the end of the package", () => {
-    const items: [string, number][] = [
-      ["icudt75l/af.res", 48],
-      ["icudt75l/coll/de.res", 40],
-      ["icudt75l/zoneinfo64.res", 33],
+  test("an item has the names of its files, and its size reaches the next item", () => {
+    const files: [string, number][] = [
+      ["coll/de.res", 40],
+      ["zoneinfo64.res", 33],
     ];
-    expect(itemsOf(packageOf(items))).toEqual([
-      { name: "af.res", size: 48 },
-      { name: "coll/de.res", size: 48 },
-      { name: "zoneinfo64.res", size: 33 },
+    expect(itemsOf(packageOf(files)).slice(firstFile)).toEqual([
+      { names: ["coll/de.res"], size: 40 },
+      { names: ["zoneinfo64.res"], size: 36 },
     ]);
-    expect(itemsOf(packageOf(items, 144)).map(item => item.name)).toEqual(["af.res", "coll/de.res", "zoneinfo64.res"]);
-    expect(itemsOf(packageOf([]))).toEqual([]);
+    expect(itemsOf(packageOf([])).map(item => item.names)).toEqual([[], [], []]);
+  });
+
+  test("a cell has the names of the bundles in its tree, and a model those in the main tree", () => {
+    const items = itemsOf(
+      packageOf(
+        [],
+        [
+          ["de", 1, 0b111111],
+          ["de_AT", 1, 0b100101],
+          ["en", 0, 0b000011],
+        ],
+      ),
+    );
+    expect(items.slice(firstFile).map(item => item.names.join())).toEqual([
+      ...["en.res", "en.res", "zone/en.res", "", "", "", ""],
+      ...["de.res,de_AT.res", "de.res,de_AT.res", "zone/de.res", "curr/de.res,curr/de_AT.res", "unit/de.res"],
+      ...["lang/de.res", "region/de.res,region/de_AT.res"],
+    ]);
   });
 
   test("other data and truncated packages throw", () => {
-    const whole = packageOf([
-      ["icudt75l/af.res", 48],
-      ["icudt75l/zu.res", 16],
-    ]);
+    const whole = packageOf([["coll/de.res", 16]], [["de", 0, 1]]);
     const withByte = (at: number, byte: number) => {
       const copy = Buffer.from(whole);
       copy[at] = byte;
       return copy;
     };
+    const [locales, files] = [whole.readUInt32LE(16), whole.readUInt32LE(20)];
     for (const other of [
       Buffer.alloc(0),
       Buffer.alloc(64),
-      withByte(2, 0),
-      withByte(8, 1),
-      withByte(12, 0x52),
-      withByte(16, 2),
-      whole.subarray(0, 40),
-      withByte(32, 0xff),
-      withByte(32 + 4 + 3, 0xff),
-      withByte(32 + 8 + 3, 0xff),
+      withByte(3, 0),
+      withByte(4, 5),
+      withByte(8, 2),
+      withByte(8, 0xff),
+      withByte(13, 0xff),
+      whole.subarray(0, -1),
+      withByte(locales, 0xff),
+      withByte(locales + 2, 0xff),
+      withByte(locales + 9, 0xff),
+      withByte(files, 0xff),
+      withByte(files + 2, 0xff),
+      withByte(files + 4, 0xff),
     ]) {
       expect(() => itemsOf(other)).toThrow("ICU's data package is malformed");
     }
@@ -644,20 +667,11 @@ describe("the items of ICU's data package", () => {
     ["lang/de.res", "language-names"],
     ["region/de.res", "region-names"],
     ["rbnf/de.res", "number-spellout"],
-    ["translit/el.res", "transliteration"],
     ["unit/de.res", "unit"],
     ["units.res", "unit"],
+    ["coldUnits.res", "unit"],
     ["grammaticalFeatures.res", "unit"],
     ["zone/de.res", "zone"],
-    ["ibm-37_P100-1995.cnv", "converter"],
-    ["cnvalias.icu", "converter"],
-    ["rfc3491.spp", "string-prep"],
-    ["confusables.cfu", "confusables"],
-    ["unames.icu", "character-names"],
-    ["nfkc_scf.nrm", "nfkc-simple-case-fold"],
-    ["windowsZones.res", "windows-zones"],
-    ["currencyNumericCodes.res", "currency-codes"],
-    ["genderList.res", "gender-list"],
     ["dayPeriods.res", "day-periods"],
     ["plurals.res", "plural-rules"],
     ["pluralRanges.res", "plural-rules"],
@@ -677,8 +691,8 @@ describe("the items of ICU's data package", () => {
     "res_index.res",
     "zone/en.res",
     "zone/root.res",
-    "zone/pool.res",
     "supplementalData.res",
+    "coldRegions.res",
     "icuver.res",
     "zoneinfo64.res",
     "nfc.nrm",
@@ -692,7 +706,6 @@ describe("the items of ICU's data package", () => {
   });
 
   const classes = new Map<IcuItemClass, { features: number[]; byLocale: boolean }>([
-    ["converter", { features: [Tools], byLocale: false }],
     ["collation", { features: [5], byLocale: false }],
     ["collation-root", { features: [1, 5], byLocale: false }],
     ["locale", { features: [7], byLocale: false }],
@@ -709,20 +722,20 @@ describe("the items of ICU's data package", () => {
 
   test("adjacent items with the same features are one run", () => {
     expect(
-      runsOf(createItems("af.res", "ar.res", "coll/de.res", "coll/fr.res", "de.res"), classes, undefined),
+      runsOf(createItems("af.res", "ar.res", "coll/de.res", "coll/fr.res", "de.res"), classes, new Map()),
     ).toStrictEqual([withoutGroup(0, 2, [7]), withoutGroup(2, 2, [5]), withoutGroup(4, 1, [7])]);
   });
 
   test("an item without a class ends a run and is not in any run", () => {
-    expect(runsOf(createItems("de.res", "en.res", "es.res", "zoneinfo64.res"), classes, undefined)).toEqual([
+    expect(runsOf(createItems("de.res", "en.res", "es.res", "zoneinfo64.res"), classes, new Map())).toEqual([
       withoutGroup(0, 1, [7]),
       withoutGroup(2, 1, [7]),
     ]);
-    expect(runsOf(createItems("en.res", "zoneinfo64.res"), classes, undefined)).toEqual([]);
+    expect(runsOf(createItems("en.res", "zoneinfo64.res"), classes, new Map())).toEqual([]);
   });
 
   test("adjacent items with different features are separate runs", () => {
-    expect(runsOf(createItems("coll/de.res", "coll/root.res", "coll/sv.res"), classes, undefined)).toEqual([
+    expect(runsOf(createItems("coll/de.res", "coll/root.res", "coll/sv.res"), classes, new Map())).toEqual([
       withoutGroup(0, 1, [5]),
       withoutGroup(1, 1, [1, 5]),
       withoutGroup(2, 1, [5]),
@@ -730,12 +743,23 @@ describe("the items of ICU's data package", () => {
   });
 
   test("an item whose class has no features ends a run and is not in any run", () => {
-    expect(runsOf(createItems("curr/de.res"), classes, undefined)).toEqual([]);
-    expect(runsOf(createItems("af.res", "curr/de.res", "de.res"), classes, undefined)).toEqual([
+    expect(runsOf(createItems("curr/de.res"), classes, new Map())).toEqual([]);
+    expect(runsOf(createItems("af.res", "curr/de.res", "de.res"), classes, new Map())).toEqual([
       withoutGroup(0, 1, [7]),
       withoutGroup(2, 1, [7]),
     ]);
   });
+
+  test("an item without a name is not in any run", () => {
+    expect(runsOf([{ names: [], size: 16 }], classes, new Map())).toEqual([]);
+  });
+
+  test.each(["de.res en.res", "coll/de.res coll/root.res", "zone/de.res zone/sv.res"])(
+    "an item with %s, which are not removed together, throws",
+    names => {
+      expect(() => runsOf([{ names: names.split(" "), size: 16 }], classes, new Map())).toThrow(BuildError);
+    },
+  );
 
   describe("by locale", () => {
     const groupOfLanguage = new Map([
@@ -771,25 +795,18 @@ describe("the items of ICU's data package", () => {
         runsOf(createItems("unit/de.res", "unit/root.res", "units.res", "unit/fi.res"), classes, groupOfLanguage),
       ).toStrictEqual([inGroup(0, 1, 0), inGroup(1, 3, undefined)]);
     });
-
-    test("without groups data leaves by feature only", () => {
-      expect(runsOf(createItems("zone/de.res", "zone/nb.res", "zone/sv.res"), classes, undefined)).toStrictEqual([
-        inGroup(0, 3, undefined),
-      ]);
-    });
   });
 
   describe("icuPackagesOf", () => {
     const packageStart = 0x400000;
     const data = packageOf([
-      ["icudt99l/coll/de.res", 16],
-      ["icudt99l/zone/de.res", 16],
-      ["icudt99l/zoneinfo64.res", 16],
+      ["coll/de.res", 16],
+      ["zone/de.res", 16],
+      ["zoneinfo64.res", 16],
     ]);
-    const collationRun = { firstItem: 0, itemCount: 1, features: [5], localeGroup: undefined, bytes: 16 };
-    const zoneRun = { firstItem: 1, itemCount: 1, features: [6], localeGroup: undefined, bytes: 16 };
-    const entrySymbol: [string, number] = ["icudt99_dat", packageStart];
-    const hookSymbol: [string, number] = ["bun_icu_zstd_dict", 0x300000];
+    const collationRun = { firstItem: firstFile, itemCount: 1, features: [5], localeGroup: undefined, bytes: 16 };
+    const zoneRun = { firstItem: firstFile + 1, itemCount: 1, features: [6], localeGroup: undefined, bytes: 16 };
+    const entrySymbol: [string, number] = ["bun_icu_package", packageStart];
     const icuLines: IcuDataLine[] = [
       { itemClass: "collation", exceptWindows: false, byLocale: false, features: ["Collation"] },
       { itemClass: "zone", exceptWindows: true, byLocale: false, features: ["Zones"] },
@@ -825,14 +842,14 @@ describe("the items of ICU's data package", () => {
 
     test("a package has the runs of the classes the model names", () => {
       expect(icuPackagesOf(linkedOf([entrySymbol]), graphOf("elf"), modelOf(icuLines))).toEqual({
-        packages: [{ start: packageStart, end: packageStart + data.length, items: 3, runs: [collationRun, zoneRun] }],
+        packages: [{ start: packageStart, end: packageStart + data.length, items: 6, runs: [collationRun, zoneRun] }],
         languages: [],
       });
     });
 
     test("an except-windows line does not apply to COFF", () => {
       expect(icuPackagesOf(linkedOf([entrySymbol]), graphOf("coff"), modelOf(icuLines)).packages).toEqual([
-        { start: packageStart, end: packageStart + data.length, items: 3, runs: [collationRun] },
+        { start: packageStart, end: packageStart + data.length, items: 6, runs: [collationRun] },
       ]);
     });
 
@@ -841,7 +858,7 @@ describe("the items of ICU's data package", () => {
       const bytes = Buffer.concat([data, Buffer.alloc(64, 0xcc)]);
       const linked = linkedOf([entrySymbol, ["after", end]], bytes);
       expect(icuPackagesOf(linked, graphOf("elf", bytes.length), modelOf(icuLines)).packages).toEqual([
-        { start: packageStart, end, items: 3, runs: [collationRun, zoneRun] },
+        { start: packageStart, end, items: 6, runs: [collationRun, zoneRun] },
       ]);
     });
 
@@ -851,9 +868,9 @@ describe("the items of ICU's data package", () => {
       expect(icuPackagesOf(linkedOf([entrySymbol]), graphOf("elf"), modelOf([]))).toEqual(nothing);
     });
 
-    test("with Bun's hook in ICU, the items of a class that is removed by locale get the group of their language", () => {
+    test("the items of a class that is removed by locale get the group of their language", () => {
       const { packages, languages } = icuPackagesOf(
-        linkedOf([entrySymbol, hookSymbol]),
+        linkedOf([entrySymbol]),
         graphOf("elf"),
         modelOf(icuLinesByLocale, [["de", "nds"]]),
       );
@@ -871,22 +888,33 @@ describe("the items of ICU's data package", () => {
 
     test("only the languages of classes that are removed by locale are listed", () => {
       const lines = [icuLines[0]!, icuLinesByLocale[1]!];
-      const elf = icuPackagesOf(linkedOf([entrySymbol, hookSymbol]), graphOf("elf"), modelOf(lines));
+      const elf = icuPackagesOf(linkedOf([entrySymbol]), graphOf("elf"), modelOf(lines));
       expect(elf.languages).toEqual([{ name: "de", group: 0 }]);
       expect(elf.packages.map(({ runs }) => runs)).toEqual([[collationRun, { ...zoneRun, localeGroup: 0 }]]);
-      expect(icuPackagesOf(linkedOf([entrySymbol, hookSymbol]), graphOf("coff"), modelOf(lines)).languages).toEqual([]);
-      expect(icuPackagesOf(linkedOf([entrySymbol, hookSymbol]), graphOf("elf"), modelOf(icuLines)).languages).toEqual(
-        [],
-      );
+      expect(icuPackagesOf(linkedOf([entrySymbol]), graphOf("coff"), modelOf(lines)).languages).toEqual([]);
+      expect(icuPackagesOf(linkedOf([entrySymbol]), graphOf("elf"), modelOf(icuLines)).languages).toEqual([]);
     });
 
-    test("without the hook a removed language would be a silent fallback, so there are no languages and no groups", () => {
-      expect(
-        icuPackagesOf(linkedOf([entrySymbol]), graphOf("elf"), modelOf(icuLinesByLocale, [["de", "nds"]])),
-      ).toEqual({
-        packages: [{ start: packageStart, end: packageStart + data.length, items: 3, runs: [collationRun, zoneRun] }],
+    test("without a package there are no languages", () => {
+      expect(icuPackagesOf(linkedOf([]), graphOf("elf"), modelOf(icuLinesByLocale, [["de", "nds"]]))).toEqual({
+        packages: [],
         languages: [],
       });
+    });
+
+    test.each(["elf", "coff"] as const)("the files in an item of Bun's package are removed together: %s", format => {
+      const root = join(import.meta.dir, "..", "..", "..");
+      const bytes = readFileSync(join(root, "src", "icu", "data", "package.bin"));
+      const linked = linkedOf([entrySymbol], bytes);
+      const { packages, languages } = icuPackagesOf(linked, graphOf(format, bytes.length), loadFeatures(root));
+      const items = itemsOf(bytes);
+      const isInRun = (name: string) => {
+        const item = items.findIndex(({ names }) => names.includes(name));
+        return packages[0]!.runs.some(({ firstItem, itemCount }) => item >= firstItem && item < firstItem + itemCount);
+      };
+      const names = ["en.res", "root.res", "zone/en.res", "en_GB.res", "zone/de.res", "curr/en.res", "coll/sv.res"];
+      expect(names.map(isInRun)).toEqual([false, false, false, format === "elf", format === "elf", true, true]);
+      expect(languages.map(({ name }) => name)).toEqual(expect.arrayContaining(["de", "en", "fil", "iw", "zu"]));
     });
 
     test("an unknown class throws", () => {
@@ -900,7 +928,7 @@ describe("the items of ICU's data package", () => {
     });
 
     test("an entry symbol outside every node throws", () => {
-      const linked = linkedOf([["icudt99_dat", 0x500000]]);
+      const linked = linkedOf([["bun_icu_package", 0x500000]]);
       expect(() => icuPackagesOf(linked, graphOf("elf"), modelOf(icuLines))).toThrow(BuildError);
     });
   });
@@ -914,6 +942,8 @@ describe("icu-locales", () => {
     ["en_US_POSIX.res", "en"],
     ["es_419.res", "es"],
     ["coll/de.res", "de"],
+    ["coll/de_.res", "de"],
+    ["coll/de__PHONEBOOK.res", "de"],
     ["zone/sr_Latn.res", "sr"],
   ])("the language of %s is %s", (name, language) => {
     expect(languageOfIcuItem(name)).toBe(language);
@@ -933,7 +963,6 @@ describe("icu-locales", () => {
     "DE.res",
     "d.res",
     "de-AT.res",
-    "de_.res",
     "",
   ])("%j belongs to no language", name => {
     expect(languageOfIcuItem(name)).toBeUndefined();

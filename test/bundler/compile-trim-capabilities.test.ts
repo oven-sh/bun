@@ -236,6 +236,18 @@ test.each([
   expect(placesThatCall(file, ["posix_spawn"]).map(place => place.address)).toEqual([call]);
 });
 
+// The slot is 0x20 pages behind the code, at 0x588 in its page.
+test.each([
+  // adrp x8, .+0x20000; adrp x9, .+0x40000; add x8, x8, #0x588
+  ["is a place while the register holds it", "080100900902009008211691", [0]],
+  // adrp x8, .+0x20000; adrp x8, .+0x40000; add x8, x8, #0x588
+  ["is none once another page has replaced it", "080100900802009008211691", []],
+])("in a Mach-O file the page of a slot %s", (_, code, places) => {
+  const { file, base, text } = machOWithOneStub(false);
+  file.fill(0, text, text + 16).write(code, text, "hex");
+  expect(placesThatCall(file, ["posix_spawn"]).map(({ address }) => address - base - text)).toEqual(places);
+});
+
 // The code begins 0x300 bytes behind the header, which the list writes as `80 06`, and 0x40 bytes ahead of the stub.
 test.each([
   // mov ecx, [rip + 0x37e8ea8c]; add [rax], al; add al, al; call stub

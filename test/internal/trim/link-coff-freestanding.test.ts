@@ -17,7 +17,7 @@ import { builtinModulesHeaderBytes, createLinker, parseArguments } from "../../.
 import { peImage } from "../../../scripts/build/trim/linked-image.ts";
 import { coff } from "../../../scripts/build/trim/linker-coff.ts";
 import { foldedEntryPointsHeading } from "../../../scripts/build/trim/report.ts";
-import { packageOf } from "../icu-data-package.ts";
+import { firstFile, packageOf } from "../icu-data-package.ts";
 import {
   baseRelocationDirectory,
   bigObjectMagic,
@@ -1334,11 +1334,11 @@ extern "C" int unreferenced(int x) { return GUARDED(Extra, entered, x); }
     "lists the items of ICU's data package by class, but not the classes Windows always needs, and cuts the items of a removed feature",
     async () => {
       const items: [string, number][] = [
-        ["icudt99l/af.res", 48],
-        ["icudt99l/coll/de.res", 40],
-        ["icudt99l/coll/root.res", 64],
-        ["icudt99l/ibm-37_P100-1995.cnv", 5000],
-        ["icudt99l/zoneinfo64.res", 33],
+        ["af.res", 48],
+        ["coll/de.res", 40],
+        ["coll/root.res", 64],
+        ["brkitr/word.brk", 5000],
+        ["zoneinfo64.res", 33],
       ];
       const lineOf = (itemClass: string) => model.icuData.find(line => line.itemClass === itemClass)!;
       const featuresOfClass = (itemClass: string) =>
@@ -1348,26 +1348,30 @@ extern "C" int unreferenced(int x) { return GUARDED(Extra, entered, x); }
       using dir = tempDir("trim-coff-freestanding-icu", {
         ...smallSources,
         "package.dat": packageOf(items),
-        "data.c": String.raw`__asm__(".section .rdata,\"dr\"\n.balign 16\n.globl icudt99_dat\nicudt99_dat:\n.incbin \"package.dat\"\n.text\n");`,
-        "main.c": mainReturning("extern const unsigned char icudt99_dat[];", "icudt99_dat[argc + 1] == 0xda ? 0 : 1"),
+        "data.c": String.raw`__asm__(".section .rdata,\"dr\"\n.balign 16\n.globl bun_icu_package\nbun_icu_package:\n.incbin \"package.dat\"\n.text\n");`,
+        "main.c": mainReturning(
+          "extern const unsigned char bun_icu_package[];",
+          "bun_icu_package[argc + 1] == 'C' ? 0 : 1",
+        ),
       });
       const { table, addressOf, trimmedExecutable } = await linked(String(dir), {
         ...optionsWith({ objects: ["feature_code", "entry", "embedder", "data", "main"] }),
         removed: ["IntlCollation"],
       });
-      expect(table.icuPackages.map(({ start }) => start)).toEqual([addressOf("icudt99_dat")]);
+      expect(table.icuPackages.map(({ start }) => start)).toEqual([addressOf("bun_icu_package")]);
       const { start: packageStart, end, runs } = table.icuPackages[0]!;
       expect(lineOf("locale").exceptWindows).toBe(true);
       const listed = runs.map(({ firstItem, itemCount, set }) => ({ firstItem, itemCount, features: table.sets[set] }));
       expect(listed).toEqual([
-        { firstItem: 1, itemCount: 1, features: featuresOfClass("collation") },
-        { firstItem: 2, itemCount: 1, features: featuresOfClass("collation-root") },
-        { firstItem: 3, itemCount: 1, features: featuresOfClass("converter") },
+        { firstItem: firstFile + 1, itemCount: 1, features: featuresOfClass("collation") },
+        { firstItem: firstFile + 2, itemCount: 1, features: featuresOfClass("collation-root") },
+        { firstItem: firstFile + 3, itemCount: 1, features: featuresOfClass("break-iteration") },
       ]);
       const left = itemsOf(peImage(trimmedExecutable).bytes(packageStart, end - packageStart)!);
-      const names = left.map(({ name }) => name);
-      expect(names).not.toContain("coll/de.res");
-      expect(names).toContain("coll/root.res");
+      expect(left.slice(firstFile + 1, firstFile + 3)).toEqual([
+        { names: ["coll/de.res"], size: 0 },
+        { names: ["coll/root.res"], size: 64 },
+      ]);
     },
   );
 

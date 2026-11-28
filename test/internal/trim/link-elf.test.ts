@@ -11,7 +11,7 @@ import { elfImage } from "../../../scripts/build/trim/linked-image.ts";
 import { unnamedSectionPrefix } from "../../../scripts/build/trim/linker-elf.ts";
 import { foldedEntryPointsHeading } from "../../../scripts/build/trim/report.ts";
 import { findHolders, parseRetained } from "../../../scripts/build/trim/why.ts";
-import { packageOf } from "../icu-data-package.ts";
+import { firstFile, packageOf } from "../icu-data-package.ts";
 import {
   addressInMap,
   archiver,
@@ -1108,11 +1108,11 @@ describeLink("what the executable exports", () => {
 
 describeLink("ICU's data package", () => {
   const items: [path: string, size: number][] = [
-    ["icudt99l/af.res", 48],
-    ["icudt99l/coll/de.res", 40],
-    ["icudt99l/coll/root.res", 64],
-    ["icudt99l/ibm-37_P100-1995.cnv", 5000],
-    ["icudt99l/nothing-knows-this.bin", 33],
+    ["af.res", 48],
+    ["coll/de.res", 40],
+    ["coll/root.res", 64],
+    ["brkitr/word.brk", 5000],
+    ["nothing-knows-this.bin", 33],
   ];
   const objects = ["feature_code", "entry", "embedder", "data", "main"];
   const dataFiles = (afterPackage: string) => ({
@@ -1120,13 +1120,13 @@ describeLink("ICU's data package", () => {
     "package.dat": packageOf(items),
     "data.c": `
       __asm__(
-        ".section .rodata\\n.balign 16\\n.globl icudt99_dat\\nicudt99_dat:\\n.incbin \\"package.dat\\"\\n"
+        ".section .rodata\\n.balign 16\\n.globl bun_icu_package\\nbun_icu_package:\\n.incbin \\"package.dat\\"\\n"
         "${afterPackage}.text\\n");
     `,
     "main.c": `
       ${start}
-      extern const unsigned char icudt99_dat[];
-      ${mainReturning("icudt99_dat[argc + 1] == 0xda ? 0 : 1")}
+      extern const unsigned char bun_icu_package[];
+      ${mainReturning("bun_icu_package[argc + 1] == 'C' ? 0 : 1")}
     `,
   });
   const readersOf = (name: string) => {
@@ -1140,13 +1140,13 @@ describeLink("ICU's data package", () => {
     using dir = tempDir("trim-elf-icu", dataFiles(".balign 16\\n.globl dictionary\\ndictionary:\\n.zero 64\\n"));
     const result = await linked(String(dir), { objects });
     const { table, addressOf, programResult } = result;
-    expect(extentsOf(result)).toEqual([{ start: addressOf("icudt99_dat"), end: addressOf("dictionary") }]);
-    expect(addressOf("dictionary") - addressOf("icudt99_dat")).toBe(Math.ceil(packageOf(items).length / 16) * 16);
+    expect(extentsOf(result)).toEqual([{ start: addressOf("bun_icu_package"), end: addressOf("dictionary") }]);
+    expect(addressOf("dictionary") - addressOf("bun_icu_package")).toBe(Math.ceil(packageOf(items).length / 16) * 16);
     const featuresOfItem: number[][] = items.map(() => []);
     for (const { firstItem, itemCount, set } of table.icuPackages[0]!.runs) {
-      featuresOfItem.fill(table.sets[set]!, firstItem, firstItem + itemCount);
+      featuresOfItem.fill(table.sets[set]!, firstItem - firstFile, firstItem - firstFile + itemCount);
     }
-    expect(featuresOfItem).toEqual(items.map(([path]) => readersOf(path.slice(path.indexOf("/") + 1))));
+    expect(featuresOfItem).toEqual(items.map(([path]) => readersOf(path)));
     expect(readersOf("coll/de.res")).toEqual([indexOf("IntlCollation")]);
     expect(readersOf("nothing-knows-this.bin")).toEqual([]);
     expect(programResult.exitCode).toBe(0);
@@ -1155,7 +1155,7 @@ describeLink("ICU's data package", () => {
   test("ends where its section ends when no name follows", async () => {
     using dir = tempDir("trim-elf-icu", dataFiles(""));
     const result = await linked(String(dir), { objects });
-    const start = result.addressOf("icudt99_dat");
+    const start = result.addressOf("bun_icu_package");
     expect(extentsOf(result)).toEqual([{ start, end: start + packageOf(items).length }]);
   });
 
@@ -1168,9 +1168,10 @@ describeLink("ICU's data package", () => {
     const file = openElf(trimmed, "r")!;
     const image = elfImage(trimmed, file);
     closeSync(file.fd);
-    const names = itemsOf(image.bytes(start, end - start)!).map(({ name }) => name);
-    expect(names).not.toContain("coll/de.res");
-    expect(names).toContain("coll/root.res");
+    expect(itemsOf(image.bytes(start, end - start)!).slice(firstFile + 1, firstFile + 3)).toEqual([
+      { names: ["coll/de.res"], size: 0 },
+      { names: ["coll/root.res"], size: 64 },
+    ]);
   });
 
   test("a program without it lists none", async () => {

@@ -168,7 +168,7 @@ const without = (...kept: string[]) => features.filter(feature => !kept.includes
 
   test.skipIf(!isLinux && !isWindows)("most of the data is removed with the features that read it", async () => {
     const [kept, forcedOut] = [await build("names-Intl.ts", []), await build("names-Intl.ts", without())];
-    expect(sizeOf(kept) - sizeOf(forcedOut)).toBeGreaterThan(7_900_000);
+    expect(sizeOf(kept) - sizeOf(forcedOut)).toBeGreaterThan(4_000_000);
   });
 
   test.skipIf(!isLinux && !isWindows)(

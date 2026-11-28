@@ -112,8 +112,8 @@ describe("which builds compile WebKit", () => {
     expect(prebuiltHasProgramObjects(cfg)).toBe(false);
     writeFileSync(join(source.destDir!, objects("testaot")), "");
     expect(prebuiltHasProgramObjects(cfg)).toBe(true);
-    const icuCode = ["lib/libicui18n.a", "lib/libicuuc.a"];
-    expect(webkit.provides(cfg).libs.filter(lib => lib.includes("icu"))).toEqual(["lib/libicudata.a"]);
+    const icu = ["lib/libicui18n.a", "lib/libicuuc.a", "lib/libicudata.a"];
+    expect(webkit.provides(cfg).libs.filter(lib => lib.includes("icu"))).toEqual([]);
     // The ICU of the tarball keeps its data compressed. The objects hold what reads it, which only has a weak reference.
     expect(
       jscPrograms(cfg).map(({ name, sources, libs, ldflags }) => [
@@ -126,13 +126,11 @@ describe("which builds compile WebKit", () => {
       ["jsc", "testaot"].map(name => [
         name,
         [join("deps", "WebKit", "programs", name, "OutOfMemory.cpp")],
-        [objects(name), ...icuCode].map(lib => join(source.destDir!, lib)),
+        [objects(name), ...icu].map(lib => join(source.destDir!, lib)),
         "-Wl,--undefined=bun_icu_maybe_decompress",
       ]),
     );
-    expect(webkit.provides(cfg).files).toEqual(
-      expect.arrayContaining([objects("jsc"), objects("testaot"), ...icuCode]),
-    );
+    expect(webkit.provides(cfg).files).toEqual(expect.arrayContaining([objects("jsc"), objects("testaot"), ...icu]));
     expect([webkitJSCPath(cfg), webkitTestAotPath(cfg)]).toEqual([join(buildDir, "jsc"), join(buildDir, "testaot")]);
   });
 
@@ -771,7 +769,7 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
     }
   });
 
-  test("only the programs link the code of the ICU of a prebuilt WebKit, and read its data with Bun's decoder", () => {
+  test("only the programs link the ICU of a prebuilt WebKit, and read its data with Bun's decoder", () => {
     using local = checkOut({}, checkout);
     const { cfg, short } = local;
     const saved = process.env.BUN_ICU_ROOT;
@@ -782,8 +780,9 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
       process.env.BUN_ICU_ROOT = join("/somewhere", "icu");
       expect(rustFlags()).not.toContain("--cfg=bun_system_icu");
       const icuLib = (name: string) => join("/somewhere", "icu", "lib", name);
-      expect((webkit.build(cfg) as DirectBuild).libs).toEqual([icuLib("libicudata.a")]);
-      for (const { libs } of jscPrograms(cfg)) expect(libs).toEqual([icuLib("libicui18n.a"), icuLib("libicuuc.a")]);
+      for (const { libs } of jscPrograms(cfg)) {
+        expect(libs).toEqual(["libicui18n.a", "libicuuc.a", "libicudata.a"].map(icuLib));
+      }
       const reading = jscPrograms(cfg).filter(program => program.rustCrates !== undefined);
       expect(
         reading.map(({ name, sources, rustCrates }) => [
@@ -849,7 +848,6 @@ describe("DirectBuild groups and steps", () => {
           },
         ],
         consumerOutputs: [join(out, "gen.h")],
-        libs: ["/outside/libicu.a"],
       }),
       provides: () => ({ libs: [], includes: [] }),
     };
@@ -860,7 +858,7 @@ describe("DirectBuild groups and steps", () => {
 
     // The tool's object is not bun's; the generated header is order-only for consumers.
     expect(resolved.objects.map(rel)).toEqual(["obj/vendor/lsquic/a.cpp.o", "obj/vendor/lsquic/b.c.o"]);
-    expect(resolved.libs).toEqual(["/outside/libicu.a"]);
+    expect(resolved.libs).toEqual([]);
     expect(resolved.generatedHeaders.map(rel)).toEqual(["deps/lsquic/gen.h"]);
     expect(resolved.outputs).toEqual([]);
 

@@ -3,6 +3,7 @@
 use crate::common::bytes::U_IS_BIG_ENDIAN;
 use crate::common::charstr::SmallChars;
 use crate::common::cstring::{find_last_byte, split_once};
+use crate::common::linked::{self, Text};
 use crate::common::memory::{self, Appendable, oom_checked, try_box, try_to_vec};
 use crate::common::slice_ext::SliceExt;
 use crate::common::ucmndata::Package;
@@ -12,7 +13,6 @@ use crate::common::utypes::{
     U_MEMORY_ALLOCATION_ERROR, UErrorCode,
 };
 use crate::sys::file::{self, Mapping, ok_or_oom};
-use crate::sys::package;
 use bun_core::{ZStr, strings, zstr};
 use bun_paths::{DELIMITER, SEP, to_native_in_place};
 use bun_sys::CloseOnDrop;
@@ -328,15 +328,10 @@ impl Search {
         Ok(None)
     }
 
-    fn in_packages(&mut self, path: &DataPath<'_>, entry: &[u8]) -> Found {
+    fn in_package_files(&mut self, path: &DataPath<'_>, entry: &[u8]) -> Found {
         /// `icudt79l.dat`, which is looked for once, when the linked package first gives nothing.
         static EXTENSION: OnceBox<Option<Package<'static>>> = OnceBox::new();
         let package = if path.is_icu_data {
-            if let Some(item) = oom_checked(package::find(entry))?
-                && let Some(data) = self.accept(item)
-            {
-                return Ok(Some(data));
-            }
             *EXTENSION.get_or_try_init(|| self.keep_error(package_by_name(U_ICUDATA_NAME)))?
         } else {
             self.keep_error(package_by_name(path.package))?
@@ -366,19 +361,56 @@ pub(crate) fn bundle_may_be_replaced(name: &[u8]) -> Result<bool, UErrorCode> {
         || (is_time_zone_bundle(name) && !time_zone_files_directories()?.is_empty()))
 }
 
+/// An item, or a bundle in a form that only the linked package has.
+pub(crate) enum Data {
+    Item(UDataMemory),
+    Image {
+        bytes: &'static [u8],
+        keys: &'static [u8],
+        root: u32,
+        no_fallback: bool,
+    },
+    Text(Box<Text>),
+}
+
+impl Data {
+    fn into_item(self) -> Result<UDataMemory, UErrorCode> {
+        match self {
+            Self::Item(item) => Ok(item),
+            _ => Err(U_INVALID_FORMAT_ERROR),
+        }
+    }
+}
+
 /// `udata_openChoice`
+#[inline(always)]
 pub(crate) fn open_choice(
     path: Option<&[u8]>,
     type_: &[u8],
     name: &[u8],
     is_acceptable: fn(&UDataInfo) -> bool,
 ) -> Result<UDataMemory, UErrorCode> {
-    do_open_choice(path, type_, name, Some(is_acceptable))
+    do_open_choice(path, type_, name, Some(is_acceptable), Places::All)?.into_item()
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Places {
+    All,
+    ExceptDirectories,
+}
+
+pub(crate) fn open_bundle(
+    path: Option<&[u8]>,
+    name: &[u8],
+    is_acceptable: fn(&UDataInfo) -> bool,
+    places: Places,
+) -> Result<Data, UErrorCode> {
+    do_open_choice(path, b"res", name, Some(is_acceptable), places)
 }
 
 /// Ends the search at the first item, and fails if that is for another platform.
 pub(crate) fn open(path: &[u8], type_: &[u8], name: &[u8]) -> Result<UDataMemory, UErrorCode> {
-    let data = do_open_choice(Some(path), type_, name, None)?;
+    let data = do_open_choice(Some(path), type_, name, None, Places::All)?.into_item()?;
     (data.info.matches_platform())
         .then_some(data)
         .ok_or(U_INVALID_FORMAT_ERROR)
@@ -390,7 +422,8 @@ fn do_open_choice(
     type_: &[u8],
     name: &[u8],
     is_acceptable: Option<fn(&UDataInfo) -> bool>,
-) -> Result<UDataMemory, UErrorCode> {
+    places: Places,
+) -> Result<Data, UErrorCode> {
     if name.is_empty() {
         return Err(U_ILLEGAL_ARGUMENT_ERROR);
     }
@@ -413,16 +446,25 @@ fn do_open_choice(
     if path.is_icu_data
         && type_ == b"res"
         && is_time_zone_bundle(name)
+        && places == Places::All
         && let Some(data) = search.in_files(time_zone_files_directories()?, b"", suffix)?
     {
-        return Ok(data);
+        return Ok(Data::Item(data));
     }
     let directories = data_directories()?;
     if (!directories.is_empty() || !path.is_icu_data)
+        && places == Places::All
         && let Some(data) = search.in_files(directories, path.package, suffix)?
     {
-        return Ok(data);
+        return Ok(Data::Item(data));
     }
-    let found = search.in_packages(&path, &entry)?;
+    if path.is_icu_data {
+        let bundle = (type_ == b"res").then_some((path.tree, name));
+        let accept = &mut |item| search.accept(item).map(Data::Item);
+        if let Some(data) = linked::find(suffix, bundle, accept)? {
+            return Ok(data);
+        }
+    }
+    let found = search.in_package_files(&path, &entry)?.map(Data::Item);
     found.ok_or_else(|| search.error.unwrap_or(U_FILE_ACCESS_ERROR))
 }

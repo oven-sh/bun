@@ -30,9 +30,11 @@ pub(crate) const NO_CE: u64 = 0x1_0100_0100;
 
 pub(crate) const LONG_PRIMARY_TAG: u32 = 1;
 pub(crate) const LONG_SECONDARY_TAG: u32 = 2;
+pub(crate) const LAZY_TAG: u32 = 3;
 pub(crate) const LATIN_EXPANSION_TAG: u32 = 4;
 pub(crate) const EXPANSION32_TAG: u32 = 5;
 pub(crate) const EXPANSION_TAG: u32 = 6;
+pub(crate) const PACKED_EXPANSION_TAG: u32 = 7;
 pub(crate) const PREFIX_TAG: u32 = 8;
 pub(crate) const CONTRACTION_TAG: u32 = 9;
 pub(crate) const DIGIT_TAG: u32 = 10;
@@ -122,6 +124,10 @@ pub(crate) fn ce_from_ce32(ce32: u32) -> u64 {
 
 pub(crate) fn make_ce(p: u32) -> u64 {
     (u64::from(p) << 32) | u64::from(COMMON_SEC_AND_TER_CE)
+}
+
+pub(crate) fn make_ce_with_secondary(p: u32, secondary: u32) -> u64 {
+    (u64::from(p) << 32) | u64::from(secondary << 16 | COMMON_TERTIARY_CE)
 }
 
 fn inc_two_byte_primary_by_offset(base_primary: u32, is_compressible: bool, offset: i32) -> u32 {

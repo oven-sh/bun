@@ -1,797 +1,363 @@
 use core::ops::Range;
 
+use bun_icu_format::bundles::Bundles;
+use bun_icu_format::package::{
+    ALIGNMENT, COLUMNS, FIRST_TREE_COLUMN, HEADER_SIZE, MAGIC, MODEL_COLUMN, Package, REMOVED,
+    TOMBSTONED, TREES,
+};
+
 use crate::error::TrimInternalError;
 
-pub(crate) const TOMBSTONE: [u8; 16] = *b"BUNICUREMOVED\0\0\0";
-
-const MINIMUM_PACKAGE_SIZE: usize = 32;
-const MINIMUM_HEADER_SIZE: usize = 20;
-const COUNT_SIZE: usize = 4;
-const ENTRY_SIZE: usize = 8;
-const DATA_OFFSET_FIELD: usize = 4;
-const TOMBSTONE_SIZE: u32 = TOMBSTONE.len() as u32;
-
-struct TableOfContents {
-    start: usize,
-    count: u32,
-}
-
-struct Tombstone {
-    entries: Range<u32>,
-    start: u32,
+struct PlannedItem {
+    flags: u32,
+    /// Empty if nothing reads the item any more.
+    from: Range<usize>,
+    to: usize,
 }
 
 struct PlannedRemoval {
-    table: TableOfContents,
-    tombstones: Vec<Tombstone>,
-    removed_spans: Vec<Range<u32>>,
-    dead_ranges: Vec<Range<u32>>,
-    dead_names: Vec<u32>,
+    items: Vec<PlannedItem>,
+    end: usize,
 }
 
 /// What `remove_items` would return. Changes nothing.
-pub(crate) fn find_dead_ranges(
+pub(crate) fn find_dead_range(
     package: &[u8],
     removed_items: &[Range<u32>],
     tombstoned_items: &[Range<u32>],
-) -> Result<Vec<Range<u32>>, TrimInternalError> {
+) -> Result<Range<u32>, TrimInternalError> {
     let removal = plan_removal(package, removed_items, tombstoned_items)
         .ok_or(TrimInternalError::MalformedIcuData)?;
-    Ok(removal.dead_ranges)
+    Ok(removal.end as u32..package.len() as u32)
 }
 
-/// Returns the byte ranges of `package` that nothing refers to any more: ascending, disjoint, adjacent ones merged, offsets from the first byte of `package`.
+/// Moves the items that are still read to the front, and returns the range of `package` after them.
 pub(crate) fn remove_items(
     package: &mut [u8],
     removed_items: &[Range<u32>],
     tombstoned_items: &[Range<u32>],
-) -> Result<Vec<Range<u32>>, TrimInternalError> {
+) -> Result<Range<u32>, TrimInternalError> {
     let removal = plan_removal(package, removed_items, tombstoned_items)
         .ok_or(TrimInternalError::MalformedIcuData)?;
-    write_tombstones(package, &removal);
-    zero_names(package, &removal);
-    compact_entries(package, &removal);
-    Ok(removal.dead_ranges)
+    let set_field = |package: &mut [u8], item: usize, value: u32| {
+        package[Package::offset_field(item)..][..4].copy_from_slice(&value.to_le_bytes());
+    };
+    let mut end = removal.items.first().map_or(removal.end, |item| item.to);
+    for (index, item) in removal.items.iter().enumerate() {
+        package[end..item.to].fill(0);
+        package.copy_within(item.from.clone(), item.to);
+        set_field(package, index, item.to as u32 | item.flags);
+        end = item.to + item.from.len();
+    }
+    set_field(package, removal.items.len(), removal.end as u32);
+    Ok(removal.end as u32..package.len() as u32)
 }
 
 fn plan_removal(
-    package: &[u8],
+    bytes: &[u8],
     removed_items: &[Range<u32>],
     tombstoned_items: &[Range<u32>],
 ) -> Option<PlannedRemoval> {
-    let table = read_table_of_contents(package)?;
-    check_runs(removed_items, table.count)?;
-    check_runs(tombstoned_items, table.count)?;
-    check_disjoint(removed_items, tombstoned_items)?;
-    let removed_spans = merge_adjacent(removed_items.iter().cloned());
-    let tombstoned_spans = merge_adjacent(tombstoned_items.iter().cloned());
-    let (tombstones, mut dead_ranges) = table.find_tombstones(package, &tombstoned_spans)?;
-    dead_ranges.extend(table.find_dead_ranges(package, &removed_spans)?);
-    dead_ranges.sort_unstable_by_key(|range| range.start);
-    let dead_names = table.find_dead_names(package, &removed_spans)?;
-    Some(PlannedRemoval {
-        table,
-        tombstones,
-        removed_spans,
-        dead_ranges: merge_adjacent(dead_ranges),
-        dead_names,
-    })
+    let package = checked_package(bytes)?;
+    let mut flags = vec![0; package.count()];
+    set_flags(&mut flags, removed_items, REMOVED)?;
+    set_flags(&mut flags, tombstoned_items, TOMBSTONED)?;
+    let is_read = find_read_items(package, &flags)?;
+    let cells = package.first_cell()..package.cell(package.units(), 0);
+    let mut end = package.offset(0);
+    let items = (flags.into_iter().zip(is_read).enumerate()).map(|(item, (flags, is_read))| {
+        let start = package.offset(item);
+        let from = start..if is_read {
+            package.offset(item + 1)
+        } else {
+            start
+        };
+        let to = end.next_multiple_of(if cells.contains(&item) { 1 } else { ALIGNMENT });
+        end = to + from.len();
+        PlannedItem { flags, from, to }
+    });
+    let items = items.collect();
+    Some(PlannedRemoval { items, end })
 }
 
-fn read_table_of_contents(package: &[u8]) -> Option<TableOfContents> {
-    if package.len() < MINIMUM_PACKAGE_SIZE
-        || u32::try_from(package.len()).is_err()
-        || !has_common_data_header(package)
+fn checked_package(bytes: &[u8]) -> Option<Package<'_>> {
+    let package = Package::new(bytes);
+    let (count, cells) = (package.count(), package.units() * COLUMNS);
+    let mut end = HEADER_SIZE.checked_add(count.checked_add(1)?.checked_mul(4)?)?;
+    if !bytes.starts_with(&MAGIC)
+        || bytes.len() >= REMOVED as usize
+        || end > bytes.len()
+        || package.first_cell() + cells > count
     {
         return None;
     }
-    let start = usize::from(u16::from_le_bytes(*package.first_chunk()?));
-    if start < MINIMUM_HEADER_SIZE {
-        return None;
+    let cells = package.first_cell()..package.first_cell() + cells;
+    for item in 0..=count {
+        let start = package.offset(item);
+        let is_aligned = item == count || cells.contains(&item) || start.is_multiple_of(ALIGNMENT);
+        if start < end || !is_aligned || package.flags(item) != 0 {
+            return None;
+        }
+        end = start;
     }
-    let count = u32_at(package, start)?;
-    let entries_end = start as u64 + COUNT_SIZE as u64 + ENTRY_SIZE as u64 * u64::from(count);
-    if entries_end > package.len() as u64 {
-        return None;
-    }
-    let table = TableOfContents { start, count };
-    table.check_entries(package)?;
-    Some(table)
+    (end <= bytes.len()).then_some(package)
 }
 
-fn has_common_data_header(package: &[u8]) -> bool {
-    package.get(2..4) == Some(&[0xda, 0x27][..])
-        && package.get(8..10) == Some(&[0, 0][..])
-        && package.get(12..17) == Some(&b"CmnD\x01"[..])
-}
-
-fn check_runs(runs: &[Range<u32>], count: u32) -> Option<()> {
+/// Fails unless the runs ascend and have only items without flags.
+fn set_flags(flags: &mut [u32], runs: &[Range<u32>], flag: u32) -> Option<()> {
     let mut previous_end = 0;
     for run in runs {
-        if run.is_empty() || run.start < previous_end {
+        let of_run = flags.get_mut(run.start as usize..run.end as usize)?;
+        if of_run.is_empty() || run.start < previous_end || of_run.iter().any(|&it| it != 0) {
             return None;
         }
+        of_run.fill(flag);
         previous_end = run.end;
-    }
-    (previous_end <= count).then_some(())
-}
-
-fn check_disjoint(mut left: &[Range<u32>], mut right: &[Range<u32>]) -> Option<()> {
-    while let (Some(left_run), Some(right_run)) = (left.first(), right.first()) {
-        if left_run.end <= right_run.start {
-            left = &left[1..];
-        } else if right_run.end <= left_run.start {
-            right = &right[1..];
-        } else {
-            return None;
-        }
     }
     Some(())
 }
 
-fn push_merged(ranges: &mut Vec<Range<u32>>, range: Range<u32>) {
-    match ranges.last_mut() {
-        Some(last) if last.end == range.start => last.end = range.end,
-        _ => ranges.push(range),
+/// The text of a locale is read with the model of its language, and with the text and the models of those that it refers to.
+fn find_read_items(package: Package, flags: &[u32]) -> Option<Vec<bool>> {
+    let mut is_read: Vec<bool> = flags.iter().map(|&it| it == 0).collect();
+    if package.units() == 0 {
+        return Some(is_read);
     }
-}
-
-fn merge_adjacent(ranges: impl IntoIterator<Item = Range<u32>>) -> Vec<Range<u32>> {
-    let mut merged = Vec::new();
-    for range in ranges {
-        push_merged(&mut merged, range);
-    }
-    merged
-}
-
-fn u32_at(bytes: &[u8], at: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(*bytes.get(at..)?.first_chunk()?))
-}
-
-impl TableOfContents {
-    fn entry_position(&self, index: u32) -> usize {
-        self.start + COUNT_SIZE + ENTRY_SIZE * index as usize
-    }
-
-    fn name_offset(&self, package: &[u8], index: u32) -> Option<u32> {
-        if index >= self.count {
-            return None;
-        }
-        u32_at(package, self.entry_position(index))
-    }
-
-    fn data_offset(&self, package: &[u8], index: u32) -> Option<u32> {
-        if index >= self.count {
-            return None;
-        }
-        u32_at(package, self.entry_position(index) + DATA_OFFSET_FIELD)
-    }
-
-    fn item_start(&self, package: &[u8], index: u32) -> Option<u32> {
-        if index == self.count {
-            return u32::try_from(package.len()).ok();
-        }
-        Some(self.start as u32 + self.data_offset(package, index)?)
-    }
-
-    fn check_entries(&self, package: &[u8]) -> Option<()> {
-        let limit = u32::try_from(package.len() - self.start).ok()?;
-        let entries_size = u32::try_from(self.entry_position(self.count) - self.start).ok()?;
-        let mut previous_data_offset = entries_size;
-        for index in 0..self.count {
-            let data_offset = self.data_offset(package, index)?;
-            let name_offset = self.name_offset(package, index)?;
-            if data_offset < previous_data_offset
-                || name_offset < entries_size
-                || name_offset >= limit
-            {
-                return None;
-            }
-            let name = package.get(self.start + name_offset as usize..)?;
-            if !bun_core::strings::contains_char(name, 0) {
-                return None;
-            }
-            previous_data_offset = data_offset;
-        }
-        (previous_data_offset <= limit).then_some(())
-    }
-
-    fn find_owned_extent(&self, package: &[u8], span: &Range<u32>) -> Option<Range<u32>> {
-        let preceding_start = span
-            .start
-            .checked_sub(1)
-            .and_then(|index| self.item_start(package, index));
-        let first_owned = span
-            .clone()
-            .find(|&index| self.item_start(package, index) != preceding_start)
-            .unwrap_or(span.end);
-        Some(self.item_start(package, first_owned)?..self.item_start(package, span.end)?)
-    }
-
-    fn find_dead_ranges(
-        &self,
-        package: &[u8],
-        removed_spans: &[Range<u32>],
-    ) -> Option<Vec<Range<u32>>> {
-        let mut dead_ranges = Vec::with_capacity(removed_spans.len());
-        for span in removed_spans {
-            let extent = self.find_owned_extent(package, span)?;
-            if !extent.is_empty() {
-                push_merged(&mut dead_ranges, extent);
-            }
-        }
-        Some(dead_ranges)
-    }
-
-    fn find_tombstones(
-        &self,
-        package: &[u8],
-        tombstoned_spans: &[Range<u32>],
-    ) -> Option<(Vec<Tombstone>, Vec<Range<u32>>)> {
-        let mut tombstones = Vec::with_capacity(tombstoned_spans.len());
-        let mut dead_ranges = Vec::with_capacity(tombstoned_spans.len());
-        for span in tombstoned_spans {
-            let extent = self.find_owned_extent(package, span)?;
-            if extent.end - extent.start < TOMBSTONE_SIZE {
+    let bundles = Bundles(package);
+    for index in 0..bundles.locales().count() {
+        for column in FIRST_TREE_COLUMN..FIRST_TREE_COLUMN + TREES.len() {
+            let own = package.cell(bundles.locales().get(index).unit, column);
+            if *flags.get(own)? != 0 || package.item(own).is_empty() {
                 continue;
             }
-            tombstones.push(Tombstone {
-                entries: span.clone(),
-                start: extent.start,
-            });
-            let dead_range = extent.start + TOMBSTONE_SIZE..extent.end;
-            if !dead_range.is_empty() {
-                dead_ranges.push(dead_range);
+            for locale in bundles.levels(index) {
+                *is_read.get_mut(package.cell(locale.unit, column))? = true;
+                *is_read.get_mut(package.cell(locale.unit, MODEL_COLUMN))? = true;
             }
         }
-        Some((tombstones, dead_ranges))
     }
-
-    fn find_dead_names(&self, package: &[u8], removed_spans: &[Range<u32>]) -> Option<Vec<u32>> {
-        let mut dead_names = Vec::new();
-        for span in removed_spans {
-            let retained_before = span
-                .start
-                .checked_sub(1)
-                .and_then(|index| self.name_offset(package, index));
-            let retained_after = self.name_offset(package, span.end);
-            for index in span.clone() {
-                let name_offset = self.name_offset(package, index)?;
-                if retained_before != Some(name_offset) && retained_after != Some(name_offset) {
-                    dead_names.push(name_offset);
-                }
-            }
-        }
-        Some(dead_names)
-    }
-}
-
-fn write_tombstones(package: &mut [u8], removal: &PlannedRemoval) {
-    let table = &removal.table;
-    for tombstone in &removal.tombstones {
-        let start = tombstone.start as usize;
-        package[start..start + TOMBSTONE.len()].copy_from_slice(&TOMBSTONE);
-        let data_offset = (tombstone.start - table.start as u32).to_le_bytes();
-        for index in tombstone.entries.clone() {
-            let field = table.entry_position(index) + DATA_OFFSET_FIELD;
-            package[field..field + data_offset.len()].copy_from_slice(&data_offset);
-        }
-    }
-}
-
-fn zero_names(package: &mut [u8], removal: &PlannedRemoval) {
-    for &name_offset in &removal.dead_names {
-        package[removal.table.start + name_offset as usize..]
-            .iter_mut()
-            .take_while(|byte| **byte != 0)
-            .for_each(|byte| *byte = 0);
-    }
-}
-
-fn compact_entries(package: &mut [u8], removal: &PlannedRemoval) {
-    let table = &removal.table;
-    let Some(first_span) = removal.removed_spans.first() else {
-        return;
-    };
-    let mut retained_count = first_span.start;
-    for (index, span) in removal.removed_spans.iter().enumerate() {
-        let next_start = removal
-            .removed_spans
-            .get(index + 1)
-            .map_or(table.count, |next| next.start);
-        package.copy_within(
-            table.entry_position(span.end)..table.entry_position(next_start),
-            table.entry_position(retained_count),
-        );
-        retained_count += next_start - span.end;
-    }
-    package[table.entry_position(retained_count)..table.entry_position(table.count)].fill(0);
-    package[table.start..table.start + COUNT_SIZE].copy_from_slice(&retained_count.to_le_bytes());
+    Some(is_read)
 }
 
 #[cfg(test)]
 #[allow(clippy::single_range_in_vec_init)]
 pub(crate) mod tests {
+    use bun_icu_format::locales::{Link, Locale};
+    use bun_icu_format::package::LOCALES;
+
     use super::*;
 
-    const HEADER_SIZE: usize = 32;
-    const FIVE_ITEMS: [(&str, usize); 5] = [
-        ("coll/a", 40),
-        ("coll/b", 24),
-        ("curr/c", 33),
-        ("lang/d", 16),
-        ("zone/e", 50),
-    ];
+    const FIVE_ITEMS: [usize; 5] = [40, 24, 36, 16, 52];
 
     fn put_u32(bytes: &mut [u8], at: usize, value: u32) {
         bytes[at..at + 4].copy_from_slice(&value.to_le_bytes());
     }
 
-    pub(crate) fn package_of(items: &[(&str, usize)], header_size: usize) -> Vec<u8> {
-        let mut header = vec![0; header_size];
-        header[..2].copy_from_slice(&(header_size as u16).to_le_bytes());
-        header[2..4].copy_from_slice(&[0xda, 0x27]);
-        header[12..17].copy_from_slice(b"CmnD\x01");
-        let mut entries = vec![0; COUNT_SIZE + items.len() * ENTRY_SIZE];
-        put_u32(&mut entries, 0, items.len() as u32);
-        let mut at = entries.len();
-        let mut names = Vec::new();
-        for (index, (name, _)) in items.iter().enumerate() {
-            put_u32(&mut entries, COUNT_SIZE + index * ENTRY_SIZE, at as u32);
-            names.extend_from_slice(name.as_bytes());
-            names.push(0);
-            at += name.len() + 1;
-        }
-        let mut bodies = Vec::new();
-        for (index, (_, size)) in items.iter().enumerate() {
-            let padding = (16 - at % 16) % 16;
-            put_u32(
-                &mut entries,
-                COUNT_SIZE + index * ENTRY_SIZE + DATA_OFFSET_FIELD,
-                (at + padding) as u32,
-            );
-            bodies.resize(bodies.len() + padding + size, 0xaa);
-            at += padding + size;
-        }
-        [header, entries, names, bodies].concat()
-    }
-
-    fn compare_after_prefix(
-        package: &[u8],
-        left: &[u8],
-        right_at: usize,
-        prefix_length: &mut usize,
-    ) -> i32 {
-        loop {
-            let left_byte = i32::from(left.get(*prefix_length).copied().unwrap_or(0));
-            let right_byte = i32::from(package[right_at + *prefix_length]);
-            let comparison = left_byte - right_byte;
-            if comparison != 0 || left_byte == 0 {
-                return comparison;
+    fn assemble(items: &[Vec<u8>], cells: Range<usize>) -> Vec<u8> {
+        let mut package = MAGIC.to_vec();
+        package.extend((cells.start as u16).to_le_bytes());
+        package.extend(((cells.len() / COLUMNS) as u16).to_le_bytes());
+        package.extend((items.len() as u32).to_le_bytes());
+        package.resize(Package::offset_field(items.len() + 1), 0);
+        for (index, item) in items.iter().enumerate() {
+            if !cells.contains(&index) {
+                package.resize(package.len().next_multiple_of(ALIGNMENT), 0);
             }
-            *prefix_length += 1;
+            let offset = package.len() as u32;
+            put_u32(&mut package, Package::offset_field(index), offset);
+            package.extend(item);
         }
+        let end = package.len() as u32;
+        put_u32(&mut package, Package::offset_field(items.len()), end);
+        package
     }
 
-    fn lookup(package: &[u8], name: &str) -> Option<usize> {
-        let table = read_table_of_contents(package)?;
-        let name = name.as_bytes();
-        let name_at =
-            |index: u32| table.start + table.name_offset(package, index).unwrap() as usize;
-        let found = |index: u32| Some(table.item_start(package, index).unwrap() as usize);
-        if table.count == 0 {
-            return None;
+    fn filled(first: usize, sizes: &[usize]) -> impl Iterator<Item = Vec<u8>> {
+        (sizes.iter().zip(first..)).map(|(&size, index)| vec![0x40 + index as u8; size])
+    }
+
+    pub(crate) fn package_of(sizes: &[usize]) -> Vec<u8> {
+        assemble(&filled(0, sizes).collect::<Vec<_>>(), 0..0)
+    }
+
+    const FIRST_CELL: usize = LOCALES + 1;
+
+    /// Has a unit for each locale, whose cells have three bytes each, and then one more item.
+    fn package_of_locales(references: &[usize]) -> Vec<u8> {
+        let mut locales = (references.len() as u16).to_le_bytes().to_vec();
+        for (unit, &reference) in references.iter().enumerate() {
+            let locale = Locale {
+                unit,
+                reference,
+                record: 0,
+                trees: 0x3f,
+                link: Link::default(),
+            };
+            locales.extend([0; 4].into_iter().chain(locale.pack().to_le_bytes()));
         }
-        let mut start = 0;
-        let mut limit = table.count;
-        let mut start_prefix_length = 0;
-        let mut limit_prefix_length = 0;
-        if compare_after_prefix(package, name, name_at(start), &mut start_prefix_length) == 0 {
-            return found(start);
-        }
-        start += 1;
-        limit -= 1;
-        if compare_after_prefix(package, name, name_at(limit), &mut limit_prefix_length) == 0 {
-            return found(limit);
-        }
-        while start < limit {
-            let index = (start + limit) / 2;
-            let mut prefix_length = start_prefix_length.min(limit_prefix_length);
-            let comparison =
-                compare_after_prefix(package, name, name_at(index), &mut prefix_length);
-            if comparison < 0 {
-                limit = index;
-                limit_prefix_length = prefix_length;
-            } else if comparison == 0 {
-                return found(index);
-            } else {
-                start = index + 1;
-                start_prefix_length = prefix_length;
+        let cells = FIRST_CELL..FIRST_CELL + references.len() * COLUMNS;
+        let mut items = vec![Vec::new(), locales];
+        items.extend(filled(cells.start, &vec![3; cells.len()]));
+        items.extend(filled(cells.end, &[16]));
+        assemble(&items, cells)
+    }
+
+    fn cell(unit: usize, column: usize) -> u32 {
+        (FIRST_CELL + unit * COLUMNS + column) as u32
+    }
+
+    fn without_zeros(item: &[u8]) -> &[u8] {
+        let zeros = item.iter().rev().take_while(|&&byte| byte == 0).count();
+        &item[..item.len() - zeros]
+    }
+
+    /// Returns the items that have lost their bytes, after checking all that holds for every removal.
+    fn emptied(before: &[u8], removed: &[Range<u32>], tombstoned: &[Range<u32>]) -> Vec<u32> {
+        let mut after = before.to_vec();
+        let dead = remove_items(&mut after, removed, tombstoned).unwrap();
+        assert_eq!(find_dead_range(before, removed, tombstoned).unwrap(), dead);
+        assert_eq!(dead.end as usize, before.len());
+        after.truncate(dead.start as usize);
+        let (old, new) = (Package::new(before), Package::new(&after));
+        assert_eq!(after[..HEADER_SIZE], before[..HEADER_SIZE]);
+        assert_eq!(new.offset(new.count()), after.len());
+        let cells = old.first_cell()..old.cell(old.units(), 0);
+        let mut emptied = Vec::new();
+        for item in 0..old.count() {
+            let is_in = |runs: &[Range<u32>]| runs.iter().any(|run| run.contains(&(item as u32)));
+            let flags = match (is_in(removed), is_in(tombstoned)) {
+                (true, _) => REMOVED,
+                (_, true) => TOMBSTONED,
+                _ => 0,
+            };
+            assert_eq!(new.flags(item), flags, "{item}");
+            assert!(cells.contains(&item) || new.offset(item).is_multiple_of(ALIGNMENT));
+            if without_zeros(new.item(item)) != without_zeros(old.item(item)) {
+                assert_eq!(without_zeros(new.item(item)), [], "{item}");
+                emptied.push(item as u32);
             }
         }
-        None
+        emptied
     }
 
-    fn item_starts(package: &[u8]) -> Vec<u32> {
-        let table = read_table_of_contents(package).unwrap();
-        (0..=table.count)
-            .map(|index| table.item_start(package, index).unwrap())
-            .collect()
-    }
-
-    fn name_range(package: &[u8], index: u32) -> Range<usize> {
-        let table = read_table_of_contents(package).unwrap();
-        let start = table.start + table.name_offset(package, index).unwrap() as usize;
-        let length = bun_core::strings::index_of_char_usize(&package[start..], 0).unwrap();
-        start..start + length + 1
-    }
-
-    fn name_field(index: usize) -> usize {
-        HEADER_SIZE + COUNT_SIZE + index * ENTRY_SIZE
-    }
-
-    fn data_field(index: usize) -> usize {
-        name_field(index) + DATA_OFFSET_FIELD
-    }
-
-    fn check_retained(package: &[u8], before: &[u8], retained: &[usize]) {
-        let starts = item_starts(before);
-        assert_eq!(u32_at(package, HEADER_SIZE), Some(retained.len() as u32));
-        for (index, (name, _)) in FIVE_ITEMS.iter().enumerate() {
-            let expected = retained.contains(&index).then_some(starts[index] as usize);
-            assert_eq!(lookup(package, name), expected, "{name}");
-        }
-        let first_item = starts[0] as usize;
-        assert_eq!(package[first_item..], before[first_item..]);
-    }
-
-    fn check_lookups(package: &[u8], starts: &[u32], expected_items: [Option<usize>; 5]) {
-        for ((name, _), expected_item) in FIVE_ITEMS.iter().zip(expected_items) {
-            assert_eq!(
-                lookup(package, name),
-                expected_item.map(|item| starts[item] as usize),
-                "{name}"
-            );
-        }
-    }
-
-    fn tombstone_range(start: u32) -> Range<usize> {
-        start as usize..start as usize + TOMBSTONE.len()
-    }
-
-    fn check_malformed(
-        package: &[u8],
-        removed_items: &[Range<u32>],
-        tombstoned_items: &[Range<u32>],
-    ) {
+    fn check_malformed(package: &[u8], removed: &[Range<u32>], tombstoned: &[Range<u32>]) {
         let mut edited = package.to_vec();
-        let result = remove_items(&mut edited, removed_items, tombstoned_items);
+        let result = remove_items(&mut edited, removed, tombstoned);
         assert!(matches!(result, Err(TrimInternalError::MalformedIcuData)));
         assert_eq!(edited, package);
     }
 
     fn check_edit_malformed(edit: impl FnOnce(&mut Vec<u8>)) {
-        let mut package = package_of(&FIVE_ITEMS, HEADER_SIZE);
+        let mut package = package_of(&FIVE_ITEMS);
         edit(&mut package);
         check_malformed(&package, &[1..2], &[]);
         check_malformed(&package, &[], &[1..2]);
     }
 
     #[test]
-    fn removes_middle_items() {
-        let before = package_of(&FIVE_ITEMS, HEADER_SIZE);
-        let mut package = before.clone();
-        let starts = item_starts(&before);
-        let dead_ranges = remove_items(&mut package, &[1..3], &[]).unwrap();
-        assert_eq!(dead_ranges, vec![starts[1]..starts[3]]);
-        check_retained(&package, &before, &[0, 3, 4]);
-        for index in [1, 2] {
-            let name = name_range(&before, index);
-            assert!(package[name].iter().all(|byte| *byte == 0));
-        }
-        assert!(
-            package[name_field(3)..name_field(5)]
-                .iter()
-                .all(|byte| *byte == 0)
-        );
-        assert_eq!(
-            package[name_range(&before, 0)],
-            before[name_range(&before, 0)]
-        );
-    }
-
-    #[test]
-    fn removes_first_item() {
-        let before = package_of(&FIVE_ITEMS, HEADER_SIZE);
-        let mut package = before.clone();
-        let starts = item_starts(&before);
-        assert_eq!(
-            remove_items(&mut package, &[0..1], &[]).unwrap(),
-            vec![starts[0]..starts[1]]
-        );
-        check_retained(&package, &before, &[1, 2, 3, 4]);
-    }
-
-    #[test]
-    fn removes_last_item() {
-        let before = package_of(&FIVE_ITEMS, HEADER_SIZE);
-        let mut package = before.clone();
-        let starts = item_starts(&before);
-        let dead_ranges = remove_items(&mut package, &[4..5], &[]).unwrap();
-        assert_eq!(dead_ranges, vec![starts[4]..before.len() as u32]);
-        check_retained(&package, &before, &[0, 1, 2, 3]);
-    }
-
-    #[test]
-    fn removes_all_items() {
-        let before = package_of(&FIVE_ITEMS, HEADER_SIZE);
-        let mut package = before.clone();
-        let starts = item_starts(&before);
-        let dead_ranges = remove_items(&mut package, &[0..5], &[]).unwrap();
-        assert_eq!(dead_ranges, vec![starts[0]..before.len() as u32]);
-        check_retained(&package, &before, &[]);
-        assert!(
-            package[name_field(0)..name_field(5)]
-                .iter()
-                .all(|byte| *byte == 0)
-        );
-    }
-
-    #[test]
-    fn separate_runs_give_separate_ranges() {
-        let before = package_of(&FIVE_ITEMS, HEADER_SIZE);
-        let mut package = before.clone();
-        let starts = item_starts(&before);
-        let dead_ranges = remove_items(&mut package, &[0..1, 2..3, 4..5], &[]).unwrap();
-        assert_eq!(
-            dead_ranges,
-            vec![
-                starts[0]..starts[1],
-                starts[2]..starts[3],
-                starts[4]..before.len() as u32
-            ]
-        );
-        check_retained(&package, &before, &[1, 3]);
-    }
-
-    #[test]
-    fn merges_adjacent_runs() {
-        let before = package_of(&FIVE_ITEMS, HEADER_SIZE);
-        let mut package = before.clone();
-        let starts = item_starts(&before);
-        assert_eq!(
-            remove_items(&mut package, &[0..1, 1..2], &[]).unwrap(),
-            vec![starts[0]..starts[2]]
-        );
-        check_retained(&package, &before, &[2, 3, 4]);
-    }
-
-    #[test]
-    fn honors_header_size() {
-        for header_size in [32, 48] {
-            let before = package_of(&FIVE_ITEMS, header_size);
-            let mut package = before.clone();
-            let starts = item_starts(&before);
-            assert_eq!(
-                remove_items(&mut package, &[1..2], &[]).unwrap(),
-                vec![starts[1]..starts[2]]
-            );
-            assert_eq!(lookup(&package, "coll/b"), None);
-            assert_eq!(lookup(&package, "curr/c"), Some(starts[2] as usize));
-            assert_eq!(package[starts[0] as usize..], before[starts[0] as usize..]);
+    fn empties_the_items_of_all_runs() {
+        let package = package_of(&FIVE_ITEMS);
+        let cases: [(&[Range<u32>], &[Range<u32>], &[u32]); 8] = [
+            (&[], &[], &[]),
+            (&[0..1], &[], &[0]),
+            (&[1..3], &[], &[1, 2]),
+            (&[], &[4..5], &[4]),
+            (&[0..5], &[], &[0, 1, 2, 3, 4]),
+            (&[0..1, 1..2], &[], &[0, 1]),
+            (&[0..1, 4..5], &[2..3], &[0, 2, 4]),
+            (&[3..4], &[1..3], &[1, 2, 3]),
+        ];
+        for (removed, tombstoned, expected) in cases {
+            assert_eq!(emptied(&package, removed, tombstoned), expected);
         }
     }
 
     #[test]
-    fn retains_shared_data_offset() {
-        let before = package_of(&[("a", 0), ("b", 16)], HEADER_SIZE);
-        let mut package = before.clone();
-        let starts = item_starts(&before);
-        assert_eq!(starts[0], starts[1]);
-        assert!(remove_items(&mut package, &[0..1], &[]).unwrap().is_empty());
-        assert_eq!(lookup(&package, "a"), None);
-        assert_eq!(lookup(&package, "b"), Some(starts[1] as usize));
+    fn dead_range_is_as_long_as_the_emptied_items() {
+        let package = package_of(&FIVE_ITEMS);
+        let dead = find_dead_range(&package, &[0..1], &[2..3]).unwrap();
+        assert_eq!(dead.len(), FIVE_ITEMS[0] + FIVE_ITEMS[2]);
     }
 
     #[test]
-    fn retains_data_shared_with_preceding_item() {
-        let before = package_of(&[("a", 0), ("b", 16), ("c", 16)], HEADER_SIZE);
-        let starts = item_starts(&before);
-        assert_eq!(starts[0], starts[1]);
-
-        let mut package = before.clone();
-        assert!(remove_items(&mut package, &[1..2], &[]).unwrap().is_empty());
-        assert_eq!(lookup(&package, "a"), Some(starts[0] as usize));
-        assert_eq!(lookup(&package, "b"), None);
-        assert_eq!(lookup(&package, "c"), Some(starts[2] as usize));
-
-        let mut package = before.clone();
-        assert_eq!(
-            remove_items(&mut package, &[1..3], &[]).unwrap(),
-            vec![starts[2]..before.len() as u32]
-        );
-        assert_eq!(lookup(&package, "a"), Some(starts[0] as usize));
-        assert_eq!(lookup(&package, "c"), None);
-    }
-
-    #[test]
-    fn retains_last_item_shared_with_preceding_item() {
-        let before = package_of(&[("a", 0), ("b", 16)], HEADER_SIZE);
-        let mut package = before.clone();
-        let starts = item_starts(&before);
-        assert!(remove_items(&mut package, &[1..2], &[]).unwrap().is_empty());
-        assert_eq!(lookup(&package, "a"), Some(starts[0] as usize));
-        assert_eq!(lookup(&package, "b"), None);
-        assert_eq!(package[starts[0] as usize..], before[starts[0] as usize..]);
-    }
-
-    #[test]
-    fn retains_shared_name() {
-        let mut before = package_of(&[("a", 16), ("b", 16), ("c", 16)], HEADER_SIZE);
-        let name_offset = u32_at(&before, name_field(0)).unwrap();
-        put_u32(&mut before, name_field(1), name_offset);
-        let mut package = before.clone();
-        remove_items(&mut package, &[0..1], &[]).unwrap();
-        assert_eq!(
-            package[name_range(&before, 0)],
-            before[name_range(&before, 0)]
-        );
-
-        let mut package = before.clone();
-        remove_items(&mut package, &[0..2], &[]).unwrap();
-        assert!(
-            package[name_range(&before, 0)]
-                .iter()
-                .all(|byte| *byte == 0)
-        );
+    fn dead_range_has_what_follows_the_last_item() {
+        let package = [package_of(&FIVE_ITEMS), vec![0xaa; 12]].concat();
+        assert_eq!(find_dead_range(&package, &[], &[]).unwrap().len(), 12);
     }
 
     #[test]
     fn empty_run_list_changes_nothing() {
-        let before = package_of(&FIVE_ITEMS, HEADER_SIZE);
-        let mut package = before.clone();
-        assert!(remove_items(&mut package, &[], &[]).unwrap().is_empty());
-        assert_eq!(package, before);
+        for before in [package_of(&FIVE_ITEMS), package_of_locales(&[0, 0, 1])] {
+            let mut package = before.clone();
+            assert!(remove_items(&mut package, &[], &[]).unwrap().is_empty());
+            assert_eq!(package, before);
+        }
     }
 
     #[test]
-    fn tombstoned_items_keep_names_and_share_one_offset() {
-        let before = package_of(&FIVE_ITEMS, HEADER_SIZE);
-        let mut package = before.clone();
-        let starts = item_starts(&before);
-        let dead_ranges = remove_items(&mut package, &[], &[1..2, 2..3]).unwrap();
-        assert_eq!(dead_ranges, vec![starts[1] + TOMBSTONE_SIZE..starts[3]]);
-        assert_eq!(u32_at(&package, HEADER_SIZE), Some(5));
-        check_lookups(
-            &package,
-            &starts,
-            [Some(0), Some(1), Some(1), Some(3), Some(4)],
-        );
-        assert_eq!(package[tombstone_range(starts[1])], TOMBSTONE);
-        let names = name_field(5)..starts[0] as usize;
-        assert_eq!(package[names.clone()], before[names]);
+    fn language_that_nothing_refers_to_is_emptied() {
+        let package = package_of_locales(&[0, 0, 1]);
+        let last = cell(2, 0)..cell(3, 0);
+        let expected: Vec<_> = last.clone().collect();
+        assert_eq!(emptied(&package, &[], &[last]), expected);
     }
 
     #[test]
-    fn tombstone_leaves_sixteen_bytes() {
-        let before = package_of(&FIVE_ITEMS, HEADER_SIZE);
-        let starts = item_starts(&before);
+    fn languages_that_a_retained_one_refers_to_keep_their_bytes() {
+        let package = package_of_locales(&[0, 0, 1, 0]);
+        let tombstoned = [cell(0, 0)..cell(2, 0), cell(3, 0)..cell(4, 0)];
+        let expected: Vec<_> = tombstoned[1].clone().collect();
+        assert_eq!(emptied(&package, &[], &tombstoned), expected);
+    }
 
-        let mut package = before.clone();
-        let dead_ranges = remove_items(&mut package, &[], &[4..5]).unwrap();
+    #[test]
+    fn one_retained_tree_keeps_that_tree_and_the_models() {
+        let package = package_of_locales(&[0, 0, 0]);
+        let removed = [cell(0, 0)..cell(1, 3), cell(1, 4)..cell(3, 0)];
+        let kept = [cell(0, 0), cell(0, 3), cell(1, 0), cell(1, 3)];
+        let expected = (cell(0, 0)..cell(3, 0)).filter(|item| !kept.contains(item));
         assert_eq!(
-            dead_ranges,
-            vec![starts[4] + TOMBSTONE_SIZE..before.len() as u32]
+            emptied(&package, &removed, &[]),
+            expected.collect::<Vec<_>>()
         );
-        assert_eq!(package[tombstone_range(starts[4])], TOMBSTONE);
-
-        let mut package = before.clone();
-        assert_eq!(starts[4] - starts[3], TOMBSTONE_SIZE);
-        assert!(remove_items(&mut package, &[], &[3..4]).unwrap().is_empty());
-        assert_eq!(package[tombstone_range(starts[3])], TOMBSTONE);
-        assert_eq!(package[..starts[3] as usize], before[..starts[3] as usize]);
-        assert_eq!(package[starts[4] as usize..], before[starts[4] as usize..]);
     }
 
     #[test]
-    fn span_shorter_than_tombstone_is_untouched() {
-        let before = package_of(&[("a", 16), ("b", 15)], HEADER_SIZE);
-        let mut package = before.clone();
-        assert!(remove_items(&mut package, &[], &[1..2]).unwrap().is_empty());
-        assert_eq!(package, before);
-    }
-
-    #[test]
-    fn tombstone_next_to_removed_span() {
-        let before = package_of(&FIVE_ITEMS, HEADER_SIZE);
-        let starts = item_starts(&before);
-
-        let mut package = before.clone();
-        let dead_ranges = remove_items(&mut package, &[1..2], &[2..4]).unwrap();
-        assert_eq!(
-            dead_ranges,
-            vec![starts[1]..starts[2], starts[2] + TOMBSTONE_SIZE..starts[4]]
-        );
-        assert_eq!(u32_at(&package, HEADER_SIZE), Some(4));
-        check_lookups(
-            &package,
-            &starts,
-            [Some(0), None, Some(2), Some(2), Some(4)],
-        );
-        assert_eq!(package[tombstone_range(starts[2])], TOMBSTONE);
-
-        let mut package = before.clone();
-        let dead_ranges = remove_items(&mut package, &[3..4], &[1..3]).unwrap();
-        assert_eq!(dead_ranges, vec![starts[1] + TOMBSTONE_SIZE..starts[4]]);
-        assert_eq!(u32_at(&package, HEADER_SIZE), Some(4));
-        check_lookups(
-            &package,
-            &starts,
-            [Some(0), Some(1), Some(1), None, Some(4)],
-        );
-        assert_eq!(package[tombstone_range(starts[1])], TOMBSTONE);
-    }
-
-    #[test]
-    fn item_sharing_data_with_retained_item_is_repointed_not_overwritten() {
-        let before = package_of(&[("a", 0), ("b", 16), ("c", 32), ("d", 16)], HEADER_SIZE);
-        let starts = item_starts(&before);
-        assert_eq!(starts[0], starts[1]);
-
-        let mut package = before.clone();
-        let dead_ranges = remove_items(&mut package, &[], &[1..3]).unwrap();
-        assert_eq!(dead_ranges, vec![starts[2] + TOMBSTONE_SIZE..starts[3]]);
-        assert_eq!(lookup(&package, "a"), Some(starts[0] as usize));
-        assert_eq!(lookup(&package, "b"), Some(starts[2] as usize));
-        assert_eq!(lookup(&package, "c"), Some(starts[2] as usize));
-        assert_eq!(lookup(&package, "d"), Some(starts[3] as usize));
-        let shared = starts[0] as usize..starts[2] as usize;
-        assert_eq!(package[shared.clone()], before[shared]);
-        assert_eq!(package[tombstone_range(starts[2])], TOMBSTONE);
-
-        let mut package = before.clone();
-        assert!(remove_items(&mut package, &[], &[1..2]).unwrap().is_empty());
-        assert_eq!(package, before);
+    fn rejects_unit_that_has_no_cells() {
+        let mut package = package_of_locales(&[0]);
+        let last_word = Package::new(&package).offset(LOCALES) + 2 * Locale::WORDS;
+        package[last_word + 1] = 0xff;
+        check_malformed(&package, &[], &[]);
     }
 
     #[test]
     fn rejects_malformed_header() {
-        check_malformed(&[0; 31], &[], &[]);
-        check_edit_malformed(|package| package[3] = 0x28);
-        check_edit_malformed(|package| package[8] = 1);
-        check_edit_malformed(|package| package[9] = 1);
-        check_edit_malformed(|package| package[15] = b'X');
-        check_edit_malformed(|package| package[16] = 2);
-        check_edit_malformed(|package| package[..2].copy_from_slice(&u16::MAX.to_le_bytes()));
-        check_edit_malformed(|package| package[..2].copy_from_slice(&19u16.to_le_bytes()));
-        check_edit_malformed(|package| put_u32(package, HEADER_SIZE, u32::MAX));
+        check_malformed(&MAGIC, &[], &[]);
+        check_edit_malformed(|package| package[3] = b'X');
+        check_edit_malformed(|package| package[4] = 6);
+        check_edit_malformed(|package| package[6] = 1);
+        check_edit_malformed(|package| put_u32(package, 8, u32::MAX));
     }
 
     #[test]
-    fn rejects_malformed_entries() {
-        check_edit_malformed(|package| {
-            let first = u32_at(package, data_field(0)).unwrap();
-            put_u32(package, data_field(1), first - 1);
-        });
-        check_edit_malformed(|package| {
-            let limit = (package.len() - HEADER_SIZE) as u32;
-            put_u32(package, data_field(4), limit + 1);
-        });
-        check_edit_malformed(|package| put_u32(package, data_field(0), 4));
-        check_edit_malformed(|package| put_u32(package, name_field(0), 4));
-        check_edit_malformed(|package| {
-            let limit = (package.len() - HEADER_SIZE) as u32;
-            put_u32(package, name_field(0), limit);
-        });
-        check_edit_malformed(|package| {
-            let limit = (package.len() - HEADER_SIZE) as u32;
-            put_u32(package, name_field(0), limit - 1);
-        });
+    fn rejects_malformed_offsets() {
+        let before = package_of(&FIVE_ITEMS);
+        let offset = |item| Package::new(&before).offset(item) as u32;
+        for (item, value) in [
+            (0, offset(0) - 4),
+            (1, offset(0) - 4),
+            (1, offset(1) + 1),
+            (3, offset(3) | REMOVED),
+            (3, offset(3) | TOMBSTONED),
+            (5, offset(5) + 1),
+        ] {
+            check_edit_malformed(|package| put_u32(package, Package::offset_field(item), value));
+        }
     }
 
     #[test]
     fn rejects_malformed_runs() {
-        let package = package_of(&FIVE_ITEMS, HEADER_SIZE);
+        let package = package_of(&FIVE_ITEMS);
         let malformed_runs: [&[Range<u32>]; 4] = [&[4..6], &[0..2, 1..3], &[1..1], &[2..3, 0..1]];
         for runs in malformed_runs {
             check_malformed(&package, runs, &[]);
@@ -801,7 +367,7 @@ pub(crate) mod tests {
 
     #[test]
     fn index_in_both_lists_is_malformed() {
-        let package = package_of(&FIVE_ITEMS, HEADER_SIZE);
+        let package = package_of(&FIVE_ITEMS);
         check_malformed(&package, &[1..3], &[2..4]);
         check_malformed(&package, &[2..4], &[1..3]);
         check_malformed(&package, &[0..5], &[2..3]);

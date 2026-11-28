@@ -1,5 +1,6 @@
 use super::toy_executable::TABLE_ROOM;
 use bun_exe_format::image::AddressRange;
+use bun_icu_format::package::{MAGIC, Package};
 use bun_removable_features::Feature;
 
 pub(crate) const REFERENCE: u8 = 0;
@@ -8,8 +9,6 @@ pub(crate) const RECOVERABLE_GUARD: u8 = 2;
 
 const TABLE_HEADER_BYTES: usize = 104;
 const TABLE_DIRECTORY_OFFSET: usize = 32;
-const ICU_HEADER_BYTES: usize = 32;
-const ICU_ENTRY_BYTES: usize = 8;
 
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct ToyRange {
@@ -176,50 +175,14 @@ fn encode_icu_languages(table: &ToyTable) -> Records {
     records
 }
 
-pub(crate) fn icu_package(items: &[(&str, usize)]) -> Vec<u8> {
-    let mut package = vec![0u8; ICU_HEADER_BYTES];
-    package[..2].copy_from_slice(&(ICU_HEADER_BYTES as u16).to_le_bytes());
-    package[2] = 0xda;
-    package[3] = 0x27;
-    package[12..16].copy_from_slice(b"CmnD");
-    package[16] = 1;
-    package.extend_from_slice(&(items.len() as u32).to_le_bytes());
-
-    let entries_bytes = 4 + ICU_ENTRY_BYTES * items.len();
-    let names_bytes: usize = items.iter().map(|(name, _)| name.len() + 1).sum();
-    let names_end = ICU_HEADER_BYTES + entries_bytes + names_bytes;
-    let mut name_offset = entries_bytes;
-    let mut data_offset = names_end.next_multiple_of(16) - ICU_HEADER_BYTES;
-    for (name, bytes) in items {
-        package.extend_from_slice(&(name_offset as u32).to_le_bytes());
-        package.extend_from_slice(&(data_offset as u32).to_le_bytes());
-        name_offset += name.len() + 1;
-        data_offset += bytes;
-    }
-    for (name, _) in items {
-        package.extend_from_slice(name.as_bytes());
-        package.push(0);
-    }
-    package.resize(names_end.next_multiple_of(16), 0);
-    for (index, (_, bytes)) in items.iter().enumerate() {
-        package.resize(package.len() + bytes, 0x40 + index as u8);
+/// All bytes of the item at `index` are `0x40 + index`.
+pub(crate) fn icu_package(items: usize, item_bytes: usize) -> Vec<u8> {
+    let mut package = MAGIC.to_vec();
+    package.extend([0, items as u32].map(u32::to_le_bytes).as_flattened());
+    let first = Package::offset_field(items + 1);
+    package.extend((0..=items).flat_map(|it| ((first + it * item_bytes) as u32).to_le_bytes()));
+    for index in 0..items {
+        package.resize(package.len() + item_bytes, 0x40 + index as u8);
     }
     package
-}
-
-pub(crate) fn find_icu_item(package: &[u8], name: &str) -> Option<usize> {
-    let count = icu_word(package, ICU_HEADER_BYTES)? as usize;
-    (0..count).find_map(|index| {
-        let entry = ICU_HEADER_BYTES + 4 + ICU_ENTRY_BYTES * index;
-        let name_start = ICU_HEADER_BYTES + icu_word(package, entry)? as usize;
-        let entry_name = bun_core::strings::split(package.get(name_start..)?, b"\0").next()?;
-        (entry_name == name.as_bytes())
-            .then(|| icu_word(package, entry + 4).map(|offset| ICU_HEADER_BYTES + offset as usize))
-            .flatten()
-    })
-}
-
-fn icu_word(package: &[u8], offset: usize) -> Option<u32> {
-    let word = package.get(offset..offset + 4)?;
-    Some(u32::from_le_bytes(word.try_into().ok()?))
 }

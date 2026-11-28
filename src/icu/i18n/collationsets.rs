@@ -97,19 +97,6 @@ impl Traversal {
     }
 }
 
-/// Calls `handle` with each range of `data` until it fails.
-fn try_for_each_range(
-    data: &CollationData,
-    mut handle: impl FnMut(Range, u32) -> Result<(), UErrorCode>,
-) -> Result<(), UErrorCode> {
-    let mut result = Ok(());
-    data.trie.enum_ranges(|start, end, ce32| {
-        result = handle((start, end), ce32);
-        result.is_ok()
-    });
-    result
-}
-
 struct ContractionsAndExpansions<'a> {
     contractions: SetContents<'a>,
     expansions: SetContents<'a>,
@@ -120,17 +107,19 @@ impl ContractionsAndExpansions<'_> {
     /// Visits the mappings of the data, then those of the base for untailored code points.
     fn for_data(&mut self, data: &CollationData) -> Result<(), UErrorCode> {
         let Some(base) = data.base else {
-            return try_for_each_range(data, |range, ce32| self.handle_ce32(data, range, ce32, 0));
+            return data
+                .trie
+                .try_for_each_range(|range, ce32| self.handle_ce32(data, range, ce32, 0));
         };
         let mut tailored = UnicodeSet::new();
-        try_for_each_range(data, |range, ce32| {
+        data.trie.try_for_each_range(|range, ce32| {
             if ce32 != collation::FALLBACK_CE32 {
                 tailored.add_range(range.0, range.1);
             }
             self.handle_ce32(data, range, ce32, 0)
         })?;
         let mut excluded = tailored.ranges().peekable();
-        try_for_each_range(base, |range, ce32| {
+        base.trie.try_for_each_range(|range, ce32| {
             for_each_part_outside(range, &mut excluded, |part| {
                 self.handle_ce32(base, part, ce32, 0)
             })
@@ -155,6 +144,11 @@ impl ContractionsAndExpansions<'_> {
             | collation::EXPANSION_TAG
             | collation::HANGUL_TAG
                 if self.traversal.prefix.is_empty() =>
+            {
+                (self.traversal).add(&mut self.expansions, range, &self.traversal.suffix)
+            }
+            collation::PACKED_EXPANSION_TAG
+                if self.traversal.prefix.is_empty() && d.trie.is_packed() =>
             {
                 (self.traversal).add(&mut self.expansions, range, &self.traversal.suffix)
             }
@@ -241,11 +235,12 @@ struct TailoredSet<'a> {
 impl TailoredSet<'_> {
     fn for_data(&mut self) -> Result<(), UErrorCode> {
         let (data, base) = (self.data, self.base);
-        try_for_each_range(data, |(start, end), ce32| match data.final_ce32(ce32) {
-            collation::FALLBACK_CE32 => Ok(()),
-            ce32 => (start..=end)
-                .try_for_each(|c| self.compare(c, ce32, base.final_ce32(base.ce32(c)), 0)),
-        })
+        data.trie
+            .try_for_each_range(|(start, end), ce32| match data.final_ce32(ce32) {
+                collation::FALLBACK_CE32 => Ok(()),
+                ce32 => (start..=end)
+                    .try_for_each(|c| self.compare(c, ce32, base.final_ce32(base.trie.peek(c)), 0)),
+            })
     }
 
     fn compare(

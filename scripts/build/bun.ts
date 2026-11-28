@@ -418,6 +418,15 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       }),
     );
   }
+  if (!cfg.darwin && !usesIcuOfLinuxSystem(cfg)) {
+    const icuData = resolve(cfg.cwd, "src", "icu", "data");
+    cObjects.push(
+      cc(n, cfg, resolve(icuData, "package.S"), {
+        flags: [...cFlagsFull, `-I${icuData}`],
+        implicitInputs: [resolve(icuData, "package.bin")],
+      }),
+    );
+  }
 
   // Dep objects (when !cfg.archiveDeps) are linked alongside bun's own
   // objects, in the same response file. With cfg.archiveDeps they live in

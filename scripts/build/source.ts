@@ -313,8 +313,6 @@ export interface DirectBuild {
    * so the consumer's depfile tracks exactly the ones it reads. Absolute.
    */
   consumerOutputs?: string[];
-  /** Libraries that join bun's link beside the objects: a step's outputs, or files outside the graph. Absolute. */
-  libs?: string[];
   /**
    * Files and directories of the source tree that `build()` read to describe
    * this graph (WebKit's CMake lists and Sources.txt). Inputs of the
@@ -507,7 +505,7 @@ export interface ResolvedDep {
   name: DepName;
   /**
    * Absolute paths to .a/.lib files for link(). Populated by cargo/prebuilt
-   * deps, by `direct` deps when `cfg.archiveDeps` is on, and by DirectBuild.libs.
+   * deps, and by `direct` deps when `cfg.archiveDeps` is on.
    */
   libs: string[];
   /**
@@ -1462,14 +1460,14 @@ function emitDirect(
     for (const o of objects) mkdirSync(resolve(o, ".."), { recursive: true });
     const lib = ar(n, cfg, join("deps", name, `${cfg.libPrefix}${name}${cfg.libSuffix}`), objects, checks);
     n.phony(name, [lib]);
-    return { libs: [lib, ...(spec.libs ?? [])], objects: [], headerOutputs: [lib], checks };
+    return { libs: [lib], objects: [], headerOutputs: [lib], checks };
   }
   n.phony(name, [...objects, ...checks]);
   // headerOutputs: what downstream needs to wait on for HEADERS to be
   // ready. For no-archive direct deps that's the codegen header
   // plus the fetch stamp — not the .o files.
   return {
-    libs: spec.libs ?? [],
+    libs: [],
     objects,
     headerOutputs: sourceStamp === undefined ? implicit : [...implicit, sourceStamp],
     checks,

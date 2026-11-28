@@ -6,10 +6,14 @@ use crate::common::slice_ext::SliceExt;
 use crate::common::ucharstrie::UCharsTrie;
 use crate::common::unicode::uscript::{USCRIPT_LATIN, USCRIPT_UNKNOWN};
 use crate::common::uniset::UnicodeSet;
-use crate::common::utrie2::UTrie2;
+use crate::common::utf16;
 use crate::common::utypes::*;
 use crate::i18n::collation;
+use crate::i18n::collationtrie::CollationTrie;
 use crate::i18n::unicode::ucol::UCOL_REORDER_CODE_FIRST;
+use bun_icu_format::collation::{
+    HANJA_INDEX_BITS, HANJA_MIN_SECONDARY, LAZY_CE32, PAIR_INDEX_BITS,
+};
 use std::ops::Deref;
 
 /// The characters before which a comparison cannot start.
@@ -21,10 +25,13 @@ pub(crate) enum UnsafeSet {
 impl UnsafeSet {
     /// Adds the lead surrogates of the supplementary code points, and freezes the set.
     pub(crate) fn new(mut set: UnicodeSet) -> Result<Self, UErrorCode> {
-        for (lead, c) in (0xd800..0xdc00).zip((0x10000..).step_by(0x400)) {
-            if set.contains_some_range(c, c + 0x3ff) {
+        let mut next = 0x10000;
+        while let Some(c) = set.first_from(next) {
+            let lead = utf16::lead(c).into();
+            if !set.contains(lead) {
                 set.add(lead);
             }
+            next = (c | 0x3ff) + 1;
         }
         set.freeze()?;
         try_box(set).map(Self::Own)
@@ -50,7 +57,7 @@ pub(crate) const MAX_NUM_SCRIPT_RANGES: usize = 256;
 pub(crate) const JAMO_CE32S_LENGTH: usize = 19 + 21 + 27;
 
 pub(crate) struct CollationData {
-    pub(crate) trie: UTrie2<'static>,
+    pub(crate) trie: CollationTrie,
     /// Index 0 has the CE32 of U+0000.
     pub(crate) ce32s: U32s<'static>,
     pub(crate) ces: U64s<'static>,
@@ -70,10 +77,10 @@ pub(crate) struct CollationData {
 }
 
 impl CollationData {
-    pub(crate) fn empty() -> Self {
+    pub(crate) fn new(trie: CollationTrie) -> Self {
         const NOTHING: &UnicodeSet = &UnicodeSet::new();
         Self {
-            trie: UTrie2::default(),
+            trie,
             ce32s: U32s::EMPTY,
             ces: U64s::EMPTY,
             contexts: U16s::EMPTY,
@@ -89,7 +96,7 @@ impl CollationData {
     }
 
     /// Inherits the defaults of a tailoring from `base`, except the fast Latin table.
-    pub(crate) fn for_tailoring(base: &'static CollationData) -> Self {
+    pub(crate) fn for_tailoring(base: &'static CollationData, trie: CollationTrie) -> Self {
         Self {
             base: Some(base),
             jamo_ce32s: base.jamo_ce32s,
@@ -98,34 +105,51 @@ impl CollationData {
             num_scripts: base.num_scripts,
             scripts_index: base.scripts_index,
             script_starts: base.script_starts,
-            ..Self::empty()
+            ..Self::new(trie)
         }
     }
 
-    #[inline(always)]
-    pub(crate) fn ce32(&self, c: u32) -> u32 {
-        self.trie.get32(c)
-    }
-
-    #[inline(always)]
-    pub(crate) fn ce32_from_supplementary(&self, c: u32) -> u32 {
-        self.trie.get32_from_supp(c)
-    }
-
-    /// Looks `c` up in the base data. Without base data the result is an invalid CE32.
+    /// Looks `c` up in the base data. Without base data the result is an invalid CE32. It can be `LAZY_CE32`.
     #[inline(always)]
     pub(crate) fn fall_back(&self, c: u32) -> (&Self, u32) {
         self.base.map_or((self, collation::FALLBACK_CE32), |base| {
-            (base, base.ce32(c))
+            (base, base.trie.get(c))
         })
+    }
+
+    #[inline]
+    fn ce32(&self, c: u32) -> u32 {
+        match self.trie.get(c) {
+            LAZY_CE32 => self.trie.fill(c).unwrap_or(LAZY_CE32),
+            ce32 => ce32,
+        }
     }
 
     /// Returns the CE32 of `c` and the data that contain it.
     pub(crate) fn look_up(&self, c: u32) -> (&Self, u32) {
-        match self.ce32(c) {
-            collation::FALLBACK_CE32 => self.fall_back(c),
-            ce32 => (self, ce32),
+        match (self.ce32(c), self.base) {
+            (collation::FALLBACK_CE32, Some(base)) => (base, base.ce32(c)),
+            (ce32, _) => (self, ce32),
         }
+    }
+
+    /// Returns the CEs of a CE32 with `PAIR_LOW_BYTE`.
+    #[inline(always)]
+    pub(crate) fn pair(&self, ce32: u32) -> [u64; 2] {
+        let indexes = (ce32 >> 8) as usize;
+        [indexes % (1 << PAIR_INDEX_BITS), indexes >> PAIR_INDEX_BITS].map(|i| self.ces.at(i))
+    }
+
+    /// Returns the primary weights and the last secondary weight of a CE32 with `HANJA_LOW_BYTE`.
+    #[inline(always)]
+    pub(crate) fn hanja(&self, ce32: u32) -> ([u32; 3], u32) {
+        let syllable = (ce32 >> 8) as usize % (1 << HANJA_INDEX_BITS);
+        let [lead, jamo @ ..] = self.ce32s.at(syllable).to_le_bytes();
+        let primaries = jamo.map(|byte| u32::from_be_bytes([lead, byte, 0, 0]));
+        (
+            primaries,
+            (ce32 >> (8 + HANJA_INDEX_BITS)) + HANJA_MIN_SECONDARY,
+        )
     }
 
     /// Resolves the tags that stand for another CE32 of the same code point.

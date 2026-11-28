@@ -2,12 +2,16 @@
 
 use crate::common::bytes::{I32s, U16s, U32s, View, Word};
 use crate::common::cstring::{find_byte, find_last_byte, split_once};
+use crate::common::linked::{Child, Text};
 use crate::common::resource::{ResourceArray, ResourceTable};
 use crate::common::slice_ext::{SliceExt, SoftUnwrap, to_index};
-use crate::common::udata::{self, UDataMemory};
+use crate::common::udata::{self, Data, Places, UDataInfo, UDataMemory};
 use crate::common::unicode::ures::*;
 use crate::common::uresbund::Entry;
 use crate::common::utypes::*;
+use bun_icu_format::key::Key;
+use bun_icu_format::schema::{Host, ROOT};
+use bun_icu_format::text::item;
 use std::cmp::Ordering;
 use std::ffi::{CStr, c_long};
 
@@ -29,6 +33,34 @@ const URES_ATT_USES_POOL_BUNDLE: u32 = 4;
 
 /// The type in bits 31..28, and an offset or an integer in bits 27..0.
 pub(crate) type Resource = u32;
+
+/// In a `Text` the offset is the rank of an image and an offset in it, and `URES_TABLE32` is a host.
+const RANK_SHIFT: u32 = 16;
+const RANK_OF_LINKS: usize = 0xfff;
+
+fn host_resource(part: usize) -> Resource {
+    (URES_TABLE32 as u32) << 28 | part as u32
+}
+
+/// `rank` is shifted.
+#[inline]
+fn resource_in_image(rank: u32, item: u16) -> Resource {
+    const TYPES: u32 = (URES_STRING_V2 | URES_TABLE16 << 4 | URES_ARRAY16 << 8) as u32
+        | (URES_INT_VECTOR as u32) << 12;
+    let type_ = TYPES >> (4 * (item >> item::KIND_SHIFT));
+    type_ << 28 | rank | u32::from(item & item::OFFSET_MASK)
+}
+
+#[inline(always)]
+fn resource_of(child: Child) -> Resource {
+    match child {
+        Child::Host(part) => host_resource(part),
+        Child::Item { rank, item } => resource_in_image((rank as u32) << RANK_SHIFT, item),
+        Child::Link(offset) => {
+            (URES_STRING_V2 as u32) << 28 | (RANK_OF_LINKS as u32) << RANK_SHIFT | u32::from(offset)
+        }
+    }
+}
 
 pub(crate) const RES_PATH_SEPARATOR: u8 = b'/';
 
@@ -129,12 +161,20 @@ pub(crate) enum Keys {
 pub(crate) enum Items {
     Strings16(U16s<'static>, usize),
     Resources(U32s<'static>, usize),
+    /// With the shifted rank.
+    InImage(U16s<'static>, u16, u32),
+    /// Some of them can be absent.
+    OfHost(Host<'static>),
 }
 
 impl Items {
+    /// The number of places.
+    #[inline]
     fn len(self) -> usize {
         match self {
             Self::Strings16(_, length) | Self::Resources(_, length) => length,
+            Self::InImage(_, length, _) => length.into(),
+            Self::OfHost(host) => host.len(),
         }
     }
 }
@@ -151,6 +191,35 @@ fn split_count16(units: U16s<'static>, index: usize) -> Option<(U16s<'static>, u
     units
         .get(index)
         .map(|count| (view_from(units, index + 1), count.into()))
+}
+
+#[inline(always)]
+fn rank_of(offset: u32) -> u32 {
+    offset >> RANK_SHIFT << RANK_SHIFT
+}
+
+#[inline(always)]
+fn units_in_image(text: &Text, offset: u32) -> U16s<'static> {
+    let image = text.units((offset >> RANK_SHIFT) as usize);
+    view_from(image, (offset as u16).into())
+}
+
+#[inline(always)]
+fn table_in_text(text: &Text, res: Resource) -> Option<(Keys, Items)> {
+    let offset = res_get_offset(res);
+    match res_get_type(res) {
+        URES_TABLE16 => {
+            let (keys, length) = split_count16(units_in_image(text, offset), 0)?;
+            let items = Items::InImage(view_from(keys, length), length as u16, rank_of(offset));
+            Some((Keys::Offsets16(keys), items))
+        }
+        URES_TABLE32 => {
+            let host = text.host(offset as usize);
+            let keys = U16s::of(host.keys().as_bytes());
+            Some((Keys::Offsets16(keys), Items::OfHost(host)))
+        }
+        _ => None,
+    }
 }
 
 /// Without a NUL `table_key` is not equal to any key.
@@ -171,6 +240,30 @@ fn compare_keys(key: &[u8], DataKey(table_key): DataKey) -> Ordering {
     }
 }
 
+#[inline(always)]
+fn place_in_image(pool: &[u8], offsets: U16s, length: usize, key: &[u8]) -> Option<usize> {
+    let search = |key: Key| binary_search(length, |i| key.compare(pool, offsets.get(i)?));
+    // Perf: short keys get a loop of their own.
+    match key.len() {
+        ..8 => search(Key::new(key)),
+        _ => search(Key::new(key)),
+    }
+}
+
+#[inline(always)]
+fn binary_search(length: usize, compare: impl Fn(usize) -> Option<Ordering>) -> Option<usize> {
+    let (mut start, mut limit) = (0, length);
+    while start < limit {
+        let middle = (start + limit) / 2;
+        match compare(middle)? {
+            Ordering::Less => limit = middle,
+            Ordering::Greater => start = middle + 1,
+            Ordering::Equal => return Some(middle),
+        }
+    }
+    None
+}
+
 pub(crate) struct ResourceData {
     bytes: &'static [u8],
     units: U16s<'static>,
@@ -183,7 +276,13 @@ pub(crate) struct ResourceData {
     pub(crate) no_fallback: bool,
     is_pool_bundle: bool,
     pub(crate) uses_pool_bundle: bool,
+    /// Keys and binaries are in the forms of the linked package.
+    pub(crate) is_image: bool,
+    text: Option<Box<Text>>,
 }
+
+/// What `count_items` returns for a table that `count_present` has to read.
+pub(crate) const UNCOUNTED: usize = usize::MAX;
 
 impl ResourceData {
     /// The root is the empty string.
@@ -200,6 +299,43 @@ impl ResourceData {
             no_fallback: false,
             is_pool_bundle: false,
             uses_pool_bundle: false,
+            is_image: false,
+            text: None,
+        }
+    }
+
+    fn of_image(
+        bytes: &'static [u8],
+        pool_keys: &'static [u8],
+        root_res: Resource,
+        no_fallback: bool,
+    ) -> Self {
+        Self {
+            bytes,
+            units: U16s::of(bytes),
+            pool_keys,
+            root_res,
+            no_fallback,
+            is_image: true,
+            ..Self::empty()
+        }
+    }
+
+    fn of_text(text: Box<Text>) -> Self {
+        Self {
+            pool_keys: text.keys(),
+            root_res: host_resource(ROOT),
+            is_image: true,
+            text: Some(text),
+            ..Self::empty()
+        }
+    }
+
+    /// Returns whether the root table can have a key like "%%Parent", which sorts before digits and letters.
+    pub(crate) fn may_have_links(&self) -> bool {
+        match &self.text {
+            Some(text) => text.link.exists(),
+            None => (self.key_by_index(self.root_res, 0)).is_some_and(|it| it.first_byte() <= b'%'),
         }
     }
 
@@ -288,39 +424,92 @@ impl ResourceData {
         })
     }
 
-    #[inline]
-    fn search(&self, keys: Keys, length: usize, key: &[u8]) -> Option<usize> {
-        let (mut start, mut limit) = (0, length);
-        while start < limit {
-            let middle = (start + limit) / 2;
-            match compare_keys(key, self.key_at(keys, middle)) {
-                Ordering::Less => limit = middle,
-                Ordering::Greater => start = middle + 1,
-                Ordering::Equal => return Some(middle),
+    fn search(&self, keys: Keys, items: Items, key: &[u8]) -> Option<usize> {
+        match (keys, items) {
+            (_, Items::OfHost(host)) => {
+                let key = Key::new(key);
+                let place = host.place_for(key)?;
+                (key.compare(self.pool_keys, host.child(place)?.0)?.is_eq()).then_some(place)
             }
+            (Keys::Offsets16(offsets), _) if self.is_image => {
+                place_in_image(self.pool_keys, offsets, items.len(), key)
+            }
+            _ => binary_search(items.len(), |i| {
+                Some(compare_keys(key, self.key_at(keys, i)))
+            }),
         }
-        None
     }
 
-    #[inline]
-    fn item_at(&self, items: Items, i: usize) -> Resource {
-        match items {
-            Items::Resources(resources, _) => resources.at(i),
+    #[inline(always)]
+    fn item_at(&self, items: Items, place: usize) -> Option<Resource> {
+        Some(match items {
+            Items::Resources(resources, _) => resources.at(place),
             Items::Strings16(units, _) => {
-                let offset = u32::from(units.at(i));
+                let offset = u32::from(units.at(place));
                 let local = offset.checked_sub(self.pool_string_index16_limit);
                 (URES_STRING_V2 as u32) << 28
                     | local.map_or(offset, |local| local + self.pool_string_index_limit)
             }
+            Items::InImage(units, _, rank) => resource_in_image(rank, units.at(place)),
+            Items::OfHost(host) => self.child_of_host(host, place)?,
+        })
+    }
+
+    #[inline(never)]
+    fn child_of_host(&self, host: Host, place: usize) -> Option<Resource> {
+        (self.text.as_ref()?.child(host.child(place)?.1)).map(resource_of)
+    }
+
+    /// Returns the place and the resource of the first child that is present from the index `next` on, which passes it.
+    #[inline(never)]
+    fn next_child_of_host(&self, host: Host, next: &mut usize) -> Option<(usize, Resource)> {
+        let text = self.text.as_ref()?;
+        (host.places().from(*next).iter()).find_map(|place| {
+            *next += 1;
+            let child = text.child(host.child(place.into())?.1)?;
+            Some((place.into(), resource_of(child)))
+        })
+    }
+
+    #[cold]
+    fn places_of_host(&self, host: Host) -> impl Iterator<Item = usize> {
+        let mut next = 0;
+        std::iter::from_fn(move || Some(self.next_child_of_host(host, &mut next)?.0))
+    }
+
+    /// Returns the place of the item with the index `i`.
+    #[inline]
+    fn place_of(&self, items: Items, i: usize) -> Option<usize> {
+        match items {
+            Items::OfHost(host) => self.places_of_host(host).nth(i),
+            _ => (i < items.len()).then_some(i),
+        }
+    }
+
+    #[inline]
+    fn count(&self, items: Items) -> usize {
+        match items {
+            Items::OfHost(host) => self.places_of_host(host).count(),
+            _ => items.len(),
+        }
+    }
+
+    /// Returns the units from `offset` to the end of the bundle or the image.
+    #[inline(always)]
+    fn units_from(&self, offset: u32) -> U16s<'static> {
+        match &self.text {
+            None => view_from(self.units, offset as usize),
+            Some(text) => units_in_image(text, offset),
         }
     }
 
     /// Returns the bytes after the count at the offset of `res`, and the count, if so many elements of `size` bytes follow.
     #[inline]
     fn split_count32(&self, res: Resource, size: usize) -> Option<(&'static [u8], usize)> {
-        let start = match res_get_offset(res) as usize {
+        let start = match res_get_offset(res) {
             0 => &EMPTY.0,
-            offset => self.bytes.get(4 * offset..)?,
+            offset if self.text.is_some() => self.units_from(offset).as_bytes(),
+            offset => self.bytes.get(4 * offset as usize..)?,
         };
         let (count, rest) = start.split_first_chunk()?;
         let count = to_index(i32::from_ne_bytes(*count));
@@ -334,13 +523,17 @@ impl ResourceData {
             .and_then(|(rest, length)| DataString::new(U16s::of(rest), length))
     }
 
-    fn split_item_count16(&self, res: Resource) -> Option<(U16s<'static>, usize)> {
-        split_count16(self.units, res_get_offset(res) as usize)
+    /// Returns `None` if `res` is not a table, or if its length is invalid.
+    #[inline(always)]
+    fn table(&self, res: Resource) -> Option<(Keys, Items)> {
+        match &self.text {
+            None => self.table_in_file(res),
+            Some(text) => table_in_text(text, res),
+        }
     }
 
-    /// Returns `None` if `res` is not a table, or if its length is invalid.
-    #[inline]
-    fn table(&self, res: Resource) -> Option<(Keys, Items)> {
+    #[inline(always)]
+    fn table_in_file(&self, res: Resource) -> Option<(Keys, Items)> {
         let offset = res_get_offset(res) as usize;
         Some(match res_get_type(res) {
             URES_TABLE if offset == 0 => (
@@ -353,7 +546,7 @@ impl ResourceData {
                 (Keys::Offsets16(keys), Items::Resources(items, length))
             }
             URES_TABLE16 => {
-                let (keys, length) = self.split_item_count16(res)?;
+                let (keys, length) = split_count16(self.units, offset)?;
                 (
                     Keys::Offsets16(keys),
                     Items::Strings16(view_from(keys, length), length),
@@ -371,76 +564,145 @@ impl ResourceData {
     }
 
     /// Returns `None` if `res` is not an array, or if its length is invalid.
-    #[inline]
+    #[inline(always)]
     fn array(&self, res: Resource) -> Option<Items> {
-        match res_get_type(res) {
-            URES_ARRAY => self
+        let offset = res_get_offset(res);
+        match (res_get_type(res), &self.text) {
+            (URES_ARRAY, _) => self
                 .split_count32(res, 4)
                 .map(|(items, length)| Items::Resources(U32s::of(items), length)),
-            URES_ARRAY16 => self
-                .split_item_count16(res)
+            (URES_ARRAY16, None) => split_count16(self.units, offset as usize)
                 .map(|(items, length)| Items::Strings16(items, length)),
+            (URES_ARRAY16, Some(text)) => split_count16(units_in_image(text, offset), 0)
+                .map(|(items, length)| Items::InImage(items, length as u16, rank_of(offset))),
             _ => None,
         }
     }
 
+    /// Perf: each kind of table in the linked package has a function without the branches for the others.
+    #[inline(never)]
     pub(crate) fn table_item_by_key(&self, table: Resource, key: &[u8]) -> Option<Resource> {
+        let offset = res_get_offset(table);
+        match (&self.text, res_get_type(table)) {
+            (Some(text), URES_TABLE32) => self.item_of_host(text, offset, key),
+            (Some(text), URES_TABLE16) => self.item_in_text(text, offset, key),
+            (None, _) if self.is_image => self.item_in_image(table, key),
+            _ => self.item_in_file(table, key),
+        }
+    }
+
+    #[inline(never)]
+    fn item_of_host(&self, text: &Text, part: u32, key: &[u8]) -> Option<Resource> {
+        let (host, key) = (text.host(part as usize), Key::new(key));
+        let (candidate, target) = host.child(host.place_for(key)?)?;
+        let is_found = text.may_have(target) && key.compare(self.pool_keys, candidate)?.is_eq();
+        is_found.then(|| text.child(target).map(resource_of))?
+    }
+
+    #[inline(never)]
+    fn item_in_text(&self, text: &Text, offset: u32, key: &[u8]) -> Option<Resource> {
+        let (keys, length) = split_count16(units_in_image(text, offset), 0)?;
+        let place = place_in_image(self.pool_keys, keys, length, key)?;
+        Some(resource_in_image(
+            rank_of(offset),
+            keys.get(length + place)?,
+        ))
+    }
+
+    #[inline(never)]
+    fn item_in_image(&self, table: Resource, key: &[u8]) -> Option<Resource> {
+        let (Keys::Offsets16(keys), items) = self.table_in_file(table)? else {
+            return None;
+        };
+        self.item_at(
+            items,
+            place_in_image(self.pool_keys, keys, items.len(), key)?,
+        )
+    }
+
+    #[inline(never)]
+    fn item_in_file(&self, table: Resource, key: &[u8]) -> Option<Resource> {
         let (keys, items) = self.table(table)?;
-        Some(self.item_at(items, self.search(keys, items.len(), key)?))
+        self.item_at(items, self.search(keys, items, key)?)
     }
 
     /// Returns the copy of `key` that the data have.
     #[cold]
     pub(crate) fn find_key(&self, table: Resource, key: &[u8]) -> Option<DataKey> {
         let (keys, items) = self.table(table)?;
-        Some(self.key_at(keys, self.search(keys, items.len(), key)?))
+        let place = self.search(keys, items, key)?;
+        (self.item_at(items, place)).map(|_| self.key_at(keys, place))
     }
 
-    /// Returns the items of a table or an array.
     #[inline]
-    fn items(&self, container: Resource) -> Option<Items> {
+    pub(crate) fn item_by_index(&self, container: Resource, i: usize) -> Option<Resource> {
         if ures_is_table(res_get_type(container)) {
-            Some(self.table(container)?.1)
-        } else {
-            self.array(container)
+            return self.table_item_by_index(container, i);
         }
+        let items = self.array(container)?;
+        (i < items.len()).then(|| self.item_at(items, i))?
     }
 
-    pub(crate) fn item_by_index(&self, container: Resource, i: usize) -> Option<Resource> {
-        let items = self.items(container)?;
-        (i < items.len()).then(|| self.item_at(items, i))
+    #[inline(never)]
+    fn table_item_by_index(&self, table: Resource, i: usize) -> Option<Resource> {
+        let (_, items) = self.table(table)?;
+        self.item_at(items, self.place_of(items, i)?)
     }
 
     pub(crate) fn key_by_index(&self, table: Resource, i: usize) -> Option<DataKey> {
         let (keys, items) = self.table(table)?;
-        (i < items.len()).then(|| self.key_at(keys, i))
+        Some(self.key_at(keys, self.place_of(items, i)?))
     }
 
     /// Returns `None` if the length of a table or array is invalid. Other types are checked when read.
+    #[inline]
     pub(crate) fn count_items(&self, res: Resource) -> Option<usize> {
-        if is_container(res_get_type(res)) {
-            self.items(res).map(Items::len)
-        } else {
-            Some(1)
+        match res_get_type(res) {
+            URES_TABLE16 | URES_ARRAY16 => {
+                (self.units_from(res_get_offset(res)).get(0)).map(usize::from)
+            }
+            URES_TABLE32 if self.text.is_some() => Some(UNCOUNTED),
+            URES_ARRAY => self.array(res).map(Items::len),
+            URES_TABLE | URES_TABLE32 => self.table_in_file(res).map(|it| it.1.len()),
+            _ => Some(1),
         }
+    }
+
+    #[cold]
+    pub(crate) fn count_present(&self, table: Resource) -> usize {
+        self.table(table).map_or(0, |it| self.count(it.1))
     }
 
     /// Returns the units from `offset` to the end of this bundle or the pool bundle.
     #[inline]
     fn string_v2_at(&self, offset: u32) -> Option<U16s<'static>> {
         Some(match offset.checked_sub(self.pool_string_index_limit) {
-            Some(local) => view_from(self.units, local as usize),
+            Some(local) => self.units_from(local),
             None => view_from(self.pool?.units, offset as usize),
         })
     }
 }
 
-pub(crate) fn res_load(path: Option<&[u8]>, name: &[u8]) -> Result<ResourceData, UErrorCode> {
-    ResourceData::new(udata::open_choice(path, b"res", name, |info| {
+pub(crate) fn res_load(
+    path: Option<&[u8]>,
+    name: &[u8],
+    places: Places,
+) -> Result<ResourceData, UErrorCode> {
+    let is_acceptable = |info: &UDataInfo| {
         info.sizeof_uchar == 2
             && &info.data_format == b"ResB"
             && matches!(info.format_version, [1..=3, ..])
-    })?)
+    };
+    match udata::open_bundle(path, name, is_acceptable, places)? {
+        Data::Item(item) => ResourceData::new(item),
+        Data::Image {
+            bytes,
+            keys,
+            root,
+            no_fallback,
+        } => Ok(ResourceData::of_image(bytes, keys, root, no_fallback)),
+        Data::Text(text) => Ok(ResourceData::of_text(text)),
+    }
 }
 
 pub(crate) fn res_get_data_string(data: &ResourceData, res: Resource) -> Option<DataString> {
@@ -617,6 +879,7 @@ impl ResourceValue {
         self.payload(URES_BINARY, 1)
     }
 
+    #[inline(always)]
     pub(crate) fn get_array(&self) -> Result<ResourceArray, UErrorCode> {
         let items = self
             .get_data()
@@ -628,6 +891,8 @@ impl ResourceValue {
         })
     }
 
+    /// Perf: to read a table that has just been returned in memory stalls.
+    #[inline(always)]
     pub(crate) fn get_table(&self) -> Result<ResourceTable, UErrorCode> {
         let (keys, items) = self
             .get_data()
@@ -640,32 +905,26 @@ impl ResourceValue {
         })
     }
 
-    fn item_at(&self, items: Items, i: usize) -> Self {
-        Self {
-            res: self.get_data().item_at(items, i),
-            ..*self
-        }
+    #[inline]
+    fn item_at(&self, items: Items, place: usize) -> Option<Self> {
+        let res = self.get_data().item_at(items, place)?;
+        Some(Self { res, ..*self })
     }
 }
 
 impl ResourceTable {
     pub(crate) fn get_size(&self) -> usize {
-        self.items.len()
+        self.origin.get_data().count(self.items)
     }
 
     pub(crate) fn get(&self, key: &[u8]) -> Option<ResourceValue> {
-        let index = (self.origin.get_data()).search(self.keys, self.get_size(), key)?;
-        Some(self.origin.item_at(self.items, index))
+        let place = (self.origin.get_data()).search(self.keys, self.items, key)?;
+        self.origin.item_at(self.items, place)
     }
 
     pub(crate) fn key_at(&self, i: usize) -> Option<DataKey> {
-        (i < self.get_size()).then(|| self.origin.get_data().key_at(self.keys, i))
-    }
-
-    #[inline]
-    pub(crate) fn key_unless_alias(&self, i: usize) -> Option<DataKey> {
         let data = self.origin.get_data();
-        (res_get_type(data.item_at(self.items, i)) != URES_ALIAS).then(|| data.key_at(self.keys, i))
+        Some(data.key_at(self.keys, data.place_of(self.items, i)?))
     }
 
     pub(crate) fn iter(
@@ -678,12 +937,37 @@ impl ResourceTable {
     pub(crate) fn iter_data_keys(
         &self,
     ) -> impl Iterator<Item = (DataKey, ResourceValue)> + Clone + use<> {
-        let Self {
-            origin,
-            keys,
-            items,
-        } = *self;
-        (0..items.len()).map(move |i| (origin.get_data().key_at(keys, i), origin.item_at(items, i)))
+        TableItems {
+            table: *self,
+            length: self.items.len(),
+            next: 0,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct TableItems {
+    table: ResourceTable,
+    length: usize,
+    next: usize,
+}
+
+impl Iterator for TableItems {
+    type Item = (DataKey, ResourceValue);
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<Self::Item> {
+        let (origin, data) = (self.table.origin, self.table.origin.get_data());
+        let (place, res) = match self.table.items {
+            Items::OfHost(host) => data.next_child_of_host(host, &mut self.next)?,
+            items if self.next < self.length => {
+                self.next += 1;
+                (self.next - 1, data.item_at(items, self.next - 1)?)
+            }
+            _ => return None,
+        };
+        let key = data.key_at(self.table.keys, place);
+        Some((key, ResourceValue { res, ..origin }))
     }
 }
 
@@ -693,11 +977,11 @@ impl ResourceArray {
     }
 
     pub(crate) fn get(&self, i: usize) -> Option<ResourceValue> {
-        (i < self.get_size()).then(|| self.origin.item_at(self.items, i))
+        (i < self.get_size()).then(|| self.origin.item_at(self.items, i))?
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = ResourceValue> + Clone + use<> {
         let Self { origin, items } = *self;
-        (0..items.len()).map(move |i| origin.item_at(items, i))
+        (0..items.len()).map_while(move |i| origin.item_at(items, i))
     }
 }

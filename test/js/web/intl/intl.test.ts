@@ -1,13 +1,9 @@
-// ECMA-402 Intl coverage. Doubles as the regression net for the per-item zstd
-// repack of ICU's display-name trees (curr/ lang/ region/ unit/ zone/): every
-// non-en case in DisplayNames / NumberFormat(unit|currencyDisplay:"name") /
-// DateTimeFormat(timeZoneName) reads a zstd-decompressed item, while Collator /
-// Segmenter / default DateTimeFormat / default NumberFormat / normalize stay raw.
+// ECMA-402 Intl coverage. Doubles as the regression net for the data that
+// src/icu_pack packs.
 //
-// Snapshots are the ground truth: they capture uncompressed-ICU output. If a
-// decompressed item is wrong, the snapshot diff shows exactly which locale/tree.
-// When WEBKIT_VERSION bumps ICU/CLDR, regenerate with `-u` against a build that
-// links the unmodified libicudata.a.
+// Snapshots are the ground truth: they capture the output of ICU4C. When
+// WEBKIT_VERSION bumps ICU/CLDR, regenerate with `-u` against a build that
+// links ICU4C (src/icu/README.md).
 
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, libcPathForDlopen } from "harness";
@@ -22,7 +18,7 @@ const snapshotIf = !isMacOS && process.versions.icu === SNAPSHOT_ICU_VERSION ? t
 const LOCALES = ["en", "de", "fr", "ja", "ko", "ru", "zh", "zh-Hant", "ar", "th", "es-419", "pt-PT"] as const;
 
 // ---------------------------------------------------------------------------
-// DisplayNames — region/ lang/ curr/ script (non-en compressed)
+// DisplayNames — region/ lang/ curr/ script
 // ---------------------------------------------------------------------------
 
 describe("Intl.DisplayNames", () => {
@@ -46,7 +42,7 @@ describe("Intl.DisplayNames", () => {
 });
 
 // ---------------------------------------------------------------------------
-// NumberFormat — default/currency-symbol raw; unit + currencyDisplay:"name" compressed
+// NumberFormat — curr/ unit/
 // ---------------------------------------------------------------------------
 
 describe("Intl.NumberFormat", () => {
@@ -82,7 +78,7 @@ describe("Intl.NumberFormat", () => {
 });
 
 // ---------------------------------------------------------------------------
-// DateTimeFormat — default raw; timeZoneName (zone/<loc>.res) compressed
+// DateTimeFormat — zone/
 // ---------------------------------------------------------------------------
 
 describe("Intl.DateTimeFormat", () => {
@@ -107,7 +103,7 @@ describe("Intl.DateTimeFormat", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Collator — coll/* raw (incl. CJK tailorings)
+// Collator — coll/ (incl. CJK tailorings)
 // ---------------------------------------------------------------------------
 
 describe("Intl.Collator", () => {
@@ -234,7 +230,7 @@ describe.skipIf(isWindows).concurrent("locale variables in the environment", () 
 });
 
 // ---------------------------------------------------------------------------
-// Segmenter — brkitr/* raw (incl. cjdict)
+// Segmenter — brkitr/ (incl. cjdict)
 // ---------------------------------------------------------------------------
 
 describe("Intl.Segmenter", () => {
@@ -256,7 +252,7 @@ describe("Intl.Segmenter", () => {
 });
 
 // ---------------------------------------------------------------------------
-// PluralRules / ListFormat / RelativeTimeFormat — supplemental, raw
+// PluralRules / ListFormat / RelativeTimeFormat — supplemental
 // ---------------------------------------------------------------------------
 
 describe("Intl.PluralRules", () => {
@@ -290,7 +286,7 @@ describe("Intl.RelativeTimeFormat", () => {
 });
 
 // ---------------------------------------------------------------------------
-// String / URL paths through ICU — raw
+// String / URL paths through ICU
 // ---------------------------------------------------------------------------
 
 describe("String.prototype.normalize", () => {
@@ -350,12 +346,12 @@ describe("Intl.getCanonicalLocales", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Exhaustive sweep — load EVERY compressed item.
+// Exhaustive sweep — load EVERY locale.
 //
 // icu-locales.txt is the full set of locales present in ICU's display-name
 // trees (extracted from the package at build time). Iterating each × the five
-// tree-touching APIs forces every region/ lang/ curr/ unit/ zone/ item through
-// the decompress hook. A corrupt item surfaces as a throw or empty string;
+// tree-touching APIs reads every region/ lang/ curr/ unit/ zone/ bundle.
+// A corrupt item surfaces as a throw or empty string;
 // "everything fell back to root" surfaces as low distinct-value count.
 //
 // Regenerate the fixture when WEBKIT_VERSION bumps ICU:

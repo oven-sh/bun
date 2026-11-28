@@ -108,6 +108,7 @@ impl RuleBasedCollator {
     }
 
     /// The start of the digits before `limit`, or 0 if the first may end a contraction. `previous` steps back from an index.
+    #[inline(never)]
     fn start_of_number(&self, limit: usize, previous: impl Fn(&mut usize) -> u32) -> usize {
         let (mut start, mut index) = (limit, limit);
         while index > 0

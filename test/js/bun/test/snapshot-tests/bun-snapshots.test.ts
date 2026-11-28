@@ -33,6 +33,248 @@ test("ArrayBuffer values are serialized like typed arrays", () => {
   `);
 });
 
+// https://github.com/oven-sh/bun/issues/3521
+describe("property matchers leave the received value as it was", () => {
+  // Every own property descriptor reachable from `roots`, as text: toEqual would accept a matcher that was left behind.
+  function ownState(...roots: object[]) {
+    const ids = new Map<object, number>();
+    const queue: object[] = [];
+    const show = (value: unknown) => {
+      if (value === null || (typeof value !== "object" && typeof value !== "function")) return String(value);
+      if (!ids.has(value)) {
+        ids.set(value, ids.size);
+        queue.push(value);
+      }
+      return `#${ids.get(value)}`;
+    };
+    roots.forEach(show);
+    const lines: string[] = [];
+    for (const object of queue) {
+      const properties = Reflect.ownKeys(object).map(key => {
+        const { value, get, set, ...flags } = Reflect.getOwnPropertyDescriptor(object, key)!;
+        return `${String(key)} ${JSON.stringify(flags)} ${show(value)} ${show(get)} ${show(set)}`;
+      });
+      lines.push(
+        [`#${ids.get(object)} frozen=${Object.isFrozen(object)} sealed=${Object.isSealed(object)}`, ...properties].join(
+          "\n  ",
+        ),
+      );
+    }
+    return lines.join("\n");
+  }
+
+  const any = expect.any;
+  class User {
+    #id = 3;
+    name = "alice";
+    profile = { age: 30 };
+    get id() {
+      return this.#id;
+    }
+    get self() {
+      return this.profile;
+    }
+  }
+  class HttpError extends Error {
+    status = 500;
+  }
+  class ApiError extends Error {
+    #body = { text: "boom" };
+    code = "E_FOO";
+    get message() {
+      return this.#body.text;
+    }
+  }
+  class OwnGetterError extends Error {
+    #body = { text: "boom" };
+    code = "E_FOO";
+    constructor() {
+      super();
+      Object.defineProperty(this, "message", {
+        get(this: OwnGetterError) {
+          return this.#body.text;
+        },
+      });
+    }
+  }
+  const deepFreeze = <T extends object>(object: T): T => {
+    Object.values(object).forEach(value => typeof value === "object" && deepFreeze(value));
+    return Object.freeze(object);
+  };
+  const symbol = Symbol("key");
+
+  const cases: Record<string, () => [received: any, matchers: any]> = {
+    "objects, arrays and dates": () => [
+      { id: 42, when: new Date(0), nested: { name: "abc" }, list: [1, "two", 3.5], rows: [{ id: 1 }, { id: 2 }] },
+      {
+        id: any(Number),
+        when: any(Date),
+        nested: { name: any(String) },
+        list: [1, any(String), any(Number)],
+        rows: [{ id: any(Number) }, { id: 2 }],
+      },
+    ],
+    "a class instance": () => [new User(), { name: any(String) }],
+    "a getter on the prototype": () => [new User(), { id: any(Number) }],
+    "an object reached through a getter": () => [new User(), { self: { age: any(Number) } }],
+    "an inherited property": () => [Object.create({ inherited: 1 }), { inherited: any(Number) }],
+    "an own getter": () => [
+      {
+        a: 0,
+        get id() {
+          return 7;
+        },
+        z: 1,
+      },
+      { id: any(Number) },
+    ],
+    "an own getter and setter that cannot be redefined": () => [
+      Object.defineProperty({ a: 0 }, "id", { get: () => 7, set() {}, enumerable: true }),
+      { id: any(Number) },
+    ],
+    "a symbol key": () => [{ [symbol]: 1, a: 2 }, { [symbol]: any(Number) }],
+    "a read-only and a hidden property": () => [
+      Object.defineProperties(
+        { a: 1 },
+        { readOnly: { value: 5, enumerable: true }, hidden: { value: 6, writable: true, configurable: true } },
+      ),
+      { readOnly: any(Number), hidden: any(Number) },
+    ],
+    "a frozen object": () => [Object.freeze({ foo: "foo", bar: "bar" }), { bar: any(String) }],
+    "a sealed object": () => [Object.seal({ foo: "foo", bar: "bar" }), { bar: any(String) }],
+    "a frozen tree": () => [
+      deepFreeze({ id: "x", items: [{ id: 1 }, { id: 2 }] }),
+      { id: any(String), items: [{ id: any(Number) }, { id: 2 }] },
+    ],
+    "a frozen instance with a getter on the prototype": () => [
+      Object.freeze(new User()),
+      { id: any(Number), name: any(String) },
+    ],
+    "an object that appears twice": () => {
+      const shared = { x: 1, y: "s" };
+      return [{ a: shared, b: shared, log: [{ shared }] }, { a: { x: any(Number) } }];
+    },
+    "cycles": () => {
+      const inner: any = { id: 1 };
+      const outer: any = { id: 2, inner };
+      inner.parent = outer;
+      outer.self = outer;
+      return [outer, { id: any(Number), inner: { id: any(Number) } }];
+    },
+    "an array with a read-only element and an accessor element": () => {
+      const array = [1, 2, 3];
+      Object.defineProperty(array, 1, { get: () => 2, enumerable: true, configurable: true });
+      Object.defineProperty(array, 2, { writable: false });
+      return [array, [any(Number), any(Number), any(Number)]];
+    },
+    "a field of an Error": () => [Object.assign(new TypeError("boom"), { code: "E_FOO" }), { code: any(String) }],
+    "the message of an Error": () => [new TypeError("boom"), { message: any(String) }],
+    "the message of a frozen Error": () => [Object.freeze(new Error("boom")), { message: any(String) }],
+    "the message of an Error in an object": () => [
+      { error: new HttpError("boom", { cause: "why" }) },
+      { error: { message: any(String), status: any(Number) } },
+    ],
+    "a field of an Error whose message is a getter that reads a private field": () => [
+      new ApiError(),
+      { code: any(String) },
+    ],
+    "a field of an Error whose message is an own getter that reads a private field": () => [
+      new OwnGetterError(),
+      { code: any(String) },
+    ],
+    "a matcher on the received side": () => [{ a: any(Number), b: 1 }, { a: 5 }],
+  };
+
+  test.each(Object.entries(cases))("%s", (_, make) => {
+    const [received, matchers] = make();
+    const before = ownState(received, matchers);
+    expect(received).toMatchSnapshot(matchers);
+    expect(ownState(received, matchers)).toBe(before);
+  });
+
+  test("inline snapshots", () => {
+    const received = { id: 42, name: "abc" };
+    expect(received).toMatchInlineSnapshot(
+      { id: expect.any(Number) },
+      `
+      {
+        "id": Any<Number>,
+        "name": "abc",
+      }
+    `,
+    );
+    expect(received.id).toBe(42);
+  });
+
+  test("when they do not match", () => {
+    const received = Object.freeze({ id: 42, name: "abc" });
+    const matchers = { id: expect.any(Number), name: expect.any(Number) };
+    const before = ownState(received, matchers);
+    expect(() => expect(received).toMatchSnapshot(matchers)).toThrow("to match properties from received object");
+    expect(ownState(received, matchers)).toBe(before);
+  });
+});
+
+describe("a property matcher on the message of an Error", () => {
+  test("is printed in place of the message, so the snapshot does not depend on it", () => {
+    for (const message of ["ENOENT: no such file or directory, open '/tmp/a'", "ENOENT: open '/tmp/b'"]) {
+      expect(new RangeError(message)).toMatchInlineSnapshot(
+        { message: expect.any(String) },
+        `[RangeError: [object ExpectAny]]`,
+      );
+      expect({ errors: [new Error(message)] }).toMatchInlineSnapshot(
+        { errors: [{ message: expect.stringContaining("ENOENT") }] },
+        `
+        {
+          "errors": [
+            [Error: [object ExpectStringContaining]],
+          ],
+        }
+      `,
+      );
+    }
+  });
+
+  test("does not ask the Error for its stack", () => {
+    class AppError extends Error {
+      constructor(message: string) {
+        super(message);
+        Error.captureStackTrace(this, this.constructor);
+      }
+    }
+    const errors = [new Error("boom"), new AppError("boom")];
+    const prepared: unknown[] = [];
+    const prepareStackTrace = Error.prepareStackTrace;
+    Error.prepareStackTrace = error => {
+      prepared.push(error);
+      return "prepared";
+    };
+    let preparedBySnapshots: unknown[];
+    let stacks: unknown[];
+    try {
+      expect({ errors }).toMatchInlineSnapshot(
+        { errors: [{ message: expect.any(String) }, { message: expect.any(String) }] },
+        `
+        {
+          "errors": [
+            [Error: [object ExpectAny]],
+            [AppError: [object ExpectAny]],
+          ],
+        }
+      `,
+      );
+      preparedBySnapshots = [...prepared];
+      stacks = errors.map(error => error.stack);
+    } finally {
+      Error.prepareStackTrace = prepareStackTrace;
+    }
+    expect(preparedBySnapshots).toEqual([]);
+    expect(stacks).toEqual(["prepared", "prepared"]);
+    expect(prepared[0]).toBe(errors[0]);
+    expect(prepared[1]).toBe(errors[1]);
+  });
+});
+
 describe("toMatchSnapshot errors", () => {
   it("should throw if property matchers exist and received is not an object", () => {
     expect(() => {

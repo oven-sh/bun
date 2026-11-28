@@ -75,3 +75,208 @@ exports[`it will create a snapshot file if it doesn't exist 7`] = `
   "j": Any<RegExp>,
 }
 `;
+
+exports[`property matchers leave the received value as it was objects, arrays and dates 1`] = `
+{
+  "id": Any<Number>,
+  "list": [
+    1,
+    Any<String>,
+    Any<Number>,
+  ],
+  "nested": {
+    "name": Any<String>,
+  },
+  "rows": [
+    {
+      "id": Any<Number>,
+    },
+    {
+      "id": 2,
+    },
+  ],
+  "when": Any<Date>,
+}
+`;
+
+exports[`property matchers leave the received value as it was a class instance 1`] = `
+User {
+  "name": Any<String>,
+  "profile": {
+    "age": 30,
+  },
+}
+`;
+
+exports[`property matchers leave the received value as it was a getter on the prototype 1`] = `
+User {
+  "id": Any<Number>,
+  "name": "alice",
+  "profile": {
+    "age": 30,
+  },
+}
+`;
+
+exports[`property matchers leave the received value as it was an object reached through a getter 1`] = `
+User {
+  "name": "alice",
+  "profile": {
+    "age": 30,
+  },
+  "self": {
+    "age": Any<Number>,
+  },
+}
+`;
+
+exports[`property matchers leave the received value as it was an inherited property 1`] = `
+{
+  "inherited": Any<Number>,
+}
+`;
+
+exports[`property matchers leave the received value as it was an own getter 1`] = `
+{
+  "a": 0,
+  "id": Any<Number>,
+  "z": 1,
+}
+`;
+
+exports[`property matchers leave the received value as it was an own getter and setter that cannot be redefined 1`] = `
+{
+  "a": 0,
+  "id": Any<Number>,
+}
+`;
+
+exports[`property matchers leave the received value as it was a symbol key 1`] = `
+{
+  "a": 2,
+  [Symbol(key)]: Any<Number>,
+}
+`;
+
+exports[`property matchers leave the received value as it was a read-only and a hidden property 1`] = `
+{
+  "a": 1,
+  "hidden": Any<Number>,
+  "readOnly": Any<Number>,
+}
+`;
+
+exports[`property matchers leave the received value as it was a frozen object 1`] = `
+{
+  "bar": Any<String>,
+  "foo": "foo",
+}
+`;
+
+exports[`property matchers leave the received value as it was a sealed object 1`] = `
+{
+  "bar": Any<String>,
+  "foo": "foo",
+}
+`;
+
+exports[`property matchers leave the received value as it was a frozen tree 1`] = `
+{
+  "id": Any<String>,
+  "items": [
+    {
+      "id": Any<Number>,
+    },
+    {
+      "id": 2,
+    },
+  ],
+}
+`;
+
+exports[`property matchers leave the received value as it was a frozen instance with a getter on the prototype 1`] = `
+User {
+  "id": Any<Number>,
+  "name": Any<String>,
+  "profile": {
+    "age": 30,
+  },
+}
+`;
+
+exports[`property matchers leave the received value as it was an object that appears twice 1`] = `
+{
+  "a": {
+    "x": Any<Number>,
+    "y": "s",
+  },
+  "b": {
+    "x": 1,
+    "y": "s",
+  },
+  "log": [
+    {
+      "shared": {
+        "x": 1,
+        "y": "s",
+      },
+    },
+  ],
+}
+`;
+
+exports[`property matchers leave the received value as it was cycles 1`] = `
+{
+  "id": Any<Number>,
+  "inner": {
+    "id": Any<Number>,
+    "parent": {
+      "id": 2,
+      "inner": {
+        "id": 1,
+        "parent": [Circular],
+      },
+      "self": [Circular],
+    },
+  },
+  "self": {
+    "id": 2,
+    "inner": {
+      "id": 1,
+      "parent": [Circular],
+    },
+    "self": [Circular],
+  },
+}
+`;
+
+exports[`property matchers leave the received value as it was an array with a read-only element and an accessor element 1`] = `
+[
+  Any<Number>,
+  Any<Number>,
+  Any<Number>,
+]
+`;
+
+exports[`property matchers leave the received value as it was a field of an Error 1`] = `[TypeError: boom]`;
+
+exports[`property matchers leave the received value as it was the message of an Error 1`] = `[TypeError: [object ExpectAny]]`;
+
+exports[`property matchers leave the received value as it was the message of a frozen Error 1`] = `[Error: [object ExpectAny]]`;
+
+exports[`property matchers leave the received value as it was the message of an Error in an object 1`] = `
+{
+  "error": [HttpError: [object ExpectAny]],
+}
+`;
+
+exports[`property matchers leave the received value as it was a matcher on the received side 1`] = `
+{
+  "a": Any<Number>,
+  "b": 1,
+}
+`;
+
+exports[`property matchers leave the received value as it was a field of an Error whose message is a getter that reads a private field 1`] = `[ApiError: boom]`;
+
+exports[`property matchers leave the received value as it was a field of an Error whose message is an own getter that reads a private field 1`] = `[OwnGetterError: boom]`;

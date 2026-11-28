@@ -180,7 +180,7 @@ fn read_stream(
         }
         let offset = offset + bytes.len() as u64;
         let bytes_read = append_with(&mut bytes, remaining.min(max_read_len), |spare| {
-            io.read(file.fd(), spare, Some(offset))
+            io.read(file, spare, Some(offset))
         })?;
         if bytes_read == 0 {
             break;

@@ -8,12 +8,14 @@ use bun_collections::ArrayHashMap;
 use bun_iocp::PendingWrite;
 use bun_jsc::JsThread;
 use bun_jsc::job::UnscheduledJob;
+use bun_sys::windows::{QueuedWrite, ReadOrigin};
 use bun_sys::{self as sys, Fd, File};
 use bun_threading::Guarded;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Key {
-    Descriptor(u64),
+    File(u64),
+    Device(u64),
     /// Device reads are queued separately, so that writes do not wait for them.
     DeviceInput(u64),
     /// Paths that differ by links, 8.3 names or non-ASCII case get different keys.
@@ -22,7 +24,12 @@ pub(crate) enum Key {
 
 impl Key {
     pub(crate) fn from_fd(fd: Fd) -> Key {
-        Key::Descriptor(sys::windows::fd_identity(fd))
+        let identity = sys::windows::fd_identity(fd);
+        if sys::windows::is_disk_file(fd) {
+            Key::File(identity)
+        } else {
+            Key::Device(identity)
+        }
     }
 
     pub(crate) fn from_device_input(fd: Fd) -> Key {
@@ -63,6 +70,7 @@ pub(crate) struct OrderGuard {
     queue: Arc<JobQueue>,
     schedule_next: fn(UnscheduledJob),
     pending_write: Option<PendingWrite>,
+    _queued_write: Option<QueuedWrite>,
 }
 
 impl OrderGuard {
@@ -79,6 +87,10 @@ impl OrderGuard {
             queue: Arc::clone(&queue),
             schedule_next: UnscheduledJob::schedule_as_continuation,
             pending_write: is_write.then(|| cx.vm().uws_loop().port().add_pending_write()),
+            _queued_write: match key {
+                Key::Device(origin) if is_write => QueuedWrite::new(origin),
+                _ => None,
+            },
         });
         let mut waiting = queue.waiting.lock();
         if let Some(jobs) = &mut *waiting {
@@ -110,7 +122,7 @@ impl Drop for OrderGuard {
 
 /// A job's reference to a caller-supplied descriptor. A duplicate stays open after the caller closes its own.
 pub(crate) enum RetainedFile {
-    Duplicate(File),
+    Duplicate { file: File, origin: ReadOrigin },
     Borrowed(Fd),
 }
 
@@ -122,12 +134,24 @@ impl RetainedFile {
             }
             return Self::Borrowed(fd);
         }
+        let origin = ReadOrigin::new(fd);
         match sys::dup(fd) {
-            Ok(duplicate) => Self::Duplicate(File::from_fd(duplicate)),
+            Ok(duplicate) => Self::Duplicate {
+                file: File::from_fd(duplicate),
+                origin,
+            },
             // A bad descriptor is reported by the job's own system call.
             Err(_) => {
                 sys::windows::pin_fd_generation(fd).map_or_else(Self::default, Self::Borrowed)
             }
+        }
+    }
+
+    /// For `io` that can block on a read of this file.
+    pub(crate) fn run_blocking<T>(&self, io: impl FnOnce() -> T) -> T {
+        match self {
+            Self::Duplicate { origin, .. } => origin.run(io),
+            Self::Borrowed(_) => io(),
         }
     }
 }
@@ -142,7 +166,7 @@ impl core::ops::Deref for RetainedFile {
     type Target = File;
     fn deref(&self) -> &File {
         match self {
-            Self::Duplicate(file) => file,
+            Self::Duplicate { file, .. } => file,
             Self::Borrowed(fd) => File::borrow(fd),
         }
     }

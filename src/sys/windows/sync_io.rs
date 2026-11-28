@@ -11,6 +11,7 @@ use std::os::windows::io::{
 
 use bun_windows_sys::externs::{IO_STATUS_BLOCK, NT_SUCCESS, WAIT_TIMEOUT};
 
+use super::duplicate_io::{PendingRead, wait_for_queued_writes};
 use super::kernel32::{
     CancelIoEx, GetCurrentThreadId, ReadFile, WaitForMultipleObjects, WaitForSingleObject,
     WriteFile,
@@ -28,13 +29,13 @@ struct EventSlot(AtomicPtr<c_void>);
 /// Indexed by thread id. The crash handler writes through this path, so it must not lock or allocate.
 static EVENT_CACHE: [EventSlot; 64] = [const { EventSlot(AtomicPtr::new(ptr::null_mut())) }; 64];
 
-struct Event {
-    handle: HANDLE,
+pub(super) struct Event {
+    pub(super) handle: HANDLE,
     slot: &'static AtomicPtr<c_void>,
 }
 
 impl Event {
-    fn acquire() -> Result<Event, Win32Error> {
+    pub(super) fn acquire() -> Result<Event, Win32Error> {
         let slot = &EVENT_CACHE[GetCurrentThreadId() as usize / 4 % EVENT_CACHE.len()].0;
         // Relaxed: the slot publishes only the handle value.
         let mut handle = slot.swap(ptr::null_mut(), Ordering::Relaxed);
@@ -57,17 +58,20 @@ impl Event {
         assert_eq!(WaitForSingleObject(self.handle, INFINITE), 0);
     }
 
-    fn wait_or_cancel(&self, file: HANDLE, request: *mut IO_STATUS_BLOCK) {
+    /// Returns `false` if the thread was interrupted first.
+    pub(super) fn wait_or_interrupt(&self) -> bool {
         let handles = [self.handle, INTERRUPT_EVENT.get()];
-        if !handles[1].is_null() {
-            // SAFETY: `handles` has two elements, and `CancelIoEx` only compares the address of `request`.
-            unsafe {
-                if WaitForMultipleObjects(2, handles.as_ptr(), FALSE, INFINITE) != 0 {
-                    CancelIoEx(file, request.cast());
-                }
-            }
+        let count = if handles[1].is_null() { 1 } else { 2 };
+        // SAFETY: `handles` has two elements.
+        unsafe { WaitForMultipleObjects(count, handles.as_ptr(), FALSE, INFINITE) == 0 }
+    }
+
+    fn wait_or_cancel(&self, file: HANDLE, request: *mut IO_STATUS_BLOCK) {
+        if !self.wait_or_interrupt() {
+            // SAFETY: `CancelIoEx` only compares the address of `request`.
+            unsafe { CancelIoEx(file, request.cast()) };
+            self.wait();
         }
-        self.wait();
     }
 }
 
@@ -258,16 +262,18 @@ pub(crate) fn readv(
 ) -> Result<usize, Win32Error> {
     let null = ptr::null_mut();
     let is_console = is_console(handle);
-    transfer_chunks(IoVecMut::chunks(vecs), offset, |buf, len, offset| {
+    let chunks = IoVecMut::chunks(vecs).inspect(|_| wait_for_queued_writes(handle));
+    transfer_chunks(chunks, offset, |buf, len, offset| {
         if is_console {
             let mut read = 0;
             // SAFETY: `buf` is writable for `len` bytes, and the call is synchronous.
             let rc = unsafe { ReadFile(handle, buf, len, &raw mut read, null) };
             return super::check(rc).map(|()| read as usize);
         }
+        let mut pending_read = None;
         let result = complete_transfer(handle, |event, io| {
             // SAFETY: `buf` is writable for `len` bytes, and `io` is live, until `complete_transfer` returns.
-            unsafe {
+            let status = unsafe {
                 ntdll::NtReadFile(
                     handle,
                     event,
@@ -279,9 +285,17 @@ pub(crate) fn readv(
                     offset,
                     ptr::null(),
                 )
+            };
+            if status == NTSTATUS::PENDING {
+                pending_read = PendingRead::register(handle, io);
             }
+            status
         });
+        let was_closed = pending_read.is_some_and(PendingRead::unregister);
         match result {
+            (NTSTATUS::CANCELLED, _) if was_closed && !is_interrupted() => {
+                Err(Win32Error::BROKEN_PIPE)
+            }
             // A partial message read: the next read returns the remainder.
             (NTSTATUS::BUFFER_OVERFLOW, bytes) => Ok(bytes),
             result => transferred(result),

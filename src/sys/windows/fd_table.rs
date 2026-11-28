@@ -6,7 +6,9 @@ use std::os::windows::io::IntoRawHandle as _;
 use bun_core::{DecodeWindows, FdKind, Mutex, MutexGuard};
 use bun_windows_sys::externs::FILE_POSITION_INFORMATION;
 
-use super::{FILE_TYPE_DISK, GetFileType, HANDLE, INVALID_HANDLE_VALUE, Win32Error, nt};
+use super::{
+    FILE_TYPE_DISK, GetFileType, HANDLE, INVALID_HANDLE_VALUE, Win32Error, duplicate_io, nt,
+};
 use crate::Fd;
 
 /// C code opens and closes descriptors without updating this table, so their kind is never cached.
@@ -161,8 +163,11 @@ pub(crate) fn try_close(fd: Fd, close: impl FnOnce() -> bool) -> bool {
     {
         return false;
     }
+    let identity = fd_identity(fd);
+    let is_closed = close();
     descriptor.bump_generation(&guard, KIND_UNREGISTERED);
-    close()
+    duplicate_io::end_reads(identity);
+    is_closed
 }
 
 /// Does not block. The result is cached for registered descriptors.
@@ -181,6 +186,15 @@ pub fn fd_identity(fd: Fd) -> u64 {
     let state =
         Descriptor::get(crt_fd).map_or(0, |descriptor| descriptor.state.load(Ordering::Acquire));
     1 << 63 | u64::from(state >> KIND_BITS) << 32 | u64::from(crt_fd as u32)
+}
+
+/// Whether `identity`, from [`fd_identity`], is that of a descriptor that [`try_close`] closes.
+pub(super) fn is_closable(identity: u64) -> bool {
+    identity >> 63 == 1 && identity as u32 > 2
+}
+
+pub(super) fn was_closed(identity: u64) -> bool {
+    is_closable(identity) && fd_identity(Fd::from_crt(identity as u32 as i32)) != identity
 }
 
 /// Whether JavaScript can observe the file position.

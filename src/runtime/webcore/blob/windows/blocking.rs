@@ -8,6 +8,8 @@ use bun_sys::windows::named_pipe;
 use bun_sys::{self as sys, E, Fd, Tag};
 use bun_threading::work_pool::DEVICE_POOL;
 
+use super::job_file::JobFile;
+
 /// NPFS copies a pending write into nonpaged pool.
 const MAX_WRITE_LEN: usize = 64 * 1024 * 1024;
 
@@ -47,13 +49,17 @@ impl BlockingIo {
     /// An overlapped device rejects a read without an offset.
     pub(super) fn read(
         &self,
-        fd: Fd,
+        file: &JobFile,
         buf: BorrowedCursor<'_, u8>,
         offset: Option<u64>,
     ) -> sys::Result<usize> {
-        let result = self.read_cancel_token.run(|| match offset {
-            Some(offset) => sys::pread_buf(fd, buf, offset as i64),
-            None => sys::read_buf(fd, buf),
+        let read = || match offset {
+            Some(offset) => sys::pread_buf(file.fd(), buf, offset as i64),
+            None => sys::read_buf(file.fd(), buf),
+        };
+        let result = self.read_cancel_token.run(|| match file {
+            JobFile::Opened(_) => read(),
+            JobFile::Borrowed(file) => file.run_blocking(read),
         });
         result.unwrap_or_else(|| Err(sys::Error::from_code(E::ECANCELED, Tag::read)))
     }

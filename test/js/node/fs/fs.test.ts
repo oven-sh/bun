@@ -19,6 +19,7 @@ import {
   tempDirWithFiles,
   tmpdirSync,
 } from "harness";
+import { once } from "node:events";
 import fs, {
   closeSync,
   constants,
@@ -59,6 +60,7 @@ import fs, {
   writeSync,
   writevSync,
 } from "node:fs";
+import net from "node:net";
 import * as os from "node:os";
 import path, { dirname, relative, resolve } from "node:path";
 import { inspect, promisify } from "node:util";
@@ -6484,6 +6486,88 @@ describe.if(isWindows)("windows file semantics", () => {
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout).toBe("true\nx,x,x\n");
+    expect(exitCode).toBe(0);
+  });
+
+  describe.concurrent.each([
+    ["at once", `fs.closeSync(3)`],
+    ["later", `process.stdin.on("end", () => fs.close(3)).resume()`],
+  ])("closing an overlapped pipe %s ends", (_, close) => {
+    it.each([
+      ["fs.read", `fs.read(3, Buffer.alloc(1), 0, 1, null, report)`, "0"],
+      ["fs.readv", `fs.readv(3, [Buffer.alloc(1)], report)`, "0"],
+      ["queued reads", `for (let i = 0; i < 3; i++) fs.read(3, Buffer.alloc(1), 0, 1, null, report)`, "000"],
+      ["fs.readFile", `fs.readFile(3, (error, data) => report(error, data?.length))`, "0"],
+      ["Bun.file().bytes()", `Bun.file(3).bytes().then(bytes => report(null, bytes.length), report)`, "0"],
+      ["Bun.write()", `Bun.write("copy", Bun.file(3)).then(length => report(null, length), report)`, "0"],
+    ])("%s", async (_, startRead, expected) => {
+      using dir = tempDir("fs-close-pipe", {});
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const fs = require("fs");
+          const report = (error, result) => fs.writeSync(2, String(error?.code ?? result));
+          ${startRead};
+          ${close};
+          console.log("started");`,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdio: ["pipe", "pipe", "pipe", "pipe"],
+      });
+      await proc.stdout.getReader().read();
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdin.end()]);
+      expect(stderr).toBe(expected);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // The peer sends one byte for each write that the child has called, and ends after the last one has arrived.
+  it.concurrent.each([
+    [
+      "fs.read",
+      `(async () => {
+        let length = 0;
+        for (let n; (n = (await promisify(fs.read)(fd, Buffer.alloc(9), 0, 9, null)).bytesRead); ) length += n;
+        return { length };
+      })()`,
+    ],
+    ["fs.readFile", `promisify(fs.readFile)(fd)`],
+    ["Bun.file().bytes()", `Bun.file(fd).bytes()`],
+  ])("%s does not pass a waiting write on a synchronous pipe", async (_, readToEnd) => {
+    const count = 100;
+    const name = `\\\\.\\pipe\\fs-order-${crypto.randomUUID()}`;
+    await using server = net.createServer();
+    await once(server.listen(name), "listening");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+        const { promisify } = require("util");
+        const fd = fs.openSync(${JSON.stringify(name)}, "r+");
+        const received = ${readToEnd};
+        for (let i = 0; i < ${count}; i++) {
+          const written = promisify(fs.write)(fd, "x");
+          fs.writeSync(1, "y");
+          await written;
+        }
+        console.error((await received).length);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [peer] = await once(server, "connection");
+    peer.on("error", () => {});
+    const received = new Promise(resolve => peer.on("data", () => peer.bytesRead === count && resolve()));
+    let sent = 0;
+    for await (const chunk of proc.stdout) {
+      peer.write(chunk);
+      if ((sent += chunk.length) === count) received.then(() => peer.end());
+    }
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe(`${count}\n`);
     expect(exitCode).toBe(0);
   });
 

@@ -385,7 +385,7 @@ impl Transfer {
             let bytes_read = source.run(|source| {
                 let fd = source.fd();
                 append_with(&mut buf, read_len, |spare| match source_io {
-                    Some(io) => io.read(fd, spare, None),
+                    Some(io) => io.read(source, spare, None),
                     None if self.should_read_from_start => sys::pread_buf(fd, spare, copied as i64),
                     None => sys::read_buf(fd, spare),
                 })

@@ -203,6 +203,13 @@ pub(super) fn query_file_info<T: NtInformation<FILE_INFORMATION_CLASS>>(
     })
 }
 
+/// Blocks behind a request that is in progress if it is.
+pub(super) fn is_synchronous(file: HANDLE) -> Result<bool, NTSTATUS> {
+    const FILE_SYNCHRONOUS_IO_ALERT: u32 = 0x10;
+    let info = query_file_info::<w::FILE_MODE_INFORMATION>(file)?;
+    Ok(info.Mode & (FILE_SYNCHRONOUS_IO_ALERT | w::FILE_SYNCHRONOUS_IO_NONALERT) != 0)
+}
+
 pub(super) fn query_volume_info<T: NtInformation<FS_INFORMATION_CLASS>>(
     file: HANDLE,
 ) -> Result<T, NTSTATUS> {

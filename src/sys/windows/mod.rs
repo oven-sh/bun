@@ -2310,7 +2310,9 @@ pub fn SetEnvironmentVariableW(name: &WStr, value: Option<&WStr>) -> Result<(), 
 }
 
 pub mod console;
+mod duplicate_io;
 pub mod env;
+pub use duplicate_io::{QueuedWrite, ReadOrigin};
 pub(crate) mod fd_table;
 pub use fd_table::{fd_identity, is_disk_file, pin_fd_generation};
 pub(crate) mod fs;

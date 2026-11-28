@@ -13,10 +13,9 @@ use std::os::windows::io::{AsRawHandle as _, HandleOrInvalid, OwnedHandle};
 use bun_core::WStr;
 use bun_windows_sys::externs::{
     FILE_ACCESS_INFORMATION, FILE_FLAG_OVERLAPPED, FILE_FS_DEVICE_INFORMATION,
-    FILE_MODE_INFORMATION, FILE_PIPE_INFORMATION, FILE_PIPE_LOCAL_INFORMATION,
-    FILE_PIPE_QUEUE_OPERATION, FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_SYNCHRONOUS_IO_NONALERT,
-    FILE_WRITE_ATTRIBUTES, GENERIC_READ, GENERIC_WRITE, OPEN_EXISTING, PIPE_ACCESS_DUPLEX,
-    WAIT_OBJECT_0,
+    FILE_PIPE_INFORMATION, FILE_PIPE_LOCAL_INFORMATION, FILE_PIPE_QUEUE_OPERATION,
+    FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_WRITE_ATTRIBUTES, GENERIC_READ, GENERIC_WRITE,
+    OPEN_EXISTING, PIPE_ACCESS_DUPLEX, WAIT_OBJECT_0,
 };
 
 use super::{
@@ -62,14 +61,12 @@ pub enum Kind {
 }
 
 pub fn kind(handle: HANDLE) -> Kind {
-    const FILE_SYNCHRONOUS_IO_ALERT: ULONG = 0x10;
-    const SYNCHRONOUS_IO: ULONG = FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT;
     match nt::query_file_info::<FILE_PIPE_INFORMATION>(handle) {
         Ok(_) | Err(NTSTATUS::ACCESS_DENIED) => {}
         Err(_) => return Kind::NotAPipe,
     }
-    match nt::query_file_info::<FILE_MODE_INFORMATION>(handle) {
-        Ok(info) if info.Mode & SYNCHRONOUS_IO == 0 => Kind::Overlapped,
+    match nt::is_synchronous(handle) {
+        Ok(false) => Kind::Overlapped,
         _ => Kind::Synchronous,
     }
 }

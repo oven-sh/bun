@@ -1650,14 +1650,16 @@ mod _async_tasks {
             let dispatch =
                 || NodeFS::dispatch::<R, A, F>(&mut NodeFS::default(), &self.args, Flavor::Async);
             #[cfg(windows)]
-            if let Some(cancel_token) = &self.cancel_token {
+            if let Some(cancel_token) = &self.cancel_token
+                && let Some(device) = &self.guards.device
+            {
                 let tag = if Self::IS_READ {
                     sys::Tag::read
                 } else {
                     sys::Tag::write
                 };
                 return cancel_token
-                    .run(dispatch)
+                    .run(|| device.file.run_blocking(dispatch))
                     .unwrap_or_else(|| Err(sys::Error::from_code(E::ECANCELED, tag)));
             }
             dispatch()

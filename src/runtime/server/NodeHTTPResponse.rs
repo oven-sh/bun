@@ -168,15 +168,8 @@ unsafe extern "C" {
     // `socket` is the opaque uSockets handle from `AnyResponse::socket()`; C++
     // only reads its ext slot. Module-private — the sole callers below pass a
     // live handle, so no caller-side precondition remains.
-    safe fn Bun__getNodeHTTPResponseThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
-    safe fn Bun__getNodeHTTPServerSocketThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
-
-    // node:http flood prevention (JSNodeHTTPServerSocket.cpp): unsent response bytes and queued responses hold a paused socket.
-    safe fn Bun__NodeHTTP__onReadsPaused(ssl: core::ffi::c_int, socket: *mut c_void);
-    safe fn Bun__NodeHTTP__onReadsResumable(ssl: core::ffi::c_int, socket: *mut c_void);
-    // False when no read of this socket is being parsed.
-    safe fn Bun__NodeHTTP__notifyWhenReadParsed(ssl: core::ffi::c_int, socket: *mut c_void)
-    -> bool;
+    safe fn Bun__getNodeHTTPResponseThisValue(socket: *mut c_void) -> JSValue;
+    safe fn Bun__getNodeHTTPServerSocketThisValue(socket: *mut c_void) -> JSValue;
 
     // Builds req.rawHeaders' flat [name, value, ...] JSArray from the header
     // bytes captured at dispatch ([u32 nameLen][u32 valueLen][name][value]...).
@@ -195,16 +188,15 @@ unsafe extern "C" {
     ) -> JSValue;
 
     // `&JSGlobalObject` encodes non-null/aligned; `status_message` is the
-    // ptr/len of a Rust `&[u8]` and `response` is a live `uws::Response<SSL>*`
-    // from the matched `AnyResponse` arm. Module-private with one call site.
-    safe fn NodeHTTPServer__writeHead_http(
+    // ptr/len of a Rust `&[u8]` and `response` is live. Module-private with one call site.
+    safe fn NodeHTTPServer__writeHead(
         global_object: &JSGlobalObject,
         status_message: *const u8,
         status_message_length: usize,
         headers_object_value: JSValue,
         auto_header_bits: u32,
         keep_alive_timeout_secs: u32,
-        response: *mut c_void,
+        response: &uws::uws_res,
     );
 
     safe fn NodeHTTPServer__bytesOfChunk(
@@ -213,8 +205,7 @@ unsafe extern "C" {
         length: *mut usize,
     ) -> bool;
     safe fn NodeHTTPServer__writeWholeResponse(
-        is_ssl: bool,
-        response: *mut c_void,
+        response: &uws::uws_res,
         status: *const u8,
         status_len: usize,
         headers: JSValue,
@@ -223,20 +214,6 @@ unsafe extern "C" {
         body: *const u8,
         body_len: usize,
     ) -> bool;
-    safe fn NodeHTTPServer__finishWholeResponse(
-        is_ssl: bool,
-        response: *mut c_void,
-        body_len: usize,
-    ) -> bool;
-    safe fn NodeHTTPServer__writeHead_https(
-        global_object: &JSGlobalObject,
-        status_message: *const u8,
-        status_message_length: usize,
-        headers_object_value: JSValue,
-        auto_header_bits: u32,
-        keep_alive_timeout_secs: u32,
-        response: *mut c_void,
-    );
 }
 
 /// `globalObject.ERR(.CODE, msg, .{}).throw()` — the actual error-construction
@@ -280,10 +257,8 @@ fn err_throw_content_length_mismatch(
         .throw()
 }
 
-/// AnyResponse `is_ssl()` shim (upstream lacks this accessor).
-#[inline]
-fn any_response_is_ssl(r: &uws::AnyResponse) -> bool {
-    matches!(r, uws::AnyResponse::SSL(_))
+fn http1<'a>(r: uws::AnyResponse) -> &'a uws::uws_res {
+    r.http1().expect("node:http responses are always HTTP/1")
 }
 
 // uSockets callback adapters: AnyResponse::on_data/on_timeout/on_writable expect
@@ -372,7 +347,7 @@ impl PendingPinnedWrite {
 }
 
 /// Writes larger than this take the pinned zero-copy path; below it the cork
-/// buffer (`LoopData::CORK_COPY_MAX` = 16KB) already handles the copy.
+/// buffer (`MAX_CORKED_WRITE_LEN` = 16KB) already handles the copy.
 const PINNED_WRITE_THRESHOLD: usize = 16 * 1024;
 
 impl NodeHTTPResponse {
@@ -406,7 +381,7 @@ impl NodeHTTPResponse {
         if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
             return JSValue::ZERO;
         }
-        Bun__getNodeHTTPResponseThisValue(any_response_is_ssl(&raw), raw.socket().cast())
+        Bun__getNodeHTTPResponseThisValue(raw.socket().cast())
     }
 
     /// Flags this response when it is not the connection's current response, and says so.
@@ -426,7 +401,7 @@ impl NodeHTTPResponse {
         if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
             return JSValue::ZERO;
         }
-        Bun__getNodeHTTPServerSocketThisValue(any_response_is_ssl(&raw), raw.socket().cast())
+        Bun__getNodeHTTPServerSocketThisValue(raw.socket().cast())
     }
 
     /// Called at this request's body fin, still inside the parser: move the
@@ -476,11 +451,7 @@ impl NodeHTTPResponse {
         {
             return;
         }
-        raw.pause();
-        Bun__NodeHTTP__onReadsPaused(
-            any_response_is_ssl(&raw) as core::ffi::c_int,
-            raw.socket().cast(),
-        );
+        http1(raw).hold_reads();
     }
 
     fn resume_socket(&self) {
@@ -496,10 +467,7 @@ impl NodeHTTPResponse {
             return;
         }
         // Not a bare resume: flood prevention can still hold the reads.
-        Bun__NodeHTTP__onReadsResumable(
-            any_response_is_ssl(&raw) as core::ffi::c_int,
-            raw.socket().cast(),
-        );
+        http1(raw).resume_held_reads();
     }
 
     /// Whether this response can still be upgraded. Check before writing anything.
@@ -1172,11 +1140,7 @@ impl NodeHTTPResponse {
         if !state.is_response_pending() || state.is_http_status_called() {
             return None;
         }
-        let (is_ssl, response): (bool, *mut c_void) = match raw_response {
-            uws::AnyResponse::TCP(tcp) => (false, tcp.cast::<c_void>()),
-            uws::AnyResponse::SSL(ssl) => (true, ssl.cast::<c_void>()),
-            uws::AnyResponse::H3(_) | uws::AnyResponse::H2(_) => return None,
-        };
+        let response = raw_response.http1()?;
 
         let utf8;
         let buffer;
@@ -1204,7 +1168,6 @@ impl NodeHTTPResponse {
         }
 
         if !NodeHTTPServer__writeWholeResponse(
-            is_ssl,
             response,
             status.as_ptr(),
             status.len(),
@@ -1223,7 +1186,7 @@ impl NodeHTTPResponse {
             js::on_aborted_set_cached(this_value, global_object, JSValue::ZERO);
         }
         self.update_flags(|f| f.insert(Flags::ENDED));
-        let is_draining = NodeHTTPServer__finishWholeResponse(is_ssl, response, bytes.len());
+        let is_draining = response.finish_corked_response(bytes.len());
         if is_draining && !self.flags.get().contains(Flags::SOCKET_CLOSED) {
             if let Some(raw_response) = self.writer() {
                 raw_response.on_writable(on_drain_shim, self.as_ctx_ptr());
@@ -1248,24 +1211,15 @@ fn write_head_internal(
         "writeHeadInternal({})",
         BStr::new(status_message)
     );
-    type WriteHead =
-        extern "C" fn(&JSGlobalObject, *const u8, usize, JSValue, u32, u32, *mut c_void);
-    let (write_head, response): (WriteHead, *mut c_void) = match response {
-        uws::AnyResponse::TCP(tcp) => (NodeHTTPServer__writeHead_http, (*tcp).cast::<c_void>()),
-        uws::AnyResponse::SSL(ssl) => (NodeHTTPServer__writeHead_https, (*ssl).cast::<c_void>()),
-        uws::AnyResponse::H3(_) | uws::AnyResponse::H2(_) => {
-            bun_core::Output::panic(format_args!("node:http responses are always HTTP/1"));
-        }
-    };
     bun_jsc::from_js_host_call_generic(global_object, || {
-        write_head(
+        NodeHTTPServer__writeHead(
             global_object,
             status_message.as_ptr(),
             status_message.len(),
             headers,
             auto_header_bits,
             keep_alive_timeout_secs,
-            response,
+            http1(*response),
         )
     })
 }
@@ -1438,10 +1392,7 @@ impl NodeHTTPResponse {
         if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
             return false;
         }
-        Bun__NodeHTTP__notifyWhenReadParsed(
-            any_response_is_ssl(&raw) as core::ffi::c_int,
-            raw.socket().cast(),
-        )
+        http1(raw).notify_when_read_parsed()
     }
 
     #[uws::uws_callback(export = "Bun__NodeHTTPResponse_setClosed", no_catch)]
@@ -1892,7 +1843,7 @@ impl NodeHTTPResponse {
         // Partial pinned progress: return false so onWritable's close gate
         // waits (bufferedAmount does not count the pinned tail). Zero progress
         // after the peer's FIN is handed to the buffered path (spill) so the
-        // sibling `flushed == 0 && RECEIVED_FIN` close in HttpContext::
+        // sibling `sent == 0 && has_received_fin()` close in http1::events'
         // onWritable decides; without FIN (SSL WANT_READ, ENOBUFS) retries.
         let pinned_before = self.pending_pinned_write.get().remaining.len();
         if self.drain_pending_pinned_write(response) {
@@ -1905,8 +1856,7 @@ impl NodeHTTPResponse {
             return true;
         }
 
-        // Drained: disarm so onEnd's `onWritable != nullptr` probe does not see
-        // a stale shim (callOnWritable would restore it); writes re-arm.
+        // Drained: disarm so `is_sending_node_response` does not see a stale shim; writes re-arm.
         response.clear_on_writable();
         response.corked(|| self.on_drain_corked(offset));
         // return true means we may have something to drain
@@ -2668,7 +2618,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
     let request_ref = bun_opaque::opaque_deref(request.cast_const());
 
     let vm = VirtualMachine::get();
-    let method = HttpMethod::which(request_ref.method()).unwrap_or(HttpMethod::OPTIONS);
+    let method = request_ref.method();
     // Like llhttp, the framing decides, not the method. CONNECT has no body: the parser tunnels every byte after its head.
     if method != HttpMethod::CONNECT {
         let req_len: usize = 'brk: {

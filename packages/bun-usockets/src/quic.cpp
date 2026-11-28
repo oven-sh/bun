@@ -56,7 +56,7 @@ static_assert(sizeof(lsxpack_strlen_t) == 4 && offsetof(struct lsxpack_header, c
 
 #define US_QUIC_READ_BUF (16 * 1024)
 /* A header set over max_size or max_fields fails its stream. One over this
- * multiple of either closes the connection, as in Http2Context.h, which has
+ * multiple of either closes the connection, as in src/http2/server, which has
  * the same floor for the size. */
 #define US_QUIC_HSET_HARD_CAP_FACTOR 2
 #define US_QUIC_HSET_HARD_CAP_FLOOR (16 * 1024)
@@ -871,7 +871,7 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     lsquic_engine_init_settings(&ctx->settings, LSENG_HTTP_SERVER);
     ctx->settings.es_versions = LSQUIC_DF_VERSIONS & LSQUIC_IETF_VERSIONS;
     ctx->settings.es_ecn = 0;
-    /* Same value as Http2Context::maxHeaderListSize. */
+    /* Same value as max_header_list_size in src/http2/server. */
     size_t max_header_size = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE ? BUN_DEFAULT_MAX_HTTP_HEADER_SIZE : 64 * 1024;
     ctx->max_header_set_size = max_header_size > 0xffffff ? 0xffffff : (unsigned) max_header_size;
     ctx->settings.es_max_header_list_size = ctx->max_header_set_size;

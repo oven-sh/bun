@@ -3,14 +3,14 @@
 
 use core::any::Any;
 use core::cell::{Cell, OnceCell};
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::c_void;
 use core::sync::atomic::Ordering;
 
 use bun_core::scoped::ScopedFlag as _;
 use bun_io::KeepAlive;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
-use bun_uws_sys::app::c as uws_app_c;
+use bun_uws_sys::app::ConnectionChange;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult};
 use bun_ptr::{AsCtxPtr, OptionCellExt as _};
@@ -297,7 +297,7 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
 
     pub(crate) dev_server: JsCell<Option<Box<crate::bake::DevServer::DevServer>>>,
 
-    /// Route → index in RouteList.cpp. uWS route handlers keep pointers into this Vec.
+    /// Route → index in RouteList.cpp. The routers keep pointers into this Vec.
     pub(crate) user_routes: JsCell<Vec<UserRoute<SSL, DEBUG>>>,
 
     /// Raw shadow of the wrapper's `m_onClientError` WriteBarrier slot.
@@ -335,11 +335,10 @@ impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
         self.listener.set(None);
         self.h3_app.set(None);
         if let Some(h2_app) = self.h2_app.take() {
-            // A drain may still be queued for it.
-            self.vm()
-                .event_loop()
-                .deferred_tasks
-                .unregister_task(core::ptr::NonNull::new(h2_app.as_ptr().cast::<c_void>()));
+            let task = core::ptr::NonNull::new(h2_app.as_ptr().cast::<c_void>());
+            // A drain may still be queued for it, and the drop can queue one.
+            drop(h2_app);
+            (self.vm().event_loop().deferred_http2_drains).unregister_task(task);
         }
         self.app.set(None);
 
@@ -486,24 +485,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.pending_requests.set(self.pending_requests.get() + 1);
     }
 
-    /// uWS filter: `+2` at TCP accept (before any TLS handshake), `-2` on
-    /// `HttpContext::onClose` / `HttpResponse::destroyForUpgrade()` — see
-    /// `AsyncSocketData::filteredAccept`. Feeds [`Self::active_connection_count`].
-    /// `-3` / `+3`: a node:http tunnel becomes idle / has bytes to send again. `-4`: it closes idle.
-    extern "C" fn on_connection_filter(
-        _socket: *mut uws_sys::us_socket_t,
-        opened: i32,
-        user_data: *mut c_void,
-    ) {
+    /// Feeds [`Self::active_connection_count`].
+    fn on_connection_change(user_data: *mut c_void, change: ConnectionChange) {
         // SAFETY: `user_data` is the `*mut Self` registered in `listen()`; the server outlives every socket in its app.
         let this = unsafe { &*user_data.cast::<Self>() };
-        // Count from accept (2 / -2), not from open (1 / -1): a TLS socket still handshaking will dispatch once that completes.
-        match opened {
-            2 => {
+        match change {
+            ConnectionChange::Accepted => {
                 this.note_connection_opened();
                 return;
             }
-            3 => {
+            ConnectionChange::TunnelBusy => {
                 this.note_tunnel_idle(false);
                 // With a listener open, the loop ref is the user's to drop (`server.unref()`).
                 if !this.has_listener() {
@@ -511,13 +502,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
                 return;
             }
-            -3 => this.note_tunnel_idle(true),
-            -4 => {
+            ConnectionChange::TunnelIdle => this.note_tunnel_idle(true),
+            ConnectionChange::IdleTunnelGone => {
                 this.note_tunnel_idle(false);
                 this.note_connection_closed();
             }
-            -2 => this.note_connection_closed(),
-            _ => return,
+            ConnectionChange::Gone => this.note_connection_closed(),
         }
         if !this.has_loop_holding_connections() && !this.has_listener() {
             this.deinit_if_we_can();
@@ -782,7 +772,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         &self,
         req: &mut uws_sys::Request,
         resp: *mut uws_sys::NewAppResponse<SSL>,
-        method: Option<bun_http_types::Method::Method>,
     ) -> Option<(bun_ptr::RefPtr<Request>, ServerDispatch<SSL, DEBUG>)> {
         jsc::mark_binding!();
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
@@ -794,16 +783,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // we avoid needing to worry as much about what memory to free.
         // (RFC 9114 §4.2 transfer-encoding check is H3-only — skipped here.)
 
-        // Resolve once, reuse for both `has_request_body()` here and the
-        // forward to `RequestContext::create` below.
-        let method = method.or_else(|| bun_http_types::Method::Method::which(req.method()));
-        let resolved_method = method.unwrap_or(bun_http_types::Method::Method::GET);
-
         let request_body_length: Option<usize> = 'len: {
-            if method
-                .unwrap_or(bun_http_types::Method::Method::OPTIONS)
-                .has_request_body()
-            {
+            if req.method().has_request_body() {
                 let len: usize = if let Some(cl) = req.header(b"content-length") {
                     bun_http_types::parse_content_length(cl)
                 } else {
@@ -846,7 +827,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self,
             std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
             any_response_from::<SSL>(resp),
-            resolved_method,
         )
         .as_ptr();
         // SAFETY: `create()` just made it, and it holds its base ref.
@@ -974,7 +954,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
                     bun_opaque::opaque_deref_mut(r),
                     resp,
-                    None,
                 ) else {
                     return;
                 };
@@ -1066,7 +1045,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));
             return;
         };
-        let Some((request, ctx)) = self.prepare_js_request_context(req, resp, None) else {
+        let Some((request, ctx)) = self.prepare_js_request_context(req, resp) else {
             return;
         };
 
@@ -1110,9 +1089,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return;
         };
 
-        let Some((request, ctx)) =
-            server.prepare_js_request_context(req, resp, user_route.route.method.specific())
-        else {
+        let Some((request, ctx)) = server.prepare_js_request_context(req, resp) else {
             return;
         };
 
@@ -1131,7 +1108,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     server_js,
                     server_request_list,
                     js_request,
-                    core::ptr::from_mut(req).cast::<c_void>(),
+                    core::ptr::from_ref(req.parameters()).cast::<c_void>(),
                 )
             });
 
@@ -1139,7 +1116,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// Invoke the JS-side
-    /// `node:http` request handler (`NodeHTTPServer__onRequest_{http,https}`),
+    /// `node:http` request handler (`NodeHTTPServer__onRequest`),
     /// then drive the returned promise / [`NodeHTTPResponse`] through the
     /// completion / abort / error paths.
     pub(crate) fn on_node_http_request(
@@ -1173,21 +1150,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // request, so only the first request for a given method pays the FFI hop
         // into `Bun__HTTPMethod__toJS`. (`get(..)` falls back to a fresh intern
         // if a future method variant ever indexes past the cache.)
-        let method_string = match bun_http::Method::find(req.method()) {
-            Some(m) => match self.method_name_cache.get(m as usize) {
-                Some(slot) => {
-                    let cached = slot.get();
-                    if cached == JSValue::ZERO {
-                        let v = m.to_js(global);
-                        slot.set(v);
-                        v
-                    } else {
-                        cached
-                    }
+        let method = req.method();
+        let method_string = match self.method_name_cache.get(method as usize) {
+            Some(slot) => {
+                let cached = slot.get();
+                if cached == JSValue::ZERO {
+                    let v = method.to_js(global);
+                    slot.set(v);
+                    v
+                } else {
+                    cached
                 }
-                None => m.to_js(global),
-            },
-            None => JSValue::UNDEFINED,
+            }
+            None => method.to_js(global),
         };
         let callback = self.config.get().on_node_http_request;
         // C++ forwards `any_server` to `NodeHTTPResponse::create`, which
@@ -1199,20 +1174,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         let mut node_http_response = None;
 
-        let on_request_ffi = if SSL {
-            ffi::NodeHTTPServer__onRequest_https
-        } else {
-            ffi::NodeHTTPServer__onRequest_http
-        };
         let result: JSValue = bun_jsc::host_fn::from_js_host_call(global, || {
-            on_request_ffi(
+            ffi::NodeHTTPServer__onRequest(
                 any_server_packed,
                 global,
                 this_object,
                 callback,
                 method_string,
                 req,
-                std::ptr::from_mut::<uws_sys::NewAppResponse<SSL>>(resp).cast(),
+                SSL,
+                resp,
                 &mut node_http_response,
             )
         })
@@ -1423,7 +1394,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     fn note_tunnel_idle(&self, idle: bool) {
         let count = self.idle_tunnel_count.get();
-        // `AsyncSocketData::filteredIdleTunnel` pairs every -3 with one +3 or -4.
         debug_assert!(idle || count > 0);
         self.idle_tunnel_count.set(if idle {
             count + 1
@@ -1599,22 +1569,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
         self.notify_inspector_server_stopped();
 
-        match &self.config.get().address {
-            server_config::Address::Unix(path) => {
-                let bytes = path.as_bytes();
-                if !bytes.is_empty() && bytes[0] != 0 {
-                    let _ = bun_sys::unlink(path.as_zstr());
-                }
-            }
-            server_config::Address::Tcp { .. } => {}
-        }
+        self.config.get().address.unlink();
 
         drop(listener);
         if !abrupt {
             // Close idle keep-alive connections now and mark busy ones to
             // close once their in-flight work completes; open websockets are
             // untouched and drain on their own. Each close reaches
-            // `on_connection_filter(-2)` synchronously, so hold the guard so
+            // `on_connection_change` synchronously, so hold the guard so
             // that path cannot run the idle pass under this frame —
             // `stop()` runs `deinit_if_we_can` right after this returns.
             //
@@ -1867,7 +1829,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     pub(crate) fn set_using_custom_expect_handler(&self, value: bool) {
         if let Some(app) = self.app() {
-            ffi::NodeHTTP_setUsingCustomExpectHandler(SSL, app.cast::<c_void>(), value);
+            bun_opaque::opaque_deref_mut(app).set_using_custom_expect_handler(value);
         }
     }
 
@@ -2036,8 +1998,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         });
 
         // --- 3. Register compiled user routes & track "/*" coverage ---
-        let mut star_methods_covered_by_user = http_method::Set::empty();
-        let mut has_any_user_route_for_star_path = false;
+        let mut has_star_route = false;
+        let mut has_star_route_for_any_method = false;
         let mut has_any_ws_route_for_star_path = false;
 
         let websocket_ptr = self.config.get().websocket.as_ref();
@@ -2047,9 +2009,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             let ud: *mut c_void = core::ptr::from_ref(user_route).cast_mut().cast();
             let path = user_route.route.path.as_bytes();
             let is_star_path = path == b"/*";
-            if is_star_path {
-                has_any_user_route_for_star_path = true;
-            }
+            has_star_route |= is_star_path;
             if should_add_chrome_devtools_json_route
                 && (path == CHROME_DEVTOOLS_ROUTE || path.starts_with(b"/.well-known/"))
             {
@@ -2059,11 +2019,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // Register HTTP routes
             match user_route.route.method {
                 server_config::RouteMethod::Any => {
-                    app.any(
-                        path,
-                        Some(trampoline::on_user_route_request::<SSL, DEBUG>),
-                        ud,
-                    );
+                    app.any(path, trampoline::on_user_route_request::<SSL, DEBUG>, ud);
                     for_each_mux_app!(self, |mux| {
                         mux.any(
                             path,
@@ -2071,9 +2027,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             Self::on_mux_user_route_request,
                         );
                     });
-                    if is_star_path {
-                        star_methods_covered_by_user = http_method::Set::all();
-                    }
+                    has_star_route_for_any_method |= is_star_path;
                     if let Some(websocket) = websocket_ptr {
                         if is_star_path {
                             has_any_ws_route_for_star_path = true;
@@ -2091,7 +2045,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     app.method(
                         method_val,
                         path,
-                        Some(trampoline::on_user_route_request::<SSL, DEBUG>),
+                        trampoline::on_user_route_request::<SSL, DEBUG>,
                         ud,
                     );
                     for_each_mux_app!(self, |mux| {
@@ -2102,9 +2056,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             Self::on_mux_user_route_request,
                         );
                     });
-                    if is_star_path {
-                        star_methods_covered_by_user.insert(method_val);
-                    }
                     // Setup user websocket in the route if needed.
                     if let Some(websocket) = websocket_ptr {
                         // Websocket upgrade is a GET request
@@ -2125,8 +2076,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // --- 4. Register negative routes ---
         // A `false` route means "fall through to the default handler": same
         // ladder as the `/*` fallback in step 9. H2/H3 stay on on_mux_request,
-        // which already falls back to on_mux_404 when on_request is empty.
-        let negative_h1 = if !self.config.get().on_node_http_request.is_empty() {
+        // which already answers 404 when on_request is empty.
+        let default_h1 = if !self.config.get().on_node_http_request.is_empty() {
             trampoline::on_node_http_request::<SSL, DEBUG>
         } else if !self.config.get().on_request.is_empty() {
             trampoline::on_request::<SSL, DEBUG>
@@ -2135,30 +2086,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         };
         for route_path in self.config.get().negative_routes.iter() {
             let p = route_path.as_bytes();
-            app.head(p, Some(negative_h1), self_ptr.cast());
-            app.any(p, Some(negative_h1), self_ptr.cast());
+            app.method(http_method::Method::HEAD, p, default_h1, self_ptr.cast());
+            app.any(p, default_h1, self_ptr.cast());
             for_each_mux_app!(self, |mux| {
-                mux.head(p, self_ptr, Self::on_mux_request);
+                mux.method(http_method::Method::HEAD, p, self_ptr, Self::on_mux_request);
                 mux.any(p, self_ptr, Self::on_mux_request);
             });
         }
 
         // --- 5. Register static routes & track "/*" coverage ---
         let mut needs_plugins = dev_server.is_some();
-        let mut has_static_route_for_star_path = false;
 
         for entry in &self.config.get().static_routes {
-            if &*entry.path == b"/*" {
-                has_static_route_for_star_path = true;
-                match &entry.method {
-                    server_config::MethodOptional::Any => {
-                        star_methods_covered_by_user = http_method::Set::all();
-                    }
-                    server_config::MethodOptional::Method(method) => {
-                        star_methods_covered_by_user |= *method;
-                    }
-                }
-            }
+            let is_star_path = &*entry.path == b"/*";
+            has_star_route |= is_star_path;
+            has_star_route_for_any_method |=
+                is_star_path && entry.method == server_config::MethodOptional::Any;
             if should_add_chrome_devtools_json_route
                 && (&*entry.path == CHROME_DEVTOOLS_ROUTE
                     || entry.path.starts_with(b"/.well-known/"))
@@ -2167,7 +2110,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
 
             // An explicit HEAD handler route must stay the HEAD handler for its
-            // path: uWS keeps the last registration for a method and path, and
+            // path: the last registration for a method and path wins, and
             // static routes register after user routes.
             let path_has_user_head_route =
                 user_routes.iter().any(|route| match &route.route.method {
@@ -2295,16 +2238,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // --- 7. Debug-mode specific routes ---
         if DEBUG {
-            app.get(
+            app.method(
+                http_method::Method::GET,
                 b"/bun:info",
-                Some(trampoline::on_bun_info_request::<SSL, DEBUG>),
+                trampoline::on_bun_info_request::<SSL, DEBUG>,
                 self_ptr.cast(),
             );
         }
-
-        // Snapshot "/*" coverage from user/static routes before DevServer
-        // (which is H1-only and not mirrored to the H2/H3 routers) marks it full.
-        let mux_star_covered = star_methods_covered_by_user;
 
         // --- 8. Handle DevServer routes & track "/*" coverage ---
         let mut has_dev_server_for_star_path = false;
@@ -2314,10 +2254,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // `self.dev_server` above; no other `&mut` to it is live.
             has_dev_server_for_star_path =
                 bun_core::handle_oom(unsafe { &mut *dev }.set_routes(self, app));
-            if has_dev_server_for_star_path {
-                // Assume dev server "/*" covers all methods if it exists
-                star_methods_covered_by_user = http_method::Set::all();
-            }
         }
 
         // Setup user websocket fallback route aka fetch function; if fetch is
@@ -2336,84 +2272,25 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // --- 9. Consolidated "/*" HTTP fallback registration ---
         let ud = self_ptr.cast::<c_void>();
-        let has_node_http = !self.config.get().on_node_http_request.is_empty();
-        let has_on_request = !self.config.get().on_request.is_empty();
-        if star_methods_covered_by_user == http_method::Set::all() {
-            // User/Static/Dev has already provided a "/*" handler for ALL methods.
-            // No further global "/*" HTTP fallback needed.
-        } else if has_any_user_route_for_star_path
-            || has_static_route_for_star_path
-            || has_dev_server_for_star_path
-        {
-            // A "/*" route exists, but doesn't cover all methods. Apply the
-            // global handler to the *remaining* methods for "/*".
-            for method_to_cover in !star_methods_covered_by_user {
-                if has_node_http {
-                    app.method(
-                        method_to_cover,
-                        b"/*",
-                        Some(trampoline::on_node_http_request::<SSL, DEBUG>),
-                        ud,
-                    );
-                } else if has_on_request {
-                    app.method(
-                        method_to_cover,
-                        b"/*",
-                        Some(trampoline::on_request::<SSL, DEBUG>),
-                        ud,
-                    );
-                } else {
-                    app.method(
-                        method_to_cover,
-                        b"/*",
-                        Some(trampoline::on_404::<SSL, DEBUG>),
-                        ud,
-                    );
-                }
+        if !has_star_route_for_any_method {
+            // With the name of a route for a method, it would go right behind that one instead of last.
+            let pattern: &[u8] = if has_star_route { b"/*\xff" } else { b"/*" };
+            if !has_dev_server_for_star_path {
+                app.any(pattern, default_h1, ud);
             }
-        } else if has_node_http {
-            app.any(
-                b"/*",
-                Some(trampoline::on_node_http_request::<SSL, DEBUG>),
-                ud,
-            );
-        } else if has_on_request {
-            app.any(b"/*", Some(trampoline::on_request::<SSL, DEBUG>), ud);
-        } else {
-            app.any(b"/*", Some(trampoline::on_404::<SSL, DEBUG>), ud);
+            // DevServer routes are not mirrored to H2/H3.
+            for_each_mux_app!(self, |mux| {
+                mux.any(pattern, self_ptr, Self::on_mux_request);
+            });
         }
-
-        // H2/H3 fallback — same three-way as H1 above, but driven by user/static
-        // "/*" coverage only (DevServer routes are not mirrored to H2/H3).
-        for_each_mux_app!(self, |mux| {
-            if mux_star_covered == http_method::Set::all() {
-                // user/static "/*" already covers every method
-            } else if has_any_user_route_for_star_path || has_static_route_for_star_path {
-                for m in !mux_star_covered {
-                    if has_on_request {
-                        mux.method(m, b"/*", self_ptr, Self::on_mux_request);
-                    } else {
-                        mux.method(m, b"/*", self_ptr, Self::on_mux_404);
-                    }
-                }
-            } else if has_on_request {
-                mux.any(b"/*", self_ptr, Self::on_mux_request);
-            } else {
-                mux.any(b"/*", self_ptr, Self::on_mux_404);
-            }
-        });
 
         if should_add_chrome_devtools_json_route {
-            app.get(
+            app.method(
+                http_method::Method::GET,
                 CHROME_DEVTOOLS_ROUTE,
-                Some(trampoline::on_chrome_devtools_json_request::<SSL, DEBUG>),
+                trampoline::on_chrome_devtools_json_request::<SSL, DEBUG>,
                 ud,
             );
-        }
-
-        // Idempotent, so re-running set_routes on reload() is fine.
-        if self.config.get().is_node_http_server {
-            ffi::NodeHTTP_assignOnNodeJSCompat(SSL, std::ptr::from_mut(app).cast::<c_void>());
         }
 
         route_list_value
@@ -2453,31 +2330,27 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return true;
         }
         // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-        let Some(h2) =
-            create_http2_app::<SSL>(bun_opaque::opaque_deref_mut(app), http1, idle_timeout)
-        else {
-            let global = self.global_this();
-            if !global.has_exception() {
-                let _ = global.throw(format_args!("Failed to create HTTP/2 server"));
-            }
-            return false;
-        };
+        let h2 = create_http2_app::<SSL>(bun_opaque::opaque_deref_mut(app), http1, idle_timeout);
         // Streams parked on socket backpressure by a JS-driven write get their
-        // next drain pass from the event loop's deferred task queue (after the
-        // current task and its microtasks), like the HTTP/1 sink's auto-flush.
-        extern "C" fn schedule_h2_drain(app: *mut c_void, _ctx: *mut c_void) {
+        // next drain pass after the current task, its microtasks and the deferred tasks.
+        fn schedule_h2_drain(app: *mut uws_sys::h2::App) {
             extern "C" fn drain(app: *mut c_void) -> bool {
+                let event_loop = jsc::VirtualMachine::get().event_loop();
+                event_loop.has_resumed_response_stream.set(false);
                 // S012: `h2::App` is an `opaque_ffi!` ZST — safe deref.
-                // Stay registered while streams are still queued.
-                bun_opaque::opaque_deref_mut(app.cast::<uws_sys::h2::App>()).drain()
+                let has_more = bun_opaque::opaque_deref_mut(app.cast::<uws_sys::h2::App>()).drain();
+                if has_more || event_loop.has_resumed_response_stream.get() {
+                    // No checkpoint may come before the loop waits.
+                    event_loop.wakeup();
+                }
+                has_more
             }
             jsc::VirtualMachine::get()
                 .event_loop()
-                .deferred_tasks
-                .post_task(core::ptr::NonNull::new(app), drain);
+                .deferred_http2_drains
+                .post_task(core::ptr::NonNull::new(app.cast()), drain);
         }
-        bun_opaque::opaque_deref_mut(h2.as_ptr())
-            .on_schedule_drain(schedule_h2_drain, h2.as_ptr().cast::<c_void>());
+        bun_opaque::opaque_deref_mut(h2.as_ptr()).on_schedule_drain(schedule_h2_drain);
         self.h2_app.set(Some(h2));
         self.init_mux_request_pool();
         true
@@ -2661,38 +2534,37 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-        bun_opaque::opaque_deref_mut(app).filter(Self::on_connection_filter, this.cast::<c_void>());
+        bun_opaque::opaque_deref_mut(app)
+            .on_connection_change(Self::on_connection_change, this.cast::<c_void>());
 
         if this_ref.config.get().is_node_http_server {
+            bun_opaque::opaque_deref_mut(app).enable_node_http();
             this_ref.set_using_custom_expect_handler(true);
         }
 
         // Owns the bracket-stripped copy of an IPv6 literal hostname; `host`
         // points into it, so it has to outlive the listen calls below.
         let mut stripped_hostname: Option<bun_core::ZBox> = None;
-        // `host` and the path reference `config.address`'s backing storage,
-        // which the trampolines never touch (they only write `listener`/
-        // `h3_listener`), so the bytes remain valid through the listen calls.
         enum Addr<'a> {
-            Tcp { port: u16, host: *const c_char },
+            Tcp {
+                port: u16,
+                host: Option<&'a bun_core::ZStr>,
+            },
             Unix(&'a bun_core::ZStr),
         }
         let (addr, tcp, options) = {
             let cfg = this_ref.config.get();
             let addr = match &cfg.address {
                 server_config::Address::Tcp { port, hostname } => {
-                    let mut host: *const c_char = core::ptr::null();
-                    if let Some(existing) = hostname.as_deref() {
+                    let host = hostname.as_ref().map(|existing| {
                         let bytes = existing.as_bytes();
                         let bare = bun_core::ip_address::strip_ipv6_brackets(bytes);
-                        host = if bare.len() == bytes.len() {
-                            existing.as_ptr()
+                        if bare.len() == bytes.len() {
+                            existing.as_zstr()
                         } else {
-                            stripped_hostname
-                                .insert(bun_core::ZBox::from_bytes(bare))
-                                .as_ptr()
-                        };
-                    }
+                            (stripped_hostname.insert(bun_core::ZBox::from_bytes(bare))).as_zstr()
+                        }
+                    });
                     Addr::Tcp { port: *port, host }
                 }
                 server_config::Address::Unix(unix) => Addr::Unix(unix.as_zstr()),
@@ -2713,18 +2585,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let mut refused_ports = Vec::new();
                 loop {
                     if tcp {
-                        // SAFETY: app is a live uws handle owned by this server.
-                        unsafe {
-                            (*app).listen_with_config(
-                                Some(trampoline::on_listen::<SSL, DEBUG>),
-                                this.cast::<c_void>(),
-                                uws_app_c::uws_app_listen_config_t {
-                                    port: port as c_int,
-                                    host,
-                                    options,
-                                },
-                            );
-                        }
+                        let app = bun_opaque::opaque_deref_mut(app);
+                        this_ref.on_listen(app.listen(host, port, options));
                     }
 
                     if Self::HAS_H3 {
@@ -2746,7 +2608,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 },
                                 &uws_sys::h3::ListenConfig {
                                     port: h3_port,
-                                    host,
+                                    host: host.map_or(core::ptr::null(), bun_core::ZStr::as_ptr),
                                     options,
                                 },
                             );
@@ -2785,15 +2647,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         bun_core::warn!("http3: true with a unix socket — HTTP/3 listener skipped");
                     }
                 }
-                // SAFETY: app is a live uws handle owned by this server.
-                unsafe {
-                    (*app).listen_on_unix_socket(
-                        trampoline::on_listen_unix::<SSL, DEBUG>,
-                        this.cast::<c_void>(),
-                        path,
-                        options,
-                    );
-                }
+                let app = bun_opaque::opaque_deref_mut(app);
+                this_ref.on_listen(app.listen_on_unix_socket(path, options));
             }
         }
 
@@ -2831,8 +2686,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 }
 
 // ─── route-list codegen externs ──────────────────────────────────────────────
-// Canonical decls live in `server_body.rs` (shared with the H3 path); reuse
-// them here instead of redeclaring with a divergent `req` pointer type.
+// Canonical decls live in `server_body.rs` (shared with the H3 path).
 use server_body::{Bun__ServerRouteList__callRoute, Bun__ServerRouteList__create};
 
 #[inline(never)]
@@ -2840,7 +2694,7 @@ fn create_http2_app<const SSL: bool>(
     parent: &mut uws_sys::app::App<SSL>,
     allow_http1: bool,
     idle_timeout_s: u32,
-) -> Option<uws_sys::h2::OwnedApp> {
+) -> uws_sys::h2::OwnedApp {
     bun_removable_features::removable_definition!(ServeHttp2, create_http2_app::<SSL>);
     uws_sys::h2::OwnedApp::new::<SSL>(parent, allow_http1, idle_timeout_s)
 }
@@ -2979,26 +2833,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 // the bodies downcast `user_data` and forward into the typed method.
 mod trampoline {
     use super::*;
-    use bun_uws_sys::{ListenSocket as UwsListenSocket, Request as UwsRequest, uws_res};
-
-    pub(super) extern "C" fn on_listen<const SSL: bool, const DEBUG: bool>(
-        socket: *mut UwsListenSocket,
-        user_data: *mut c_void,
-    ) {
-        // SAFETY: user_data is the `*mut NewServer<..>` passed to listen_with_config.
-        let server = unsafe { &*user_data.cast::<NewServer<SSL, DEBUG>>() };
-        // SAFETY: the server is stopped, which drops this, within the tick that closes its group.
-        server.on_listen(unsafe { uws_sys::app::OwnedListenSocket::from_raw(socket) });
-    }
-
-    pub(super) extern "C" fn on_listen_unix<const SSL: bool, const DEBUG: bool>(
-        socket: *mut UwsListenSocket,
-        _domain: *const c_char,
-        _flags: i32,
-        user_data: *mut c_void,
-    ) {
-        on_listen::<SSL, DEBUG>(socket, user_data);
-    }
+    use bun_uws_sys::{Request as UwsRequest, uws_res};
 
     pub(super) extern "C" fn on_404<const SSL: bool, const DEBUG: bool>(
         res: *mut uws_res,
@@ -3135,43 +2970,23 @@ mod ffi {
     // has Rust-layout fields (Vec, Cell, …); irrelevant for an opaque handle.
     #[allow(improper_ctypes)]
     unsafe extern "C" {
-        // `app` is the opaque `uws::App<SSL>*`; C++ only flips a flag / assigns a
-        // handler. Callers pass the live `self.app` handle, so no precondition.
-        pub(super) safe fn NodeHTTP_setUsingCustomExpectHandler(
-            ssl: bool,
-            app: *mut c_void,
-            value: bool,
-        );
-        pub(super) safe fn NodeHTTP_assignOnNodeJSCompat(ssl: bool, app: *mut c_void);
-
         /// `src/jsc/bindings/NodeHTTP.cpp` — constructs the JS
         /// `IncomingMessage`/`ServerResponse` pair, allocates a
         /// [`NodeHTTPResponse`] (returned via `node_response_ptr` with one ref
-        /// taken), and invokes `callback(req, res)`. The plain-HTTP and HTTPS
-        /// monomorphizations differ only in the `Response<SSL>` opaque type.
+        /// taken), and invokes `callback(req, res)`.
         ///
         /// `&JSGlobalObject` / `&mut Option<_>` discharge the deref'd-param
         /// preconditions; `request`/`response` are opaque uws
         /// handles (module-private — sole caller passes live pointers).
-        pub(super) safe fn NodeHTTPServer__onRequest_http(
+        pub(super) safe fn NodeHTTPServer__onRequest(
             any_server: usize,
             global: &jsc::JSGlobalObject,
             this_value: jsc::JSValue,
             callback: jsc::JSValue,
             method_string: jsc::JSValue,
             request: *mut uws_sys::Request,
-            response: *mut c_void, // *uws.NewApp(false).Response
-            node_response_ptr: &mut Option<bun_ptr::RefPtr<NodeHTTPResponse>>,
-        ) -> jsc::JSValue;
-
-        pub(super) safe fn NodeHTTPServer__onRequest_https(
-            any_server: usize,
-            global: &jsc::JSGlobalObject,
-            this_value: jsc::JSValue,
-            callback: jsc::JSValue,
-            method_string: jsc::JSValue,
-            request: *mut uws_sys::Request,
-            response: *mut c_void, // *uws.NewApp(true).Response
+            is_ssl: bool,
+            response: &uws_sys::uws_res,
             node_response_ptr: &mut Option<bun_ptr::RefPtr<NodeHTTPResponse>>,
         ) -> jsc::JSValue;
     }
@@ -3638,11 +3453,10 @@ impl AnyServer {
         req: &mut uws::Request,
         resp: uws::AnyResponse,
         global: &jsc::JSGlobalObject,
-        method: Option<bun_http::Method>,
     ) -> jsc::JsResult<Option<SavedRequest>> {
         let req: &mut uws_sys::Request = req;
         Ok(any_server_dispatch_resp!(self, resp, |s, r| {
-            let Some((request, ctx)) = s.prepare_js_request_context(req, r, method) else {
+            let Some((request, ctx)) = s.prepare_js_request_context(req, r) else {
                 return Ok(None);
             };
             Some(DispatchedRequest(request.wrap_for_bake(global)).save(&ctx, global, req, r))

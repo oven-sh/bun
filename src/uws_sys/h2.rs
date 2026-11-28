@@ -1,18 +1,37 @@
-//! HTTP/2 bindings. Method names mirror NewApp/NewResponse (and h3) 1:1 so
+//! HTTP/2 for `Bun.serve()`. Method names mirror NewApp/NewResponse (and h3) 1:1 so
 //! callers (including the AnyResponse dispatch arms) see the same surface
-//! regardless of transport. Requests are [`crate::h3::Request`]: both
-//! transports hand C++ the same decoded header list.
+//! regardless of transport. Requests are [`crate::h3::Request`].
 
-use core::ffi::c_void;
+use core::cell::Cell;
+use core::ffi::{c_int, c_void};
+use core::mem::ManuallyDrop;
 use core::ptr;
+use core::sync::atomic::Ordering;
+use std::rc::Rc;
+use std::time::Instant;
 
-use crate::SocketAddress;
+use bun_core::ffi::slice;
+use bun_http_types::Method::Method;
+use bun_http2::server;
+use bun_ptr::{AnyRefCounted, BackRef, RefPtr};
+
+use crate::app::{self, BUN_DEFAULT_MAX_HTTP_HEADER_SIZE, ConnectionChange, Http2, Http2App};
+use crate::h3::Head;
+use crate::http1::{VACATED_LEN, VACATED_OFFSET};
+use crate::quic::Header;
+use crate::request::Routes;
 use crate::response::{State, WriteResult};
-use crate::thunk;
-use crate::{AnyRequest, AnyResponse};
-use bun_ptr::{AnyRefCounted, RefPtr};
+use crate::socket_group::VTable;
+use crate::{
+    AnyRequest, AnyResponse, CloseCode, Loop, SocketAddress, SocketGroup, SocketKind, thunk,
+    us_socket_t, uws_res,
+};
 
 pub use crate::h3::Request;
+
+type Server = server::Server<Host>;
+type Connection = server::Connection<Host>;
+type Stream = server::Stream<Host>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Response
@@ -21,32 +40,35 @@ pub use crate::h3::Request;
 bun_opaque::opaque_ffi! { pub struct Response; }
 
 impl Response {
-    pub fn end(&mut self, data: &[u8], close_connection: bool) {
-        // SAFETY: self is a live FFI handle; data ptr/len valid for read
-        unsafe { c::uws_h2_res_end(self, data.as_ptr(), data.len(), close_connection) }
+    fn of<'a>(stream: &Rc<Stream>) -> &'a mut Self {
+        Self::opaque_mut(Rc::as_ptr(stream).cast_mut().cast())
     }
-    pub(crate) fn try_end(&mut self, data: &[u8], total: usize, close_connection: bool) -> bool {
-        // SAFETY: self is a live FFI handle; data ptr/len valid for read
-        unsafe { c::uws_h2_res_try_end(self, data.as_ptr(), data.len(), total, close_connection) }
+    fn stream(&self) -> ManuallyDrop<Rc<Stream>> {
+        // SAFETY: from `of`. Its connection holds it for as long as a handler may.
+        ManuallyDrop::new(unsafe { Rc::from_raw(self.as_mut_ptr().cast()) })
     }
-    pub fn end_without_body(&mut self, close_connection: bool) {
-        c::uws_h2_res_end_without_body(self, close_connection)
+
+    pub fn end(&mut self, data: &[u8], _close_connection: bool) {
+        self.stream().end(data)
     }
-    pub(crate) fn end_stream(&mut self, close_connection: bool) {
-        c::uws_h2_res_end_stream(self, close_connection)
+    pub(crate) fn try_end(&mut self, data: &[u8], total: usize, _close_connection: bool) -> bool {
+        self.stream().try_end(data, total as u64)
     }
-    pub(crate) fn end_send_file(&mut self, write_offset: u64, close_connection: bool) {
-        c::uws_h2_res_end_sendfile(self, write_offset, close_connection)
+    pub fn end_without_body(&mut self, _close_connection: bool) {
+        self.stream().end_without_body()
+    }
+    pub(crate) fn end_stream(&mut self, _close_connection: bool) {
+        self.stream().end_stream()
+    }
+    pub(crate) fn end_send_file(&mut self, _write_offset: u64, _close_connection: bool) {
+        self.stream().end_stream()
     }
     /// Streams share a connection; the TCP close-when-idle gate has no per-stream equivalent.
     pub(crate) fn close_if_done_and_marked(&mut self) {}
     pub(crate) fn write(&mut self, data: &[u8]) -> WriteResult {
-        let mut len: usize = data.len();
-        // SAFETY: self is a live FFI handle; data ptr valid for read; len out-ptr is a valid local
-        if unsafe { c::uws_h2_res_write(self, data.as_ptr(), &raw mut len) } {
-            WriteResult::WantMore(len)
-        } else {
-            WriteResult::Backpressure(len)
+        match self.stream().write(data) {
+            Ok(len) => WriteResult::WantMore(len),
+            Err(len) => WriteResult::Backpressure(len),
         }
     }
     pub(crate) fn try_write_body(&mut self, data: &[u8], _is_first: bool) -> usize {
@@ -59,62 +81,57 @@ impl Response {
         let _ = self.write(data);
     }
     pub fn write_status(&mut self, status: &[u8]) {
-        // SAFETY: self is a live FFI handle; status ptr/len valid for read
-        unsafe { c::uws_h2_res_write_status(self, status.as_ptr(), status.len()) }
+        self.stream().write_status(status)
     }
     pub fn write_header(&mut self, key: &[u8], value: &[u8]) {
-        // SAFETY: self is a live FFI handle; key/value ptr+len valid for read
-        unsafe {
-            c::uws_h2_res_write_header(self, key.as_ptr(), key.len(), value.as_ptr(), value.len())
-        }
+        self.stream().write_header(key, value)
     }
     pub(crate) fn write_header_int(&mut self, key: &[u8], value: u64) {
-        // SAFETY: self is a live FFI handle; key ptr/len valid for read
-        unsafe { c::uws_h2_res_write_header_int(self, key.as_ptr(), key.len(), value) }
+        self.stream().write_header_int(key, value)
     }
     pub(crate) fn write_mark(&mut self) {
-        c::uws_h2_res_write_mark(self)
+        self.stream().write_date()
     }
     pub(crate) fn mark_wrote_content_length_header(&mut self) {
-        c::uws_h2_res_mark_wrote_content_length_header(self)
+        self.stream().mark(server::State::WROTE_CONTENT_LENGTH)
     }
     pub(crate) fn mark_wrote_date_header(&mut self) {
-        c::uws_h2_res_mark_wrote_date_header(self)
+        self.stream().mark(server::State::WROTE_DATE)
     }
     pub(crate) fn write_continue(&mut self) {
-        c::uws_h2_res_write_continue(self)
+        self.stream().write_continue()
     }
     pub(crate) fn write_informational(&mut self, _data: &[u8]) {
         // node:http (the only caller) never reaches HTTP/2; kept for AnyResponse dispatch parity.
     }
-    pub(crate) fn flush_headers(&mut self, immediate: bool) {
-        c::uws_h2_res_flush_headers(self, immediate)
+    pub(crate) fn flush_headers(&mut self, _immediate: bool) {
+        self.stream().flush_headers()
     }
     /// The handler started consuming the request body: widen this stream's
     /// receive window from the small initial value.
     pub fn grow_request_window(&mut self) {
-        c::uws_h2_res_grow_request_window(self)
+        self.stream().widen_receive_window()
     }
     pub(crate) fn pause(&mut self) {
-        c::uws_h2_res_pause(self)
+        self.stream().pause()
     }
     pub(crate) fn resume(&mut self) {
-        c::uws_h2_res_resume(self)
+        self.stream().resume()
     }
     pub fn timeout(&mut self, seconds: u8) {
-        c::uws_h2_res_timeout(self, seconds)
+        self.stream().set_timeout(seconds)
     }
     pub(crate) fn reset_timeout(&mut self) {
-        c::uws_h2_res_reset_timeout(self)
+        self.stream().reset_timeout()
     }
     pub(crate) fn get_buffered_amount(&mut self) -> u64 {
-        c::uws_h2_res_get_buffered_amount(self)
+        self.stream().buffered_amount() as u64
     }
     pub(crate) fn has_responded(&mut self) -> bool {
-        c::uws_h2_res_has_responded(self)
+        !self.state().is_response_pending()
     }
     pub(crate) fn state(&mut self) -> State {
-        c::uws_h2_res_state(self)
+        State::from_bits_retain(self.stream().state().bits().into())
     }
     pub(crate) fn should_close_connection(&mut self) -> bool {
         self.state().is_http_connection_close()
@@ -123,11 +140,11 @@ impl Response {
     /// `server.stop(true)` from inside the handler) even if onAborted was not
     /// armed yet; the handle stays valid until the current call unwinds.
     pub(crate) fn is_closed(&self) -> bool {
-        c::uws_h2_res_is_closed(self)
+        self.stream().is_retired()
     }
     /// END_STREAM on the HEADERS frame, or `content-length: 0`.
     pub fn request_body_ended(&self) -> bool {
-        c::uws_h2_res_request_body_ended(self)
+        self.stream().has_request_body_ended()
     }
     pub(crate) fn is_corked(&self) -> bool {
         false
@@ -139,129 +156,93 @@ impl Response {
     pub(crate) fn prepare_for_sendfile(&mut self) {}
     pub(crate) fn mark_needs_more(&mut self) {}
     pub(crate) fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
-        let mut port: i32 = 0;
-        let mut is_ipv6: bool = false;
-        let mut ip_ptr: *const u8 = ptr::null();
-        let len = c::uws_h2_res_get_remote_address_info(self, &mut ip_ptr, &mut port, &mut is_ipv6);
-        if len == 0 {
-            return None;
-        }
-        // SAFETY: uws returns a pointer+len pair valid until the next address lookup
-        // on this thread; copied before returning.
-        let ip = unsafe { bun_core::ffi::slice(ip_ptr, len) };
-        Some(SocketAddress::new(ip, port, is_ipv6))
+        uws_res::of(self.stream().socket()?.0).get_remote_socket_info()
     }
     pub(crate) fn force_close(&mut self) {
-        c::uws_h2_res_force_close(self)
+        self.stream().abort()
     }
 
     pub(crate) fn on_writable<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
         H: Fn(*mut UD, u64, AnyResponse) -> bool + Copy + 'static,
     {
-        extern "C" fn cb<UD, H>(r: &mut Response, off: u64, p: *mut c_void) -> bool
-        where
-            H: Fn(*mut UD, u64, AnyResponse) -> bool + Copy + 'static,
-        {
-            if p.is_null() {
-                return true;
-            }
-            thunk::zst::<H>()(p.cast::<UD>(), off, AnyResponse::H2(r))
-        }
-        c::uws_h2_res_on_writable(self, Some(cb::<UD, H>), ud.cast())
+        let handler: server::OnWritable<Host> = |stream, offset, ud| {
+            ud.is_null() || thunk::zst::<H>()(ud.cast(), offset, AnyResponse::H2(Self::of(stream)))
+        };
+        self.stream().set_on_writable(Some(handler), ud.cast())
     }
     pub(crate) fn clear_on_writable(&mut self) {
-        c::uws_h2_res_clear_on_writable(self)
+        self.stream().set_on_writable(None, ptr::null_mut())
+    }
+    fn on_event<UD, H>(stream: &Rc<Stream>, ud: *mut c_void)
+    where
+        H: Fn(*mut UD, AnyResponse) + Copy + 'static,
+    {
+        if !ud.is_null() {
+            thunk::zst::<H>()(ud.cast(), AnyResponse::H2(Self::of(stream)));
+        }
     }
     pub(crate) fn on_aborted<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
         H: Fn(*mut UD, AnyResponse) + Copy + 'static,
     {
-        extern "C" fn cb<UD, H>(r: &mut Response, p: *mut c_void)
-        where
-            H: Fn(*mut UD, AnyResponse) + Copy + 'static,
-        {
-            if p.is_null() {
-                return;
-            }
-            thunk::zst::<H>()(p.cast::<UD>(), AnyResponse::H2(r))
-        }
-        c::uws_h2_res_on_aborted(self, Some(cb::<UD, H>), ud.cast())
+        (self.stream()).set_on_aborted(Some(Self::on_event::<UD, H>), ud.cast())
     }
     pub(crate) fn clear_aborted(&mut self) {
-        c::uws_h2_res_on_aborted(self, None, ptr::null_mut())
+        self.stream().set_on_aborted(None, ptr::null_mut())
     }
     pub fn on_timeout<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
         H: Fn(*mut UD, AnyResponse) + Copy + 'static,
     {
-        extern "C" fn cb<UD, H>(r: &mut Response, p: *mut c_void)
-        where
-            H: Fn(*mut UD, AnyResponse) + Copy + 'static,
-        {
-            if p.is_null() {
-                return;
-            }
-            thunk::zst::<H>()(p.cast::<UD>(), AnyResponse::H2(r))
-        }
-        c::uws_h2_res_on_timeout(self, Some(cb::<UD, H>), ud.cast())
+        (self.stream()).set_on_timeout(Some(Self::on_event::<UD, H>), ud.cast())
     }
     pub(crate) fn clear_timeout(&mut self) {
-        c::uws_h2_res_on_timeout(self, None, ptr::null_mut())
+        self.stream().set_on_timeout(None, ptr::null_mut())
     }
     pub(crate) fn on_data<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
         H: Fn(*mut UD, AnyResponse, &[u8], bool) + Copy + 'static,
     {
-        // Safe fn item: nested local thunk, only coerced to the C-ABI
-        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
-        extern "C" fn cb<UD, H>(
-            r: &mut Response,
-            chunk_ptr: *const u8,
-            len: usize,
-            last: bool,
-            p: *mut c_void,
-        ) where
-            H: Fn(*mut UD, AnyResponse, &[u8], bool) + Copy + 'static,
-        {
-            if p.is_null() {
-                return;
+        let handler: server::OnData<Host> = |stream, chunk, is_last, ud| {
+            if !ud.is_null() {
+                thunk::zst::<H>()(ud.cast(), AnyResponse::H2(Self::of(stream)), chunk, is_last);
             }
-            // SAFETY: uWS callback contract — `chunk_ptr[..len]` is valid for the call.
-            let chunk = unsafe { thunk::c_slice(chunk_ptr, len) };
-            thunk::zst::<H>()(p.cast::<UD>(), AnyResponse::H2(r), chunk, last);
-        }
-        c::uws_h2_res_on_data(self, Some(cb::<UD, H>), ud.cast())
+        };
+        self.stream().set_on_data(Some(handler), ud.cast())
     }
     pub(crate) fn clear_on_data(&mut self) {
-        c::uws_h2_res_on_data(self, None, ptr::null_mut())
+        self.stream().set_on_data(None, ptr::null_mut())
     }
     pub(crate) fn corked<F: FnOnce()>(&mut self, f: F) {
-        // Safe fn item: nested local thunk, only coerced to the C-ABI
-        // fn-pointer type passed to C; body wraps its raw-ptr op explicitly.
-        extern "C" fn handle<F: FnOnce()>(user_data: *mut c_void) {
-            // SAFETY: user_data points at a stack `ManuallyDrop<F>` valid for this synchronous call.
-            let f = unsafe { core::ptr::read(user_data.cast::<F>()) };
-            f();
-        }
-        let mut f = core::mem::ManuallyDrop::new(f);
-        c::uws_h2_res_cork(self, (&raw mut *f).cast::<c_void>(), handle::<F>);
+        self.stream().cork(f)
     }
     pub(crate) fn run_corked_with_type<UD>(&mut self, handler: fn(&UD), ud: &UD) {
-        // cork is synchronous, so we stack-allocate the (handler, ud) pair and
-        // recover it inside the trampoline — same shape as H1's
-        // `Response::run_corked_with_type` so `AnyResponse` can dispatch uniformly.
-        type Ctx<'a, UD> = (fn(&UD), &'a UD);
-        // Safe fn item: nested local thunk, only coerced to the C-ABI
-        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
-        extern "C" fn cb<UD>(p: *mut c_void) {
-            // SAFETY: p points at a stack Ctx<UD> valid for this synchronous call.
-            let ctx = unsafe { &*p.cast::<Ctx<'_, UD>>() };
-            (ctx.0)(ctx.1);
-        }
-        let mut ctx: Ctx<'_, UD> = (handler, ud);
-        c::uws_h2_res_cork(self, (&raw mut ctx).cast(), cb::<UD>)
+        self.corked(|| handler(ud))
     }
+}
+
+/// SAFETY: `key` and `value` have that many bytes.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn uws_h2_res_write_header(
+    res: &mut Response,
+    key: *const u8,
+    key_len: usize,
+    value: *const u8,
+    value_len: usize,
+) {
+    // SAFETY: forwarded.
+    unsafe { res.write_header(slice(key, key_len), slice(value, value_len)) }
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn uws_h2_res_write_mark(res: &mut Response) {
+    res.write_mark()
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn uws_h2_res_state(res: &mut Response) -> *mut server::State {
+    res.stream().state.as_ptr()
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -270,54 +251,192 @@ impl Response {
 
 bun_opaque::opaque_ffi! { pub struct App; }
 
-#[derive(Copy, Clone)]
-enum RouteKind {
-    Get,
-    Post,
-    Put,
-    Delete,
-    Patch,
-    Head,
-    Options,
-    Connect,
-    Trace,
-    Any,
-}
+#[derive(Clone, Copy)]
+struct Socket(*mut us_socket_t);
 
-impl RouteKind {
-    fn from_method(m: bun_http_types::Method::Method) -> Option<RouteKind> {
-        use bun_http_types::Method::Method as M;
-        Some(match m {
-            M::GET => RouteKind::Get,
-            M::POST => RouteKind::Post,
-            M::PUT => RouteKind::Put,
-            M::DELETE => RouteKind::Delete,
-            M::PATCH => RouteKind::Patch,
-            M::OPTIONS => RouteKind::Options,
-            M::HEAD => RouteKind::Head,
-            M::CONNECT => RouteKind::Connect,
-            M::TRACE => RouteKind::Trace,
-            _ => return None,
-        })
+impl Socket {
+    fn get<'a>(self) -> &'a mut us_socket_t {
+        us_socket_t::opaque_mut(self.0)
+    }
+
+    fn data_ptr(self) -> *mut SocketData {
+        self.get().ext_ptr().wrapping_add(VACATED_OFFSET).cast()
+    }
+
+    fn connection(self) -> ManuallyDrop<Rc<Connection>> {
+        // SAFETY: from `adopt`, and `on_close` is the last event.
+        ManuallyDrop::new(unsafe { Rc::from_raw((*self.data_ptr()).connection) })
     }
 }
 
-/// Stamps one `pub fn $name<UD, H>(&mut self, p, ud, h)` per HTTP verb,
-/// each forwarding to [`App::route`] with the matching [`RouteKind`].
-/// `connect`/`trace` are intentionally omitted — exposed only via
-/// [`App::method`].
-macro_rules! h2_route_methods {
-    ($($name:ident => $kind:ident),* $(,)?) => {$(
-        pub fn $name<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
-        where
-            H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
-        {
-            Self::route(RouteKind::$kind, self, p, ud, h);
-        }
-    )*};
+struct SocketData {
+    connection: *const Connection,
+    /// It counts the socket until it closes.
+    parent: BackRef<app::Context>,
 }
 
-pub struct OwnedApp(core::ptr::NonNull<App>);
+const _: () = assert!(size_of::<SocketData>() <= VACATED_LEN);
+
+impl server::Socket for Socket {
+    fn write(self, bytes: &[u8]) -> usize {
+        self.get().write(bytes).max(0) as usize
+    }
+    fn request_writable(self) {
+        self.get().send_file_needs_more()
+    }
+    fn shutdown(self) {
+        self.get().shutdown()
+    }
+    fn close(self) {
+        self.get().close(CloseCode::normal)
+    }
+    fn set_timeout(self, seconds: u32) {
+        self.get().set_timeout(seconds)
+    }
+}
+
+struct Host {
+    routes: Routes<Response, Request>,
+    date: &'static Cell<[u8; 29]>,
+    schedule_drain: Cell<Option<(fn(*mut App), *mut App)>>,
+}
+
+impl server::Host for Host {
+    type Socket = Socket;
+    type Field = Header;
+
+    fn field(name: &[u8], value: &[u8]) -> Header {
+        Header::init(name, value, None)
+    }
+    fn route(&self, stream: &Rc<Stream>, request: server::Request<'_, Header>) -> bool {
+        let head = Head {
+            target: request.path,
+            authority: request.authority,
+            fields: request.fields,
+        };
+        head.dispatch(request.method, &self.routes, Response::of(stream))
+    }
+    fn date(&self) -> [u8; 29] {
+        self.date.get()
+    }
+    fn max_header_size(&self) -> usize {
+        BUN_DEFAULT_MAX_HTTP_HEADER_SIZE.load(Ordering::Relaxed)
+    }
+    fn schedule_drain(&self) {
+        if let Some((cb, app)) = self.schedule_drain.get() {
+            cb(app);
+        }
+    }
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+}
+
+struct Context {
+    group: SocketGroup,
+    server: Rc<Server>,
+}
+
+impl Context {
+    fn new(idle_timeout_s: u32) -> Rc<Self> {
+        let host = Host {
+            routes: Routes::default(),
+            date: &Loop::get().data().date,
+            schedule_drain: Cell::new(None),
+        };
+        let context = Rc::new(Self {
+            group: SocketGroup::default(),
+            server: Server::new(host, idle_timeout_s),
+        });
+        (context.group).init(Loop::get(), Some(&VTABLE), ptr::null_mut());
+        context
+    }
+
+    fn connections(&self) -> impl Iterator<Item = Rc<Connection>> {
+        self.group
+            .sockets()
+            .map(|socket| Rc::clone(&Socket(socket).connection()))
+    }
+}
+
+impl Http2App for Context {
+    fn adopt(&self, res: &uws_res, preface_len: usize, data: &[u8]) {
+        if !res.can_upgrade() {
+            return;
+        }
+        let (parent, socket) = (res.vacate_for_http2(), Socket(res.socket().raw()));
+        // SAFETY: there is room, and no event comes before the write. The move resets the timeout.
+        unsafe {
+            socket.get().move_to(&self.group, SocketKind::Dynamic);
+            let connection = Connection::new(Rc::clone(&self.server), socket, preface_len);
+            socket.data_ptr().write(SocketData {
+                connection: Rc::into_raw(connection),
+                parent: BackRef::new(parent),
+            });
+        }
+        socket.get().set_allows_half_open(false);
+        if data.is_empty() {
+            socket.connection().flush();
+        } else {
+            socket.connection().on_data(data);
+        }
+    }
+
+    fn close_all(&self) {
+        Connection::close_all(self.connections());
+    }
+
+    fn close_idle(&self, close_when_idle: bool) -> usize {
+        Connection::close_idle(self.connections(), close_when_idle)
+    }
+}
+
+static VTABLE: VTable = VTable {
+    on_open: None,
+    on_data: Some(on_data),
+    on_fd: None,
+    on_writable: Some(on_writable),
+    on_close: Some(on_close),
+    on_timeout: Some(on_timeout),
+    on_long_timeout: None,
+    on_end: Some(on_end),
+    on_connect_error: None,
+    on_connecting_error: None,
+    on_handshake: None,
+};
+
+extern "C" fn on_data(socket: *mut us_socket_t, data: *mut u8, len: c_int) -> *mut us_socket_t {
+    if !Socket(socket).get().is_shutdown() {
+        // SAFETY: the loop lends what it read for the call.
+        (Socket(socket).connection()).on_data(unsafe { slice(data, len as usize) });
+    }
+    socket
+}
+
+extern "C" fn on_writable(socket: *mut us_socket_t) -> *mut us_socket_t {
+    Socket(socket).connection().on_writable();
+    socket
+}
+
+extern "C" fn on_close(socket: *mut us_socket_t, _: c_int, _: *mut c_void) -> *mut us_socket_t {
+    ManuallyDrop::into_inner(Socket(socket).connection()).on_close();
+    // SAFETY: from `adopt`.
+    unsafe { &(*Socket(socket).data_ptr()).parent }.report(ConnectionChange::Gone);
+    socket
+}
+
+extern "C" fn on_timeout(socket: *mut us_socket_t) -> *mut us_socket_t {
+    Socket(socket).connection().on_timeout();
+    socket
+}
+
+extern "C" fn on_end(socket: *mut us_socket_t) -> *mut us_socket_t {
+    Rc::clone(&Socket(socket).connection()).on_end();
+    socket
+}
+
+/// It has to go right before its parent.
+pub struct OwnedApp(Rc<Context>);
 
 impl OwnedApp {
     /// Attach an HTTP/2 context to `parent`: its connections that negotiate
@@ -328,83 +447,79 @@ impl OwnedApp {
         parent: &mut crate::app::App<SSL>,
         allow_http1: bool,
         idle_timeout_s: u32,
-    ) -> Option<Self> {
-        // SAFETY: parent is a live TemplatedApp<SSL>
-        let p = unsafe {
-            c::uws_h2_create_app(
-                i32::from(SSL),
-                std::ptr::from_mut(parent).cast::<crate::app::uws_app_t>(),
-                allow_http1,
-                idle_timeout_s,
-            )
-        };
-        core::ptr::NonNull::new(p).map(Self)
+    ) -> Self {
+        let context = Context::new(idle_timeout_s);
+        parent.attach_http2(Http2 {
+            app: Rc::<Context>::clone(&context),
+            allows_http1: allow_http1,
+        });
+        Self(context)
     }
 
     pub fn as_ptr(&self) -> *mut App {
-        self.0.as_ptr()
+        Rc::as_ptr(&self.0).cast_mut().cast()
     }
 }
 
 impl Drop for OwnedApp {
+    #[inline(never)]
     fn drop(&mut self) {
-        // SAFETY: created in `new`, destroyed once.
-        unsafe { c::uws_h2_app_destroy(self.as_ptr()) }
+        self.0.close_all();
+        self.0.server.cancel_drain();
     }
 }
 
 impl App {
-    /// Streams parked on backpressure need another drain pass outside the
-    /// current call; `cb(user, ctx)` should arrange for [`drain`] to run soon.
-    pub fn on_schedule_drain(
-        &mut self,
-        cb: unsafe extern "C" fn(user: *mut c_void, ctx: *mut c_void),
-        user: *mut c_void,
-    ) {
-        // SAFETY: live handle; cb/user are stored and invoked on this thread.
-        unsafe { c::uws_h2_app_on_schedule_drain(self, cb, user) }
+    fn server(&self) -> &Rc<Server> {
+        // SAFETY: from `OwnedApp::as_ptr`, which its holder keeps for as long as it uses this.
+        &unsafe { &*self.as_mut_ptr().cast::<Context>() }.server
     }
-    /// Returns true if more streams are still queued (keep the task).
+    fn routes(&self) -> &Routes<Response, Request> {
+        &self.server().host.routes
+    }
+    /// Streams parked on backpressure need another drain pass outside the
+    /// current call; `cb` should arrange for [`drain`] to run soon.
+    pub fn on_schedule_drain(&mut self, cb: fn(*mut App)) {
+        (self.server().host.schedule_drain).set(Some((cb, self.as_mut_ptr())))
+    }
+    /// True if it has to run again, with no event to wait for.
     pub fn drain(&mut self) -> bool {
-        c::uws_h2_app_drain(self)
+        Rc::clone(self.server()).drain()
     }
     pub fn clear_routes(&mut self) {
-        c::uws_h2_app_clear_routes(self)
+        self.routes().clear()
     }
 
-    fn route<UD, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: *mut UD, _handler: H)
+    fn route<UD, H>(&mut self, method: Option<Method>, pattern: &[u8], ud: *mut UD, _handler: H)
     where
         H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
     {
-        // Safe fn item: nested local thunk, only coerced to the C-ABI
-        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
-        extern "C" fn cb<UD, H>(res: &mut Response, req: &mut Request, p: *mut c_void)
+        extern "C" fn cb<UD, H>(res: *mut Response, req: *mut Request, p: *mut c_void)
         where
             H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
         {
-            // SAFETY: uWS callback contract — `p` is the registered `*mut UD`
-            // (non-null by route registration).
+            // SAFETY: `p` is the registered `*mut UD` (non-null by route registration).
             let Some(ud) = (unsafe { p.cast::<UD>().as_ref() }) else {
                 return;
             };
-            thunk::zst::<H>()(ud, req, res);
+            thunk::zst::<H>()(ud, Request::opaque_mut(req), Response::opaque_mut(res));
         }
-        Self::route_raw(which, this, pattern, Some(cb::<UD, H>), ud.cast());
+        self.routes().add(method, pattern, cb::<UD, H>, ud.cast());
     }
 
     /// `route` for an intrusively-refcounted `U` as the route userdata; see
     /// [`method_ref`](Self::method_ref).
     fn route_ref<U: AnyRefCounted + 'static, H>(
-        which: RouteKind,
-        this: &mut App,
+        &mut self,
+        method: Option<Method>,
         pattern: &[u8],
         owner: &RefPtr<U>,
     ) where
         H: Fn(RefPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
     {
         extern "C" fn cb<U: AnyRefCounted + 'static, H>(
-            res: &mut Response,
-            req: &mut Request,
+            res: *mut Response,
+            req: *mut Request,
             p: *mut c_void,
         ) where
             H: Fn(RefPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
@@ -413,56 +528,21 @@ impl App {
             let owner = unsafe { RefPtr::init_ref(p.cast::<U>()) };
             thunk::zst::<H>()(owner, AnyRequest::H3(req), AnyResponse::H2(res));
         }
-        Self::route_raw(
-            which,
-            this,
-            pattern,
-            Some(cb::<U, H>),
-            owner.as_ptr().cast(),
-        );
+        (self.routes()).add(method, pattern, cb::<U, H>, owner.as_ptr().cast());
     }
 
-    fn route_raw(
-        which: RouteKind,
-        this: &mut App,
-        pattern: &[u8],
-        cb: c::Handler,
-        ud: *mut c_void,
-    ) {
-        let f = match which {
-            RouteKind::Get => c::uws_h2_app_get,
-            RouteKind::Post => c::uws_h2_app_post,
-            RouteKind::Put => c::uws_h2_app_put,
-            RouteKind::Delete => c::uws_h2_app_delete,
-            RouteKind::Patch => c::uws_h2_app_patch,
-            RouteKind::Head => c::uws_h2_app_head,
-            RouteKind::Options => c::uws_h2_app_options,
-            RouteKind::Connect => c::uws_h2_app_connect,
-            RouteKind::Trace => c::uws_h2_app_trace,
-            RouteKind::Any => c::uws_h2_app_any,
-        };
-        // SAFETY: this is a live FFI handle; pattern ptr/len valid for read; trampoline is `extern "C"`
-        unsafe { f(this, pattern.as_ptr(), pattern.len(), cb, ud) }
-    }
-
-    h2_route_methods! {
-        get     => Get,
-        post    => Post,
-        put     => Put,
-        delete  => Delete,
-        patch   => Patch,
-        head    => Head,
-        options => Options,
-        any     => Any,
-    }
-
-    pub fn method<UD, H>(&mut self, m: bun_http_types::Method::Method, p: &[u8], ud: *mut UD, h: H)
+    pub fn any<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
     where
         H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
     {
-        if let Some(kind) = RouteKind::from_method(m) {
-            Self::route(kind, self, p, ud, h);
-        }
+        self.route(None, p, ud, h);
+    }
+
+    pub fn method<UD, H>(&mut self, m: Method, p: &[u8], ud: *mut UD, h: H)
+    where
+        H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
+    {
+        self.route(Some(m), p, ud, h);
     }
 
     /// [`method`](Self::method) with an intrusively-refcounted `U` as the
@@ -470,16 +550,14 @@ impl App {
     /// route is registered, so the trampoline can hand the handler a ref of its own.
     pub fn method_ref<U: AnyRefCounted + 'static, H>(
         &mut self,
-        m: bun_http_types::Method::Method,
+        m: Method,
         p: &[u8],
         _h: H,
         owner: &RefPtr<U>,
     ) where
         H: Fn(RefPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
     {
-        if let Some(kind) = RouteKind::from_method(m) {
-            Self::route_ref::<U, H>(kind, self, p, owner);
-        }
+        self.route_ref::<U, H>(Some(m), p, owner);
     }
 
     /// [`any`](Self::any) counterpart of [`method_ref`](Self::method_ref).
@@ -487,190 +565,6 @@ impl App {
     where
         H: Fn(RefPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
     {
-        Self::route_ref::<U, H>(RouteKind::Any, self, p, owner);
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// extern "C"
-// ──────────────────────────────────────────────────────────────────────────
-
-mod c {
-    use super::*;
-
-    pub(super) type Handler =
-        Option<unsafe extern "C" fn(&mut Response, &mut Request, *mut c_void)>;
-
-    // Opaque handles in this module are `#[repr(C)]` with `UnsafeCell<[u8; 0]>`,
-    // so `&T`/`&mut T` are ABI-identical to a non-null pointer. Shims whose
-    // only pointer arg is the opaque handle (plus value types) are `safe fn`.
-    // Shims with (ptr,len), nullable raw, *mut c_void ctx stay unsafe.
-    unsafe extern "C" {
-        pub(super) fn uws_h2_create_app(
-            ssl: i32,
-            parent: *mut crate::app::uws_app_t,
-            allow_http1: bool,
-            idle_timeout_s: u32,
-        ) -> *mut App;
-        pub(super) fn uws_h2_app_destroy(app: *mut App);
-        pub(super) fn uws_h2_app_on_schedule_drain(
-            app: *mut App,
-            cb: unsafe extern "C" fn(user: *mut c_void, ctx: *mut c_void),
-            user: *mut c_void,
-        );
-        pub(super) safe fn uws_h2_app_drain(app: &mut App) -> bool;
-        pub(super) safe fn uws_h2_app_clear_routes(app: &mut App);
-        pub(super) safe fn uws_h2_res_write_continue(res: &mut Response);
-        pub(super) fn uws_h2_app_get(
-            app: *mut App,
-            p: *const u8,
-            n: usize,
-            h: Handler,
-            ud: *mut c_void,
-        );
-        pub(super) fn uws_h2_app_post(
-            app: *mut App,
-            p: *const u8,
-            n: usize,
-            h: Handler,
-            ud: *mut c_void,
-        );
-        pub(super) fn uws_h2_app_put(
-            app: *mut App,
-            p: *const u8,
-            n: usize,
-            h: Handler,
-            ud: *mut c_void,
-        );
-        pub(super) fn uws_h2_app_delete(
-            app: *mut App,
-            p: *const u8,
-            n: usize,
-            h: Handler,
-            ud: *mut c_void,
-        );
-        pub(super) fn uws_h2_app_patch(
-            app: *mut App,
-            p: *const u8,
-            n: usize,
-            h: Handler,
-            ud: *mut c_void,
-        );
-        pub(super) fn uws_h2_app_head(
-            app: *mut App,
-            p: *const u8,
-            n: usize,
-            h: Handler,
-            ud: *mut c_void,
-        );
-        pub(super) fn uws_h2_app_options(
-            app: *mut App,
-            p: *const u8,
-            n: usize,
-            h: Handler,
-            ud: *mut c_void,
-        );
-        pub(super) fn uws_h2_app_connect(
-            app: *mut App,
-            p: *const u8,
-            n: usize,
-            h: Handler,
-            ud: *mut c_void,
-        );
-        pub(super) fn uws_h2_app_trace(
-            app: *mut App,
-            p: *const u8,
-            n: usize,
-            h: Handler,
-            ud: *mut c_void,
-        );
-        pub(super) fn uws_h2_app_any(
-            app: *mut App,
-            p: *const u8,
-            n: usize,
-            h: Handler,
-            ud: *mut c_void,
-        );
-        pub(super) safe fn uws_h2_res_state(res: &mut Response) -> State;
-        pub(super) fn uws_h2_res_end(res: *mut Response, p: *const u8, n: usize, close: bool);
-        pub(super) safe fn uws_h2_res_end_stream(res: &mut Response, close: bool);
-        pub(super) safe fn uws_h2_res_force_close(res: &mut Response);
-        pub(super) safe fn uws_h2_res_is_closed(res: &Response) -> bool;
-        pub(super) safe fn uws_h2_res_request_body_ended(res: &Response) -> bool;
-        pub(super) fn uws_h2_res_try_end(
-            res: *mut Response,
-            p: *const u8,
-            n: usize,
-            total: usize,
-            close: bool,
-        ) -> bool;
-        pub(super) safe fn uws_h2_res_end_without_body(res: &mut Response, close: bool);
-        pub(super) safe fn uws_h2_res_grow_request_window(res: &mut Response);
-        pub(super) safe fn uws_h2_res_pause(res: &mut Response);
-        pub(super) safe fn uws_h2_res_resume(res: &mut Response);
-        pub(super) fn uws_h2_res_write_status(res: *mut Response, p: *const u8, n: usize);
-        pub(super) fn uws_h2_res_write_header(
-            res: *mut Response,
-            kp: *const u8,
-            kn: usize,
-            vp: *const u8,
-            vn: usize,
-        );
-        pub(super) fn uws_h2_res_write_header_int(
-            res: *mut Response,
-            kp: *const u8,
-            kn: usize,
-            v: u64,
-        );
-        pub(super) safe fn uws_h2_res_mark_wrote_content_length_header(res: &mut Response);
-        pub(super) safe fn uws_h2_res_mark_wrote_date_header(res: &mut Response);
-        pub(super) safe fn uws_h2_res_write_mark(res: &mut Response);
-        pub(super) safe fn uws_h2_res_flush_headers(res: &mut Response, immediate: bool);
-        pub(super) fn uws_h2_res_write(res: *mut Response, p: *const u8, len: *mut usize) -> bool;
-        pub(super) safe fn uws_h2_res_has_responded(res: &mut Response) -> bool;
-        pub(super) safe fn uws_h2_res_get_buffered_amount(res: &mut Response) -> u64;
-        pub(super) safe fn uws_h2_res_reset_timeout(res: &mut Response);
-        pub(super) safe fn uws_h2_res_timeout(res: &mut Response, seconds: u8);
-        pub(super) safe fn uws_h2_res_end_sendfile(res: &mut Response, off: u64, close: bool);
-        // safe: `&mut Response` is ABI-identical to a non-null `*mut`;
-        // `cb`/`ud` are stored opaquely (never dereferenced by the C++ shim
-        // itself) — no preconditions on this call. Mirrors `uws_res_on_*`.
-        pub(super) safe fn uws_h2_res_on_writable(
-            res: &mut Response,
-            cb: Option<extern "C" fn(&mut Response, u64, *mut c_void) -> bool>,
-            ud: *mut c_void,
-        );
-        pub(super) safe fn uws_h2_res_clear_on_writable(res: &mut Response);
-        pub(super) safe fn uws_h2_res_on_aborted(
-            res: &mut Response,
-            cb: Option<extern "C" fn(&mut Response, *mut c_void)>,
-            ud: *mut c_void,
-        );
-        pub(super) safe fn uws_h2_res_on_timeout(
-            res: &mut Response,
-            cb: Option<extern "C" fn(&mut Response, *mut c_void)>,
-            ud: *mut c_void,
-        );
-        pub(super) safe fn uws_h2_res_on_data(
-            res: &mut Response,
-            cb: Option<unsafe extern "C" fn(&mut Response, *const u8, usize, bool, *mut c_void)>,
-            ud: *mut c_void,
-        );
-        // safe: cork is synchronous — `ud` is passed straight back to `cb`
-        // without being dereferenced by the C++ shim itself, so the call has
-        // no preconditions beyond the live opaque handle.
-        pub(super) safe fn uws_h2_res_cork(
-            res: &mut Response,
-            ud: *mut c_void,
-            cb: unsafe extern "C" fn(*mut c_void),
-        );
-        // Out-params are `&mut` (non-null, valid for write); the C shim only
-        // stores into them and returns a length — no read-through precondition.
-        pub(super) safe fn uws_h2_res_get_remote_address_info(
-            res: &mut Response,
-            ip: &mut *const u8,
-            port: &mut i32,
-            is_ipv6: &mut bool,
-        ) -> usize;
+        self.route_ref::<U, H>(None, p, owner);
     }
 }

@@ -148,8 +148,9 @@ For each task dequeued from the task queue:
 │          │       (safety net for any remaining microtasks)  │
 │          │                                                   │
 │          └─> RUN DEFERRED TASK QUEUE (event_loop.rs:136-138)│
-│              └─> deferred_tasks.run()                       │
-│                  (buffered writes, file sink flushes, etc.) │
+│              ├─> deferred_tasks.run()                       │
+│              │   (buffered writes, file sink flushes, etc.) │
+│              └─> deferred_http2_drains.run()                │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```

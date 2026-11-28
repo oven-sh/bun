@@ -70,7 +70,7 @@ pub(crate) extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
     // Do NOT add `symbolize=0`
     // here — LSAN's function-name suppression matching (`test/leaksan.supp`)
     // requires symbolized stacks; with symbolization disabled every entry like
-    // `leak:uws_create_app` silently stops matching and CI reports the
+    // `leak:uws_h3_create_app` silently stops matching and CI reports the
     // suppressed allocations as leaks. If local debug crashes feel slow to
     // print, set `ASAN_OPTIONS=symbolize=0` in your shell instead.
     c"detect_stack_use_after_return=0:detect_leaks=0".as_ptr()

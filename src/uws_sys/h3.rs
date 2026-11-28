@@ -2,10 +2,19 @@
 //! (including the AnyResponse dispatch arms) see the same surface regardless
 //! of transport.
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr;
+use std::rc::Rc;
+
+use bun_http_types::Method::Method;
+use bun_http_types::router::Parameters;
+use bun_http1::byte_sets::NOT_QUESTION_MARK;
+use bun_http1::request::is_path_for;
 
 use crate::SocketAddress;
+use crate::http1::Out;
+use crate::quic::Header;
+use crate::request::Routed;
 use crate::response::{State, WriteResult};
 use crate::socket_context::BunSocketContextOptions;
 use crate::thunk;
@@ -45,35 +54,136 @@ impl ListenSocket {
 // Request
 // ──────────────────────────────────────────────────────────────────────────
 
+pub(crate) struct Head<'a> {
+    pub(crate) target: &'a [u8],
+    /// Or `host`, if there is none (RFC 9114 §4.3.1).
+    pub(crate) authority: &'a [u8],
+    /// Their names are in lowercase.
+    pub(crate) fields: &'a [Header],
+}
+
+impl<'a> Head<'a> {
+    /// With the method.
+    fn new(fields: &'a [Header]) -> (&'a [u8], Self) {
+        let (mut method, mut target, mut authority) = (&b""[..], &b""[..], &b""[..]);
+        for field in fields {
+            let value = field.value_bytes();
+            match field.name_bytes() {
+                b":method" => method = value,
+                b":path" => target = value,
+                b":authority" => authority = value,
+                b"host" if authority.is_empty() => authority = value,
+                _ => {}
+            }
+        }
+        let head = Self {
+            target,
+            authority,
+            fields,
+        };
+        (method, head)
+    }
+
+    fn field(&self, name: &[u8]) -> &'a [u8] {
+        if name == b"host" {
+            return self.authority;
+        }
+        let field = self.fields.iter().find(|field| field.name_bytes() == name);
+        field.map_or(b"", Header::value_bytes)
+    }
+
+    /// False if no handler took it.
+    pub(crate) fn dispatch<Res>(
+        self,
+        method: Method,
+        routes: &crate::request::Routes<Res, Request>,
+        response: *mut Res,
+    ) -> bool {
+        let path = &self.target[..NOT_QUESTION_MARK.prefix_len(self.target)];
+        routes.dispatch(path, response, &mut Routed::new(method, self), || {})
+    }
+}
+
 bun_opaque::opaque_ffi! { pub struct Request; }
 
 impl Request {
+    fn routed(&self) -> &Routed<'_, Head<'_>> {
+        // SAFETY: `Head::dispatch` lent it to the handler that has `self` on its stack.
+        unsafe { &*self.as_mut_ptr().cast() }
+    }
     pub fn set_yield(&mut self, y: bool) {
-        c::uws_h3_req_set_yield(self, y)
+        self.routed().has_yielded.set(y)
     }
-    pub fn url(&mut self) -> &[u8] {
-        let mut p: *const u8 = ptr::null();
-        let n = c::uws_h3_req_get_url(self, &mut p);
-        // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-        unsafe { bun_core::ffi::slice(p, n) }
+    pub fn url(&self) -> &[u8] {
+        self.routed().head.target
     }
-    pub fn method(&mut self) -> &[u8] {
-        let mut p: *const u8 = ptr::null();
-        let n = c::uws_h3_req_get_method(self, &mut p);
-        // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-        unsafe { bun_core::ffi::slice(p, n) }
+    pub fn method(&self) -> Method {
+        self.routed().method
     }
-    pub fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
-        let mut p: *const u8 = ptr::null();
-        // SAFETY: self is a live FFI handle; name ptr/len valid for read; out-ptr is a valid local
-        let n = unsafe { c::uws_h3_req_get_header(self, name.as_ptr(), name.len(), &raw mut p) };
-        if n == 0 {
-            None
-        } else {
-            // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-            Some(unsafe { bun_core::ffi::slice(p, n) })
+    pub fn header(&self, name: &[u8]) -> Option<&[u8]> {
+        Some(self.routed().head.field(name)).filter(|value| !value.is_empty())
+    }
+    pub fn parameters(&self) -> &Parameters<'_> {
+        &self.routed().parameters
+    }
+}
+
+/// The regular fields, and the authority as the only `host` after them. `index` starts at 0.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__MuxRequest__nextField(
+    request: &Request,
+    index: &mut usize,
+    name: Out<'_>,
+    value: Out<'_>,
+) -> bool {
+    let head = &request.routed().head;
+    let has_authority = !head.authority.is_empty();
+    let field = loop {
+        *index += 1;
+        match head.fields.get(*index - 1) {
+            Some(field) => match field.name_bytes() {
+                [b':', ..] => {}
+                b"host" if has_authority => {}
+                name => break (name, field.value_bytes()),
+            },
+            None if has_authority && *index == head.fields.len() + 1 => {
+                break (&b"host"[..], head.authority);
+            }
+            None => return false,
         }
-    }
+    };
+    name.write(field.0.into());
+    value.write(field.1.into());
+    true
+}
+
+type Routes = crate::request::Routes<Response, Request>;
+
+/// SAFETY: there are `len` of the `fields`.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn uws_h3_dispatch(
+    routes: &Routes,
+    response: &mut Response,
+    fields: *const Header,
+    len: c_uint,
+) {
+    // SAFETY: forwarded.
+    let (method, head) = Head::new(unsafe { bun_core::ffi::slice(fields, len as usize) });
+    let status: &[u8] = match Method::find_uppercase(method) {
+        None => b"501 Not Implemented",
+        Some(_) if !is_path_for(method, head.target) => b"400 Bad Request",
+        Some(method) => {
+            if head.field(b"expect") == b"100-continue" {
+                response.write_continue();
+            }
+            if head.dispatch(method, routes, response) {
+                return;
+            }
+            b"404 Not Found"
+        }
+    };
+    response.write_status(status);
+    response.end(b"", false);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -316,72 +426,34 @@ impl Response {
 
 bun_opaque::opaque_ffi! { pub struct App; }
 
-#[derive(Copy, Clone)]
-enum RouteKind {
-    Get,
-    Post,
-    Put,
-    Delete,
-    Patch,
-    Head,
-    Options,
-    Connect,
-    Trace,
-    Any,
-}
-
-impl RouteKind {
-    fn from_method(m: bun_http_types::Method::Method) -> Option<RouteKind> {
-        use bun_http_types::Method::Method as M;
-        Some(match m {
-            M::GET => RouteKind::Get,
-            M::POST => RouteKind::Post,
-            M::PUT => RouteKind::Put,
-            M::DELETE => RouteKind::Delete,
-            M::PATCH => RouteKind::Patch,
-            M::OPTIONS => RouteKind::Options,
-            M::HEAD => RouteKind::Head,
-            M::CONNECT => RouteKind::Connect,
-            M::TRACE => RouteKind::Trace,
-            _ => return None,
-        })
-    }
-}
-
 #[derive(Debug, strum::IntoStaticStr)]
 pub enum AddServerNameError {
     FailedToAddServerName,
 }
 bun_core::impl_tag_error!(AddServerNameError);
 
-/// Stamps one `pub fn $name<UD, H>(&mut self, p, ud, h)` per HTTP verb,
-/// each forwarding to [`App::route`] with the matching [`RouteKind`].
-/// `connect`/`trace` are intentionally omitted — h3 exposes those only via
-/// [`App::method`].
-macro_rules! h3_route_methods {
-    ($($name:ident => $kind:ident),* $(,)?) => {$(
-        pub fn $name<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
-        where
-            H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
-        {
-            Self::route(RouteKind::$kind, self, p, ud, h);
-        }
-    )*};
-}
-
 /// Never made when `!SSL`, so that a server without TLS links none of this.
-pub struct OwnedApp<const SSL: bool>(core::ptr::NonNull<App>);
+pub struct OwnedApp<const SSL: bool> {
+    app: ptr::NonNull<App>,
+    _routes: Rc<Routes>,
+}
 
 impl<const SSL: bool> OwnedApp<SSL> {
     pub fn new(opts: &BunSocketContextOptions, idle_timeout_s: u32) -> Option<Self> {
         if !SSL {
             return None;
         }
-        core::ptr::NonNull::new(c::uws_h3_create_app(*opts, idle_timeout_s)).map(Self)
+        let routes = Rc::<Routes>::default();
+        // SAFETY: `routes` is dropped after the app is destroyed.
+        let p = unsafe { c::uws_h3_create_app(*opts, idle_timeout_s, Rc::as_ptr(&routes).cast()) };
+        Some(Self {
+            app: ptr::NonNull::new(p)?,
+            _routes: routes,
+        })
     }
 
     pub fn as_ptr(&self) -> *mut App {
-        self.0.as_ptr()
+        self.app.as_ptr()
     }
 }
 
@@ -409,43 +481,44 @@ impl App {
     pub fn close(&mut self) {
         c::uws_h3_app_close(self)
     }
+    fn routes(&mut self) -> &Routes {
+        // SAFETY: `OwnedApp` owns both.
+        unsafe { &*c::uws_h3_app_routes(self).cast() }
+    }
     pub fn clear_routes(&mut self) {
-        c::uws_h3_app_clear_routes(self)
+        self.routes().clear()
     }
 
-    fn route<UD, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: *mut UD, _handler: H)
+    fn route<UD, H>(&mut self, method: Option<Method>, pattern: &[u8], ud: *mut UD, _handler: H)
     where
         H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
     {
-        // Safe fn item: nested local thunk, only coerced to the C-ABI
-        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
-        extern "C" fn cb<UD, H>(res: &mut Response, req: &mut Request, p: *mut c_void)
+        extern "C" fn cb<UD, H>(res: *mut Response, req: *mut Request, p: *mut c_void)
         where
             H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
         {
-            // SAFETY: uWS callback contract — `p` is the registered `*mut UD`
-            // (non-null by route registration).
+            // SAFETY: `p` is the registered `*mut UD` (non-null by route registration).
             let Some(ud) = (unsafe { p.cast::<UD>().as_ref() }) else {
                 return;
             };
-            thunk::zst::<H>()(ud, req, res);
+            thunk::zst::<H>()(ud, Request::opaque_mut(req), Response::opaque_mut(res));
         }
-        Self::route_raw(which, this, pattern, Some(cb::<UD, H>), ud.cast());
+        self.routes().add(method, pattern, cb::<UD, H>, ud.cast());
     }
 
     /// `route` for an intrusively-refcounted `U` as the route userdata; see
     /// [`method_ref`](Self::method_ref).
     fn route_ref<U: AnyRefCounted + 'static, H>(
-        which: RouteKind,
-        this: &mut App,
+        &mut self,
+        method: Option<Method>,
         pattern: &[u8],
         owner: &RefPtr<U>,
     ) where
         H: Fn(RefPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
     {
         extern "C" fn cb<U: AnyRefCounted + 'static, H>(
-            res: &mut Response,
-            req: &mut Request,
+            res: *mut Response,
+            req: *mut Request,
             p: *mut c_void,
         ) where
             H: Fn(RefPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
@@ -454,56 +527,21 @@ impl App {
             let owner = unsafe { RefPtr::init_ref(p.cast::<U>()) };
             thunk::zst::<H>()(owner, AnyRequest::H3(req), AnyResponse::H3(res));
         }
-        Self::route_raw(
-            which,
-            this,
-            pattern,
-            Some(cb::<U, H>),
-            owner.as_ptr().cast(),
-        );
+        (self.routes()).add(method, pattern, cb::<U, H>, owner.as_ptr().cast());
     }
 
-    fn route_raw(
-        which: RouteKind,
-        this: &mut App,
-        pattern: &[u8],
-        cb: c::Handler,
-        ud: *mut c_void,
-    ) {
-        let f = match which {
-            RouteKind::Get => c::uws_h3_app_get,
-            RouteKind::Post => c::uws_h3_app_post,
-            RouteKind::Put => c::uws_h3_app_put,
-            RouteKind::Delete => c::uws_h3_app_delete,
-            RouteKind::Patch => c::uws_h3_app_patch,
-            RouteKind::Head => c::uws_h3_app_head,
-            RouteKind::Options => c::uws_h3_app_options,
-            RouteKind::Connect => c::uws_h3_app_connect,
-            RouteKind::Trace => c::uws_h3_app_trace,
-            RouteKind::Any => c::uws_h3_app_any,
-        };
-        // SAFETY: this is a live FFI handle; pattern ptr/len valid for read; trampoline is `extern "C"`
-        unsafe { f(this, pattern.as_ptr(), pattern.len(), cb, ud) }
-    }
-
-    h3_route_methods! {
-        get     => Get,
-        post    => Post,
-        put     => Put,
-        delete  => Delete,
-        patch   => Patch,
-        head    => Head,
-        options => Options,
-        any     => Any,
-    }
-
-    pub fn method<UD, H>(&mut self, m: bun_http_types::Method::Method, p: &[u8], ud: *mut UD, h: H)
+    pub fn any<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
     where
         H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
     {
-        if let Some(kind) = RouteKind::from_method(m) {
-            Self::route(kind, self, p, ud, h);
-        }
+        self.route(None, p, ud, h);
+    }
+
+    pub fn method<UD, H>(&mut self, m: Method, p: &[u8], ud: *mut UD, h: H)
+    where
+        H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
+    {
+        self.route(Some(m), p, ud, h);
     }
 
     /// [`method`](Self::method) with an intrusively-refcounted `U` as the
@@ -511,16 +549,14 @@ impl App {
     /// route is registered, so the trampoline can hand the handler a ref of its own.
     pub fn method_ref<U: AnyRefCounted + 'static, H>(
         &mut self,
-        m: bun_http_types::Method::Method,
+        m: Method,
         p: &[u8],
         _h: H,
         owner: &RefPtr<U>,
     ) where
         H: Fn(RefPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
     {
-        if let Some(kind) = RouteKind::from_method(m) {
-            Self::route_ref::<U, H>(kind, self, p, owner);
-        }
+        self.route_ref::<U, H>(Some(m), p, owner);
     }
 
     /// [`any`](Self::any) counterpart of [`method_ref`](Self::method_ref).
@@ -528,7 +564,7 @@ impl App {
     where
         H: Fn(RefPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
     {
-        Self::route_ref::<U, H>(RouteKind::Any, self, p, owner);
+        self.route_ref::<U, H>(None, p, owner);
     }
 
     pub fn listen_with_config<UD, H>(&mut self, ud: *mut UD, _handler: H, config: &ListenConfig)
@@ -582,8 +618,6 @@ pub struct ListenConfig {
 mod c {
     use super::*;
 
-    pub(super) type Handler =
-        Option<unsafe extern "C" fn(&mut Response, &mut Request, *mut c_void)>;
     pub(super) type ListenHandler = Option<unsafe extern "C" fn(*mut ListenSocket, *mut c_void)>;
 
     // Opaque handles in this module are `#[repr(C)]` with `UnsafeCell<[u8; 0]>`,
@@ -591,89 +625,20 @@ mod c {
     // only pointer arg is the opaque handle (plus value types) are `safe fn`.
     // Shims with (ptr,len), nullable raw, *mut c_void ctx stay unsafe.
     unsafe extern "C" {
-        pub(super) safe fn uws_h3_create_app(
+        pub(super) fn uws_h3_create_app(
             opts: BunSocketContextOptions,
             idle_timeout_s: u32,
+            routes: *const c_void,
         ) -> *mut App;
         pub(super) fn uws_h3_app_destroy(app: *mut App);
         pub(super) safe fn uws_h3_app_close(app: &mut App);
-        pub(super) safe fn uws_h3_app_clear_routes(app: &mut App);
+        pub(super) safe fn uws_h3_app_routes(app: &mut App) -> *const c_void;
         pub(super) fn uws_h3_app_add_server_name(
             app: *mut App,
             hostname: *const c_char,
             opts: BunSocketContextOptions,
         ) -> bool;
         pub(super) safe fn uws_h3_res_write_continue(res: &mut Response);
-        pub(super) fn uws_h3_app_get(
-            app: *mut App,
-            p: *const u8,
-            n: usize,
-            h: Handler,
-            ud: *mut c_void,
-        );
-        pub(super) fn uws_h3_app_post(
-            app: *mut App,
-            p: *const u8,
-            n: usize,
-            h: Handler,
-            ud: *mut c_void,
-        );
-        pub(super) fn uws_h3_app_put(
-            app: *mut App,
-            p: *const u8,
-            n: usize,
-            h: Handler,
-            ud: *mut c_void,
-        );
-        pub(super) fn uws_h3_app_delete(
-            app: *mut App,
-            p: *const u8,
-            n: usize,
-            h: Handler,
-            ud: *mut c_void,
-        );
-        pub(super) fn uws_h3_app_patch(
-            app: *mut App,
-            p: *const u8,
-            n: usize,
-            h: Handler,
-            ud: *mut c_void,
-        );
-        pub(super) fn uws_h3_app_head(
-            app: *mut App,
-            p: *const u8,
-            n: usize,
-            h: Handler,
-            ud: *mut c_void,
-        );
-        pub(super) fn uws_h3_app_options(
-            app: *mut App,
-            p: *const u8,
-            n: usize,
-            h: Handler,
-            ud: *mut c_void,
-        );
-        pub(super) fn uws_h3_app_connect(
-            app: *mut App,
-            p: *const u8,
-            n: usize,
-            h: Handler,
-            ud: *mut c_void,
-        );
-        pub(super) fn uws_h3_app_trace(
-            app: *mut App,
-            p: *const u8,
-            n: usize,
-            h: Handler,
-            ud: *mut c_void,
-        );
-        pub(super) fn uws_h3_app_any(
-            app: *mut App,
-            p: *const u8,
-            n: usize,
-            h: Handler,
-            ud: *mut c_void,
-        );
         pub(super) fn uws_h3_app_listen_with_config(
             app: *mut App,
             host: *const c_char,
@@ -767,19 +732,6 @@ mod c {
             ip: &mut *const u8,
             port: &mut i32,
             is_ipv6: &mut bool,
-        ) -> usize;
-
-        pub(super) safe fn uws_h3_req_set_yield(req: &mut Request, y: bool);
-        // Out-param `out` is `&mut *const u8` (non-null, valid for write); the C
-        // shim only stores a pointer into request-owned storage and returns its
-        // length — no read-through precondition, so `safe fn`.
-        pub(super) safe fn uws_h3_req_get_url(req: &mut Request, out: &mut *const u8) -> usize;
-        pub(super) safe fn uws_h3_req_get_method(req: &mut Request, out: &mut *const u8) -> usize;
-        pub(super) fn uws_h3_req_get_header(
-            req: *mut Request,
-            name: *const u8,
-            len: usize,
-            out: *mut *const u8,
         ) -> usize;
     }
 }

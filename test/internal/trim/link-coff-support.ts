@@ -9,7 +9,7 @@ import { CoffObject } from "../../../scripts/build/trim/coff-objects.ts";
 import type { FeatureName } from "../../../scripts/build/trim/features.ts";
 import { peImage } from "../../../scripts/build/trim/linked-image.ts";
 import type { TrimTable } from "../../../scripts/build/trim/table.ts";
-import type { BuiltinEntry } from "../../../scripts/build/trim/types.ts";
+import type { BuiltinEntry, CxxFunctionPattern } from "../../../scripts/build/trim/types.ts";
 import {
   baseSources,
   cleanExit,
@@ -59,6 +59,7 @@ export interface LinkOptions {
   keepsArchivedObjects?: boolean;
   inputs?: string[];
   minimums?: Record<FeatureName, number>;
+  cxxFunctions?: Record<FeatureName, CxxFunctionPattern[]>;
   builtins?: BuiltinEntry[];
   isFreestanding?: boolean;
   afterCompile?(folder: string): void;
@@ -116,8 +117,8 @@ export async function plainLink(folder: string, options: LinkOptions = {}) {
 
 export async function wrapped(folder: string, options: LinkOptions = {}) {
   await prepareInputs(folder, options, name => name);
-  const { minimums, builtins } = options;
-  const linkInputs = writeLinkInputs(folder, { minimums, builtins });
+  const { minimums, builtins, cxxFunctions } = options;
+  const linkInputs = writeLinkInputs(folder, { minimums, builtins, cxxFunctions });
   return await run(linkArguments(linkInputs, linkCommand(options, name => name), { demangler: tools["llvm-cxxfilt"]! }), folder);
 }
 

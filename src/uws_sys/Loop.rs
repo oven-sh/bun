@@ -1,9 +1,14 @@
-use core::cell::Cell;
+use core::cell::{Cell, OnceCell, RefCell};
 use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::NonNull;
 
+use bun_http_types::ETag::wtf::write_http_date;
+use bun_ptr::BackRef;
+
 use crate::InternalLoopData;
 use crate::Timespec;
+use crate::async_socket::CorkSlots;
+use crate::web_socket::{SharedDeflate, WebSockets};
 
 #[cfg(windows)]
 use bun_libuv_sys as uv;
@@ -495,7 +500,7 @@ pub type Loop = WindowsLoop;
 #[cfg(not(windows))]
 pub type Loop = PosixLoop;
 
-/// What `Loop::get` returns. It has uWS's `LoopData` behind it, and a loop from `create` does not.
+/// What `Loop::get` returns. It has a [`LoopData`] behind it, and a loop from `create` does not.
 #[repr(transparent)]
 pub struct ThreadLoop(Loop);
 
@@ -508,14 +513,104 @@ impl core::ops::Deref for ThreadLoop {
 }
 
 impl ThreadLoop {
-    pub fn update_date(&self) {
-        c::uws_loop_date_header_timer_update(self);
+    pub(crate) fn data(&self) -> &LoopData {
+        // SAFETY: it is one.
+        unsafe { LoopData::of(&raw const self.0) }
     }
 
-    /// Runs the uWS pre handler, which flushes queued `publish()` batches and leftover corks.
+    pub fn update_date(&self) {
+        self.data().update_date();
+    }
+
+    /// Queued `publish()` batches and leftover corks.
     pub fn flush_pending_writes(&self) {
-        // SAFETY: this thread's live loop, with the `LoopData` that lists the writes.
-        unsafe { c::uws_loop_flush_pending_writes(self) };
+        self.data().flush_pending_writes();
+    }
+}
+
+/// What the servers of a thread share.
+#[repr(C, align(16))]
+pub(crate) struct LoopData {
+    /// Http3Response.h reads it.
+    pub(crate) date: Cell<[u8; 29]>,
+    pub(crate) cork_slots: CorkSlots,
+    /// Before and after an iteration. Through a pointer, so that a program without a server can be trimmed.
+    pub(crate) topic_drains: RefCell<Vec<(BackRef<WebSockets>, fn(&WebSockets))>>,
+    pub(crate) shared_deflate: OnceCell<Box<SharedDeflate>>,
+}
+
+const _: () = assert!(core::mem::offset_of!(LoopData, date) == 0);
+
+impl LoopData {
+    /// SAFETY: `loop_` is a [`ThreadLoop`] that lives for `'a`.
+    pub(crate) unsafe fn of<'a>(loop_: *const Loop) -> &'a Self {
+        // SAFETY: written by `Bun__ThreadLoop__create`.
+        unsafe { &*c::us_loop_ext(loop_).cast() }
+    }
+
+    fn update_date(&self) {
+        let now = bun_core::time::milli_timestamp().max(1) as u64;
+        if let Ok(date) = write_http_date(&mut [0; 32], now).try_into() {
+            self.date.set(date);
+        }
+    }
+
+    fn flush_pending_writes(&self) {
+        self.drain_topics();
+        self.cork_slots.uncork_all();
+    }
+
+    fn drain_topics(&self) {
+        if !self.topic_drains.borrow().is_empty() {
+            self.call_topic_drains();
+        }
+    }
+
+    #[inline(never)]
+    fn call_topic_drains(&self) {
+        for (web_sockets, drain) in &*self.topic_drains.borrow() {
+            drain(web_sockets);
+        }
+    }
+}
+
+/// Null if there are no descriptors left.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__ThreadLoop__create(native_loop: *mut c_void) -> *mut Loop {
+    unsafe extern "C" fn wakeup(_: *mut Loop) {}
+    unsafe extern "C" fn pre(loop_: *mut Loop) {
+        // SAFETY: the one that is created here.
+        unsafe { LoopData::of(loop_) }.flush_pending_writes();
+    }
+    unsafe extern "C" fn post(loop_: *mut Loop) {
+        // SAFETY: the one that is created here.
+        unsafe { LoopData::of(loop_) }.drain_topics();
+    }
+
+    let size = size_of::<LoopData>() as c_uint;
+    // SAFETY: a new loop, with room for the data.
+    unsafe {
+        let loop_ = c::us_create_loop(native_loop, Some(wakeup), Some(pre), Some(post), size);
+        if !loop_.is_null() {
+            c::us_loop_ext(loop_).cast::<LoopData>().write(LoopData {
+                date: Cell::new([0; 29]),
+                cork_slots: CorkSlots::new(),
+                topic_drains: RefCell::default(),
+                shared_deflate: OnceCell::new(),
+            });
+            LoopData::of(loop_).update_date();
+        }
+        loop_
+    }
+}
+
+/// SAFETY: from `Bun__ThreadLoop__create`, and not used again.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__ThreadLoop__free(loop_: *mut Loop) {
+    // SAFETY: forwarded.
+    unsafe {
+        c::us_loop_ext(loop_).cast::<LoopData>().drop_in_place();
+        c::us_loop_free(loop_);
     }
 }
 
@@ -557,8 +652,7 @@ mod c {
         pub(super) safe fn uws_get_loop() -> *mut ThreadLoop;
         #[cfg(windows)]
         pub(super) fn uws_get_loop_with_native(native: *mut c_void) -> *mut ThreadLoop;
-        pub(super) safe fn uws_loop_date_header_timer_update(loop_: &ThreadLoop);
-        pub(super) fn uws_loop_flush_pending_writes(loop_: &ThreadLoop);
+        pub(super) fn us_loop_ext(loop_: *const Loop) -> *mut c_void;
     }
 }
 // Raw, for callers on another thread that hold only a pointer (e.g. bun_http's

@@ -102,7 +102,7 @@ impl DirectoryRoute {
     }
 
     pub(crate) fn on_request(self: RefPtr<Self>, req: AnyRequest, resp: AnyResponse) {
-        let method = Method::find(req.method()).unwrap_or(Method::GET);
+        let method = req.method();
         self.on(req, resp, method);
     }
 
@@ -271,7 +271,7 @@ impl DirectoryRoute {
                 .then_some(Subpath::File(f, s, true));
         }
         // Trailing slash on a regular file is a miss (nginx, npm `send`):
-        // `/file/` would route past an exact `/file` handler in uWS.
+        // `/file/` would route past an exact `/file` handler.
         (bun_sys::S::ISREG(mode) && !had_trailing_slash).then_some(Subpath::File(file, stat, false))
     }
 
@@ -371,9 +371,9 @@ fn build_slash_redirect(url: &[u8], out: &mut [u8]) -> usize {
     path.len() + 1 + q
 }
 
-/// Split a raw request-target (uWS `getFullUrl()`) into `(path, query)`.
+/// Split a raw request-target into `(path, query)`.
 /// Strips `?query` first, then any absolute-form scheme+authority (RFC 9112
-/// §3.2.2), mirroring uWS `getUrlForRouting()` exactly. `query` includes the
+/// §3.2.2), mirroring `bun_http1::request::Request::path` exactly. `query` includes the
 /// leading `?` when present.
 fn path_and_query(url: &[u8]) -> (&[u8], &[u8]) {
     let (path, query) = match strings::index_of_char(url, b'?') {
@@ -449,9 +449,7 @@ fn resolve_subpath(url: &[u8], url_prefix: &[u8], out: &mut [u8]) -> Option<(usi
         return None;
     }
 
-    // uWS routed on the raw URL split on literal `/` with no decode and no
-    // normalization. Any transformation we apply that uWS did not creates a
-    // path uWS never matched, which can bypass a more-specific overlapping
+    // router.rs matched the raw URL split on `/`. A transformation of it can bypass a more-specific overlapping
     // route. So reject every such transformation: `%XX` whose decoded byte is
     // a `pchar` (would let `%61dmin` reach `admin/`); encoded `%2F`; and any
     // non-canonical segment (empty / `.` / `..`). Route segments can only
@@ -590,7 +588,7 @@ mod tests {
 
     #[test]
     fn resolve_route_precedence_parity() {
-        // These all route to the outer wildcard in uWS (which matches on raw
+        // These all route to the outer wildcard (router.rs matches on raw
         // segments) but would reach a file under an inner prefix if we
         // normalized, decoded `/`, or decoded a pchar. Reject so the served
         // path equals the routed path.
@@ -604,7 +602,7 @@ mod tests {
         assert_eq!(resolve(b"/static/a/./b.txt", b"/static/"), None);
         assert_eq!(resolve(b"/static/a/../b.txt", b"/static/"), None);
         assert_eq!(resolve(b"/static/a/..", b"/static/"), None);
-        // `%XX` encoding a pchar (RFC 3986) is rejected: uWS would not have
+        // `%XX` encoding a pchar (RFC 3986) is rejected: router.rs would not have
         // matched the literal segment, so decoding it creates a new path.
         assert_eq!(resolve(b"/static/%61dmin/x", b"/static/"), None);
         assert_eq!(resolve(b"/static/admi%6E/x", b"/static/"), None);

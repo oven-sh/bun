@@ -1,7 +1,7 @@
 use bun_core::strings::ByteSet;
 
 /// RFC 9110 §5.6.2 `tchar`.
-pub(crate) static TOKEN: ByteSet = ByteSet::new(&[
+pub static TOKEN: ByteSet = ByteSet::new(&[
     b'!'..=b'!',
     b'#'..=b'\'',
     b'*'..=b'+',
@@ -52,15 +52,13 @@ pub(crate) static LINE: ByteSet = ByteSet::new(&[0..=9, 11..=12, 14..=0xff]);
 pub(crate) static RELAXED_CONTENT: ByteSet = ByteSet::new(&[1..=9, 11..=12, 14..=0xff]);
 
 /// [`CONTENT`] and DEL.
-pub(crate) static CONTENT_OR_DELETE: ByteSet = ByteSet::new(&[b'\t'..=b'\t', b' '..=0xff]);
+pub static CONTENT_OR_DELETE: ByteSet = ByteSet::new(&[b'\t'..=b'\t', b' '..=0xff]);
 
 pub(crate) static ABOVE_SPACE: ByteSet = ByteSet::new(core::slice::from_ref(&(b'!'..=0xff)));
 
 pub(crate) static NOT_COMMA: ByteSet = ByteSet::new(&[0..=b'+', b'-'..=0xff]);
 
-pub(crate) static NOT_QUESTION_MARK: ByteSet = ByteSet::new(&[0..=b'>', b'@'..=0xff]);
-
-pub(crate) static NOT_SLASH: ByteSet = ByteSet::new(&[0..=b'.', b'0'..=0xff]);
+pub static NOT_QUESTION_MARK: ByteSet = ByteSet::new(&[0..=b'>', b'@'..=0xff]);
 
 pub(crate) static METHOD: ByteSet = ByteSet::new(&[b'-'..=b'-', b'A'..=b'Z', b'a'..=b'z']);
 

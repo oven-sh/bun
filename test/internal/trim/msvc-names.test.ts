@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { featureNamed } from "../../../scripts/build/trim/features.ts";
 import { Demangler } from "../../../scripts/build/trim/report.ts";
-import { model, skipNotice } from "./toy-program.ts";
+import { skipNotice } from "./toy-program.ts";
 
 const namesAndParameters: [mangled: string, text: string][] = [
   ["?$S1@?1??usesLocals@Toy@@YAHH@Z@4IA", "`int __cdecl Toy::usesLocals(int)'::`2'::$S1"],
@@ -143,19 +142,4 @@ test("without a tool every name stays as it is", () => {
     "?plain@Toy@@YAHH@Z",
     "entered",
   ]);
-});
-
-describe.skipIf(!canDemangle)("the pattern for what serves TLS", () => {
-  const patterns = featureNamed(model, "TlsSockets").cxxFunctions!.map(({ pattern }) => new RegExp(pattern));
-  const matches = (text: string) => patterns.some(pattern => pattern.test(text));
-
-  test("takes the instantiation for TLS as either ABI spells it, and not the other", () => {
-    expect(matches("uWS::HttpResponse<true>::end()")).toBe(true);
-    expect(matches("uWS::HttpResponse<false>::end()")).toBe(false);
-    // The Microsoft ABI writes a bool as a number.
-    expect(demangle("?end@?$HttpResponse@$00@uWS@@QEAAXXZ")).toEqual(["uWS::HttpResponse<1>::end(void)"]);
-    expect(matches("uWS::HttpResponse<1>::end(void)")).toBe(true);
-    expect(matches(demangle("?end@?$HttpResponse@$0A@@uWS@@QEAAXXZ")[0]!)).toBe(false);
-    expect(matches(demangle("?upgrade@Toy@@YAXPEAU?$HttpResponseData@$00$0A@@uWS@@@Z")[0]!)).toBe(true);
-  });
 });

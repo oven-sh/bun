@@ -3,7 +3,7 @@
 //! sites do not change.
 
 use bun_jsc::{JSGlobalObject, JSValue};
-use bun_uws::{create_bun_socket_error_t, us_socket_stream_buffer_t, us_socket_t};
+use bun_uws::{create_bun_socket_error_t, us_socket_stream_buffer_t, us_socket_t, uws_res};
 
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
@@ -95,16 +95,6 @@ pub(crate) fn create_bun_socket_error_to_js(
 // verbatim copy.
 pub(crate) use bun_jsc::system_error::verify_error_to_js;
 
-unsafe extern "C" {
-    /// JSNodeHTTPServerSocket.cpp. Writes through the uWS buffer of the connection and returns whether uWS still holds bytes.
-    fn Bun__NodeHTTPServerSocket__writeBehindResponse(
-        socket: *mut us_socket_t,
-        ssl: bool,
-        data: *const u8,
-        length: usize,
-    ) -> bool;
-}
-
 // ── us_socket_buffered_js_write (C-exported, called from JSNodeHTTPServerSocket.cpp) ──
 /// # Safety
 /// `socket` and `buffer` must be valid, non-null pointers for the duration of the call
@@ -112,7 +102,6 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn us_socket_buffered_js_write(
     socket: *mut us_socket_t,
-    ssl: bool,
     ended: bool,
     // uWS still holds response bytes: write through its buffer. The caller defers a shutdown (`shutdownAfterResponseDrains`).
     hold: bool,
@@ -185,10 +174,7 @@ unsafe extern "C" fn us_socket_buffered_js_write(
         // single `&mut` does not alias the re-entrant write path documented at
         // the top of this fn (raw `socket` is still kept for that reason).
         let socket_ref = us_socket_t::opaque_mut(socket);
-        // SAFETY: the caller guarantees `socket` is live for the call; the slice is valid for its length.
-        let write_behind_response = |bytes: &[u8]| unsafe {
-            Bun__NodeHTTPServerSocket__writeBehindResponse(socket, ssl, bytes.as_ptr(), bytes.len())
-        };
+        let write_behind_response = |bytes: &[u8]| uws_res::of(socket).write_behind_response(bytes);
         if hold {
             // What an earlier write still owes goes first.
             let owed = stream_buffer.slice().len();

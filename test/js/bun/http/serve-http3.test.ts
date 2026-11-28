@@ -1791,7 +1791,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
 
 describe("Bun.serve HTTP/3 production", () => {
   // RFC 9110 §6.6.1: an origin server with a clock MUST send Date.
-  // H1 writes it via HttpResponse::writeMark(); H3 must too.
+  // H1 writes it via write_mark(); H3 must too.
   test("Date header is sent on every response shape", async () => {
     await withServer(async port => {
       // Cover every Http3Response header-send path: internalEnd (string/buffer
@@ -1866,8 +1866,8 @@ describe("Bun.serve HTTP/3 production", () => {
     });
   });
 
-  // Expect: 100-continue is handled at the uWS layer for both transports
-  // (HttpContext.h / Http3Context.h call writeContinue before routing); a
+  // Expect: 100-continue is answered before the handler runs for both
+  // transports (src/uws_sys/http1/mod.rs, h3.rs); a
   // curl --expect100-timeout assertion was flaky enough to drop here.
 });
 
@@ -1948,6 +1948,28 @@ describe("Bun.serve HTTP/3 request validation", () => {
       wellFormed: "200 1",
       after: "200 1",
     });
+  });
+
+  test.each(["FOO", "get"])("answers the method %s with 501, like the HTTP/2 listener", async method => {
+    await using server = Bun.serve({ port: 0, tls, http3: true, fetch: req => new Response(req.method) });
+    expect(await h3Exchange(server.port!, requestHeaders("/", { ":method": method }))).toBe("501 ");
+    expect(await h3Exchange(server.port!, requestHeaders("/", { ":method": "QUERY" }))).toBe("200 QUERY");
+  });
+
+  test.each([
+    ["GET", "a"],
+    ["GET", "*"],
+    ["GET", "?a"],
+    ["GET", "https://localhost/a"],
+    ["GET", ""],
+    ["GET", "/a b"],
+    ["GET", "/a\tb"],
+    ["GET", "/a\x01"],
+    ["CONNECT", "/a"],
+  ])("answers %s with the :path %j with 400", async (method, path) => {
+    await using server = Bun.serve({ port: 0, tls, http3: true, fetch: req => new Response(req.method) });
+    expect(await h3Exchange(server.port!, requestHeaders(path, { ":method": method }))).toBe("400 ");
+    expect(await h3Exchange(server.port!, requestHeaders("*", { ":method": "OPTIONS" }))).toBe("200 OPTIONS");
   });
 
   // QPACK delivers a field value as a length-prefixed string, so SP / HTAB at

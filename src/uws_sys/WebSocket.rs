@@ -17,11 +17,14 @@ use bun_websocket::handshake;
 use bun_websocket::reader::{Failure, Message, Reader, control_frames_len, parse_close};
 use bun_websocket::topics::{self, SubscriberId, Topics};
 
+use crate::async_socket::{Appended, AsyncSocket, MAX_CORKED_WRITE_LEN};
+use crate::http1::{VACATED_LEN, VACATED_OFFSET, node};
 use crate::response::Response;
 use crate::socket_group::VTable;
+use crate::thunk::OpaqueHandle;
 use crate::{
     CloseCode, InternalLoopData, Loop, Opcode, Request, SendStatus, SocketGroup, SocketKind,
-    UsIoVec, us_socket_t, uws_res,
+    us_socket_t, uws_res,
 };
 
 pub const SHARED_COMPRESSOR: i32 = 1;
@@ -29,8 +32,6 @@ pub const SHARED_DECOMPRESSOR: i32 = 1 << 8;
 pub const DEDICATED_COMPRESSOR_3KB: i32 = 9 << 4 | 1;
 const COMPRESSOR_MASK: i32 = 0x00ff;
 
-/// `LoopData::CORK_COPY_MAX`
-const LONG_MESSAGE_LEN: usize = 16 * 1024;
 const TIMEOUT_REASON: &[u8] = b"WebSocket timed out from inactivity";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -153,32 +154,38 @@ pub trait WebSocketUpgradeServer<const SSL: bool>: Sized + 'static {
     );
 }
 
-pub(crate) extern "C" fn on_upgrade<Server: WebSocketUpgradeServer<SSL>, const SSL: bool>(
+#[derive(Clone, Copy)]
+pub(crate) struct UpgradeRoute {
+    handler: fn(Self, *mut uws_res, &mut Request),
     server: *mut c_void,
-    res: *mut uws_res,
-    req: &mut Request,
-    context: *const c_void,
+    context: BackRef<WebSocketUpgradeContext>,
     id: usize,
-) {
-    if prepare_upgrade(req) {
-        // SAFETY: `App::<SSL>::ws` registered `server` and `context`, which lasts as long as the
-        // app, and uWS passes a response of that app.
-        unsafe {
-            Server::on_websocket_upgrade(server.cast(), &mut *res.cast(), req, &*context.cast(), id)
-        }
-    }
 }
 
-/// False if the request is for the next route.
-fn prepare_upgrade(req: &mut Request) -> bool {
-    if req.header(b"sec-websocket-key").unwrap_or_default().len() != 24 {
-        req.set_yield(true);
-        return false;
+impl UpgradeRoute {
+    pub(crate) fn new<Server: WebSocketUpgradeServer<SSL>, const SSL: bool>(
+        server: *mut c_void,
+        context: BackRef<WebSocketUpgradeContext>,
+        id: usize,
+    ) -> Self {
+        Self {
+            // SAFETY: as it was passed to `App::ws`.
+            handler: |this, res, req| unsafe {
+                let res = Response::as_handle(res.cast());
+                Server::on_websocket_upgrade(this.server.cast(), res, req, &this.context, this.id)
+            },
+            server,
+            context,
+            id,
+        }
     }
-    if handshake::has_broken_compression(req.header(b"user-agent").unwrap_or_default()) {
-        req.parsed().clear_field(b"sec-websocket-extensions");
+
+    pub(crate) fn run(self, res: *mut uws_res, req: &mut Request) {
+        if handshake::has_broken_compression(req.header(b"user-agent").unwrap_or_default()) {
+            req.parsed().clear_field(b"sec-websocket-extensions");
+        }
+        (self.handler)(self, res, req);
     }
-    true
 }
 
 #[derive(Clone, Copy)]
@@ -209,7 +216,8 @@ pub struct WebSockets {
 impl Drop for WebSockets {
     fn drop(&mut self) {
         if !self.contexts.get_mut().is_empty() {
-            c::uws_loop_remove_tick_handler(ptr::from_mut(self).cast());
+            (Loop::get().data().topic_drains.borrow_mut())
+                .retain(|(other, _)| !ptr::eq(other.get(), self));
         }
     }
 }
@@ -230,15 +238,10 @@ impl WebSockets {
         behavior: WebSocketBehavior,
         emit: fn(AnyWebSocket, Event<'_>),
     ) -> BackRef<WebSocketUpgradeContext> {
-        extern "C" fn drain(this: *const c_void) {
-            // SAFETY: `drop` removes the handler.
-            let this = unsafe { &*this.cast::<WebSockets>() };
-            this.topics.borrow_mut().drain_all();
-        }
-
         let mut contexts = self.contexts.borrow_mut();
         if contexts.is_empty() {
-            c::uws_loop_add_tick_handler(ptr::from_ref(self).cast(), drain);
+            let drain = |this: &Self| this.topics.borrow_mut().drain_all();
+            (Loop::get().data().topic_drains.borrow_mut()).push((BackRef::new(self), drain));
         }
         let index = contexts.iter().position(|context| {
             context.key == key && (!key.is_null() || context.behavior.get() == behavior)
@@ -269,8 +272,8 @@ impl WebSockets {
     }
 
     fn shared(&self) -> &SharedDeflate {
-        // SAFETY: the loop owns it, and outlives its sockets.
-        (self.shared).get_or_init(|| unsafe { &*c::uws_loop_shared_deflate().cast() })
+        let of_loop = || &**(Loop::get().data().shared_deflate).get_or_init(SharedDeflate::new);
+        self.shared.get_or_init(of_loop)
     }
 
     pub fn num_subscribers(&self, topic: &[u8]) -> u32 {
@@ -303,7 +306,7 @@ impl WebSockets {
         let Some(topic) = topics.find(topic) else {
             return SendStatus::Dropped;
         };
-        if message.len() < LONG_MESSAGE_LEN {
+        if message.len() < MAX_CORKED_WRITE_LEN {
             if !topics.publish(topic, sender, message, opcode, compress) {
                 return SendStatus::Dropped;
             }
@@ -329,29 +332,23 @@ impl WebSockets {
         }
         worst.unwrap_or(SendStatus::Dropped)
     }
-}
 
-#[unsafe(no_mangle)]
-extern "C" fn Bun__WebSockets__close(this: &WebSockets) {
-    for index in 0.. {
-        let Some(context) = this.contexts.borrow().get(index).cloned() else {
-            break;
-        };
-        // A close handler can close the others.
-        let mut sockets = Vec::new();
-        let mut socket = context.group.head_sockets.get();
-        while !socket.is_null() {
-            sockets.push(AnyWebSocket(socket));
-            socket = c::uws_socket_next(us_socket_t::opaque_mut(socket));
-        }
-        context.loop_data.keeping_closed_sockets(|| {
-            for ws in sockets {
-                if !ws.socket().is_closed() {
-                    ws.end(1001, b"Server closed");
+    pub(crate) fn close(&self) {
+        for index in 0.. {
+            let Some(context) = self.contexts.borrow().get(index).cloned() else {
+                break;
+            };
+            // A close handler can close the others.
+            let sockets: Vec<_> = context.group.sockets().map(AnyWebSocket).collect();
+            context.loop_data.keeping_closed_sockets(|| {
+                for ws in sockets {
+                    if !ws.socket().is_closed() {
+                        ws.end(1001, b"Server closed");
+                    }
                 }
-            }
-        });
-        context.group.close_all();
+            });
+            context.group.close_all();
+        }
     }
 }
 
@@ -366,9 +363,9 @@ pub struct WebSocketUpgradeContext {
     app: BackRef<WebSockets>,
 }
 
-impl<const SSL: bool> Response<SSL> {
+impl uws_res {
     pub fn upgrade(
-        &mut self,
+        &self,
         data: *mut c_void,
         sec_web_socket_key: &[u8],
         sec_web_socket_protocol: &[u8],
@@ -379,7 +376,7 @@ impl<const SSL: bool> Response<SSL> {
             return false;
         }
         // The 101 and what the open handler sends go out in one write.
-        c::uws_socket_cork(self.socket());
+        self.socket().cork();
 
         let mut key = [0; 24];
         let key_len = sec_web_socket_key.len().min(key.len());
@@ -415,7 +412,7 @@ impl<const SSL: bool> Response<SSL> {
             deflate_params = Some(params);
         }
         self.write_mark();
-        c::uws_socket_write(self.socket(), &UsIoVec::new(b"\r\n"));
+        self.socket().write(b"\r\n");
         // TLS refused the 101. The next writable event closes the connection.
         if !self.can_upgrade() {
             return false;
@@ -425,67 +422,62 @@ impl<const SSL: bool> Response<SSL> {
     }
 
     /// The complete response head, for a caller that negotiates by itself. False if TLS refused it.
-    pub(crate) fn write_handshake(&mut self, handshake: &[u8]) -> bool {
+    pub(crate) fn write_handshake(&self, handshake: &[u8]) -> bool {
         if !self.can_upgrade() {
             return false;
         }
-        c::uws_socket_cork(self.socket());
-        c::uws_socket_write(self.socket(), &UsIoVec::new(handshake));
+        self.socket().cork();
+        self.socket().write(handshake);
         self.can_upgrade()
     }
 
-    fn socket(&mut self) -> &mut us_socket_t {
-        us_socket_t::opaque_mut(ptr::from_mut(self).cast())
-    }
-
     pub(crate) fn become_web_socket(
-        &mut self,
+        &self,
         user_data: *mut c_void,
         deflate_params: Option<Params>,
         ctx: &WebSocketUpgradeContext,
     ) {
         assert!(self.can_upgrade());
         let state = State::new(user_data, deflate_params, ctx.behavior.get().compression);
-        let ws = AnyWebSocket(self.socket());
-        let kind = if SSL {
+        let ws = AnyWebSocket(self.socket().raw());
+        let kind = if self.is_ssl() {
             SocketKind::UwsWsTls
         } else {
             SocketKind::UwsWs
         };
-        // SAFETY: an open HTTP socket. The first call vacates the room for the state, and the second hands the socket to `VTABLE`.
+        self.vacate_for_web_socket();
+        // SAFETY: there is room, and `VTABLE` finds it written.
         unsafe {
-            c::uws_res_destroy_for_upgrade(SSL.into(), ws.0);
             ws.state_ptr().write(state);
-            c::uws_res_adopt_into(SSL.into(), ws.0, &ctx.group, kind as u8);
+            ws.socket().move_to(&ctx.group, kind);
         }
+        node::on_upgraded(ws.writer());
         ws.set_timeout(ctx.timeouts.get().idle);
         (ctx.loop_data).keeping_closed_sockets(|| ws.emit(Event::Open));
-        c::uws_socket_uncork(ws.socket());
+        ws.writer().uncork();
     }
 }
 
 /// For all the servers of a loop.
-struct SharedDeflate {
+pub(crate) struct SharedDeflate {
     compressor: RefCell<Compressor>,
     decompressor: RefCell<Decompressor>,
     compressed: RefCell<Vec<u8>>,
     decompressed: Cell<Vec<u8>>,
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn Bun__SharedDeflate__create() -> Box<SharedDeflate> {
-    Box::new(SharedDeflate {
-        compressor: RefCell::new(Compressor::shared()),
-        decompressor: RefCell::new(Decompressor::shared()),
-        compressed: RefCell::default(),
-        decompressed: Cell::default(),
-    })
+impl SharedDeflate {
+    fn new() -> Box<Self> {
+        Box::new(Self {
+            compressor: RefCell::new(Compressor::shared()),
+            decompressor: RefCell::new(Decompressor::shared()),
+            compressed: RefCell::default(),
+            decompressed: Cell::default(),
+        })
+    }
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn Bun__SharedDeflate__destroy(_: Box<SharedDeflate>) {}
-
-/// Behind `UpgradedSocketData` (HttpResponse.h). Never dropped: `on_close` empties it, under calls that still read it.
+/// Never dropped: `on_close` empties it, under calls that still read it.
 struct State {
     user_data: *mut c_void,
     reader: RefCell<Reader>,
@@ -531,8 +523,7 @@ impl State {
     }
 }
 
-const STATE_OFFSET: usize = 64;
-const _: () = assert!(size_of::<State>() <= 128 && align_of::<State>() <= 8);
+const _: () = assert!(size_of::<State>() <= VACATED_LEN && align_of::<State>() <= 8);
 
 #[derive(Clone, Copy)]
 pub struct AnyWebSocket(*mut us_socket_t);
@@ -552,8 +543,12 @@ impl AnyWebSocket {
         us_socket_t::opaque_mut(self.0)
     }
 
+    fn writer<'a>(self) -> &'a AsyncSocket {
+        AsyncSocket::opaque_ref(self.0.cast())
+    }
+
     fn state_ptr(self) -> *mut State {
-        self.socket().ext_ptr().wrapping_add(STATE_OFFSET).cast()
+        self.socket().ext_ptr().wrapping_add(VACATED_OFFSET).cast()
     }
 
     fn state<'a>(self) -> &'a State {
@@ -588,11 +583,11 @@ impl AnyWebSocket {
     }
 
     pub fn memory_cost(self) -> usize {
-        c::uws_socket_buffer_capacity(self.socket())
+        self.writer().buffer_capacity()
     }
 
     pub fn get_buffered_amount(self) -> usize {
-        c::uws_socket_buffered_amount(self.socket())
+        self.writer().buffered_amount()
     }
 
     pub fn get_remote_address(self, buf: &mut [u8]) -> Option<&[u8]> {
@@ -601,12 +596,12 @@ impl AnyWebSocket {
 
     /// Run `f` while the socket is corked.
     pub fn cork<R>(self, f: impl FnOnce() -> R) -> R {
-        if c::uws_socket_is_corked(self.socket()) {
+        if self.writer().is_corked() {
             return f();
         }
-        c::uws_socket_cork(self.socket());
+        self.writer().cork();
         let result = self.context().loop_data.keeping_closed_sockets(f);
-        c::uws_socket_uncork(self.socket());
+        self.writer().uncork();
         result
     }
 
@@ -628,7 +623,7 @@ impl AnyWebSocket {
     }
 
     pub fn is_paused(self) -> bool {
-        c::uws_socket_is_paused(self.socket())
+        self.socket().is_paused()
     }
 
     fn has_stopped_reading(self) -> bool {
@@ -659,11 +654,11 @@ impl AnyWebSocket {
         }
         if let Some(subscriber) = self.state().subscriber.get() {
             self.topics().borrow_mut().drain(subscriber);
-        } else if message.len() >= LONG_MESSAGE_LEN
+        } else if message.len() >= MAX_CORKED_WRITE_LEN
             && !compress
             && self.socket().kind() == SocketKind::UwsWs
             && self.get_buffered_amount() == 0
-            && !c::uws_socket_has_corked_bytes(self.socket())
+            && !self.writer().has_corked_bytes()
         {
             return self.write_frame_directly(message, opcode, fin);
         }
@@ -713,16 +708,19 @@ impl AnyWebSocket {
 
     fn write_frame(self, payload: &[u8], opcode: Opcode, flags: Flags) -> SendStatus {
         let len = WebsocketHeader::frame_size(payload.len(), false);
-        let mut attribute = 0;
-        let buffer = c::uws_socket_send_buffer(self.socket(), len, &mut attribute);
-        // SAFETY: room for `len` bytes, until the next call on a socket.
-        let buffer = unsafe { core::slice::from_raw_parts_mut(buffer, len) };
-        let (_, rest) = write_unmasked_head(buffer, opcode, payload.len(), flags);
-        rest.write_copy_of_slice(payload);
-        self.after_write(match attribute {
-            c::NEEDS_DRAIN => self.write(b""),
-            c::NEEDS_UNCORK => c::uws_socket_uncork(self.socket()),
-            _ => false,
+        let appended = self.writer().append(len, |mut out| {
+            let mut head = [MaybeUninit::uninit(); 10];
+            match write_unmasked_head(&mut head, opcode, payload.len(), flags).0 {
+                // Without a call of `memcpy`.
+                &[first, len] => out.append(&[first, len]),
+                head => out.append(head),
+            }
+            out.append(payload);
+        });
+        self.after_write(match appended {
+            Appended::ToCork => false,
+            Appended::ToNewCork => self.writer().uncork().has_backpressure,
+            Appended::ToBuffer => self.write(b""),
         })
     }
 
@@ -738,9 +736,9 @@ impl AnyWebSocket {
                 &head[written.min(head.len())..],
                 &payload[written.saturating_sub(head.len())..],
             ] {
-                c::uws_socket_buffer(self.socket(), &UsIoVec::new(rest));
+                self.writer().buffer(rest);
             }
-            c::uws_socket_uncork_without_sending(self.socket());
+            self.writer().uncork_without_sending();
         }
         self.after_write(has_backpressure)
     }
@@ -758,7 +756,7 @@ impl AnyWebSocket {
 
     /// After what is buffered. True if something still is.
     fn write(self, bytes: &[u8]) -> bool {
-        c::uws_socket_write(self.socket(), &UsIoVec::new(bytes))
+        self.writer().write(bytes).has_backpressure
     }
 
     /// Without a closing handshake.
@@ -767,7 +765,7 @@ impl AnyWebSocket {
             return;
         }
         self.drain_topics();
-        c::uws_socket_uncork(self.socket());
+        self.writer().uncork();
         // Callers rely on the close handler having run.
         self.socket().close(CloseCode::fast_shutdown);
         if !self.socket().is_closed() {
@@ -804,7 +802,7 @@ impl AnyWebSocket {
             };
             self.write_frame(&payload[..len], Opcode::Close, Flags::Final);
         }
-        c::uws_socket_uncork(self.socket());
+        self.writer().uncork();
     }
 
     /// The Close frame, then the FIN. False if that has begun before.
@@ -1027,14 +1025,20 @@ static VTABLE: VTable = VTable {
 };
 
 extern "C" fn on_data(socket: *mut us_socket_t, data: *mut u8, len: c_int) -> *mut us_socket_t {
+    // SAFETY: the loop lends what it read for the call.
+    read(socket, unsafe {
+        core::slice::from_raw_parts_mut(data, len as usize)
+    });
+    socket
+}
+
+pub(crate) fn read(socket: *mut us_socket_t, data: &mut [u8]) {
     let ws = AnyWebSocket(socket);
     let state = ws.state();
-    // SAFETY: the loop lends what it read for the call.
-    let data = unsafe { core::slice::from_raw_parts_mut(data, len as usize) };
     match state.phase.get() {
         Phase::Open => {}
-        Phase::OpenWithUnreadFrames => return on_data_before_unread_frames(ws, data),
-        Phase::ShuttingDown => return socket,
+        Phase::OpenWithUnreadFrames => return read_before_unread_frames(ws, data),
+        Phase::ShuttingDown => return,
     }
     // The rest of a TLS read arrives after a pause too.
     if !ws.is_paused() {
@@ -1042,7 +1046,7 @@ extern "C" fn on_data(socket: *mut us_socket_t, data: *mut u8, len: c_int) -> *m
     }
     state.has_timed_out.set(false);
 
-    c::uws_socket_cork(ws.socket());
+    ws.writer().cork();
     if let Err(failure) = ws.read(data) {
         state.reader.borrow_mut().release();
         match failure {
@@ -1050,28 +1054,22 @@ extern "C" fn on_data(socket: *mut us_socket_t, data: *mut u8, len: c_int) -> *m
             _ => ws.fail(failure),
         }
     }
-    c::uws_socket_uncork(ws.socket());
-    socket
+    ws.writer().uncork();
 }
 
 /// A handler runs the event loop. Only control frames may overtake the others.
 #[cold]
-fn on_data_before_unread_frames(ws: AnyWebSocket, data: &mut [u8]) -> *mut us_socket_t {
+fn read_before_unread_frames(ws: AnyWebSocket, data: &mut [u8]) {
     let (control_frames, rest) = data.split_at_mut(control_frames_len(data));
     let failure = (rest.first()).map(|byte| Failure::Interleaved(Opcode::from_raw(byte & 0xf)));
     ws.state().phase.set(Phase::Open);
-    on_data(
-        ws.0,
-        control_frames.as_mut_ptr(),
-        control_frames.len() as c_int,
-    );
+    read(ws.0, control_frames);
     if !ws.has_stopped_reading() {
         ws.state().phase.set(Phase::OpenWithUnreadFrames);
         if let Some(failure) = failure {
             ws.fail(failure);
         }
     }
-    ws.0
 }
 
 extern "C" fn on_writable(socket: *mut us_socket_t) -> *mut us_socket_t {
@@ -1110,7 +1108,8 @@ extern "C" fn on_close(
 ) -> *mut us_socket_t {
     let ws = AnyWebSocket(socket);
     let state = ws.state();
-    c::uws_socket_on_upgraded_close(ws.socket());
+    ws.writer().uncork_without_sending();
+    node::on_closed(ws.writer(), 0, false);
     if !state.is_shutting_down() {
         ws.leave_topics();
         let reason = if reason.is_null() {
@@ -1124,7 +1123,7 @@ extern "C" fn on_close(
     state.reader.borrow_mut().release();
     state.compressor.take();
     state.decompressor.take();
-    c::uws_socket_clear_buffer(ws.socket());
+    ws.writer().clear_buffer();
     socket
 }
 
@@ -1146,51 +1145,9 @@ extern "C" fn on_timeout(socket: *mut us_socket_t) -> *mut us_socket_t {
     socket
 }
 
-extern "C" fn on_end(socket: *mut us_socket_t) -> *mut us_socket_t {
+pub(crate) extern "C" fn on_end(socket: *mut us_socket_t) -> *mut us_socket_t {
     let ws = AnyWebSocket(socket);
-    c::uws_socket_uncork_without_sending(ws.socket());
+    ws.writer().uncork_without_sending();
     ws.socket().close(CloseCode::normal);
     socket
-}
-
-mod c {
-    use super::*;
-
-    /// `uWS::SendBufferAttribute`
-    pub(super) const NEEDS_DRAIN: c_int = 1;
-    pub(super) const NEEDS_UNCORK: c_int = 2;
-
-    unsafe extern "C" {
-        pub(super) safe fn uws_loop_add_tick_handler(
-            key: *const c_void,
-            handler: extern "C" fn(*const c_void),
-        );
-        pub(super) safe fn uws_loop_remove_tick_handler(key: *const c_void);
-        pub(super) safe fn uws_loop_shared_deflate() -> *const c_void;
-        pub(super) fn uws_res_destroy_for_upgrade(ssl: c_int, socket: *mut us_socket_t);
-        pub(super) fn uws_res_adopt_into(
-            ssl: c_int,
-            socket: *mut us_socket_t,
-            group: &SocketGroup,
-            kind: u8,
-        );
-        pub(super) safe fn uws_socket_on_upgraded_close(socket: &mut us_socket_t);
-        pub(super) safe fn uws_socket_next(socket: &mut us_socket_t) -> *mut us_socket_t;
-        pub(super) safe fn uws_socket_is_paused(socket: &mut us_socket_t) -> bool;
-        pub(super) safe fn uws_socket_cork(socket: &mut us_socket_t);
-        pub(super) safe fn uws_socket_uncork(socket: &mut us_socket_t) -> bool;
-        pub(super) safe fn uws_socket_uncork_without_sending(socket: &mut us_socket_t);
-        pub(super) safe fn uws_socket_is_corked(socket: &mut us_socket_t) -> bool;
-        pub(super) safe fn uws_socket_has_corked_bytes(socket: &mut us_socket_t) -> bool;
-        pub(super) safe fn uws_socket_send_buffer(
-            socket: &mut us_socket_t,
-            len: usize,
-            attribute: &mut c_int,
-        ) -> *mut MaybeUninit<u8>;
-        pub(super) safe fn uws_socket_write(socket: &mut us_socket_t, bytes: &UsIoVec<'_>) -> bool;
-        pub(super) safe fn uws_socket_buffer(socket: &mut us_socket_t, bytes: &UsIoVec<'_>);
-        pub(super) safe fn uws_socket_buffered_amount(socket: &mut us_socket_t) -> usize;
-        pub(super) safe fn uws_socket_buffer_capacity(socket: &mut us_socket_t) -> usize;
-        pub(super) safe fn uws_socket_clear_buffer(socket: &mut us_socket_t);
-    }
 }

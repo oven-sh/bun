@@ -1024,6 +1024,7 @@ pub const SSL_VERIFY_NONE: c_int = 0x00;
 pub const SSL_VERIFY_PEER: c_int = 0x01;
 pub const SSL_VERIFY_FAIL_IF_NO_PEER_CERT: c_int = 0x02;
 
+pub const SSL_SENT_SHUTDOWN: c_int = 1;
 pub const SSL_RECEIVED_SHUTDOWN: c_int = 2;
 
 pub const SSL_TLSEXT_ERR_OK: c_int = 0;

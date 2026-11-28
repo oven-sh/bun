@@ -585,37 +585,37 @@ impl DevServer {
 
         // Each `dev_route_tramp::<SSL, ID>` is a distinct C function with its handler baked in.
         macro_rules! route {
-            ($method:ident, $pattern:expr, $id:expr) => {
-                app.$method($pattern, Some(dev_route_tramp::<SSL, { $id }>), dev)
+            ($add:ident($($method:expr)?), $pattern:expr, $id:expr) => {
+                app.$add($($method,)? $pattern, dev_route_tramp::<SSL, { $id }>, dev)
             };
         }
 
         route!(
-            get,
+            method(Method::GET),
             const_format::concatcp!(CLIENT_PREFIX, "/:route").as_bytes(),
             DevHandlerId::JsRequest
         );
         route!(
-            get,
+            method(Method::GET),
             const_format::concatcp!(ASSET_PREFIX, "/:asset").as_bytes(),
             DevHandlerId::AssetRequest
         );
         route!(
-            get,
+            method(Method::GET),
             const_format::concatcp!(INTERNAL_PREFIX, "/src/*").as_bytes(),
             DevHandlerId::SrcRequest
         );
         route!(
-            post,
+            method(Method::POST),
             const_format::concatcp!(INTERNAL_PREFIX, "/report_error").as_bytes(),
             DevHandlerId::ReportError
         );
         route!(
-            post,
+            method(Method::POST),
             const_format::concatcp!(INTERNAL_PREFIX, "/unref").as_bytes(),
             DevHandlerId::UnrefSourceMap
         );
-        route!(any, INTERNAL_PREFIX.as_bytes(), DevHandlerId::NotFound);
+        route!(any(), INTERNAL_PREFIX.as_bytes(), DevHandlerId::NotFound);
 
         app.ws::<Self, HmrSocket>(
             const_format::concatcp!(INTERNAL_PREFIX, "/hmr").as_bytes(),
@@ -628,7 +628,7 @@ impl DevServer {
         // Only attach a catch-all handler if the framework has filesystem
         // router types. Otherwise, this can just be Bun.serve's default handler.
         if !self.framework.file_system_router_types.is_empty() {
-            route!(any, b"/*", DevHandlerId::Request);
+            route!(any(), b"/*", DevHandlerId::Request);
             Ok(true)
         } else {
             Ok(false)

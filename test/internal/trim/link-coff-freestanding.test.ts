@@ -816,7 +816,9 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     const folder = String(dir);
     const objects = ["feature_code", "sockets", "embedder", "main"];
     const builtins = [builtinUsing(spelledBuiltin, "toy.tls", "TlsSockets")];
-    const { featuresOf } = await linked(folder, { ...optionsWith({ objects, builtins }), removed: ["TlsSockets"] });
+    const cxxFunctions = { TlsSockets: [{ hint: "uWS", pattern: "uWS::HttpResponse<(?:true|1)[,>]" }] };
+    const options = optionsWith({ objects, builtins, cxxFunctions });
+    const { featuresOf } = await linked(folder, { ...options, removed: ["TlsSockets"] });
     const names = ["end@?$HttpResponse@$00@uWS", "feature_code", "end@?$HttpResponse@$0A@@uWS"];
     expect(names.map(featuresOf)).toEqual([["TlsSockets"], ["TlsSockets"], undefined]);
     expect(entryPointsText(folder, output)).toMatch(

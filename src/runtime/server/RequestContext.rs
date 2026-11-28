@@ -1210,7 +1210,7 @@ where
 
     /// `end_stream()` for a response the sink already ended
     /// (`HTTPServerWritable::ended_response`), where `resp` must no longer be
-    /// dereferenced. `markDone()` already did what `detach_response()` would.
+    /// dereferenced. The end already did what `detach_response()` would.
     ///
     /// HTTP/1 arrives from the stream's resolve/reject reaction, by then
     /// uSockets may have freed or recycled the socket. HTTP/2 and HTTP/3
@@ -1236,7 +1236,7 @@ where
         ctx_log!("endWithoutBody");
         if let Some(resp) = self.resp.get() {
             let _base_ref = self.detach_response();
-            // uWS markDone() clears onAborted on end, so on_abort can never
+            // uWS clears onAborted on end, so on_abort can never
             // run for this request; this is the last chance to reclaim an
             // outstanding claim (e.g. a 413 while the handler promise parks).
             self.reclaim_promise_cell();
@@ -1245,7 +1245,7 @@ where
             // This end can run uncorked (e.g. render_production_error from a
             // rejection microtask), where no cork or parser gate runs the
             // close check for Connection: close or a graceful-stop mark. The
-            // shim no-ops when the socket is corked (the cork wrapper's own
+            // call no-ops when the socket is corked (the cork wrapper's own
             // gate runs later) or already closed.
             resp.close_if_done_and_marked();
             // end_request_streaming_and_drain() must run after the last
@@ -1285,7 +1285,7 @@ where
             resp.write_status(b"413 Payload Too Large");
         }
         // The normal end path detaches `self.resp` and releases the base ref. uWS
-        // markDone() clears onAborted, so no abort would ever do either.
+        // clears onAborted on end, so no abort would ever do either.
         self.end_without_body(!MUX);
         self.unpipe();
     }
@@ -1351,7 +1351,6 @@ where
         server: &ThisServer,
         req: *mut Req<SSL_ENABLED, MUX>,
         resp: uws::AnyResponse,
-        method: Method,
     ) -> NonNull<Self> {
         let any_req = Self::any_request(req);
         let range = RangeRequest::raw_from_request(&any_req);
@@ -1363,7 +1362,7 @@ where
             root: Cell::new(root),
             resp: AttachedResponse(JsCell::new(Some((resp, base_ref)))),
             req: Cell::new(Some(req)),
-            method,
+            method: any_req.method(),
             server: JsCell::new(Some(PendingRequest::new(bun_ptr::BackRef::new(server)))),
             range,
             if_range,
@@ -1603,6 +1602,7 @@ where
         let pinned = RequestContextRef::pin(this);
         let this = pinned.ctx();
         if let Some(sink) = this.sink_mut() {
+            Self::note_resumed_stream();
             return sink.on_writable(write_offset, _resp);
         }
         true
@@ -3195,9 +3195,17 @@ where
             return false;
         }
         if let Some(bs) = this.byte_stream.get() {
+            Self::note_resumed_stream();
             bun_ptr::BackRef::from(bs).resume();
         }
         true
+    }
+
+    fn note_resumed_stream() {
+        if MUX {
+            let event_loop = jsc::VirtualMachine::get().event_loop();
+            event_loop.has_resumed_response_stream.set(true);
+        }
     }
 
     /// False: 416 has been sent.

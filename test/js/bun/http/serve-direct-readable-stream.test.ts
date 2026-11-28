@@ -169,7 +169,7 @@ test.skipIf(!isASAN)(
   30_000,
 );
 
-// Once controller.end() fully ends the response, uWS markDone() drops its
+// Once controller.end() fully ends the response, end_response() drops its
 // onAborted handler, so a peer that closes the plain-TCP socket afterwards
 // never reaches RequestContext::on_abort. uSockets frees the socket at the
 // end of that loop tick (us_internal_free_closed_sockets), but resp was never
@@ -203,7 +203,7 @@ test.skipIf(!isASAN)(
               // Suspend so assignToStream sees a pending promise and the
               // resolution goes through the on_resolve_stream microtask.
               await gate1;
-              // Fully ends the uWS response: markDone() drops onAborted.
+              // Fully ends the uWS response: end_response() drops onAborted.
               controller.end();
               // Parks the resolution microtask past the socket close.
               await gate2;
@@ -442,7 +442,7 @@ test.concurrent(
 // that, while the request is still being dispatched, which left two gaps:
 //
 // - pull() writes and close()s: the auto-flusher completes the response before
-//   the dispatch returns, uWS markDone() drops its callbacks, and toAsync then
+//   the dispatch returns, end_response() drops its callbacks, and toAsync then
 //   armed onAborted anyway. The keep-alive socket outlives the request, so the
 //   callback pointed at a context already returned to the pool; closing the
 //   connection later (server.stop(true) here, a client disconnect in general)
@@ -457,9 +457,9 @@ test.concurrent(
 //     AddressSanitizer: heap-use-after-free       uws_res_has_responded
 //                                                 <- HTTPServerWritable::end_from_js
 //
-// The callbacks are now armed before the stream is attached, so markDone()
+// The callbacks are now armed before the stream is attached, so end_response()
 // disarming them is final and a stop() from inside pull() aborts the sink.
-// The remaining tests pin down what follows from markDone() being final:
+// The remaining tests pin down what follows from end_response() being final:
 // nothing tells the request when its socket goes away once the response has
 // completed, so the request is released when the controller closes, also
 // while pull() is still parked, and a later stop() and the Request based APIs
@@ -949,7 +949,7 @@ describe("a pull() that outlives its own end() does not hold the request", () =>
 
 // The HTTP/3 sibling must NOT take the ended_response short-circuit.
 // Http3Response::markDone() deliberately leaves onAborted armed (unlike
-// HTTP/1's markDone()) so that Http3Context's on_stream_close can notify the
+// HTTP/1's end_response()) so that Http3Context's on_stream_close can notify the
 // holder; end_stream() -> detach_response() -> clear_aborted() is what disarms
 // it. Skipping that leaves the callback pointing at a RequestContext the
 // stream-resolution microtask has already released, and lsquic's later

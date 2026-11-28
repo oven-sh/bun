@@ -97,6 +97,14 @@ pub enum ConnectResult {
     Failed,
 }
 
+/// None may close under the iteration.
+pub(crate) fn list_of_sockets(head: *mut us_socket_t) -> impl Iterator<Item = *mut us_socket_t> {
+    let some = |socket: *mut us_socket_t| (!socket.is_null()).then_some(socket);
+    core::iter::successors(some(head), move |&socket| {
+        some(uws_socket_next(us_socket_t::opaque_mut(socket)))
+    })
+}
+
 impl SocketGroup {
     /// Initialise an embedded group. `owner_ptr` is what `group.owner::<T>()`
     /// recovers inside handlers — pass the embedding struct so dispatch can
@@ -123,6 +131,10 @@ impl SocketGroup {
         // SAFETY: fn contract.
         unsafe { us_socket_group_deinit(self) };
         self.loop_.set(ptr::null_mut());
+    }
+
+    pub(crate) fn sockets(&self) -> impl Iterator<Item = *mut us_socket_t> {
+        list_of_sockets(self.head_sockets.get())
     }
 
     pub fn close_all(&self) {
@@ -311,6 +323,7 @@ unsafe extern "C" {
         ext: *mut c_void,
     );
     fn us_socket_group_deinit(group: *const SocketGroup);
+    safe fn uws_socket_next(socket: &mut us_socket_t) -> *mut us_socket_t;
     fn us_socket_group_close_all(group: *const SocketGroup);
     fn us_socket_group_listen(
         group: *const SocketGroup,

@@ -1,131 +1,207 @@
-use core::ffi::{c_char, c_int, c_void};
+use core::cell::{Cell, OnceCell, RefCell};
+use core::ffi::{CStr, c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
-use core::ptr::NonNull;
+use core::ptr;
+use core::sync::atomic::AtomicUsize;
 use std::rc::Rc;
 
-use bun_core::ZStr;
+use bun_boringssl_sys::OwnedSslCtx;
+use bun_core::{ZBox, ZStr};
 use bun_http_types::Method::Method;
+use bun_http1::request::RequestOptions;
 
+use crate::http1::events::{NODE_TCP, NODE_TLS, TCP, TLS};
+use crate::http1::{Connection, Routes};
+use crate::request::Handler;
 use crate::response::Response;
 use crate::socket_context::BunSocketContextOptions;
-use crate::web_socket::{WebSocketHandler, WebSocketUpgradeServer, WebSockets, on_upgrade};
+use crate::web_socket::{UpgradeRoute, WebSocketHandler, WebSocketUpgradeServer, WebSockets};
 use crate::{
-    AnyRequest, AnyResponse, ListenSocket as UwsListenSocket, Request, WebSocketBehavior, thunk,
-    us_socket_t, uws_res,
+    AnyRequest, AnyResponse, ListenSocket as UwsListenSocket, Loop, Request, SocketGroup,
+    SocketKind, SslCtx, WebSocketBehavior, create_bun_socket_error_t, thunk, us_socket_t, uws_res,
 };
 use bun_ptr::{AnyRefCounted, RefPtr};
 
-// This file provides Rust bindings for the uWebSockets App class.
-// It wraps the C API exposed in libuwsockets.cpp which provides a C interface
-// to the C++ uWebSockets library defined in App.h.
-//
-// The architecture is:
-// 1. App.h - C++ uWebSockets library with TemplatedApp<SSL> class
-//    - Defines the main TemplatedApp<bool SSL> template class
-//    - Provides HTTP server functionality with SSL/non-SSL variants
-//    - Implements routing methods (get, post, put, delete, etc.)
-//    - Handles server name (SNI) support for SSL contexts
-//    - Provides listen() methods for binding to ports/unix sockets
-//
-// 2. libuwsockets.cpp - C wrapper functions that call the C++ methods
-//    - Exposes C functions like uws_create_app(), uws_app_get(), etc.
-//    - Handles SSL/non-SSL branching with if(ssl) checks
-//    - Converts between C types (char*, size_t) and C++ types (string_view)
-//    - Manages memory and object lifetime for C callers
-//    - Provides callback wrappers that convert C function pointers to C++ lambdas
-//    - Functions like uws_app_connect(), uws_app_trace() mirror C++ methods
-//
-// 3. App.rs - Rust bindings that call the C wrapper functions
-//    - App<const SSL: bool> generic struct parameterized by SSL boolean
-//    - Methods like close() call corresponding C functions
-//    - Type-safe wrappers around raw C pointers and function calls
-//    - Converts Rust slices to C pointer/length pairs
-//    - Provides compile-time SSL flag selection via SSL as i32
-//
-// This layered approach allows Rust code to use high-performance uWebSockets
-// functionality while maintaining memory safety and Rust's type system benefits.
-// The C layer handles the impedance mismatch between Rust and C++, while the
-// Rust layer provides idiomatic APIs for Rust developers.
+#[derive(Clone, Copy)]
+pub enum ConnectionChange {
+    /// Before the TLS handshake.
+    Accepted,
+    /// It has closed, or become a WebSocket.
+    Gone,
+    /// At the end of its input, with nothing left to send.
+    TunnelIdle,
+    TunnelBusy,
+    IdleTunnelGone,
+}
 
-/// Opaque handle to a uWS::TemplatedApp<SSL>. Always used via `*mut App<SSL>`.
-#[repr(C)]
-pub struct App<const SSL: bool>(uws_app_s);
+type OnConnectionChange = fn(*mut c_void, ConnectionChange);
+type OnOpen = fn(*mut c_void, &mut us_socket_t);
+type OnClientError = fn(*mut c_void, &mut us_socket_t, u8, &[u8]);
 
-/// Stamps one `pub fn $name(&mut self, pattern, handler, user_data)` per HTTP
-/// verb. Bodies are byte-identical modulo the C symbol — see `uws_app_get` &co
-/// in capi.rs. uWS copies `pattern` internally, so the slice need only live for
-/// the call.
-macro_rules! uws_app_route_methods {
-    ($($name:ident => $cfn:ident),* $(,)?) => {$(
-        // The C++ side is always_inline, so without this every caller gets its own copy of the route registration.
-        #[inline(never)]
-        pub fn $name(
-            &mut self,
-            pattern: &[u8],
-            handler: c::uws_method_handler,
-            user_data: *mut c_void,
-        ) {
-            // SAFETY: self is a valid app; pattern outlives the call (uWS copies it).
-            unsafe {
-                c::$cfn(
-                    Self::SSL_FLAG,
-                    std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                    pattern.as_ptr(),
-                    pattern.len(),
-                    handler,
-                    user_data,
-                )
-            }
+/// Behind a pointer, so that a program without HTTP/2 can be trimmed.
+pub(crate) trait Http2App {
+    /// `preface_len` bytes of the preface came before `data`.
+    fn adopt(&self, res: &uws_res, preface_len: usize, data: &[u8]);
+    fn close_all(&self);
+    fn close_idle(&self, close_when_idle: bool) -> usize;
+}
+
+pub(crate) struct Http2 {
+    pub(crate) app: Rc<dyn Http2App>,
+    pub(crate) allows_http1: bool,
+}
+
+pub(crate) struct Context {
+    group: SocketGroup,
+    /// The connection whose read is being parsed.
+    pub(crate) reading: Cell<*const uws_res>,
+    pub(crate) request_options: Cell<RequestOptions>,
+    pub(crate) answers_expect: Cell<bool>,
+    pub(crate) allows_half_open: Cell<bool>,
+    pub(crate) rejects_unauthorized: bool,
+    pub(crate) routes: Routes,
+    pub(crate) http2: OnceCell<Http2>,
+    on_connection_change: Cell<Option<(OnConnectionChange, *mut c_void)>>,
+    pub(crate) on_open: Cell<Option<(OnOpen, *mut c_void)>>,
+    pub(crate) on_client_error: Cell<Option<(OnClientError, *mut c_void)>>,
+    web_sockets: WebSockets,
+    ssl_ctx: Option<OwnedSslCtx>,
+    /// For listeners to come.
+    server_names: RefCell<Vec<(ZBox, OwnedSslCtx)>>,
+}
+
+impl Context {
+    pub(crate) fn report(&self, change: ConnectionChange) {
+        if let Some((handler, user_data)) = self.on_connection_change.get() {
+            handler(user_data, change);
         }
-    )*};
+    }
+
+    fn update_request_options(&self, f: impl FnOnce(&mut RequestOptions)) {
+        let mut options = self.request_options.get();
+        f(&mut options);
+        self.request_options.set(options);
+    }
+
+    fn close_idle_connections(&self, close_when_idle: bool) -> usize {
+        let (loop_data, mut closed) = (&Loop::get().internal_loop_data, 0);
+        // A close handler can close the others.
+        let connections: Vec<_> = self.group.sockets().map(uws_res::of).collect();
+        loop_data.keeping_closed_sockets(|| {
+            for res in (connections.iter()).filter(|res| !res.is_closed_or_upgraded()) {
+                if res.close_if_idle() {
+                    closed += 1;
+                } else if close_when_idle {
+                    res.close_when_idle();
+                }
+            }
+        });
+        if close_when_idle && self.group.low_prio_count.get() != 0 {
+            let group = &self.group;
+            (loop_data.low_priority_sockets())
+                .filter(|&socket| ptr::eq(us_socket_t::opaque_mut(socket).group(), group))
+                .for_each(|socket| uws_res::of(socket).close_when_idle());
+        }
+        let http2 = self.http2.get();
+        closed + http2.map_or(0, |http2| http2.app.close_idle(close_when_idle))
+    }
 }
 
-pub struct OwnedApp<const SSL: bool> {
-    app: NonNull<App<SSL>>,
-    _web_sockets: Rc<WebSockets>,
+/// Opaque handle to the [`Context`] of an [`OwnedApp`]. Always used via `*mut App<SSL>`.
+#[repr(C)]
+pub struct App<const SSL: bool> {
+    _p: core::cell::UnsafeCell<[u8; 0]>,
+    _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
+
+pub struct OwnedApp<const SSL: bool>(Rc<Context>);
 
 impl<const SSL: bool> OwnedApp<SSL> {
     pub fn new(opts: &BunSocketContextOptions) -> Option<Self> {
-        let web_sockets = Rc::<WebSockets>::default();
-        // SAFETY: FFI call; uws_create_app returns null on failure.
-        let app = unsafe {
-            c::uws_create_app(App::<SSL>::SSL_FLAG, *opts, Rc::as_ptr(&web_sockets).cast())
+        let ssl_ctx = match SSL {
+            true => Some(opts.create_ssl_context(&mut create_bun_socket_error_t::none)?),
+            false => None,
         };
-        Some(Self {
-            app: NonNull::new(app.cast())?,
-            _web_sockets: web_sockets,
-        })
+        let context = Rc::new(Context {
+            group: SocketGroup::default(),
+            reading: Cell::new(ptr::null()),
+            request_options: Cell::new(RequestOptions {
+                max_header_size: 0,
+                max_headers_count: 0,
+                requires_host: true,
+                has_strict_methods: false,
+                has_lenient_values: false,
+                has_lenient_transfer_encoding: false,
+            }),
+            answers_expect: Cell::new(true),
+            allows_half_open: Cell::new(false),
+            rejects_unauthorized: opts.request_cert != 0 && opts.reject_unauthorized != 0,
+            routes: Routes::default(),
+            http2: OnceCell::new(),
+            on_connection_change: Cell::new(None),
+            on_open: Cell::new(None),
+            on_client_error: Cell::new(None),
+            web_sockets: WebSockets::default(),
+            ssl_ctx,
+            server_names: RefCell::default(),
+        });
+        let (vtable, owner) = (if SSL { &TLS } else { &TCP }, Rc::as_ptr(&context));
+        (context.group).init(Loop::get(), Some(vtable), owner.cast_mut().cast());
+        Some(Self(context))
     }
 
     pub fn as_ptr(&self) -> *mut App<SSL> {
-        self.app.as_ptr()
-    }
-}
-
-impl<const SSL: bool> Drop for OwnedApp<SSL> {
-    fn drop(&mut self) {
-        // SAFETY: created in `new` with the same flag, destroyed once.
-        unsafe { c::uws_app_destroy(App::<SSL>::SSL_FLAG, self.as_ptr().cast()) }
+        Rc::as_ptr(&self.0).cast_mut().cast()
     }
 }
 
 impl<const SSL: bool> App<SSL> {
-    const SSL_FLAG: i32 = SSL as i32;
+    const SOCKET_KIND: SocketKind = match SSL {
+        true => SocketKind::UwsHttpTls,
+        false => SocketKind::UwsHttp,
+    };
 
-    /// `&mut uws_app_s` view of self for `safe fn` shims.
-    #[inline]
-    fn as_raw(&mut self) -> &mut uws_app_s {
-        &mut self.0
+    fn context(&self) -> &Context {
+        // SAFETY: from `OwnedApp::as_ptr`, which its holder keeps for as long as it uses this.
+        unsafe { &*self._p.get().cast() }
     }
 
+    /// The listeners too.
     pub fn close(&mut self) {
-        c::uws_app_close(Self::SSL_FLAG, self.as_raw())
+        let context = self.context();
+        context.group.close_all();
+        context.web_sockets.close();
+        if let Some(http2) = context.http2.get() {
+            http2.app.close_all();
+        }
     }
 
     pub fn web_sockets(&mut self) -> &WebSockets {
-        // SAFETY: `OwnedApp` owns both.
-        unsafe { &*c::uws_app_web_sockets(Self::SSL_FLAG, self.as_raw()).cast() }
+        &self.context().web_sockets
+    }
+
+    fn routes(&mut self) -> &Routes {
+        &self.context().routes
+    }
+
+    pub fn enable_node_http(&mut self) {
+        let group = &self.context().group;
+        debug_assert!(group.head_listen_sockets.get().is_null());
+        (group.vtable).set(Some(if SSL { &NODE_TLS } else { &NODE_TCP }));
+    }
+
+    pub fn set_using_custom_expect_handler(&mut self, value: bool) {
+        self.context().answers_expect.set(!value);
+    }
+
+    pub(crate) fn attach_http2(&mut self, http2: Http2) {
+        let context = self.context();
+        debug_assert!(context.http2.get().is_none() && context.server_names.borrow().is_empty());
+        let http2 = context.http2.get_or_init(|| http2);
+        if SSL && let Some(ssl_ctx) = &context.ssl_ctx {
+            // SAFETY: a live `SSL_CTX`.
+            unsafe { us_ssl_ctx_enable_http2_alpn(ssl_ctx.as_ptr(), http2.allows_http1.into()) };
+        }
     }
 
     /// Close every HTTP connection that is idle (no request being received, no
@@ -134,7 +210,7 @@ impl<const SSL: bool> App<SSL> {
     /// work completes. Never touches WebSockets or the listen socket.
     /// Returns the number of connections closed.
     pub fn close_idle_connections(&mut self, close_when_idle: bool) -> usize {
-        c::uws_app_close_idle(Self::SSL_FLAG, self.as_raw(), i32::from(close_when_idle))
+        self.context().close_idle_connections(close_when_idle)
     }
 
     pub fn set_flags(
@@ -144,26 +220,28 @@ impl<const SSL: bool> App<SSL> {
         lenient_http_flags: u8,
         http_allow_half_open: bool,
     ) {
-        c::uws_app_set_flags(
-            Self::SSL_FLAG,
-            self.as_raw(),
-            require_host_header,
-            use_strict_method_validation,
-            lenient_http_flags,
-            http_allow_half_open,
-        )
+        self.context().update_request_options(|options| {
+            options.requires_host = require_host_header;
+            options.has_strict_methods = use_strict_method_validation;
+            options.has_lenient_values = lenient_http_flags & 1 != 0;
+            options.has_lenient_transfer_encoding = lenient_http_flags & 2 != 0;
+        });
+        self.context().allows_half_open.set(http_allow_half_open);
     }
 
     pub fn set_max_http_header_size(&mut self, max_header_size: u64) {
-        c::uws_app_set_max_http_header_size(Self::SSL_FLAG, self.as_raw(), max_header_size)
+        (self.context()).update_request_options(|options| options.max_header_size = max_header_size)
     }
 
     pub fn set_max_headers_count(&mut self, max_headers_count: u32) {
-        c::uws_app_set_max_headers_count(Self::SSL_FLAG, self.as_raw(), max_headers_count)
+        (self.context())
+            .update_request_options(|options| options.max_headers_count = max_headers_count)
     }
 
     pub fn clear_routes(&mut self) {
-        c::uws_app_clear_routes(Self::SSL_FLAG, self.as_raw())
+        let routes = self.routes();
+        routes.requests.clear();
+        routes.upgrades.take();
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -184,38 +262,23 @@ impl<const SSL: bool> App<SSL> {
     //   }
     // ─────────────────────────────────────────────────────────────────────
 
-    uws_app_route_methods! {
-        get     => uws_app_get,
-        post    => uws_app_post,
-        options => uws_app_options,
-        delete  => uws_app_delete,
-        patch   => uws_app_patch,
-        put     => uws_app_put,
-        head    => uws_app_head,
-        connect => uws_app_connect,
-        trace   => uws_app_trace,
-        any     => uws_app_any,
+    pub fn any(
+        &mut self,
+        pattern: &[u8],
+        handler: Handler<uws_res, Request>,
+        user_data: *mut c_void,
+    ) {
+        (self.routes().requests).add(None, pattern, handler, user_data);
     }
 
     pub fn method(
         &mut self,
         method_: Method,
         pattern: &[u8],
-        handler: c::uws_method_handler,
+        handler: Handler<uws_res, Request>,
         user_data: *mut c_void,
     ) {
-        match method_ {
-            Method::GET => self.get(pattern, handler, user_data),
-            Method::POST => self.post(pattern, handler, user_data),
-            Method::PUT => self.put(pattern, handler, user_data),
-            Method::DELETE => self.delete(pattern, handler, user_data),
-            Method::PATCH => self.patch(pattern, handler, user_data),
-            Method::OPTIONS => self.options(pattern, handler, user_data),
-            Method::HEAD => self.head(pattern, handler, user_data),
-            Method::CONNECT => self.connect(pattern, handler, user_data),
-            Method::TRACE => self.trace(pattern, handler, user_data),
-            _ => {}
-        }
+        (self.routes().requests).add(Some(method_), pattern, handler, user_data);
     }
 
     /// [`method`](Self::method) with an intrusively-refcounted `U` as the
@@ -233,7 +296,7 @@ impl<const SSL: bool> App<SSL> {
         self.method(
             method_,
             pattern,
-            Some(Self::route_ref_thunk::<U, H>),
+            Self::route_ref_thunk::<U, H>,
             owner.as_ptr().cast(),
         );
     }
@@ -249,7 +312,7 @@ impl<const SSL: bool> App<SSL> {
     {
         self.any(
             pattern,
-            Some(Self::route_ref_thunk::<U, H>),
+            Self::route_ref_thunk::<U, H>,
             owner.as_ptr().cast(),
         );
     }
@@ -267,89 +330,93 @@ impl<const SSL: bool> App<SSL> {
         thunk::zst::<H>()(owner, AnyRequest::H1(req), resp)
     }
 
-    pub fn on_client_error(
-        &mut self,
-        handler: extern "C" fn(*mut c_void, c_int, *mut us_socket_t, u8, *mut u8, c_int),
-        user_data: *mut c_void,
-    ) {
-        // Callers receive the raw C args and slice raw_packet manually.
-        c::uws_app_set_on_clienterror(Self::SSL_FLAG, self.as_raw(), handler, user_data)
+    /// Only for `node:http`.
+    pub fn on_client_error(&mut self, handler: OnClientError, user_data: *mut c_void) {
+        (self.context().on_client_error).set(Some((handler, user_data)));
     }
 
-    pub fn listen_with_config(
+    /// On failure, `errno` says why.
+    pub fn listen(
         &mut self,
-        handler: c::uws_listen_handler,
-        user_data: *mut c_void,
-        config: c::uws_app_listen_config_t,
-    ) {
-        // Callers supply the C-ABI shim directly.
-        // SAFETY: self is a valid app; config.host (if non-null) is NUL-terminated and outlives the call.
-        unsafe {
-            c::uws_app_listen_with_config(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                config.host,
-                u16::try_from(config.port).expect("int cast"),
-                config.options,
-                handler,
-                user_data,
-            )
-        }
+        host: Option<&ZStr>,
+        port: u16,
+        options: c_int,
+    ) -> Option<OwnedListenSocket<SSL>> {
+        let context = self.context();
+        let listener = context.group.listen(
+            Self::SOCKET_KIND,
+            context.ssl_ctx.as_ref().map(OwnedSslCtx::as_ptr),
+            host.filter(|host| !host.is_empty()),
+            port.into(),
+            // The client speaks first.
+            options | crate::LIBUS_LISTEN_DEFER_ACCEPT,
+            size_of::<Connection>() as c_int,
+            &mut 0,
+        );
+        Some(self.set_up(listener?))
     }
 
+    /// On failure, `errno` says why.
     pub fn listen_on_unix_socket(
         &mut self,
-        handler: extern "C" fn(*mut UwsListenSocket, *const c_char, i32, *mut c_void),
-        user_data: *mut c_void,
-        domain_name: &ZStr,
-        flags: i32,
-    ) {
-        // Callers supply the C-ABI shim directly.
-        // SAFETY: self is a valid app; domain_name is NUL-terminated.
-        unsafe {
-            c::uws_app_listen_domain_with_options(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                domain_name.as_ptr().cast(),
-                domain_name.len(),
-                flags,
-                handler,
-                user_data,
-            )
+        path: &ZStr,
+        options: c_int,
+    ) -> Option<OwnedListenSocket<SSL>> {
+        let context = self.context();
+        let listener = context.group.listen_unix(
+            Self::SOCKET_KIND,
+            context.ssl_ctx.as_ref().map(OwnedSslCtx::as_ptr),
+            path.as_bytes(),
+            options,
+            size_of::<Connection>() as c_int,
+            &mut 0,
+        );
+        Some(self.set_up(listener?))
+    }
+
+    fn set_up(&self, listener: crate::OwnedListenSocket) -> OwnedListenSocket<SSL> {
+        let socket = UwsListenSocket::opaque_mut(listener.as_ptr());
+        socket.get_socket().unref();
+        if SSL {
+            for (name, ssl_ctx) in &*self.context().server_names.borrow() {
+                socket.add_server_name(name, ssl_ctx.as_ptr());
+            }
         }
+        OwnedListenSocket(listener)
     }
 
     pub fn add_server_name_with_options(
         &mut self,
-        hostname_pattern: &core::ffi::CStr,
+        hostname_pattern: &CStr,
         opts: &BunSocketContextOptions,
         apply_client_cert_policy: bool,
     ) -> Result<(), AddServerNameError> {
-        // SAFETY: self is a valid app; hostname_pattern is NUL-terminated.
-        let rc = unsafe {
-            c::uws_add_server_name_with_options(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                hostname_pattern.as_ptr(),
-                *opts,
-                i32::from(apply_client_cert_policy),
-            )
-        };
-        if rc != 0 {
-            return Err(AddServerNameError::FailedToAddServerName);
+        let context = self.context();
+        debug_assert!(SSL && context.group.head_listen_sockets.get().is_null());
+        let ssl_ctx = (opts.create_ssl_context(&mut create_bun_socket_error_t::none))
+            .ok_or(AddServerNameError::FailedToAddServerName)?;
+        // SAFETY: a live `SSL_CTX`.
+        unsafe {
+            if apply_client_cert_policy {
+                let (requests, rejects) = (opts.request_cert, opts.reject_unauthorized);
+                us_ssl_ctx_set_sni_policy(ssl_ctx.as_ptr(), requests, rejects);
+            }
+            if let Some(http2) = context.http2.get() {
+                us_ssl_ctx_enable_http2_alpn(ssl_ctx.as_ptr(), http2.allows_http1.into());
+            }
         }
+        let name = ZBox::from_bytes(hostname_pattern.to_bytes());
+        context.server_names.borrow_mut().push((name, ssl_ctx));
         Ok(())
     }
 
-    /// Register a connection filter: `handler` is invoked with the raw
-    /// `us_socket_t*` and `1` when an HTTP connection is opened (for TLS, when
-    /// its handshake completes) and `-1` when it closes.
-    pub fn filter(
-        &mut self,
-        handler: extern "C" fn(*mut us_socket_t, i32, *mut c_void),
-        user_data: *mut c_void,
-    ) {
-        c::uws_filter(Self::SSL_FLAG, self.as_raw(), Some(handler), user_data)
+    pub fn on_connection_change(&mut self, handler: OnConnectionChange, user_data: *mut c_void) {
+        (self.context().on_connection_change).set(Some((handler, user_data)));
+    }
+
+    /// Only for `node:http`. With TLS, after the handshake.
+    pub fn on_open(&mut self, handler: OnOpen, user_data: *mut c_void) {
+        self.context().on_open.set(Some((handler, user_data)));
     }
 
     /// Calls with the same `context_key` share one context. It keeps the first call's `T` and
@@ -364,40 +431,9 @@ impl<const SSL: bool> App<SSL> {
         context_key: *const c_void,
     ) {
         let context = self.web_sockets().context::<T>(context_key, behavior);
-        // SAFETY: self is a valid app; pattern valid for the call.
-        unsafe {
-            c::uws_app_ws(
-                Self::SSL_FLAG,
-                self.as_raw(),
-                pattern.as_ptr(),
-                pattern.len(),
-                on_upgrade::<Server, SSL>,
-                ctx,
-                context.as_const_ptr().cast(),
-                id,
-            )
-        }
+        let route = UpgradeRoute::new::<Server, SSL>(ctx, context, id);
+        (self.routes().upgrades.borrow_mut()).add(Some(Method::GET), pattern, route);
     }
-
-    // HTTP response object for handling HTTP responses.
-    //
-    // This wraps the uWS HttpResponse template class from HttpResponse.h, providing
-    // methods for writing response data, setting headers, handling timeouts, and
-    // managing the response lifecycle. The response object supports both regular
-    // HTTP responses and chunked transfer encoding, and can handle large data
-    // writes by automatically splitting them into appropriately sized chunks.
-    //
-    // Key features:
-    // - Write response data with automatic chunking for large payloads
-    // - Set HTTP status codes and headers
-    // - Handle response timeouts and aborted requests
-    // - Support for WebSocket upgrades
-    // - Cork/uncork functionality for efficient batched writes
-    // - Automatic handling of Connection: close semantics
-    //
-    // Rust inherent associated types are unstable; callers name
-    // `crate::response::Response<{SSL as i32}>` / `crate::web_socket::WebSocket<{SSL as i32}>`
-    // directly.
 }
 
 /// Opaque listen socket handle, parameterized by SSL to match `App<SSL>`.
@@ -410,11 +446,6 @@ pub struct ListenSocket<const SSL: bool> {
 pub struct OwnedListenSocket<const SSL: bool>(crate::OwnedListenSocket);
 
 impl<const SSL: bool> OwnedListenSocket<SSL> {
-    /// SAFETY: `socket` is from an app's listen callback, and this drops before the loop frees it.
-    pub unsafe fn from_raw(socket: *mut UwsListenSocket) -> Option<Self> {
-        NonNull::new(socket).map(|socket| Self(crate::OwnedListenSocket(socket)))
-    }
-
     pub fn as_ptr(&self) -> *mut ListenSocket<SSL> {
         self.0.as_ptr().cast()
     }
@@ -441,193 +472,8 @@ pub enum AddServerNameError {
 }
 bun_core::impl_tag_error!(AddServerNameError);
 
-bun_opaque::opaque_ffi! { pub struct uws_app_s; }
-pub(crate) type uws_app_t = uws_app_s;
-
-#[allow(non_camel_case_types)]
-pub mod c {
-    use super::*;
-
-    pub(crate) type uws_listen_handler = Option<extern "C" fn(*mut UwsListenSocket, *mut c_void)>;
-    pub(crate) type uws_method_handler =
-        Option<extern "C" fn(*mut uws_res, *mut Request, *mut c_void)>;
-    // The C++ shim hands the filter the uws_res_t*, which for HTTP server
-    // sockets is the raw us_socket_t* — typed as such so callers outside this
-    // crate can name the handler signature.
-    pub(crate) type uws_filter_handler = Option<extern "C" fn(*mut us_socket_t, i32, *mut c_void)>;
-
-    unsafe extern "C" {
-        pub(crate) safe fn uws_app_close(ssl: i32, app: &mut uws_app_s);
-        pub(crate) safe fn uws_app_web_sockets(ssl: i32, app: &mut uws_app_s) -> *const c_void;
-        pub(crate) safe fn uws_app_close_idle(
-            ssl: i32,
-            app: &mut uws_app_s,
-            close_when_idle: i32,
-        ) -> usize;
-        // safe: `&mut uws_app_s` is ABI-identical to a non-null `*mut`;
-        // `handler`/`user_data` are stored opaquely (never dereferenced by the
-        // C++ shim itself) — no preconditions on this call.
-        pub(crate) safe fn uws_app_set_on_clienterror(
-            ssl: c_int,
-            app: &mut uws_app_s,
-            handler: extern "C" fn(*mut c_void, c_int, *mut us_socket_t, u8, *mut u8, c_int),
-            user_data: *mut c_void,
-        );
-        pub(crate) fn uws_create_app(
-            ssl: i32,
-            options: BunSocketContextOptions,
-            web_sockets: *const c_void,
-        ) -> *mut uws_app_t;
-        pub(crate) fn uws_app_destroy(ssl: i32, app: *mut uws_app_t);
-        pub(crate) safe fn uws_app_set_flags(
-            ssl: i32,
-            app: &mut uws_app_t,
-            require_host_header: bool,
-            use_strict_method_validation: bool,
-            lenient_http_flags: u8,
-            http_allow_half_open: bool,
-        );
-        pub(crate) safe fn uws_app_set_max_http_header_size(
-            ssl: i32,
-            app: &mut uws_app_t,
-            max_header_size: u64,
-        );
-        pub(crate) safe fn uws_app_set_max_headers_count(
-            ssl: i32,
-            app: &mut uws_app_t,
-            max_headers_count: u32,
-        );
-        pub(crate) fn uws_app_get(
-            ssl: i32,
-            app: *mut uws_app_t,
-            pattern: *const u8,
-            pattern_len: usize,
-            handler: uws_method_handler,
-            user_data: *mut c_void,
-        );
-        pub(crate) fn uws_app_post(
-            ssl: i32,
-            app: *mut uws_app_t,
-            pattern: *const u8,
-            pattern_len: usize,
-            handler: uws_method_handler,
-            user_data: *mut c_void,
-        );
-        pub(crate) fn uws_app_options(
-            ssl: i32,
-            app: *mut uws_app_t,
-            pattern: *const u8,
-            pattern_len: usize,
-            handler: uws_method_handler,
-            user_data: *mut c_void,
-        );
-        pub(crate) fn uws_app_delete(
-            ssl: i32,
-            app: *mut uws_app_t,
-            pattern: *const u8,
-            pattern_len: usize,
-            handler: uws_method_handler,
-            user_data: *mut c_void,
-        );
-        pub(crate) fn uws_app_patch(
-            ssl: i32,
-            app: *mut uws_app_t,
-            pattern: *const u8,
-            pattern_len: usize,
-            handler: uws_method_handler,
-            user_data: *mut c_void,
-        );
-        pub(crate) fn uws_app_put(
-            ssl: i32,
-            app: *mut uws_app_t,
-            pattern: *const u8,
-            pattern_len: usize,
-            handler: uws_method_handler,
-            user_data: *mut c_void,
-        );
-        pub(crate) fn uws_app_head(
-            ssl: i32,
-            app: *mut uws_app_t,
-            pattern: *const u8,
-            pattern_len: usize,
-            handler: uws_method_handler,
-            user_data: *mut c_void,
-        );
-        pub(crate) fn uws_app_connect(
-            ssl: i32,
-            app: *mut uws_app_t,
-            pattern: *const u8,
-            pattern_len: usize,
-            handler: uws_method_handler,
-            user_data: *mut c_void,
-        );
-        pub(crate) fn uws_app_trace(
-            ssl: i32,
-            app: *mut uws_app_t,
-            pattern: *const u8,
-            pattern_len: usize,
-            handler: uws_method_handler,
-            user_data: *mut c_void,
-        );
-        pub(crate) fn uws_app_any(
-            ssl: i32,
-            app: *mut uws_app_t,
-            pattern: *const u8,
-            pattern_len: usize,
-            handler: uws_method_handler,
-            user_data: *mut c_void,
-        );
-        pub(crate) fn uws_app_listen_with_config(
-            ssl: i32,
-            app: *mut uws_app_t,
-            host: *const c_char,
-            port: u16,
-            options: i32,
-            handler: uws_listen_handler,
-            user_data: *mut c_void,
-        );
-        pub(crate) fn uws_app_ws(
-            ssl: i32,
-            app: &mut uws_app_s,
-            pattern: *const u8,
-            pattern_len: usize,
-            handler: extern "C" fn(*mut c_void, *mut uws_res, &mut Request, *const c_void, usize),
-            user_data: *mut c_void,
-            context: *const c_void,
-            id: usize,
-        );
-        pub(crate) fn uws_add_server_name_with_options(
-            ssl: i32,
-            app: *mut uws_app_t,
-            hostname_pattern: *const c_char,
-            options: BunSocketContextOptions,
-            apply_client_cert_policy: c_int,
-        ) -> i32;
-        pub(crate) safe fn uws_filter(
-            ssl: i32,
-            app: &mut uws_app_t,
-            handler: uws_filter_handler,
-            user_data: *mut c_void,
-        );
-
-        pub(crate) fn uws_app_listen_domain_with_options(
-            ssl_flag: c_int,
-            app: *mut uws_app_t,
-            domain: *const c_char,
-            pathlen: usize,
-            flags: i32,
-            handler: extern "C" fn(*mut UwsListenSocket, *const c_char, i32, *mut c_void),
-            user_data: *mut c_void,
-        );
-
-        pub(crate) safe fn uws_app_clear_routes(ssl_flag: c_int, app: &mut uws_app_t);
-    }
-
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    pub struct uws_app_listen_config_t {
-        pub port: c_int,
-        pub host: *const c_char,
-        pub options: c_int,
-    }
+unsafe extern "C" {
+    pub(crate) safe static BUN_DEFAULT_MAX_HTTP_HEADER_SIZE: AtomicUsize;
+    fn us_ssl_ctx_set_sni_policy(ctx: *mut SslCtx, request_cert: c_int, reject_unauthorized: c_int);
+    fn us_ssl_ctx_enable_http2_alpn(ctx: *mut SslCtx, allow_http1: c_int);
 }

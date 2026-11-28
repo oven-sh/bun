@@ -2104,6 +2104,7 @@ impl VirtualMachine {
         if !self.is_inside_deferred_task_queue.get() {
             let _inside = self.is_inside_deferred_task_queue.raise_for_scope();
             self.event_loop().deferred_tasks.run();
+            self.event_loop().deferred_http2_drains.run();
         }
 
         // The loop won't tick again, so flush now.

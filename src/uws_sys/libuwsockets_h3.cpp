@@ -1,23 +1,18 @@
-// HTTP/3 C ABI. Mirrors the uws_* surface in libuwsockets.cpp 1:1
-// (same parameter shapes, same callback signatures) so the caller can
-// pattern-match NewApp/NewResponse without protocol-specific branches.
-// Kept in its own TU so HTTP/1.1 and HTTP/3 stay file-level separable.
+// HTTP/3 C ABI.
 
 // clang-format off
 #include "_libusockets.h"
 #include "quic.h"
+#include <bun-usockets/src/internal/internal.h>
 
 #include <bun-uws/src/Http3App.h>
 #include <bun-uws/src/Http3Response.h>
-#include <bun-uws/src/Http3Request.h>
 #include <string_view>
-#include <string.h>
 // clang-format on
 
 extern "C" size_t Bun__formatIpAddress(char (&buffer)[64], bool is_ipv6);
 
 using uWS::H3App;
-using uWS::Http3Request;
 using uWS::Http3Response;
 using uWS::Http3ResponseData;
 
@@ -32,53 +27,25 @@ extern "C" {
 
 typedef struct uws_h3_app_s uws_h3_app_t;
 typedef struct uws_h3_res_s uws_h3_res_t;
-typedef struct uws_h3_req_s uws_h3_req_t;
 
-typedef void (*uws_h3_method_handler)(uws_h3_res_t*, uws_h3_req_t*, void*);
 typedef void (*uws_h3_listen_handler)(us_quic_listen_socket_t*, void*);
 
 /* ───── app ───── */
 
-uws_h3_app_t* uws_h3_create_app(struct us_bun_socket_context_options_t options, unsigned int idle_timeout_s)
+uws_h3_app_t* uws_h3_create_app(struct us_bun_socket_context_options_t options, unsigned int idle_timeout_s, const void* routes)
 {
-    uWS::SocketContextOptions sco;
-    static_assert(sizeof(sco) == sizeof(options));
-    memcpy(&sco, &options, sizeof(sco));
-    return (uws_h3_app_t*)H3App::create(sco, idle_timeout_s);
+    return (uws_h3_app_t*)H3App::create(options, idle_timeout_s, routes);
 }
 
 void uws_h3_app_destroy(uws_h3_app_t* app) { delete (H3App*)app; }
 void uws_h3_app_close(uws_h3_app_t* app) { ((H3App*)app)->close(); }
-void uws_h3_app_clear_routes(uws_h3_app_t* app) { ((H3App*)app)->clearRoutes(); }
+const void* uws_h3_app_routes(uws_h3_app_t* app) { return ((H3App*)app)->http3Context->getContextData()->routes; }
 
 bool uws_h3_app_add_server_name(uws_h3_app_t* app, const char* hostname,
     struct us_bun_socket_context_options_t options)
 {
-    uWS::SocketContextOptions sco;
-    memcpy(&sco, &options, sizeof(sco));
-    return ((H3App*)app)->addServerNameWithOptions(hostname, sco);
+    return ((H3App*)app)->addServerNameWithOptions(hostname, options);
 }
-
-#define H3_ROUTE(name, method)                                                                       \
-    void uws_h3_app_##name(uws_h3_app_t* app, const char* pattern, size_t pattern_len,               \
-        uws_h3_method_handler handler, void* user_data)                                              \
-    {                                                                                                \
-        if (handler == nullptr) return;                                                              \
-        ((H3App*)app)->method(sv(pattern, pattern_len), [handler, user_data](auto* res, auto* req) { \
-            handler((uws_h3_res_t*)res, (uws_h3_req_t*)req, user_data);                              \
-        });                                                                                          \
-    }
-H3_ROUTE(get, get)
-H3_ROUTE(post, post)
-H3_ROUTE(options, options)
-H3_ROUTE(delete, del)
-H3_ROUTE(patch, patch)
-H3_ROUTE(put, put)
-H3_ROUTE(head, head)
-H3_ROUTE(connect, connect)
-H3_ROUTE(trace, trace)
-H3_ROUTE(any, any)
-#undef H3_ROUTE
 
 void uws_h3_app_listen_with_config(uws_h3_app_t* app, const char* host, uint16_t port,
     int32_t options, uws_h3_listen_handler handler, void* user_data)
@@ -234,33 +201,6 @@ uint64_t uws_h3_res_get_remote_address_info(uws_h3_res_t* res, const char** dest
     *dest = b;
     *is_ipv6 = len != 4;
     return Bun__formatIpAddress(b, *is_ipv6);
-}
-
-/* ───── request ───── */
-
-void uws_h3_req_set_yield(uws_h3_req_t* req, bool y) { ((Http3Request*)req)->setYield(y); }
-
-/* The FFI contract requires a non-null pointer; a default-
- * constructed string_view has data() == nullptr, so normalise empties. */
-static inline size_t ffi_sv(std::string_view v, const char** dest)
-{
-    *dest = v.empty() ? "" : v.data();
-    return v.length();
-}
-
-size_t uws_h3_req_get_url(uws_h3_req_t* req, const char** dest)
-{
-    return ffi_sv(((Http3Request*)req)->getFullUrl(), dest);
-}
-
-size_t uws_h3_req_get_method(uws_h3_req_t* req, const char** dest)
-{
-    return ffi_sv(((Http3Request*)req)->getMethod(), dest);
-}
-
-size_t uws_h3_req_get_header(uws_h3_req_t* req, const char* lower, size_t lower_len, const char** dest)
-{
-    return ffi_sv(((Http3Request*)req)->getHeader(sv(lower, lower_len)), dest);
 }
 
 #pragma clang attribute pop

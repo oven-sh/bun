@@ -806,6 +806,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_http2"
+version = "0.0.0"
+dependencies = [
+ "bitflags",
+ "bun_core",
+ "bun_hpack",
+ "bun_http1",
+ "bun_http_types",
+]
+
+[[package]]
 name = "bun_http_jsc"
 version = "0.0.0"
 dependencies = [
@@ -2209,8 +2220,8 @@ dependencies = [
  "bun_boringssl_sys",
  "bun_core",
  "bun_errno",
- "bun_hpack",
  "bun_http1",
+ "bun_http2",
  "bun_http_types",
  "bun_libuv_sys",
  "bun_opaque",

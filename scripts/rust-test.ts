@@ -47,6 +47,7 @@ const crates = [
   "bun_hash",
   "bun_hpack",
   "bun_http1",
+  "bun_http2",
   "bun_http_types",
   "bun_icu",
   "bun_icu_data",

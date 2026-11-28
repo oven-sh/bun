@@ -1,19 +1,8 @@
-//! Rust wrapper around `uws::Response<bool isSSL>` from µWebSockets.
-//!
-//! This provides a type-safe Rust interface to the underlying C++ `uws::Response` template.
-//! The `SSL` const parameter determines whether this wraps `uws::Response<true>` (SSL/TLS)
-//! or `uws::Response<false>` (plain HTTP).
-//!
-//! The wrapper:
-//! - Uses opaque types to hide the C++ implementation details
-//! - Provides compile-time SSL/TLS specialization via the `SSL` const parameter
-//! - Offers safe casting between Rust and C representations
-//! - Maintains zero-cost abstractions over the underlying µWebSockets API
+//! Handles to the response of a request. The methods for HTTP/1 are in `http1`.
 
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 
-use bun_http1::request::RequestParser;
-
+use crate::http1::{OnData, OnWritable};
 use crate::thunk;
 use crate::thunk::OpaqueHandle;
 use crate::{WebSocketUpgradeContext, us_socket_t};
@@ -62,338 +51,31 @@ impl SocketAddress {
     }
 }
 
-/// Opaque handle for `uws::Response<SSL>`.
-///
-/// The SSL flag is modeled as a `const SSL: bool` parameter on an opaque
-/// extern type (Nomicon pattern).
+bun_opaque::opaque_ffi! {
+    /// An HTTP/1 connection, and the response that has it.
+    pub struct uws_res;
+}
+
+/// A [`uws_res`] whose handlers know whether it has TLS.
 #[repr(C)]
-pub struct Response<const SSL: bool>(c::uws_res);
+pub struct Response<const SSL: bool>(uws_res);
+
+impl<const SSL: bool> core::ops::Deref for Response<SSL> {
+    type Target = uws_res;
+
+    fn deref(&self) -> &uws_res {
+        &self.0
+    }
+}
 
 impl<const SSL: bool> Response<SSL> {
-    #[inline(always)]
-    const fn ssl_flag() -> i32 {
-        SSL as i32
-    }
-
     /// The `AnyResponse` variant for this `SSL` flag.
     #[inline]
-    pub fn res_to_any(res: *mut c::uws_res) -> AnyResponse {
+    pub(crate) fn res_to_any(res: *mut uws_res) -> AnyResponse {
         if SSL {
             AnyResponse::SSL(res.cast())
         } else {
             AnyResponse::TCP(res.cast())
-        }
-    }
-
-    #[inline]
-    pub(crate) fn downcast(&mut self) -> *mut c::uws_res {
-        std::ptr::from_mut::<Self>(self).cast::<c::uws_res>()
-    }
-
-    /// `&mut uws_res` view of self for `safe fn` shims.
-    #[inline]
-    fn as_raw(&mut self) -> &mut c::uws_res {
-        &mut self.0
-    }
-
-    #[inline]
-    pub(crate) fn downcast_socket(&mut self) -> *mut us_socket_t {
-        std::ptr::from_mut::<Self>(self).cast::<us_socket_t>()
-    }
-
-    pub fn end(&mut self, data: &[u8], close_connection: bool) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
-            c::uws_res_end(
-                Self::ssl_flag(),
-                self.downcast(),
-                data.as_ptr(),
-                data.len(),
-                close_connection,
-            );
-        }
-    }
-
-    pub(crate) fn try_end(&mut self, data: &[u8], total: usize, close_: bool) -> bool {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
-            c::uws_res_try_end(
-                Self::ssl_flag(),
-                self.downcast(),
-                data.as_ptr(),
-                data.len(),
-                total,
-                close_,
-            )
-        }
-    }
-
-    pub(crate) fn is_connect_request(&mut self) -> bool {
-        c::uws_res_is_connect_request(Self::ssl_flag(), self.as_raw())
-    }
-
-    fn take_request_trailers(&mut self) -> Vec<u8> {
-        let parser = c::uws_res_get_parser(Self::ssl_flag(), self.as_raw());
-        // SAFETY: null once the parser is destroyed. http1.rs does not borrow it while a handler runs.
-        unsafe { parser.cast::<RequestParser>().as_mut() }
-            .map_or_else(Vec::new, RequestParser::take_trailers)
-    }
-
-    pub(crate) fn flush_headers(&mut self, flush_immediately: bool) {
-        c::uws_res_flush_headers(Self::ssl_flag(), self.as_raw(), flush_immediately)
-    }
-
-    pub(crate) fn is_corked(&mut self) -> bool {
-        c::uws_res_is_corked(Self::ssl_flag(), self.as_raw())
-    }
-
-    pub(crate) fn state(&self) -> State {
-        c::uws_res_state(Self::ssl_flag() as c_int, &self.0)
-    }
-
-    pub fn should_close_connection(&self) -> bool {
-        self.state().is_http_connection_close()
-    }
-
-    /// Valid after the close callback: uSockets frees a closed socket only when the outermost tick ends.
-    pub(crate) fn is_closed(&self) -> bool {
-        // Same view as `downcast_socket`: the response handle is the socket.
-        us_socket_t::opaque_ref(std::ptr::from_ref::<Self>(self).cast::<us_socket_t>()).is_closed()
-    }
-
-    /// False if the socket is closed or already sent its FIN / close_notify. `upgrade()` returns
-    /// false for those.
-    pub(crate) fn can_upgrade(&self) -> bool {
-        let socket =
-            us_socket_t::opaque_ref(std::ptr::from_ref::<Self>(self).cast::<us_socket_t>());
-        !socket.is_closed() && !socket.is_shutdown()
-    }
-
-    pub(crate) fn prepare_for_sendfile(&mut self) {
-        c::uws_res_prepare_for_sendfile(Self::ssl_flag(), self.as_raw())
-    }
-
-    pub(crate) fn uncork(&mut self) {
-        c::uws_res_uncork(Self::ssl_flag(), self.as_raw())
-    }
-
-    /// Sends what the cork buffer holds for this socket. The socket stays corked.
-    pub fn send_corked(&mut self) {
-        c::uws_res_send_corked(Self::ssl_flag(), self.as_raw())
-    }
-
-    /// Marks the response in flight as one that user JavaScript produces. It is sent when it completes.
-    pub fn send_when_complete(&mut self) {
-        c::uws_res_send_when_complete(Self::ssl_flag(), self.as_raw())
-    }
-
-    /// Defers the close to the end of the read uws is parsing. False: not parsing, the caller closes now.
-    pub fn close_after_message_if_parsing(&mut self) -> bool {
-        c::uws_res_close_after_message_if_parsing(Self::ssl_flag(), self.as_raw())
-    }
-
-    /// Removes the handlers that were attached with `user_data`. See `HttpResponse::clearHandlersOf`.
-    pub(crate) fn clear_handlers_of(&mut self, user_data: *mut c_void) {
-        c::uws_res_clear_handlers_of(Self::ssl_flag(), self.as_raw(), user_data)
-    }
-
-    pub(crate) fn pause(&mut self) {
-        c::uws_res_pause(Self::ssl_flag(), self.as_raw())
-    }
-
-    pub(crate) fn resume(&mut self) {
-        c::uws_res_resume(Self::ssl_flag(), self.as_raw())
-    }
-
-    pub(crate) fn write_continue(&mut self) {
-        c::uws_res_write_continue(Self::ssl_flag(), self.as_raw())
-    }
-
-    pub(crate) fn write_informational(&mut self, data: &[u8]) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
-            c::uws_res_write_informational(
-                Self::ssl_flag(),
-                self.downcast(),
-                data.as_ptr(),
-                data.len(),
-            )
-        }
-    }
-
-    pub fn write_status(&mut self, status: &[u8]) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
-            c::uws_res_write_status(
-                Self::ssl_flag(),
-                self.downcast(),
-                status.as_ptr(),
-                status.len(),
-            )
-        }
-    }
-
-    pub fn write_header(&mut self, key: &[u8], value: &[u8]) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
-            c::uws_res_write_header(
-                Self::ssl_flag(),
-                self.downcast(),
-                key.as_ptr(),
-                key.len(),
-                value.as_ptr(),
-                value.len(),
-            )
-        }
-    }
-
-    pub fn write_header_int(&mut self, key: &[u8], value: u64) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
-            c::uws_res_write_header_int(
-                Self::ssl_flag(),
-                self.downcast(),
-                key.as_ptr(),
-                key.len(),
-                value,
-            )
-        }
-    }
-
-    pub fn end_without_body(&mut self, close_connection: bool) {
-        c::uws_res_end_without_body(Self::ssl_flag(), self.as_raw(), close_connection)
-    }
-
-    pub(crate) fn end_send_file(&mut self, write_offset: u64, close_connection: bool) {
-        c::uws_res_end_sendfile(
-            Self::ssl_flag(),
-            self.as_raw(),
-            write_offset,
-            close_connection,
-        )
-    }
-
-    /// Completion gate for end paths that bypass `internalEnd` (the sendfile
-    /// path): closes the socket when the connection is marked to close, the
-    /// response is complete, and every outgoing byte has been flushed.
-    pub(crate) fn close_if_done_and_marked(&mut self) {
-        c::uws_res_close_if_done_and_marked(Self::ssl_flag(), self.as_raw())
-    }
-
-    pub fn timeout(&mut self, seconds: u8) {
-        c::uws_res_timeout(Self::ssl_flag(), self.as_raw(), seconds)
-    }
-
-    pub(crate) fn reset_timeout(&mut self) {
-        c::uws_res_reset_timeout(Self::ssl_flag(), self.as_raw())
-    }
-
-    pub(crate) fn get_buffered_amount(&mut self) -> u64 {
-        c::uws_res_get_buffered_amount(Self::ssl_flag(), self.as_raw())
-    }
-
-    /// `get_buffered_amount() == 0` and, for TLS, no ciphertext batch tail left in userspace.
-    pub(crate) fn has_fully_drained(&mut self) -> bool {
-        c::uws_res_has_fully_drained(Self::ssl_flag(), self.as_raw())
-    }
-
-    pub(crate) fn write(&mut self, data: &[u8]) -> WriteResult {
-        let mut len: usize = data.len();
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        match unsafe {
-            c::uws_res_write(
-                Self::ssl_flag(),
-                self.downcast(),
-                data.as_ptr(),
-                &raw mut len,
-            )
-        } {
-            true => WriteResult::WantMore(len),
-            false => WriteResult::Backpressure(len),
-        }
-    }
-
-    /// Write body bytes without copying the unwritten tail into uWS backpressure.
-    /// Returns the number of body bytes accepted. See `HttpResponse::tryWriteBody`.
-    pub(crate) fn try_write_body(&mut self, data: &[u8], is_first: bool) -> usize {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
-            c::uws_res_try_write_body(
-                Self::ssl_flag(),
-                self.downcast(),
-                data.as_ptr(),
-                data.len(),
-                is_first,
-            )
-        }
-    }
-
-    /// Copy the body tail into the uWS backpressure buffer and close out the
-    /// chunk framing. See `HttpResponse::spillBodyTail`.
-    pub(crate) fn spill_body(&mut self, data: &[u8]) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
-            c::uws_res_spill_body(Self::ssl_flag(), self.downcast(), data.as_ptr(), data.len())
-        }
-    }
-
-    pub(crate) fn has_responded(&mut self) -> bool {
-        c::uws_res_has_responded(Self::ssl_flag(), self.as_raw())
-    }
-
-    pub(crate) fn mark_wrote_content_length_header(&mut self) {
-        c::uws_res_mark_wrote_content_length_header(Self::ssl_flag(), self.as_raw())
-    }
-
-    pub(crate) fn mark_wrote_date_header(&mut self) {
-        c::uws_res_mark_wrote_date_header(Self::ssl_flag(), self.as_raw())
-    }
-
-    pub(crate) fn write_mark(&mut self) {
-        c::uws_res_write_mark(Self::ssl_flag(), self.as_raw())
-    }
-
-    pub(crate) fn get_native_handle(&mut self) -> Fd {
-        #[cfg(windows)]
-        {
-            // on windows uSockets exposes SOCKET (uintptr-sized) as a pointer
-            // value; tag kind=system via `from_system` (masks bit 63) so
-            // `INVALID_SOCKET` (~0) doesn't decode as kind=uv.
-            return Fd::from_system(
-                c::uws_res_get_native_handle(Self::ssl_flag(), self.as_raw())
-                    as *mut core::ffi::c_void,
-            );
-        }
-        #[cfg(not(windows))]
-        {
-            Fd::from_native(
-                c_int::try_from(
-                    c::uws_res_get_native_handle(Self::ssl_flag(), self.as_raw()) as usize,
-                )
-                .unwrap(),
-            )
-        }
-    }
-
-    pub fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
-        let mut ip_ptr: *const u8 = core::ptr::null();
-        let mut port: i32 = 0;
-        let mut is_ipv6: bool = false;
-        // This function will fill in the slots and return len.
-        // if len is zero it will not fill in the slots so it is ub to
-        // return the struct in that case.
-        let ip_len =
-            c::uws_res_get_remote_address_info(self.as_raw(), &mut ip_ptr, &mut port, &mut is_ipv6);
-        if ip_len > 0 {
-            Some(SocketAddress::new(
-                // SAFETY: uws populated ip_ptr/ip_len with bytes valid until the next
-                // address lookup on this thread; copied before returning.
-                unsafe { bun_core::ffi::slice(ip_ptr, ip_len) },
-                port,
-                is_ipv6,
-            ))
-        } else {
-            None
         }
     }
 
@@ -408,36 +90,19 @@ impl<const SSL: bool> Response<SSL> {
     where
         H: Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static,
     {
-        extern "C" fn handle<U, H, const SSL: bool>(
-            this: &mut c::uws_res,
-            amount: u64,
-            data: *mut c_void,
-        ) -> bool
-        where
-            H: Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static,
-        {
-            // null user-data is always a no-op.
-            if data.is_null() {
-                return true;
-            }
-            thunk::zst::<H>()(data.cast::<U>(), amount, Response::<SSL>::res_to_any(this))
-        }
-        c::uws_res_on_writable(
-            Self::ssl_flag(),
-            self.as_raw(),
-            Some(handle::<U, H, SSL>),
-            user_data.cast(),
-        );
+        let handler: OnWritable = |res, offset, data| {
+            let res = Self::res_to_any(res.as_mut_ptr());
+            data.is_null() || thunk::zst::<H>()(data.cast(), offset, res)
+        };
+        self.set_on_writable(handler, user_data.cast());
     }
 
-    pub(crate) fn clear_on_writable(&mut self) {
-        c::uws_res_clear_on_writable(Self::ssl_flag(), self.as_raw())
-    }
-
-    #[inline]
-    pub(crate) fn mark_needs_more(&mut self) {
-        if !SSL {
-            c::us_socket_mark_needs_more_not_ssl(self.as_raw())
+    fn on_event<U, H>(res: &uws_res, user_data: *mut c_void)
+    where
+        H: Fn(*mut U, AnyResponse) + Copy + 'static,
+    {
+        if !user_data.is_null() {
+            thunk::zst::<H>()(user_data.cast(), Self::res_to_any(res.as_mut_ptr()));
         }
     }
 
@@ -445,132 +110,51 @@ impl<const SSL: bool> Response<SSL> {
     where
         H: Fn(*mut U, AnyResponse) + Copy + 'static,
     {
-        extern "C" fn handle<U, H, const SSL: bool>(this: &mut c::uws_res, user_data: *mut c_void)
-        where
-            H: Fn(*mut U, AnyResponse) + Copy + 'static,
-        {
-            // null user-data is always a no-op.
-            if user_data.is_null() {
-                return;
-            }
-            thunk::zst::<H>()(user_data.cast::<U>(), Response::<SSL>::res_to_any(this))
-        }
-        c::uws_res_on_aborted(
-            Self::ssl_flag(),
-            self.as_raw(),
-            Some(handle::<U, H, SSL>),
-            optional_data.cast(),
-        );
-    }
-
-    pub(crate) fn clear_aborted(&mut self) {
-        c::uws_res_on_aborted(Self::ssl_flag(), self.as_raw(), None, core::ptr::null_mut())
+        self.set_on_aborted(Self::on_event::<U, H>, optional_data.cast());
     }
 
     pub fn on_timeout<U, H>(&mut self, _handler: H, optional_data: *mut U)
     where
         H: Fn(*mut U, AnyResponse) + Copy + 'static,
     {
-        extern "C" fn handle<U, H, const SSL: bool>(this: &mut c::uws_res, user_data: *mut c_void)
-        where
-            H: Fn(*mut U, AnyResponse) + Copy + 'static,
-        {
-            // null user-data is always a no-op.
-            if user_data.is_null() {
-                return;
-            }
-            thunk::zst::<H>()(user_data.cast::<U>(), Response::<SSL>::res_to_any(this))
-        }
-        c::uws_res_on_timeout(
-            Self::ssl_flag(),
-            self.as_raw(),
-            Some(handle::<U, H, SSL>),
-            optional_data.cast(),
-        );
-    }
-
-    pub(crate) fn clear_timeout(&mut self) {
-        c::uws_res_on_timeout(Self::ssl_flag(), self.as_raw(), None, core::ptr::null_mut())
-    }
-
-    pub(crate) fn clear_on_data(&mut self) {
-        c::uws_res_on_data(Self::ssl_flag(), self.as_raw(), None, core::ptr::null_mut())
+        self.set_on_timeout(Self::on_event::<U, H>, optional_data.cast());
     }
 
     pub fn on_data<U, H>(&mut self, _handler: H, optional_data: *mut U)
     where
         H: Fn(*mut U, AnyResponse, &[u8], bool) + Copy + 'static,
     {
-        // Safe fn item: nested local thunk, only coerced to the C-ABI
-        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
-        extern "C" fn handle<U, H, const SSL: bool>(
-            this: &mut c::uws_res,
-            chunk_ptr: *const u8,
-            len: usize,
-            last: bool,
-            user_data: *mut c_void,
-        ) where
-            H: Fn(*mut U, AnyResponse, &[u8], bool) + Copy + 'static,
-        {
-            // null user-data is always a no-op.
-            if user_data.is_null() {
-                return;
+        let handler: OnData = |res, chunk, is_last, user_data| {
+            if !user_data.is_null() {
+                let res = Self::res_to_any(res.as_mut_ptr());
+                thunk::zst::<H>()(user_data.cast(), res, chunk, is_last);
             }
-            // SAFETY: uWS callback contract — `chunk_ptr[..len]` is valid for the call.
-            let chunk = unsafe { thunk::c_slice(chunk_ptr, len) };
-            let res = Response::<SSL>::res_to_any(this);
-            thunk::zst::<H>()(user_data.cast::<U>(), res, chunk, last)
-        }
-        c::uws_res_on_data(
-            Self::ssl_flag(),
-            self.as_raw(),
-            Some(handle::<U, H, SSL>),
-            optional_data.cast(),
-        );
+        };
+        self.set_on_data(Some(handler), optional_data.cast());
     }
+}
 
-    pub(crate) fn end_stream(&mut self, close_connection: bool) {
-        c::uws_res_end_stream(Self::ssl_flag(), self.as_raw(), close_connection)
-    }
-
-    /// Run `handler` while the response is corked.
-    pub(crate) fn corked<F: FnOnce()>(&mut self, f: F) {
-        // Safe fn item: nested local thunk, only coerced to the C-ABI
-        // fn-pointer type passed to C; body wraps its raw-ptr op explicitly.
-        extern "C" fn handle<F: FnOnce()>(user_data: *mut c_void) {
-            // SAFETY: user_data points at a stack `ManuallyDrop<F>` valid for this synchronous call.
-            let f = unsafe { core::ptr::read(user_data.cast::<F>()) };
-            f();
+impl uws_res {
+    pub fn get_remote_socket_info(&self) -> Option<SocketAddress> {
+        // Another socket may have its descriptor.
+        if self.is_closed() {
+            return None;
         }
-        let mut f = core::mem::ManuallyDrop::new(f);
-        // cork is synchronous so the stack-allocated closure outlives the FFI call.
-        c::uws_res_cork(
-            Self::ssl_flag(),
-            self.as_raw(),
-            (&raw mut *f).cast::<c_void>(),
-            handle::<F>,
-        );
-    }
-
-    pub(crate) fn run_corked_with_type<U>(&mut self, handler: fn(&U), data: &U) {
-        // cork is synchronous, so we can stack-allocate the (handler, data) pair
-        // and recover it inside the trampoline.
-        type Ctx<'a, U> = (fn(&U), &'a U);
-        // Safe fn item: nested local thunk, only coerced to the C-ABI
-        // fn-pointer type passed to C; body wraps its raw-ptr op explicitly.
-        extern "C" fn handle<U>(user_data: *mut c_void) {
-            // SAFETY: user_data points at a stack Ctx<U> valid for this synchronous call.
-            let ctx = unsafe { &*user_data.cast::<Ctx<'_, U>>() };
-            (ctx.0)(ctx.1);
+        let mut ip_ptr: *const u8 = core::ptr::null();
+        let mut port: i32 = 0;
+        let mut is_ipv6: bool = false;
+        let ip_len = uws_res_get_remote_address_info(self, &mut ip_ptr, &mut port, &mut is_ipv6);
+        if ip_len > 0 {
+            Some(SocketAddress::new(
+                // SAFETY: uws populated ip_ptr/ip_len with bytes valid until the next
+                // address lookup on this thread; copied before returning.
+                unsafe { bun_core::ffi::slice(ip_ptr, ip_len) },
+                port,
+                is_ipv6,
+            ))
+        } else {
+            None
         }
-        let mut ctx: Ctx<'_, U> = (handler, data);
-        // cork is synchronous so the stack-allocated ctx outlives the FFI call.
-        c::uws_res_cork(
-            Self::ssl_flag(),
-            self.as_raw(),
-            (&raw mut ctx).cast::<c_void>(),
-            handle::<U>,
-        );
     }
 }
 
@@ -578,12 +162,12 @@ pub type TCPResponse = Response<false>;
 pub type TLSResponse = Response<true>;
 
 // SAFETY: `Response<SSL>` is a `#[repr(C)]` ZST (`UnsafeCell<[u8; 0]>`) with
-// align 1; C++ owns the real bytes.
+// align 1; uSockets owns the real bytes.
 unsafe impl<const SSL: bool> OpaqueHandle for Response<SSL> {}
 // SAFETY: `h3::Response` is a `#[repr(C)]` ZST (`UnsafeCell<[u8; 0]>`) with
 // align 1; C++ owns the real bytes.
 unsafe impl OpaqueHandle for H3Response {}
-// SAFETY: as above for `h2::Response`.
+// SAFETY: a ZST as above. It stands for the pointer of an `Rc`, and nothing is read through it as `Self`.
 unsafe impl OpaqueHandle for H2Response {}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -601,6 +185,26 @@ pub enum AnyResponse {
 // (S019): each variant payload is a ZST opaque, so the deref is sound by
 // construction and needs no `unsafe` at the dispatch site.
 macro_rules! any_dispatch {
+    ($self:expr, |$r:ident| $body:expr) => {
+        match $self {
+            AnyResponse::SSL(_) | AnyResponse::TCP(_) => {
+                let $r = uws_res::opaque_ref($self.as_ptr().cast());
+                $body
+            }
+            AnyResponse::H3(ptr) => {
+                let $r = H3Response::as_handle(ptr);
+                $body
+            }
+            AnyResponse::H2(ptr) => {
+                let $r = H2Response::as_handle(ptr);
+                $body
+            }
+        }
+    };
+}
+
+/// For the methods whose handler is told the variant.
+macro_rules! variant_dispatch {
     ($self:expr, |$r:ident| $body:expr) => {
         match $self {
             AnyResponse::SSL(ptr) => {
@@ -664,20 +268,23 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.end_send_file(write_offset, close_connection))
     }
 
-    /// Completion gate for end paths that bypass `internalEnd` (the sendfile
-    /// path); see `Response::close_if_done_and_marked`.
+    /// See `uws_res::close_if_done_and_marked`.
     pub fn close_if_done_and_marked(self) {
         any_dispatch!(self, |r| r.close_if_done_and_marked())
     }
 
-    pub fn socket(self) -> *mut c::uws_res {
+    pub fn socket(self) -> *mut uws_res {
         match self {
             AnyResponse::H3(_) | AnyResponse::H2(_) => {
                 panic!("socket() is only available for HTTP/1 responses")
             }
-            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).downcast(),
-            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).downcast(),
+            AnyResponse::SSL(_) | AnyResponse::TCP(_) => self.as_ptr().cast(),
         }
+    }
+
+    pub fn http1<'a>(self) -> Option<&'a uws_res> {
+        matches!(self, AnyResponse::SSL(_) | AnyResponse::TCP(_))
+            .then(|| uws_res::opaque_ref(self.as_ptr().cast()))
     }
 
     /// The handle with its variant erased, for the C++ shims that take the
@@ -716,11 +323,9 @@ impl AnyResponse {
 
     /// H2 and H3 have no batch tail.
     pub fn has_fully_drained(self) -> bool {
-        match self {
-            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).has_fully_drained(),
-            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).has_fully_drained(),
-            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).get_buffered_amount() == 0,
-            AnyResponse::H2(ptr) => H2Response::as_handle(ptr).get_buffered_amount() == 0,
+        match self.http1() {
+            Some(res) => res.has_fully_drained(),
+            None => self.get_buffered_amount() == 0,
         }
     }
 
@@ -744,7 +349,7 @@ impl AnyResponse {
     where
         H: Fn(*mut U, &[u8], bool) + Copy + 'static,
     {
-        any_dispatch!(self, |r| {
+        variant_dispatch!(self, |r| {
             r.on_data(move |u, _, d, l| handler(u, d, l), optional_data)
         })
     }
@@ -777,7 +382,7 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.should_close_connection())
     }
 
-    /// See `Response::is_closed`; always `false` for HTTP/3 (see `h3::Response::is_closed`).
+    /// See `uws_res::is_closed`; always `false` for HTTP/3 (see `h3::Response::is_closed`).
     pub fn is_closed(self) -> bool {
         any_dispatch!(self, |r| r.is_closed())
     }
@@ -810,48 +415,28 @@ impl AnyResponse {
 
     /// HTTP/1 only: the handlers of an HTTP/2 or HTTP/3 stream belong to one response.
     pub fn clear_handlers_of<U>(self, user_data: *mut U) {
-        match self {
-            AnyResponse::SSL(ptr) => {
-                TLSResponse::as_handle(ptr).clear_handlers_of(user_data.cast())
-            }
-            AnyResponse::TCP(ptr) => {
-                TCPResponse::as_handle(ptr).clear_handlers_of(user_data.cast())
-            }
-            AnyResponse::H3(_) | AnyResponse::H2(_) => {}
+        if let Some(res) = self.http1() {
+            res.clear_handlers_of(user_data.cast());
         }
     }
 
     /// HTTP/1 only: an HTTP/2 or HTTP/3 stream has no socket read to finish.
     pub fn close_after_message_if_parsing(self) -> bool {
-        match self {
-            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).close_after_message_if_parsing(),
-            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).close_after_message_if_parsing(),
-            AnyResponse::H3(_) | AnyResponse::H2(_) => false,
-        }
+        (self.http1()).is_some_and(uws_res::close_after_message_if_parsing)
     }
 
     pub fn force_close(self) {
         match self {
-            AnyResponse::SSL(ptr) => {
-                // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-                us_socket_t::opaque_mut(TLSResponse::as_handle(ptr).downcast_socket())
-                    .close(crate::us_socket::CloseCode::failure);
-            }
-            AnyResponse::TCP(ptr) => {
-                us_socket_t::opaque_mut(TCPResponse::as_handle(ptr).downcast_socket())
-                    .close(crate::us_socket::CloseCode::failure);
+            AnyResponse::SSL(_) | AnyResponse::TCP(_) => {
+                us_socket_t::opaque_mut(self.as_ptr().cast()).close(crate::CloseCode::failure);
             }
             AnyResponse::H3(ptr) => H3Response::as_handle(ptr).force_close(),
             AnyResponse::H2(ptr) => H2Response::as_handle(ptr).force_close(),
         }
     }
 
-    pub fn get_native_handle(self) -> Fd {
-        match self {
-            AnyResponse::H3(_) | AnyResponse::H2(_) => bun_core::Fd::INVALID,
-            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).get_native_handle(),
-            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).get_native_handle(),
-        }
+    pub fn get_fd(self) -> Fd {
+        (self.http1()).map_or(Fd::INVALID, |res| res.socket().raw().get_fd())
     }
 
     pub fn prepare_for_sendfile(self) {
@@ -862,21 +447,21 @@ impl AnyResponse {
     where
         H: Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static,
     {
-        any_dispatch!(self, |r| r.on_writable(handler, optional_data))
+        variant_dispatch!(self, |r| r.on_writable(handler, optional_data))
     }
 
     pub fn on_timeout<U: 'static, H>(self, handler: H, optional_data: *mut U)
     where
         H: Fn(*mut U, AnyResponse) + Copy + 'static,
     {
-        any_dispatch!(self, |r| r.on_timeout(handler, optional_data))
+        variant_dispatch!(self, |r| r.on_timeout(handler, optional_data))
     }
 
     pub fn on_aborted<U: 'static, H>(self, handler: H, optional_data: *mut U)
     where
         H: Fn(*mut U, AnyResponse) + Copy + 'static,
     {
-        any_dispatch!(self, |r| r.on_aborted(handler, optional_data))
+        variant_dispatch!(self, |r| r.on_aborted(handler, optional_data))
     }
 
     /// The registrant keeps a ref on `owner` until it clears the handler, which gets a ref of its own.
@@ -923,11 +508,7 @@ impl AnyResponse {
 
     /// The trailer section that a `node:http` server received after the body.
     pub fn take_request_trailers(self) -> Vec<u8> {
-        match self {
-            AnyResponse::H3(_) | AnyResponse::H2(_) => Vec::new(),
-            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).take_request_trailers(),
-            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).take_request_trailers(),
-        }
+        (self.http1()).map_or_else(Vec::new, uws_res::take_request_trailers)
     }
 
     pub fn end_stream(self, close_connection: bool) {
@@ -942,13 +523,9 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.run_corked_with_type(handler, data))
     }
 
-    /// See `Response::can_upgrade`.
+    /// See `uws_res::can_upgrade`.
     pub fn can_upgrade(self) -> bool {
-        match self {
-            AnyResponse::H3(_) | AnyResponse::H2(_) => false,
-            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).can_upgrade(),
-            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).can_upgrade(),
-        }
+        self.http1().is_some_and(uws_res::can_upgrade)
     }
 
     /// Returns false if the socket can't be upgraded (see `can_upgrade`). Nothing was written and
@@ -961,35 +538,19 @@ impl AnyResponse {
         sec_web_socket_extensions: &[u8],
         ctx: &WebSocketUpgradeContext,
     ) -> bool {
-        match self {
-            // server.upgrade() returns false before reaching here for H3
-            // (request_context.get(RequestContext) is null — the H3 ctx is a
-            // different type and upgrade_context is never set).
-            AnyResponse::H3(_) | AnyResponse::H2(_) => unreachable!(),
-            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).upgrade(
-                data.cast(),
-                sec_web_socket_key,
-                sec_web_socket_protocol,
-                sec_web_socket_extensions,
-                ctx,
-            ),
-            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).upgrade(
-                data.cast(),
-                sec_web_socket_key,
-                sec_web_socket_protocol,
-                sec_web_socket_extensions,
-                ctx,
-            ),
-        }
+        // server.upgrade() returns false before reaching here for a stream.
+        self.http1().unwrap().upgrade(
+            data.cast(),
+            sec_web_socket_key,
+            sec_web_socket_protocol,
+            sec_web_socket_extensions,
+            ctx,
+        )
     }
 
-    /// See `Response::write_handshake`.
+    /// See `uws_res::write_handshake`.
     pub fn write_handshake(self, handshake: &[u8]) -> bool {
-        match self {
-            AnyResponse::H3(_) | AnyResponse::H2(_) => false,
-            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).write_handshake(handshake),
-            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).write_handshake(handshake),
-        }
+        (self.http1()).is_some_and(|res| res.write_handshake(handshake))
     }
 
     /// After `write_handshake` succeeded.
@@ -999,15 +560,7 @@ impl AnyResponse {
         deflate_params: Option<Params>,
         ctx: &WebSocketUpgradeContext,
     ) {
-        match self {
-            AnyResponse::H3(_) | AnyResponse::H2(_) => unreachable!(),
-            AnyResponse::SSL(ptr) => {
-                TLSResponse::as_handle(ptr).become_web_socket(data.cast(), deflate_params, ctx)
-            }
-            AnyResponse::TCP(ptr) => {
-                TCPResponse::as_handle(ptr).become_web_socket(data.cast(), deflate_params, ctx)
-            }
-        }
+        (self.http1().unwrap()).become_web_socket(data.cast(), deflate_params, ctx)
     }
 }
 
@@ -1040,11 +593,7 @@ pub(crate) type H3Response = crate::h3::Response;
 pub(crate) type H2Response = crate::h2::Response;
 
 bitflags::bitflags! {
-    /// Non-exhaustive bitset — values may carry
-    /// unnamed bit combinations.
-    /// Mirrors `uWS::HttpResponseData::state`. That word is wider than a byte —
-    /// it also carries the response-framing and node:http bits above bit 7 — so
-    /// this must stay `u32` even though only the bits below are named here.
+    /// HttpResponse.h mirrors some.
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct State: u32 {
@@ -1054,12 +603,45 @@ bitflags::bitflags! {
         const HTTP_RESPONSE_PENDING            = 8;
         const HTTP_CONNECTION_CLOSE            = 16;
         const HTTP_WROTE_CONTENT_LENGTH_HEADER = 32;
+        const HTTP_WROTE_DATE_HEADER           = 64;
+        const HTTP_WROTE_TRANSFER_ENCODING_HEADER = 128;
+        /// HTTP/1.0
+        const HTTP_ANCIENT_REQUEST             = 1 << 8;
+        const HTTP_NO_BODY_STATUS              = 1 << 9;
+        const HTTP_CLOSE_DELIMITED             = 1 << 10;
+        /// The request whose handler runs has to queue its response.
+        const HTTP_NODE_PIPELINED_DISPATCH     = 1 << 11;
+        const HTTP_NODE_PARSING_STOPPED        = 1 << 12;
+        /// Until the responses have drained.
+        const HTTP_NODE_READS_PAUSED           = 1 << 13;
+        const HTTP_NODE_TUNNEL_AFTER_BODY      = 1 << 14;
+        /// With something left to send.
         const HTTP_NODE_RECEIVED_FIN           = 1 << 15;
+        const HTTP_NODE_HAS_RESPONSE_TRAILERS  = 1 << 16;
+        const HTTP_CLOSE_WHEN_IDLE             = 1 << 17;
+        const HTTP_SEND_WHEN_COMPLETE          = 1 << 18;
+        const HTTP_NODE_NOTIFY_READ_PARSED     = 1 << 19;
         const HTTP_NODE_CLOSE_AFTER_MESSAGE    = 1 << 20;
+        /// Even if the response never ends.
+        const HTTP_NODE_CLOSE_AFTER_DRAIN      = 1 << 21;
+        /// Before we did.
+        const HTTP_NODE_PEER_ENDED             = 1 << 22;
+        const HTTP_NODE_HALF_CLOSED            = 1 << 23;
     }
 }
 
 impl State {
+    /// What outlives a response.
+    pub(crate) const OF_CONNECTION: Self = (Self::HTTP_NODE_PARSING_STOPPED)
+        .union(Self::HTTP_NODE_READS_PAUSED)
+        .union(Self::HTTP_NODE_TUNNEL_AFTER_BODY)
+        .union(Self::HTTP_NODE_RECEIVED_FIN)
+        .union(Self::HTTP_CLOSE_WHEN_IDLE)
+        .union(Self::HTTP_NODE_CLOSE_AFTER_MESSAGE)
+        .union(Self::HTTP_NODE_CLOSE_AFTER_DRAIN)
+        .union(Self::HTTP_NODE_PEER_ENDED)
+        .union(Self::HTTP_NODE_HALF_CLOSED);
+
     #[inline]
     pub fn is_response_pending(self) -> bool {
         self.bits() & State::HTTP_RESPONSE_PENDING.bits() != 0
@@ -1095,7 +677,7 @@ impl State {
         self.bits() & State::HTTP_NODE_RECEIVED_FIN.bits() != 0
     }
 
-    /// uws closes this socket once the read it is parsing is delivered (see HttpResponseData.h).
+    /// uws closes this socket once the read it is parsing is delivered.
     #[inline]
     pub fn is_node_close_after_message(self) -> bool {
         self.bits() & State::HTTP_NODE_CLOSE_AFTER_MESSAGE.bits() != 0
@@ -1107,179 +689,12 @@ pub enum WriteResult {
     Backpressure(usize),
 }
 
-pub use c::uws_res;
-
-pub mod c {
-    use super::*;
-
-    bun_opaque::opaque_ffi! {
-        /// Opaque `uws_res_t` (the untyped C handle).
-        pub struct uws_res;
-    }
-
-    // `uws_res` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>`, so `&uws_res` /
-    // `&mut uws_res` are ABI-identical to a non-null pointer. Value-typed
-    // shims are `safe fn`; (ptr,len), nullable raw, *mut c_void ctx stay
-    // unsafe.
-    unsafe extern "C" {
-        pub(crate) safe fn uws_res_mark_wrote_content_length_header(ssl: i32, res: &mut uws_res);
-        pub(crate) safe fn uws_res_mark_wrote_date_header(ssl: i32, res: &mut uws_res);
-        pub(crate) safe fn uws_res_write_mark(ssl: i32, res: &mut uws_res);
-        pub(crate) safe fn us_socket_mark_needs_more_not_ssl(socket: &mut uws_res);
-        pub(crate) safe fn uws_res_state(ssl: c_int, res: &uws_res) -> State;
-        pub(crate) safe fn uws_res_is_connect_request(ssl: i32, res: &mut uws_res) -> bool;
-        pub(crate) safe fn uws_res_get_parser(ssl: i32, res: &mut uws_res) -> *mut c_void;
-        // Out-params are `&mut` (non-null, valid for write); the C shim only
-        // stores into them and returns a length — no read-through precondition.
-        pub(crate) safe fn uws_res_get_remote_address_info(
-            res: &mut uws_res,
-            dest: &mut *const u8,
-            port: &mut i32,
-            is_ipv6: &mut bool,
-        ) -> usize;
-        pub(crate) safe fn uws_res_uncork(ssl: i32, res: &mut uws_res);
-        pub(crate) safe fn uws_res_send_corked(ssl: i32, res: &mut uws_res);
-        pub(crate) safe fn uws_res_send_when_complete(ssl: i32, res: &mut uws_res);
-        pub(crate) safe fn uws_res_close_after_message_if_parsing(
-            ssl: i32,
-            res: &mut uws_res,
-        ) -> bool;
-        pub(crate) safe fn uws_res_clear_handlers_of(
-            ssl: i32,
-            res: &mut uws_res,
-            user_data: *mut c_void,
-        );
-        pub(crate) fn uws_res_end(
-            ssl: i32,
-            res: *mut uws_res,
-            data: *const u8,
-            length: usize,
-            close_connection: bool,
-        );
-        pub(crate) safe fn uws_res_flush_headers(
-            ssl: i32,
-            res: &mut uws_res,
-            flush_immediately: bool,
-        );
-        pub(crate) safe fn uws_res_is_corked(ssl: i32, res: &mut uws_res) -> bool;
-        pub(crate) safe fn uws_res_pause(ssl: i32, res: &mut uws_res);
-        pub(crate) safe fn uws_res_resume(ssl: i32, res: &mut uws_res);
-        pub(crate) safe fn uws_res_write_continue(ssl: i32, res: &mut uws_res);
-        pub(crate) fn uws_res_write_informational(
-            ssl: i32,
-            res: *mut uws_res,
-            data: *const u8,
-            length: usize,
-        );
-        pub(crate) fn uws_res_write_status(
-            ssl: i32,
-            res: *mut uws_res,
-            status: *const u8,
-            length: usize,
-        );
-        pub(crate) fn uws_res_write_header(
-            ssl: i32,
-            res: *mut uws_res,
-            key: *const u8,
-            key_length: usize,
-            value: *const u8,
-            value_length: usize,
-        );
-        pub(crate) fn uws_res_write_header_int(
-            ssl: i32,
-            res: *mut uws_res,
-            key: *const u8,
-            key_length: usize,
-            value: u64,
-        );
-        pub(crate) safe fn uws_res_end_without_body(
-            ssl: i32,
-            res: &mut uws_res,
-            close_connection: bool,
-        );
-        pub(crate) safe fn uws_res_end_sendfile(
-            ssl: i32,
-            res: &mut uws_res,
-            write_offset: u64,
-            close_connection: bool,
-        );
-        pub(crate) safe fn uws_res_timeout(ssl: i32, res: &mut uws_res, timeout: u8);
-        pub(crate) safe fn uws_res_reset_timeout(ssl: i32, res: &mut uws_res);
-        pub(crate) safe fn uws_res_close_if_done_and_marked(ssl: i32, res: &mut uws_res);
-        pub(crate) safe fn uws_res_get_buffered_amount(ssl: i32, res: &mut uws_res) -> u64;
-        pub(crate) safe fn uws_res_has_fully_drained(ssl: i32, res: &mut uws_res) -> bool;
-        pub(crate) fn uws_res_write(
-            ssl: i32,
-            res: *mut uws_res,
-            data: *const u8,
-            length: *mut usize,
-        ) -> bool;
-        pub(crate) fn uws_res_try_write_body(
-            ssl: i32,
-            res: *mut uws_res,
-            data: *const u8,
-            length: usize,
-            is_first: bool,
-        ) -> usize;
-        pub(crate) fn uws_res_spill_body(
-            ssl: i32,
-            res: *mut uws_res,
-            data: *const u8,
-            length: usize,
-        );
-        pub(crate) safe fn uws_res_has_responded(ssl: i32, res: &mut uws_res) -> bool;
-        // safe: `&mut uws_res` is ABI-identical to a non-null `*mut uws_res`;
-        // `handler`/`user_data` are stored opaquely (never dereferenced by the
-        // C++ shim itself) — no preconditions on this call.
-        pub(crate) safe fn uws_res_on_writable(
-            ssl: i32,
-            res: &mut uws_res,
-            handler: Option<extern "C" fn(&mut uws_res, u64, *mut c_void) -> bool>,
-            user_data: *mut c_void,
-        );
-        pub(crate) safe fn uws_res_clear_on_writable(ssl: i32, res: &mut uws_res);
-        pub(crate) safe fn uws_res_on_aborted(
-            ssl: i32,
-            res: &mut uws_res,
-            handler: Option<extern "C" fn(&mut uws_res, *mut c_void)>,
-            optional_data: *mut c_void,
-        );
-        pub(crate) safe fn uws_res_on_timeout(
-            ssl: i32,
-            res: &mut uws_res,
-            handler: Option<extern "C" fn(&mut uws_res, *mut c_void)>,
-            optional_data: *mut c_void,
-        );
-        pub(crate) fn uws_res_try_end(
-            ssl: i32,
-            res: *mut uws_res,
-            data: *const u8,
-            length: usize,
-            total: usize,
-            close: bool,
-        ) -> bool;
-        pub(crate) safe fn uws_res_end_stream(ssl: i32, res: &mut uws_res, close_connection: bool);
-        pub(crate) safe fn uws_res_prepare_for_sendfile(ssl: i32, res: &mut uws_res);
-        pub(crate) safe fn uws_res_get_native_handle(
-            ssl: i32,
-            res: &mut uws_res,
-        ) -> *mut us_socket_t;
-        pub(crate) safe fn uws_res_on_data(
-            ssl: i32,
-            res: &mut uws_res,
-            handler: Option<
-                unsafe extern "C" fn(&mut uws_res, *const u8, usize, bool, *mut c_void),
-            >,
-            optional_data: *mut c_void,
-        );
-        // safe: cork is synchronous — `ctx` is passed straight back to
-        // `corker` without being dereferenced by the C++ shim itself, so the
-        // call has no preconditions beyond the live opaque handle.
-        pub(crate) safe fn uws_res_cork(
-            ssl: i32,
-            res: &mut uws_res,
-            ctx: *mut c_void,
-            corker: unsafe extern "C" fn(*mut c_void),
-        );
-    }
+unsafe extern "C" {
+    /// The length of `dest`, or 0.
+    safe fn uws_res_get_remote_address_info(
+        res: &uws_res,
+        dest: &mut *const u8,
+        port: &mut i32,
+        is_ipv6: &mut bool,
+    ) -> usize;
 }

@@ -1602,7 +1602,7 @@ describe("insecureHTTPParser: Transfer-Encoding without a final chunked coding",
   });
 
   // Bun's lenient mode implements llhttp's LENIENT_TRANSFER_ENCODING but not LENIENT_CHUNKED_LENGTH
-  // (HttpContextData.h), so the Transfer-Encoding plus Content-Length conflict still rejects here.
+  // (RequestOptions), so the Transfer-Encoding plus Content-Length conflict still rejects here.
   // Node's kLenientAll includes both bits and reads such a request until EOF.
   test.concurrent("insecureHTTPParser still rejects Transfer-Encoding with Content-Length (Bun)", async () => {
     const { events } = await run("Transfer-Encoding: gzip\r\nContent-Length: 5", { insecure: true });

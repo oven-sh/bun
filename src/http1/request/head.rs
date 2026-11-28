@@ -6,14 +6,15 @@ use bun_core::strings::{
 };
 use bun_core::vec::BorrowedBuf;
 use bun_http_types::Method::Method;
+use bun_http_types::router::NOT_SLASH;
 
 use super::{RequestError, RequestOptions};
 use crate::byte_sets::{
-    ABOVE_SPACE, CONTENT, CONTENT_OR_DELETE, LIST_ELEMENT, METHOD, NOT_QUESTION_MARK, NOT_SLASH,
+    ABOVE_SPACE, CONTENT, CONTENT_OR_DELETE, LIST_ELEMENT, METHOD, NOT_QUESTION_MARK,
     RELAXED_CONTENT, TOKEN, UPPERCASE_METHOD, VISIBLE,
 };
 
-/// 2 fewer than `UWS_HTTP_MAX_HEADERS_COUNT` in HttpParser.h.
+/// 2 fewer than `UWS_HTTP_MAX_HEADERS_COUNT` in HttpRequest.h.
 pub(super) const MAX_FIELDS: usize = 198;
 const MAX_TRAILER_FIELDS: usize = 199;
 pub(super) const BLANKS: &[u8] = b" \t";
@@ -29,8 +30,6 @@ pub(super) type FieldStorage<'a> = [MaybeUninit<Field<'a>>; MAX_FIELDS];
 /// The head of a request, for as long as it is dispatched.
 pub struct Request<'a> {
     line: RequestLine<'a>,
-    /// Every known method fits.
-    lowercase_method: [u8; 16],
     fields: &'a [Cell<Field<'a>>],
     names: NameFilter,
     pub(super) after_head: &'a [u8],
@@ -113,9 +112,6 @@ impl<'a> Request<'a> {
 
         let request = Self {
             line,
-            lowercase_method: bytes
-                .first_chunk()
-                .map_or([0; 16], |start| start.map(|byte| byte | 0x20)),
             fields: Cell::from_mut(fields.into_filled_mut()).as_slice_of_cells(),
             names,
             after_head: &[],
@@ -127,12 +123,6 @@ impl<'a> Request<'a> {
 
     pub fn method(&self) -> &'a [u8] {
         self.line.method
-    }
-
-    /// One that is too long to be known stays as it was sent.
-    pub fn lowercase_method(&self) -> &[u8] {
-        let method = self.line.method;
-        self.lowercase_method.get(..method.len()).unwrap_or(method)
     }
 
     pub fn target(&self) -> &'a [u8] {

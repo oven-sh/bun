@@ -148,8 +148,7 @@
 #include "JSKeyObject.h"
 
 #include <string_view>
-#include <bun-uws/src/App.h>
-#include <bun-uws/src/Http3Request.h>
+#include <bun-uws/src/HttpRequest.h>
 #include <bun-usockets/src/internal/internal.h>
 #include "IDLTypes.h"
 #include "JSDOMBinding.h"
@@ -3040,19 +3039,22 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromHeaders(FfiSlice<StringP
     }
     return &headers.leakRef();
 }
+bool Bun__MuxRequest__nextField(const void*, size_t* index, uWS::http1::Bytes* name, uWS::http1::Bytes* value);
+
 extern "C++" {
-template<typename Request>
-static WebCore::FetchHeaders* createFetchHeadersFromRequest(Request* req)
+template<auto nextField, typename Request>
+static WebCore::FetchHeaders* createFetchHeadersFromRequest(const Request* req)
 {
     auto headers = WebCore::FetchHeaders::create();
 
     HTTPHeaderMap map = HTTPHeaderMap();
-    req->forEachHeader([&](std::string_view name, std::string_view val) {
-        StringView nameView = StringView(std::span { reinterpret_cast<const Latin1Character*>(name.data()), name.length() });
+    uWS::http1::Bytes name, val;
+    for (size_t i = 0; nextField(req, &i, &name, &val);) {
+        StringView nameView = StringView(std::span { reinterpret_cast<const Latin1Character*>(name.data), name.length });
         std::span<Latin1Character> data;
-        auto value = String::createUninitialized(val.length(), data);
-        if (val.length() > 0)
-            memcpy(data.data(), val.data(), val.length());
+        auto value = String::createUninitialized(val.length, data);
+        if (val.length > 0)
+            memcpy(data.data(), val.data, val.length);
 
         HTTPHeaderName hn;
         if (WebCore::findHTTPHeaderName(nameView, hn)) {
@@ -3060,18 +3062,18 @@ static WebCore::FetchHeaders* createFetchHeadersFromRequest(Request* req)
         } else {
             map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
         }
-    });
+    }
     headers->setInternalHeaders(WTF::move(map));
     return &headers.leakRef();
 }
 }
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
 {
-    return createFetchHeadersFromRequest(reinterpret_cast<uWS::HttpRequest*>(arg1));
+    return createFetchHeadersFromRequest<uWS::http1::Bun__Http1Request__nextField>(reinterpret_cast<uWS::HttpRequest*>(arg1)->parsed);
 }
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
 {
-    return createFetchHeadersFromRequest(reinterpret_cast<uWS::Http3Request*>(arg1));
+    return createFetchHeadersFromRequest<Bun__MuxRequest__nextField>(arg1);
 }
 void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0)
 {

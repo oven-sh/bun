@@ -1,6 +1,6 @@
 import type { BunRequest, ServeOptions, Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tls } from "harness";
 import net from "node:net";
 
 describe("path parameters", () => {
@@ -956,6 +956,128 @@ it("route precedence for mix of method-specific routes and any routes", async ()
   expect(await fetch(new URL("/test/ANY/POST", server.url), { method: "POST" }).then(res => res.text())).toBe(
     "POST /test/ANY/POST",
   );
+});
+
+describe.each(["http1.1", "http2", "http3"] as const)("over %s", protocol => {
+  const say = (name: string) => (req: BunRequest) =>
+    new Response(null, { headers: { "x-route": [name, req.method, ...Object.values(req.params ?? {})].join(" ") } });
+
+  const options = { port: 0, hostname: "127.0.0.1", tls, http2: true, http3: true };
+
+  async function routesOf(routes: ServeOptions["routes"], requests: string[]) {
+    await using server = Bun.serve({ ...options, routes, fetch: say("fetch") as any });
+    const found: Record<string, string | null> = {};
+    for (const request of requests) {
+      const [method, path] = request.split(" ");
+      const response = await fetch(new URL(path, server.url), { method, protocol, tls: { rejectUnauthorized: false } });
+      found[request] = response.headers.get("x-route");
+    }
+    return found;
+  }
+
+  it("a route for any method goes before a less specific one for the method", async () => {
+    const routes = {
+      "/api/:id": { GET: say("id") },
+      "/api/*": { POST: say("rest") },
+      "/api/me": say("me"),
+      "/static/*": new Response(null, { headers: { "x-route": "static" } }),
+      "/static/:id": say("file"),
+    };
+    expect(await routesOf(routes, ["GET /api/me", "POST /api/me", "GET /api/1", "HEAD /static/1"])).toEqual({
+      "GET /api/me": "me GET",
+      "POST /api/me": "me POST",
+      "GET /api/1": "id GET 1",
+      "HEAD /static/1": "file HEAD 1",
+    });
+  });
+
+  it("fetch() only gets what no route takes", async () => {
+    const routes = { "/*": { GET: say("star") }, "/a": say("a") };
+    expect(await routesOf(routes, ["GET /a", "POST /a", "GET /b", "POST /b", "QUERY /b", "PROPFIND /b"])).toEqual({
+      "GET /a": "a GET",
+      "POST /a": "a POST",
+      "GET /b": "star GET",
+      "POST /b": "fetch POST",
+      "QUERY /b": "fetch QUERY",
+      "PROPFIND /b": "fetch PROPFIND",
+    });
+  });
+
+  it("/* for GET also takes HEAD, and passes on what it has no file for", async () => {
+    const found = new Response(null, { headers: { "x-route": "static" } });
+    expect(await routesOf({ "/*": { GET: found } }, ["GET /a", "HEAD /a", "POST /a"])).toEqual({
+      "GET /a": "static",
+      "HEAD /a": "static",
+      "POST /a": "fetch POST",
+    });
+    const missing = { "/*": { GET: Bun.file(import.meta.dir + "/missing") }, "/b": say("b") };
+    expect(await routesOf(missing, ["GET /a", "HEAD /a"])).toEqual({ "GET /a": "fetch GET", "HEAD /a": "fetch HEAD" });
+  });
+
+  it("a /* without its file passes the request on to the next wildcard", async () => {
+    const missing = () => Bun.file(import.meta.dir + "/missing");
+    const all = () => new Response(null, { headers: { "x-route": "all" } });
+    for (const star of [missing(), { GET: missing() }, { GET: missing(), POST: missing() }]) {
+      expect(await routesOf({ "/*": star, "/**": all() }, ["GET /a", "HEAD /a", "POST /a"])).toEqual({
+        "GET /a": "all",
+        "HEAD /a": "all",
+        "POST /a": "all",
+      });
+    }
+  });
+
+  it("a route that cannot match does not put fetch() before a wildcard", async () => {
+    expect(await routesOf({ "/*/a": say("never"), "/**": say("all") }, ["GET /b/a"])).toEqual({
+      "GET /b/a": "all GET",
+    });
+  });
+
+  it("fetch() goes after a wildcard even if it replaces /*", async () => {
+    const all = new Response(null, { headers: { "x-route": "all" } });
+    expect(await routesOf({ "/**": all, "/*": false }, ["GET /a"])).toEqual({ "GET /a": "all" });
+  });
+
+  it("a handler can replace the routes", async () => {
+    await using server = Bun.serve({
+      ...options,
+      routes: {
+        "/:a": req => {
+          server.reload({ routes: { "/x/:b": req => new Response("second " + req.params.b) } });
+          return new Response("first " + req.params.a);
+        },
+      },
+    });
+    const text = (path: string) =>
+      fetch(new URL(path, server.url), { protocol, tls: { rejectUnauthorized: false } }).then(r => r.text());
+    expect([await text("/1"), await text("/x/2"), await text("/3")]).toEqual(["first 1", "second 2", ""]);
+  });
+});
+
+async function exchange(server: Server<unknown>, head: string) {
+  const socket = net.connect(server.port!, "127.0.0.1");
+  socket.write(`${head}\r\nHost: localhost\r\nConnection: close\r\n\r\n`);
+  let received = "";
+  for await (const chunk of socket) received += chunk;
+  return received;
+}
+
+it.each(["FOO", "get", "Post"])("%s is not served after a route has replaced another", async method => {
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    routes: { "/:a": () => new Response("a"), "/:b": () => new Response("b") },
+  });
+  expect(await exchange(server, "GET /x HTTP/1.1")).toEndWith("\r\n\r\nb");
+  expect(await exchange(server, `${method} /x HTTP/1.1`)).toBe("");
+});
+
+it.each([
+  ["the one for upgrades", { websocket: { message() {} } }],
+  ["one whose file is missing", { routes: { "/": Bun.file(import.meta.dir + "/missing") } }],
+])("100 Continue is sent once if a route passes the request on: %s", async (_, options) => {
+  await using server = Bun.serve({ port: 0, hostname: "127.0.0.1", ...options, fetch: () => new Response("ok") });
+  const received = await exchange(server, "GET / HTTP/1.1\r\nExpect: 100-continue");
+  expect(received.match(/^HTTP.*/gm)).toEqual(["HTTP/1.1 100 Continue", "HTTP/1.1 200 OK"]);
 });
 
 it("routes absolute-form request targets by path and derives request.url from the Host header", async () => {

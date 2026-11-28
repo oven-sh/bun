@@ -99,6 +99,10 @@ pub struct EventLoop {
     #[cfg(not(windows))]
     holds_forever_poll: Cell<bool>,
     pub deferred_tasks: DeferredTaskQueue::DeferredTaskQueue,
+    /// They send what `deferred_tasks` have queued, so they run after those and take none of their turns.
+    pub deferred_http2_drains: DeferredTaskQueue::DeferredTaskQueue,
+    /// A response has asked its source for more since the last of those began.
+    pub has_resumed_response_stream: Cell<bool>,
     /// The uws loop this `EventLoop` runs on: the process loop for the VM's
     /// embedded loops, a private one for a spawnSync loop. Set by
     /// `ensure_waker` / `with_uws_loop`.
@@ -148,6 +152,8 @@ impl EventLoop {
             #[cfg(not(windows))]
             holds_forever_poll: Cell::new(false),
             deferred_tasks: DeferredTaskQueue::DeferredTaskQueue::default(),
+            deferred_http2_drains: DeferredTaskQueue::DeferredTaskQueue::default(),
+            has_resumed_response_stream: Cell::new(false),
             uws_loop: Cell::new(None),
             entered_event_loop_count: Cell::new(0),
             task_drains: AtomicU64::new(0),
@@ -464,6 +470,7 @@ impl EventLoop {
         {
             let _inside = vm.is_inside_deferred_task_queue.raise_for_scope();
             self.deferred_tasks.run();
+            self.deferred_http2_drains.run();
         }
 
         // Guard on `event_loop_handle` being set, but drain via `uws_loop()`:

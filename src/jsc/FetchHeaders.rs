@@ -48,7 +48,7 @@ unsafe extern "C" {
         values: FfiSlice<'_, StringPointer>,
         buf: FfiSlice<'_>,
     ) -> HeadersRef;
-    // safe: `arg1` is an opaque handle to a C++-owned uWS HttpRequest, never dereferenced here.
+    // safe: `arg1` is an opaque handle to a uWS HttpRequest, never dereferenced here.
     safe fn WebCore__FetchHeaders__createFromUWS(arg1: *mut c_void) -> HeadersRef;
     fn WebCore__FetchHeaders__deref(arg0: NonNull<FetchHeaders>);
     safe fn WebCore__FetchHeaders__fastGet_(arg0: &FetchHeaders, arg1: u8, arg2: &mut EncodedSlice);
@@ -72,7 +72,6 @@ unsafe extern "C" {
     );
     safe fn WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(
         arg0: &mut FetchHeaders,
-        ssl: bool,
         arg1: *mut c_void,
     );
     safe fn WebCore__FetchHeaders__createFromH3(arg0: *mut c_void) -> HeadersRef;
@@ -182,8 +181,8 @@ impl FetchHeaders {
     }
 
     /// For the 101 response of an HTTP/1 WebSocket upgrade. Skips headers that `upgrade()` writes.
-    pub fn to_uws_response_for_websocket_upgrade(&mut self, ssl: bool, uws_response: *mut c_void) {
-        WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(self, ssl, uws_response)
+    pub fn to_uws_response_for_websocket_upgrade(&mut self, uws_response: *mut c_void) {
+        WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(self, uws_response)
     }
 
     /// `value`'s tag carries its encoding, and a `WTFStringImpl`-tagged value

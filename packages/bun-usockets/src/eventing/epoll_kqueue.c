@@ -252,7 +252,6 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
     return loop;
 }
 
-/* Shared dispatch loop for both us_loop_run and us_loop_run_bun_tick */
 static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
 #ifdef LIBUS_USE_EPOLL
     for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
@@ -443,33 +442,6 @@ static const struct timespec *us_internal_clamp_to_sweep(struct us_loop_t *loop,
     storage->tv_sec = (time_t) sweep_sec;
     storage->tv_nsec = (long) sweep_nsec;
     return storage;
-}
-
-void us_loop_run(struct us_loop_t *loop) {
-    /* While we have non-fallthrough polls we shouldn't fall through */
-    while (loop->num_polls) {
-        loop->data.tick_depth++;
-        /* Emit pre callback */
-        us_internal_loop_pre(loop);
-
-        struct timespec sweep_ts;
-        const struct timespec *timeout = us_internal_clamp_to_sweep(loop, NULL, &sweep_ts);
-
-        /* Fetch ready polls */
-#ifdef LIBUS_USE_EPOLL
-        loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, timeout);
-#else
-        loop->num_ready_polls = bun_kevent64_wait(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, 0, timeout);
-#endif
-
-        us_internal_dispatch_ready_polls(loop);
-        us_internal_drain_ready_polls(loop);
-        us_internal_sweep_if_due(loop);
-
-        /* Emit post callback */
-        us_internal_loop_post(loop);
-        loop->data.tick_depth--;
-    }
 }
 
 extern unsigned int Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns, int * _Nullable released_heap_access);

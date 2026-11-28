@@ -477,6 +477,12 @@ impl us_socket_t {
         }
     }
 
+    pub(crate) fn writev(&mut self, iov: &[UsIoVec<'_>]) -> i32 {
+        bun_core::scoped_log!(uws, "us_socket_writev({:p}, {})", self, iov.len());
+        // SAFETY: as in `raw_writev`.
+        unsafe { c::us_socket_writev(self, iov.as_ptr(), iov.len() as c_int) }
+    }
+
     /// Bypass TLS — raw bytes to the fd even if `is_tls()`.
     pub(crate) fn raw_write(&mut self, data: &[u8]) -> i32 {
         bun_core::scoped_log!(uws, "us_socket_raw_write({:p}, {})", self, data.len());
@@ -533,6 +539,52 @@ impl us_socket_t {
 
     pub(crate) fn ssl_send_rejected(&self) -> bool {
         c::us_socket_ssl_send_rejected(self) > 0
+    }
+
+    pub(crate) fn has_ssl_spill(&self) -> bool {
+        c::us_socket_ssl_spill_pending(self) != 0
+    }
+
+    pub(crate) fn has_dropped_ssl_spill(&self) -> bool {
+        c::us_socket_ssl_spill_dropped(self) != 0
+    }
+
+    pub(crate) fn has_negotiated_http2(&self) -> bool {
+        c::us_socket_alpn_is_h2(self) != 0
+    }
+
+    pub(crate) fn server_name_rejects_unauthorized(&self) -> bool {
+        c::us_socket_server_name_reject_unauthorized(self) != 0
+    }
+
+    pub(crate) fn stalled_write_means_peer_gone(&self) -> bool {
+        c::us_socket_stalled_write_means_peer_gone(self) != 0
+    }
+
+    pub(crate) fn is_paused(&self) -> bool {
+        c::uws_socket_is_paused(self)
+    }
+
+    pub(crate) fn set_allows_half_open(&mut self, allows: bool) {
+        c::uws_socket_set_allow_half_open(self, allows);
+    }
+
+    pub(crate) fn set_hangup_closes_unsent(&mut self) {
+        c::uws_socket_set_hangup_closes_unsent(self);
+    }
+
+    pub(crate) fn ref_(&mut self) {
+        c::us_socket_ref(self);
+    }
+
+    pub(crate) fn unref(&mut self) {
+        c::us_socket_unref(self);
+    }
+
+    /// It keeps its address and its ext. SAFETY: the ext is what the handlers of `group` take it for.
+    pub(crate) unsafe fn move_to(&mut self, group: &SocketGroup, kind: SocketKind) {
+        // SAFETY: forwarded.
+        unsafe { crate::socket::sock_c::us_socket_adopt(self, group, kind as u8, -1, -1) };
     }
 
     pub(crate) fn queued_input(&self) -> QueuedInput {
@@ -639,6 +691,11 @@ mod c {
             iov: *const super::UsIoVec<'_>,
             count: i32,
         ) -> i32;
+        pub(super) fn us_socket_writev(
+            s: *mut us_socket_t,
+            iov: *const UsIoVec<'_>,
+            count: c_int,
+        ) -> c_int;
         pub(super) fn us_socket_raw_write(s: *mut us_socket_t, data: *const u8, length: i32)
         -> i32;
         pub(super) safe fn us_socket_flush(s: &mut us_socket_t);
@@ -675,6 +732,16 @@ mod c {
         pub(super) safe fn us_socket_get_error(s: &us_socket_t) -> c_int;
         pub(super) safe fn us_socket_is_established(s: &us_socket_t) -> i32;
         pub(super) safe fn us_socket_ssl_send_rejected(s: &us_socket_t) -> c_int;
+        pub(super) safe fn us_socket_ssl_spill_pending(s: &us_socket_t) -> c_uint;
+        pub(super) safe fn us_socket_ssl_spill_dropped(s: &us_socket_t) -> c_int;
+        pub(super) safe fn us_socket_alpn_is_h2(s: &us_socket_t) -> c_int;
+        pub(super) safe fn us_socket_server_name_reject_unauthorized(s: &us_socket_t) -> c_int;
+        pub(super) safe fn us_socket_stalled_write_means_peer_gone(s: &us_socket_t) -> c_int;
+        pub(super) safe fn uws_socket_is_paused(s: &us_socket_t) -> bool;
+        pub(super) safe fn uws_socket_set_allow_half_open(s: &mut us_socket_t, allows: bool);
+        pub(super) safe fn uws_socket_set_hangup_closes_unsent(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_ref(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_unref(s: &mut us_socket_t);
         pub(super) safe fn us_socket_queued_input(s: &us_socket_t) -> c_int;
 
         /// ssl_ctx is required (the whole point); sni may be null.

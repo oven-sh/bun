@@ -357,8 +357,6 @@ void us_socket_group_close_all_ex(us_socket_group_r group, int also_listeners) n
 int us_loop_close_all_groups(us_loop_r loop) nonnull_fn_decl;
 
 unsigned short us_socket_group_timestamp(us_socket_group_r group) nonnull_fn_decl;
-struct us_loop_t *us_socket_group_loop(us_socket_group_r group) nonnull_fn_decl __attribute((returns_nonnull));
-void *us_socket_group_ext(us_socket_group_r group) nonnull_fn_decl;
 struct us_socket_group_t *us_socket_group_next(us_socket_group_r group) nonnull_fn_decl;
 
 /* Move an open socket between groups / kinds, optionally resizing its ext.
@@ -416,9 +414,6 @@ void us_listen_socket_close(struct us_listen_socket_t *ls) nonnull_fn_decl;
  * earlier one. */
 void us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
     const char *hostname_pattern, struct ssl_ctx_st *ssl_ctx) nonnull_fn_decl;
-/* Returns an owned reference; the caller must release it. */
-struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket_t *ls,
-    const char *hostname_pattern) nonnull_fn_decl;
 /* tls.Server#setSecureContext(): swap the default SSL_CTX used for NEWLY
  * accepted sockets (SNI-selected contexts are untouched). Up_refs ctx; live
  * connections keep the previous context alive through their own SSL refs. */
@@ -555,7 +550,7 @@ struct ssl_ctx_st *us_ssl_ctx_from_options(
     struct us_bun_socket_context_options_t options,
     enum create_bun_socket_error_t *err);
 /* SSL_CTX_up_ref / SSL_CTX_free without an OpenSSL include — for C++ callers
- * (uWS App.h) that don't pull in BoringSSL headers. */
+ * that don't pull in BoringSSL headers. */
 void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
 /* Install an ALPN selector that prefers "h2", then "http/1.1" (when
@@ -593,7 +588,7 @@ void us_loop_free(us_loop_r loop) nonnull_fn_decl;
 /* Returns the loop user data extension */
 void *us_loop_ext(us_loop_r loop) nonnull_fn_decl;
 
-/* Blocks the calling thread and drives the event loop until no more non-fallthrough polls are scheduled */
+/* libuv only. Blocks the calling thread and drives the event loop until no more non-fallthrough polls are scheduled */
 void us_loop_run(us_loop_r loop) nonnull_fn_decl;
 
 
@@ -723,14 +718,8 @@ void us_socket_sendfile_needs_more(us_socket_r s) nonnull_fn_decl;
 void *us_listen_socket_ext(struct us_listen_socket_t *ls) nonnull_fn_decl;
 LIBUS_SOCKET_DESCRIPTOR us_listen_socket_get_fd(struct us_listen_socket_t *ls) nonnull_fn_decl;
 int us_listen_socket_port(struct us_listen_socket_t *ls) nonnull_fn_decl;
-struct us_socket_group_t *us_listen_socket_group(struct us_listen_socket_t *ls) nonnull_fn_decl;
 /* Call before another process gets a duplicate of the listening socket. */
 void us_listen_socket_set_shared(struct us_listen_socket_t *ls) nonnull_fn_decl;
-/* Walk a group's live listeners. The list is the source of truth — anything
- * that caches us_listen_socket_t* across event-loop ticks (e.g. a std::vector
- * in C++) is a UAF once a listener is closed and freed in loop_post. */
-struct us_listen_socket_t *us_socket_group_head_listen_socket(us_socket_group_r group) nonnull_fn_decl;
-struct us_listen_socket_t *us_listen_socket_next(struct us_listen_socket_t *ls) nonnull_fn_decl;
 LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) nonnull_fn_decl;
 /* SO_RCVBUF / SO_SNDBUF, like us_udp_socket_buffer_size. */
 int us_socket_buffer_size(us_socket_r s, int is_recv, int size, int *out) nonnull_fn_decl;

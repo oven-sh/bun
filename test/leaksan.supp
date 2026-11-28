@@ -36,7 +36,7 @@ leak:Zig::GlobalObject::moduleLoaderResolve
 leak:JSModuleLoader__import
 leak:dyld::ThreadLocalVariables
 leak:JSC__JSModuleLoader__loadAndEvaluateModule
-leak:uws_create_app
+leak:bun_uws_sys::app::OwnedApp<*>::new
 leak:uws_h3_create_app
 leak:lsquic_global_init
 leak:us_create_quic_client_context

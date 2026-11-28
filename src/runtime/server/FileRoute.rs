@@ -242,7 +242,7 @@ impl FileRoute {
     }
 
     pub(crate) fn on_request(self: RefPtr<Self>, req: AnyRequest, resp: AnyResponse) {
-        let method = Method::find(req.method()).unwrap_or(Method::GET);
+        let method = req.method();
         self.on(req, resp, method);
     }
 

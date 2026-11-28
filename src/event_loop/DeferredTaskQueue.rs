@@ -76,7 +76,15 @@ impl DeferredTaskQueue {
         unsafe { &mut *self.map.get() }.swap_remove(&ctx)
     }
 
+    #[inline]
     pub fn run(&self) {
+        // SAFETY: as in `post_task`.
+        if !unsafe { &*self.map.get() }.is_empty() {
+            self.run_entries();
+        }
+    }
+
+    fn run_entries(&self) {
         // Callbacks may re-entrantly mutate `self.map` (see the re-entrancy
         // note in the file doc), so re-read `len()` every iteration and
         // re-check slot `i` after each callback. `remaining` is a livelock bound.

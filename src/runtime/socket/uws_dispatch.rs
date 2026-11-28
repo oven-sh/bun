@@ -108,8 +108,7 @@ fn vt(s: *mut us_socket_t) -> &'static VTable {
         SocketKind::Invalid => {
             panic!("us_socket_t with kind=invalid (group={:p})", s.raw_group())
         }
-        // Per-group vtable: uWS C++ installs a different `HttpContext<SSL>*`
-        // closure per server, so the table can't be static per kind.
+        // Per-group vtable.
         SocketKind::Dynamic
         | SocketKind::UwsHttp
         | SocketKind::UwsHttpTls

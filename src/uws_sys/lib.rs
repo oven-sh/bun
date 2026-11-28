@@ -8,6 +8,7 @@
     clippy::not_unsafe_ptr_arg_deref
 )]
 #![warn(unused_must_use)]
+#![feature(core_io_borrowed_buf)]
 //! Low-level FFI bindings for uSockets / uWebSockets as used by Bun.
 //!
 //! Each `*.rs` file is mapped to a snake_case
@@ -29,6 +30,7 @@ pub const LIBUS_SOCKET_ALLOW_HALF_OPEN: core::ffi::c_int = 2;
 pub const LIBUS_LISTEN_REUSE_PORT: core::ffi::c_int = 4;
 pub const LIBUS_SOCKET_IPV6_ONLY: core::ffi::c_int = 8;
 pub const LIBUS_LISTEN_REUSE_ADDR: core::ffi::c_int = 16;
+pub(crate) const LIBUS_LISTEN_DEFER_ACCEPT: core::ffi::c_int = 64;
 pub const LIBUS_SOCKET_OPEN_PAUSED: core::ffi::c_int = 256;
 
 /// BoringSSL `SSL_CTX` (alias so callers don't need a direct boringssl dep).
@@ -408,6 +410,8 @@ pub use error::{Error, Result};
 
 #[path = "App.rs"]
 pub mod app;
+#[path = "AsyncSocket.rs"]
+mod async_socket;
 #[path = "BodyReaderMixin.rs"]
 pub mod body_reader_mixin;
 #[path = "ConnectingSocket.rs"]
@@ -416,7 +420,6 @@ pub mod connecting_socket;
 pub mod h2;
 #[path = "h3.rs"]
 pub mod h3;
-mod hpack;
 mod http1;
 #[path = "InternalLoopData.rs"]
 pub mod internal_loop_data;
@@ -533,7 +536,7 @@ pub use body_reader_mixin::BodyReaderMixin;
 pub use connecting_socket::ConnectingSocket;
 pub use listen_socket::{ListenSocket, OwnedListenSocket};
 pub use request::{AnyRequest, Request};
-pub use response::c::uws_res;
+pub use response::uws_res;
 pub use response::{AnyResponse, SocketAddress};
 pub use socket_context::BunSocketContextOptions;
 pub use socket_group::ConnectResult;

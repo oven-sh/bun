@@ -3,8 +3,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/Structure.h>
-#include <bun-uws/src/App.h>
-#include <bun-uws/src/Http3Request.h>
+#include <bun-uws/src/HttpRequest.h>
 #include "AsyncContextFrame.h"
 #include "ServerRouteList.h"
 #include "decodeURIComponentSIMD.h"
@@ -82,13 +81,11 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    template<typename Req>
-    JSValue callRoute(Zig::GlobalObject* globalObject, uint32_t index, void* requestPtr, EncodedJSValue serverObject, EncodedJSValue* requestObject, Req* req);
+    JSValue callRoute(Zig::GlobalObject* globalObject, uint32_t index, void* requestPtr, EncodedJSValue serverObject, EncodedJSValue* requestObject, const uWS::http1::RouteParameters* parameters);
 
 private:
     Structure* structureForParamsObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint32_t index, std::span<const Identifier> identifiers);
-    template<typename Req>
-    JSObject* paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint32_t index, Req* req);
+    JSObject* paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint32_t index, const uWS::http1::RouteParameters* parameters);
 
     ServerRouteList(JSC::VM& vm, JSC::Structure* structure, std::span<EncodedJSValue> callbacks, std::span<EncodedSlice> paths)
         : Base(vm, structure)
@@ -195,8 +192,7 @@ Structure* ServerRouteList::structureForParamsObject(JSC::VM& vm, JSC::JSGlobalO
     return m_paramsObjectStructures.at(index).get();
 }
 
-template<typename Req>
-JSObject* ServerRouteList::paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint32_t index, Req* req)
+JSObject* ServerRouteList::paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint32_t index, const uWS::http1::RouteParameters* parameters)
 {
 
     // Ensure that the object doesn't get GC'd before we've had a chance to initialize it.
@@ -207,9 +203,10 @@ JSObject* ServerRouteList::paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject
     args.ensureCapacity(identifierCount);
 
     for (size_t i = 0; i < identifierCount; i++) {
-        auto param = req->getParameter(static_cast<unsigned short>(i));
-        if (!param.empty()) {
-            const std::span<const uint8_t> paramBytes(reinterpret_cast<const uint8_t*>(param.data()), param.size());
+        uWS::http1::Bytes param;
+        uWS::http1::Bun__RouteParameters__at(parameters, i, &param);
+        if (param.length) {
+            const std::span<const uint8_t> paramBytes(reinterpret_cast<const uint8_t*>(param.data), param.length);
             args.append(jsString(vm, decodeURIComponentSIMD(paramBytes)));
         } else {
             args.append(jsEmptyString(vm));
@@ -234,14 +231,13 @@ JSObject* ServerRouteList::paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject
     return object;
 }
 
-template<typename Req>
-JSValue ServerRouteList::callRoute(Zig::GlobalObject* globalObject, uint32_t index, void* requestPtr, EncodedJSValue serverObject, EncodedJSValue* requestObject, Req* req)
+JSValue ServerRouteList::callRoute(Zig::GlobalObject* globalObject, uint32_t index, void* requestPtr, EncodedJSValue serverObject, EncodedJSValue* requestObject, const uWS::http1::RouteParameters* parameters)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* structure = globalObject->m_JSBunRequestStructure.get(globalObject);
 
-    auto* params = paramsObjectForRoute(vm, globalObject, index, req);
+    auto* params = paramsObjectForRoute(vm, globalObject, index, parameters);
 
     JSBunRequest* request = JSBunRequest::create(vm, structure, requestPtr, params);
     *requestObject = JSValue::encode(request);
@@ -266,25 +262,11 @@ extern "C" JSC::EncodedJSValue Bun__ServerRouteList__callRoute(
     JSC::EncodedJSValue serverObject,
     JSC::EncodedJSValue routeListObject,
     JSC::EncodedJSValue* requestObject,
-    uWS::HttpRequest* req)
+    const uWS::http1::RouteParameters* parameters)
 {
     JSValue routeListValue = JSValue::decode(routeListObject);
     ServerRouteList* routeList = uncheckedDowncast<ServerRouteList>(routeListValue);
-    return JSValue::encode(routeList->callRoute(globalObject, index, requestPtr, serverObject, requestObject, req));
-}
-
-extern "C" JSC::EncodedJSValue Bun__ServerRouteList__callRouteH3(
-    Zig::GlobalObject* globalObject,
-    uint32_t index,
-    void* requestPtr,
-    JSC::EncodedJSValue serverObject,
-    JSC::EncodedJSValue routeListObject,
-    JSC::EncodedJSValue* requestObject,
-    uWS::Http3Request* req)
-{
-    JSValue routeListValue = JSValue::decode(routeListObject);
-    ServerRouteList* routeList = uncheckedDowncast<ServerRouteList>(routeListValue);
-    return JSValue::encode(routeList->callRoute(globalObject, index, requestPtr, serverObject, requestObject, req));
+    return JSValue::encode(routeList->callRoute(globalObject, index, requestPtr, serverObject, requestObject, parameters));
 }
 
 extern "C" JSC::EncodedJSValue Bun__ServerRouteList__create(Zig::GlobalObject* globalObject, EncodedJSValue* callbacks, EncodedSlice* paths, size_t pathsLength)

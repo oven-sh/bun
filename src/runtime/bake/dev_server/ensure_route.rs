@@ -242,7 +242,7 @@ pub(super) enum ReqOrSaved<'a> {
 impl ReqOrSaved<'_> {
     fn method(&self) -> Method {
         match self {
-            ReqOrSaved::Req(req) => Method::which(req.method()).unwrap_or(Method::POST),
+            ReqOrSaved::Req(req) => req.method(),
             ReqOrSaved::Aborted => unreachable!(),
         }
     }
@@ -260,7 +260,7 @@ impl DevServer {
         let ReqOrSaved::Req(req) = req else {
             unreachable!()
         };
-        let method = Method::which(req.method()).unwrap_or(Method::GET);
+        let method = req.method();
 
         match kind {
             deferred_request::HandlerKind::BundledHtmlPage => {
@@ -283,7 +283,7 @@ impl DevServer {
                     .server
                     .as_ref()
                     .unwrap()
-                    .prepare_and_save_js_request_context(req, resp, global, Some(method))?
+                    .prepare_and_save_js_request_context(req, resp, global)?
                 else {
                     return Ok(Deferral::Answered);
                 };

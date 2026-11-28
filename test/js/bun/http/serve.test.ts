@@ -2193,8 +2193,8 @@ describe("response framing", () => {
     });
   });
 
-  // `FileRoute` ships its body via sendfile / `HttpResponse::write()`, neither
-  // of which goes through `internalEnd`, so it needs its own null-body-status
+  // `FileRoute` ships its body via sendfile / `write()`, neither
+  // of which goes through `finish()`, so it needs its own null-body-status
   // drop. 101 is the one null-body status its bodiless list was missing.
   it.each(["GET", "HEAD"])("a Bun.file route on a null-body status serves no body bytes (%s)", async method => {
     using dir = tempDir("framing-file-route", { "f.bin": "data" });
@@ -2973,6 +2973,28 @@ describe("server.requestIP", () => {
     await promise;
     expect(Buffer.concat(received).toString()).toEndWith("\r\n\r\nnull");
     connection.end();
+  });
+
+  it.each(["http", "https"])("is null once the connection has closed (%s)", async protocol => {
+    const options = { hostname: "127.0.0.1", socket: { data() {} } };
+    using other = Bun.listen({ ...options, port: 0 });
+    let address: unknown;
+    const sockets: Promise<Bun.Socket>[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: protocol === "https" ? tls : undefined,
+      fetch(req, server) {
+        server.stop(true);
+        // They get the descriptors that were just closed.
+        for (let i = 0; i < 4; i++) sockets.push(Bun.connect({ ...options, port: other.port }));
+        address = server.requestIP(req);
+        return new Response();
+      },
+    });
+    const error = await fetch(server.url, { tls: { rejectUnauthorized: false } }).catch(error => error);
+    for (const socket of await Promise.all(sockets)) socket.terminate();
+    expect({ code: error.code, address }).toEqual({ code: "ECONNRESET", address: null });
   });
 });
 
@@ -4874,7 +4896,7 @@ it("survives aborted uploads while responding with a tee()d request-body branch"
 // socket.end(request) pattern) must receive every response byte already handed
 // to uWS, not just what the kernel accepted on the first send. No
 // Connection: close on the request: the post-drain shutdown is driven by the
-// HTTP_NODE_RECEIVED_FIN clause of shouldCloseConnection(), not by
+// HTTP_NODE_RECEIVED_FIN clause of closes_after_response(), not by
 // HTTP_CONNECTION_CLOSE.
 describe("a client half-close after the request does not truncate a large response body", () => {
   const BODY = 8 * 1024 * 1024;
@@ -5734,20 +5756,15 @@ it("Proxy-Connection: close does not end a Bun.serve connection", async () => {
   }
 });
 
-it.each([
-  ["in mixed case that reaches a handler has its name", "Post", /^HTTP\/1\.1 200 .*\r\n\r\nPOST$/s],
-  ["with a byte above 0x7f is a bad request", "P\u00d6ST", /^HTTP\/1\.1 400 Bad Request\r\n/],
-])("a method %s", async (_, method, expected) => {
-  const handler = (req: Request) => new Response(req.method);
-  // With two names for one parameter, the router has a route left for a method it does not know.
-  using server = serve({ port: 0, fetch: handler, routes: { "/u/:id": handler, "/u/:name": handler } });
+it("a method with a byte above 0x7f is a bad request", async () => {
+  using server = serve({ port: 0, fetch: req => new Response(req.method) });
   const socket = connect(server.port!, "127.0.0.1");
   try {
     let received = "";
     socket.on("data", chunk => (received += chunk));
-    socket.write(`${method} / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+    socket.write("P\u00d6ST / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
     await once(socket, "close");
-    expect(received).toMatch(expected);
+    expect(received).toStartWith("HTTP/1.1 400 Bad Request\r\n");
   } finally {
     socket.destroy();
   }

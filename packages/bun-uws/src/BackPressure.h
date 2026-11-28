@@ -16,8 +16,8 @@
  * limitations under the License.
  */
 
-#ifndef UWS_ASYNCSOCKETDATA_H
-#define UWS_ASYNCSOCKETDATA_H
+#ifndef UWS_BACKPRESSURE_H
+#define UWS_BACKPRESSURE_H
 
 #include "libusockets.h"
 
@@ -29,27 +29,19 @@
 namespace uWS {
 
 /* Contiguous buffer with a moving head cursor: erase() bumps head,
- * append()/resize() compact into the drained head gap before growing, so
+ * append() compacts into the drained head gap before growing, so
  * draining never memmoves or reallocates. Growing reserves TAIL_ROOM spare
  * bytes, so appending framing after a buffered payload doesn't reallocate and
  * copy that payload. */
 struct BackPressure {
     BackPressure() = default;
-    BackPressure(BackPressure &&other) noexcept
-        : buf(other.buf), head(other.head), tail(other.tail), cap(other.cap) {
-        other.buf = nullptr;
-        other.head = other.tail = other.cap = 0;
-    }
     BackPressure(const BackPressure &) = delete;
     BackPressure &operator=(const BackPressure &) = delete;
     ~BackPressure() { us_free(buf); }
 
     /* Unsent bytes. data() points at length() contiguous bytes. */
     size_t length() const { return tail - head; }
-    size_t size() const { return length(); }
     const char *data() const { return buf + head; }
-    /* Allocation footprint for memoryCost / GC reporting. */
-    size_t totalLength() const { return cap; }
 
     void append(const char *src, size_t n) {
         if (!n) return;
@@ -67,38 +59,13 @@ struct BackPressure {
         }
     }
 
-    /* erase() that keeps the allocation when fully drained, for buffers that
-     * refill every event (HTTP/2 connection output). */
-    void consume(size_t n) {
-        head += n;
-        if (head >= tail) head = tail = 0;
-    }
-
     void clear() {
         head = tail = 0;
         release();
     }
 
-    /* Make room for at least n live bytes without later realloc. */
-    void reserve(size_t n) {
-        if (n > length()) ensureTailRoom(n - length());
-    }
-
-    /* Grow to n live bytes; caller writes into data() + old length(). */
-    void resize(size_t n) {
-        size_t live = length();
-        if (n > live) {
-            ensureTailRoom(n - live);
-            tail += n - live;
-        } else {
-            tail = head + n;
-        }
-    }
-
-    /* Enough for the chunk's CRLF and the next chunk-size line (HttpResponse::CHUNK_HEAD_MAX). */
-    static constexpr size_t TAIL_ROOM = 12;
-
 private:
+    static constexpr size_t TAIL_ROOM = 12;
     static constexpr size_t MIN_CAPACITY = 4096;
 
     char *buf = nullptr;
@@ -148,39 +115,6 @@ private:
     }
 };
 
-/* Depending on how we want AsyncSocket to function, this will need to change */
-
-template <bool SSL>
-struct AsyncSocketData {
-    /* This will do for now */
-    BackPressure buffer;
-
-    /* Allow move constructing us */
-    AsyncSocketData(BackPressure &&backpressure) : buffer(std::move(backpressure)) {
-
-    }
-
-    /* Or empty */
-    AsyncSocketData() = default;
-    const char *peerCertVerifyErrorCode = nullptr;
-    bool isIdle = false;
-    bool isAuthorized = false; // per-socket TLS authorization status
-    bool peerCertVerified = false;
-    /* Whether this socket has fired the context filter with +1. onClose and
-     * upgrade only fire -1 for sockets that did, so the filter stays balanced
-     * across every open/close path (TLS sockets that RST before the handshake,
-     * rejectUnauthorized failures, etc. never fire +1). */
-    bool filteredOpen = false;
-    /* Whether it has fired the filter with +2 ("accepted": at TCP accept for
-     * both transports, i.e. before a TLS handshake); -2 balances it on the
-     * same paths that balance +1. A filter that must account for every socket
-     * that can still reach a handler counts these. */
-    bool filteredAccept = false;
-    /* Whether it has fired the filter with -3 (HttpResponse::setNodeHttpTunnelIdle).
-     * +3 undoes it, and an idle socket fires -4 in place of -2. */
-    bool filteredIdleTunnel = false;
-};
-
 }
 
-#endif // UWS_ASYNCSOCKETDATA_H
+#endif // UWS_BACKPRESSURE_H

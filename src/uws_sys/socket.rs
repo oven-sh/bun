@@ -908,10 +908,10 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 }
 
-mod sock_c {
+pub(crate) mod sock_c {
     use super::{SocketGroup, us_socket_t};
     unsafe extern "C" {
-        pub(super) fn us_socket_adopt(
+        pub(crate) fn us_socket_adopt(
             s: *mut us_socket_t,
             group: *const SocketGroup,
             kind: u8,

@@ -1,4 +1,4 @@
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 use core::mem;
 use core::ptr::NonNull;
 use std::io::Write as _;
@@ -29,6 +29,7 @@ use bun_core::{EncodedSlice, String as BunString, StringView, Utf8Bytes, strings
 use bun_core::{Output, fmt as bun_fmt};
 use bun_http::header_has_token;
 use bun_http::{self as http, Method, MimeType};
+use bun_http_types::router::Parameters;
 use bun_jsc::Debugger::DebuggerId;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::uuid::UUID;
@@ -117,7 +118,6 @@ trait RequestCtxOps: RequestCtx {
         server: &Self::Server,
         req: &mut Self::Req,
         resp: uws::AnyResponse,
-        method: http::Method,
     ) -> NonNull<Self>;
     fn dispatch(&self) -> Self::Dispatch;
     fn respond(
@@ -166,15 +166,8 @@ where
         server: &ThisServer,
         req: &mut Self::Req,
         any_resp: uws::AnyResponse,
-        method: http::Method,
     ) -> NonNull<Self> {
-        Self::create(
-            slot,
-            server,
-            std::ptr::from_mut(req).cast(),
-            any_resp,
-            method,
-        )
+        Self::create(slot, server, std::ptr::from_mut(req).cast(), any_resp)
     }
     #[inline]
     fn dispatch(&self) -> Self::Dispatch {
@@ -278,7 +271,8 @@ trait ReqLike {
     /// Whether the transport frames the body with a Transfer-Encoding header.
     /// This is the parser's verdict, not a lookup of the first header field.
     fn has_transfer_encoding(&mut self) -> bool;
-    fn method(&mut self) -> &[u8];
+    fn method(&mut self) -> http::Method;
+    fn parameters(&mut self) -> &Parameters<'_>;
     fn url(&mut self) -> &[u8];
     fn set_yield(&mut self, y: bool);
 }
@@ -292,8 +286,12 @@ impl ReqLike for uws_sys::Request {
         uws_sys::Request::has_transfer_encoding(self)
     }
     #[inline]
-    fn method(&mut self) -> &[u8] {
+    fn method(&mut self) -> http::Method {
         uws_sys::Request::method(self)
+    }
+    #[inline]
+    fn parameters(&mut self) -> &Parameters<'_> {
+        uws_sys::Request::parameters(self)
     }
     #[inline]
     fn url(&mut self) -> &[u8] {
@@ -317,8 +315,12 @@ impl ReqLike for uws_sys::h3::Request {
         false
     }
     #[inline]
-    fn method(&mut self) -> &[u8] {
+    fn method(&mut self) -> http::Method {
         uws_sys::h3::Request::method(self)
+    }
+    #[inline]
+    fn parameters(&mut self) -> &Parameters<'_> {
+        uws_sys::h3::Request::parameters(self)
     }
     #[inline]
     fn url(&mut self) -> &[u8] {
@@ -348,15 +350,15 @@ impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
     }
     #[inline]
     fn write_status(&mut self, s: &[u8]) {
-        uws_sys::NewAppResponse::<SSL>::write_status(self, s)
+        uws_sys::uws_res::write_status(self, s)
     }
     #[inline]
     fn end_without_body(&mut self, c: bool) {
-        uws_sys::NewAppResponse::<SSL>::end_without_body(self, c)
+        uws_sys::uws_res::end_without_body(self, c)
     }
     #[inline]
     fn timeout(&mut self, s: u8) {
-        uws_sys::NewAppResponse::<SSL>::timeout(self, s)
+        uws_sys::uws_res::timeout(self, s)
     }
     #[inline]
     fn on_timeout_warn(&mut self, ud: *mut c_void) {
@@ -1648,8 +1650,7 @@ where
             if options.headers.is_some() || cookies_to_write.is_some() {
                 resp.write_status(b"101 Switching Protocols");
                 if let Some(headers) = options.headers() {
-                    headers
-                        .to_uws_response_for_websocket_upgrade(SSL, resp.socket().cast::<c_void>());
+                    headers.to_uws_response_for_websocket_upgrade(resp.socket().cast::<c_void>());
                 }
                 if let Some(c) = cookies_to_write.as_mut()
                     && let Err(err) = c.write(
@@ -1761,12 +1762,7 @@ where
         // `set_routes` stop routing through the node:http path.
         //
         // Never the other direction: a server that was not created as a
-        // node:http server cannot become one through reload(). listen()
-        // already sized every future connection's socket ext block for this
-        // server's kind (HttpResponseData vs the bigger NodeHttpResponseData)
-        // and set_routes would swap the context onto the node:http handler
-        // instantiation under those already-sized allocations, so the node
-        // request path would construct and index past them.
+        // node:http server cannot become one through reload().
         if self.config.get().is_node_http_server
             && self.config.get().on_node_http_request != new_config.on_node_http_request
         {
@@ -2034,7 +2030,7 @@ where
         if self.app().is_none() || self.deinit_running.get() {
             return 0;
         }
-        // Each close reaches `on_connection_filter(-2)` synchronously; hold
+        // Each close reaches `on_connection_change` synchronously; hold
         // the guard so the nested call skips the idle pass; this call then runs
         // it. One-shot sweep (Node semantics): busy connections are spared
         // and are NOT marked to close later.
@@ -2231,7 +2227,8 @@ where
     /// or `uws::H3::Response`); both hand us the same decoded-header request.
     pub(super) fn on_mux_request<R: RespLike>(&self, req: &mut uws::H3::Request, resp: &mut R) {
         if self.config.get().on_request.is_empty() {
-            return Self::on_mux_404(self, req, resp);
+            resp.write_status(b"404 Not Found");
+            return resp.end_without_body(false);
         }
         self.on_request_for::<ServerMuxRequestContext<SSL, DEBUG>, _>(req, resp);
     }
@@ -2244,11 +2241,6 @@ where
         Self::on_user_route_request_for::<ServerMuxRequestContext<SSL, DEBUG>, _>(
             user_route, req, resp,
         );
-    }
-
-    pub(super) fn on_mux_404<R: RespLike>(_this: &Self, _req: &mut uws::H3::Request, resp: &mut R) {
-        resp.write_status(b"404 Not Found");
-        resp.end_without_body(false);
     }
 
     pub(crate) fn do_ref<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
@@ -2322,33 +2314,25 @@ where
             return;
         };
 
-        let Some((request, ctx)) = server.prepare_js_request_context_for::<Ctx, R>(
-            req,
-            resp,
-            user_route.route.method.specific(),
-        ) else {
+        let Some((request, ctx)) = server.prepare_js_request_context_for::<Ctx, R>(req, resp)
+        else {
             return;
         };
 
         let _entered = server.vm().enter_event_loop_scope_without_checkpoint();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
-        let call_route = if Ctx::IS_MUX {
-            Bun__ServerRouteList__callRouteH3
-        } else {
-            Bun__ServerRouteList__callRoute
-        };
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
         let global = bun_opaque::opaque_deref(server.global_this);
         let (request, response_value) =
             DispatchedRequest::call_route(request, global, |request, js_request| {
-                call_route(
+                Bun__ServerRouteList__callRoute(
                     global,
                     index,
                     request,
                     server_js,
                     server_request_list,
                     js_request,
-                    std::ptr::from_mut(req).cast::<c_void>(),
+                    std::ptr::from_ref(ReqLike::parameters(req)).cast::<c_void>(),
                 )
             });
 
@@ -2380,8 +2364,7 @@ where
             respond_stopped_503(resp);
             return;
         };
-        let Some((request, ctx)) = self.prepare_js_request_context_for::<Ctx, R>(req, resp, None)
-        else {
+        let Some((request, ctx)) = self.prepare_js_request_context_for::<Ctx, R>(req, resp) else {
             return;
         };
 
@@ -2404,7 +2387,6 @@ where
         &self,
         req: &mut Ctx::Req,
         resp: &mut R,
-        method: Option<http::Method>,
     ) -> Option<(RefPtr<Request>, Ctx::Dispatch)> {
         jsc::mark_binding!();
 
@@ -2422,13 +2404,8 @@ where
             }
         }
 
-        // Resolve once, reuse for both `has_request_body()` and the forward to
-        // `Ctx::create`.
-        let method = method.or_else(|| http::Method::which(ReqLike::method(req)));
-        let resolved_method = method.unwrap_or(http::Method::GET);
-
         let request_body_length: Option<usize> = 'request_body_length: {
-            if method.unwrap_or(http::Method::OPTIONS).has_request_body() {
+            if ReqLike::method(req).has_request_body() {
                 let len: usize = 'brk: {
                     if let Some(content_length) = ReqLike::header(req, b"content-length") {
                         break 'brk bun_http_types::parse_content_length(content_length);
@@ -2476,7 +2453,7 @@ where
         );
         // SAFETY: `init()` or `listen()` set it before the app could dispatch, and the VM keeps its pools.
         let slot = unsafe { &*pool }.claim();
-        let ctx_slot = Ctx::create_in(slot, self, req, any_resp, resolved_method);
+        let ctx_slot = Ctx::create_in(slot, self, req, any_resp);
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { ctx_slot.as_ref() };
         let dispatch = ctx.dispatch();
@@ -2597,7 +2574,6 @@ where
         resp: &mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws::Request,
         upgrade_ctx: &WebSocketUpgradeContext,
-        method: Option<http::Method>,
     ) {
         // BACKREF: `UserRoute.server` is set at construction from the owning
         // `NewServer` (which outlives every `UserRoute` in its `user_routes`
@@ -2613,7 +2589,7 @@ where
             return;
         };
 
-        let Some((request, ctx)) = server.prepare_js_request_context(req, resp, method) else {
+        let Some((request, ctx)) = server.prepare_js_request_context(req, resp) else {
             return;
         };
         ctx.upgrade_context
@@ -2631,7 +2607,7 @@ where
                     server_js,
                     server_request_list,
                     js_request,
-                    std::ptr::from_mut(req).cast::<c_void>(),
+                    std::ptr::from_ref(req.parameters()).cast::<c_void>(),
                 )
             });
 
@@ -2661,7 +2637,7 @@ where
             // intermediate `&mut Self` was ever created; shared suffices (the
             // route entry is only read).
             let user_route = unsafe { &*this.cast::<UserRoute<SSL, DEBUG>>() };
-            Self::upgrade_web_socket_user_route(user_route, resp, req, upgrade_ctx, None);
+            Self::upgrade_web_socket_user_route(user_route, resp, req, upgrade_ctx);
             return;
         }
         // Access `this` as *ThisServer only if id is 0
@@ -2689,13 +2665,11 @@ where
         req.set_yield(false);
         // `claim()` reserves a fresh slot whose `Drop` releases it on panic before init.
         let ctx_slot = this.request_pool.claim();
-        let method = http::Method::which(req.method()).unwrap_or(http::Method::GET);
         let ctx = <ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create_in(
             ctx_slot,
             this,
             req,
             RespLike::to_any_response(resp),
-            method,
         );
         // SAFETY: `create_in` just made it, and it holds its base ref.
         let ctx = Dispatch::new(unsafe { ctx.as_ref() });
@@ -2746,14 +2720,7 @@ where
         req: &mut uws::Request,
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
-        if cfg!(debug_assertions) {
-            // NOTE: scoped_log! expands each arg twice (ANSI/no-ANSI branches);
-            // copy to owned buffers so the two `&req` borrows in the expansion
-            // don't overlap with the returned slice lifetimes.
-            let m = req.method().to_vec();
-            let u = req.url().to_vec();
-            httplog!("{} - {}", BStr::new(&m), BStr::new(&u));
-        }
+        httplog!("{:?} - {}", req.method(), BStr::new(req.url()));
 
         let authorized = 'brk: {
             let Some(dev_server) = self.dev_server.get().as_deref() else {
@@ -2849,11 +2816,7 @@ where
             let is_ssl = SSL;
             let global = self.global();
             let node_socket = jsc::from_js_host_call(&global, || {
-                Bun__getOrCreateNodeHTTPServerSocket(
-                    is_ssl,
-                    std::ptr::from_mut(socket).cast::<c_void>(),
-                    &global,
-                )
+                Bun__getOrCreateNodeHTTPServerSocket(is_ssl, socket, &global)
             })?;
             if node_socket.is_undefined_or_null() {
                 return Ok(());
@@ -2880,7 +2843,7 @@ where
     /// its handshake completed). Hands the JSNodeHTTPServerSocket to the JS
     /// `onConnection` callback so `node:http` can emit 'connection' before any
     /// request bytes arrive.
-    pub(crate) fn on_connection_callback(&self, socket: *mut c_void) -> JsResult<()> {
+    pub(crate) fn on_connection_callback(&self, socket: &mut uws::Socket) -> JsResult<()> {
         if self.js_value_for_dispatch().is_none() {
             return Ok(());
         }
@@ -2933,33 +2896,17 @@ fn server_set_on_client_error(
                         <$T>::js_gc_on_client_error_set,
                     );
                     this.on_clienterror.set(on_clienterror);
-                    // uws_sys::App::on_client_error takes the raw C-ABI handler shape;
-                    // wrap our typed callback in an extern "C" thunk that slices raw_packet.
-                    extern "C" fn thunk(
+                    fn thunk(
                         user_data: *mut c_void,
-                        _ssl: c_int,
-                        socket: *mut uws_sys::us_socket_t,
+                        socket: &mut uws_sys::us_socket_t,
                         error_code: u8,
-                        raw_packet: *mut u8,
-                        raw_packet_len: c_int,
+                        raw_packet: &[u8],
                     ) {
-                        // SAFETY: user_data is the `*mut Self` registered below; socket is a live
-                        // uWS socket; raw_packet/raw_packet_len describe a valid (possibly empty)
-                        // buffer. Shared — the callback re-enters JS.
+                        // SAFETY: user_data is the `*mut Self` registered below. Shared — the callback re-enters JS.
                         let this = unsafe { &*user_data.cast::<$T>() };
-                        let packet: &[u8] = if raw_packet_len > 0 {
-                            // SAFETY: uWS guarantees `raw_packet` points to `raw_packet_len`
-                            // readable bytes when `raw_packet_len > 0`.
-                            unsafe { bun_core::ffi::slice(raw_packet, raw_packet_len as usize) }
-                        } else {
-                            &[]
-                        };
-                        // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-                        crate::dispatch::fold(this.on_client_error_callback(
-                            bun_opaque::opaque_deref_mut(socket),
-                            error_code,
-                            packet,
-                        ));
+                        crate::dispatch::fold(
+                            this.on_client_error_callback(socket, error_code, raw_packet),
+                        );
                     }
                     // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                     bun_opaque::opaque_deref_mut(app)
@@ -2998,8 +2945,6 @@ fn server_set_on_connection(
         ($T:ty) => {
             if let Some(this) = server.as_class_ref::<$T>() {
                 if let Some(app) = this.app() {
-                    // The filter is registered once per native server: `bun --hot` gets here again, and the thunk reads the slot at call time.
-                    let first = this.on_connection.get().is_empty();
                     let mut on_connection = callback;
                     super::wrap_handler_slot(
                         &mut on_connection,
@@ -3008,28 +2953,13 @@ fn server_set_on_connection(
                         <$T>::js_gc_on_connection_set,
                     );
                     this.on_connection.set(on_connection);
-                    // uws filters fire with `1` when an HTTP connection is opened
-                    // (for TLS, when its handshake completes) and `-1` on close;
-                    // only the open notification is forwarded to JS.
-                    extern "C" fn thunk(
-                        socket: *mut uws_sys::us_socket_t,
-                        opened: i32,
-                        user_data: *mut c_void,
-                    ) {
-                        if opened != 1 {
-                            return;
-                        }
-                        // SAFETY: user_data is the `*mut Self` registered below;
-                        // socket is a live uWS socket for this server's group.
-                        // Shared — the callback re-enters JS.
+                    fn thunk(user_data: *mut c_void, socket: &mut uws_sys::us_socket_t) {
+                        // SAFETY: user_data is the `*mut Self` registered below. Shared — the callback re-enters JS.
                         let this = unsafe { &*user_data.cast::<$T>() };
-                        crate::dispatch::fold(this.on_connection_callback(socket.cast::<c_void>()));
+                        crate::dispatch::fold(this.on_connection_callback(socket));
                     }
-                    if first {
-                        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                        bun_opaque::opaque_deref_mut(app)
-                            .filter(thunk, this.as_ptr().cast::<c_void>());
-                    }
+                    // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                    bun_opaque::opaque_deref_mut(app).on_open(thunk, this.as_ptr().cast::<c_void>());
                 }
                 return Ok(JSValue::UNDEFINED);
             }
@@ -3180,7 +3110,7 @@ extern "C" fn server_set_max_headers_count_shim(
 // Pointee types lack #[repr(C)] but are only passed by pointer.
 #[allow(improper_ctypes)]
 unsafe extern "C" {
-    // NodeHTTPServer__onRequest_{http,https} live in `mod.rs::ffi` (sole user
+    // NodeHTTPServer__onRequest lives in `mod.rs::ffi` (sole user
     // is `on_node_http_request`); duplicate decls here caused
     // clashing_extern_declarations.
 
@@ -3191,12 +3121,12 @@ unsafe extern "C" {
     // if the connection has not produced a parsed request yet.
     safe fn Bun__getOrCreateNodeHTTPServerSocket(
         is_ssl: bool,
-        socket: *mut c_void,
+        socket: &mut uws::Socket,
         global: &JSGlobalObject,
     ) -> JSValue;
 
     // `&JSGlobalObject` / `&mut JSValue` discharge the deref'd-param
-    // preconditions; `req` is an opaque handle that C++
+    // preconditions; `parameters` is an opaque handle that C++
     // forwards (module-private — sole callers pass live pointers).
     pub(super) safe fn Bun__ServerRouteList__callRoute(
         global: &JSGlobalObject,
@@ -3205,17 +3135,7 @@ unsafe extern "C" {
         server_object: JSValue,
         route_list_object: JSValue,
         request_object: &mut JSValue,
-        req: *mut c_void, // *uws.Request
-    ) -> JSValue;
-
-    safe fn Bun__ServerRouteList__callRouteH3(
-        global: &JSGlobalObject,
-        index: u32,
-        request: RefPtr<Request>,
-        server_object: JSValue,
-        route_list_object: JSValue,
-        request_object: &mut JSValue,
-        req: *mut c_void,
+        parameters: *const c_void,
     ) -> JSValue;
 
     // `global` is the live VM global; `callbacks`/`paths` are the ptr/len of

@@ -13,7 +13,6 @@
 #include "CookieMap.h"
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
-#include <bun-uws/src/App.h>
 
 namespace Bun {
 

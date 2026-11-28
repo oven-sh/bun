@@ -2589,8 +2589,8 @@ it("socket handle write keeps buffered data intact when encoding coercion re-ent
   // dropped or written through a stale buffer.
   //
   // The raw handle.write()/streamBuffer path only has its drain machinery wired up for
-  // CONNECT-tunneled sockets (uWS HttpContext::onWritable gates onSocketDrain on
-  // isConnectRequest), so the scenario must be driven from a "connect" handler — on a
+  // CONNECT-tunneled sockets (on_writable in http1/events.rs gates it on
+  // is_tunnel), so the scenario must be driven from a "connect" handler — on a
   // plain GET the buffered bytes would never flush and the fixture would hang.
   const MB = 1024 * 1024;
   const expectedTotal = 8 * MB + 4 * MB + 4 * MB;
@@ -3753,7 +3753,7 @@ it("standalone ServerResponse end() after writeHead() sets writableEnded (#25632
 
 it("flushHeaders on a 204 response carries no chunked framing", async () => {
   // noBodyStatus must suppress the Transfer-Encoding header in flushHeaders()
-  // and the terminating chunk in internalEnd(), like the one-shot end() path.
+  // and the terminating chunk in finish(), like the one-shot end() path.
   // The /second GET is chunked, not Content-Length: writeHead() freezes the
   // framing while _contentLength is still null, exactly as Node does.
   const server = createServer((req, res) => {

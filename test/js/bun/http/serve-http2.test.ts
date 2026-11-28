@@ -807,6 +807,64 @@ describe("Bun.serve http2 in-process", () => {
     await closed;
   });
 
+  test("a route for each method, until reload() drops them", async () => {
+    const methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE"];
+    const from = (name: string) => () => new Response(null, { headers: { "x-from": name } });
+    await using server = Bun.serve({
+      port: 0,
+      http2: true,
+      routes: { "/m": Object.fromEntries(methods.map(method => [method, from(method)])) },
+      fetch: from("fetch"),
+    });
+    const session = await connectH2(server.port!, false);
+    const ask = () =>
+      Promise.all(
+        methods.map(async method => (await request(session, { ":method": method, ":path": "/m" })).headers["x-from"]),
+      );
+    expect(await ask()).toEqual(methods);
+    server.reload({ routes: {}, fetch: from("fetch") });
+    expect(await ask()).toEqual(methods.map(() => "fetch"));
+    session.destroy();
+  });
+
+  test("a Date header of the application is the only one", async () => {
+    const init = { headers: { "date": "Thu, 01 Jan 1970 00:00:00 GMT", "content-length": "1" } };
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      http2: true,
+      routes: { "/static": new Response("x", init), "/file": new Response(Bun.file(import.meta.path), init) },
+      fetch: () => new Response("x", init),
+    });
+    for (const path of ["/static", "/file", "/fetch"]) {
+      const raw = await RawH2.connect(server.port!, false);
+      raw.headers(1, baseHeaders(path));
+      const { payload } = await raw.waitFor(f => f.type === T.HEADERS);
+      // 33 is `date` in the static table.
+      expect([path, hpackFields(payload).filter(field => field.index === 33).length]).toEqual([path, 1]);
+      raw.close();
+    }
+  });
+
+  test.each([false, true])(
+    "a body that the socket cannot take at once goes on without a frame (tls: %p)",
+    async secure => {
+      const body = randomBytes(16 * 1024 * 1024);
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        http2: true,
+        tls: secure ? tlsCert : undefined,
+        fetch: () => new Response(body),
+      });
+      const raw = await RawH2.connect(server.port!, secure, { settings: Buffer.from([0, 4, 0x40, 0, 0, 0]) });
+      raw.write(frame(T.WINDOW_UPDATE, 0, 0, Buffer.from([0x40, 0, 0, 0])));
+      raw.headers(1, baseHeaders("/"));
+      expect(sha256(await raw.body(1))).toBe(sha256(body));
+      raw.close();
+    },
+  );
+
   test("handler throwing produces 500 over h2", async () => {
     await using server = Bun.serve({
       port: 0,

@@ -2,31 +2,37 @@
 #define UWS_H3CONTEXT_H
 
 #include "quic.h"
-#include "Loop.h"
-#include "Http3ContextData.h"
-#include "Http3Request.h"
+#include "HttpRequest.h"
 #include "Http3Response.h"
 #include "Http3ResponseData.h"
+
+#include <memory>
 
 namespace uWS {
 
 static_assert(US_QUIC_MAX_REQUEST_FIELDS == UWS_HTTP_MAX_HEADERS_COUNT, "HTTP/3 has the field limit of HTTP/1 and HTTP/2");
 
+extern "C" void uws_h3_dispatch(const void *routes, Http3Response *, const us_quic_header_t *fields, unsigned int count);
+
+struct Http3ContextData {
+    /* Routes in src/uws_sys/h3.rs, which OwnedApp owns. */
+    const void *routes;
+};
+
 struct Http3Context {
 
     struct Deleter {
         void operator()(Http3Context *ctx) const {
-            ctx->getContextData()->~Http3ContextData();
             us_quic_socket_context_free((us_quic_socket_context_t *) ctx);
         }
     };
     using Ptr = std::unique_ptr<Http3Context, Deleter>;
 
-    static Ptr create(Loop *loop, us_bun_socket_context_options_t options, unsigned idleTimeoutSecs = 0) {
+    static Ptr create(us_loop_t *loop, us_bun_socket_context_options_t options, unsigned idleTimeoutSecs, const void *routes) {
         us_quic_socket_context_t *ctx = us_create_quic_socket_context(
-            (us_loop_t *) loop, options, sizeof(Http3ContextData), idleTimeoutSecs);
+            loop, options, sizeof(Http3ContextData), idleTimeoutSecs);
         if (!ctx) return nullptr;
-        new (us_quic_socket_context_ext(ctx)) Http3ContextData();
+        new (us_quic_socket_context_ext(ctx)) Http3ContextData{routes};
 
         us_quic_socket_context_on_stream_open(ctx, [](us_quic_stream_t *s, int) {
             new (us_quic_stream_ext(s)) Http3ResponseData();
@@ -49,12 +55,7 @@ struct Http3Context {
                 return;
             }
 
-            Http3Request req(s);
-            if (req.getHeader("expect") == "100-continue") res->writeContinue();
-            cd->router.getUserData() = {res, &req};
-            if (!cd->router.route(req.getMethod(), req.getUrl())) {
-                res->writeStatus("404 Not Found")->end();
-            }
+            uws_h3_dispatch(cd->routes, res, us_quic_stream_header(s, 0), us_quic_stream_header_count(s));
         });
 
         us_quic_socket_context_on_stream_data(ctx, [](us_quic_stream_t *s, const char *data, unsigned len, int fin) {
@@ -87,23 +88,6 @@ struct Http3Context {
 
     Http3ContextData *getContextData() {
         return (Http3ContextData *) us_quic_socket_context_ext((us_quic_socket_context_t *) this);
-    }
-
-    void onHttp(std::string_view method, std::string_view pattern,
-                MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
-        Http3ContextData *cd = getContextData();
-        std::vector<std::string_view> methods =
-            method == "*" ? std::vector<std::string_view>{"*"} : std::vector<std::string_view>{method};
-        cd->router.add(methods, pattern, [handler = std::move(handler)](auto *router) mutable {
-            /* Copy out: the handler may reload routes, replacing `router`
-             * (and its user data) while we're inside it. */
-            Http3Request *req = router->getUserData().httpRequest;
-            Http3Response *res = router->getUserData().httpResponse;
-            req->setYield(false);
-            req->setParameters(router->getParameters());
-            handler(res, req);
-            return !req->getYield();
-        }, method == "*" ? cd->router.LOW_PRIORITY : cd->router.MEDIUM_PRIORITY);
     }
 
     us_quic_listen_socket_t *listen(const char *host, int port, int flags) {

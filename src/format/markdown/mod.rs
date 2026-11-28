@@ -631,6 +631,11 @@ fn with_document<R>(
         indentation: 0,
         is_in_label: false,
         first_of_run: Vec::new(),
+        kept_line_breaks: std::cell::RefCell::new((
+            ast::NONE,
+            printer::KeptLineBreaks::None,
+            Vec::new(),
+        )),
         stack: Stack::for_tree(),
         failure: None,
     };

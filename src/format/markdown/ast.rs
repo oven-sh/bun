@@ -114,7 +114,8 @@ pub struct Node {
     /// An item's `checked`: 0 is `null`, 1 `false`, 2 `true`.
     pub checked: u8,
     pub reference_type: ReferenceType,
-    /// For oxfmt: 1 for HTML that ends at a specific text (`-->`, `</script>` ..), 1 for indented code.
+    /// 1 for HTML that ends at a specific text (`-->`, `</script>` ..), 0 for HTML that only an empty line ends. For
+    /// oxfmt: 1 for indented code.
     /// A heading's `depth`, an ordered list's `start`, a table's column count (the columns are at
     /// `Tree::aligns[first_align..]`), a sentence's token count (the tokens are at `Tree::tokens[first_align..]`). For
     /// a list: how many lists of its kind are right before it.

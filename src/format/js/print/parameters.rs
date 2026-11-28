@@ -346,6 +346,14 @@ fn cannot_break<'a>(param: Param<'a>, f: &Formatter<'a>) -> bool {
         })
 }
 
+/// Prettier prints `set a(⏎b,⏎) {}`. JavaScriptCore rejects the comma: a setter takes one `FormalParameter`.
+fn is_setter_parameter_list(func: Func<'_>) -> bool {
+    func.kind() == FnKind::Setter
+        && func.has_body()
+        && func.params().len() == 1
+        && func.this_param().is_none()
+}
+
 struct ParameterList<'a> {
     func: Func<'a>,
     layout: ParameterLayout,
@@ -379,6 +387,7 @@ impl<'a> Format<'a> for ParameterList<'a> {
             ParameterLayout::Default => {
                 // Nothing can follow a rest parameter, not even a comma.
                 let trailing_separator = match self.func.params().last().is_some_and(Param::is_rest)
+                    || is_setter_parameter_list(self.func)
                 {
                     true => TrailingSeparator::Disallowed,
                     false => FormatTrailingCommas::Arguments.trailing_separator(f.options()),

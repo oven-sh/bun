@@ -15,7 +15,6 @@
 #include <wtf/SetForScope.h>
 #include <wtf/Threading.h>
 #include <JavaScriptCore/WeakInlines.h>
-extern "C" void Bun__startLoop(us_loop_t* loop);
 
 namespace WebCore {
 static constexpr ScriptExecutionContextIdentifier INITIAL_IDENTIFIER_INTERNAL = 1;

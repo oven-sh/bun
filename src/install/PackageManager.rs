@@ -737,16 +737,6 @@ pub enum Subcommand {
     Why,
     Dedupe,
     Prune,
-    // bin,
-    // hash,
-    // @"hash-print",
-    // @"hash-string",
-    // cache,
-    // @"default-trusted",
-    // untrusted,
-    // trust,
-    // ls,
-    // migrate,
 }
 
 impl Subcommand {

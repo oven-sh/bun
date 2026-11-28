@@ -371,25 +371,13 @@ declare const $asyncContext: InternalFieldObject<[import("./node/async_hooks").F
 
 // We define our intrinsics in ./BunBuiltinNames.h. Some of those are globals.
 
-declare var $_events: TODO;
-declare function $addAbortAlgorithmToSignal(signal: AbortSignal, algorithm: () => void): TODO;
-declare function $autoAllocateChunkSize(): TODO;
 declare function $basename(): TODO;
-declare function $body(): TODO;
 declare function $bunNativePtr(): TODO;
-declare function $cancel(): TODO;
-declare function $close(): TODO;
-declare function $code(): TODO;
 declare function $createFIFO(): TODO;
 declare function $createUninitializedArrayBuffer(size: number): ArrayBuffer;
 declare function $data(): TODO;
-declare function $decode(): TODO;
-declare function $dirname(): TODO;
-declare function $encoding(): TODO;
 declare function $end(): TODO;
-declare function $errno(): TODO;
 declare function $extname(): TODO;
-declare function $fatal(): TODO;
 declare function $format(): TODO;
 // `requirer`: a CommonJS module; the registry is its Bun.ModuleGraph's loader's. Omitted: the global object's.
 declare function $esmNamespaceForCjs(key: string, requirer?: JSCommonJSModule): any | undefined;
@@ -403,30 +391,11 @@ declare function $requireCacheWillSet(key: string, value: unknown, requirer?: JS
 declare function $isHiddenFromRequireCache(key?: string | symbol): boolean | undefined;
 declare function $esmLoadSync(key: string, requirer?: JSCommonJSModule): any;
 declare function $get(): TODO;
-declare function $handleEvent(): TODO;
-declare function $headers(): TODO;
-declare function $highWaterMark(): TODO;
-declare function $host(): TODO;
-declare function $hostname(): TODO;
-declare function $ignoreBOM(): TODO;
-declare function $importer(): TODO;
 declare function $internalRequire(id: string, parent: JSCommonJSModule, requireMap: RequireMap): TODO;
-declare function $isAbortSignal(signal: unknown): signal is AbortSignal;
 declare function $isAbsolute(): TODO;
 declare function $join(): TODO;
-declare function $main(): TODO;
-declare function $makeDOMException(): TODO;
-declare function $makeGetterTypeError(className: string, prop: string): Error;
-declare function $method(): TODO;
 declare function $normalize(): TODO;
 declare function $parse(): TODO;
-declare function $path(): TODO;
-declare function $port(): TODO;
-declare function $pull(): TODO;
-declare function $read(): TODO;
-declare function $readable(): TODO;
-declare function $removeAbortAlgorithmFromSignal(signal: AbortSignal, algorithmIdentifier: number): TODO;
-declare function $redirect(): TODO;
 declare function $relative(): TODO;
 declare function $require(): TODO;
 /** Loads `id` into `mod`. Returns -1 when the module is ESM and must be loaded from the ESM registry. */
@@ -453,15 +422,9 @@ declare function $resolveSync(
   parentModule?: JSCommonJSModule,
   resolveFilenameOptions?: unknown,
 ): string;
-declare function $self(): TODO;
 declare function $size(): TODO;
 declare function $start(): TODO;
-declare function $status(): TODO;
-declare function $stream(): TODO;
-declare function $syscall(): TODO;
 declare function $toNamespacedPath(): TODO;
-declare function $url(): TODO;
-declare function $writable(): TODO;
 declare function $write(): TODO;
 declare function $writer(): TODO;
 declare function $written(): TODO;
@@ -521,13 +484,6 @@ declare interface PromiseConstructor {
   $resolve: PromiseConstructor["resolve"];
   $try: PromiseConstructor["try"];
   $withResolvers: PromiseConstructor["withResolvers"];
-}
-
-declare interface UnderlyingSource {
-  $lazy?: boolean;
-  $bunNativePtr?: undefined | TODO;
-  autoAllocateChunkSize?: number;
-  $stream?: ReadableStream;
 }
 
 declare interface AddEventListenerOptions {

@@ -1934,6 +1934,8 @@ export default b.declarations(
 
   // Native code answers a read and takes a store, and a descriptor shows a data property (ZigGlobalObject.cpp: a CustomGetterSetter without the attribute of an accessor).
   b.method("AbortSignal.prototype.onabort", eventHandlerAttributeKeptIn("AbortSignal.onabort", receiver)),
+  // ZigGlobalObject.cpp lays them in an executable that has an external source map.
+  ["_debugIds", "_sentryDebugIds"].flatMap(name => b.extend(name, { mutability: "ChangesOnItsOwn" })),
   b.static("onerror", b.property(b.any, { setter: eventHandlerAttribute(globalObject).setter })),
   b.static("onmessage", b.property(b.any, { setter: eventHandlerAttribute(globalObject).setter })),
   b.fn("addEventListener", listenerRegistration(globalObject)),

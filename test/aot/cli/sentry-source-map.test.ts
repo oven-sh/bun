@@ -420,4 +420,36 @@ describe("--sourcemap=external with a Sentry SDK", () => {
       }),
     buildLimit,
   );
+
+  for (const [flags, expected] of [
+    [["--sourcemap=external"], "1 1 object 7 2\n"],
+    [[], "none none undefined none 1\n"],
+  ] as const) {
+    test(
+      `the program follows what _debugIds and _sentryDebugIds hold, built with ${JSON.stringify(flags)}`,
+      () =>
+        slot(async () => {
+          using dir = tempDir("aot-debug-ids", {
+            "app.js": `
+              const count = ids => (ids === undefined ? "none" : Object.keys(ids).length);
+              class Box { constructor(held) { this.held = held; } }
+              const ids = globalThis._debugIds;
+              const printed = [count(ids), count(globalThis._sentryDebugIds), typeof new Box(ids).held];
+              if (ids) ids.own = () => 7;
+              printed.push(ids ? ids.own() : "none");
+              globalThis._sentryDebugIds = globalThis._sentryDebugIds || {};
+              globalThis._sentryDebugIds.stack = "id";
+              printed.push(count(globalThis._sentryDebugIds));
+              console.log(printed.join(" "));
+            `,
+          });
+          const folder = String(dir);
+          built(await spawned([bunExe(), "compile", "app.js", ...flags, "--outfile", "dist/app"], folder, env));
+          const run = await spawned([join(folder, "dist", isWindows ? "app.exe" : "app")], folder, env);
+          expect({ stdout: run.stdout, stderr: run.stderr }).toEqual({ stdout: expected, stderr: "" });
+          expect(run.exitCode).toBe(0);
+        }),
+      buildLimit,
+    );
+  }
 });

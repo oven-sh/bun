@@ -160,6 +160,7 @@ fn parse(args: &[&ZStr]) -> Options {
             );
             Global::exit(1);
         }
+        super::arguments::publish_pwd_after_chdir(cwd);
     }
     let mut options = Options {
         all: parsed.flag(b"--all"),

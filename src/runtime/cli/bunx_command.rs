@@ -244,6 +244,7 @@ impl Options {
                         );
                         Global::exit(1);
                     }
+                    super::arguments::publish_pwd_after_chdir(dir);
                 } else if let Some(age) = Self::flag_value(argv, &mut i, "--minimum-release-age") {
                     // Validate the whole value, like `bun add` does, because it becomes part of a
                     // directory name.

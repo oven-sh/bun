@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, it } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, linkSync } from "fs";
+import { chmodSync, copyFileSync, existsSync, linkSync, symlinkSync } from "fs";
 import { bunEnv as bunEnv_, bunExe, forEachLine, isWindows, substDrive, tempDir, tempDirWithFiles } from "harness";
 import { basename, join } from "path";
 
@@ -443,6 +443,208 @@ describe.concurrent("bun run", () => {
       expect(basename(stdout.trim())).toBe("subdir");
       expect(exitCode).toBe(0);
     });
+  });
+
+  // https://github.com/oven-sh/bun/issues/30456
+  //
+  // The reported repro is `bun --cwd=frontend run lint`, so cover both the
+  // bare-entrypoint form (`bun --cwd=subdir test.js`) and the `run`
+  // subcommand form (`bun --cwd=subdir run test.js`) — each hits a different
+  // Arguments.parse branch.
+  //
+  // Windows env keys and paths are case-insensitive; compare a folded form.
+  const samePath = (a: string, b: string) =>
+    isWindows ? a.replaceAll("\\", "/").toLowerCase() === b.replaceAll("\\", "/").toLowerCase() : a === b;
+
+  for (const withRun of [false, true]) {
+    const label = withRun ? "bun --cwd run" : "bun --cwd";
+    const buildCmd = (...extra: string[]) => [bunExe(), "--cwd=subdir", ...(withRun ? ["run"] : []), ...extra];
+
+    it(`${label} updates process.env.PWD to match the new cwd`, async () => {
+      using dir = tempDir(`bun-run-cwd-pwd-${withRun ? "run" : "bare"}`, {
+        "subdir/test.js": `console.log(JSON.stringify({ pwd: process.env.PWD, cwd: process.cwd() }));`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: buildCmd("test.js"),
+        cwd: String(dir),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...bunEnv,
+          // Set a known PWD so we detect when it's not overwritten — don't
+          // rely on the inherited parent PWD (Bun's test harness can leave
+          // it pointing at an unexpected directory on some platforms).
+          PWD: String(dir),
+        },
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      const { pwd, cwd } = JSON.parse(stdout);
+      expect(cwd).toMatch(/subdir$/);
+      // PWD must match cwd — tools like vue-tsc / TypeScript's module
+      // resolution read PWD and use it as the resolution root.
+      expect(samePath(pwd, cwd)).toBe(true);
+      expect(exitCode).toBe(0);
+    });
+
+    it(`${label} PWD is inherited by spawned child processes`, async () => {
+      using dir = tempDir(`bun-run-cwd-pwd-child-${withRun ? "run" : "bare"}`, {
+        "subdir/test.js": `
+          import { spawnSync } from "child_process";
+          const out = spawnSync(process.execPath, ["-e", "console.log(process.env.PWD)"], {
+            env: process.env,
+            encoding: "utf8",
+          });
+          process.stdout.write(out.stdout);
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: buildCmd("test.js"),
+        cwd: String(dir),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...bunEnv,
+          PWD: String(dir),
+        },
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toMatch(/subdir$/);
+      expect(exitCode).toBe(0);
+    });
+
+    // When PWD is absent from the inherited env (env -u PWD, cron, systemd,
+    // minimal Docker), --cwd still has to publish it through to process.env.
+    it(`${label} adds PWD when parent had none`, async () => {
+      using dir = tempDir(`bun-run-cwd-pwd-unset-${withRun ? "run" : "bare"}`, {
+        "subdir/test.js": `console.log(process.env.PWD ?? "<unset>");`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: buildCmd("test.js"),
+        cwd: String(dir),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...bunEnv, PWD: undefined },
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toMatch(/subdir$/);
+      expect(exitCode).toBe(0);
+    });
+
+    // Like bash's `cd`, PWD keeps the logical spelling the user walked through
+    // (symlinks intact) while process.cwd() reports the physical path. The
+    // workspace-root lookup in the package manager relies on this.
+    it.skipIf(isWindows)(`${label} keeps PWD logical through a symlinked parent`, async () => {
+      using dir = tempDir(`bun-run-cwd-pwd-symlink-${withRun ? "run" : "bare"}`, {
+        "real/subdir/test.js": `console.log(JSON.stringify({ pwd: process.env.PWD, cwd: process.cwd() }));`,
+      });
+      const real = join(String(dir), "real");
+      const link = join(String(dir), "link");
+      symlinkSync(real, link);
+
+      await using proc = Bun.spawn({
+        cmd: buildCmd("test.js"),
+        cwd: link,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...bunEnv, PWD: link },
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ pwd: join(link, "subdir"), cwd: join(real, "subdir") });
+      expect(exitCode).toBe(0);
+    });
+
+    // A parent that chdir'd without updating PWD (or a bogus PWD) must not
+    // leak into the child: when $PWD + arg names a different directory, fall
+    // back to the physical path.
+    it.skipIf(isWindows)(`${label} ignores a stale inherited PWD`, async () => {
+      using dir = tempDir(`bun-run-cwd-pwd-stale-${withRun ? "run" : "bare"}`, {
+        "a/subdir/test.js": `console.log(JSON.stringify({ pwd: process.env.PWD, cwd: process.cwd() }));`,
+        "b/subdir/.keep": "",
+      });
+
+      await using proc = Bun.spawn({
+        cmd: buildCmd("test.js"),
+        cwd: join(String(dir), "a"),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...bunEnv, PWD: join(String(dir), "b") },
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      const expected = join(String(dir), "a", "subdir");
+      expect(JSON.parse(stdout)).toEqual({ pwd: expected, cwd: expected });
+      expect(exitCode).toBe(0);
+    });
+
+    // Tab completion appends a slash; bash's cd strips it from PWD.
+    it(`${label} strips a trailing slash from PWD`, async () => {
+      using dir = tempDir(`bun-run-cwd-pwd-slash-${withRun ? "run" : "bare"}`, {
+        "subdir/test.js": `console.log(JSON.stringify({ pwd: process.env.PWD, cwd: process.cwd() }));`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--cwd=subdir/", ...(withRun ? ["run"] : []), "test.js"],
+        cwd: String(dir),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...bunEnv, PWD: String(dir) },
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      const { pwd, cwd } = JSON.parse(stdout);
+      expect(samePath(pwd, cwd)).toBe(true);
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  // bunx parses --cwd itself and must publish PWD through the same helper.
+  // The tool is a bun-shebang script, not a shell script: sh re-derives PWD
+  // from getcwd at startup, which would hide a stale inherited value.
+  it.skipIf(isWindows)("bunx --cwd updates PWD for the tool it runs", async () => {
+    using dir = tempDir("bunx-cwd-pwd", {
+      "subdir/node_modules/.bin/showpwd": `#!${bunExe()}\nconsole.log(process.env.PWD);\n`,
+    });
+    chmodSync(join(String(dir), "subdir/node_modules/.bin/showpwd"), 0o755);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "x", "--cwd=subdir", "showpwd"],
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...bunEnv, PWD: String(dir) },
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(join(String(dir), "subdir"));
+    expect(exitCode).toBe(0);
   });
 
   it("DCE annotations are respected", async () => {

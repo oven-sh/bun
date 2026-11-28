@@ -1262,6 +1262,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             );
             Global::exit(1);
         }
+        publish_pwd_after_chdir(cwd_arg);
         // Store the post-chdir physical path (mirrors process.chdir) so
         // process.cwd(), path.resolve, and the resolver agree on one form.
         let mut phys = bun_paths::path_buffer_pool::get();
@@ -2122,6 +2123,123 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     Ok(opts)
+}
+
+/// Publish `PWD` after a successful `--cwd` chdir, with bash's logical-path rule.
+pub(crate) fn publish_pwd_after_chdir(requested: &[u8]) {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let physical = bun_core::getcwd(&mut buf)
+        .ok()
+        .map(|p| bun_core::ZBox::from_bytes(p.as_bytes()));
+    let pwd = match (lexical_pwd(requested), physical) {
+        (Some(lexical), Some(physical)) => {
+            if same_directory(&lexical, &physical) {
+                lexical
+            } else {
+                physical
+            }
+        }
+        (None, Some(physical)) | (Some(physical), None) => physical,
+        (None, None) => return,
+    };
+    set_pwd_env(&pwd);
+}
+
+/// `$PWD` joined with the argument: the spelling the user typed, symlinks intact.
+#[cfg(unix)]
+fn lexical_pwd(requested: &[u8]) -> Option<bun_core::ZBox> {
+    let base: &[u8] = if bun_paths::is_absolute(requested) {
+        b"/"
+    } else {
+        // Read uncached: `env_var::PWD` would pin the pre-chdir value for later readers.
+        bun_core::getenv_z(bun_core::zstr!("PWD"))?
+    };
+    if !bun_paths::is_absolute(base) {
+        return None;
+    }
+    let mut spill = Vec::new();
+    let joined =
+        resolve_path::join_abs_string_spill::<platform::Loose>(base, &mut spill, &[requested]);
+    let trimmed = strings::without_trailing_slash(joined);
+    Some(bun_core::ZBox::from_bytes(if trimmed.is_empty() {
+        b"/"
+    } else {
+        trimmed
+    }))
+}
+
+#[cfg(unix)]
+fn same_directory(a: &bun_core::ZBox, b: &bun_core::ZBox) -> bool {
+    if a.as_bytes() == b.as_bytes() {
+        return true;
+    }
+    let (Ok(there), Ok(here)) = (bun_sys::stat(a), bun_sys::stat(b)) else {
+        return false;
+    };
+    there.st_dev == here.st_dev && there.st_ino == here.st_ino
+}
+
+#[cfg(not(unix))]
+fn lexical_pwd(_requested: &[u8]) -> Option<bun_core::ZBox> {
+    None
+}
+
+#[cfg(not(unix))]
+fn same_directory(_a: &bun_core::ZBox, _b: &bun_core::ZBox) -> bool {
+    false
+}
+
+fn set_pwd_env(cwd: &bun_core::ZBox) {
+    #[cfg(windows)]
+    {
+        patch_windows_environ_snapshot(cwd.as_bytes());
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
+        let wcwd = bun_paths::strings::to_w_path(wbuf.as_mut_slice(), cwd.as_bytes());
+        let _ = bun_sys::windows::SetEnvironmentVariableW(bun_core::wstr!("PWD"), Some(wcwd));
+    }
+    #[cfg(not(windows))]
+    {
+        // SAFETY: literal is NUL-terminated; ZBox::as_ptr() points to NUL-terminated bytes.
+        unsafe {
+            let _ = libc::setenv(c"PWD".as_ptr(), cwd.as_ptr(), 1);
+        }
+    }
+}
+
+/// Rebuild the envp snapshot `DotEnv::load_process` reads; `SetEnvironmentVariableW` skips it.
+#[cfg(windows)]
+fn patch_windows_environ_snapshot(cwd: &[u8]) {
+    use bun_core::{CStrList, CStrRef};
+
+    let mut entry: Vec<u8> = Vec::with_capacity(4 + cwd.len() + 1);
+    entry.extend_from_slice(b"PWD=");
+    entry.extend_from_slice(cwd);
+    entry.push(0);
+    let entry = CStrRef::from_slice_with_nul(Box::leak(entry.into_boxed_slice()));
+
+    let env = bun_core::os::environ().unterminated();
+    let mut new: Vec<Option<CStrRef<'static>>> = Vec::with_capacity(env.len() + 2);
+    let mut replaced = false;
+    for &slot in env {
+        let Some(slot) = slot else { continue };
+        let bytes = slot.to_cstr().to_bytes();
+        // Windows env keys are case-insensitive — match getenv_z_any_case.
+        let key_end = bun_core::strings::index_of_char_usize(bytes, b'=').unwrap_or(bytes.len());
+        if bun_core::strings::eql_case_insensitive_ascii_check_length(&bytes[..key_end], b"PWD") {
+            new.push(Some(entry));
+            replaced = true;
+        } else {
+            new.push(Some(slot));
+        }
+    }
+    if !replaced {
+        new.push(Some(entry));
+    }
+    new.push(None);
+    let new = CStrList::new(Box::leak(new.into_boxed_slice()));
+    // SAFETY: single-threaded argv parse; no other thread reads `environ` yet,
+    // and the loop above pushes no `None` before the terminator.
+    unsafe { bun_core::os::set_environ(new) };
 }
 
 /// Cold path: `bun test` option-group parsing — timeout / coverage / reporter /

@@ -120,8 +120,9 @@ pub(crate) fn is_read_left_out_by_bun_run(member: BuiltinId) -> bool {
     reads.binary_search(&member).is_ok()
 }
 
+/// The parser's list is for browsers too. A program for Bun has no `window`, and a read of it throws.
 pub(crate) fn is_name_left_out_by_bun_run(name: &[u8]) -> bool {
-    is_pure_global_identifier(name)
+    is_pure_global_identifier(name) && name != b"window"
 }
 
 fn is_arithmetic(op: BinOp) -> bool {

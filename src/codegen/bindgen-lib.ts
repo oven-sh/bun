@@ -51,7 +51,7 @@ export const f64 = new DoubleType();
 /** A `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. `.usv` for a `USVString`. `.local` for the JS string itself. */
 export const string = new StringType();
 
-/** The JS value itself, as a `JsLocal<'a>`. `.stringObjectAsString`, `.orAbsent`. */
+/** The JS value itself, as a `JsLocal<'a>`. `.orAbsent`. */
 export const any = new AnyType();
 
 /** A function, or a proxy of one, as a `JsLocal<'a, Callable>`. */
@@ -105,7 +105,7 @@ export const array = (element: Type) => new ArrayType(element);
 /** A result only: an object with a property for each `(key, value)` the body gives. */
 export const record = (value: Type) => new RecordResultType(value);
 
-/** The last argument: it and every one after it, as a `&'a [T]`. `element` is `b.any` or `b.string.local`. */
+/** The last argument: it and every one after it, as a `&'a [T]`. `element` is `b.string.local`. For any value: `b.any.variadic`. */
 export const rest = (element: Type) => new RestType(element);
 
 // A named type is called what it is exported as: `export const Formatter = b.enumeration([..])`.

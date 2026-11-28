@@ -639,6 +639,10 @@ mod _impl {
             k.length()
         };
         buf1[len1] = 0;
+        // `=C:` is the working directory of a drive, which Node does not let a script write.
+        if buf1[0] == u16::from(b'=') && v.tag() != bun_core::Tag::Dead {
+            return;
+        }
 
         let str2: Option<&WStr> = if v.tag() != bun_core::Tag::Dead {
             Some('str_: {

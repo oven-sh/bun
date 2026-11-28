@@ -741,18 +741,29 @@ export function createOnWarning(
     if (!trace && !traceWarningHelperShown) {
       traceWarningHelperShown = true;
       const argv0 = processObject.argv0 || "node";
+      let program = "node";
       // A string goes to the native path.basename(), so a path.basename() that the program replaced is not called.
-      // Anything else goes to node:path, which throws unless the program replaced basename().
-      const program =
-        typeof argv0 !== "string"
-          ? require("node:path").basename(argv0)
-          : (process.platform === "win32"
-              ? $bindgen("node_path.bind.ts", "basenameWin32")
-              : $bindgen("node_path.bind.ts", "basenamePosix"))(argv0);
+      if (typeof argv0 === "string") {
+        program = (
+          process.platform === "win32"
+            ? $bindgen("node_path.bind.ts", "basenameWin32")
+            : $bindgen("node_path.bind.ts", "basenamePosix")
+        )(argv0);
+      } else {
+        // Throws unless the program replaced basename(). In Node process.argv0 is read-only, so this cannot throw there.
+        try {
+          program = require("node:path").basename(argv0);
+        } catch {}
+      }
       msg += `\n(Use \`${program} --trace-warnings ...\` to show where the warning was created)`;
     }
     writeOut(msg);
   };
+}
+
+export function getEnvAsString(processObject: typeof process, name: string) {
+  const value = processObject.env[name];
+  return value ? `${value}` : null;
 }
 
 export function loadEnvFile(path) {

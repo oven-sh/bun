@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunExe } from "harness";
+import * as namespace from "node:os";
 import { join } from "node:path";
 import { run } from "../../../aot/harness/run";
 
@@ -36,6 +37,18 @@ test.each([
   [{ constructor: { name: "Fake" } }, "an instance of Fake"],
   [Object.create({ constructor: Bar }), "an instance of Bar"],
   [Object.create(null), "[Object: null prototype] {}"],
+  [{ __proto__: null, a: 1 }, "[Object: null prototype]"],
+  [{ constructor: null, a: 1 }, "[Object]"],
+  [{ constructor: "text" }, "[Object]"],
+  [{ constructor: { name: 1 } }, "[Object]"],
+  [{ constructor: { name: Symbol() } }, "[Object]"],
+  [{ constructor: { name: { toString: null } } }, "[Object]"],
+  [new Proxy({ __proto__: null, [Symbol.for("nodejs.util.inspect.custom")]: () => "custom" }, {}), "custom"],
+  // Node names the kind of these.
+  [namespace, "[Object]"],
+  [new Proxy({ a: 1 }, { get: () => undefined }), "[Object]"],
+  [new Proxy({ a: 1 }, { get: (_, key) => (typeof key === "symbol" ? () => "trap" : undefined) }), "[Object]"],
+  [Object.assign(new Map([[1, 2]]), { constructor: undefined }), "[Object]"],
 ])("object %#", (value, expected) => {
   expect(received(value)).toBe(expected);
 });

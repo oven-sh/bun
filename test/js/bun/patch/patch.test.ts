@@ -115,8 +115,8 @@ describe("apply", () => {
       b: {},
     });
 
-    const afolder = join(tempdir, "a");
-    const bfolder = join(tempdir, "b");
+    const afolder = join(String(tempdir), "a");
+    const bfolder = join(String(tempdir), "b");
 
     const patchfile = await makeDiff(afolder, bfolder, tempdir);
     expect(patchfile).toBe("");
@@ -135,8 +135,8 @@ describe("apply", () => {
       };
       await using tempdir = tempDir("patch-test", files);
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       console.log("makeDiff args", afolder, bfolder);
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
@@ -160,8 +160,8 @@ describe("apply", () => {
       };
       await using tempdir = tempDir("patch-test", files);
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
@@ -177,8 +177,8 @@ describe("apply", () => {
       };
       await using tempdir = tempDir("patch-test", files);
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
@@ -191,7 +191,7 @@ describe("apply", () => {
     // must be traversable regardless, or the file cannot be created inside them.
     test.if(process.platform !== "win32")("creates missing parent directories traversable", async () => {
       await using tempdir = tempDir("patch-test", { "a/.keep": "" });
-      const afolder = join(tempdir, "a");
+      const afolder = join(String(tempdir), "a");
 
       const patch =
         "diff --git a/newdir/sub/new.txt b/newdir/sub/new.txt\n" +
@@ -220,8 +220,8 @@ describe("apply", () => {
       };
       await using tempdir = tempDir("patch-test", files);
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
@@ -306,8 +306,8 @@ describe("apply", () => {
       };
       await using tempdir = tempDir("patch-test", files);
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
@@ -348,8 +348,8 @@ describe("apply", () => {
 
       await using tempdir = tempDir("patch-test", files);
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       await fs.chmod(join(bfolder, "hi.txt"), 0o755);
 
@@ -375,8 +375,8 @@ describe("apply", () => {
       "b/plan b/empty.js": "",
       "b/plan b/run.sh": "#!/bin/sh\n",
     });
-    const afolder = join(tempdir, "a");
-    const bfolder = join(tempdir, "b");
+    const afolder = join(String(tempdir), "a");
+    const bfolder = join(String(tempdir), "b");
     await fs.chmod(join(bfolder, "plan b", "run.sh"), 0o755);
 
     await apply(await makeDiff(afolder, bfolder, tempdir), afolder);
@@ -399,8 +399,8 @@ describe("apply", () => {
         "b/hello.txt": bfile,
       });
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
@@ -418,8 +418,8 @@ describe("apply", () => {
         "b/hello.txt": bfile,
       });
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
@@ -437,8 +437,8 @@ describe("apply", () => {
         "b/hello.txt": bfile,
       });
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
@@ -456,8 +456,8 @@ describe("apply", () => {
         "b/hello.txt": bfile,
       });
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
@@ -517,8 +517,8 @@ describe("apply", () => {
         "b/hello.txt": bfile,
       });
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
@@ -578,8 +578,8 @@ describe("apply", () => {
         "b/hello.txt": bfile,
       });
 
-      const afolder = join(tempdir, "a");
-      const bfolder = join(tempdir, "b");
+      const afolder = join(String(tempdir), "a");
+      const bfolder = join(String(tempdir), "b");
 
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
@@ -597,7 +597,7 @@ describe("apply", () => {
       await using tempdir = tempDir("patch-test", {
         "a/hello.txt": afile,
       });
-      const afolder = join(tempdir, "a");
+      const afolder = join(String(tempdir), "a");
 
       // Hunk 1 adds 2 lines, so hunk 2's correct `+` start is 9. The header
       // says 7 (stale), exactly as yarn patch-commit emits.
@@ -653,7 +653,7 @@ describe("apply", () => {
       await using tempdir = tempDir("patch-test", {
         "a/hello.txt": afile,
       });
-      const afolder = join(tempdir, "a");
+      const afolder = join(String(tempdir), "a");
 
       const patchfile = [
         "diff --git a/hello.txt b/hello.txt",
@@ -677,7 +677,7 @@ describe("apply", () => {
       await using tempdir = tempDir("patch-test", {
         "a/sub/hello.txt": afile,
       });
-      const afolder = join(tempdir, "a");
+      const afolder = join(String(tempdir), "a");
 
       const patchfile = [
         "diff --git a/sub/hello.txt b/sub/hello.txt",
@@ -703,7 +703,7 @@ describe("apply", () => {
       await using tempdir = tempDir("patch-test", {
         "a/hello.txt": afile,
       });
-      const afolder = join(tempdir, "a");
+      const afolder = join(String(tempdir), "a");
 
       // The patch was made when "target" was line 2. It is now line 50.
       const patchfile = [

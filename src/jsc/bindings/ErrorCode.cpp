@@ -772,27 +772,30 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Messa
     if (cell->isObject()) {
         auto constructor = value.get(globalObject, vm.propertyNames->constructor);
         RETURN_IF_EXCEPTION(scope, void());
+        JSValue customInspect = jsUndefined();
         if (constructor.toBoolean(globalObject)) {
             auto name = constructor.get(globalObject, vm.propertyNames->name);
             RETURN_IF_EXCEPTION(scope, void());
-            auto str = name.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, void());
-            builder.append("an instance of "_s);
-            auto view = str->view(globalObject);
-            RETURN_IF_EXCEPTION(scope, );
-            builder.append(view);
-            return;
-        }
-        // In an executable: util.inspect(value, { depth: -1 }) of a plain object, as in Node: its own custom inspect function runs, and nothing that it holds is printed.
-        if (vm.hasCompiledCode() && (cell->type() == JSC::FinalObjectType || cell->type() == JSC::CompiledObjectType)) {
-            auto customInspect = value.get(globalObject, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)));
-            RETURN_IF_EXCEPTION(scope, void());
-            if (!customInspect.isCallable()) {
-                auto description = describeObjectWithoutConstructorName(vm, globalObject, cell->getObject());
-                RETURN_IF_EXCEPTION(scope, void());
-                builder.append(description);
+            if (name.isString()) {
+                builder.append("an instance of "_s);
+                auto view = asString(name)->view(globalObject);
+                RETURN_IF_EXCEPTION(scope, );
+                builder.append(view);
                 return;
             }
+        } else {
+            auto* inspected = cell->getObject();
+            while (auto* proxy = dynamicDowncast<JSC::ProxyObject>(inspected))
+                inspected = proxy->target();
+            customInspect = inspected->get(globalObject, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)));
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        // util.inspect(value, { depth: -1 }), as in Node: nothing that the object holds is printed, except by its custom inspect function.
+        if (!customInspect.isCallable()) {
+            auto description = describeObjectWithoutConstructorName(vm, globalObject, cell->getObject());
+            RETURN_IF_EXCEPTION(scope, void());
+            builder.append(description);
+            return;
         }
     }
 

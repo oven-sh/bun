@@ -1,4 +1,4 @@
-// A Map with an own `constructor` that is undefined keeps its prototype: the formatter prints what it holds.
+// A Map with an own `constructor` that is undefined keeps its prototype. It is not printed with what it holds.
 const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("made up") });
 const map = new Map([[1, server]]);
 map.constructor = undefined;

@@ -730,32 +730,58 @@ unsafe extern "C" fn highway_last_index_of_any_char(
         .rposition(|c| chars.contains(c))
         .unwrap_or(len)
 }
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-unsafe extern "C" fn highway_index_of_untidy_slash(p: *const u8, len: usize) -> usize {
-    // SAFETY: the caller passes a slice, as a pointer and a length.
-    let path = unsafe { bytes(p, len) };
-    let is_untidy = |part: &[u8]| {
-        matches!(
-            part,
-            [b'/', ..] | [b'.'] | [b'.', b'/', ..] | [b'.', b'.'] | [b'.', b'.', b'/', ..]
-        )
-    };
-    (1..len)
-        .find(|&at| path[at - 1] == b'/' && is_untidy(&path[at..]))
-        .map_or(len, |at| at - 1)
+fn is_untidy_separator_at(path: &[u8], at: usize, separator: u8) -> bool {
+    path[at] == separator
+        && match path[at + 1..] {
+            [b'.'] | [b'.', b'.'] => true,
+            [b'.', b'.', next, ..] => next == separator,
+            [b'.', next, ..] | [next, ..] => next == separator,
+            [] => false,
+        }
 }
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-unsafe extern "C" fn highway_last_index_of_slash(p: *const u8, len: usize) -> usize {
-    // SAFETY: the caller passes a slice, as a pointer and a length.
-    unsafe { highway_last_index_of_char(p, len, b'/') }
+macro_rules! path_searches {
+    ($( $kernel:ident = $find:ident(|$path:ident, $at:ident| $is:expr); )*) => {$(
+        #[unsafe(no_mangle)]
+        #[linkage = "weak"]
+        unsafe extern "C" fn $kernel(p: *const u8, len: usize) -> usize {
+            // SAFETY: the caller passes a slice, as a pointer and a length.
+            let $path = unsafe { bytes(p, len) };
+            (0..len).$find(|&$at| $is).unwrap_or(len)
+        }
+    )*};
+}
+path_searches! {
+    highway_index_of_untidy_slash = find(|path, at| is_untidy_separator_at(path, at, b'/'));
+    highway_index_of_untidy_backslash = find(|path, at| is_untidy_separator_at(path, at, b'\\'));
+    highway_index_of_untidy_backslash_or_slash_or_colon =
+        find(|path, at| matches!(path[at], b'/' | b':') || is_untidy_separator_at(path, at, b'\\'));
+    highway_last_index_of_slash = rfind(|path, at| path[at] == b'/');
+    highway_last_index_of_slash_or_dot = rfind(|path, at| matches!(path[at], b'/' | b'.'));
+    highway_last_index_of_backslash = rfind(|path, at| path[at] == b'\\');
+    highway_last_index_of_slash_or_backslash = rfind(|path, at| matches!(path[at], b'/' | b'\\'));
+    highway_last_index_of_slash_or_backslash_or_dot =
+        rfind(|path, at| matches!(path[at], b'/' | b'\\' | b'.'));
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
 unsafe extern "C" fn highway_count_slashes(p: *const u8, len: usize) -> usize {
     // SAFETY: the caller passes a slice, as a pointer and a length.
     unsafe { highway_count_char(p, len, b'/') }
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_either_byte_bits(p: *const u8, len: usize, a: u8, b: u8) -> u64 {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let text = unsafe { bytes(p, len) };
+    (0..len)
+        .map(|at| u64::from(text[at] == a || text[at] == b) << at)
+        .sum()
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_count_backslashes(p: *const u8, len: usize) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    unsafe { highway_count_char(p, len, b'\\') }
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]

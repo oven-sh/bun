@@ -3900,7 +3900,7 @@ BunString JSC__JSString__view(JSC::JSString* str, JSC::JSGlobalObject* global, c
 bool JSC__JSString__is8Bit(const JSC::JSString* arg0) { return arg0->is8Bit(); };
 size_t JSC__JSString__length(const JSC::JSString* arg0) { return arg0->length(); }
 
-// JSString::latin1_characters in src/jsc/JSString.rs reads these fields itself.
+// JSString::characters in src/jsc/JSString.rs reads these fields itself.
 static_assert(JSC::JSString::offsetOfValue() == 8 && JSC::JSString::isRopeInPointer == 1 && JSC::JSRopeString::isSubstringInPointer == 2, "JSString::m_fiber is mirrored in src/jsc/JSString.rs");
 static_assert(JSC::JSRopeString::offsetOfLength() == 16 && JSC::JSRopeString::offsetOfFiber1Lower() == 20 && JSC::JSRopeString::offsetOfFiber2() == 24 && JSC::JSRopeString::offsetOfFiber2Lower() == 26 && sizeof(JSC::JSRopeString) == 32, "JSRopeString's fibers are mirrored in src/jsc/JSString.rs");
 static_assert(JSC::JSRopeString::CompactFibers::addressMask <= (1ULL << 48) - 1 && JSC::JSRopeString::CompactFibers::shiftOfFiber2InUpperWord == 16, "JSRopeString's fibers are mirrored in src/jsc/JSString.rs");
@@ -3921,8 +3921,25 @@ static ALWAYS_INLINE bool nextCellIsOnFreeList(JSC::GCClient::IsoSubspace& space
     return *std::bit_cast<char**>(freeList + JSC::FreeList::offsetOfIntervalStart()) < *std::bit_cast<char**>(freeList + JSC::FreeList::offsetOfIntervalEnd());
 }
 
+static constexpr unsigned maxShortStringLength = 4096;
+
+// `string` is no rope.
+static ALWAYS_INLINE bool mayHoldLongText(JSC::JSString* string)
+{
+    auto* text = string->tryGetValueImpl();
+    return text->length() > maxShortStringLength || text->isSubString();
+}
+
+// A few characters (V8's SlicedString::kMinLength) do not keep a long string alive.
+static ALWAYS_INLINE bool isSubstringCopied(JSC::JSString* string, uint32_t length)
+{
+    return length < 13 && mayHoldLongText(string);
+}
+
 static NEVER_INLINE JSC::JSString* substringOfResolvedSlow(JSC::VM& vm, JSC::JSString* string, uint32_t offset, uint32_t length)
 {
+    if (isSubstringCopied(string, length))
+        return JSC::jsString(vm, WTF::StringView(*string->tryGetValueImpl()).substring(offset, length).toString());
     return JSC::jsSubstringOfResolved(vm, string, offset, length);
 }
 
@@ -3931,7 +3948,7 @@ static ALWAYS_INLINE JSC::JSString* substringOfResolved(JSC::VM& vm, JSC::JSStri
 {
     ASSERT(!string->isRope());
     ASSERT(!isPart || length < string->length());
-    if (length > 2 && nextCellIsOnFreeList(vm.ropeStringSpace())) [[likely]] {
+    if (length > 2 && !isSubstringCopied(string, length) && nextCellIsOnFreeList(vm.ropeStringSpace())) [[likely]] {
         if (string->isSubstring())
             __builtin_unreachable();
         if (auto* text = string->tryGetValueImpl(); isPart && (!text || text->length() == length))
@@ -3962,8 +3979,14 @@ extern "C" void JSC__JSString__substringsOfResolved(JSC::JSString* string, JSC::
         substrings[i] = JSC::JSValue::encode(substringOfResolved(vm, string, ranges[2 * i], ranges[2 * i + 1], false));
 }
 
+// `owner` is no rope.
+extern "C" __attribute__((__always_inline__)) bool JSC__JSString__mayHoldLongTextFor(JSC::JSString* owner, uint32_t length)
+{
+    return mayHoldLongText(owner) && length <= maxShortStringLength;
+}
+
 // At most `capacity` of them. A rope is not resolved: nothing is allocated in the heap and nothing is thrown.
-extern "C" uint32_t JSC__JSString__firstCharacters(const JSC::JSString* string, char16_t* characters, uint32_t capacity)
+extern "C" void JSC__JSString__firstCharacters(const JSC::JSString* string, char16_t* characters, uint32_t capacity)
 {
     uint32_t count = 0;
     JSC::JSRopeString::LeafIterator leaves { string };
@@ -3972,7 +3995,6 @@ extern "C" uint32_t JSC__JSString__firstCharacters(const JSC::JSString* string, 
         for (unsigned i = 0; i < leaf.length() && count < capacity; ++i)
             characters[count++] = leaf[i];
     }
-    return count;
 }
 
 extern "C" JSC::EncodedJSValue JSC__JSString__singleLatin1Character(JSC::JSGlobalObject* globalObject, uint8_t character)

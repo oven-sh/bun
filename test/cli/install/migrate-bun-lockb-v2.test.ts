@@ -83,7 +83,7 @@ for (const testInfo of tests) {
     const oldLockfileContents = await file(join(import.meta.dir, "fixtures", testInfo.lockfile)).text();
     using testDir = tempDir(testInfo.name, testInfo.files);
 
-    await cp(join(import.meta.dir, "fixtures", testInfo.lockfile), join(testDir, "bun.lockb"));
+    await cp(join(import.meta.dir, "fixtures", testInfo.lockfile), join(String(testDir), "bun.lockb"));
 
     let { stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
@@ -98,7 +98,7 @@ for (const testInfo of tests) {
     expect(await exited).toBe(0);
     expect(err).toContain("Saved lockfile");
 
-    const newLockfileContents = await file(join(testDir, "bun.lockb")).bytes();
+    const newLockfileContents = await file(join(String(testDir), "bun.lockb")).bytes();
     const newLockfile = parseLockfile(testDir);
 
     // contents should be different due to semver numbers changing size
@@ -117,7 +117,7 @@ for (const testInfo of tests) {
 
     expect(await exited).toBe(0);
 
-    const newLockfileContents2 = await file(join(testDir, "bun.lockb")).bytes();
+    const newLockfileContents2 = await file(join(String(testDir), "bun.lockb")).bytes();
     const newLockfile2 = parseLockfile(testDir);
     expect(newLockfileContents2).toEqual(newLockfileContents);
     expect(newLockfile2).toEqual(newLockfile);

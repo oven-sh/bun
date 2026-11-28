@@ -483,13 +483,13 @@ describe("Bun.build", () => {
       `,
     });
     const build = await Bun.build({
-      entrypoints: [join(dir, "app.ts")],
-      outdir: join(dir, "out"),
+      entrypoints: [join(String(dir), "app.ts")],
+      outdir: join(String(dir), "out"),
       target: "bun",
       bytecode: true,
     });
     expect(build.success).toBe(true);
-    const js = join(dir, "out", "app.js");
+    const js = join(String(dir), "out", "app.js");
     const jsc = js + ".jsc";
     const pristine = readFileSync(jsc);
     expect(pristine.length).toBeGreaterThan(256);

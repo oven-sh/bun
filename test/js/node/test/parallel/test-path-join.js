@@ -110,6 +110,12 @@ joinTests.push([
       [['c:.', 'file'], 'c:file'],
       [['c:', '/'], 'c:\\'],
       [['c:', 'file'], 'c:\\file'],
+      [['./upload', '/../C:/Windows'], '.\\C:\\Windows'],
+      [['upload', '../', 'C:foo'], '.\\C:foo'],
+      [['test/..', '??/D:/Test'], '.\\??\\D:\\Test'],
+      [['test', '..', 'D:'], '.\\D:'],
+      [['test', '..', 'D:\\'], '.\\D:\\'],
+      [['test', '..', 'D:foo'], '.\\D:foo'],
     ]
   ),
 ]);

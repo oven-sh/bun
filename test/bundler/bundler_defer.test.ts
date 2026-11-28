@@ -142,7 +142,7 @@ describe("defer", () => {
       });
       try {
         const result = await Bun.build({
-          entrypoints: [path.join(folder, "index.ts")],
+          entrypoints: [path.join(String(folder), "index.ts")],
           minify: true,
           plugins: [
             {
@@ -531,10 +531,10 @@ warn: (msg: string) => console.warn(\`[WARN] \${msg}\`)
 `,
     });
 
-    const entrypoint = path.join(folder, "src", "index.ts");
+    const entrypoint = path.join(String(folder), "src", "index.ts");
     await Bun.$`${bunExe()} install`.env(bunEnv).cwd(folder);
 
-    const outdir = path.join(folder, "dist");
+    const outdir = path.join(String(folder), "dist");
 
     let onFinalizeCallCount = 0;
     let onFinalizeCallRegistry = new FinalizationRegistry(() => {
@@ -607,7 +607,7 @@ warn: (msg: string) => console.warn(\`[WARN] \${msg}\`)
 
     expect(result.success).toBeTrue();
     await Bun.$`${bunExe()} run ${result.outputs[0].path}`;
-    const output = await Bun.$`cat ${path.join(folder, "dist", "output.json")}`.json();
+    const output = await Bun.$`cat ${path.join(String(folder), "dist", "output.json")}`.json();
     expect(output).toStrictEqual({
       "index.ts": {
         "imports": [

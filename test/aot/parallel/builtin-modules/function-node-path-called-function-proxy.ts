@@ -1,5 +1,5 @@
 // A loop calls a function that calls path.parse(), and a line that never runs puts a Proxy in that function's place.
-// STATISTIC: NativeFunctionTestsEmitted >= 1
+// STATISTIC: NativeFunctionTestsEmitted >= 1 Todo: path.parse is not entered by its direct binding, so its callee is not tested
 // STATISTIC: NativeFunctionsCalledDirectly >= 1
 import * as path from "node:path";
 

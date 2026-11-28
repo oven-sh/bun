@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import assert from "node:assert";
 import path from "node:path";
+import { runInNewContext } from "node:vm";
 
 describe("path.parse", () => {
   test("general", () => {
@@ -191,7 +192,16 @@ describe("path.parse", () => {
         assert.strictEqual(path.format(element), expect);
       });
 
-      [null, undefined, 1, true, false, "string"].forEach(pathObject => {
+      [
+        [null, "null"],
+        [undefined, "undefined"],
+        [1, "type number (1)"],
+        [true, "type boolean (true)"],
+        [false, "type boolean (false)"],
+        ["string", "type string ('string')"],
+        [[], "an instance of Array"],
+        [function named() {}, "function named"],
+      ].forEach(([pathObject, received]) => {
         assert.throws(
           () => {
             path.format(pathObject);
@@ -199,19 +209,7 @@ describe("path.parse", () => {
           {
             code: "ERR_INVALID_ARG_TYPE",
             name: "TypeError",
-            // TODO: Make our error messages use util.inspect like Node:
-            // https://github.com/nodejs/node/blob/68885d512640556ba95b18f5ab2e0b9e76013399/lib/internal/errors.js#L1370-L1440
-            // https://github.com/nodejs/node/blob/68885d512640556ba95b18f5ab2e0b9e76013399/test/common/index.js#L815
-            //
-            // Node's error message template is:
-            //  `The "pathObject" argument must be of type object. Received ${inspect(input, { depth: -1 })}`
-            //
-            // For example, when we throw for path.format(null) our error message is:
-            //   The "pathObject" property must be of type object, got object
-            //
-            // While Node's error message is:
-            //   The "pathObject" argument must be of type object. Received null
-            message: `The "pathObject" property must be of type object, got ${typeof pathObject}`,
+            message: `The "pathObject" argument must be of type object. Received ${received}`,
           },
         );
       });
@@ -220,10 +218,34 @@ describe("path.parse", () => {
     // See https://github.com/nodejs/node/issues/44343
     assert.strictEqual(path.format({ name: "x", ext: "png" }), "x.png");
     assert.strictEqual(path.format({ name: "x", ext: ".png" }), "x.png");
+    assert.strictEqual(path.format({ name: "x", ext: [".png"] }), "x..png");
+    assert.strictEqual(path.format({ name: "x", ext: { toString: () => ".png" } }), "x..png");
   });
 });
 
 describe("path.format", () => {
+  test.each(["dir", "root", "base", "name", "ext"])("does not read %s from Object.prototype", added => {
+    class Parts {
+      #name = "n";
+      get name() {
+        return this.#name;
+      }
+    }
+    const inputs = [{}, { dir: "d", name: "n", ext: ".e" }, { root: "r", base: "b" }, { __proto__: { base: "b" } }];
+    const proxy = new Proxy({}, { get: (_, key) => (key === "base" ? "p" : ""), getPrototypeOf: () => proxy });
+    const context = runInNewContext("this", { __proto__: { __proto__: null, base: "c" } });
+    const all = [...inputs, new Parts(), proxy, context];
+    const ask = () => all.flatMap(it => [path.posix.format(it), path.win32.format(it)]);
+    let formatted;
+    Object.defineProperty(Object.prototype, added, { value: "added", configurable: true });
+    try {
+      formatted = ask();
+    } finally {
+      delete Object.prototype[added];
+    }
+    expect(formatted).toEqual(["", "", "d/n.e", "d\\n.e", "rb", "rb", "b", "b", "n", "n", "p", "p", "c", "c"]);
+  });
+
   test("formats { dir, name, ext } with a dot-less ext when the result exceeds the platform path limit", async () => {
     // When `base` is absent and `ext` does not start with ".", format() inserts the dot itself.
     // The formatted result must stay correct even when the combined length of dir/name/ext is far

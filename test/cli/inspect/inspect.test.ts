@@ -15,7 +15,7 @@ const anyPathname = expect.stringMatching(/^\/[a-z0-9-]+$/);
  * Get a function that creates a random `.sock` file in the specified temporary directory.
  */
 const randomSocketPathFn = (tempdir: string) => (): string =>
-  join(tempdir, Math.random().toString(36).substring(2, 15) + ".sock");
+  join(String(tempdir), Math.random().toString(36).substring(2, 15) + ".sock");
 
 describe("websocket", () => {
   const tests = [
@@ -488,7 +488,7 @@ test.todo("junit reporter", async () => {
   const [socket, subprocess] = await Promise.all([
     connect(`unix://${path}`, resolve),
     spawn({
-      cmd: [bunExe(), "--inspect-wait=unix:" + path, "test", join(tempdir, "a.test.js")],
+      cmd: [bunExe(), "--inspect-wait=unix:" + path, "test", join(String(tempdir), "a.test.js")],
       env: bunEnv,
       stdout: "inherit",
       stderr: "inherit",

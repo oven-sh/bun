@@ -93,7 +93,7 @@ function getValidatedPath(p: string | URL): string {
     return path;
   }
   if (p.startsWith("file:")) return Bun.fileURLToPath(p);
-  return require("node:path").resolve(p);
+  return $bindgen("node_path.bind.ts", "resolveWithRealCwd")(p);
 }
 
 function throwIfNullBytesInFileName(filename: string): void {

@@ -11,7 +11,9 @@
 // version on main). Replace this with Bun.Glob once those gaps are closed
 // natively.
 const { validateObject, validateString, validateBoolean, validateArray } = require("internal/validators");
-const { join, resolve, basename, dirname, isAbsolute } = require("node:path");
+const { basename, dirname, isAbsolute } = require("node:path");
+const join = $bindgen("node_path.bind.ts", "joinWithOriginalNormalize") as $Node.Path["join"];
+const resolve = $bindgen("node_path.bind.ts", "resolveWithRealCwd");
 const { kEmptyObject } = require("internal/shared");
 
 const isWindows = process.platform === "win32";

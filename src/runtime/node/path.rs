@@ -1,944 +1,773 @@
 //! The bodies of node_path.bind.ts.
+#![forbid(unsafe_code)]
 
+use bun_core::strings::{CodeUnits, PathByte};
+use bun_node_path::fast_path::{self, StackBuffer};
+use bun_node_path::{Output, PathArgs, Platform, ResolveStep, Scratch, glob, posix, utf8, win32};
+use bun_paths::path_buffer_pool;
+
+use super::path_ffi::{self, Method};
 use crate::generated_bindgen::node_path::ParsedPath;
-use crate::jsc::JSString;
-use crate::jsc::bindgen::{self, JsHeap, JsLatin1, JsLocal, JsScope};
-use crate::jsc::rare_data::PathBuf as RarePathBuf;
-use crate::node::validators::{validate_object, validate_string};
-use bun_collections::smallvec::SmallVec;
-use bun_core::Utf8Bytes;
-use bun_core::vec::BorrowedBuf;
-use bun_node_path::{
-    CHAR_BACKWARD_SLASH, CHAR_FORWARD_SLASH, PathParsed, RelativePosixLatin1,
-    basename_posix_latin1, basename_posix_t, basename_windows_t,
-    basename_without_suffix_posix_latin1, dirname_posix_latin1, dirname_posix_t, dirname_windows_t,
-    extname_posix_latin1, extname_posix_t, extname_windows_t, format_t, is_absolute_posix_t,
-    is_absolute_windows_t, is_ascii, is_resolved_ascii_posix, is_tidy_ascii_posix, join_buf_len,
-    join_posix_t, join_windows_t, normalize_buf_len, normalize_posix_latin1, normalize_posix_t,
-    normalize_windows_t, parse_posix_latin1, parse_posix_t, parse_windows_t, path_size,
-    relative_buf_len, relative_posix_latin1, relative_posix_t, relative_windows_t,
-    resolve_absolute_posix_latin1, resolve_buf_len, resolve_posix_t, resolve_windows_t,
-    to_namespaced_path_buf_len, to_namespaced_path_windows_t,
-};
-use bun_paths::MAX_PATH_BYTES;
+use crate::jsc::bindgen::{self, JsCharacters, JsHeap, JsLocal, JsScope, to_js};
+use crate::jsc::{ErrorCode, JSString};
 
-type Text<'a> = JsLocal<'a, JSString>;
-type TextResult<'a> = bindgen::Result<'a, Text<'a>>;
+type JsStr<'a> = JsLocal<'a, JSString>;
+type StrResult<'a> = bindgen::Result<'a, JsStr<'a>>;
+type ValueResult<'a> = bindgen::Result<'a, JsLocal<'a>>;
 
-/// Path scratch carved from the per-VM [`RarePathBuf`], which is allocated once.
-enum PathScratch<'a> {
-    Pooled(&'a mut [u8]),
-    Spill(Box<[u8]>),
+const HOST_IS_WIN32: bool = cfg!(windows);
+
+#[inline(never)]
+fn out_of_line<R>(body: impl FnOnce() -> R) -> R {
+    body()
 }
 
-impl PathScratch<'_> {
-    const POOL_MAX: usize = 32 * MAX_PATH_BYTES;
-
-    #[inline]
-    fn new(heap: &JsHeap<'_>, len: usize) -> Self {
-        if len > Self::POOL_MAX {
-            return Self::Spill(vec![0; len].into_boxed_slice());
+/// Evaluates `$body` with `$units` bound to the slice in `$text`. The 16-bit copy of `$body` is not inlined.
+macro_rules! match_code_units {
+    ($text:expr, |$units:ident| $body:expr) => {
+        match $text {
+            CodeUnits::U8($units) => $body,
+            CodeUnits::U16($units) => out_of_line(|| $body),
         }
-        // SAFETY: the global object is only asked for its VM.
-        let vm = unsafe { heap.global() }.bun_vm();
-        // SAFETY: a path function makes one scratch and runs no script while it has it.
-        let pool: &mut RarePathBuf = unsafe { vm.rare_data().path_buf.get_mut() };
-        Self::Pooled(&mut pool.get(len)[..len])
-    }
+    };
+}
 
-    #[inline]
-    fn slice(&mut self) -> &mut [u8] {
+macro_rules! platform_call {
+    ($win32:expr, $name:ident($($argument:expr),*)) => {
+        if $win32 {
+            win32::$name($($argument),*)
+        } else {
+            posix::$name($($argument),*)
+        }
+    };
+}
+
+#[cold]
+fn to_js_error<'a>(heap: &JsHeap<'a>, error: bun_node_path::Error) -> bindgen::Error<'a> {
+    match error {
+        // As V8 throws when Node concatenates.
+        bun_node_path::Error::StringTooLong => heap.range_error(format_args!("{error}")),
+        bun_node_path::Error::Alloc(error) => error.into(),
+    }
+}
+
+#[cold]
+fn creation_error<'a>(
+    heap: &JsHeap<'a>,
+    len: usize,
+    error: bindgen::Error<'a>,
+) -> bindgen::Error<'a> {
+    if len > bun_core::String::max_length() {
+        to_js_error(heap, bun_node_path::Error::StringTooLong)
+    } else {
+        error
+    }
+}
+
+#[inline(always)]
+fn create_string<'a>(heap: &JsHeap<'a>, text: CodeUnits<'_>) -> StrResult<'a> {
+    heap.try_create_string_from_units(text)
+        .map_err(|error| creation_error(heap, text.len(), error))
+}
+
+enum ArgError<'a> {
+    Path(bun_node_path::Error),
+    Js(bindgen::Error<'a>),
+    NotAString { index: usize },
+}
+
+impl From<bun_node_path::Error> for ArgError<'_> {
+    fn from(error: bun_node_path::Error) -> Self {
+        ArgError::Path(error)
+    }
+}
+
+impl<'a> From<bindgen::Error<'a>> for ArgError<'a> {
+    #[inline(always)]
+    fn from(error: bindgen::Error<'a>) -> Self {
+        ArgError::Js(error)
+    }
+}
+
+impl<'a> ArgError<'a> {
+    #[cold]
+    fn into_js_error(self, heap: &JsHeap<'a>) -> bindgen::Error<'a> {
         match self {
-            Self::Pooled(slice) => slice,
-            Self::Spill(slab) => slab,
+            ArgError::Path(error) => to_js_error(heap, error),
+            ArgError::Js(error) => error,
+            ArgError::NotAString { index } => heap.error_with_code(
+                ErrorCode::INVALID_ARG_TYPE,
+                format_args!("The \"paths[{index}]\" argument must be of type string"),
+            ),
         }
     }
 }
 
-/// `answer`, which was computed from the Latin-1 characters of operands alone.
-#[inline]
-fn latin1_answer<'a>(heap: &JsHeap<'a>, answer: &[u8]) -> Option<Text<'a>> {
-    (answer.len() <= JSString::MAX_LENGTH).then(|| heap.create_latin1_string(answer))
+trait Arg<'a>: Copy {
+    fn as_str(self) -> Option<JsStr<'a>>;
 }
 
-/// `None` for all but an 8-bit string. With `FLAT_ONLY`, `None` for a rope too, and nothing is called.
-/// An answer with a character outside ASCII is made from UTF-8, so only ASCII characters of these become an answer.
-#[inline(always)]
-fn latin1_of<'a, const FLAT_ONLY: bool>(
-    heap: &JsHeap<'a>,
-    text: Text<'a>,
-) -> bindgen::Result<'a, Option<JsLatin1<'a>>> {
-    if FLAT_ONLY {
-        Ok(text.flat_latin1())
-    } else {
-        text.resolved_latin1(heap)
+impl<'a> Arg<'a> for JsStr<'a> {
+    #[inline(always)]
+    fn as_str(self) -> Option<JsStr<'a>> {
+        Some(self)
     }
 }
 
-/// [`latin1_of`], and `None` unless every character is ASCII.
-#[inline(always)]
-fn ascii_of<'a, const FLAT_ONLY: bool>(
-    heap: &JsHeap<'a>,
-    text: Text<'a>,
-) -> bindgen::Result<'a, Option<JsLatin1<'a>>> {
-    Ok(latin1_of::<FLAT_ONLY>(heap, text)?.filter(|text| is_ascii(text.characters())))
+impl<'a> Arg<'a> for JsLocal<'a> {
+    #[inline(always)]
+    fn as_str(self) -> Option<JsStr<'a>> {
+        self.as_string()
+    }
 }
 
-/// `$name` answers `$of_latin1` of the operands' Latin-1 characters, or `$of_utf8` where that is `None`.
-macro_rules! by_form_of_operands {
-    ($name:ident, $of_other:ident, $of_latin1:ident, $of_utf8:ident, ($($operand:ident: $type:ty),*) -> $result:ty) => {
-        #[inline(always)]
-        fn $name<'a, const WINDOWS: bool>(heap: &JsHeap<'a>, $($operand: $type),*) -> bindgen::Result<'a, $result> {
-            match $of_latin1::<WINDOWS, true>(heap, $($operand),*) {
-                Ok(Some(answer)) => Ok(answer),
-                _ => $of_other::<WINDOWS>(heap, $($operand),*),
-            }
+#[derive(Clone, Copy)]
+struct Args<'h, 'a, T> {
+    heap: &'h JsHeap<'a>,
+    paths: &'h [T],
+}
+
+impl<'h, 'a, T: Arg<'a>> PathArgs for Args<'h, 'a, T> {
+    type Error = ArgError<'a>;
+    type Guard = JsCharacters<'h, 'a>;
+
+    #[inline(always)]
+    fn len(self) -> usize {
+        self.paths.len()
+    }
+
+    #[inline(always)]
+    fn load(self, index: usize) -> Result<Self::Guard, ArgError<'a>> {
+        let Some(path) = self.paths[index].as_str() else {
+            core::hint::cold_path();
+            return Err(ArgError::NotAString { index });
+        };
+        Ok(path.characters(self.heap)?)
+    }
+
+    #[inline(always)]
+    fn units(guard: &Self::Guard) -> CodeUnits<'_> {
+        guard.units()
+    }
+}
+
+#[inline(always)]
+fn to_js_string<'a>(heap: &JsHeap<'a>, args: &[impl Arg<'a>], output: Output<'_>) -> StrResult<'a> {
+    let arg = |index: usize| args[index].as_str().expect("it has been loaded");
+    match output {
+        Output::Arg(index) => Ok(arg(index)),
+        Output::ArgSlice(index, range) => Ok(arg(index).characters(heap)?.substring(heap, range)),
+        Output::Built(text) => create_string(heap, text),
+        Output::DotDots(dotdots) if dotdots.is_16bit() => out_of_line(|| {
+            let mut scratch = Scratch::new();
+            let text = dotdots.to_utf16_in(&mut scratch);
+            create_string(
+                heap,
+                CodeUnits::U16(text.map_err(|it| to_js_error(heap, it))?),
+            )
+        }),
+        Output::DotDots(dotdots) => heap
+            .try_create_latin1_string_with(dotdots.len(), |to| dotdots.write(to))
+            .map_err(|error| creation_error(heap, dotdots.len(), error)),
+    }
+}
+
+/// For `resolve` and `relative`, whose results do not keep alive in Node what an argument was cut from.
+#[inline(always)]
+fn to_detached_js_string<'a>(
+    heap: &JsHeap<'a>,
+    args: &[impl Arg<'a>],
+    output: Output<'_>,
+) -> StrResult<'a> {
+    let (index, range) = match output {
+        Output::Arg(index) => (index, None),
+        Output::ArgSlice(index, range) => (index, Some(range)),
+        output => return to_js_string(heap, args, output),
+    };
+    let arg = args[index].as_str().expect("it has been loaded");
+    let text = arg.characters(heap)?;
+    text.detached_substring(heap, range.unwrap_or_else(|| 0..text.units().len()))
+}
+
+/// The receiver conversion of `String.prototype` methods, for what a replaced function returned.
+#[inline(always)]
+fn coerce_to_string<'a>(cx: &mut JsScope<'a>, value: JsLocal<'a>) -> StrResult<'a> {
+    if let Some(string) = value.as_string() {
+        return Ok(string);
+    }
+    out_of_line(|| {
+        if value.to_js().is_undefined_or_null() {
+            return Err(cx.heap.type_error(format_args!(
+                "String.prototype.charCodeAt called on null or undefined"
+            )));
         }
+        let string = value.to_js().to_js_string(cx.global())?.to_js();
+        Ok(JsLocal::new(&cx.heap, string)
+            .as_string()
+            .expect("ToString"))
+    })
+}
 
-        #[inline(never)]
-        fn $of_other<'a, const WINDOWS: bool>(heap: &JsHeap<'a>, $($operand: $type),*) -> bindgen::Result<'a, $result> {
-            match $of_latin1::<WINDOWS, false>(heap, $($operand),*)? {
-                Some(answer) => Ok(answer),
-                None => $of_utf8::<WINDOWS>(heap, $($operand),*),
-            }
+fn is_strict_equal<'a>(
+    cx: &mut JsScope<'a>,
+    a: JsLocal<'a>,
+    b: JsLocal<'a>,
+) -> bindgen::Result<'a, bool> {
+    Ok(a.to_js().is_strict_equal(b.to_js(), cx.global())?)
+}
+
+#[inline(always)]
+fn basename<'a, const WIN32: bool>(
+    heap: &JsHeap<'a>,
+    path: JsStr<'a>,
+    suffix: Option<JsStr<'a>>,
+) -> StrResult<'a> {
+    let text = path.characters(heap)?;
+    let range = match suffix {
+        None => match_code_units!(text.units(), |path| platform_call!(WIN32, basename(path))),
+        Some(suffix) => {
+            let suffix = suffix.characters(heap)?;
+            let suffix = suffix.units();
+            match_code_units!(text.units(), |path| match_code_units!(suffix, |suffix| {
+                platform_call!(WIN32, basename_without_suffix(path, suffix))
+            }))
         }
     };
+    Ok(text.substring(heap, range))
 }
 
-// ───────────────────────────── parts of one path ─────────────────────────────
-
-/// The characters `range` of `text`. SAFETY: `range` is what a function of `bun_node_path` answered for `text.characters()`.
 #[inline(always)]
-unsafe fn part<'a>(
-    heap: &JsHeap<'a>,
-    text: &JsLatin1<'a>,
-    range: core::ops::Range<usize>,
-) -> Text<'a> {
-    // SAFETY: forwarded.
-    unsafe { text.substring_unchecked(heap, range.start, range.end) }
-}
-
-/// [`part`], or `None` if one of the characters is outside ASCII. SAFETY: that of [`part`].
-#[inline(always)]
-unsafe fn ascii_part<'a>(
-    heap: &JsHeap<'a>,
-    text: &JsLatin1<'a>,
-    range: core::ops::Range<usize>,
-) -> Option<Text<'a>> {
-    // SAFETY: forwarded.
-    unsafe {
-        is_ascii(text.characters().get_unchecked(range.clone())).then(|| part(heap, text, range))
+fn dirname<'a, const WIN32: bool>(heap: &JsHeap<'a>, path: JsStr<'a>) -> StrResult<'a> {
+    let text = path.characters(heap)?;
+    match match_code_units!(text.units(), |path| platform_call!(WIN32, dirname(path))) {
+        Some(end) => Ok(text.substring(heap, 0..end)),
+        None => Ok(heap.create_latin1_string(b".")),
     }
 }
 
-/// `slice`, which a function of `bun_node_path` answered for `text.characters()`, or `None` if one of the characters is outside ASCII.
 #[inline(always)]
-fn ascii_slice<'a>(heap: &JsHeap<'a>, text: &JsLatin1<'a>, slice: &[u8]) -> Option<Text<'a>> {
-    is_ascii(slice).then(|| text.part(heap, slice))
+fn extname<'a, const WIN32: bool>(heap: &JsHeap<'a>, path: JsStr<'a>) -> StrResult<'a> {
+    let text = path.characters(heap)?;
+    let range = match_code_units!(text.units(), |path| platform_call!(WIN32, extname(path)));
+    Ok(text.substring(heap, range))
 }
 
 #[inline(always)]
-fn basename_t<'p, const WINDOWS: bool>(path: &'p [u8], suffix: Option<&[u8]>) -> &'p [u8] {
-    if WINDOWS {
-        basename_windows_t(path, suffix)
+fn is_absolute<const WIN32: bool>(path: JsStr<'_>) -> bool {
+    if WIN32 {
+        win32::is_absolute(&path.first_characters::<3>())
     } else {
-        basename_posix_t(path, suffix)
+        posix::is_absolute(&path.first_characters::<1>())
     }
 }
 
 #[inline(always)]
-fn basename_of_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
+fn parse<'a, const WIN32: bool>(
     heap: &JsHeap<'a>,
-    path: Text<'a>,
-    suffix: Option<Text<'a>>,
-) -> bindgen::Result<'a, Option<Text<'a>>> {
-    let Some(text) = latin1_of::<FLAT_ONLY>(heap, path)? else {
-        return Ok(None);
-    };
-    let Some(suffix) = suffix else {
-        return Ok(if WINDOWS {
-            ascii_slice(heap, &text, basename_windows_t(text.characters(), None))
-        } else {
-            // SAFETY: the range is of these characters.
-            unsafe { ascii_part(heap, &text, basename_posix_latin1(text.characters())) }
-        });
-    };
-    // A suffix whose UTF-8 is longer than that of the path is not looked for. Of an ASCII suffix that is its length.
-    let Some(suffix) = ascii_of::<FLAT_ONLY>(heap, suffix)? else {
-        return Ok(None);
-    };
-    let (characters, suffix) = (text.characters(), suffix.characters());
-    if WINDOWS {
-        return Ok(ascii_slice(
-            heap,
-            &text,
-            basename_windows_t(characters, Some(suffix)),
-        ));
-    }
-    // SAFETY: the ranges are of these characters.
-    Ok(unsafe {
-        ascii_part(
-            heap,
-            &text,
-            if suffix.is_empty() || suffix.len() > characters.len() {
-                basename_posix_latin1(characters)
-            } else {
-                basename_without_suffix_posix_latin1(characters, suffix)
-            },
-        )
-    })
-}
-
-#[cold]
-#[inline(never)]
-fn basename_of_utf8<'a, const WINDOWS: bool>(
-    heap: &JsHeap<'a>,
-    path: Text<'a>,
-    suffix: Option<Text<'a>>,
-) -> TextResult<'a> {
-    let path = path.view(heap)?;
-    let suffix = match suffix {
-        Some(suffix) => Some(suffix.view(heap)?),
-        None => None,
-    };
-    let path_utf8 = path.to_utf8();
-    let suffix_utf8 = suffix
-        .as_ref()
-        .filter(|suffix| !suffix.is_empty() && suffix.length() <= path.length())
-        .map(|suffix| suffix.to_utf8());
-    let suffix_utf8 = suffix_utf8.as_ref().map(Utf8Bytes::slice);
-    heap.create_utf8_string(basename_t::<WINDOWS>(path_utf8.slice(), suffix_utf8))
-}
-by_form_of_operands!(basename, basename_of_other, basename_of_latin1, basename_of_utf8, (path: Text<'a>, suffix: Option<Text<'a>>) -> Text<'a>);
-
-#[inline(always)]
-fn dirname_of_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
-    heap: &JsHeap<'a>,
-    path: Text<'a>,
-) -> bindgen::Result<'a, Option<Text<'a>>> {
-    let Some(text) = latin1_of::<FLAT_ONLY>(heap, path)? else {
-        return Ok(None);
-    };
-    if WINDOWS {
-        return Ok(ascii_slice(
-            heap,
-            &text,
-            dirname_windows_t(text.characters()),
-        ));
-    }
-    Ok(match dirname_posix_latin1(text.characters()) {
-        // SAFETY: the range is of these characters.
-        Ok(end) => unsafe { ascii_part(heap, &text, 0..end) },
-        Err(literal) => Some(heap.create_latin1_string(literal)),
-    })
-}
-
-#[cold]
-#[inline(never)]
-fn dirname_of_utf8<'a, const WINDOWS: bool>(heap: &JsHeap<'a>, path: Text<'a>) -> TextResult<'a> {
-    let path = path.view(heap)?;
-    let utf8 = path.to_utf8();
-    heap.create_utf8_string(if WINDOWS {
-        dirname_windows_t(utf8.slice())
-    } else {
-        dirname_posix_t(utf8.slice())
-    })
-}
-by_form_of_operands!(dirname, dirname_of_other, dirname_of_latin1, dirname_of_utf8, (path: Text<'a>) -> Text<'a>);
-
-#[inline(always)]
-fn extname_of_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
-    heap: &JsHeap<'a>,
-    path: Text<'a>,
-) -> bindgen::Result<'a, Option<Text<'a>>> {
-    let Some(text) = latin1_of::<FLAT_ONLY>(heap, path)? else {
-        return Ok(None);
-    };
-    Ok(if WINDOWS {
-        ascii_slice(heap, &text, extname_windows_t(text.characters()))
-    } else {
-        // SAFETY: the range is of these characters.
-        unsafe { ascii_part(heap, &text, extname_posix_latin1(text.characters())) }
-    })
-}
-
-#[cold]
-#[inline(never)]
-fn extname_of_utf8<'a, const WINDOWS: bool>(heap: &JsHeap<'a>, path: Text<'a>) -> TextResult<'a> {
-    let path = path.view(heap)?;
-    let utf8 = path.to_utf8();
-    heap.create_utf8_string(if WINDOWS {
-        extname_windows_t(utf8.slice())
-    } else {
-        extname_posix_t(utf8.slice())
-    })
-}
-by_form_of_operands!(extname, extname_of_other, extname_of_latin1, extname_of_utf8, (path: Text<'a>) -> Text<'a>);
-
-#[inline(always)]
-fn is_absolute<const WINDOWS: bool>(path: Text<'_>) -> bool {
-    let Some(text) = path.flat_latin1() else {
-        return is_absolute_by_first_characters::<WINDOWS>(path);
-    };
-    if WINDOWS {
-        is_absolute_windows_t(text.characters())
-    } else {
-        is_absolute_posix_t(text.characters())
-    }
-}
-
-#[cold]
-#[inline(never)]
-fn is_absolute_by_first_characters<const WINDOWS: bool>(path: Text<'_>) -> bool {
-    let mut first = [0u16; 3];
-    let count = path.first_characters(&mut first);
-    if WINDOWS {
-        is_absolute_windows_t(&first[..count])
-    } else {
-        is_absolute_posix_t(&first[..count])
-    }
-}
-
-#[inline(always)]
-fn parse_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
-    heap: &JsHeap<'a>,
-    path: Text<'a>,
-) -> bindgen::Result<'a, Option<ParsedPath<'a>>> {
-    let Some(text) = ascii_of::<FLAT_ONLY>(heap, path)? else {
-        return Ok(None);
-    };
-    if !WINDOWS {
-        let parsed = parse_posix_latin1(text.characters());
-        // SAFETY: the ranges are of these characters.
-        return Ok(Some(unsafe {
-            if parsed.ext.is_empty() {
-                let [root, dir, base, ext] = text
-                    .substrings_unchecked(heap, [parsed.root, parsed.dir, parsed.base, parsed.ext]);
-                ParsedPath {
-                    root,
-                    dir,
-                    base,
-                    ext,
-                    name: base,
-                }
-            } else {
-                let [root, dir, base, ext, name] = text.substrings_unchecked(
-                    heap,
-                    [
-                        parsed.root,
-                        parsed.dir,
-                        parsed.base,
-                        parsed.ext,
-                        parsed.name,
-                    ],
-                );
-                ParsedPath {
-                    root,
-                    dir,
-                    base,
-                    ext,
-                    name,
-                }
-            }
-        }));
-    }
-    let parsed = parse_windows_t(text.characters());
-    let base = text.part(heap, parsed.base);
-    Ok(Some(ParsedPath {
-        root: text.part(heap, parsed.root),
-        dir: text.part(heap, parsed.dir),
-        base,
-        ext: text.part(heap, parsed.ext),
-        name: if parsed.ext.is_empty() {
-            base
-        } else {
-            text.part(heap, parsed.name)
-        },
-    }))
-}
-
-#[cold]
-#[inline(never)]
-fn parse_utf8<'a, const WINDOWS: bool>(
-    heap: &JsHeap<'a>,
-    path: Text<'a>,
+    path: JsStr<'a>,
 ) -> bindgen::Result<'a, ParsedPath<'a>> {
-    let path = path.view(heap)?;
-    let utf8 = path.to_utf8();
-    let parsed = if WINDOWS {
-        parse_windows_t(utf8.slice())
+    let text = path.characters(heap)?;
+    let parsed = match_code_units!(text.units(), |path| platform_call!(WIN32, parse(path)));
+    let [root, dir, base, ext, name] = if parsed.ext.is_empty() {
+        let [root, dir, base, ext] =
+            text.substrings(heap, &[parsed.root, parsed.dir, parsed.base, parsed.ext]);
+        [root, dir, base, ext, base]
     } else {
-        parse_posix_t(utf8.slice())
+        let ranges = [
+            parsed.root,
+            parsed.dir,
+            parsed.base,
+            parsed.ext,
+            parsed.name,
+        ];
+        text.substrings(heap, &ranges)
     };
     Ok(ParsedPath {
-        root: heap.create_utf8_string(parsed.root)?,
-        dir: heap.create_utf8_string(parsed.dir)?,
-        base: heap.create_utf8_string(parsed.base)?,
-        ext: heap.create_utf8_string(parsed.ext)?,
-        name: heap.create_utf8_string(parsed.name)?,
+        root,
+        dir,
+        base,
+        ext,
+        name,
     })
 }
-by_form_of_operands!(parse, parse_other, parse_latin1, parse_utf8, (path: Text<'a>) -> ParsedPath<'a>);
-
-// ───────────────────────────── paths that are made ─────────────────────────────
-
-/// As long a path as is put together on the stack.
-const SHORT: usize = 512;
-
-type JoinedBuffer = core::mem::MaybeUninit<[u8; SHORT]>;
-
-/// Room for what a path that is [`SHORT`] is normalized to.
-type NormalizedBuffer = [core::mem::MaybeUninit<u8>; SHORT + 2];
 
 #[inline(always)]
-fn normalized_buffer() -> NormalizedBuffer {
-    [const { core::mem::MaybeUninit::uninit() }; SHORT + 2]
-}
-
-/// Paths with a '/' between them, put together from the last to the first.
-struct Joined<'b> {
-    /// Not in here, so that `start` stays in a register while the buffer is passed to `memcpy`.
-    buffer: &'b mut JoinedBuffer,
-    /// From here on the buffer is written.
-    start: usize,
-}
-
-impl<'b> Joined<'b> {
-    #[inline(always)]
-    fn new(buffer: &'b mut JoinedBuffer) -> Self {
-        Self {
-            buffer,
-            start: SHORT,
-        }
+fn normalize<'a, const WIN32: bool>(heap: &JsHeap<'a>, path: JsStr<'a>) -> StrResult<'a> {
+    let text = path.characters(heap)?;
+    let text = text.units();
+    if match_code_units!(text, |text| platform_call!(
+        WIN32,
+        is_trivially_normalized(text)
+    )) {
+        return Ok(path);
     }
-
-    /// Whether there was room for it.
-    #[inline(always)]
-    fn prepend(&mut self, part: &[u8]) -> bool {
-        let is_first = self.start == SHORT;
-        if part.len() + usize::from(!is_first) > self.start {
-            return false;
-        }
-        let buffer = self.buffer.as_mut_ptr().cast::<u8>();
-        // SAFETY: there is room in front of `start`.
-        unsafe {
-            if !is_first {
-                self.start -= 1;
-                buffer.add(self.start).write(CHAR_FORWARD_SLASH);
-            }
-            self.start -= part.len();
-            buffer
-                .add(self.start)
-                .copy_from_nonoverlapping(part.as_ptr(), part.len());
-        }
-        true
-    }
-
-    #[inline(always)]
-    fn characters(&self) -> &[u8] {
-        // SAFETY: written from `start` on.
-        unsafe {
-            core::slice::from_raw_parts(
-                self.buffer.as_ptr().cast::<u8>().add(self.start),
-                SHORT - self.start,
-            )
-        }
-    }
+    out_of_line(|| {
+        let mut scratch = Scratch::new();
+        let output = match_code_units!(text, |text| platform_call!(
+            WIN32,
+            normalize(text, &mut scratch)
+        ));
+        to_js_string(heap, &[path], output.map_err(|it| to_js_error(heap, it))?)
+    })
 }
-
-/// As many operands as are looked at without a list on the heap.
-const FEW: usize = 8;
-
-type Parts<'p> = [core::mem::MaybeUninit<&'p [u8]>; FEW];
 
 #[inline(always)]
-fn normalize_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
+fn try_join<'a, const WIN32: bool>(
     heap: &JsHeap<'a>,
-    path: Text<'a>,
-) -> bindgen::Result<'a, Option<Text<'a>>> {
-    let Some(text) = latin1_of::<FLAT_ONLY>(heap, path)? else {
-        return Ok(None);
-    };
-    if !WINDOWS && is_tidy_ascii_posix(text.characters()) {
-        return Ok(Some(path));
+    paths: &[JsStr<'a>],
+) -> bindgen::Result<'a, Option<JsStr<'a>>> {
+    let mut buffer = StackBuffer::new();
+    let output = fast_path::join::<WIN32, _>(Args { heap, paths }, &mut buffer);
+    if let Some(output) = output.map_err(|error| error.into_js_error(heap))? {
+        return to_js_string(heap, paths, output).map(Some);
     }
-    if !is_ascii(text.characters()) {
-        return Ok(None);
-    }
-    if !WINDOWS && text.characters().len() <= SHORT {
-        return Ok(Some(normalize_short_posix(heap, text.characters())));
-    }
-    Ok(normalize_untidy::<WINDOWS>(heap, text))
-}
-
-/// `path` is [`SHORT`] and ASCII.
-#[inline(never)]
-fn normalize_short_posix<'a>(heap: &JsHeap<'a>, path: &[u8]) -> Text<'a> {
-    heap.create_latin1_string(normalize_posix_latin1(path, &mut normalized_buffer()))
-}
-
-#[inline(never)]
-fn normalize_untidy<'a, const WINDOWS: bool>(
-    heap: &JsHeap<'a>,
-    text: JsLatin1<'a>,
-) -> Option<Text<'a>> {
-    let characters = text.characters();
-    let mut scratch = PathScratch::new(heap, normalize_buf_len(characters));
-    let answer = if WINDOWS {
-        normalize_windows_t(characters, scratch.slice())
-    } else {
-        normalize_posix_t(characters, scratch.slice())
-    };
-    if answer == characters {
-        return Some(text.string());
-    }
-    latin1_answer(heap, answer)
+    out_of_line(|| {
+        let mut scratch = Scratch::new();
+        platform_call!(WIN32, join(Args { heap, paths }, &mut scratch))
+            .map_err(|error| error.into_js_error(heap))?
+            .map(|output| to_js_string(heap, paths, output))
+            .transpose()
+    })
 }
 
 #[cold]
-#[inline(never)]
-fn normalize_utf8<'a, const WINDOWS: bool>(heap: &JsHeap<'a>, path: Text<'a>) -> TextResult<'a> {
-    let path = path.view(heap)?;
-    let utf8 = path.to_utf8();
-    let mut scratch = PathScratch::new(heap, normalize_buf_len(utf8.slice()));
-    heap.create_utf8_string(if WINDOWS {
-        normalize_windows_t(utf8.slice(), scratch.slice())
-    } else {
-        normalize_posix_t(utf8.slice(), scratch.slice())
-    })
-}
-by_form_of_operands!(normalize, normalize_other, normalize_latin1, normalize_utf8, (path: Text<'a>) -> Text<'a>);
-
-#[inline(always)]
-fn join_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
+fn join_unnormalized<'a, const WIN32: bool>(
     heap: &JsHeap<'a>,
-    paths: &'a [Text<'a>],
-) -> bindgen::Result<'a, Option<Text<'a>>> {
-    if WINDOWS {
-        return join_windows_latin1::<FLAT_ONLY>(heap, paths);
-    }
-    let mut buffer = JoinedBuffer::uninit();
-    let mut joined = Joined::new(&mut buffer);
-    let mut only = None;
-    for &path in paths.iter().rev() {
-        let Some(text) = latin1_of::<FLAT_ONLY>(heap, path)? else {
-            return Ok(None);
-        };
-        if text.characters().is_empty() {
-            continue;
-        }
-        only = if joined.start == SHORT {
-            Some(path)
-        } else {
-            None
-        };
-        if !joined.prepend(text.characters()) {
-            return Ok(None);
-        }
-    }
-    let joined = joined.characters();
-    if !is_tidy_ascii_posix(joined) {
-        return Ok(is_ascii(joined).then(|| normalize_short_posix(heap, joined)));
-    }
-    Ok(Some(match only {
-        Some(only) => only,
-        None => heap.create_latin1_string(joined),
-    }))
+    paths: &[JsStr<'a>],
+) -> StrResult<'a> {
+    let mut scratch = Scratch::new();
+    let output = platform_call!(WIN32, join_unnormalized(Args { heap, paths }, &mut scratch));
+    to_js_string(heap, paths, output.map_err(|it| it.into_js_error(heap))?)
 }
 
 #[inline(always)]
-fn join_windows_latin1<'a, const FLAT_ONLY: bool>(
-    heap: &JsHeap<'a>,
-    paths: &'a [Text<'a>],
-) -> bindgen::Result<'a, Option<Text<'a>>> {
-    if paths.len() > FEW {
-        return Ok(None);
-    }
-    let mut parts: Parts<'_> = [const { core::mem::MaybeUninit::uninit() }; FEW];
-    let mut parts = BorrowedBuf::from(&mut parts[..]);
-    for &path in paths {
-        let Some(text) = ascii_of::<FLAT_ONLY>(heap, path)? else {
-            return Ok(None);
-        };
-        if !text.characters().is_empty() {
-            parts.unfilled().append(&[text.characters()]);
-        }
-    }
-    // With this bound LLVM unrolls the loop over the parts in `join_windows_parts`.
-    assert!(parts.len() <= FEW);
-    Ok(join_windows_parts(heap, parts.filled()))
-}
-
-#[inline(never)]
-fn join_windows_parts<'a>(heap: &JsHeap<'a>, parts: &[&[u8]]) -> Option<Text<'a>> {
-    let buf_len = join_buf_len(true, parts);
-    let mut scratch = PathScratch::new(heap, buf_len * 2);
-    let (buf, buf2) = scratch.slice().split_at_mut(buf_len);
-    latin1_answer(heap, join_windows_t(parts, buf, buf2))
-}
-
-#[cold]
-#[inline(never)]
-fn join_utf8<'a, const WINDOWS: bool>(heap: &JsHeap<'a>, paths: &'a [Text<'a>]) -> TextResult<'a> {
-    let mut views: SmallVec<[crate::jsc::JSStringView<'a>; FEW]> =
-        SmallVec::with_capacity(paths.len());
-    for path in paths {
-        let view = path.view(heap)?;
-        if !view.is_empty() {
-            views.push(view);
-        }
-    }
-    let owned: SmallVec<[Utf8Bytes<'_>; FEW]> = views.iter().map(|view| view.to_utf8()).collect();
-    let parts: SmallVec<[&[u8]; FEW]> = owned.iter().map(Utf8Bytes::slice).collect();
-    let buf_len = join_buf_len(WINDOWS, &parts);
-    let mut scratch = PathScratch::new(heap, buf_len * 2);
-    let (buf, buf2) = scratch.slice().split_at_mut(buf_len);
-    heap.create_utf8_string(if WINDOWS {
-        join_windows_t(&parts, buf, buf2)
-    } else {
-        join_posix_t(&parts, buf, buf2)
-    })
-}
-by_form_of_operands!(join, join_other, join_latin1, join_utf8, (paths: &'a [Text<'a>]) -> Text<'a>);
-
-/// # Safety
-/// `rhs_ptr[..rhs_len]` must be a valid readable slice. Called only from C++.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__Node__Path_joinWTF(
-    lhs: &bun_core::String,
-    rhs_ptr: *const u8,
-    rhs_len: usize,
-) -> bun_core::String {
-    // SAFETY: caller passes a valid slice from C++.
-    let rhs = unsafe { bun_core::ffi::slice(rhs_ptr, rhs_len) };
-    let lhs = lhs.to_utf8();
-    let paths: [&[u8]; 2] = [lhs.slice(), rhs];
-    let buf_len = join_buf_len::<u8>(cfg!(windows), &paths);
-    let mut fixed = [0u8; path_size::<u8>() * 2];
-    let mut spill = Vec::new();
-    // Fall back to the heap when the joined path is too long for the stack buffer.
-    let scratch: &mut [u8] = if buf_len * 2 <= fixed.len() {
-        &mut fixed
-    } else {
-        spill.resize(buf_len * 2, 0);
-        &mut spill
-    };
-    let (buf, buf2) = scratch.split_at_mut(buf_len);
-    #[cfg(windows)]
-    let joined = join_windows_t::<u8>(&paths, buf, buf2);
-    #[cfg(not(windows))]
-    let joined = join_posix_t::<u8>(&paths, buf, buf2);
-    bun_core::String::clone_utf8(joined)
-}
-
-#[inline(always)]
-fn relative_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
-    heap: &JsHeap<'a>,
-    from: Text<'a>,
-    to: Text<'a>,
-) -> bindgen::Result<'a, Option<Text<'a>>> {
-    if WINDOWS {
-        return Ok(None);
-    }
-    let (Some(from), Some(to)) = (
-        latin1_of::<FLAT_ONLY>(heap, from)?,
-        latin1_of::<FLAT_ONLY>(heap, to)?,
-    ) else {
-        return Ok(None);
-    };
-    if !is_resolved_ascii_posix(from.characters()) || !is_resolved_ascii_posix(to.characters()) {
-        if !is_ascii(from.characters()) || !is_ascii(to.characters()) {
-            return Ok(None);
-        }
-        return Ok(relative_of_untidy_posix(heap, from, to));
-    }
-    let target = to.characters();
-    let answer = relative_posix_latin1(from.characters(), target);
-    if answer.ups == 0 {
-        // SAFETY: the range is of these characters.
-        return Ok(Some(unsafe { part(heap, &to, answer.rest..target.len()) }));
-    }
-    Ok(relative_upwards(heap, answer.ups, &target[answer.rest..]))
-}
-
-/// ".." `ups` times, at least once, with slashes between them, and then `rest`.
-#[inline(always)]
-fn relative_upwards<'a>(heap: &JsHeap<'a>, ups: usize, rest: &[u8]) -> Option<Text<'a>> {
-    let length = ups * 3 - 1 + rest.len();
-    if length > JSString::MAX_LENGTH {
-        return None;
-    }
-    // SAFETY: two characters, three for each further "..", and the rest.
-    Some(unsafe {
-        heap.create_latin1_string_with(length, |mut at| {
-            at.copy_from_nonoverlapping(b"..".as_ptr(), 2);
-            at = at.add(2);
-            for _ in 1..ups {
-                at.copy_from_nonoverlapping(b"/..".as_ptr(), 3);
-                at = at.add(3);
-            }
-            at.copy_from_nonoverlapping(rest.as_ptr(), rest.len());
-        })
-    })
-}
-
-/// `from` and `to` are ASCII.
-#[inline(never)]
-fn relative_of_untidy_posix<'a>(
-    heap: &JsHeap<'a>,
-    from: JsLatin1<'a>,
-    to: JsLatin1<'a>,
-) -> Option<Text<'a>> {
-    let (from_characters, to_characters) = (from.characters(), to.characters());
-    if !is_absolute_posix_t(from_characters)
-        || !is_absolute_posix_t(to_characters)
-        || from_characters.len() > SHORT
-        || to_characters.len() > SHORT
+fn join<'a, const WIN32: bool>(cx: &mut JsScope<'a>, paths: &[JsStr<'a>]) -> ValueResult<'a> {
+    let platform = Platform::new(WIN32);
+    let is_original = path_ffi::is_original(cx, platform, Method::Normalize);
+    if !WIN32
+        && is_original
+        && let [path] = *paths
     {
-        return relative_of_absolute_posix(heap, from, to);
+        return normalize_posix(&cx.heap, path).map(JsLocal::as_value);
     }
-    let (mut from_buffer, mut to_buffer) = (normalized_buffer(), normalized_buffer());
-    let from = resolve_absolute_posix_latin1(from_characters, &mut from_buffer);
-    let to = resolve_absolute_posix_latin1(to_characters, &mut to_buffer);
-    let RelativePosixLatin1 { ups, rest } = relative_posix_latin1(from, to);
-    if ups == 0 {
-        return Some(heap.create_latin1_string(&to[rest..]));
+    match try_join::<WIN32>(&cx.heap, paths)? {
+        Some(joined) if is_original => Ok(joined.as_value()),
+        Some(_) => {
+            let joined = join_unnormalized::<WIN32>(&cx.heap, paths)?;
+            path_ffi::call_method(cx, platform, Method::Normalize, joined)
+        }
+        None => join_unnormalized::<WIN32>(&cx.heap, paths).map(JsLocal::as_value),
     }
-    relative_upwards(heap, ups, &to[rest..])
 }
 
-/// `None` where the working directory, whose characters are UTF-8, completes one of the paths.
-#[inline(never)]
-fn relative_of_absolute_posix<'a>(
+#[inline(always)]
+fn try_relative<'a, const WIN32: bool>(
     heap: &JsHeap<'a>,
-    from: JsLatin1<'a>,
-    to: JsLatin1<'a>,
-) -> Option<Text<'a>> {
-    let (from, to) = (from.characters(), to.characters());
-    if !is_absolute_posix_t(from) || !is_absolute_posix_t(to) {
-        return None;
+    from: JsStr<'a>,
+    to: JsStr<'a>,
+) -> bindgen::Result<'a, Option<JsStr<'a>>> {
+    let (from_text, to_text) = (from.characters(heap)?, to.characters(heap)?);
+    let mut buffers = [StackBuffer::new(), StackBuffer::new()];
+    if let Some(output) =
+        fast_path::relative::<WIN32>(from_text.units(), to_text.units(), &mut buffers)
+    {
+        return to_detached_js_string(heap, &[from, to], output).map(Some);
     }
-    let buf_len = relative_buf_len(from, to);
-    let mut scratch = PathScratch::new(heap, buf_len * 3);
-    let (buf, rest) = scratch.slice().split_at_mut(buf_len);
-    let (from_buf, tmp_buf) = rest.split_at_mut(buf_len);
-    latin1_answer(heap, relative_posix_t(from, to, buf, from_buf, tmp_buf))
-}
-
-#[inline(never)]
-fn relative_utf8<'a, const WINDOWS: bool>(
-    heap: &JsHeap<'a>,
-    from: Text<'a>,
-    to: Text<'a>,
-) -> TextResult<'a> {
-    let from_view = from.view(heap)?;
-    let to_view = to.view(heap)?;
-    if from_view.is_empty() && to_view.is_empty() {
-        return Ok(from);
-    }
-    let (from, to) = (from_view.to_utf8(), to_view.to_utf8());
-    let (from, to) = (from.slice(), to.slice());
-    let buf_len = relative_buf_len(from, to);
-    let mut scratch = PathScratch::new(heap, buf_len * 3);
-    let (buf, rest) = scratch.slice().split_at_mut(buf_len);
-    let (from_buf, tmp_buf) = rest.split_at_mut(buf_len);
-    heap.create_utf8_string(if WINDOWS {
-        relative_windows_t(from, to, buf, from_buf, tmp_buf)
-    } else {
-        relative_posix_t(from, to, buf, from_buf, tmp_buf)
+    out_of_line(|| {
+        let (args, mut scratch) = ([from, to], Scratch::new());
+        let (from, to) = (from.characters(heap)?, to.characters(heap)?);
+        platform_call!(WIN32, relative(from.units(), to.units(), &mut scratch))
+            .map_err(|error| to_js_error(heap, error))?
+            .map(|output| to_detached_js_string(heap, &args, output))
+            .transpose()
     })
 }
-by_form_of_operands!(relative, relative_other, relative_latin1, relative_utf8, (from: Text<'a>, to: Text<'a>) -> Text<'a>);
 
-#[cfg(unix)]
-unsafe extern "C" {
-    safe fn Process__getCachedCwd(global: &crate::jsc::JSGlobalObject) -> crate::jsc::JSValue;
-}
-
-/// `None` unless the paths that count are 8-bit strings and [`SHORT`] together.
-#[inline(always)]
-fn resolve_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
+fn relative_of_resolved<'a, const WIN32: bool>(
     heap: &JsHeap<'a>,
-    paths: &'a [JsLocal<'a>],
-) -> bindgen::Result<'a, Option<Text<'a>>> {
-    if WINDOWS {
-        return Ok(None);
-    }
-    let mut buffer = JoinedBuffer::uninit();
-    let mut joined = Joined::new(&mut buffer);
-    for path in paths.iter().rev() {
-        let Some(path) = path.as_string() else {
-            return Ok(None);
-        };
-        let Some(text) = latin1_of::<FLAT_ONLY>(heap, path)? else {
-            return Ok(None);
-        };
-        let part = text.characters();
-        if part.is_empty() {
-            continue;
-        }
-        let is_absolute = part[0] == CHAR_FORWARD_SLASH;
-        if is_absolute && joined.start == SHORT && is_resolved_ascii_posix(part) {
-            return Ok(Some(path));
-        }
-        if !joined.prepend(part) {
-            return Ok(None);
-        }
-        if is_absolute {
-            return Ok(resolve_joined_posix(heap, joined.characters()));
-        }
-    }
-    // `process.cwd()` itself is kept as a string.
-    if matches!(joined.characters(), b"" | b"." | b"./") {
-        return Ok(None);
-    }
-    #[cfg(not(windows))]
-    {
-        let working_directory = bun_node_path::posix_working_directory();
-        if is_absolute_posix_t(working_directory) && joined.prepend(working_directory) {
-            return Ok(resolve_joined_posix(heap, joined.characters()));
-        }
-    }
-    Ok(None)
+    from: JsStr<'a>,
+    to: JsStr<'a>,
+) -> StrResult<'a> {
+    let args = [from, to];
+    let (from, to) = (from.characters(heap)?, to.characters(heap)?);
+    let output = if WIN32 {
+        win32::relative_of_resolved(from.units(), to.units()).map_err(|it| to_js_error(heap, it))?
+    } else {
+        posix::relative_of_resolved(from.units(), to.units())
+    };
+    to_detached_js_string(heap, &args, output)
 }
 
-/// `joined` is absolute and [`SHORT`]. `None` if one of its characters, or bytes of the working directory, is outside ASCII.
 #[inline(always)]
-fn resolve_joined_posix<'a>(heap: &JsHeap<'a>, joined: &[u8]) -> Option<Text<'a>> {
-    if is_resolved_ascii_posix(joined) {
-        return Some(heap.create_latin1_string(joined));
+fn relative<'a, const WIN32: bool>(
+    cx: &mut JsScope<'a>,
+    from: JsStr<'a>,
+    to: JsStr<'a>,
+) -> StrResult<'a> {
+    if path_ffi::is_original(cx, Platform::new(WIN32), Method::Resolve)
+        && let Some(relative) = try_relative::<WIN32>(&cx.heap, from, to)?
+    {
+        return Ok(relative);
     }
-    is_ascii(joined).then(|| resolve_untidy_posix(heap, joined))
+    out_of_line(|| {
+        let empty = cx.heap.create_latin1_string(b"");
+        if is_strict_equal(cx, from.as_value(), to.as_value())? {
+            return Ok(empty);
+        }
+        let from = call_resolve::<WIN32>(cx, from)?;
+        let to = call_resolve::<WIN32>(cx, to)?;
+        if is_strict_equal(cx, from, to)? {
+            return Ok(empty);
+        }
+        let (from, to) = (coerce_to_string(cx, from)?, coerce_to_string(cx, to)?);
+        relative_of_resolved::<WIN32>(&cx.heap, from, to)
+    })
 }
 
-/// `joined` is absolute, [`SHORT`] and ASCII.
 #[inline(never)]
-fn resolve_untidy_posix<'a>(heap: &JsHeap<'a>, joined: &[u8]) -> Text<'a> {
-    heap.create_latin1_string(resolve_absolute_posix_latin1(
-        joined,
-        &mut normalized_buffer(),
+fn call_resolve<'a, const WIN32: bool>(cx: &mut JsScope<'a>, path: JsStr<'a>) -> ValueResult<'a> {
+    let platform = Platform::new(WIN32);
+    if path_ffi::is_original(cx, platform, Method::Resolve) {
+        resolve::<WIN32>(cx, &[path.as_value()])
+    } else {
+        path_ffi::call_method(cx, platform, Method::Resolve, path)
+    }
+}
+
+/// `resolve()`, `resolve("")` and `resolve(".")` return the cwd without normalizing it.
+#[inline(always)]
+fn means_cwd<'a>(heap: &JsHeap<'a>, paths: &[JsLocal<'a>]) -> bindgen::Result<'a, bool> {
+    const DOT: u16 = b'.' as u16;
+    let [path] = paths else {
+        return Ok(paths.is_empty());
+    };
+    let text = path.as_string().map(|text| text.characters(heap));
+    Ok(matches!(
+        text.transpose()?.as_ref().map(JsCharacters::units),
+        Some(CodeUnits::U8([] | [b'.']) | CodeUnits::U16([] | [DOT]))
     ))
 }
 
-#[inline(never)]
-fn resolve_utf8<'a, const WINDOWS: bool>(
-    heap: &JsHeap<'a>,
-    paths: &'a [JsLocal<'a>],
-) -> TextResult<'a> {
-    // SAFETY: it is passed to what throws, after which this returns, and to what reads the cached working directory.
-    let global = unsafe { heap.global() };
-    // From the last to the first that is absolute.
-    let mut views: SmallVec<[crate::jsc::JSStringView<'a>; FEW]> = SmallVec::new();
-    for (index, path) in paths.iter().enumerate().rev() {
-        validate_string(global, path.to_js(), format_args!("paths[{}]", index))?;
-        let Some(path) = path.as_string() else {
-            unreachable!("a String object arrives as a string");
-        };
-        let view = path.view(heap)?;
-        if view.is_empty() {
-            continue;
-        }
-        let is_absolute = !WINDOWS && view.char_at(0) == u16::from(CHAR_FORWARD_SLASH);
-        views.push(view);
-        if is_absolute {
-            break;
-        }
+/// The cwd to resolve `paths` against, if Node's call of `process.cwd()` can be skipped.
+#[inline(always)]
+fn cached_cwd<'h, 'a, const WIN32: bool>(
+    heap: &'h JsHeap<'a>,
+    paths: &[JsLocal<'a>],
+) -> Result<Option<JsCharacters<'h, 'a>>, ArgError<'a>> {
+    if WIN32 != HOST_IS_WIN32 || means_cwd(heap, paths)? {
+        return Ok(None);
     }
-    let owned: SmallVec<[Utf8Bytes<'_>; FEW]> = views.iter().map(|view| view.to_utf8()).collect();
-    let parts: SmallVec<[&[u8]; FEW]> = owned.iter().rev().map(Utf8Bytes::slice).collect();
+    let cwd = path_ffi::cached_cwd(heap).and_then(JsLocal::as_string);
+    Ok(cwd.map(|cwd| cwd.characters(heap)).transpose()?)
+}
 
-    #[cfg(unix)]
-    if !WINDOWS
-        && (parts.is_empty() || (parts.len() == 1 && (parts[0] == b"." || parts[0] == b"./")))
-    {
-        // `process.cwd()`, which throws when `getcwd` fails (for example, a deleted working directory).
-        let cwd = crate::jsc::call_zero_is_throw(global, || Process__getCachedCwd(global))?;
-        let Some(cwd) = JsLocal::new(heap, cwd).as_string() else {
-            unreachable!("process.cwd() is a string");
-        };
+/// Node caches `process.cwd()` before it runs an ES module or `-e`, so removing that directory is not noticed.
+#[inline(always)]
+pub(crate) fn removed_initial_cwd<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, Option<JsStr<'a>>> {
+    if path_ffi::cached_cwd(heap).is_some() {
+        return Ok(None);
+    }
+    out_of_line(|| {
+        let is_removed = bun_core::is_in_initial_working_directory()
+            && bun_core::getcwd(&mut path_buffer_pool::get()).is_err();
+        is_removed
+            .then(|| heap.create_utf8_string(utf8::real_cwd()))
+            .transpose()
+    })
+}
+
+#[inline(always)]
+fn process_cwd<'a>(cx: &mut JsScope<'a>) -> ValueResult<'a> {
+    match removed_initial_cwd(&cx.heap)? {
+        Some(cwd) => Ok(cwd.as_value()),
+        None => path_ffi::call_cwd(cx),
+    }
+}
+
+/// `resolve`, as far as it gets without running JavaScript.
+#[inline(always)]
+fn resolve_step<'a, const WIN32: bool>(
+    heap: &JsHeap<'a>,
+    paths: &[JsLocal<'a>],
+) -> Result<ResolveStep<JsStr<'a>>, ArgError<'a>> {
+    let mut buffer = StackBuffer::new();
+    let cwd = {
+        #[inline(always)]
+        || cached_cwd::<WIN32>(heap, paths)
+    };
+    if let Some(step) = fast_path::resolve::<WIN32, _>(cwd, Args { heap, paths }, &mut buffer)? {
+        return Ok(step.try_map(
+            #[inline(always)]
+            |output| to_detached_js_string(heap, paths, output),
+        )?);
+    }
+    out_of_line(|| {
+        let (args, mut scratch) = (Args { heap, paths }, Scratch::new());
+        let mut step = platform_call!(WIN32, resolve(None, args, &mut scratch));
+        if let Ok(ResolveStep::NeedsCwd) = step
+            && let Some(cwd) = cached_cwd::<WIN32>(heap, paths)?
+        {
+            step = platform_call!(WIN32, resolve(Some(cwd.units()), args, &mut scratch));
+        }
+        Ok(step?.try_map(
+            #[inline(always)]
+            |output| to_detached_js_string(heap, paths, output),
+        )?)
+    })
+}
+
+#[inline(always)]
+fn try_resolve<'a, const WIN32: bool>(heap: &JsHeap<'a>, paths: &[JsLocal<'a>]) -> ValueResult<'a> {
+    match resolve_step::<WIN32>(heap, paths) {
+        Ok(ResolveStep::Done(resolved)) => Ok(resolved.as_value()),
+        Ok(ResolveStep::NeedsCwd) => to_js::i32(heap, !0),
+        Ok(ResolveStep::NeedsDriveCwd(letter)) => to_js::i32(heap, !i32::from(letter)),
+        Err(ArgError::NotAString { index }) => to_js::i32(heap, index as i32),
+        Err(error) => Err(error.into_js_error(heap)),
+    }
+}
+
+#[inline(never)]
+fn resolve_with_cwd<'a, const WIN32: bool>(
+    heap: &JsHeap<'a>,
+    cwd: JsStr<'a>,
+    paths: &[JsLocal<'a>],
+) -> StrResult<'a> {
+    let (args, mut buffer) = (Args { heap, paths }, StackBuffer::new());
+    let load_cwd = {
+        #[inline(always)]
+        || Ok(Some(cwd.characters(heap)?))
+    };
+    let step = fast_path::resolve::<WIN32, _>(load_cwd, args, &mut buffer);
+    if let Some(step) = step.map_err(|error| error.into_js_error(heap))? {
+        return to_js_string(heap, paths, step.unwrap_done());
+    }
+    let (cwd, mut scratch) = (cwd.characters(heap)?, Scratch::new());
+    let step = platform_call!(WIN32, resolve(Some(cwd.units()), args, &mut scratch));
+    let step = step.map_err(|error| error.into_js_error(heap))?;
+    to_js_string(heap, paths, step.unwrap_done())
+}
+
+#[inline(always)]
+fn resolve<'a, const WIN32: bool>(cx: &mut JsScope<'a>, paths: &[JsLocal<'a>]) -> ValueResult<'a> {
+    match resolve_step::<WIN32>(&cx.heap, paths) {
+        Ok(ResolveStep::Done(resolved)) => Ok(resolved.as_value()),
+        Ok(ResolveStep::NeedsCwd) if WIN32 => resolve_win32_with_process_cwd(cx, paths),
+        Ok(ResolveStep::NeedsCwd) => resolve_posix_with_process_cwd(cx, paths),
+        Ok(ResolveStep::NeedsDriveCwd(letter)) => resolve_win32_with_drive_cwd(cx, paths, letter),
+        Err(ArgError::NotAString { index }) => Err(path_ffi::throw_not_a_string(cx, paths, index)),
+        Err(error) => Err(error.into_js_error(&cx.heap)),
+    }
+}
+
+#[inline(always)]
+fn posix_cwd<'a>(cx: &mut JsScope<'a>) -> ValueResult<'a> {
+    let cwd = process_cwd(cx)?;
+    if !HOST_IS_WIN32 {
         return Ok(cwd);
     }
+    let cwd = coerce_to_string(cx, cwd)?;
+    to_foreign_cwd(&cx.heap, cwd).map(JsLocal::as_value)
+}
 
-    let buf_len = resolve_buf_len(WINDOWS, &parts);
-    let mut scratch = PathScratch::new(heap, buf_len * 2);
-    let (buf, buf2) = scratch.slice().split_at_mut(buf_len);
-    heap.create_utf8_string(if WINDOWS {
-        resolve_windows_t(&parts, buf, buf2)
+/// <https://github.com/nodejs/node/blob/v26.12.1/lib/path.js#L1245-L1273>
+#[inline(never)]
+fn resolve_posix_with_process_cwd<'a>(
+    cx: &mut JsScope<'a>,
+    paths: &[JsLocal<'a>],
+) -> ValueResult<'a> {
+    if means_cwd(&cx.heap, paths)? {
+        let cwd = posix_cwd(cx)?;
+        if is_absolute_posix(coerce_to_string(cx, cwd)?) {
+            return Ok(cwd);
+        }
+    }
+    let cwd = posix_cwd(cx)?;
+    let cwd = coerce_to_string(cx, cwd)?;
+    resolve_with_cwd_posix(&cx.heap, cwd, paths).map(JsLocal::as_value)
+}
+
+/// <https://github.com/nodejs/node/blob/v26.12.1/lib/path.js#L205-L214>
+#[inline(never)]
+fn resolve_win32_with_process_cwd<'a>(
+    cx: &mut JsScope<'a>,
+    paths: &[JsLocal<'a>],
+) -> ValueResult<'a> {
+    let cwd = process_cwd(cx)?;
+    if HOST_IS_WIN32 && paths.is_empty() {
+        return Ok(cwd);
+    }
+    let cwd_string = coerce_to_string(cx, cwd)?;
+    let starts_with_sep = win32::is_absolute(&cwd_string.first_characters::<1>());
+    if !(paths.is_empty() || (starts_with_sep && means_cwd(&cx.heap, paths)?)) {
+        resolve_with_cwd_win32(&cx.heap, cwd_string, paths).map(JsLocal::as_value)
+    } else if HOST_IS_WIN32 {
+        Ok(cwd)
     } else {
-        resolve_posix_t(&parts, buf, buf2)
+        to_foreign_cwd(&cx.heap, cwd_string).map(JsLocal::as_value)
+    }
+}
+
+/// <https://github.com/nodejs/node/blob/v26.12.1/lib/path.js#L215-L231>
+#[cold]
+fn resolve_win32_with_drive_cwd<'a>(
+    cx: &mut JsScope<'a>,
+    paths: &[JsLocal<'a>],
+    letter: u8,
+) -> ValueResult<'a> {
+    // Bun's `process.env` lacks these variables, and keeps what Node refuses to write under such a name.
+    let mut cwd = if path_ffi::is_env_of_process(cx) {
+        drive_cwd(&cx.heap, letter)?.map_or(JsLocal::UNDEFINED, JsLocal::as_value)
+    } else {
+        path_ffi::drive_cwd_from_env(cx, letter)?
+    };
+    if !cwd.to_js().to_boolean() {
+        cwd = process_cwd(cx)?;
+    }
+    let cwd = if cwd.is_undefined() {
+        cx.heap.create_latin1_string(&[letter, b':', b'\\'])
+    } else {
+        coerce_to_string(cx, cwd)?
+    };
+    resolve_with_cwd_win32(&cx.heap, cwd, paths).map(JsLocal::as_value)
+}
+
+pub(crate) fn join_with_original_normalize<'a>(
+    heap: &JsHeap<'a>,
+    paths: &[JsStr<'a>],
+) -> StrResult<'a> {
+    let joined = try_join::<HOST_IS_WIN32>(heap, paths)?;
+    Ok(joined.unwrap_or_else(|| heap.create_latin1_string(b".")))
+}
+
+pub(crate) fn resolve_with_real_cwd<'a>(
+    cx: &mut JsScope<'a>,
+    paths: &[JsLocal<'a>],
+) -> StrResult<'a> {
+    const DOT: u16 = b'.' as u16;
+    const SLASH: u16 = b'/' as u16;
+    // `fs.createWriteStream("")` has to throw in a removed directory, whose path names a file that can be created.
+    if !HOST_IS_WIN32
+        && let [path] = paths
+        && let Some(path) = path.as_string()
+        && matches!(
+            path.characters(&cx.heap)?.units(),
+            CodeUnits::U8(b"" | b"." | b"./") | CodeUnits::U16([] | [DOT] | [DOT, SLASH])
+        )
+    {
+        let cwd = path_ffi::call_original_cwd(cx)?;
+        return Ok(cwd.as_string().expect("process.cwd() is a string"));
+    }
+    let heap = &cx.heap;
+    let (args, mut scratch) = (Args { heap, paths }, Scratch::new());
+    let drive_cwd = match platform_call!(HOST_IS_WIN32, resolve(None, args, &mut scratch)) {
+        Ok(ResolveStep::Done(output)) => return to_detached_js_string(heap, paths, output),
+        Ok(ResolveStep::NeedsCwd) => None,
+        Ok(ResolveStep::NeedsDriveCwd(letter)) => drive_cwd(heap, letter)?,
+        Err(ArgError::NotAString { index }) => {
+            return Err(path_ffi::throw_not_a_string(cx, paths, index));
+        }
+        Err(error) => return Err(error.into_js_error(heap)),
+    };
+    let cwd = match drive_cwd {
+        Some(cwd) => cwd,
+        None => heap.create_utf8_string(utf8::real_cwd())?,
+    };
+    resolve_with_cwd::<HOST_IS_WIN32>(heap, cwd, paths)
+}
+
+pub(crate) fn to_foreign_cwd<'a>(heap: &JsHeap<'a>, cwd: JsStr<'a>) -> StrResult<'a> {
+    let mut scratch = Scratch::new();
+    let foreign = match_code_units!(cwd.characters(heap)?.units(), |cwd| if HOST_IS_WIN32 {
+        posix::cwd_from_win32(cwd, &mut scratch).map(PathByte::units)
+    } else {
+        win32::cwd_from_posix(cwd, &mut scratch).map(PathByte::units)
+    });
+    create_string(heap, foreign.map_err(|error| to_js_error(heap, error))?)
+}
+
+pub(crate) fn drive_cwd<'a>(
+    heap: &JsHeap<'a>,
+    letter: u8,
+) -> bindgen::Result<'a, Option<JsStr<'a>>> {
+    win32::drive_cwd(letter)
+        .filter(|cwd| !cwd.is_empty())
+        .map(|cwd| create_string(heap, CodeUnits::U16(&cwd)))
+        .transpose()
+}
+
+#[inline(always)]
+fn matches_glob<'a, const WIN32: bool>(
+    heap: &JsHeap<'a>,
+    path: JsStr<'a>,
+    pattern: JsStr<'a>,
+) -> bindgen::Result<'a, bool> {
+    let options = glob::Options {
+        platform: Platform::new(WIN32),
+        nocase: cfg!(any(windows, target_os = "macos")),
+    };
+    matches_glob_with_options(heap, path, pattern, options)
+}
+
+pub(crate) fn matches_glob_for_testing<'a>(
+    heap: &JsHeap<'a>,
+    path: JsStr<'a>,
+    pattern: JsStr<'a>,
+    win32: bool,
+    nocase: bool,
+) -> bindgen::Result<'a, bool> {
+    let platform = Platform::new(win32);
+    matches_glob_with_options(heap, path, pattern, glob::Options { platform, nocase })
+}
+
+fn matches_glob_with_options<'a>(
+    heap: &JsHeap<'a>,
+    path: JsStr<'a>,
+    pattern: JsStr<'a>,
+    options: glob::Options,
+) -> bindgen::Result<'a, bool> {
+    let (path, pattern) = (path.characters(heap)?, pattern.characters(heap)?);
+    let (path, pattern) = (path.units(), pattern.units());
+    let mut termination = None;
+    let mut should_continue = || {
+        termination = termination
+            .take()
+            .or_else(|| heap.check_termination().err());
+        termination.is_none()
+    };
+    let cache = &crate::jsc_hooks::runtime_state().path_glob_cache;
+    let result = (cache.borrow_mut()).matches(path, pattern, options, &mut should_continue);
+    result.map_err(|error| {
+        termination.unwrap_or_else(|| glob_error(heap, error, path.len(), pattern.len()))
     })
 }
-by_form_of_operands!(resolve, resolve_other, resolve_latin1, resolve_utf8, (paths: &'a [JsLocal<'a>]) -> Text<'a>);
 
-fn format<'a, const WINDOWS: bool>(
-    cx: &mut JsScope<'a>,
-    path_object: JsLocal<'a>,
-) -> TextResult<'a> {
-    let separator = if WINDOWS {
-        CHAR_BACKWARD_SLASH
-    } else {
-        CHAR_FORWARD_SLASH
-    };
-    format_with_separator(cx, path_object, separator)
-}
-
-fn format_with_separator<'a>(
-    cx: &mut JsScope<'a>,
-    path_object: JsLocal<'a>,
-    separator: u8,
-) -> TextResult<'a> {
-    let path_object = path_object.to_js();
-    let members = {
-        let global = cx.global();
-        validate_object(
-            global,
-            path_object,
-            format_args!("pathObject"),
-            Default::default(),
-        )?;
-        let mut members: [Option<Utf8Bytes<'static>>; 5] = Default::default();
-        for (member, name) in members
-            .iter_mut()
-            .zip(["root", "dir", "base", "name", "ext"])
-        {
-            if let Some(value) = path_object.get_truthy(global, name)? {
-                *member = Some(value.to_utf8(global)?);
-            }
+#[cold]
+fn glob_error<'a>(
+    heap: &JsHeap<'a>,
+    error: glob::Error,
+    path_len: usize,
+    pattern_len: usize,
+) -> bindgen::Error<'a> {
+    match error {
+        glob::Error::PatternTooLong => heap.type_error(format_args!("pattern is too long")),
+        glob::Error::InvalidRegExp { message } => heap.syntax_error_from_utf16(&message),
+        glob::Error::Aborted(glob::Abort::StackOverflow) => {
+            heap.range_error(format_args!("Maximum call stack size exceeded"))
         }
-        members
-    };
-    let [root, dir, base, name, ext] = members.each_ref().map(|member| match member {
-        Some(utf8) => utf8.slice(),
-        None => &[],
-    });
-    // One more for the separator.
-    let buf_len =
-        (1 + (if dir.is_empty() {
-            root.len()
-        } else {
-            dir.len()
-        }) + (if base.is_empty() {
-            name.len() + ext.len() + 1
-        } else {
-            base.len()
-        }))
-        .max(path_size::<u8>());
-    let heap = &cx.heap;
-    let mut scratch = PathScratch::new(heap, buf_len);
-    heap.create_utf8_string(format_t(
-        &PathParsed {
-            root,
-            dir,
-            base,
-            ext,
-            name,
-        },
-        separator,
-        scratch.slice(),
-    ))
+        glob::Error::Aborted(glob::Abort::BudgetExceeded) => heap.error_with_code(
+            ErrorCode::INVALID_ARG_VALUE,
+            format_args!(
+                "The argument 'pattern' ({pattern_len} characters) is too complex to match against \
+                 'path' ({path_len} characters)"
+            ),
+        ),
+        glob::Error::Aborted(glob::Abort::Memory(error)) => to_js_error(heap, error),
+        glob::Error::Aborted(glob::Abort::Terminated) => {
+            unreachable!("the termination is thrown in its place")
+        }
+    }
 }
-
-// ───────────────────────────── what node_path.bind.ts names ─────────────────────────────
 
 macro_rules! on_both_platforms {
     ($( $posix:ident, $win32:ident = $body:ident($($parameter:ident: $type:ty),*) -> $result:ty; )*) => {$(
@@ -953,70 +782,20 @@ macro_rules! on_both_platforms {
     )*};
 }
 on_both_platforms! {
-    basename_posix, basename_win32 = basename(heap: &JsHeap<'a>, path: Text<'a>, ext: Option<Text<'a>>) -> TextResult<'a>;
-    dirname_posix, dirname_win32 = dirname(heap: &JsHeap<'a>, path: Text<'a>) -> TextResult<'a>;
-    extname_posix, extname_win32 = extname(heap: &JsHeap<'a>, path: Text<'a>) -> TextResult<'a>;
-    format_posix, format_win32 = format(cx: &mut JsScope<'a>, path_object: JsLocal<'a>) -> TextResult<'a>;
-    is_absolute_posix, is_absolute_win32 = is_absolute(path: Text<'a>) -> bool;
-    join_posix, join_win32 = join(heap: &JsHeap<'a>, paths: &'a [Text<'a>]) -> TextResult<'a>;
-    normalize_posix, normalize_win32 = normalize(heap: &JsHeap<'a>, path: Text<'a>) -> TextResult<'a>;
-    parse_posix, parse_win32 = parse(heap: &JsHeap<'a>, path: Text<'a>) -> bindgen::Result<'a, ParsedPath<'a>>;
-}
-
-#[inline(always)]
-pub(crate) fn relative_posix<'a>(
-    heap: &JsHeap<'a>,
-    from: Text<'a>,
-    to: Text<'a>,
-) -> TextResult<'a> {
-    relative::<false>(heap, from, to)
-}
-
-#[inline(always)]
-pub(crate) fn relative_win32<'a>(
-    heap: &JsHeap<'a>,
-    from: Text<'a>,
-    to: Text<'a>,
-) -> TextResult<'a> {
-    relative::<true>(heap, from, to)
-}
-
-#[inline(always)]
-pub(crate) fn resolve_posix<'a>(heap: &JsHeap<'a>, paths: &'a [JsLocal<'a>]) -> TextResult<'a> {
-    resolve::<false>(heap, paths)
-}
-
-#[inline(always)]
-pub(crate) fn resolve_win32<'a>(heap: &JsHeap<'a>, paths: &'a [JsLocal<'a>]) -> TextResult<'a> {
-    resolve::<true>(heap, paths)
-}
-
-#[inline(always)]
-pub(crate) fn to_namespaced_path_posix<'a>(_: &JsHeap<'a>, path: JsLocal<'a>) -> JsLocal<'a> {
-    path
-}
-
-/// Based on Node v21.6.1 path.win32.toNamespacedPath: https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L624
-pub(crate) fn to_namespaced_path_win32<'a>(
-    cx: &mut JsScope<'a>,
-    path: JsLocal<'a>,
-) -> bindgen::Result<'a, JsLocal<'a>> {
-    if !path.to_js().is_string() {
-        return Ok(path);
-    }
-    let text = path.to_js().to_js_string(cx.global())?.to_js();
-    let heap = &cx.heap;
-    let Some(text) = JsLocal::new(heap, text).as_string() else {
-        unreachable!("ToString gives a string");
-    };
-    let view = text.view(heap)?;
-    if view.is_empty() {
-        return Ok(path);
-    }
-    let utf8 = view.to_utf8();
-    let buf_len = to_namespaced_path_buf_len(utf8.slice());
-    let mut scratch = PathScratch::new(heap, buf_len * 2);
-    let (buf, buf2) = scratch.slice().split_at_mut(buf_len);
-    let answer = to_namespaced_path_windows_t(utf8.slice(), buf, buf2);
-    heap.create_utf8_string(answer).map(JsLocal::as_value)
+    basename_posix, basename_win32 = basename(heap: &JsHeap<'a>, path: JsStr<'a>, suffix: Option<JsStr<'a>>) -> StrResult<'a>;
+    dirname_posix, dirname_win32 = dirname(heap: &JsHeap<'a>, path: JsStr<'a>) -> StrResult<'a>;
+    extname_posix, extname_win32 = extname(heap: &JsHeap<'a>, path: JsStr<'a>) -> StrResult<'a>;
+    is_absolute_posix, is_absolute_win32 = is_absolute(path: JsStr<'a>) -> bool;
+    join_posix, join_win32 = join(cx: &mut JsScope<'a>, paths: &[JsStr<'a>]) -> ValueResult<'a>;
+    join_unnormalized_posix, join_unnormalized_win32 = join_unnormalized(heap: &JsHeap<'a>, paths: &[JsStr<'a>]) -> StrResult<'a>;
+    matches_glob_posix, matches_glob_win32 = matches_glob(heap: &JsHeap<'a>, path: JsStr<'a>, pattern: JsStr<'a>) -> bindgen::Result<'a, bool>;
+    normalize_posix, normalize_win32 = normalize(heap: &JsHeap<'a>, path: JsStr<'a>) -> StrResult<'a>;
+    parse_posix, parse_win32 = parse(heap: &JsHeap<'a>, path: JsStr<'a>) -> bindgen::Result<'a, ParsedPath<'a>>;
+    relative_posix, relative_win32 = relative(cx: &mut JsScope<'a>, from: JsStr<'a>, to: JsStr<'a>) -> StrResult<'a>;
+    relative_of_resolved_posix, relative_of_resolved_win32 = relative_of_resolved(heap: &JsHeap<'a>, from: JsStr<'a>, to: JsStr<'a>) -> StrResult<'a>;
+    resolve_posix, resolve_win32 = resolve(cx: &mut JsScope<'a>, paths: &[JsLocal<'a>]) -> ValueResult<'a>;
+    resolve_with_cwd_posix, resolve_with_cwd_win32 = resolve_with_cwd(heap: &JsHeap<'a>, cwd: JsStr<'a>, paths: &[JsLocal<'a>]) -> StrResult<'a>;
+    try_join_posix, try_join_win32 = try_join(heap: &JsHeap<'a>, paths: &[JsStr<'a>]) -> bindgen::Result<'a, Option<JsStr<'a>>>;
+    try_relative_posix, try_relative_win32 = try_relative(heap: &JsHeap<'a>, from: JsStr<'a>, to: JsStr<'a>) -> bindgen::Result<'a, Option<JsStr<'a>>>;
+    try_resolve_posix, try_resolve_win32 = try_resolve(heap: &JsHeap<'a>, paths: &[JsLocal<'a>]) -> ValueResult<'a>;
 }

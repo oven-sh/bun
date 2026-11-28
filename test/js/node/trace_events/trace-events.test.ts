@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // The 'http.client.request' trace span must be closed on every terminal path,
@@ -41,4 +41,30 @@ test("http.client.request span is closed when the proxy CONNECT tunnel fails", a
   const events = JSON.parse(readFileSync(traceFile, "utf8")).traceEvents;
   const phases = events.filter(e => e.name === "http.client.request").map(e => e.ph);
   expect({ phases: phases.sort(), exitCode }).toEqual({ phases: ["b", "e"], exitCode: 0 });
+});
+
+test("the events of a Worker are merged when path.normalize is replaced", async () => {
+  using dir = tempDir("trace-events-replaced-normalize", {
+    "main.mjs": `
+      import { once } from "node:events";
+      import path from "node:path";
+      import { Worker } from "node:worker_threads";
+      await once(new Worker("", { eval: true }), "exit");
+      path.normalize = () => { throw new Error("replaced"); };
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--trace-event-categories", "node", "--trace-event-file-pattern", "trace.log", "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect({ files: readdirSync(String(dir)).sort(), stderr, exitCode }).toEqual({
+    files: ["main.mjs", "trace.log"],
+    stderr: "",
+    exitCode: 0,
+  });
+  const events = JSON.parse(readFileSync(join(String(dir), "trace.log"), "utf8")).traceEvents;
+  expect(new Set(events.map(event => event.tid)).size).toBeGreaterThan(1);
 });

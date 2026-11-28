@@ -99,7 +99,7 @@ function getValidatedPath(p: any) {
     if (typeof path !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
     return path;
   }
-  return require("node:path").resolve(p);
+  return $bindgen("node_path.bind.ts", "resolveWithRealCwd")(p);
 }
 
 function copyObject(source) {

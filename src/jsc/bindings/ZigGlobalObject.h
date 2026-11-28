@@ -72,6 +72,7 @@ struct node_module;
 #include <node_api.h>
 #include "Bindgen/AdditionsToGlobalObject.h"
 #include "NativeModuleList.h"
+#include "Path.h"
 #include "streams/JSStreamsRuntime.h"
 
 namespace Bun {
@@ -461,6 +462,7 @@ public:
     V(public, Bun::JSMockModule, mockModule)                                                                 \
                                                                                                              \
     V(public, WriteBarrier<JSObject>, m_processEnvObject)                                                    \
+    V(public, Bun::PathModule, m_pathModule)                                                                 \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSS3FileStructure)                                    \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_S3ErrorStructure)                                     \

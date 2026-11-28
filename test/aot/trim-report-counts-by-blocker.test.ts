@@ -41,8 +41,9 @@ function eachRow(rows: Row[]) {
 describe.concurrent("one reason to keep more", () => {
   eachRow([
     ["hello world", "main.mjs", helloWorld, 5, ""],
-    ["eval", "main.mjs", `console.log(eval(${fromOutside}));`, 87, "dynamic-import eval"],
-    ["new Function", "main.mjs", `console.log(new Function(${fromOutside})());`, 86, "dynamic-import eval"],
+    ["node:path", "main.mjs", `import { join } from "node:path";\nconsole.log(join("a", "b"));`, 16, ""],
+    ["eval", "main.mjs", `console.log(eval(${fromOutside}));`, 86, "dynamic-import eval"],
+    ["new Function", "main.mjs", `console.log(new Function(${fromOutside})());`, 85, "dynamic-import eval"],
     [
       "import() of a computed path",
       "main.mjs",

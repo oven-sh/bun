@@ -3,11 +3,16 @@
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
+use core::mem::MaybeUninit;
+use core::ops::Range;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::Environment;
+use bun_core::strings::CodeUnits;
+use bun_core::vec::{BorrowedBuf, BorrowedCursor};
 
+use crate::js_string::Characters;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
     ArrayBuffer, CommonString, ErrorCode, JSArray, JSGlobalObject, JSObject, JSString, JSValue,
@@ -201,17 +206,61 @@ impl<'a> JsHeap<'a> {
         }))
     }
 
-    /// A string of `length` 8-bit characters, 2 to [`JSString::MAX_LENGTH`]. SAFETY: `fill` writes all of them.
+    /// As [`try_create_latin1_string`](Self::try_create_latin1_string) for either width. 16-bit text is narrowed if it fits.
     #[inline(always)]
-    pub unsafe fn create_latin1_string_with(
+    pub fn try_create_string_from_units(
+        &self,
+        units: CodeUnits<'_>,
+    ) -> Result<'a, JsLocal<'a, JSString>> {
+        match units {
+            CodeUnits::U8(latin1) => self.try_create_latin1_string(latin1),
+            CodeUnits::U16(utf16) => self.try_create_narrowed_string(utf16),
+        }
+    }
+
+    #[inline(never)]
+    fn try_create_narrowed_string(&self, utf16: &[u16]) -> Result<'a, JsLocal<'a, JSString>> {
+        if utf16.len() > bun_core::String::max_length() {
+            return Err(self.string_too_long());
+        }
+        if utf16.len() < 2 || utf16.iter().fold(0, |bits, unit| bits | unit) > 0xFF {
+            return self
+                .try_create_string(bun_core::EncodedSlice::utf16(utf16))
+                .map_err(|_| self.memory_allocation_failed());
+        }
+        self.try_create_latin1_string_with(utf16.len(), |mut to| {
+            let (blocks, rest) = utf16.as_chunks::<16>();
+            for block in blocks {
+                to.append(&block.map(|unit| unit as u8));
+            }
+            for &unit in rest {
+                to.append(&[unit as u8]);
+            }
+        })
+    }
+
+    /// As [`try_create_latin1_string`](Self::try_create_latin1_string), written in place: `fill` appends all `length` characters, at least 2.
+    #[inline(always)]
+    pub fn try_create_latin1_string_with(
         &self,
         length: usize,
-        fill: impl FnOnce(*mut u8),
-    ) -> JsLocal<'a, JSString> {
-        // SAFETY: forwarded. Without the `JsHeap`, `fill` allocates nothing in the heap.
-        JsLocal::from_raw(unsafe {
-            JSString::create_latin1_with(self.global_object(), length, fill)
-        })
+        fill: impl FnOnce(BorrowedCursor<'_, u8>),
+    ) -> Result<'a, JsLocal<'a, JSString>> {
+        if length > bun_core::String::max_length() {
+            return Err(self.string_too_long());
+        }
+        // SAFETY: `to` is the address of `length` bytes that nothing else reads until all of them are written, which is asserted.
+        let string = unsafe {
+            JSString::try_create_latin1_with(self.global_object(), length, |to| {
+                let to = core::slice::from_raw_parts_mut(to.cast::<MaybeUninit<u8>>(), length);
+                let mut characters = BorrowedBuf::from(to);
+                fill(characters.unfilled());
+                assert!(characters.len() == length);
+            })
+        };
+        string
+            .map(JsLocal::from_raw)
+            .ok_or_else(|| self.memory_allocation_failed())
     }
 
     /// A string that takes over the allocation of `utf16`. Its error is not thrown: a `&mut self` method can call it.
@@ -320,6 +369,15 @@ impl<'a> JsHeap<'a> {
     #[cold]
     pub fn syntax_error(&self, args: core::fmt::Arguments<'_>) -> Error<'a> {
         Error::unthrown(self.global_object().create_syntax_error_instance(args))
+    }
+
+    /// As [`syntax_error`](Self::syntax_error), for a message that can have lone surrogates.
+    #[cold]
+    pub fn syntax_error_from_utf16(&self, message: &[u16]) -> Error<'a> {
+        Error::unthrown(crate::EncodedSliceJsc::to_syntax_error_instance(
+            &bun_core::EncodedSlice::utf16(message),
+            self.global_object(),
+        ))
     }
 
     /// As [`error`](Self::error), with a `code`, which also picks the class.
@@ -639,138 +697,110 @@ impl<'a> JsLocal<'a, JSString> {
         }
     }
 
-    /// The characters of an 8-bit string that is no rope, where they are: six instructions.
+    /// The characters, where they are. A rope is resolved, which fails when there is no memory for it.
     #[inline(always)]
-    pub fn flat_latin1(self) -> Option<JsLatin1<'a>> {
-        let owner = self.cell();
-        Some(JsLatin1 {
-            string: self,
-            text: crate::js_string::Latin1Characters {
-                owner,
-                offset: 0,
-                characters: owner.flat_latin1_characters()?,
-            },
-        })
-    }
-
-    /// As [`flat_latin1`](Self::flat_latin1), and of a substring too.
-    #[inline]
-    pub fn latin1(self) -> Option<JsLatin1<'a>> {
-        Some(JsLatin1 {
-            string: self,
-            text: self.cell().latin1_characters()?,
-        })
-    }
-
-    /// As [`latin1`](Self::latin1), of a rope too: it is resolved, which fails when there is no memory for it.
-    #[inline]
-    pub fn resolved_latin1(self, heap: &JsHeap<'a>) -> Result<'a, Option<JsLatin1<'a>>> {
-        if let Some(text) = self.latin1() {
-            return Ok(Some(text));
+    pub fn characters<'heap>(self, heap: &'heap JsHeap<'a>) -> Result<'a, JsCharacters<'heap, 'a>> {
+        let cell = self.cell();
+        if cell.is_non_substring_rope() {
+            self.resolve(heap)?;
         }
-        self.view(heap)?;
-        Ok(self.latin1())
+        let text = cell.characters().expect("it has been resolved");
+        Ok(JsCharacters { string: self, text })
     }
 
-    /// The characters of any string. A rope is resolved, which fails when there is no memory for it.
-    #[inline]
-    pub fn view(self, heap: &JsHeap<'a>) -> Result<'a, crate::JSStringView<'a>> {
-        self.cell()
-            .view(heap.global_object())
-            .map_err(Error::pending)
+    #[inline(never)]
+    fn resolve(self, heap: &JsHeap<'a>) -> Result<'a, ()> {
+        let view = self.cell().view(heap.global_object());
+        view.map(drop).map_err(Error::pending)
     }
 
-    /// How many of the first characters were written to `characters`: all that fit. Nothing is resolved.
-    #[inline]
-    pub fn first_characters(self, characters: &mut [u16]) -> usize {
-        self.cell().first_characters(characters)
+    /// The first `N` characters, and 0 for those it does not have. Nothing is resolved.
+    #[inline(always)]
+    pub fn first_characters<const N: usize>(self) -> [u16; N] {
+        match self.cell().flat_characters() {
+            Some(CodeUnits::U8(units)) => {
+                core::array::from_fn(|at| units.get(at).map_or(0, |&unit| unit.into()))
+            }
+            Some(CodeUnits::U16(units)) => {
+                core::array::from_fn(|at| units.get(at).copied().unwrap_or(0))
+            }
+            None => self.cell().first_characters(),
+        }
     }
 }
 
-/// The characters of an 8-bit JS string.
-#[derive(Clone, Copy)]
-pub struct JsLatin1<'a> {
+/// As [`crate::JSStringView`]: on the stack, keeps the owner of the characters alive. Borrows the [`JsHeap`] because JavaScript can replace a string's storage.
+pub struct JsCharacters<'heap, 'a> {
     string: JsLocal<'a, JSString>,
-    text: crate::js_string::Latin1Characters<'a>,
+    text: Characters<'heap>,
 }
 
-impl<'a> JsLatin1<'a> {
+impl Drop for JsCharacters<'_, '_> {
     #[inline(always)]
-    pub fn characters(&self) -> &'a [u8] {
-        self.text.characters
+    fn drop(&mut self) {
+        self.text.owner.ensure_still_alive();
+    }
+}
+
+impl<'a> JsCharacters<'_, 'a> {
+    #[inline(always)]
+    pub fn units(&self) -> CodeUnits<'_> {
+        self.text.units
     }
 
+    /// The characters `range`, shared with this string unless they are a few of very many. All of them are this string.
     #[inline(always)]
-    pub fn string(&self) -> JsLocal<'a, JSString> {
-        self.string
-    }
-
-    /// The characters `start..end`, shared with this string and not copied. All of them are this string.
-    #[inline(always)]
-    pub fn substring(&self, heap: &JsHeap<'a>, start: usize, end: usize) -> JsLocal<'a, JSString> {
-        assert!(start <= end && end <= self.text.characters.len());
-        // SAFETY: just checked.
-        unsafe { self.substring_unchecked(heap, start, end) }
-    }
-
-    /// SAFETY: `start <= end <= self.characters().len()`.
-    #[inline(always)]
-    pub unsafe fn substring_unchecked(
-        &self,
-        heap: &JsHeap<'a>,
-        start: usize,
-        end: usize,
-    ) -> JsLocal<'a, JSString> {
-        debug_assert!(start <= end && end <= self.text.characters.len());
-        if end - start == self.text.characters.len() {
+    pub fn substring(&self, heap: &JsHeap<'a>, range: Range<usize>) -> JsLocal<'a, JSString> {
+        let length = self.text.units.len();
+        assert!(range.start <= range.end && range.end <= length);
+        if range.len() == length {
             return self.string;
         }
         // SAFETY: the owner is no rope, and fewer than the characters that are in it are not all of it.
         JsLocal::from_raw(unsafe {
             self.text.owner.substring_of_resolved(
                 heap.global_object(),
-                self.text.offset + start as u32,
-                (end - start) as u32,
+                self.text.offset + range.start as u32,
+                range.len() as u32,
             )
         })
     }
 
-    /// As [`substring_unchecked`](Self::substring_unchecked), several with one call. SAFETY: `start <= end <= self.characters().len()` of each range.
+    /// As [`substring`](Self::substring), but copied if they would keep a long string alive.
     #[inline(always)]
-    #[allow(clippy::needless_pass_by_value)] // written at the call
-    pub unsafe fn substrings_unchecked<const N: usize>(
+    pub fn detached_substring(
         &self,
         heap: &JsHeap<'a>,
-        ranges: [core::ops::Range<usize>; N],
+        range: Range<usize>,
+    ) -> Result<'a, JsLocal<'a, JSString>> {
+        // SAFETY: the owner is no rope.
+        if unsafe { self.text.owner.may_hold_long_text_for(range.len() as u32) } {
+            core::hint::cold_path();
+            return heap.try_create_string_from_units(self.text.units.slice(range));
+        }
+        Ok(self.substring(heap, range))
+    }
+
+    /// As [`substring`](Self::substring), several with one call.
+    #[inline(always)]
+    pub fn substrings<const N: usize>(
+        &self,
+        heap: &JsHeap<'a>,
+        ranges: &[Range<usize>; N],
     ) -> [JsLocal<'a, JSString>; N] {
-        let mut offsets_and_lengths = [[0u32; 2]; N];
-        let mut index = 0;
-        while index < N {
-            let range = &ranges[index];
-            debug_assert!(range.start <= range.end && range.end <= self.text.characters.len());
-            offsets_and_lengths[index] = [
-                self.text.offset + range.start as u32,
-                (range.end - range.start) as u32,
-            ];
-            index += 1;
+        let mut offsets_and_lengths = [[0; 2]; N];
+        for index in 0..N {
+            let Range { start, end } = ranges[index];
+            assert!(start <= end && end <= self.text.units.len());
+            offsets_and_lengths[index] = [self.text.offset + start as u32, (end - start) as u32];
         }
         // SAFETY: the owner is no rope, and the characters are in it.
-        let substrings = unsafe {
+        unsafe {
             self.text
                 .owner
                 .substrings_of_resolved(heap.global_object(), &offsets_and_lengths)
-        };
-        substrings.map(JsLocal::from_raw)
-    }
-
-    /// `part` as a string: a [`substring`](Self::substring) if it is a slice of [`characters`](Self::characters), a copy if it lies elsewhere.
-    #[inline(always)]
-    pub fn part(&self, heap: &JsHeap<'a>, part: &[u8]) -> JsLocal<'a, JSString> {
-        let start = (part.as_ptr() as usize).wrapping_sub(self.text.characters.as_ptr() as usize);
-        if start <= self.text.characters.len() && part.len() <= self.text.characters.len() - start {
-            return self.substring(heap, start, start + part.len());
         }
-        heap.create_latin1_string(part)
+        .map(JsLocal::from_raw)
     }
 }
 

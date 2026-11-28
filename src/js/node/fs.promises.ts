@@ -349,7 +349,7 @@ const exports = {
   mkdtempDisposable: async function mkdtempDisposable(prefix, options) {
     const path = await fs.mkdtemp(prefix, options);
     // Stash the full path in case of process.chdir()
-    const fullPath = require("node:path").resolve(path);
+    const fullPath = $bindgen("node_path.bind.ts", "resolveWithRealCwd")(path);
     async function remove() {
       // force makes repeated removal a no-op; real failures (EACCES) still throw
       await fs.rm(fullPath, { recursive: true, force: true });

@@ -30,6 +30,73 @@ describe("path.normalize", () => {
     assert.strictEqual(path.win32.normalize("foo/bar\\baz"), "foo\\bar\\baz");
   });
 
+  test("win32 names with a colon", () => {
+    const { join, normalize } = path.win32;
+    const wide = text => ("\u65e5" + text).slice(1);
+    const long = Buffer.alloc(600, "n").toString();
+    for (const [input, expected] of [
+      ["ab:", ".\\ab:"],
+      ["ab:/c", ".\\ab:\\c"],
+      ["ab:c", "ab:c"],
+      ["ab:c/d:", ".\\ab:c\\d:"],
+      ["ab:/../c", "c"],
+      ["../ab:", "..\\ab:"],
+      ["..a/ab:", ".\\..a\\ab:"],
+      ["./C:a", ".\\C:a"],
+      ["CON:", ".\\CON:"],
+      ["con:/a", ".\\con:\\a"],
+      ["COM1:./a", ".\\COM1:.\\a"],
+      ["CON::", ".\\CON::"],
+      ["./NUL:a", ".\\NUL:a"],
+      ["a\\\\NUL:b", "a\\NUL:b"],
+      ["c:COM1:", "c:COM1:"],
+      ["C:\\a\\.\\NUL:", "C:\\a\\NUL:"],
+      ["\\a\\LPT1:", "\\a\\LPT1:"],
+      ["\\\\a\\b\\COM1:\\c", "\\\\a\\b\\COM1:\\c"],
+      ["\\\\.\\COM1:", "\\\\.\\COM1:"],
+      ["\\\\?\\COM1:a", "\\\\?\\COM1:a"],
+    ]) {
+      for (const form of [input, wide(input), expected]) {
+        assert.strictEqual(normalize(form), expected);
+        assert.strictEqual(join(form), expected);
+      }
+      assert.strictEqual(join("x", input), normalize(`x\\${input}`));
+      assert.strictEqual(join(input, long), normalize(`${input}\\${long}`));
+    }
+  });
+
+  test("win32 reserved names", () => {
+    const numbered = digits => [...digits].flatMap(digit => ["COM" + digit, "LPT" + digit]);
+    for (const [names, prefix] of [
+      [["CON", "PRN", "AUX", "NUL", ...numbered("123456789\xb9\xb2\xb3")], ".\\"],
+      [["CO", "CONN", "COM", "COM10", "\u0143ON", ...numbered("0\xb0\u2074\u0131")], ""],
+    ]) {
+      for (const name of names.flatMap(name => [name, name.toLowerCase()])) {
+        assert.strictEqual(path.win32.normalize(`${name}:a`), `${prefix}${name}:a`);
+        for (const suffix of ["", "f", ".txt"]) assert.strictEqual(path.win32.normalize(name + suffix), name + suffix);
+      }
+    }
+  });
+
+  test("win32 server names", () => {
+    const { dirname, join, normalize, parse, resolve } = path.win32;
+    for (const [input, expected] of [
+      ["//a/b/c", ["//a/b/", "//a/b/", "\\\\a\\b\\c", "\\\\a\\b\\c"]],
+      ["//.../b/c", ["//.../b/", "//.../b/", "\\\\...\\b\\c", "\\\\...\\b\\c"]],
+      ["//..a/b/c", ["//..a/b/", "//..a/b/", "\\\\..a\\b\\c", "\\\\..a\\b\\c"]],
+      ["//./b/c", ["//./b/", "//./b/", "\\\\.\\b\\c", "\\\\.\\b\\c"]],
+      ["///b/c", ["/", "///b", "\\b\\c", "C:\\b\\c"]],
+      ["//../b/c", ["/", "//../b", "\\b\\c", "C:\\b\\c"]],
+      ["\\\\..\\b", ["\\", "\\\\..", "\\b", "C:\\b"]],
+    ]) {
+      for (const form of [input, ("\u65e5" + input).slice(1)]) {
+        assert.deepStrictEqual([parse(form).root, dirname(form), normalize(form), resolve("C:\\x", form)], expected);
+        assert.strictEqual(join(form), normalize(form));
+      }
+    }
+    assert.deepStrictEqual([join("//a", "b"), join("//..", "b")], ["\\\\a\\b\\", "\\b"]);
+  });
+
   test("posix", () => {
     assert.strictEqual(path.posix.normalize("./fixtures///b/../b/c.js"), "fixtures/b/c.js");
     assert.strictEqual(path.posix.normalize("/foo/../../../bar"), "/bar");

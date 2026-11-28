@@ -1,5 +1,5 @@
 // A function of the host names a value that it refuses in the message of its error, and says there whether the object has properties of its own: fields that nobody reads count.
-// The output is stored: plain Bun prints what an object without a constructor holds; an executable says what Node says and looks at nothing that it holds.
+// The output is stored: plain Bun has the same function, so it would agree with a fault.
 import { Readable } from "node:stream";
 function told(run: () => unknown): string {
   try { return "answered " + String(run()); } catch (error: any) { return `${error.code}: ${error.message}`; }

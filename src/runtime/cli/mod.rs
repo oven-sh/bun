@@ -282,6 +282,7 @@ pub(crate) fn getcwd_or_exe_dir(buf: &mut bun_paths::PathBuffer) -> &[u8] {
     if let Ok(cwd) = bun_core::getcwd(buf) {
         return cwd;
     }
+    bun_core::did_change_working_directory();
     let exe_dir = (bun_core::self_exe_path().ok()).and_then(|exe| bun_paths::dirname(exe));
     exe_dir.unwrap_or(if cfg!(windows) { b"C:\\" } else { b"/" })
 }

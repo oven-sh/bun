@@ -231,14 +231,14 @@ for (const [name, copy] of impls) {
         "from/keep": "",
       });
 
-      const origTarget = join(basename, "target.txt");
+      const origTarget = join(String(basename), "target.txt");
 
       // Absolute target — exercises the isAbsolute fast path.
-      const srcAbs = join(basename, "from", "abs_link");
+      const srcAbs = join(String(basename), "from", "abs_link");
       fs.symlinkSync(origTarget, srcAbs);
 
       // Relative target — exercises the dirname(src) resolve path.
-      const srcRel = join(basename, "from", "rel_link");
+      const srcRel = join(String(basename), "from", "rel_link");
       fs.symlinkSync(join("..", "target.txt"), srcRel);
 
       await copy(basename + "/from", basename + "/to", { recursive: true });
@@ -247,7 +247,7 @@ for (const [name, copy] of impls) {
         ["abs_link", srcAbs],
         ["rel_link", srcRel],
       ] as const) {
-        const copiedLink = join(basename, "to", which);
+        const copiedLink = join(String(basename), "to", which);
         expect(fs.lstatSync(copiedLink).isSymbolicLink()).toBe(true);
 
         // The copied link's target string must not be the path of the source
@@ -259,8 +259,8 @@ for (const [name, copy] of impls) {
       // Deleting the source tree must not break the absolute link, since its
       // target lives outside the source tree. With the bug, the copied link
       // pointed at from/abs_link and would dangle once from/ was removed.
-      fs.rmSync(join(basename, "from"), { recursive: true, force: true });
-      expect(fs.readFileSync(join(basename, "to", "abs_link"), "utf8")).toBe("hello");
+      fs.rmSync(join(String(basename), "from"), { recursive: true, force: true });
+      expect(fs.readFileSync(join(String(basename), "to", "abs_link"), "utf8")).toBe("hello");
     });
 
     test("symlinks - relative target inside the tree is resolved against the source tree", async () => {
@@ -271,13 +271,13 @@ for (const [name, copy] of impls) {
         "from/a.txt": "a",
         "from/sub/keep.txt": "keep",
       });
-      fs.symlinkSync(join("..", "a.txt"), join(basename, "from", "sub", "link"));
+      fs.symlinkSync(join("..", "a.txt"), join(String(basename), "from", "sub", "link"));
 
-      await copy(join(basename, "from"), join(basename, "result"), { recursive: true });
+      await copy(join(String(basename), "from"), join(String(basename), "result"), { recursive: true });
 
-      const copiedLink = join(basename, "result", "sub", "link");
+      const copiedLink = join(String(basename), "result", "sub", "link");
       expect(fs.lstatSync(copiedLink).isSymbolicLink()).toBe(true);
-      expect(fs.readlinkSync(copiedLink)).toBe(join(basename, "from", "a.txt"));
+      expect(fs.readlinkSync(copiedLink)).toBe(join(String(basename), "from", "a.txt"));
       expect(fs.readFileSync(copiedLink, "utf8")).toBe("a");
     });
 
@@ -285,15 +285,15 @@ for (const [name, copy] of impls) {
       await using basename = tempDir("cp", {
         "from/d/f.txt": "x",
       });
-      fs.chmodSync(join(basename, "from", "d", "f.txt"), 0o600);
-      fs.chmodSync(join(basename, "from", "d"), 0o700);
+      fs.chmodSync(join(String(basename), "from", "d", "f.txt"), 0o600);
+      fs.chmodSync(join(String(basename), "from", "d"), 0o700);
 
-      await copy(join(basename, "from"), join(basename, "result"), { recursive: true });
+      await copy(join(String(basename), "from"), join(String(basename), "result"), { recursive: true });
 
       expect({
-        dirMode: fs.statSync(join(basename, "result", "d")).mode & 0o777,
-        fileMode: fs.statSync(join(basename, "result", "d", "f.txt")).mode & 0o777,
-        content: fs.readFileSync(join(basename, "result", "d", "f.txt"), "utf8"),
+        dirMode: fs.statSync(join(String(basename), "result", "d")).mode & 0o777,
+        fileMode: fs.statSync(join(String(basename), "result", "d", "f.txt")).mode & 0o777,
+        content: fs.readFileSync(join(String(basename), "result", "d", "f.txt"), "utf8"),
       }).toEqual({
         dirMode: 0o700,
         fileMode: 0o600,
@@ -305,10 +305,12 @@ for (const [name, copy] of impls) {
       await using basename = tempDir("cp", {
         "from/a.txt": "a",
       });
-      mkfifo(join(basename, "from", "pipe"), 0o666);
-      expect(fs.lstatSync(join(basename, "from", "pipe")).isFIFO()).toBe(true);
+      mkfifo(join(String(basename), "from", "pipe"), 0o666);
+      expect(fs.lstatSync(join(String(basename), "from", "pipe")).isFIFO()).toBe(true);
 
-      const e = await copyShouldThrow(join(basename, "from"), join(basename, "result"), { recursive: true });
+      const e = await copyShouldThrow(join(String(basename), "from"), join(String(basename), "result"), {
+        recursive: true,
+      });
       expect(e.code).toBe("ERR_FS_CP_FIFO_PIPE");
     });
 
@@ -344,7 +346,7 @@ for (const [name, copy] of impls) {
       let prev = process.cwd();
       process.chdir(String(basename));
 
-      await copy(join(basename, "from"), join(basename, "result"), {
+      await copy(join(String(basename), "from"), join(String(basename), "result"), {
         filter,
         recursive: true,
       });
@@ -352,9 +354,9 @@ for (const [name, copy] of impls) {
       process.chdir(prev);
 
       expect(filter.mock.calls.sort((a, b) => a[0].localeCompare(b[0]))).toEqual([
-        [join(basename, "from"), join(basename, "result")],
-        [join(basename, "from", "a.txt"), join(basename, "result", "a.txt")],
-        [join(basename, "from", "b.txt"), join(basename, "result", "b.txt")],
+        [join(String(basename), "from"), join(String(basename), "result")],
+        [join(String(basename), "from", "a.txt"), join(String(basename), "result", "a.txt")],
+        [join(String(basename), "from", "b.txt"), join(String(basename), "result", "b.txt")],
       ]);
     });
 
@@ -454,15 +456,15 @@ test.skipIf(!isWindows)("cpSync over symlinks does not leak Windows handles", ()
     "from/target.txt": "hello",
   });
   for (let i = 0; i < N; i++) {
-    fs.symlinkSync(join(basename, "from", "target.txt"), join(basename, "from", `link${i}.txt`));
+    fs.symlinkSync(join(String(basename), "from", "target.txt"), join(String(basename), "from", `link${i}.txt`));
   }
 
   // Warm up once so any lazy init (thread pool, path buffers, etc.) doesn't
   // count against the measured delta.
-  fs.cpSync(join(basename, "from"), join(basename, "warmup"), { recursive: true });
+  fs.cpSync(join(String(basename), "from"), join(String(basename), "warmup"), { recursive: true });
 
   const before = handleCount();
-  fs.cpSync(join(basename, "from"), join(basename, "result"), { recursive: true });
+  fs.cpSync(join(String(basename), "from"), join(String(basename), "result"), { recursive: true });
   const after = handleCount();
 
   // Without the fix every symlink leaks a handle, so `after - before` is >= N.
@@ -479,18 +481,18 @@ test.skipIf(!isWindows)("cpSync recursive copies a junction as a link to the ori
   using basename = tempDir("cp-junction", {
     "from/real/inner.txt": "inner",
   });
-  fs.symlinkSync(join(basename, "from", "real"), join(basename, "from", "junction"), "junction");
+  fs.symlinkSync(join(String(basename), "from", "real"), join(String(basename), "from", "junction"), "junction");
 
-  fs.cpSync(join(basename, "from"), join(basename, "result"), { recursive: true });
+  fs.cpSync(join(String(basename), "from"), join(String(basename), "result"), { recursive: true });
 
-  const copied = join(basename, "result", "junction");
+  const copied = join(String(basename), "result", "junction");
   expect(fs.lstatSync(copied).isSymbolicLink()).toBe(true);
   // Pin the stored link target, not just that creation succeeded: a relative or
   // otherwise wrong target still produces a link that lstat reports as a symlink.
   const copiedTarget = fs.readlinkSync(copied);
   expect(isAbsolute(copiedTarget)).toBe(true);
-  expect(fs.realpathSync(copiedTarget)).toBe(fs.realpathSync(join(basename, "from", "real")));
-  expect(fs.realpathSync(copied)).toBe(fs.realpathSync(join(basename, "from", "real")));
+  expect(fs.realpathSync(copiedTarget)).toBe(fs.realpathSync(join(String(basename), "from", "real")));
+  expect(fs.realpathSync(copied)).toBe(fs.realpathSync(join(String(basename), "from", "real")));
   expect(fs.readFileSync(join(copied, "inner.txt"), "utf8")).toBe("inner");
 });
 
@@ -504,14 +506,14 @@ test.skipIf(!isWindows)("cpSync recursive copies a directory symlink to a UNC ta
   });
   // Administrative-share spelling of `real`, like the "windows path handling"
   // suite in fs.test.ts relies on.
-  const real = fs.realpathSync(join(basename, "real"));
+  const real = fs.realpathSync(join(String(basename), "real"));
   const uncReal = `\\\\localhost\\${real[0]}$\\${real.slice(3)}`;
   expect(fs.readFileSync(join(uncReal, "inner.txt"), "utf8")).toBe("inner");
-  fs.symlinkSync(uncReal, join(basename, "from", "link"), "dir");
+  fs.symlinkSync(uncReal, join(String(basename), "from", "link"), "dir");
 
-  fs.cpSync(join(basename, "from"), join(basename, "result"), { recursive: true });
+  fs.cpSync(join(String(basename), "from"), join(String(basename), "result"), { recursive: true });
 
-  const copied = join(basename, "result", "link");
+  const copied = join(String(basename), "result", "link");
   expect(fs.lstatSync(copied).isSymbolicLink()).toBe(true);
   const copiedTarget = fs.readlinkSync(copied);
   expect(isAbsolute(copiedTarget)).toBe(true);
@@ -691,6 +693,82 @@ describe.skipIf(!isPosix).concurrent("fs.promises.cp recursive rejects an empty 
     // The earlier path is in a buffer of the thread that copied to it.
     expect(await bunRun(["--cwd", String(dir), "-e", script], { UV_THREADPOOL_SIZE: "2" })).toSpawn(
       '["ENOENT","file"]',
+    );
+  });
+});
+
+describe.concurrent("relative paths start at the cwd of the process", () => {
+  const eachCopy = `
+    import fs from "node:fs";
+    import path from "node:path";
+    const copies = [
+      (src, dest) => fs.cpSync(src, dest, { recursive: true }),
+      (src, dest) => fs.cpSync(src, dest, { recursive: true, filter: () => true }),
+      (src, dest) => fs.promises.cp(src, dest, { recursive: true }),
+    ];
+    async function eachCopy(src, dest) {
+      for (const [index, copy] of copies.entries()) {
+        try {
+          await copy(src, dest + index);
+          console.log("copied");
+        } catch (error) {
+          console.log(error.code);
+        }
+      }
+    }`;
+
+  test("when process.cwd is replaced", async () => {
+    using dir = tempDir("cp-replaced-cwd", { "real/src/file": "x", "other/file": "x" });
+    const script = `${eachCopy}
+      const src = path.resolve("src");
+      const other = path.resolve("..", "other");
+      process.cwd = () => other;
+      await eachCopy(src, "src/inner");
+      await eachCopy("src", path.join(src, "inner"));
+      console.log(fs.readdirSync(src).join());`;
+    expect(await bunRun(["--cwd", join(String(dir), "real"), "-e", script])).toSpawn(
+      [...Array(6).fill("ERR_FS_CP_EINVAL"), "file"].join("\n"),
+    );
+  });
+
+  test("when path.normalize is replaced", async () => {
+    using dir = tempDir("cp-replaced-normalize", { "src/inner/file": "x" });
+    const script = `${eachCopy}
+      path.normalize = () => "replaced";
+      await eachCopy("src", "dest");
+      console.log([0, 1, 2].map(index => fs.readdirSync("dest" + index + "/inner")).join());`;
+    expect(await bunRun(["--cwd", String(dir), "-e", script])).toSpawn("copied\ncopied\ncopied\nfile,file,file");
+  });
+
+  test.skipIf(isWindows)("when the cwd is removed, absolute paths do not need it", async () => {
+    using dir = tempDir("cp-removed-cwd", { "removed": {}, "kept/file": "x" });
+    const script = `${eachCopy}
+      const kept = path.join(path.dirname(fs.realpathSync(".")), "kept");
+      fs.rmdirSync("../removed");
+      await eachCopy(path.join(kept, "file"), path.join(kept, "copy"));`;
+    expect(await bunRun(["--cwd", join(String(dir), "removed"), "-e", script])).toSpawn("copied\ncopied\ncopied");
+  });
+
+  test.skipIf(!isLinux)("when the cwd is removed, `..` is still its parent", async () => {
+    using dir = tempDir("cp-removed-cwd-parent", { "removed": {}, "kept/file": "x" });
+    const script = `${eachCopy}
+      process.cwd = () => "/";
+      fs.rmdirSync("../removed");
+      await eachCopy("../kept/file", "../kept/copy");
+      await eachCopy("../kept", "../kept/a/b");`;
+    expect(await bunRun(["--cwd", join(String(dir), "removed"), "-e", script])).toSpawn(
+      [...Array(3).fill("copied"), ...Array(3).fill("ERR_FS_CP_EINVAL")].join("\n"),
+    );
+  });
+
+  // Where names are UTF-8, a lone surrogate is written as U+FFFD.
+  test.skipIf(isWindows)("a lone surrogate names the same directory as U+FFFD", async () => {
+    using dir = tempDir("cp-lone-surrogate", { "d\ufffd/file": "x" });
+    const script = `${eachCopy}
+      await eachCopy("d\\ud800", "d\\ufffd/a/b");
+      console.log(fs.readdirSync("d\\ufffd").join());`;
+    expect(await bunRun(["--cwd", String(dir), "-e", script])).toSpawn(
+      [...Array(3).fill("ERR_FS_CP_EINVAL"), "file"].join("\n"),
     );
   });
 });

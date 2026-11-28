@@ -225,6 +225,8 @@ interface Console {
 declare function $argument<T = any>(index: number): any | undefined;
 /** returns number of arguments */
 declare function $argumentCount(): number;
+/** The realm's `process`, even if `globalThis.process` is reassigned. Only in `src/js/ahead-of-time/`. */
+declare const $process: typeof process;
 /** array.push(item) */
 declare function $arrayPush(array: T[], item: T): void;
 
@@ -570,6 +572,7 @@ declare interface Function {
 
 interface String {
   $charCodeAt: String["charCodeAt"];
+  $substr: String["substr"];
   // add others as needed
 }
 

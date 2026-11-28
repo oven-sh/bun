@@ -56,3 +56,12 @@ test("a server answers alike from both texts", async () => {
   expect(first).toEqual(plain);
   expect(second).toEqual(plain);
 });
+
+test("node:path calls what a script has replaced from both texts", async () => {
+  const { plain, second, first } = await printedInThreeWays(
+    join(parallel, "what-node-path-brings", "what-a-script-has-replaced-is-called-beside-node-http.js"),
+  );
+  expect(plain.exitCode).toBe(0);
+  expect(first).toEqual(plain);
+  expect(second).toEqual(plain);
+});

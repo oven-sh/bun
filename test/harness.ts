@@ -852,7 +852,7 @@ export function unprivilegedSpawnOptions(dir: string): { uid?: number; gid?: num
   try {
     fs.chownSync(dir, NOBODY, NOBODY);
     for (const entry of fs.readdirSync(dir, { recursive: true, encoding: "utf8" })) {
-      fs.lchownSync(join(dir, entry), NOBODY, NOBODY);
+      fs.lchownSync(join(String(dir), entry), NOBODY, NOBODY);
     }
     const tmp = fs.realpathSync(temporaryFolderThatInstalls());
     for (let parent = dirname(fs.realpathSync(dir)); parent !== dirname(parent); parent = dirname(parent)) {

@@ -99,7 +99,7 @@ describe.concurrent("a stream that a native consumer takes", () => {
     },
     "Bun.write()": async (response, finish) => {
       using dir = tempDir("web-stream-state", {});
-      const written = Bun.write(join(dir, "out"), response);
+      const written = Bun.write(join(String(dir), "out"), response);
       finish();
       expect(await written).toBe(10);
     },
@@ -256,7 +256,7 @@ describe.concurrent("a stream that a native consumer takes", () => {
     using dir = tempDir("web-stream-state", {});
     const failure = new Error("the producer failed");
     const stream = make(failure);
-    expect(await Bun.write(join(dir, "out"), new Response(stream)).catch(error => error)).toBe(failure);
+    expect(await Bun.write(join(String(dir), "out"), new Response(stream)).catch(error => error)).toBe(failure);
     expect(state(stream)).toEqual(errored);
     expect(await finished(stream).catch(error => error)).toBe(failure);
   });
@@ -332,7 +332,7 @@ describe.concurrent("a stream that a native consumer takes", () => {
     using dir = tempDir("web-stream-state", {});
     const response = await fetch(`http://127.0.0.1:${upstream.port}/`);
     const body = response.body!;
-    const written = Bun.write(join(dir, "out"), response);
+    const written = Bun.write(join(String(dir), "out"), response);
     for (const connection of connections) connection.end();
     const error = await written.catch(error => error);
     expect(error.code).toBe("ECONNRESET");
@@ -362,7 +362,7 @@ describe.concurrent("a stream that a native consumer takes", () => {
 
   test("closes a Bun.file() stream after a fetch() request body takes it to the end", async () => {
     using dir = tempDir("web-stream-state", { "in.txt": "first last" });
-    const stream = Bun.file(join(dir, "in.txt")).stream();
+    const stream = Bun.file(join(String(dir), "in.txt")).stream();
     await using sink = Bun.serve({ port: 0, fetch: async request => new Response(await request.text()) });
     const upload = await fetch(sink.url, { method: "POST", body: stream });
     expect(await upload.text()).toBe("first last");
@@ -372,8 +372,8 @@ describe.concurrent("a stream that a native consumer takes", () => {
 
   test("errors a Bun.file() stream whose file does not open", async () => {
     using dir = tempDir("web-stream-state", {});
-    const stream = Bun.file(join(dir, "missing")).stream();
-    const error = await Bun.write(join(dir, "out"), stream).catch(error => error);
+    const stream = Bun.file(join(String(dir), "missing")).stream();
+    const error = await Bun.write(join(String(dir), "out"), stream).catch(error => error);
     expect(error.code).toBe("ENOENT");
     expect(state(stream)).toEqual(errored);
     expect(await finished(stream).catch(error => error)).toBe(error);

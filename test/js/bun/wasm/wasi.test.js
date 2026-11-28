@@ -1,8 +1,9 @@
 import { spawnSync } from "bun";
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
+import { runInNewContext } from "node:vm";
 import { WASI } from "node:wasi";
 
 it("Should support printing 'hello world'", () => {
@@ -162,6 +163,71 @@ it("path_* syscalls cannot escape the preopened directory", () => {
     WASI_ESUCCESS,
   );
   expect(wasi.FD_MAP.has(4)).toBe(true);
+});
+
+it("a relative preopen does not depend on what a script has replaced", () => {
+  using dir = tempDir("wasi-relative-preopen", {
+    "first/data/first.txt": "",
+    "second/data/second.txt": "",
+  });
+  const { cwd } = process;
+  const { normalize, resolve } = path;
+  const originalCwd = cwd();
+  const second = path.join(String(dir), "second");
+  try {
+    process.chdir(path.join(String(dir), "first"));
+    process.cwd = () => second;
+    path.normalize = () => second;
+    path.resolve = () => {
+      throw new Error("replaced");
+    };
+    const wasi = new WASI({ preopens: { "/": "data" } });
+    wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+    const memory = Buffer.from(wasi.memory.buffer);
+
+    const WASI_ESUCCESS = 0;
+    const WASI_ENOENT = 44;
+    const stat = name => wasi.wasiImport.path_filestat_get(3, 0, 1024, memory.write(name, 1024), 8192);
+    expect([stat("first.txt"), stat("second.txt")]).toEqual([WASI_ESUCCESS, WASI_ENOENT]);
+    const [WASI_O_CREAT, WASI_RIGHT_FD_WRITE] = [1, 64n];
+    const length = memory.write("made.txt", 1024);
+    expect(wasi.wasiImport.path_open(3, 0, 1024, length, WASI_O_CREAT, WASI_RIGHT_FD_WRITE, 0n, 0, 8192)).toBe(0);
+    wasi.wasiImport.fd_close(4);
+    wasi.wasiImport.fd_close(3);
+    expect(fs.readdirSync("data").sort()).toEqual(["first.txt", "made.txt"]);
+  } finally {
+    process.cwd = cwd;
+    Object.assign(path, { normalize, resolve });
+    process.chdir(originalCwd);
+  }
+});
+
+it("the first instance does not keep a function of node:path that was replaced at the time", async () => {
+  using dir = tempDir("wasi-restored-function", { "file.txt": "" });
+  const script = `
+    import path from "node:path";
+    import { WASI } from "node:wasi";
+    const { isAbsolute } = path;
+    path.isAbsolute = () => true;
+    new WASI({});
+    path.isAbsolute = isAbsolute;
+    const wasi = new WASI({ preopens: { "/": "." } });
+    wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+    const length = Buffer.from(wasi.memory.buffer).write("file.txt", 1024);
+    console.log(wasi.wasiImport.path_open(3, 0, 1024, length, 0, 2n, 0n, 0, 8192));`;
+  expect(await bunRun(["--cwd", String(dir), "-e", script])).toSpawn("0");
+});
+
+it.each([
+  ["this realm", String],
+  ["another realm", runInNewContext("String")],
+])("a preopen can be a String object of %s", (_, StringOfRealm) => {
+  using dir = tempDir("wasi-string-object-preopen", { "file.txt": "" });
+  const wasi = new WASI({ preopens: { "/": new StringOfRealm(dir) } });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const memory = Buffer.from(wasi.memory.buffer);
+  expect(wasi.wasiImport.path_filestat_get(3, 0, 1024, memory.write("file.txt", 1024), 8192)).toBe(0);
+  wasi.wasiImport.fd_close(3);
 });
 
 it("poll_oneoff waits on a clock subscription and reports the event", () => {

@@ -9,7 +9,7 @@ const other = function () { return 1; };
 class Strict {
   static assign(f, value) { f.call = value; return "assigned"; }
 }
-const kinds = { native: Math.max, library: Array.from, constructor: WeakSet, locked: Array, module: require("path").join };
+const kinds = { native: Math.max, library: Array.from, constructor: WeakSet, locked: Array, module: require("path").basename };
 for (const name of Object.keys(kinds)) {
   const f = kinds[name];
   attempt(name + " another value", () => Object.defineProperty(f, "call", { value: other }));

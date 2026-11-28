@@ -15,7 +15,6 @@ use bun_boringssl::c as boring;
 use bun_collections::StringArrayHashMap;
 use bun_core::strings;
 use bun_core::{Mutex, Output};
-use bun_paths::MAX_PATH_BYTES;
 use bun_ptr::RefPtr;
 use bun_sys::{self as syscall, Fd, Mode, Stdio};
 use bun_uws::{self as uws, SocketGroup};
@@ -243,8 +242,6 @@ pub struct RareData {
     // proxy_env_storage moved to VirtualMachine — see comment there on why
     // lazy RareData creation raced with worker spawn.
     spawn_sync_event_loop_: OnceCell<Box<SpawnSyncEventLoop>>,
-
-    pub path_buf: JsCell<PathBuf>,
 }
 
 #[cfg(not(windows))]
@@ -274,47 +271,9 @@ impl Default for RareData {
             default_csrf_secret: OnceCell::new(),
             tls_default_ciphers: JsCell::new(None),
             spawn_sync_event_loop_: OnceCell::new(),
-            path_buf: JsCell::default(),
         }
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// PathBuf
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Reusable heap buffer for path.resolve, path.relative, and path.toNamespacedPath.
-/// Three fixed-size tiers, lazily allocated on first use. Safe because JS is single-threaded.
-#[derive(Default)]
-pub struct PathBuf {
-    pub(crate) small: Option<Box<[u8; 2 * MAX_PATH_BYTES]>>,
-    pub(crate) medium: Option<Box<[u8; 8 * MAX_PATH_BYTES]>>,
-    pub(crate) large: Option<Box<[u8; 32 * MAX_PATH_BYTES]>>,
-}
-
-impl PathBuf {
-    const S: usize = MAX_PATH_BYTES;
-
-    /// Returns the smallest lazily-allocated tier buffer that fits `min_len`.
-    // Revisit caller semantics for inputs exceeding the large tier.
-    pub fn get(&mut self, min_len: usize) -> &mut [u8] {
-        if min_len <= 2 * Self::S {
-            &mut **self
-                .small
-                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 2 * MAX_PATH_BYTES]>)
-        } else if min_len <= 8 * Self::S {
-            &mut **self
-                .medium
-                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 8 * MAX_PATH_BYTES]>)
-        } else {
-            &mut **self
-                .large
-                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 32 * MAX_PATH_BYTES]>)
-        }
-    }
-}
-
-// Drop is automatic for Option<Box<...>> fields — no explicit deinit needed.
 
 /// One max-size HTTP/2 PADDED DATA frame payload (pad-length byte + data + padding).
 pub type H2PaddedFrameBuffer = [u8; 16384];

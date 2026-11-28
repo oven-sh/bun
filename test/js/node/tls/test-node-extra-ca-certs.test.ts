@@ -21,7 +21,7 @@ xAz7TbGPHUBH5dqMzlWqEkZxcY9u9GL19SJPpC7dl8K8V5dKBwvgOubcLp4qLvZU
       "test.js": `console.log('OK');`,
     });
 
-    const certPath = join(dir, "extra-ca.pem");
+    const certPath = join(String(dir), "extra-ca.pem");
 
     // Test that NODE_EXTRA_CA_CERTS loads the certificate
     await using proc = spawn({
@@ -43,7 +43,7 @@ xAz7TbGPHUBH5dqMzlWqEkZxcY9u9GL19SJPpC7dl8K8V5dKBwvgOubcLp4qLvZU
       "test.js": `console.log('OK');`,
     });
 
-    const nonExistentPath = join(dir, "non-existent.pem");
+    const nonExistentPath = join(String(dir), "non-existent.pem");
 
     // Test that missing file doesn't crash the process
     await using proc = spawn({
@@ -75,7 +75,7 @@ aWRnaXRzIFB0eSBMdGQwHhcNMTgwNDEwMDgwNzQ4WhcNMjgwNDA3MDgwNzQ4WjBF
       "test.js": `console.log('OK');`,
     });
 
-    const certPath = join(dir, "extra-ca.pem");
+    const certPath = join(String(dir), "extra-ca.pem");
 
     // Test that both work together
     await using proc = spawn({

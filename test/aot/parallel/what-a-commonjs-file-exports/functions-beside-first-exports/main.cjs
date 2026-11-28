@@ -1,5 +1,5 @@
 // A module that requires others first and is required at the first call of a function: its exports variable holds the first exports object and the function. A record is never called, so what is no function throws.
-// STATISTIC: CallsInlined >= 36
+// STATISTIC: CallsInlined >= 33
 "use strict";
 let add, box, late, kept;
 function getAdd() { return add || (add = require("./modules/add.cjs")); }

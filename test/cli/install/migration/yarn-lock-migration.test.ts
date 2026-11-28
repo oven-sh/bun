@@ -61,7 +61,7 @@ async function migrateYarnLock(dir: string) {
     env: {
       ...bunEnv,
       BUN_CONFIG_REGISTRY: registry.url.href,
-      BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache"),
+      BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -74,7 +74,7 @@ async function migrateYarnLock(dir: string) {
   expect(stderr).toContain("migrated lockfile from yarn.lock");
   expect(exitCode).toBe(0);
 
-  const lock = Bun.JSONC.parse(await Bun.file(join(dir, "bun.lock")).text()) as { packages: unknown };
+  const lock = Bun.JSONC.parse(await Bun.file(join(String(dir), "bun.lock")).text()) as { packages: unknown };
   return { packages: lock.packages, requestedManifests: [...requestedManifests].sort() };
 }
 
@@ -120,9 +120,9 @@ is-number@^7.0.0:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("simple-yarn-migration");
   });
 
@@ -217,9 +217,9 @@ to-fast-properties@^2.0.0:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
 
     // Verify that long build tags are preserved correctly
     expect(bunLockContent).toContain("4.16.1-1.4bc8b6e1b66cb932731fb1bdbbc550d1e010de81");
@@ -244,7 +244,7 @@ to-fast-properties@^2.0.0:
     const [installStderr, installExitCode] = await Promise.all([installResult.stderr.text(), installResult.exited]);
     expect(installStderr).not.toContain("error:");
     expect(installExitCode).toBe(0);
-    expect(fs.readFileSync(join(tmpDir, "bun.lock"), "utf8")).toBe(bunLockContent);
+    expect(fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8")).toBe(bunLockContent);
   });
 
   test("yarn.lock with extremely long build tags (regression test)", async () => {
@@ -285,7 +285,7 @@ test-package@1.0.0-alpha.beta.gamma.delta.epsilon.zeta.eta.theta.iota.kappa.lamb
     const exitCode = await migrateResult.exited;
     expect(exitCode).toBe(0);
 
-    const bunLockPath = join(tmpDir, "bun.lock");
+    const bunLockPath = join(String(tmpDir), "bun.lock");
     expect(fs.existsSync(bunLockPath)).toBe(true);
 
     const bunLockContent = fs.readFileSync(bunLockPath, "utf8");
@@ -805,9 +805,9 @@ vary@~1.1.2:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("complex-yarn-migration");
   });
 
@@ -877,9 +877,9 @@ undici-types@~5.26.4:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("aliases-yarn-migration");
 
     // Verify that npm aliases are handled correctly
@@ -1176,7 +1176,7 @@ y@1.0.0:
       env: {
         ...bunEnv,
         BUN_CONFIG_REGISTRY: registry.url.href,
-        BUN_INSTALL_CACHE_DIR: join(tmpDir, ".bun-cache"),
+        BUN_INSTALL_CACHE_DIR: join(String(tmpDir), ".bun-cache"),
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -1189,7 +1189,7 @@ y@1.0.0:
     expect(stderr).toContain("migrated lockfile from yarn.lock");
     expect(exitCode).toBe(0);
 
-    const lock = Bun.JSONC.parse(await Bun.file(join(tmpDir, "bun.lock")).text()) as { packages: unknown };
+    const lock = Bun.JSONC.parse(await Bun.file(join(String(tmpDir), "bun.lock")).text()) as { packages: unknown };
     expect(lock.packages).toStrictEqual(
       Object.fromEntries(
         Object.entries(rows).map(([dependency, [url, packageName]]) => [dependency, [`${packageName}@${url}`, {}]]),
@@ -1278,9 +1278,9 @@ webpack@^5.89.0:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("resolutions-yarn-migration");
 
     // Verify resolutions are handled
@@ -1346,7 +1346,7 @@ is-number@^7.0.0:
     expect(stderr).toContain("migrated lockfile from yarn.lock");
     expect(exitCode).toBe(0);
 
-    const lock = Bun.JSONC.parse(await Bun.file(join(tmpDir, "bun.lock")).text()) as { overrides: unknown };
+    const lock = Bun.JSONC.parse(await Bun.file(join(String(tmpDir), "bun.lock")).text()) as { overrides: unknown };
     expect(lock.overrides).toStrictEqual({
       "acorn": "^8.11.3",
       "is-even": "1.0.0",
@@ -1443,9 +1443,9 @@ lodash@^4.17.21:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("workspace-yarn-migration");
 
     const lock = Bun.JSONC.parse(bunLockContent) as {
@@ -1569,9 +1569,9 @@ babel-loader/chalk@^2.4.2:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("scoped-yarn-migration");
 
     // Verify scoped packages are at the bottom
@@ -1789,9 +1789,9 @@ webpack@^5.75.0:
 
     const exitCode = await migrateResult.exited;
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("complex-realistic-yarn-migration");
 
     // Verify key features are migrated
@@ -1843,7 +1843,7 @@ describe("bun pm migrate for existing yarn.lock", () => {
       expect(stderr).toContain("migrated lockfile from yarn.lock");
       expect(exitCode).toBe(0);
 
-      const bunLockContent = await Bun.file(join(tmpDir, "bun.lock")).text();
+      const bunLockContent = await Bun.file(join(String(tmpDir), "bun.lock")).text();
       expect(bunLockContent).toMatchSnapshot(folder);
     },
     // yarn-cli-repo is yarn's own 8k-line lockfile; a debug build takes several seconds to migrate it.
@@ -1945,9 +1945,9 @@ fsevents@^2.3.2:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("os-cpu-yarn-migration");
 
     // yarn.lock has none of these fields: they come from the manifests
@@ -2019,7 +2019,7 @@ uses-foo15@1.0.0:
     expect(stderr).toContain("migrated lockfile from yarn.lock");
     expect(exitCode).toBe(0);
 
-    const lock = Bun.JSONC.parse(fs.readFileSync(join(tmpDir, "bun.lock"), "utf8")) as any;
+    const lock = Bun.JSONC.parse(fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8")) as any;
     expect(Object.fromEntries(Object.entries(lock.packages).map(([key, value]: any) => [key, value[0]]))).toEqual({
       "bar": "bar@1.0.0",
       "foo": "foo@1.5.0",

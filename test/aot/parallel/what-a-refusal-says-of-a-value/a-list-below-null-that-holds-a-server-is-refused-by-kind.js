@@ -1,4 +1,4 @@
-// A list without a constructor is printed with what it holds: the getters of the server run.
+// A list without a constructor is not printed with what it holds.
 const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("made up") });
 try {
   queueMicrotask(Object.setPrototypeOf([server], null));

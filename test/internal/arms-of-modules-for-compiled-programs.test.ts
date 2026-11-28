@@ -26,10 +26,7 @@ const unpublishedChannels = "the-console-and-the-loader-of-an-executable-publish
 // The line of the arm as it is written, without the blanks around it, and what reaches it. A line that stands twice in a file is listed twice.
 const witnessed: Record<string, [line: string, witness: string][]> = {
   "ahead-of-time/builtins/ProcessObjectInternals.ts": [
-    [
-      'if (typeof argv0 !== "string" && CAN_LOAD_NODE_PATH) {',
-      "parallel/what-a-warning-brings/the-program-replaces-basename.js",
-    ],
+    ["} else if (CAN_LOAD_NODE_PATH) {", "parallel/what-a-warning-brings/the-program-replaces-basename.js"],
   ],
   "ahead-of-time/internal/process/next_tick_queue.ts": [
     [
@@ -293,8 +290,8 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
   ],
   "ahead-of-time/node/path.ts": [
     [
-      "IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS",
-      "parallel-test-runs/arms-of-the-library/the-first-matches-glob-loads-the-validators/a_test.js",
+      "CAN_REPLACE_BUILT_INS &&",
+      "parallel-test-runs/arms-of-the-library/format-while-a-name-lies-on-object-prototype/a_test.js",
     ],
   ],
   "ahead-of-time/internal/fs/streams.ts": [

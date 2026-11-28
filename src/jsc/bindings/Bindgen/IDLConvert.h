@@ -112,14 +112,6 @@ void throwNotUnsharedBufferSource(JSC::JSGlobalObject& globalObject, JSC::ThrowS
     ctx.throwTypeMustBe(globalObject, scope, "an ArrayBuffer or ArrayBufferView that is not shared"_s);
 }
 
-// What `ToString` gives for a `String` object, which runs its `toString`. Any other value as it is.
-ALWAYS_INLINE JSC::JSValue stringOfStringObject(JSC::JSGlobalObject& globalObject, JSC::JSValue value)
-{
-    if (value.inherits<JSC::StringObject>()) [[unlikely]]
-        return value.toString(&globalObject);
-    return value;
-}
-
 // An argument of a function whose body is C++ (`cppSymbol`).
 class ArgumentInFrame {
 public:
@@ -169,7 +161,7 @@ private:
     JSC::EncodedJSValue m_values[count];
 };
 
-// `b.rest`: the arguments of a call from `first` on. They stay in the frame of the caller unless one is converted.
+// `b.rest`: the arguments of a call from `first` on. They stay in the frame of the caller.
 class RestArguments {
     WTF_FORBID_HEAP_ALLOCATION;
     WTF_MAKE_NONCOPYABLE(RestArguments);
@@ -186,30 +178,9 @@ public:
     size_t size() const { return m_size; }
     JSC::JSValue at(size_t index) const { return JSC::JSValue::decode(m_values[index]); }
 
-    // As stringOfStringObject, in order.
-    ALWAYS_INLINE void convertStringObjects(JSC::JSGlobalObject& globalObject)
-    {
-        for (size_t index = 0; index < m_size; ++index) {
-            if (at(index).inherits<JSC::StringObject>()) [[unlikely]]
-                return convertStringObjectsSlow(globalObject);
-        }
-    }
-
 private:
-    NEVER_INLINE void convertStringObjectsSlow(JSC::JSGlobalObject& globalObject)
-    {
-        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(&globalObject));
-        auto& converted = m_converted.emplace();
-        for (size_t index = 0; index < m_size; ++index) {
-            converted.append(stringOfStringObject(globalObject, at(index)));
-            RETURN_IF_EXCEPTION(scope, void());
-        }
-        m_values = converted.data();
-    }
-
-    const JSC::EncodedJSValue* m_values;
+    const JSC::EncodedJSValue* const m_values;
     const size_t m_size;
-    std::optional<JSC::MarkedArgumentBuffer> m_converted;
 };
 
 // std::nullopt for anything else, a shared buffer included. A detached or out-of-bounds view is empty.

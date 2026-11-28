@@ -557,7 +557,16 @@ function getDefaults() {
     randomFillSync: array => crypto.getRandomValues(array),
     isTTY: fd => require("node:tty").isatty(fd),
     fs: require("node:fs"),
-    path: require("node:path"),
+    path: {
+      __proto__: require("node:path"),
+      join: $bindgen("node_path.bind.ts", "joinWithOriginalNormalize"),
+      resolve: $bindgen("node_path.bind.ts", "resolveWithRealCwd"),
+      // Both arguments are resolved.
+      relative:
+        process.platform === "win32"
+          ? $bindgen("node_path.bind.ts", "tryRelativeWin32")
+          : $bindgen("node_path.bind.ts", "tryRelativePosix"),
+    } as unknown as WASIBindings["path"],
   };
 
   return (defaultConfig = {
@@ -651,7 +660,7 @@ class WASI {
           inheriting: RIGHTS_DIRECTORY_INHERITING,
         },
         fakePath: k,
-        path: v,
+        path: require("node:util/types").isStringObject(v) ? String(v) : v,
       });
     }
     const getiovs = (iovs: number, iovsLen: number) => {

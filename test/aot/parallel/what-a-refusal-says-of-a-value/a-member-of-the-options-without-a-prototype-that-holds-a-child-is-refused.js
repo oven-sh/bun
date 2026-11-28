@@ -1,5 +1,5 @@
 // The message of the refusal says what kind of value it was and looks at nothing that the object holds.
-// The output is stored: plain Bun prints what such an object holds; an executable says what Node says and looks at nothing that it holds.
+// The output is stored: plain Bun has the same function, so it would agree with a fault.
 const child = Bun.spawn(["true"]);
 try {
   Bun.spawn(["true"], { signal: { __proto__: null, child } });

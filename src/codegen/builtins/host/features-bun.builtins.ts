@@ -139,6 +139,10 @@ export default b.declarations(
       "stringToFlagsForTesting",
     ),
   ),
+  extendAll(
+    ["InternalForTesting", "NodePath"],
+    ...nativeBindings("Bindgen", "node_path.bind.ts", "matchesGlobForTesting"),
+  ),
   extendAll(["InternalForTesting", "FsStats"], ...nativeBindings("Bindgen", "Stat.bind.ts", "createStatsForIno")),
   extendAll(["InternalForTesting", "Buffer"], ...nativeBindings("Bindgen", "memory_pressure.bind.ts", "psiTrigger")),
 

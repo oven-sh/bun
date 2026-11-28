@@ -5429,14 +5429,18 @@ impl VirtualMachine {
     pub fn set_process_cwd(&self, to: &bun_core::ZStr) -> bun_sys::Result<()> {
         let fs = self.fs();
         bun_sys::chdir(to)?;
+        bun_core::did_change_working_directory();
         let mut buf = bun_paths::path_buffer_pool::get();
         let mut cwd = match bun_sys::getcwd_z(&mut buf) {
             bun_sys::Result::Ok(cwd) => bun_paths::Path::from(cwd),
             bun_sys::Result::Err(err) => {
                 let _ = bun_sys::chdir(&bun_paths::Path::from(fs.top_level_dir()));
+                bun_core::did_change_working_directory();
                 return bun_sys::Result::Err(err);
             }
         };
+        #[cfg(windows)]
+        bun_sys::save_working_directory_of_drive();
         cwd.push_trailing_sep();
         fs.set_top_level_dir(Self::intern_cwd(fs, &cwd));
         Ok(())

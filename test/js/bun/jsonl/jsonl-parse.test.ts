@@ -407,7 +407,7 @@ describe("Bun.JSONL", () => {
       });
 
       test("a line with escapes is incomplete wherever it is cut", () => {
-        // No \uXXXX in the line: text that ends inside one is still a SyntaxError, a gap that oven-sh/WebKit#638 is open for.
+        // The line has no \u escape with four hex digits: text that ends inside one is still a SyntaxError, a gap that oven-sh/WebKit#638 is open for.
         const line = JSON.stringify({ text: 'line1\nline2 "quoted" \\ end\t/' });
         const bytes = new TextEncoder().encode(line + "\n");
         for (let cut = 1; cut < line.length; cut++) {

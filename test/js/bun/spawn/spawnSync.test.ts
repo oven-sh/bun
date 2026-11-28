@@ -1,5 +1,16 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isRoot, isWindows, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isLinux,
+  isMusl,
+  isPosix,
+  isRoot,
+  isWindows,
+  setuidDeniedCodes,
+  tempDir,
+} from "harness";
 import { totalmem } from "os";
 import { join } from "path";
 describe("spawnSync", () => {
@@ -272,7 +283,7 @@ describe("uid/gid", () => {
     } catch (e) {
       thrown = e;
     }
-    expect(thrown?.code).toBe("EPERM");
+    expect(thrown?.code).toBeOneOf(setuidDeniedCodes);
   });
 });
 

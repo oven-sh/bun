@@ -1,9 +1,19 @@
 import { spawn } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isLinux,
+  isMacOS,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  withoutAggressiveGC,
+} from "harness";
 import { once } from "node:events";
 import { connect } from "node:net";
 import { join } from "node:path";
+import { createContext, Script } from "node:vm";
 import storesThatEndInADefinition from "../bun/jsc/stores-that-end-in-a-definition-fixture.js";
 
 test("exists", () => {
@@ -759,4 +769,306 @@ test("dispatchEvent skips a listener that is a WebAssembly GC object", () => {
   target.addEventListener("a", () => calls++);
   target.dispatchEvent(new Event("a"));
   expect(calls).toBe(1);
+});
+
+// JavaScriptCore keeps the last thrown exception until native code enters JavaScript again. So each
+// script throws an unrelated error after the last entry and before the listener's error is reported.
+describe.concurrent("an EventTarget reports a listener's error, not an older error that was caught", () => {
+  async function run(lines) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", lines.join("\n")], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr: normalizeBunSnapshot(stderr), exitCode };
+  }
+  const onUncaughtException = body => `process.on("uncaughtException", error => { ${body} });`;
+
+  const handleEventNotCallable = [
+    `try { throw new Error("caught before, unrelated"); } catch {}`,
+    `const target = new EventTarget();`,
+    `target.addEventListener("a", { handleEvent: 123 });`,
+    `target.dispatchEvent(new Event("a"));`,
+  ];
+  // The two cases of WPT dom/events/EventListener-handleEvent-not-callable-after-caught-exception.html.
+  const handleEventGetterCatches = [
+    `const target = new EventTarget();`,
+    `target.addEventListener("a", { get handleEvent() { try { throw new Error("caught by the getter"); } catch {} return "not callable"; } });`,
+    `target.dispatchEvent(new Event("a"));`,
+  ];
+  const earlierListenerCatches = [
+    `const target = new EventTarget();`,
+    `target.addEventListener("a", () => { try { throw new Error("caught by an earlier listener"); } catch {} });`,
+    `target.addEventListener("a", { handleEvent: "not callable" });`,
+    `target.dispatchEvent(new Event("a"));`,
+  ];
+  // The error is not caught. It propagates through the finally block to the event loop.
+  const handleEventNotCallableInFinally = [
+    `const target = new EventTarget();`,
+    `target.addEventListener("a", { handleEvent: 123 });`,
+    `setImmediate(() => { try { throw new Error("still propagating"); } finally { target.dispatchEvent(new Event("a")); } });`,
+  ];
+  // Native code dispatches the message in a later turn of the event loop.
+  const handleEventNotCallableInLaterTurn = [
+    `const { port1, port2 } = new MessageChannel();`,
+    `setImmediate(() => {`,
+    `  port2.addEventListener("message", { handleEvent: 123 });`,
+    `  port2.start();`,
+    `  port1.postMessage("");`,
+    `  try { JSON.parse("{"); } catch {}`,
+    `});`,
+  ];
+  // The thenable rejects inside dispatchEvent, so the tick that reports the reason is queued right
+  // after the tick that throws and catches.
+  const thenableRejectsWith = reason => [
+    `const reason = ${reason};`,
+    `const target = new EventTarget();`,
+    `target.addEventListener("a", () => ({ then: (resolve, reject) => reject(reason) }));`,
+    `process.nextTick(() => { try { throw new Error("caught in a tick, unrelated"); } catch {} });`,
+    `target.dispatchEvent(new Event("a"));`,
+  ];
+  // The thenable keeps onRejected. Its caller rejects twice in a later turn, after a tick that throws and catches.
+  const thenableRejectsLater = [
+    `let onRejected;`,
+    `const target = new EventTarget();`,
+    `target.addEventListener("a", () => ({ then: (resolve, reject) => { onRejected = reject; } }));`,
+    `target.dispatchEvent(new Event("a"));`,
+    `setImmediate(() => {`,
+    `  process.nextTick(() => { try { throw new Error("caught in a tick, unrelated"); } catch {} });`,
+    `  onRejected("first");`,
+    `  onRejected(42);`,
+    `});`,
+  ];
+  // A server stops the work of a request when its response closes. The work catches its AbortError in the
+  // tick drain that reports what the async listener threw.
+  const abortListenerOfHttpServerThrows = [
+    `const { createServer } = require("node:http");`,
+    `const { setTimeout: sleep } = require("node:timers/promises");`,
+    `const server = createServer((request, response) => {`,
+    `  const controller = new AbortController();`,
+    `  controller.signal.addEventListener("abort", async () => { throw new Error("thrown by the abort listener"); });`,
+    `  (async () => { try { await sleep(60_000, null, { signal: controller.signal }); } catch {} })();`,
+    `  response.on("close", () => controller.abort());`,
+    `  response.end("ok");`,
+    `});`,
+    `server.listen(0, "127.0.0.1", async () => { await (await fetch("http://127.0.0.1:" + server.address().port)).text(); });`,
+  ];
+  // The timeout of a node:vm run is over and the script caught its error: no termination is pending any more.
+  const afterTheTimeoutOfAVmRun = listener => [
+    `try { require("node:vm").runInNewContext("for (;;);", {}, { timeout: 20 }); } catch (error) { console.log(error.code); }`,
+    `const target = new EventTarget();`,
+    `target.addEventListener("a", ${listener});`,
+    `target.dispatchEvent(new Event("a"));`,
+  ];
+  // The same, and the timeout cut a listener short: the dispatcher cleared that termination before the run ended.
+  // A deadline that passed before the listener was entered cut nothing short, so the run is made again with more time.
+  const afterATimeoutThatCutAListenerShort = [
+    `const { createContext, Script } = require("node:vm");`,
+    `const spins = new EventTarget();`,
+    `let entered = false;`,
+    `spins.addEventListener("a", () => { entered = true; for (;;); });`,
+    `const context = createContext({ dispatch: () => spins.dispatchEvent(new Event("a")) });`,
+    `let code;`,
+    `for (const timeout of [50, 250, 1250]) {`,
+    `  try { new Script("dispatch()").runInContext(context, { timeout }); } catch (error) { code = error.code; }`,
+    `  if (entered) break;`,
+    `}`,
+    `console.log(entered, code);`,
+    `const target = new EventTarget();`,
+    `target.addEventListener("a", { handleEvent: 123 });`,
+    `target.dispatchEvent(new Event("a"));`,
+  ];
+  // The pending tick makes the second async function catch its rejection before the tick that
+  // reports the first one's.
+  const asyncAttributeHandlerThrows = [
+    `const controller = new AbortController();`,
+    `controller.signal.onabort = async () => { throw new Error("thrown by onabort"); };`,
+    `controller.abort();`,
+    `(async () => { try { await Promise.reject(new Error("handled elsewhere, unrelated")); } catch {} })();`,
+    `process.nextTick(() => {});`,
+  ];
+
+  test.each([
+    [
+      "handleEvent is not callable",
+      [onUncaughtException(`console.log(String(error));`), ...handleEventNotCallable],
+      "TypeError: 'handleEvent' property of event listener should be callable\n",
+    ],
+    [
+      "handleEvent is not callable, after its getter caught an error",
+      [onUncaughtException(`console.log(String(error));`), ...handleEventGetterCatches],
+      "TypeError: 'handleEvent' property of event listener should be callable\n",
+    ],
+    [
+      "handleEvent is not callable, after an earlier listener caught an error",
+      [onUncaughtException(`console.log(String(error));`), ...earlierListenerCatches],
+      "TypeError: 'handleEvent' property of event listener should be callable\n",
+    ],
+    [
+      "handleEvent is not callable, while another error still propagates",
+      [onUncaughtException(`console.log(String(error));`), ...handleEventNotCallableInFinally],
+      "TypeError: 'handleEvent' property of event listener should be callable\nError: still propagating\n",
+    ],
+    [
+      "handleEvent is not callable, dispatched in a later turn",
+      [onUncaughtException(`console.log(String(error)); port1.close();`), ...handleEventNotCallableInLaterTurn],
+      "TypeError: 'handleEvent' property of event listener should be callable\n",
+    ],
+    [
+      "the listener's thenable rejects with an Error",
+      [
+        onUncaughtException(`console.log(error === reason, String(error));`),
+        ...thenableRejectsWith(`new Error("rejected by the listener")`),
+      ],
+      "true Error: rejected by the listener\n",
+    ],
+    [
+      "the listener's thenable rejects with a number",
+      [onUncaughtException(`console.log(typeof error, error);`), ...thenableRejectsWith(`42`)],
+      "number 42\n",
+    ],
+    [
+      "the listener's thenable rejects twice in a later turn",
+      [onUncaughtException(`console.log(typeof error, error);`), ...thenableRejectsLater],
+      "string first\nnumber 42\n",
+    ],
+    [
+      "an async on<event> handler throws",
+      [onUncaughtException(`console.log(String(error));`), ...asyncAttributeHandlerThrows],
+      "Error: thrown by onabort\n",
+    ],
+    [
+      "an async abort listener of a node:http server throws",
+      [onUncaughtException(`console.log(String(error)); server.close();`), ...abortListenerOfHttpServerThrows],
+      "Error: thrown by the abort listener\n",
+    ],
+    [
+      "handleEvent is not callable, after the script caught the timeout of a node:vm run",
+      [onUncaughtException(`console.log(String(error));`), ...afterTheTimeoutOfAVmRun(`{ handleEvent: 123 }`)],
+      "ERR_SCRIPT_EXECUTION_TIMEOUT\nTypeError: 'handleEvent' property of event listener should be callable\n",
+    ],
+    [
+      "handleEvent is not callable, after the script caught a timeout that cut a listener short",
+      [onUncaughtException(`console.log(String(error));`), ...afterATimeoutThatCutAListenerShort],
+      "true ERR_SCRIPT_EXECUTION_TIMEOUT\nTypeError: 'handleEvent' property of event listener should be callable\n",
+    ],
+    [
+      "the listener's thenable rejects, after the script caught the timeout of a node:vm run",
+      [
+        onUncaughtException(`console.log(String(error));`),
+        ...afterTheTimeoutOfAVmRun(
+          `() => ({ then: (resolve, reject) => reject(new Error("rejected by the listener")) })`,
+        ),
+      ],
+      "ERR_SCRIPT_EXECUTION_TIMEOUT\nError: rejected by the listener\n",
+    ],
+  ])("uncaughtException receives it: %s", async (_, lines, stdout) => {
+    expect(await run(lines)).toEqual({ stdout, stderr: "", exitCode: 0 });
+  });
+
+  test.each([
+    [
+      "handleEvent is not callable",
+      handleEventNotCallable,
+      [
+        `1 | try { throw new Error("caught before, unrelated"); } catch {}`,
+        `2 | const target = new EventTarget();`,
+        `3 | target.addEventListener("a", { handleEvent: 123 });`,
+        `4 | target.dispatchEvent(new Event("a"));`,
+        `           ^`,
+        `TypeError: 'handleEvent' property of event listener should be callable`,
+        `      at <cwd>/[eval]:4:8`,
+      ],
+    ],
+    [
+      "the listener's thenable rejects with an Error",
+      thenableRejectsWith(`new Error("rejected by the listener")`),
+      [
+        `1 | const reason = new Error("rejected by the listener");`,
+        `                       ^`,
+        `error: rejected by the listener`,
+        `      at <cwd>/[eval]:1:20`,
+      ],
+    ],
+    ["the listener's thenable rejects with a number", thenableRejectsWith(`42`), [`error: 42`]],
+  ])("the default report prints it: %s", async (_, lines, report) => {
+    expect(await run(lines)).toEqual({
+      stdout: "",
+      stderr: [...report, "", "Bun v<bun-version>"].join("\n"),
+      exitCode: 1,
+    });
+  });
+});
+
+// The timeout of a node:vm run asks the VM to stop. The dispatcher calls the next listener after it cleared that
+// termination, or before anything took it. A report made then would reach `bun test` as an unhandled error.
+describe("dispatchEvent does not report a handleEvent that is not callable while the timeout of a node:vm run is pending", () => {
+  // `listen` adds the listeners, and one of them says in `entered` that the timeout can now land where the test
+  // needs it. A deadline that passed before that shows nothing, so the dispatch is made again with more time.
+  function dispatchUnderTimeout(listen) {
+    let result;
+    for (const timeout of [50, 250, 1250]) {
+      const target = new EventTarget();
+      const entered = [];
+      listen(target, entered, timeout);
+      const context = createContext({ dispatch: () => target.dispatchEvent(new Event("a")) });
+      const script = new Script("dispatch()");
+      let code;
+      try {
+        script.runInContext(context, { timeout });
+      } catch (error) {
+        code = error.code;
+      }
+      result = { code, entered };
+      if (entered.length > 0) break;
+    }
+    return result;
+  }
+  function spin() {
+    const end = Date.now() + 5000;
+    while (Date.now() < end);
+  }
+
+  test("after the listener that the timeout cut short", () => {
+    const result = dispatchUnderTimeout((target, entered) => {
+      target.addEventListener("a", () => {
+        entered.push("first");
+        spin();
+      });
+      target.addEventListener("a", { handleEvent: 123 });
+    });
+    expect(result).toEqual({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT", entered: ["first"] });
+  });
+
+  test("after a listener that the dispatcher entered since", () => {
+    const result = dispatchUnderTimeout((target, entered) => {
+      let spins = false;
+      target.addEventListener("a", () => {
+        if (!spins) return;
+        entered.push("first");
+        spin();
+      });
+      target.addEventListener("a", () => {
+        if (entered.length > 0) entered.push("second");
+      });
+      // Both listeners have run once, so the second one is entered again after the timeout cut the first one short.
+      // That entry is the state under test: it empties the VM's last exception, which was the termination.
+      target.dispatchEvent(new Event("a"));
+      target.addEventListener("a", { handleEvent: 123 });
+      spins = true;
+    });
+    expect(result).toEqual({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT", entered: ["first", "second"] });
+  });
+
+  test("when the deadline passed inside its getter", () => {
+    const result = dispatchUnderTimeout((target, entered, timeout) => {
+      target.addEventListener("a", {
+        get handleEvent() {
+          entered.push("getter");
+          // The deadline has to pass inside one native call, with nothing after it that polls for the termination:
+          // a loop polls, and the termination interrupts Atomics.wait. The sleep outlasts a timer that is late.
+          Bun.sleepSync(timeout + 500);
+          return 123;
+        },
+      });
+    });
+    expect(result).toEqual({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT", entered: ["getter"] });
+  });
 });

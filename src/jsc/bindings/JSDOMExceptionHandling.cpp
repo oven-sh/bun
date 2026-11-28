@@ -81,9 +81,11 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSValue exceptionValue
     RELEASE_ASSERT(vm.currentThreadIsHoldingAPILock());
     auto* exception = dynamicDowncast<JSC::Exception>(exceptionValue);
     if (!exception) {
-        exception = vm.lastException();
-        if (!exception)
-            exception = JSC::Exception::create(lexicalGlobalObject->vm(), exceptionValue, JSC::Exception::StackCaptureAction::DoNotCaptureStack);
+        // A termination can be pending with no exception set: a dispatcher cleared it (JSC::profiledCall with a NakedPtr), or nothing has polled for it yet.
+        if (vm.hasPendingTermination()) [[unlikely]]
+            return;
+        // Upstream WebCore reports vm.lastException() here: the VM's latest throw, even a caught one, of any value.
+        exception = JSC::Exception::create(lexicalGlobalObject->vm(), exceptionValue, JSC::Exception::StackCaptureAction::DoNotCaptureStack);
     }
 
     reportException(lexicalGlobalObject, exception, cachedScript, fromModule);

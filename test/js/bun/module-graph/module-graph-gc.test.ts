@@ -432,9 +432,12 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
       expect(await lifetimes.survives("graph")).toBe(true);
 
       const sender = new BroadcastChannel("module-graph-gc " + type);
-      sender.postMessage(type === "message" ? "to the graph" : undeserializable());
-      expect(await heard.promise).toBe(type);
-      sender.close();
+      try {
+        sender.postMessage(type === "message" ? "to the graph" : undeserializable());
+        expect(await heard.promise).toBe(type);
+      } finally {
+        sender.close();
+      }
       expect(await lifetimes.stillAlive("graph")).toEqual([]);
     },
   );

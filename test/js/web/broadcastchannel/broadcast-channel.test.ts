@@ -364,15 +364,18 @@ describe("a channel that script reaches only through its messageerror listener",
   async function post(name: string, message: unknown) {
     const sender = new BroadcastChannel(name);
     const last = new BroadcastChannel(name);
-    const { promise, resolve } = Promise.withResolvers<void>();
-    last.onmessage = event => {
-      if (event.data === "last") resolve();
-    };
-    sender.postMessage(message);
-    sender.postMessage("last");
-    await promise;
-    sender.close();
-    last.close();
+    try {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      last.onmessage = event => {
+        if (event.data === "last") resolve();
+      };
+      sender.postMessage(message);
+      sender.postMessage("last");
+      await promise;
+    } finally {
+      sender.close();
+      last.close();
+    }
   }
 
   test.each([
@@ -460,22 +463,25 @@ describe("a channel that script reaches only through its messageerror listener",
        require("node:worker_threads").parentPort.postMessage("ready");`,
       { eval: true },
     );
-    const nextMessage = () => {
-      const { promise, resolve, reject } = Promise.withResolvers<unknown>();
-      worker.once("message", resolve);
-      worker.once("error", reject);
-      worker.once("exit", code => reject(new Error(`the worker exited with code ${code} before it posted`)));
-      return promise;
-    };
-    const ready = await nextMessage();
     const sender = new BroadcastChannel(name);
-    sender.postMessage(undeserializable());
-    sender.postMessage("last");
-    const heard = await nextMessage();
-    sender.close();
-    await worker.terminate();
+    try {
+      const nextMessage = () => {
+        const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+        worker.once("message", resolve);
+        worker.once("error", reject);
+        worker.once("exit", code => reject(new Error(`the worker exited with code ${code} before it posted`)));
+        return promise;
+      };
+      const ready = await nextMessage();
+      sender.postMessage(undeserializable());
+      sender.postMessage("last");
+      const heard = await nextMessage();
 
-    expect({ ready, heard }).toEqual({ ready: "ready", heard: [0, 1, 2, 3, 4, 5, 6, 7] });
+      expect({ ready, heard }).toEqual({ ready: "ready", heard: [0, 1, 2, 3, 4, 5, 6, 7] });
+    } finally {
+      sender.close();
+      await worker.terminate();
+    }
   });
 });
 

@@ -4617,11 +4617,6 @@ pub mod c {
     // stays free of an extra dependency and of deprecation noise.
     #[cfg(target_os = "macos")]
     unsafe extern "C" {
-        /// `extern mach_port_t mach_task_self_` — the task's send right,
-        /// cached by libsystem at startup. `mach_task_self()` in C is a macro
-        /// that just reads this global. Immutable for the process lifetime →
-        /// `safe static` (no read precondition).
-        safe static mach_task_self_: libc::mach_port_t;
         /// `mach_port_t mach_host_self(void)` — host privileged port.
         pub safe fn mach_host_self() -> libc::mach_port_t;
         /// `uint32_t _dyld_image_count(void)`
@@ -4633,12 +4628,8 @@ pub mod c {
         #[link_name = "_dyld_get_image_header"]
         safe fn dyld_get_image_header_raw(image_index: u32) -> *const core::ffi::c_void;
     }
-    /// `mach_task_self()` — C macro `#define mach_task_self() mach_task_self_`.
     #[cfg(target_os = "macos")]
-    #[inline]
-    pub fn mach_task_self() -> libc::mach_port_t {
-        mach_task_self_
-    }
+    pub use bun_core::ffi::mach_task_self;
     /// `_dyld_get_image_header(i)` — on 64-bit Darwin every loaded image is
     /// 64-bit, so present it as `*const mach_header_64`.
     #[cfg(target_os = "macos")]

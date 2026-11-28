@@ -71,7 +71,37 @@ impl MemoryAccessor {
         mem: -1,
     };
 
-    fn read(&mut self, address: usize, buf: &mut [u8]) -> bool {
+    /// `by_kernel_alone`: for an address that nothing has checked. The read fails where only `is_valid_memory` would stand in front of the copy.
+    fn read(
+        &mut self,
+        address: usize,
+        buf: &mut [u8],
+        #[cfg(not(target_os = "macos"))] by_kernel_alone: bool,
+    ) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            unsafe extern "C" {
+                fn mach_vm_read_overwrite(
+                    target_task: libc::mach_port_t,
+                    address: u64,
+                    size: u64,
+                    data: u64,
+                    out_size: *mut u64,
+                ) -> libc::kern_return_t;
+            }
+            let mut copied = 0u64;
+            // SAFETY: the kernel writes at most `buf.len()` bytes to `buf`, and answers with an error for what this task cannot read.
+            let result = unsafe {
+                mach_vm_read_overwrite(
+                    crate::ffi::mach_task_self(),
+                    address as u64,
+                    buf.len() as u64,
+                    buf.as_mut_ptr() as u64,
+                    &raw mut copied,
+                )
+            };
+            return result == libc::KERN_SUCCESS && copied == buf.len() as u64;
+        }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         loop {
             match self.mem {
@@ -131,23 +161,43 @@ impl MemoryAccessor {
                 }
             }
         }
-        if !is_valid_memory(address) {
-            return false;
+        #[cfg(not(target_os = "macos"))]
+        {
+            if by_kernel_alone || !is_valid_memory(address) {
+                return false;
+            }
+            // SAFETY: is_valid_memory just confirmed the page at `address` is mapped.
+            unsafe {
+                core::ptr::copy_nonoverlapping(address as *const u8, buf.as_mut_ptr(), buf.len());
+            }
+            true
         }
-        // SAFETY: is_valid_memory just confirmed the page at `address` is mapped.
-        unsafe {
-            core::ptr::copy_nonoverlapping(address as *const u8, buf.as_mut_ptr(), buf.len());
-        }
-        true
     }
 
     fn load_usize(&mut self, address: usize) -> Option<usize> {
         let mut result = [0u8; core::mem::size_of::<usize>()];
-        if self.read(address, &mut result) {
+        if self.read(
+            address,
+            &mut result,
+            #[cfg(not(target_os = "macos"))]
+            false,
+        ) {
             Some(usize::from_ne_bytes(result))
         } else {
             None
         }
+    }
+
+    #[cfg(not(windows))]
+    fn load_usize_by_kernel(&mut self, address: usize) -> Option<usize> {
+        let mut result = [0u8; core::mem::size_of::<usize>()];
+        self.read(
+            address,
+            &mut result,
+            #[cfg(not(target_os = "macos"))]
+            true,
+        )
+        .then(|| usize::from_ne_bytes(result))
     }
 }
 
@@ -161,6 +211,7 @@ impl Drop for MemoryAccessor {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn is_valid_memory(address: usize) -> bool {
     let page_size = bun_alloc::page_size();
     let aligned_address = address & !(page_size - 1);
@@ -338,7 +389,8 @@ pub fn note_compiled_code() {
 fn is_behind_call(address: usize, mut load: impl FnMut(usize) -> Option<usize>) -> bool {
     const OPCODE_OF_NEAR_CALL: u8 = 0xe8;
     const OPCODE_OF_GROUP_5: u8 = 0xff;
-    let Some(bytes) = load(address - core::mem::size_of::<usize>()).map(usize::to_le_bytes) else {
+    let before = address.checked_sub(core::mem::size_of::<usize>());
+    let Some(bytes) = before.and_then(&mut load).map(usize::to_le_bytes) else {
         return false;
     };
     let calls_through =
@@ -366,6 +418,58 @@ fn caller_by_frame_record(
         fp.checked_add(2 * WORD)?,
         caller_fp,
     ))
+}
+
+/// The registers of the caller of a function that has not run its first instruction, given those there: (pc, sp, fp). `None` where a return led there.
+#[cfg(not(windows))]
+fn caller_at_function_entry(
+    pc: usize,
+    sp: usize,
+    fp: usize,
+    link_register: Option<usize>,
+    mut load: impl FnMut(usize) -> Option<usize>,
+) -> Option<(usize, usize, usize)> {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let return_address = strip_return_address_signature(link_register?);
+        // As `StackIterator` reads it: a register that is 0 or not aligned holds no address of a frame record.
+        let in_frame_record = Some(fp)
+            .filter(|fp| *fp != 0 && fp.is_multiple_of(core::mem::align_of::<usize>()))
+            .and_then(|fp| fp.checked_add(StackIterator::PC_OFFSET))
+            .and_then(&mut load);
+        // A return jumps to x30, and a function that has run without a call still has there what its frame record holds.
+        if return_address == 0
+            || return_address == strip_return_address_signature(pc)
+            || in_frame_record.map(strip_return_address_signature) == Some(return_address)
+        {
+            return None;
+        }
+        Some((return_address, sp, fp))
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        const WORD: usize = core::mem::size_of::<usize>();
+        let _ = (pc, link_register);
+        // A call pushes one word onto a stack that the ABI aligns to 16 bytes, and a return pops it.
+        if sp % (2 * WORD) != WORD {
+            return None;
+        }
+        let return_address = load(sp)?;
+        // The tables are asked after this read, because they read the code in front of the word themselves.
+        if !is_behind_call(return_address, &mut load) {
+            return None;
+        }
+        // No table says what code that compiled functions share has on the stack, so the walk does not start in it.
+        if compiled_frame_at_return_address(return_address).is_some_and(|frame| frame.is_in_stub) {
+            return None;
+        }
+        Some((return_address, sp.checked_add(WORD)?, fp))
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        let _ = (pc, sp, fp, link_register, &mut load);
+        None
+    }
 }
 
 /// Through how many frames the registers of one lead, that one counted, up to `most`.
@@ -786,6 +890,15 @@ pub fn capture_from_context(
     n
 }
 
+/// The addresses that `capture_from_fault` wrote.
+#[cfg(not(windows))]
+#[derive(Clone, Copy, Default)]
+pub struct FaultTrace {
+    pub len: usize,
+    /// The first address could not be fetched, and the second is where the function goes on that called it or jumped to it.
+    pub starts_at_caller: bool,
+}
+
 #[cfg(not(windows))]
 fn walk(mut it: StackIterator, out: &mut [usize]) -> usize {
     let mut n = 0usize;
@@ -805,23 +918,46 @@ fn walk(mut it: StackIterator, out: &mut [usize]) -> usize {
 /// frame record: where the fault lies in one, the frame-pointer chain starts at a caller far up the stack, and the callers in
 /// between are found from the stack pointer and the tables. `behind_pc` lies behind the start of the instruction at `pc` and
 /// not behind its end: the tables are asked about return addresses.
+/// `fault_address` is what a fault could not read, write or run. Where it is `pc`, the instruction there was not fetched, and the walk starts at the function that called it or jumped to it. `link_register` is x30 at the fault, if it can be the return address of that function.
 #[cfg(not(windows))]
 pub fn capture_from_fault(
     pc: usize,
     behind_pc: usize,
     fp: usize,
     sp: usize,
+    fault_address: Option<usize>,
+    link_register: Option<usize>,
     out: &mut [usize],
-) -> usize {
+) -> FaultTrace {
     if out.is_empty() {
-        return 0;
+        return FaultTrace::default();
     }
     // Without FEAT_FPAC a return address that fails to authenticate gets bits in that place, and the return to it faults.
     out[0] = strip_return_address_signature(pc);
+    if fault_address == Some(pc) {
+        let mut ma = MemoryAccessor::INIT;
+        let mut load = |address| ma.load_usize_by_kernel(address);
+        let own = 0usize;
+        // What the rule reads, nothing has checked. So it reads by the kernel alone, and applies only where a word of this frame can be read that way.
+        let reads = load(core::ptr::from_ref(&own).expose_provenance()).is_some();
+        if reads
+            && let Some((pc, sp, fp)) = caller_at_function_entry(pc, sp, fp, link_register, load)
+        {
+            // A return address lies behind its call.
+            let callers = capture_from_fault(pc, pc, fp, sp, None, None, &mut out[1..]);
+            return FaultTrace {
+                len: 1 + callers.len,
+                starts_at_caller: true,
+            };
+        }
+    }
     let mut it = StackIterator::init(fp);
     if cfg!(target_arch = "x86_64") {
         it.returned_to = Some((behind_pc, sp));
         it.is_at_fault = true;
     }
-    1 + walk(it, &mut out[1..])
+    FaultTrace {
+        len: 1 + walk(it, &mut out[1..]),
+        starts_at_caller: false,
+    }
 }

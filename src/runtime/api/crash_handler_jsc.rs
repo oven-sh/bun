@@ -6,7 +6,7 @@ use bun_core::String as BunString;
 use bun_core::{Environment, Global};
 use bun_crash_handler as crash_handler;
 
-use crate::generated_bindgen::crash_handler_jsc::FeatureData;
+use crate::generated_bindgen::crash_handler_jsc::{FaultState, FeatureData};
 
 pub(crate) fn get_mach_o_image_zero_offset() -> Option<f64> {
     #[cfg(not(target_os = "macos"))]
@@ -237,6 +237,155 @@ pub(crate) fn stack_trace_starts_at_signed_return_address() -> Option<bool> {
     }
     #[cfg(not(all(target_arch = "aarch64", target_os = "linux")))]
     {
+        None
+    }
+}
+
+/// Whether the stack trace of a fault in `state` has the return address that the state holds for the function at the fault, and then the callers of this function. `None` where the processor has no such state, and for a trace that is neither.
+pub(crate) fn fault_walk_starts_at_caller(state: FaultState) -> Option<bool> {
+    #[cfg(all(unix, any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        use bun_core::debug::{capture_from_fault, frame_address, return_address_of_frame};
+        use bun_sys::Mmap;
+        use core::ptr::NonNull;
+
+        const READ_WRITE: i32 = libc::PROT_READ | libc::PROT_WRITE;
+        fn pages(count: usize, access: i32) -> Option<Mmap> {
+            let length = count * bun_sys::page_size();
+            let flags = libc::MAP_PRIVATE | libc::MAP_ANON;
+            Mmap::new(length, access, flags, bun_sys::Fd::from_native(-1), 0).ok()
+        }
+        /// One page of memory whose next page is not mapped.
+        fn page_in_front_of_none() -> Option<Mmap> {
+            let page = bun_sys::page_size();
+            let first = pages(2, READ_WRITE)?.into_raw().cast::<u8>();
+            let page_at = |start| NonNull::slice_from_raw_parts(start, page);
+            // SAFETY: the two pages are from one `mmap`, and each becomes the value's that is made of it.
+            unsafe {
+                drop(Mmap::from_raw(page_at(first.add(page))));
+                Some(Mmap::from_raw(page_at(first)))
+            }
+        }
+
+        /// x86-64: `call rax` ends it.
+        static CODE: [u8; 16] = [
+            0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+            0xff, 0xd0,
+        ];
+        const CALL: [u8; 2] = [0xff, 0xd0];
+        const NOT_MAPPED: usize = 8;
+        let page = bun_sys::page_size();
+        let fp = frame_address();
+        // SAFETY: `fp` is the frame record of this function.
+        let caller = unsafe { return_address_of_frame(fp) };
+        // The memory that a state points into. It lasts until the trace is taken.
+        let memory = match state {
+            FaultState::WordBehindEndOfMemory => Some(page_in_front_of_none()?),
+            FaultState::WordInMemoryThatCannotBeRead | FaultState::FrameRecordThatCannotBeRead => {
+                Some(pages(1, libc::PROT_NONE)?)
+            }
+            FaultState::CallAcrossTwoPages => {
+                let mut both = pages(2, READ_WRITE)?;
+                // SAFETY: the pages are anonymous, and they can be read and written.
+                unsafe { both.as_mut_slice()[page - 1..=page].copy_from_slice(&CALL) };
+                Some(both)
+            }
+            _ => None,
+        };
+        let memory = memory.as_ref().map_or(0, |memory| memory.as_ptr().addr());
+        let behind_call = match state {
+            FaultState::CallAcrossTwoPages => memory + page + 1,
+            _ => CODE.as_ptr_range().end.addr(),
+        };
+
+        // Which word is what a call pushed, and what `pc`, the fault address and x30 are.
+        let (pushed, pc, fault_address, link_register) = match state {
+            FaultState::CallOfZero => (behind_call, 0, Some(0), behind_call),
+            FaultState::CallOfAddressThatCannotRun => {
+                (behind_call, NOT_MAPPED, Some(NOT_MAPPED), behind_call)
+            }
+            FaultState::FaultOnData => (behind_call, NOT_MAPPED, Some(2 * NOT_MAPPED), behind_call),
+            FaultState::SignalWithoutFaultAddress => (behind_call, 0, None, behind_call),
+            FaultState::ReturnToAddressThatCannotRun => {
+                (behind_call, NOT_MAPPED, Some(NOT_MAPPED), NOT_MAPPED)
+            }
+            FaultState::LinkRegisterOfZero if cfg!(target_arch = "aarch64") => {
+                (behind_call, NOT_MAPPED, Some(NOT_MAPPED), 0)
+            }
+            FaultState::LinkRegisterOfFrameRecord if cfg!(target_arch = "aarch64") => {
+                (behind_call, NOT_MAPPED, Some(NOT_MAPPED), caller)
+            }
+            FaultState::FrameRecordThatCannotBeRead
+            | FaultState::UnalignedFrameRecordThatHoldsLinkRegister
+                if cfg!(target_arch = "aarch64") =>
+            {
+                (behind_call, NOT_MAPPED, Some(NOT_MAPPED), behind_call)
+            }
+            FaultState::WordThatNoCallPushed if cfg!(target_arch = "x86_64") => {
+                (behind_call - CALL.len(), 0, Some(0), 0)
+            }
+            FaultState::WordBelowEveryCall if cfg!(target_arch = "x86_64") => (1, 0, Some(0), 0),
+            FaultState::StackThatCannotBeRead if cfg!(target_arch = "x86_64") => (0, 0, Some(0), 0),
+            // Of the 8 bytes in front of the word, where a call would be, the last one is not mapped.
+            FaultState::WordBehindEndOfMemory if cfg!(target_arch = "x86_64") => {
+                (memory + page + 1, 0, Some(0), 0)
+            }
+            FaultState::WordInMemoryThatCannotBeRead if cfg!(target_arch = "x86_64") => {
+                (memory + core::mem::size_of::<usize>(), 0, Some(0), 0)
+            }
+            FaultState::CallAcrossTwoPages if cfg!(target_arch = "x86_64") => {
+                (behind_call, 0, Some(0), 0)
+            }
+            _ => return None,
+        };
+
+        #[repr(align(8))]
+        struct Aligned([u8; 24]);
+        let mut holds_link_register = Aligned([0; 24]);
+        holds_link_register.0[9..17].copy_from_slice(&behind_call.to_ne_bytes());
+        let [_, not_aligned, ..] = &core::hint::black_box(&holds_link_register).0;
+        // AArch64: what x29 is where it is the address of no frame record. No callers are found from it.
+        let (fp, caller) = match state {
+            FaultState::FrameRecordThatCannotBeRead => (memory, 0),
+            FaultState::UnalignedFrameRecordThatHoldsLinkRegister => {
+                (core::ptr::from_ref(not_aligned).expose_provenance(), 0)
+            }
+            _ => (fp, caller),
+        };
+
+        // x86-64: a call leaves the stack pointer at the second word, and a return at the first.
+        #[repr(align(16))]
+        struct Stack([usize; 2]);
+        let stack = Stack([pushed; 2]);
+        let [at_return, at_call] = &core::hint::black_box(&stack).0;
+        let sp = match state {
+            FaultState::ReturnToAddressThatCannotRun => {
+                core::ptr::from_ref(at_return).expose_provenance()
+            }
+            FaultState::StackThatCannotBeRead => NOT_MAPPED,
+            _ => core::ptr::from_ref(at_call).expose_provenance(),
+        };
+        let link_register = cfg!(target_arch = "aarch64").then_some(link_register);
+
+        let mut trace = [0usize; 3];
+        let found = capture_from_fault(
+            pc,
+            pc.wrapping_add(1),
+            fp,
+            sp,
+            fault_address,
+            link_register,
+            &mut trace,
+        );
+        match (found.starts_at_caller, trace) {
+            (true, [_, first, second]) if first == behind_call && second == caller => Some(true),
+            (false, [_, first, second]) if first == caller && second != caller => Some(false),
+            _ => None,
+        }
+    }
+    #[cfg(not(all(unix, any(target_arch = "x86_64", target_arch = "aarch64"))))]
+    {
+        let _ = state;
         None
     }
 }

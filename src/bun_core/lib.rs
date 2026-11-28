@@ -2336,6 +2336,16 @@ pub mod ffi {
         u
     }
 
+    /// `mach_task_self()`: the send right of this task. In C it is a macro that reads this global, which libsystem sets once when the process starts.
+    #[cfg(target_os = "macos")]
+    #[inline]
+    pub fn mach_task_self() -> libc::mach_port_t {
+        unsafe extern "C" {
+            safe static mach_task_self_: libc::mach_port_t;
+        }
+        mach_task_self_
+    }
+
     /// Borrow a fixed-size `[c_char; N]` C-struct field as `&[u8]`, truncated at
     /// the first NUL (or full length if none). This is the `&[c_char]` analogue
     /// of [`cstr_bytes`] for inline arrays like `utsname::release`.

@@ -10,6 +10,7 @@ import {
   isLinux,
   isPosix,
   isWindows,
+  libcPathForDlopen,
   mergeWindowEnvs,
   tempDir,
 } from "harness";
@@ -64,6 +65,219 @@ test.if(isDebug && isLinux && hasSymbolizer)(
 const hasPointerAuthentication = isLinux && isArm64 && /\bpaca\b/.test(readFileSync("/proc/cpuinfo", "utf8"));
 test.if(hasPointerAuthentication)("a stack trace takes the signature off a return address", () => {
   expect(crash_handler.stackTraceStartsAtSignedReturnAddress()).toBe(true);
+});
+
+// What a child runs first to close both reads that the kernel offers of a process's own memory, with a seccomp filter.
+// Where the kernel refuses the filter, it says so in one line and ends.
+const closesKernelReads = isLinux
+  ? `
+const { dlopen, ptr } = require("bun:ffi");
+const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, {
+  prctl: { args: ["i32", "u64", "u64", "u64", "u64"], returns: "i32" },
+  process_vm_readv: { args: ["i32", "ptr", "u64", "ptr", "u64", "u64"], returns: "i64" },
+}).symbols;
+const load = 0x20, jumpIfEqual = 0x15, answer = 0x06, allow = 0x7fff0000, notPermitted = 0x00050000 | 1;
+const architecture = 4, systemCall = 0, setNoNewPrivileges = 38, setFilter = 22, filterMode = 2;
+const [thisArchitecture, processVmReadv, openat, open] =
+  process.arch === "arm64" ? [0xc00000b7, 270, 56, 56] : [0xc000003e, 310, 257, 2];
+const instructions = [
+  [load, 0, 0, architecture], [jumpIfEqual, 1, 0, thisArchitecture], [answer, 0, 0, allow],
+  [load, 0, 0, systemCall],
+  [jumpIfEqual, 2, 0, processVmReadv], [jumpIfEqual, 1, 0, openat], [jumpIfEqual, 0, 1, open],
+  [answer, 0, 0, notPermitted],
+  [answer, 0, 0, allow],
+];
+const filter = new Uint8Array(instructions.length * 8);
+const view = new DataView(filter.buffer);
+instructions.forEach(([code, ifTrue, ifFalse, operand], i) => {
+  view.setUint16(i * 8, code, true);
+  view.setUint8(i * 8 + 2, ifTrue);
+  view.setUint8(i * 8 + 3, ifFalse);
+  view.setUint32(i * 8 + 4, operand, true);
+});
+const filterProgram = new BigUint64Array([BigInt(instructions.length), BigInt(ptr(filter))]);
+// What the hook and the end of the process need is loaded while files can be opened.
+require("bun:internal-for-testing").crash_handler.faultWalkStartsAtCaller("callOfZero");
+if (libc.prctl(setNoNewPrivileges, 1, 0, 0, 0) || libc.prctl(setFilter, filterMode, ptr(filterProgram), 0, 0)) {
+  console.log(JSON.stringify(["the filter was refused", null]));
+  process.exit(0);
+}
+const from = new BigUint64Array([42n]), to = new BigUint64Array(1);
+const vector = words => new BigUint64Array([BigInt(ptr(words)), 8n]);
+const [local, remote] = [vector(to), vector(from)];
+const read = Number(libc.process_vm_readv(process.pid, ptr(local), 1, ptr(remote), 1, 0));
+let opened = "opened";
+try {
+  require("fs").openSync("/proc/self/mem", "r");
+} catch (error) {
+  opened = error.code;
+}
+if (read !== -1 || opened !== "EPERM") throw new Error("the kernel still reads: " + JSON.stringify({ read, opened }));
+`
+  : "";
+// LeakSanitizer lists the threads from /proc where the process ends, which the filter refuses too.
+const withoutKernelReadsEnv = {
+  ...noReportEnv,
+  ASAN_OPTIONS: [noReportEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+};
+// A container can refuse a seccomp filter. A child finds that out before the test is declared: the test is then skipped by
+// name, and does not pass without a check. bun:ffi, which installs the filter, needs what a hardened build does not give.
+const takesSeccompFilter =
+  isLinux &&
+  !!without("a hardened build") &&
+  !(await (async () => {
+    await using probe = Bun.spawn({
+      cmd: [bunExe(), "-e", closesKernelReads],
+      env: withoutKernelReadsEnv,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return (await probe.stdout.text()).includes("the filter was refused");
+  })());
+
+// The instruction at an address where nothing can run is not fetched, and no frame record names the function that called
+// it or jumped to it. On AArch64 x30 does, and on x86-64 the word that the call pushed. A return leaves neither.
+describe.if(isPosix)("the stack trace of a fault at an address that cannot be run", () => {
+  const isX64 = process.arch === "x64";
+  const onArm64 = (startsAtCaller: boolean) => (isArm64 ? startsAtCaller : null);
+  const onX64 = (startsAtCaller: boolean) => (isX64 ? startsAtCaller : null);
+  // Each state is the registers of such a fault, and the answer is whether the stack trace starts at that function.
+  // `null`: the processor has no such state.
+  const states = [
+    ["a call of 0", "callOfZero", true],
+    ["a call of another address that cannot be run", "callOfAddressThatCannotRun", true],
+    ["a fault on data", "faultOnData", false],
+    ["a signal without a fault address", "signalWithoutFaultAddress", false],
+    ["a return to an address that cannot be run", "returnToAddressThatCannotRun", false],
+    // What x30 holds where no call has set it.
+    ["a link register of 0", "linkRegisterOfZero", onArm64(false)],
+    [
+      "a link register that the frame record holds, in a function that has run",
+      "linkRegisterOfFrameRecord",
+      onArm64(false),
+    ],
+    // What x29 holds where it is the address of no frame record. Nothing says that the function has run, and x30 is taken.
+    ["a frame pointer into memory that cannot be read", "frameRecordThatCannotBeRead", onArm64(true)],
+    [
+      "a frame pointer that is not aligned, in front of what x30 holds",
+      "unalignedFrameRecordThatHoldsLinkRegister",
+      onArm64(true),
+    ],
+    // What the stack pointer is at where no call has pushed it.
+    ["a word on the stack that no call instruction ends at", "wordThatNoCallPushed", onX64(false)],
+    ["a word on the stack below 8", "wordBelowEveryCall", onX64(false)],
+    ["a stack pointer that cannot be read", "stackThatCannotBeRead", onX64(false)],
+    ["a word on the stack one byte behind the end of memory", "wordBehindEndOfMemory", onX64(false)],
+    ["a word on the stack in memory that cannot be read", "wordInMemoryThatCannotBeRead", onX64(false)],
+    ["a word on the stack behind a call instruction that lies on two pages", "callAcrossTwoPages", onX64(true)],
+  ] as const;
+
+  // A wrong walk reads what cannot be read and ends its process, so a child takes the states. It says one at a time,
+  // and the states that it did not come to are missing. `before` runs first in the child.
+  async function answersOfChild(of: readonly (typeof states)[number][], before = "", env = noReportEnv) {
+    const program = `${before}
+const { crash_handler } = require("bun:internal-for-testing");
+for (const state of ${JSON.stringify(of.map(([, state]) => state))})
+  console.log(JSON.stringify([state, crash_handler.faultWalkStartsAtCaller(state)]));`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", program],
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const answered = new Map<string, boolean | null>(
+      stdout
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map(line => JSON.parse(line)),
+    );
+    const answers = Object.fromEntries(
+      of.filter(([, state]) => answered.has(state)).map(([name, state]) => [name, answered.get(state)]),
+    );
+    return { answers, exitCode, signalCode: proc.signalCode, stderr: exitCode === 0 ? "" : stderr };
+  }
+
+  test.concurrent("each state of the registers", async () => {
+    expect(await answersOfChild(states)).toEqual({
+      answers: Object.fromEntries(states.map(([name, , startsAtCaller]) => [name, startsAtCaller])),
+      exitCode: 0,
+      signalCode: null,
+      stderr: "",
+    });
+  });
+
+  // Where the kernel offers no read of the process's own memory, the walk copies memory itself after it has asked whether
+  // the page is mapped. That is no answer for an address that nothing has checked, so the rule is off there: each trace
+  // is as without it. The filter closes process_vm_readv and /proc/<pid>/mem, and the child shows that both are closed.
+  test.concurrent.if(takesSeccompFilter)("each state without a read by the kernel", async () => {
+    // The walk of main reads a frame record in memory that cannot be read itself, with or without the rule.
+    const read = states.filter(([, state]) => state !== "frameRecordThatCannotBeRead");
+    // From a frame pointer that is not aligned the walk finds no caller, which the hook takes for neither answer.
+    const isNeither = (state: string) => state === "unalignedFrameRecordThatHoldsLinkRegister";
+    expect(await answersOfChild(read, closesKernelReads, withoutKernelReadsEnv)).toEqual({
+      answers: Object.fromEntries(
+        read.map(([name, state, startsAtCaller]) => [name, startsAtCaller === null || isNeither(state) ? null : false]),
+      ),
+      exitCode: 0,
+      signalCode: null,
+      stderr: "",
+    });
+  });
+
+  // The same through the signal handler, with the registers that the kernel saved. C code that bun:ffi compiles calls
+  // the address. No image holds the address, that code, or the thunk that called it: the report starts with as many
+  // frames that it cannot place as `unplaced` says. The second is the C code, and without it there is one less.
+  async function callOf(target: string, ...args: string[]) {
+    const call = `new (require("bun:ffi").CFunction)({ ptr: ${target}, args: [], returns: "void" })()`;
+    await using proc = Bun.spawn({
+      cmd: withoutCoreDump([bunExe(), "-e", call, "--debug-crash-handler-use-trace-string", ...args]),
+      env: noReportEnv,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // After the version: the platform, the command, the format and 7 characters of commit, two VLQs of feature bits,
+    // and the frames, where `_` is one that no image holds.
+    const unplaced = stderr.match(/\/\d+\.\d+\.\d+\/.{10}(?:[g-z0-9+/]*[A-Za-f]){2}(_*)/)?.[1].length;
+    return { reason: stderr.match(/^panic\(main thread\): (.*) at address 0x/m)?.[1], unplaced, exitCode };
+  }
+  // bun:ffi needs memory that it can write and run, and ASAN answers a fault itself.
+  const takesRealFaults = (isLinux || process.platform === "darwin") && !isASAN && !!without("a hardened build");
+
+  test.concurrent.if(takesRealFaults)("a real call of an address where nothing is mapped", async () => {
+    expect(await callOf("8")).toEqual({
+      reason: "Segmentation fault",
+      unplaced: 3,
+      exitCode: 128 + osConstants.signals.SIGSEGV,
+    });
+  });
+
+  // macOS raises SIGBUS for what is mapped and cannot be run.
+  test.concurrent.if(takesRealFaults)("a real call of memory that holds data", async () => {
+    const signal = isLinux ? "SIGSEGV" : "SIGBUS";
+    expect(await callOf(`require("bun:ffi").ptr(new Uint8Array(64))`)).toEqual({
+      reason: isLinux ? "Segmentation fault" : "Bus error",
+      unplaced: 3,
+      exitCode: 128 + osConstants.signals[signal],
+    });
+  });
+
+  // Linux raises SIGBUS with BUS_ADRERR for a page that its file does not hold. Code that is running faults like this
+  // when its file is cut, so x30 is not taken for the return address of what runs there. x86-64 looks at the stack.
+  test.concurrent.if(takesRealFaults && isLinux)("a real call of a page that its file does not hold", async () => {
+    using dir = tempDir("crash-call-of-page-without-file", { "empty": "" });
+    const mapped = `(() => {
+      const { mmap } = require("bun:ffi").dlopen(${JSON.stringify(libcPathForDlopen())}, {
+        mmap: { args: ["ptr", "usize", "i32", "i32", "i32", "i64"], returns: "ptr" },
+      }).symbols;
+      // PROT_READ | PROT_EXEC, MAP_PRIVATE
+      return mmap(null, 16384, 1 | 4, 2, require("fs").openSync(process.argv.at(-1), "r"), 0);
+    })()`;
+    expect(await callOf(mapped, path.join(String(dir), "empty"))).toEqual({
+      reason: "Bus error",
+      unplaced: isArm64 ? 2 : 3,
+      exitCode: 128 + osConstants.signals.SIGBUS,
+    });
+  });
 });
 
 // The program finds the return addresses that `descend` has left on the stack and changes the bits where a signature goes.

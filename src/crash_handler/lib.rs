@@ -610,6 +610,17 @@ mod draft {
     }
 
     impl CrashReason<'_> {
+        /// What the fault could not read, write or run, for the faults that say so.
+        #[cfg(unix)]
+        fn fault_address(&self) -> Option<usize> {
+            match *self {
+                CrashReason::SegmentationFault(address) | CrashReason::BusError(address) => {
+                    Some(address)
+                }
+                _ => None,
+            }
+        }
+
         /// Signal to terminate the process with after the crash report has
         /// been printed. Signal-originated crashes re-raise the original
         /// fault so the parent process (and core-dump analyzers) see the
@@ -740,6 +751,8 @@ mod draft {
             behind_pc: usize,
             fp: usize,
             sp: usize,
+            /// x30, where the function at `pc` may not have run yet.
+            link_register: Option<usize>,
             context: SignalContext<'a>,
         },
         /// Walk the current stack and trim the capture machinery above this PC.
@@ -816,6 +829,8 @@ mod draft {
                 let _ = PANICKING.fetch_add(1, Ordering::SeqCst);
                 let addresses_in_trace: [usize; 20];
                 let trace_address_count: usize;
+                // The frames are described from an address whose call has not started its callee. That is the second where the first was not fetched and is no compiled code: a compiled function may have run before its page could not be fetched.
+                let first_described_address: usize;
 
                 {
                     let _panic_guard = PANIC_MUTEX.lock();
@@ -1013,7 +1028,7 @@ mod draft {
                     let mut addr_buf: [usize; 20] = [0; 20];
 
                     let trace: &[usize] = {
-                        let idx: usize = match seed {
+                        let (idx, starts_at_caller): (usize, bool) = match seed {
                             // For an actual fault the signal/exception handler hands
                             // us the saved register context. Seeding the walk from
                             // the fault `pc`/`fp` is the only reliable way to recover
@@ -1022,30 +1037,43 @@ mod draft {
                             // disjoint from the faulting thread's, and release builds
                             // strip the unwind tables a CFI-based capture would need.
                             #[cfg(windows)]
-                            TraceSeed::Fault { pc, context } => {
-                                bun_core::debug::capture_from_context(pc, context, &mut addr_buf)
-                            }
+                            TraceSeed::Fault { pc, context } => (
+                                bun_core::debug::capture_from_context(pc, context, &mut addr_buf),
+                                // The walk pops a return address where `pc` has no function entry, and does not say that it did.
+                                false,
+                            ),
                             #[cfg(unix)]
                             TraceSeed::FaultOnStack {
                                 pc,
                                 behind_pc,
                                 fp,
                                 sp,
+                                link_register,
                                 ..
-                            } => bun_core::debug::capture_from_fault(
-                                pc,
-                                behind_pc,
-                                fp,
-                                sp,
-                                &mut addr_buf,
-                            ),
+                            } => {
+                                let found = bun_core::debug::capture_from_fault(
+                                    pc,
+                                    behind_pc,
+                                    fp,
+                                    sp,
+                                    reason.fault_address(),
+                                    link_register,
+                                    &mut addr_buf,
+                                );
+                                (found.len, found.starts_at_caller)
+                            }
                             TraceSeed::BeginAddr(addr) => {
-                                debug::capture_stack_trace(addr, &mut addr_buf)
+                                (debug::capture_stack_trace(addr, &mut addr_buf), false)
                             }
-                            TraceSeed::None => {
-                                debug::capture_stack_trace(debug::return_address(), &mut addr_buf)
-                            }
+                            TraceSeed::None => (
+                                debug::capture_stack_trace(debug::return_address(), &mut addr_buf),
+                                false,
+                            ),
                         };
+                        first_described_address = usize::from(
+                            starts_at_caller
+                                && crate::compiled_frames::offset_in_code(addr_buf[0]).is_none(),
+                        );
                         &addr_buf[..idx.min(addr_buf.len())]
                     };
                     addresses_in_trace = addr_buf;
@@ -1166,11 +1194,7 @@ mod draft {
                         any(target_arch = "x86_64", target_arch = "aarch64")
                     ))]
                     if let TraceSeed::FaultOnStack { context, .. } = seed {
-                        let fault = match reason {
-                            CrashReason::SegmentationFault(address)
-                            | CrashReason::BusError(address) => Some(address),
-                            _ => None,
-                        };
+                        let fault = reason.fault_address();
                         crate::fault_registers::write_to(context, fault, &mut |text| {
                             let _ = writer.write_all(text);
                         });
@@ -1206,7 +1230,7 @@ mod draft {
                 reset_segfault_handler();
 
                 crate::compiled_frames::write_frames_on_stack(
-                    &addresses_in_trace[..trace_address_count],
+                    &addresses_in_trace[first_described_address..trace_address_count],
                     &mut |text| {
                         let _ = stderr_writer().write_all(text);
                     },
@@ -1616,6 +1640,8 @@ mod draft {
         const SEGV_MAPERR: c_int = 1;
         // What Linux says of an instruction that may not be run at all: on x86-64 removed code is filled with `hlt`.
         const SI_KERNEL: c_int = 0x80;
+        // What Linux says of a page that its file no longer holds. Code on one faults in the middle of a function, where x30 is no return address of it.
+        const BUS_ADRERR: c_int = 2;
         let pc = registers.map(|(pc, _, _)| pc);
         let code = info.si_code;
         let is_page_fault = match sig {
@@ -1668,6 +1694,14 @@ mod draft {
                     },
                     fp,
                     sp,
+                    link_register: if cfg!(target_os = "linux")
+                        && sig == libc::SIGBUS
+                        && code == BUS_ADRERR
+                    {
+                        None
+                    } else {
+                        return_address_at_function_entry(context)
+                    },
                     context,
                 },
                 None => TraceSeed::None,
@@ -3785,4 +3819,70 @@ mod draft {
         bun_core::keep_symbols!(CrashHandler__unsupportedUVFunction);
     }
     // Rust links #[no_mangle] symbols unconditionally.
+
+    #[cfg(all(test, unix))]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn only_a_fault_on_memory_says_what_could_not_be_reached() {
+            assert_eq!(CrashReason::SegmentationFault(8).fault_address(), Some(8));
+            assert_eq!(CrashReason::BusError(8).fault_address(), Some(8));
+            // These have the address of an instruction that was fetched.
+            assert_eq!(CrashReason::IllegalInstruction(8).fault_address(), None);
+            assert_eq!(CrashReason::FloatingPointError(8).fault_address(), None);
+            assert_eq!(CrashReason::Trap(8).fault_address(), None);
+        }
+
+        /// Whether the stack trace of a call of 0 starts at the word that the stack pointer is at, which is the address behind `code`.
+        #[cfg(target_arch = "x86_64")]
+        fn starts_behind(code: &[u8]) -> bool {
+            // A call leaves the stack pointer at a word that is 8 above a multiple of 16.
+            #[repr(align(16))]
+            struct Stack([usize; 2]);
+            let mut padded = [0x90u8; 16];
+            padded[16 - code.len()..].copy_from_slice(code);
+            let padded = core::hint::black_box(&padded);
+            let behind_code = padded.as_ptr_range().end.expose_provenance();
+            let stack = Stack([0, behind_code]);
+            let pushed = core::ptr::from_ref(&core::hint::black_box(&stack).0[1]);
+            let mut trace = [0usize; 2];
+            bun_core::debug::capture_from_fault(
+                0,
+                1,
+                bun_core::debug::frame_address(),
+                pushed.expose_provenance(),
+                Some(0),
+                None,
+                &mut trace,
+            );
+            trace[1] == behind_code
+        }
+
+        #[cfg(target_arch = "x86_64")]
+        #[test]
+        fn the_word_behind_each_form_of_a_call_is_where_the_walk_starts() {
+            let calls: [&[u8]; 10] = [
+                &[0xe8, 0, 0, 0, 0],
+                &[0xff, 0xd0],
+                &[0xff, 0x10],
+                &[0x41, 0xff, 0xd3],
+                &[0xff, 0x50, 0x08],
+                &[0xff, 0x14, 0xc8],
+                &[0xff, 0x54, 0x24, 0x08],
+                &[0xff, 0x15, 0, 0, 0, 0],
+                &[0xff, 0x90, 0, 1, 0, 0],
+                &[0xff, 0x94, 0x24, 0, 1, 0, 0],
+            ];
+            for call in calls {
+                assert!(starts_behind(call), "{call:02x?}");
+            }
+            // `jmp rax`, `push [rax]`, and no instruction but `nop`.
+            for other in [&[0xff, 0xe0][..], &[0xff, 0x30], &[]] {
+                assert!(!starts_behind(other), "{other:02x?}");
+            }
+            // `mov qword ptr [rbp - 0x18], 1`: the test reads bytes and knows no start of an instruction.
+            assert!(starts_behind(&[0x48, 0xc7, 0x45, 0xe8, 1, 0, 0, 0]));
+        }
+    }
 } // end mod draft

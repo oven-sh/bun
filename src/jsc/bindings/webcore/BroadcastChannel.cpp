@@ -75,9 +75,7 @@ ExceptionOr<void> BroadcastChannel::postMessage(JSC::JSGlobalObject& globalObjec
 
 void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
 {
-    // The collector keeps only the wrapper of a channel with pending activity.
-    // Any other channel stays subscribed after its wrapper is collected, until
-    // the sweep. The global of a realm that script dropped can be dead by then.
+    // Only pending activity says that the wrapper and its global are alive: a collected channel stays subscribed until the sweep.
     if (!virtualHasPendingActivity())
         return;
 
@@ -131,11 +129,7 @@ void BroadcastChannel::eventListenersDidChange()
 bool BroadcastChannel::virtualHasPendingActivity() const
 {
     // Called from the GC thread; a single atomic load covers everything.
-    // An open channel with a `message` or `messageerror` listener stays alive:
-    // https://html.spec.whatwg.org/multipage/web-messaging.html#broadcasting-to-other-browsing-contexts
-    // A message in flight is not counted. The registry's task holds only a
-    // ThreadSafeWeakPtr, and dispatchMessage() drops the message of a channel
-    // that this does not keep.
+    // A message in flight does not count: dispatchMessage() drops it unless this still holds.
     uint64_t s = m_state.load(std::memory_order_acquire);
     return !(s & Closed) && (s & HasMessageOrMessageErrorListener);
 }

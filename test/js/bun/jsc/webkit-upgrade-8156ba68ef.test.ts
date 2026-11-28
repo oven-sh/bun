@@ -1,3 +1,4 @@
+import { jscDescribe } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -1013,6 +1014,126 @@ describe.concurrent("WebKit 8156ba68ef upgrade", () => {
       }
     }
     expect(failures).toEqual([]);
+  });
+
+  // Defines a toJSON that is not enumerable.
+  const withToJSON = <T extends object>(object: T, toJSON: unknown): T =>
+    Object.defineProperty(object, "toJSON", { value: toJSON });
+
+  // An object with a prototype other than Object.prototype takes the fast path of JSON.stringify (4f3ecec974), and
+  // objects of one shape in a list share what the path learned about the first (aeca1a989f). Whether such an object
+  // has a toJSON is asked of the object and of its prototype chain, by another check than the one for a plain object.
+  test("JSON.stringify calls a toJSON that an object or its prototype chain has", () => {
+    class Point {
+      x: number;
+      y: number;
+      constructor(x: number, y: number) {
+        this.x = x;
+        this.y = y;
+      }
+    }
+    class Handle {
+      uri = "u";
+      cid = "c";
+      text = "t";
+      toJSON() {
+        return { uri: this.uri, cid: this.cid };
+      }
+    }
+    class Derived extends Handle {}
+    const own = () => "own";
+    const frozen = Object.freeze(
+      withToJSON(new Point(1, 2), function (this: Point) {
+        return { x: this.x };
+      }),
+    );
+    const getter = Object.defineProperty({}, "toJSON", { get: () => () => "getter" });
+    const proxy = new Proxy({}, { get: (_, key) => (key === "toJSON" ? () => "proxy" : undefined) });
+
+    expect({
+      noToJSON: JSON.stringify([new Point(1, 2), new Point(3, 4)]),
+      own: JSON.stringify(withToJSON(new Point(1, 2), own)),
+      ownFrozen: JSON.stringify(frozen),
+      ownAmongOthers: JSON.stringify([new Point(0, 0), withToJSON(new Point(1, 2), own), new Point(3, 4)]),
+      ownAmongLiterals: JSON.stringify([{ x: 0 }, { x: 0 }, withToJSON({ x: 0 }, own), { x: 0 }]),
+      ownWithGap: JSON.stringify({ point: withToJSON(new Point(1, 2), own) }, null, 1),
+      ownOnNullPrototype: JSON.stringify(withToJSON(Object.assign(Object.create(null), { a: 1 }), own)),
+      method: JSON.stringify(new Handle()),
+      methodFrozen: JSON.stringify(Object.freeze(new Handle())),
+      methodInherited: JSON.stringify([new Derived(), new Derived()]),
+      notEnumerableOnPrototype: JSON.stringify(
+        Object.assign(Object.create(withToJSON({}, () => "prototype")), { a: 1 }),
+      ),
+      getterOnPrototype: JSON.stringify(Object.assign(Object.create(getter), { a: 1 })),
+      proxyAsPrototype: JSON.stringify(Object.assign(Object.create(proxy), { a: 1 })),
+    }).toEqual({
+      noToJSON: '[{"x":1,"y":2},{"x":3,"y":4}]',
+      own: '"own"',
+      ownFrozen: '{"x":1}',
+      ownAmongOthers: '[{"x":0,"y":0},"own",{"x":3,"y":4}]',
+      ownAmongLiterals: '[{"x":0},{"x":0},"own",{"x":0}]',
+      ownWithGap: '{\n "point": "own"\n}',
+      ownOnNullPrototype: '"own"',
+      method: '{"uri":"u","cid":"c"}',
+      methodFrozen: '{"uri":"u","cid":"c"}',
+      methodInherited: '[{"uri":"u","cid":"c"},{"uri":"u","cid":"c"}]',
+      notEnumerableOnPrototype: '"prototype"',
+      getterOnPrototype: '"getter"',
+      proxyAsPrototype: '"proxy"',
+    });
+  });
+
+  // The fast path remembers on a Structure that there is no toJSON, and the first call of each case leaves that behind.
+  // A toJSON that is defined afterwards, on the object or on a prototype, has to make the second call look again.
+  test("JSON.stringify sees a toJSON that is defined after an earlier call", () => {
+    class Instance {
+      a = 1;
+    }
+    class GetsMethod {
+      a = 1;
+    }
+    class Base {
+      a = 1;
+    }
+    class Derived extends Base {}
+    const later = () => "later";
+    const cases: Record<string, [value: object, define: (value: object) => unknown]> = {
+      ownOnLiteral: [{ a: 1 }, value => withToJSON(value, later)],
+      ownOnInstance: [new Instance(), value => withToJSON(value, later)],
+      enumerableOnClassPrototype: [new GetsMethod(), () => Object.assign(GetsMethod.prototype, { toJSON: later })],
+      notEnumerableOnBaseClassPrototype: [new Derived(), () => withToJSON(Base.prototype, later)],
+      onPrototypeThatReplacesTheFirst: [new Instance(), value => Object.setPrototypeOf(value, { toJSON: later })],
+    };
+    const texts: Record<string, string[]> = {};
+    for (const [name, [value, define]] of Object.entries(cases)) {
+      const first = JSON.stringify(value);
+      define(value);
+      texts[name] = [first, JSON.stringify(value)];
+    }
+    expect(texts).toEqual({
+      ownOnLiteral: ['{"a":1}', '"later"'],
+      ownOnInstance: ['{"a":1}', '"later"'],
+      enumerableOnClassPrototype: ['{"a":1}', '"later"'],
+      notEnumerableOnBaseClassPrototype: ['{"a":1}', '"later"'],
+      onPrototypeThatReplacesTheFirst: ['{"a":1}', '"later"'],
+    });
+
+    // An object in dictionary mode keeps its Structure when it gets a property, so nothing replaces what the first call
+    // remembered.
+    // The digits of the address are upper case on Windows. The colon ends it, so a part of it never matches.
+    const structureOf = (value: object) => /Structure (0x[0-9a-f]+):/i.exec(jscDescribe(value))![1];
+    const text = '{"a":1,' + Array.from({ length: 200 }, (_, i) => `"k${i}":${i}`).join(",") + "}";
+    for (const value of [{ a: 1 }, new Instance()]) {
+      for (let i = 0; i < 200; i++) (value as any)["k" + i] = i;
+      const structure = structureOf(value);
+      const first = JSON.stringify(value);
+      withToJSON(value, later);
+      expect({ first, structure: structureOf(value), second: JSON.stringify(value) }).toEqual({
+        first: text,
+        structure,
+        second: '"later"',
+      });
+    }
   });
 
   // `f(a, ...b, c)` is one instruction that builds the callee's frame from the operands (c3b920b487). It made an

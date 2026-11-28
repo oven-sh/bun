@@ -271,7 +271,7 @@ afterEach(() => {
 
 ## Async Lifecycle Hooks
 
-All lifecycle hooks support async functions. Bun waits for the promise a hook or a test returns. It also waits for any other object with a `then()` method, such as the one React's `act()` returns.
+All lifecycle hooks support async functions. Bun waits for the promise a hook or a test returns. It also waits for any other object with a `then()` method, such as the one React's `act()` returns. A hook or a test that takes a `done` parameter is the exception: Bun does not call `then()` on an object it returns.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { beforeAll, afterAll, test, expect } from "bun:test";

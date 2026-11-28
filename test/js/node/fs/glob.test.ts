@@ -3,8 +3,9 @@
  * tested elsewhere. These tests check API compatibility with Node.js.
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { isWindows, tempDir, tempDirWithFiles } from "harness";
+import { isMacOS, isWindows, tempDir, tempDirWithFiles, type DirectoryTree } from "harness";
 import fs from "node:fs";
+import { join, sep } from "node:path";
 
 let tmp: string;
 beforeAll(() => {
@@ -298,4 +299,192 @@ describe("fs.globSync exclude with withFileTypes", () => {
     expect(inners).toHaveLength(1);
     expect(String(inners[0].parentPath).replaceAll("\\", "/")).toEndWith("keep");
   });
+});
+
+// The lists in the blocks below are the ones Node.js v26.12.1 returns for the same tree and the same call.
+
+type GlobOptions = { cwd: string; followSymlinks?: boolean; exclude?: string[] };
+
+/** The lists of the three entry points, sorted, with "/" as the separator. */
+async function globAll(pattern: string | string[], options: GlobOptions) {
+  const normalize = (paths: string[]) => paths.map(path => path.replaceAll(sep, "/")).sort();
+  const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+  fs.glob(pattern, options, (err, paths) => (err ? reject(err) : resolve(paths)));
+  return {
+    globSync: normalize(fs.globSync(pattern, options)),
+    glob: normalize(await promise),
+    "promises.glob": normalize(await Array.fromAsync(fs.promises.glob(pattern, options))),
+  };
+}
+
+function fromAllThree(expected: string[]) {
+  return { globSync: expected, glob: expected, "promises.glob": expected };
+}
+
+/**
+ * Makes `link` a link to the directory `target`, which is a path below `root`.
+ * A junction is the link to a directory that Windows lets a process create without a privilege. POSIX ignores the type.
+ */
+function linkDirectory(root: string, target: string, link: string) {
+  fs.symlinkSync(join(root, target), join(root, link), "junction");
+}
+
+// https://github.com/nodejs/node/issues/62897
+describe("a directory that is listed after one of its children was traversed", () => {
+  const src = { src: { helpers: { "a.ts": "", "b.ts": "" }, "index.ts": "" } };
+  const cases: { name: string; tree: DirectoryTree; pattern: string | string[]; expected: string[] }[] = [
+    {
+      // "a/**" matches "a" and every directory below it. "../*" lists the parent of each one.
+      name: "'..' after '**'",
+      tree: { a: { b: { c: { d: {} } }, c: { d: { c: {} } }, x: "", z: "" } },
+      pattern: "a/**/../*",
+      expected: ["a", "a/b", "a/b/c", "a/b/c/d", "a/c", "a/c/d", "a/c/d/c", "a/x", "a/z"],
+    },
+    {
+      // "r.js" is the match in which "**" stands for no directory.
+      name: "'..' after a '**' that matches nothing",
+      tree: { "r.js": "", a: { "1.js": "", b: { "3.js": "", c: {} } } },
+      pattern: "a/**/../*.js",
+      expected: ["a/1.js", "a/b/3.js", "r.js"],
+    },
+    {
+      // The "./" pattern is traversed first, then "src/*.ts" lists "src".
+      // Entries are visited in sorted order, so "index.ts" comes after "helpers".
+      name: "a pattern array with a './' pattern",
+      tree: src,
+      pattern: ["src/*.ts", "./src/helpers/*.ts"],
+      expected: ["src/helpers/a.ts", "src/helpers/b.ts", "src/index.ts"],
+    },
+    {
+      name: "a brace group with a './' alternative",
+      tree: src,
+      pattern: "{src/*.ts,./src/helpers/*.ts}",
+      expected: ["src/helpers/a.ts", "src/helpers/b.ts", "src/index.ts"],
+    },
+  ];
+
+  it.each(cases)("$name", async ({ tree, pattern, expected }) => {
+    using dir = tempDir("fs-glob-seen", tree);
+    expect(await globAll(pattern, { cwd: String(dir) })).toEqual(fromAllThree(expected));
+  });
+
+  it("returns the list of Node.js for a pattern array whose patterns share a tail", async () => {
+    using dir = tempDir("fs-glob-seen", { src: { lib: { "c.ts": "" } } });
+    const cwd = String(dir);
+    // Node.js loses "src/lib/c.ts" in one order of these three patterns: its walker skips a queued pattern when one of
+    // its tails is already marked for that path, and it marks the other tails without a walk.
+    expect({
+      firstTwo: await globAll(["./**/*.ts", "./src/**/*.ts"], { cwd }),
+      otherOrder: await globAll(["./src/**/*.ts", "./**/*.ts", "src/*.ts"], { cwd }),
+      thisOrder: await globAll(["./**/*.ts", "./src/**/*.ts", "src/*.ts"], { cwd }),
+    }).toEqual({
+      firstTwo: fromAllThree(["src/lib/c.ts"]),
+      otherOrder: fromAllThree(["src/lib/c.ts"]),
+      thisOrder: fromAllThree([]),
+    });
+  });
+});
+
+describe("a link to a directory that '**' meets", () => {
+  type Row = [pattern: string, options: Omit<GlobOptions, "cwd">, expected: string[]];
+
+  describe("a/lnk -> a/b", () => {
+    const rows: Row[] = [
+      // The link is listed. The part of the pattern after "**" is not matched inside the link.
+      ["**/*", {}, ["a", "a/1.js", "a/b", "a/b/3.js", "a/b/c", "a/lnk", "r.js"]],
+      ["**/*", { followSymlinks: false }, ["a", "a/1.js", "a/b", "a/b/3.js", "a/b/c", "a/lnk", "r.js"]],
+      ["**/*/", {}, ["a", "a/b", "a/b/c"]],
+      ["./**/*.js", {}, ["a/1.js", "a/b/3.js", "r.js"]],
+      ["./**/c", {}, ["a/b/c"]],
+      ["**/*.js", {}, ["a/1.js", "a/b/3.js", "r.js"]],
+      ["**/lnk", {}, ["a/lnk"]],
+      // A link that the pattern names is followed.
+      ["a/lnk/*", {}, ["a/lnk/3.js", "a/lnk/c"]],
+      // followSymlinks: true keeps the paths through the link.
+      [
+        "**/*",
+        { followSymlinks: true },
+        ["a", "a/1.js", "a/b", "a/b/3.js", "a/b/c", "a/lnk", "a/lnk/3.js", "a/lnk/c", "r.js"],
+      ],
+      ["**/*/", { followSymlinks: true }, ["a", "a/b", "a/b/c", "a/lnk", "a/lnk/c"]],
+    ];
+
+    it.each(rows)("%j %j", async (pattern, options, expected) => {
+      using dir = tempDir("fs-glob-link", { "r.js": "", a: { "1.js": "", b: { "3.js": "", c: {} } } });
+      linkDirectory(String(dir), "a/b", "a/lnk");
+      expect(await globAll(pattern, { cwd: String(dir), ...options })).toEqual(fromAllThree(expected));
+    });
+  });
+
+  // The tree and the calls of Node's test/parallel/test-fs-glob-no-follow-symlink-globstar.mjs. The other half of that
+  // file needs Node's permission model, which Bun does not have, so the file is not in test/js/node/test/parallel.
+  describe("a link that points outside of cwd", () => {
+    const rows: Row[] = [
+      ["**/*", {}, ["link", "visible.txt"]],
+      ["**/*", { followSymlinks: false }, ["link", "visible.txt"]],
+      ["./**/*.txt", {}, ["visible.txt"]],
+      [
+        "**/*",
+        { followSymlinks: true },
+        ["link", "link/nested", "link/nested/secret-two.txt", "link/secret-one.txt", "visible.txt"],
+      ],
+    ];
+
+    it.each(rows)("%j %j", async (pattern, options, expected) => {
+      using dir = tempDir("fs-glob-link-outside", {
+        outside: { "secret-one.txt": "", nested: { "secret-two.txt": "" } },
+        workspace: { "visible.txt": "" },
+      });
+      linkDirectory(String(dir), "outside", "workspace/link");
+      const cwd = join(String(dir), "workspace");
+      expect(await globAll(pattern, { cwd, ...options })).toEqual(fromAllThree(expected));
+    });
+  });
+
+  // The layout of https://github.com/oven-sh/bun/issues/29699: packages that link to each other in a cycle.
+  describe("node_modules links between packages", () => {
+    const rows: Row[] = [
+      ["./**/src/*.test.ts", {}, ["src/foo.test.ts"]],
+      ["**/*/*.test.ts", {}, ["src/foo.test.ts"]],
+      ["**/*.test.ts", {}, ["src/foo.test.ts"]],
+    ];
+
+    it.each(rows)("%j %j", async (pattern, options, expected) => {
+      using dir = tempDir("fs-glob-link-packages", {
+        a: { src: { "foo.test.ts": "" }, node_modules: {} },
+        b: { src: { "bar.test.ts": "" }, node_modules: {} },
+        c: { node_modules: {} },
+      });
+      linkDirectory(String(dir), "b", "a/node_modules/b");
+      linkDirectory(String(dir), "c", "b/node_modules/c");
+      linkDirectory(String(dir), "a", "c/node_modules/a");
+      const cwd = join(String(dir), "a");
+      expect(await globAll(pattern, { cwd, ...options })).toEqual(fromAllThree(expected));
+    });
+  });
+
+  it("does not list a path through a link for '..' after '**'", async () => {
+    // "b/a" is a link to "b". A walker that keeps every sibling but still enters the link lists "b/g.js" for "b/a/..".
+    using dir = tempDir("fs-glob-link-parent", { w: { "r.js": "", b: { "g.js": "" }, x: { a: { "f.js": "" } } } });
+    linkDirectory(String(dir), "w/b", "w/b/a");
+    const cwd = join(String(dir), "w");
+    expect(await globAll("./**/../*.js", { cwd })).toEqual(fromAllThree(["r.js"]));
+  });
+
+  // A link to a file needs a privilege on Windows.
+  it.skipIf(isWindows)("followSymlinks: true does not enter a link that is not a directory", async () => {
+    using dir = tempDir("fs-glob-link-file", { d: { "f.txt": "" } });
+    const root = String(dir);
+    fs.symlinkSync(join(root, "d", "f.txt"), join(root, "tofile"));
+    fs.symlinkSync(join(root, "nowhere"), join(root, "dangling"));
+    fs.symlinkSync(join(root, "d"), join(root, "todir"));
+    expect(await globAll("./**/.", { cwd: root, followSymlinks: true })).toEqual(fromAllThree(["d", "todir"]));
+  });
+});
+
+// Node.js matches a literal exclude pattern without case on the platforms where it matches a pattern without case.
+it("a literal exclude pattern in another case excludes on macOS and Windows only", async () => {
+  using dir = tempDir("fs-glob-exclude-case", { a: { "b.txt": "" } });
+  const expected = isMacOS || isWindows ? [] : ["a/b.txt"];
+  expect(await globAll("a/b.txt", { cwd: String(dir), exclude: ["A/B.TXT"] })).toEqual(fromAllThree(expected));
 });

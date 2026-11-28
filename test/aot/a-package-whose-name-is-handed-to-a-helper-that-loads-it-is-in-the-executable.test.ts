@@ -1,19 +1,27 @@
 // `const { tryRequire } = require("./util"); const colors = tryRequire("colors")`: the name and the require() stand in two files. An executable that doesn't hold the package
 // takes the helper's fallback, and nothing says so.
 import { expect } from "bun:test";
-import { bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { existsSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "./harness/default-timeout";
+import { limitOfARun, limitWithASAN, slot } from "./harness/commands";
 import { run } from "./harness/run";
+import { test, testOneByOne } from "./supported";
 
 const packages = (...kinds: string[]) =>
   Object.fromEntries(kinds.map(kind => [`node_modules/fake-${kind}/index.js`, `exports.kind = "${kind}";\n`]));
 const tries = `name => { try { return require(name); } catch { return null; } }`;
 const show = `const show = it => (it ? it.kind : "none");\n`;
 const sloppyOrStrict = `console.log((function () { return typeof this; })());\n`;
+// In the last two programs each package holds a text of its own. The texts that stand in an executable say which packages it holds.
+const marked = ["tools", "fake-big"];
+const markOf = (name: string) => `made-up mark of the package ${name}`;
+const withMark = (name: string, code = "") => ({
+  [`node_modules/${name}/index.js`]: `${code}exports.text = "${markOf(name)}";\n`,
+});
 
-const cases: Record<string, { files: Record<string, string>; said: string; leftOut?: string }> = {
+/** `said`: what the program prints. `holds`: of the marked packages, those that the executable holds. */
+const cases: Record<string, { files: Record<string, string>; said: string; holds?: string[] }> = {
   "a helper that is taken apart, read off, held whole, called at once, or handed on by another file": {
     files: {
       "main.cjs": `const { tryRequire } = require("./named.cjs");\nconst bring = require("./named.cjs").bring;\nconst load = require("./whole.cjs");\n${show}console.log(show(tryRequire("fake-a")), show(bring("fake-b")), show(load("fake-c")), show(require("./whole.cjs")("fake-d")), show(require("./again.cjs")("fake-e")));\n`,
@@ -117,43 +125,83 @@ const cases: Record<string, { files: Record<string, string>; said: string; leftO
   "a function of a built-in module that only shares the helper's name: its text brings no package": {
     files: {
       "main.cjs": `const { basename } = require("node:path");\nconsole.log(basename("fake-big"), typeof require("tools").basename);\n`,
-      "node_modules/tools/index.js": `exports.basename = name => require(name);\n`,
-      "node_modules/fake-big/index.js": `exports.text = "made-up mark of a package that nobody loads";\n`,
+      ...withMark("tools", `exports.basename = name => require(name);\n`),
+      ...withMark("fake-big"),
     },
     said: "fake-big function",
-    leftOut: "made-up mark of a package that nobody loads",
+    holds: ["tools"],
   },
   "a function taken out of an object of the file's own that only shares the helper's name: its text brings no package":
     {
       files: {
         "main.cjs": `const { get } = { get: name => name.length };\nconsole.log(get("fake-big"), typeof require("tools").get);\n`,
-        "node_modules/tools/index.js": `exports.get = name => require(name);\n`,
-        "node_modules/fake-big/index.js": `exports.text = "made-up mark of a package that nobody loads";\n`,
+        ...withMark("tools", `exports.get = name => require(name);\n`),
+        ...withMark("fake-big"),
       },
       said: "8 function",
-      leftOut: "made-up mark of a package that nobody loads",
+      holds: ["tools"],
     },
 };
 
-test.each(Object.entries(cases))(
+const forms = { closed: [], withCodeFromDisk: ["--aot-allow-code-from-disk"] };
+type Form = keyof typeof forms;
+const bothForms = Object.keys(forms) as Form[];
+/**
+ * As `Promise.all`, but it waits for all of them before it throws what one of them threw. `run()` throws where the commands
+ * of the file hold too much memory together, and a case that ends removes its folder: by then no command of it is left there.
+ */
+async function allOf<Asked extends readonly unknown[] | []>(asked: Asked) {
+  const thrown = (await Promise.allSettled(asked)).find(one => one.status === "rejected");
+  if (thrown) throw (thrown as PromiseRejectedResult).reason;
+  return Promise.all(asked);
+}
+/** What `ask` answers for each form of the executable. Both are asked at once. */
+const ofEachForm = async <Answer>(ask: (form: Form) => Answer | Promise<Answer>) =>
+  Object.fromEntries(await allOf(bothForms.map(async form => [form, await ask(form)] as const)));
+const inBothForms = <Answer>(answer: Answer) => Object.fromEntries(bothForms.map(form => [form, answer]));
+
+// The builds are nearly all of the time. So the cases run beside one another, and so do the commands of a case that don't wait
+// for one another. Each command takes a slot: no more of them run at once than the machine has processors.
+// A debug build of Bun is more than a GB, and so is every executable that it builds: there the cases run one by one.
+const declare = isDebug ? testOneByOne : test.concurrent;
+const limitOfACase = 600_000;
+// A command that hangs is killed at its limit, and gives its slot back. On a debug build one build takes minutes: there a
+// command has as long as its case.
+const limit = isDebug ? limitOfACase : isASAN ? limitWithASAN : limitOfARun;
+
+/** What a run prints that ends well: its lines on stdout, nothing on stderr, exit code 0. */
+const prints = (said: string) => ({ stdout: said + "\n", stderr: "", exitCode: 0 });
+/** The marked packages whose text stands in the file. */
+function markedPackagesIn(executable: string) {
+  const bytes = readFileSync(executable);
+  return marked.filter(name => bytes.includes(markOf(name)));
+}
+
+declare.each(Object.entries(cases))(
   "%s",
-  async (_, { files, said, leftOut }) => {
+  async (_, { files, said, holds }) => {
     using dir = tempDir("aot-a-name-handed-to-a-helper", files);
     const folder = String(dir);
     const main = Object.keys(files).find(name => name.startsWith("main."))!;
-    expect((await run([bunExe(), main], folder)).stdout.trim()).toBe(said);
-    const forms = { closed: [], withCodeFromDisk: ["--aot-allow-code-from-disk"] };
-    for (const [form, flags] of Object.entries(forms)) {
-      const command = [bunExe(), "build", "--compile", "--aot", ...flags, `./${main}`, "--outfile", join("bin", form)];
-      const { stderr, exitCode } = await run(command, folder);
-      expect({ form, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ form, stderr: "", exitCode: 0 });
+    const executableOf = (form: Form) => join(folder, "bin", form + (isWindows ? ".exe" : ""));
+    const start = (...command: string[]) => slot(() => run(command, folder, bunEnv, limit));
+    // A build that succeeds still warns where a require() takes a name that is no constant (TS100064): its stderr is shown only if it fails.
+    async function build(form: Form) {
+      const flags = ["--compile", "--aot", ...forms[form]];
+      const outfile = join("bin", form);
+      const { stderr, exitCode } = await start(bunExe(), "build", ...flags, `./${main}`, "--outfile", outfile);
+      return { stderr: exitCode === 0 ? "" : stderr, exitCode };
     }
+
+    // Plain Bun and the two builds only read the folder, and each build writes a file of its own.
+    const [plain, built] = await allOf([start(bunExe(), main), ofEachForm(build)]);
+    expect(plain).toEqual(prints(said));
+    expect(built).toEqual(inBothForms({ stderr: "", exitCode: 0 }));
+
+    // The packages leave the disk before an executable starts: what it loads, it holds.
     if (existsSync(join(folder, "node_modules"))) renameSync(join(folder, "node_modules"), join(folder, "gone"));
-    for (const form of Object.keys(forms)) {
-      const executable = join(folder, "bin", form + (isWindows ? ".exe" : ""));
-      expect({ form, said: (await run([executable], folder)).stdout.trim() }).toEqual({ form, said });
-      if (leftOut) expect(readFileSync(executable).includes(leftOut)).toBe(false);
-    }
+    expect(await ofEachForm(form => start(executableOf(form)))).toEqual(inBothForms(prints(said)));
+    if (holds) expect(await ofEachForm(form => markedPackagesIn(executableOf(form)))).toEqual(inBothForms(holds));
   },
-  600_000,
+  limitOfACase,
 );

@@ -923,6 +923,51 @@ describe.concurrent("fetch-tls", () => {
 
   // A function given here replaces Bun's own hostname check, so one that
   // approves by mistake turns hostname verification off.
+  it("a checkServerIdentity that can no longer be called approves nothing", async () => {
+    // --isolate=modules shares built-in modules, so `fs` carries the function into b, and retires the node:vm realm of a.
+    const check = `
+      import { test } from "bun:test";
+      import fs from "node:fs";
+      test("fetch", async () => {
+        let heard = 0;
+        await using server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          tls: ${JSON.stringify(validTls)},
+          fetch: () => (heard++, new Response()),
+        });
+        const tls = { ca: ${JSON.stringify(validTls.cert)}, checkServerIdentity: fs.approve };
+        const results = [];
+        for (const request of [() => fetch(server.url, { tls }), () => new Bun.FetchSession({ tls }).fetch(server.url)]) {
+          results.push(await request().then(response => response.status, error => error.code));
+        }
+        console.log(JSON.stringify({ results, heard, asked: fs.asked }));
+      });
+    `;
+    using dir = tempDir("fetch-tls-retired-callback", {
+      "a.test.ts": `
+        import vm from "node:vm";
+        ${check}
+        fs.asked = 0;
+        fs.approve = vm.runInNewContext("() => { fs.asked++; }", { fs });
+      `,
+      "b.test.ts": check,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate=modules", "--timeout=30000", "./a.test.ts", "./b.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.match(/^{.*$/gm)?.map(line => JSON.parse(line))).toEqual([
+      { results: [200, 200], heard: 2, asked: 2 },
+      { results: ["ERR_TLS_CERT_ALTNAME_INVALID", "ERR_TLS_CERT_ALTNAME_INVALID"], heard: 0, asked: 2 },
+    ]);
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   it("an async checkServerIdentity does not turn hostname verification off", async () => {
     // This certificate names only DNS:localhost, and the request dials 127.0.0.1.
     await createServer(CERT_LOCALHOST_ONLY, async port => {

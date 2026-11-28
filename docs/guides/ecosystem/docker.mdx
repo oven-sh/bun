@@ -146,4 +146,42 @@ CONTAINER ID        IMAGE               COMMAND                  CREATED        
 
 ---
 
+## Ship a single-file executable
+
+Instead of copying your source and `node_modules` into the image, you can compile your app into a [single-file executable](/bundler/executables) with `bun build --compile` and ship only that binary. The final image carries no `node_modules` and no Bun runtime layer, so it is smaller and has a reduced attack surface.
+
+Compile the executable in a stage that has Bun, then copy just the binary into a minimal base image:
+
+```docker Dockerfile icon="docker"
+# use the official Bun image
+# see all versions at https://hub.docker.com/r/oven/bun/tags
+FROM oven/bun:1 AS build
+WORKDIR /usr/src/app
+
+# install dependencies (the compile step must resolve every imported package)
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
+
+# compile the app into a self-contained binary named "server"
+COPY . .
+RUN bun build ./index.ts --compile --outfile server
+
+# copy only the binary into a minimal image
+FROM gcr.io/distroless/cc-debian12:nonroot AS release
+WORKDIR /app
+COPY --from=build --chown=nonroot:nonroot /usr/src/app/server ./server
+
+# run the app
+ENV NODE_ENV=production
+EXPOSE 3000/tcp
+USER nonroot
+ENTRYPOINT [ "/app/server" ]
+```
+
+<Note>
+  A compiled binary is dynamically linked against the system C/C++ runtime libraries, so the final image must provide them. A [distroless](https://github.com/GoogleContainerTools/distroless) `cc` image (or a `debian`/`ubuntu` slim image) includes them, while an empty `scratch` image does not. Compile the binary inside the Linux build stage, since the executable is platform-specific.
+</Note>
+
+---
+
 See the [Docker documentation](https://docs.docker.com/) for more advanced usage.

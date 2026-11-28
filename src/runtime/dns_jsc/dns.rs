@@ -3,28 +3,31 @@
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_void};
 use core::mem::{ManuallyDrop, MaybeUninit};
-use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use core::ptr;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use core::time::Duration;
 
-use bun_collections::{ArrayHashMap, BoundedArray, IntegerBitSet};
+use bun_collections::{BoundedArray, IntegerBitSet};
 #[cfg(not(windows))]
 use bun_core::Output;
-use bun_core::{self as bun, env_var, fmt as bun_fmt};
+use bun_core::ip_address::{self, IpText};
+use bun_core::{self as bun, Fd, env_var, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
 #[cfg(any(windows, target_os = "macos"))]
 use bun_dns::GetAddrInfoResult;
+use bun_dns::os::Os;
 use bun_dns::{
     self, AddrInfoList, Backend as GetAddrInfoBackend, GetAddrInfo, Options as GetAddrInfoOptions,
     ResultList as GetAddrInfoResultList,
 };
+use bun_dns_client::{Answer, Answers, DEFAULT_PORT, Error, Events, RecordType, SocketId};
 use bun_io::JsKeepAlive;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult, StringJsc as _,
-    SystemError,
 };
 use bun_ptr::RefPtr;
 #[cfg(windows)]
@@ -34,14 +37,10 @@ use bun_sys::{self as sys};
 use bun_uws::{ConnectingSocket, Loop};
 use bun_wyhash::hash as wyhash;
 
-use super::cares_jsc;
+use super::answer_jsc;
 use crate::generated_bindgen::dns::LookupOptions;
 use crate::generated_bindgen::dns_internals::{ResolverOptions, js_DNSResolver};
-use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
-use bun_cares_sys::c_ares_draft as c_ares;
-use bun_cares_sys::parse_ip;
-use c_ares::RecordType;
 
 // `sockaddr_storage` / `addrinfo` / `AF_*` / `AI_*` are absent from `libc` on
 // the MSVC target; route through a single `netc` shim so call sites stay
@@ -61,7 +60,7 @@ pub(crate) mod netc {
         addrinfo, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage,
     };
     pub(crate) use bun_sys::windows::ws2_32::{AF_INET, AF_INET6, AF_UNSPEC};
-    /// The libuv spelling: `c_ares::Error::init_eai` reads UV_EAI_* codes on Windows.
+    /// The libuv spelling: `bun_dns::getaddrinfo_error` reads UV_EAI_* codes on Windows.
     pub(crate) const EAI_NONAME: core::ffi::c_int = bun_libuv_sys::UV_EAI_NONAME;
 }
 type SockaddrStorage = netc::sockaddr_storage;
@@ -71,7 +70,11 @@ type Sockaddr = netc::sockaddr;
 #[inline]
 fn global_resolver(global_this: &JSGlobalObject) -> &'static RefPtr<Resolver> {
     crate::jsc_hooks::dns_resolver().get_or_init(|| {
-        let options = c_ares::ChannelOptions::default();
+        let options = bun_dns_client::Options {
+            timeout: None,
+            max_timeout: None,
+            tries: 4,
+        };
         // The VM-global resolver serves every context of the realm.
         RefPtr::new(Resolver::setup(global_this.bun_vm(), None, options))
     })
@@ -80,13 +83,6 @@ fn global_resolver(global_this: &JSGlobalObject) -> &'static RefPtr<Resolver> {
 bun_output::declare_scope!(DNSLookup, visible);
 bun_output::declare_scope!(dns, hidden);
 bun_output::declare_scope!(DNSResolver, visible);
-
-// ──────────────────────────────────────────────────────────────────────────
-// C type aliases
-// ──────────────────────────────────────────────────────────────────────────
-
-const IANA_DNS_PORT: i32 = 53;
-const CARES_TIMEOUT_CHECK_INTERVAL_MS: i64 = 1000;
 
 // ──────────────────────────────────────────────────────────────────────────
 // dns_sd (macOS): DNSServiceQueryRecord over one shared mDNSResponder connection, no per-lookup threads.
@@ -202,16 +198,10 @@ pub(crate) mod lib_uv_backend {
 
 fn normalize_dns_name<'a>(name: &'a [u8], backend: &mut GetAddrInfoBackend) -> &'a [u8] {
     if *backend == GetAddrInfoBackend::CAres {
-        // https://github.com/c-ares/c-ares/issues/477
-        if name.ends_with(b".localhost") {
+        if internal::is_localhost_name(name) {
             *backend = GetAddrInfoBackend::System;
             return b"localhost";
-        } else if name.ends_with(b".local")
-            // https://github.com/c-ares/c-ares/pull/463
-            || bun_core::ip_address::is_ipv6_address(name)
-            // getaddrinfo() is inconsistent with ares_getaddrinfo() when using localhost
-            || name == b"localhost"
-        {
+        } else if name.ends_with(b".local") || ip_address::is_ipv6_address(name) {
             *backend = GetAddrInfoBackend::System;
         }
     }
@@ -355,12 +345,14 @@ pub(crate) struct Waiters {
     name: Box<[u8]>,
     first: DNSLookup,
     joined: Vec<DNSLookup>,
+    /// Of the event loop, in which it was asked.
+    turn: u64,
 }
 
 /// Selects one of the resolver's pending caches.
 #[derive(Copy, Clone, enum_map::Enum)]
 enum QueryKind {
-    HostCares,
+    HostClient,
     HostNative,
     Addr,
     NameInfo,
@@ -370,7 +362,7 @@ enum QueryKind {
 impl QueryKind {
     fn syscall(self) -> &'static [u8] {
         match self {
-            Self::HostCares | Self::HostNative => b"getaddrinfo",
+            Self::HostClient | Self::HostNative => b"getaddrinfo",
             Self::Addr => b"getHostByAddr",
             Self::NameInfo => b"getnameinfo",
             Self::Record(RecordType::A) => b"queryA",
@@ -410,15 +402,21 @@ impl Default for PendingCache {
 }
 
 impl PendingCache {
-    /// Gives `lookup` back if no query for `name` is in flight.
-    fn join(&self, hash: u64, name: &[u8], lookup: DNSLookup) -> Result<(), DNSLookup> {
+    /// Gives `lookup` back if no query for `name` is in flight that was asked in `first_turn` or later.
+    fn join(
+        &self,
+        hash: u64,
+        name: &[u8],
+        first_turn: u64,
+        lookup: DNSLookup,
+    ) -> Result<(), DNSLookup> {
         let mut used = self.used.get().iter_set();
         while let Some(slot) = used.next() {
             if self.hashes[slot].get() != hash {
                 continue;
             }
             let mut waiters = self.entries[slot].take().expect("pending DNS slot");
-            if *waiters.name == *name {
+            if *waiters.name == *name && waiters.turn >= first_turn {
                 waiters.joined.push(lookup);
                 self.entries[slot].set(Some(waiters));
                 return Ok(());
@@ -477,13 +475,20 @@ impl PendingQuery {
         let lookup = DNSLookup::init(global_this, context);
         let promise = lookup.promise.value();
         let cache = &resolver.pending[kind];
-        let Err(first) = cache.join(hash, name, lookup) else {
+        let turn = resolver.vm().uws_loop().iteration_number();
+        let first_turn = match kind {
+            QueryKind::HostNative => 0,
+            // The client joins later ones, and can ask again for them.
+            _ => turn,
+        };
+        let Err(first) = cache.join(hash, name, first_turn, lookup) else {
             return (promise, None);
         };
         let waiters = Box::new(Waiters {
             name: name.into(),
             first,
             joined: Vec::new(),
+            turn,
         });
         let query = Self {
             resolver: resolver.clone(),
@@ -544,16 +549,22 @@ impl PendingQuery {
         }
     }
 
-    fn reject(self, err: c_ares::Error) {
+    fn reject(self, err: Error) {
         let kind = self.kind;
-        let with_hostname = !matches!(kind, QueryKind::HostCares | QueryKind::HostNative);
+        let with_hostname = !matches!(kind, QueryKind::HostClient | QueryKind::HostNative);
+        let err = match (kind, err) {
+            // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
+            (QueryKind::HostClient, Error::ENODATA) => Error::ENOTFOUND,
+            _ => err,
+        };
         let Waiters {
             name,
             first,
             joined,
+            ..
         } = *self.into_waiters();
         for lookup in core::iter::once(first).chain(joined) {
-            cares_jsc::reject_later(
+            answer_jsc::reject_later(
                 lookup.promise,
                 err,
                 kind.syscall(),
@@ -564,17 +575,17 @@ impl PendingQuery {
         }
     }
 
-    /// Set the resolver's timer first: script can turn the loop or close the channel from here.
-    fn complete_cares((query, answer): (Self, c_ares::Answer)) {
+    /// Set the resolver's timer first: script can turn the loop or close the client from here.
+    fn complete((query, answer): (Self, Answer)) {
         match answer {
-            Ok(reply) => query.resolve(|global| cares_jsc::reply_to_js(&reply, global)),
+            Ok(reply) => query.resolve(|global| answer_jsc::reply_to_js(&reply, global)),
             Err(err) => query.reject(err),
         }
     }
 
     /// The addresses or the status that the system's resolver answered with.
     pub(crate) fn complete_native(self, result: Result<GetAddrInfoResultList, i32>) {
-        let list = match result.map_err(c_ares::Error::init_eai) {
+        let list = match result.map_err(bun_dns::getaddrinfo_error) {
             Ok(list) => list,
             Err(Some(err)) => return self.reject(err),
             // No list and no error is an empty answer.
@@ -649,24 +660,28 @@ impl Resolver {
     pub(crate) fn cancel_pending_uv_requests_for_teardown(&self) {
         let mut used = self.pending[QueryKind::HostNative].used.get().iter_set();
         while let Some(slot) = used.next() {
-            // SAFETY: the request lives until its task runs, which frees the slot.
-            let _ = unsafe { libuv::uv_cancel(self.pending_uv_requests[slot].get()) };
+            // Teardown runs several passes; cancel each request once.
+            let request = self.pending_uv_requests[slot].replace(ptr::null_mut());
+            if !request.is_null() {
+                // SAFETY: the request lives until its task runs, which frees the slot.
+                let _ = unsafe { libuv::uv_cancel(request) };
+            }
         }
     }
 
-    /// `Stopped` if a channel was open. The VM, its polls and its timers have to be alive.
-    pub(crate) fn close_channel_for_terminate(
+    /// `Stopped` if the client was open. The VM, its polls and its timers have to be alive.
+    pub(crate) fn close_client_for_terminate(
         self: &RefPtr<Self>,
     ) -> bun_jsc::virtual_machine::SweepResult {
         use bun_jsc::virtual_machine::SweepResult;
-        let result = if self.channel.is_open() {
+        let client = self.client.take();
+        let result = if client.is_some() {
             SweepResult::Stopped
         } else {
             SweepResult::Idle
         };
         self.abort_handle.leave();
-        self.request_completed(self.channel.close());
-        self.polls.with_mut(PollsMap::clear_retaining_capacity);
+        self.request_completed(client.map(Client::close).unwrap_or_default());
         result
     }
 }
@@ -970,7 +985,7 @@ pub(crate) mod internal {
     }
 
     /// Chrome's `IsLocalHostname` (RFC 6761 §6.3): `localhost` or `*.localhost`, ASCII case-insensitive, one trailing dot allowed.
-    fn is_localhost_name(host: &[u8]) -> bool {
+    pub(super) fn is_localhost_name(host: &[u8]) -> bool {
         const DOT_LOCALHOST: &[u8] = b".localhost";
         let host = host.strip_suffix(b".").unwrap_or(host);
         strings::eql_case_insensitive_ascii(host, b"localhost", true)
@@ -1350,14 +1365,14 @@ pub(crate) mod internal {
         hostname: &[u8],
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let Some(rc) = c_ares::Error::eai_raw_by_name(code) else {
+        let Some(rc) = bun_dns::getaddrinfo_status_by_name(code) else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "unknown getaddrinfo status name: {}",
                 bstr::BStr::new(code)
             )));
         };
-        match c_ares::Error::init_eai(rc) {
-            Some(err) => crate::dns_jsc::cares_jsc::error_to_js_with_syscall_and_hostname(
+        match bun_dns::getaddrinfo_error(rc) {
+            Some(err) => crate::dns_jsc::answer_jsc::error_to_js_with_syscall_and_hostname(
                 err,
                 global,
                 b"getaddrinfo",
@@ -1591,26 +1606,20 @@ pub(crate) mod internal {
 // Resolver — JSC-exposed `dns.Resolver` (a JSDNSResolver holds a ref)
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(windows)]
-type PollType = OpenUvDnsPoll;
-#[cfg(not(windows))]
-type PollType = bun_io::OwnedFilePoll;
-
-type PollsMap = ArrayHashMap<c_ares::ares_socket_t, PollType>;
+type Client = bun_dns_client::Client<Os<DnsPoll>, PendingQuery>;
 
 /// `DNSResolver`, declared in `dns_internals.bind.ts`.
 #[derive(bun_ptr::RefCounted)]
-#[ref_count(destroy = Self::destroy)]
 pub(crate) struct Resolver {
     pub(crate) ref_count: bun_ptr::RefCount<Resolver>,
-    channel: c_ares::Channel<PendingQuery>,
-    /// The context whose script made the resolver: its channel is that context's, whoever is first
+    /// Borrowed for no longer than a call into it, which runs no script.
+    client: JsCell<Option<Client>>,
+    /// The context whose script made the resolver: its client is that context's, whoever is first
     /// to query. `None`: the VM-global one, which is the realm's whatever the realm's context is
     /// called by then (`bun test --isolate` renews it for every file).
     made_in: Option<bun_jsc::ContextId>,
     pub(crate) vm: bun_ptr::BackRef<VirtualMachine>, // JSC_BORROW (BACKREF — VirtualMachine outlives the resolver; read-only after init)
-    pub(crate) polls: JsCell<PollsMap>,
-    options: c_ares::ChannelOptions,
+    options: bun_dns_client::Options,
 
     pub(crate) event_loop_timer: EventLoopTimer,
     /// Held while the timer is armed.
@@ -1621,9 +1630,7 @@ pub(crate) struct Resolver {
     #[cfg(windows)]
     pending_uv_requests: [Cell<*mut libuv::uv_req_t>; PENDING_CACHE_SLOTS],
 
-    /// Armed while a channel is open: a live channel has sockets, timers and
-    /// queries in flight whose callbacks need the context that opened it, which
-    /// closes it (any resolver, not just the VM-global one) if nobody did before.
+    /// Armed while the client is open: its queries need the context that opened it, which closes it if nobody did before.
     pub(crate) abort_handle: bun_jsc::AbortHandle,
 }
 
@@ -1631,14 +1638,14 @@ bun_event_loop::impl_timer_owner!(Resolver; from_timer_ptr => event_loop_timer);
 
 bun_jsc::impl_abort_handle_owner!(Resolver, abort_handle, |this, _cause| {
     // SAFETY: trait contract.
-    let _ = unsafe { RefPtr::init_ref(this) }.close_channel_for_terminate();
+    let _ = unsafe { RefPtr::init_ref(this) }.close_client_for_terminate();
 });
 
 #[cfg(windows)]
 pub(crate) struct UvDnsPoll {
     // BACKREF — stored mut because the poll callback's ref may free `*this`.
     pub parent: *mut Resolver,
-    pub socket: c_ares::ares_socket_t,
+    pub socket: SocketId,
     /// Number of `on_dns_poll_uv` calls for this handle on the stack. libuv
     /// reads `poll` again after each one returns.
     poll_cb_depth: u32,
@@ -1650,19 +1657,14 @@ pub(crate) struct UvDnsPoll {
 
 #[cfg(windows)]
 impl UvDnsPoll {
-    fn new(parent: *mut Resolver, socket: c_ares::ares_socket_t) -> *mut Self {
-        bun_core::heap::into_raw(Box::new(Self {
+    fn new(parent: *mut Resolver, socket: SocketId) -> bun_ptr::AliasableBox<Self> {
+        bun_ptr::AliasableBox::new(Self {
             parent,
             socket,
             poll_cb_depth: 0,
             closed: false,
             poll: bun_core::ffi::zeroed(),
-        }))
-    }
-
-    pub(crate) fn destroy(this: *mut Self) {
-        // SAFETY: `this` came from `heap::into_raw` in `new`, and nothing uses it after this call.
-        unsafe { drop(bun_core::heap::take(this)) };
+        })
     }
 
     fn from_poll(poll: *mut libuv::uv_poll_t) -> *mut Self {
@@ -1671,39 +1673,76 @@ impl UvDnsPoll {
     }
 }
 
-/// Dropping it closes the handle, which `on_close_uv` frees.
-#[cfg(windows)]
-pub(crate) struct OpenUvDnsPoll(*mut UvDnsPoll);
+/// The resolver whose client has the polls.
+struct PollOwner(*mut Resolver);
 
-#[cfg(windows)]
-impl OpenUvDnsPoll {
-    fn open(parent: *mut Resolver, socket: c_ares::ares_socket_t) -> Option<Self> {
-        let poll = UvDnsPoll::new(parent, socket);
-        // SAFETY: a fresh heap allocation with a zeroed `uv_poll_t`.
-        let rc = unsafe {
-            libuv::uv_poll_init_socket(Loop::get().uv_loop(), &raw mut (*poll).poll, socket as _)
-        };
-        if rc < 0 {
-            UvDnsPoll::destroy(poll);
-            return None;
-        }
+#[cfg(not(windows))]
+struct DnsPoll(bun_io::OwnedFilePoll);
+
+#[cfg(not(windows))]
+impl bun_dns::os::Poll for DnsPoll {
+    type Owner = PollOwner;
+
+    fn open(owner: &PollOwner, socket: Fd) -> Option<Self> {
+        let owner = bun_io::Owner::new(bun_io::PollTag::DnsResolver, owner.0.cast());
+        // SAFETY: the poll becomes a part of its owner.
+        let poll = unsafe { bun_io::OwnedFilePoll::new(bun_io::js_vm_ctx(), socket, owner) };
         Some(Self(poll))
     }
 
-    fn start(&self, events: c_int) -> c_int {
+    fn watch(&self, writable: bool) {
+        // There is no way to drop one direction and keep the other.
+        if self.0.has_flag(bun_io::PollFlag::PollWritable) {
+            let _ = self.0.unregister(false);
+        }
+        if !self.0.has_flag(bun_io::PollFlag::PollReadable) {
+            let _ = self.0.register(bun_io::PollKind::Readable, false);
+        }
+        if writable {
+            let _ = self.0.register(bun_io::PollKind::Writable, false);
+        }
+    }
+}
+
+/// Dropping it closes the handle, which `on_close_uv` frees.
+#[cfg(windows)]
+struct DnsPoll(*mut UvDnsPoll);
+
+#[cfg(windows)]
+impl bun_dns::os::Poll for DnsPoll {
+    type Owner = PollOwner;
+
+    fn open(owner: &PollOwner, socket: Fd) -> Option<Self> {
+        let socket = bun_dns::os::socket_id(socket);
+        let poll = UvDnsPoll::new(owner.0, socket);
+        // SAFETY: a fresh heap allocation with a zeroed `uv_poll_t`.
+        let (rc, kind) = unsafe {
+            let handle = &raw mut (*poll.as_ptr()).poll;
+            let rc = libuv::uv_poll_init_socket(Loop::get().uv_loop(), handle, socket as _);
+            (rc, (*handle).type_)
+        };
+        if kind != libuv::HandleType::Poll {
+            return None;
+        }
+        let closes_on_drop = Self(poll.into_raw());
+        (rc >= 0).then_some(closes_on_drop)
+    }
+
+    fn watch(&self, writable: bool) {
+        let events = libuv::UV_READABLE | if writable { libuv::UV_WRITABLE } else { 0 };
         // SAFETY: initialised by `open`, and not closed yet.
-        unsafe {
+        let _ = unsafe {
             libuv::uv_poll_start(
                 &raw mut (*self.0).poll,
                 events,
                 Some(Resolver::on_dns_poll_uv),
             )
-        }
+        };
     }
 }
 
 #[cfg(windows)]
-impl Drop for OpenUvDnsPoll {
+impl Drop for DnsPoll {
     fn drop(&mut self) {
         // SAFETY: initialised by `open`, and not closed yet.
         unsafe {
@@ -1718,11 +1757,10 @@ impl Drop for OpenUvDnsPoll {
 #[cfg(windows)]
 impl bun_event_loop::Taskable for UvDnsPoll {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::UvDnsPollFree;
-    unsafe fn release_unrun(this: *mut Self) {
-        Self::destroy(this);
-    }
+    type Payload = bun_ptr::AliasableBox<Self>;
+    fn release_unrun(_: Self::Payload) {}
     /// The task doesn't run JS.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Payload) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -1754,24 +1792,14 @@ fn to_port_number(double: f64, global: &JSGlobalObject) -> JsResult<u16> {
     Err(jsc::Error::SOCKET_BAD_PORT.throw(global, format_args!("Port number out of range: {port}")))
 }
 
-fn throw_invalid_ip(global: &JSGlobalObject, address: &ZStr) -> jsc::JsError {
-    let address = bstr::BStr::new(address.as_bytes());
+fn throw_invalid_ip(global: &JSGlobalObject, address: &[u8]) -> jsc::JsError {
+    let address = bstr::BStr::new(address);
     jsc::Error::INVALID_IP_ADDRESS.throw(global, format_args!("Invalid IP address: \"{address}\""))
 }
 
-fn throw_channel_error(
-    global: &JSGlobalObject,
-    err: c_ares::Error,
-    syscall: bun::String,
-) -> jsc::JsError {
-    let system_error = SystemError {
-        errno: -1,
-        code: bun::String::static_(err.code()),
-        message: bun::String::static_(err.label()),
-        syscall,
-        ..Default::default()
-    };
-    global.throw_value(system_error.to_error_instance(global))
+/// What Node.js takes for `reverse()` and `setLocalAddress()`.
+fn parse_address(text: &[u8]) -> Option<IpAddr> {
+    ip_address::parse_uv_inet_pton(text).filter(|_| !strings::contains_char(text, 0))
 }
 
 impl Resolver {
@@ -1782,14 +1810,13 @@ impl Resolver {
     fn setup(
         vm: &VirtualMachine,
         made_in: Option<bun_jsc::ContextId>,
-        options: c_ares::ChannelOptions,
+        options: bun_dns_client::Options,
     ) -> Self {
         Self {
             ref_count: bun_ptr::RefCount::init(),
-            channel: c_ares::Channel::default(),
+            client: JsCell::new(None),
             made_in,
             vm: bun_ptr::BackRef::new(vm),
-            polls: JsCell::new(PollsMap::new()),
             options,
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::DNSResolver),
             timer_ref: Cell::new(None),
@@ -1800,18 +1827,6 @@ impl Resolver {
         }
     }
 
-    /// Not `Drop`: c-ares reports the sockets it closes through a `&Self`, which would alias the `&mut`.
-    ///
-    /// # Safety
-    /// `this` is the box of a resolver that lost its last ref.
-    unsafe fn destroy(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe {
-            drop((*this).channel.close());
-            drop(bun_core::heap::take(this));
-        }
-    }
-
     #[inline]
     pub(crate) fn as_ctx_ptr(&self) -> *mut Self {
         std::ptr::from_ref::<Self>(self).cast_mut()
@@ -1819,23 +1834,21 @@ impl Resolver {
 
     // ───────────── timer / pending bookkeeping ─────────────
 
-    pub(crate) fn check_timeouts(self: RefPtr<Self>, now: &bun::timespec, vm: &VirtualMachine) {
+    pub(crate) fn check_timeouts(self: RefPtr<Self>, vm: &VirtualMachine) {
         self.event_loop_timer
             .state
             .set(EventLoopTimerState::PENDING);
         crate::jsc_hooks::timer_all().increment_timer_ref(-1, vm.uws_loop());
 
-        if self.channel.has_active_queries() {
+        if self.next_check().is_some() {
             let _exit = vm.enter_event_loop_scope();
-            let answers = self.channel.process_timeouts();
-            if self.channel.has_active_queries() {
-                self.add_timer(Some(now), CARES_TIMEOUT_CHECK_INTERVAL_MS);
-            }
-            answers.for_each(PendingQuery::complete_cares);
+            let answers = self.with_client(Client::process_timeouts);
+            self.update_timer();
+            answers.into_iter().for_each(PendingQuery::complete);
         }
     }
 
-    /// Joins the query in flight for `name`, or has `send` hand a new one to the channel.
+    /// Joins the query in flight for `name`, or has `send` hand a new one to the client.
     fn ask(
         self: &RefPtr<Self>,
         kind: QueryKind,
@@ -1843,48 +1856,45 @@ impl Resolver {
         name: &[u8],
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
-        send: impl FnOnce(PendingQuery) -> c_ares::Answers<PendingQuery>,
+        send: impl FnOnce(&mut Client, PendingQuery) -> Answers<PendingQuery>,
     ) -> JSValue {
         let (promise, query) =
             PendingQuery::join_or_create(self, kind, hash, name, global_this, context);
-        let Some(query) = query else {
-            return promise;
-        };
-        let answers = send(query);
-        if self.channel.has_active_queries() {
-            self.add_timer(None, CARES_TIMEOUT_CHECK_INTERVAL_MS);
-        } else {
-            // c-ares answered inside the call (cache, hosts file, error). As in Node, that takes a turn of the loop.
-            self.remove_timer();
-            self.add_timer(None, 0);
+        if let Some(query) = query {
+            self.request_sent(self.with_client(|client| send(client, query)));
         }
-        answers.for_each(PendingQuery::complete_cares);
         promise
     }
 
-    fn request_completed(self: &RefPtr<Self>, answers: c_ares::Answers<PendingQuery>) {
+    fn request_sent(self: &RefPtr<Self>, answers: Answers<PendingQuery>) {
+        // If it was answered inside the call (cache, hosts file, error), that takes a turn of the loop as in Node.
+        let now = || bun::timespec::now(bun::TimespecMockMode::ForceRealTime);
+        self.add_timer(self.next_check().unwrap_or_else(now));
+        answers.into_iter().for_each(PendingQuery::complete);
+    }
+
+    fn request_completed(self: &RefPtr<Self>, answers: Answers<PendingQuery>) {
         self.update_timer();
-        answers.for_each(PendingQuery::complete_cares);
+        answers.into_iter().for_each(PendingQuery::complete);
     }
 
     fn update_timer(self: &RefPtr<Self>) {
-        if self.channel.has_active_queries() {
-            self.add_timer(None, CARES_TIMEOUT_CHECK_INTERVAL_MS);
+        if let Some(next) = self.next_check() {
+            self.add_timer(next);
         } else {
             self.remove_timer();
         }
     }
 
-    fn add_timer(self: &RefPtr<Self>, now: Option<&bun::timespec>, delay_ms: i64) {
-        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
+    fn add_timer(self: &RefPtr<Self>, next: bun::timespec) {
+        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE
+            && !self.event_loop_timer.next.get().greater(&next)
+        {
             return;
         }
 
+        self.remove_timer();
         self.timer_ref.set(Some(self.clone()));
-        let now_ts = now
-            .copied()
-            .unwrap_or_else(|| bun::timespec::now(bun::TimespecMockMode::ForceRealTime));
-        let next = now_ts.add_ms(delay_ms);
         self.event_loop_timer.next.set(next);
         let uws_loop = self.vm().uws_loop();
         let timers = crate::jsc_hooks::timer_all();
@@ -1904,28 +1914,29 @@ impl Resolver {
         self.timer_ref.set(None);
     }
 
-    /// Opens it if it is closed. Script can close it again.
-    fn get_channel(&self) -> Result<&c_ares::Channel<PendingQuery>, c_ares::Error> {
-        if !self.channel.is_open() {
-            let context = match self.made_in {
-                Some(made_in) => self.vm.context_of(made_in),
-                None => self.vm.root_context(),
-            };
-            // SAFETY: it stays in its box until `destroy` closes the channel. The callback only touches `polls`.
-            unsafe {
-                self.channel.open(self, self.options)?;
-                bun_jsc::AbortHandle::arm_owner(self.as_ctx_ptr(), context);
-            }
-        }
-        Ok(&self.channel)
+    fn next_check(&self) -> Option<bun::timespec> {
+        let next = self.client.get().as_ref()?.next_check()?;
+        Some(bun::timespec {
+            sec: next.as_secs() as i64,
+            nsec: next.subsec_nanos().into(),
+        })
     }
 
-    fn get_channel_or_error(
-        &self,
-        global_this: &JSGlobalObject,
-    ) -> JsResult<&c_ares::Channel<PendingQuery>> {
-        self.get_channel()
-            .map_err(|err| throw_channel_error(global_this, err, bun::String::EMPTY))
+    /// Opens it if it is closed.
+    fn with_client<T>(&self, call: impl FnOnce(&mut Client) -> T) -> T {
+        self.client
+            .with_mut(|client| call(client.get_or_insert_with(|| self.open_client())))
+    }
+
+    #[cold]
+    fn open_client(&self) -> Client {
+        let context = match self.made_in {
+            Some(made_in) => self.vm.context_of(made_in),
+            None => self.vm.root_context(),
+        };
+        // SAFETY: it stays in its box, and the handle is disarmed when it drops.
+        unsafe { bun_jsc::AbortHandle::arm_owner(self.as_ctx_ptr(), context) };
+        Client::new(Os::new(PollOwner(self.as_ctx_ptr())), self.options)
     }
 
     // ───────────── poll callbacks ─────────────
@@ -1937,21 +1948,23 @@ impl Resolver {
         events: c_int,
     ) {
         let poll = UvDnsPoll::from_poll(watcher);
-        // SAFETY: `on_close_uv` doesn't free `poll` while `poll_cb_depth` is non-zero, and an open poll's resolver is live.
+        // SAFETY: `on_close_uv` doesn't free `poll` while `poll_cb_depth` is non-zero, and leaves the free to this call then. An open poll's resolver is live.
         unsafe {
             (*poll).poll_cb_depth += 1;
             let parent: *mut Resolver = (*poll).parent;
             let vm = (*parent).vm.get();
-            // An error counts as both: https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
-            RefPtr::init_ref(parent).on_dns_poll(
-                (*poll).socket,
-                status < 0 || events & libuv::UV_READABLE != 0,
-                status < 0 || events & libuv::UV_WRITABLE != 0,
-            );
+            let events = Events {
+                readable: status < 0 || events & libuv::UV_READABLE != 0,
+                writable: events & libuv::UV_WRITABLE != 0,
+                failed: status < 0,
+            };
+            RefPtr::init_ref(parent).on_dns_poll((*poll).socket, events);
             (*poll).poll_cb_depth -= 1;
             if (*poll).poll_cb_depth == 0 && (*poll).closed {
                 // The task queue isn't drained until this libuv callback returns.
-                vm.enqueue_task(jsc::Task::init(poll));
+                let poll = ptr::NonNull::new_unchecked(poll);
+                let poll = bun_ptr::AliasableBox::from_non_null(poll);
+                vm.enqueue_task(jsc::Task::new::<UvDnsPoll>(poll));
             }
         }
     }
@@ -1968,90 +1981,13 @@ impl Resolver {
                 (*poll).closed = true;
                 return;
             }
+            bun_core::heap::destroy(poll);
         }
-        UvDnsPoll::destroy(poll);
     }
 
-    pub(crate) fn on_dns_poll(
-        self: RefPtr<Self>,
-        fd: c_ares::ares_socket_t,
-        readable: bool,
-        writable: bool,
-    ) {
+    pub(crate) fn on_dns_poll(self: RefPtr<Self>, socket: SocketId, events: Events) {
         let _exit = self.vm().enter_event_loop_scope();
-        self.request_completed(self.channel.process(fd, readable, writable));
-    }
-}
-
-impl c_ares::ChannelContainer for Resolver {
-    fn on_dns_socket_state(&self, fd: c_ares::ares_socket_t, readable: bool, writable: bool) {
-        if !readable && !writable {
-            // c-ares's way of saying that the socket is closed.
-            drop(self.polls.with_mut(|p| p.remove(&fd)));
-            return;
-        }
-
-        #[cfg(windows)]
-        self.polls.with_mut(|polls| {
-            use bun_collections::array_hash_map::MapEntry;
-            let poll = match polls.entry(fd) {
-                MapEntry::Occupied(entry) => entry.into_mut(),
-                MapEntry::Vacant(entry) => match OpenUvDnsPoll::open(self.as_ctx_ptr(), fd) {
-                    Some(poll) => entry.insert(poll),
-                    None => return,
-                },
-            };
-
-            let uv_events = (if readable { libuv::UV_READABLE } else { 0 })
-                | (if writable { libuv::UV_WRITABLE } else { 0 });
-            if poll.start(uv_events) < 0 {
-                polls.swap_remove(&fd);
-            }
-        });
-        #[cfg(not(windows))]
-        self.polls.with_mut(|polls| {
-            let poll = polls.entry(fd).or_insert_with(|| {
-                let owner =
-                    bun_io::Owner::new(bun_io::PollTag::DnsResolver, self.as_ctx_ptr().cast());
-                // SAFETY: `polls` is a field of the owner.
-                unsafe { PollType::new(bun_io::js_vm_ctx(), sys::Fd::from_native(fd), owner) }
-            });
-
-            // c-ares reports the full desired (readable, writable) set for this
-            // fd; sync the poll's registration to match. FilePoll now supports
-            // both directions on one poll (epoll: combined mask via CTL_MOD;
-            // kqueue: two filters on the same ident, both EV_DELETEd on
-            // unregister).
-            let have_readable = poll.has_flag(bun_io::PollFlag::PollReadable);
-            let have_writable = poll.has_flag(bun_io::PollFlag::PollWritable);
-
-            if (have_readable && !readable) || (have_writable && !writable) {
-                // Dropping a direction. FilePoll has no per-direction
-                // unregister (epoll CTL_DEL removes both; a targeted kqueue
-                // EV_DELETE would need a new API), and leaving the unwanted
-                // direction armed would busy-loop on level-triggered writable
-                // once the socket connects. Full resync is the simplest
-                // correct path and c-ares DNS fds are short-lived.
-                let _ = poll.unregister(false);
-                if readable {
-                    let _ = poll.register(bun_io::PollKind::Readable, false);
-                }
-                if writable {
-                    let _ = poll.register(bun_io::PollKind::Writable, false);
-                }
-            } else {
-                // Only adding directions (or no change). register() issues a
-                // single CTL_MOD on epoll that preserves the other direction;
-                // on kqueue EV_ADD creates a separate (ident, filter) knote
-                // without disturbing the existing one.
-                if readable && !have_readable {
-                    let _ = poll.register(bun_io::PollKind::Readable, false);
-                }
-                if writable && !have_writable {
-                    let _ = poll.register(bun_io::PollKind::Writable, false);
-                }
-            }
-        });
+        self.request_completed(self.with_client(|client| client.process(socket, events)));
     }
 }
 
@@ -2096,7 +2032,7 @@ impl Resolver {
                 "non-empty string",
             ));
         }
-        self.resolve_record(global_this, record, name)
+        Ok(self.resolve_record(global_this, record, name))
     }
 
     fn resolve_record(
@@ -2104,19 +2040,12 @@ impl Resolver {
         global_this: &JSGlobalObject,
         record: RecordType,
         name: &[u8],
-    ) -> JsResult<JSValue> {
+    ) -> JSValue {
         let context = global_this.bun_vm().context_of_caller().id();
-        let kind = QueryKind::Record(record);
-        let channel = match self.get_channel() {
-            Ok(channel) => channel,
-            Err(err) => {
-                let error = cares_jsc::error_to_js_with_syscall(err, global_this, kind.syscall())?;
-                return Err(global_this.throw_value(error));
-            }
-        };
-
-        let send = |query| channel.resolve(record, name, query);
-        Ok(self.ask(kind, wyhash(name), name, global_this, context, send))
+        let (kind, hash) = (QueryKind::Record(record), wyhash(name));
+        self.ask(kind, hash, name, global_this, context, |client, query| {
+            client.resolve(record, name, query)
+        })
     }
 
     pub(crate) fn global_resolve(
@@ -2156,7 +2085,7 @@ impl Resolver {
             ));
         }
 
-        self.resolve_record(global_this, record_type, name)
+        Ok(self.resolve_record(global_this, record_type, name))
     }
 
     pub(crate) fn global_reverse(cx: &mut JsScope<'_>, ip: &[u8]) -> JsResult<JSValue> {
@@ -2178,23 +2107,11 @@ impl Resolver {
             ));
         }
 
-        let kind = QueryKind::Addr;
-        let channel = match self.get_channel() {
-            Ok(channel) => channel,
-            Err(err) => {
-                return Err(global_this.throw_value(
-                    cares_jsc::error_to_js_with_syscall_and_hostname(
-                        err,
-                        global_this,
-                        kind.syscall(),
-                        ip,
-                    )?,
-                ));
-            }
+        let send = |client: &mut Client, query| match parse_address(ip) {
+            Some(ip) => client.reverse(ip, query),
+            None => vec![(query, Err(Error::ENOTIMP))],
         };
-
-        let send = |query| channel.get_host_by_addr(ip, query);
-        Ok(self.ask(kind, wyhash(ip), ip, global_this, context, send))
+        Ok(self.ask(QueryKind::Addr, wyhash(ip), ip, global_this, context, send))
     }
 
     pub(crate) fn global_lookup(
@@ -2254,9 +2171,9 @@ impl Resolver {
         if !bun_dns::is_valid_hostname(name) {
             let promise = JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
-            cares_jsc::reject_later(
+            answer_jsc::reject_later(
                 promise,
-                c_ares::Error::ENOTFOUND,
+                Error::ENOTFOUND,
                 b"getaddrinfo",
                 Some(name),
                 global_this,
@@ -2276,7 +2193,9 @@ impl Resolver {
         };
 
         if opts.backend == GetAddrInfoBackend::CAres {
-            return self.c_ares_lookup_with_normalized_name(&query, global_this, context);
+            let (kind, hash) = (QueryKind::HostClient, query.hash());
+            let send = |client: &mut Client, it| client.lookup(&query.name, opts.family, it);
+            return Ok(self.ask(kind, hash, &query.name, global_this, context, send));
         }
 
         let (kind, hash) = (QueryKind::HostNative, query.hash());
@@ -2300,22 +2219,6 @@ impl Resolver {
         Ok(promise)
     }
 
-    fn c_ares_lookup_with_normalized_name(
-        self: &RefPtr<Self>,
-        query: &GetAddrInfo,
-        global_this: &JSGlobalObject,
-        context: bun_jsc::ContextId,
-    ) -> JsResult<JSValue> {
-        let channel = self.get_channel().map_err(|err| {
-            throw_channel_error(global_this, err, bun::String::create_atom(&query.name))
-        })?;
-
-        let (kind, hash) = (QueryKind::HostCares, query.hash());
-        let send =
-            |pending| channel.get_addr_info(&query.name, query.port, &query.to_cares(), pending);
-        Ok(self.ask(kind, hash, &query.name, global_this, context, send))
-    }
-
     // ───────── servers / local address ─────────
 
     pub(crate) fn get_global_servers(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -2324,40 +2227,15 @@ impl Resolver {
 
     pub(crate) fn get_servers(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global_this = cx.global();
-        let channel = self.get_channel_or_error(global_this)?;
-        let servers = channel.servers().map_err(|err| {
-            global_this.throw_value(global_this.create_error_instance(format_args!(
-                "ares_get_servers_ports error: {}",
-                err.label()
-            )))
-        })?;
+        let servers: Vec<SocketAddr> = self.with_client(|client| client.servers().collect());
         let values = JSValue::create_empty_array(global_this, 0)?;
 
-        for (i, current) in (0u32..).zip(servers.iter()) {
-            let mut buf = [0u8; INET6_ADDRSTRLEN];
-            let family = current.family;
-
-            let octets = &current.addr[..if family == netc::AF_INET { 4 } else { 16 }];
-            let Some(ip) = bun_cares_sys::ntop(octets, &mut buf).map(bstr::BStr::new) else {
-                return Err(global_this.throw_value(global_this.create_error_instance(
-                    format_args!(
-                        "ares_inet_ntop error: no more space to convert a network format address"
-                    ),
-                )));
-            };
-
-            let mut port = current.tcp_port;
-            if port == 0 {
-                port = current.udp_port;
-            }
-            if port == 0 {
-                port = IANA_DNS_PORT;
-            }
-
+        for (i, server) in (0u32..).zip(servers) {
+            let (ip, port) = (IpText::new(server.ip()), server.port());
             // https://nodejs.org/api/dns.html#dnsgetservers
-            let server = if port == IANA_DNS_PORT {
-                bun::String::clone_utf8(ip)
-            } else if family == netc::AF_INET6 {
+            let server = if port == DEFAULT_PORT {
+                bun::String::clone_latin1(&ip)
+            } else if server.is_ipv6() {
                 bun::String::create_format(format_args!("[{ip}]:{port}"))
             } else {
                 bun::String::create_format(format_args!("{ip}:{port}"))
@@ -2375,11 +2253,12 @@ impl Resolver {
         second: Option<bun_core::String>,
     ) -> JsResult<()> {
         let global_this = cx.global();
-        let channel = self.get_channel_or_error(global_this)?;
         let set = |value: &bun_core::String| {
-            let address = value.to_owned_slice_z();
-            let ip = parse_ip(&address).ok_or_else(|| throw_invalid_ip(global_this, &address))?;
-            channel.set_local_ip(ip);
+            let ip = parse_address(&value.to_utf8()).ok_or_else(|| {
+                let message = format_args!("Invalid IP address.");
+                jsc::Error::INVALID_ARG_VALUE.throw(global_this, message)
+            })?;
+            self.with_client(|client| client.set_local_ip(ip));
             JsResult::Ok(ip)
         };
 
@@ -2394,18 +2273,17 @@ impl Resolver {
     }
 
     /// Runs script: the elements are coerced.
-    fn servers_from_js<'a>(
+    fn servers_from_js(
         global_this: &JSGlobalObject,
         argument: JSValue,
-    ) -> JsResult<Vec<c_ares::struct_ares_addr_port_node<'a>>> {
+    ) -> JsResult<Vec<(IpAddr, u16)>> {
         if !argument.is_array() {
             return Err(global_this.throw_invalid_argument_type("setServers", "servers", "array"));
         }
 
         let mut triples_iterator = argument.array_iterator(global_this)?;
 
-        let mut entries: Vec<c_ares::struct_ares_addr_port_node<'_>> =
-            Vec::with_capacity(triples_iterator.len as usize);
+        let mut entries = Vec::new();
 
         while let Some(triple) = triples_iterator.next()? {
             if !triple.is_array() {
@@ -2429,32 +2307,11 @@ impl Resolver {
                 );
             }
 
-            let address_string = triple
-                .get_index(global_this, 1)?
-                .to_bun_string(global_this)?;
-            let address = bun::ZBox::from_bytes(address_string.to_utf8().slice());
-
-            let af: c_int = if family == 4 {
-                netc::AF_INET
-            } else {
-                netc::AF_INET6
-            };
-
-            let mut node: c_ares::struct_ares_addr_port_node<'_> = bun_core::ffi::zeroed();
-            node.family = af;
-            node.udp_port = port;
-            node.tcp_port = port;
-
-            let parsed = if family == 4 {
-                bun_cares_sys::pton::<4>(&address).map(|addr| node.addr[..4].copy_from_slice(&addr))
-            } else {
-                bun_cares_sys::pton(&address).map(|addr| node.addr = addr)
-            };
-            if parsed.is_none() {
-                return Err(throw_invalid_ip(global_this, &address));
-            }
-
-            entries.push(node);
+            let address = triple.get_index(global_this, 1)?.to_utf8(global_this)?;
+            let ip = ip_address::parse_strict(&address)
+                .filter(|ip| ip.is_ipv4() == (family == 4))
+                .ok_or_else(|| throw_invalid_ip(global_this, &address))?;
+            entries.push((ip, port as u16));
         }
         Ok(entries)
     }
@@ -2469,7 +2326,7 @@ impl Resolver {
         servers: JsLocal<'_>,
     ) -> JsResult<()> {
         let global_this = cx.global();
-        let busy = self.get_channel_or_error(global_this)?.has_active_queries();
+        let busy = self.with_client(|client| client.has_requests());
         // It's okay to call dns.setServers with active queries, but not dns.Resolver.setServers
         if busy && self.made_in.is_some() {
             return Err(global_this
@@ -2481,38 +2338,27 @@ impl Resolver {
         }
 
         let entries = Self::servers_from_js(global_this, servers.to_js());
-        let mut entries = entries.inspect_err(|_| self.update_timer())?;
-        let mut head = None;
-        for entry in entries.iter_mut().rev() {
-            entry.next = head;
-            head = Some(&*entry);
-        }
-
-        let (result, answers) = self.get_channel_or_error(global_this)?.set_servers(head);
-        self.request_completed(answers);
-        result.map_err(|err| {
-            global_this.throw_value(global_this.create_error_instance(format_args!(
-                "ares_set_servers_ports error: {}",
-                err.label()
-            )))
-        })
+        let entries = entries.inspect_err(|_| self.update_timer())?;
+        self.request_completed(self.with_client(|client| client.set_servers(&entries)));
+        Ok(())
     }
 
     pub(crate) fn new_resolver(cx: &mut JsScope<'_>, options: &ResolverOptions) -> JSValue {
         let global_this = cx.global();
         let vm = global_this.bun_vm();
-        let options = c_ares::ChannelOptions {
-            timeout: options.timeout,
-            tries: options.tries,
+        let options = bun_dns_client::Options {
+            timeout: (options.timeout > 0).then(|| Duration::from_millis(options.timeout as u64)),
+            max_timeout: (options.max_timeout > 0)
+                .then(|| Duration::from_millis(options.max_timeout.into())),
+            tries: options.tries.max(1) as u32,
         };
         bun_output::scoped_log!(DNSResolver, "init");
         let made_in = Some(vm.context_of_caller().id());
         js_DNSResolver::to_js(RefPtr::new(Self::setup(vm, made_in, options)), global_this)
     }
 
-    pub(crate) fn cancel(self: &RefPtr<Self>, cx: &mut JsScope<'_>) -> JsResult<()> {
-        self.request_completed(self.get_channel_or_error(cx.global())?.cancel());
-        Ok(())
+    pub(crate) fn cancel(self: &RefPtr<Self>) {
+        self.request_completed(self.with_client(Client::cancel));
     }
 
     // Resolves the given address and port into a host name and service using the operating system's underlying getnameinfo implementation.
@@ -2535,22 +2381,18 @@ impl Resolver {
 
         let port: u16 = to_port_number(port_value, global_this)?;
 
-        let mut buf = [0u8; 128];
-        let Some(ip) = strings::copy_z(&mut buf, addr_s).and_then(parse_ip) else {
+        let Some(ip) = ip_address::parse_strict(addr_s) else {
             return Err(global_this.throw_invalid_argument_value(
                 b"address",
                 bun_string_jsc::create_utf8_for_js(global_this, addr_s)?,
             ));
         };
-        // `ares_getnameinfo` would send an ip6.arpa query, which never resolves, for an IPv4-mapped address.
-        let sa = bun_dns::Address::from_ip(ip.to_canonical(), port).into_storage();
 
         let resolver = global_resolver(global_this);
-        let channel = resolver.get_channel_or_error(global_this)?;
-
         // For one address, the hashes are equal only if the ports are.
         let (kind, hash) = (QueryKind::NameInfo, wyhash(addr_s) ^ u64::from(port));
-        let send = |query| channel.get_name_info(&sa, query);
+        // An IPv4-mapped address has no name in ip6.arpa.
+        let send = |client: &mut Client, query| client.name_info(ip.to_canonical(), port, query);
         Ok(resolver.ask(kind, hash, addr_s, global_this, context, send))
     }
 

@@ -1,5 +1,6 @@
 import assert from "assert";
 import { describe, expect, test } from "bun:test";
+import { isASAN, isDebug, runFixtureMaxRSS } from "harness";
 
 function makeBlock(f: Function, ...args: any[]) {
   return function () {
@@ -139,3 +140,74 @@ test("assert.deepStrictEqual diff message stays bounded for large arrays with ma
   // Identical large arrays still compare equal without throwing.
   expect(() => assert.deepStrictEqual(actual, actual.slice())).not.toThrow();
 }, 30_000);
+
+function deepStrictEqualMessage(actual: unknown, expected: unknown): string {
+  let error: Error | undefined;
+  try {
+    assert.deepStrictEqual(actual, expected);
+  } catch (e) {
+    error = e as Error;
+  }
+  expect(error).toBeInstanceOf(assert.AssertionError);
+  return error!.message;
+}
+
+test.concurrent("assert.deepStrictEqual takes little memory to diff a large array against an empty one", async () => {
+  // Keeping every diagonal of every level would take 63 MB.
+  const fixture = (expected: string) => `
+    const actual = Array.from({ length: 2_800 }, (_, i) => i);
+    try {
+      require("node:assert").deepStrictEqual(actual, ${expected});
+    } catch (error) {
+      process.stdout.write(JSON.stringify(error.message.split("\\n").length));
+    }
+  `;
+  // The baseline runs the same code, so the difference is the memory of the diff.
+  const [maxRSS, baselineMaxRSS] = await Promise.all([
+    runFixtureMaxRSS(fixture("[]"), 2_807),
+    runFixtureMaxRSS(fixture("actual.with(0, -1)"), 12),
+  ]);
+  expect((maxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 55 : 35);
+});
+
+test("assert.deepStrictEqual prints a diff up to its limit and a preview past it", () => {
+  const message = (length: number) =>
+    deepStrictEqualMessage(
+      Array.from({ length }, (_, i) => i),
+      Array.from({ length }, (_, i) => i + 100_000),
+    );
+  const lines = (length: number, prefix: string, first: number) =>
+    Array.from({ length }, (_, i) => prefix + (first + i)).join(",\n");
+  const header = "Expected values to be strictly deep-equal:\n";
+
+  expect(message(1_446)).toBe(
+    `${header}+ actual - expected\n\n  [\n${lines(1_446, "+   ", 0)}\n${lines(1_446, "-   ", 100_000)}\n  ]\n`,
+  );
+  expect(message(1_447)).toBe(`${header}\n... Skipped lines\n[\n${lines(49, "  ", 0)},\n...\n`);
+});
+
+test.each([
+  ["Latin-1", "é"],
+  ["UTF-16", "ń"],
+])("assert.deepStrictEqual diff breaks ties as Node does (%s)", (_, suffix) => {
+  const strings = (digits: string) => Array.from(digits, digit => digit + suffix);
+  const message = (lines: string[]) =>
+    `Expected values to be strictly deep-equal:\n+ actual - expected\n\n  [\n${lines.join("\n").replaceAll("é", suffix)}\n  ]\n`;
+
+  expect(deepStrictEqualMessage(strings("1122"), strings("211"))).toBe(
+    message(["-   '2é',", "    '1é',", "    '1é',", "+   '2é',", "+   '2é'"]),
+  );
+  expect(deepStrictEqualMessage(strings("1231221"), strings("321213"))).toBe(
+    message([
+      "+   '1é',",
+      "+   '2é',",
+      "    '3é',",
+      "-   '2é',",
+      "    '1é',",
+      "    '2é',",
+      "+   '2é',",
+      "    '1é',",
+      "-   '3é'",
+    ]),
+  );
+});

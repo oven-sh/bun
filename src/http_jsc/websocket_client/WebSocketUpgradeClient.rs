@@ -41,6 +41,7 @@ use bun_ptr::{BackRef, JsCell, RefPtr};
 
 use super::websocket_proxy_tunnel::IntoUpgradeClientRef;
 use bun_uws::{self as uws, SocketHandler, SocketKind};
+use bun_websocket::handshake::{compute_accept_value, parse_window_bits};
 
 use super::cpp_websocket::{CppWebSocket, HandshakeVerdict, TlsHandshake, TlsPeer};
 use super::websocket_deflate as WebSocketDeflate;
@@ -685,8 +686,9 @@ where
             // `tls.checkServerIdentity` may close the WebSocket.
             // That close clears `hostname`, so the name is moved out while the verdict borrows it.
             let hostname = self.hostname.take();
-            let ssl = socket.ssl_mut();
-            let name = identity_name(hostname.as_bytes(), ssl.as_deref());
+            // SAFETY: the socket that reports its handshake is open, and `ssl` is done with before that callback runs.
+            let mut ssl = unsafe { socket.ssl_mut() };
+            let name = identity_name(hostname.as_bytes(), ssl.as_deref_mut());
             let handshake = TlsHandshake::First {
                 context: self.context,
                 peer: self.tls_peer(),
@@ -775,13 +777,14 @@ where
         if SSL {
             let hostname = self.hostname.get();
             if !hostname.is_empty() {
-                if let Some(ssl) = socket.ssl_mut() {
+                // SAFETY: the socket has just opened, and `ssl` is used for this one call.
+                if let Some(ssl) = unsafe { socket.ssl_mut() } {
                     bun_http::configure_http_client_with_alpn(
                         ssl,
                         if bun_core::ip_address::is_ip_host(hostname.as_bytes()) {
-                            core::ptr::null()
+                            None
                         } else {
-                            hostname.as_ptr()
+                            Some(hostname.as_zstr().into())
                         },
                         bun_http::AlpnOffer::H1,
                     );
@@ -1696,23 +1699,6 @@ fn build_request_body(
     }
 }
 
-fn parse_window_bits(value: &[u8]) -> Option<u8> {
-    use WebSocketDeflate::Params;
-
-    let digits = value
-        .strip_prefix(b"\"")
-        .and_then(|v| v.strip_suffix(b"\""))
-        .unwrap_or(value);
-    let bits = match *digits {
-        [d @ b'0'..=b'9'] => d - b'0',
-        [b'1', d @ b'0'..=b'9'] => 10 + (d - b'0'),
-        _ => return None,
-    };
-    (Params::MIN_WINDOW_BITS..=Params::MAX_WINDOW_BITS)
-        .contains(&bits)
-        .then_some(bits)
-}
-
 /// Validates the server's response to the global `WebSocket`'s offer, which is always
 /// `permessage-deflate; client_max_window_bits` (`WebSocketOptions::extensions` in WebSocket.h), and
 /// returns the negotiated params (RFC 7692 §7.1). `None` for a different extension, an unknown or
@@ -1746,25 +1732,10 @@ fn parse_deflate_response(response: &[u8]) -> Option<WebSocketDeflate::Params> {
     Some(params)
 }
 
-/// Compute the expected Sec-WebSocket-Accept value per RFC 6455 §4.2.2:
-/// base64(SHA-1(key ++ "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
-fn compute_accept_value(key: &[u8]) -> [u8; 28] {
-    use bun_sha_hmac::sha::hashers::SHA1;
-    const WEBSOCKET_GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-    let mut hasher = SHA1::init();
-    hasher.update(key);
-    hasher.update(WEBSOCKET_GUID);
-    let mut hash = [0u8; SHA1::DIGEST];
-    hasher.r#final(&mut hash);
-    let mut result = [0u8; 28];
-    let _ = bun_base64::encode(&mut result, &hash);
-    result
-}
-
 /// Returns the name the certificate must match: `hostname` (`tls.serverName` or the URL's host), falling back to the SNI.
 fn identity_name<'a>(
     hostname: &'a [u8],
-    ssl: Option<&boringssl::c::SSL>,
+    ssl: Option<&mut boringssl::c::SSL>,
 ) -> std::borrow::Cow<'a, [u8]> {
     if !hostname.is_empty() {
         hostname.into()

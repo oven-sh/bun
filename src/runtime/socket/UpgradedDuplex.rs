@@ -65,7 +65,7 @@ pub(crate) struct UpgradedDuplex {
     /// [`Self::drain_pending`] as soon as the engine is up.
     pub pending_data: JsCell<Vec<u8>>,
     /// The transport closed before the TLS engine existed (same window as
-    /// [`Self::pending_data`]). Consumed by the queued `StartTLS` task.
+    /// [`Self::pending_data`]). Consumed by the queued `run_start_tls`.
     pub pending_close: Cell<bool>,
     /// [`Self::shutdown`] arrived before the engine existed. [`Self::drain_pending`] replays it.
     pub pending_shutdown: Cell<bool>,
@@ -365,13 +365,13 @@ impl DuplexUpgradeContext {
     }
 
     /// Replay bytes that arrived before the engine existed. Called by
-    /// `run_event` once the `StartTLS` branch has
+    /// `run_start_tls` once it has
     /// finished its bookkeeping, so the replay is indistinguishable from an
     /// ordinary post-start delivery.
     pub(super) fn drain_pending(&self) {
         let this = &self.upgrade;
         // Nothing to replay, or the engine never came up (the socket died
-        // before `StartTLS`). Bail before taking so the bytes are not
+        // before `run_start_tls`). Bail before taking so the bytes are not
         // destroyed by a drain that could not deliver them.
         if this.wrapper_ref().is_none() {
             return;
@@ -631,9 +631,7 @@ impl UpgradedDuplex {
     }
 
     fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
-        self.wrapper_ref()
-            .and_then(|w| w.ssl.get())
-            .map(|p| p.as_ptr())
+        Some(self.wrapper_ref()?.ssl()?.as_ptr())
     }
 
     #[uws_callback(export = "UpgradedDuplex__ssl_error", no_catch)]
@@ -687,7 +685,7 @@ impl UpgradedDuplex {
         // can run re-entrantly from `on_close` while a
         // `SSLWrapper::handle_traffic` frame is still on the stack with a
         // `&SSLWrapper` into the `Some` payload. Assigning `None` runs `Drop`
-        // (fine - `deinit()` nulls `ssl`/`ctx`) but then memmoves a fresh
+        // (which frees the `SSL` under that frame) and then memmoves a fresh
         // `Option::None` value over the slot, whose payload bytes are stack
         // garbage - the in-flight frame's `self.ssl` then reads junk and
         // `flush_pending_events` UAFs into BoringSSL. `deinit()` alone leaves

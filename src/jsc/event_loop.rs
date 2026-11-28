@@ -15,6 +15,7 @@ use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU64, Ordering};
 
 use bun_core::scoped::{ScopedCell as _, ScopedFlag as _};
 use bun_io as Async;
+use bun_ptr::VecCellExt as _;
 use bun_uws as uws;
 
 use crate::js_promise::Status as PromiseStatus;
@@ -26,7 +27,6 @@ use crate::{self as jsc, JSGlobalObject, JSValue, JsResult};
 // Re-exports (thin re-exports of sibling/neighbor modules — do NOT inline
 // bodies). Kept so downstream `bun_jsc::event_loop::Foo` paths resolve.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_event_loop::AnyTaskWithExtraContext;
 pub use bun_event_loop::ConcurrentTask::{
     self, ConcurrentTask as ConcurrentTaskItem, Queue as ConcurrentQueue,
 };
@@ -244,9 +244,9 @@ pub enum TopLevelWaitError {
 
 // ──────────────────────────────────────────────────────────────────────────
 // §Dispatch hot-path — `tick_queue_with_count` is the per-tick dispatch over
-// `Task { tag, ptr }`. Per PORTING.md, the *high tier owns the match loop*:
+// `Task { tag, payload }`. Per PORTING.md, the *high tier owns the match loop*:
 // `bun_runtime` registers the real dispatcher at init; this crate only stores
-// `(tag, ptr)` and the hook. The dispatch match lives in
+// `(tag, payload)` and the hook. The dispatch match lives in
 // `bun_runtime::dispatch::run_tasks` (every arm names a `bun_runtime` type).
 // ──────────────────────────────────────────────────────────────────────────
 // The hook receives the specific `EventLoop` to drain (which may be the
@@ -662,7 +662,7 @@ impl EventLoop {
         }
 
         let concurrent = self.concurrent_tasks.pop_batch();
-        let count = concurrent.count;
+        let count = concurrent.len();
         if count == 0 {
             return tasks.readable_length() - start_count;
         }
@@ -770,9 +770,8 @@ impl EventLoop {
     }
 
     /// Any thread.
-    pub(crate) fn post(&self, task: NonNull<ConcurrentTaskItem>) {
-        // SAFETY: the task is the caller's until it is pushed.
-        match unsafe { task.as_ref() }.task.tag().is_plugin_request() {
+    pub(crate) fn post(&self, task: ConcurrentTask::OwnedConcurrentTask) {
+        match task.tag().is_plugin_request() {
             true => self.concurrent_plugin_requests.push(task),
             false => self.concurrent_tasks.push(task),
         }
@@ -939,21 +938,9 @@ impl EventLoop {
         }
     }
 
-    /// Move a batch that other threads posted into `tasks`, freeing the heap carriers.
-    fn take_concurrent_tasks(
-        tasks: &mut Queue,
-        batch: bun_threading::unbounded_queue::Batch<ConcurrentTaskItem>,
-    ) {
-        let mut iter = batch.iterator();
-        loop {
-            let node = iter.next();
-            if node.is_null() {
-                break;
-            }
-            // SAFETY: `node` is non-null and owned by the popped batch; the
-            // iterator advanced past it before returning.
-            let task =
-                unsafe { ConcurrentTask::ConcurrentTask::into_task(NonNull::new_unchecked(node)) };
+    /// Move a batch that other threads posted into `tasks`.
+    fn take_concurrent_tasks(tasks: &mut Queue, batch: impl Iterator<Item = Task>) {
+        for task in batch {
             let _ = tasks.write_item(task);
         }
     }
@@ -1013,8 +1000,7 @@ impl EventLoop {
 
     /// How many immediates wait for the next [`tick_immediate_tasks`](Self::tick_immediate_tasks).
     pub fn immediate_task_count(&self) -> usize {
-        // SAFETY: a read of the length.
-        unsafe { &*self.immediate_tasks.as_ptr() }.len()
+        self.immediate_tasks.len()
     }
 
     /// See [`EventLoop::yield_tasks`].
@@ -1027,8 +1013,7 @@ impl EventLoop {
     }
 
     pub(crate) fn has_yield_tasks(&self) -> bool {
-        // SAFETY: a read of the length.
-        !unsafe { &*self.yield_tasks.as_ptr() }.is_empty()
+        self.yield_tasks.len() > 0
     }
 
     /// `auto_tick`, before it polls: last iteration's yielded tasks become
@@ -1255,22 +1240,6 @@ impl EventLoop {
 }
 
 impl EventLoop {
-    /// # Safety
-    /// `done` must point to a live `bool`; C++ writes `true` through it from a
-    /// callback inside `tick()`, so it cannot be a Rust `&mut` (would alias).
-    pub unsafe fn tick_while_paused(&self, done: *const bool) {
-        // SAFETY: see fn contract — `done` is a live FFI bool written by C++.
-        while !unsafe { done.read_volatile() } {
-            #[cfg(not(windows))]
-            self.usockets_loop().tick();
-            #[cfg(windows)]
-            // SAFETY: `uv_loop()` is live for this loop's lifetime; JS thread.
-            unsafe {
-                (*self.uv_loop()).tick()
-            };
-        }
-    }
-
     /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
     /// `context`: as for [`run_callback`](Self::run_callback).
     /// `after_call` runs after `callback` returns and before microtasks drain.
@@ -1313,15 +1282,9 @@ impl EventLoop {
     #[cfg(windows)]
     fn hold_forever_poll(&self, loop_: &'static uws::Loop) {
         if self.forever_timer.get().is_none() {
-            let this = core::ptr::from_ref(self)
-                .cast_mut()
-                .cast::<core::ffi::c_void>();
-            let mut t = uws::Timer::create(loop_, this);
+            let mut t = uws::Timer::create(loop_);
             // SAFETY: t is a fresh non-null timer handle
-            unsafe {
-                t.as_mut()
-                    .set(this, Some(noop_forever_timer), 1000 * 60 * 4, 1000 * 60 * 4)
-            };
+            unsafe { t.as_mut() }.set(Some(noop_forever_timer), 1000 * 60 * 4, 1000 * 60 * 4);
             self.forever_timer.set(Some(t));
         }
     }

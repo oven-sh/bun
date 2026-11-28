@@ -1825,6 +1825,13 @@ it("readdirSync throws when given a path that doesn't exist", () => {
   }
 });
 
+it.skipIf(!isWindows)("readdirSync of a device path lists a directory and creates nothing", () => {
+  using dir = tempDir("readdir-device-path", { "a.txt": "" });
+  expect(() => readdirSync(`\\\\.\\${dir}\\missing`)).toThrow(expect.objectContaining({ code: "ENOENT" }));
+  expect(() => readdirSync(`\\\\.\\${dir}\\a.txt`)).toThrow(expect.objectContaining({ code: "ENOTDIR" }));
+  expect(readdirSync(`\\\\.\\${dir}`)).toEqual(["a.txt"]);
+});
+
 it("readdirSync throws when given a file path with trailing slash", () => {
   try {
     readdirSync(import.meta.path + "/");
@@ -3911,6 +3918,32 @@ describe("fs.exists", () => {
 });
 
 describe("rm", () => {
+  it.skipIf(!isWindows).each(["", "\\"])("removes a directory that is written as a device path (%j)", end => {
+    using dir = tempDir("rm-device-path", { "sub/a.txt": "" });
+    rmSync(`\\\\.\\${dir}\\sub${end}`, { recursive: true, force: true });
+    expect(readdirSync(String(dir))).toEqual([]);
+  });
+
+  it.concurrent.skipIf(!isWindows).each(["sub/.", "sub/a.txt/."])(
+    "force does not hide that %s cannot be removed",
+    async name => {
+      using dir = tempDir("rm-dot", { "sub/a.txt": "" });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `fs.promises.rm("${name}", { recursive: true, force: true }).catch(e => console.log(e.code))`,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("EINVAL\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
   it("removes a file", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.txt`;
     writeFileSync(path, "File written successfully", "utf8");

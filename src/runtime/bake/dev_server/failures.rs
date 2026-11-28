@@ -295,7 +295,7 @@ impl DevServer {
                     route_bundle::State::PossibleBundlingFailures;
             }
 
-            self.publish(HmrTopic::Errors, &payload, Opcode::BINARY);
+            self.publish(HmrTopic::Errors, &payload, Opcode::Binary);
         } else if !self.graphs.incremental_result.failures_removed.is_empty() {
             let mut payload: Vec<u8> = Vec::with_capacity(
                 ::core::mem::size_of::<MessageId>()
@@ -315,7 +315,7 @@ impl DevServer {
                 payload.extend_from_slice(&removed.get_owner().encode().bits().to_le_bytes());
             }
 
-            self.publish(HmrTopic::Errors, &payload, Opcode::BINARY);
+            self.publish(HmrTopic::Errors, &payload, Opcode::Binary);
         }
 
         self.graphs.incremental_result.failures_removed.clear();

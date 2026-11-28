@@ -5,6 +5,7 @@ use core::ptr::NonNull;
 use std::sync::Arc;
 
 use crate::http_thread::InitOpts as HTTPThreadInitOpts;
+use crate::internal_state::TransportEnd;
 use crate::request_trace::Endpoints;
 use crate::ssl_config::{self, SSLConfig};
 use crate::{
@@ -578,17 +579,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
     ) -> Result<(), InitError> {
         debug_assert!(SSL, "ssl only");
         let opts = uws::SocketContext::BunSocketContextOptions {
-            ca: if !init_opts.ca.is_empty() {
-                init_opts.ca.as_ptr().cast()
-            } else {
-                core::ptr::null()
-            },
-            ca_count: u32::try_from(init_opts.ca.len()).expect("int cast"),
-            ca_file_name: if !init_opts.abs_ca_file_name.is_empty() {
-                init_opts.abs_ca_file_name.as_ptr()
-            } else {
-                core::ptr::null()
-            },
+            ca: (!init_opts.ca.is_empty()).then_some(init_opts.ca).into(),
+            ca_file_name: (!init_opts.abs_ca_file_name.is_empty())
+                .then_some(init_opts.abs_ca_file_name.into()),
             request_cert: 1,
             ..Default::default()
         };
@@ -1378,8 +1371,14 @@ impl<const SSL: bool> Handler<SSL> {
         HTTPContext::<SSL>::terminate_socket(socket);
     }
 
-    pub fn on_close(socket: HTTPSocket<SSL>, _: c_int, _: Option<*mut c_void>) {
-        let tagged = HTTPContext::<SSL>::enter_client(socket, |c| c.on_close::<SSL>(socket));
+    pub fn on_close(socket: HTTPSocket<SSL>, code: c_int, _: Option<*mut c_void>) {
+        // Past the `CloseCode`s, it is the error that the socket reported.
+        let end = if code > uws::CloseCode::FastShutdown as c_int {
+            TransportEnd::Failed
+        } else {
+            TransportEnd::Clean
+        };
+        let tagged = HTTPContext::<SSL>::enter_client(socket, |c| c.on_close::<SSL>(socket, end));
         let Some(tagged) = tagged else { return };
         HTTPContext::<SSL>::mark_socket_as_dead(socket);
 
@@ -1523,7 +1522,7 @@ impl<const SSL: bool> Handler<SSL> {
             } else {
                 socket.close(uws::CloseKind::Normal);
             }
-            client.on_close::<SSL>(socket)
+            client.on_close::<SSL>(socket, TransportEnd::Clean)
         });
         let Some(tagged) = tagged else { return };
         HTTPContext::<SSL>::mark_tagged_socket_as_dead(socket, tagged);

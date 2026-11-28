@@ -1,4 +1,5 @@
 use core::ffi::c_void;
+use core::ops::Range;
 
 use crate::{JSGlobalObject, JSValue, JsResult};
 
@@ -15,9 +16,14 @@ unsafe extern "C" {
         args: &MarkedArgumentBuffer,
         global: &JSGlobalObject,
     ) -> JSValue;
+    safe fn MarkedArgumentBuffer__constructArrayOfRange(
+        args: &MarkedArgumentBuffer,
+        global: &JSGlobalObject,
+        start: usize,
+        end: usize,
+    ) -> JSValue;
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `f`
-    // (never dereferenced as Rust data) — same contract as
-    // `JSC__VM__holdAPILock` / `JSC__JSGlobalObject__queueMicrotaskCallback`.
+    // (never dereferenced as Rust data).
     safe fn MarkedArgumentBuffer__run(
         ctx: *mut c_void,
         f: extern "C" fn(ctx: *mut c_void, args: *mut c_void),
@@ -62,6 +68,18 @@ impl MarkedArgumentBuffer {
     pub fn construct_array(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         crate::call_zero_is_throw(global, || {
             MarkedArgumentBuffer__constructArray(self, global)
+        })
+    }
+
+    /// A `JSArray` of some of the values.
+    #[track_caller]
+    pub(crate) fn construct_array_of_range(
+        &self,
+        global: &JSGlobalObject,
+        range: Range<usize>,
+    ) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(global, || {
+            MarkedArgumentBuffer__constructArrayOfRange(self, global, range.start, range.end)
         })
     }
 

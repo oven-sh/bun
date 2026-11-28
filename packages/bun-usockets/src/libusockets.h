@@ -98,7 +98,7 @@
 #define LIBUS_SEND_BUFFER_LENGTH (1 << 14)
 /* A timeout granularity of 4 seconds means give or take 4 seconds from set timeout */
 #define LIBUS_TIMEOUT_GRANULARITY 4
-/* 32 byte padding of receive buffer ends */
+/* Without it mimalloc commits a page of 4 MiB for a receive buffer (MI_LARGE_MAX_OBJ_SIZE) */
 #define LIBUS_RECV_BUFFER_PADDING 32
 /* Guaranteed alignment of extension memory */
 #define LIBUS_EXT_ALIGNMENT 16
@@ -250,10 +250,7 @@ int us_udp_socket_bind(struct us_udp_socket_t *s, const char *hostname, unsigned
 #ifdef _WIN32
 
 /* Create a new high precision, low performance timer. May fail and return null */
-struct us_timer_t *us_create_timer(us_loop_r loop, int fallthrough, unsigned int ext_size);
-
-/* Returns user data extension for this timer */
-void *us_timer_ext(struct us_timer_t *timer);
+struct us_timer_t *us_create_timer(us_loop_r loop, int fallthrough);
 
 /* */
 void us_timer_close(struct us_timer_t *timer, int fallthrough);
@@ -506,12 +503,14 @@ struct us_bun_socket_context_options_t {
     const char *ca_file_name;
     const char *ssl_ciphers;
     int ssl_prefer_low_memory_usage;
+    /* Sets X509_V_FLAG_PARTIAL_CHAIN on the context's certificate store. */
+    int allow_partial_trust_chain;
     const char * const *key;
-    unsigned int key_count;
+    size_t key_count;
     const char * const *cert;
-    unsigned int cert_count;
+    size_t cert_count;
     const char * const *ca;
-    unsigned int ca_count;
+    size_t ca_count;
     unsigned int secure_options;
     // Minimum/maximum TLS protocol version (TLS1_VERSION..TLS1_3_VERSION); 0 = unset/default.
     int ssl_min_version;
@@ -524,9 +523,7 @@ struct us_bun_socket_context_options_t {
     int session_timeout;
     /* PEM-encoded CRLs added to the context's X509_STORE (enables CRL checking). */
     const char * const *crl;
-    unsigned int crl_count;
-    /* Sets X509_V_FLAG_PARTIAL_CHAIN on the context's certificate store. */
-    int allow_partial_trust_chain;
+    size_t crl_count;
     /* Colon-separated signature algorithm list applied via
      * SSL_CTX_set1_sigalgs_list. */
     const char *sigalgs;
@@ -727,6 +724,8 @@ void *us_listen_socket_ext(struct us_listen_socket_t *ls) nonnull_fn_decl;
 LIBUS_SOCKET_DESCRIPTOR us_listen_socket_get_fd(struct us_listen_socket_t *ls) nonnull_fn_decl;
 int us_listen_socket_port(struct us_listen_socket_t *ls) nonnull_fn_decl;
 struct us_socket_group_t *us_listen_socket_group(struct us_listen_socket_t *ls) nonnull_fn_decl;
+/* Call before another process gets a duplicate of the listening socket. */
+void us_listen_socket_set_shared(struct us_listen_socket_t *ls) nonnull_fn_decl;
 /* Walk a group's live listeners. The list is the source of truth — anything
  * that caches us_listen_socket_t* across event-loop ticks (e.g. a std::vector
  * in C++) is a UAF once a listener is closed and freed in loop_post. */

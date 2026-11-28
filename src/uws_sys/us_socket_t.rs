@@ -110,6 +110,11 @@ impl us_socket_t {
     }
 
     pub fn close(&mut self, code: CloseCode) {
+        self.close_with_reason(code, ptr::null_mut());
+    }
+
+    /// `on_close` gets `reason`.
+    pub(crate) fn close_with_reason(&mut self, code: CloseCode, reason: *mut c_void) {
         bun_core::scoped_log!(
             uws,
             "us_socket_close({:p}, {})",
@@ -118,7 +123,7 @@ impl us_socket_t {
         );
         unsafe {
             // SAFETY: self is a live us_socket_t
-            let _ = c::us_socket_close(self, code, ptr::null_mut());
+            let _ = c::us_socket_close(self, code, reason);
         }
     }
 
@@ -321,7 +326,7 @@ impl us_socket_t {
         &mut self,
         g: &SocketGroup,
         k: SocketKind,
-        ssl_ctx: &mut SslCtx,
+        ssl_ctx: &OwnedSslCtx,
         sni: Option<&core::ffi::CStr>,
         is_client: bool,
         request_cert: bool,
@@ -336,7 +341,7 @@ impl us_socket_t {
                 self,
                 g,
                 k as u8,
-                ssl_ctx,
+                ssl_ctx.as_ptr(),
                 sni.map_or(ptr::null(), |s| s.as_ptr()),
                 is_client as i32,
                 request_cert as i32,

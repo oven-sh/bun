@@ -571,11 +571,12 @@ impl PostgresSQLConnection {
             return;
         }
 
-        let socket = *self.socket.get();
+        let tls = self.socket.get().as_tls();
+        // SAFETY: `on_close` detaches the socket, and both checks last use `ssl` before user code runs.
+        let ssl = tls.and_then(|tls| unsafe { tls.ssl_mut() });
         if let Some(callback) = self.check_server_identity_callback() {
             let hostname = self.tls_config.server_name_bytes();
-            if let Err(reason) = server_identity::check(self.global(), callback, &socket, hostname)
-            {
+            if let Err(reason) = server_identity::check(self.global(), callback, ssl, hostname) {
                 self.fail_with_js_value(reason);
                 return;
             }
@@ -583,10 +584,6 @@ impl PostgresSQLConnection {
                 return;
             }
         } else if let Some(hostname) = self.native_identity_hostname() {
-            let ssl = match &socket {
-                Socket::SocketTls(tls) => tls.ssl_mut(),
-                Socket::SocketTcp(_) => None,
-            };
             if hostname.is_empty()
                 || !ssl.is_some_and(|ssl| uws::check_server_identity(ssl, hostname))
             {
@@ -796,25 +793,9 @@ pub(crate) fn create_connection<'a>(
         },
     )
     .map_err(|_| {
-        let mut message: Vec<u8> = Vec::new();
-        use std::io::Write as _;
-        let _ = if path.is_empty() {
-            write!(
-                &mut message,
-                "Failed to connect to {}:{}",
-                bstr::BStr::new(hostname),
-                port
-            )
-        } else {
-            write!(
-                &mut message,
-                "Failed to connect to {}",
-                bstr::BStr::new(path)
-            )
-        };
         global_object.throw_value(postgres_error_to_js(
             global_object,
-            Some(&message),
+            Some(b"Failed to connect"),
             AnyPostgresError::ConnectionRefused,
         ))
     })
@@ -1522,10 +1503,9 @@ impl PostgresSQLConnection {
             b'T' => self.on_row_description(reader)?,
             b'R' => {
                 let body = reader.body()?;
-                let tls = match self.socket.get() {
-                    Socket::SocketTls(tls) => tls.ssl_mut(),
-                    Socket::SocketTcp(_) => None,
-                };
+                let tls = self.socket.get().as_tls();
+                // SAFETY: `on_close` detaches the socket, and `authenticate` only reads its certificate.
+                let tls = tls.and_then(|tls| unsafe { tls.ssl_mut() });
                 let replied = self.write(|out| {
                     self.handshake
                         .with_mut(|it| it.authenticate(body, tls, out))

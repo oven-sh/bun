@@ -1,7 +1,7 @@
 # bun_icu
 
-The functions of ICU's C API that JavaScriptCore, WTF and Bun's C++ call, for the arguments that they pass. The callers
-are compiled against ICU4C's headers, and the data package is ICU4C's. Both come with WebKit's build
+The functions of ICU's C API that JavaScriptCore, WTF and Bun's C++ call, for the arguments that they pass, and a part of
+`ubidi.h`. The callers are compiled against ICU4C's headers, and the data package is ICU4C's. Both come with WebKit's build
 (`scripts/build/deps/webkit.ts`). The crate is empty where the system's ICU is used: on macOS, and on Linux with a local
 WebKit without `BUN_ICU_ROOT`.
 

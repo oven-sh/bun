@@ -71,7 +71,7 @@ pub(crate) struct RuntimeState {
     /// `RareData.ssl_ctx_cache` — concrete digest-keyed weak `SSL_CTX*` cache.
     /// Same cycle-break story as `sql_rare`.
     pub(crate) ssl_ctx_cache: crate::api::SSLContextCache::SSLContextCache,
-    /// Per-VM resolver + c-ares channel.
+    /// Per-VM resolver.
     /// Lazy-init by [`crate::dns_jsc::global_resolver`]; released when this box
     /// drops in [`deinit_runtime_state`].
     pub(crate) dns_resolver: core::cell::OnceCell<bun_ptr::RefPtr<crate::dns_jsc::Resolver>>,
@@ -1067,29 +1067,12 @@ fn process_exit(global: &JSGlobalObject, code: u8) {
     crate::node::process::exit(global, code);
 }
 
-/// `graph.find(path).?.sourcemap.load()`.
-/// Reaches the concrete `bun_standalone_graph::Graph` via its `UnsafeCell`
-/// singleton accessor (proper write provenance) and lazily decodes the
-/// embedded source map for `path`. The returned `Arc` is the caller's strong
-/// ref.
-///
-/// Note: do **not** thread the `&'static dyn StandaloneModuleGraph` from
-/// `vm.standalone_module_graph` here and cast it to `&mut Graph` — that
-/// shared-ref provenance has no write permission, so the resulting `&mut` is
-/// instant UB under Stacked Borrows regardless of `INIT_LOCK`. `Graph::get()`
-/// hands out the `*mut` directly from the backing `UnsafeCell`.
-///
-/// `LazySourceMap::load` is the graph's only post-init mutation and is
-/// serialized by `INIT_LOCK`.
+/// Lazily decodes the embedded source map for `path`.
 fn load_standalone_sourcemap(
     path: &[u8],
 ) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>> {
-    let graph = bun_standalone_graph::Graph::get()?;
-    // SAFETY: `graph` is the `UnsafeCell::get()` pointer to the
-    // process-lifetime singleton. `find`/`load` mutate only per-file lazy
-    // state; this hook runs on the JS thread and `LazySourceMap::load` is
-    // additionally guarded by its own `INIT_LOCK`.
-    unsafe { (*graph).find(path)?.sourcemap.load() }
+    let graph = bun_standalone_graph::Graph::get_ref()?;
+    graph.find(path)?.load_sourcemap()
 }
 
 /// `node_cluster_binding.child_singleton.deinit()` —
@@ -1144,7 +1127,7 @@ mod vm_loader_ctx {
                 match (*(*this).transpiler.as_ptr()).resolver.read_dir_info(dir) {
                     Ok(Some(dir_info)) => {
                         dir_info
-                            .package_json()
+                            .package_json
                             .or(dir_info.enclosing_package_json)
                     }
                     _ => None,
@@ -1203,7 +1186,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     cancel_timers,
     end_hot_run_timers,
     stop_dns_for_vm_teardown,
-    stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
+    stop_active_handles_for_vm_teardown,
     disarm_all_timers_for_vm_teardown,
     close_timer_loop_handles_after_vm_destroyed,
 };
@@ -1310,7 +1293,7 @@ pub(crate) fn hot_reload_generation() -> f64 {
 /// `only`, just those script of that (stopped) context set.
 /// `timer::All` lives in `bun_runtime`; callers (`global_exit`,
 /// `WebWorker::shutdown`) are in `bun_jsc`, hence the hook.
-fn cancel_timers(vm: &VirtualMachine, only: Option<bun_jsc::ContextId>) {
+fn cancel_timers(vm: &VirtualMachine, only: Option<&bun_jsc::ScriptExecutionContext>) {
     let Some(all) = try_timer_all() else {
         return;
     };
@@ -1328,10 +1311,7 @@ fn cancel_timers(vm: &VirtualMachine, only: Option<bun_jsc::ContextId>) {
     }
     if let Some(context) = only {
         // A graph's context keeps the set of its own live timers.
-        let Some(timers) = vm.timer_context(context).map(|c| c.take_timers()) else {
-            return;
-        };
-        for &timer in timers.keys() {
+        for &timer in context.take_timers().keys() {
             // SAFETY: tracked ⇒ live (each untracks itself when it drops); a
             // discard may free the one it discards, never another tracked one.
             unsafe { timer::discard_js_timer(timer) };
@@ -1355,39 +1335,27 @@ fn end_hot_run_timers(vm: &VirtualMachine, cancel: CancelHotRunTimers) {
 ///
 /// # Safety
 /// `runtime_state()` is installed; JS thread; the JSC VM is already destroyed.
-unsafe fn close_timer_loop_handles_after_vm_destroyed(_vm: *mut VirtualMachine) {
+unsafe fn close_timer_loop_handles_after_vm_destroyed() {
     #[cfg(windows)]
     timer_all().close_loop_handles_for_vm_teardown();
 }
 
-/// `RuntimeHooks::stop_active_handles_for_vm_teardown` — see [`stop_active_handles_for_vm_teardown`].
-///
-/// # Safety
-/// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
-unsafe fn stop_active_handles_for_vm_teardown_hook(vm: *mut VirtualMachine) -> SweepResult {
-    // SAFETY: per the contract above.
-    stop_active_handles_for_vm_teardown(unsafe { &*vm })
-}
-
 /// `RuntimeHooks::disarm_all_timers_for_vm_teardown`.
-unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
+unsafe fn disarm_all_timers_for_vm_teardown() {
     if let Some(all) = try_timer_all() {
         // SAFETY: JS thread; teardown has forbidden script.
         unsafe { all.disarm_all_for_vm_teardown() };
     }
 }
 
-/// `RuntimeHooks::stop_dns_for_vm_teardown` — destroy the per-VM global DNS
-/// resolver's c-ares channel now so its `ARES_EDESTRUCTION` and socket-state
-/// callbacks run while the JSC VM, `RareData.file_polls`, and `runtime_state`
-/// are all still live.
+/// `RuntimeHooks::stop_dns_for_vm_teardown`
 fn stop_dns_for_vm_teardown() -> SweepResult {
     let Some(state) = try_runtime_state() else {
         return SweepResult::Idle;
     };
     let mut result = SweepResult::Idle;
     if let Some(resolver) = state.dns_resolver.get() {
-        result = result.and(resolver.close_channel_for_terminate());
+        result = result.and(resolver.close_client_for_terminate());
         #[cfg(windows)]
         resolver.cancel_pending_uv_requests_for_teardown();
     }
@@ -1406,7 +1374,8 @@ pub(crate) fn stop_active_handles_for_test_isolation(vm: &VirtualMachine) {
     let _ = stop_active_handles(vm, bun_jsc::StopReason::Disposed);
 }
 
-pub(crate) fn stop_active_handles_for_vm_teardown(vm: &VirtualMachine) -> SweepResult {
+/// `RuntimeHooks::stop_active_handles_for_vm_teardown`
+fn stop_active_handles_for_vm_teardown(vm: &VirtualMachine) -> SweepResult {
     stop_active_handles(vm, bun_jsc::StopReason::VmTeardown)
 }
 
@@ -1842,19 +1811,16 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 .transpile_source_code_arena
                 .take()
                 .unwrap_or_else(|| Box::new(bun_alloc::Arena::new()));
-            // Stable heap address (Box interior); survives the move into
-            // `arena_guard` and into the VM slot on give-back.
-            let arena_ptr: *const bun_alloc::Arena = &raw const *arena;
             // Captured before `arena` moves into `arena_guard` (the Box
             // interior is address-stable across the move).
             let arena_heap: *mut bun_alloc::mimalloc::Heap = arena.heap_ptr();
-            let give_back_arena = true;
+            let give_back_arena = Cell::new(true);
             // Note: a scopeguard so `?`-early-returns still run the cleanup.
-            let mut arena_guard = scopeguard::guard(
+            let arena_guard = scopeguard::guard(
                 (jsc_vm, arena, give_back_arena, args.flags),
                 |(jsc_vm, mut arena, give_back, flags)| {
                     let slot = &jsc_vm.module_loader.transpile_source_code_arena;
-                    if !give_back {
+                    if !give_back.get() {
                         // When `give_back_arena == false`, ownership is held past
                         // `process_fetch_log` so log spans pointing into the
                         // arena stay valid. The ParseError path that flips
@@ -2038,9 +2004,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
 
                 let options = &jsc_vm.transpiler.get().options;
                 let mut parse_options = ParseOptions {
-                    // SAFETY: `arena_ptr` points at the `Box<Arena>` interior
-                    // held by `arena_guard`; the guard outlives `parse_result`.
-                    arena: unsafe { &*arena_ptr },
+                    arena: &arena_guard.1,
                     path: *path,
                     loader,
                     dirname_fd: bun_sys::Fd::INVALID,
@@ -2112,7 +2076,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     if !disable_transpilying {
                         maybe_watch_file(jsc_vm, &mut input_file, is_node_override, path, hash);
                     }
-                    arena_guard.2 = false; // give_back_arena = false
+                    arena_guard.2.set(false); // give_back_arena = false
                     // Node compile cache: record the failed module so exit-time
                     // persist logs the "was not initialized" skip (Node parity).
                     if !DATA_ONLY {
@@ -2152,7 +2116,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
 
                 // SAFETY: `transpiler.log` was swapped to non-null `args.log` above.
                 if unsafe { (*(*transpiler).log).errors > 0 } {
-                    arena_guard.2 = false;
+                    arena_guard.2.set(false);
                     // Node compile cache: record the failed module so exit-time
                     // persist logs the "was not initialized" skip (Node parity).
                     if !DATA_ONLY {
@@ -2366,7 +2330,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             (*transpiler).resolver.read_dir_info(source.path.name().dir)
                         } {
                             Ok(Some(dir_info)) => {
-                                dir_info.package_json().or(dir_info.enclosing_package_json)
+                                dir_info.package_json.or(dir_info.enclosing_package_json)
                             }
                             _ => None,
                         };
@@ -2497,7 +2461,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             // stable cache slot.
                             match unsafe { (*transpiler).resolver.read_dir_info(dir) } {
                                 Ok(Some(dir_info)) => dir_info
-                                    .package_json()
+                                    .package_json
                                     .or(dir_info.enclosing_package_json)
                                     .map_or(module_type, |p| p.module_type),
                                 _ => module_type,
@@ -2565,16 +2529,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 // `globalThis.wasmSourceBytes` so the wasi runner avoids
                 // reading the file twice.
                 if let Some(source) = args.virtual_source {
-                    // Spec — `DecodedJSValue{ .ptr = globalThis }.encode()`:
-                    // a JSGlobalObject is a JSCell, so its pointer encodes
-                    // directly as a JSValue.
-                    let global_value = bun_jsc::DecodedJSValue {
-                        u: bun_jsc::decoded_js_value::EncodedValueDescriptor {
-                            ptr: core::ptr::from_ref(global_object).cast_mut().cast(),
-                        },
-                    }
-                    .encode();
-                    global_value.put(
+                    global_object.to_js_value().put(
                         global_object,
                         b"wasmSourceBytes",
                         bun_jsc::ArrayBuffer::create_uint8_array(global_object, &source.contents)?,
@@ -3090,8 +3045,6 @@ export default db;
             });
         }
 
-        // SAFETY: `file.module_info` is a live subrange of the embedded section (set in `Graph::from_bytes`).
-        let module_info = unsafe { &*file.module_info };
         let module_info_strings: &'static [u8] = bun_standalone_graph::Graph::get_ref()
             .map_or(&[], |graph| graph.module_info_string_table);
         return Some(ResolvedSource {
@@ -3107,14 +3060,14 @@ export default db;
             },
             bytecode_cache: Bytecode::persistent_at(file.bytecode, file.bytecode_entry_offset),
             source_code_hash: file.source_hash,
-            module_info: if !module_info.is_empty() {
+            module_info: if !file.module_info.is_empty() {
                 let decoded = bun_bundler::analyze_transpiled_module::ModuleInfoSlotTable::parse(
                     module_info_strings,
                 )
                 .ok()
                 .and_then(|table| {
                     bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized
-                            ::create_with_table(&table, module_info)
+                            ::create_with_table(&table, file.module_info)
                 });
                 debug_assert!(decoded.is_some(), "embedded module_info does not decode");
                 decoded
@@ -3407,7 +3360,7 @@ fn package_json_of<'a>(
     }
     // SAFETY: `read_dir_info` is re-entrant on the JS thread.
     match unsafe { (*jsc_vm.transpiler.as_ptr()).resolver.read_dir_info(dir) } {
-        Ok(Some(dir_info)) => dir_info.package_json().or(dir_info.enclosing_package_json),
+        Ok(Some(dir_info)) => dir_info.package_json.or(dir_info.enclosing_package_json),
         _ => None,
     }
 }
@@ -3472,12 +3425,8 @@ fn intern_transpile_path(value: &[u8]) -> &'static [u8] {
     // Fast path: `value` already lives in the process-lifetime `FilenameStore`
     // backing arena (resolver-interned, or a prior `intern_transpile_path`
     // result) — no hash, no probe, no append.
-    if Fs::FilenameStore::instance().exists(value) {
-        // SAFETY: `exists` is a pointer-range check (like `is_slice_in_buffer`): the
-        // bytes lie wholly within `FilenameStore`'s backing storage, which is
-        // process-lifetime and never freed, so widening to `'static` is sound.
-        // Same widening as `FilenameStore::append_slice` itself performs.
-        return unsafe { core::slice::from_raw_parts(value.as_ptr(), value.len()) };
+    if let Some(interned) = Fs::FilenameStore::instance().as_interned(value) {
+        return interned;
     }
     TRANSPILE_PATH_INTERN.with(|cell| {
         let mut set = cell.borrow_mut();
@@ -4350,17 +4299,14 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
             ]
             .concat(),
         );
-        let is_complete = {
-            let file = bun_sys::open(&scratch, O::WRONLY | O::CREAT | O::EXCL, 0o600)
-                .map(bun_sys::CloseOnDrop::new)
-                .ok()?;
-            file.write_all(contents).is_ok()
-        };
-        if !is_complete || bun_sys::rename(&scratch, &to).is_err() {
-            let _ = bun_sys::unlink(&scratch);
-            if !is_written() {
-                return None;
-            }
+        let flags = O::WRONLY | O::CREAT | O::EXCL;
+        let scratch = bun_sys::Tmpfile::open(bun_sys::Fd::cwd(), scratch, flags, 0o600).ok()?;
+        let is_complete = scratch.file.write_all(contents).is_ok();
+        let scratch = scratch.close();
+        if is_complete && bun_sys::rename(&scratch, &to).is_ok() {
+            scratch.keep();
+        } else if !is_written() {
+            return None;
         }
     }
     Some(written_path(addon.name).to_vec())

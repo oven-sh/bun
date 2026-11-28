@@ -159,17 +159,12 @@ impl<'a> Scanner<'a> {
                 // base name so test-file discovery order is deterministic —
                 // regression/issue/26851 relies on `a_*.test` running before
                 // `b_*.test` under `--bail`.
-                let mut entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
-                index_sort::sort_slice_by(&mut entry_ptrs, |a, b| {
-                    // SAFETY: `EntryMap` stores `*mut Entry` into the
-                    // process-static `EntryStore`; valid for `'static`.
-                    let (an, bn) = unsafe { ((**a).base_lowercase(), (**b).base_lowercase()) };
-                    an.cmp(bn)
+                let mut entries: Vec<&fs::Entry> = entries.data.values().copied().collect();
+                index_sort::sort_slice_by(&mut entries, |a, b| {
+                    a.base_lowercase().cmp(b.base_lowercase())
                 });
-                for entry_ptr in entry_ptrs {
-                    // SAFETY: `EntryMap` stores `*mut Entry` into the
-                    // process-static `EntryStore`; valid for `'static`.
-                    self.next(&self.fs().fs, unsafe { &*entry_ptr });
+                for entry in entries {
+                    self.next(&self.fs().fs, entry);
                 }
             }
         }

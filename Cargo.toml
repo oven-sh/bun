@@ -54,7 +54,6 @@ members = [
   "src/threading",
   "src/valkey",
   "src/watcher",
-  "src/cares_sys",
   "src/clap",
   "src/clap_macros",
   "src/crash_handler",
@@ -62,6 +61,7 @@ members = [
   "src/csrf",
   "src/css_jsc",
   "src/dns",
+  "src/dns/client",
   "src/dotenv",
   "src/event_loop",
   "src/executable",
@@ -91,6 +91,7 @@ members = [
   "src/png",
   "src/jpeg",
   "src/webp",
+  "src/websocket",
   "src/s3_signing",
   "src/sql_jsc",
   "src/zlib",
@@ -438,7 +439,6 @@ bun_tar = { path = "src/tar" }
 bun_threading = { path = "src/threading" }
 bun_valkey = { path = "src/valkey" }
 bun_watcher = { path = "src/watcher" }
-bun_cares_sys = { path = "src/cares_sys" }
 bun_clap = { path = "src/clap" }
 bun_clap_macros = { path = "src/clap_macros" }
 bun_crash_handler = { path = "src/crash_handler" }
@@ -446,6 +446,7 @@ bun_cron = { path = "src/cron" }
 bun_csrf = { path = "src/csrf" }
 bun_css_jsc = { path = "src/css_jsc" }
 bun_dns = { path = "src/dns" }
+bun_dns_client = { path = "src/dns/client" }
 bun_dotenv = { path = "src/dotenv" }
 bun_event_loop = { path = "src/event_loop" }
 bun_exe_format = { path = "src/exe_format" }
@@ -524,6 +525,7 @@ bun_bunfig = { path = "src/bunfig" }
 bun_output = { path = "src/output" }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_webp = { path = "src/webp" }
+bun_websocket = { path = "src/websocket" }
 bun_which = { path = "src/which" }
 
 # Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. Assertions and overflow
@@ -546,6 +548,10 @@ opt-level = 3
 
 # Unoptimized, the default quality takes seconds for a few kilobytes.
 [profile.dev.package.bun_brotli]
+opt-level = 3
+
+# Runs for every byte that a WebSocket server receives.
+[profile.dev.package.bun_websocket]
 opt-level = 3
 
 # Runs for every line of a response head and every chunk of a body.

@@ -126,6 +126,15 @@ impl<'a> JsHeap<'a> {
     }
 
     #[inline]
+    pub fn create_array_of(
+        &self,
+        values: &crate::MarkedArgumentBuffer,
+        range: core::ops::Range<usize>,
+    ) -> Result<'a, JsLocal<'a, JSArray>> {
+        JsLocal::from_js_result(values.construct_array_of_range(self.global_object(), range))
+    }
+
+    #[inline]
     pub fn create_utf8_string(&self, utf8: &[u8]) -> Result<'a, JsLocal<'a, JSString>> {
         JsLocal::from_js_result(crate::bun_string_jsc::create_utf8_for_js(
             self.global_object(),
@@ -305,6 +314,12 @@ impl<'a> JsHeap<'a> {
     #[cold]
     pub fn range_error(&self, args: core::fmt::Arguments<'_>) -> Error<'a> {
         Error::unthrown(self.global_object().create_range_error_instance(args))
+    }
+
+    /// As [`error`](Self::error), a `SyntaxError`.
+    #[cold]
+    pub fn syntax_error(&self, args: core::fmt::Arguments<'_>) -> Error<'a> {
+        Error::unthrown(self.global_object().create_syntax_error_instance(args))
     }
 
     /// As [`error`](Self::error), with a `code`, which also picks the class.
@@ -745,12 +760,7 @@ impl<'a> JsLatin1<'a> {
                 .owner
                 .substrings_of_resolved(heap.global_object(), &offsets_and_lengths)
         };
-        // SAFETY: `JsLocal` is `repr(transparent)` over `JSValue`.
-        unsafe {
-            (&raw const substrings)
-                .cast::<[JsLocal<'a, JSString>; N]>()
-                .read()
-        }
+        substrings.map(JsLocal::from_raw)
     }
 
     /// `part` as a string: a [`substring`](Self::substring) if it is a slice of [`characters`](Self::characters), a copy if it lies elsewhere.

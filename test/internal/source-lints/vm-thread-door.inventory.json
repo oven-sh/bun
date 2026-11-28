@@ -76,6 +76,9 @@
   "src/runtime/cli/open.rs": {
     "thread spawn": 1
   },
+  "src/runtime/cli/pm_diff_command.rs": {
+    "thread spawn": 1
+  },
   "src/runtime/cli/publish_command.rs": {
     "thread spawn": 1
   },
@@ -84,11 +87,6 @@
   },
   "src/runtime/cli/test/ShardsByReach.rs": {
     "thread spawn": 1
-  },
-  "src/runtime/crypto/PBKDF2.rs": {
-    "unsafe impl Send": [
-      "Digest"
-    ]
   },
   "src/runtime/dns_jsc/dns.rs": {
     "WorkPool::schedule*": 1,
@@ -146,6 +144,9 @@
   },
   "src/runtime/node/node_fs.rs": {
     "WorkPool::schedule*": 4,
+    "intrusive_work_task!": [
+      "NewAsyncCpTask"
+    ],
     "owned_task!": [
       "AsyncMkdirp",
       "CpSingleTask",
@@ -160,11 +161,6 @@
     "WorkPool::schedule*": 2,
     "owned_task!": [
       "InitialStatTask"
-    ]
-  },
-  "src/runtime/node/node_process.rs": {
-    "unsafe impl Sync": [
-      "CStrPtr"
     ]
   },
   "src/runtime/node/path_watcher.rs": {
@@ -183,21 +179,27 @@
     ]
   },
   "src/runtime/shell/builtin/cp.rs": {
-    "WorkPool::schedule*": 1
-  },
-  "src/runtime/shell/builtin/rm.rs": {
-    "WorkPool::schedule*": 2
-  },
-  "src/runtime/shell/dispatch_tasks.rs": {
-    "unsafe impl Send": [
-      "ShellGlobTask"
+    "WorkPool::schedule*": 1,
+    "intrusive_work_task!": [
+      "ShellCpTask"
     ]
   },
-  "src/runtime/shell/interpreter.rs": {
+  "src/runtime/shell/builtin/rm.rs": {
     "WorkPool::schedule*": 1
   },
+  "src/runtime/shell/interpreter.rs": {
+    "WorkPool::schedule*": 1,
+    "intrusive_work_task!": [
+      "PoolTask"
+    ],
+    "unsafe impl Send": [
+      "ShellTask"
+    ]
+  },
   "src/runtime/webcore/blob/fd_job.rs": {
-    "WorkPool::schedule*": 1
+    "unsafe impl Waiter": [
+      "Parked"
+    ]
   },
   "src/runtime/webcore/fetch/FetchTasklet.rs": {
     "HTTPThread::schedule": 1

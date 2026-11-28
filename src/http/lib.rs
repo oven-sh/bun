@@ -48,14 +48,12 @@ pub mod signals;
 #[path = "ThreadSafeStreamBuffer.rs"]
 pub mod thread_safe_stream_buffer;
 mod verbose;
-#[path = "websocket.rs"]
-pub mod websocket;
 
 // ── crate-root re-exports ──
 pub use async_http::AsyncHTTP;
 pub(crate) use async_http::InFlightRequest;
 pub use certificate_info::CertificateInfo;
-pub use decompressor::Decompressor;
+pub use decompressor::{Decompressor, UnfinishedStream};
 pub use header_builder::HeaderBuilder;
 pub use headers::Headers;
 pub(crate) use http_cert_error::HTTPCertError;
@@ -206,6 +204,7 @@ pub struct Flags {
     /// Whether this request stays out of the keep-alive pool. See `PoolBypass`.
     pub(crate) pool_bypass: PoolBypass,
     pub(crate) disable_decompression: bool,
+    pub unfinished_stream: UnfinishedStream,
     pub(crate) did_have_handshaking_error: bool,
     /// `PooledSocket::verification` of the socket this request took from the
     /// pool, so a weaker request re-pooling it doesn't downgrade the record.
@@ -233,6 +232,7 @@ impl Default for Flags {
             disable_keepalive: false,
             pool_bypass: PoolBypass::Off,
             disable_decompression: false,
+            unfinished_stream: UnfinishedStream::Reject,
             did_have_handshaking_error: false,
             reused_socket_verification: PeerVerification::None,
             force_last_modified: false,
@@ -873,7 +873,7 @@ use bun_uws as uws;
 use bun_wyhash::Wyhash;
 
 use crate::http_context::HTTPSocket as HttpSocket;
-use crate::internal_state::{RequestStage, ResponseStage};
+use crate::internal_state::{RequestStage, ResponseStage, TransportEnd};
 use crate::proxy_tunnel::TunnelClosed;
 use crate::ssl_wrapper::SSLWrapper;
 use crate::verbose::{CurlFormatter, HeaderFormatter, ResponseFormatter};
@@ -1069,40 +1069,32 @@ pub enum AlpnOffer {
 /// the ALPN protocol list for `offer`, and enables SCT/OCSP stapling. Called
 /// before a TLS socket's first handshake. It must run even when the hostname is an
 /// IP literal (with empty SNI) so ALPN is still advertised.
-///
-// `ssl` is the live SSL handle for a just-opened socket (BoringSSL never
-// returns null); `hostname` is null (no SNI for IP literals) or a
-// NUL-terminated buffer that outlives this call. The deref is null-guarded.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn configure_http_client_with_alpn(
-    ssl: &mut boringssl::c::SSL,
-    hostname: *const core::ffi::c_char,
+    ssl: &boringssl::c::SSL,
+    hostname: Option<bun_core::CStrRef<'_>>,
     offer: AlpnOffer,
 ) {
-    // SAFETY: `ssl` is a live `&mut SSL`; `hostname` is null-guarded before deref.
-    unsafe {
-        if !hostname.is_null() && *hostname != 0 {
-            boringssl::c::SSL_set_tlsext_host_name(ssl, hostname);
-        }
-        boringssl::c::SSL_clear_options(ssl, boringssl::c::SSL_OP_LEGACY_SERVER_CONNECT);
-        boringssl::c::SSL_set_options(ssl, boringssl::c::SSL_OP_LEGACY_SERVER_CONNECT);
-
-        const ALPN_H1: &[u8] = &[8, b'h', b't', b't', b'p', b'/', b'1', b'.', b'1'];
-        const ALPN_H2: &[u8] = &[2, b'h', b'2'];
-        const ALPN_H2_H1: &[u8] = &[
-            2, b'h', b'2', 8, b'h', b't', b't', b'p', b'/', b'1', b'.', b'1',
-        ];
-        let alpns: &'static [u8] = match offer {
-            AlpnOffer::H1 => ALPN_H1,
-            AlpnOffer::H1OrH2 => ALPN_H2_H1,
-            AlpnOffer::H2Only => ALPN_H2,
-        };
-        let rc = boringssl::c::SSL_set_alpn_protos(ssl, alpns.as_ptr(), alpns.len());
-        debug_assert_eq!(rc, 0);
-
-        boringssl::c::SSL_enable_signed_cert_timestamps(ssl);
-        boringssl::c::SSL_enable_ocsp_stapling(ssl);
+    if let Some(hostname) = hostname.filter(|hostname| !hostname.to_cstr().is_empty()) {
+        boringssl::c::SSL_set_tlsext_host_name(ssl, hostname);
     }
+    boringssl::c::SSL_clear_options(ssl, boringssl::c::SSL_OP_LEGACY_SERVER_CONNECT);
+    boringssl::c::SSL_set_options(ssl, boringssl::c::SSL_OP_LEGACY_SERVER_CONNECT);
+
+    const ALPN_H1: &[u8] = &[8, b'h', b't', b't', b'p', b'/', b'1', b'.', b'1'];
+    const ALPN_H2: &[u8] = &[2, b'h', b'2'];
+    const ALPN_H2_H1: &[u8] = &[
+        2, b'h', b'2', 8, b'h', b't', b't', b'p', b'/', b'1', b'.', b'1',
+    ];
+    let alpns: &'static [u8] = match offer {
+        AlpnOffer::H1 => ALPN_H1,
+        AlpnOffer::H1OrH2 => ALPN_H2_H1,
+        AlpnOffer::H2Only => ALPN_H2,
+    };
+    let accepted = ssl.set_alpn_protos(alpns);
+    debug_assert!(accepted);
+
+    boringssl::c::SSL_enable_signed_cert_timestamps(ssl);
+    boringssl::c::SSL_enable_ocsp_stapling(ssl);
 }
 
 // ── EntryList column accessors ──────────────────────────────────────────
@@ -1634,13 +1626,8 @@ impl<'a> HTTPClient<'a> {
     ) -> ControlFlow<NextStep> {
         if self.wants_server_identity_check() {
             let enforce = self.flags.reject_unauthorized;
-            // SAFETY: `ssl` is a live `&mut SSL` for the open TLS socket whose
-            // peer certificate is being verified.
-            let cert_chain = unsafe { boringssl::c::SSL_get_peer_cert_chain(ssl) };
-            if !cert_chain.is_null() {
-                // SAFETY: cert_chain is a live STACK_OF(X509) owned by the SSL session; index 0 is in bounds when non-null is returned
-                let x509 = unsafe { boringssl::c::sk_X509_value(cert_chain, 0) };
-                if !x509.is_null() {
+            if let Some(cert_chain) = boringssl::c::SSL_get_peer_cert_chain(ssl) {
+                if let Some(x509) = boringssl::c::sk_X509_value(cert_chain, 0) {
                     let hostname = get_tls_hostname(self, allow_proxy_url);
 
                     // check if we need to report the error (probably to `checkServerIdentity` was informed from JS side)
@@ -1653,17 +1640,7 @@ impl<'a> HTTPClient<'a> {
                     let is_proxy_certificate = allow_proxy_url && self.http_proxy.is_some();
                     if !is_proxy_certificate && self.signals.get(signals::Field::CertErrors) {
                         // clone the relevant data
-                        // SAFETY: x509 is a live *mut X509 borrowed from cert_chain; null out-ptr requests size-only
-                        let cert_size =
-                            unsafe { boringssl::c::i2d_X509(x509, core::ptr::null_mut()) };
-                        let mut cert = vec![0u8; usize::try_from(cert_size).expect("int cast")]
-                            .into_boxed_slice();
-                        let mut cert_ptr = cert.as_mut_ptr();
-                        // SAFETY: x509 is live; cert_ptr points at a writable buffer of cert_size bytes
-                        let result_size =
-                            unsafe { boringssl::c::i2d_X509(x509, &raw mut cert_ptr) };
-                        debug_assert!(result_size == cert_size);
-
+                        let cert = Box::<[u8]>::from(&*x509.to_der().expect("i2d_X509"));
                         self.state.certificate_info = Some(CertificateInfo {
                             cert,
                             hostname: Box::<[u8]>::from(hostname),
@@ -1778,44 +1755,31 @@ impl<'a> HTTPClient<'a> {
     /// Valid only before the handshake starts, so [`Self::on_connect`] is the only caller.
     fn configure_tls<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         if IS_SSL {
-            // SAFETY: socket.get_native_handle() returns a valid *mut SSL on TLS sockets
-            let ssl_ptr: *mut boringssl::c::SSL = socket
-                .get_native_handle()
-                .map(|p| p.cast())
-                .unwrap_or(core::ptr::null_mut());
-            if !ssl_ptr.is_null() {
+            if let Some(ssl) = socket.get_native_handle() {
+                // SAFETY: a TLS socket's handle is its `SSL`; it has just opened, and nothing in this block closes it.
+                let ssl = unsafe { &*ssl.cast::<boringssl::c::SSL>() };
                 let raw_hostname = get_tls_hostname(self, self.http_proxy.is_some());
 
                 // Build a NUL-terminated SNI string only when the hostname is not an
                 // IP literal (RFC 6066 forbids IP SNI). ALPN/SCT/OCSP must still be
                 // configured regardless, so the helper is called unconditionally
-                // below with `null` SNI in the IP case.
-                let mut owned: Vec<u8>; // drops on scope exit
-                let host_z: *const core::ffi::c_char =
-                    if !bun_core::ip_address::is_ip_host(raw_hostname) {
-                        // SAFETY: TEMP_HOSTNAME only accessed from HTTP thread
-                        let temp = scratch::temp_hostname();
-                        if raw_hostname.len() < temp.len() {
-                            temp[..raw_hostname.len()].copy_from_slice(raw_hostname);
-                            temp[raw_hostname.len()] = 0;
-                            temp.as_ptr().cast::<core::ffi::c_char>()
-                        } else {
-                            owned = Vec::with_capacity(raw_hostname.len() + 1);
-                            owned.extend_from_slice(raw_hostname);
-                            owned.push(0);
-                            owned.as_ptr().cast::<core::ffi::c_char>()
-                        }
+                // below with no SNI in the IP case.
+                let owned: bun_core::ZBox;
+                let host_z = if !bun_core::ip_address::is_ip_host(raw_hostname) {
+                    // SAFETY: TEMP_HOSTNAME only accessed from HTTP thread
+                    let temp = scratch::temp_hostname();
+                    if raw_hostname.len() < temp.len() {
+                        temp[..raw_hostname.len()].copy_from_slice(raw_hostname);
+                        Some(bun_core::ZStr::nul_terminate(temp, raw_hostname.len()).into())
                     } else {
-                        core::ptr::null()
-                    };
+                        owned = bun_core::ZBox::from_bytes(raw_hostname);
+                        Some(owned.as_zstr().into())
+                    }
+                } else {
+                    None
+                };
 
-                // SAFETY: `ssl_ptr` was null-checked above and is the live SSL
-                // handle for this just-opened socket.
-                configure_http_client_with_alpn(
-                    unsafe { &mut *ssl_ptr },
-                    host_z,
-                    self.alpn_offer(),
-                );
+                configure_http_client_with_alpn(ssl, host_z, self.alpn_offer());
 
                 if self.flags.reject_unauthorized {
                     socket.set_inline_reject();
@@ -1827,7 +1791,7 @@ impl<'a> HTTPClient<'a> {
                     .filter(|_| crate::session_cache::eligible(self))
                 {
                     let want_tunnel = self.http_proxy.is_some() && self.url.is_https();
-                    // SAFETY: `ssl_ptr` is live and pre-handshake (uSockets starts
+                    // SAFETY: `ssl` is pre-handshake (uSockets starts
                     // the handshake when the open callback returns); `get_ssl_ctx`
                     // returns the static `https_context` or the heap context this
                     // client holds a strong ref on, both of which outlive
@@ -1835,7 +1799,7 @@ impl<'a> HTTPClient<'a> {
                     unsafe {
                         crate::session_cache::install(
                             raw_socket,
-                            ssl_ptr,
+                            ssl,
                             self.get_ssl_ctx::<true>(),
                             self.connected_url.hostname,
                             self.connected_url.get_port_auto(),
@@ -1992,20 +1956,9 @@ impl<'a> HTTPClient<'a> {
         }
 
         if IS_SSL {
-            let ssl_ptr: *mut boringssl::c::SSL = socket
-                .get_native_handle()
-                .map(|p| p.cast())
-                .unwrap_or(core::ptr::null_mut());
-            let mut proto: *const u8 = core::ptr::null();
-            let mut proto_len: c_uint = 0;
-            // SAFETY: ssl_ptr is a live *mut SSL for this socket; out-params are
-            // valid stack locals. `proto[0..proto_len]` is the slice ALPN wrote
-            // (borrowed from the SSL session, valid while ssl_ptr is).
-            let alpn = unsafe {
-                boringssl::c::SSL_get0_alpn_selected(ssl_ptr, &raw mut proto, &raw mut proto_len);
-                bun_core::ffi::slice(proto, proto_len as usize)
-            };
-            if alpn == b"h2" {
+            // SAFETY: the socket is open, and `ssl` is used for this one comparison.
+            let ssl = unsafe { socket.ssl_mut() };
+            if ssl.is_some_and(|ssl| ssl.alpn_selected() == b"h2") {
                 bun_core::scoped_log!(fetch, "ALPN negotiated h2 {}", BStr::new(self.url.href));
                 // This arm needs HttpSocket<true>, but the const-generic isn't
                 // unified here, so rebuild from the InternalSocket.
@@ -2049,6 +2002,7 @@ impl<'a> HTTPClient<'a> {
     pub(crate) fn on_close<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
+        end: TransportEnd,
     ) -> ControlFlow<NextStep> {
         bun_core::scoped_log!(fetch, "Closed  {}\n", BStr::new(self.url.href));
 
@@ -2062,7 +2016,7 @@ impl<'a> HTTPClient<'a> {
             return self.do_redirect::<IS_SSL>(socket);
         }
         if self.state.is_body_complete_on_close() {
-            if let Err(err) = self.finalize_body_on_eof() {
+            if let Err(err) = self.finalize_body_on_close(end) {
                 return self.fail(err);
             }
             return Break(NextStep::ReleaseSocket);
@@ -3014,7 +2968,11 @@ impl<'a> HTTPClient<'a> {
                     Ok(has_backpressure) => Ok(has_backpressure),
                     Err(TunnelClosed) => {
                         drop(locked);
-                        return self.on_proxy_tunnel_close(Error::ConnectionClosed, socket);
+                        return self.on_proxy_tunnel_close(
+                            Error::ConnectionClosed,
+                            TransportEnd::Failed,
+                            socket,
+                        );
                     }
                 }
             }
@@ -3083,7 +3041,11 @@ impl<'a> HTTPClient<'a> {
         if let Some(proxy) = &mut self.proxy_tunnel
             && let Err(TunnelClosed) = proxy.on_writable(socket.into(), lent_wrapper)
         {
-            return self.on_proxy_tunnel_close(Error::ConnectionClosed, socket);
+            return self.on_proxy_tunnel_close(
+                Error::ConnectionClosed,
+                TransportEnd::Failed,
+                socket,
+            );
         }
 
         // Parked until the JS `checkServerIdentity` callback approves the peer
@@ -3698,8 +3660,11 @@ impl<'a> HTTPClient<'a> {
         /// 4 MiB: a full read of ordinary text, so such bodies do not evict each other from the cache.
         const WHOLE_BODY_PASSES_PER_TURN: usize = 16;
 
+        let unfinished = self.flags.unfinished_stream;
         if !self.decodes_in_passes() {
-            return self.state.process_body_buffer(is_final_chunk, usize::MAX);
+            return self
+                .state
+                .process_body_buffer(is_final_chunk, usize::MAX, unfinished);
         }
         // The resume that is due takes these bytes too.
         if self.holds_off_receiving() {
@@ -3719,7 +3684,9 @@ impl<'a> HTTPClient<'a> {
         }
         for _ in 0..WHOLE_BODY_PASSES_PER_TURN {
             let max_output = self.state.decoded_body.list.len() + budget;
-            let has_bytes = self.state.process_body_buffer(is_final_chunk, max_output)?;
+            let has_bytes =
+                self.state
+                    .process_body_buffer(is_final_chunk, max_output, unfinished)?;
             if !self.state.has_pending_compressed() || !self.signals.wants_whole_body() {
                 return Ok(has_bytes);
             }
@@ -3741,10 +3708,19 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    /// For an end of the body that comes without bytes, so that a compressed stream that stops short is rejected.
-    pub(crate) fn finalize_body_on_eof(&mut self) -> crate::Result<()> {
-        self.state.flags.received_last_chunk = true;
+    /// For an end of the body that comes without bytes, so that a compressed stream that stops short is noticed.
+    pub(crate) fn finalize_body_on_eof(&mut self, end: TransportEnd) -> crate::Result<()> {
+        self.state.end_body(end);
         self.process_received_body(true).map(drop)
+    }
+
+    /// For an HTTP/1 connection that closes.
+    pub(crate) fn finalize_body_on_close(&mut self, end: TransportEnd) -> crate::Result<()> {
+        // A reset that `send()` reported first reads as a FIN.
+        if !self.is_request_fully_sent() {
+            return self.finalize_body_on_eof(TransportEnd::Failed);
+        }
+        self.finalize_body_on_eof(end)
     }
 
     /// The consumer or the decoder is behind, so the transport should stop taking body bytes.
@@ -3758,7 +3734,9 @@ impl<'a> HTTPClient<'a> {
             || self.proxy_tunnel.is_some()
             || self.flags.upgrade_state == HTTPUpgradeState::Upgraded
             || !self.holds_off_receiving()
-            || socket.is_closed_or_has_error()
+            // Not `get_error()`: reading SO_ERROR clears it, and the reset would then look like a FIN.
+            || socket.is_closed()
+            || socket.is_shutdown()
         {
             return;
         }
@@ -4133,8 +4111,12 @@ impl<'a> HTTPClient<'a> {
         if !self.state.flags.is_redirect_pending {
             Self::trace_received_chunk(self.tracing.as_deref(), incoming_data);
             if self.state.encoding.is_compressed() {
-                self.state
-                    .decompress_bytes(incoming_data, true, usize::MAX)?;
+                self.state.decompress_bytes(
+                    incoming_data,
+                    true,
+                    usize::MAX,
+                    self.flags.unfinished_stream,
+                )?;
             } else {
                 self.state
                     .get_body_buffer()

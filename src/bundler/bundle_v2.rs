@@ -32,7 +32,7 @@ pub use bv2_impl::{
     BuildResult, DependenciesScanner, DependenciesScannerResult, OnDependenciesAnalyze,
 };
 
-pub use crate::DeferredBatchTask::DeferredBatchTask;
+use crate::DeferredBatchTask::DeferredBatchTask;
 use crate::Graph::Graph;
 use crate::IndexInt;
 use crate::PathToSourceIndexMap::{ModuleMap, PathToSourceIndexMap};
@@ -264,7 +264,7 @@ impl<'a> BundleV2<'a> {
     }
 
     /// Mutable projection of the `plugins` backref for FFI calls that take
-    /// `*mut` (`drain_deferred`). The pointee is disjoint from `self` storage.
+    /// `*mut`. The pointee is disjoint from `self` storage.
     #[inline]
     pub(crate) fn plugins_mut(&mut self) -> Option<&mut JSBundlerPlugin> {
         // SAFETY: BACKREF — see `plugins_ref`. `&mut self` ensures no other
@@ -829,7 +829,7 @@ pub mod bv2_impl {
                     kind: u8,
                 );
                 #[link_name = "JSBundlerPlugin__drainDeferred"]
-                safe fn JSBundlerPlugin__drainDeferred(this: &mut Plugin, rejected: bool);
+                safe fn JSBundlerPlugin__drainDeferred(this: &Plugin, rejected: bool);
                 #[link_name = "JSBundlerPlugin__hasOnBeforeParsePlugins"]
                 safe fn JSBundlerPlugin__hasOnBeforeParsePlugins(this: &Plugin) -> i32;
                 #[link_name = "JSBundlerPlugin__freezeFilters"]
@@ -855,10 +855,10 @@ pub mod bv2_impl {
             impl Plugin {
                 /// `Plugin.drainDeferred` — resolve every onLoad
                 /// `.defer()` promise. The
-                /// only bundler caller (`DeferredBatchTask::run_on_js_thread`)
+                /// only bundler caller (`DeferredBatch::run_on_js_thread`)
                 /// ignores failures, so the void FFI call is the observable
                 /// behaviour at this tier.
-                pub(crate) fn drain_deferred(&mut self, rejected: bool) {
+                pub(crate) fn drain_deferred(&self, rejected: bool) {
                     JSBundlerPlugin__drainDeferred(self, rejected)
                 }
 
@@ -1236,10 +1236,8 @@ pub mod bv2_impl {
                 pub owner: LoadOwner<'a>,
                 /// Defer may only be called once.
                 pub called_defer: bool,
-                /// `.defer()`ed during this `Graph::defer_epoch`: until that epoch's batch is drained (or
-                /// this load's answer arrives first) its scan-counter unit sits in
-                /// `Graph::deferred_pending`. Bundle thread only.
-                pub(crate) deferred_in: Option<u32>,
+                /// The `Graph::defer_epoch` that a `.defer()` falls in: it cannot end while this load is pending.
+                pub(crate) defer_epoch: u32,
                 /// Intrusive node for the Mini-loop queue: carries this load's answer back to the bundle
                 /// thread (`on_load_async`).
                 pub task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
@@ -1259,7 +1257,7 @@ pub mod bv2_impl {
                     value: LoadValue::Pending,
                     owner,
                     called_defer: false,
-                    deferred_in: None,
+                    defer_epoch: bv2.graph.defer_epoch,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                     defer_task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
@@ -1319,26 +1317,28 @@ pub mod bv2_impl {
                 }
             }
             /// A plugin `.defer()`red a [`Load`]: the notice to the loop that runs the bundle, when
-            /// that is a JS loop. Borrows the request: the answer, which frees it, is queued later.
-            #[repr(transparent)]
-            pub struct LoadDeferred(Load<'static>);
+            /// that is a JS loop.
+            pub struct LoadDeferred(*mut BundleV2<'static>);
             impl bun_event_loop::Taskable for LoadDeferred {
                 const TAG: bun_event_loop::TaskTag =
                     bun_event_loop::task_tag::BundleV2PluginLoadDeferred;
-                /// Nothing is owned.
-                unsafe fn release_unrun(_: *mut Self) {}
+                type Payload = Self;
+                fn release_unrun(_: Self) {}
                 /// A step of the bundle.
-                unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+                fn context(_: &Self) -> bun_event_loop::ContextId {
                     bun_event_loop::ContextId::NONE
                 }
             }
             impl LoadDeferred {
+                /// SAFETY: it is queued once, for the bundle's thread, ahead of the answer to `load`.
+                pub unsafe fn new(load: &Load<'_>) -> Self {
+                    Self(load.bv2)
+                }
                 #[inline(never)]
-                pub fn run(&mut self) {
+                pub fn run(self) {
                     bun_removable_features::removable_definition!(Bundler, Self::run);
-                    // SAFETY: `bv2` is a live backref set in `Load::init`.
-                    let bv2 = unsafe { &mut *self.0.bv2 };
-                    BundleV2::on_notify_defer(&mut self.0, bv2);
+                    // SAFETY: the pass cannot finish before the answer, which is still to come.
+                    unsafe { &mut *self.0 }.on_notify_defer();
                 }
             }
         }
@@ -3935,9 +3935,10 @@ pub mod bv2_impl {
                 let loaders = &*input_files.loader;
                 let targets = self.graph.ast.items_target();
                 let mut has_unusable_output_path = false;
+                let is_executable = self.transpiler.options.compile_mode.is_executable();
                 // Without an output directory the paths are only returned, so they can have any length.
-                let opens_output_paths = !self.transpiler.resolver.opts.output_dir.is_empty()
-                    || self.transpiler.options.compile_mode.is_executable();
+                let opens_output_paths =
+                    !self.transpiler.resolver.opts.output_dir.is_empty() || is_executable;
                 let mut templates: Vec<(usize, options::PathTemplate)> = Vec::new();
 
                 for reachable_source in reachable_files {
@@ -3982,6 +3983,10 @@ pub mod bv2_impl {
 
                             template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
                             template.placeholder.dir = pathname.dir.to_vec().into_boxed_slice();
+                            // In an executable `node:fs` finds `D:/a/b.txt`, and not `./b.txt`.
+                            if bun_paths::is_absolute(&relative) && !is_executable {
+                                template.resolve_dir(&self.transpiler.options.root_dir);
+                            }
                             let mut ext: &[u8] = pathname.ext;
                             if !ext.is_empty() && ext[0] == b'.' {
                                 ext = &ext[1..];
@@ -4019,7 +4024,6 @@ pub mod bv2_impl {
                     }
                 }
 
-                let is_executable = self.transpiler.options.compile_mode.is_executable();
                 // The output path of a copied file -> its output file and its module.
                 let mut copied: bun_collections::StringHashMap<(u32, usize)> = Default::default();
                 for (index, mut template) in templates {
@@ -4199,7 +4203,7 @@ pub mod bv2_impl {
                 unreachable!("`on_load_async` answers a waiter");
             };
             let (source_index, path) = (parse_task.source_index, parse_task.path);
-            if load.deferred_in == Some(this.graph.defer_epoch) {
+            if load.called_defer && load.defer_epoch == this.graph.defer_epoch {
                 // Answered while `.defer()`red and before that batch was drained (cancelled, or a plugin
                 // that did not wait): its unit is still parked in `deferred_pending`; move it back so this
                 // answer accounts for it like any other.
@@ -6199,17 +6203,17 @@ pub mod bv2_impl {
                                 // This information cannot be queried while printing because a lock wouldn't get held.
                                 import_record.path.text = path.text;
                                 import_record.path.namespace = b"file";
-                                import_record.path.pretty = self
-                                    .arena()
-                                    .alloc_str(&format!(
+                                import_record.path.pretty = self.arena().alloc_slice_copy(
+                                    format!(
                                         "{}/{}{}",
                                         bake_types::ASSET_PREFIX,
                                         bun_core::fmt::bytes_to_hex_lower_string(
                                             &hash.to_ne_bytes()
                                         ),
                                         bstr::BStr::new(bun_paths::extension(path.text)),
-                                    ))
-                                    .as_bytes();
+                                    )
+                                    .as_bytes(),
+                                );
                                 import_record.path.is_disabled = false;
                             } else {
                                 import_record.path.text = path.text;
@@ -6640,8 +6644,7 @@ pub mod bv2_impl {
             if let Some(i) = answered {
                 if last_error.is_some() && self.dev_server.is_some() {
                     // The dev server links failed files too, and skips a file that has no parts.
-                    // SAFETY: truncating to len 0 never exposes uninitialized elements.
-                    unsafe { self.graph.ast.items_parts_mut()[idx].set_len(0) };
+                    self.graph.ast.items_parts_mut()[idx].forget_elements();
                 }
                 let made = import_records.as_slice()[i].source_index;
                 if declined && scheduled > 0 && made.is_valid() {
@@ -6684,17 +6687,17 @@ pub mod bv2_impl {
             );
             js_parser_options.bundle = true;
 
-            let unique_key: &[u8] = self
-                .arena()
-                .alloc_str(&format!(
+            let unique_key: &[u8] = self.arena().alloc_slice_copy(
+                format!(
                     "{}",
                     chunk::UniqueKey {
                         prefix: self.unique_key,
                         kind: chunk::QueryKind::HtmlImport,
                         index: self.graph.html_imports.len() as u32,
                     },
-                ))
-                .as_bytes();
+                )
+                .as_bytes(),
+            );
 
             // Extract raw pointers so the `&mut self` borrow from
             // `transpiler_for_target` doesn't overlap `self.arena()` below.
@@ -6793,12 +6796,12 @@ pub mod bv2_impl {
                 for (importer, range) in waited {
                     let importer_path = self.graph.input_files.items_source()[importer].path.text;
                     let importer_graph = self.graph.ast.items_target()[importer].bake_graph();
-                    // SAFETY: the log lives in the dev server, disjoint from `self.graph`.
-                    let log: &mut bun_ast::Log = unsafe {
-                        bun_ptr::detach_lifetime_mut(
-                            self.log_for_resolution_failures(importer_path, importer_graph),
-                        )
-                    };
+                    let log = Self::log_for_resolution_failures_impl(
+                        &mut self.dev_server,
+                        &mut self.transpiler,
+                        importer_path,
+                        importer_graph,
+                    );
                     log.add_range_error_fmt(
                         Some(&self.graph.input_files.items_source()[importer]),
                         range,
@@ -6863,15 +6866,10 @@ pub mod bv2_impl {
     impl<'a> BundleV2<'a> {
         /// A load handed to the plugins called `.defer()`: its scan-counter unit is parked in
         /// `deferred_pending` until the deferred batch runs or its answer arrives. Bundle thread.
-        pub fn on_notify_defer(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
-            debug_assert!(matches!(
-                load.owner,
-                jsc_api::JSBundler::LoadOwner::Bundle(_)
-            ));
-            this.thread_lock.assert_locked();
-            load.deferred_in = Some(this.graph.defer_epoch);
-            this.graph.deferred_pending += 1;
-            this.decrement_scan_counter();
+        pub fn on_notify_defer(&mut self) {
+            self.thread_lock.assert_locked();
+            self.graph.deferred_pending += 1;
+            self.decrement_scan_counter();
         }
 
         #[inline(never)]

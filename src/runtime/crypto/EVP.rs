@@ -169,10 +169,10 @@ impl EVP {
         }
     }
 
-    pub(crate) fn hash(&mut self, input: &[u8], output: &mut [u8]) -> Option<u32> {
+    pub(crate) fn hash(&mut self, input: &[u8], output: &mut Digest) -> Option<u32> {
         boringssl::ERR_clear_error();
-        let mut outsize: c_uint = (output.len() as u16).min(self.size()) as c_uint;
-        // SAFETY: input/output point to valid slices of the given lengths; outsize bounded by output.len().
+        let mut outsize: c_uint = 0;
+        // SAFETY: `input` is valid for its length, and every digest fits in a `Digest`.
         // BoringSSL never reads the `ENGINE`.
         if unsafe {
             boringssl::EVP_Digest(
@@ -193,10 +193,14 @@ impl EVP {
 
     pub(crate) fn r#final<'a>(&mut self, output: &'a mut [u8]) -> &'a mut [u8] {
         boringssl::ERR_clear_error();
-        let mut outsize: u32 = (output.len() as u16).min(self.size()) as u32;
-        // SAFETY: output points to a valid mutable slice; outsize bounded by output.len().
+        let output = &mut output[..self.size() as usize];
+        // SAFETY: self.ctx is initialized with self.md, so this writes `size()` bytes.
         if unsafe {
-            boringssl::EVP_DigestFinal_ex(&raw mut self.ctx, output.as_mut_ptr(), &raw mut outsize)
+            boringssl::EVP_DigestFinal_ex(
+                &raw mut self.ctx,
+                output.as_mut_ptr(),
+                core::ptr::null_mut(),
+            )
         } != 1
         {
             return &mut output[..0];
@@ -204,7 +208,7 @@ impl EVP {
 
         self.reset();
 
-        &mut output[..outsize as usize]
+        output
     }
 
     pub(crate) fn update(&mut self, input: &[u8]) {

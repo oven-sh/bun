@@ -2428,7 +2428,15 @@ pub fn write_sanitized_parent_dirs<W: bun_io::Write>(
     writer: &mut W,
     dir: &[u8],
 ) -> bun_io::Result<()> {
-    let mut rest: &[u8] = dir;
+    // The path from one drive or share to another is absolute. `D:\a` becomes `D_\a`.
+    let (volume, mut rest) = dir.split_at(bun_paths::volume(dir).len());
+    for byte in volume {
+        let is_name = !matches!(byte, b'\\' | b'/' | b':' | b'?');
+        writer.write_all(&[if is_name { *byte } else { b'_' }])?;
+    }
+    if bun_paths::root(dir).len() == dir.len() {
+        return Ok(());
+    }
     loop {
         let sep = rest.iter().position(|&b| bun_paths::is_sep(b));
         let seg = sep.map_or(rest, |i| &rest[..i]);
@@ -2516,6 +2524,26 @@ fn path_template_print_tolerates_malformed_brackets() {
 impl PathTemplate {
     pub(crate) fn needs(&self, field: PlaceholderField) -> bool {
         path_template_needs(&self.data, field)
+    }
+
+    /// Makes `[dir]` lead to a real path, as `root_dir` is. On Windows the working directory keeps junctions and `subst` drives.
+    pub(crate) fn resolve_dir(&mut self, root_dir: &[u8]) {
+        use bun_paths::Path;
+        if !cfg!(windows) || !self.needs(PlaceholderField::Dir) {
+            return;
+        }
+        let dir = Path::resolve(&[root_dir, &self.placeholder.dir]);
+        if !matches!(bun_paths::volume(&dir), [_, b':']) {
+            return;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        for ancestor in bun_paths::ancestors(&dir) {
+            if let Ok(real) = bun_sys::realpath(&Path::from(ancestor), &mut buf) {
+                let real = Path::join(&[real, &dir[ancestor.len()..]]);
+                self.placeholder.dir = Path::relative(root_dir, &real).as_bytes().into();
+                return;
+            }
+        }
     }
 
     /// The width this template's `[hash]`/`[hashN]` asks for.

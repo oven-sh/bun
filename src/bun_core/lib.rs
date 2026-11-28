@@ -1,4 +1,4 @@
-#![feature(adt_const_params, allocator_ext)]
+#![feature(adt_const_params, allocator_ext, ascii_char)]
 #![feature(core_io, core_io_borrowed_buf, vec_split_at_spare)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
 #![feature(freeze)] // `impl_field_parent!`'s `shared` arm rejects `Freeze` children at compile time
@@ -585,7 +585,7 @@ pub const unsafe fn container_of<P, F>(field: *const F, offset: usize) -> *mut P
 /// Recover a typed `&mut T` from a C-callback's opaque user-data pointer.
 ///
 /// This is the canonical spelling for the ubiquitous trampoline pattern where
-/// a C library (c-ares, uWS, libuv, lol-html, BoringSSL, …) round-
+/// a C library (uWS, libuv, lol-html, BoringSSL, …) round-
 /// trips a Rust object through a `void *user_data` slot and hands it back to
 /// an `extern "C" fn` thunk. Earlier ports open-coded this as
 /// `unsafe { &mut *ctx.cast::<T>() }` at every site; centralising it here
@@ -791,7 +791,7 @@ impl<T: ?Sized + core::marker::Freeze> __IsFreeze<T> {
 
 /// Declares that `Self` embeds exactly one intrusive `F` field at byte
 /// [`OFFSET`](IntrusiveField::OFFSET). Every per-module `const X_OFFSET: usize`
-/// trait (`TASK_OFFSET`, `MIXIN_OFFSET`,
+/// trait (`MIXIN_OFFSET`,
 /// `CHANNEL_OFFSET`, `LazyBool<_, const OFFSET>`, `from_task`, …) is the same
 /// `(Parent, Field, OFFSET)` triple plus [`container_of`] arithmetic — this
 /// trait is exactly that triple, with both directions provided.
@@ -804,13 +804,7 @@ pub unsafe trait IntrusiveField<F>: Sized {
     const OFFSET: usize;
 
     /// Project `&mut self` → `&mut self.<field>`.
-    #[inline(always)]
-    fn field_mut(&mut self) -> &mut F {
-        // SAFETY: `OFFSET` is `offset_of!(Self, <field>)` per impl contract;
-        // `&mut self` covers the whole `Self`, so the field reborrow is in-bounds
-        // and uniquely borrowed for the returned lifetime.
-        unsafe { &mut *core::ptr::from_mut(self).byte_add(Self::OFFSET).cast::<F>() }
-    }
+    fn field_mut(&mut self) -> &mut F;
 
     /// `*mut Self` → `*mut self.<field>`.
     ///
@@ -836,7 +830,7 @@ pub unsafe trait IntrusiveField<F>: Sized {
     }
 }
 
-/// Stamp `unsafe impl IntrusiveField<$F> for $T { const OFFSET = offset_of!($T, $field); }`.
+/// Stamp `unsafe impl IntrusiveField<$F> for $T` over the field `$field`.
 ///
 /// ```ignore
 /// bun_core::intrusive_field!(ShellCpTask, task: ShellTask);
@@ -850,12 +844,14 @@ macro_rules! intrusive_field {
     ([$($gen:tt)*] $T:ty, $field:ident : $F:ty) => {
         unsafe impl<$($gen)*> $crate::IntrusiveField<$F> for $T {
             const OFFSET: usize = ::core::mem::offset_of!($T, $field);
+            #[inline(always)]
+            fn field_mut(&mut self) -> &mut $F {
+                &mut self.$field
+            }
         }
     };
     ($T:ty, $field:ident : $F:ty) => {
-        unsafe impl $crate::IntrusiveField<$F> for $T {
-            const OFFSET: usize = ::core::mem::offset_of!($T, $field);
-        }
+        $crate::intrusive_field!([] $T, $field: $F);
     };
 }
 
@@ -1593,9 +1589,16 @@ pub(crate) mod strings_impl {
         if utf16.is_empty() || buf.is_empty() {
             return EncodeIntoResult::default();
         }
+        let utf16 = utf16_within_reach(utf16, buf);
         let input = WithUtf8Len::utf16_worst_case(utf16, buf.len())
             .unwrap_or_else(|| WithUtf8Len::utf16_with_replacement(utf16));
         copy_utf16_into_utf8_with_utf8_len(buf, input)
+    }
+
+    /// A unit takes at least a byte, so no more can be written to `buf`. One more can complete a surrogate pair.
+    #[inline]
+    pub(crate) fn utf16_within_reach<'a>(utf16: &'a [u16], buf: &[u8]) -> &'a [u16] {
+        &utf16[..utf16.len().min(buf.len() + 1)]
     }
 
     pub fn copy_utf16_into_utf8_with_utf8_len(
@@ -1646,7 +1649,7 @@ pub(crate) mod strings_impl {
             };
         }
         const MIN_LEN_FOR_SIMDUTF: usize = 64;
-        if latin1.len() >= MIN_LEN_FOR_SIMDUTF {
+        if (MIN_LEN_FOR_SIMDUTF..=buf.len()).contains(&latin1.len()) {
             let input = WithUtf8Len::latin1(latin1);
             if buf.len() >= input.utf8_len() {
                 let mut out = BorrowedBuf::from(buf);
@@ -2103,6 +2106,7 @@ pub(crate) mod strings_impl {
         fn index_of_unit(s: &[Self], unit: Self) -> Option<usize>;
         fn last_index_of_unit(s: &[Self], unit: Self) -> Option<usize>;
     }
+    #[derive(Clone, Copy)]
     pub enum CodeUnits<'a> {
         U8(&'a [u8]),
         U16(&'a [u16]),
@@ -2370,8 +2374,9 @@ pub mod ffi {
     /// Replaces the `// SAFETY: H is a ZST → mem::zeroed()` comment repeated
     /// at every callback trampoline that smuggles a generic `H: Fn*` through C
     /// (`uws_sys::thunk`, `server_body::route_thunk`).
+    /// `Copy` keeps the opaque FFI handles out: they are ZSTs too.
     #[inline(always)]
-    pub fn conjure_zst<H>() -> H {
+    pub fn conjure_zst<H: Copy>() -> H {
         const {
             assert!(
                 core::mem::size_of::<H>() == 0,

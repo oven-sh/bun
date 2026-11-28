@@ -490,13 +490,13 @@ pub struct FILE_DISPOSITION_INFORMATION_EX {
 }
 
 /// `FILE_RENAME_INFORMATION` ex variant (`ntifs.h`). `FileName` is a
-/// variable-length tail; declared `[u16; 1]` to match the C flex-array idiom.
+/// variable-length tail with room for `N` units; C declares one.
 #[repr(C)]
-pub struct FILE_RENAME_INFORMATION_EX {
+pub struct FILE_RENAME_INFORMATION_EX<const N: usize = 1> {
     pub Flags: ULONG,
     pub RootDirectory: HANDLE,
     pub FileNameLength: ULONG,
-    pub FileName: [u16; 1],
+    pub FileName: [core::mem::MaybeUninit<u16>; N],
 }
 
 // `FILE_DISPOSITION_INFORMATION_EX.Flags` bits (winnt.h).
@@ -1060,6 +1060,18 @@ pub mod ws2_32 {
     pub const SOCK_DGRAM: c_int = 2;
     pub const IPPROTO_TCP: c_int = 6;
     pub const IPPROTO_UDP: c_int = 17;
+    pub const IPPROTO_IPV6: c_int = 41;
+    pub const SOL_SOCKET: c_int = 0xffff;
+    pub const SO_RCVBUF: c_int = 0x1002;
+    pub const SO_RANDOMIZE_PORT: c_int = 0x3005;
+    pub const TCP_NODELAY: c_int = 1;
+    pub const IPV6_V6ONLY: c_int = 27;
+    pub const FIONBIO: c_int = 0x8004_667e_u32 as c_int;
+    pub const WSA_FLAG_OVERLAPPED: u32 = 0x01;
+    pub const WSA_FLAG_NO_HANDLE_INHERIT: u32 = 0x80;
+    pub const INVALID_SOCKET: usize = usize::MAX;
+
+    pub type socklen_t = c_int;
 
     /// `ADDRINFOA` (`ws2def.h`). Field names match POSIX `addrinfo` so
     /// cross-platform `bun_dns` code can dot-access without cfg arms.
@@ -1085,6 +1097,15 @@ pub mod ws2_32 {
             res: *mut *mut addrinfo,
         ) -> c_int;
         pub fn freeaddrinfo(ai: *mut addrinfo);
+        pub fn getnameinfo(
+            address: *const sockaddr,
+            address_len: socklen_t,
+            node: *mut c_char,
+            node_len: u32,
+            service: *mut c_char,
+            service_len: u32,
+            flags: c_int,
+        ) -> c_int;
     }
 
     /// `SOCKADDR_STORAGE` (`ws2def.h`). 128 bytes, 8-aligned.
@@ -1139,6 +1160,34 @@ pub mod ws2_32 {
 
     #[cfg_attr(windows, link(name = "ws2_32"))]
     unsafe extern "system" {
+        pub fn WSASocketW(
+            af: c_int,
+            kind: c_int,
+            protocol: c_int,
+            protocol_info: *const c_void,
+            group: u32,
+            flags: u32,
+        ) -> usize;
+        pub fn closesocket(s: usize) -> c_int;
+        pub fn ioctlsocket(s: usize, cmd: c_int, argp: *mut u32) -> c_int;
+        pub fn bind(s: usize, name: *const sockaddr, len: socklen_t) -> c_int;
+        pub fn connect(s: usize, name: *const sockaddr, len: socklen_t) -> c_int;
+        pub fn getsockname(s: usize, name: *mut sockaddr, len: *mut socklen_t) -> c_int;
+        pub fn setsockopt(
+            s: usize,
+            level: c_int,
+            name: c_int,
+            value: *const c_char,
+            len: socklen_t,
+        ) -> c_int;
+        pub fn recvfrom(
+            s: usize,
+            buf: *mut c_void,
+            len: c_int,
+            flags: c_int,
+            from: *mut sockaddr,
+            from_len: *mut socklen_t,
+        ) -> c_int;
         pub fn recv(s: usize, buf: *mut c_void, len: c_int, flags: c_int) -> c_int;
         pub fn send(s: usize, buf: *const c_void, len: c_int, flags: c_int) -> c_int;
         /// `WSAPoll` (`winsock2.h`). Returns count of ready fds, 0 on timeout,

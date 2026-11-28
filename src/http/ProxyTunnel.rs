@@ -7,7 +7,7 @@ use bun_uws as uws;
 
 use crate::http_cert_error::HTTPCertError;
 use crate::http_context::{HTTPSocket, PeerVerification};
-use crate::internal_state::HTTPStage;
+use crate::internal_state::{HTTPStage, TransportEnd};
 use crate::ssl_config::SSLConfig;
 use crate::ssl_wrapper::{Handler as SSLWrapperHandler, InitError, SSLWrapper};
 use crate::{AlpnOffer, HTTPClient, NextStep};
@@ -70,8 +70,13 @@ impl<const IS_SSL: bool> ClientHandler<'_, '_, IS_SSL> {
     }
 
     fn close(&mut self, err: Error) {
+        let end = if self.wrapper.flags.received_ssl_shutdown() {
+            TransportEnd::Clean
+        } else {
+            TransportEnd::Failed
+        };
         self.wrapper.deinit();
-        self.next_step = self.client.on_proxy_tunnel_close(err, self.socket);
+        self.next_step = self.client.on_proxy_tunnel_close(err, end, self.socket);
     }
 }
 
@@ -80,33 +85,27 @@ fn on_tunnel_open(client: &mut HTTPClient<'_>, wrapper: &SSLWrapper) {
     bun_analytics::features::http_client_proxy.fetch_add(1, Ordering::Relaxed);
     client.state.response_stage = HTTPStage::ProxyHandshake;
     client.state.request_stage = HTTPStage::ProxyHandshake;
-    if let Some(ssl_ptr) = wrapper.ssl.get() {
+    if let Some(ssl_ptr) = wrapper.ssl() {
         let _hostname = crate::get_tls_hostname(client, false);
 
         // SAFETY: `ssl_ptr` is the live SSL handle from the tunnel's SSLWrapper.
-        let ssl = unsafe { &mut *ssl_ptr.as_ptr() };
-        if bun_core::ip_address::is_ip_host(_hostname) {
-            // SNI is null (IP literal — no SNI).
-            crate::configure_http_client_with_alpn(ssl, core::ptr::null(), AlpnOffer::H1);
+        let ssl = unsafe { ssl_ptr.as_ref() };
+        let owned: bun_core::ZBox;
+        let host_z = if bun_core::ip_address::is_ip_host(_hostname) {
+            // IP literal — no SNI.
+            None
         } else {
             // SAFETY: TEMP_HOSTNAME is only accessed from the single HTTP thread.
             let temp_hostname = crate::temp_hostname();
             if _hostname.len() < temp_hostname.len() {
                 temp_hostname[.._hostname.len()].copy_from_slice(_hostname);
-                temp_hostname[_hostname.len()] = 0;
-                // `temp_hostname` is NUL-terminated and outlives this call.
-                crate::configure_http_client_with_alpn(
-                    ssl,
-                    temp_hostname.as_ptr().cast(),
-                    AlpnOffer::H1,
-                );
+                Some(bun_core::ZStr::nul_terminate(temp_hostname, _hostname.len()).into())
             } else {
-                let mut owned = _hostname.to_vec();
-                owned.push(0);
-                // `owned` is NUL-terminated and outlives this call.
-                crate::configure_http_client_with_alpn(ssl, owned.as_ptr().cast(), AlpnOffer::H1);
+                owned = bun_core::ZBox::from_bytes(_hostname);
+                Some(owned.as_zstr().into())
             }
-        }
+        };
+        crate::configure_http_client_with_alpn(ssl, host_z, AlpnOffer::H1);
     }
 }
 
@@ -181,9 +180,9 @@ fn on_tunnel_handshake(
         // result, which is `UNABLE_TO_GET_ISSUER_CERT` by default when the peer
         // never got as far as sending a certificate. Only a certificate that
         // was received can be what is wrong.
-        let peer_sent_certificate = wrapper.ssl.get().is_some_and(|ssl| {
-            // SAFETY: the live SSL handle of the tunnel's wrapper; the chain is borrowed.
-            !unsafe { bun_boringssl_sys::SSL_get_peer_cert_chain(ssl.as_ptr()) }.is_null()
+        let peer_sent_certificate = wrapper.ssl().is_some_and(|mut ssl| {
+            // SAFETY: the live SSL handle of the tunnel's wrapper, used for this one call.
+            bun_boringssl_sys::SSL_get_peer_cert_chain(unsafe { ssl.as_mut() }).is_some()
         });
         Err(
             if handshake_error.error_no <= 0
@@ -236,7 +235,7 @@ impl<const IS_SSL: bool> SSLWrapperHandler for ClientHandler<'_, '_, IS_SSL> {
         }
         let client = &mut *self.client;
         if client.wants_server_identity_check() {
-            let Some(ssl_ptr) = self.wrapper.ssl.get() else {
+            let Some(ssl_ptr) = self.wrapper.ssl() else {
                 return;
             };
 
@@ -351,7 +350,7 @@ impl HTTPClient<'_> {
         match tunnel.write(socket.into(), lent_wrapper, buf) {
             Ok(written) => Continue(written),
             Err(TunnelClosed) => self
-                .on_proxy_tunnel_close(Error::ConnectionClosed, socket)
+                .on_proxy_tunnel_close(Error::ConnectionClosed, TransportEnd::Failed, socket)
                 .map_continue(|()| None),
         }
     }
@@ -359,14 +358,17 @@ impl HTTPClient<'_> {
     pub(crate) fn on_proxy_tunnel_close<const IS_SSL: bool>(
         &mut self,
         mut err: Error,
+        end: TransportEnd,
         socket: HTTPSocket<IS_SSL>,
     ) -> ControlFlow<NextStep> {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onClose");
         // Mirror `HTTPClient::on_close`:
         // treat connection close as end-of-body for identity transfer when no content-length.
         if !self.state.flags.is_redirect_pending && self.state.is_body_complete_on_close() {
-            match self.finalize_body_on_eof() {
+            match self.finalize_body_on_close(end) {
                 Ok(()) => return Break(NextStep::ReleaseSocket),
+                // `err` says why.
+                Err(Error::ConnectionClosed) => {}
                 Err(e) => err = e,
             }
         }

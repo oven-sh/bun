@@ -18,6 +18,12 @@ export const extractedSplitNewLinesFastPathStringsOnly = b.fn({
   returns: b.array(b.string).optional,
 });
 
+/** Of two `Uint32Array`s. For each replacement, where it starts and ends in `actual`, then in `expected`. */
+export const diffNumbers = b.fn({
+  args: { actual: b.bytes({ from: ["buffer"] }), expected: b.bytes({ from: ["buffer"] }) },
+  returns: b.array(b.i32),
+});
+
 export const normalizeEncoding = b.fn({
   args: { encoding: b.string.loose },
   returns: b.any,

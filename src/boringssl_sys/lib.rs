@@ -20,6 +20,36 @@ pub fn rand_bytes(buf: &mut [u8]) {
     }
 }
 
+/// Formats `packed_error` into `buf` via `ERR_error_string_n`, cut short to fit.
+pub fn error_string(packed_error: u32, buf: &mut [u8]) -> &[u8] {
+    // SAFETY: BoringSSL writes at most `buf.len()` bytes.
+    unsafe { boringssl::ERR_error_string_n(packed_error, buf.as_mut_ptr().cast(), buf.len()) };
+    bun_core::slice_to_nul(buf)
+}
+
+/// Fills `out` via `PKCS5_PBKDF2_HMAC`.
+pub fn pbkdf2_hmac(
+    password: &[u8],
+    salt: &[u8],
+    iterations: u32,
+    digest: &EVP_MD,
+    out: &mut [u8],
+) -> bool {
+    // SAFETY: each pointer is valid for the length next to it.
+    unsafe {
+        boringssl::PKCS5_PBKDF2_HMAC(
+            password.as_ptr(),
+            password.len(),
+            salt.as_ptr(),
+            salt.len(),
+            iterations,
+            digest,
+            out.len(),
+            out.as_mut_ptr(),
+        ) > 0
+    }
+}
+
 /// Constant-time byte-slice equality via BoringSSL `CRYPTO_memcmp`.
 ///
 /// Returns `false` when lengths differ (the length comparison itself is NOT

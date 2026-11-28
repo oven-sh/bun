@@ -1,9 +1,8 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::Ordering;
 
 use bun_boringssl as boringssl;
-use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::{MutableString, String as BunString};
 use bun_event_loop::{ConcurrentTask::ConcurrentTask, Task, Taskable};
 use bun_http as http;
@@ -29,6 +28,7 @@ use crate::generated_bindgen::fetch_tasklet::{
 };
 use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store as BlobStore};
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
+use crate::webcore::byte_stream::PinnedBytes;
 use crate::webcore::fetch::fetch_request_body_sink::FetchRequestBodySink;
 use crate::webcore::fetch::fetch_trace::{self, FetchTrace};
 use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamStrong};
@@ -46,97 +46,73 @@ use http::signals::BODY_HIGH_WATER_MARK;
 
 use boringssl::c::OwnedX509;
 
-// ConcurrentTask::from() needs `Taskable`; tag is declared in bun_event_loop
-// but the impl lives next to the type (cycle-break).
-/// The "last ref dropped on the HTTP thread → deinit on the JS thread" hop:
-/// same pointer, its own tag, so teardown can tell it from a progress update.
-#[repr(transparent)]
-pub(crate) struct FetchTaskletDeinitHop(FetchTasklet);
+/// The HTTP thread had the last ref: the hop that drops it on the JS thread.
+pub(crate) struct FetchTaskletDeinitHop;
 impl Taskable for FetchTaskletDeinitHop {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletDeinit;
-    /// The last ref dropped on the HTTP thread while we were tearing down:
-    /// deinit here, on the JS thread with the heap alive, as the hop intended.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe { Self::run(this) }
-    }
+    type Payload = RefPtr<FetchTasklet>;
+    fn release_unrun(_: Self::Payload) {}
     /// Frees a tasklet; calls no script.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Payload) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
-    }
-}
-impl FetchTaskletDeinitHop {
-    /// # Safety
-    /// `this` is the tasklet the hop was created from, ref_count == 0, JS thread.
-    pub(crate) unsafe fn run(this: *mut Self) {
-        // SAFETY: fn contract — sole owner.
-        drop(unsafe { bun_core::heap::take(this.cast::<FetchTasklet>()) });
     }
 }
 
 /// The HTTP thread drained the request body's buffer: the hop that tells the sink, on the JS
-/// thread. Same pointer, its own tag.
-#[repr(transparent)]
-pub(crate) struct FetchTaskletRequestDrain(FetchTasklet);
+/// thread.
+pub(crate) struct FetchTaskletRequestDrain;
 impl Taskable for FetchTaskletRequestDrain {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletRequestDrain;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract; the task owns a ref.
-        drop(unsafe { RefPtr::from_raw(this.cast::<FetchTasklet>()) });
-    }
+    type Payload = RefPtr<FetchTasklet>;
+    fn release_unrun(_: Self::Payload) {}
     /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Payload) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
 
-/// There are events to publish. Same pointer, its own tag.
-#[repr(transparent)]
-pub(crate) struct FetchTaskletTrace(FetchTasklet);
+/// There are events to publish.
+pub(crate) struct FetchTaskletTrace;
 impl Taskable for FetchTaskletTrace {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletTrace;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract; the task owns a ref.
-        let tasklet = unsafe { RefPtr::from_raw(this.cast::<FetchTasklet>()) };
+    type Payload = RefPtr<FetchTasklet>;
+    fn release_unrun(tasklet: Self::Payload) {
         // It may be waiting for the headers of its next hop.
         tasklet.abort_transport();
     }
     /// `on_trace_events` enters it.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Payload) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
 
 /// The HTTP thread's ref, and how that thread reaches the JS thread.
 struct HttpThreadRef {
-    tasklet: NonNull<FetchTasklet>,
+    tasklet: Option<RefPtr<FetchTasklet>>,
     ticket: jsc::Ticket,
 }
 
 impl Drop for HttpThreadRef {
     fn drop(&mut self) {
-        let tasklet = self.tasklet.as_ptr();
-        // SAFETY: the ref taken in `queue`.
-        if unsafe { bun_ptr::ThreadSafeRefCount::release(tasklet) } {
+        if let Some(last) = self.tasklet.take().and_then(RefPtr::drop_unless_last) {
             // It holds JSC handles, so it is freed on the JS thread.
-            self.ticket
-                .post(ConcurrentTask::create(bun_event_loop::Task::init(
-                    tasklet.cast::<FetchTaskletDeinitHop>(),
-                )));
+            let task = ConcurrentTask::create::<FetchTaskletDeinitHop>(last);
+            self.ticket.post(task);
         }
     }
 }
 
+/// One for each tasklet, in `js_ref` or in the queue.
+pub struct JsThreadRef(RefPtr<FetchTasklet>);
+
 impl Taskable for FetchTasklet {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTasklet;
+    type Payload = JsThreadRef;
     /// No other progress update follows one that does not run.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract; `js_ref` keeps the tasklet alive.
-        drop(unsafe { (*this).js_ref.take() });
-    }
+    fn release_unrun(_: Self::Payload) {}
     /// `on_progress_update` decides: a fetch whose context stopped reports nothing, and what is left
     /// of it is released there.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Payload) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -162,8 +138,8 @@ pub struct FetchTasklet {
     /// and deinit tasks, and what makes the VM wait for it. JS-thread code uses
     /// the VM through `global_this` instead and never touches this.
     http_ref: Option<HttpThreadRef>,
-    /// Held until the last progress update.
-    js_ref: Option<RefPtr<FetchTasklet>>,
+    /// `None` while it is queued in `concurrent_task`. Guarded by `mutex` up to `release_at_shutdown`.
+    js_ref: Option<JsThreadRef>,
     pub global_this: GlobalRef,
     pub(crate) request_body: HTTPRequestBody,
     /// This side's ref; the HTTP thread holds the other.
@@ -187,7 +163,7 @@ pub struct FetchTasklet {
     /// The count missed and `WriteMessageType::LengthMismatch` was sent.
     pub(crate) request_body_mismatched: bool,
     pub(crate) promise: jsc::JSPromiseStrong,
-    pub(crate) concurrent_task: ConcurrentTask,
+    concurrent_task: ConcurrentTask,
     pub poll_ref: KeepAlive,
     /// For Http Client requests
     /// when Content-Length is provided this represents the whole size of the request
@@ -206,7 +182,6 @@ pub struct FetchTasklet {
     pub(crate) context: jsc::ContextId,
     pub(crate) signals: Signals,
     pub(crate) signal_store: http::signals::Store,
-    pub(crate) has_schedule_callback: AtomicBool,
 
     // must be stored because AbortSignal stores reason weakly
     pub(crate) abort_reason: StrongOptional,
@@ -398,7 +373,7 @@ impl FetchTasklet {
     /// INVARIANT: every `*mut FetchTasklet` threaded through the HTTP-thread
     /// callback (`callback`), the drain hook (`on_write_request_data_drain` /
     /// `resume_request_data_stream`), and the JS-thread enqueue
-    /// (`queue` → `node`) was produced by `heap::into_raw(Box<FetchTasklet>)`
+    /// (`queue` → `node`) was produced by `RefPtr::from(Box<FetchTasklet>)`
     /// in `get()` and is kept alive by the intrusive `ref_count` until
     /// `drop`. Access on either thread is serialised: HTTP-thread writes
     /// happen under `mutex.lock()` and JS-thread access is single-threaded.
@@ -465,26 +440,12 @@ impl FetchTasklet {
     /// `HTTPClientResultCallback::release_at_shutdown` for `FetchTasklet`.
     /// Called from `dealloc_in_flight_for_exit` on the HTTP thread for each
     /// request still in `in_flight` when `process.exit()` interrupts it.
-    /// `queue()` left two refs (`js_ref` and `http_ref`); the final
-    /// `callback`'s deref and `on_progress_update`'s JS-side deref will never
-    /// run, so this must balance both — but only when no `on_progress_update`
-    /// is already parked in the parent's concurrent queue.
-    ///
-    /// The `has_schedule_callback` flag distinguishes the two states:
-    ///   * `false` — nothing queued. Drop both refs here; the last one hops
-    ///     `deinit` to the JS thread, which teardown runs from its queue release.
-    ///   * `true` — a non-final `on_progress_update` is queued (this entry is
-    ///     still in `in_flight`, so the *final* `callback` hasn't run). That
-    ///     queued node needs `js_ref` and its VM releases it from its
-    ///     queue; dropping it here too would leave the queued node pointing at
-    ///     a freed `FetchTasklet`. Drop only the HTTP-side ref.
+    /// The final `callback`, which leads to the release of `js_ref` and `http_ref`, will never run.
     ///
     /// Only reachable for a request whose VM has *not* torn down (a worker
     /// still running when the main thread exits): a VM's teardown waits for its
     /// fetches' tickets — i.e. for their final callback — before the exiting
-    /// main thread parks the HTTP thread. `has_schedule_callback` is written by
-    /// the HTTP-thread `callback` and the JS-thread `on_progress_update` under
-    /// its own compare-exchange discipline, which this load relies on.
+    /// main thread parks the HTTP thread.
     ///
     /// SAFETY: `this` is the live `*mut FetchTasklet` registered as
     /// `result_callback.ctx` in `get()`; HTTP-thread-only at this point.
@@ -493,16 +454,11 @@ impl FetchTasklet {
         // Free the body-bytes buffer the same way the `is_shutting_down`
         // branch in `callback` does (no JS-thread drain will reclaim it).
         // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
-        let queued_progress_update =
-            unsafe { (*this).has_schedule_callback.load(Ordering::Acquire) };
-        // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
         unsafe {
             (*this).scheduled_response_buffer = MutableString::default();
             let _http_ref = (*this).http_ref.take().expect(Self::HOLDS_REF);
-            if !queued_progress_update {
-                // Not the last ref: `_http_ref` is still held.
-                (*this).js_ref = None;
-            }
+            // Not the last ref: `_http_ref` is still held.
+            (*this).js_ref = None;
         }
     }
 
@@ -643,40 +599,8 @@ impl FetchTasklet {
         );
 
         if !success {
-            let mut err = self.on_reject();
-            let mut js_err = JSValue::ZERO;
-            // if we are streaming update with error
-            if let Some(bytes) = self.response_stream.take() {
-                js_err = err.to_js(&global_this);
-                js_err.ensure_still_alive();
-                bytes.on_data(StreamResult::Err(StreamError::JSValue(
-                    bun_jsc::strong::Optional::create(js_err, &global_this),
-                )));
-            }
-            // A failure result is terminal (only `InFlightRequest::finish`
-            // reports `fail`), so everything pending must settle
-            // here: a still-streaming request-body sink does not exempt the
-            // response body. Returning right after `sink.cancel()` used to
-            // leave a buffered `arrayBuffer()`/`text()` promise pending
-            // forever when a fetch with an in-flight streaming request body
-            // was aborted mid-response.
-            if self.sink_mut().is_some() && js_err.is_empty() {
-                js_err = err.to_js(&global_this);
-                js_err.ensure_still_alive();
-            }
-            // if we are buffering resolve the promise
-            if let Some(response) = self.native_response.get().as_deref() {
-                // body value now owns the error
-                let body = response.get_body_value();
-                body.to_error_instance(err, &global_this)?;
-            }
-            // Cancel the request-body sink last: closing the sink signal fires
-            // the controller's onClose synchronously, which can re-enter the
-            // tasklet.
-            if !js_err.is_empty() {
-                self.cancel_request_body_sink(js_err);
-            }
-            return Ok(());
+            let err = self.on_reject();
+            return self.fail_body(err, self.response_stream.take());
         }
 
         // body can be marked as used but we still need to pipe the data
@@ -688,14 +612,19 @@ impl FetchTasklet {
                 bytes.size_hint.set(self.get_size_hint());
                 *buffer_reset = false;
                 let chunk = self.scheduled_response_buffer.list.as_slice();
-                bytes.on_data(StreamResult::TemporaryAndDone(chunk));
+                let delivered = bytes.try_on_data(StreamResult::TemporaryAndDone(chunk));
+                if delivered.is_err() {
+                    return self.fail_body_without_memory(bytes);
+                }
                 return Ok(());
             }
         } else if let Some(bytes) = self.response_stream.bytes() {
             bun_output::scoped_log!(FetchTasklet, "onBodyReceived response_stream");
             bytes.size_hint.set(self.get_size_hint());
             let chunk = self.scheduled_response_buffer.list.as_slice();
-            bytes.on_data(StreamResult::Temporary(chunk));
+            if bytes.try_on_data(StreamResult::Temporary(chunk)).is_err() {
+                return self.fail_body_without_memory(bytes);
+            }
             if self.response_stream.is_held() {
                 self.after_body_chunk_delivered(&bytes);
             }
@@ -778,26 +707,72 @@ impl FetchTasklet {
         Ok(())
     }
 
-    /// SAFETY: `this` is the tasklet of a posted update. The last update may free it.
-    pub(crate) unsafe fn on_progress_update(this: *mut Self) -> JsResult<()> {
+    fn fail_body(&mut self, mut err: BodyValueError, stream: Option<PinnedBytes>) -> JsResult<()> {
+        let global_this = self.global_this;
+        let mut js_err = JSValue::ZERO;
+        // if we are streaming update with error
+        if let Some(bytes) = stream {
+            js_err = err.to_js(&global_this);
+            js_err.ensure_still_alive();
+            bytes.on_data(StreamResult::Err(StreamError::JSValue(
+                bun_jsc::strong::Optional::create(js_err, &global_this),
+            )));
+        }
+        // No more of the body is delivered, so everything pending must settle
+        // here: a still-streaming request-body sink does not exempt the
+        // response body. Returning right after `sink.cancel()` used to
+        // leave a buffered `arrayBuffer()`/`text()` promise pending
+        // forever when a fetch with an in-flight streaming request body
+        // was aborted mid-response.
+        if self.sink_mut().is_some() && js_err.is_empty() {
+            js_err = err.to_js(&global_this);
+            js_err.ensure_still_alive();
+        }
+        // if we are buffering resolve the promise
+        if let Some(response) = self.native_response.get().as_deref() {
+            // body value now owns the error
+            let body = response.get_body_value();
+            body.to_error_instance(err, &global_this)?;
+        }
+        // Cancel the request-body sink last: closing the sink signal fires
+        // the controller's onClose synchronously, which can re-enter the
+        // tasklet.
+        if !js_err.is_empty() {
+            self.cancel_request_body_sink(js_err);
+        }
+        Ok(())
+    }
+
+    /// `stream` could not take a chunk.
+    #[cold]
+    fn fail_body_without_memory(&mut self, stream: PinnedBytes) -> JsResult<()> {
+        self.response_stream.release();
+        self.result.fail = Some(bun_alloc::AllocError.into());
+        let err = self.on_reject();
+        let result = self.fail_body(err, Some(stream));
+        if self.result.has_more {
+            self.on_stream_cancelled();
+        }
+        result
+    }
+
+    pub(crate) fn on_progress_update(JsThreadRef(js_ref): JsThreadRef) -> JsResult<()> {
         jsc::mark_binding!();
         bun_output::scoped_log!(FetchTasklet, "onProgressUpdate");
-        // SAFETY: fn contract; `_js_ref` outlives the last use of `this`.
+        let this = js_ref.as_ptr();
+        // SAFETY: `_js_ref` outlives the last use of `this`. What the HTTP thread writes is read under the lock.
         unsafe {
             let vm = (*this).global_this.bun_vm();
             // The response, the upload's pump and what they settle continue the script that fetched.
             let _context = vm.enter_context((*this).context);
             let lock = (*this).mutex.lock_guard();
-            (*this)
-                .has_schedule_callback
-                .store(false, Ordering::Relaxed);
             let is_done = !(*this).result.has_more;
-            // A copy too: script that runs below can spin the event loop up to the last update.
-            let _js_ref = if is_done {
-                (*this).js_ref.take()
-            } else {
-                (*this).js_ref.clone()
-            };
+            // A copy: script that runs below can spin the event loop up to the last update.
+            if !is_done {
+                (*this).js_ref = Some(JsThreadRef(js_ref.clone()));
+            }
+            // Rebound so that it drops before `_context`.
+            let _js_ref = js_ref;
             (*this).update_progress(vm, lock, is_done)?;
             if (*this).trace.is_some() {
                 // What this update settled is heard of after this task.
@@ -811,8 +786,8 @@ impl FetchTasklet {
     /// HTTP thread.
     fn post_trace_events(this: *mut FetchTasklet) {
         // SAFETY: the HTTP thread's ref keeps `this` alive.
-        let task = unsafe { RefPtr::init_ref(this) }.into_raw();
-        let task = ConcurrentTask::create_from(task.cast::<FetchTaskletTrace>());
+        let task = unsafe { RefPtr::init_ref(this) };
+        let task = ConcurrentTask::create::<FetchTaskletTrace>(task);
         Self::from_raw_ref(this).ticket().post(task);
     }
 
@@ -1161,9 +1136,9 @@ impl FetchTasklet {
         if certificate_info.cert.is_empty() {
             return Err(None);
         }
-        let mut x509 = OwnedX509::from_der(&certificate_info.cert).ok_or(None)?;
+        let x509 = OwnedX509::from_der(&certificate_info.cert).ok_or(None)?;
         let global_object = self.global_this;
-        let js_cert = X509::to_js(&mut x509, &global_object)
+        let js_cert = X509::to_js(&x509, &global_object)
             .map_err(|e| Some(global_object.take_exception(e)))?;
         let js_hostname: JSValue =
             bun_string_jsc::create_utf8_for_js(&global_object, &certificate_info.hostname)
@@ -1328,15 +1303,15 @@ impl FetchTasklet {
         // The hostname never resolved: report the resolver error (`ENOTFOUND`,
         // ...) with `syscall`/`hostname`, the same shape `node:dns` produces,
         // rather than a generic connect-failure message. `dns_error` is the
-        // raw getaddrinfo(3) code and is nonzero on this path, so `init_eai`
+        // raw getaddrinfo(3) code and is nonzero on this path, so `getaddrinfo_error`
         // is always `Some`.
         if fail == http::Error::DNSResolveFailed {
-            if let Some(dns_err) = c_ares::Error::init_eai(self.result.dns_error) {
+            if let Some(dns_err) = bun_dns::getaddrinfo_error(self.result.dns_error) {
                 // `dns_hostname` is the owned copy of the exact name the
                 // connect resolved (proxy or post-redirect target), captured
                 // on the HTTP thread.
                 let hostname: &[u8] = self.result.dns_hostname.as_deref().unwrap_or(b"");
-                let mut err = crate::dns_jsc::cares_jsc::system_error_with_syscall_and_hostname(
+                let mut err = crate::dns_jsc::answer_jsc::system_error_with_syscall_and_hostname(
                     dns_err,
                     b"getaddrinfo",
                     hostname,
@@ -1898,7 +1873,8 @@ impl FetchTasklet {
             self.poll_ref.unref(bun_io::js_vm_ctx());
         }
         let global_this = self.global_this;
-        let response_js = response.clone().to_js(&global_this);
+        let wrapper = response.clone().wrap(&global_this);
+        let response_js = wrapper.to_js();
         response_js.ensure_still_alive();
         self.response = jsc::Weak::<FetchTasklet>::create(
             response_js,
@@ -1911,14 +1887,10 @@ impl FetchTasklet {
         {
             trace.tie_stores_to(&global_this, response_js);
         }
-        let response_ptr = response.as_ptr();
         self.native_response.set(Some(response));
         // Response-owned listener so abort still errors the body after this tasklet detaches its own.
         if let Some(signal) = self.abort_signal() {
-            // SAFETY: `native_response` and the wrapper each hold a ref on the live heap allocation.
-            unsafe {
-                Response::attach_abort_signal(response_ptr, &global_this, signal, self.context)
-            };
+            Response::attach_abort_signal(&wrapper, &global_this, signal, self.context);
         }
         response_js
     }
@@ -1927,7 +1899,7 @@ impl FetchTasklet {
         cx: &bun_jsc::JsThread<'_>,
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
-    ) -> (*mut FetchTasklet, Box<AsyncHTTP<'static>>) {
+    ) -> (RefPtr<FetchTasklet>, Box<AsyncHTTP<'static>>) {
         let mut fetch_tasklet = Box::new(FetchTasklet {
             sink: None,
             async_http_id: None,
@@ -1959,7 +1931,6 @@ impl FetchTasklet {
             context: cx.context().id(),
             signals: Signals::default(),
             signal_store: http::signals::Store::unclaimed(),
-            has_schedule_callback: AtomicBool::new(false),
             abort_reason: StrongOptional::empty(),
             check_server_identity: fetch_options.check_server_identity,
             fetch_session: fetch_options.fetch_session,
@@ -2027,9 +1998,11 @@ impl FetchTasklet {
 
         let sendfile = fetch_tasklet.request_body.take_sendfile();
 
-        let fetch_tasklet_ptr = bun_core::heap::into_raw(fetch_tasklet);
-        // SAFETY: just allocated, and `fetch_tasklet` is not used once `fetch_tasklet_ptr` is
-        // dereferenced. `'static`: `http` is an `AsyncHTTP<'static>` that borrows (headers_buf,
+        let js_ref = RefPtr::from(fetch_tasklet);
+        let fetch_tasklet_ptr = js_ref.as_ptr();
+        // SAFETY: just allocated, `js_ref` is not dereferenced here, and `fetch_tasklet` is not
+        // used once `fetch_tasklet_ptr` is dereferenced.
+        // `'static`: `http` is an `AsyncHTTP<'static>` that borrows (headers_buf,
         // request_body, unix_socket_path) FetchTasklet-owned storage. NOT process-lifetime:
         // `request_headers.buf`, `request_body` and `unix_socket_path` are not reallocated for the
         // time the request has them. Its ref on the tasklet goes after `callback` has dropped it.
@@ -2088,6 +2061,7 @@ impl FetchTasklet {
         );
         http.client.flags.is_streaming_request_body = is_stream;
         http.client.flags.forced_protocol = fetch_options.forced_protocol;
+        http.client.flags.unfinished_stream = http::UnfinishedStream::Accept;
         http.client.flags.is_node_http_client = fetch_options.is_node_http_client;
         fetch_tasklet.is_waiting_request_stream_start = is_stream;
         if is_stream {
@@ -2129,7 +2103,7 @@ impl FetchTasklet {
             // SAFETY: the tasklet is heap-allocated and drops its handle with itself.
             unsafe { jsc::AbortHandle::follow_owner(fetch_tasklet_ptr, signal) };
         }
-        (fetch_tasklet_ptr, http)
+        (js_ref, http)
     }
 
     pub(crate) fn abort_listener(&mut self, reason: JSValue) {
@@ -2163,8 +2137,8 @@ impl FetchTasklet {
     /// This is ALWAYS called from the http thread and we cannot touch the buffer here because is locked
     fn on_write_request_data_drain(this: *mut FetchTasklet) {
         // SAFETY: the HTTP thread's ref keeps `this` alive.
-        let task = unsafe { RefPtr::init_ref(this) }.into_raw();
-        let task = ConcurrentTask::create_from(task.cast::<FetchTaskletRequestDrain>());
+        let task = unsafe { RefPtr::init_ref(this) };
+        let task = ConcurrentTask::create::<FetchTaskletRequestDrain>(task);
         Self::from_raw_ref(this).ticket().post(task);
     }
 
@@ -2297,9 +2271,9 @@ impl FetchTasklet {
         }
         if needs_task {
             // SAFETY: `self` is the live heap tasklet.
-            let task = unsafe { RefPtr::init_ref(std::ptr::from_mut(self)) }.into_raw();
+            let task = unsafe { RefPtr::init_ref(std::ptr::from_mut(self)) };
             let event_loop = self.global_this.bun_vm().event_loop();
-            event_loop.enqueue_task(Task::init(task.cast::<FetchTaskletTrace>()));
+            event_loop.enqueue_task(Task::new::<FetchTaskletTrace>(task));
         }
     }
 
@@ -2429,17 +2403,17 @@ impl FetchTasklet {
         promise: jsc::JSPromiseStrong,
     ) -> JsResult<()> {
         http::http_thread::init(&http::http_thread::InitOpts::default());
-        let (node, mut request) = Self::get(cx, fetch_options, promise);
+        let (js_ref, mut request) = Self::get(cx, fetch_options, promise);
+        let node = js_ref.as_ptr();
 
         let node_ref = Self::from_raw_mut(node);
         node_ref.poll_ref.ref_(bun_io::js_vm_ctx());
 
-        // SAFETY: the ref that `get` made it with.
-        let js_ref = node_ref.js_ref.insert(unsafe { RefPtr::from_raw(node) });
+        let js_ref = node_ref.js_ref.insert(JsThreadRef(js_ref));
         // Out on the HTTP thread from here until its final callback: its context
         // aborts it when it stops, and the VM waits for it (the ticket).
         node_ref.http_ref = Some(HttpThreadRef {
-            tasklet: js_ref.clone().into_non_null(),
+            tasklet: Some(js_ref.0.clone()),
             ticket: cx.vm().ticket(),
         });
         // SAFETY: as in `get`.
@@ -2598,21 +2572,14 @@ impl FetchTasklet {
             task_ref.result.fail = Some(bun_alloc::AllocError.into());
         }
 
-        if let Err(has_schedule_callback) = task_ref.has_schedule_callback.compare_exchange(
-            false,
-            true,
-            Ordering::Acquire,
-            Ordering::Relaxed,
-        ) {
-            if has_schedule_callback {
-                return;
-            }
-        }
-        let ct = core::ptr::NonNull::from(task_ref.concurrent_task.from(task));
-        // `ct` is the inline `concurrent_task` field of the heap tasklet; the
-        // queue takes ownership of its `next` link. This thread's ref keeps the
-        // tasklet (and the ticket in it) alive across the post.
-        task_ref.ticket().post_intrusive(ct);
+        let Some(js_ref) = task_ref.js_ref.take() else {
+            return;
+        };
+        let update = Task::new::<Self>(js_ref);
+        // SAFETY: `js_ref` was there, so the node is in no queue, and `update` keeps it alive.
+        let update = unsafe { ConcurrentTask::in_place(&raw mut task_ref.concurrent_task, update) };
+        // This thread's ref keeps the ticket alive across the post.
+        task_ref.ticket().post(update);
     }
 }
 

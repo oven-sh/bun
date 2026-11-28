@@ -16,7 +16,6 @@ import { RedisClient } from "../../../src/runtime/valkey_jsc/valkey.bind.ts";
 // declares it. Delete the entry when that PR lands: the lint fails while a name
 // listed here is declared (or is no longer registered).
 const pendingDeclarations: Record<string, string> = {
-  pubsub: "#39208",
   select: "#39208",
   // Not usable until #35521 lands: psubscribe() takes no listener today, so
   // every pmessage the server sends is dropped.

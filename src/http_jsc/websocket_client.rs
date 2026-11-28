@@ -16,13 +16,15 @@ use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_core::scoped::ScopedFlag as _;
 use bun_core::{EncodedSlice, String as BunString, strings};
-use bun_http::websocket::{Opcode, WebsocketHeader, is_valid_close_code};
 use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject};
 use bun_ptr::{BackRef, JsCell, RefPtr};
 use bun_uws::{self as uws, NewSocketHandler, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
+use bun_websocket::frame::{
+    AUTO_PONG_BACKPRESSURE_LIMIT, MAX_CONTROL_PAYLOAD, Opcode, WebsocketHeader, is_valid_close_code,
+};
 
 use self::cpp_websocket::{CppWebSocket, TlsHandshake};
 use self::websocket_deflate::WebSocketDeflate;
@@ -51,15 +53,9 @@ pub type Socket<const SSL: bool> = NewSocketHandler<SSL>;
 const STACK_FRAME_SIZE: usize = 1024;
 /// Minimum message size to compress (RFC 7692 recommendation)
 const MIN_COMPRESS_SIZE: usize = 860;
-/// RFC 6455 §5.5: a control frame's payload is at most 125 bytes.
-const MAX_CONTROL_PAYLOAD: usize = 125;
 /// Largest frame length `ws` and undici accept: `Number.MAX_SAFE_INTEGER`.
 const MAX_PAYLOAD_LENGTH: u64 = (1 << 53) - 1;
 const MAX_CONTROL_FRAME_SIZE: usize = WebsocketHeader::frame_size(MAX_CONTROL_PAYLOAD, true);
-/// Skip auto-pongs while more than this many bytes are unsent. A peer can send unlimited Pings,
-/// so unbounded replies would let it exhaust our memory. App sends aren't capped.
-/// RFC 6455 §5.5.3 allows answering only the most recent Ping.
-const AUTO_PONG_BACKPRESSURE_LIMIT: usize = 16 * 1024 * 1024;
 
 /// Seconds to wait after sending our Close frame before dropping the connection (`closeTimeout` in `ws`).
 #[inline]
@@ -402,7 +398,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
         if !ws.accepts_tls_peer(
             TlsHandshake::Renegotiation,
-            socket.ssl_mut(),
+            // SAFETY: the socket that reports its handshake is open. No JS runs for a renegotiation.
+            unsafe { socket.ssl_mut() },
             success == 1 && ssl_error.error_no == 0,
             &self.verified_hostname,
         ) {

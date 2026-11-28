@@ -1,5 +1,3 @@
-use core::ffi::{c_uint, c_void};
-use core::mem::size_of;
 use core::ptr::NonNull;
 
 use crate::Loop;
@@ -10,12 +8,8 @@ bun_core::declare_scope!(uws, visible);
 bun_opaque::opaque_ffi! { pub struct Timer; }
 
 impl Timer {
-    pub fn create<T>(loop_: &'static Loop, _ptr: T) -> NonNull<Timer> {
-        let t = us_create_timer(
-            loop_,
-            0,
-            c_uint::try_from(size_of::<T>()).expect("int cast"),
-        );
+    pub fn create(loop_: &'static Loop) -> NonNull<Timer> {
+        let t = us_create_timer(loop_, 0);
         NonNull::new(t).unwrap_or_else(|| {
             panic!(
                 "us_create_timer: returned null: {}",
@@ -24,20 +18,8 @@ impl Timer {
         })
     }
 
-    pub fn set<T>(
-        &mut self,
-        ptr: T,
-        cb: Option<extern "C" fn(*mut Timer)>,
-        ms: i32,
-        repeat_ms: i32,
-    ) {
-        // SAFETY: ext storage was allocated with size_of::<T>() in create();
-        // caller guarantees T matches.
-        unsafe {
-            us_timer_set(self, cb, ms, repeat_ms);
-            let value_ptr = us_timer_ext(self);
-            (value_ptr.cast::<T>()).write(ptr);
-        }
+    pub fn set(&mut self, cb: Option<extern "C" fn(*mut Timer)>, ms: i32, repeat_ms: i32) {
+        us_timer_set(self, cb, ms, repeat_ms);
     }
 
     pub unsafe fn close<const FALLTHROUGH: bool>(this: *mut Self) {
@@ -48,12 +30,7 @@ impl Timer {
 }
 
 unsafe extern "C" {
-    pub(crate) safe fn us_create_timer(
-        loop_: &Loop,
-        fallthrough: i32,
-        ext_size: c_uint,
-    ) -> *mut Timer;
-    pub(crate) safe fn us_timer_ext(timer: &mut Timer) -> *mut *mut c_void;
+    pub(crate) safe fn us_create_timer(loop_: &Loop, fallthrough: i32) -> *mut Timer;
     pub(crate) fn us_timer_close(timer: *mut Timer, fallthrough: i32);
     pub(crate) safe fn us_timer_set(
         timer: &mut Timer,

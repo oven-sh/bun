@@ -3,7 +3,7 @@
   "module": "index.ts",
   "type": "module",
   "devDependencies": {
-    "jest": "^29.3.1",
-    "vitest": "^0.25.3"
+    "jest": "^30.5.2",
+    "vitest": "^5.1.1"
   }
 }

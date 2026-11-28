@@ -62,7 +62,7 @@ test("postgres: connection refused is reported distinctly and fails fast", async
   const port = await closedPort();
   // Refused is not retried: with a retry budget this long, a retry would run into the test's timeout.
   const err = await connectError(`postgres://postgres@127.0.0.1:${port}/postgres`, 600);
-  expect(err.message).toBe("Failed to connect");
+  expect(err.message).toBe(`Failed to connect to 127.0.0.1:${port}`);
   expect(err.code).toBe("ERR_POSTGRES_CONNECTION_REFUSED");
 });
 
@@ -74,7 +74,9 @@ test.each([
   const port = await closedPort();
   const err = await connectError(`${adapter}://user@127.0.0.1:${port}/database`);
   expect(err).toBeInstanceOf(SQL.SQLError);
-  expect(Bun.inspect(err, { colors: false })).toBe(`${name}: Failed to connect\n code: "${code}"\n\n`);
+  const message = `Failed to connect to 127.0.0.1:${port}`;
+  expect(err.stack).toBe(`${name}: ${message}`);
+  expect(Bun.inspect(err, { colors: false })).toBe(`${name}: ${message}\n code: "${code}"\n\n`);
 });
 
 test("postgres: connection closed before handshake completes is a connect failure", async () => {
@@ -191,7 +193,7 @@ test("postgres: established connection that closes keeps the plain message", asy
 test("mysql: connection refused is reported distinctly and fails fast", async () => {
   const port = await closedPort();
   const err = await connectError(`mysql://root@127.0.0.1:${port}/mysql`, 600);
-  expect(err.message).toBe("Failed to connect");
+  expect(err.message).toBe(`Failed to connect to 127.0.0.1:${port}`);
   expect(err.code).toBe("ERR_MYSQL_CONNECTION_REFUSED");
 });
 

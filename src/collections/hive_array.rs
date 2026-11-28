@@ -149,18 +149,17 @@ impl<const CAPACITY: usize> HiveBitSetIter<CAPACITY> {
 /// The pointers are intended to be stable
 /// Sorta related to https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2021/p0447r15.html
 ///
-/// All slot operations take `&self` and the buffer is `UnsafeCell` — slot
-/// pointers come from `UnsafeCell::get()` and so survive `&self` reborrows of
+/// All slot operations take `&self`: each slot is an `UnsafeCell`, so its pointer survives `&self` reborrows of
 /// the pool (the `bumpalo` / `typed-arena` shape). `HiveArray` is `!Sync`.
 pub struct HiveArray<T, const CAPACITY: usize> {
-    buffer: UnsafeCell<[MaybeUninit<T>; CAPACITY]>,
+    buffer: [UnsafeCell<MaybeUninit<T>>; CAPACITY],
     pub used: HiveBitSet<CAPACITY>,
 }
 
 impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     const fn init() -> Self {
         Self {
-            buffer: UnsafeCell::new([const { MaybeUninit::uninit() }; CAPACITY]),
+            buffer: [const { UnsafeCell::new(MaybeUninit::uninit()) }; CAPACITY],
             used: HiveBitSet::init_empty(),
         }
     }
@@ -186,7 +185,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         unsafe {
             core::ptr::addr_of_mut!((*out).used).write(HiveBitSet::init_empty());
         }
-        // `buffer: UnsafeCell<[MaybeUninit<T>; CAPACITY]>` intentionally untouched.
+        // `buffer: [UnsafeCell<MaybeUninit<T>>; CAPACITY]` intentionally untouched.
     }
 
     /// Heap-allocate an empty hive without staging `Self` on the stack.
@@ -199,32 +198,19 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         }
     }
 
-    /// Raw pointer to slot `index`. Carries the buffer's `UnsafeCell` tag so
+    /// Raw pointer to slot `index`. Carries the slot's `UnsafeCell` tag so
     /// it survives later `&self` reborrows. Safe to obtain; deref requires
     /// the slot to be claimed and initialized.
     #[inline]
     pub fn ptr_at(&self, index: usize) -> *mut T {
-        // `assert!`, not `debug_assert!` — `ptr.add()` past the end is UB, not
-        // a panic, in release builds. Keep this a safe `pub fn`.
-        assert!(index < CAPACITY);
-        // SAFETY: `index < CAPACITY` (asserted above); in-bounds offset.
-        unsafe {
-            self.buffer
-                .get()
-                .cast::<MaybeUninit<T>>()
-                .add(index)
-                .cast::<T>()
-        }
+        self.buffer[index].get().cast::<T>()
     }
 
     /// Reserves a slot to [`write`](HiveSlot::write). `None` if the hive is full.
     pub fn claim(&self) -> Option<HiveSlot<'_, T, CAPACITY>> {
         let index = self.used.find_first_unset()?;
         self.used.set(index);
-        // SAFETY: `index < CAPACITY` ⇒ in-bounds; `UnsafeCell::get` is non-null.
-        let slot = unsafe {
-            NonNull::new_unchecked(self.buffer.get().cast::<MaybeUninit<T>>().add(index))
-        };
+        let slot = NonNull::from_ref(&self.buffer[index]).cast::<MaybeUninit<T>>();
         asan::unpoison(slot.as_ptr().cast(), size_of::<T>());
         Some(HiveSlot {
             slot,
@@ -241,7 +227,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
 
     fn index_of(&self, value: *const T) -> Option<u32> {
         asan::assert_unpoisoned(value.cast::<u8>());
-        let start = self.buffer.get().cast::<T>();
+        let start = self.buffer.as_ptr().cast::<T>();
         // One-past-the-end pointer of `buffer`; `wrapping_add` is sound for
         // the in-allocation offset and matches `add` exactly here.
         let end = start.wrapping_add(CAPACITY);
@@ -296,7 +282,7 @@ impl<T, const CAPACITY: usize> Drop for HiveArray<T, CAPACITY> {
                 self.used.unset(index);
                 // SAFETY: `claim()` hands out a `HiveSlot<'_>` that borrows the pool
                 // (its Drop unsets the bit if never written). Whoever forgets the token
-                // instead (`write`, `assume_init`, `ManuallyDrop`) has written the slot. So by the
+                // instead (`write`, `ManuallyDrop`) has written the slot. So by the
                 // time `&mut self` is obtainable every `used` slot is fully initialized.
                 unsafe { core::ptr::drop_in_place(slot) };
                 asan::poison(slot.cast(), size_of::<T>());
@@ -320,8 +306,7 @@ impl<T, const CAPACITY: usize> Drop for HiveArray<T, CAPACITY> {
 ///
 /// `HiveSlot` encodes the invariant **"a `used` slot is always fully
 /// initialized"** in the type system: you cannot obtain the stable
-/// initialized `*mut T` without going through [`write`](Self::write) (or the
-/// `unsafe` [`assume_init`](Self::assume_init) escape hatch). If the token is
+/// initialized `*mut T` without going through [`write`](Self::write). If the token is
 /// dropped (early return, `?`, panic) the slot is released **without** running
 /// `T::drop` — it was never written.
 ///
@@ -352,19 +337,6 @@ impl<'h, T, const CAPACITY: usize> HiveSlot<'h, T, CAPACITY> {
         // the `UnsafeCell` tag alive for callers holding sibling slot pointers.
         unsafe { p.as_ptr().write(value) };
         p
-    }
-
-    /// Caller has fully initialized the slot by writing through
-    /// [`addr`](Self::addr). Consumes the token.
-    ///
-    /// # Safety
-    /// Every field of `T` must be initialized, including padding-adjacent
-    /// niches (enum discriminants, `NonNull`, `Box`, `&`). Calling this on a
-    /// partially-written slot is the exact UB this type exists to prevent.
-    #[inline]
-    pub unsafe fn assume_init(self) -> NonNull<T> {
-        let this = ManuallyDrop::new(self);
-        this.slot.cast::<T>()
     }
 }
 
@@ -436,7 +408,7 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
         // `Self`, and valid for writes of `size_of::<Self>()` bytes.
         unsafe { Self::init_in_place(boxed.as_mut_ptr()) };
         // SAFETY: `init_in_place` fully initialized `hive.used`; `hive.buffer`
-        // is `[MaybeUninit<T>; CAPACITY]`, for which uninitialized bytes are a
+        // is `[UnsafeCell<MaybeUninit<T>>; CAPACITY]`, for which uninitialized bytes are a
         // valid representation. Every field of `Self` is therefore valid.
         unsafe { boxed.assume_init() }
     }

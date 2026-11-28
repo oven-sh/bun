@@ -7,7 +7,7 @@
 //! Those targets live in `bun_runtime`, which depends on this crate —
 //! re-exporting them here would create a cycle. Callers reference
 //! `bun_runtime::{webcore,api,node}` directly; lower-tier consumers that
-//! constructed those types (e.g. `output_file_jsc`, `BlobArrayBuffer_deallocator`)
+//! constructed those types (e.g. `output_file_jsc`)
 //! have been moved up into `bun_runtime`, and the few that only need an opaque
 //! borrow (e.g. `DOMFormData::for_each`) are generic over the caller's `Blob`.
 
@@ -131,8 +131,6 @@ pub mod common_strings;
 pub mod console_object;
 #[path = "Counters.rs"]
 pub mod counters;
-#[path = "DecodedJSValue.rs"]
-pub mod decoded_js_value;
 #[path = "DOMURL.rs"]
 pub mod dom_url;
 #[path = "EncodedSlice.rs"]
@@ -341,7 +339,6 @@ impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
 }
 
 pub use self::counters::Counters;
-pub use self::decoded_js_value::DecodedJSValue;
 pub use self::js_array::JSArray;
 pub use self::js_ref::{HasJsRef, JsCellRefExt, JsRef};
 pub use self::string_builder::StringBuilder;
@@ -1223,9 +1220,9 @@ pub mod event_loop;
 pub use self::event_loop as EventLoop;
 pub mod job;
 pub use self::event_loop::{
-    AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask, DeferredTaskQueue,
-    EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop, PosixSignalTask,
-    Stopped, Task, WorkPool, WorkPoolTask,
+    ConcurrentCppTask, ConcurrentTask, CppTask, DeferredTaskQueue, EventLoopHandle, EventLoopTask,
+    GarbageCollectionController, MiniEventLoop, PosixSignalTask, Stopped, Task, WorkPool,
+    WorkPoolTask,
 };
 pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread};
 #[cfg(unix)]

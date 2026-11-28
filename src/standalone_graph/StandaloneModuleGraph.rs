@@ -585,11 +585,50 @@ impl CompiledModuleGraphFile {
     /// Whether each byte of the record that becomes an enum holds a value of it. Any other value would be undefined behavior.
     fn has_known_enum_values(record: &[u8; size_of::<CompiledModuleGraphFile>()]) -> bool {
         use core::mem::offset_of;
-        usize::from(record[offset_of!(Self, loader)])
-            < <Loader as strum::VariantNames>::VARIANTS.len()
-            && record[offset_of!(Self, encoding)] <= Encoding::Utf16 as u8
-            && record[offset_of!(Self, module_format)] <= ModuleFormat::Cjs as u8
-            && record[offset_of!(Self, side)] <= FileSide::Client as u8
+        (usize::from(record[offset_of!(Self, loader)])
+            < <Loader as strum::VariantNames>::VARIANTS.len())
+            & (record[offset_of!(Self, encoding)] <= Encoding::Utf16 as u8)
+            & (record[offset_of!(Self, module_format)] <= ModuleFormat::Cjs as u8)
+            & (record[offset_of!(Self, side)] <= FileSide::Client as u8)
+    }
+
+    /// Whether the ranges and enums of all `records` are such that `to_bytes` writes them, but for `bytecode`, which `slice_to_mut` checks.
+    ///
+    /// # Safety
+    /// As `slice_to`.
+    #[inline(never)]
+    unsafe fn are_sound(
+        records: &[[u8; size_of::<CompiledModuleGraphFile>()]],
+        base: *const u8,
+        len: usize,
+    ) -> bool {
+        // A range ends in front of the trailer, so each of them has a byte behind it.
+        let ends_at = |it: StringPointer| u64::from(it.offset) + u64::from(it.length);
+        records.iter().all(|record| {
+            if !Self::has_known_enum_values(record) {
+                return false;
+            }
+            // SAFETY: `record` has the size of one, and each of its enums holds a value of that enum.
+            let it: Self = unsafe { core::ptr::read_unaligned(record.as_ptr().cast::<Self>()) };
+            let end = ends_at(it.name)
+                .max(ends_at(it.contents))
+                .max(ends_at(it.sourcemap))
+                .max(ends_at(it.module_info))
+                .max(ends_at(it.bytecode_origin_path));
+            if end >= len as u64 {
+                return false;
+            }
+            // `File::utf16_units` casts them.
+            let is_aligned = it.encoding != Encoding::Utf16
+                || (base.addr() + it.contents.offset as usize).is_multiple_of(align_of::<u16>())
+                    && it.contents.length.is_multiple_of(size_of::<u16>() as u32);
+            // Not behind the contents: a launch from bytecode or compiled code touches no page of them.
+            // SAFETY: checked above.
+            let ends = |it: StringPointer| unsafe {
+                it.length == 0 || *base.add(it.offset as usize + it.length as usize) == 0
+            };
+            is_aligned && ends(it.name) && ends(it.bytecode_origin_path)
+        })
     }
 }
 
@@ -1447,23 +1486,27 @@ impl StandaloneModuleGraph {
         let _ = record_at;
         let has_linked_bytecode_payload =
             offsets.flags.contains(Flags::HAS_LINKED_BYTECODE_PAYLOAD);
-        let mut file_prelinked_index = vec![u32::MAX; modules_list_count];
+        // Most executables have no such graph, and then nothing is allocated for it.
+        let mut file_prelinked_index = match prelinked_module_files.len() {
+            0 => Vec::new(),
+            _ => vec![u32::MAX; modules_list_count],
+        };
         for (module_index, &file) in prelinked_module_files.iter().enumerate() {
             file_prelinked_index[file as usize] = module_index as u32;
         }
 
+        let modules_list = modules_list_bytes
+            .as_chunks::<{ size_of::<CompiledModuleGraphFile>() }>()
+            .0;
+        // A pass of its own: the loop below compiles to slower code with a way out in the middle.
+        // SAFETY: as for `slice_to`.
+        if !unsafe { CompiledModuleGraphFile::are_sound(modules_list, raw_const, raw_len) } {
+            return Ok(None);
+        }
         let mut modules = StringArrayHashMap::<File>::new();
         modules.reserve(modules_list_count);
-        for (i, record) in modules_list_bytes
-            .as_chunks::<{ size_of::<CompiledModuleGraphFile>() }>()
-            .0
-            .iter()
-            .enumerate()
-        {
-            if !CompiledModuleGraphFile::has_known_enum_values(record) {
-                return Ok(None);
-            }
-            // SAFETY: `record` has the size of one, and each of its enums holds a value of that enum.
+        for (i, record) in modules_list.iter().enumerate() {
+            // SAFETY: `record` has the size of one, and each of its enums holds a value of that enum: `is_sound`.
             let module: CompiledModuleGraphFile = unsafe {
                 core::ptr::read_unaligned(record.as_ptr().cast::<CompiledModuleGraphFile>())
             };
@@ -1484,24 +1527,13 @@ impl StandaloneModuleGraph {
             // subranges; section bytes are a live 'static allocation.
             let (name, contents, sourcemap_bytes, module_info, bytecode_origin) = unsafe {
                 (
-                    or_corrupted!(slice_to_z(raw_const, raw_len, module.name)),
-                    or_corrupted!(contents_to_z(raw_const, raw_len, module.contents)),
-                    or_corrupted!(slice_to(raw_const, raw_len, module.sourcemap)),
-                    or_corrupted!(slice_to(raw_const, raw_len, module.module_info)),
-                    or_corrupted!(slice_to_z(raw_const, raw_len, module.bytecode_origin_path)),
+                    sound_text(raw_const, module.name),
+                    sound_text(raw_const, module.contents),
+                    sound_bytes(raw_const, module.sourcemap),
+                    sound_bytes(raw_const, module.module_info),
+                    sound_text(raw_const, module.bytecode_origin_path),
                 )
             };
-            // `File::utf16_units` casts them.
-            if module.encoding == Encoding::Utf16
-                && !(contents
-                    .as_bytes()
-                    .as_ptr()
-                    .addr()
-                    .is_multiple_of(align_of::<u16>())
-                    && contents.len().is_multiple_of(size_of::<u16>()))
-            {
-                return Ok(None);
-            }
             let _ = modules.put(
                 name.as_bytes(),
                 File {
@@ -1552,7 +1584,7 @@ impl StandaloneModuleGraph {
                     encoding: module.encoding,
                     wtf_string: std::sync::OnceLock::new(),
                     utf8: std::sync::OnceLock::new(),
-                    prelinked_index: file_prelinked_index[i],
+                    prelinked_index: file_prelinked_index.get(i).copied().unwrap_or(u32::MAX),
                 },
             );
         }
@@ -1568,32 +1600,7 @@ impl StandaloneModuleGraph {
         }
         modules.lock_pointers(); // make the pointers stable forever
 
-        // Keys are posix-separated already (see `to_bytes`), so byte-scan for `/`.
-        let mut dirs = StringArrayHashMap::<()>::new();
-        // Most files are in the folder of the one before.
-        let mut previous_folder: &[u8] = b"";
-        for key in modules.keys() {
-            // `add_source_directories` adds these: it stops at the first ancestor already in `dirs`, this loop at 8 bytes.
-            if !is_bun_standalone_file_path(key) {
-                continue;
-            }
-            let Some(sep) = strings::last_index_of_char(key, b'/') else {
-                continue;
-            };
-            let folder = &key[..sep as usize];
-            if folder == previous_folder {
-                continue;
-            }
-            previous_folder = folder;
-            let mut rest = folder;
-            while rest.len() >= BASE_PUBLIC_PATH.len() && !dirs.contains_key(rest) {
-                let _ = dirs.put(rest, ());
-                let Some(sep) = strings::last_index_of_char(rest, b'/') else {
-                    break;
-                };
-                rest = &rest[..sep as usize];
-            }
-        }
+        let mut dirs = folders_of(&modules);
         if let Some(program) = &compiled_program {
             compiled_program::add_source_directories(&mut dirs, &modules, program);
         }
@@ -1633,6 +1640,48 @@ impl StandaloneModuleGraph {
             .find(|(candidate, _, _)| *candidate == id)
             .map(|&(_, bytes, entry_offset)| (bytes, entry_offset))
     }
+}
+
+/// Every folder that holds a file of `modules` under the root of the executable.
+fn folders_of(modules: &StringArrayHashMap<File>) -> StringArrayHashMap<()> {
+    // Keys are posix-separated already (see `to_bytes`), so byte-scan for `/`.
+    let mut dirs = StringArrayHashMap::<()>::new();
+    let mask = if modules.count() > 2048 { 1023 } else { 0 };
+    let mut seen: Vec<&[u8]> = vec![b""; mask + 1];
+    for key in modules.keys() {
+        // `add_source_directories` adds these: it stops at the first ancestor already in `dirs`, this loop at 8 bytes.
+        if !is_bun_standalone_file_path(key) {
+            continue;
+        }
+        let Some(sep) = strings::last_index_of_char(key, b'/') else {
+            continue;
+        };
+        let folder = &key[..sep as usize];
+        let end = folder
+            .last_chunk()
+            .map_or(0, |end| u64::from_le_bytes(*end));
+        let slot = (end.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 54) as usize & mask;
+        let seen_there = &mut seen[slot];
+        if seen_there.len() == folder.len()
+            && seen_there.last_chunk::<8>() == folder.last_chunk::<8>()
+            && *seen_there == folder
+        {
+            continue;
+        }
+        *seen_there = folder;
+        let mut rest = folder;
+        while rest.len() >= BASE_PUBLIC_PATH.len() {
+            match dirs.get_or_put(rest) {
+                Ok(entry) if !entry.found_existing => {}
+                _ => break,
+            }
+            let Some(sep) = strings::last_index_of_char(rest, b'/') else {
+                break;
+            };
+            rest = &rest[..sep as usize];
+        }
+    }
+    dirs
 }
 
 /// Read-only subslice helper. Builds a `&'static [u8]` over the *subrange only* so no
@@ -1679,31 +1728,37 @@ unsafe fn slice_to_mut(base: *mut u8, len: usize, ptr: StringPointer) -> Option<
 ///
 /// SAFETY: as `slice_to`.
 unsafe fn slice_to_z(base: *const u8, len: usize, ptr: StringPointer) -> Option<&'static ZStr> {
-    // SAFETY: the caller's contract.
-    let text = unsafe { contents_to_z(base, len, ptr)? };
-    let end = match ptr.length {
-        0 => 0,
-        // SAFETY: `contents_to_z` has checked that the byte behind `text` is in bounds.
-        length => unsafe { *base.add(ptr.offset as usize + length as usize) },
-    };
-    (end == 0).then_some(text)
-}
-
-/// `slice_to_z` without a look at the NUL: a launch from bytecode or compiled code touches no page of the contents.
-/// The byte is in bounds, whatever it holds.
-///
-/// SAFETY: as `slice_to`.
-unsafe fn contents_to_z(base: *const u8, len: usize, ptr: StringPointer) -> Option<&'static ZStr> {
-    if ptr.length == 0 {
+    let (off, n) = (ptr.offset as usize, ptr.length as usize);
+    if n == 0 {
         return Some(ZStr::EMPTY);
     }
-    let off = ptr.offset as usize;
-    let n = ptr.length as usize;
     if off.checked_add(n)? >= len {
         return None;
     }
     // SAFETY: checked above, and the caller's contract.
-    Some(unsafe { ZStr::from_raw(base.add(off), n) })
+    unsafe { (*base.add(off + n) == 0).then(|| ZStr::from_raw(base.add(off), n)) }
+}
+
+/// `slice_to` for a range of a record that `are_sound` has seen.
+///
+/// SAFETY: as `slice_to`, and `are_sound` returned true for the record.
+unsafe fn sound_bytes(base: *const u8, ptr: StringPointer) -> &'static [u8] {
+    if ptr.length == 0 {
+        return b"";
+    }
+    // SAFETY: the caller's contract.
+    unsafe { core::slice::from_raw_parts(base.add(ptr.offset as usize), ptr.length as usize) }
+}
+
+/// `sound_bytes` for a range that has a byte behind it, which is the NUL but for the contents, where nobody has looked.
+///
+/// SAFETY: as `sound_bytes`.
+unsafe fn sound_text(base: *const u8, ptr: StringPointer) -> &'static ZStr {
+    if ptr.length == 0 {
+        return ZStr::EMPTY;
+    }
+    // SAFETY: the caller's contract.
+    unsafe { ZStr::from_raw(base.add(ptr.offset as usize), ptr.length as usize) }
 }
 
 /// A text import the bundler emitted as an asset (`Loader::Text` arm of

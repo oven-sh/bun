@@ -468,7 +468,7 @@ fn parse_manifest(directory: &[u8], package_json: &[u8], contents: &[u8]) -> Pac
             Some(written) => executables.push((name.clone(), written.to_vec())),
             None => bin.for_each_property(|key, _, value| {
                 if let Some(written) = value.as_utf8_string_literal() {
-                    executables.push((bun_paths::basename(key).to_vec(), written.to_vec()));
+                    executables.push((strip_scope(key).to_vec(), written.to_vec()));
                 }
             }),
         }

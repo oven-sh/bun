@@ -50,6 +50,43 @@ describe("setTimeout", () => {
 
     await expect(promise).rejects.toThrow(expect.objectContaining({ name: "AbortError" }));
   });
+
+  // A call takes at most 0x100000 arguments in JSC. A spread of this array throws a RangeError.
+  it("resolves to an array too long to pass as call arguments", async () => {
+    const value = new Array(0x100000 + 1).fill(0);
+    const resolved = await setTimeout(1, value);
+    expect(resolved === value).toBe(true);
+  });
+
+  it("does not read the value before the promise resolves", async () => {
+    const traps: string[] = [];
+    const value = new Proxy([1, 2, 3], {
+      get(target, key, receiver) {
+        traps.push(`get ${String(key)}`);
+        return Reflect.get(target, key, receiver);
+      },
+      has(target, key) {
+        traps.push(`has ${String(key)}`);
+        return Reflect.has(target, key);
+      },
+    });
+
+    const promise = setTimeout(1, value);
+    expect(traps).toEqual([]);
+
+    expect(await promise).toBe(value);
+    // A promise that resolves to an object looks up `then` on it. Nothing else reads the value.
+    expect(traps).toEqual(["get then"]);
+  });
+
+  it("does not throw for a revoked Proxy value", async () => {
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+
+    const promise = setTimeout(1, proxy);
+    // The promise rejects when it resolves to the proxy: the lookup of `then` throws.
+    await expect(promise).rejects.toBeInstanceOf(TypeError);
+  });
 });
 
 describe("setImmediate", () => {

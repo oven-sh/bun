@@ -25,6 +25,92 @@ describe("process.stdout", () => {
   });
 });
 
+// child.stdout and child.stderr read into one buffer again and again, and each 'data' chunk was a view of it: all the
+// chunks of the stream lay in one ArrayBuffer of 64 KiB. test/js/node/stream/node-stream.test.js has what follows from
+// that, for the other streams of the same kind.
+describe.concurrent("child.stdout and child.stderr", () => {
+  // The writer sends block i (`size` times the letter a + i) when it gets a line on stdin, so every block is a read of
+  // its own.
+  function spawnWriter(stream, size = 8) {
+    const writer = `let i = 0; const next = () => i < 4 ? process.${stream}.write(Buffer.alloc(${size}, 97 + i++)) : process.exit(0); next(); process.stdin.on("data", next);`;
+    const child = spawn(bunExe(), ["-e", writer], {
+      env: bunEnv,
+      stdio: ["pipe", stream === "stdout" ? "pipe" : "inherit", stream === "stderr" ? "pipe" : "inherit"],
+    });
+    // The last line can reach a writer that already exited.
+    child.stdin.on("error", () => {});
+    return child;
+  }
+  // "a8": the letter of a block and its length.
+  const runOf = bytes =>
+    Buffer.from(bytes)
+      .toString("latin1")
+      .replace(/(.)\1*/g, run => run[0] + run.length);
+  // As postMessage(chunk, [chunk.buffer]) moves it.
+  const moveOut = chunk => runOf(structuredClone(chunk, { transfer: [chunk.buffer] }));
+
+  // 3000 bytes are more than the typed arrays that JavaScriptCore keeps in the heap of its cells.
+  it.each([
+    ["stdout", 8],
+    ["stderr", 8],
+    ["stdout", 3000],
+  ])("each 'data' chunk of %s is a Buffer of its own (blocks of %d bytes)", async (stream, size) => {
+    const child = spawnWriter(stream, size);
+    // Whether each chunk is a Buffer when the stream gets it. Any other view costs a Buffer around it.
+    const pushed = [];
+    const push = child[stream].push;
+    child[stream].push = function (chunk, encoding) {
+      if (chunk !== null) pushed.push(Buffer.isBuffer(chunk));
+      return push.call(this, chunk, encoding);
+    };
+    const kept = [];
+    child[stream].on("data", chunk => {
+      kept.push(chunk);
+      child.stdin.write("\n");
+    });
+    await once(child[stream], "end");
+
+    const shapes = kept.map(chunk => runOf(chunk) + " " + chunk.byteOffset + "/" + chunk.buffer.byteLength);
+    const buffers = new Set(kept.map(chunk => chunk.buffer)).size;
+    // Each chunk goes without the others.
+    const moved = kept.map(chunk => {
+      try {
+        return moveOut(chunk);
+      } catch (error) {
+        return error.name;
+      }
+    });
+    const blocks = Array.from("abcd", letter => letter + size);
+    expect({ shapes, buffers, moved, pushed }).toEqual({
+      shapes: blocks.map(block => `${block} 0/${size}`),
+      buffers: 4,
+      moved: blocks,
+      pushed: [true, true, true, true],
+    });
+  });
+
+  // Resolves when a block waits in `stream`, and rejects when `stream` is over first.
+  function nextBlockWaits(stream) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const over = () => reject(new Error("the stream was over before its next block"));
+    // 'readable' with nothing to read is the end of the stream.
+    const onReadable = () => (stream.readableLength > 0 ? resolve() : over());
+    stream.on("readable", onReadable).on("close", over).on("error", reject);
+    return promise.finally(() => stream.off("readable", onReadable).off("close", over).off("error", reject));
+  }
+
+  it("a chunk of a for await loop moves out while the next one waits in the stream", async () => {
+    const child = spawnWriter("stdout");
+    const moved = [];
+    for await (const chunk of child.stdout) {
+      child.stdin.write("\n");
+      if (moved.length < 3 && child.stdout.readableLength === 0) await nextBlockWaits(child.stdout);
+      moved.push(chunk.length > 0 ? moveOut(chunk) : "");
+    }
+    expect(moved).toEqual(["a8", "b8", "c8", "d8"]);
+  });
+});
+
 describe("process.stdin", () => {
   it("should allow us to read from stdin in readable mode", done => {
     const input = "hello there\n";

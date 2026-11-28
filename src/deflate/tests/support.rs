@@ -46,6 +46,20 @@ unsafe extern "C" fn highway_crc32(state: u32, bytes: *const u8, len: usize) -> 
 }
 
 #[unsafe(no_mangle)]
+unsafe extern "C" fn highway_copy_and_crc32(
+    state: u32,
+    bytes: *const u8,
+    copy: *mut u8,
+    len: usize,
+) -> u64 {
+    // SAFETY: the caller passes a slice, and room for it.
+    unsafe {
+        copy.copy_from_nonoverlapping(bytes, len);
+        highway_crc32(state, bytes, len)
+    }
+}
+
+#[unsafe(no_mangle)]
 unsafe extern "C" fn highway_adler32(adler: u32, bytes: *const u8, len: usize) -> u32 {
     // SAFETY: the caller passes a slice, as a pointer and a length.
     continue_adler32(adler, unsafe { core::slice::from_raw_parts(bytes, len) })
@@ -56,6 +70,20 @@ unsafe extern "C" fn highway_index_of_char(bytes: *const u8, len: usize, byte: u
     // SAFETY: the caller passes a slice, as a pointer and a length.
     let bytes = unsafe { core::slice::from_raw_parts(bytes, len) };
     bytes.iter().take_while(|&&other| other != byte).count()
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn highway_common_prefix_length(a: *const u8, b: *const u8, len: usize) -> usize {
+    use core::slice::from_raw_parts;
+    // SAFETY: the caller passes two slices.
+    let (a, b) = unsafe { (from_raw_parts(a, len), from_raw_parts(b, len)) };
+    a.iter().zip(b).take_while(|(a, b)| a == b).count()
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn highway_repeat(from: *const u8, to: *mut u8, _: usize, len: usize) {
+    // SAFETY: both have more, and `to` is a period behind `from`.
+    (0..len).for_each(|at| unsafe { *to.add(at) = *from.add(at) });
 }
 
 thread_local! {
@@ -101,6 +129,16 @@ unsafe impl GlobalAlloc for Allocator {
         // SAFETY: the caller's.
         unsafe { System.dealloc(pointer, layout) }
     }
+}
+
+/// For what stands in for code that does not allocate.
+pub(crate) fn uncounted<R>(body: impl FnOnce() -> R) -> R {
+    let before = (ALLOCATIONS.get(), FAILING.take(), FAILED_SIZE.take());
+    let result = body();
+    ALLOCATIONS.set(before.0);
+    FAILING.set(before.1);
+    FAILED_SIZE.set(before.2);
+    result
 }
 
 /// Runs `body`, in which the allocations that are `failing` do, and so does asking again. Also returns how many it asked for.

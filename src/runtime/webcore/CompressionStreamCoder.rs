@@ -26,6 +26,7 @@ use bun_jsc::{
     ThreadIsolatedArg,
 };
 
+use crate::node::node_zlib_binding::{Loan, OutputScratch, SpareCodecMemory};
 use bun_zlib::{Deflater, Inflater, deflate, inflate};
 use bun_zstd::{EndDirective, Status};
 
@@ -126,6 +127,7 @@ enum Backend {
 
 pub(crate) struct CompressionStreamCoder {
     backend: Backend,
+    loan: Option<Loan>,
     /// DecompressionStream only: the codec has reported end-of-stream. Any
     /// further input is the spec's "trailing junk" TypeError.
     ended: bool,
@@ -214,6 +216,7 @@ impl CompressionStreamCoder {
         };
         Ok(Box::new(Self {
             backend,
+            loan: None,
             ended: false,
             zstd_head: [0; 4],
             zstd_head_len: 0,
@@ -225,12 +228,34 @@ impl CompressionStreamCoder {
         }))
     }
 
+    /// When it is new, and again when it is done.
+    fn swap_memory(&mut self, spare: &mut SpareCodecMemory) {
+        match &mut self.backend {
+            Backend::BrotliEncode(encoder) => encoder.swap_memory(&mut spare.brotli_encoder),
+            Backend::BrotliDecode(decoder) => decoder.swap_tables(&mut spare.brotli_decoder),
+            Backend::ZstdEncode(encoder) => encoder.swap_memory(&mut spare.zstd_encoder),
+            Backend::ZstdDecode(decoder) => decoder.swap_tables(&mut spare.zstd_decoder),
+            Backend::Deflate(_) | Backend::Inflate(_) => {}
+        }
+    }
+
+    /// About what the next step of a decoder comes to.
+    fn expected_output(&self, input: &[u8]) -> usize {
+        match (&self.backend, &self.pending) {
+            (Backend::Deflate(_) | Backend::BrotliEncode(_) | Backend::ZstdEncode(_), _) => 0,
+            (_, Some(pending)) => pending.cap,
+            (_, None) => (self.high_water_mark).clamp(input.len(), input.len().saturating_mul(4)),
+        }
+    }
+
     /// One step of the chunk (or, with `finish`, the final flush) in progress:
     /// collects at most `max(high_water_mark, chunk length)` bytes into `out` and
     /// returns `true` if the codec stopped at that cap, in which case the caller
     /// must step again (with no input) before feeding the next chunk.
     fn step(&mut self, input: &[u8], finish: bool, out: &mut Vec<u8>) -> Result<bool, CodecError> {
         out.clear();
+        // It grows in steps if that is too much.
+        let _ = out.try_reserve_exact(self.expected_output(input));
         if let Some(mut pending) = self.pending.take() {
             debug_assert!(input.is_empty());
             return match self.run(
@@ -385,8 +410,7 @@ impl CompressionStreamCoder {
                             consumed: input.len() - remaining.len(),
                         });
                     }
-                    match append_step(out, cap, |spare| decoder.decompress(&mut remaining, spare))?
-                    {
+                    match decoder.decompress_appending(&mut remaining, out, cap) {
                         Ok(bun_brotli::DecodeStatus::Finished) => {
                             self.ended = true;
                             if !remaining.is_empty() {
@@ -528,7 +552,12 @@ pub(crate) extern "C" fn CompressionStreamCoder__create(
     );
     let format = Format::from_u8(format)?;
     let level = (has_level && !decompress).then_some(level);
-    CompressionStreamCoder::new(format, decompress, high_water_mark.max(1), level).ok()
+    let mut coder =
+        CompressionStreamCoder::new(format, decompress, high_water_mark.max(1), level).ok()?;
+    if !matches!(coder.backend, Backend::Deflate(_) | Backend::Inflate(_)) {
+        coder.loan = SpareCodecMemory::lend(|spare| coder.swap_memory(spare));
+    }
+    Some(coder)
 }
 
 #[inline(never)]
@@ -540,7 +569,12 @@ pub(crate) extern "C" fn CompressionStreamCoder__destroy(
         CompressionStreams,
         CompressionStreamCoder__destroy
     );
-    drop(this);
+    // The last cells are destroyed after the state.
+    if let (Some(mut this), Some(state)) = (this, crate::jsc_hooks::try_runtime_state())
+        && this.loan.is_some()
+    {
+        (state.spare_codec_memory).with_mut(|spare| this.swap_memory(spare));
+    }
 }
 
 /// One JS-thread [`step`](CompressionStreamCoder::step): returns its output as
@@ -563,28 +597,34 @@ pub(crate) unsafe extern "C" fn CompressionStreamCoder__transform(
         CompressionStreams,
         CompressionStreamCoder__transform
     );
-    let rare = global.bun_vm().rare_data();
-    let mut out = rare.take_compression_scratch();
     // SAFETY: fn contract. Both borrows end when `step()` returns, and it runs no JavaScript.
-    let step = unsafe { (*this).step(bun_core::ffi::slice(input, input_len), finish, &mut out) };
-    let result = match step {
+    let (this, input) = unsafe { (&mut *this, bun_core::ffi::slice(input, input_len)) };
+    let mut out = match this.expected_output(input) {
+        ..CHUNK => OutputScratch::for_encoder(),
+        _ => OutputScratch(Vec::new()),
+    };
+    match this.step(input, finish, &mut out.0) {
         Ok(has_more) => {
             *more = has_more;
-            let chunk = if out.is_empty() {
-                JSUint8Array::create_empty(global)
-            } else {
-                JSUint8Array::from_bytes_copy(global, &out)
-            };
-            bun_jsc::to_js_host_fn_result(global, chunk)
+            output_to_js(global, out)
         }
         Err(e) => {
             *more = false;
             throw_codec_error(global, e);
             JSValue::ZERO
         }
-    };
-    rare.put_back_compression_scratch(out);
-    result
+    }
+}
+
+fn output_to_js(global: &JSGlobalObject, out: OutputScratch) -> JSValue {
+    let chunk = out.finish(
+        |bytes| match bytes {
+            [] => JSUint8Array::create_empty(global),
+            _ => JSUint8Array::from_bytes_copy(global, bytes),
+        },
+        |bytes| JSUint8Array::from_bytes(global, bytes),
+    );
+    bun_jsc::to_js_host_fn_result(global, chunk)
 }
 
 fn codec_error_to_js(global: &JSGlobalObject, e: &CodecError) -> JSValue {
@@ -674,9 +714,24 @@ unsafe extern "C" {
         coder: *mut c_void,
         out: *const u8,
         out_len: usize,
+        out_owner: *mut c_void,
         more: bool,
         error: JSValue,
     );
+}
+
+/// The output as a `Uint8Array`. Zero if it throws.
+///
+/// # Safety
+/// `out_owner` is that of the running `Bun__CompressionStream__deliverAsync`, which is done with `out`.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn CompressionStreamCoder__takeOutput(
+    global: &JSGlobalObject,
+    out_owner: *mut c_void,
+) -> JSValue {
+    // SAFETY: fn contract.
+    let out = core::mem::take(unsafe { &mut *out_owner.cast::<Vec<u8>>() });
+    output_to_js(global, OutputScratch(out))
 }
 
 /// One step of a large `CompressionStream`/`DecompressionStream` chunk, run
@@ -709,9 +764,9 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
 
     fn then(this: Self, stream: Strong, cx: &bun_jsc::JsThread<'_>) -> bun_jsc::JsResult<()> {
         let global = cx.global();
-        let (out, err) = match &this.error {
-            None => (&this.out[..], JSValue::ZERO),
-            Some(e) => (&[][..], codec_error_to_js(global, e)),
+        let (mut out, err) = match &this.error {
+            None => (this.out, JSValue::ZERO),
+            Some(e) => (Vec::new(), codec_error_to_js(global, e)),
         };
         // SAFETY: `stream` is the cell that gave the coder up, and `out` outlives the call.
         unsafe {
@@ -721,6 +776,7 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
                 bun_core::heap::into_raw(this.coder).cast(),
                 out.as_ptr(),
                 out.len(),
+                (&raw mut out).cast(),
                 this.more,
                 err,
             )

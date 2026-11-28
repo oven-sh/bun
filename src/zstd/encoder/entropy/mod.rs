@@ -10,7 +10,7 @@ mod literals;
 use bun_zstd_decoder::format::Encoding;
 use bun_zstd_decoder::{Error, Result};
 
-pub(crate) use codes::{CodeTables, CodesChoice, CodesPlan, count_len, first_symbol};
+pub(crate) use codes::{CodeTables, CodesChoice, CodesPlan, first_symbol};
 pub(crate) use literals::{LiteralTables, LiteralsPlan, looks_random};
 
 use crate::block::Content;

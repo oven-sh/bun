@@ -1,5 +1,7 @@
 //! XXH64. Unlike that of `bun_highway`, it links without the C++ objects and inlines into the search for long matches.
 
+use bun_highway::unzstd::consume_stripes;
+
 const PRIME_1: u64 = 0x9E37_79B1_85EB_CA87;
 const PRIME_2: u64 = 0xC2B2_AE3D_27D4_EB4F;
 const PRIME_3: u64 = 0x1656_67B1_9E37_79F9;
@@ -119,7 +121,8 @@ impl XxHash64 {
             bytes = rest;
         }
         let (stripes, tail) = bytes.as_chunks();
-        consume(&mut self.lanes, stripes);
+        let rest = consume_stripes(&mut self.lanes, [PRIME_2, PRIME_1], stripes);
+        consume(&mut self.lanes, rest);
         for (to, from) in self.partial.iter_mut().zip(tail) {
             *to = *from;
         }

@@ -21,7 +21,7 @@ function createTruncatedServer(compression: "gzip" | "br" | "zstd" | "deflate", 
           compressed = Bun.gzipSync(data);
           break;
         case "br":
-          compressed = brotliCompressSync(data);
+          compressed = Buffer.from("1b2300f88d946ed654ed82145626d942deba10451e5945d300cc3a20d9797bcbb23420", "hex");
           break;
         case "zstd":
           compressed = Bun.zstdCompressSync(data);

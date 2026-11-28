@@ -380,6 +380,17 @@ impl<C: OwnedJob> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
     #[track_caller]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
+        WorkPool::schedule(Self::create(cx, off, js));
+    }
+
+    /// For work that takes less time than the way to the pool and back: it is done now, and completes like any other job.
+    #[track_caller]
+    pub fn run_here(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
+        Self::run_on_pool(Self::create(cx, off, js));
+    }
+
+    #[track_caller]
+    fn create(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) -> *mut WorkPoolTask {
         let job = heap::into_raw(Box::new(Self {
             header: JobHeader {
                 // SAFETY: (this and the entry below) the erased dispatchers are
@@ -413,18 +424,17 @@ impl<C: OwnedJob> Job<C> {
             off,
             js,
         }));
-        // SAFETY: live until completed/released on this thread; the pool owns it now.
+        // SAFETY: live until completed/released on this thread; whoever runs the task owns it until then.
         unsafe {
             if C::Shared::CANCELLABLE {
                 cx.vm().jobs.with_mut(|j| j.push(&raw mut (*job).header));
             }
-            WorkPool::schedule(&raw mut (*job).pooled.task);
+            &raw mut (*job).pooled.task
         }
     }
 
     fn run_on_pool(task: *mut WorkPoolTask) {
-        // SAFETY: only reachable through the `task.callback` slot wired in
-        // `schedule`; the pool calls back with exactly that field of a live job.
+        // SAFETY: what `create` returned, directly or by way of the pool: that field of a live job.
         let this: *mut Self = unsafe {
             let pooled = from_field_ptr!(Pooled<C::Shared, C::Resume>, task, task);
             from_field_ptr!(Self, pooled, pooled)

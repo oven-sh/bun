@@ -6,7 +6,7 @@ use bun_zstd_decoder::{Error, Result};
 
 use super::Reuse;
 use super::histogram::Histogram;
-use super::huffman::{Description, JUMP_TABLE_LEN, Table};
+use super::huffman::{Description, Table};
 use crate::bytes::{is_one_byte_repeated, put};
 use crate::parameters::{Strategy, Tuning};
 
@@ -105,15 +105,6 @@ impl LiteralsPlan {
             _ => self.estimated_len + self.description.len + overhead,
         }
     }
-
-    pub(crate) fn overhead(len: usize) -> usize {
-        compressed_header_len(len)
-            + if len < FOUR_STREAMS_FROM {
-                0
-            } else {
-                JUMP_TABLE_LEN
-            }
-    }
 }
 
 fn reusable<'a>(table: &'a Option<Box<Table>>, reuse: Reuse, counts: &[u32]) -> Option<&'a Table> {
@@ -175,7 +166,8 @@ impl LiteralTables {
         let len = literals.len();
         let min_len = match self.reuse {
             Reuse::Always => 6,
-            _ => 8 << (9 - tuning.strategy as usize).min(3),
+            _ if tuning.strategy < Strategy::Lazy2 => 64,
+            _ => 8 << (9 - tuning.strategy as usize).min(1),
         };
         if tuning.compresses_literals() && len >= min_len {
             let header_len = compressed_header_len(len);
@@ -227,7 +219,12 @@ impl LiteralTables {
         if has_few_matches && looks_random(literals) {
             return Ok(None);
         }
-        let histogram = Histogram::of(literals);
+        let is_hurried = strategy.is_hurried();
+        let histogram = if is_hurried {
+            Histogram::estimate(literals, if strategy < Strategy::Greedy { 12 } else { 14 })
+        } else {
+            Histogram::of(literals)
+        };
         if histogram.largest_count == len {
             return Ok(Some((1, Encoding::Rle)));
         }
@@ -241,18 +238,21 @@ impl LiteralTables {
         }
 
         let candidate = get_or_allocate(&mut self.candidate, || Table::EMPTY)?;
-        candidate.build(counts, len, strategy >= Strategy::Ultra);
+        if !is_hurried || candidate.build_quickly(&histogram, len).is_none() {
+            let is_short = strategy == Strategy::Optimal && len < FOUR_STREAMS_FROM;
+            candidate.build(counts, len, strategy >= Strategy::Ultra || is_short);
+        }
         let Ok(description_len) = candidate.describe(out) else {
             return Ok(None);
         };
         let is_too_long = description_len + 12 >= len;
-        if let Some(current) = current {
-            let new_len = description_len + candidate.compressed_len(counts);
-            if current.compressed_len(counts) <= new_len || is_too_long {
-                return repeat(current, out);
-            }
+        let new_len = || description_len + candidate.compressed_len(counts);
+        if let Some(current) = current
+            && (current.compressed_len(counts) <= new_len() || is_too_long)
+        {
+            return repeat(current, out);
         }
-        if is_too_long {
+        if is_too_long || (has_few_matches && new_len() >= strategy.worth_it_below(len)) {
             return Ok(None);
         }
         let out = out.get_mut(description_len..).ok_or(Error::Internal)?;

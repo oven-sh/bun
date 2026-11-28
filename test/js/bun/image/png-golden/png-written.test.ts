@@ -119,10 +119,10 @@ describe("RGBA", () => {
   });
 
   // When all the rows of this picture have gone in, the IDAT chunk has room for one more byte. At level 1 that is so
-  // for one picture of noise in some 8000, and for as long as zlib hands over the same bytes at the same moments. A
+  // for one picture in some thousands, and for as long as zlib hands over the same bytes at the same moments. A
   // stream of node:zlib gives zlib a row at a time and the room that is left of 8192 bytes, as src/png/encoder.rs does.
   test("the end of the stream when one byte is left of an IDAT chunk", async () => {
-    const source = sourceOf(contents.noise(1316, 4));
+    const source = sourceOf(contents["a few colors"](5522, 4));
     const file = await new Bun.Image(source.file).png({ compressionLevel: 1 }).bytes();
     expect(read(file).rgba.equals(source.rgba)).toBe(true);
 

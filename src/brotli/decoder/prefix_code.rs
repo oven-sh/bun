@@ -1,38 +1,32 @@
 //! RFC 7932 sections 3.4 and 3.5: how a stream describes a prefix code.
 
-use core::hint::select_unpredictable;
-
-use bun_highway::with_bmi2;
+use bun_highway::brotli_decoder::{CodeLength, SymbolLists};
 
 use super::Stop;
-use super::bit_reader::{BitReader, Bits, REFILLED};
-use super::huffman::{SymbolLists, fill_root};
+use super::bit_reader::{BitReader, Bits};
 use crate::DecodeError;
 use crate::format::{
-    Alphabet, CODE_LENGTH_CODE_LENGTH_CODES, CODE_LENGTH_CODE_ORDER, INITIAL_REPEATED_CODE_LENGTH,
-    MAX_CODE_LENGTH, MAX_CODE_LENGTH_CODE_LENGTH, REPEAT_PREVIOUS_CODE_LENGTH, repeat_extra_bits,
+    Alphabet, CODE_LENGTH_CODE_LENGTH_CODES, CODE_LENGTH_CODE_ORDER, CODE_LENGTH_CODES,
+    INITIAL_REPEATED_CODE_LENGTH, MAX_CODE_LENGTH_CODE_LENGTH, reverse_byte,
 };
-
-const FIRST_REPEAT: u32 = REPEAT_PREVIOUS_CODE_LENGTH as u32;
 
 enum Phase {
     Start,
     CodeLengthCode(CodeLengthCode),
-    SymbolLengths(CodeLengthTable, SymbolLengths),
+    SymbolLengths,
 }
 
 pub(super) struct PrefixCodeReader {
     phase: Phase,
-    /// Not for streams without codes.
-    symbols: Option<SymbolLists>,
+    symbols: Box<SymbolLists>,
 }
 
 impl PrefixCodeReader {
-    pub(super) fn new() -> Self {
-        Self {
+    pub(super) fn new() -> Result<Self, Stop> {
+        Ok(Self {
             phase: Phase::Start,
-            symbols: None,
-        }
+            symbols: SymbolLists::new().ok_or(DecodeError::AllocTreeGroups)?,
+        })
     }
 
     /// Returns a complete code.
@@ -41,10 +35,7 @@ impl PrefixCodeReader {
         alphabet: Alphabet,
         reader: &mut BitReader<'_>,
     ) -> Result<&SymbolLists, Stop> {
-        let symbols = match &mut self.symbols {
-            Some(symbols) => symbols,
-            none => none.insert(SymbolLists::new()?),
-        };
+        let symbols = &mut *self.symbols;
         loop {
             match &mut self.phase {
                 Phase::Start => {
@@ -59,12 +50,12 @@ impl PrefixCodeReader {
                 }
                 Phase::CodeLengthCode(code) => {
                     code.read(reader)?;
-                    let table = CodeLengthTable::new(code)?;
-                    symbols.clear_for_runs(alphabet.size);
-                    self.phase = Phase::SymbolLengths(table, SymbolLengths::new());
+                    code.fill(&mut symbols.code_lengths)?;
+                    symbols.clear(alphabet.size, INITIAL_REPEATED_CODE_LENGTH);
+                    self.phase = Phase::SymbolLengths;
                 }
-                Phase::SymbolLengths(table, lengths) => {
-                    read_symbol_lengths(lengths, alphabet.size, table, reader, symbols)?;
+                Phase::SymbolLengths => {
+                    read_symbol_lengths(reader, symbols)?;
                     self.phase = Phase::Start;
                     return Ok(symbols);
                 }
@@ -79,36 +70,28 @@ fn read_simple_code(
     code: &mut SymbolLists,
 ) -> Result<(), Stop> {
     let count = bits.read(2)? as usize + 1;
-    let mut symbols = [0; 4];
-    let (symbols, _) = symbols.split_at_mut(count);
-    for symbol in symbols.iter_mut() {
+    let mut symbols = [1, 2, 3, 4].map(|n| u32::MAX / 8 - 4 + n);
+    for symbol in symbols.iter_mut().take(count) {
         *symbol = bits.read(alphabet.symbol_bits)?;
         if *symbol >= alphabet.size {
             return Err(DecodeError::SimpleHuffmanAlphabet.into());
         }
     }
-    let mut rest = &*symbols;
-    while let [first, others @ ..] = rest {
-        if others.contains(first) {
-            return Err(DecodeError::SimpleHuffmanSame.into());
-        }
-        rest = others;
+    let [a, b, c, d] = symbols;
+    if (a == b) | (a == c) | (a == d) | (b == c) | (b == d) | (c == d) {
+        return Err(DecodeError::SimpleHuffmanSame.into());
     }
-    let lengths = match count {
-        1 | 2 => [1; 4],
-        3 => [1, 2, 2, 2],
-        _ if bits.read_flag()? => [1, 2, 3, 3],
-        _ => [2; 4],
+    let [a, b, c, d]: [u32; 4] = match count {
+        1 => [4 * a + 1, 0, 0, 0],
+        2 => [4 * a + 1, 4 * b + 1, 0, 0],
+        3 => [4 * a + 1, 4 * b + 2, 4 * c + 2, 0],
+        _ if bits.read_flag()? => [4 * a + 1, 4 * b + 2, 4 * c + 3, 4 * d + 3],
+        _ => symbols.map(|symbol| 4 * symbol + 2),
     };
-    let mut sorted = [(u32::MAX, 0); 4];
-    for ((slot, &symbol), length) in sorted.iter_mut().zip(&*symbols).zip(lengths) {
-        *slot = (symbol, length);
-    }
-    sorted.sort_unstable();
-    code.clear();
-    for (symbol, length) in sorted.into_iter().take(count) {
-        code.push_run(length, symbol, 1);
-    }
+    let ([a, b], [c, d]) = ([a.min(b), a.max(b)], [c.min(d), c.max(d)]);
+    let ([a, c], [b, d]) = ([a.min(c), a.max(c)], [b.min(d), b.max(d)]);
+    let sorted = [a, b.min(c), b.max(c), d];
+    code.set(sorted.map(|it| it as u8 % 4), sorted.map(|it| it / 4));
     Ok(())
 }
 
@@ -128,6 +111,7 @@ impl CodeLengthCode {
         }
     }
 
+    #[inline(always)]
     #[allow(clippy::indexing_slicing)] // Reduced to the size of the tables.
     fn read(&mut self, reader: &mut BitReader<'_>) -> Result<(), Stop> {
         /// How many bits there are for a length, the length, and how much of the space of all codes it takes up.
@@ -162,126 +146,65 @@ impl CodeLengthCode {
         (*reader, self.next, self.space) = (local, next, space);
         result
     }
-}
 
-/// The length of the code with and without the extra bits, the symbol unless it is a repeat, and a mask for the extra bits.
-struct CodeLengthTable([[u8; 4]; 1 << MAX_CODE_LENGTH_CODE_LENGTH]);
-
-impl CodeLengthTable {
-    fn new(code: &CodeLengthCode) -> Result<Self, Stop> {
-        let entry_for = |symbol: u32, length: u32| {
-            let (symbol, extra_bits) = if symbol < FIRST_REPEAT {
-                (symbol, 0)
-            } else {
-                (0, repeat_extra_bits(symbol))
-            };
-            let mask = (1 << extra_bits) - 1;
-            ((mask << 24) | (symbol << 16) | (length << 8) | (length + extra_bits)).to_le_bytes()
+    #[inline(always)]
+    #[allow(clippy::indexing_slicing)] // Reduced to the size of the tables.
+    fn fill(&self, table: &mut [CodeLength; 32]) -> Result<(), Stop> {
+        const SYMBOLS: usize = CODE_LENGTH_CODES;
+        /// For each length, and in it each symbol: the entry, and how many of them there are.
+        static ENTRIES: ([CodeLength; 256], [u8; 128]) = {
+            let (mut all, mut i) = (([CodeLength::new(0, 0); _], [0; _]), 0);
+            while i < (MAX_CODE_LENGTH_CODE_LENGTH + 1) * SYMBOLS {
+                let (length, symbol) = ((i / SYMBOLS) as u8, (i % SYMBOLS) as u8);
+                all.0[i] = CodeLength::new(symbol, length);
+                all.1[i] = 32 >> length;
+                i += 1;
+            }
+            all
         };
-        let mut table = [[0; 4]; _];
-        if code.space == 0 {
-            let of_length = |length: usize| {
-                let mut symbols = code.symbols_by_length.get(length).copied().unwrap_or(0);
-                core::iter::from_fn(move || {
-                    let symbol = symbols.trailing_zeros();
-                    symbols &= symbols.checked_sub(1)?;
-                    Some(symbol)
-                })
-            };
-            fill_root(&mut table, of_length, entry_for);
-        } else {
-            let [_, used @ ..] = code.symbols_by_length;
-            let used = used.into_iter().fold(0, |all, some| all | some);
+        let [_, a, b, c, d, e, ..] = self.symbols_by_length.map(u64::from);
+        if self.space != 0 {
+            let used = a | b | c | d | e;
             if !used.is_power_of_two() {
                 return Err(DecodeError::ClSpace.into());
             }
-            table.fill(entry_for(used.trailing_zeros(), 0));
+            table.fill(ENTRIES.0[used.trailing_zeros() as usize]);
+            return Ok(());
         }
-        Ok(Self(table))
-    }
-}
-
-#[derive(Clone, Copy)]
-struct SymbolLengths {
-    symbol: u32,
-    space: i32,
-    previous_length: u32,
-    previous_mask: u32,
-    /// Two less than what the last repeats of the same kind add up to.
-    run: u32,
-}
-
-with_bmi2! {
-    fn read_symbol_lengths(
-        lengths: &mut SymbolLengths,
-        alphabet_size: u32,
-        table: &CodeLengthTable,
-        reader: &mut BitReader<'_>,
-        symbols: &mut SymbolLists,
-    ) -> Result<(), Stop> {
-        let (mut state, mut local) = (*lengths, *reader);
-        let result = state.read_all(alphabet_size, table, &mut local, symbols);
-        (*lengths, *reader) = (state, local);
-        result
-    }
-}
-
-impl SymbolLengths {
-    fn new() -> Self {
-        Self {
-            symbol: 0,
-            space: 1 << MAX_CODE_LENGTH,
-            previous_length: u32::from(INITIAL_REPEATED_CODE_LENGTH),
-            previous_mask: 0,
-            run: 0,
-        }
-    }
-
-    #[inline(always)]
-    fn read_all(
-        &mut self,
-        alphabet_size: u32,
-        table: &CodeLengthTable,
-        reader: &mut BitReader<'_>,
-        symbols: &mut SymbolLists,
-    ) -> Result<(), Stop> {
-        const MASK_FOR_PREVIOUS: u32 = (1 << repeat_extra_bits(FIRST_REPEAT)) - 1;
-        /// How much of the space of all codes one takes up.
-        static SHARES: [u16; 16] = [
-            0, 16384, 8192, 4096, 2048, 1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1,
-        ];
-        #[allow(clippy::indexing_slicing)] // Reduced to the size of the table.
-        let share = |length: u32| i32::from(SHARES[length as usize % 16]);
-        loop {
-            reader.refill();
-            for _ in 0..REFILLED / 8 {
-                let peek = reader.bits.peek() as u32;
-                #[allow(clippy::indexing_slicing)] // Reduced to the size of the table.
-                let entry = &table.0[peek as usize % 32];
-                reader.bits.skip(u32::from(entry[0]))?;
-                let (length, mask) = (u32::from(entry[2]), u32::from(entry[3]));
-                let extra = (peek >> (entry[1] % 32)) & mask;
-                // With a mask of zero, this counts one symbol.
-                let goes_on = core::mem::replace(&mut self.previous_mask, mask) == mask;
-                let before = select_unpredictable(goes_on, self.run, 0);
-                let more = before * mask + extra + 1;
-                self.run = before + more;
-                let count = more + select_unpredictable(goes_on, 0, mask & 2);
-
-                let previous = self.previous_length;
-                let length = select_unpredictable(mask == MASK_FOR_PREVIOUS, previous, length);
-                self.previous_length = select_unpredictable(length != 0, length, previous);
-                symbols.push_run(length, self.symbol, count);
-                self.space -= count as i32 * share(length);
-                self.symbol += count;
-                if self.symbol >= alphabet_size || self.space == 0 {
-                    return if self.symbol <= alphabet_size && self.space == 0 {
-                        Ok(())
-                    } else {
-                        Err(DecodeError::HuffmanSpace.into())
-                    };
-                }
+        // With the first bit highest, the entries for a code are next to each other.
+        let (mut in_order, mut at) = ([0; 32 + 16], 0);
+        let short = a | (b << SYMBOLS) | (c << (2 * SYMBOLS));
+        for (first, mut codes) in [(SYMBOLS, short), (4 * SYMBOLS, d | (e << SYMBOLS))] {
+            while codes != 0 {
+                let index = first + codes.trailing_zeros() as usize;
+                in_order[at % 32..][..16].fill(index as u8);
+                at += usize::from(ENTRIES.1[index % 128]);
+                codes &= codes - 1;
             }
         }
+        for bits in 0..8 {
+            let at = usize::from(reverse_byte(bits as u8) / 8);
+            for (high_bits, next) in [(0, 0), (8, 2), (16, 1), (24, 3)] {
+                table[bits + high_bits] = ENTRIES.0[usize::from(in_order[at + next])];
+            }
+        }
+        Ok(())
+    }
+}
+
+#[inline(always)]
+fn read_symbol_lengths(reader: &mut BitReader<'_>, symbols: &mut SymbolLists) -> Result<(), Stop> {
+    let mut input = reader.lend();
+    let mut is_complete = symbols.read_lengths(&mut input);
+    reader.go_on_from(input);
+    while is_complete.is_none() {
+        reader.refill_for(8);
+        let bits = reader.bits.peek();
+        reader.bits.skip(symbols.bits_for_length(bits))?;
+        is_complete = symbols.push_length(bits);
+    }
+    match is_complete {
+        Some(true) => Ok(()),
+        _ => Err(DecodeError::HuffmanSpace.into()),
     }
 }

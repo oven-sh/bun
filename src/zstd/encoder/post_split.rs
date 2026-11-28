@@ -1,88 +1,131 @@
-//! Splits a block where tables of their own make both parts smaller.
+//! Splits a block where tables of their own make the parts smaller.
 
-use core::ops::Range;
-
-use bun_zstd_decoder::format::BLOCK_HEADER_LEN;
+use bun_zstd_decoder::array::At;
 use bun_zstd_decoder::{Error, Output, Result};
 
-use crate::block::{self, BlockWriter, Content};
-use crate::entropy::{LiteralsPlan, count_len};
-use crate::parameters::Tuning;
-use crate::sequences::{
-    OffsetValue, Repeats, Sequence, Sequences, count_codes, literals_len, matches_len,
-};
+use crate::block::{BlockWriter, Content};
+use crate::bytes::highest_bit;
+use crate::entropy::fse::SYMBOLS;
+use crate::entropy::histogram;
+use crate::parameters::{Strategy, Tuning};
+use crate::sequences::{Mark, OffsetValue, Repeats, Sequence, Sequences, count_codes};
 
-const SPLITS_MAX: usize = 196;
-const SEQUENCES_MIN: usize = 300;
+const PIECES_MAX: usize = 15;
+const BIT: u32 = 256;
 
-struct Part {
-    sequences: Range<usize>,
-    literals: Range<usize>,
-}
-
-struct Splitter<'a> {
-    writer: &'a mut BlockWriter,
-    sequences: &'a [Sequence],
-    literals: &'a [u8],
-    tuning: &'a Tuning,
-    /// The sequences that start a part, but for the first one.
-    splits: [u16; SPLITS_MAX],
-    count: usize,
-}
-
-impl Splitter<'_> {
-    /// `None` if its tables cannot be described.
-    fn estimated_len(&mut self, part: &Part) -> Result<Option<usize>> {
-        let literals = self.literals.get(part.literals.clone());
-        let sequences = self.sequences.get(part.sequences.clone());
-        let (literals, sequences) = literals.zip(sequences).ok_or(Error::Internal)?;
-        let counts = count_codes(sequences);
-        let entropy = &mut self.writer.entropy;
-        let Some(literals_plan) = entropy.literals.plan(literals, self.tuning)? else {
-            return Ok(None);
-        };
-        let codes_plan = entropy
-            .codes
-            .plan(sequences, &counts, self.tuning.strategy)?;
-        let headers_len = BLOCK_HEADER_LEN + count_len(sequences.len()) + 1;
-        let overhead = LiteralsPlan::overhead(literals.len());
-        Ok(Some(
-            headers_len
-                + literals_plan.estimated_len(literals.len(), overhead)
-                + entropy.codes.estimated_len(&codes_plan, &counts),
-        ))
+/// How many to consider for a block of `len` bytes. The margin of `worst_case_len()` has room for their headers.
+pub(crate) fn pieces(len: usize, strategy: Strategy) -> usize {
+    let (len_log, max) = match strategy {
+        Strategy::Ultra2 => (12, PIECES_MAX),
+        Strategy::Ultra | Strategy::Optimal | Strategy::TreeLazy2 => (13, 8),
+        _ => (14, 4),
+    };
+    match len >> len_log {
+        ..2 => 0,
+        pieces => pieces.min(max),
     }
+}
 
-    /// `len` is the estimate for `whole`.
-    fn split(&mut self, whole: &Part, len: usize) -> Result<()> {
-        if whole.sequences.len() < SEQUENCES_MIN {
-            return Ok(());
-        }
-        let middle = whole.sequences.start.midpoint(whole.sequences.end);
-        let first = whole.sequences.start..middle;
-        let before_middle = self.sequences.get(first.clone()).ok_or(Error::Internal)?;
-        let literals_middle = whole.literals.start + literals_len(before_middle);
-        let first = Part {
-            sequences: first,
-            literals: whole.literals.start..literals_middle,
-        };
-        let second = Part {
-            sequences: middle..whole.sequences.end,
-            literals: literals_middle..whole.literals.end,
-        };
-        if let Some(first_len) = self.estimated_len(&first)?
-            && let Some(second_len) = self.estimated_len(&second)?
-            && first_len + second_len < len
-        {
-            self.split(&first, first_len)?;
-            if let Some(split) = self.splits.get_mut(self.count) {
-                *split = middle as u16;
-                self.count += 1;
-                self.split(&second, second_len)?;
+/// From a table, as vector multiplications lower the clock of Cascade Lake.
+#[inline(always)]
+fn times_log(count: u32) -> u32 {
+    const LEN_LOG: u32 = 9;
+    #[expect(clippy::indexing_slicing, reason = "evaluated at compile time")]
+    static TABLE: [u32; 1 << LEN_LOG] = {
+        let (mut table, mut count) = ([0; _], 1u64);
+        while count < 1 << LEN_LOG {
+            let (mut log, mut rest, mut digits) =
+                (count.ilog2() as u64, count << 30 >> count.ilog2(), 0);
+            while digits < 20 {
+                rest = (rest * rest) >> 30;
+                (log, rest, digits) = (2 * log + (rest >> 31), rest >> (rest >> 31), digits + 1);
             }
+            table[count as usize] = ((count * log * BIT as u64) >> digits) as u32;
+            count += 1;
         }
-        Ok(())
+        table
+    };
+    TABLE.get(count as usize).copied().unwrap_or_else(|| {
+        let shift = highest_bit(count) + 2 - LEN_LOG;
+        let [low, high] = [0, 1].map(|it| *TABLE.at((count >> shift) as usize + it));
+        (low << shift) + (high - low) * (count % (1 << shift)) + shift * count * BIT
+    })
+}
+
+/// For what `after` has more of the symbols `used`, and how many kinds of them there are.
+fn entropy(before: &[u32; 256], after: &[u32; 256], used: &[u8]) -> (u32, u32) {
+    let (mut total, mut saved, mut kinds) = (0, 0, 0);
+    for &symbol in used {
+        let count = after.at(symbol.into()) - before.at(symbol.into());
+        total += count;
+        saved += times_log(count);
+        kinds += u32::from(count != 0);
     }
+    (times_log(total).saturating_sub(saved), kinds)
+}
+
+/// `used` are the literals and the symbols of each kind of code. One in `rate` literals is in the histograms.
+fn estimate(start: &Mark, end: &Mark, [bytes, used @ ..]: [&[u8]; 4], rate: u32) -> u32 {
+    let literals = (end.literals - start.literals) * BIT;
+    let (sampled, kinds) = entropy(&start.histogram, &end.histogram, bytes);
+    // Samples look more uneven than what they are from.
+    let compressed = rate * sampled + kinds * (rate - 1) * (BIT * 3 / 4);
+    let described = compressed.max(literals) + (3 * kinds + 250) * BIT;
+    let codes = used.map(|it| entropy(&start.codes, &end.codes, it));
+    let codes = codes.map(|(entropy, kinds)| entropy + 6 * kinds * BIT);
+    described.min(8 * literals) + codes.iter().sum::<u32>() + 100 * BIT
+}
+
+/// Lists the symbols that occur.
+fn used<'a>(counts: &[u32; 256], room: &'a mut [u8; 256]) -> &'a [u8] {
+    let symbols = (0..=u8::MAX).filter(|&it| *counts.at(it.into()) != 0);
+    let count = room
+        .iter_mut()
+        .zip(symbols)
+        .map(|(to, it)| *to = it)
+        .count();
+    room.split_at(count).0
+}
+
+/// Moves the best marks to the front, and returns them.
+fn choose<'a>(marks: &'a mut [Mark], literals: &[u8], rate: usize) -> &'a [Mark] {
+    const SAMPLES: usize = 4;
+    let (mut histogram, mut counted) = ([0; _], 0);
+    for mark in &mut *marks {
+        let piece = literals
+            .get(counted..mark.literals as usize)
+            .unwrap_or_default();
+        for part in piece.chunks(piece.len() / SAMPLES + 1) {
+            histogram::add(&mut histogram, part.split_at(part.len().div_ceil(rate)).0);
+        }
+        (mark.histogram, counted) = (histogram, mark.literals as usize);
+    }
+    let Some(last) = marks.last() else {
+        return marks;
+    };
+    let (mut bytes, mut codes) = ([0; _], [0; _]);
+    let mut codes = used(&last.codes, &mut codes).chunk_by(|a, b| a ^ b < SYMBOLS as u8);
+    let [a, b, c] = core::array::from_fn(|_| codes.next().unwrap_or_default());
+    let used = [used(&last.histogram, &mut bytes), a, b, c];
+    let mut best = [(0, 0); PIECES_MAX + 1];
+    for (to, end) in marks.iter().enumerate().skip(1) {
+        let ways = (marks.iter().zip(best).take(to).enumerate())
+            .map(|(from, (start, it))| (it.0 + estimate(start, end, used, rate as u32), from));
+        *best.at_mut(to) = ways.min().unwrap_or_default();
+    }
+    let (mut first, mut at) = (marks.len() - 1, marks.len() - 1);
+    while at != 0 {
+        (first, at) = (first - 1, best.at(at).1);
+        marks.swap(first, at);
+    }
+    marks.get(first..).unwrap_or_default()
+}
+
+/// Leaves out what does not matter for the recent offsets at the end.
+fn decisive(sequences: &[Sequence]) -> &[Sequence] {
+    let are_new = |it: &[Sequence; 3]| it.iter().all(|it| it.offset().offset().is_some());
+    let start = sequences.array_windows().rposition(are_new);
+    sequences.get(start.unwrap_or(0)..).unwrap_or_default()
 }
 
 /// A part that ends up uncompressed does not change the recent offsets of a decoder the way the search counted on.
@@ -98,182 +141,101 @@ fn replace_lost_repeats(sequences: &mut [Sequence], decoder: &mut Repeats, searc
     }
 }
 
-/// `repeats` are the recent offsets after `all`.
 #[inline(never)]
 pub(crate) fn write(
     writer: &mut BlockWriter,
     bytes: &[u8],
     all: &mut Sequences,
-    repeats: Repeats,
     tuning: &Tuning,
     is_last: bool,
     out: &mut Output<'_>,
 ) -> Result<()> {
-    let whole = Part {
-        sequences: 0..all.list.len(),
-        literals: 0..all.literals().len(),
-    };
-    let mut splitter = Splitter {
-        writer,
-        sequences: &all.list,
-        literals: all.literals(),
-        tuning,
-        splits: [0; SPLITS_MAX],
-        count: 0,
-    };
-    if whole.sequences.len() >= SEQUENCES_MIN
-        && let Some(len) = splitter.estimated_len(&whole)?
-    {
-        splitter.split(&whole, len)?;
-    }
-    let Splitter { splits, count, .. } = splitter;
-    if count == 0 {
-        let content = Content {
-            bytes,
-            sequences: &all.list,
-            literals: all.literals(),
-            counts: &all.counts,
-            repeats,
-        };
-        return writer.write(&content, tuning, is_last, out);
-    }
-
-    let (written_before, repeats_before) = (out.written(), writer.repeats);
-    let splits = splits.get(..count).ok_or(Error::Internal)?;
-    // Half of the margin of `worst_case_len()` is for what follows.
-    let len_max = BLOCK_HEADER_LEN + bytes.len() + (bytes.len() >> 9);
-    match write_parts(writer, bytes, all, splits, tuning, is_last, out) {
-        Ok(()) if out.written() - written_before <= len_max => Ok(()),
-        Ok(()) | Err(Error::DstSizeTooSmall) => {
-            out.rewind(written_before);
-            writer.entropy.forget();
-            writer.repeats = repeats_before;
-            block::write_raw(bytes, is_last, out)
-        }
-        error => error,
-    }
-}
-
-fn write_parts(
-    writer: &mut BlockWriter,
-    mut bytes: &[u8],
-    all: &mut Sequences,
-    splits: &[u16],
-    tuning: &Tuning,
-    is_last: bool,
-    out: &mut Output<'_>,
-) -> Result<()> {
+    let (list, literals, marks) = all.split_mut();
+    let rate = 1 + usize::from(tuning.strategy.is_hurried()) * (literals.len() >> 14);
     let mut search_repeats = writer.repeats;
-    let (list, mut literals) = all.split_mut();
-    let mut start = 0;
-    let ends = splits.iter().map(|&split| usize::from(split));
-    for end in ends.chain([list.len()]) {
-        let is_last_part = end == list.len();
-        let sequences = list.get_mut(start..end).ok_or(Error::Internal)?;
-        let (literals_len, len) = if is_last_part {
-            (literals.len(), bytes.len())
-        } else {
-            let literals_len = literals_len(sequences);
-            (literals_len, literals_len + matches_len(sequences))
-        };
+    for [start, end] in choose(marks, literals, rate).array_windows() {
+        let range = |of: fn(&Mark) -> u32| of(start) as usize..of(end) as usize;
+        let sequences = (list.get_mut(range(|it| it.sequences))).ok_or(Error::Internal)?;
         let mut repeats = writer.repeats;
-        replace_lost_repeats(sequences, &mut repeats, &mut search_repeats);
+        let counts = if repeats == search_repeats && start.borrowed == 0 {
+            let after = |it: Repeats, by: &Sequence| it.after(by.offset(), by.literal_len() != 0);
+            repeats = decisive(sequences).iter().fold(repeats, after);
+            search_repeats = repeats;
+            core::array::from_fn(|it| end.codes.at(it) - start.codes.at(it))
+        } else {
+            if let Some(first) = sequences.first_mut() {
+                first.drop_literals(start.borrowed);
+            }
+            replace_lost_repeats(sequences, &mut repeats, &mut search_repeats);
+            count_codes(sequences)
+        };
         let content = Content {
-            bytes: bytes.split_off(..len).ok_or(Error::Internal)?,
+            bytes: bytes.get(range(|it| it.bytes)).ok_or(Error::Internal)?,
             sequences,
-            literals: literals.split_off(..literals_len).ok_or(Error::Internal)?,
-            counts: &count_codes(sequences),
+            literals: literals
+                .get(range(|it| it.literals))
+                .ok_or(Error::Internal)?,
+            counts: &counts,
             repeats,
         };
-        writer.write(&content, tuning, is_last && is_last_part, out)?;
-        start = end;
+        let is_last = is_last && end.bytes as usize == bytes.len();
+        writer.write(&content, tuning, is_last, out)?;
     }
     Ok(())
 }
 
 #[test]
-fn records_no_more_splits_than_there_is_room_for() -> Result<()> {
+fn products_are_close() {
+    for count in (1..1 << 17).step_by(7) {
+        let exact = f64::from(count) * f64::from(count).log2() * f64::from(BIT);
+        let error = (f64::from(times_log(count)) - exact).abs();
+        assert!(error <= 1.0 + f64::from(count) / 64.0);
+    }
+}
+
+#[test]
+fn parts_end_within_literals_and_make_up_for_lost_repeats() -> Result<()> {
+    use bun_zstd_decoder::{XxHash64, decompress};
+
     use crate::parameters::{Purpose, Request};
 
-    // Four quarters that have little in common
-    let mut all = Sequences::new();
-    all.clear_for(1 << 17, 4)?;
-    for index in 0..800 {
-        let quarter = index / 200;
-        let offset = OffsetValue::new((50 << (3 * quarter)) + index);
-        all.push(1 + quarter, offset, 10 + 5 * quarter + index % 2);
-    }
-    all.finish(&[0; 16400], 16400)?;
-    let whole = Part {
-        sequences: 0..all.list.len(),
-        literals: 0..all.literals().len(),
+    let (mut all, mut bytes) = (Sequences::new(), Vec::new());
+    all.clear_for(1 << 17, 3)?;
+    let mut add = |runs: &[(u32, u8)], offset| {
+        let masks = (runs.iter()).flat_map(|&(len, mask)| (0..len).map(move |_| mask));
+        for mask in masks {
+            bytes.push(XxHash64::hash(&bytes.len().to_le_bytes()) as u8 & mask);
+        }
+        bytes.extend_from_within(bytes.len() - 1000..bytes.len() - 995);
+        all.push(runs.iter().map(|it| it.0).sum(), offset, 5);
     };
-    let tuning = Request::new(16).tuning(None, Purpose::Frame { dictionary_len: 0 });
-    for (room, expected) in [(4, [200, 400, 600, 0]), (1, [200, 0, 0, 0])] {
-        let mut splitter = Splitter {
-            writer: &mut BlockWriter::new(),
-            sequences: &all.list,
-            literals: all.literals(),
-            tuning: &tuning,
-            splits: [0; SPLITS_MAX],
-            count: SPLITS_MAX - room,
-        };
-        splitter.split(&whole, usize::MAX)?;
-        let recorded = splitter.splits.into_iter().skip(SPLITS_MAX - room);
-        assert!(recorded.eq(expected.into_iter().take(room)));
-    }
-    Ok(())
-}
-
-#[test]
-fn parts_that_take_too_much_are_given_up() -> Result<()> {
-    use bun_zstd_decoder::XxHash64;
-    use bun_zstd_decoder::format::CodeKind;
-
-    use crate::entropy::Reuse;
-    use crate::parameters::{Purpose, Request};
+    add(&[(8193, 3), (4000, 255)], OffsetValue::new(1000));
+    add(&[(4188, 255), (1000, 3)], OffsetValue(1));
+    (0..899).for_each(|_| add(&[(3, 3)], OffsetValue(1)));
+    let end = bytes.len() as u32;
+    bytes.extend((end..4 << 13).map(|_| 7));
+    all.finish(&bytes, end, 4)?;
 
     let tuning = Request::new(19).tuning(None, Purpose::Frame { dictionary_len: 0 });
-    // The parts add 41 bytes.
-    for (len, room, is_given_up) in [
-        (19455, 20000, true),
-        (19456, 20000, false),
-        (19456, 19496, true),
-    ] {
-        // Sixteen parts that have little in common. Only the first one gets smaller.
-        let mut all = Sequences::new();
-        all.clear_for(1 << 17, 3)?;
-        for index in 0..4800 {
-            let part = index / 300;
-            let code = match part {
-                0 => 22 + index % 2,
-                _ => 24 + part % 8,
-            };
-            all.push(part / 8, OffsetValue::new((1 << code) + index), 3);
-        }
-        let noise = |it: u32| XxHash64::hash(&it.to_le_bytes()) as u8;
-        let bytes: Vec<_> = (0..len).map(noise).collect();
-        all.finish(&bytes, 16800)?;
-
-        let (mut writer, mut room) = (BlockWriter::new(), vec![0; room]);
-        let (repeats, mut out) = (Repeats::INITIAL, Output::slice(&mut room));
-        write(
-            &mut writer,
-            &bytes,
-            &mut all,
-            repeats,
-            &tuning,
-            true,
-            &mut out,
-        )?;
-        let added = out.written() - bytes.len();
-        drop(out);
-        assert_eq!(added, if is_given_up { BLOCK_HEADER_LEN } else { 41 });
-        let content = room.split_at(BLOCK_HEADER_LEN).1;
-        assert_eq!(content.starts_with(&bytes), is_given_up);
-        assert_eq!(writer.repeats == repeats, is_given_up);
-        let reuse = *writer.entropy.codes.reuse_mut(CodeKind::Offset);
-        assert_eq!(reuse == Reuse::Never, is_given_up);
-    }
+    let (mut frame, mut back) = (Vec::with_capacity(1 << 16), Vec::with_capacity(1 << 16));
+    frame.extend([0x28, 0xB5, 0x2F, 0xFD, 0, 0x38]);
+    let mut out = Output::spare_capacity(&mut frame, usize::MAX);
+    write(
+        &mut BlockWriter::new(),
+        &bytes,
+        &mut all,
+        &tuning,
+        true,
+        &mut out,
+    )?;
+    drop(out);
+    decompress(
+        &frame,
+        &mut Output::spare_capacity(&mut back, usize::MAX),
+        None,
+    )?;
+    assert_eq!(back, bytes);
+    let changed = all.list.iter().map(|it| (it.literal_len(), it.offset().0));
+    assert!(changed.take(3).eq([(4000, 1003), (1000, 1003), (3, 1)]));
     Ok(())
 }

@@ -4,6 +4,7 @@ use core::cell::Cell;
 use core::hint::cold_path;
 
 use bun_deflate::format::MAX_MATCH_LEN;
+use bun_deflate::lanes::{Block, Lanes, Sheet, Symbol, Unknown};
 use bun_highway::with_bmi2;
 use bun_highway::zlib::{Appender, Span, copy_match};
 
@@ -370,67 +371,115 @@ fn decode_fast<const MASK: bool>(
     }
 }
 
-enum Symbol {
-    /// Only the first byte counts. Alone it is stored from a high-byte register, which some Raptor Lake CPUs get wrong:
-    /// https://github.com/trifectatechfoundation/zlib-rs/issues/306
-    Literal([u8; 4]),
-    EndOfBlock,
-    Match {
-        len: usize,
-        distance: usize,
-    },
+/// Of the current block.
+pub(super) enum Codes<'a> {
+    Tables(&'a Tables),
+    Lanes(&'a mut Lanes, &'a mut Block),
 }
 
-/// The next symbol and how many bits it takes, if they are all there.
+/// How many symbols to decode one by one where lanes get no further.
 #[inline(always)]
-fn peek(tables: &Tables, bits: &mut BitReader<'_>) -> Result<Option<(Symbol, u32)>, Damage> {
-    bits.refill();
-    let (mut stream, mut used) = (bits.buffer, 0);
-    let mut advance = |stream: &mut u64, count: u32| {
-        *stream >>= count;
-        used += count;
-        (used <= bits.count).then_some(used)
-    };
-    let is_link = |entry: Entry| entry.is_special() && matches!(entry.kind(), Special::Subtable);
+pub(super) fn steps_between_lanes(bits: &BitReader<'_>) -> usize {
+    if (bits.position() as isize) < 0 {
+        1
+    } else {
+        64
+    }
+}
 
-    let mut entry = tables
-        .literal_length
-        .look_up(stream & tables.literal_length_mask);
-    if is_link(entry) {
-        advance(&mut stream, LITERAL_LENGTH_BITS);
-        entry = tables.literal_length.follow(entry, stream);
-    }
-    if entry.literal_count() != 0 {
-        let used = advance(&mut stream, entry.small());
-        return Ok(used.map(|used| (Symbol::Literal(entry.literals()), used)));
-    }
-    let Some(used) = advance(&mut stream, entry.bits()) else {
-        return Ok(None);
-    };
-    let mut len = entry.match_length();
-    if entry.is_special() {
-        match entry.kind() {
-            Special::LengthWithExtraBits => {}
-            Special::EndOfBlock => return Ok(Some((Symbol::EndOfBlock, used))),
-            _ => return Err(Damage::LiteralLengthCode),
+/// Whether the block has ended.
+#[inline(always)]
+pub(super) fn decode_in_lanes(
+    (lanes, block): (&mut Lanes, &mut Block),
+    bits: &mut BitReader<'_>,
+    sheet: &mut Sheet<'_>,
+) -> bool {
+    let mut position = bits.position();
+    let has_ended = lanes.decode(block, bits.input, &mut position, sheet);
+    bits.seek(position);
+    has_ended
+}
+
+pub(super) trait Peek {
+    /// The next symbol and how many bits it takes, if they are all there.
+    fn peek(&self, bits: &mut BitReader<'_>) -> Result<Option<(Symbol, u32)>, Damage>;
+}
+
+impl Peek for Codes<'_> {
+    #[inline(always)]
+    fn peek(&self, bits: &mut BitReader<'_>) -> Result<Option<(Symbol, u32)>, Damage> {
+        match self {
+            Self::Tables(tables) => tables.peek(bits),
+            Self::Lanes(lanes, _) => lanes.peek(bits),
         }
-        len += entry.small_number(stream);
-        advance(&mut stream, entry.small());
     }
+}
 
-    let mut code = tables.distance.look_up(stream);
-    if is_link(code.entry()) {
-        advance(&mut stream, DISTANCE_BITS);
-        code = tables.distance.follow(code.entry(), stream);
+impl Peek for Lanes {
+    #[inline(always)]
+    fn peek(&self, bits: &mut BitReader<'_>) -> Result<Option<(Symbol, u32)>, Damage> {
+        bits.refill();
+        match self.first_symbol(bits.buffer) {
+            (_, used) if used > bits.count => Ok(None),
+            (Ok(symbol), used) => Ok(Some((symbol, used))),
+            (Err(Unknown::Length), _) => Err(Damage::LiteralLengthCode),
+            (Err(Unknown::Distance), _) => Err(Damage::DistanceCode),
+        }
     }
-    let distance = code.distance(stream);
-    let Some(used) = advance(&mut stream, code.entry().bits()) else {
-        return Ok(None);
-    };
-    if code.entry().is_special() {
-        return Err(Damage::DistanceCode);
+}
+
+impl Peek for Tables {
+    #[inline(always)]
+    fn peek(&self, bits: &mut BitReader<'_>) -> Result<Option<(Symbol, u32)>, Damage> {
+        bits.refill();
+        let (mut stream, mut used) = (bits.buffer, 0);
+        let mut advance = |stream: &mut u64, count: u32| {
+            *stream >>= count;
+            used += count;
+            (used <= bits.count).then_some(used)
+        };
+        let is_link =
+            |entry: Entry| entry.is_special() && matches!(entry.kind(), Special::Subtable);
+
+        let mut entry = self
+            .literal_length
+            .look_up(stream & self.literal_length_mask);
+        if is_link(entry) {
+            advance(&mut stream, LITERAL_LENGTH_BITS);
+            entry = self.literal_length.follow(entry, stream);
+        }
+        if entry.literal_count() != 0 {
+            let used = advance(&mut stream, entry.small());
+            return Ok(used.map(|used| (Symbol::Literal(entry.literals()), used)));
+        }
+        let Some(used) = advance(&mut stream, entry.bits()) else {
+            return Ok(None);
+        };
+        let mut len = entry.match_length();
+        if entry.is_special() {
+            match entry.kind() {
+                Special::LengthWithExtraBits => {}
+                Special::EndOfBlock => return Ok(Some((Symbol::EndOfBlock, used))),
+                _ => return Err(Damage::LiteralLengthCode),
+            }
+            len += entry.small_number(stream);
+            advance(&mut stream, entry.small());
+        }
+
+        let mut code = self.distance.look_up(stream);
+        if is_link(code.entry()) {
+            advance(&mut stream, DISTANCE_BITS);
+            code = self.distance.follow(code.entry(), stream);
+        }
+        let distance = code.distance(stream);
+        let Some(used) = advance(&mut stream, code.entry().bits()) else {
+            return Ok(None);
+        };
+        if code.entry().is_special() {
+            return Err(Damage::DistanceCode);
+        }
+        Ok(Some((Symbol::Match { len, distance }, used)))
     }
-    Ok(Some((Symbol::Match { len, distance }, used)))
 }
 
 pub(super) enum Step {
@@ -445,12 +494,12 @@ pub(super) enum Step {
 /// One symbol, or a length and its distance. Takes no bits unless all that it needs are there.
 #[inline(always)]
 pub(super) fn decode_one(
-    tables: &Tables,
+    codes: &impl Peek,
     bits: &mut BitReader<'_>,
     tape: &mut impl Tape,
     reach: Reach,
 ) -> Result<Step> {
-    let Some((symbol, used)) = peek(tables, bits)? else {
+    let Some((symbol, used)) = codes.peek(bits)? else {
         return Ok(Step::NeedsInput);
     };
     bits.skip(used);
@@ -471,21 +520,45 @@ pub(super) fn decode_one(
     }
 }
 
-/// Where there is room for all that starts. `None` if that is used up.
+/// Where there is room for all that starts. `None` if that is used up, or `steps` are.
 #[inline(always)]
 pub(super) fn decode_slowly(
-    tables: &Tables,
+    codes: &impl Peek,
     bits: &mut BitReader<'_>,
     mut tape: impl Tape,
     reach: Reach,
+    mut steps: impl Iterator,
 ) -> Result<Option<Status>> {
-    while tape.room() >= SLACK {
-        match decode_one(tables, bits, &mut tape, reach)? {
+    while tape.room() >= SLACK && steps.next().is_some() {
+        match decode_one(codes, bits, &mut tape, reach)? {
             Step::NeedsInput => return Ok(Some(Status::NeedsInput)),
             Step::EndOfBlock => return Ok(Some(Status::BlockEnd)),
             Step::Literal | Step::Match(_) => {}
             Step::OutOfReach => return Err(Damage::DistanceTooFarBack.into()),
         }
+    }
+    Ok(None)
+}
+
+/// Up to the first symbol that ends behind `full`. `None` if it does not get there, or `OutOfReach` right there.
+#[inline(always)]
+pub(super) fn decode_past(
+    codes: &impl Peek,
+    bits: &mut BitReader<'_>,
+    (mut lap, full): (Lap<'_>, usize),
+    reach: Reach,
+    last_distance: &Cell<usize>,
+    mut steps: impl Iterator,
+) -> Result<Option<Step>> {
+    while lap.position() <= full && lap.room() >= SLACK && steps.next().is_some() {
+        last_distance.set(match decode_one(codes, bits, &mut lap, reach)? {
+            Step::Literal => 0,
+            Step::Match(distance) => distance,
+            Step::OutOfReach if lap.position() < full => {
+                return Err(Damage::DistanceTooFarBack.into());
+            }
+            other => return Ok(Some(other)),
+        });
     }
     Ok(None)
 }
@@ -499,11 +572,11 @@ pub(super) enum NoMatch {
 /// Takes nothing else, nor a literal that there is no room for.
 #[inline(always)]
 pub(super) fn take_unless_match(
-    tables: &Tables,
+    codes: &Codes<'_>,
     bits: &mut BitReader<'_>,
     room: usize,
 ) -> Option<NoMatch> {
-    let (taken, used) = match peek(tables, bits) {
+    let (taken, used) = match codes.peek(bits) {
         Ok(Some((Symbol::Literal(bytes), used))) if room != 0 => (NoMatch::Literal(bytes), used),
         Ok(Some((Symbol::EndOfBlock, used))) => (NoMatch::EndOfBlock, used),
         _ => return None,
@@ -521,8 +594,8 @@ pub(super) struct LongestMatch {
 }
 
 impl LongestMatch {
-    pub(super) fn peek(tables: &Tables, bits: &mut BitReader<'_>) -> Option<Self> {
-        match peek(tables, bits) {
+    pub(super) fn peek(codes: &Codes<'_>, bits: &mut BitReader<'_>) -> Option<Self> {
+        match codes.peek(bits) {
             Ok(Some((Symbol::Match { len, distance }, code_bits))) if len == MAX_MATCH_LEN => {
                 Some(Self {
                     distance,

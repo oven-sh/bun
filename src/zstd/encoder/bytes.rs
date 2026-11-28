@@ -95,26 +95,22 @@ pub(crate) fn put(out: &mut [u8], bytes: &[u8]) -> Option<()> {
     Some(())
 }
 
-/// How many bytes `a` and `b` start with in common, and whether the next one of `b` is below that of `a`.
+/// How many bytes `a` and `b` start with in common.
 #[inline]
-pub(crate) fn compare(a: &[u8], b: &[u8]) -> (usize, bool) {
+pub(crate) fn common_prefix(a: &[u8], b: &[u8]) -> usize {
     let len = a.len().min(b.len());
     let (Some(a), Some(b)) = (a.get(..len), b.get(..len)) else {
-        return (0, false);
+        return 0;
     };
     let ((a_words, a_rest), (b_words, b_rest)) = (a.as_chunks(), b.as_chunks());
     for (index, (a, b)) in a_words.iter().zip(b_words).enumerate() {
         if a != b {
             let difference = u64::from_le_bytes(*a) ^ u64::from_le_bytes(*b);
-            let len = index * 8 + (difference.trailing_zeros() / 8) as usize;
-            return (len, u64::from_be_bytes(*b) < u64::from_be_bytes(*a));
+            return index * 8 + (difference.trailing_zeros() / 8) as usize;
         }
     }
-    let mut rest = a_rest.iter().zip(b_rest).enumerate();
-    match rest.find(|(_, (a, b))| a != b) {
-        Some((index, (a, b))) => (len - a_rest.len() + index, b < a),
-        None => (len, false),
-    }
+    let rest = a_rest.iter().zip(b_rest).take_while(|(a, b)| a == b);
+    len - a_rest.len() + rest.count()
 }
 
 /// One bit for each byte, from the lowest up. Compiles to vector instructions, which `zip()` prevents in hardened builds.

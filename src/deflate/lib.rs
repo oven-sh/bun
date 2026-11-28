@@ -10,10 +10,11 @@
 )]
 #![warn(unused_must_use)]
 #![feature(
+    allocator_ext,
+    core_io_borrowed_buf,
     hint_prefetch,
     iter_advance_by,
-    stmt_expr_attributes,
-    vec_push_within_capacity
+    stmt_expr_attributes
 )]
 
 /// `core::array::from_fn` for constants.
@@ -32,32 +33,31 @@ macro_rules! table {
     }};
 }
 
-mod binary_trees;
 mod bit_reader;
 mod bit_writer;
 mod block;
-mod block_splitter;
 mod compressor;
 mod decode_tables;
 mod decompressor;
+pub mod encoder;
 mod error;
 pub mod format;
 pub mod gzip;
-mod hash_chains;
-mod hash_lists;
-mod hash_table;
-mod huffman;
-mod match_cache;
-mod near_optimal;
+pub mod lanes;
 mod output;
-mod parser;
-mod window;
 mod zlib;
 
 pub use compressor::{Compressor, Format, Level, compress_bound, compress_to_vec};
 pub use decompressor::{Decompressed, gunzip, inflate, inflate_message};
 pub use error::{Error, Result};
 pub use output::Output;
+
+/// What this thread keeps for the next stream that it decompresses or compresses, up to 210 and 288 KiB.
+pub fn free_spare_memory() {
+    decode_tables::free_spare();
+    lanes::free_spare();
+    encoder::Scratch::free_spare();
+}
 
 /// The `N` items from `at` on.
 #[inline(always)]
@@ -83,20 +83,6 @@ fn copy_prefix<T: Copy>(to: &mut [T], from: &[T]) -> usize {
     let len = to.len().min(from.len());
     to.split_at_mut(len).0.copy_from_slice(from.split_at(len).0);
     len
-}
-
-/// Makes `storage` at least `len` long, with zeros after what an earlier input left in it.
-fn grow<T: Copy + Default>(storage: &mut Vec<T>, len: usize) -> Result<&mut [T]> {
-    if let Some(more) = len.checked_sub(storage.len()) {
-        storage.try_reserve_exact(more)?;
-        storage.resize(len, T::default());
-    }
-    Ok(storage)
-}
-
-fn grow_to_array<T: Copy + Default, const N: usize>(storage: &mut Vec<T>) -> Result<&mut [T; N]> {
-    let array = grow(storage, N)?.first_chunk_mut();
-    array.ok_or(Error::Alloc(bun_alloc::AllocError))
 }
 
 /// `table[index % N]`, which the compiler knows to be in bounds.

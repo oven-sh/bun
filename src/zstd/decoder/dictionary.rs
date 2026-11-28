@@ -2,11 +2,12 @@
 
 use std::borrow::Cow;
 
-use crate::array::allocate;
+use bun_highway::unzstd::HuffmanTable;
+
 use crate::error::{Error, Result};
-use crate::format::{BLOCK_LEN_MAX, CodeKind, DICTIONARY_MAGIC};
-use crate::huffman::HuffmanTable;
-use crate::sequences::SequenceTables;
+use crate::format::{CodeKind, DICTIONARY_MAGIC};
+use crate::huffman;
+use crate::sequences::{SequenceTables, read_table};
 
 /// The largest that a sequence can spell out. The last values stand for repeated offsets in the decoder.
 const OFFSET_MAX: u32 = u32::MAX - 3;
@@ -20,7 +21,7 @@ pub struct Dictionary<'a> {
 
 /// What the first block of a frame can repeat.
 pub(crate) struct Entropy {
-    pub(crate) huffman: HuffmanTable,
+    pub(crate) huffman: Box<HuffmanTable>,
     pub(crate) sequences: Box<SequenceTables>,
     pub(crate) repeat_offsets: [u32; 3],
 }
@@ -61,8 +62,8 @@ impl<'a> Dictionary<'a> {
             return Ok(self);
         }
         let mut entropy = Entropy {
-            huffman: HuffmanTable::default(),
-            sequences: allocate(|| SequenceTables::EMPTY)?,
+            huffman: HuffmanTable::allocate().ok_or(Error::MemoryAllocation)?,
+            sequences: SequenceTables::allocate().ok_or(Error::MemoryAllocation)?,
             repeat_offsets: [0; _],
         };
         entropy.read(rest).map_err(|error| match error {
@@ -91,14 +92,14 @@ impl<'a> Dictionary<'a> {
 
 impl Entropy {
     fn read(&mut self, src: &[u8]) -> Result<()> {
-        let len = self.huffman.read(src, BLOCK_LEN_MAX)?;
+        let len = huffman::read_table(&mut self.huffman, src)?;
         let mut src = src.get(len..).ok_or(Error::Internal)?;
         for kind in [
             CodeKind::Offset,
             CodeKind::MatchLength,
             CodeKind::LiteralLength,
         ] {
-            let len = self.sequences.read(kind, src)?;
+            let len = read_table(&mut self.sequences, kind, src)?;
             src = src.get(len..).ok_or(Error::Internal)?;
         }
         let (offsets, content) = src

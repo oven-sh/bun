@@ -1,10 +1,12 @@
-use bun_highway::brotli::Place;
+use bun_highway::brotli::{differences, short_codes};
 
-use super::matching::bytes_at;
+use super::matching::{array_at, bytes_at};
 use crate::memory::{self, Result};
 
-/// Hashing reads eight bytes, even for the last byte of the input.
-pub(super) const SLACK: usize = 7;
+/// So much can be read after the input.
+const SLACK: usize = 136;
+
+pub(super) const SPAN: usize = 32;
 
 /// The recent input. A copy of the start follows the end, so that a block can be read without wrapping.
 pub(super) struct RingBuffer {
@@ -99,26 +101,54 @@ impl<'a> Window<'a> {
         bytes_at(self.bytes, self.index(position))
     }
 
-    /// `pair` is `offset` bytes after `position`.
     #[inline(always)]
-    pub(super) fn place(&self, position: usize, offset: usize, pair: [u8; 2]) -> Place<'a> {
-        Place {
-            ring: &self.bytes[offset..],
-            ring_mask: self.mask,
-            position: position as u32,
-            pair,
+    pub(super) fn array_at<const N: usize>(&self, position: usize) -> &'a [u8; N] {
+        array_at(self.bytes, self.index(position))
+    }
+
+    /// A bit for each of the [`SPAN`] bytes from `position` on that is not the same as `distance` before.
+    #[inline(always)]
+    pub(super) fn differences(&self, position: usize, distance: usize) -> u32 {
+        let earlier = position.wrapping_sub(distance);
+        differences(
+            self.bytes,
+            position as u32 & self.mask,
+            earlier as u32 & self.mask,
+        )
+    }
+
+    /// Up to `max`, if `known` bytes match.
+    #[inline(always)]
+    pub(super) fn match_length(
+        &self,
+        position: usize,
+        distance: usize,
+        mut known: usize,
+        max: usize,
+    ) -> usize {
+        while known < max {
+            let same = self
+                .differences(position + known, distance)
+                .trailing_zeros() as usize;
+            known += same;
+            if same != SPAN {
+                break;
+            }
         }
+        known.min(max)
+    }
+
+    /// A bit for each that may lead to a match.
+    #[inline(always)]
+    pub(super) fn short_codes(&self, position: usize, last_distances: &[i32; 4]) -> u32 {
+        let pair = self.bytes_at(position);
+        short_codes(self.bytes, self.mask, position as u32, pair, last_distances)
     }
 
     /// From `position` up to the end of the tail.
     #[inline(always)]
     pub(super) fn from(&self, position: usize) -> &'a [u8] {
         &self.bytes[self.index(position)..]
-    }
-
-    #[inline(always)]
-    pub(super) fn without_tail(&self) -> &'a [u8] {
-        &self.bytes[..self.bytes.len().min(self.mask as usize + 1)]
     }
 
     /// Before and after the end of the ring.

@@ -7,7 +7,7 @@ edition.workspace = true
 path = "lib.rs"
 
 [features]
-# For tests that link without the C++ objects: plain loops stand in for the kernels of zstd.
+# For tests that link without the C++ objects: plain loops stand in for the kernels of zstd and of the DEFLATE compressor.
 test_support = []
 
 [lints]
@@ -15,4 +15,9 @@ workspace = true
 
 [dependencies]
 bstr.workspace = true
+bun_pod.workspace = true
 
+
+[[test]]
+name = "unzstd"
+path = "unzstd/tests.rs"

@@ -35,14 +35,6 @@ impl Hasher {
     }
 
     #[inline(always)]
-    pub(super) fn of_3_bytes(bits: u32) -> Self {
-        Self {
-            multiplier: 506_832_829 << 40,
-            shift: 64 - bits,
-        }
-    }
-
-    #[inline(always)]
     pub(super) fn with_bits(self, bits: u32) -> Self {
         Self {
             shift: 64 - bits,

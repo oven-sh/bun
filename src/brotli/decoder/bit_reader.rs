@@ -1,4 +1,5 @@
 use super::Stop;
+use bun_highway::brotli_decoder::Input;
 
 /// What a refill leaves in [`Bits`] while there is input, and so the most that one step of decoding may take.
 pub(super) const REFILLED: u32 = 56;
@@ -196,8 +197,22 @@ impl<'a> BitReader<'a> {
     }
 
     #[inline(always)]
-    pub(super) fn input_len(&self) -> usize {
-        self.input.len()
+    pub(super) fn input(&self) -> &'a [u8] {
+        self.input
+    }
+
+    #[inline(always)]
+    pub(super) fn lend(&self) -> Input<'a> {
+        Input {
+            bytes: self.input,
+            bits: self.bits.value,
+            bit_count: self.bits.count,
+        }
+    }
+
+    #[inline(always)]
+    pub(super) fn go_on_from(&mut self, lent: Input<'a>) {
+        (self.input, self.bits.value, self.bits.count) = (lent.bytes, lent.bits, lent.bit_count);
     }
 
     #[inline(always)]
@@ -239,6 +254,23 @@ impl<'a> BitReader<'a> {
             value: fast.rest,
             count: fast.used.wrapping_neg() % 8,
         };
+    }
+
+    /// From the byte that has the next bit, and where that is in it. Not while there are bits of earlier input.
+    pub(super) fn rest_with_next_bit(&self) -> Option<(&'a [u8], u32)> {
+        let rest = self.whole_input.get(self.byte_of_next_bit()?..)?;
+        let (rest, _) = rest.split_at(rest.len().min(1 << 28));
+        Some((rest, self.bits.count.wrapping_neg() % 8))
+    }
+
+    /// In what [`rest_with_next_bit`](Self::rest_with_next_bit) returned.
+    pub(super) fn skip_to_bit(&mut self, bit: u32) {
+        self.input = (self.byte_of_next_bit())
+            .and_then(|start| self.whole_input.get(start + bit as usize / 8..))
+            .unwrap_or_default();
+        self.bits = Bits::default();
+        self.refill();
+        self.bits.skip_known(bit % 8);
     }
 
     #[inline(always)]

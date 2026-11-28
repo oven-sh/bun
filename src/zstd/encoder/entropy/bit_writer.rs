@@ -1,8 +1,10 @@
 //! Streams of bits.
 
+use bun_highway::zstd_stages::{Progress, Tables, write_sequences};
 use bun_zstd_decoder::bounded::Bounded;
 
 use crate::bytes::likely;
+use crate::sequences::Sequence;
 
 const WORD_LEN: usize = 8;
 
@@ -80,6 +82,25 @@ impl<'a> BitWriter<'a> {
     pub(super) fn add_all(&mut self, value: u64, count: u32) {
         self.bits |= value.wrapping_shl(self.count);
         self.count = self.count.plus(count);
+    }
+
+    /// See [`write_sequences`]. After a flush.
+    pub(super) fn add_sequences(
+        &mut self,
+        tables: &Tables<'_>,
+        sequences: &[Sequence],
+        states: &mut [u32; 3],
+    ) -> usize {
+        let mut progress = Progress {
+            states: *states,
+            position: self.words.position,
+            bit_count: self.count,
+            bits: self.bits,
+        };
+        let left = write_sequences(tables, sequences, self.words.out, &mut progress);
+        (*states, self.words.position) = (progress.states, progress.position);
+        (self.bits, self.count) = (progress.bits, progress.bit_count);
+        left
     }
 
     /// Leaves at most 7 bits pending.

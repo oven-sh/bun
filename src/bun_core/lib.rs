@@ -2313,14 +2313,6 @@ pub mod ffi {
         unsafe { Box::<T>::new_zeroed().assume_init() }
     }
 
-    /// [`boxed_zeroed`] for memory that may be refused.
-    #[inline]
-    pub fn try_boxed_zeroed<T: Zeroable>() -> Result<Box<T>, bun_alloc::AllocError> {
-        let zeroed = Box::<T>::try_new_zeroed().map_err(|_| bun_alloc::AllocError)?;
-        // SAFETY: `T: Zeroable` asserts the all-zero bit pattern is a valid `T`.
-        Ok(unsafe { zeroed.assume_init() })
-    }
-
     /// Safe `uname(2)` wrapper: zero-init a `utsname`, call `libc::uname`, return
     /// it by value. On the (theoretical) error path the struct stays all-zero,
     /// so every `c_char[]` field reads as an empty NUL-terminated string.

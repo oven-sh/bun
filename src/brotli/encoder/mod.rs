@@ -1,4 +1,4 @@
-//! Makes the choices of google/brotli 1.2. The output depends on its numbers, and on the order of floating-point operations.
+//! The output is the same on all CPUs.
 #![allow(clippy::indexing_slicing)] // No index is read from a stream.
 
 mod bit_stream;
@@ -7,24 +7,23 @@ mod block_splitter;
 mod cluster;
 mod command;
 mod fragment;
-mod hash;
 mod histogram;
 mod huffman;
 mod input_block;
-mod literal_contexts;
-mod literal_cost;
 mod log2;
-mod match_finder;
 mod matching;
 mod meta_block;
+mod optimal;
 mod params;
 mod prepared_dictionary;
+mod quick;
+mod quick_words;
 mod ring_buffer;
 mod symbol_set;
+mod utf8;
 mod windowed;
 mod word_tables;
 mod words;
-mod zopfli;
 
 pub use params::{MAX_QUALITY, MIN_QUALITY};
 
@@ -33,8 +32,9 @@ use bit_writer::BitWriter;
 use fragment::Fragments;
 use histogram::DISTANCE_SYMBOLS;
 use huffman::{TreeBuilder, max_description_size};
+use optimal::Optimal;
 use params::{Params, Requested};
-use prepared_dictionary::PreparedDictionary;
+use quick::Quick;
 use windowed::Windowed;
 
 use crate::error::EncodeError;
@@ -64,8 +64,22 @@ pub enum EncodeStatus {
 #[derive(Default)]
 pub struct Encoder {
     requested: Requested,
-    dictionary: Option<PreparedDictionary>,
+    /// Until the stream starts.
+    dictionary: Vec<u8>,
+    spare: SpareMemory,
     stream: Option<Stream>,
+}
+
+/// What one encoder leaves to the next, which is at most 3 MiB. The output does not depend on it.
+#[derive(Default)]
+pub struct SpareMemory {
+    quick: quick::Spare,
+    optimal: Option<Optimal>,
+    writer: BitWriter,
+}
+
+impl SpareMemory {
+    const MAX_SIZE: usize = 3 << 20;
 }
 
 impl Encoder {
@@ -80,13 +94,13 @@ impl Encoder {
     #[inline(never)]
     pub fn with_dictionary(dictionary: &[u8]) -> Option<Self> {
         bun_removable_features::removable_definition!(BrotliEncoder, Self::with_dictionary);
-        let dictionary = match dictionary.len() {
-            0 => None,
-            1..=MAX_DICTIONARY_SIZE => Some(PreparedDictionary::new(dictionary).ok()?),
-            _ => return None,
-        };
+        if dictionary.len() > MAX_DICTIONARY_SIZE {
+            return None;
+        }
+        let mut copy = memory::empty(dictionary.len()).ok()?;
+        copy.extend_from_slice(dictionary);
         Some(Self {
-            dictionary,
+            dictionary: copy,
             ..Self::default()
         })
     }
@@ -107,13 +121,62 @@ impl Encoder {
         bun_removable_features::removable_definition!(BrotliEncoder, Self::compress);
         let stream = match &mut self.stream {
             Some(stream) => stream,
-            none => none.insert(Stream::new(&self.requested, input.len())?),
+            none => {
+                if operation == Operation::Finish {
+                    self.requested.adapt_to(input);
+                }
+                let stream =
+                    Stream::new(&self.requested, &self.dictionary, input, &mut self.spare)?;
+                self.dictionary = Vec::new();
+                none.insert(stream)
+            }
         };
-        let result = stream.compress(self.dictionary.as_ref(), operation, input, &mut output);
+        let result = stream.compress(operation, input, &mut output);
         if result == Err(EncodeError::OutOfMemory) {
             stream.state = State::OutOfMemory;
         }
         result
+    }
+
+    /// Forgets the stream if it has begun.
+    #[inline(never)]
+    pub fn swap_memory(&mut self, spare: &mut SpareMemory) {
+        bun_removable_features::removable_definition!(BrotliEncoder, Self::swap_memory);
+        core::mem::swap(&mut self.spare, spare);
+        if let Some(stream) = self.stream.take() {
+            spare.writer = stream.writer;
+            spare.writer.clear();
+            match stream.method {
+                Method::Fragments(..) => {}
+                Method::Quick(quick) => spare.quick = quick.into_spare(),
+                Method::Windowed(windowed) => spare.optimal = windowed.into_spare(),
+            }
+        }
+        if spare.writer.capacity() > SpareMemory::MAX_SIZE / 6 {
+            spare.writer = BitWriter::default();
+        }
+        if spare.quick.size() > SpareMemory::MAX_SIZE / 2 {
+            spare.quick = quick::Spare::default();
+        }
+    }
+
+    /// Appends a stream, which has not begun, for all of `input`.
+    pub fn compress_whole(
+        &mut self,
+        mut input: &[u8],
+        out: &mut Vec<u8>,
+    ) -> Result<(), EncodeError> {
+        let room = max_compressed_size(input.len());
+        loop {
+            out.try_reserve(room)
+                .map_err(|_| EncodeError::OutOfMemory)?;
+            let status = bun_core::vec::append_with(out, room, |out| {
+                self.compress(Operation::Finish, &mut input, out)
+            });
+            if status? == EncodeStatus::Done {
+                return Ok(());
+            }
+        }
     }
 }
 
@@ -142,7 +205,8 @@ enum State {
 
 #[allow(clippy::large_enum_variant)] // There is one for each stream.
 enum Method {
-    Fragments(Fragments),
+    Fragments(Fragments, TreeBuilder),
+    Quick(Quick),
     Windowed(Windowed),
 }
 
@@ -150,7 +214,6 @@ struct Stream {
     params: Params,
     state: State,
     method: Method,
-    trees: TreeBuilder,
     writer: BitWriter,
     /// How many of the bytes in `writer` the caller has.
     delivered: usize,
@@ -159,19 +222,29 @@ struct Stream {
 }
 
 impl Stream {
-    fn new(requested: &Requested, first_input: usize) -> memory::Result<Self> {
+    fn new(
+        requested: &Requested,
+        dictionary: &[u8],
+        first_input: &[u8],
+        spare: &mut SpareMemory,
+    ) -> memory::Result<Self> {
         let params = Params::new(requested);
-        let mut writer = BitWriter::default();
-        try_reserve_for(first_input.min(params.block_size()), &mut writer)?;
+        let mut writer = core::mem::take(&mut spare.writer);
+        try_reserve_for(first_input.len().min(params.block_size()), &mut writer)?;
         writer.write_bits(params.stream_header());
         Ok(Self {
             params,
             state: State::Processing,
             method: match params.quality {
-                0 | 1 => Method::Fragments(Fragments::new(params.quality)),
-                _ => Method::Windowed(Windowed::new(&params)),
+                0 | 1 => Method::Fragments(Fragments::new(params.quality), TreeBuilder::new()?),
+                2..=9 => Method::Quick(Quick::new(
+                    &params,
+                    dictionary,
+                    first_input,
+                    core::mem::take(&mut spare.quick),
+                )?),
+                _ => Method::Windowed(Windowed::new(&params, dictionary, spare.optimal.take())?),
             },
-            trees: TreeBuilder::new()?,
             lone_header: Some(writer.position()),
             writer,
             delivered: 0,
@@ -199,7 +272,6 @@ impl Stream {
 
     fn compress(
         &mut self,
-        dictionary: Option<&PreparedDictionary>,
         operation: Operation,
         input: &mut &[u8],
         output: &mut BorrowedCursor<'_, u8>,
@@ -217,14 +289,22 @@ impl Stream {
             _ => return Err(EncodeError::InvalidOperation),
         }
 
+        if let Method::Quick(quick) = &mut self.method
+            && operation == Operation::Finish
+            && quick.compress_whole(&self.params, input, &mut self.writer)?
+        {
+            *input = &[];
+            self.state = State::Finished;
+        }
         loop {
-            if let Method::Windowed(windowed) = &mut self.method
-                && !is_metadata
-                && !input.is_empty()
-            {
-                let room = windowed.room_in_block(&self.params);
+            if !is_metadata && !input.is_empty() {
+                let room = self.room_in_block().unwrap_or(0);
                 let (fits, rest) = input.split_at(room.min(input.len()));
-                windowed.add_input(fits)?;
+                match &mut self.method {
+                    Method::Fragments(..) => {}
+                    Method::Quick(quick) => quick.add_input(&self.params, fits)?,
+                    Method::Windowed(windowed) => windowed.add_input(fits)?,
+                }
                 *input = rest;
             }
             if !self.deliver(output) {
@@ -232,7 +312,7 @@ impl Stream {
             }
             match self.state {
                 State::Processing => {
-                    if !self.process(dictionary, operation, input)? {
+                    if !self.process(operation, input)? {
                         return Ok(EncodeStatus::Done);
                     }
                 }
@@ -245,7 +325,7 @@ impl Stream {
                 // Pads the output to a byte boundary.
                 State::Flushing => write_metadata_header(&mut self.writer, 0),
                 State::BeforeMetadata { size } => {
-                    self.end_block(dictionary, 0, Operation::Flush)?;
+                    self.end_block(0, Operation::Flush)?;
                     write_metadata_header(&mut self.writer, size);
                     self.state = State::InMetadata { left: size };
                 }
@@ -266,16 +346,19 @@ impl Stream {
         }
     }
 
+    fn room_in_block(&self) -> Option<usize> {
+        match &self.method {
+            Method::Fragments(..) => None,
+            Method::Quick(quick) => Some(quick.room_in_block(&self.params)),
+            Method::Windowed(windowed) => Some(windowed.room_in_block(&self.params)),
+        }
+    }
+
     /// Returns false if it waits for input.
-    fn process(
-        &mut self,
-        dictionary: Option<&PreparedDictionary>,
-        operation: Operation,
-        input: &mut &[u8],
-    ) -> memory::Result<bool> {
-        let (is_ready, fragment_size) = match &self.method {
-            Method::Windowed(windowed) => (windowed.room_in_block(&self.params) == 0, 0),
-            Method::Fragments(_) => (!input.is_empty(), self.params.block_size()),
+    fn process(&mut self, operation: Operation, input: &mut &[u8]) -> memory::Result<bool> {
+        let (is_ready, fragment_size) = match self.room_in_block() {
+            Some(room) => (room == 0, 0),
+            None => (!input.is_empty(), self.params.block_size()),
         };
         if !is_ready && operation == Operation::Process {
             return Ok(false);
@@ -287,10 +370,12 @@ impl Stream {
             Operation::Process
         };
         let is_last = operation == Operation::Finish;
-        let (trees, writer) = (&mut self.trees, &mut self.writer);
+        let writer = &mut self.writer;
         match &mut self.method {
-            Method::Fragments(method) => method.compress(fragment, is_last, trees, writer)?,
-            Method::Windowed(_) => self.end_block(dictionary, rest.len(), operation)?,
+            Method::Fragments(method, trees) => {
+                method.compress(fragment, is_last, trees, writer)?
+            }
+            _ => self.end_block(rest.len(), operation)?,
         }
         *input = rest;
         match operation {
@@ -301,19 +386,23 @@ impl Stream {
         Ok(true)
     }
 
-    fn end_block(
-        &mut self,
-        dictionary: Option<&PreparedDictionary>,
-        more_input: usize,
-        operation: Operation,
-    ) -> memory::Result<()> {
-        let Method::Windowed(windowed) = &mut self.method else {
-            return Ok(());
+    fn end_block(&mut self, more_input: usize, operation: Operation) -> memory::Result<()> {
+        let (params, writer) = (&mut self.params, &mut self.writer);
+        let mut hint_at = |unprocessed| {
+            if params.size_hint == 0 {
+                params.size_hint = unprocessed + more_input;
+            }
         };
-        if self.params.size_hint == 0 {
-            self.params.size_hint = windowed.unprocessed() + more_input;
+        match &mut self.method {
+            Method::Fragments(..) => Ok(()),
+            Method::Quick(quick) => {
+                hint_at(quick.unprocessed());
+                quick.end_block(params, operation, writer)
+            }
+            Method::Windowed(windowed) => {
+                hint_at(windowed.unprocessed());
+                windowed.end_block(params, operation, writer)
+            }
         }
-        let (trees, writer) = (&mut self.trees, &mut self.writer);
-        windowed.end_block(&self.params, dictionary, operation, trees, writer)
     }
 }

@@ -1,4 +1,6 @@
+use crate::lane_kernels::{IS_SUPPORTED, WRITTEN};
 use crate::support::{Random, copy, crc32, with_failing};
+use bun_deflate::lanes::Sheet;
 use bun_deflate::{Decompressed, Error, Output, Result, gunzip, inflate, inflate_message};
 use core::mem::MaybeUninit;
 
@@ -874,6 +876,14 @@ fn gzip_bits_that_count() {
 #[test]
 fn allocation_that_fails() {
     let Stream { bytes, data, .. } = final_sample();
+    // The thread keeps some memory, which it can do without.
+    let mut output = vec![0; data.len()];
+    assert!(
+        with_failing(0..9, || inflate(&bytes, Output::Slice(&mut output)))
+            .0
+            .is_ok()
+    );
+    assert!(to_slice(inflate, &bytes, data.len()) == Ok((bytes.len(), output)));
     for failing in 0.. {
         let mut vec = PREFIX.to_vec();
         let (result, allocations) = with_failing(failing..failing + 1, || {
@@ -887,4 +897,46 @@ fn allocation_that_fails() {
         assert!(matches!(result, Err(Error::Alloc(_))));
         assert_eq!(vec, PREFIX);
     }
+}
+
+#[test]
+fn long_blocks_with_and_without_lanes() {
+    let mut random = Random(9);
+    let litlen = shuffled(
+        &[0, 1, 1, 1, 2, 12, 20, 15, 20, 30, 23, 40, 40, 42, 28],
+        &mut random,
+    );
+    let offset = shuffled(&[0, 0, 0, 2, 28, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &mut random);
+    let mut stream = Stream::default();
+    stream.stored(false, &random.bytes(32768));
+    use_all(
+        stream.dynamic(false, &litlen, &offset),
+        &litlen,
+        &offset,
+        &mut random,
+    );
+    use_all(stream.fixed(false), &[1; 270], &offset, &mut random);
+    let usual = [vec![8; 255], vec![9; 2]].concat();
+    use_all(stream.dynamic(true, &usual, &[0]), &usual, &[], &mut random);
+    for in_lanes in [true, false] {
+        bun_deflate::free_spare_memory();
+        IS_SUPPORTED.set(in_lanes);
+        WRITTEN.set(0);
+        assert!(to_slice(inflate, &stream.bytes, stream.data.len()).is_ok());
+        assert_eq!(
+            WRITTEN.get() > (stream.data.len() - 32768) * 3 / 4,
+            in_lanes
+        );
+        stream.is_accepted();
+        for len in (33_000..stream.bytes.len()).step_by(997) {
+            refuses(inflate, &stream.bytes[..len], stream.data.len());
+        }
+    }
+}
+
+#[test]
+fn a_lap_has_to_fit_in_the_sheet() {
+    let mut bytes = [1; 4096];
+    let mut sheet = Sheet::slice(&mut bytes, 0..100, 32768, 32768, usize::MAX - 100);
+    assert!(!sheet.copy(1000, 50));
 }

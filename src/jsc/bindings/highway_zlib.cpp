@@ -1,23 +1,10 @@
-// The kernels of src/zlib, runtime-dispatched via Google Highway. src/highway/zlib.rs says what each takes.
+// The kernel of src/zlib, written with Google Highway. src/highway/zlib.rs says what it takes.
 
-// The list of highway_webp_decoder.cpp: with 256 bits the cache sets the pace.
-#undef HWY_DISABLED_TARGETS
-#define HWY_DISABLED_TARGETS (HWY_ALL_SVE | HWY_NEON | HWY_NEON_BF16 | HWY_SSE4 | (HWY_AVX2 - 1))
-#ifndef __OPTIMIZE__
-#error "Unless hwy::ChosenTarget::GetIndex() is inlined, the linker may keep that of a file with other targets."
-#endif
-
-#undef HWY_TARGET_INCLUDE
-#define HWY_TARGET_INCLUDE "highway_zlib.cpp"
-#include <hwy/foreach_target.h>
 #include <hwy/highway.h>
-#include "highway_dispatch.h"
 
 #include <stddef.h>
 #include <stdint.h>
 
-#ifndef BUN_ZLIB_TABLES
-#define BUN_ZLIB_TABLES
 namespace bun {
 
 // For each period up to 16, where in it each of 32 bytes is, and how many bytes the whole periods take.
@@ -25,7 +12,7 @@ struct Periods {
     alignas(16) uint8_t indices[17][32];
     uint8_t steps[17];
 };
-[[maybe_unused]] static constexpr Periods periods = [] {
+static constexpr Periods periods = [] {
     Periods table {};
     for (size_t period = 1; period <= 16; period++) {
         for (size_t i = 0; i < 32; i++)
@@ -36,7 +23,6 @@ struct Periods {
 }();
 
 } // namespace bun
-#endif
 
 HWY_BEFORE_NAMESPACE();
 namespace bun {
@@ -44,17 +30,6 @@ namespace HWY_NAMESPACE {
 
 namespace hn = hwy::HWY_NAMESPACE;
 
-void SubtractSaturating(uint16_t* HWY_RESTRICT values, size_t groups, uint16_t amount)
-{
-    const hn::ScalableTag<uint16_t> d;
-    const auto subtrahend = hn::Set(d, amount);
-    for (; groups != 0; groups--, values += 64) {
-        for (size_t i = 0; i < 64; i += hn::MaxLanes(d))
-            hn::StoreU(hn::SaturatedSub(hn::LoadU(d, values + i), subtrahend), d, values + i);
-    }
-}
-
-#if HWY_TARGET == HWY_STATIC_TARGET
 static HWY_INLINE void Repeat(const uint8_t* from, uint8_t* to, size_t period, size_t len)
 {
     const hn::Full128<uint8_t> d;
@@ -82,27 +57,16 @@ static HWY_INLINE void Repeat(const uint8_t* from, uint8_t* to, size_t period, s
         to += step;
     } while (to < end);
 }
-#endif
 
 // NOLINTNEXTLINE(google-readability-namespace-comments)
 } // namespace HWY_NAMESPACE
 } // namespace bun
 HWY_AFTER_NAMESPACE();
 
-#if HWY_ONCE
 namespace bun {
-HWY_EXPORT(SubtractSaturating);
-
 // `period` is 1 to 31. Reads so many bytes or 16, then writes up to `len + 31`. Not dispatched, so that LTO inlines it.
 extern "C" HWY_ATTR void highway_repeat(const uint8_t* from, uint8_t* to, size_t period, size_t len)
 {
     HWY_STATIC_DISPATCH(Repeat)(from, to, period, len);
 }
-
-// A group has 64 values.
-extern "C" void highway_subtract_saturating(uint16_t* values, size_t groups, uint16_t amount)
-{
-    BUN_HWY_DISPATCH(SubtractSaturating)(values, groups, amount);
-}
 } // namespace bun
-#endif

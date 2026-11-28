@@ -2016,6 +2016,29 @@ export const fileOverrides: FileOverride[] = [
     desc: "LTO inlines a function only into one that has all of its CPU features, and these are called from Rust loops.",
   },
   {
+    file: "src/jsc/bindings/highway_brotli.cpp",
+    extraFlags: ["-fstack-clash-protection"],
+    when: c => c.x64 && (c.linux || c.freebsd),
+    desc: "A frame of several pages gets probed, like those of the Rust code that calls it.",
+  },
+  {
+    file: "src/jsc/bindings/highway_brotli_quick.cpp",
+    extraFlags: ["-O2"],
+    desc: "Same as highway_json.cpp below in debug builds. Otherwise as fast as -O3, and smaller.",
+  },
+  {
+    file: "src/jsc/bindings/highway_brotli_quick.cpp",
+    extraFlags: ["-fsanitize=safe-stack"],
+    when: usesSafeStack,
+    desc: "It has arrays on the stack that depend on the input, and never calls back into JavaScript.",
+  },
+  {
+    file: "src/jsc/bindings/highway_brotli_quick.cpp",
+    extraFlags: ["-fstack-clash-protection"],
+    when: c => c.x64 && (c.linux || c.freebsd),
+    desc: "A frame of several pages gets probed, like those of the Rust code that calls it.",
+  },
+  {
     file: "src/jsc/bindings/highway_byte_set.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,
@@ -2026,6 +2049,12 @@ export const fileOverrides: FileOverride[] = [
     extraFlags: ["-O2"],
     when: c => c.debug,
     desc: "Same as highway_json.cpp below: the kernels run over every byte of what is in a gzip or zlib stream.",
+  },
+  {
+    file: "src/jsc/bindings/highway_inflate.cpp",
+    extraFlags: ["-fno-lto", "-fno-whole-program-vtables", "-mbranches-within-32B-boundaries"],
+    when: c => c.x64 && !c.windows,
+    desc: "Skylake to Cascade Lake decode a jump across 32 bytes each time anew (JCC erratum): 3-10%. LTO would drop the option.",
   },
   {
     file: "src/jsc/bindings/highway_jpeg.cpp",
@@ -2052,6 +2081,30 @@ export const fileOverrides: FileOverride[] = [
     desc: "Same as highway_json.cpp below: the kernels run over every pixel of a WebP image.",
   },
   {
+    file: "src/jsc/bindings/highway_deflate.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every byte that is deflated.",
+  },
+  {
+    file: "src/jsc/bindings/highway_deflate.cpp",
+    extraFlags: ["-fsanitize=safe-stack"],
+    when: usesSafeStack,
+    desc: "Same as highway_zstd.cpp.",
+  },
+  {
+    file: "src/jsc/bindings/highway_deflate.cpp",
+    extraFlags: ["-fstack-clash-protection"],
+    when: c => c.x64 && (c.linux || c.freebsd),
+    desc: "Same as highway_zstd.cpp.",
+  },
+  {
+    file: "src/jsc/bindings/highway_deflate.cpp",
+    extraFlags: ["-fno-lto", "-fno-whole-program-vtables", "-mbranches-within-32B-boundaries"],
+    when: c => c.x64 && !c.windows,
+    desc: "Same as highway_inflate.cpp: 1-4%.",
+  },
+  {
     file: "src/jsc/bindings/highway_zlib.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,
@@ -2062,6 +2115,24 @@ export const fileOverrides: FileOverride[] = [
     extraFlags: ["-O2"],
     when: c => c.debug,
     desc: "Same as highway_json.cpp below: the XML structural-index kernel must be optimized even in debug builds.",
+  },
+  {
+    file: "src/jsc/bindings/highway_zstd_stages.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every byte that the lower levels of zstd compress.",
+  },
+  {
+    file: "src/jsc/bindings/highway_zstd_stages.cpp",
+    extraFlags: ["-fsanitize=safe-stack"],
+    when: usesSafeStack,
+    desc: "Same as highway_zstd.cpp.",
+  },
+  {
+    file: "src/jsc/bindings/highway_zstd_stages.cpp",
+    extraFlags: ["-fstack-clash-protection"],
+    when: c => c.x64 && (c.linux || c.freebsd),
+    desc: "A frame of several pages gets probed, like those of the Rust code that calls it.",
   },
   {
     file: "src/jsc/bindings/highway_zstd.cpp",
@@ -2080,6 +2151,42 @@ export const fileOverrides: FileOverride[] = [
     extraFlags: ["-fstack-clash-protection"],
     when: c => c.x64 && (c.linux || c.freebsd),
     desc: "A frame of several pages gets probed, like those of the Rust code that calls it.",
+  },
+  {
+    file: "src/jsc/bindings/highway_zstd_ladder.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every byte that the higher levels of zstd compress.",
+  },
+  {
+    file: "src/jsc/bindings/highway_zstd_ladder.cpp",
+    extraFlags: ["-fsanitize=safe-stack"],
+    when: usesSafeStack,
+    desc: "Same as highway_zstd.cpp.",
+  },
+  {
+    file: "src/jsc/bindings/highway_zstd_ladder.cpp",
+    extraFlags: ["-fstack-clash-protection"],
+    when: c => c.x64 && (c.linux || c.freebsd),
+    desc: "Same as highway_zstd.cpp.",
+  },
+  {
+    file: "src/jsc/bindings/highway_inflate.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every byte that is inflated.",
+  },
+  {
+    file: "src/jsc/bindings/highway_inflate.cpp",
+    extraFlags: ["-fsanitize=safe-stack"],
+    when: usesSafeStack,
+    desc: "Same as highway_zstd.cpp.",
+  },
+  {
+    file: "src/jsc/bindings/highway_inflate.cpp",
+    extraFlags: ["-fstack-clash-protection"],
+    when: c => c.x64 && (c.linux || c.freebsd),
+    desc: "Same as highway_zstd.cpp.",
   },
   {
     file: "src/jsc/bindings/highway_json.cpp",

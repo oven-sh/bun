@@ -14,6 +14,7 @@ extern "C" JSC::EncodedJSValue CompressionStreamCoder__transform(CompressionStre
 extern "C" JSC::EncodedJSValue CompressionStreamCoder__transformInto(CompressionStreamCoder* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish, void* sinkController, bool* more);
 // Off-thread step. It owns the coder until Bun__CompressionStream__deliverAsync completes it.
 extern "C" void CompressionStreamCoder__transformAsync(CompressionStreamCoder* coder, JSC::JSGlobalObject* global, JSC::EncodedJSValue streamCell, JSC::EncodedJSValue chunk, const uint8_t* input, size_t inputLen, bool finish);
+extern "C" JSC::EncodedJSValue CompressionStreamCoder__takeOutput(JSC::JSGlobalObject* global, void* outOwner);
 
 namespace Bun {
 namespace WebStreams {

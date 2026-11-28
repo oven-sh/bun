@@ -1,5 +1,4 @@
-// More of zlib-golden-steps.test.ts. Each case tells src/zlib from a version with one small mistake that the others
-// let through, so all builds get all of them.
+// More of zlib-golden-steps.test.ts, for corners of zlib-ng's way to compress. All builds get all of them.
 import { expect, test } from "bun:test";
 import { deflateDifferences, inParts, loadCases } from "./observe";
 

@@ -1,4 +1,4 @@
-// The data-parallel parts of the encoder in src/brotli, in the arithmetic of google/brotli (LICENSE.md). All targets give the same results.
+// The data-parallel parts of the encoder in src/brotli. All targets give the same results.
 
 // Besides the list in scripts/build/deps/highway.ts: SVE, all above AVX2, and what would compile to the same as the baseline.
 #undef HWY_DISABLED_TARGETS
@@ -13,15 +13,73 @@
 #include <hwy/highway.h>
 #include "highway_dispatch.h"
 
+#include <algorithm>
 #include <array>
+#include <bit>
 #include <iterator>
-#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 #include <utility>
 
-// The output of the encoder depends on each rounding.
-#pragma STDC FP_CONTRACT OFF
+#ifndef BUN_HIGHWAY_BROTLI_TYPES
+#define BUN_HIGHWAY_BROTLI_TYPES
+namespace bun::brotli {
+
+template<class T, size_t N> using Lanes __attribute__((ext_vector_type(N))) = T;
+using U8x8 = Lanes<uint8_t, 8>;
+using U8x16 = Lanes<uint8_t, 16>;
+using U8x32 = Lanes<uint8_t, 32>;
+using U16x8 = Lanes<uint16_t, 8>;
+using I16x16 = Lanes<int16_t, 16>;
+using U16x16 = Lanes<uint16_t, 16>;
+using U32x4 = Lanes<uint32_t, 4>;
+using U32x8 = Lanes<uint32_t, 8>;
+using I8x32 = Lanes<int8_t, 32>;
+using I32x4 = Lanes<int32_t, 4>;
+using I64x4 = Lanes<int64_t, 4>;
+using I32x8 = Lanes<int32_t, 8>;
+
+constexpr size_t kRungs = 7, kChunk = 512, kSpan = 32, kLongest = 352, kRing = 1024, kPrefetched = 24, kPad = 8;
+constexpr size_t kMaxHashed = 128, kEntries = kRungs * (kChunk + kPad) + kPad + kPrefetched;
+
+// These two are also in src/highway/brotli.rs.
+struct Rung {
+    uint32_t length, level, start, size_bits, next;
+};
+
+struct Chunk {
+    uint32_t mask, from, to, floor, end, origin, max_distance, position_bits;
+    int32_t classes[3];
+};
+
+struct Work {
+    uint64_t found[kEntries];
+    uint32_t slots[kEntries], entries[kEntries];
+    uint32_t hashes[2][kChunk + kMaxHashed + 16];
+    uint16_t seeds[2 * kEntries], below[kEntries], places[2][kChunk + 16];
+    int16_t ranks[kChunk + 32];
+    uint8_t bytes[kSpan + kChunk + kLongest + kSpan];
+};
+
+template<size_t N, class F> constexpr auto Tabulate(F entry)
+{
+    std::array<decltype(entry(0)), N> all {};
+    for (size_t i = 0; i < N; i++)
+        all[i] = entry(i);
+    return all;
+}
+
+// The numbers of the bits that are set.
+inline constexpr auto kSetBits = Tabulate<256>([](size_t bits) {
+    uint64_t all = 0;
+    for (size_t bit = 8; bit--;)
+        all = bits >> bit & 1 ? all << 8 | bit : all;
+    return all;
+});
+
+} // namespace bun::brotli
+#endif
 
 HWY_BEFORE_NAMESPACE();
 namespace bun {
@@ -29,413 +87,61 @@ namespace HWY_NAMESPACE {
 
 namespace hn = hwy::HWY_NAMESPACE;
 
-using DF64 = hn::CappedTag<double, 4>;
-using VF64 = hn::Vec<DF64>;
-using MF64 = hn::Mask<DF64>;
-static constexpr size_t kLanes = hn::MaxLanes(DF64());
-
-static constexpr size_t kGroup = 8;
-static constexpr size_t kGroupParts = kGroup / kLanes;
-
-static HWY_INLINE uint32_t BitsOf(const MF64 (&masks)[kGroupParts])
+template<size_t kGroups>
+static HWY_INLINE void FindSwitchesIn(const uint16_t* HWY_RESTRICT symbols, size_t steps, size_t stride, const uint16_t* HWY_RESTRICT costs, size_t alphabet_size,
+    uint16_t switch_cost, uint16_t* HWY_RESTRICT bits)
 {
-    const DF64 d;
-    const hn::Repartition<uint32_t, DF64> d32;
-    const auto narrowed = [&](size_t part) HWY_ATTR {
-        return hn::ConcatEven(d32, hn::BitCast(d32, hn::VecFromMask(d, masks[part + 1])), hn::BitCast(d32, hn::VecFromMask(d, masks[part])));
-    };
-#if HWY_MAX_BYTES >= 32
-    return hn::BitsFromMask(d32, hn::MaskFromVec(narrowed(0)));
-#else
-    const hn::Repartition<uint16_t, DF64> d16;
-    return hn::BitsFromMask(d16, hn::MaskFromVec(hn::ConcatEven(d16, hn::BitCast(d16, narrowed(2)), hn::BitCast(d16, narrowed(0)))));
-#endif
-}
-
-static void BrotliFindSwitches(const uint16_t* HWY_RESTRICT symbols, size_t length, const double* HWY_RESTRICT symbol_costs,
-    size_t alphabet_size, size_t groups, double switch_cost, double* HWY_RESTRICT costs, uint8_t* HWY_RESTRICT switches,
-    uint8_t* HWY_RESTRICT cheapest)
-{
-    constexpr size_t kPrologue = 2000;
-    const DF64 d;
-    const VF64 too_much = hn::Set(d, 1e99);
-    const size_t low_groups = HWY_MIN(groups, size_t { 8 });
-    VF64 min_cost = hn::Zero(d);
-    VF64 max_cost = too_much;
-    uint8_t unused;
-    uint8_t* previous_cheapest = &unused;
-    for (size_t position = 0; position < length; position++) {
-        const double* added = symbol_costs + HWY_MIN(size_t { symbols[position] }, alphabet_size - 1) * groups * kGroup;
-        VF64 smallest[2] = { too_much, too_much };
-        // Finishes the previous symbol, which had to wait for `min_cost`.
-        const auto step = [&](size_t group, uint64_t& zeros) HWY_ATTR {
-            MF64 is_high[kGroupParts], is_zero[kGroupParts];
-            for (size_t part = 0; part < kGroupParts; part++) {
-                const size_t at = group * kGroup + part * kLanes;
-                const VF64 relative = hn::Sub(hn::LoadU(d, costs + at), min_cost);
-                is_high[part] = hn::Ge(relative, max_cost);
-                is_zero[part] = hn::Eq(relative, hn::Zero(d));
-                const VF64 next = hn::Add(hn::Min(relative, max_cost), hn::LoadU(d, added + at));
-                smallest[part % 2] = hn::Min(next, smallest[part % 2]);
-                hn::StoreU(next, d, costs + at);
+    const hn::CappedTag<uint16_t, 16> d;
+    constexpr size_t kLanes = hn::MaxLanes(d), kParts = 16 / kLanes;
+    hn::Vec<decltype(d)> sums[kGroups * kParts];
+    for (auto& sum : sums)
+        sum = hn::Zero(d);
+    const auto limit = hn::Set(d, switch_cost);
+    for (size_t step = 0; step < steps; ++step, bits += 2 * kGroups) {
+        hn::Vec<decltype(d)> added[kGroups * kParts];
+        for (auto& sum : added)
+            sum = hn::Zero(d);
+        for (size_t i = 0; i < stride; ++i) {
+            const uint16_t* row = costs + HWY_MIN(size_t { *symbols }, alphabet_size - 1) * 16 * kGroups;
+            ++symbols;
+            for (size_t part = 0; part < kGroups * kParts; ++part)
+                added[part] = hn::Add(added[part], hn::LoadU(d, row + part * kLanes));
+        }
+        auto least = sums[0] = hn::Add(sums[0], added[0]);
+        for (size_t part = 1; part < kGroups * kParts; ++part)
+            least = hn::Min(least, sums[part] = hn::Add(sums[part], added[part]));
+        least = hn::MinOfLanes(d, least);
+        for (size_t group = 0; group < kGroups; ++group) {
+            uint32_t switches = 0, cheapest = 0;
+            for (size_t part = 0; part < kParts; ++part) {
+                auto& sum = sums[group * kParts + part];
+                cheapest |= hn::BitsFromMask(d, hn::Eq(sum, least)) << (part * kLanes);
+                sum = hn::Min(hn::Sub(sum, least), limit);
+                switches |= hn::BitsFromMask(d, hn::Eq(sum, limit)) << (part * kLanes);
             }
-            switches[group] = BitsOf(is_high);
-            zeros = (zeros >> 8) | (uint64_t { BitsOf(is_zero) } << 56);
-        };
-        uint64_t low_zeros = 0, high_zeros = 0;
-        for (size_t group = 0; group < low_groups; group++)
-            step(group, low_zeros);
-        for (size_t group = 8; group < groups; group++)
-            step(group, high_zeros);
-        *previous_cheapest = low_zeros ? hwy::Num0BitsBelowLS1Bit_Nonzero64(low_zeros) - 8 * (8 - low_groups)
-                                       : 64 + hwy::Num0BitsBelowLS1Bit_Nonzero64(high_zeros | uint64_t { 1 } << 63) - 8 * (16 - groups);
-        previous_cheapest = cheapest + position;
-        switches += groups;
-        min_cost = hn::MinOfLanes(d, hn::Min(smallest[0], smallest[1]));
-        double limit = switch_cost;
-        if (position < kPrologue)
-            limit *= 0.77 + (0.07 / kPrologue) * static_cast<double>(position);
-        max_cost = hn::Set(d, limit);
+            bits[2 * group] = switches;
+            bits[2 * group + 1] = cheapest;
+        }
     }
-    size_t lane = 0;
-    while (lane + 1 < groups * kGroup && costs[lane] != hn::GetLane(min_cost))
-        lane++;
-    *previous_cheapest = lane;
 }
 
-// Four histograms at a time, one in each lane: the sum for each has to be in the order of the symbols.
-static constexpr size_t kFourParts = 4 / kLanes;
-static constexpr size_t kWord = 64;
-// `MAX_SYMBOLS` and `SPARE_LOGARITHMS` in src/highway/brotli.rs.
-static constexpr size_t kMaxSymbols = 704, kSpareEntries = 256;
-static_assert(4 * kWord <= kSpareEntries);
-
-struct Logged {
-    VF64 log[kFourParts], number[kFourParts];
-};
-
-// The entry for a number is at twice the number.
-static HWY_INLINE Logged LookUp(const double* HWY_RESTRICT table, const uint32_t* HWY_RESTRICT twice, size_t stride)
+static void BrotliFindSwitches(const uint16_t* HWY_RESTRICT symbols, size_t steps, size_t stride, const uint16_t* HWY_RESTRICT costs, size_t alphabet_size,
+    size_t groups, uint16_t switch_cost, uint16_t* HWY_RESTRICT bits)
 {
-    const DF64 d;
-    const auto entry = [&](size_t lane) HWY_ATTR { return hn::LoadU(hn::Full128<double>(), table + twice[lane * stride]); };
-#if HWY_MAX_BYTES >= 32
-    const auto even = hn::Combine(d, entry(2), entry(0)), odd = hn::Combine(d, entry(3), entry(1));
-    return { { hn::InterleaveLower(d, even, odd) }, { hn::InterleaveUpper(d, even, odd) } };
-#else
-    return { { hn::InterleaveLower(d, entry(0), entry(1)), hn::InterleaveLower(d, entry(2), entry(3)) },
-        { hn::InterleaveUpper(d, entry(0), entry(1)), hn::InterleaveUpper(d, entry(2), entry(3)) } };
-#endif
-}
-
-// Makes entries from `limit` on, which is a power of two, for what is not below it. `count` is a multiple of 4 up to `kSpareEntries`.
-static HWY_NOINLINE void BrotliAddEntries(double* HWY_RESTRICT table, uint32_t limit, uint32_t* HWY_RESTRICT twice, size_t count)
-{
-    const hn::Full128<uint32_t> d;
-    uint32_t next = limit;
-    for (size_t at = 0; at < count; at += 4) {
-        const auto high_bits = hn::And(hn::LoadU(d, twice + at), hn::Set(d, 0 - limit));
-        for (uint64_t large = hn::BitsFromMask(d, hn::Ne(high_bits, hn::Zero(d))); large; large &= large - 1) {
-            uint32_t& index = twice[at + hwy::Num0BitsBelowLS1Bit_Nonzero64(large)];
-            table[next + 1] = index / 2;
-            table[next] = log2(table[next + 1]);
-            index = next;
-            next += 2;
-        }
+    switch (groups) {
+    case 1:
+        return FindSwitchesIn<1>(symbols, steps, stride, costs, alphabet_size, switch_cost, bits);
+    case 2:
+        return FindSwitchesIn<2>(symbols, steps, stride, costs, alphabet_size, switch_cost, bits);
+    case 3:
+        return FindSwitchesIn<3>(symbols, steps, stride, costs, alphabet_size, switch_cost, bits);
+    default:
+        return FindSwitchesIn<4>(symbols, steps, stride, costs, alphabet_size, switch_cost, bits);
     }
 }
 
-struct Sums {
-    VF64 bits[kFourParts];
-    // For the codes that extend a run of zeros.
-    VF64 extension_bits[kFourParts];
-};
-
-// Returns the end of the `lengths` of the codes, which are negative for symbols that a histogram does not have.
-template<bool kHasRuns>
-static HWY_INLINE int32_t* SumSymbols(const uint32_t* HWY_RESTRICT common, const uint32_t* const* HWY_RESTRICT others, size_t size,
-    const uint64_t* HWY_RESTRICT used, double* HWY_RESTRICT table, uint32_t limit, const Logged& total, Sums& sums,
-    int32_t* HWY_RESTRICT lengths)
-{
-    static constexpr auto kNumbers = [] {
-        std::array<double, kWord> numbers {};
-        for (size_t i = 0; i < kWord; i++)
-            numbers[i] = i;
-        return numbers;
-    }();
-    const DF64 d;
-    const hn::Rebind<int32_t, DF64> di;
-    const hn::Repartition<uint32_t, DF64> du;
-    alignas(32) uint32_t twice[4 * kWord];
-    VF64 previous[kFourParts];
-    for (auto& symbol : previous)
-        symbol = hn::Set(d, kWord - 1);
-    for (size_t first = 0; first < size; first += kWord) {
-        for (auto& symbol : previous)
-            symbol = hn::Sub(symbol, hn::Set(d, kWord));
-        const size_t count = HWY_MIN(size - first, kWord);
-        uint64_t word = used[first / kWord] & (~uint64_t { 0 } >> (kWord - count));
-        if (!word)
-            continue;
-        auto any = hn::Zero(du);
-        for (size_t at = 0; at < count; at += hn::MaxLanes(du)) {
-            for (size_t lane = 0; lane < 4; lane++) {
-                const auto sum = hn::Add(hn::LoadU(du, common + first + at), hn::LoadU(du, others[lane] + first + at));
-                hn::Store(hn::Add(sum, sum), du, twice + lane * kWord + at);
-                any = hn::Or(any, sum);
-            }
-        }
-        if (HWY_UNLIKELY(!hn::AllTrue(du, hn::Eq(hn::And(any, hn::Set(du, 0 - limit / 2)), hn::Zero(du))))) {
-            for (size_t lane = 0; lane < 4; lane++)
-                hwy::ZeroBytes(twice + lane * kWord + count, sizeof(uint32_t) * (kWord - count));
-            BrotliAddEntries(table, limit, twice, 4 * kWord);
-        }
-        do {
-            const size_t symbol = hwy::Num0BitsBelowLS1Bit_Nonzero64(word);
-            const Logged counts = LookUp(table, twice + symbol, kWord);
-            for (size_t part = 0; part < kFourParts; part++) {
-                const auto cost = hn::Sub(total.log[part], counts.log[part]);
-                if constexpr (kHasRuns) {
-                    const auto here = hn::Add(hn::Min(cost, hn::Zero(d)), hn::Set(d, kNumbers[symbol]));
-                    const auto gap = hn::Sub(here, previous[part]);
-                    previous[part] = hn::Max(previous[part], here);
-                    const auto from_zeros = [&](double zeros) HWY_ATTR { return hn::Gt(gap, hn::Set(d, zeros)); };
-                    const auto bits_from = [&](double zeros) HWY_ATTR { return hn::IfThenElseZero(from_zeros(zeros), hn::Set(d, 3.0)); };
-                    // Like adding 3 twice: with five symbols or more, a sum that can be inexact is above 4.
-                    sums.bits[part] = hn::Add(sums.bits[part], hn::Add(bits_from(3), bits_from(10)));
-                    sums.extension_bits[part] = hn::Add(sums.extension_bits[part], bits_from(10));
-                    if (HWY_UNLIKELY(!hn::AllFalse(d, from_zeros(66)))) {
-                        sums.bits[part] = hn::Add(hn::Add(sums.bits[part], bits_from(66)), bits_from(514));
-                        sums.extension_bits[part] = hn::Add(sums.extension_bits[part], hn::Add(bits_from(66), bits_from(514)));
-                    }
-                }
-                sums.bits[part] = hn::Add(sums.bits[part], hn::Mul(counts.number[part], cost));
-                hn::StoreU(hn::DemoteInRangeTo(di, hn::Add(cost, hn::Set(d, 0.5))), di, lengths + part * kLanes);
-            }
-            lengths += 4;
-            word &= word - 1;
-        } while (word);
-    }
-    return lengths;
-}
-
-static void BrotliEstimateCosts(const uint32_t* HWY_RESTRICT common, const uint32_t* const* HWY_RESTRICT others, size_t size,
-    const uint64_t* HWY_RESTRICT used, const uint32_t* HWY_RESTRICT totals, const uint32_t* HWY_RESTRICT gaps, double* HWY_RESTRICT table,
-    uint32_t limit, double* HWY_RESTRICT costs)
-{
-    const DF64 d;
-    const hn::Rebind<int32_t, DF64> di;
-    const hn::Repartition<int8_t, DF64> d8;
-    const hn::Repartition<int16_t, DF64> d16;
-    const hn::Repartition<int32_t, DF64> d32;
-    const hn::Full128<uint32_t> d4;
-    const auto doubled = [&](const uint32_t* four) HWY_ATTR { return hn::ShiftLeft<1>(hn::LoadU(d4, four)); };
-
-    // How often each length occurs, then the code for runs of zeros, and then the sum.
-    alignas(16) uint32_t twice[16 + 2][4];
-    hn::Store(doubled(totals), d4, twice[0]);
-    BrotliAddEntries(table, limit, twice[0], 4);
-    const Logged total = LookUp(table, twice[0], 1);
-    const auto lone_zeros = doubled(gaps), runs = doubled(gaps + 4);
-
-    constexpr size_t kBytes = hn::MaxLanes(d8);
-    alignas(32) int32_t lengths[4 * kMaxSymbols + kBytes];
-    Sums sums;
-    for (size_t part = 0; part < kFourParts; part++)
-        sums.bits[part] = sums.extension_bits[part] = hn::Zero(d);
-    int32_t* const lengths_end = hn::AllTrue(d4, hn::Eq(runs, hn::Zero(d4)))
-        ? SumSymbols<false>(common, others, size, used, table, limit, total, sums, lengths)
-        : SumSymbols<true>(common, others, size, used, table, limit, total, sums, lengths);
-    for (size_t i = 0; i < kBytes; i += kBytes / 4)
-        hn::StoreU(hn::Set(d32, -1), d32, lengths_end + i);
-
-    alignas(32) int8_t bytes[4 * kMaxSymbols];
-    int8_t* bytes_end = bytes;
-    auto longest = hn::Set(d8, 1);
-    for (const int32_t* from = lengths; from < lengths_end; from += kBytes, bytes_end += kBytes) {
-        const auto half = [&](size_t at) HWY_ATTR { return hn::ReorderDemote2To(d16, hn::Load(d32, from + at), hn::Load(d32, from + at + kBytes / 4)); };
-        const auto packed = hn::Min(hn::ReorderDemote2To(d8, half(0), half(kBytes / 2)), hn::Set(d8, 15));
-        longest = hn::Max(longest, packed);
-        hn::Store(packed, d8, bytes_end);
-    }
-    const size_t kinds = hn::AllFalse(d8, hn::Gt(longest, hn::Set(d8, 7))) ? 8 : 16;
-
-    auto sum = hn::Add(lone_zeros, runs);
-    for (size_t first = 0; first < kinds; first += 8) {
-        hn::Vec<decltype(d8)> seen[8];
-        for (auto& count : seen)
-            count = hn::Zero(d8);
-        for (const int8_t* at = bytes; at < bytes_end; at += kBytes) {
-            const auto length = hn::Sub(hn::Load(d8, at), hn::Set(d8, static_cast<int8_t>(first)));
-            for (size_t i = 0; i < 8; i++)
-                seen[i] = hn::Sub(seen[i], hn::VecFromMask(d8, hn::Eq(length, hn::Set(d8, static_cast<int8_t>(i)))));
-        }
-        for (size_t i = 0; i < 8; i++) {
-            const auto by_lane = hn::TableLookupBytes(seen[i], hn::Dup128VecFromValues(d8, 0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15));
-            const auto pairs = hn::SatWidenMulPairwiseAdd(d16, hn::BitCast(hn::RebindToUnsigned<decltype(d8)>(), by_lane), hn::Set(d8, 2));
-            const auto fours = hn::BitCast(hn::RebindToUnsigned<decltype(d32)>(), hn::WidenMulPairwiseAdd(d32, pairs, hn::Set(d16, 1)));
-#if HWY_MAX_BYTES >= 32
-            const auto all = hn::Add(hn::LowerHalf(d4, fours), hn::UpperHalf(d4, fours));
-#else
-            const auto all = fours;
-#endif
-            sum = hn::Add(sum, all);
-            hn::Store(all, d4, twice[first + i]);
-        }
-    }
-    for (size_t part = 0; part < kFourParts; part++) {
-        const auto extensions = hn::DemoteInRangeTo(di, hn::Div(sums.extension_bits[part], hn::Set(d, 1.5)));
-        hn::StoreU(extensions, di, reinterpret_cast<int32_t*>(twice[kinds]) + part * kLanes);
-    }
-    hn::Store(hn::Add(sum, hn::Load(d4, twice[kinds])), d4, twice[kinds + 1]);
-    hn::Store(hn::Add(runs, hn::Load(d4, twice[kinds])), d4, twice[kinds]);
-    hn::Store(hn::Add(lone_zeros, hn::Load(d4, twice[0])), d4, twice[0]);
-    const auto any = hn::Or3(hn::Load(d4, twice[kinds + 1]), lone_zeros, runs);
-    if (HWY_UNLIKELY(!hn::AllTrue(d4, hn::Lt(any, hn::Set(d4, limit)))))
-        BrotliAddEntries(table, limit, twice[0], 4 * (kinds + 2));
-
-    VF64 entropy[kFourParts];
-    for (auto& bits : entropy)
-        bits = hn::Zero(d);
-    for (size_t i = 0; i <= kinds; i++) {
-        const Logged count = LookUp(table, twice[i], 1);
-        for (size_t part = 0; part < kFourParts; part++)
-            entropy[part] = hn::Sub(entropy[part], hn::Mul(count.number[part], count.log[part]));
-    }
-    const Logged codes = LookUp(table, twice[kinds + 1], 1);
-
-    longest = hn::Max(longest, hn::BitCast(d8, hn::Reverse(d32, hn::BitCast(d32, longest))));
-    longest = hn::Max(longest, hn::BitCast(d8, hn::Shuffle1032(hn::BitCast(d32, longest))));
-    longest = hn::Max(longest, hn::BitCast(d8, hn::Shuffle2301(hn::BitCast(d32, longest))));
-    const auto max_lengths = hn::PromoteTo(hn::Full128<int32_t>(), hn::ResizeBitCast(hn::Full32<int8_t>(), longest));
-    alignas(16) int32_t header_bits[4];
-    hn::Store(hn::Add(hn::ShiftLeft<1>(max_lengths), hn::Set(hn::Full128<int32_t>(), 18)), hn::Full128<int32_t>(), header_bits);
-    for (size_t part = 0; part < kFourParts; part++) {
-        const auto header = hn::PromoteTo(d, hn::LoadU(di, header_bits + part * kLanes));
-        const auto code_bits = hn::Max(hn::Add(entropy[part], hn::Mul(codes.number[part], codes.log[part])), codes.number[part]);
-        hn::StoreU(hn::Add(hn::Add(sums.bits[part], header), code_bits), d, costs + part * kLanes);
-    }
-}
-
-#if HWY_MAX_BYTES >= 32
-
-static size_t BrotliRemovePairs(double* HWY_RESTRICT costs, uint32_t* HWY_RESTRICT pairs, size_t count, uint32_t a, uint32_t b)
-{
-    const DF64 d;
-    const hn::RebindToUnsigned<DF64> d64;
-    const hn::Repartition<uint32_t, DF64> du;
-    const hn::Repartition<int32_t, DF64> di;
-    // In all lanes.
-    auto best_cost = hn::Set(d, 1e99);
-    auto best_pair = hn::Set(du, ~uint32_t { 0 });
-    auto best_apart = hn::Zero(di);
-    const auto apart_of = [&](hn::Vec<decltype(du)> pair) HWY_ATTR {
-        return hn::BitCast(di, hn::Sub(pair, hn::BitCast(du, hn::ShiftLeft<32>(hn::BitCast(d64, pair)))));
-    };
-    size_t kept = 0;
-    for (size_t at = 0; at + kLanes <= count; at += kLanes) {
-        auto cost = hn::LoadU(d, costs + at);
-        auto pair = hn::LoadU(du, pairs + 2 * at);
-        const auto is_gone = hn::VecFromMask(du, hn::Or(hn::Eq(pair, hn::Set(du, a)), hn::Eq(pair, hn::Set(du, b))));
-        const auto stays = hn::RebindMask(d, hn::Eq(hn::BitCast(d64, is_gone), hn::Zero(d64)));
-        const auto apart = apart_of(pair);
-        const auto better = [&]() HWY_ATTR {
-            const auto is_nearer = hn::MaskFromVec(hn::BitCast(d, hn::DupOdd(hn::VecFromMask(di, hn::Lt(apart, best_apart)))));
-            return hn::And(stays, hn::Or(hn::Lt(cost, best_cost), hn::And(hn::Eq(cost, best_cost), is_nearer)));
-        };
-        for (auto found = better(); HWY_UNLIKELY(!hn::AllFalse(d, found));) {
-            const size_t first = at + hn::FindKnownFirstTrue(d, found);
-            const auto lane = hn::SetOnlyFirst(found);
-            cost = hn::IfThenElse(lane, best_cost, cost);
-            pair = hn::IfVecThenElse(hn::BitCast(du, hn::VecFromMask(d, lane)), best_pair, pair);
-            best_cost = hn::Set(d, costs[first]);
-            best_pair = hn::OddEven(hn::Set(du, pairs[2 * first + 1]), hn::Set(du, pairs[2 * first]));
-            best_apart = apart_of(best_pair);
-            found = hn::AndNot(lane, better());
-        }
-        hn::StoreU(hn::BitCast(du, hn::Compress(hn::BitCast(d, pair), stays)), du, pairs + 2 * kept);
-        kept += hn::CompressStore(cost, stays, d, costs + kept);
-    }
-    costs[0] = hn::GetLane(best_cost);
-    pairs[0] = hn::GetLane(best_pair);
-    pairs[1] = hn::ExtractLane(best_pair, 1);
-    return kept;
-}
-
-#else
-
-// For each set of four elements of 8 bytes to leave out, the bytes of the others.
-struct Remainders {
-    alignas(16) uint8_t bytes[16][32];
-    uint8_t counts[16];
-};
-
-static constexpr Remainders kRemainders = [] {
-    Remainders all {};
-    for (size_t gone = 0; gone < 16; gone++) {
-        for (size_t byte = 0; byte < 32; byte++) {
-            if (gone >> (byte / 8) & 1)
-                continue;
-            all.bytes[gone][8 * all.counts[gone] + byte % 8] = byte;
-            all.counts[gone] += byte % 8 == 7;
-        }
-    }
-    return all;
-}();
-
-// `PAIR_GROUP` in src/highway/brotli.rs at a time, since getting bits out of a mask takes long.
-static size_t BrotliRemovePairs(double* HWY_RESTRICT costs, uint32_t* HWY_RESTRICT pairs, size_t count, uint32_t a, uint32_t b)
-{
-    const DF64 d;
-    const hn::Repartition<uint32_t, DF64> du;
-    const hn::Repartition<int32_t, DF64> di;
-    const hn::Repartition<uint8_t, DF64> d8;
-    double best_cost = 1e99;
-    uint32_t best_first = ~uint32_t { 0 }, best_second = best_first;
-    const auto apart = [](uint32_t first, uint32_t second) { return static_cast<int32_t>(second - first); };
-    const auto narrowed = [&](MF64 low, MF64 high) HWY_ATTR {
-        return hn::MaskFromVec(hn::ConcatEven(du, hn::BitCast(du, hn::VecFromMask(d, high)), hn::BitCast(du, hn::VecFromMask(d, low))));
-    };
-    const auto keep = [&](const void* from, uint64_t gone, void* to) HWY_ATTR {
-        const auto low = hn::LoadU(d8, static_cast<const uint8_t*>(from)), high = hn::LoadU(d8, static_cast<const uint8_t*>(from) + 16);
-        for (size_t at = 0; at < 32; at += 16) {
-            const auto bytes = hn::IndicesFromVec(d8, hn::Load(d8, kRemainders.bytes[gone] + at));
-            hn::StoreU(hn::TwoTablesLookupLanes(d8, low, high, bytes), d8, static_cast<uint8_t*>(to) + at);
-        }
-    };
-    size_t kept = 0;
-    for (size_t at = 0; at + 4 <= count; at += 4) {
-        const auto low_costs = hn::LoadU(d, costs + at), high_costs = hn::LoadU(d, costs + at + 2), best_costs = hn::Set(d, best_cost);
-        const auto low_pairs = hn::LoadU(du, pairs + 2 * at), high_pairs = hn::LoadU(du, pairs + 2 * at + 4);
-        const auto firsts = hn::ConcatEven(du, high_pairs, low_pairs), seconds = hn::ConcatOdd(du, high_pairs, low_pairs);
-        const auto have = [&](uint32_t id) HWY_ATTR { return hn::Or(hn::Eq(firsts, hn::Set(du, id)), hn::Eq(seconds, hn::Set(du, id))); };
-        const auto is_gone = hn::Or(have(a), have(b));
-        const auto is_cheaper = narrowed(hn::Lt(low_costs, best_costs), hn::Lt(high_costs, best_costs));
-        const auto is_equal = narrowed(hn::Eq(low_costs, best_costs), hn::Eq(high_costs, best_costs));
-        const auto is_nearer = hn::RebindMask(du, hn::Lt(hn::BitCast(di, hn::Sub(seconds, firsts)), hn::Set(di, apart(best_first, best_second))));
-        const uint64_t gone = hn::BitsFromMask(du, is_gone);
-        if (HWY_UNLIKELY(!hn::AllFalse(du, hn::AndNot(is_gone, hn::Or(is_cheaper, hn::And(is_equal, is_nearer)))))) {
-            for (size_t i = at; i < at + 4; i++) {
-                uint32_t &first = pairs[2 * i], &second = pairs[2 * i + 1];
-                const bool is_better = costs[i] < best_cost || (costs[i] == best_cost && apart(first, second) < apart(best_first, best_second));
-                if (is_better && !(gone >> (i - at) & 1)) {
-                    std::swap(costs[i], best_cost);
-                    std::swap(first, best_first);
-                    std::swap(second, best_second);
-                }
-            }
-        }
-        keep(costs + at, gone, costs + kept);
-        keep(pairs + 2 * at, gone, pairs + 2 * kept);
-        kept += kRemainders.counts[gone];
-    }
-    costs[0] = best_cost;
-    pairs[0] = best_first;
-    pairs[1] = best_second;
-    return kept;
-}
-
-#endif
+// `MAX_SYMBOLS` in src/highway/brotli.rs.
+static constexpr size_t kMaxSymbols = 704;
 
 // `LEAF_SLACK` in src/highway/brotli.rs.
 static constexpr size_t kLeafGroup = 16;
@@ -604,190 +310,283 @@ static bool BrotliSortLeaves(const uint64_t* HWY_RESTRICT leaves, size_t count, 
 
 // The rest does too little for a call through a table. It is for the baseline, and LTO puts it into the loops of the caller.
 
-using DF32 = hn::Full128<float>;
-using DU32 = hn::Full128<uint32_t>;
-using DI32 = hn::Full128<int32_t>;
-using DU16 = hn::Full128<uint16_t>;
-using DU8 = hn::Full128<uint8_t>;
-using DU64 = hn::Full128<uint64_t>;
-
-// `SLOT_SHIFT` and `LENGTH_SHIFT` in src/highway/brotli.rs.
-static constexpr int kSlotShift = 4, kLengthShift = 37;
-
-class ShortCodes {
-public:
-    HWY_INLINE ShortCodes(const uint8_t* bytes, uint32_t last_start, uint32_t ring_mask, uint32_t position, uint16_t pair)
-        : m_bytes(bytes)
-        , m_from(hn::Add(hn::Set(DU32(), position), hn::ShiftRight<1>(Span())))
-        , m_mask(hn::Set(DU32(), ring_mask))
-        , m_last(hn::Set(DU32(), last_start))
-        , m_all(hn::Zero(DU32()))
-        , m_pairs(hn::Set(DU16(), pair))
-    {
-    }
-
-    HWY_INLINE uint64_t For(hn::Vec<DU32> distances)
-    {
-        const DU8 d8;
-        const DU16 d16;
-        const DU64 d64;
-        const auto start = hn::Sub(hn::And(hn::Sub(m_from, distances), m_mask), Span());
-        m_all = hn::Or(m_all, start);
-        const auto at = hn::BitCast(d64, hn::Min(start, m_last));
-        const uint64_t low = hn::GetLane(at), high = hn::ExtractLane(at, 1);
-        uint64_t near_first, near_second;
-        uint16_t at_third, at_fourth;
-        hwy::CopyBytes<8>(m_bytes + (low & 0xFFFFFFFF), &near_first);
-        hwy::CopyBytes<8>(m_bytes + (low >> 32), &near_second);
-        hwy::CopyBytes<2>(m_bytes + (high & 0xFFFFFFFF), &at_third);
-        hwy::CopyBytes<2>(m_bytes + (high >> 32), &at_fourth);
-        const auto nearby = hn::BitCast(d8, hn::Dup128VecFromValues(d64, near_first, near_second));
-        const auto codes_from_0 = hn::TableLookupBytes(nearby, hn::Dup128VecFromValues(d8, 3, 4, 11, 12, 0, 0, 0, 0, 4, 5, 2, 3, 5, 6, 1, 2));
-        const auto codes_from_8 = hn::TableLookupBytes(nearby, hn::Dup128VecFromValues(d8, 6, 7, 0, 1, 12, 13, 10, 11, 13, 14, 9, 10, 14, 15, 8, 9));
-        const auto with_all = hn::InsertLane(hn::InsertLane(hn::BitCast(d16, codes_from_0), 2, at_third), 3, at_fourth);
-        return hn::BitsFromMask(d8, hn::OrderedDemote2MasksTo(d8, d16, hn::Eq(with_all, m_pairs), hn::Eq(hn::BitCast(d16, codes_from_8), m_pairs)));
-    }
-
-    HWY_INLINE bool WentAround() const { return !hn::AllFalse(DI32(), hn::IsNegative(hn::BitCast(DI32(), m_all))); }
-
-private:
-    // From the farthest to the nearest position that each of the last distances stands for.
-    static HWY_INLINE hn::Vec<DU32> Span() { return hn::Dup128VecFromValues(DU32(), 6, 6, 0, 0); }
-
-    const uint8_t* m_bytes;
-    hn::Vec<DU32> m_from, m_mask, m_last, m_all;
-    hn::Vec<DU16> m_pairs;
-};
-
 static HWY_INLINE uint32_t BrotliShortCodes(const uint8_t* HWY_RESTRICT bytes, uint32_t last_start, uint32_t ring_mask, uint32_t position,
     uint16_t pair, const uint32_t* HWY_RESTRICT distances)
 {
-    ShortCodes codes(bytes, last_start, ring_mask, position, pair);
-    const uint32_t found = codes.For(hn::LoadU(DU32(), distances));
-    return HWY_UNLIKELY(codes.WentAround()) ? 0xFFFF : found;
+    const hn::Full128<uint8_t> d8;
+    const hn::Full128<uint16_t> d16;
+    const hn::Full128<uint32_t> d32;
+    const hn::Full128<int32_t> di32;
+    const hn::Full128<uint64_t> d64;
+    // From the farthest to the nearest position that each of the last distances stands for.
+    const auto span = hn::Dup128VecFromValues(d32, 6, 6, 0, 0);
+    const auto nearest = hn::Sub(hn::Add(hn::Set(d32, position), hn::ShiftRight<1>(span)), hn::LoadU(d32, distances));
+    const auto start = hn::Sub(hn::And(nearest, hn::Set(d32, ring_mask)), span);
+    const auto at = hn::BitCast(d64, hn::Min(start, hn::Set(d32, last_start)));
+    const uint64_t low = hn::GetLane(at), high = hn::ExtractLane(at, 1);
+    uint64_t near_first, near_second;
+    uint16_t at_third, at_fourth;
+    hwy::CopyBytes<8>(bytes + (low & 0xFFFFFFFF), &near_first);
+    hwy::CopyBytes<8>(bytes + (low >> 32), &near_second);
+    hwy::CopyBytes<2>(bytes + (high & 0xFFFFFFFF), &at_third);
+    hwy::CopyBytes<2>(bytes + (high >> 32), &at_fourth);
+    const auto nearby = hn::BitCast(d8, hn::Dup128VecFromValues(d64, near_first, near_second));
+    const auto codes_from_0 = hn::TableLookupBytes(nearby, hn::Dup128VecFromValues(d8, 3, 4, 11, 12, 0, 0, 0, 0, 4, 5, 2, 3, 5, 6, 1, 2));
+    const auto codes_from_8 = hn::TableLookupBytes(nearby, hn::Dup128VecFromValues(d8, 6, 7, 0, 1, 12, 13, 10, 11, 13, 14, 9, 10, 14, 15, 8, 9));
+    const auto with_all = hn::InsertLane(hn::InsertLane(hn::BitCast(d16, codes_from_0), 2, at_third), 3, at_fourth);
+    const auto pairs = hn::Set(d16, pair);
+    const uint32_t found = hn::BitsFromMask(d8, hn::OrderedDemote2MasksTo(d8, d16, hn::Eq(with_all, pairs), hn::Eq(hn::BitCast(d16, codes_from_8), pairs)));
+    const bool went_around = !hn::AllFalse(di32, hn::IsNegative(hn::BitCast(di32, start)));
+    return HWY_UNLIKELY(went_around) ? 0xFFFF : found;
 }
 
-static HWY_INLINE uint32_t BrotliShortCodesOfFive(const uint8_t* HWY_RESTRICT bytes, uint32_t last_start, uint32_t ring_mask, uint32_t position,
-    uint16_t pair, const uint32_t* HWY_RESTRICT distances, const uint64_t* HWY_RESTRICT ranked, float hopeless, uint64_t* HWY_RESTRICT others)
+using namespace brotli;
+
+template<class T> static HWY_INLINE T Load(const void* from)
 {
-    const DU8 d8;
-    const DU16 d16;
-    const DU32 d32;
-    const DF32 df;
-    const auto distances_of = [&](size_t rank) HWY_ATTR { return hn::LoadU(d32, distances + (ranked[rank] >> kSlotShift) % 8 * 4); };
-    ShortCodes codes(bytes, last_start, ring_mask, position, pair);
-    uint32_t best = codes.For(distances_of(0));
-    uint64_t found = 0;
-    for (size_t rank = 1; rank < 5; rank++)
-        found |= codes.For(distances_of(rank)) << (16 * rank - 16);
-    if (HWY_UNLIKELY(codes.WentAround())) {
-        best = 0xFFFF;
-        found = ~uint64_t { 0 };
-    }
-    const auto like_best = [&](size_t rank) HWY_ATTR {
-        return hn::OrderedDemote2MasksTo(d16, d32, hn::Eq(distances_of(rank), distances_of(0)), hn::Eq(distances_of(rank + 1), distances_of(0)));
-    };
-    const auto equal_bytes = hn::VecFromMask(d8, hn::OrderedDemote2MasksTo(d8, d16, like_best(1), like_best(3)));
-    const auto halves = [&](size_t rank) HWY_ATTR { return hn::BitCast(df, hn::LoadU(DU64(), ranked + rank)); };
-    const auto costs = hn::ConcatOdd(df, halves(3), halves(1));
-    const auto is_like_best = hn::RebindMask(df, hn::Eq(hn::BitCast(d32, equal_bytes), hn::Set(d32, ~uint32_t { 0 })));
-    const auto dropped = hn::RebindMask(d32, hn::Or(hn::And(is_like_best, hn::Ge(costs, hn::Set(df, hopeless))), hn::Gt(costs, hn::Zero(df))));
-    *others = found & ~hn::GetLane(hn::BitCast(DU64(), hn::VecFromMask(d16, hn::OrderedDemote2MasksTo(d16, d32, dropped, dropped))));
-    return best;
+    T value;
+    memcpy(&value, from, sizeof(T));
+    return value;
+}
+template<class T> static HWY_INLINE void Store(void* to, T value) { memcpy(to, &value, sizeof(T)); }
+template<class T, class U> static HWY_INLINE T As(U value) { return __builtin_bit_cast(T, value); }
+template<class T> static HWY_INLINE T Min(T a, T b) { return __builtin_elementwise_min(a, b); }
+template<class T> static HWY_INLINE T Max(T a, T b) { return __builtin_elementwise_max(a, b); }
+static HWY_INLINE uint32_t BitsOf(I32x8 mask) { return As<uint8_t>(__builtin_convertvector(mask, Lanes<bool, 8>)); }
+
+static HWY_INLINE uint32_t Differences(const uint8_t* a, const uint8_t* b)
+{
+    return ~As<uint32_t>(__builtin_convertvector(Load<U8x32>(a) == Load<U8x32>(b), Lanes<bool, 32>));
 }
 
-template<class Distance, class Insert>
-static HWY_INLINE hn::Mask<DF32> Improve(float* HWY_RESTRICT costs, uint32_t* HWY_RESTRICT nodes, size_t stride, hn::Vec<DI32> lengths, hn::Vec<DI32> end,
-    hn::Vec<DF32> cost, const Distance& distance, const Insert& insert)
+static constexpr U32x8 kIota = { 0, 1, 2, 3, 4, 5, 6, 7 };
+
+// Stores `first` plus the number of each bit that is set. Returns how many.
+static HWY_INLINE size_t Append(uint32_t bits, uint16_t* to, U16x8 first)
 {
-    const DF32 df;
-    const DU32 du;
-    const auto old = hn::LoadU(df, costs);
-    const auto better = hn::And(hn::Lt(cost, old), hn::RebindMask(df, hn::Lt(lengths, end)));
-    if (hn::AllFalse(df, better))
-        return better;
-    hn::StoreU(hn::IfThenElse(better, cost, old), df, costs);
-    const auto put = [&](uint32_t* to, hn::Vec<DU32> value) HWY_ATTR {
-        hn::StoreU(hn::IfThenElse(hn::RebindMask(du, better), value, hn::LoadU(du, to)), du, to);
-    };
-    put(nodes, hn::BitCast(du, lengths));
-    put(nodes + stride, distance());
-    put(nodes + 2 * stride, insert());
-    return better;
+    Store(to, __builtin_convertvector(As<U8x8>(kSetBits[bits]), U16x8) + first);
+    return __builtin_popcount(bits);
 }
 
-static HWY_INLINE void BrotliTryLengths(float* HWY_RESTRICT costs, uint32_t* HWY_RESTRICT nodes, size_t stride, size_t length, size_t end,
-    const float* HWY_RESTRICT extra_bits, const float* HWY_RESTRICT symbol_costs, float base, uint32_t distance, uint32_t insert)
+static HWY_INLINE void HashWords(const uint8_t* bytes, size_t count, uint32_t mask, uint32_t* hashes)
 {
-    const DF32 df;
-    const DU32 du;
-    const DI32 di;
-    auto lengths = hn::Iota(di, static_cast<int32_t>(length));
-    for (; length < end; length += 4, lengths = hn::Add(lengths, hn::Set(di, 4))) {
-        const auto cost = hn::Add(hn::Add(hn::Set(df, base), hn::LoadU(df, extra_bits + length)), hn::LoadU(df, symbol_costs + length));
-        Improve(
-            costs + length, nodes + length, stride, lengths, hn::Set(di, static_cast<int32_t>(end)), cost,
-            [&]() HWY_ATTR { return hn::Set(du, distance); }, [&]() HWY_ATTR { return hn::Set(du, insert); });
+    for (size_t i = 0; i < count; i += 8) {
+        const U8x16 some = Load<U8x16>(bytes + i);
+        const U32x8 words = As<U32x8>(__builtin_shufflevector(some, some, 0, 1, 2, 3, 1, 2, 3, 4, 2, 3, 4, 5, 3, 4, 5, 6, 4, 5, 6, 7, 5, 6, 7, 8, 6, 7, 8, 9, 7, 8, 9, 10));
+        // Many multiplications in a row make some CPUs lower their clock.
+        U32x8 hash = words & mask;
+        hash += hash << 13, hash ^= hash >> 7, hash += hash << 17, hash ^= hash >> 11, hash += hash << 9;
+        Store(hashes + i, hash ^ hash >> 15);
     }
 }
 
-static HWY_INLINE size_t BrotliTryLengthsAtCost(float* HWY_RESTRICT costs, uint32_t* HWY_RESTRICT nodes, size_t stride, size_t length, size_t end,
-    float cost, uint32_t distance, uint32_t insert)
+template<class T> static HWY_INLINE T Joined(T first, T last) { return first + (last << 13 | last >> 19); }
+
+constexpr size_t kLevelShift = 12;
+
+// A third of the places have level 1 or above, a fifth 2, a ninth 3, and half of that 4.
+static HWY_INLINE void Mark(Work& w, size_t count)
 {
-    const DU32 du;
-    const DI32 di;
-    auto lengths = hn::Iota(di, static_cast<int32_t>(length)), longest = hn::Zero(di);
-    for (; length < end; length += 4, lengths = hn::Add(lengths, hn::Set(di, 4))) {
-        const auto better = Improve(
-            costs + length, nodes + length, stride, lengths, hn::Set(di, static_cast<int32_t>(end)), hn::Set(DF32(), cost),
-            [&]() HWY_ATTR { return hn::Set(du, distance); }, [&]() HWY_ATTR { return hn::Set(du, insert); });
-        longest = hn::IfThenElse(hn::RebindMask(di, better), lengths, longest);
+    for (size_t i = 0; i < count + 8; i += 16) {
+        const uint8_t* at = w.bytes + kSpan + i;
+        Store(w.ranks + i, (__builtin_convertvector(Load<U8x16>(at), U16x16) | __builtin_convertvector(Load<U8x16>(at + 1), U16x16) << 8) * 0x9E37);
     }
-    return hn::ReduceMax(di, longest);
+    I16x16 place = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+    for (size_t i = 0; i < count; i += 16, place += 16) {
+        const auto rank = [&](size_t offset) HWY_ATTR { return Load<I16x16>(w.ranks + i + offset); };
+        const I16x16 middle = rank(4), left = Min(rank(2), rank(3)), right = Min(rank(5), rank(6));
+        const auto is_least = [&](I16x16 left, I16x16 right) HWY_ATTR { return (middle < left) & ~(middle > right); };
+        const I16x16 ninth = is_least(Min(left, Min(rank(0), rank(1))), Min(right, Min(rank(7), rank(8))));
+        Store(w.places[0] + i, place - ((is_least(rank(3), rank(5)) + is_least(left, right) + ninth + (ninth & (rank(0) < rank(8)))) << kLevelShift));
+    }
 }
 
-static HWY_INLINE void BrotliTryMatches(float* HWY_RESTRICT costs, uint32_t* HWY_RESTRICT nodes, size_t stride, size_t length, size_t end,
-    const float* HWY_RESTRICT extra_bits, const uint64_t* HWY_RESTRICT matches, size_t count, const float* HWY_RESTRICT distance_costs,
-    const float* HWY_RESTRICT symbol_costs, float base, uint32_t insert, const float* HWY_RESTRICT symbol_costs2, float base2, uint32_t insert2)
+template<bool kPrefetches> static HWY_INLINE void Exchange(uint64_t* HWY_RESTRICT tables, Work& w, size_t from, size_t to)
 {
-    const DF32 df;
-    const DU32 du;
-    const DI32 di;
-    const DU8 d8;
-    alignas(16) static constexpr uint32_t kMissing[8] = { 0, 0, 0, 0, INT32_MAX, INT32_MAX, INT32_MAX, INT32_MAX };
-    const auto low = hn::BitCast(du, hn::LoadU(DU64(), matches)), high = hn::BitCast(du, hn::LoadU(DU64(), matches + 2));
-    const auto distances = hn::ConcatEven(du, high, low);
-    const auto longest = hn::BitCast(di, hn::Or(hn::ShiftRight<kLengthShift - 32>(hn::ConcatOdd(du, high, low)), hn::LoadU(du, kMissing + 4 - (count - 1) % 4)));
+#pragma unroll 4
+    for (size_t i = from; i < to; i++) {
+        if (kPrefetches)
+            __builtin_prefetch(tables + w.slots[i + kPrefetched], 1);
+        uint64_t& pair = tables[w.slots[i]];
+        const uint64_t old = pair;
+        w.found[i] = old;
+        pair = old << 32 | w.entries[i];
+    }
+}
 
-    // The exponent is the number of extra bits, and the next bit tells the two symbols for it apart. The zero after that stops a carry.
-    const auto half = hn::ShiftRight<1>(hn::Add(distances, hn::Set(du, 3)));
-    const auto as_float = hn::ConvertTo(df, hn::BitCast(di, hn::AndNot(hn::ShiftRight<2>(half), half)));
-    const auto top = hn::ShiftRight<22>(hn::BitCast(du, as_float));
-    const auto symbols = hn::BitCast(DU64(), hn::And(top, hn::Set(du, 63)));
-    const uint64_t symbols01 = hn::GetLane(symbols), symbols23 = hn::ExtractLane(symbols, 1);
-    const auto distance_cost = hn::Dup128VecFromValues(df, distance_costs[symbols01 & 0xFFFFFFFF], distance_costs[symbols01 >> 32],
-        distance_costs[symbols23 & 0xFFFFFFFF], distance_costs[symbols23 >> 32]);
-    const auto distance_bits = hn::ConvertTo(df, hn::Sub(hn::BitCast(di, hn::ShiftRight<1>(top)), hn::Set(di, 127)));
-    const auto with_distance = [&](float cost) HWY_ATTR { return hn::Add(hn::Add(hn::Set(df, cost), distance_bits), distance_cost); };
-    const auto bases = with_distance(base), bases2 = with_distance(base2);
+static HWY_NOINLINE void BrotliMeasureSlowly(const uint8_t* here, const uint8_t* ring, size_t size, size_t there, uint32_t& forth, uint32_t& back)
+{
+    if (there < kSpan || there + kSpan > size) {
+        for (forth = back = 0; back < std::min(there, kSpan) && there <= size && here[~size_t { back }] == ring[there - back - 1];)
+            back++;
+    }
+    size_t length = forth;
+    for (; length < kLongest && there + length + kSpan <= size; length += kSpan) {
+        if (const uint32_t differences = Differences(here + length, ring + there + length)) {
+            forth = length + __builtin_ctz(differences);
+            return;
+        }
+    }
+    forth = length;
+}
 
-    auto lengths = hn::Iota(di, static_cast<int32_t>(length));
-    do {
-        const auto exceeds = [&](hn::Vec<DI32> limit) HWY_ATTR { return hn::BitCast(d8, hn::VecFromMask(di, hn::Gt(lengths, limit))); };
-        const auto minus_index = hn::Add(hn::Add(exceeds(hn::Broadcast<0>(longest)), exceeds(hn::Broadcast<1>(longest))), exceeds(hn::Broadcast<2>(longest)));
-        const auto twice = hn::Add(minus_index, minus_index);
-        const auto bytes = hn::Sub(hn::BitCast(d8, hn::Set(du, 0x03020100)), hn::Add(twice, twice));
-        const auto of_match = [&](auto v) HWY_ATTR { return hn::BitCast(hn::DFromV<decltype(v)>(), hn::TableLookupBytes(hn::BitCast(d8, v), bytes)); };
-        const auto extra = hn::LoadU(df, extra_bits + length);
-        const auto cost = hn::Add(hn::Add(of_match(bases), extra), hn::LoadU(df, symbol_costs + length));
-        const auto cost2 = hn::Add(hn::Add(of_match(bases2), extra), hn::LoadU(df, symbol_costs2 + length));
-        Improve(
-            costs + length, nodes + length, stride, lengths, hn::Set(di, static_cast<int32_t>(end)), hn::Min(cost, cost2),
-            [&]() HWY_ATTR { return of_match(distances); },
-            [&]() HWY_ATTR { return hn::IfThenElse(hn::RebindMask(du, hn::Lt(cost2, cost)), hn::Set(du, insert2), hn::Set(du, insert)); });
-        lengths = hn::Add(lengths, hn::Set(di, 4));
-        length += 4;
-    } while (length < end);
+static HWY_NOINLINE void BrotliMeasure(const uint8_t* HWY_RESTRICT ring, size_t size, const Chunk& r, uint32_t behind, Work& w, size_t seeds, int64_t* HWY_RESTRICT starts)
+{
+    constexpr size_t kBatch = 128;
+    alignas(32) uint32_t places[kBatch], distances[kBatch], theres[kBatch], forths[kBatch], backs[kBatch];
+    alignas(32) int64_t keys[kBatch];
+    const uint32_t last = std::min<size_t>(size - 2 * kSpan, UINT32_MAX);
+    Store(w.seeds + seeds, U16x8(w.seeds[0]));
+    for (size_t first = 0; first < seeds; first += kBatch) {
+        const size_t count = std::min(kBatch, (seeds - first + 7) / 8 * 8);
+#pragma unroll 4
+        for (size_t i = 0; i < count; i++) {
+            const size_t seed = w.seeds[first + i];
+            places[i] = w.entries[seed / 2];
+            distances[i] = Load<uint32_t>(reinterpret_cast<const uint8_t*>(w.found) + 4 * seed);
+        }
+        const auto there_at = [&](size_t i) HWY_ATTR { return (Load<U32x8>(places + i) + r.from - Load<U32x8>(distances + i)) & r.mask; };
+        for (size_t i = 0; i < count; i += 8) {
+            Store(places + i, (Load<U32x8>(places + i) - r.from) % kChunk);
+            Store(theres + i, Min(there_at(i) - kSpan, U32x8(last)));
+        }
+#pragma unroll 2
+        for (size_t i = 0; i < count; i++) {
+            const uint8_t *here = w.bytes + places[i], *there = ring + theres[i];
+            backs[i] = __builtin_clzll(2 * uint64_t { Differences(here, there) } + 1) - 31;
+            forths[i] = std::countr_zero(Differences(here + kSpan, there + kSpan));
+        }
+        for (size_t i = 0; i < count; i += 8) {
+            const U32x8 place = Load<U32x8>(places + i), distance = Load<U32x8>(distances + i), there = there_at(i);
+            for (uint32_t bits = BitsOf((Load<U32x8>(forths + i) == kSpan) | (Load<U32x8>(theres + i) == last)); bits; bits &= bits - 1) {
+                const size_t lane = __builtin_ctz(bits);
+                BrotliMeasureSlowly(w.bytes + kSpan + places[i + lane], ring, size, there[lane], forths[i + lane], backs[i + lane]);
+            }
+            const U32x8 forth = Min(Load<U32x8>(forths + i), r.end - r.from - place), back = Min(Load<U32x8>(backs + i), place + behind);
+            const U32x8 low = (-distance << 9) + forth + back, high = ((place + forth + (r.from - r.origin)) << 7) + As<U32x8>(As<I32x8>(-distance) >> 23);
+            const U32x8 valid = high | As<U32x8>(distance > place + r.from);
+            Store(keys + i, __builtin_shufflevector(low, valid, 0, 8, 1, 9, 4, 12, 5, 13));
+            Store(keys + i + 4, __builtin_shufflevector(low, valid, 2, 10, 3, 11, 6, 14, 7, 15));
+            const I32x8 far = As<I32x8>(distance);
+            Store(theres + i, (((place + r.from - back) << 2) - As<U32x8>((far > r.classes[0]) + (far > r.classes[1]) + (far > r.classes[2]))) % (4 * kRing));
+        }
+        for (size_t i = 0; i < count; i += 8) {
+            for (size_t k = 0; k < 8; k++) {
+                int64_t& best = starts[theres[i + k / 4 * 2 + k / 2 % 2 * 4 + k % 2]];
+                best = __builtin_unpredictable(keys[i + k] > best) ? keys[i + k] : best;
+            }
+        }
+    }
+}
+
+static void BrotliFindMatches(const uint8_t* HWY_RESTRICT ring, size_t size, const Chunk& r, Rung* rungs, size_t rung_count, uint64_t* HWY_RESTRICT tables, Work& w,
+    int64_t* HWY_RESTRICT starts)
+{
+    const size_t count = r.to - r.from, start = std::min<size_t>(r.from & r.mask, size);
+    const size_t before = std::min(start, kSpan), after = std::min({ size - start, size_t { r.end - r.from }, count + kLongest + kSpan });
+    memcpy(w.bytes + kSpan - before, ring + start - before, before + after);
+    memset(w.bytes + kSpan + after, 0, std::min(sizeof(w.bytes) - kSpan - after, kMaxHashed + kSpan));
+    Mark(w, count);
+
+    // Where those of each rung are in the lists.
+    size_t firsts[kRungs], counts[kRungs], total = kPad, hashed = 0, marked = count;
+    const size_t reach = count + rungs[rung_count - 1].length;
+    const uint32_t bits = r.position_bits;
+    uint32_t *hashes = w.hashes[0], *spare = w.hashes[1];
+    uint16_t *places = w.places[0], *next_places = w.places[1];
+    for (size_t n = 0; n < rung_count; n++) {
+        Rung& rung = rungs[n];
+        if (hashed < 4) {
+            hashed = std::min<size_t>(rung.length, 4);
+            HashWords(w.bytes + kSpan, reach, ~0u >> (32 - 8 * hashed), hashes);
+        }
+        for (; 2 * hashed < rung.length; hashed *= 2, std::swap(hashes, spare)) {
+            for (size_t i = 0; i + 2 * hashed < reach; i += 8)
+                Store(spare + i, Joined(Load<U32x8>(hashes + i), Load<U32x8>(hashes + i + hashed)));
+        }
+        const uint32_t* last = hashes + rung.length - hashed;
+        const size_t high = std::min<size_t>(count, std::max(r.end - r.from + 1, rung.length) - rung.length);
+        const size_t low = std::min<size_t>(high, std::max(rung.next, r.from) - r.from);
+        if (low != high)
+            rung.next = r.from + high;
+        const uint32_t shift = 32 - rung.size_bits, table = rung.start;
+        uint32_t *slots = w.slots + total, *entries = w.entries + total;
+        size_t listed = high - low;
+        if (!rung.level) {
+            U32x8 previous = 1;
+            for (size_t i = low; i < high; i += 8) {
+                const U32x8 hash = Joined(Load<U32x8>(hashes + i), Load<U32x8>(last + i));
+                // The start of a run is worth more than the rest.
+                Store(slots + i - low, ((hash >> shift) + table) & ~As<U32x8>(hash + !n == __builtin_shufflevector(previous, hash, 6, 7, 8, 9, 10, 11, 12, 13)));
+                previous = hash;
+                Store(entries + i - low, (hash << bits) + (kIota + (r.from + static_cast<uint32_t>(i))));
+            }
+        } else {
+            uint16_t* below = w.below + total;
+            while (marked && places[marked - 1] % kChunk >= high)
+                marked--;
+            Store(places + marked, U16x16(0));
+            listed = 0;
+            for (size_t i = 0; i < marked; i += 16) {
+                const uint32_t bits = As<uint16_t>(__builtin_convertvector(Load<I16x16>(places + i) >= static_cast<int16_t>(rung.level << kLevelShift), Lanes<bool, 16>));
+                listed += Append(bits % 256, below + listed, i);
+                listed += Append(bits / 256, below + listed, i + 8);
+            }
+            Store(below + listed, U16x8(0));
+            for (size_t i = 0; i < listed; i++) {
+                const uint32_t place = (next_places[i] = places[below[i]]) % kChunk, hash = Joined(hashes[place], last[place]) * 0x9E3779B1u;
+                // What is known goes to the spare slot.
+                slots[i] = HWY_UNLIKELY(place < low) ? 0 : (hash >> shift) + table;
+                entries[i] = (hash << bits) + r.from + place;
+            }
+            std::swap(places, next_places);
+            marked = listed;
+        }
+        Store(slots + listed, U32x8(0)), Store(entries + listed, U32x8(0));
+        firsts[n] = total, counts[n] = listed;
+        total += listed + kPad;
+    }
+    memset(w.slots + total, 0, kPrefetched * sizeof(uint32_t));
+    if (bits > 16)
+        Exchange<true>(tables, w, kPad, total);
+    else
+        Exchange<false>(tables, w, kPad, total);
+    if (!r.max_distance)
+        return;
+
+    size_t seeds = 0;
+    const U32x8 max_distance = r.max_distance;
+    for (size_t n = 0; n < rung_count; n++) {
+        uint64_t* found = w.found + firsts[n];
+        const uint64_t* lower = w.found + firsts[n - !!n];
+        const uint32_t* entries = w.entries + firsts[n];
+        const uint16_t* below = w.below + firsts[n];
+        Store(found + counts[n], U32x8(0));
+        U32x8 previous = 0;
+        U16x8 index = 2 * firsts[n];
+        const auto pick = [&](size_t i, U32x8 known) HWY_ATTR {
+            const U32x4 entry = Load<U32x4>(entries + i);
+            const U32x8 distance = __builtin_shufflevector(entry, entry, 0, 0, 1, 1, 2, 2, 3, 3) - Load<U32x8>(found + i);
+            Store(found + i, distance);
+            const U32x8 earlier = __builtin_shufflevector(previous, distance, 6, 7, 8, 9, 10, 11, 12, 13);
+            previous = distance;
+            const auto is_among = [&](U32x8 pairs) HWY_ATTR { return (distance == pairs) | (distance == __builtin_shufflevector(pairs, pairs, 1, 0, 3, 2, 5, 4, 7, 6)); };
+            seeds += Append(BitsOf((distance <= max_distance) & ~(is_among(earlier) | is_among(known) | (distance == 0))), w.seeds + seeds, index);
+            index += 8;
+        };
+        if (!n) {
+            for (size_t i = 0; i < counts[n]; i += 4)
+                pick(i, 0);
+        } else if (!rungs[n].level) {
+            for (size_t i = 0; i < counts[n]; i += 4)
+                pick(i, Load<U32x8>(lower + i));
+        } else {
+            for (size_t i = 0; i < counts[n]; i += 4)
+                pick(i, As<U32x8>(Lanes<uint64_t, 4> { lower[below[i]], lower[below[i + 1]], lower[below[i + 2]], lower[below[i + 3]] }));
+        }
+    }
+
+    BrotliMeasure(ring, size, r, std::min<uint32_t>(r.from - r.floor, before), w, seeds, starts);
 }
 
 } // namespace HWY_NAMESPACE
@@ -797,28 +596,13 @@ HWY_AFTER_NAMESPACE();
 #if HWY_ONCE
 namespace bun {
 HWY_EXPORT(BrotliFindSwitches);
-HWY_EXPORT(BrotliEstimateCosts);
-HWY_EXPORT(BrotliRemovePairs);
+HWY_EXPORT(BrotliFindMatches);
 HWY_EXPORT(BrotliSortLeaves);
 
-// For 1 to 16 `groups`. Reads `length` symbols and `alphabet_size * groups * 8` costs, updates `groups * 8`, writes `groups` and 1 bytes for each symbol.
-extern "C" void highway_brotli_find_switches(const uint16_t* symbols, size_t length, const double* symbol_costs, size_t alphabet_size,
-    size_t groups, double switch_cost, double* costs, uint8_t* switches, uint8_t* cheapest)
+// For 1 to 4 `groups`. Reads `steps * stride` symbols and `alphabet_size * groups * 16` costs, writes `steps * groups * 2` numbers.
+extern "C" void highway_brotli_find_switches(const uint16_t* symbols, size_t steps, size_t stride, const uint16_t* costs, size_t alphabet_size, size_t groups, uint16_t switch_cost, uint16_t* bits)
 {
-    BUN_HWY_DISPATCH(BrotliFindSwitches)(symbols, length, symbol_costs, alphabet_size, groups, switch_cost, costs, switches, cheapest);
-}
-
-// Reads `size` counts of each, a multiple of 8 up to 704. Uses `limit + 512` numbers of `table`, where `limit` is a power of two from 2 on.
-extern "C" void highway_brotli_estimate_costs(const uint32_t* common, const uint32_t* const* others, size_t size, const uint64_t* used,
-    const uint32_t* totals, const uint32_t* gaps, double* table, uint32_t limit, double* costs)
-{
-    BUN_HWY_DISPATCH(BrotliEstimateCosts)(common, others, size, used, totals, gaps, table, limit, costs);
-}
-
-// Updates `count` costs and pairs, and the first ones in any case.
-extern "C" size_t highway_brotli_remove_pairs(double* costs, uint32_t* pairs, size_t count, uint32_t a, uint32_t b)
-{
-    return BUN_HWY_DISPATCH(BrotliRemovePairs)(costs, pairs, count, a, b);
+    BUN_HWY_DISPATCH(BrotliFindSwitches)(symbols, steps, stride, costs, alphabet_size, groups, switch_cost, bits);
 }
 
 // Touches less than `count + 16` elements of both. `count` is at most 704.
@@ -827,39 +611,124 @@ extern "C" bool highway_brotli_sort_leaves(const uint64_t* leaves, size_t count,
     return BUN_HWY_DISPATCH(BrotliSortLeaves)(leaves, count, like_shell_sort, sorted);
 }
 
-// These two read up to `last_start + 8` bytes.
+// Reads up to `last_start + 8` bytes.
 extern "C" __attribute__((always_inline)) uint32_t highway_brotli_short_codes(const uint8_t* bytes, uint32_t last_start, uint32_t ring_mask,
     uint32_t position, uint16_t pair, const uint32_t* distances)
 {
     return HWY_STATIC_DISPATCH(BrotliShortCodes)(bytes, last_start, ring_mask, position, pair, distances);
 }
 
-extern "C" __attribute__((always_inline)) uint32_t highway_brotli_short_codes_of_five(const uint8_t* bytes, uint32_t last_start,
-    uint32_t ring_mask, uint32_t position, uint16_t pair, const uint32_t* distances, const uint64_t* ranked, float hopeless, uint64_t* others)
+using namespace brotli;
+static_assert(sizeof(Work) == 8 * 11270);
+
+// `find_matches` in src/highway/brotli.rs asserts what this takes for granted.
+extern "C" void highway_brotli_find_matches(const uint8_t* ring, size_t size, const Chunk* chunk, Rung* rungs, size_t rung_count, uint64_t* tables, Work* work, int64_t* starts)
 {
-    return HWY_STATIC_DISPATCH(BrotliShortCodesOfFive)(bytes, last_start, ring_mask, position, pair, distances, ranked, hopeless, others);
+    BUN_HWY_DISPATCH(BrotliFindMatches)(ring, size, *chunk, rungs, rung_count, tables, *work, starts);
 }
 
-// These three touch up to `end + 3` numbers of `costs`, of three rows of `nodes`, and of the tables by length that they take.
-extern "C" __attribute__((always_inline)) void highway_brotli_try_lengths(float* costs, uint32_t* nodes, size_t stride, size_t length,
-    size_t end, const float* extra_bits, const float* symbol_costs, float base, uint32_t distance, uint32_t insert)
+// The rest is for any target. It gets the instructions of the function that it is inlined in.
+#define INLINED extern "C" __attribute__((always_inline))
+using namespace HWY_STATIC_NAMESPACE;
+
+INLINED uint32_t highway_brotli_differences(const uint8_t* a, const uint8_t* b) { return Differences(a, b); }
+
+INLINED uint32_t highway_brotli_differences_in_case(const uint8_t* word, const uint8_t* changes, const uint8_t* bytes)
 {
-    HWY_STATIC_DISPATCH(BrotliTryLengths)(costs, nodes, stride, length, end, extra_bits, symbol_costs, base, distance, insert);
+    const U8x32 spelling = Load<U8x32>(word), spelled = spelling ^ (As<U8x32>(As<I8x32>(spelling + (127 - 'z')) > 127 - 26) & Load<U8x32>(changes));
+    return ~As<uint32_t>(__builtin_convertvector(spelled == Load<U8x32>(bytes), Lanes<bool, 32>));
 }
 
-extern "C" __attribute__((always_inline)) size_t highway_brotli_try_lengths_at_cost(float* costs, uint32_t* nodes, size_t stride,
-    size_t length, size_t end, float cost, uint32_t distance, uint32_t insert)
+INLINED uint32_t highway_brotli_tagged(const uint16_t* all, const uint16_t* tags)
 {
-    return HWY_STATIC_DISPATCH(BrotliTryLengthsAtCost)(costs, nodes, stride, length, end, cost, distance, insert);
+    const U16x16 tag = Load<U16x16>(all) >> 2;
+    return As<uint16_t>(__builtin_convertvector((tag == tags[0]) | (tag == tags[1]) | (tag == tags[2]) | (tag == tags[3]) | (tag == tags[4]), Lanes<bool, 16>));
 }
 
-// `length` is below `end`.
-extern "C" __attribute__((always_inline)) void highway_brotli_try_matches(float* costs, uint32_t* nodes, size_t stride, size_t length,
-    size_t end, const float* extra_bits, const uint64_t* matches, size_t count, const float* distance_costs, const float* symbol_costs,
-    float base, uint32_t insert, const float* symbol_costs2, float base2, uint32_t insert2)
+INLINED void highway_brotli_lower(int32_t* costs, const int32_t* added, const int32_t* barred, const int32_t* by_context, int32_t base, int32_t is_from_first)
 {
-    HWY_STATIC_DISPATCH(BrotliTryMatches)(costs, nodes, stride, length, end, extra_bits, matches, count, distance_costs, symbol_costs, base,
-        insert, symbol_costs2, base2, insert2);
+    const I32x4 bases = Load<I32x4>(by_context) + base;
+    const I32x8 last = bases[3], first = last + ((__builtin_shufflevector(bases, bases, 0, 1, 2, 3, 3, 3, 3, 3) - last) & is_from_first);
+    const I32x8 low = Min(Load<I32x8>(costs), (first + Load<I32x8>(added)) | Load<I32x8>(barred));
+    const I32x8 high = Min(Load<I32x8>(costs + 8), (last + Load<I32x8>(added + 8)) | Load<I32x8>(barred + 8));
+    Store(costs, low), Store(costs + 8, high);
+}
+
+INLINED bool highway_brotli_all_above(const int32_t* costs, int32_t limit) { return BitsOf(Load<I32x8>(costs) > limit) == 0xFF; }
+
+INLINED int32_t highway_brotli_least_sum(const int32_t* a, const int32_t* b, const int32_t* barred)
+{
+    return __builtin_reduce_min(((Load<I32x8>(a) + Load<I32x8>(b)) & ~7) | As<I32x8>(kIota) | Load<I32x8>(barred));
+}
+
+INLINED uint64_t highway_brotli_spread_matches(int64_t* HWY_RESTRICT starts, int64_t* HWY_RESTRICT matches, int32_t first, int32_t enough, int32_t* HWY_RESTRICT summaries)
+{
+    I64x4 latest = Load<I64x4>(matches + 4 * 63);
+    uint64_t are_short = 0;
+    for (size_t i = 0; i < 64; i += 8) {
+        I32x8 rows[8];
+        for (size_t k = 0; k < 8; k++) {
+            latest = Max(latest, Load<I64x4>(starts + 4 * (i + k)));
+            Store(starts + 4 * (i + k), I64x4(0)), Store(matches + 4 * (i + k), latest);
+            rows[k] = As<I32x8>(latest);
+        }
+        const auto odd = [](I32x8 a, I32x8 b) { return __builtin_shufflevector(a, b, 1, 3, 9, 11, 5, 7, 13, 15); };
+        const auto even = [](I32x8 a, I32x8 b) { return __builtin_shufflevector(a, b, 0, 2, 8, 10, 4, 6, 12, 14); };
+        const auto low = [](I32x8 a, I32x8 b) { return __builtin_shufflevector(a, b, 0, 1, 2, 3, 8, 9, 10, 11) >> 7; };
+        const auto high = [](I32x8 a, I32x8 b) { return __builtin_shufflevector(a, b, 4, 5, 6, 7, 12, 13, 14, 15) >> 7; };
+        const I32x8 a = odd(rows[0], rows[1]), b = odd(rows[2], rows[3]), c = odd(rows[4], rows[5]), d = odd(rows[6], rows[7]);
+        const I32x8 lasts[4] = { low(even(a, b), even(c, d)), low(odd(a, b), odd(c, d)), high(even(a, b), even(c, d)), high(odd(a, b), odd(c, d)) };
+        const I32x8 place = As<I32x8>(kIota) + (first + static_cast<int32_t>(i));
+        I32x8 record = place, bits = 0;
+        for (int32_t k = 0; k < 4; k++) {
+            bits |= (lasts[k] > record) & (1 << 2 * k);
+            record = Max(record, lasts[k]);
+        }
+        const I32x8 longest = record - place + 1;
+        Store(summaries + i, longest << 8 | bits);
+        are_short |= uint64_t { BitsOf(longest < enough) } << i;
+    }
+    return are_short;
+}
+
+INLINED void highway_brotli_tally(const uint32_t* old, uint32_t added, const uint32_t* signs, uint32_t mask, uint32_t* products, uint32_t* sums)
+{
+    // For each eighth of an octave, the slope of the chord, and above it how far below zero it starts.
+    constexpr U32x8 kChords = U32x8 { 24, 28, 29, 31, 34, 35, 37, 38 } * 8 + (U32x8 { 192, 228, 238, 260, 296, 309, 337, 352 } << 16);
+    const U32x8 before = Load<U32x8>(old), count = before + ((Load<U32x8>(signs) ^ added) - Load<U32x8>(signs)), positive = Max(count, U32x8(1));
+    const U32x8 bits = As<U32x8>(__builtin_convertvector(As<I32x8>(positive), Lanes<float, 8>));
+    const U32x8 eighth = bits >> 20 & 7, exponent = (bits >> 23) - 127;
+#if HWY_ARCH_ARM_A64
+    const U8x32 bytes = As<U8x32>(eighth * 0x04040404 + 0x03020100);
+    const U32x8 chord = As<U32x8>(uint8x16x2_t { vqtbl2q_u8(As<uint8x16x2_t>(kChords), As<uint8x16_t>(bytes.lo)), vqtbl2q_u8(As<uint8x16x2_t>(kChords), As<uint8x16_t>(bytes.hi)) });
+#else
+    const U32x8 chord = { kChords[eighth[0]], kChords[eighth[1]], kChords[eighth[2]], kChords[eighth[3]], kChords[eighth[4]], kChords[eighth[5]], kChords[eighth[6]], kChords[eighth[7]] };
+#endif
+    const U32x8 product = ((positive & mask) * ((chord + (exponent << 7)) & 0x7FFF) - (chord >> 16 << exponent % 32)) >> 3;
+    const U32x8 more = Load<U32x8>(sums) + (product - Load<U32x8>(old + 8));
+    Store(products, product), Store(sums, more);
+    Store(sums + 8, Load<U32x8>(sums + 8) + As<U32x8>((count == 0) - (before == 0)));
+    Store(sums + 16, Max(Load<U32x8>(sums + 16), count));
+}
+
+INLINED uint32_t highway_brotli_replace_matches(int64_t* known, const int64_t* matches)
+{
+    const I64x4 old = Load<I64x4>(known), all = Load<I64x4>(matches);
+    Store(known, all);
+    return BitsOf(As<I32x8>(all == old));
+}
+
+INLINED uint32_t highway_brotli_short_code_for(int32_t distance, const int32_t* last_distances)
+{
+    const I32x4 differences = distance - Load<I32x4>(last_distances);
+    const I32x8 low = __builtin_shufflevector(differences, differences, 0, 1, 2, 3, 0, 0, 0, 0), high = __builtin_shufflevector(differences, differences, 0, 0, 1, 1, 1, 1, 1, 1);
+    return std::countr_zero(BitsOf(low == I32x8 { 0, 0, 0, 0, -1, 1, -2, 2 }) | BitsOf(high == I32x8 { -3, 3, -1, 1, -2, 2, -3, 3 }) << 8);
+}
+
+INLINED void highway_brotli_push_front(const int32_t* values, int32_t first, bool is_new, int32_t* to)
+{
+    const I32x4 old = Load<I32x4>(values), pushed = __builtin_shufflevector(old, I32x4(first), 4, 0, 1, 2);
+    Store(to, I32x4(-is_new) ? pushed : old);
 }
 } // namespace bun
 #endif

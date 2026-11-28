@@ -1,4 +1,4 @@
-//! The zstd encoder. Derived from zstd 1.5.7 (LICENSE.md), whose output it reproduces, and whose numbers it uses.
+//! The zstd encoder. Derived from zstd 1.5.7 (LICENSE.md), whose parameters it takes.
 #![forbid(unsafe_code)]
 // Input, dictionaries and parameters come from anywhere and a panic aborts the process.
 #![deny(
@@ -41,7 +41,7 @@ use bun_zstd_decoder::format::BLOCK_LEN_MAX;
 use bun_zstd_decoder::{Output, Result};
 
 pub use parameters::DEFAULT_LEVEL;
-pub use stream::{Encoder, EndDirective};
+pub use stream::{Encoder, EndDirective, Spare};
 
 use frame::{FrameWriter, Start};
 use parameters::{Purpose, Request};

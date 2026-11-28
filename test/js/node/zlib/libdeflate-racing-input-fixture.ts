@@ -1,6 +1,6 @@
-// Calls Bun.deflateSync and Bun.gzipSync on a shared mapping of argv[2] while a worker rewrites it.
-// libdeflate sizes a block in one pass over the input and emits it in a second pass.
+// Compresses a shared mapping of argv[2] while a worker rewrites it. The compressors go over their input more than once.
 import { isMainThread, parentPort, Worker } from "node:worker_threads";
+import zlib from "node:zlib";
 
 const view = Bun.mmap(process.argv[2], { shared: true });
 
@@ -13,7 +13,7 @@ if (isMainThread) {
     for (const compress of [Bun.deflateSync, Bun.gzipSync]) {
       let output: Uint8Array;
       try {
-        output = compress(view, { library: "libdeflate" });
+        output = compress(view.subarray(0, 4096), { library: "libdeflate", level: (1 + (i % 12)) as 1 });
       } catch (error) {
         if (!/insufficient space/.test((error as Error).message)) throw error;
         continue;
@@ -23,6 +23,11 @@ if (isMainThread) {
         process.exit(1);
       }
     }
+  }
+  for (let i = 0; i < 44; i++) {
+    zlib.gzipSync(view, { level: i % 10 });
+    zlib.brotliCompressSync(view, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: i % 10 } });
+    Bun.zstdCompressSync(view, { level: 1 + (i % 22) });
   }
   console.log("done");
   process.exit(0);
@@ -36,7 +41,7 @@ if (isMainThread) {
     cheap[i] = next() & 0x7f;
     costly[i] = 0xf0 + (next() & 0x0f);
   }
-  for (let i = 0; i < 16; i++) cheap[next() % view.length] = 0xf0 + i;
+  for (let i = 0; i < 16; i++) cheap[next() % 4096] = 0xf0 + i;
 
   parentPort!.postMessage("ready");
 

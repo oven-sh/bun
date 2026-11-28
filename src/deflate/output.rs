@@ -1,5 +1,6 @@
 //! Where results go.
 
+use crate::lanes::Sheet;
 use crate::{Error, Result, copy_prefix};
 
 /// How much at most the decoder has zeroed at once, so that the zeros are still in the cache, and how far ahead it prefetches.
@@ -21,10 +22,13 @@ pub(crate) struct Sink<'a> {
     /// Where the result starts in a `Vec`.
     start: usize,
     step: usize,
+    /// Of so many bytes.
+    crc: Option<(u32, usize)>,
 }
 
 impl<'a> Sink<'a> {
     /// [`Self::extend`] adds `first_step` bytes if there is capacity, then twice as many each time.
+    #[inline]
     pub(crate) fn new(output: Output<'a>, first_step: usize) -> Self {
         let start = match &output {
             Output::Slice(_) => 0,
@@ -34,7 +38,24 @@ impl<'a> Sink<'a> {
             output,
             start,
             step: first_step.min(MAX_STEP),
+            crc: None,
         }
+    }
+
+    pub(crate) fn start_checking(&mut self) {
+        self.crc = Some((0, 0));
+    }
+
+    /// The CRC-32 of the first `len` bytes, if at least `min` are new.
+    #[inline(always)]
+    pub(crate) fn check(&mut self, len: usize, min: usize) -> Option<u32> {
+        let (crc, checked) = self.crc.filter(|it| len - it.1 >= min)?;
+        if len == checked {
+            return Some(crc);
+        }
+        let crc = bun_highway::crc32(crc, self.bytes().get(checked..len)?);
+        self.crc = Some((crc, len));
+        Some(crc)
     }
 
     pub(crate) fn bytes(&mut self) -> &mut [u8] {
@@ -67,6 +88,15 @@ impl<'a> Sink<'a> {
             _ => return Err(Error::InsufficientSpace),
         }
         Ok(())
+    }
+
+    /// For a `Vec` that comes without spare capacity.
+    pub(crate) fn reserve_first(&mut self, len: impl FnOnce() -> usize) {
+        if let Output::Vec { vec, limit } = &mut self.output
+            && vec.capacity() == self.start
+        {
+            _ = vec.try_reserve_exact(len().min(*limit));
+        }
     }
 
     /// Makes [`Self::bytes`] at least `len` long, and a step longer if there is capacity.
@@ -103,6 +133,45 @@ impl<'a> Sink<'a> {
         Ok(())
     }
 
+    #[inline]
+    pub(crate) fn write_and_check(&mut self, at: usize, bytes: &[u8]) -> Result<()> {
+        self.make_room(at + bytes.len())?;
+        if let (Some(crc), Output::Vec { vec, .. }) = (self.check(at, 0), &mut self.output) {
+            vec.truncate(self.start + at);
+            let crc = bun_highway::checksums::append_and_crc32(crc, bytes, vec);
+            self.crc = Some((crc, at + bytes.len()));
+            return Ok(());
+        }
+        self.write(at, bytes)
+    }
+
+    /// For up to `max` bytes from `written` on, which it advances.
+    #[inline(always)]
+    pub(crate) fn with_sheet<R>(
+        &mut self,
+        written: &mut usize,
+        max: usize,
+        write: impl FnOnce(&mut Sheet<'_>) -> R,
+    ) -> R {
+        match &mut self.output {
+            Output::Slice(slice) => {
+                let room = *written..*written + max;
+                let mut sheet = Sheet::slice(slice, room, *written, usize::MAX, 0);
+                let result = write(&mut sheet);
+                *written = sheet.position();
+                result
+            }
+            Output::Vec { vec, limit } => {
+                vec.truncate(self.start + *written);
+                let room = max.min(*limit - *written);
+                let result = Sheet::behind(vec, room, *written, usize::MAX, write);
+                *written = vec.len() - self.start;
+                result
+            }
+        }
+    }
+
+    #[inline]
     pub(crate) fn finish(self, written: usize) {
         if let Output::Vec { vec, .. } = self.output {
             vec.truncate(self.start + written);

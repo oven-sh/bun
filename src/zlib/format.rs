@@ -1,8 +1,6 @@
 //! What `bun_deflate::format` does not have.
 
-use bun_deflate::format::{
-    FIRST_LENGTH_SYMBOL, LITLEN_SYMBOLS, OFFSET_SYMBOLS, RESERVED_SYMBOLS, repeat_slot,
-};
+use bun_deflate::format::{LITLEN_SYMBOLS, OFFSET_SYMBOLS, RESERVED_SYMBOLS, repeat_slot};
 use bun_deflate::gzip::MAGIC_AND_METHOD;
 
 pub(crate) const MIN_WINDOW_BITS: u8 = 8;
@@ -17,7 +15,6 @@ pub(crate) const ZLIB_HEADER_DIVISOR: u16 = 31;
 pub(crate) const MAX_STORED_LEN: usize = u16::MAX as usize;
 
 pub(crate) const LITERAL_LENGTH_SYMBOLS: usize = LITLEN_SYMBOLS - RESERVED_SYMBOLS;
-pub(crate) const LENGTH_SYMBOLS: usize = LITERAL_LENGTH_SYMBOLS - FIRST_LENGTH_SYMBOL;
 pub(crate) const DISTANCE_SYMBOLS: usize = OFFSET_SYMBOLS - RESERVED_SYMBOLS;
 
 /// A code length symbol that stands for a run of lengths.
@@ -35,10 +32,6 @@ impl Repeat {
             min: slot.base,
             extra_bits: slot.extra_bits,
         }
-    }
-
-    pub(crate) const fn max(&self) -> u32 {
-        self.min + (1 << self.extra_bits) - 1
     }
 }
 
@@ -58,7 +51,8 @@ mod tests {
 
     #[test]
     fn repeats_are_those_of_rfc_1951() {
-        let runs = [16, 17, 18].map(Repeat::new).map(|it| it.min..=it.max());
+        let runs = [16, 17, 18].map(Repeat::new);
+        let runs = runs.map(|it| it.min..=it.min + (1 << it.extra_bits) - 1);
         assert_eq!(runs, [3..=6, 3..=10, 11..=138]);
     }
 }

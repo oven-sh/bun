@@ -5,7 +5,7 @@ mod common;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_zstd_decoder::{Error, Result, Status};
+use bun_zstd_decoder::{Error, Output, Result, Status, decompress};
 use bun_zstd_encoder::EndDirective::{Continue, End};
 use common::*;
 
@@ -63,7 +63,7 @@ fn workers() -> Result<()> {
     write(&mut encoder, &input, Continue, 1, &mut out)?;
 
     // A section that is full is not the last one, also if it has to wait for its turn until the end is asked for.
-    let mut waiting = common::encoder(&[(WORKERS, 1), (JOB_LEN, 1)], &[])?;
+    let mut waiting = common::encoder(&[(WORKERS, 1), (JOB_LEN, 1), (STRATEGY, 2)], &[])?;
     let sections = input[..1 << 16].repeat(32);
     let taken = step(&mut waiting, &sections, 0, Continue);
     assert_eq!(taken, (sections.len(), 0, Ok(Status::Pending)));
@@ -73,7 +73,15 @@ fn workers() -> Result<()> {
     write(&mut waiting, &[], End, usize::MAX, &mut out)?;
     assert_eq!(summary(&out), (26581, 0x0FD7_92CD));
 
-    drop((encoder, waiting));
+    // Matches reach into the section before.
+    let mut staged = common::encoder(&[(WORKERS, 2), (JOB_LEN, 1)], &[])?;
+    out.clear();
+    write(&mut staged, &sections, End, usize::MAX, &mut out)?;
+    let mut back = vec![0; sections.len()];
+    decompress(&out, &mut Output::slice(&mut back), None)?;
+    assert!(out.len() < 1 << 16 && back == sections);
+
+    drop((encoder, waiting, staged));
     for grants in 0.. {
         let mut encoder = common::encoder(&parameters, DICTIONARY)?;
         GRANTS.store(grants, Ordering::SeqCst);

@@ -1,7 +1,11 @@
 use bun_core::vec::{BorrowedBuf, append_with};
-use bun_zlib::inflate::{Container, SPARE_CAPACITY, Status, has_zlib_header};
+use bun_zlib::inflate::{
+    Container, SPARE_CAPACITY, Status, free_spare_memory, has_zlib_header, reserve_for,
+};
 use bun_zlib::{Damage, Error, Inflater, Result};
 
+use crate::deflate::raw;
+use crate::lane_kernels::{IS_SUPPORTED, WORK, WRITTEN};
 use crate::plain::{self, End, adler32, crc32};
 use crate::samples::Random;
 use crate::writer::Writer;
@@ -303,7 +307,7 @@ fn damage_is_found_where_a_plain_decoder_finds_it() {
     let calls = (0..1500).fold(0, |calls, seed| {
         let mut random = Random::new(seed);
         let input = random.mixed(600, 512);
-        let mut stream = crate::deflate::raw(&input, 1 + seed as i32 % 9, 1);
+        let mut stream = crate::deflate::in_short_blocks(&input, 1 + seed as i32 % 9);
         for _ in 0..=random.below(2) {
             let within = random.pick(&[4, 40, stream.len()]).min(stream.len());
             let at = random.below(within);
@@ -312,7 +316,7 @@ fn damage_is_found_where_a_plain_decoder_finds_it() {
         stream.truncate(stream.len() - random.pick(&[0, 0, 0, 1, 9]));
         calls ^ check(&stream, &input[..random.pick(&[0, 0, 100])], &mut random)
     });
-    assert_eq!(calls, 0x6a9e_afc4, "zlib-ng 2.3.3 stops elsewhere");
+    assert_eq!(calls, 0xa7c9_d7c2, "it used to stop elsewhere");
 }
 
 #[test]
@@ -697,7 +701,7 @@ fn in_gzip(raw: &[u8], plain: &[u8]) -> Vec<u8> {
 #[test]
 fn containers_are_read_in_pieces_of_any_size() {
     let plain = Random::new(1).mixed(500, 512);
-    let raw = crate::deflate::raw(&plain, 6, 1);
+    let raw = crate::deflate::in_short_blocks(&plain, 6);
     let mut calls = 0;
     for stream in [in_zlib(&raw, &plain, None), in_gzip(&raw, &plain)] {
         let followed = [&stream[..], &[0xff; 20]].concat();
@@ -713,7 +717,7 @@ fn containers_are_read_in_pieces_of_any_size() {
             }
         }
     }
-    assert_eq!(calls, 0x891b_6ea9, "zlib-ng 2.3.3 stops elsewhere");
+    assert_eq!(calls, 0x0d65_98ae, "it used to stop elsewhere");
 }
 
 #[test]
@@ -1208,7 +1212,7 @@ fn long_calls_follow_each_other() {
     }
     let raw = crate::deflate::raw(&plain, 6, 8);
     for (container, stream) in [
-        (Container::Raw, crate::deflate::raw(&plain, 6, 1)),
+        (Container::Raw, crate::deflate::in_short_blocks(&plain, 6)),
         (Container::Zlib, in_zlib(&raw, &plain, None)),
         (Container::Gzip, in_gzip(&raw, &plain)),
     ] {
@@ -1641,5 +1645,162 @@ fn what_is_left_of_the_buffer_has_nothing_from_the_window() {
             assert!(first == second, "{read} {room}");
             read += first.0;
         }
+    }
+}
+
+/// Words, which make for codewords of many lengths.
+fn text(len: usize, random: &mut Random) -> Vec<u8> {
+    let mut word = |_| {
+        (0..2 + random.below(9))
+            .map(|_| b'a' + random.up_to(25) as u8)
+            .collect()
+    };
+    let words: [Vec<u8>; 900] = std::array::from_fn(&mut word);
+    let pick = std::iter::repeat_with(|| &words[random.up_to(899)]);
+    pick.flatten().copied().take(len).collect()
+}
+
+#[test]
+fn lanes_make_no_difference() {
+    let mut random = Random::new(21);
+    let digits: Vec<u8> = (0..90_000).map(|_| random.below(64) as u8).collect();
+    let mut few_matches: Vec<u8> = (0..90_000)
+        .map(|_| random.below(256).min(random.below(256)) as u8)
+        .collect();
+    (500..89_000)
+        .step_by(300)
+        .for_each(|at| few_matches.copy_within(at / 2..at / 2 + at % 41, at));
+    for (input, level) in [
+        (text(90_000, &mut random), 6),
+        (text(90_000, &mut random), 1),
+        (digits, 6),
+        (few_matches, 6),
+    ] {
+        for is_damaged in [false, true] {
+            let mut stream = raw(&input, level, 5);
+            let at = stream.len() * 3 / 4;
+            stream[at] ^= u8::from(is_damaged);
+            let calls = [true, false].map(|in_lanes| {
+                free_spare_memory();
+                IS_SUPPORTED.set(in_lanes);
+                WRITTEN.set(0);
+                let calls = check(&stream, &[], &mut Random::new(22));
+                assert_eq!(WRITTEN.get() > input.len() / 4, in_lanes);
+                calls
+            });
+            assert_eq!(calls[0], calls[1]);
+        }
+    }
+}
+
+#[test]
+fn streams_take_turns_with_the_lanes_and_a_buffer() {
+    let mut random = Random::new(23);
+    let inputs = [(); 3].map(|()| text(120_000, &mut random));
+    let streams = [(0, 6), (1, 1), (2, 1)].map(|(at, level)| raw(&inputs[at], level, 8));
+    let mut all = streams
+        .each_ref()
+        .map(|it| (raw_with(&[]), &it[..], Vec::new()));
+    let mut buffer = [0; 9000];
+    while all.iter().any(|it| !it.1.is_empty()) {
+        let (inflater, rest, out) = &mut all[random.below(3)];
+        for _ in 0..random.below(4) {
+            let (start, len) = (random.below(500), rest.len().min(8000));
+            buffer[start..start + len].copy_from_slice(&rest[..len]);
+            let mut piece = &buffer[start..start + len];
+            out.extend(step(inflater, &mut piece, 4000 + random.below(200), false).0);
+            *rest = &rest[len - piece.len()..];
+        }
+    }
+    assert!(all.map(|it| it.2) == inputs);
+}
+
+#[test]
+fn an_empty_vec_gets_about_what_it_takes() {
+    for (len, in_lanes) in [
+        (2000, true),
+        (40_000, true),
+        (400_000, true),
+        (400_000, false),
+    ] {
+        free_spare_memory();
+        IS_SUPPORTED.set(in_lanes);
+        let (input, mut out) = (text(len, &mut Random::new(24)), Vec::new());
+        let stream = raw(&input, 6, 8);
+        reserve_for(&stream, false, &mut out, usize::MAX).unwrap();
+        let status = raw_with(&[]).inflate_to_vec(&mut &stream[..], &mut out, usize::MAX);
+        assert!(status == Ok(Status::StreamEnd) && out == input);
+        assert!(out.capacity() < len + len / 4 + SPARE_CAPACITY);
+    }
+}
+
+fn inflate_all(mut streams: &[u8]) -> Vec<u8> {
+    let (mut inflater, mut out) = (raw_with(&[]), Vec::new());
+    WORK.set(0);
+    while streams.first().is_some_and(|&it| it != 0xFF) {
+        let status = inflater.inflate_to_vec(&mut streams, &mut out, usize::MAX);
+        assert_eq!(status, Ok(Status::StreamEnd));
+        inflater.reset();
+    }
+    out
+}
+
+#[test]
+fn lanes_give_up_where_they_waste_time() {
+    for len in [300, 1500] {
+        let input = text(200 * len, &mut Random::new(25));
+        let streams: Vec<u8> = input.chunks(len).flat_map(|it| raw(it, 6, 8)).collect();
+        assert!(inflate_all(&streams) == input);
+        assert!(WORK.get() < input.len());
+    }
+
+    let chain = |len| [(1..16).collect(), vec![0; len], vec![15]].concat();
+    let mut empty_blocks = Writer::default();
+    for _ in 0..500 {
+        empty_blocks
+            .dynamic(false, &chain(241), &[0])
+            .end_block()
+            .stored(false, &[7; 400]);
+    }
+    let usual = [vec![8; 255], vec![10, 10, 9]].concat();
+    let (mut matches, mut far_matches) = (Writer::default(), Writer::default());
+    matches.dynamic(false, &usual, &[1]).literals(b"a");
+    let lengths = [vec![2, 3, 4, 5, 6], vec![0; 251], vec![6, 1]].concat();
+    far_matches
+        .stored(false, &[7; 300])
+        .dynamic(false, &lengths, &chain(0));
+    for at in 0..50_000 {
+        matches.copy(3, 1);
+        far_matches.copy(3, 65 + at * 7 % 190);
+    }
+    for stream in [
+        &mut empty_blocks,
+        matches.end_block(),
+        far_matches.end_block(),
+    ] {
+        assert!(inflate_all(&stream.stored(true, &[]).finish()).len() > 150_000);
+        assert!(WORK.get() < 20_000);
+    }
+}
+
+#[test]
+fn guesses_at_the_length_have_limits() {
+    let lengths = [vec![0; 256], vec![1], vec![0; 28], vec![1]].concat();
+    let empty = Writer::default()
+        .dynamic(true, &lengths, &[1])
+        .end_block()
+        .finish();
+    let mut zeros = Writer::default();
+    zeros.fixed(true).literals(&[0]);
+    for _ in 0..39 {
+        zeros.copy(258, 1);
+    }
+    for (mut stream, len, max) in [
+        (empty.clone(), 1000, 65 << 10),
+        (empty, 3 << 20, 33 << 20),
+        (zeros.end_block().finish(), 3 << 20, 80_000),
+    ] {
+        stream.resize(len, 0xFF);
+        assert!(inflate_all(&stream).capacity() <= max);
     }
 }

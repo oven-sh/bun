@@ -1,6 +1,7 @@
 //! Counting symbols.
 
 use bun_highway::zstd::{are_quicker_for, count_bytes};
+use bun_highway::zstd_stages::estimate_counts;
 use bun_zstd_decoder::array::At;
 use bun_zstd_decoder::bounded::Bounded;
 
@@ -26,6 +27,20 @@ impl Histogram<256> {
             1500..16_384 => count_interleaved::<1>(symbols),
             _ => count_interleaved::<2>(symbols),
         })
+    }
+
+    /// See [`estimate_counts`].
+    #[inline]
+    pub(crate) fn estimate(symbols: &[u8], sample_log: u32) -> Self {
+        let mut counts = [0; _];
+        match estimate_counts(symbols, sample_log, &mut counts) {
+            Some([max_symbol, largest_count]) => Self {
+                counts,
+                max_symbol: max_symbol as usize,
+                largest_count: largest_count as usize,
+            },
+            None => Self::of(symbols),
+        }
     }
 }
 

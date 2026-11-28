@@ -4,6 +4,7 @@ use core::ops::Range;
 
 use bun_removable_features::removable_definition;
 use bun_zstd_decoder::array::allocate;
+use bun_zstd_decoder::format::BLOCK_LEN_MAX;
 use bun_zstd_decoder::{Error, Output, Result, Status};
 
 use crate::dictionary::Dictionary;
@@ -68,11 +69,12 @@ enum Older {
     InBuffer { end: usize },
 }
 
-/// Collects input into blocks. At the end of its buffer, it starts over.
+/// Collects input into blocks. At the end of its buffer, it starts over behind what it keeps.
 struct Buffered {
     writer: FrameWriter,
     buffer: Vec<u8>,
     capacity: usize,
+    kept_len: usize,
     older: Older,
     /// Of the block that is being filled.
     start: usize,
@@ -98,6 +100,7 @@ impl Buffered {
                 writer: FrameWriter::new(plan),
                 buffer: Vec::new(),
                 capacity: 0,
+                kept_len: 0,
                 older: Older::InDictionary,
                 start: 0,
                 filled: 0,
@@ -111,7 +114,7 @@ impl Buffered {
             .writer
             .start(plan, input_len, Start::Frame(dictionary))?;
         let block_len = frame.writer.block_len_max();
-        frame.capacity = frame.writer.window_len() + block_len;
+        [frame.capacity, frame.kept_len] = frame.writer.buffer_lens();
         (frame.older, frame.start, frame.filled) = (Older::InDictionary, 0, 0);
         // If that is all, the end of the frame does not need a block of its own.
         frame.target = block_len + usize::from(input_len == Some(block_len as u64));
@@ -183,8 +186,13 @@ impl Buffered {
         self.has_ended = is_last;
 
         if self.filled + block_len > self.capacity {
+            let kept_len = self.writer.worth_keeping(self.kept_len);
+            let kept_from = self.filled.saturating_sub(kept_len);
+            if !is_last && let Some(filled) = self.buffer.get_mut(..self.filled) {
+                filled.copy_within(kept_from.., 0);
+            }
             self.older = Older::InBuffer { end: self.filled };
-            self.filled = 0;
+            self.filled -= kept_from;
         }
         self.start = self.filled;
         self.target = self.filled + block_len;
@@ -232,6 +240,35 @@ impl Buffered {
     }
 }
 
+/// Memory that is passed on from frame to frame, up to 2.5 MB. It makes no difference for the output.
+#[derive(Default)]
+pub struct Spare(Option<Box<Buffered>>);
+
+impl Spare {
+    fn new(mut frame: Box<Buffered>) -> Self {
+        const TABLES_LEN_MAX: usize = 1 << 20;
+        if frame.buffer.capacity() > 2 * BLOCK_LEN_MAX {
+            frame.buffer = Vec::new();
+        }
+        let [held, _] = frame.writer.tables_len();
+        Self((held <= TABLES_LEN_MAX && !frame.writer.has_long_finder()).then_some(frame))
+    }
+
+    /// See [`compress`](crate::compress).
+    #[inline(never)]
+    pub fn compress(&mut self, bytes: &[u8], out: &mut Output<'_>, level: i32) -> Result<()> {
+        removable_definition!(ZstdCompressor, Self::compress);
+        let (request, len) = (Request::new(level), Some(bytes.len() as u64));
+        let tuning = request.tuning(len, Purpose::Frame { dictionary_len: 0 });
+        let mut frame = Buffered::new(request.plan(tuning), len, None, self.0.take())?;
+        let written_before = out.written();
+        let result = (frame.writer).write(&Input::alone(bytes, &[]), None, true, out);
+        result.inspect_err(|_| out.rewind(written_before))?;
+        *self = Self::new(frame);
+        Ok(())
+    }
+}
+
 enum Frame {
     Buffered(Box<Buffered>),
     Parallel(Box<Workers>),
@@ -265,6 +302,14 @@ impl Encoder {
             pool: Pool::default(),
             error: None,
         }
+    }
+
+    /// Before the first frame, and after the last one.
+    #[inline(never)]
+    pub fn swap_memory(&mut self, spare: &mut Spare) {
+        removable_definition!(ZstdCompressor, Self::swap_memory);
+        let own = self.finished.take().map(Spare::new).unwrap_or_default();
+        self.finished = core::mem::replace(spare, own).0;
     }
 
     fn ensure_idle(&self) -> Result<()> {
@@ -381,6 +426,20 @@ impl Encoder {
                 out.rewind(written_before);
                 (self.error, self.frame) = (Some(error), None);
                 (0, Err(error))
+            }
+        }
+    }
+
+    /// Appends a frame for all of `input`, between frames.
+    pub fn compress_whole(&mut self, mut input: &[u8], out: &mut Vec<u8>) -> Result<()> {
+        let room = worst_case_len(input.len());
+        loop {
+            out.try_reserve(room)?;
+            let mut out = Output::spare_capacity(out, room);
+            let (consumed, status) = self.step(input, &mut out, EndDirective::End);
+            input = input.get(consumed..).unwrap_or_default();
+            if status? == Status::Complete {
+                return Ok(());
             }
         }
     }

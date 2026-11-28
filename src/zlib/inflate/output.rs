@@ -1,8 +1,10 @@
 //! Where one call puts its output.
 
 use core::cell::Cell;
+use core::iter::repeat;
 
 use bun_core::vec::{BorrowedBuf, append_behind, append_with};
+use bun_deflate::lanes::{Block, Lanes, Sheet};
 use bun_highway::zlib::{Appender, NEXT_MATCH_OFFSET};
 
 use super::Status;
@@ -16,11 +18,15 @@ use crate::error::Result;
 pub(super) trait Target {
     fn filled(&self) -> &[u8];
     fn room(&self) -> usize;
+    /// Once it is as large as it may get.
+    fn max_room(&self) -> usize;
     fn append(&mut self, bytes: &[u8], checksum: &mut Checksum);
     /// `false` if it is as large as it may get.
-    fn grow(&mut self) -> Result<bool>;
+    fn grow(&mut self, input_len: usize) -> Result<bool>;
     /// When it is nearly full: if that is cheap, or what `input_len` bytes stand for is unlikely to fit.
     fn grow_early(&mut self, input_len: usize);
+    /// If it has no memory yet.
+    fn reserve_first(&mut self, len: impl FnOnce() -> usize);
     /// The last `back` bytes, or the first `max` of them.
     fn append_again(&mut self, back: usize, max: usize, checksum: &mut Checksum);
     /// Touches no more than `room` bytes, and the `reach.from` in front of them. `None` if they are all but used up.
@@ -31,6 +37,14 @@ pub(super) trait Target {
         room: usize,
         reach: Reach,
         last_distance: &Cell<usize>,
+    ) -> Result<Option<Status>>;
+    /// The same, but `None` may come earlier.
+    fn decode_in_lanes(
+        &mut self,
+        lanes: (&mut Lanes, &mut Block),
+        bits: &mut BitReader<'_>,
+        room: usize,
+        reach: Reach,
     ) -> Result<Option<Status>>;
 }
 
@@ -56,18 +70,26 @@ impl Target for &mut BorrowedBuf<'_, u8> {
         self.capacity() - self.len()
     }
 
+    #[inline]
+    fn max_room(&self) -> usize {
+        self.room()
+    }
+
     #[inline(always)]
     fn append(&mut self, bytes: &[u8], checksum: &mut Checksum) {
         checksum.copy(bytes, self.unfilled());
     }
 
     #[inline]
-    fn grow(&mut self) -> Result<bool> {
+    fn grow(&mut self, _: usize) -> Result<bool> {
         Ok(false)
     }
 
     #[inline]
     fn grow_early(&mut self, _: usize) {}
+
+    #[inline]
+    fn reserve_first(&mut self, _: impl FnOnce() -> usize) {}
 
     fn append_again(&mut self, back: usize, max: usize, checksum: &mut Checksum) {
         with_all(self, |all, len| {
@@ -97,6 +119,35 @@ impl Target for &mut BorrowedBuf<'_, u8> {
             result
         })
     }
+
+    #[inline(never)]
+    fn decode_in_lanes(
+        &mut self,
+        (lanes, block): (&mut Lanes, &mut Block),
+        bits: &mut BitReader<'_>,
+        room: usize,
+        reach: Reach,
+    ) -> Result<Option<Status>> {
+        with_all(self, |all, len| {
+            let (start, limit) = (*len - reach.from, reach.from + room - (SLACK - 1));
+            let bytes = all.get_mut(start..*len + room).unwrap_or_default();
+            let mut sheet =
+                Sheet::slice(bytes, reach.from..usize::MAX, reach.available, reach.max, 0);
+            let has_ended = codes::decode_in_lanes((lanes, block), bits, &mut sheet);
+            let mut end = sheet.position();
+            let result = if has_ended || end != reach.from {
+                Ok(has_ended.then_some(Status::BlockEnd))
+            } else {
+                let (tape, steps) = (
+                    Lap::new((bytes, &mut end), limit, None)?,
+                    0..codes::steps_between_lanes(bits),
+                );
+                codes::decode_slowly(lanes, bits, tape, reach, steps)
+            };
+            *len = start + end;
+            result
+        })
+    }
 }
 
 #[inline(always)]
@@ -115,7 +166,13 @@ fn decode_in_place(
     {
         return Ok(Some(Status::BlockEnd));
     }
-    codes::decode_slowly(tables, bits, Lap::new((bytes, end), limit, None)?, reach)
+    codes::decode_slowly(
+        tables,
+        bits,
+        Lap::new((bytes, end), limit, None)?,
+        reach,
+        repeat(()),
+    )
 }
 
 const MIN_GROWTH: usize = 4096;
@@ -124,18 +181,37 @@ pub(super) struct Growing<'a> {
     vec: &'a mut Vec<u8>,
     start: usize,
     max_len: usize,
+    input_len: usize,
+    guesses: u8,
     /// The caller did not know how long the output is.
     has_grown: bool,
 }
 
 impl<'a> Growing<'a> {
-    pub(super) fn new(vec: &'a mut Vec<u8>, max: usize) -> Self {
+    pub(super) fn new(vec: &'a mut Vec<u8>, max: usize, input_len: usize) -> Self {
         Self {
             start: vec.len(),
             max_len: vec.len().saturating_add(max),
+            input_len,
+            guesses: 0,
             has_grown: false,
             vec,
         }
+    }
+
+    /// For the last `left` bytes of the input, if they are like those before. `None` where doubling is called for.
+    fn likely_growth(&mut self, left: usize) -> Option<usize> {
+        /// More than doubling takes. Windows does not wait for memory to be used.
+        const MAX_BEYOND: usize = 32 << 20;
+        let (read, len) = (self.input_len.saturating_sub(left), self.vec.len());
+        let ratio = len
+            .saturating_mul(18)
+            .checked_div(read)
+            .filter(|_| self.start == 0 && len >= MIN_GROWTH / 2 && self.guesses < 2)?;
+        let likely = left.saturating_mul(ratio) / 16;
+        self.guesses += u8::from(likely < len);
+        let most = len.saturating_mul(16).min(len.saturating_add(MAX_BEYOND));
+        Some(likely.clamp(len / 8, most) + SLACK)
     }
 }
 
@@ -150,15 +226,24 @@ impl Target for Growing<'_> {
         self.vec.capacity().min(self.max_len) - self.vec.len()
     }
 
+    #[inline]
+    fn max_room(&self) -> usize {
+        self.max_len - self.vec.len()
+    }
+
     #[inline(always)]
     fn append(&mut self, bytes: &[u8], checksum: &mut Checksum) {
         append_with(self.vec, bytes.len(), |out| checksum.copy(bytes, out));
     }
 
-    fn grow(&mut self) -> Result<bool> {
+    fn grow(&mut self, input_len: usize) -> Result<bool> {
         let spare = self.vec.capacity() - self.vec.len();
         let left = self.max_len.saturating_sub(self.vec.capacity());
-        if left != 0 && self.vec.try_reserve(spare + left.min(MIN_GROWTH)).is_err() {
+        let reserved = match self.likely_growth(input_len) {
+            Some(likely) => self.vec.try_reserve_exact(spare + left.min(likely)),
+            None => self.vec.try_reserve(spare + left.min(MIN_GROWTH)),
+        };
+        if reserved.is_err() {
             let growth = left.min(MIN_GROWTH + self.vec.len() / 8);
             self.vec.try_reserve_exact(spare + growth)?;
         }
@@ -170,7 +255,14 @@ impl Target for Growing<'_> {
         const LONG_INPUT: usize = 1024;
         if self.has_grown || input_len >= LONG_INPUT || self.vec.capacity() < MIN_GROWTH {
             // What is left may do after all.
-            _ = self.grow();
+            _ = self.grow(input_len);
+        }
+    }
+
+    #[inline]
+    fn reserve_first(&mut self, len: impl FnOnce() -> usize) {
+        if self.vec.capacity() == 0 {
+            self.has_grown = self.vec.try_reserve_exact(len().min(self.max_len)).is_ok();
         }
     }
 
@@ -199,7 +291,29 @@ impl Target for Growing<'_> {
         }
         let decoded = self.vec.len() - start;
         let tape = Appender::new(self.vec, reach.from + decoded, room - decoded);
-        codes::decode_slowly(tables, bits, tape, reach)
+        codes::decode_slowly(tables, bits, tape, reach, repeat(()))
+    }
+
+    #[inline(never)]
+    fn decode_in_lanes(
+        &mut self,
+        (lanes, block): (&mut Lanes, &mut Block),
+        bits: &mut BitReader<'_>,
+        room: usize,
+        reach: Reach,
+    ) -> Result<Option<Status>> {
+        let start = self.vec.len();
+        let has_ended = Sheet::behind(self.vec, room, reach.available, reach.max, |sheet| {
+            codes::decode_in_lanes((lanes, block), bits, sheet)
+        });
+        if has_ended || self.vec.len() != start {
+            return Ok(has_ended.then_some(Status::BlockEnd));
+        }
+        let (tape, steps) = (
+            Appender::new(self.vec, reach.from, room),
+            0..codes::steps_between_lanes(bits),
+        );
+        codes::decode_slowly(lanes, bits, tape, reach, steps)
     }
 }
 

@@ -12,7 +12,11 @@ mod inflate_through_window;
 #[path = "inflate.rs"]
 mod inflate_to_vec;
 mod kernels;
+#[path = "../../deflate/tests/lane_kernels.rs"]
+mod lane_kernels;
 mod plain;
 mod refusals;
 mod samples;
 mod writer;
+
+use refusals::uncounted;

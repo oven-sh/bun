@@ -1,5 +1,3 @@
-use core::array::from_fn;
-
 use crate::format::COMMAND_SYMBOLS;
 
 pub(super) const GROUP: usize = 16;
@@ -95,34 +93,6 @@ impl SymbolSet {
         }
         words[word_count - 1] &= u64::MAX >> (end.wrapping_neg() % WORD);
         Self { words, word_count }
-    }
-
-    #[inline(always)]
-    pub(super) fn union(&self, other: &Self) -> Self {
-        Self {
-            words: from_fn(|i| self.words[i] | other.words[i]),
-            word_count: self.word_count.max(other.word_count),
-        }
-    }
-
-    pub(super) fn words(&self) -> &[u64; COMMAND_SYMBOLS / WORD] {
-        &self.words
-    }
-
-    /// Up to the last symbol: how many are missing alone or in twos, and how often more are missing in a row.
-    #[inline(always)]
-    pub(super) fn gaps(&self) -> [u32; 2] {
-        let (mut after_missing, mut previous) = ([0; 3], u64::MAX);
-        for &word in &self.words[..self.word_count] {
-            let mut symbols = word;
-            for (missing, count) in (1..).zip(&mut after_missing) {
-                symbols &= !((word << missing) | (previous >> (u64::BITS - missing)));
-                *count += symbols.count_ones();
-            }
-            previous = word;
-        }
-        let [one, two, three] = after_missing;
-        [one + two - 2 * three, three]
     }
 
     #[inline(always)]

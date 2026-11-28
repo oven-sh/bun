@@ -101,17 +101,30 @@ impl Candidates {
         (match_len >= min_match).then_some(Candidate { match_len, ..whole })
     }
 
-    /// Like [`MatchState::search`], which gets to search between the candidates.
+    /// The start, end and offset of those in what is being compressed.
+    pub(super) fn within(&self, history: &History<'_>) -> impl Iterator<Item = [u32; 3]> {
+        let left = self.list.get(self.position.index..).unwrap_or_default();
+        let (mut at, mut passed, end) = (history.start, self.position.passed, history.end());
+        left.iter().map_while(move |candidate| {
+            let start = at.saturating_add(candidate.literal_len.saturating_sub(passed));
+            at = at.saturating_add(candidate.len() - core::mem::take(&mut passed));
+            (start < end).then_some([start, at, candidate.offset])
+        })
+    }
+
+    /// Like [`MatchState::search`], which gets to search between the candidates. If they `are_given`, they can go beyond the history.
     pub(crate) fn search(
         &mut self,
         state: &mut MatchState,
         search: &Search<'_>,
+        are_given: bool,
         sequences: &mut Sequences,
         repeats: &mut Repeats,
     ) -> u32 {
         let history = &search.history;
         let end = history.end();
-        if state.tuning.strategy >= Strategy::Optimal {
+        let is_optimal = state.tuning.strategy >= Strategy::Optimal;
+        if is_optimal && !are_given {
             let long_matches = Some(&*self);
             let search = Search {
                 long_matches,
@@ -127,75 +140,25 @@ impl Candidates {
             history: history.part(start, end),
             ..*search
         };
-        let mut at = history.start;
-        while at < end
-            && let Some(candidate) = self.take(end - at, state.tuning.min_match)
+        let (mut at, mut passed) = (history.start, history.start);
+        while passed < end
+            && let Some(candidate) = self.take(end - passed, state.tuning.min_match)
         {
+            let start = passed + candidate.literal_len;
+            passed = start + candidate.match_len;
+            let is_known = candidate.offset as usize <= start as usize + history.older.len();
+            if is_optimal && is_known && candidate.match_len < 256 {
+                continue;
+            }
             state.index_up_to(history, at);
-            let start = at + candidate.literal_len;
             let anchor = state.search(&part(at, start), sequences, repeats);
             let offset = OffsetValue::new(candidate.offset);
             *repeats = repeats.after(offset, true);
             sequences.push(start - anchor, offset, candidate.match_len);
-            at = start + candidate.match_len;
+            at = passed;
         }
         state.index_up_to(history, at);
         state.search(&part(at, end), sequences, repeats)
-    }
-}
-
-/// Offers the candidates for a block position by position.
-pub(super) struct Cursor<'a> {
-    list: &'a [Candidate],
-    position: Position,
-    start: u32,
-    end: u32,
-    offset: u32,
-}
-
-impl<'a> Cursor<'a> {
-    pub(super) fn new(candidates: Option<&'a Candidates>, block_len: usize) -> Self {
-        let mut cursor = Self {
-            list: candidates.map(|it| &*it.list).unwrap_or_default(),
-            position: candidates.map(|it| it.position).unwrap_or_default(),
-            start: 0,
-            end: 0,
-            offset: 0,
-        };
-        cursor.load(0, block_len as u32);
-        cursor
-    }
-
-    fn load(&mut self, at: u32, left: u32) {
-        (self.start, self.end) = (u32::MAX, u32::MAX);
-        let Some(candidate) = self.list.get(self.position.index) else {
-            return;
-        };
-        let passed = self.position.passed;
-        let literals_left = candidate.literal_len.saturating_sub(passed);
-        let len = left.min(candidate.len() - passed);
-        if literals_left < left {
-            (self.start, self.end) = (at + literals_left, at + len);
-            self.offset = candidate.offset;
-        }
-        self.position.advance(self.list, len);
-    }
-
-    /// The offset and the length of the match at `at` of the block, of which `left` bytes are left.
-    #[inline(always)]
-    pub(super) fn at(&mut self, at: u32, left: u32) -> Option<(u32, u32)> {
-        if self.position.index >= self.list.len() {
-            return None;
-        }
-        if at >= self.end {
-            if at > self.end {
-                self.position.advance(self.list, at - self.end);
-            }
-            self.load(at, left);
-        }
-        (self.start..self.end)
-            .contains(&at)
-            .then(|| (self.offset, self.end - at))
     }
 }
 
@@ -394,6 +357,9 @@ impl Finder {
             if before + after > best_len {
                 best_len = before + after;
                 best = Some((index, before, after));
+                if best_len == history.end() - anchor {
+                    break;
+                }
             }
         }
         best

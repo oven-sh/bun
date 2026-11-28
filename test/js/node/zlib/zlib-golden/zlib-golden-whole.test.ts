@@ -1,5 +1,5 @@
 // Made-up data with the bytes that it is compressed to in one go, for all kinds of settings. See record.ts.
-// The results are those of zlib-ng 2.3.3.
+// The results are Bun's own, and the same on every CPU.
 import { expect, test } from "bun:test";
 import zlib from "node:zlib";
 import { input } from "./inputs";
@@ -22,8 +22,8 @@ test("the functions for a whole buffer give the same bytes", async () => {
     const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
     zlib[names[c.mode]](source, options, (error, result) => (error ? reject(error) : resolve(result)));
     expect(zlib[`${names[c.mode]}Sync`](source, options).equals(deflate(c).output)).toBe(true);
-    // These write first and finish then.
-    expect((await promise).equals(deflate({ ...c, steps: `${source.length}` }).output)).toBe(true);
+    // To store, these write first and finish then.
+    expect((await promise).equals(deflate(options.level ? c : { ...c, steps: `${source.length}` }).output)).toBe(true);
   }
 });
 

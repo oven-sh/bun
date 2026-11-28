@@ -321,8 +321,15 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   }
   // Nor can one with other CPU features, which this one has in some release builds.
   noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_brotli.cpp"));
-  // Nor one with SafeStack, which this one has in hardened builds.
+  // Nor one without LTO.
+  noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_inflate.cpp"));
+  // Nor one with SafeStack, which these have in hardened builds.
+  noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_brotli_quick.cpp"));
   noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_zstd.cpp"));
+  // <windows.h> defines `near`, `far` and `small`.
+  noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_deflate.cpp"));
+  noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_zstd_ladder.cpp"));
+  noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_zstd_stages.cpp"));
 
   // Windows-only cpp sources (rescle — PE resource editor for --compile).
   if (cfg.windows) {

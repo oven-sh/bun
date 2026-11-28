@@ -33,6 +33,16 @@ pub(crate) fn raw(input: &[u8], level: i32, memory_level: u8) -> Vec<u8> {
     out
 }
 
+pub(crate) fn in_short_blocks(input: &[u8], level: i32) -> Vec<u8> {
+    let mut deflater = Deflater::new(Container::Raw, options(level, 0, 15, 8)).unwrap();
+    let mut out = Vec::new();
+    let pieces = input.chunks(200).map(|it| (it, Flush::Block));
+    for (piece, flush) in pieces.chain([(&[][..], Flush::Finish)]) {
+        deflater.deflate_to_vec(piece, &mut out, flush).unwrap();
+    }
+    out
+}
+
 /// One call with exactly so much room.
 fn step(
     deflater: &mut Deflater,
@@ -180,128 +190,80 @@ fn session(level: i32, mut strategy: i32, seed: u64, next: Next) -> u32 {
 }
 
 #[test]
-fn calls_in_any_order_give_what_zlib_ng_gives() {
-    /// The first of 24 seeds and the result with zlib-ng 2.3.3, by the level and the strategy at the start.
-    #[rustfmt::skip]
-    const EXPECTED: [[(u64, u32); 5]; 10] = [
-        [(24, 0x4aa3_f145), (0, 0xca2c_f35a), (0, 0xb7a3_f7e0), (0, 0x50b8_fec1), (24, 0x090a_2718)],
-        [(0, 0xb6d8_b25b), (0, 0xa7d2_807a), (0, 0x7a9a_3e41), (0, 0x2bb7_0661), (48, 0x3460_44bb)],
-        [(24, 0x8780_d345), (0, 0xad33_f143), (24, 0xc322_e46f), (72, 0xa0f6_9601), (0, 0x51d2_101f)],
-        [(0, 0x4be2_87ba), (0, 0x7ae5_df72), (0, 0xdfa5_0dae), (0, 0xfd0e_4369), (0, 0xda68_da84)],
-        [(0, 0xc751_9b89), (0, 0xeca7_820b), (0, 0xcfc5_afa2), (0, 0xbe46_838f), (24, 0x5ab7_23ed)],
-        [(0, 0x55cc_c07e), (24, 0x5516_3ad9), (0, 0x90a4_f9a8), (0, 0xb7fe_6797), (0, 0x67cf_6dbe)],
-        [(0, 0x4fa1_d2a0), (0, 0xbdc6_1165), (0, 0xca25_1029), (48, 0x2b2b_88e3), (0, 0x4aa9_9c4f)],
-        [(48, 0x242d_dff9), (24, 0x5649_6296), (0, 0x047b_ed37), (0, 0x4fd7_950e), (0, 0x72e1_e0a0)],
-        [(24, 0x5865_dce4), (0, 0xfa24_0a61), (24, 0x17d4_4b9b), (24, 0x18eb_d2a9), (24, 0x9f3a_9040)],
-        [(0, 0x7c01_7d43), (48, 0x516a_c3bb), (0, 0x9623_575b), (0, 0xe7c2_11fd), (48, 0x5a42_c4f6)],
-    ];
-    let found: [[_; 5]; 10] = std::array::from_fn(|level| {
-        std::array::from_fn(|strategy| {
-            let first = EXPECTED[level][strategy].0;
-            let hash = (first..first + 24).fold(0, |hash, seed| {
-                hash ^ session(level as i32, strategy as i32, seed, Next::New)
-            });
-            (first, hash)
-        })
-    });
-    assert_eq!(found, EXPECTED, "{found:x?}");
-}
-
-/// The first arguments of `session()`, and the result with zlib-ng 2.3.3.
-#[rustfmt::skip]
-const RARE: &[(i32, i32, u64, u32)] = &[
-    (0, 0, 64, 0x7338_3b5e), (0, 0, 163, 0x7cc7_2afb), (0, 0, 1153, 0xfa28_4898), (0, 0, 2998, 0xfcee_8f7c),
-    (1, 0, 130, 0x3a3c_eed9), (1, 0, 1811, 0x996b_a1f0), (2, 0, 141, 0x49ab_3ea9), (2, 0, 387, 0xf632_0ead),
-    (5, 0, 248, 0x5331_8687), (5, 0, 296, 0xa03a_5b17), (6, 0, 1774, 0xc12f_eeb3), (6, 2, 2224, 0x2954_e4ca),
-    (7, 0, 75, 0xb795_0925), (7, 0, 1446, 0x11d1_bf7a), (8, 0, 116, 0x44b9_e4a8), (8, 0, 420, 0x6661_01d5),
-    (8, 0, 576, 0x1e19_a825), (8, 0, 1220, 0x98ca_b372), (8, 1, 140, 0x7753_210c), (8, 1, 1076, 0x958a_7ff9),
-    (9, 0, 90, 0xa2b0_5f94), (9, 0, 270, 0x0cb9_ce59), (9, 0, 290, 0x0dee_141e), (9, 0, 1958, 0x074c_9550),
-    (9, 4, 1340, 0x6ddc_d3f7), (9, 4, 1861, 0x475c_bdbd),
-];
-
-/// More of them, with the result that this crate gives.
-#[rustfmt::skip]
-const MORE_RARE: &[(i32, i32, u64, u32)] = &[
-    (2, 0, 91, 0x918a_3124), (2, 0, 220, 0x075f_93a6), (5, 0, 21359, 0x9d30_4111), (6, 2, 205, 0xbecf_d0c7),
-    (6, 3, 339, 0x81b5_4edc), (7, 0, 103, 0xbf91_eb2e), (7, 0, 236, 0xab45_2993), (8, 1, 51, 0xb3f7_aed1),
-    (9, 0, 182, 0xb18a_3c09), (9, 0, 279, 0x9714_3e61), (9, 4, 665, 0x9768_6613), (9, 4, 1474, 0x1211_565e),
-    (9, 4, 2217, 0x6c78_f705),
-];
-
-fn assert_results(sessions: &[(i32, i32, u64, u32)]) {
-    for &(level, strategy, seed, expected) in sessions {
-        let found = session(level, strategy, seed, Next::New);
-        assert_eq!(found, expected, "{level} {strategy} {seed}");
-    }
-}
-
-#[test]
-fn and_so_do_some_that_few_sequences_are_like() {
-    assert_results(RARE);
-}
-
-#[test]
-fn others_give_what_was_recorded_with_this_crate() {
-    assert_results(MORE_RARE);
-}
-
-#[test]
-fn a_deflater_is_as_good_as_new_after_reset() {
-    let rare = RARE.iter().chain(MORE_RARE).map(|it| (it.0, it.1, it.2));
+fn calls_in_any_order_do_the_same_after_reset() {
     let all = (0..2000).map(|it| (it % 10, it / 10 % 5, it as u64 / 50));
-    for (level, strategy, seed) in rare.chain(all) {
+    for (level, strategy, seed) in all {
         let [new, reset] = [Next::New, Next::Reset].map(|it| session(level, strategy, seed, it));
         assert_eq!(new, reset, "{level} {strategy} {seed}");
     }
 }
 
 #[test]
-fn the_rolling_hash_starts_over_after_reset() {
-    // From zero, so the second position is found, which starts with one.
-    let input = b"1\0abcd2\0abcd345";
-    let set_level = |deflater: &mut Deflater, level: i32| {
-        let is_set = deflater.set_params(level.try_into().unwrap(), Strategy::Default);
-        assert_eq!(is_set, Ok(true));
-    };
-    for dictionary in [&b""[..], b"xyz"] {
-        let mut deflater = Deflater::new(Container::Raw, options(9, 0, 15, 8)).unwrap();
-        deflater
-            .deflate_to_vec(b"efghijklm", &mut Vec::new(), Flush::Sync)
-            .unwrap();
-        set_level(&mut deflater, 8);
-        deflater.reset();
-        deflater.set_dictionary(dictionary).unwrap();
-        let mut out = Vec::new();
-        deflater
-            .deflate_to_vec(input, &mut out, Flush::None)
-            .unwrap();
-        set_level(&mut deflater, 9);
-        deflater
-            .deflate_to_vec(b"", &mut out, Flush::Finish)
-            .unwrap();
-        assert_eq!(out, raw(input, 9, 8));
+fn neither_the_pieces_nor_the_room_matter() {
+    let mut random = Random::new(3);
+    for it in 0..180 {
+        let (window_bits, memory_level) = (random.pick(&[9, 12, 15]), random.pick(&[1, 8, 9]));
+        let options = options(1 + it % 9, it / 9 % 5, window_bits, memory_level);
+        let len = random.pick(&[0, 300, 2047, 6655, 8191, 8480, 20_000, 150_000]) + random.below(3);
+        let mut input = random.mixed(len, 1 << window_bits);
+        input[len / 3..len / 2].fill(9);
+        let (mut whole, mut out) = (Vec::new(), Vec::new());
+        compress(&input, &mut whole, Container::Raw, options).unwrap();
+        let mut deflater = Deflater::new(Container::Raw, options).unwrap();
+        let pieces = input
+            .chunks(50 + random.up_to(30_000))
+            .map(|it| (it, Flush::None));
+        for (mut piece, flush) in pieces.chain([(&[][..], Flush::Finish)]) {
+            let room = 9 + random.up_to(9000);
+            while step(&mut deflater, &mut piece, &mut out, room, flush) == Ok(Status::NeedsOutput)
+            {
+            }
+        }
+        assert!(out == whole, "{it}");
+        check_stream(Container::Raw, &mut out, &[], &input);
     }
 }
 
 #[test]
-fn the_rolling_hash_goes_on_behind_a_dictionary() {
-    // One of two bytes is too short for a hash.
-    for (dictionary, input) in [
-        (&b"xy"[..], &b"1\0abcd2\0abcd345"[..]),
-        (b"wxy", b"xyabcd2xyabcd345"),
-    ] {
-        let through = |level: i32| {
-            let mut deflater = Deflater::new(Container::Raw, options(9, 0, 15, 8)).unwrap();
+fn what_came_before_is_found_whatever_the_level_was() {
+    let known = Random::new(1).bytes(3000);
+    for (before, after) in (0..=9).flat_map(|before| (1..=9).map(move |after| (before, after))) {
+        let mut deflater = Deflater::new(Container::Raw, options(before, 0, 15, 8)).unwrap();
+        let (dictionary, first) = known.split_at(1000);
+        deflater.set_dictionary(dictionary).unwrap();
+        let mut out = Vec::new();
+        deflater
+            .deflate_to_vec(first, &mut out, Flush::Sync)
+            .unwrap();
+        let is_set = deflater.set_params(after.try_into().unwrap(), Strategy::Default);
+        assert_eq!(is_set, Ok(true));
+        for piece in known.chunks(500) {
+            out.clear();
+            deflater
+                .deflate_to_vec(piece, &mut out, Flush::Sync)
+                .unwrap();
+            assert!(out.len() < 20, "{before} {after}");
+        }
+    }
+}
+
+#[test]
+fn strategies_keep_to_their_limits() {
+    let input = Random::new(5).mixed(60_000, 4096);
+    for level in 1..=9 {
+        let [literals, runs, fixed] = [2, 3, 4].map(|strategy| {
             let mut out = Vec::new();
-            deflater.set_dictionary(dictionary).unwrap();
-            for (level, input, flush) in [(level, input, Flush::None), (9, b"", Flush::Finish)] {
-                let is_set = deflater.set_params(level.try_into().unwrap(), Strategy::Default);
-                assert_eq!(is_set, Ok(true));
-                deflater.deflate_to_vec(input, &mut out, flush).unwrap();
-            }
-            out
-        };
-        assert_eq!(through(8), through(9));
+            compress(
+                &input,
+                &mut out,
+                Container::Raw,
+                options(level, strategy, 15, 8),
+            )
+            .unwrap();
+            plain::inflate(&out, &[])
+        });
+        assert_eq!((literals.max_distance, runs.max_distance), (0, 1));
+        assert_eq!(fixed.longest_codes, [0; 3]);
     }
 }
 
@@ -369,8 +331,8 @@ fn the_window_may_slide_any_number_of_times_at_level_0() {
         (512, 999),
         (700, 999),
     ];
-    let found = [2, 6, 7, 9].map(|level| {
-        stored.iter().fold(0, |hash, &(len, piece)| {
+    for level in [2, 6, 7, 9] {
+        for (len, piece) in stored {
             let mut deflater = Deflater::new(Container::Zlib, options(level, 0, 9, 8)).unwrap();
             let (mut out, stored) = (Vec::new(), Random::new(60).mixed(len, 512));
             for (level, input, piece) in
@@ -391,11 +353,8 @@ fn the_window_may_slide_any_number_of_times_at_level_0() {
                 &[],
                 &[first, &stored, last].concat(),
             );
-            crc32(hash, &out)
-        })
-    });
-    // From zlib-ng 2.3.3.
-    assert_eq!(found, [0x8663_2ef7, 0xd183_39fb, 0x4fe5_3af9, 0xf8e7_fd96]);
+        }
+    }
 }
 
 #[test]
@@ -465,124 +424,40 @@ fn nothing_is_left_after_reset() {
     }
 }
 
-/// The longest codes for code lengths and for literals, and the checksum of the stream to compare with zlib-ng 2.3.3's.
-fn longest_codes(input: &[u8]) -> (u8, u8, u32) {
-    let mut out = Vec::new();
-    compress(input, &mut out, Container::Raw, options(6, 2, 15, 9)).unwrap();
-    let inflated = plain::inflate(&out, &[]);
-    assert!(inflated.bytes == input);
-    (
-        inflated.longest_codes[0],
-        inflated.longest_codes[1],
-        crc32(0, &out),
-    )
-}
-
 #[test]
-fn codes_for_literals_have_at_most_15_bits() {
-    let mut random = Random::new(1);
-    let found = [14, 15, 16, 17, 20].map(|count| longest_codes(&random.uneven(count)));
-    let expected = [
-        (4, 14, 0xec43_7a9e),
-        (5, 15, 0xca9a_ca36),
-        (5, 15, 0x2a7f_615c),
-        (5, 15, 0x0856_687b),
-        (4, 15, 0x7ca3_39dc),
-    ];
-    assert_eq!(found, expected);
-}
+fn uneven_frequencies_make_long_codes() {
+    for count in [12, 13, 14, 15, 16, 17] {
+        let input = (1u32..1 << count).map(|it| it.trailing_zeros() as u8);
+        let (input, mut out) = (input.collect::<Vec<_>>(), Vec::new());
+        compress(&input, &mut out, Container::Raw, options(6, 2, 15, 9)).unwrap();
+        let inflated = plain::inflate(&out, &[]);
+        assert!(inflated.bytes == input && (12..=14).contains(&inflated.longest_codes[1]));
 
-#[test]
-fn codes_for_distances_have_at_most_15_bits() {
-    let found = [15, 16, 17].map(|count| {
         let mut input = Planned::with_literals(13_000);
         for symbol in Random::new(1).uneven(count) {
             let (base, extra_bits) = plain::DISTANCES[10 + usize::from(symbol)];
             input.copy(3, base..base + (1 << extra_bits));
         }
-        let out = raw(&input.bytes, 9, 9);
-        let inflated = plain::inflate(&out, &[]);
-        assert!(inflated.bytes == input.bytes);
-        (inflated.longest_codes[2], crc32(0, &out))
-    });
-    assert_eq!(
-        found,
-        [(14, 0x7a56_5012), (15, 0xe5b7_f5ba), (15, 0x9248_949a)]
-    );
-}
-
-#[test]
-fn codes_for_code_lengths_have_at_most_7_bits() {
-    // How many bytes get a code of each length. In this order no length comes often enough in a row for a repeat code.
-    let lengths = [
-        (4, 3),
-        (6, 16),
-        (7, 25),
-        (8, 40),
-        (9, 60),
-        (10, 93),
-        (11, 1),
-        (12, 8),
-        (14, 7),
-    ];
-    let lengths: Vec<_> = lengths
-        .into_iter()
-        .flat_map(|(bits, times)| vec![bits; times])
-        .collect();
-    let times = |byte| 1 << (14 - lengths[usize::from(byte) * 31 % lengths.len()]);
-    let input: Vec<_> = (0..lengths.len() as u8)
-        .flat_map(|it| vec![it; times(it)])
-        .collect();
-    assert_eq!(longest_codes(&input), (7, 14, 0x0956_06f0));
-}
-
-#[test]
-fn level_9_looks_at_4096_candidates() {
-    let found = [4094, 4095, 4096, 4097].map(|count| {
-        [0, 1, 2000, count].map(|of_other_bytes| {
-            let mut random = Random::new(1);
-            let mut input = b"-abc0123456789".to_vec();
-            for at in 0..count {
-                // They have the same hash.
-                input.extend(if at < count - of_other_bytes {
-                    b"abc"
-                } else {
-                    b"Abc"
-                });
-                input.push(128 + random.below(100) as u8);
-            }
-            let len_with = |end: &[u8]| {
-                let (input, mut out) = ([&input, end].concat(), Vec::new());
-                compress(&input, &mut out, Container::Raw, options(9, 4, 15, 9)).unwrap();
-                out.len()
-            };
-            // The first is one match if that is found, and else a literal and a match like the second.
-            len_with(b"\xf0\xf1abc0123456789") < len_with(b"\xf0\xf1-bc0123456789")
-        })
-    });
-    assert_eq!(found, [[true; 4], [true; 4], [false; 4], [false; 4]]);
-}
-
-#[test]
-fn a_block_that_does_not_compress_is_stored_however_long_it_is() {
-    // As many symbols as fit in a block: literals of 9 bits, matches of 3 bytes in 25 bits, and one of 258 bytes.
-    let mut input = Planned::with_literals(16_513);
-    for len in [vec![3; 16_253], vec![258]].concat() {
-        input.copy(len, 16_385..input.bytes.len().min(32_000));
+        assert!(plain::inflate(&raw(&input.bytes, 9, 9), &[]).bytes == input.bytes);
     }
-    let mut input = input.bytes;
-    input.extend([0; 300]);
-    let mut out = Vec::new();
-    compress(&input, &mut out, Container::Raw, options(9, 4, 15, 9)).unwrap();
-    assert_eq!(out[..5], [0, 0xfa, 0xff, 5, 0]);
-    check_stream(Container::Raw, &mut out, &[], &input);
+}
+
+#[test]
+fn what_does_not_compress_is_stored_with_any_window() {
+    let input = Random::new(1).bytes(100_000);
+    for (window_bits, strategy) in (9..=15).flat_map(|bits| [(bits, 0), (bits, 4)]) {
+        let (options, mut out) = (options(6, strategy, window_bits, 9), Vec::new());
+        compress(&input, &mut out, Container::Raw, options).unwrap();
+        assert!(out.len() < input.len() + 80);
+        check_stream(Container::Raw, &mut out, &[], &input);
+    }
 }
 
 #[test]
 fn matches_stay_within_the_window() {
     for window_bits in 9..=15 {
         let size = 1 << window_bits;
-        let input = Random::new(window_bits.into()).mixed(5 * size, size);
+        let input = Random::new(window_bits.into()).mixed(5 * size + 20_000, size);
         for level in 1..=9 {
             let mut out = Vec::new();
             compress(
@@ -766,4 +641,115 @@ fn the_defaults_are_those_of_zlib() {
     };
     assert!(with(Options::default()) == with(options(6, 0, 15, 8)));
     assert!(with(options(6, 0, 8, 8)) == with(options(6, 0, 9, 8)));
+}
+
+#[test]
+fn matches_are_found_in_very_little() {
+    for level in 1..=9 {
+        let mut deflater = Deflater::new(Container::Raw, options(level, 0, 15, 8)).unwrap();
+        deflater.set_dictionary(b"-abcdefgh").unwrap();
+        let mut out = Vec::new();
+        deflater.deflate_whole(b"abcdefgh", &mut out).unwrap();
+        assert_eq!(out, [131, 209, 0], "{level}");
+        assert_eq!(raw(b"-abcd1abcd2345", level, 8).len(), 13);
+    }
+    assert_eq!(raw(b"-abc1abc2345", 9, 8).len(), 12);
+}
+
+#[test]
+fn short_streams_do_not_depend_on_those_before() {
+    let mut random = Random::new(5);
+    let known = random.mixed(20_000, 900);
+    // Enough for the tables of the thread to be cleared several times.
+    for it in 0..600 {
+        let input = &known[random.below(3) * 50..][..random.up_to(7000)];
+        let options = options(1 + it % 9, it / 9 % 5, random.pick(&[9, 15]), 8);
+        let (mut whole, mut out) = (Vec::new(), Vec::new());
+        compress(input, &mut whole, Container::Raw, options).unwrap();
+        let mut deflater = Deflater::new(Container::Raw, options).unwrap();
+        for (piece, flush) in [(input, Flush::None), (&[][..], Flush::Finish)] {
+            deflater.deflate_to_vec(piece, &mut out, flush).unwrap();
+        }
+        assert!(out == whole, "{it}");
+    }
+}
+
+#[test]
+fn what_has_been_copied_is_found_again() {
+    let mut random = Random::new(5);
+    let (mut version, mut all) = (random.bytes(20000), Vec::new());
+    for at in (0..40).map(|it| it * 7919 % 19000) {
+        version.splice(at..at + 7, random.bytes(40));
+        all.extend(&version);
+    }
+    for level in 3..=9 {
+        let len = raw(&all, level, 8).len();
+        assert!(len < 36000, "{level} {len}");
+    }
+}
+
+#[test]
+fn matches_are_found_after_noise() {
+    let mut random = Random::new(6);
+    let mut input = random.bytes(9000);
+    (0..20000).for_each(|_| input.extend(random.bytes(3).repeat(3)));
+    for level in 1..=9 {
+        let len = raw(&input, level, 8).len();
+        assert!(len < 120_000, "{level} {len}");
+    }
+}
+
+#[test]
+fn a_run_ends_with_the_strategy() {
+    for start in 0..258 {
+        let input = Random::new(7).bytes(50).repeat(400);
+        let (first, rest) = input[start..].split_at(8480);
+        let mut deflater = Deflater::new(Container::Raw, options(6, 0, 15, 8)).unwrap();
+        let mut out = Vec::new();
+        for piece in [&input[..start], first] {
+            deflater
+                .deflate_to_vec(piece, &mut out, Flush::Sync)
+                .unwrap();
+        }
+        let only_literals = options(6, 2, 15, 8);
+        let has_changed = deflater.set_params(only_literals.level, only_literals.strategy);
+        assert_eq!(has_changed, Ok(true));
+        out.clear();
+        deflater
+            .deflate_to_vec(rest, &mut out, Flush::Finish)
+            .unwrap();
+        assert!(out.len() > rest.len() / 2, "{start}");
+    }
+}
+
+#[test]
+fn older_copies_may_be_longer() {
+    let mut random = Random::new(8);
+    for period in [7, 75, 257, 3165] {
+        let mut input = random.bytes(period).repeat(90_000 / period);
+        for (at, byte) in random.bytes(2000).into_iter().enumerate() {
+            input[43 * at + usize::from(byte % 32)] = byte;
+        }
+        input[40_000..43_000].fill(0);
+        for level in 3..=9 {
+            assert!(plain::inflate(&raw(&input, level, 8), &[]).bytes == input);
+        }
+    }
+}
+
+#[test]
+fn a_run_may_end_where_a_block_does() {
+    let noise = Random::new(8).bytes(9000);
+    for end in (8200..8800).step_by(7) {
+        let (mut input, mut out) = (noise.clone(), Vec::new());
+        input[7700..end].fill(0);
+        input[end..].iter_mut().for_each(|it| *it %= 128);
+        let mut deflater = Deflater::new(Container::Raw, options(6, 0, 10, 8)).unwrap();
+        let mut unread = &input[..];
+        step(&mut deflater, &mut unread, &mut out, 9000, Flush::None).unwrap();
+        while step(&mut deflater, &mut unread, &mut out, 99, Flush::Finish).unwrap()
+            == Status::NeedsOutput
+        {}
+        check_stream(Container::Raw, &mut out, &[], &input);
+    }
 }

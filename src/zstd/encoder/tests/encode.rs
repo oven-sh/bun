@@ -8,7 +8,7 @@ use std::cell::Cell;
 use bun_highway::zstd::COUNT_MIN;
 use bun_zstd_decoder::{Dictionary, Error, Output, Result, Status, XxHash64, decompress};
 use bun_zstd_encoder::EndDirective::{Continue, End, Flush};
-use bun_zstd_encoder::{DEFAULT_LEVEL, Encoder, compress, compress_bound};
+use bun_zstd_encoder::{DEFAULT_LEVEL, Encoder, Spare, compress, compress_bound};
 use common::*;
 
 thread_local! {
@@ -43,12 +43,19 @@ const FORMAT: u32 = 10;
 const LEVEL: u32 = 100;
 const HASH_LOG: u32 = 102;
 const CHAIN_LOG: u32 = 103;
-const STRATEGY: u32 = 107;
 const TARGET_BLOCK_LEN: u32 = 130;
 
 fn noise(len: usize) -> Vec<u8> {
     let words = (0..len as u64).map(|it| XxHash64::hash(&it.to_le_bytes()));
     words.flat_map(u64::to_le_bytes).take(len).collect()
+}
+
+fn decompressed(frames: &[u8], dictionary: &[u8]) -> Result<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(100_000);
+    let mut out = Output::spare_capacity(&mut bytes, usize::MAX);
+    decompress(frames, &mut out, Some(&Dictionary::new(dictionary)?))?;
+    drop(out);
+    Ok(bytes)
 }
 
 #[test]
@@ -64,6 +71,7 @@ fn refused_memory_is_an_error() -> Result<()> {
         ]
     });
     let others = [
+        vec![],
         vec![(WINDOW_LOG, 12), (STRATEGY, 4)],
         vec![(WINDOW_LOG, 14), (TARGET_BLOCK_LEN, 1340)],
         vec![(WINDOW_LOG, 14), (LONG_DISTANCE, 1)],
@@ -103,7 +111,7 @@ fn refused_memory_is_an_error() -> Result<()> {
             19,
         );
         if GRANTS.take().is_some() {
-            assert_eq!((result, summary(&out)), (Ok(()), (11260, 0x65D0_0CE6)));
+            assert!(result.is_ok() && decompressed(&out, &[])? == input);
             break;
         }
         assert_eq!(result, Err(Error::MemoryAllocation));
@@ -135,6 +143,73 @@ fn memory_that_frames_do_not_need_is_given_up() -> Result<()> {
     assert_eq!(frames_until_it_allocates(&mut encoder, &large, 1), None);
     let frames = frames_until_it_allocates(&mut encoder, &small, 200);
     assert_eq!(frames, Some(129));
+    Ok(())
+}
+
+#[test]
+fn spare_memory_does_not_change_the_output() -> Result<()> {
+    let input = sample(40_000);
+    let cases = [
+        (3, 40_000),
+        (3, 600),
+        (1, 9000),
+        (4, 20_000),
+        (9, 3000),
+        (-1, 700),
+        (3, 0),
+    ];
+    let mut out = Vec::with_capacity(4 * input.len());
+    let mut spare = Spare::default();
+    for (level, len) in [cases, cases].concat() {
+        out.clear();
+        let input = &input[..len];
+        compress(
+            input,
+            &mut Output::spare_capacity(&mut out, usize::MAX),
+            level,
+        )?;
+        let expected = summary(&out);
+        out.clear();
+        spare.compress(
+            input,
+            &mut Output::spare_capacity(&mut out, usize::MAX),
+            level,
+        )?;
+        assert_eq!(summary(&out), expected, "{level} {len}");
+
+        let summaries = [&mut Spare::default(), &mut spare].map(|spare| {
+            let mut encoder = Encoder::new(level);
+            encoder.swap_memory(spare);
+            out.clear();
+            write(&mut encoder, &input[..len / 3], Flush, 1000, &mut out)?;
+            write(&mut encoder, &input[len / 3..], End, 1000, &mut out)?;
+            encoder.swap_memory(spare);
+            Ok::<_, Error>(summary(&out))
+        });
+        assert!(summaries[0].is_ok() && summaries[0] == summaries[1]);
+        assert!(decompressed(&out, &[])? == input);
+    }
+
+    for is_refused in [false, false, true] {
+        out.clear();
+        GRANTS.set(is_refused.then_some(0));
+        spare.compress(&input, &mut Output::spare_capacity(&mut out, usize::MAX), 3)?;
+    }
+    GRANTS.set(None);
+    Ok(())
+}
+
+#[test]
+fn matches_reach_small_blocks_at_the_start() -> Result<()> {
+    let start = noise(200);
+    for level in [1, 3, 5] {
+        let (mut encoder, mut out) = (Encoder::new(level), Vec::with_capacity(20_000));
+        for piece in [&start[..], &start, &start.repeat(30), &start] {
+            write(&mut encoder, piece, Flush, usize::MAX, &mut out)?;
+        }
+        write(&mut encoder, &[], End, usize::MAX, &mut out)?;
+        assert!(out.len() < 2 * start.len() && decompressed(&out, &[])? == start.repeat(33));
+    }
     Ok(())
 }
 
@@ -199,9 +274,10 @@ fn literals_fit_in_as_little_room_with_kernels() -> Result<()> {
     };
     for count_min in [usize::MAX, 4096] {
         COUNT_MIN.set(count_min);
-        assert_eq!(fits(3700), Err(Error::DstSizeTooSmall));
-        for room in 3701..3900 {
-            assert_eq!(fits(room)?, (3694, 0x5E63_B143));
+        let expected = fits(5000)?;
+        assert_eq!(fits(expected.0), Err(Error::DstSizeTooSmall));
+        for room in expected.0 + 8..expected.0 + 200 {
+            assert_eq!(fits(room)?, expected);
         }
     }
     Ok(())
@@ -246,9 +322,32 @@ fn small_blocks_are_given_up_if_the_last_one_grows_too_much() -> Result<()> {
 }
 
 #[test]
+fn matches_reach_what_a_full_buffer_keeps() -> Result<()> {
+    for (level, window_log, period) in [(3, 18, 250_000), (3, 12, 2500), (-1, 18, 8000)] {
+        let input = [noise(period).repeat(8), vec![0; 3 * period], sample(period)].concat();
+        let mut encoder = encoder(&[(LEVEL, level), (WINDOW_LOG, window_log)], &[])?;
+        let mut out = Vec::with_capacity(2 * input.len());
+        for piece in input.chunks(period / 3) {
+            write(&mut encoder, piece, Flush, usize::MAX, &mut out)?;
+        }
+        write(&mut encoder, &[], End, usize::MAX, &mut out)?;
+        assert!(out.len() < 2 * period, "{level} {window_log} {}", out.len());
+
+        let mut back = Vec::with_capacity(input.len());
+        decompress(
+            &out,
+            &mut Output::spare_capacity(&mut back, usize::MAX),
+            None,
+        )?;
+        assert!(back == input);
+    }
+    Ok(())
+}
+
+#[test]
 fn matches_end_where_blocks_do() -> Result<()> {
     let input = sample(6000);
-    for (block_len, expected) in [(10, (7723, 0x11B5_CCD9)), (11, (7169, 0x3BD5_8B28))] {
+    for block_len in [10, 11] {
         let mut encoder = encoder(&[(LEVEL, 19)], &[])?;
         encoder.set_pledged_len(Some(input.len() as u64))?;
         let mut out = Vec::with_capacity(2 * input.len());
@@ -256,7 +355,8 @@ fn matches_end_where_blocks_do() -> Result<()> {
             write(&mut encoder, block, Flush, usize::MAX, &mut out)?;
         }
         write(&mut encoder, &[], End, usize::MAX, &mut out)?;
-        assert_eq!(summary(&out), expected);
+        assert!(out.len() < input.len() + 3 * input.len() / block_len);
+        assert!(decompressed(&out, &[])? == input);
     }
     Ok(())
 }
@@ -389,48 +489,29 @@ fn settings_change_between_frames() -> Result<()> {
     assert_eq!(encoder.load_dictionary(DICTIONARY), Err(Error::StageWrong));
     encoder.reset_session();
 
-    let changes: [(&[_], &[u8], _); _] = [
-        (&[(LEVEL, 19), (CHECKSUM, 1)], &[], (12185, 0xACD8_1077)),
-        (
-            &[(WINDOW_LOG, 12), (LONG_DISTANCE, 1), (162, 8)],
-            &[],
-            (14366, 0xCDBD_8D8E),
-        ),
-        (
-            &[(LEVEL, 7), (LONG_DISTANCE, 0)],
-            DICTIONARY,
-            (14827, 0xED54_51CB),
-        ),
-        (
-            &[(LEVEL, 1), (TARGET_BLOCK_LEN, 1)],
-            &input[..3000],
-            (14632, 0x1FE7_4F84),
-        ),
-        (
-            &[(LEVEL, 0), (WINDOW_LOG, 0), (TARGET_BLOCK_LEN, 0)],
-            &[],
-            (13712, 0xDA54_ED7C),
-        ),
-        (
-            &[(WORKERS, -1), (JOB_LEN, 0), (STRATEGY, 6)],
-            &[],
-            (12851, 0x4A76_895F),
-        ),
-        (&[(STRATEGY, 0)], &[], (13712, 0xDA54_ED7C)),
+    let changes: [(&[_], &[u8]); _] = [
+        (&[(LEVEL, 19), (CHECKSUM, 1)], &[]),
+        (&[(WINDOW_LOG, 12), (LONG_DISTANCE, 1), (162, 8)], &[]),
+        (&[(LEVEL, 7), (LONG_DISTANCE, 0)], DICTIONARY),
+        (&[(LEVEL, 1), (TARGET_BLOCK_LEN, 1)], &input[..3000]),
+        (&[(LEVEL, 0), (WINDOW_LOG, 0), (TARGET_BLOCK_LEN, 0)], &[]),
+        (&[(WORKERS, -1), (JOB_LEN, 0), (STRATEGY, 6)], &[]),
+        (&[(STRATEGY, 0)], &[]),
     ];
     let mut out = Vec::with_capacity(4 * input.len());
-    for (parameters, dictionary, expected) in changes {
+    let mut so_far = Vec::new();
+    for (parameters, dictionary) in changes {
+        so_far.extend_from_slice(parameters);
+        three_frames(&mut common::encoder(&so_far, dictionary)?, &input, &mut out)?;
+        let expected = summary(&out);
+
         encoder.load_dictionary(dictionary)?;
         for &(key, value) in parameters {
             encoder.set_parameter(key, value)?;
         }
         three_frames(&mut encoder, &input, &mut out)?;
         assert_eq!(summary(&out), expected, "{parameters:?}");
-
-        let mut back = Vec::with_capacity(3 * input.len());
-        let mut back_out = Output::spare_capacity(&mut back, usize::MAX);
-        decompress(&out, &mut back_out, Some(&Dictionary::new(dictionary)?))?;
-        drop(back_out);
+        let back = decompressed(&out, dictionary)?;
         assert!(back == [&input[..], &input[..500], &input[..]].concat());
     }
     Ok(())

@@ -19,7 +19,7 @@ import path from "path";
 
 // A hand-written empty frame: magic, a descriptor without a content size (so it goes through the
 // streaming decoder), the window descriptor (unless all of the frame is there and can go straight to the
-// output, the decoder allocates a window of 2^windowLog bytes) and one empty raw last block.
+// output or has one block, the decoder allocates a window of 2^windowLog bytes) and one empty raw last block.
 const emptyFrameWithWindowLog = (windowLog: number) =>
   new Uint8Array([0x28, 0xb5, 0x2f, 0xfd, 0x00, (windowLog - 10) << 3, 0x01, 0x00, 0x00]);
 const emptyFrameWith16MiBWindow = emptyFrameWithWindowLog(24);
@@ -354,7 +354,10 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
   const CAP_MIB = 8;
   const outOfMemory = { name: "RangeError", message: "Out of memory" };
 
-  // Like emptyFrameWith16MiBWindow, a stream whose decoder has to allocate a 16 MiB window (larger
+  // With a block of one byte that is not the last one, which is what a stream allocates the window for.
+  const twoBlocksWith16MiBWindow = Buffer.of(...emptyFrameWith16MiBWindow.subarray(0, -3), 8, 0, 0, 97, 1, 0, 0);
+
+  // Like twoBlocksWith16MiBWindow, a stream whose decoder has to allocate a 16 MiB window (larger
   // than the cap) before it can produce anything, so the codec's own allocation fails, not one of ours.
   const brotliWith16MiBWindow = (input: Uint8Array) =>
     zlib.brotliCompressSync(input, {
@@ -420,11 +423,11 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
       noHeaderSize: await new Response(
         new Response(Buffer.alloc(12 * MiB)).body!.pipeThrough(new CompressionStream("zstd")),
       ).bytes(),
-      largeWindow: emptyFrameWith16MiBWindow,
-      largeWindowTruncated: emptyFrameWith16MiBWindow.subarray(0, -1),
+      largeWindow: twoBlocksWith16MiBWindow,
+      largeWindowTruncated: twoBlocksWith16MiBWindow.subarray(0, -1),
     };
     expect(frames.noHeaderSize[4] & 0xe0).toBe(0);
-    expect(zstdDecompressSync(frames.largeWindow)).toHaveLength(0);
+    expect(zstdDecompressSync(frames.largeWindow)).toHaveLength(1);
 
     const results = await runCapped(
       frames,
@@ -450,8 +453,8 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
       "decompress headerSizeAboveLimit": outOfMemory,
       "decompressSync noHeaderSize": outOfMemory,
       "decompress noHeaderSize": outOfMemory,
-      "decompressSync largeWindow": 0,
-      "decompress largeWindow": 0,
+      "decompressSync largeWindow": 1,
+      "decompress largeWindow": 1,
       "decompressSync largeWindowTruncated": outOfMemory,
       "decompress largeWindowTruncated": outOfMemory,
       afterwards: "still works",
@@ -507,8 +510,8 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
       br: zlib.brotliCompressSync(zeros, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 1 } }),
       zstd: zstdCompressSync(zeros),
       "br-large-window": brotliWith16MiBWindow(zeros),
-      "zstd-large-window": emptyFrameWith16MiBWindow,
-      "zstd-large-window-truncated": emptyFrameWith16MiBWindow.subarray(0, -1),
+      "zstd-large-window": twoBlocksWith16MiBWindow,
+      "zstd-large-window-truncated": twoBlocksWith16MiBWindow.subarray(0, -1),
       afterwards: gzipSync(Buffer.from("still works")),
     };
     const encodings: Record<string, string> = {
@@ -543,7 +546,7 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
       br: fetchOutOfMemory,
       zstd: fetchOutOfMemory,
       "br-large-window": fetchOutOfMemory,
-      "zstd-large-window": "",
+      "zstd-large-window": "a",
       "zstd-large-window-truncated": fetchOutOfMemory,
       afterwards: "still works",
     });
@@ -635,7 +638,7 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
     const streams = {
       brotli: zlib.brotliCompressSync(zeros, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 1 } }),
       brotliLargeWindow: brotliWith16MiBWindow(zeros),
-      zstdLargeWindow: emptyFrameWith16MiBWindow,
+      zstdLargeWindow: twoBlocksWith16MiBWindow,
     };
 
     const results = await runCapped(
@@ -693,7 +696,7 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
 
 // From Zen 4 and Sapphire Rapids on, src/jsc/bindings/highway_zstd.cpp takes blocks with 4096 or more. It counts them
 // in batches of 3712 and groups of 128, by their 2 highest bits, and writes 64 codes at a time to each of 4 streams.
-describe("literals compress to what zstd 1.5.7 makes of them", () => {
+describe("literals compress to the same bytes on every CPU", () => {
   function generate(length: number, byte: (below: (limit: number) => number) => number) {
     let state = 1;
     const below = (limit: number) => {
@@ -713,22 +716,24 @@ describe("literals compress to what zstd 1.5.7 makes of them", () => {
     40_000,
   ];
   it.each<[string, Parameters<typeof generate>[1], string]>([
-    ["below 64", below => below(1 + below(64)), "bb725258"],
-    ["from 64", below => 64 + below(1 + below(64)), "a54c637c"],
-    ["from 128", below => 128 + below(1 + below(64)), "ea4e0340"],
-    ["from 192", below => 255 - below(1 + below(64)), "fd4b71c2"],
-    ["below 128", below => below(1 + below(128)), "2692621f"],
-    ["seldom from 64", below => (below(200) ? below(1 + below(64)) : 64 + below(192)), "608ac342"],
-    ["seldom from 128", below => (below(200) ? 32 + below(1 + below(95)) : 128 + below(128)), "9c5e2c5e"],
-    ["long codes", below => below(1 + below(1 + below(256))), "163887a6"],
-    ["a code of 1 bit", below => (below(16) < 9 ? 200 : below(256)), "71317cdd"],
+    ["below 64", below => below(1 + below(64)), "82ac7d99"],
+    ["from 64", below => 64 + below(1 + below(64)), "69fb7288"],
+    ["from 128", below => 128 + below(1 + below(64)), "23a6e89"],
+    ["from 192", below => 255 - below(1 + below(64)), "818c509e"],
+    ["below 128", below => below(1 + below(128)), "3153d744"],
+    ["seldom from 64", below => (below(200) ? below(1 + below(64)) : 64 + below(192)), "f32999f2"],
+    ["seldom from 128", below => (below(200) ? 32 + below(1 + below(95)) : 128 + below(128)), "14db9f2d"],
+    ["long codes", below => below(1 + below(1 + below(256))), "b54cb29"],
+    ["a code of 1 bit", below => (below(16) < 9 ? 200 : below(256)), "e58dfbb0"],
     ["nothing to gain, and no room left", below => (below(140) ? below(256) : 200), "404d578e"],
   ])("%s", (_, byte, expected) => {
     // Short codes where the streams start and end.
     const common = byte(() => 0);
     const bytes = generate(40_000, byte).fill(common, -7);
     const inputs = lengths.map(length => bytes.slice(-length).fill(common, 0, 4));
-    expect(summary(inputs.map(input => zstdCompressSync(input, { level: 1 })))).toBe(expected);
+    const frames = inputs.map(input => zstdCompressSync(input, { level: 1 }));
+    expect(frames.findIndex((frame, i) => !zstdDecompressSync(frame).equals(inputs[i]))).toBe(-1);
+    expect(summary(frames)).toBe(expected);
   });
 
   it("no room left at a level that is content with little gain", () => {
@@ -738,7 +743,7 @@ describe("literals compress to what zstd 1.5.7 makes of them", () => {
 
   it("a byte that only the last batch has", () => {
     const bytes = generate(3 * 3712 + 1, below => below(1 + below(64))).fill(255, -1);
-    expect(summary([3712, 0].map(less => zstdCompressSync(bytes.subarray(less), { level: 1 })))).toBe("2ea935b9");
+    expect(summary([3712, 0].map(less => zstdCompressSync(bytes.subarray(less), { level: 1 })))).toBe("756f7cbb");
   });
 
   it("where a block is split, before anything is known about matches", () => {
@@ -751,7 +756,7 @@ describe("literals compress to what zstd 1.5.7 makes of them", () => {
       pledgedSrcSize: input.length,
       params: { [zlib.constants.ZSTD_c_compressionLevel]: 3 },
     });
-    const expected = "28b52ffda0000004005400001043430100fbff39c0028500001841424103500100ec9139837dfe6f0f";
+    const expected = "28b52ffda0000004004c000008430100fcff3910028500001841424103500100ec9139837dfe6f0f";
     expect(compressed.toString("hex")).toBe(expected);
     expect(zlib.zstdDecompressSync(compressed).equals(input)).toBe(true);
   });
@@ -816,20 +821,142 @@ describe("literals compress to what zstd 1.5.7 makes of them", () => {
       const bytes = new Uint8Array(far + 2000);
       bytes.set(some.subarray(0, 2000));
       bytes.set(some.subarray(2000), far);
-      // What is around them differs, so that only the table for 3 bytes has them, which this level is the first to use.
+      // What is around them differs, so that no longer match has them.
       for (let at = 50; at < 2000; at += 50) {
         bytes.set([100, ...rare.subarray(at, at + 3), 101], at);
         bytes.set([102, ...rare.subarray(at, at + 3), 103], far + at);
       }
       return zstdCompressSync(bytes, { level: 18 });
     });
-    expect([...frames.map(it => it.length), summary(frames)]).toEqual([2418, 2497, "436ff6b2"]);
+    expect([...frames.map(it => it.length), summary(frames)]).toEqual([2414, 2414, "514b4b6"]);
   });
 
   it("a whole block", () => {
     const bytes = generate(128 * 1024, below => below(1 + below(64)));
-    expect(summary([0, 1, 200].map(less => zstdCompressSync(bytes.subarray(less), { level: 1 })))).toBe("8c0ed0aa");
+    expect(summary([0, 1, 200].map(less => zstdCompressSync(bytes.subarray(less), { level: 1 })))).toBe("3ed66f41");
   });
+});
+
+it.each([1, 2, 3, 4, 5, 6])("a long write after a short flush keeps track of the recent offsets at level %d", level => {
+  const source = readFileSync(__filename);
+  const out = Buffer.alloc(16384);
+  for (let start = 0; start < 4000; start += 200) {
+    // A frame starts with the offsets 1, 4 and 8.
+    const input = Buffer.concat([
+      source.subarray(start, start + 200),
+      Buffer.from(`${start}<abcdefgh>abcdefg>abcdefg>abcdefg>abcdefg`),
+      source.subarray(start + 200, start + 5000),
+    ]);
+    const stream: any = zlib.createZstdCompress({ params: { [zlib.constants.ZSTD_c_compressionLevel]: level } });
+    stream._handle.writeSync(zlib.constants.ZSTD_e_flush, input, 0, 200, out, 0, out.length);
+    const used = out.length - stream._writeState[0];
+    stream._handle.writeSync(zlib.constants.ZSTD_e_end, input, 200, input.length - 200, out, used, out.length - used);
+    expect(zstdDecompressSync(out.subarray(0, out.length - stream._writeState[0])).equals(input)).toBe(true);
+    stream.close();
+  }
+});
+
+function noise(length: number, seed: number, mask = 255) {
+  const bytes = Buffer.alloc(length);
+  for (let i = 0; i < length; i++) {
+    seed = (Math.imul(seed, 1103515245) + 12345) | 0;
+    bytes[i] = (seed >>> 24) & mask;
+  }
+  return bytes;
+}
+
+it("a frame that starts with a pattern does not depend on the frames before it", () => {
+  const { ZSTD_c_compressionLevel: level, ZSTD_c_windowLog: windowLog } = zlib.constants;
+  // Tables from `zstd --train`, the recent offsets 1, 2 and 3, and 4 bytes of content.
+  const dictionary = Buffer.from(
+    "37a430ecf68aed403c10b8da3407fcffffffffffffffef953e352293e89d926823b4491239a978d5a8b19905fecc8d88667f0142b38f8888f8ffbb89e8ff47690be8892704b3000010140c8a0553f1a4760b0004e0cc90cac68e4a49236996e4300c430819630c21840011181118110000000000a4324894991e261d43c88c800800000000000000" +
+      "010000000200000003000000" +
+      "6564207b",
+    "hex",
+  );
+  const text = readFileSync(import.meta.path);
+  const input = Buffer.concat([Buffer.alloc(1024, "abc"), text]);
+  const others = [text.subarray(20000, 40000), noise(20000, 1, 7), noise(30000, 4, 0x91)];
+  const frames = others.map(other => {
+    zlib.zstdCompressSync(other, { params: { [level]: 9 } });
+    return zlib.zstdCompressSync(input, { dictionary, params: { [level]: 9, [windowLog]: 10 } });
+  });
+  expect(frames.map(frame => Bun.hash(frame))).toEqual(frames.map(() => Bun.hash(frames[0])));
+  expect(zlib.zstdDecompressSync(frames[0], { dictionary }).equals(input)).toBe(true);
+});
+
+it.each([5, 16, 19])("workers take long matches that go back further than their overlap at level %d", level => {
+  const half = noise(1 << 20, 2);
+  const input = Buffer.concat([half, half]);
+  const c = zlib.constants;
+  const frame = zlib.zstdCompressSync(input, {
+    params: {
+      [c.ZSTD_c_compressionLevel]: level,
+      [c.ZSTD_c_enableLongDistanceMatching]: 1,
+      [c.ZSTD_c_nbWorkers]: 2,
+      [c.ZSTD_c_jobSize]: 512 << 10,
+      [c.ZSTD_c_overlapLog]: 1,
+    },
+  });
+  expect(frame.length).toBeLessThan(half.length * 1.05);
+  expect(zlib.zstdDecompressSync(frame).equals(input)).toBe(true);
+});
+
+it.each([3, 5, 9, 13])("matches go as far back as a window of 32 MB allows at level %d", level => {
+  const piece = noise(1 << 16, 3);
+  const input = Buffer.alloc(17 << 20);
+  piece.copy(input);
+  piece.copy(input, input.length - piece.length);
+  const c = zlib.constants;
+  const frame = zlib.zstdCompressSync(input, {
+    params: { [c.ZSTD_c_compressionLevel]: level, [c.ZSTD_c_windowLog]: 25 },
+  });
+  expect(frame.length).toBeLessThan(piece.length * 1.25);
+  expect(zlib.zstdDecompressSync(frame).equals(input)).toBe(true);
+});
+
+it.each([1, 3, 5, 6, 12, 15, 19])("versions of a file match once the first is out of reach at level %d", level => {
+  let version = Buffer.from(noise(30000, 5).toString("base64"));
+  const versions: Buffer[] = [];
+  for (let i = 0; i < 24; i++) {
+    const at = (i * 7919) % 39000;
+    version = Buffer.concat([version.subarray(0, at), noise(40, i), version.subarray(at + 7)]);
+    versions.push(version);
+  }
+  const input = Buffer.concat(versions);
+  const c = zlib.constants;
+  const frame = zlib.zstdCompressSync(input, {
+    params: { [c.ZSTD_c_compressionLevel]: level, [c.ZSTD_c_windowLog]: 17 },
+  });
+  expect(frame.length).toBeLessThan(45000);
+  expect(zlib.zstdDecompressSync(frame).equals(input)).toBe(true);
+});
+
+describe.each([6, 9, 12, 15, 19])("data of another kind in front makes little difference at level %d", level => {
+  const random = noise(1 << 19, 6);
+  const repeated = (width: number, times: number) =>
+    random.subarray(0, 300_000).map((_, i) => random[Math.floor(i / (width * times)) * width + (i % width)]);
+  const stamps = BigUint64Array.from({ length: 37500 }, (_, i) => BigInt(1700000000000 + i * 1000 + (random[i] % 9)));
+  const prefixes = { zeros: Buffer.alloc(9000), bases: noise(9000, 7, 3), text: readFileSync(import.meta.path) };
+  it.each<[string, Uint8Array, number]>([
+    ["runs", repeated(1, 16), 1 / 16],
+    ["pixels of 3 bytes", repeated(3, 3), 1 / 3],
+    ["pixels of 4 bytes", repeated(4, 2), 1 / 2],
+    ["timestamps", new Uint8Array(stamps.buffer), 1 / 4],
+  ])("%s", (_, data, share) => {
+    for (const prefix of Object.values(prefixes)) {
+      const input = Buffer.concat([prefix, data]);
+      const frame = zstdCompressSync(input, { level });
+      expect(frame.length - zstdCompressSync(prefix, { level }).length).toBeLessThan(data.length * share * 1.1 + 8000);
+      expect(zstdDecompressSync(frame).equals(input)).toBe(true);
+    }
+  });
+});
+
+it("levels above the highest one are the highest one", () => {
+  const compress = (level: number) =>
+    zlib.zstdCompressSync(readFileSync(__filename), { params: { [zlib.constants.ZSTD_c_compressionLevel]: level } });
+  expect(compress(257).equals(compress(22))).toBe(true);
 });
 
 it("zlib.constants has the numbers that the errors of src/zstd have", () => {
@@ -1324,5 +1451,41 @@ describe.concurrent("Zstandard HTTP compression", () => {
     expect(response.headers.get("Content-Encoding")).toBe("zstd");
     const echoed = await response.text();
     expect(echoed).toBe(testString);
+  });
+});
+
+describe("zstd levels 1 to 5 adapt to the kind of data", () => {
+  let state = 1;
+  const next = () => ((state ^= state << 13), (state ^= state >>> 17), (state ^= state << 5), state >>> 0);
+  const noise = (length: number) =>
+    Buffer.from(Uint32Array.from({ length: (length + 3) >> 2 }, next).buffer, 0, length);
+  const random = noise(300_000);
+  const make = (byte: (i: number) => number) => Buffer.from(Uint8Array.from({ length: 280_000 }, (_, i) => byte(i)));
+  const times = BigUint64Array.from({ length: 35_000 }, (_, i) => BigInt(17e11 + i * 1000 + (random[i] & 7)));
+  const words = make(i => (i % 6 === 5 ? random[i] : random[(random[i - (i % 6)] % 200) * 5 + (i % 6)]));
+
+  const cases: [string, Buffer, number[], number][] = [
+    ["runs of a byte", make(i => random[i >> 4]), [1, 2, 3, 4, 5], 21_000],
+    ["runs of two bytes", make(i => random[((i / 14) | 0) * 2 + (i & 1)]), [1, 2, 3, 4, 5], 44_000],
+    ["short words", words, [3, 4, 5], 135_000],
+    ["timestamps behind noise", Buffer.concat([noise(9000), Buffer.from(times.buffer)]), [3, 4, 5], 84_000],
+  ];
+  it.each(cases)("%s", (_, input, levels, most) => {
+    for (const level of levels) {
+      const compressed = Bun.zstdCompressSync(input, { level });
+      expect(Bun.zstdDecompressSync(compressed).equals(input)).toBe(true);
+      expect(compressed.length).toBeLessThan(most);
+    }
+  });
+
+  it("a stream reaches back a whole window", async () => {
+    const stream = zlib.createZstdCompress({ params: { [zlib.constants.ZSTD_c_compressionLevel]: 1 } });
+    const part = Buffer.concat([random, words.subarray(0, 150_000)]);
+    const output = Array.fromAsync(stream);
+    for (let i = 0; i < 6; i++) stream.write(part);
+    stream.end();
+    const compressed = Buffer.concat(await output);
+    expect(zlib.zstdDecompressSync(compressed).equals(Buffer.concat(Array(6).fill(part)))).toBe(true);
+    expect(compressed.length).toBeLessThan(500_000);
   });
 });

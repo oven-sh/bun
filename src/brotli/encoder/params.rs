@@ -9,7 +9,6 @@ use crate::format::{
 pub const MIN_QUALITY: i32 = 0;
 pub const MAX_QUALITY: i32 = 11;
 
-pub(super) const LARGE_INPUT_SIZE: usize = 1 << 20;
 const MIN_BLOCK_BITS: u32 = 16;
 const MAX_BLOCK_BITS: u32 = 24;
 const MODE_FONT: u32 = 2;
@@ -70,6 +69,15 @@ impl Requested {
         }
         true
     }
+
+    /// The next quality takes less time to build its codes, but more if everything matches something.
+    pub(super) fn adapt_to(&mut self, whole_stream: &[u8]) {
+        if self.quality == 1 && self.stream_offset == 0 && whole_stream.len() < 2 << 10 {
+            let pairs = whole_stream.array_windows();
+            let varying_bits = pairs.fold(0, |bits, [a, b]| bits | (a ^ b));
+            self.quality += i32::from(!matches!(varying_bits.count_ones(), 1 | 2));
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -98,8 +106,9 @@ impl Params {
             .clamp(MIN_WINDOW_BITS as i32, max_window_bits as i32) as u32;
         let block_bits = match (quality, requested.block_bits) {
             (0 | 1, _) => window_bits,
-            (2 | 3, _) => 14,
-            (9.., 0) => window_bits.clamp(16, 18),
+            (2 | 3, _) => 16,
+            (10.., 0) => window_bits.clamp(MIN_BLOCK_BITS, 18),
+            (10.., bits) => bits.clamp(MIN_BLOCK_BITS as i32, 18) as u32,
             (_, 0) => 16,
             (_, bits) => bits.clamp(MIN_BLOCK_BITS as i32, MAX_BLOCK_BITS as i32) as u32,
         };

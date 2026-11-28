@@ -684,6 +684,38 @@ fn a_frame_fills_its_room_the_same_after_any_other() -> Result<()> {
 }
 
 #[test]
+fn many_sequences_of_all_kinds() -> Result<()> {
+    let mut noise = Noise(9);
+    for (window_log, dictionary_len) in [(10, 0), (12, 0), (17, 0), (17, 500)] {
+        let mut frame = Frame::new(window_log, noise.bytes(dictionary_len));
+        frame.raw(&noise.bytes(8));
+        for block in 0..30 {
+            let (mut sequences, mut len, mut literal_count) = (Vec::new(), 0, noise.below(40));
+            let reach = frame.history.len().min(1 << window_log);
+            while len < 800.min(40 * block) << (window_log / 2 - 5) {
+                let literal_len = noise.below([3, 3, 40][block % 3]);
+                let match_len = 3 + noise.below(10) * [1, 7][block % 2];
+                // None gets down to 0.
+                let offset_value = if sequences.len() % 8 >= 3 && noise.below(2) == 0 {
+                    1 + noise.below(3)
+                } else {
+                    reach + 3 - noise.below(reach - 7)
+                };
+                sequences.push(Sequence {
+                    literal_len,
+                    offset_value,
+                    match_len,
+                });
+                (len, literal_count) = (len + literal_len + match_len, literal_count + literal_len);
+            }
+            frame.compressed(&repeated(block as u8, literal_count), &sequences);
+        }
+        frame.check()?;
+    }
+    Ok(())
+}
+
+#[test]
 fn matches_of_all_periods_and_lengths() -> Result<()> {
     let mut noise = Noise(2);
     let mut frame = Frame::new(14, noise.bytes(100));
@@ -696,6 +728,7 @@ fn matches_of_all_periods_and_lengths() -> Result<()> {
                     match_len,
                 };
                 frame.compressed(&raw(noise.bytes(4 * literal_len + 2)), &[sequence; 4]);
+                frame.compressed(&raw(noise.bytes(33 * literal_len)), &[sequence; 33]);
             }
         }
     }
@@ -978,7 +1011,7 @@ fn a_stream_of_literals_has_as_many_as_it_says() {
 }
 
 #[test]
-fn pairs_are_built_from_the_shortest_code_up() -> Result<()> {
+fn one_code_is_shorter_than_all_others() -> Result<()> {
     // A tree of 15 symbols: one code of 3 bits and fourteen of 4.
     let lengths: Vec<u32> = [3].into_iter().chain([4; 14]).collect();
     let mut noise = Noise(7);

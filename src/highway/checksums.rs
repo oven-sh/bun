@@ -1,6 +1,6 @@
 //! The CRC-32 of gzip and the Adler-32 of zlib, from src/jsc/bindings/highway_checksums.cpp.
 
-use std::io::BorrowedCursor;
+use std::io::{BorrowedBuf, BorrowedCursor};
 
 use crate::{SCALAR_CUTOFF, scalar_only};
 
@@ -152,6 +152,17 @@ pub fn copy_and_crc32(crc: u32, bytes: &[u8], mut copy: BorrowedCursor<'_, u8>) 
         };
         finish_crc32(state, crc, copy.filled())
     })
+}
+
+/// The same for a `Vec` that has the capacity.
+#[inline]
+pub fn append_and_crc32(crc: u32, bytes: &[u8], vec: &mut Vec<u8>) -> u32 {
+    let mut copy = BorrowedBuf::from(vec.spare_capacity_mut());
+    let crc = copy_and_crc32(crc, bytes, copy.unfilled());
+    let len = copy.len();
+    // SAFETY: the filled part of a `BorrowedBuf` is initialized, and starts where `vec` ends.
+    unsafe { vec.set_len(vec.len() + len) };
+    crc
 }
 
 /// What can be added up without an overflow. The kernel asserts it.

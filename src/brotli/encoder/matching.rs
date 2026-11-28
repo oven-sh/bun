@@ -15,6 +15,16 @@ pub(super) fn bytes_at<const N: usize>(data: &[u8], at: usize) -> [u8; N] {
 }
 
 #[inline(always)]
+pub(super) fn array_at<T, const N: usize>(data: &[T], at: usize) -> &[T; N] {
+    &data[at..].as_chunks().0[0]
+}
+
+#[inline(always)]
+pub(super) fn array_at_mut<T, const N: usize>(data: &mut [T], at: usize) -> &mut [T; N] {
+    &mut data[at..].as_chunks_mut().0[0]
+}
+
+#[inline(always)]
 pub(super) fn put_bytes<const N: usize>(data: &mut [u8], at: usize, bytes: [u8; N]) {
     if let Some(target) = data[at..at + N].as_mut_array() {
         *target = bytes;

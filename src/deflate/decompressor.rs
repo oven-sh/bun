@@ -3,15 +3,20 @@
 use crate::bit_reader::{BITS_IN_REFILL, Bits, Input, LOOKAHEAD};
 use crate::decode_tables::{
     DynamicTables, END, EXCEPTIONAL, LITERAL, LITLEN_BITS, OFFSET_BITS, STATIC_TABLES, SUBTABLE,
-    Tables, check_end, value,
+    Spare, Tables, check_end, value,
 };
 use crate::format::{DYNAMIC, MAX_CODEWORD_LEN, MAX_MATCH_LEN, STATIC, STORED};
+use crate::lanes::{Block, Lanes, Sheet, Symbol};
 use crate::output::{MAX_STEP, Output, Sink};
 use crate::{Error, Result, chunk_at, gzip, wrapped};
 use bun_highway::with_bmi2;
 use core::cell::Cell;
 use core::hint::{Locality, cold_path, prefetch_write};
 
+const MIN_LANES_INPUT: usize = 540;
+const LONG_STATIC_INPUT: usize = 1300;
+/// What follows tends to be short too.
+const SHORT_STATIC_BLOCK: usize = 1000;
 const CHUNK: usize = 16;
 const MAX_COPY_STEP: usize = 4 * CHUNK;
 /// What copying a match may write: a step can start at its last byte.
@@ -30,31 +35,39 @@ pub struct Decompressed {
 }
 
 /// A raw DEFLATE stream.
+#[inline]
 pub fn inflate(input: &[u8], output: Output<'_>) -> Result<Decompressed> {
     with_sink(input, output, |sink| decode_blocks(input, sink, false))
 }
 
 /// A raw stream that may also end where the length of a stored block would start, like a WebSocket message (RFC 7692 7.2.1).
+#[inline]
 pub fn inflate_message(input: &[u8], output: Output<'_>) -> Result<Decompressed> {
     with_sink(input, output, |sink| decode_blocks(input, sink, true))
 }
 
 /// The first member of a gzip file.
+#[inline]
 pub fn gunzip(input: &[u8], output: Output<'_>) -> Result<Decompressed> {
-    with_sink(input, output, |sink| {
-        let before_trailer = input.len().saturating_sub(gzip::TRAILER_LEN);
-        let stream = gzip::skip_header(input.split_at(before_trailer).0)?;
-        let Decompressed { read, written } = decode_blocks(stream, sink, false)?;
-        let end = before_trailer - stream.len() + read;
-        let data = sink.bytes().get(..written).unwrap_or_default();
-        match chunk_at(input, end) == Some(&gzip::trailer(data)) {
-            true => Ok(Decompressed {
-                read: end + gzip::TRAILER_LEN,
-                written,
-            }),
-            false => Err(Error::BadData),
-        }
-    })
+    with_sink(input, output, |sink| decode_member(input, sink))
+}
+
+fn decode_member(input: &[u8], sink: &mut Sink<'_>) -> Result<Decompressed> {
+    sink.start_checking();
+    let before_trailer = input.len().saturating_sub(gzip::TRAILER_LEN);
+    let stream = gzip::skip_header(input.split_at(before_trailer).0)?;
+    let Decompressed { read, written } = decode_blocks(stream, sink, false)?;
+    let end = before_trailer - stream.len() + read;
+    let trailer = sink
+        .check(written, 0)
+        .map(|crc| gzip::trailer_for(crc, written as u32));
+    match chunk_at(input, end) == trailer.as_ref() {
+        true => Ok(Decompressed {
+            read: end + gzip::TRAILER_LEN,
+            written,
+        }),
+        false => Err(Error::BadData),
+    }
 }
 
 #[inline(always)]
@@ -70,10 +83,12 @@ fn with_sink(
 }
 
 with_bmi2! {
-    fn decode_blocks(input: &[u8], sink: &mut Sink<'_>, is_message: bool) -> Result<Decompressed> {
-        let input = Input::new(input);
-        let (mut bits, mut written) = (Bits::default(), 0);
-        let mut dynamic = None;
+    fn decode_blocks(bytes: &[u8], sink: &mut Sink<'_>, is_message: bool) -> Result<Decompressed> {
+        let mut zeros = [0; _];
+        let input = Input::new(bytes, &mut zeros);
+        let (mut lanes, mut block) = (Lanes::default(), Block::default());
+        let (mut bits, mut written, mut short_static_end) = (Bits::default(), 0, 0);
+        let (mut spare, mut dynamic) = (Spare::default(), None);
         loop {
             bits.refill(&input)?;
             let is_final = bits.buffer & 1 != 0;
@@ -89,8 +104,19 @@ with_bmi2! {
                     written += len;
                     bits = Bits::at(read + 4 + len);
                 }
-                STATIC => {
+                STATIC => 'block: {
                     bits.consume(3);
+                    if bits.next + LONG_STATIC_INPUT <= bytes.len()
+                        && bits.next >= core::mem::replace(&mut short_static_end, bits.next + SHORT_STATIC_BLOCK)
+                    {
+                        let (mut new_bits, mut position) = (bits, written);
+                        let lanes = (&mut lanes, &mut block);
+                        let has_ended = decode_static(lanes, is_final, &input, &mut new_bits, sink, &mut position);
+                        (bits, written) = (new_bits, position);
+                        if has_ended? {
+                            break 'block;
+                        }
+                    }
                     // These tend to be too short for a call.
                     let inlined = #[inline(always)]
                     |tables: &_, input: &_, bits: &mut _, output: &mut _, position: &mut _| {
@@ -98,19 +124,143 @@ with_bmi2! {
                     };
                     decode_block(&STATIC_TABLES, inlined, &input, &mut bits, sink, &mut written)?;
                 }
-                DYNAMIC => {
-                    let tables = dynamic.get_or_insert_with(DynamicTables::new);
-                    bits = tables.read_header(bits, &input)?;
+                DYNAMIC => 'block: {
+                    let (header, mut resumed) = (bits, None);
+                    if bits.next + MIN_LANES_INPUT <= bytes.len()
+                        && let Some(end) = lanes.start_dynamic(&mut block, bytes, bits.bit_position())
+                    {
+                        sink.reserve_first(|| lanes.likely_output_len(bytes.len() - end / 8) + Sheet::SPARE_LEN);
+                        let (mut new_bits, mut position) = (Bits::at_bit(end, &input)?, written);
+                        let lanes = (&mut lanes, &mut block);
+                        let has_ended = decode_in_lanes(lanes, &input, &mut new_bits, sink, &mut position);
+                        (bits, written) = (new_bits, position);
+                        if has_ended? {
+                            break 'block;
+                        }
+                        resumed = Some(bits);
+                    }
+                    let tables = spare.tables().unwrap_or_else(|| dynamic.get_or_insert_with(DynamicTables::new));
+                    bits = resumed.unwrap_or(tables.read_header(header, &input)?);
                     decode_block(tables, decode_dynamic, &input, &mut bits, sink, &mut written)?;
                 }
                 _ => return Err(Error::BadData),
             }
+            sink.check(written, MAX_STEP);
             if is_final {
                 let read = bits.byte_position();
                 input.bytes_from(read)?;
                 return Ok(Decompressed { read, written });
             }
         }
+    }
+}
+
+with_bmi2! {
+    /// Goes by samples. Returns whether the block ended.
+    fn decode_static(
+        lanes: (&mut Lanes, &mut Block),
+        is_final: bool,
+        input: &Input<'_>,
+        bits: &mut Bits,
+        sink: &mut Sink<'_>,
+        written: &mut usize,
+    ) -> Result<bool> {
+        let (bytes, mut sample_len) = (input.bytes_from(0)?, 256);
+        while let Some(sample) = bytes.get(..bits.next + sample_len) {
+            if sink.bytes().len() - *written < 2 * FAST_ROOM {
+                sink.check(*written, 0);
+                sink.extend(*written)?;
+            }
+            bits.refill(input)?;
+            let before = (bits.next, *written);
+            if decode_fast(&STATIC_TABLES, sample, bits, sink.bytes(), written)? {
+                return Ok(true);
+            }
+            let (read, left) = (bits.next - before.0, bytes.len() - bits.next);
+            if *written == before.1 {
+                break;
+            }
+            if lanes.0.start_static(lanes.1, is_final, [read, *written - before.1, left])
+                && decode_in_lanes((lanes.0, lanes.1), input, bits, sink, written)?
+            {
+                return Ok(true);
+            }
+            sample_len = MAX_STEP.min(2 * sample_len);
+        }
+        Ok(false)
+    }
+}
+
+/// Returns whether the block ended. Leaves all that is out of the ordinary to [`decode_block`].
+#[inline(never)]
+fn decode_in_lanes(
+    (lanes, block): (&mut Lanes, &mut Block),
+    input: &Input<'_>,
+    bits: &mut Bits,
+    sink: &mut Sink<'_>,
+    written: &mut usize,
+) -> Result<bool> {
+    const STEP: usize = 16 * 1024;
+    let bytes = input.bytes_from(0)?;
+    loop {
+        let (mut bit, before) = (bits.bit_position(), *written);
+        let has_ended =
+            sink.with_sheet(written, STEP, |it| lanes.decode(block, bytes, &mut bit, it));
+        *bits = Bits::at_bit(bit, input)?;
+        if has_ended || block.is_given_up() {
+            return Ok(has_ended);
+        }
+        if *written != before {
+            sink.check(*written, MAX_STEP);
+            continue;
+        }
+        sink.extend(*written)?;
+        if sink.is_at_capacity() {
+            let has_ended = lanes.decode_last(block, bytes, &mut bit, sink.bytes(), written);
+            *bits = Bits::at_bit(bit, input)?;
+            if has_ended {
+                return Ok(true);
+            }
+        }
+        loop {
+            bits.refill(input)?;
+            let (Ok(symbol), used) = lanes.first_symbol(bits.buffer) else {
+                return Ok(false);
+            };
+            let (len, from) = match symbol {
+                _ if bits.bit_position() + used as usize > 8 * bytes.len() => return Ok(false),
+                Symbol::Literal(_) => (1, 0),
+                Symbol::Match { len, distance } if distance <= *written => {
+                    (len, *written - distance)
+                }
+                Symbol::EndOfBlock => {
+                    bits.consume(used);
+                    return Ok(true);
+                }
+                _ => return Ok(false),
+            };
+            let end = *written + len;
+            let Some(output) = sink.bytes().get_mut(..end) else {
+                sink.extend(end)?;
+                break;
+            };
+            match (symbol, output) {
+                (Symbol::Literal(literals), [.., last]) => *last = literals[0],
+                (_, output) => copy_bytewise(output, from, *written),
+            }
+            bits.consume(used);
+            *written = end;
+        }
+    }
+}
+
+/// Up to the end of `output`.
+#[inline(always)]
+fn copy_bytewise(output: &mut [u8], from: usize, to: usize) {
+    let cells = Cell::from_mut(output).as_slice_of_cells();
+    let after = |start| cells.get(start..).unwrap_or_default();
+    for (to, from) in after(to).iter().zip(after(from)) {
+        to.set(from.get());
     }
 }
 
@@ -125,7 +275,7 @@ fn copy_stored(input: &[u8], sink: &mut Sink<'_>, written: usize) -> Result<usiz
     let len = usize::from(u16::from_le_bytes([len0, len1]));
     match input.get(..len).ok_or(Error::BadData)? {
         [] => {}
-        bytes => sink.write(written, bytes)?,
+        bytes => sink.write_and_check(written, bytes)?,
     }
     Ok(len)
 }
@@ -162,6 +312,7 @@ fn decode_block<const N: usize>(
             },
             false => output.len(),
         };
+        sink.check(*written, MAX_STEP / 2);
         sink.extend(needed_len)?;
     }
 }
@@ -227,11 +378,7 @@ fn decode_carefully<const N: usize>(
         }
         let offset = value(entry, bits.consume(entry));
         let from = position.checked_sub(offset).ok_or(Error::BadData)?;
-        let cells = Cell::from_mut(&mut *output).as_slice_of_cells();
-        let after = |start| cells.get(start..end).unwrap_or_default();
-        for (to, from) in after(*position).iter().zip(after(from)) {
-            to.set(from.get());
-        }
+        copy_bytewise(output.split_at_mut(end).0, from, *position);
         *position = end;
     }
 }

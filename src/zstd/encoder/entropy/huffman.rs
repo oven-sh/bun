@@ -2,13 +2,14 @@
 
 use bun_highway::with_bmi2;
 use bun_highway::zstd::{Written, are_quicker_for, write_codes};
+use bun_highway::zstd_stages::{assign_codes, write_literals};
 use bun_zstd_decoder::array::At;
 use bun_zstd_decoder::bounded::Bounded;
 use bun_zstd_decoder::format::HUFFMAN_TABLE_LOG_MAX;
 use bun_zstd_decoder::{Error, Result};
 
 use super::bit_writer::WordWriter;
-use super::fse::{self, Normalized};
+use super::fse;
 use super::histogram::Histogram;
 use crate::bytes::{highest_bit, likely, put};
 
@@ -49,7 +50,8 @@ impl Code {
 
 #[derive(Clone, Copy)]
 pub(crate) struct Table {
-    codes: [Code; 256],
+    /// See [`Code`].
+    codes: [u64; 256],
     /// 0 for symbols without a code.
     lens: [u8; 256],
     /// How many codes have that length.
@@ -274,11 +276,10 @@ fn compress_weights(
         return Ok(None);
     }
     let log = fse::table_log_for(6, weights.len(), histogram.max_symbol, 2);
-    let normalized = Normalized::new(histogram.used(), weights.len(), log, false)?;
-    let header_len = normalized.write(out)?;
-    let out = out.get_mut(header_len..).unwrap_or_default();
     let mut table = fse::Tables::<64, 16>::EMPTY;
-    let shape = table.build(0, &normalized);
+    let (shape, header_len) =
+        table.build_and_describe(0, histogram, weights.len(), log, true, out)?;
+    let out = out.get_mut(header_len..).unwrap_or_default();
     let len = with_bmi2(
         #[inline(always)]
         || table.compress(shape, weights, out),
@@ -366,7 +367,7 @@ fn compress_4_streams(
 
 impl Table {
     pub(super) const EMPTY: Self = Self {
-        codes: [Code(0); 256],
+        codes: [0; _],
         lens: [0; 256],
         per_len: [0; RANKS],
         log: 0,
@@ -384,7 +385,7 @@ impl Table {
         let symbols = self.codes.iter_mut().zip(self.lens);
         for (code, len) in symbols.take(self.max_symbol + 1) {
             let value = next_value.at_mut(usize::from(len));
-            *code = Code::new(*value, len);
+            *code = Code::new(*value, len).0;
             *value += 1;
         }
     }
@@ -424,6 +425,16 @@ impl Table {
         };
         self.set_limited_lens(&mut tree, limit, counts.len());
         self.assign_codes();
+    }
+
+    /// Like [`build`](Self::build), but without a tree.
+    pub(super) fn build_quickly(&mut self, histogram: &Histogram<256>, len: usize) -> Option<()> {
+        self.max_symbol = histogram.max_symbol;
+        let limit = fse::table_log_for(CODE_LEN_MAX, len, self.max_symbol, 1);
+        let (counts, used) = (&histogram.counts, self.max_symbol + 1);
+        let (codes, lens) = (&mut self.codes, &mut self.lens);
+        self.log = assign_codes(counts, used, limit, codes, lens, &mut self.per_len)?;
+        Some(())
     }
 
     fn best_limit(&mut self, tree: &Tree, counts: &[u32]) -> u32 {
@@ -519,7 +530,7 @@ impl Table {
         symbols: &[u8],
         writer: &mut WordWriter<'_>,
     ) -> Option<Pending> {
-        let code = |symbol: u8| *self.codes.at(usize::from(symbol));
+        let code = |symbol: u8| Code(*self.codes.at(usize::from(symbol)));
         let add_group = |pending: &mut Pending, group: &[u8; N]| {
             for (index, &symbol) in group.iter().enumerate().rev() {
                 if index > 0 || IS_ROOMY {
@@ -592,7 +603,7 @@ impl Table {
 
     #[inline(never)]
     fn compress_in_vectors(&self, symbols: &[u8], out: &mut [u8]) -> Option<usize> {
-        let codes = self.codes.map(Code::short);
+        let codes = self.codes.map(|it| Code(it).short());
         compress_4_streams(symbols, out, |symbols, out| {
             match write_codes(symbols, &codes, out) {
                 Some(written) => finish_written(&written, out),
@@ -612,6 +623,10 @@ impl Table {
             self.compress_1_stream(symbols, out)
         } else if are_quicker_for(symbols.len()) {
             self.compress_in_vectors(symbols, out)
+        } else if self.log <= CODE_LEN_MAX
+            && let Some(len) = write_literals(symbols, &self.codes, out)
+        {
+            Some(len)
         } else {
             compress_4_streams(symbols, out, |symbols, out| {
                 self.compress_1_stream(symbols, out)
@@ -688,7 +703,7 @@ mod tests {
         let (table, symbols) = with_all_lengths();
         for count in 0..40 {
             let (symbols, mut out) = (symbols.split_at(300 - count).1, [0; 128]);
-            let written = write_codes(symbols, &table.codes.map(Code::short), &mut out);
+            let written = write_codes(symbols, &table.codes.map(|it| Code(it).short()), &mut out);
             let written = written.unwrap_or_default();
             for more in 0..12 {
                 let out = out.split_at_mut(written.len as usize + more).0;

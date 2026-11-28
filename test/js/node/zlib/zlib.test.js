@@ -1,14 +1,17 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
+import { once } from "node:events";
 import * as fs from "node:fs";
 import { resolve } from "node:path";
 import * as stream from "node:stream";
 import * as util from "node:util";
 import * as vm from "node:vm";
 import * as zlib from "node:zlib";
+import { Engine, nothing } from "./zlib-golden/engine";
+import { input as goldenInput, random as goldenRandom } from "./zlib-golden/inputs";
 
 describe("prototype and name and constructor", () => {
   for (let [name, Class] of [
@@ -178,31 +181,31 @@ describe("zlib", () => {
       ],
     };
 
-    // Length and CRC-32 of what libdeflate 1.26 makes of them at the levels from 0 to 12.
+    // Length and CRC-32 of what they come to at the levels from 0 to 12.
     const outputs = {
       "every length up to 70":
         "2840 fbed1731, 2783 bfbc85d6, 2771 994affc5, 2759 72ab9c3a, 2747 7e3a2c93, 2735 ece7741b, 2723 89528bf1, 2711 e9583147, 2699 58bfee6e, 2687 f4d2b609, 2675 db3d7399, 2663 2d4af09f, 2651 81d48b08",
       "short text":
-        "16347 61afba6e, 8348 efc624f2, 8323 c11a04af, 8327 7d974324, 8327 7d974324, 8332 ea3538b9, 8332 ea3538b9, 8332 ea3538b9, 8330 947f263, 8330 947f263, 8256 df1a08d8, 8250 bc06e83a, 8250 c674a7c1",
+        "16347 61afba6e, 8351 4c213612, 8351 4c213612, 8351 4c213612, 8351 4c213612, 8351 4c213612, 8351 4c213612, 8336 57ad7147, 8335 e82cff80, 8335 e82cff80, 8268 9dfb385e, 8256 2ab37ca6, 8254 2c7f6b0e",
       "text":
-        "150015 1bf9da53, 56423 d3acd2a4, 58152 4fa51948, 58629 55b72437, 58681 f43c36fe, 58719 f1743f42, 58759 240b57c, 58748 d24c1a92, 58890 266ad694, 58890 266ad694, 53537 b44b5026, 53510 fb025766, 53510 fb025766",
+        "150015 1bf9da53, 57559 ad95850d, 57559 ad95850d, 57559 ad95850d, 57559 ad95850d, 57559 ad95850d, 57559 ad95850d, 57688 d221c645, 57662 e6070231, 57662 e6070231, 53708 12f757f2, 53655 a11042a0, 53655 7aeb5314",
       "noise":
-        "70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b",
+        "70315 51f6763b, 70320 32d9eddd, 70320 32d9eddd, 70320 32d9eddd, 70320 32d9eddd, 70320 32d9eddd, 70320 32d9eddd, 70320 32d9eddd, 70320 32d9eddd, 70320 32d9eddd, 70320 32d9eddd, 70320 32d9eddd, 70320 32d9eddd",
       "few literals":
-        "80020 4283f9ef, 41732 2334d2fa, 40989 3e411d4f, 40617 837292b2, 40451 b862455e, 40437 1dfa72db, 37546 ae88b1bc, 37525 a1a3c7ef, 37525 88276a10, 37525 88276a10, 37497 d8315164, 37478 a951a11b, 37465 f7e37463",
+        "80020 4283f9ef, 37564 cda4bfdc, 37564 cda4bfdc, 37564 cda4bfdc, 37564 cda4bfdc, 37593 2af8500c, 37593 2af8500c, 37590 c29cfcd6, 37570 2af5375b, 37570 2af5375b, 37562 5485b467, 37562 84d690e2, 37562 84d690e2",
       "zeros":
-        "400299 e534ed11, 483 4854ebc5, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742",
+        "400299 e534ed11, 408 69706306, 408 69706306, 408 69706306, 408 69706306, 408 69706306, 408 69706306, 408 69706306, 408 69706306, 408 69706306, 408 69706306, 408 69706306, 408 69706306",
       "runs":
-        "180020 96ade632, 13817 69b9becf, 13281 6208a9ae, 13402 43e83a99, 13423 9b7f9f13, 10438 88d33ee2, 11054 f727375a, 11403 6060be7, 11467 dfa412cd, 11467 2a3bb84f, 9640 2f185b9a, 9628 7807567, 9646 2ae1a590",
+        "180020 96ade632, 9863 f9890c42, 9784 c63d81cd, 9784 c63d81cd, 9784 c63d81cd, 9784 c63d81cd, 9784 c63d81cd, 9872 ed6b64a9, 9950 f4c46e6b, 9950 f4c46e6b, 9582 a2b9304d, 9583 721f7be3, 9583 721f7be3",
       "repeats":
-        "180020 43dcb3cb, 18469 c0636993, 18313 fc44cfbe, 18311 8b10654f, 18305 b9feb4e0, 18217 519798fe, 18221 360226f5, 18229 defd7ddb, 18229 defd7ddb, 18229 defd7ddb, 18176 64affd45, 18176 64affd45, 18176 64affd45",
+        "180020 43dcb3cb, 18251 36a0d33b, 18245 dbb1081b, 18245 dbb1081b, 18245 dbb1081b, 18245 dbb1081b, 18245 dbb1081b, 18244 654e2717, 18245 d6df4156, 18245 d6df4156, 18183 6ff9b085, 18183 6ff9b085, 18176 58641e9d",
       "as far back as it gets":
-        "440040 2c93c3cf, 287894 2ec9174f, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6",
+        "440040 2c93c3cf, 210576 b443cb73, 210731 5824e685, 210731 5824e685, 210731 5824e685, 210731 5824e685, 210731 5824e685, 210731 5824e685, 210731 5824e685, 210731 5824e685, 210731 5824e685, 210731 5824e685, 210731 5824e685",
       "one kind after the other":
-        "264025 af96f3cd, 69011 a752f662, 65858 9a887ff9, 65799 2399ad39, 65798 1ece87c4, 65679 cdb64dd5, 65727 a81187e6, 65569 8914fb56, 65559 ad0ba262, 65559 ad0ba262, 62332 15fd70e7, 62317 53789c0a, 62318 c97b697b",
+        "264025 af96f3cd, 65269 8183d09f, 65172 ee00f0ef, 65172 ee00f0ef, 65172 ee00f0ef, 65172 ee00f0ef, 65172 ee00f0ef, 65008 728d8920, 65002 679e1f1f, 65002 679e1f1f, 62967 bb73be9f, 62803 853243cf, 62791 5822b39c",
     };
 
-    it.each(Object.keys(inputs))("compresses %s to the same bytes as ever", name => {
+    it.each(Object.keys(inputs))("compresses %s to the same bytes on every CPU", name => {
       const sums = [];
       for (let level = 0; level <= 12; level++) {
         const streams = inputs[name].map(input => deflateSync(input, { library, level }));
@@ -396,7 +399,7 @@ describe("zlib", () => {
         { strategy: zlib.constants.Z_RLE },
         { strategy: zlib.constants.Z_FIXED },
         { memLevel: 1 },
-        { memLevel: 9 },
+        { memLevel: 5 },
         { memLevel: 1, strategy: zlib.constants.Z_RLE, level: 9 },
       ])(`${compress.name}: %j gives the bytes node:zlib gives, which are not the default's`, options => {
         const compressed = Buffer.from(compress(data, options));
@@ -452,11 +455,9 @@ describe("zlib", () => {
       });
     }
 
-    // Z_FIXED has no tree of its own, and a block of memLevel 9 that the window slid past is not stored:
-    // 9 bits for each byte from 144 up and 10 for each block, where deflateBound() allows 9 bits and 3 bytes in all.
-    // The first block is stored, which spares 4092 bytes, and each other uses up less than one: 5120 are the fewest.
+    // Z_FIXED takes 9 bits for each byte from 144 up. zlib-ng writes more than deflateBound() for enough of this.
     it(
-      "an output longer than deflateBound() is whole",
+      "bytes with long fixed codes are stored",
       () => {
         const period = Buffer.alloc(37 * 37 * 38 * 3);
         for (let i = 0; i < period.length; i += 3) {
@@ -465,12 +466,11 @@ describe("zlib", () => {
           period[i + 1] = 181 + (Math.floor(triple / 38) % 37);
           period[i + 2] = 218 + (triple % 38);
         }
-        const input = Buffer.alloc(5130 * 32768, period);
-        // One match in three blocks of 32767 symbols keeps each block starting just before a multiple of the window.
+        const input = Buffer.alloc(100 * 32768, period);
         for (let i = 5 * 32767 + 16000; i + 4 < input.length; i += 3 * 32768) input.copyWithin(i, i - 30000, i - 29996);
 
         const compressed = deflateSync(input, { memLevel: 9, strategy: zlib.constants.Z_FIXED, level: 2 });
-        expect(compressed.length).toBeGreaterThan(input.length + input.length / 8 + 3);
+        expect(compressed.length).toBeWithin(input.length, input.length * 1.001);
         expect(Buffer.compare(inflateSync(compressed), input)).toBe(0);
       },
       isDebug ? 60_000 : undefined,
@@ -605,6 +605,178 @@ describe("one-shot results", () => {
   });
 });
 
+describe.each([
+  ["gzip", "gunzip", "Gunzip"],
+  ["gzip", "unzip", "Unzip"],
+  ["deflate", "unzip", "Unzip"],
+  ["deflate", "inflate", "Inflate"],
+  ["deflateRaw", "inflateRaw", "InflateRaw"],
+  ["brotliCompress", "brotliDecompress", "BrotliDecompress"],
+  ["zstdCompress", "zstdDecompress", "ZstdDecompress"],
+])("%s and %s", (compress, decompress, className) => {
+  const fast = { params: compress === "brotliCompress" ? { [zlib.constants.BROTLI_PARAM_QUALITY]: 2 } : undefined };
+  const chunkSize = 1024;
+  const long = goldenInput("prose", 40 * chunkSize + 7);
+  const describeResult = (error, result) =>
+    error
+      ? `${error.name} ${error.code} ${error.errno} ${error.message}`
+      : Bun.hash(result.engine ? result.buffer : result);
+  const callSync = (name, ...args) => {
+    try {
+      return describeResult(null, zlib[`${name}Sync`](...args));
+    } catch (error) {
+      return describeResult(error);
+    }
+  };
+  const call = (name, ...args) =>
+    new Promise(resolve => zlib[name](...args, (error, result) => resolve(describeResult(error, result))));
+
+  /** How often each of the methods of the handles is called meanwhile. */
+  async function countWrites(run) {
+    const engine = new zlib[className]();
+    const prototype = Object.getPrototypeOf(engine._handle);
+    engine.close();
+    const spies = ["write", "writeSync"].map(name => spyOn(prototype, name));
+    try {
+      await run();
+      return spies.map(spy => spy.mock.calls.length);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+  }
+
+  it("take a whole buffer at once", async () => {
+    const writes = await countWrites(async () => {
+      expect(zlib[`${decompress}Sync`](zlib[`${compress}Sync`](long, fast), { chunkSize })).toEqual(long);
+      const compressed = await util.promisify(zlib[compress])(long, fast);
+      expect(await util.promisify(zlib[decompress])(compressed, { chunkSize })).toEqual(long);
+    });
+    expect(writes).toEqual([0, 0]);
+  });
+
+  // With `info` it takes a stream.
+  it.each([300, long.length])("end like a stream for %d bytes", async length => {
+    const dictionary = long.subarray(50, 250);
+    const good = zlib[`${compress}Sync`](long.subarray(0, length), fast);
+    const withDictionary = zlib[`${compress}Sync`](long.subarray(0, length), { ...fast, dictionary });
+    const damaged = at => Buffer.from(good).fill(0xfe, at, at + 3);
+    const cases = [
+      [good],
+      [good, { maxOutputLength: length }],
+      [good, { maxOutputLength: length - 1 }],
+      [good, { maxOutputLength: length - 0.5 }],
+      [good, { windowBits: 9 }],
+      [good.subarray(0, 0)],
+      [good.subarray(0, 1)],
+      [good.subarray(0, -1)],
+      [good.subarray(0, -1), { maxOutputLength: 10 }],
+      [damaged(0)],
+      [damaged(good.length >> 1)],
+      [damaged(good.length - 3)],
+      [Buffer.concat([good, good])],
+      [Buffer.concat([good, good.subarray(0, 2)])],
+      [Buffer.concat([good, good.subarray(0, 9)])],
+      [Buffer.concat([good, Buffer.alloc(5)])],
+      [Buffer.concat([good, Buffer.alloc(5, 7)])],
+      [withDictionary],
+      [withDictionary, { dictionary }],
+      [withDictionary.subarray(0, -1), { dictionary }],
+      [withDictionary, { dictionary: dictionary.subarray(1) }],
+    ];
+    const results = async more =>
+      Promise.all(
+        cases.map(async ([data, options]) => [
+          callSync(decompress, data, { ...options, ...more }),
+          await call(decompress, data, { ...options, ...more }),
+        ]),
+      );
+    const expected = await results({ chunkSize, info: true });
+    expect(new Set(expected.flat()).size).toBeGreaterThan(3);
+    expect(await results({ chunkSize })).toEqual(expected);
+  });
+
+  it("refuse output that is too long", async () => {
+    const { length } = zlib[`${compress}Sync`](long, fast);
+    const tooLarge = `RangeError ERR_BUFFER_TOO_LARGE undefined Cannot create a Buffer larger than 99 bytes`;
+    expect(callSync(compress, long, { ...fast, maxOutputLength: 99 })).toBe(tooLarge);
+    expect(await call(compress, long, { ...fast, maxOutputLength: 99 })).toBe(tooLarge);
+    expect(await call(compress, long, { ...fast, maxOutputLength: length })).toBe(callSync(compress, long, fast));
+  });
+
+  it("keep nothing of the options of the call before", () => {
+    const expected = zlib[`${compress}Sync`]("abcabcabc");
+    zlib[`${compress}Sync`](long, { ...fast, level: 1, dictionary: Buffer.from("abc") });
+    expect(zlib[`${compress}Sync`]("abcabcabc")).toEqual(expected);
+    expect(callSync(compress, "", { level: 1.5, params: { 4: 7 } })).toMatch(/ERR_OUT_OF_RANGE|ERR_ZLIB_INIT/);
+    const options = {
+      get dictionary() {
+        expect(zlib[`${compress}Sync`]("abcabcabc")).toEqual(expected);
+      },
+    };
+    expect(zlib[`${compress}Sync`]("abcabcabc", options)).toEqual(expected);
+  });
+
+  it("call back later, with the engine, and let other tasks run", async () => {
+    const compressed = zlib[`${compress}Sync`]("abc");
+    const order = [];
+    const { promise, resolve } = Promise.withResolvers();
+    zlib[decompress](compressed, function () {
+      order.push([this instanceof zlib[className], this.destroyed, this.bytesWritten]);
+      resolve();
+    });
+    process.nextTick(() => order.push("tick"));
+    queueMicrotask(() => order.push("microtask"));
+    await promise;
+    expect(order.pop()).toEqual([true, true, compressed.length]);
+    expect(order.sort()).toEqual(["microtask", "tick"]);
+
+    let ran = false;
+    setImmediate(() => (ran = true));
+    while (!ran) await call(decompress, compressed);
+  });
+
+  it.each([
+    ["is left alone", () => {}],
+    ["is paused", stream => (stream.pause(), setImmediate(() => stream.resume()))],
+    ["gets shorter chunks", stream => (stream._chunkSize = 300)],
+    ["gets longer chunks", stream => (stream._chunkSize = 2500)],
+  ])("give the chunks of writeSync() in a stream that %s", async (name, disturb) => {
+    const good = zlib[`${compress}Sync`](long, fast);
+    for (const data of [good, Buffer.from(good).fill(0xfe, good.length - 900, good.length - 800)]) {
+      const stream = new zlib[className]({ chunkSize, highWaterMark: chunkSize });
+      const chunks = [];
+      stream.on("data", chunk => chunks.push(chunk) % 5 === 0 && disturb(stream));
+      const ended = once(stream, "end").then(
+        () => undefined,
+        error => `${error.code} ${error.message}`,
+      );
+      stream.end(data);
+      const error = await ended;
+
+      using engine = new Engine(className, { chunkSize });
+      if (engine.write(data)) engine.write(nothing, stream._finishFlushFlag);
+      expect(error).toBe(engine.error);
+      if (error) {
+        if (name === "is left alone") expect(Buffer.concat(chunks)).toEqual(engine.output);
+        continue;
+      }
+      expect(Buffer.concat(chunks)).toEqual(engine.output);
+      expect(stream.bytesWritten).toBe(engine.read);
+      expect(new Set(chunks.slice(0, 5).map(chunk => chunk.length))).toEqual(new Set([chunkSize]));
+      expect(new Set(chunks.slice(5, -1).map(chunk => chunk.length))).toEqual(new Set([stream._chunkSize]));
+    }
+  });
+});
+
+it("a zstd frame whose end has yet to be read cannot be reset", async () => {
+  const stream = zlib.createZstdCompress({ chunkSize: 4096 });
+  stream.once("data", () => stream.reset());
+  const failed = once(stream, "error");
+  stream.cork();
+  stream.end(goldenInput("noise", 10_000));
+  expect((await failed)[0].code).toBe("ERR_ZLIB_INCOMPLETE_FRAME");
+});
+
 describe("zlib.brotli", () => {
   const inputString =
     "ΩΩLorem ipsum dolor sit amet, consectetur adipiscing eli" +
@@ -630,7 +802,8 @@ describe("zlib.brotli", () => {
 
   it("brotliCompress", async () => {
     const compressed = await util.promisify(zlib.brotliCompress)(inputString);
-    expect(compressed.toString()).toEqual(compressedBuffer.toString());
+    expect(compressed.length).toBeLessThanOrEqual(compressedBuffer.length);
+    expect(zlib.brotliDecompressSync(compressed).toString()).toEqual(inputString);
   });
 
   it("brotliDecompress", async () => {
@@ -640,7 +813,8 @@ describe("zlib.brotli", () => {
 
   it("brotliCompressSync", () => {
     const compressed = zlib.brotliCompressSync(inputString);
-    expect(compressed.toString()).toEqual(compressedBuffer.toString());
+    expect(compressed.length).toBeLessThanOrEqual(compressedBuffer.length);
+    expect(zlib.brotliDecompressSync(compressed).toString()).toEqual(inputString);
   });
 
   it("brotliDecompressSync", () => {
@@ -795,7 +969,8 @@ describe("zlib.brotli", () => {
           [ZLIB.BROTLI_PARAM_QUALITY]: 11,
         },
       });
-      expect(compressed.toString()).toEqual(Buffer.from(compressedString2, "base64").toString());
+      expect(compressed.length).toBeLessThanOrEqual(Buffer.from(compressedString2, "base64").length);
+      expect(zlib.brotliDecompressSync(compressed).toString()).toEqual(inputString2);
     }
     {
       const compressed = await util.promisify(zlib.brotliCompress)(inputString2, {
@@ -804,7 +979,9 @@ describe("zlib.brotli", () => {
           [ZLIB.BROTLI_PARAM_QUALITY]: 2,
         },
       });
-      expect(compressed.toString()).toEqual(Buffer.from(compressedString3, "base64").toString());
+      expect(compressed.length).toBeLessThanOrEqual(Buffer.from(compressedString3, "base64").length);
+      expect(compressed.length).toBeGreaterThan(Buffer.from(compressedString2, "base64").length);
+      expect(zlib.brotliDecompressSync(compressed).toString()).toEqual(inputString2);
     }
   });
 });
@@ -1013,12 +1190,14 @@ describe("zlib.zstd", () => {
     const { promise, resolve, reject } = Promise.withResolvers();
     zlib.zstdCompress(inputString, opts, (err, out) => (err ? reject(err) : resolve(out)));
     const compressed = await promise;
-    expect(compressed.toString("base64")).toEqual(compressedString);
+    expect(compressed.length).toBeLessThan(compressedBuffer.length + 8);
+    expect(zlib.zstdDecompressSync(compressed).toString()).toEqual(inputString);
   });
 
   it("zstdCompressSync", () => {
     const compressed = zlib.zstdCompressSync(inputString);
-    expect(compressed.toString("base64")).toEqual(compressedString);
+    expect(compressed.length).toBeLessThan(compressedBuffer.length + 8);
+    expect(zlib.zstdDecompressSync(compressed).toString()).toEqual(inputString);
   });
 
   it("zstdDecompressSync", () => {
@@ -1597,11 +1776,230 @@ describe("crc32", () => {
   });
 });
 
+describe.each([
+  ["DeflateRaw", "inflateRaw", [1, 2, 3, 6, 7, 9], level => ({ level }), [0, 1, 2, 3, 5], 4],
+  ["BrotliCompress", "brotliDecompress", [1, 2, 4, 5, 9, 10, 11], level => ({ params: { 1: level } }), [0, 1], 2],
+  ["ZstdCompress", "zstdDecompress", [-1, 1, 3, 5, 6, 9, 13, 19], level => ({ params: { 100: level } }), [0, 1], 2],
+])("%s", (className, decompress, levels, optionsFor, flushes, finish) => {
+  const compress = (data, level) =>
+    zlib[`${className[0].toLowerCase()}${className.slice(1)}Sync`](data, optionsFor(level));
+  const data = goldenInput("mixed", 150_000);
+
+  it.each(levels)("does not depend on what was compressed before at level %d", level => {
+    for (const length of [100, 1000, 6000, 20_000]) {
+      const results = levels.map((other, i) => {
+        compress(data.subarray(i, i + (300 << i)), other);
+        return Bun.hash(compress(data.subarray(0, length), level));
+      });
+      expect(new Set(results).size).toBe(1);
+    }
+  });
+
+  it.each(levels)("takes writes of all lengths and flushes of all kinds in one stream at level %d", level => {
+    const [next, out] = [goldenRandom(level + 7), Buffer.alloc(200_000)];
+    for (let round = 0; round < (isDebug ? 3 : 20); round++) {
+      const engine = new zlib[className](optionsFor(level));
+      const start = next(50_000);
+      let [at, used] = [start, 0];
+      for (let left = 1 + next(8); left >= 0; left--) {
+        const length = Math.min(next(2 << next(15)), data.length - at);
+        const flush = left ? flushes[next(flushes.length)] : finish;
+        engine._handle.writeSync(flush, data, at, length, out, used, out.length - used);
+        [at, used] = [at + length, out.length - engine._writeState[0]];
+      }
+      engine.close();
+      expect(zlib[`${decompress}Sync`](out.subarray(0, used)).equals(data.subarray(start, at))).toBe(true);
+    }
+  });
+});
+
+describe("work that is done before it is asked for", () => {
+  const noise = goldenInput("noise", 60_000);
+  const firstChunk = (engine, input) => {
+    engine.write(input);
+    return new Promise(resolve => engine.once("data", chunk => resolve([chunk, engine.emit("first", chunk)])));
+  };
+
+  it("leaves nothing out if the next write brings more input", async () => {
+    const engine = zlib.createDeflate({ level: 0 });
+    let rest;
+    engine.on("first", () => {
+      const more = Buffer.concat([noise.subarray(engine.bytesWritten), Buffer.from("more")]);
+      engine._outBuffer = Buffer.alloc(engine._chunkSize);
+      engine._outOffset = 0;
+      rest = engine._processChunk(more, zlib.constants.Z_FINISH);
+      engine.destroy();
+    });
+    const [first] = await firstChunk(engine, noise);
+    expect(zlib.inflateSync(Buffer.concat([first, rest])).equals(Buffer.concat([noise, Buffer.from("more")]))).toBe(
+      true,
+    );
+  });
+
+  it("is no reason to refuse reset() after a frame that fills the chunk", async () => {
+    const chunkSize = zlib.zstdCompressSync(noise).length;
+    const engine = zlib.createZstdCompress({ chunkSize, flush: zlib.constants.ZSTD_e_end });
+    engine.on("first", () => engine.reset());
+    const [frame] = await firstChunk(engine, noise);
+    expect(engine.errored).toBeNull();
+    expect(zlib.zstdDecompressSync(frame).equals(noise)).toBe(true);
+    engine.destroy();
+  });
+
+  it("takes its error along when reset() drops it", async () => {
+    const params = { [zlib.constants.BROTLI_PARAM_LGWIN]: 10, [zlib.constants.BROTLI_PARAM_QUALITY]: 5 };
+    const damaged = zlib.brotliCompressSync(noise.subarray(0, 20_000), { params });
+    damaged[damaged.length - 1] = 0xff;
+    const engine = zlib.createBrotliDecompress();
+    let result;
+    engine.on("first", () => {
+      engine.reset();
+      engine._outOffset = 0;
+      result = engine._processChunk(zlib.brotliCompressSync("next"), zlib.constants.BROTLI_OPERATION_FINISH);
+      engine.destroy();
+    });
+    await firstChunk(engine, damaged);
+    expect(result.toString()).toBe("next");
+  });
+});
+
+describe("a whole buffer at once", () => {
+  it.each(["Gunzip", "BrotliDecompress", "ZstdDecompress", "Gzip", "BrotliCompress", "ZstdCompress"])(
+    "is refused by a %s that has begun",
+    className => {
+      const engine = new zlib[className]();
+      engine._handle.writeSync(
+        0,
+        Buffer.from([0x1f]),
+        0,
+        className === "ZstdDecompress" ? 0 : 1,
+        Buffer.alloc(9),
+        0,
+        9,
+      );
+      expect(engine._handle.writeAllSync(Buffer.alloc(9), 1e6)).toBeUndefined();
+      expect(engine._handle.writeAll(Buffer.alloc(9), 1e6, () => {})).toBe(false);
+      engine.close();
+    },
+  );
+
+  it.each(["Gzip", "BrotliCompress", "ZstdCompress"])("is refused by a %s that may have to stop early", className => {
+    const engine = new zlib[className]();
+    expect(engine._handle.writeAll(Buffer.alloc(5000), 5000, () => {})).toBe(false);
+    expect(engine._handle.writeAllSync(Buffer.alloc(5000), 5000)).toBeUndefined();
+    engine.close();
+  });
+
+  it("goes on in chunks if the output is very long", async () => {
+    const frame = zlib.zstdCompressSync(Buffer.alloc(1 << 20, "ab"));
+    const output = await util.promisify(zlib.zstdDecompress)(Buffer.concat(Array(65).fill(frame)), {
+      chunkSize: 1 << 20,
+    });
+    expect(output.equals(Buffer.alloc(65 << 20, "ab"))).toBe(true);
+  });
+
+  it("is not read again from a WebAssembly.Memory that has grown", async () => {
+    const memory = new WebAssembly.Memory({ initial: 1 });
+    const frame = Buffer.concat([zlib.zstdCompressSync("kept"), Buffer.from("junk")]);
+    const input = new Uint8Array(memory.buffer, 0, frame.length);
+    input.set(frame);
+    const output = util.promisify(zlib.zstdDecompress)(input);
+    memory.grow(1);
+    expect(String(await output)).toBe("kept");
+  });
+
+  it.each([
+    ["gzip", { level: 0 }],
+    ["gzip", { level: 6 }],
+    ["brotliCompress", { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 } }],
+    ["zstdCompress", {}],
+  ])("gives the bytes that %s gives in chunks with %j", async (name, options) => {
+    const input = goldenInput("prose", 300_000);
+    const limited = { ...options, maxOutputLength: 301_000 };
+    const [sync, async] = [zlib[`${name}Sync`], util.promisify(zlib[name])];
+    expect(sync(input, options).equals(sync(input, limited))).toBe(true);
+    expect((await async(input, options)).equals(await async(input, limited))).toBe(true);
+  });
+
+  it.each([
+    ["brotliCompress", { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 }, dictionary: Buffer.from("word") }],
+    [
+      "zstdCompress",
+      { params: { [zlib.constants.ZSTD_c_compressionLevel]: 9, [zlib.constants.ZSTD_c_windowLog]: 17 } },
+    ],
+  ])("gives the bytes that %s gives for more than a job takes", async (name, options) => {
+    const input = goldenInput("prose", 700_000);
+    expect(zlib[`${name}Sync`](input, options).equals(await util.promisify(zlib[name])(input, options))).toBe(true);
+  });
+
+  it("throws for a detached DataView", () => {
+    const view = new DataView(new ArrayBuffer(8));
+    view.buffer.transfer();
+    expect(() => zlib.gzipSync(view)).toThrow(TypeError);
+  });
+
+  it("takes no handle from Object.prototype", async () => {
+    const source = `Object.prototype[3] = 1; console.log(require("zlib").gzipSync("").length)`;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stderr: "inherit" });
+    expect(await Promise.all([proc.stdout.text(), proc.exited])).toEqual(["20\n", 0]);
+  });
+});
+
+it("does not do long work for short input in write()", async () => {
+  const text = Buffer.alloc(1 << 20, "ab");
+  const bomb = zlib.brotliCompressSync(text, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 } });
+  const isDoneAtOnce = async (engine, flush, input) => {
+    // Another thread may be done by then too, but not every time.
+    let isDone = true;
+    for (let i = 0; i < 100 && isDone; i++) {
+      const [stream, out] = [engine(), Buffer.alloc(1024)];
+      stream._outBuffer = out;
+      stream._processChunk(input, flush, () => {});
+      isDone = out[0] !== 0;
+      await once(stream, "data");
+      stream.destroy();
+    }
+    return isDone;
+  };
+  const chunkSize = 1024;
+  expect({
+    short: await isDoneAtOnce(() => zlib.createBrotliDecompress({ chunkSize }), 0, zlib.brotliCompressSync("short")),
+    bomb: await isDoneAtOnce(() => zlib.createBrotliDecompress({ chunkSize }), 0, bomb),
+    brotli: await isDoneAtOnce(() => zlib.createBrotliCompress({ chunkSize, dictionary: text }), 2, Buffer.from("a")),
+    zstd: await isDoneAtOnce(() => zlib.createZstdCompress({ chunkSize, dictionary: text }), 2, Buffer.alloc(0)),
+  }).toEqual({ short: true, bomb: false, brotli: false, zstd: false });
+});
+
+it("streams that stay open do not pile up the memory that calls pass on to each other", async () => {
+  const source = /* js */ `
+    const zlib = require("zlib");
+    const [input, kept] = [await Bun.file(process.execPath).slice(1e6, 1.2e6).bytes(), []];
+    const round = () => {
+      Bun.zstdCompressSync(input);
+      kept.push(zlib.createZstdCompress({ chunkSize: 64 }));
+      Bun.zstdCompressSync(input);
+      kept.push(new CompressionStream("zstd"));
+    };
+    round();
+    const before = process.memoryUsage.rss();
+    for (let i = 1; i <= 100; i++) {
+      round();
+      if (i % 20 === 0) Bun.gc(true);
+    }
+    console.log((process.memoryUsage.rss() - before) >> 20);
+  `;
+  const env = { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=1"].filter(Boolean).join(":") };
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env, stderr: "inherit" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(Number(stdout)).toBeLessThan(isASAN || isDebug ? 80 : 40);
+  expect(exitCode).toBe(0);
+});
+
 // Only ASAN can detect the out-of-bounds write.
 it.skipIf(!isASAN)(
-  "libdeflate doesn't write past its output buffer when another thread rewrites a mapped input",
+  "compressors don't write past their buffers when another thread rewrites a mapped input",
   async () => {
-    using dir = tempDir("libdeflate-race", { "bytes.bin": Buffer.alloc(4096) });
+    using dir = tempDir("libdeflate-race", { "bytes.bin": Buffer.alloc(70_000) });
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1662,4 +2060,80 @@ it("zstdCompress compresses the bytes the caller passed when a WebAssembly.Memor
   expect(stdout.trim()).toBe(JSON.stringify({ detachedAfterGrow: true, roundTripMatches: true }));
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
+});
+
+describe("deflate finds the matches", () => {
+  function random(seed) {
+    const next = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) >>> 16;
+    return { below: n => next() % n, bytes: n => Buffer.from(Array.from({ length: n }, () => next() >>> 8)) };
+  }
+  const many = (count, make) => Buffer.concat(Array.from({ length: count }, (_, i) => make(i)));
+  const r = random(1);
+  const words = r.bytes(1000);
+  const bodies = {
+    "pixels, 3 times each": [many(22000, () => Buffer.alloc(9, r.bytes(3))), 0.55],
+    "pixels, 5 times each": [many(13000, () => Buffer.alloc(15, r.bytes(3))), 0.36],
+    "runs": [many(12000, () => Buffer.alloc(1 + r.below(32), r.below(256))), 0.27],
+    "words": [many(33000, (i, at = 5 * r.below(200)) => Buffer.concat([words.subarray(at, at + 5), r.bytes(1)])), 0.65],
+  };
+  const starts = {
+    nothing: Buffer.alloc(0),
+    noise: r.bytes(9000),
+    acgt: r.bytes(9000).map(byte => "acgt".charCodeAt(byte % 4)),
+  };
+  function check(input, limit, levels, libdeflateLevels) {
+    const streams = [
+      ...levels.map(level => [`zlib ${level}`, zlib.deflateRawSync(input, { level })]),
+      ...libdeflateLevels.map(level => [
+        `libdeflate ${level}`,
+        Bun.deflateSync(input, { level, library: "libdeflate" }),
+      ]),
+    ];
+    expect(streams.filter(([, it]) => it.length > limit).map(([name, it]) => [name, it.length])).toEqual([]);
+    for (const [, stream] of streams) expect(zlib.inflateRawSync(stream).equals(input)).toBe(true);
+  }
+
+  for (const [bodyName, [body, ratio]] of Object.entries(bodies)) {
+    it.each(Object.keys(starts))(`in ${bodyName} after %s`, start => {
+      check(Buffer.concat([starts[start], body]), starts[start].length + ratio * body.length, [1, 6, 9], [6, 10]);
+    });
+  }
+
+  it.each(Object.keys(starts))("in a counter after %s", start => {
+    const counter = Buffer.from(Uint32Array.from({ length: 50000 }, (_, i) => 0x8ecd0000 + 16 * i).buffer);
+    check(Buffer.concat([starts[start], counter]), starts[start].length + 0.36 * counter.length, [9], [10]);
+  });
+
+  it("in records with few differences", () => {
+    const records = Buffer.alloc(200000, r.bytes(257));
+    for (let at = 0; at < records.length; at += 1 + r.below(60)) records[at] = r.below(256);
+    check(records, 26000, [6, 9], [6, 9, 12]);
+  });
+
+  it("in successive versions of a file", () => {
+    let version = r.bytes(20000);
+    const versions = many(20, (i, at = (i * 7919) % 19000) => {
+      return (version = Buffer.concat([version.subarray(0, at), r.bytes(40), version.subarray(at + 7)]));
+    });
+    check(versions, 28000, [9], [9, 10, 12]);
+  });
+
+  it.each([1, 6, 9])("in short messages after one that cannot be compressed, at level %d", async level => {
+    async function lenAfter(first) {
+      const [stream, ids] = [zlib.createDeflateRaw({ level }), random(2)];
+      let len = 0;
+      stream.on("data", chunk => (len += chunk.length));
+      const send = message => {
+        stream.write(message);
+        return new Promise(resolve => stream.flush(zlib.constants.Z_SYNC_FLUSH, resolve));
+      };
+      await send(first);
+      len = 0;
+      for (let i = 0; i < 200; i++)
+        await send(JSON.stringify({ id: ids.below(9999), type: "update", ts: 1700000000 + ids.below(9999), ok: true }));
+      stream.close();
+      return len;
+    }
+    expect(await lenAfter(random(3).bytes(20000))).toBeLessThan(1.05 * (await lenAfter("{}")));
+  });
 });

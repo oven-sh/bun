@@ -162,13 +162,13 @@ describe("flushes", () => {
 describe("params()", () => {
   const written = (from: number[], to: number[], flush: number) => {
     const stream: any = zlib.createDeflateRaw({ level: from[0], strategy: from[1] });
-    const [data, out] = [input("markup", 2000), Buffer.alloc(4000)];
+    const [data, out] = [input("echoes", 60000), Buffer.alloc(70000)];
     let error: string | undefined;
     stream._handle.onerror = (message: string) => (error = message);
     stream._handle.writeSync(flush, data, 0, 1000, out, 0, out.length);
     const used = out.length - stream._writeState[0];
     stream._handle.params(...to);
-    if (!error) stream._handle.writeSync(Z_FINISH, data, 1000, 1000, out, used, out.length - used);
+    if (!error) stream._handle.writeSync(Z_FINISH, data, 1000, 59000, out, used, out.length - used);
     stream.close();
     return error ?? hex(out.subarray(0, out.length - stream._writeState[0]));
   };

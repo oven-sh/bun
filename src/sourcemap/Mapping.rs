@@ -351,6 +351,10 @@ impl Lookup {
             }
 
             let name: &[u8] = &source_map.external_source_names[index];
+            // A source with no name is not a file. Joined to a module URL that has no directory, it is an empty path.
+            if name.is_empty() {
+                return None;
+            }
 
             let path = path_of_source(base_filename, name);
             match bun_sys::File::read_from(bun_sys::Fd::cwd(), &path) {

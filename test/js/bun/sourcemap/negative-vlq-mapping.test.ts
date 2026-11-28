@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 // A `// @bun`-pragma'd file is not re-transpiled, so the sidecar / inline
 // source map is parsed as-is when error.stack is formatted. A negative
@@ -167,5 +167,51 @@ describe.concurrent("sourcemap: negative VLQ delta in mappings is rejected, not 
       originNegCol: {},
     });
     expect(exitCode).toBe(0);
+  });
+});
+
+// `sourcesContent` is only the text of a code frame. A map that has none, or `null`, still remaps a frame.
+describe.concurrent("sourcemap: sourcesContent is optional", () => {
+  // Generated line 3, column 2 -> sources[0], line 5, column 3.
+  const base = { version: 3, sources: ["orig.ts"], names: [], mappings: ";;EAIE;" };
+  const mapped = { stdout: "at t (orig.ts:5:3)\n", stderr: "", exitCode: 0 };
+
+  async function run(files: Record<string, string>) {
+    using dir = tempDir("sourcemap-no-content", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.replaceAll(String(dir) + sep, ""), stderr, exitCode };
+  }
+
+  test.each([
+    ["absent", base],
+    ["null", { ...base, sourcesContent: null }],
+  ])("external .map: sourcesContent %s", async (_, map) => {
+    const files = { "entry.js": body + `//# sourceMappingURL=entry.js.map\n`, "entry.js.map": JSON.stringify(map) };
+    expect(await run(files)).toEqual(mapped);
+  });
+
+  // What `bun build --sourcemap=external` writes: a `debugId` comment and no `sourceMappingURL` comment.
+  test("external .map of a file that has a debugId comment only: sourcesContent absent", async () => {
+    const files = {
+      "entry.js": body + `//# debugId=0123456789ABCDEF64756E2164756E21\n`,
+      "entry.js.map": JSON.stringify({ ...base, debugId: "0123456789ABCDEF64756E2164756E21" }),
+    };
+    expect(await run(files)).toEqual(mapped);
+  });
+
+  // The inline map is the one that is used, also beside a `.map` that decodes.
+  test("inline data-URL map: sourcesContent absent", async () => {
+    const files = {
+      "entry.js": body + `//# sourceMappingURL=data:application/json;base64,${btoa(JSON.stringify(base))}\n`,
+      "entry.js.map": JSON.stringify({ ...base, sources: ["sidecar.ts"], sourcesContent: [""] }),
+    };
+    expect(await run(files)).toEqual(mapped);
   });
 });

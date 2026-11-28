@@ -1,6 +1,6 @@
 import { XML } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { join } from "node:path";
 
 // Hand-written coverage beyond the W3C conformance suite (xml-test-suite.test.ts):
@@ -70,7 +70,8 @@ describe("input types", () => {
             { eval: true, workerData: bytes },
           );
           writer.once("message", () => {
-            for (let i = 0; i < 4000; i++) {
+            // A debug build takes about 1 ms for each pass, and the test has 5 s.
+            for (let i = 0; i < ${isDebug ? 1000 : 4000}; i++) {
               const { r } = Bun.XML.parse(bytes);
               for (const key of Object.keys(r)) {
                 if (!Object.hasOwn(r, key.split("").join(""))) {
@@ -1035,9 +1036,9 @@ describe("XML.stringify", () => {
   });
 
   test("deep values are a catchable error", () => {
-    // Must overflow on every build: release frames are far smaller than
-    // debug/ASAN ones, so use a depth no native stack survives.
-    const depth = 1_000_000;
+    // Must overflow on every build. A release build on an 18 MB stack (the
+    // darwin and Windows main thread) overflows below 65_000 levels.
+    const depth = 200_000;
     let deep: any = "x";
     for (let i = 0; i < depth; i++) deep = { a: deep };
     expect(() => XML.stringify(deep)).toThrow(RangeError);

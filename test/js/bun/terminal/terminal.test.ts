@@ -1141,7 +1141,7 @@ describe("Bun.Terminal", () => {
       }
     }
 
-    test("can create many terminals with FD cleanup", () => {
+    test("can create many terminals with FD cleanup", async () => {
       const terminals: Bun.Terminal[] = [];
       const TERMINAL_COUNT = 50;
 
@@ -1166,15 +1166,19 @@ describe("Bun.Terminal", () => {
         expect(terminal.closed).toBe(true);
       }
 
-      // Give time for cleanup
-      Bun.gc(true);
-
-      // FD count should return to near baseline (within acceptable delta for GC timing)
-      const finalFds = countOpenFds();
-      if (baselineFds >= 0 && finalFds >= 0) {
-        const fdDelta = finalFds - baselineFds;
-        // Allow some delta for async cleanup, but should be much less than the opened count
-        expect(fdDelta).toBeLessThan(TERMINAL_COUNT * 2);
+      // FD count should return to the baseline. close() closes the master and the slave fd itself. It can
+      // leave the read and the write fd to the work pool, which closes them later. A leaked fd stays open
+      // however long this waits.
+      if (baselineFds >= 0) {
+        const deadline = performance.now() + 2000;
+        let fdDelta = countOpenFds() - baselineFds;
+        while (fdDelta > 0 && performance.now() < deadline) {
+          await Bun.sleep(1);
+          fdDelta = countOpenFds() - baselineFds;
+        }
+        // The baseline can include fds of an earlier test that the work pool had not closed yet, so the
+        // count can end below it.
+        expect(fdDelta).toBeLessThanOrEqual(0);
       }
     });
 

@@ -15,6 +15,7 @@ import {
   runInThisContext,
   Script,
   SourceTextModule,
+  SyntheticModule,
 } from "node:vm";
 
 function capture(_: any, _1?: any) {}
@@ -3377,6 +3378,33 @@ test("node:vm SourceTextModule link() with other modules after a link() that fai
   expect(stderr).toBe("");
   expect(stdout).toBe("SyntaxError\nonly2,v v=b2\nSyntaxError\ndep#1\n");
   expect(exitCode).toBe(0);
+});
+
+test("node:vm SyntheticModule namespace object takes no new property, whichever of setExport() and `namespace` runs first", async () => {
+  async function namespaceOf(exports: Record<string, unknown>, readNamespaceFirst: boolean): Promise<any> {
+    const module = new SyntheticModule(Object.keys(exports), function () {
+      for (const name in exports) this.setExport(name, exports[name]);
+    });
+    await module.link(() => {});
+    if (readNamespaceFirst) module.namespace;
+    await module.evaluate();
+    return module.namespace;
+  }
+  const write = (namespace: any, value: unknown) => {
+    namespace.__esModule = value;
+  };
+
+  for (const readNamespaceFirst of [false, true]) {
+    const plain = await namespaceOf({ x: 1 }, readNamespaceFirst);
+    expect(Object.isExtensible(plain)).toBe(false);
+    // A write that added the property would be cached, and would then do the same to the namespace object below.
+    for (let i = 0; i < 10; i++) expect(() => write(plain, true)).toThrow(TypeError);
+    expect(Reflect.ownKeys(plain)).toEqual(["x", Symbol.toStringTag]);
+
+    const exporter = await namespaceOf({ __esModule: false, x: 1 }, readNamespaceFirst);
+    expect(() => write(exporter, true)).toThrow(TypeError);
+    expect(exporter.__esModule).toBe(false);
+  }
 });
 
 test("node:vm Object.defineProperty on the context global when the sandbox is an uncacheable dictionary holding an accessor for a built-in", async () => {

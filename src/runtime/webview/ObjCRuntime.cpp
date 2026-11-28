@@ -33,12 +33,34 @@ SEL NSURL::s_absoluteString;
 
 Class NSURLRequest::cls;
 SEL NSURLRequest::s_requestWithURL;
+SEL NSURLRequest::s_URL;
+SEL NSURLRequest::s_HTTPMethod;
+SEL NSURLRequest::s_valueForHTTPHeaderField;
+SEL NSURLRequest::s_HTTPBody;
 
+Class NSError::cls;
 SEL NSError::s_localizedDescription;
 SEL NSError::s_userInfo;
+SEL NSError::s_errorWithDomain_code_userInfo;
 
+Class NSData::cls;
 SEL NSData::s_bytes;
 SEL NSData::s_length;
+SEL NSData::s_dataWithBytes_length;
+
+Class NSMutableDictionary::cls;
+SEL NSMutableDictionary::s_setObject_forKey;
+
+Class NSHTTPURLResponse::cls;
+SEL NSHTTPURLResponse::s_initWithURL_statusCode_HTTPVersion_headerFields;
+
+SEL WKURLSchemeTask::s_request;
+SEL WKURLSchemeTask::s_didReceiveResponse;
+SEL WKURLSchemeTask::s_didReceiveData;
+SEL WKURLSchemeTask::s_didFinish;
+SEL WKURLSchemeTask::s_didFailWithError;
+
+SEL WKWebViewConfiguration::s_setURLSchemeHandler_forURLScheme;
 
 Class NSNumber::cls;
 SEL NSNumber::s_numberWithDouble;
@@ -54,6 +76,7 @@ SEL NSDictionary::s_objectForKey;
 Class NSApplication::cls;
 SEL NSApplication::s_sharedApplication;
 SEL NSApplication::s_setActivationPolicy;
+SEL NSApplication::s_activateIgnoringOtherApps;
 
 Class NSWindow::cls;
 Class NSWindow::hostCls;
@@ -76,6 +99,11 @@ SEL NSWindow::s_convertPointToScreen;
 SEL NSWindow::s_orderBack;
 SEL NSWindow::s_setAlphaValue;
 SEL NSWindow::s_setIgnoresMouseEvents;
+SEL NSWindow::s_makeKeyAndOrderFront;
+SEL NSWindow::s_orderOut;
+SEL NSWindow::s_setTitle;
+SEL NSWindow::s_center;
+SEL NSWindow::s_setOpaque;
 
 Class NSProcessInfo::cls;
 SEL NSProcessInfo::s_processInfo;
@@ -228,11 +256,76 @@ static void delegateDidReceiveScriptMessage(id self, SEL, id /*controller*/, id 
     id rawBody = objc::WKScriptMessage(message).body();
     if (!objc::Ref(rawBody).isKindOf(objc::NSDictionary::cls)) return;
     objc::NSDictionary body(rawBody);
-    id type = body.objectForKey(objc::NSString::fromWTF("type"_s).m_id);
-    id args = body.objectForKey(objc::NSString::fromWTF("args"_s).m_id);
+    static id kBunIpc = objc::Ref(objc::NSString::fromWTF("bunIpc"_s).m_id).msg<id>(objc::Ref::s_retain);
+    static id kReqId = objc::Ref(objc::NSString::fromWTF("reqId"_s).m_id).msg<id>(objc::Ref::s_retain);
+    static id kIsInvoke = objc::Ref(objc::NSString::fromWTF("isInvoke"_s).m_id).msg<id>(objc::Ref::s_retain);
+    static id kChannel = objc::Ref(objc::NSString::fromWTF("channel"_s).m_id).msg<id>(objc::Ref::s_retain);
+    static id kPayload = objc::Ref(objc::NSString::fromWTF("payload"_s).m_id).msg<id>(objc::Ref::s_retain);
+    static id kType = objc::Ref(objc::NSString::fromWTF("type"_s).m_id).msg<id>(objc::Ref::s_retain);
+    static id kArgs = objc::Ref(objc::NSString::fromWTF("args"_s).m_id).msg<id>(objc::Ref::s_retain);
+    id ipcFlag = body.objectForKey(kBunIpc);
+    if (ipcFlag) {
+        id reqIdStr = body.objectForKey(kReqId);
+        id isInvokeStr = body.objectForKey(kIsInvoke);
+        id channel = body.objectForKey(kChannel);
+        id payload = body.objectForKey(kPayload);
+        if (!objc::Ref(channel).isKindOf(objc::NSString::cls)) return;
+        uint32_t reqId = 0;
+        if (objc::Ref(reqIdStr).isKindOf(objc::NSString::cls)) {
+            reqId = static_cast<uint32_t>(strtoul(reinterpret_cast<const char*>(objc::NSString(reqIdStr).toWTF().utf8().data()), nullptr, 10));
+        }
+        bool isInvoke = false;
+        if (objc::Ref(isInvokeStr).isKindOf(objc::NSString::cls)) {
+            isInvoke = objc::NSString(isInvokeStr).toWTF() == "1"_s;
+        }
+        WTF::String chStr = objc::NSString(channel).toWTF();
+        WTF::String plStr = objc::Ref(payload).isKindOf(objc::NSString::cls)
+            ? objc::NSString(payload).toWTF()
+            : "[]"_s;
+        host->onDesktopIpcMessage(reqId, isInvoke, chStr, plStr);
+        return;
+    }
+    id type = body.objectForKey(kType);
+    id args = body.objectForKey(kArgs);
     if (!objc::Ref(type).isKindOf(objc::NSString::cls)) return;
     if (args && !objc::Ref(args).isKindOf(objc::NSArray::cls)) return;
     host->onConsoleMessage(type, args);
+}
+
+static void delegateDidReceiveScriptMessageWithReply(id self, SEL, id /*controller*/, id message, id replyHandler)
+{
+    ObjCRuntime::ARPool pool;
+    auto* host = objc::NavigationDelegate(self).host();
+    if (!host) return;
+    id rawBody = objc::WKScriptMessage(message).body();
+    if (!objc::Ref(rawBody).isKindOf(objc::NSDictionary::cls)) return;
+    objc::NSDictionary body(rawBody);
+    static id kChannel = objc::Ref(objc::NSString::fromWTF("channel"_s).m_id).msg<id>(objc::Ref::s_retain);
+    static id kPayload = objc::Ref(objc::NSString::fromWTF("payload"_s).m_id).msg<id>(objc::Ref::s_retain);
+    id channel = body.objectForKey(kChannel);
+    id payload = body.objectForKey(kPayload);
+    if (!objc::Ref(channel).isKindOf(objc::NSString::cls)) return;
+    WTF::String chStr = objc::NSString(channel).toWTF();
+    WTF::String plStr = objc::Ref(payload).isKindOf(objc::NSString::cls)
+        ? objc::NSString(payload).toWTF()
+        : "[]"_s;
+    host->onDesktopIpcMessageWithReply(chStr, plStr, replyHandler);
+}
+
+static void delegateStartURLSchemeTask(id self, SEL, id /*webView*/, id urlSchemeTask)
+{
+    ObjCRuntime::ARPool pool;
+    auto* host = objc::NavigationDelegate(self).host();
+    if (!host) return;
+    host->onSchemeTaskStart(urlSchemeTask);
+}
+
+static void delegateStopURLSchemeTask(id self, SEL, id /*webView*/, id urlSchemeTask)
+{
+    ObjCRuntime::ARPool pool;
+    auto* host = objc::NavigationDelegate(self).host();
+    if (!host) return;
+    host->onSchemeTaskStop(urlSchemeTask);
 }
 
 // _webView:getContextMenuFromProposedMenu:forElement:userInfo:completionHandler:
@@ -388,12 +481,34 @@ bool ObjCRuntime::load()
 
     CLS(NSURLRequest::cls, "NSURLRequest");
     NSURLRequest::s_requestWithURL = sel("requestWithURL:");
+    NSURLRequest::s_URL = sel("URL");
+    NSURLRequest::s_HTTPMethod = sel("HTTPMethod");
+    NSURLRequest::s_valueForHTTPHeaderField = sel("valueForHTTPHeaderField:");
+    NSURLRequest::s_HTTPBody = sel("HTTPBody");
 
+    CLS(NSError::cls, "NSError");
     NSError::s_localizedDescription = sel("localizedDescription");
     NSError::s_userInfo = sel("userInfo");
+    NSError::s_errorWithDomain_code_userInfo = sel("errorWithDomain:code:userInfo:");
 
+    CLS(NSData::cls, "NSData");
     NSData::s_bytes = sel("bytes");
     NSData::s_length = sel("length");
+    NSData::s_dataWithBytes_length = sel("dataWithBytes:length:");
+
+    CLS(NSMutableDictionary::cls, "NSMutableDictionary");
+    NSMutableDictionary::s_setObject_forKey = sel("setObject:forKey:");
+
+    CLS(NSHTTPURLResponse::cls, "NSHTTPURLResponse");
+    NSHTTPURLResponse::s_initWithURL_statusCode_HTTPVersion_headerFields = sel("initWithURL:statusCode:HTTPVersion:headerFields:");
+
+    WKURLSchemeTask::s_request = sel("request");
+    WKURLSchemeTask::s_didReceiveResponse = sel("didReceiveResponse:");
+    WKURLSchemeTask::s_didReceiveData = sel("didReceiveData:");
+    WKURLSchemeTask::s_didFinish = sel("didFinish");
+    WKURLSchemeTask::s_didFailWithError = sel("didFailWithError:");
+
+    WKWebViewConfiguration::s_setURLSchemeHandler_forURLScheme = sel("setURLSchemeHandler:forURLScheme:");
 
     CLS(NSNumber::cls, "NSNumber");
     NSNumber::s_numberWithDouble = sel("numberWithDouble:");
@@ -430,6 +545,12 @@ bool ObjCRuntime::load()
     NSWindow::s_orderBack = sel("orderBack:");
     NSWindow::s_setAlphaValue = sel("setAlphaValue:");
     NSWindow::s_setIgnoresMouseEvents = sel("setIgnoresMouseEvents:");
+    NSWindow::s_makeKeyAndOrderFront = sel("makeKeyAndOrderFront:");
+    NSWindow::s_orderOut = sel("orderOut:");
+    NSWindow::s_setTitle = sel("setTitle:");
+    NSWindow::s_center = sel("center");
+    NSWindow::s_setOpaque = sel("setOpaque:");
+    NSApplication::s_activateIgnoringOtherApps = sel("activateIgnoringOtherApps:");
 
     CLS(NSProcessInfo::cls, "NSProcessInfo");
     NSProcessInfo::s_processInfo = sel("processInfo");
@@ -542,9 +663,20 @@ bool ObjCRuntime::load()
     addMethod(NavigationDelegate::cls,
         sel("userContentController:didReceiveScriptMessage:"),
         reinterpret_cast<IMP>(delegateDidReceiveScriptMessage), "v@:@@");
+    addMethod(NavigationDelegate::cls,
+        sel("userContentController:didReceiveScriptMessage:replyHandler:"),
+        reinterpret_cast<IMP>(delegateDidReceiveScriptMessageWithReply), "v@:@@@?");
+    addMethod(NavigationDelegate::cls,
+        sel("webView:startURLSchemeTask:"),
+        reinterpret_cast<IMP>(delegateStartURLSchemeTask), "v@:@@");
+    addMethod(NavigationDelegate::cls,
+        sel("webView:stopURLSchemeTask:"),
+        reinterpret_cast<IMP>(delegateStopURLSchemeTask), "v@:@@");
     if (Protocol* proto = getProtocol("WKNavigationDelegate")) addProtocol(NavigationDelegate::cls, proto);
     if (Protocol* proto = getProtocol("WKUIDelegate")) addProtocol(NavigationDelegate::cls, proto);
     if (Protocol* proto = getProtocol("WKScriptMessageHandler")) addProtocol(NavigationDelegate::cls, proto);
+    if (Protocol* proto = getProtocol("WKScriptMessageHandlerWithReply")) addProtocol(NavigationDelegate::cls, proto);
+    if (Protocol* proto = getProtocol("WKURLSchemeHandler")) addProtocol(NavigationDelegate::cls, proto);
     registerClassPair(NavigationDelegate::cls);
 
     // --- register BunHostWindow : NSWindow -------------------------------

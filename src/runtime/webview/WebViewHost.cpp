@@ -139,7 +139,7 @@ Ref<WebViewHost> WebViewHost::createForIPC(uint32_t viewId, uint32_t width, uint
     objc::WKUserContentController ucc(cfg.userContentController());
     ucc.addScriptMessageHandler(host->m_delegate, objc::NSString::fromWTF("bunConsole"_s));
     ucc.addUserScript(objc::WKUserScript::createAtDocumentStart(
-        objc::NSString::fromWTF(WTF::String::fromUTF8(kConsoleCaptureJS))));
+        objc::NSString::fromWTF(WTF::String::fromUTF8(kConsoleCaptureJS)), false));
 
     host->m_webview = objc::WKWebView::create(WTF::move(cfg), width, height);
     host->m_webview.setNavigationDelegate(host->m_delegate);
@@ -199,6 +199,10 @@ void WebViewHost::close()
 {
     if (m_closed) return;
     m_closed = true;
+    for (auto& kv : m_pendingIpcReplies) {
+        if (kv.second) _Block_release(kv.second);
+    }
+    m_pendingIpcReplies.clear();
     ObjCRuntime::ARPool pool;
 
     // Break the delegate backlink so late navigation callbacks see null.
@@ -218,6 +222,10 @@ void WebViewHost::close()
     m_window = {};
     m_webview = {};
     m_delegate = {};
+    for (auto& kv : m_schemeTasks) {
+        if (kv.second) objc::Ref(kv.second).msg<void>(objc::Ref::s_release);
+    }
+    m_schemeTasks.clear();
 }
 
 // --- Requests --------------------------------------------------------------
@@ -848,6 +856,1058 @@ void WebViewHost::onScreenshotComplete(id nsimage, id error)
     p += nameLen;
     memcpy(p, &pngLen, 4);
     hostWriter()->sendReply(m_viewId, Reply::ScreenshotDone, payload.span().data(), static_cast<uint32_t>(payload.size()));
+}
+
+static constexpr const char* kDesktopBridgeJS = R"js(
+(() => {
+  const pending = new Map();
+  let nextReqId = 1;
+  const listeners = new Map();
+  window.__bunIpcResolve = (reqId, ok, jsonStr) => {
+    const entry = pending.get(reqId);
+    if (!entry) return;
+    pending.delete(reqId);
+    let val = undefined;
+    try { val = jsonStr ? JSON.parse(jsonStr) : undefined; } catch { val = jsonStr; }
+    if (ok) entry.resolve(val);
+    else entry.reject(new Error(typeof val === "string" ? val : "IPC error"));
+  };
+  window.__bunIpcDispatch = (channel, jsonStr) => {
+    const set = listeners.get(channel);
+    if (!set) return;
+    let args = [];
+    try { args = jsonStr ? JSON.parse(jsonStr) : []; } catch {}
+    for (const fn of set) fn({ senderId: 0 }, ...args);
+  };
+  const _replyHandler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bunIpcReply;
+  const _postHandler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bunIpc;
+  const _isCustomOrigin = location.protocol !== "file:" && location.protocol !== "about:" && location.protocol !== "data:" && location.origin !== "null";
+  const _blobPrefix = _isCustomOrigin ? location.origin + "/__bun_ipc__/" : "";
+  const _binPrefix = _isCustomOrigin ? location.origin + "/__bun_ipc_bin__/" : "";
+  function _toBytes(data) {
+    if (data === undefined || data === null) return new Uint8Array(0);
+    if (data instanceof Uint8Array) return data;
+    if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    if (data instanceof ArrayBuffer) return new Uint8Array(data);
+    return new Uint8Array(0);
+  }
+  function _u8ToB64(u8) {
+    let s = "";
+    const CHUNK = 0x8000;
+    for (let i = 0; i < u8.length; i += CHUNK) {
+      s += String.fromCharCode.apply(null, u8.subarray(i, i + CHUNK));
+    }
+    return btoa(s);
+  }
+  function _b64ToU8(b64) {
+    const bin = atob(b64);
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return u8;
+  }
+  window.bunDesktopIpc = {
+    async invokeBinary(channel, data) {
+      if (!_binPrefix) {
+        const b64 = _u8ToB64(_toBytes(data));
+        const resB64 = await window.bunDesktopIpc.invoke("__bun_bin__:" + String(channel), b64);
+        return resB64 ? _b64ToU8(String(resB64)) : new Uint8Array(0);
+      }
+      const body = data === undefined || data === null ? new Uint8Array(0) : data;
+      const res = await fetch(_binPrefix + encodeURIComponent(String(channel)), {
+        method: "POST",
+        body,
+        headers: { "x-bun-ipc-invoke": "1" },
+      });
+      if (!res.ok) {
+        const msg = await res.text().catch(() => "");
+        throw new Error(msg || ("IPC binary error (" + res.status + ")"));
+      }
+      return new Uint8Array(await res.arrayBuffer());
+    },
+    async invoke(channel, ...args) {
+      if (_replyHandler) {
+        const resJson = await _replyHandler.postMessage({
+          channel: String(channel),
+          payload: args.length === 0 ? "[]" : JSON.stringify(args),
+        });
+        if (resJson === undefined || resJson === null) return undefined;
+        if (_blobPrefix && typeof resJson === "string" && resJson.length < 48 && resJson.charCodeAt(0) === 123 && resJson.startsWith('{"__bunIpcBlob":')) {
+          const meta = JSON.parse(resJson);
+          const r = await fetch(_blobPrefix + meta.__bunIpcBlob);
+          return await r.json();
+        }
+        return JSON.parse(resJson);
+      }
+      const reqId = nextReqId++;
+      return new Promise((resolve, reject) => {
+        pending.set(reqId, { resolve, reject });
+        _postHandler.postMessage({
+          bunIpc: "1",
+          reqId: String(reqId),
+          isInvoke: "1",
+          channel: String(channel),
+          payload: args.length === 0 ? "[]" : JSON.stringify(args),
+        });
+      });
+    },
+    send(channel, ...args) {
+      _postHandler.postMessage({
+        bunIpc: "1",
+        reqId: "0",
+        isInvoke: "0",
+        channel: String(channel),
+        payload: args.length === 0 ? "[]" : JSON.stringify(args),
+      });
+    },
+    on(channel, fn) {
+      let s = listeners.get(channel);
+      if (!s) { s = new Set(); listeners.set(channel, s); }
+      s.add(fn);
+      return window.bunDesktopIpc;
+    },
+    once(channel, fn) {
+      const wrapped = (ev, ...args) => {
+        window.bunDesktopIpc.removeListener(channel, wrapped);
+        fn(ev, ...args);
+      };
+      return window.bunDesktopIpc.on(channel, wrapped);
+    },
+    off(channel, fn) {
+      listeners.get(channel)?.delete(fn);
+      return window.bunDesktopIpc;
+    },
+    removeListener(channel, fn) {
+      listeners.get(channel)?.delete(fn);
+      return window.bunDesktopIpc;
+    },
+    removeAllListeners(channel) {
+      if (channel === undefined) listeners.clear();
+      else listeners.delete(channel);
+      return window.bunDesktopIpc;
+    },
+  };
+  const _contextBridge = {
+    exposeInMainWorld(key, api) {
+      window[String(key)] = api;
+    },
+  };
+  if (typeof window.require !== "function") {
+    window.require = function(id) {
+      if (id === "electron") {
+        return {
+          ipcRenderer: window.bunDesktopIpc,
+          contextBridge: _contextBridge,
+          webUtils: { getPathForFile(f) { return (f && f.path) || (f && f.name) || ""; } },
+        };
+      }
+      throw new Error("Cannot find module '" + id + "'");
+    };
+  }
+})();
+)js";
+
+static WTF::Vector<WTF::String>& registeredCustomSchemes()
+{
+    static LazyNeverDestroyed<WTF::Vector<WTF::String>> schemes;
+    static std::once_flag once;
+    std::call_once(once, [] { schemes.construct(); });
+    return schemes.get();
+}
+
+void WebViewHost::registerCustomScheme(const WTF::String& scheme)
+{
+    WTF::String lower = scheme.convertToASCIILowercase();
+    if (lower.isEmpty() || lower == "app"_s || lower == "http"_s || lower == "https"_s || lower == "file"_s) return;
+    auto& list = registeredCustomSchemes();
+    for (const auto& s : list) {
+        if (s == lower) return;
+    }
+    list.append(WTF::move(lower));
+}
+
+void WebViewHost::warmDesktop()
+{
+    static bool warmed = false;
+    if (warmed) return;
+    if (!ObjCRuntime::tryLoad()->m_loaded) return;
+    warmed = true;
+    ObjCRuntime::ARPool pool;
+    // Initialize shared WKProcessPool + WebKit frameworks without allocating a throwaway WKWebView.
+    (void)objc::WKWebViewConfiguration::createEphemeral();
+}
+
+Ref<WebViewHost> WebViewHost::createDesktopForIPC(
+    uint32_t viewId,
+    uint32_t width,
+    uint32_t height,
+    int32_t x,
+    int32_t y,
+    uint8_t flags,
+    const WTF::String& title,
+    const WTF::String& preloadJs)
+{
+    ASSERT(ObjCRuntime::tryLoad()->m_loaded);
+    const bool show = (flags & 1) != 0;
+    if (show) {
+        objc::NSApplication::setActivationPolicyRegular();
+    }
+
+    auto host = adoptRef(*new WebViewHost());
+    host->m_viewId = viewId;
+
+    auto cfg = objc::WKWebViewConfiguration::createEphemeral();
+    host->m_delegate = objc::NavigationDelegate::create(host.ptr());
+    cfg.setURLSchemeHandler(host->m_delegate, objc::NSString::fromWTF("app"_s));
+    for (const auto& s : registeredCustomSchemes()) {
+        cfg.setURLSchemeHandler(host->m_delegate, objc::NSString::fromWTF(s));
+    }
+
+    objc::WKUserContentController ucc(cfg.userContentController());
+    ucc.addScriptMessageHandler(host->m_delegate, objc::NSString::fromWTF("bunConsole"_s));
+    ucc.addScriptMessageHandler(host->m_delegate, objc::NSString::fromWTF("bunIpc"_s));
+    {
+        static auto selFn = reinterpret_cast<SEL (*)(const char*)>(dlsym(RTLD_DEFAULT, "sel_registerName"));
+        static auto clsFn = reinterpret_cast<Class (*)(const char*)>(dlsym(RTLD_DEFAULT, "objc_getClass"));
+        if (selFn && clsFn) {
+            if (Class cwCls = clsFn("WKContentWorld")) {
+                if (id pageWorld = objc::Ref::msgCls<id>(cwCls, selFn("pageWorld"))) {
+                    SEL addReplySel = selFn("addScriptMessageHandlerWithReply:contentWorld:name:");
+                    if (ucc.msg<BOOL>(selFn("respondsToSelector:"), addReplySel)) {
+                        ucc.msg<void>(addReplySel, host->m_delegate.m_id, pageWorld, objc::NSString::fromWTF("bunIpcReply"_s).m_id);
+                    }
+                }
+            }
+        }
+    }
+
+    const bool mainFrameOnly = (flags & 32) == 0;
+
+    ucc.addUserScript(objc::WKUserScript::createAtDocumentStart(
+        objc::NSString::fromWTF(WTF::String::fromUTF8(kConsoleCaptureJS)), mainFrameOnly));
+
+    ucc.addUserScript(objc::WKUserScript::createAtDocumentStart(
+        objc::NSString::fromWTF(WTF::String::fromUTF8(kDesktopBridgeJS)), mainFrameOnly));
+
+    if (!preloadJs.isEmpty()) {
+        ucc.addUserScript(objc::WKUserScript::createAtDocumentStart(objc::NSString::fromWTF(preloadJs), mainFrameOnly));
+    }
+
+    host->m_webview = objc::WKWebView::create(WTF::move(cfg), width, height);
+    host->m_webview.setNavigationDelegate(host->m_delegate);
+    host->m_webview.setUIDelegate(host->m_delegate);
+
+    bool resizable = (flags & 2) != 0;
+    bool frame = (flags & 4) != 0;
+    bool transparent = (flags & 8) != 0;
+    bool hasPos = (flags & 16) != 0;
+
+    unsigned long styleMask = 0;
+    if (frame) {
+        styleMask = 1 | 2 | 4; // Titled | Closable | Miniaturizable
+        if (resizable) styleMask |= 8; // Resizable
+    }
+
+    host->m_window = objc::NSWindow::createVisible(
+        hasPos ? static_cast<double>(x) : 0.0,
+        hasPos ? static_cast<double>(y) : 0.0,
+        static_cast<double>(width),
+        static_cast<double>(height),
+        styleMask,
+        transparent);
+    if (!title.isEmpty()) {
+        host->m_window.setTitle(objc::NSString::fromWTF(title).m_id);
+    }
+    if (!hasPos) {
+        host->m_window.center();
+    }
+    host->m_window.setContentView(host->m_webview);
+    if (show) {
+        host->m_window.makeKeyAndOrderFront();
+    }
+    host->m_width = width;
+    host->m_height = height;
+    return host;
+}
+
+void WebViewHost::setWindowTitle(const WTF::String& title)
+{
+    if (m_closed || !m_window.m_id) return;
+    m_window.setTitle(objc::NSString::fromWTF(title).m_id);
+}
+
+void WebViewHost::showWindow(bool visible)
+{
+    if (m_closed || !m_window.m_id) return;
+    if (visible) {
+        objc::NSApplication::setActivationPolicyRegular();
+        m_window.makeKeyAndOrderFront();
+    } else
+        m_window.orderOut();
+}
+
+void WebViewHost::performWindowAction(uint8_t action)
+{
+    if (m_closed || !m_window.m_id) return;
+    static auto selFn = reinterpret_cast<SEL (*)(const char*)>(dlsym(RTLD_DEFAULT, "sel_registerName"));
+    static auto clsFn = reinterpret_cast<Class (*)(const char*)>(dlsym(RTLD_DEFAULT, "objc_getClass"));
+    if (!selFn) return;
+    switch (action) {
+    case 1: // Maximize
+        if (!m_window.msg<BOOL>(selFn("isZoomed"))) {
+            m_window.msg<void>(selFn("zoom:"), static_cast<id>(nullptr));
+        }
+        break;
+    case 2: // Unmaximize
+        if (m_window.msg<BOOL>(selFn("isZoomed"))) {
+            m_window.msg<void>(selFn("zoom:"), static_cast<id>(nullptr));
+        }
+        break;
+    case 3: // Minimize
+        m_window.msg<void>(selFn("miniaturize:"), static_cast<id>(nullptr));
+        break;
+    case 4: // Focus
+        objc::NSApplication::setActivationPolicyRegular();
+        m_window.makeKeyAndOrderFront();
+        if (clsFn) {
+            if (Class nsAppCls = clsFn("NSApplication")) {
+                if (id app = objc::Ref::msgCls<id>(nsAppCls, selFn("sharedApplication"))) {
+                    objc::Ref(app).msg<void>(selFn("activateIgnoringOtherApps:"), static_cast<BOOL>(YES));
+                }
+            }
+        }
+        break;
+    case 5: // Center
+        m_window.msg<void>(selFn("center"));
+        break;
+    case 6: // Restore
+        m_window.msg<void>(selFn("deminiaturize:"), static_cast<id>(nullptr));
+        break;
+    default:
+        break;
+    }
+}
+
+namespace {
+id parseJsonObjC(const WTF::String& json)
+{
+    static auto selFn = reinterpret_cast<SEL (*)(const char*)>(dlsym(RTLD_DEFAULT, "sel_registerName"));
+    static auto clsFn = reinterpret_cast<Class (*)(const char*)>(dlsym(RTLD_DEFAULT, "objc_getClass"));
+    if (!selFn || !clsFn) return nullptr;
+    Class jsonCls = clsFn("NSJSONSerialization");
+    if (!jsonCls) return nullptr;
+    WTF::CString utf8 = json.utf8();
+    if (utf8.length() == 0) return nullptr;
+    Class dataCls = clsFn("NSData");
+    id nsData = objc::Ref::msgCls<id>(dataCls, selFn("dataWithBytes:length:"), utf8.data(), static_cast<unsigned long>(utf8.length()));
+    if (!nsData) return nullptr;
+    id err = nullptr;
+    return objc::Ref::msgCls<id>(jsonCls, selFn("JSONObjectWithData:options:error:"), nsData, 0UL, &err);
+}
+
+WTF::String serializeJsonObjC(id obj)
+{
+    static auto selFn = reinterpret_cast<SEL (*)(const char*)>(dlsym(RTLD_DEFAULT, "sel_registerName"));
+    static auto clsFn = reinterpret_cast<Class (*)(const char*)>(dlsym(RTLD_DEFAULT, "objc_getClass"));
+    if (!selFn || !clsFn || !obj) return "{}"_s;
+    Class jsonCls = clsFn("NSJSONSerialization");
+    if (!jsonCls) return "{}"_s;
+    id err = nullptr;
+    id data = objc::Ref::msgCls<id>(jsonCls, selFn("dataWithJSONObject:options:error:"), obj, 0UL, &err);
+    if (!data) return "{}"_s;
+    const void* bytes = objc::Ref(data).msg<const void*>(selFn("bytes"));
+    unsigned long len = objc::Ref(data).msg<unsigned long>(selFn("length"));
+    if (!bytes || len == 0) return "{}"_s;
+    return WTF::String::fromUTF8(std::span<const uint8_t>(static_cast<const uint8_t*>(bytes), len));
+}
+
+id buildNSMenuFromArray(id itemsArr)
+{
+    static auto selFn = reinterpret_cast<SEL (*)(const char*)>(dlsym(RTLD_DEFAULT, "sel_registerName"));
+    static auto clsFn = reinterpret_cast<Class (*)(const char*)>(dlsym(RTLD_DEFAULT, "objc_getClass"));
+    if (!selFn || !clsFn || !itemsArr) return nullptr;
+    Class menuCls = clsFn("NSMenu");
+    Class itemCls = clsFn("NSMenuItem");
+    Class arrCls = clsFn("NSArray");
+    Class dictCls = clsFn("NSDictionary");
+    if (!menuCls || !itemCls || !arrCls || !dictCls) return nullptr;
+    if (!objc::Ref(itemsArr).isKindOf(arrCls)) return nullptr;
+
+    id menu = objc::Ref(objc::Ref::msgCls<id>(menuCls, selFn("alloc"))).msg<id>(selFn("initWithTitle:"), objc::NSString::fromWTF(""_s).m_id);
+    unsigned long count = objc::Ref(itemsArr).msg<unsigned long>(selFn("count"));
+    id typeKey = objc::NSString::fromWTF("type"_s).m_id;
+    id labelKey = objc::NSString::fromWTF("label"_s).m_id;
+    id submenuKey = objc::NSString::fromWTF("submenu"_s).m_id;
+    Class strCls = clsFn("NSString");
+
+    for (unsigned long i = 0; i < count; ++i) {
+        id entry = objc::Ref(itemsArr).msg<id>(selFn("objectAtIndex:"), i);
+        if (!entry || !objc::Ref(entry).isKindOf(dictCls)) continue;
+        id typeVal = objc::Ref(entry).msg<id>(selFn("objectForKey:"), typeKey);
+        if (typeVal && objc::Ref(typeVal).isKindOf(strCls)) {
+            const char* t = objc::Ref(typeVal).msg<const char*>(selFn("UTF8String"));
+            if (t && strcmp(t, "separator") == 0) {
+                id sep = objc::Ref::msgCls<id>(itemCls, selFn("separatorItem"));
+                objc::Ref(menu).msg<void>(selFn("addItem:"), sep);
+                continue;
+            }
+        }
+        id labelVal = objc::Ref(entry).msg<id>(selFn("objectForKey:"), labelKey);
+        id titleStr = (labelVal && objc::Ref(labelVal).isKindOf(strCls)) ? labelVal : objc::NSString::fromWTF(""_s).m_id;
+        id item = objc::Ref(objc::Ref::msgCls<id>(itemCls, selFn("alloc"))).msg<id>(selFn("initWithTitle:action:keyEquivalent:"), titleStr, static_cast<SEL>(nullptr), objc::NSString::fromWTF(""_s).m_id);
+        id subVal = objc::Ref(entry).msg<id>(selFn("objectForKey:"), submenuKey);
+        if (subVal && objc::Ref(subVal).isKindOf(arrCls)) {
+            id subMenu = buildNSMenuFromArray(subVal);
+            if (subMenu) {
+                objc::Ref(subMenu).msg<void>(selFn("setTitle:"), titleStr);
+                objc::Ref(item).msg<void>(selFn("setSubmenu:"), subMenu);
+                objc::Ref(subMenu).msg<void>(selFn("release"));
+            }
+        }
+        objc::Ref(menu).msg<void>(selFn("addItem:"), item);
+        objc::Ref(item).msg<void>(selFn("release"));
+    }
+    return menu;
+}
+} // namespace
+
+void WebViewHost::setWindowProgress(double progress)
+{
+    if (m_closed) return;
+    static auto selFn = reinterpret_cast<SEL (*)(const char*)>(dlsym(RTLD_DEFAULT, "sel_registerName"));
+    static auto clsFn = reinterpret_cast<Class (*)(const char*)>(dlsym(RTLD_DEFAULT, "objc_getClass"));
+    if (!selFn || !clsFn) return;
+    Class nsAppCls = clsFn("NSApplication");
+    if (!nsAppCls) return;
+    id app = objc::Ref::msgCls<id>(nsAppCls, selFn("sharedApplication"));
+    if (!app) return;
+    id dockTile = objc::Ref(app).msg<id>(selFn("dockTile"));
+    if (!dockTile) return;
+    if (progress >= 0.0 && progress <= 1.0) {
+        int pct = static_cast<int>(progress * 100.0 + 0.5);
+        WTF::String label = makeString(pct, "%"_s);
+        objc::Ref(dockTile).msg<void>(selFn("setBadgeLabel:"), objc::NSString::fromWTF(label).m_id);
+    } else {
+        objc::Ref(dockTile).msg<void>(selFn("setBadgeLabel:"), static_cast<id>(nullptr));
+    }
+}
+
+void WebViewHost::setApplicationMenu(const WTF::String& menuJson)
+{
+    static auto selFn = reinterpret_cast<SEL (*)(const char*)>(dlsym(RTLD_DEFAULT, "sel_registerName"));
+    static auto clsFn = reinterpret_cast<Class (*)(const char*)>(dlsym(RTLD_DEFAULT, "objc_getClass"));
+    if (!selFn || !clsFn) return;
+    Class nsAppCls = clsFn("NSApplication");
+    if (!nsAppCls) return;
+    id app = objc::Ref::msgCls<id>(nsAppCls, selFn("sharedApplication"));
+    if (!app) return;
+
+    if (menuJson.isEmpty() || menuJson == "null"_s) {
+        objc::Ref(app).msg<void>(selFn("setMainMenu:"), static_cast<id>(nullptr));
+        return;
+    }
+    id parsed = parseJsonObjC(menuJson);
+    id menu = buildNSMenuFromArray(parsed);
+    if (menu) {
+        objc::Ref(app).msg<void>(selFn("setMainMenu:"), menu);
+        objc::Ref(menu).msg<void>(selFn("release"));
+    }
+}
+
+void WebViewHost::showDialog(uint32_t viewId, uint32_t reqId, uint8_t kind, const WTF::String& optsJson)
+{
+    static auto selFn = reinterpret_cast<SEL (*)(const char*)>(dlsym(RTLD_DEFAULT, "sel_registerName"));
+    static auto clsFn = reinterpret_cast<Class (*)(const char*)>(dlsym(RTLD_DEFAULT, "objc_getClass"));
+    WTF::String resultJson = "{}"_s;
+
+    if (selFn && clsFn) {
+        Class dictCls = clsFn("NSDictionary");
+        Class mutDictCls = clsFn("NSMutableDictionary");
+        Class mutArrCls = clsFn("NSMutableArray");
+        Class arrCls = clsFn("NSArray");
+        Class strCls = clsFn("NSString");
+        Class numCls = clsFn("NSNumber");
+        id opts = parseJsonObjC(optsJson);
+        auto getStr = [&](const char* key) -> id {
+            if (!opts || !objc::Ref(opts).isKindOf(dictCls)) return nullptr;
+            id v = objc::Ref(opts).msg<id>(selFn("objectForKey:"), objc::NSString::fromWTF(WTF::String::fromLatin1(key)).m_id);
+            return (v && objc::Ref(v).isKindOf(strCls)) ? v : nullptr;
+        };
+
+        if (kind == 0) { // open dialog
+            id panel = objc::Ref::msgCls<id>(clsFn("NSOpenPanel"), selFn("openPanel"));
+            if (id title = getStr("title")) objc::Ref(panel).msg<void>(selFn("setTitle:"), title);
+            long res = objc::Ref(panel).msg<long>(selFn("runModal"));
+            id outDict = objc::Ref::msgCls<id>(mutDictCls, selFn("dictionary"));
+            // NSModalResponseOK = 1
+            bool canceled = (res != 1);
+            id paths = objc::Ref::msgCls<id>(mutArrCls, selFn("array"));
+            if (!canceled) {
+                id urls = objc::Ref(panel).msg<id>(selFn("URLs"));
+                unsigned long cnt = urls ? objc::Ref(urls).msg<unsigned long>(selFn("count")) : 0;
+                for (unsigned long i = 0; i < cnt; ++i) {
+                    id u = objc::Ref(urls).msg<id>(selFn("objectAtIndex:"), i);
+                    if (id p = objc::Ref(u).msg<id>(selFn("path"))) {
+                        objc::Ref(paths).msg<void>(selFn("addObject:"), p);
+                    }
+                }
+            }
+            objc::Ref(outDict).msg<void>(selFn("setObject:forKey:"), objc::Ref::msgCls<id>(numCls, selFn("numberWithBool:"), static_cast<BOOL>(canceled)), objc::NSString::fromWTF("canceled"_s).m_id);
+            objc::Ref(outDict).msg<void>(selFn("setObject:forKey:"), paths, objc::NSString::fromWTF("filePaths"_s).m_id);
+            resultJson = serializeJsonObjC(outDict);
+        } else if (kind == 1) { // save dialog
+            id panel = objc::Ref::msgCls<id>(clsFn("NSSavePanel"), selFn("savePanel"));
+            if (id title = getStr("title")) objc::Ref(panel).msg<void>(selFn("setTitle:"), title);
+            long res = objc::Ref(panel).msg<long>(selFn("runModal"));
+            id outDict = objc::Ref::msgCls<id>(mutDictCls, selFn("dictionary"));
+            bool canceled = (res != 1);
+            objc::Ref(outDict).msg<void>(selFn("setObject:forKey:"), objc::Ref::msgCls<id>(numCls, selFn("numberWithBool:"), static_cast<BOOL>(canceled)), objc::NSString::fromWTF("canceled"_s).m_id);
+            if (!canceled) {
+                if (id u = objc::Ref(panel).msg<id>(selFn("URL"))) {
+                    if (id p = objc::Ref(u).msg<id>(selFn("path"))) {
+                        objc::Ref(outDict).msg<void>(selFn("setObject:forKey:"), p, objc::NSString::fromWTF("filePath"_s).m_id);
+                    }
+                }
+            }
+            resultJson = serializeJsonObjC(outDict);
+        } else { // message / error box
+            id alert = objc::Ref(objc::Ref::msgCls<id>(clsFn("NSAlert"), selFn("alloc"))).msg<id>(selFn("init"));
+            if (id msg = getStr("message"))
+                objc::Ref(alert).msg<void>(selFn("setMessageText:"), msg);
+            else if (id title = getStr("title"))
+                objc::Ref(alert).msg<void>(selFn("setMessageText:"), title);
+            if (id detail = getStr("detail"))
+                objc::Ref(alert).msg<void>(selFn("setInformativeText:"), detail);
+            else if (id content = getStr("content"))
+                objc::Ref(alert).msg<void>(selFn("setInformativeText:"), content);
+            if (kind == 3) {
+                // NSAlertStyleCritical = 2
+                objc::Ref(alert).msg<void>(selFn("setAlertStyle:"), 2UL);
+            }
+            if (opts && objc::Ref(opts).isKindOf(dictCls)) {
+                id btns = objc::Ref(opts).msg<id>(selFn("objectForKey:"), objc::NSString::fromWTF("buttons"_s).m_id);
+                if (btns && objc::Ref(btns).isKindOf(arrCls)) {
+                    unsigned long cnt = objc::Ref(btns).msg<unsigned long>(selFn("count"));
+                    for (unsigned long i = 0; i < cnt; ++i) {
+                        id b = objc::Ref(btns).msg<id>(selFn("objectAtIndex:"), i);
+                        if (b && objc::Ref(b).isKindOf(strCls)) {
+                            objc::Ref(alert).msg<id>(selFn("addButtonWithTitle:"), b);
+                        }
+                    }
+                }
+            }
+            long res = objc::Ref(alert).msg<long>(selFn("runModal"));
+            objc::Ref(alert).msg<void>(selFn("release"));
+            int idx = res >= 1000 ? static_cast<int>(res - 1000) : 0;
+            id outDict = objc::Ref::msgCls<id>(mutDictCls, selFn("dictionary"));
+            objc::Ref(outDict).msg<void>(selFn("setObject:forKey:"), objc::Ref::msgCls<id>(numCls, selFn("numberWithInt:"), idx), objc::NSString::fromWTF("response"_s).m_id);
+            objc::Ref(outDict).msg<void>(selFn("setObject:forKey:"), objc::Ref::msgCls<id>(numCls, selFn("numberWithBool:"), NO), objc::NSString::fromWTF("checkboxChecked"_s).m_id);
+            resultJson = serializeJsonObjC(outDict);
+        }
+    }
+
+    WTF::CString utf8 = resultJson.utf8();
+    uint32_t len = static_cast<uint32_t>(utf8.length());
+    WTF::Vector<uint8_t, 256> out(8 + len);
+    memcpy(out.mutableSpan().data(), &reqId, 4);
+    memcpy(out.mutableSpan().data() + 4, &len, 4);
+    if (len > 0) memcpy(out.mutableSpan().data() + 8, utf8.data(), len);
+    hostWriter()->sendReply(viewId, Reply::DesktopDialogResult, out.span().data(), static_cast<uint32_t>(out.size()));
+}
+
+void WebViewHost::sendDesktopIpcReply(uint32_t reqId, bool ok, const WTF::String& resultJson)
+{
+    auto it = m_pendingIpcReplies.find(reqId);
+    if (it != m_pendingIpcReplies.end()) {
+        void* block = it->second;
+        m_pendingIpcReplies.erase(it);
+        if (block) {
+            auto fn = reinterpret_cast<void (^)(id, id)>(block);
+            if (ok) {
+                const auto u = url();
+                const bool isCustom = !u.isEmpty() && !u.startsWith("http:"_s) && !u.startsWith("https:"_s) && !u.startsWith("file:"_s) && !u.startsWith("data:"_s) && !u.startsWith("about:"_s);
+                if (resultJson.length() >= 131072 && m_webview.m_id && isCustom) {
+                    m_pendingIpcBlobs.emplace(reqId, resultJson);
+                    fn(objc::NSString::fromWTF(makeString("{\"__bunIpcBlob\":"_s, reqId, '}')).m_id, nullptr);
+                } else {
+                    fn(objc::NSString::fromWTF(resultJson).m_id, nullptr);
+                }
+            } else {
+                fn(nullptr, objc::NSString::fromWTF(resultJson).m_id);
+            }
+            _Block_release(block);
+        }
+        return;
+    }
+    if (m_closed || !m_webview.m_id) return;
+    WTF::CString jsonUtf8 = resultJson.utf8();
+    // Escape as JS string literal using JSON-style quoting or base64-free safe helper:
+    WTF::StringBuilder js;
+    js.append("window.__bunIpcResolve("_s);
+    js.append(reqId);
+    js.append(ok ? ",true,"_s : ",false,"_s);
+    // Wrap in JSON.stringify-safe template by escaping backslash, quotes, newlines:
+    js.append('"');
+    for (size_t i = 0; i < jsonUtf8.length(); ++i) {
+        char c = jsonUtf8.data()[i];
+        if (c == '\\' || c == '"') {
+            js.append('\\');
+            js.append(c);
+        } else if (c == '\n')
+            js.append("\\n"_s);
+        else if (c == '\r')
+            js.append("\\r"_s);
+        else
+            js.append(c);
+    }
+    js.append("\");"_s);
+    m_webview.callAsync(objc::NSString::fromWTF(js.toString()), nullptr, nullptr);
+}
+
+void WebViewHost::onDesktopIpcMessageWithReply(const WTF::String& channel, const WTF::String& argsJson, id replyHandler)
+{
+    if (m_closed) {
+        if (replyHandler) {
+            reinterpret_cast<void (^)(id, id)>(replyHandler)(nullptr, objc::NSString::fromWTF("Window closed"_s).m_id);
+        }
+        return;
+    }
+    uint32_t reqId = m_nextIpcReqId++;
+    if (m_nextIpcReqId == 0) m_nextIpcReqId = 1;
+    if (replyHandler) {
+        m_pendingIpcReplies.emplace(reqId, _Block_copy(replyHandler));
+    }
+    onDesktopIpcMessage(reqId, true, channel, argsJson);
+}
+
+void WebViewHost::dispatchToRenderer(const WTF::String& channel, const WTF::String& argsJson)
+{
+    if (m_closed || !m_webview.m_id) return;
+    WTF::CString chUtf8 = channel.utf8();
+    WTF::CString argsUtf8 = argsJson.utf8();
+    WTF::StringBuilder js;
+    js.append("window.__bunIpcDispatch(\""_s);
+    for (size_t i = 0; i < chUtf8.length(); ++i) {
+        char c = chUtf8.data()[i];
+        if (c == '\\' || c == '"') {
+            js.append('\\');
+            js.append(c);
+        } else
+            js.append(c);
+    }
+    js.append("\",\""_s);
+    for (size_t i = 0; i < argsUtf8.length(); ++i) {
+        char c = argsUtf8.data()[i];
+        if (c == '\\' || c == '"') {
+            js.append('\\');
+            js.append(c);
+        } else if (c == '\n')
+            js.append("\\n"_s);
+        else if (c == '\r')
+            js.append("\\r"_s);
+        else
+            js.append(c);
+    }
+    js.append("\");"_s);
+    m_webview.callAsync(objc::NSString::fromWTF(js.toString()), nullptr, nullptr);
+}
+
+void WebViewHost::sendDesktopIpcBinaryReply(uint32_t reqId, uint16_t status, const uint8_t* dataPtr, uint32_t dataLen)
+{
+    auto it = m_schemeTasks.find(reqId);
+    if (it == m_schemeTasks.end()) return;
+    objc::WKURLSchemeTask st(it->second);
+    m_schemeTasks.erase(it);
+    if (!m_closed) {
+        objc::NSURL nsUrl = st.request().URL();
+        auto headers = objc::NSMutableDictionary::create();
+        headers.setObject(
+            objc::NSString::fromWTF(status >= 400 ? "text/plain; charset=utf-8"_s : "application/octet-stream"_s).m_id,
+            objc::NSString::fromWTF("Content-Type"_s).m_id);
+        headers.setObject(
+            objc::NSString::fromWTF("*"_s).m_id,
+            objc::NSString::fromWTF("Access-Control-Allow-Origin"_s).m_id);
+        auto resp = objc::NSHTTPURLResponse::create(nsUrl, status, headers.m_id);
+        st.didReceiveResponse(resp.m_id);
+        if (dataLen > 0 && dataPtr) {
+            st.didReceiveData(objc::NSData::withBytes(dataPtr, static_cast<unsigned long>(dataLen)).m_id);
+        }
+        st.didFinish();
+    }
+    objc::Ref(st.m_id).msg<void>(objc::Ref::s_release);
+}
+
+void WebViewHost::onDesktopIpcMessage(uint32_t reqId, bool isInvoke, const WTF::String& channel, const WTF::String& argsJson)
+{
+    if (m_closed) return;
+    WTF::CString ch = channel.utf8();
+    WTF::CString args = argsJson.utf8();
+    uint32_t chLen = static_cast<uint32_t>(ch.length());
+    uint32_t argsLen = static_cast<uint32_t>(args.length());
+    WTF::Vector<uint8_t, 128> out;
+    out.grow(4 + 1 + 4 + chLen + 4 + argsLen);
+    uint8_t* p = out.mutableSpan().data();
+    memcpy(p, &reqId, 4);
+    p += 4;
+    *p++ = isInvoke ? 1 : 0;
+    memcpy(p, &chLen, 4);
+    p += 4;
+    if (chLen) memcpy(p, ch.data(), chLen);
+    p += chLen;
+    memcpy(p, &argsLen, 4);
+    p += 4;
+    if (argsLen) memcpy(p, args.data(), argsLen);
+    hostWriter()->sendReply(m_viewId, Reply::DesktopIpc, out.span().data(), static_cast<uint32_t>(out.size()));
+}
+
+static void appendHostStr(WTF::Vector<uint8_t, 256>& out, const WTF::String& s)
+{
+    WTF::CString u = s.utf8();
+    uint32_t len = static_cast<uint32_t>(u.length());
+    size_t off = out.size();
+    out.grow(off + 4 + len);
+    memcpy(out.mutableSpan().data() + off, &len, 4);
+    if (len > 0) memcpy(out.mutableSpan().data() + off + 4, u.data(), len);
+}
+
+static WTF::String percentDecodeChannel(const WTF::String& s)
+{
+    WTF::CString utf8 = s.utf8();
+    const char* p = reinterpret_cast<const char*>(utf8.data());
+    size_t len = utf8.length();
+    WTF::Vector<uint8_t, 128> out;
+    out.reserveInitialCapacity(len);
+    auto hexVal = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    for (size_t i = 0; i < len; ++i) {
+        if (p[i] == '%' && i + 2 < len) {
+            int hi = hexVal(p[i + 1]);
+            int lo = hexVal(p[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                out.append(static_cast<uint8_t>((hi << 4) | lo));
+                i += 2;
+                continue;
+            }
+        }
+        out.append(static_cast<uint8_t>(p[i]));
+    }
+    return WTF::String::fromUTF8(std::span<const char>(reinterpret_cast<const char*>(out.span().data()), out.size()));
+}
+
+void WebViewHost::evaluateDesktopJS(uint32_t reqId, const WTF::String& script)
+{
+    if (m_closed || !m_webview.m_id) {
+        WTF::Vector<uint8_t, 256> out;
+        out.grow(5);
+        memcpy(out.mutableSpan().data(), &reqId, 4);
+        out[4] = 0;
+        appendHostStr(out, "Window closed"_s);
+        hostWriter()->sendReply(m_viewId, Reply::DesktopEvalResult, out.span().data(), static_cast<uint32_t>(out.size()));
+        return;
+    }
+
+    struct EvalBlock {
+        void* isa;
+        int32_t flags;
+        int32_t reserved;
+        void (*invoke)(EvalBlock*, id, id);
+        const HostBlockDescriptor* descriptor;
+        Ref<WebViewHost> host;
+        uint32_t reqId;
+    };
+    static const HostBlockDescriptor desc {
+        0, sizeof(EvalBlock), nullptr,
+        [](const void* p) {
+            static_cast<EvalBlock*>(const_cast<void*>(p))->host.~Ref();
+        }
+    };
+    auto* b = static_cast<EvalBlock*>(malloc_zone_malloc(malloc_default_zone(), sizeof(EvalBlock)));
+    b->isa = _NSConcreteMallocBlock;
+    b->flags = BLOCK_NEEDS_FREE | BLOCK_HAS_COPY_DISPOSE | (1 << 1);
+    b->reserved = 0;
+    b->reqId = reqId;
+    b->descriptor = &desc;
+    new (&b->host) Ref<WebViewHost>(*this);
+    b->invoke = [](EvalBlock* self, id result, id error) {
+        ObjCRuntime::ARPool pool;
+        WebViewHost& h = self->host.get();
+        if (h.m_closed) return;
+        WTF::Vector<uint8_t, 256> out;
+        out.grow(5);
+        memcpy(out.mutableSpan().data(), &self->reqId, 4);
+        if (error) {
+            out[4] = 0;
+            objc::NSError err(error);
+            id msg = objc::NSDictionary(err.userInfo()).objectForKey(objc::NSString::fromWTF("WKJavaScriptExceptionMessage"_s).m_id);
+            appendHostStr(out, msg ? objc::NSString(msg).toWTF() : err.localizedDescription());
+        } else {
+            out[4] = 1;
+            WTF::String resStr = objc::Ref(result).isKindOf(objc::NSString::cls)
+                ? objc::NSString(result).toWTF()
+                : "null"_s;
+            appendHostStr(out, resStr);
+        }
+        hostWriter()->sendReply(h.m_viewId, Reply::DesktopEvalResult, out.span().data(), static_cast<uint32_t>(out.size()));
+    };
+
+    auto body = makeString("return JSON.stringify(await ("_s, script, "))"_s);
+    m_webview.callAsync(objc::NSString::fromWTF(body), nullptr, b);
+    _Block_release(b);
+}
+
+void WebViewHost::onSchemeTaskStart(id task)
+{
+    if (m_closed || !task) return;
+    objc::WKURLSchemeTask st(task);
+    objc::NSURLRequest req = st.request();
+    objc::NSURL nsUrl = req.URL();
+    WTF::String url = nsUrl.absoluteString();
+    const bool isCustomScheme = !url.isEmpty() && !url.startsWith("http:"_s) && !url.startsWith("https:"_s) && !url.startsWith("file:"_s) && !url.startsWith("data:"_s);
+
+    static constexpr auto kIpcBinMarker = "/__bun_ipc_bin__/"_s;
+    auto binMarkerPos = url.find(kIpcBinMarker);
+    if (isCustomScheme && binMarkerPos != WTF::notFound
+        && !req.headerValue(objc::NSString::fromWTF("x-bun-ipc-invoke"_s)).isEmpty()) {
+        WTF::String rawChannel = url.substring(binMarkerPos + kIpcBinMarker.length());
+        auto qPos = rawChannel.find('?');
+        if (qPos != WTF::notFound) rawChannel = rawChannel.substring(0, qPos);
+        WTF::String channel = percentDecodeChannel(rawChannel);
+
+        uint32_t reqId = m_nextSchemeTaskId++;
+        objc::Ref(task).retain();
+        m_schemeTasks.emplace(reqId, task);
+
+        objc::NSData body = req.HTTPBody();
+        std::span<const uint8_t> bodySpan = body.span();
+        WTF::CString chUtf8 = channel.utf8();
+        uint32_t chLen = static_cast<uint32_t>(chUtf8.length());
+        uint32_t dataLen = static_cast<uint32_t>(bodySpan.size());
+
+        WTF::Vector<uint8_t, 256> out;
+        out.grow(4 + 4 + chLen + 4 + dataLen);
+        uint8_t* p = out.mutableSpan().data();
+        memcpy(p, &reqId, 4);
+        p += 4;
+        memcpy(p, &chLen, 4);
+        p += 4;
+        if (chLen > 0) memcpy(p, chUtf8.data(), chLen);
+        p += chLen;
+        memcpy(p, &dataLen, 4);
+        p += 4;
+        if (dataLen > 0) memcpy(p, bodySpan.data(), dataLen);
+        hostWriter()->sendReply(m_viewId, Reply::DesktopIpcBinary, out.span().data(), static_cast<uint32_t>(out.size()));
+        return;
+    }
+
+    static constexpr auto kIpcBlobMarker = "/__bun_ipc__/"_s;
+    auto markerPos = url.find(kIpcBlobMarker);
+    if (isCustomScheme && markerPos != WTF::notFound) {
+        WTF::String idStr = url.substring(markerPos + kIpcBlobMarker.length());
+        uint32_t blobId = 0;
+        bool validId = idStr.length() > 0;
+        for (unsigned i = 0; i < idStr.length(); ++i) {
+            UChar ch = idStr[i];
+            if (ch < '0' || ch > '9') {
+                validId = false;
+                break;
+            }
+            blobId = blobId * 10 + static_cast<uint32_t>(ch - '0');
+        }
+        auto bit = validId ? m_pendingIpcBlobs.find(blobId) : m_pendingIpcBlobs.end();
+        if (bit == m_pendingIpcBlobs.end()) {
+            auto headers = objc::NSMutableDictionary::create();
+            auto resp = objc::NSHTTPURLResponse::create(nsUrl, 404, headers.m_id);
+            st.didReceiveResponse(resp.m_id);
+            st.didFinish();
+            return;
+        }
+        auto utf8 = bit->second.utf8();
+        m_pendingIpcBlobs.erase(bit);
+        auto headers = objc::NSMutableDictionary::create();
+        headers.setObject(
+            objc::NSString::fromWTF("application/json; charset=utf-8"_s).m_id,
+            objc::NSString::fromWTF("Content-Type"_s).m_id);
+        headers.setObject(
+            objc::NSString::fromWTF("*"_s).m_id,
+            objc::NSString::fromWTF("Access-Control-Allow-Origin"_s).m_id);
+        auto resp = objc::NSHTTPURLResponse::create(nsUrl, 200, headers.m_id);
+        st.didReceiveResponse(resp.m_id);
+        if (utf8.length() > 0) {
+            st.didReceiveData(objc::NSData::withBytes(utf8.data(), static_cast<unsigned long>(utf8.length())).m_id);
+        }
+        st.didFinish();
+        return;
+    }
+
+    uint32_t taskId = m_nextSchemeTaskId++;
+    objc::Ref(task).retain();
+    m_schemeTasks.emplace(taskId, task);
+
+    WTF::String method = req.HTTPMethod();
+    WTF::String range = req.headerValue(objc::NSString::fromWTF("Range"_s));
+    static auto selFn = reinterpret_cast<SEL (*)(const char*)>(dlsym(RTLD_DEFAULT, "sel_registerName"));
+    static SEL s_allHdrs = selFn ? selFn("allHTTPHeaderFields") : nullptr;
+    id hdrDict = s_allHdrs ? req.msg<id>(s_allHdrs) : nullptr;
+    WTF::String headersJson = hdrDict ? serializeJsonObjC(hdrDict) : "{}"_s;
+    objc::NSData body = req.HTTPBody();
+    std::span<const uint8_t> bodySpan = body.span();
+
+    WTF::Vector<uint8_t, 256> out;
+    out.grow(4);
+    memcpy(out.mutableSpan().data(), &taskId, 4);
+    appendHostStr(out, url);
+    appendHostStr(out, method);
+    appendHostStr(out, range);
+    appendHostStr(out, headersJson);
+    uint32_t bodyLen = static_cast<uint32_t>(bodySpan.size());
+    size_t bOff = out.size();
+    out.grow(bOff + 4 + bodyLen);
+    memcpy(out.mutableSpan().data() + bOff, &bodyLen, 4);
+    if (bodyLen > 0) memcpy(out.mutableSpan().data() + bOff + 4, bodySpan.data(), bodyLen);
+    hostWriter()->sendReply(m_viewId, Reply::DesktopSchemeRequest, out.span().data(), static_cast<uint32_t>(out.size()));
+}
+
+void WebViewHost::onSchemeTaskStop(id task)
+{
+    if (!task) return;
+    for (auto it = m_schemeTasks.begin(); it != m_schemeTasks.end(); ++it) {
+        if (it->second == task) {
+            objc::Ref(task).msg<void>(objc::Ref::s_release);
+            m_schemeTasks.erase(it);
+            return;
+        }
+    }
+}
+
+static objc::Owned<objc::NSMutableDictionary> parseHeadersJson(const WTF::String& json)
+{
+    auto dict = objc::NSMutableDictionary::create();
+    WTF::CString utf8 = json.utf8();
+    const char* p = reinterpret_cast<const char*>(utf8.data());
+    const char* end = p + utf8.length();
+    auto skipWs = [&]() {
+        while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r'))
+            ++p;
+    };
+    auto readStr = [&](WTF::Vector<char, 128>& out) -> bool {
+        skipWs();
+        if (p >= end || *p != '"') return false;
+        ++p;
+        out.clear();
+        while (p < end && *p != '"') {
+            if (*p == '\\' && p + 1 < end) {
+                ++p;
+                switch (*p) {
+                case 'n':
+                    out.append('\n');
+                    break;
+                case 'r':
+                    out.append('\r');
+                    break;
+                case 't':
+                    out.append('\t');
+                    break;
+                default:
+                    out.append(*p);
+                    break;
+                }
+            } else {
+                out.append(*p);
+            }
+            ++p;
+        }
+        if (p >= end || *p != '"') return false;
+        ++p;
+        out.append('\0');
+        return true;
+    };
+    skipWs();
+    if (p >= end || *p != '{') return dict;
+    ++p;
+    WTF::Vector<char, 128> key, val;
+    while (p < end) {
+        skipWs();
+        if (p < end && *p == '}') break;
+        if (!readStr(key)) break;
+        skipWs();
+        if (p >= end || *p != ':') break;
+        ++p;
+        if (!readStr(val)) break;
+        dict.setObject(
+            objc::NSString::fromWTF(WTF::String::fromUTF8(val.span().data())).m_id,
+            objc::NSString::fromWTF(WTF::String::fromUTF8(key.span().data())).m_id);
+        skipWs();
+        if (p < end && *p == ',') ++p;
+    }
+    return dict;
+}
+
+void WebViewHost::sendSchemeResponse(
+    uint32_t taskId,
+    uint16_t status,
+    uint8_t kind,
+    const WTF::String& headersJson,
+    const uint8_t* bytesPtr,
+    uint32_t bytesLen,
+    const WTF::String& filePath,
+    uint64_t offset,
+    uint64_t length)
+{
+    auto it = m_schemeTasks.find(taskId);
+    if (it == m_schemeTasks.end()) return;
+    id rawTask = it->second;
+    m_schemeTasks.erase(it);
+
+    objc::WKURLSchemeTask task(rawTask);
+    objc::NSURL url = task.request().URL();
+
+    if (kind == 2) {
+        auto err = objc::NSError::create(objc::NSString::fromWTF("BunDesktopError"_s), status ? status : -1, nullptr);
+        task.didFailWithError(err.m_id);
+        objc::Ref(rawTask).msg<void>(objc::Ref::s_release);
+        return;
+    }
+
+    auto headers = parseHeadersJson(headersJson);
+    auto resp = objc::NSHTTPURLResponse::create(url, static_cast<long>(status ? status : 200), headers.m_id);
+
+    if (kind == 1) {
+        WTF::CString pathUtf8 = filePath.utf8();
+        int fd = ::open(reinterpret_cast<const char*>(pathUtf8.data()), O_RDONLY);
+        if (fd < 0) {
+            auto err = objc::NSError::create(objc::NSString::fromWTF("NSPOSIXErrorDomain"_s), errno, nullptr);
+            task.didFailWithError(err.m_id);
+            objc::Ref(rawTask).msg<void>(objc::Ref::s_release);
+            return;
+        }
+        task.didReceiveResponse(resp.m_id);
+        size_t chunkCap = static_cast<size_t>(std::min<uint64_t>(length > 0 ? length : 65536, 1048576));
+        WTF::Vector<uint8_t> buf(chunkCap);
+        uint64_t remaining = length;
+        uint64_t cur = offset;
+        while (remaining > 0) {
+            size_t toRead = remaining > chunkCap ? chunkCap : static_cast<size_t>(remaining);
+            ssize_t n = ::pread(fd, buf.mutableSpan().data(), toRead, static_cast<off_t>(cur));
+            if (n <= 0) break;
+            task.didReceiveData(objc::NSData::withBytes(buf.span().data(), static_cast<unsigned long>(n)).m_id);
+            cur += static_cast<uint64_t>(n);
+            remaining -= static_cast<uint64_t>(n);
+        }
+        ::close(fd);
+        task.didFinish();
+        objc::Ref(rawTask).msg<void>(objc::Ref::s_release);
+        return;
+    }
+
+    task.didReceiveResponse(resp.m_id);
+    if (bytesLen > 0 && bytesPtr) {
+        task.didReceiveData(objc::NSData::withBytes(bytesPtr, bytesLen).m_id);
+    }
+    task.didFinish();
+    objc::Ref(rawTask).msg<void>(objc::Ref::s_release);
 }
 
 } // namespace Bun

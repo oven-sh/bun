@@ -233,6 +233,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--smol                            Use less memory, but run garbage collection more often"
     ),
     parse_param!(
+        "--desktop                         Run the application with native desktop GUI support"
+    ),
+    parse_param!(
         "--interactive                     Start a Node.js-compatible REPL, like node --interactive"
     ),
     parse_param!(
@@ -475,6 +478,7 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
             RuntimeRequirement::Feature(Feature::AotCompiler),
         ),
         (Long(b"smol"), Nothing),
+        (Long(b"desktop"), Nothing),
         (Long(b"interactive"), Nothing),
         (Long(b"preload"), RuntimeCode),
         (Long(b"require"), RuntimeCode),
@@ -662,6 +666,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!(
             "--compile                        Generate a standalone Bun executable containing your bundled code. Implies --production"
+        ),
+        parse_param!(
+            "--desktop                        With --compile: build a standalone desktop application"
         ),
         parse_param!(
             "--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv"
@@ -1644,6 +1651,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
+        ctx.runtime_options.desktop = args.flag(b"--desktop");
         // To `node`, `--check` means something else.
         ctx.runtime_options.check = args.flag(b"--check") && cmd != CommandTag::RunAsNodeCommand;
         // Decided here: on Windows the process that starts it again is set up right after this.
@@ -2748,6 +2756,15 @@ fn parse_build_command_options(
     if compiles {
         ctx.bundler_options.compile = true;
         ctx.bundler_options.inline_entrypoint_import_meta_main = true;
+    }
+
+    if args.flag(b"--desktop") {
+        if !ctx.bundler_options.compile {
+            Output::err_generic("--desktop in bun build requires --compile", ());
+            Global::crash();
+        }
+        ctx.bundler_options.desktop = true;
+        ctx.bundler_options.windows.hide_console = true;
     }
 
     if let Some(compile_exec_argv) = args.option(b"--compile-exec-argv") {

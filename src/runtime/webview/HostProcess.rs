@@ -16,7 +16,7 @@
 
 use core::sync::atomic::{AtomicI32, Ordering};
 
-use bun_jsc::JSGlobalObject;
+use bun_jsc::{JSGlobalObject, virtual_machine::VirtualMachine};
 use bun_output::{declare_scope, scoped_log};
 use bun_spawn::{self, ProcessHandle, Status};
 
@@ -24,7 +24,6 @@ use bun_spawn::{self, ProcessHandle, Status};
 use {
     crate::Error,
     bun_core::CStrList,
-    bun_jsc::virtual_machine::VirtualMachine,
     bun_ptr::{AliasableBox, CellExt as _},
     bun_spawn::{
         EventLoopHandle, ProcessExit, ProcessExitKind, SpawnOptions, SpawnResultExt as _, Stdio,
@@ -40,6 +39,18 @@ pub(crate) struct HostProcess {
 
 /// Of the host that C++ talks to, whichever thread spawned it. 0: none.
 static PID: AtomicI32 = AtomicI32::new(0);
+/// Parent socket fd held between [`prewarm`] and [`Bun__WebViewHost__ensure`].
+/// `-1` once C++ adopts it into usockets (or if spawned directly by `ensure`).
+#[cfg(target_os = "macos")]
+static PREWARMED_FD: AtomicI32 = AtomicI32::new(-1);
+
+#[cfg(target_os = "macos")]
+fn close_prewarmed_fd() {
+    let fd = PREWARMED_FD.swap(-1, Ordering::Relaxed);
+    if fd >= 0 {
+        let _ = bun_sys::close(Fd::from_native(fd));
+    }
+}
 
 fn unreaped() -> &'static super::Unreaped<HostProcess> {
     #[cfg(target_os = "macos")]
@@ -63,22 +74,65 @@ fn kill(pid: i32) {
 /// child dies they get connection-invalidated and exit.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__WebViewHost__kill() {
+    #[cfg(target_os = "macos")]
+    close_prewarmed_fd();
     kill(PID.load(Ordering::Relaxed));
 }
 
 /// HostClient::retireGlobal (`bun test --isolate`): unpublish and kill this host so the next file can spawn its own at once.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__WebViewHost__retire() {
+    #[cfg(target_os = "macos")]
+    close_prewarmed_fd();
     kill(PID.swap(0, Ordering::Relaxed));
+}
+
+/// Pre-warms the WebView host subprocess on macOS (`--desktop`) so `posix_spawn`
+/// and `dlopen(AppKit, WebKit)` overlap with JS module loading instead of blocking
+/// the first `new BrowserWindow()` / `new Bun.WebView()`.
+///
+/// Idempotent; non-macOS is a no-op.
+pub(crate) fn prewarm(vm: &VirtualMachine) {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = vm;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // In-process Thread-0 AppKit mode is default on macOS; only pre-warm
+        // the subprocess when explicitly opted out via BUN_DESKTOP_IN_PROCESS=0.
+        if std::env::var_os("BUN_DESKTOP_IN_PROCESS").as_deref() != Some(std::ffi::OsStr::new("0"))
+        {
+            let _ = vm;
+            return;
+        }
+        if PID.load(Ordering::Relaxed) != 0 {
+            return;
+        }
+        match spawn(vm, false, false) {
+            Ok(fd) => {
+                let prev = PREWARMED_FD.swap(fd.native(), Ordering::Relaxed);
+                if prev >= 0 {
+                    let _ = bun_sys::close(Fd::from_native(prev));
+                }
+            }
+            Err(err) => {
+                // Non-fatal: `Bun__WebViewHost__ensure` retries on first window/view.
+                scoped_log!(WebViewHost, "prewarm spawn failed: {}", err.name());
+            }
+        }
+    }
 }
 
 /// Lazy: first `new Bun.WebView()` calls this via C++. Returns the parent
 /// socket fd (C++ adopts into usockets and owns it from then on), or -1.
+/// If [`prewarm`] already spawned the child, hands over its held fd once.
 /// C++'s HostClient::ensureSpawned checks its own sock before calling here,
-/// so instance-already-exists → -1 means "you already have the fd, this is
-/// a bug" not "spawn failed". We deliberately don't store the fd — usockets
-/// owns it; re-returning a fd usockets may have already closed would be a
-/// use-after-close. Rust only owns process lifetime (watch + kill).
+/// so instance-already-exists with no prewarmed fd → -1 means "you already
+/// have the fd, this is a bug" not "spawn failed". We deliberately don't store
+/// the fd after adoption — usockets owns it; re-returning a fd usockets may
+/// have already closed would be a use-after-close. Rust only owns process
+/// lifetime (watch + kill).
 #[unsafe(no_mangle)]
 extern "C" fn Bun__WebViewHost__ensure(
     global: &JSGlobalObject,
@@ -92,6 +146,10 @@ extern "C" fn Bun__WebViewHost__ensure(
     }
     #[cfg(target_os = "macos")]
     {
+        let prewarmed = PREWARMED_FD.swap(-1, Ordering::Relaxed);
+        if prewarmed >= 0 {
+            return prewarmed;
+        }
         if PID.load(Ordering::Relaxed) != 0 {
             return -1; // C++ already holds the fd
         }
@@ -127,6 +185,8 @@ impl HostProcess {
         if (PID.compare_exchange(pid, 0, Ordering::Relaxed, Ordering::Relaxed)).is_err() {
             return; // retired
         }
+        #[cfg(target_os = "macos")]
+        close_prewarmed_fd();
         let signo: i32 = status.signal().map_or(0, |signal| i32::from(signal.0));
         // SAFETY: takes no pointers, and this is the thread that C++ called `Bun__WebViewHost__ensure` on.
         unsafe { Bun__WebViewHost__childDied(signo) };

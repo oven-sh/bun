@@ -92,7 +92,7 @@ impl bun_jsc::JsClass for Response {
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = bun_ptr::weak_ptr::destroy)]
 pub(crate) struct Response {
-    body: JsCell<Body>,
+    pub(crate) body: JsCell<Body>,
     init: JsCell<Init>,
     url: JsCell<BunString>,
     redirected: Cell<bool>,

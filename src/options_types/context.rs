@@ -238,6 +238,7 @@ pub struct BundlerOptions {
     pub elide_lines: Option<usize>,
     // Compile options
     pub compile: bool,
+    pub desktop: bool,
     pub compile_target: CompileTarget,
     pub compile_exec_argv: Option<Box<[u8]>>,
     pub compile_autoload_dotenv: bool,
@@ -305,6 +306,7 @@ impl Default for BundlerOptions {
             env_prefix: Box::default(),
             elide_lines: None,
             compile: false,
+            desktop: false,
             compile_target: CompileTarget::default(),
             compile_exec_argv: None,
             compile_autoload_dotenv: true,
@@ -687,6 +689,7 @@ pub struct DebuggerEnable {
 
 pub struct RuntimeOptions {
     pub smol: bool,
+    pub desktop: bool,
     /// `--check`: type check what is about to be run, and do not run it if there are errors.
     pub check: bool,
     pub debugger: Debugger,
@@ -762,6 +765,7 @@ impl Default for RuntimeOptions {
     fn default() -> Self {
         Self {
             smol: false,
+            desktop: false,
             check: false,
             debugger: Debugger::Unspecified,
             if_present: false,

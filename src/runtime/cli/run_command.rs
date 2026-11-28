@@ -1002,6 +1002,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
             global_cache: ctx.debug.global_cache,
             smol: ctx.runtime_options.smol,
+            desktop: ctx.runtime_options.desktop,
             mini_mode: ctx.runtime_options.smol,
             eval_mode: ctx.runtime_options.eval.eval_and_print,
             is_main_thread: true,
@@ -1173,6 +1174,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if graph.flags.contains(GraphFlags::CROSS_COMPILED_BYTECODE) {
             bun_analytics::features::cross_compiled_bytecode.fetch_add(1, Ordering::Relaxed);
         }
+        if graph.flags.contains(GraphFlags::DESKTOP) {
+            ctx.runtime_options.desktop = true;
+        }
         bun_ast::initialize_store();
 
         // Load bunfig.toml unless disabled by compile flags. Config loading
@@ -1193,6 +1197,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             graph: Some(graph),
             is_main_thread: true,
             smol: ctx.runtime_options.smol,
+            desktop: ctx.runtime_options.desktop,
             // `Options::dns_result_order` is `u8` until the
             // b2-cycle widens it to `bun_dns::Order`; the enum is
             // `#[repr(u8)]` so `as u8` is exact.
@@ -1377,6 +1382,10 @@ impl Run<'_> {
         vm.hot_reload.set(ctx.debug.hot_reload);
         vm.on_unhandled_rejection
             .set(Run::on_unhandled_rejection_before_close);
+
+        if ctx.runtime_options.desktop {
+            crate::webview::host_process::prewarm(vm);
+        }
 
         start_profilers(vm, ctx);
 

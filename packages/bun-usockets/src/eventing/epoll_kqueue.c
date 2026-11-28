@@ -475,6 +475,22 @@ void us_loop_run(struct us_loop_t *loop) {
 extern unsigned int Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns, int * _Nullable released_heap_access);
 extern void Bun__JSC_acquireHeapAccessAfterWait(void * _Nonnull jsc_vm);
 
+#ifdef __APPLE__
+typedef int (*us_bun_apple_poll_fn)(int kq_fd, void *events, int max_events, const struct timespec *timeout, int will_idle);
+typedef void (*us_bun_apple_post_fn)(void);
+static us_bun_apple_poll_fn g_bun_apple_poll_hook = NULL;
+static us_bun_apple_post_fn g_bun_apple_post_hook = NULL;
+
+void us_bun_set_apple_hooks(us_bun_apple_poll_fn poll_fn, us_bun_apple_post_fn post_fn) {
+    g_bun_apple_poll_hook = poll_fn;
+    g_bun_apple_post_hook = post_fn;
+}
+
+int us_bun_kevent64_raw(int kq_fd, void *events, int max_events, unsigned int flags, const struct timespec *timeout) {
+    return bun_kevent64_wait(kq_fd, (struct kevent64_s *)events, max_events, flags, timeout);
+}
+#endif
+
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
     if (loop->num_polls == 0)
         return;
@@ -517,7 +533,15 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
      * Only on a tick that really parks: there is no time to sweep in a poll that returns at once.
      * With no scavenger to hand off to, fall back to sweeping inline, rate-limited, because doing
      * it between ticks is what we are avoiding. */
-    const int handed_off = will_idle_inside_event_loop && mi_on_thread_idle_start();
+#ifdef __APPLE__
+    /* In-process WebKit runs CFRunLoopRunInMode inside g_bun_apple_poll_hook on Thread 0,
+     * which invokes Cocoa/WebKit callbacks that allocate via mimalloc. Handing Thread 0's
+     * heaps to mi-scavenger across that poll races with mi_page_purge_holes_now. */
+    const int can_handoff_heap = will_idle_inside_event_loop && g_bun_apple_poll_hook == NULL;
+#else
+    const int can_handoff_heap = will_idle_inside_event_loop;
+#endif
+    const int handed_off = can_handoff_heap && mi_on_thread_idle_start();
     if (!handed_off && will_idle_inside_event_loop) {
         static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
         static _Thread_local uint64_t last_idle_sweep_ns = 0;
@@ -535,6 +559,11 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
      * interaction (line 1975). No equivalent of KEVENT_FLAG_IMMEDIATE needed. */
     loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, timeout);
 #else
+#ifdef __APPLE__
+    if (UNLIKELY(g_bun_apple_poll_hook != NULL)) {
+        loop->num_ready_polls = g_bun_apple_poll_hook(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, timeout, will_idle_inside_event_loop);
+    } else
+#endif
     loop->num_ready_polls = bun_kevent64_wait(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS,
         /* When we won't idle (pending wakeups or zero timeout), use KEVENT_FLAG_IMMEDIATE.
          * In XNU's kqueue_scan (bsd/kern/kern_event.c):
@@ -554,6 +583,12 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     /* Before anything touches the JS heap again (this may run a finished collection's epilogue, i.e. destructors). */
     if (released_heap_access)
         Bun__JSC_acquireHeapAccessAfterWait(loop->data.jsc_vm);
+
+#ifdef __APPLE__
+    if (UNLIKELY(g_bun_apple_post_hook != NULL)) {
+        g_bun_apple_post_hook();
+    }
+#endif
 
     us_internal_dispatch_ready_polls(loop);
     us_internal_drain_ready_polls(loop);

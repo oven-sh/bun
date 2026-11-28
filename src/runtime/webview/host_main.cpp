@@ -76,6 +76,10 @@ static bool loadHostCF()
 
 void FrameWriter::sendReply(uint32_t viewId, Reply op, const uint8_t* payload, uint32_t len)
 {
+    if (m_inProcessFn) {
+        m_inProcessFn(viewId, op, payload, len);
+        return;
+    }
     Frame h = { len, viewId, static_cast<uint8_t>(op) };
     if (m_queue.isEmpty()) {
         iovec iov[2] = {
@@ -304,6 +308,124 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
             writer.sendReply(viewId, Reply::Ack);
         }
         return;
+    case Op::CreateDesktopWindow: {
+        auto p = decode<CreateDesktopWindowPayload>(r);
+        WTF::String title = r.str();
+        WTF::String preloadJs = r.str();
+        views.emplace(viewId, WebViewHost::createDesktopForIPC(viewId, p.width, p.height, p.x, p.y, p.flags, title, preloadJs));
+        return;
+    }
+    case Op::SetWindowTitle:
+        if (auto* v = view(viewId, op)) {
+            v->setWindowTitle(r.str());
+            writer.sendReply(viewId, Reply::Ack);
+        }
+        return;
+    case Op::ShowWindow: {
+        uint8_t vis = r.remaining() >= 1 ? r.u8() : 1;
+        if (auto* v = view(viewId, op)) {
+            v->showWindow(vis != 0);
+            writer.sendReply(viewId, Reply::Ack);
+        }
+        return;
+    }
+    case Op::DesktopWindowAction: {
+        uint8_t action = r.remaining() >= 1 ? r.u8() : 0;
+        if (auto* v = view(viewId, op)) {
+            v->performWindowAction(action);
+        }
+        return;
+    }
+    case Op::DesktopSetMenu: {
+        WTF::String menuJson = r.str();
+        WebViewHost::setApplicationMenu(menuJson);
+        return;
+    }
+    case Op::DesktopWindowProgress: {
+        double progress = -1.0;
+        if (r.remaining() >= sizeof(double)) {
+            memcpy(&progress, r.bytes(sizeof(double)), sizeof(double));
+        }
+        if (auto* v = view(viewId, op)) {
+            v->setWindowProgress(progress);
+        }
+        return;
+    }
+    case Op::DesktopDialog: {
+        uint32_t reqId = r.u32();
+        uint8_t kind = r.remaining() >= 1 ? r.u8() : 0;
+        WTF::String optsJson = r.str();
+        WebViewHost::showDialog(viewId, reqId, kind, optsJson);
+        return;
+    }
+    case Op::DesktopWarm:
+        WebViewHost::warmDesktop();
+        return;
+    case Op::DesktopRegisterScheme: {
+        WTF::String scheme = r.str();
+        WebViewHost::registerCustomScheme(scheme);
+        return;
+    }
+    case Op::DesktopEval: {
+        uint32_t reqId = r.u32();
+        WTF::String script = r.str();
+        if (auto* v = view(viewId, op)) {
+            v->evaluateDesktopJS(reqId, script);
+        }
+        return;
+    }
+    case Op::DesktopIpcReply: {
+        uint32_t reqId = r.u32();
+        uint8_t ok = r.u8();
+        WTF::String res = r.str();
+        if (auto* v = view(viewId, op)) {
+            v->sendDesktopIpcReply(reqId, ok != 0, res);
+        }
+        return;
+    }
+    case Op::DesktopIpcBinaryReply: {
+        uint32_t reqId = r.u32();
+        uint16_t status = static_cast<uint16_t>(r.remaining() >= 2 ? (r.u8() | (static_cast<uint16_t>(r.u8()) << 8)) : 500);
+        uint32_t dataLen = r.u32();
+        const uint8_t* dataPtr = r.bytes(dataLen);
+        if (auto* v = view(viewId, op)) {
+            v->sendDesktopIpcBinaryReply(reqId, status, dataPtr, dataLen);
+        }
+        return;
+    }
+    case Op::DesktopDispatch: {
+        WTF::String ch = r.str();
+        WTF::String args = r.str();
+        if (auto* v = view(viewId, op)) {
+            v->dispatchToRenderer(ch, args);
+        }
+        return;
+    }
+    case Op::DesktopSchemeResponse: {
+        uint32_t taskId = r.u32();
+        uint16_t status = static_cast<uint16_t>(r.remaining() >= 2 ? (r.u8() | (static_cast<uint16_t>(r.u8()) << 8)) : 200);
+        uint8_t kind = r.remaining() >= 1 ? r.u8() : 2;
+        WTF::String headersJson = r.str();
+        if (auto* v = view(viewId, op)) {
+            if (kind == 0) {
+                uint32_t len = r.u32();
+                const uint8_t* ptr = r.bytes(len);
+                v->sendSchemeResponse(taskId, status, kind, headersJson, ptr, len, WTF::emptyString(), 0, 0);
+            } else if (kind == 1) {
+                WTF::String filePath = r.str();
+                uint64_t offset = 0;
+                uint64_t length = 0;
+                if (r.remaining() >= 16) {
+                    memcpy(&offset, r.bytes(8), 8);
+                    memcpy(&length, r.bytes(8), 8);
+                }
+                v->sendSchemeResponse(taskId, status, kind, headersJson, nullptr, 0, filePath, offset, length);
+            } else {
+                v->sendSchemeResponse(taskId, status, kind, headersJson, nullptr, 0, WTF::emptyString(), 0, 0);
+            }
+        }
+        return;
+    }
     // Input ops: return true = async (completion block Acks), false = sync.
     case Op::Click: {
         auto p = decode<ClickPayload>(r);
@@ -355,6 +477,31 @@ static void cfCallback(CFFileDescriptorRef, CFOptionFlags flags, void*)
 {
     if (flags & kCFFileDescriptorReadCallBack) g_host->onReadable();
     if (flags & kCFFileDescriptorWriteCallBack) g_host->writer.onWritable();
+}
+
+static bool g_inProcessInitialized = false;
+
+void initInProcessHost(FrameWriter::InProcessReplyFn replyFn)
+{
+    if (g_inProcessInitialized) return;
+    g_inProcessInitialized = true;
+    g_host.construct();
+    g_host->writer.initInProcess(replyFn);
+}
+
+void dispatchInProcess(uint32_t viewId, Op op, const uint8_t* payload, uint32_t len)
+{
+    if (!g_inProcessInitialized) return;
+    Reader r { payload, payload + len };
+    g_host->dispatch(viewId, op, r);
+}
+
+void clearInProcessHost()
+{
+    if (!g_inProcessInitialized) return;
+    ObjCRuntime::ARPool pool;
+    g_host->views.clear();
+    g_host->failedViews.clear();
 }
 
 } // namespace WebViewProto

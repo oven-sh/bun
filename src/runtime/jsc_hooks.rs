@@ -1181,7 +1181,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     apply_standalone_runtime_flags,
     parse_worker_exec_argv_flags,
     stop_watches_for_vm_teardown,
-    cron_clear_all_reload: crate::api::cron::CronJob::stop_all_for_reload,
+    cron_clear_all_reload,
     retroactively_report_discovered_tests,
     cancel_timers,
     end_hot_run_timers,
@@ -1276,6 +1276,12 @@ fn stop_watches_for_vm_teardown() {
         state.memory_pressure_watcher.set(None);
         state.browsers.release_for_vm_teardown();
     }
+}
+
+fn cron_clear_all_reload() {
+    crate::api::cron::CronJob::stop_all_for_reload();
+    crate::desktop::ipc::reset_on_hot_reload();
+    crate::desktop::protocol::reset_on_hot_reload();
 }
 
 pub(crate) fn hot_reload_generation() -> f64 {

@@ -952,6 +952,9 @@ impl BuildCommand {
                     if !ctx.bundler_options.compile_autoload_package_json {
                         flags |= Flags::DISABLE_AUTOLOAD_PACKAGE_JSON;
                     }
+                    if ctx.bundler_options.desktop {
+                        flags |= Flags::DESKTOP;
+                    }
                     flags
                 };
                 let trim_plan = match plan_bundle_trimming(

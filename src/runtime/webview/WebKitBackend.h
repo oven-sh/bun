@@ -43,6 +43,7 @@ struct HostClient {
     us_socket_t* sock = nullptr;
     Zig::GlobalObject* global = nullptr;
     bool dead = false;
+    bool inProcess = false;
 
     uint32_t nextViewId = 1;
     std::unordered_map<uint32_t, JSC::Weak<JSWebView>> viewsById;

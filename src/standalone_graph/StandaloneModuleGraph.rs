@@ -1164,7 +1164,9 @@ bitflags::bitflags! {
         const HAS_LINKED_BYTECODE_PAYLOAD   = 1 << 13;
         /// After the linked-payload record: the record of the program compiled ahead of time (`compiled_program.rs`).
         const HAS_COMPILED_PROGRAM          = 1 << 14;
-        // _padding: u17
+        /// Built with `--compile --desktop`: boots with native desktop GUI mode enabled.
+        const DESKTOP                       = 1 << 15;
+        // _padding: u16
     }
 }
 

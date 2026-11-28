@@ -4,16 +4,22 @@
 
 #include "root.h"
 #include "WebKitBackend.h"
+#include "DesktopBackend.h"
 #include "JSWebView.h"
 
 #if OS(DARWIN)
 
 #include "bun-uws/src/SocketKinds.h"
 #include "ipc_protocol.h"
+#include "ObjCRuntime.h"
 #include "ZigGlobalObject.h"
 #include "BunClientData.h"
 #include "GeneratedBlob.h"
 #include "OwnedFd.h"
+#include <CoreFoundation/CFFileDescriptor.h>
+#include <dlfcn.h>
+#include <pthread.h>
+#include <sys/event.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -36,11 +42,228 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+extern "C" void us_bun_set_apple_hooks(
+    int (*poll_fn)(int kq_fd, void* events, int max_events, const struct timespec* timeout, int will_idle),
+    void (*post_fn)(void));
+extern "C" int us_bun_kevent64_raw(int kq_fd, void* events, int max_events, unsigned int flags, const struct timespec* timeout);
+
 namespace Bun {
 namespace WK {
 
 using namespace JSC;
 using namespace WebViewProto;
+
+HostClient& client();
+extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
+extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
+
+// ---------------------------------------------------------------------------
+// In-process Thread-0 AppKit + CFRunLoop/kqueue bridge (Option A)
+// Eliminates bun --webview-host subprocess, second dlopen, and socketpair IPC.
+// Opt out with BUN_DESKTOP_IN_PROCESS=0 if subprocess isolation is desired.
+// ---------------------------------------------------------------------------
+namespace {
+
+struct QueuedReply {
+    uint32_t viewId;
+    Reply op;
+    WTF::Vector<uint8_t> payload;
+};
+
+struct AppleCF {
+    bool loaded = false;
+    CFRunLoopRef (*CFRunLoopGetMain)() = nullptr;
+    void (*CFRunLoopStop)(CFRunLoopRef) = nullptr;
+    SInt32 (*CFRunLoopRunInMode)(CFStringRef, CFTimeInterval, Boolean) = nullptr;
+    void (*CFRunLoopAddSource)(CFRunLoopRef, CFRunLoopSourceRef, CFStringRef) = nullptr;
+    CFStringRef kCFRunLoopDefaultMode = nullptr;
+    CFFileDescriptorRef (*CFFileDescriptorCreate)(CFAllocatorRef, int, Boolean,
+        void (*)(CFFileDescriptorRef, CFOptionFlags, void*), const CFFileDescriptorContext*) = nullptr;
+    CFRunLoopSourceRef (*CFFileDescriptorCreateRunLoopSource)(CFAllocatorRef, CFFileDescriptorRef, CFIndex) = nullptr;
+    void (*CFFileDescriptorEnableCallBacks)(CFFileDescriptorRef, CFOptionFlags) = nullptr;
+    void (*CFFileDescriptorInvalidate)(CFFileDescriptorRef) = nullptr;
+};
+
+static AppleCF g_cf;
+static CFFileDescriptorRef g_kqCffd = nullptr;
+static int g_kqFd = -1;
+static bool g_inApplePoll = false;
+static id g_nsApp = nullptr;
+static SEL s_nextEventMatchingMask = nullptr;
+static SEL s_sendEvent = nullptr;
+
+static WTF::Vector<QueuedReply>& queuedReplies()
+{
+    static LazyNeverDestroyed<WTF::Vector<QueuedReply>> q;
+    static std::once_flag once;
+    std::call_once(once, [] { q.construct(); });
+    return q.get();
+}
+
+static void kqCfCallback(CFFileDescriptorRef, CFOptionFlags, void*)
+{
+    g_cf.CFRunLoopStop(g_cf.CFRunLoopGetMain());
+}
+
+static bool loadInProcessAppKit()
+{
+    if (!g_cf.loaded) {
+        void* h = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", RTLD_LAZY | RTLD_LOCAL);
+        if (!h) return false;
+#define S(name)                                                         \
+    g_cf.name = reinterpret_cast<decltype(g_cf.name)>(dlsym(h, #name)); \
+    if (!g_cf.name) return false
+        S(CFRunLoopGetMain);
+        S(CFRunLoopStop);
+        S(CFRunLoopRunInMode);
+        S(CFRunLoopAddSource);
+        S(CFFileDescriptorCreate);
+        S(CFFileDescriptorCreateRunLoopSource);
+        S(CFFileDescriptorEnableCallBacks);
+        S(CFFileDescriptorInvalidate);
+#undef S
+        auto* mode = reinterpret_cast<CFStringRef*>(dlsym(h, "kCFRunLoopDefaultMode"));
+        if (!mode) return false;
+        g_cf.kCFRunLoopDefaultMode = *mode;
+        g_cf.loaded = true;
+    }
+
+    auto* rt = ObjCRuntime::tryLoad();
+    if (!rt->m_loaded) return false;
+
+    if (!g_nsApp) {
+        ObjCRuntime::ARPool pool;
+        g_nsApp = objc::Ref::msgCls<id>(objc::NSApplication::cls, objc::NSApplication::s_sharedApplication);
+        objc::NSApplication::setActivationPolicyAccessory();
+        objc::NSProcessInfo::disableAppNap();
+        auto* regSel = reinterpret_cast<SEL (*)(const char*)>(dlsym(RTLD_DEFAULT, "sel_registerName"));
+        if (!regSel) return false;
+        s_nextEventMatchingMask = regSel("nextEventMatchingMask:untilDate:inMode:dequeue:");
+        s_sendEvent = regSel("sendEvent:");
+    }
+    return g_nsApp != nullptr;
+}
+
+static void drainNonBlockingEvents()
+{
+    if (!g_nsApp) return;
+    ObjCRuntime::ARPool pool;
+    for (;;) {
+        id ev = objc::Ref(g_nsApp).msg<id>(
+            s_nextEventMatchingMask, ~0ULL, static_cast<id>(nullptr),
+            reinterpret_cast<id>(const_cast<void*>(static_cast<const void*>(g_cf.kCFRunLoopDefaultMode))),
+            static_cast<signed char>(1));
+        if (!ev) break;
+        objc::Ref(g_nsApp).msg<void>(s_sendEvent, ev);
+    }
+}
+
+static int inProcessApplePoll(int kq_fd, void* events, int max_events, const struct timespec* timeout, int will_idle)
+{
+    // Background threads (e.g. HTTP server thread) use raw kqueue directly.
+    if (pthread_main_np() == 0) {
+        return us_bun_kevent64_raw(kq_fd, events, max_events, will_idle ? 0 : KEVENT_FLAG_IMMEDIATE, timeout);
+    }
+
+    drainNonBlockingEvents();
+
+    // Fast path: if kqueue already has ready events or we must not idle, return immediately.
+    int ready = us_bun_kevent64_raw(kq_fd, events, max_events, KEVENT_FLAG_IMMEDIATE, timeout);
+    if (ready > 0 || !will_idle || !queuedReplies().isEmpty()) {
+        return ready;
+    }
+
+    if (g_kqFd != kq_fd) {
+        if (g_kqCffd) {
+            g_cf.CFFileDescriptorInvalidate(g_kqCffd);
+            g_kqCffd = nullptr;
+        }
+        g_kqFd = kq_fd;
+        g_kqCffd = g_cf.CFFileDescriptorCreate(nullptr, kq_fd, false, kqCfCallback, nullptr);
+        if (g_kqCffd) {
+            CFRunLoopSourceRef src = g_cf.CFFileDescriptorCreateRunLoopSource(nullptr, g_kqCffd, 0);
+            g_cf.CFRunLoopAddSource(g_cf.CFRunLoopGetMain(), src, g_cf.kCFRunLoopDefaultMode);
+        }
+    }
+
+    if (g_kqCffd) {
+        g_cf.CFFileDescriptorEnableCallBacks(g_kqCffd, kCFFileDescriptorReadCallBack);
+    }
+
+    {
+        ObjCRuntime::ARPool pool;
+        double sec = 60.0;
+        if (timeout) {
+            sec = static_cast<double>(timeout->tv_sec) + static_cast<double>(timeout->tv_nsec) / 1e9;
+            if (sec < 0.0) sec = 0.0;
+        }
+
+        g_inApplePoll = true;
+        g_cf.CFRunLoopRunInMode(g_cf.kCFRunLoopDefaultMode, sec, true);
+        g_inApplePoll = false;
+
+        drainNonBlockingEvents();
+    }
+
+    return us_bun_kevent64_raw(kq_fd, events, max_events, KEVENT_FLAG_IMMEDIATE, timeout);
+}
+
+static void inProcessApplePost()
+{
+    if (pthread_main_np() == 0 || queuedReplies().isEmpty()) return;
+    auto& c = client();
+    if (!c.global) {
+        queuedReplies().clear();
+        return;
+    }
+
+    WTF::Vector<QueuedReply> batch;
+    queuedReplies().swap(batch);
+
+    auto& vm = c.global->vm();
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    Bun__EventLoop__enter(c.global);
+    for (auto& item : batch) {
+        if (c.dead) break;
+        Frame h { static_cast<uint32_t>(item.payload.size()), item.viewId, static_cast<uint8_t>(item.op) };
+        Reader r { item.payload.span().data(), item.payload.span().data() + item.payload.size() };
+        c.handleReply(h, r);
+        if (auto* exception = catchScope.exception()) [[unlikely]] {
+            if (!catchScope.clearExceptionExceptTermination()) break;
+            c.global->reportUncaughtExceptionAtEventLoop(c.global, exception);
+        }
+    }
+    Bun__EventLoop__exit(c.global);
+}
+
+static void onInProcessReply(uint32_t viewId, Reply op, const uint8_t* payload, uint32_t len)
+{
+    auto& c = client();
+    if (c.dead || !c.global) return;
+
+    if (g_inApplePoll) {
+        QueuedReply q;
+        q.viewId = viewId;
+        q.op = op;
+        if (len > 0 && payload) q.payload.append(std::span<const uint8_t>(payload, len));
+        queuedReplies().append(WTF::move(q));
+        g_cf.CFRunLoopStop(g_cf.CFRunLoopGetMain());
+        return;
+    }
+
+    auto& vm = c.global->vm();
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    Frame h { len, viewId, static_cast<uint8_t>(op) };
+    Reader r { payload, payload + len };
+    c.handleReply(h, r);
+    if (auto* exception = catchScope.exception()) [[unlikely]] {
+        if (catchScope.clearExceptionExceptTermination()) {
+            c.global->reportUncaughtExceptionAtEventLoop(c.global, exception);
+        }
+    }
+}
+
+} // namespace
 
 // Spawn + process-exit watch implemented in HostProcess.rs (EVFILT_PROC).
 extern "C" int32_t Bun__WebViewHost__ensure(Zig::GlobalObject*, bool stdoutInherit, bool stderrInherit);
@@ -123,7 +346,7 @@ static constexpr us_socket_vtable_t s_hostVTable = {
 // → closure → view, so "any views" covers "any pending".
 void HostClient::updateKeepAlive()
 {
-    bool want = !viewsById.empty();
+    bool want = !viewsById.empty() || DesktopBackend::hasActiveWindows();
     if (want == sockRefd || !global) return;
     sockRefd = want;
     Bun__VmHandle__refKeepAlive(
@@ -132,6 +355,10 @@ void HostClient::updateKeepAlive()
 
 bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool stderrInherit)
 {
+    if (inProcess && !dead) {
+        global = zig;
+        return true;
+    }
     if (sock && !dead) return true;
 
     // Host died (rejectAllAndMarkDead ran). HostProcess.rs cleared its
@@ -140,9 +367,21 @@ bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool 
     // bytes are for the dead socket.
     if (dead) {
         dead = false;
+        inProcess = false;
         sock = nullptr;
         rx.clear();
         txQueue.clear();
+    }
+
+    const char* envInProc = getenv("BUN_DESKTOP_IN_PROCESS");
+    if (pthread_main_np() != 0 && (!envInProc || strcmp(envInProc, "0") != 0)) {
+        if (loadInProcessAppKit()) {
+            initInProcessHost(&onInProcessReply);
+            us_bun_set_apple_hooks(&inProcessApplePoll, &inProcessApplePost);
+            inProcess = true;
+            global = zig;
+            return true;
+        }
     }
 
     OwnedFd fd { Bun__WebViewHost__ensure(zig, stdoutInherit, stderrInherit) };
@@ -174,6 +413,10 @@ bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool 
 
 void HostClient::writeFrame(Op op, uint32_t viewId, const uint8_t* payload, uint32_t len)
 {
+    if (inProcess && !dead) {
+        dispatchInProcess(viewId, op, payload, len);
+        return;
+    }
     if (!sock || dead || us_socket_is_closed(sock)) return;
     Frame h = { len, viewId, static_cast<uint8_t>(op) };
     const auto* hbytes = reinterpret_cast<const uint8_t*>(&h);
@@ -305,6 +548,8 @@ void HostClient::handleReply(const Frame& h, Reader r)
     auto* g = global;
     auto& vm = g->vm();
     auto reply = static_cast<Reply>(h.op);
+
+    if (DesktopBackend::handleReply(g, h, r)) return;
 
     auto it = viewsById.find(h.viewId);
     if (it == viewsById.end()) return;
@@ -447,6 +692,14 @@ void HostClient::handleReply(const Frame& h, Reader r)
         view->m_loading = false;
         settleSlot(g, view, view->m_pendingMisc, false, createError(g, r.str()));
         return;
+
+    case Reply::DesktopIpc:
+    case Reply::DesktopIpcBinary:
+    case Reply::DesktopWindowClosed:
+    case Reply::DesktopSchemeRequest:
+    case Reply::DesktopDialogResult:
+    case Reply::DesktopEvalResult:
+        return;
     }
 }
 
@@ -473,6 +726,7 @@ void HostClient::rejectAllAndMarkDead(const WTF::String& reason)
         v->m_closed = true;
     }
     viewsById.clear();
+    DesktopBackend::onHostDied();
     updateKeepAlive();
 }
 
@@ -485,7 +739,15 @@ void HostClient::retireGlobal(Zig::GlobalObject* g)
 {
     if (global != g) return;
     rejectAllAndMarkDead("WebView closed: its test file finished"_s);
-    Bun__WebViewHost__retire();
+    if (inProcess) {
+        clearInProcessHost();
+        queuedReplies().clear();
+        us_bun_set_apple_hooks(nullptr, nullptr);
+        inProcess = false;
+        dead = false;
+    } else {
+        Bun__WebViewHost__retire();
+    }
     global = nullptr;
 }
 

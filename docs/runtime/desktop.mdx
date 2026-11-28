@@ -1,0 +1,444 @@
+---
+title: Desktop
+description: Build native desktop applications with Bun using system WebViews, Electron-compatible APIs, zero-copy custom protocols, HMR, and single-file executables
+---
+
+Bun includes built-in native desktop application support via `--desktop` and `bun:desktop`. Instead of bundling Chromium, it uses the operating system's native WebView (`WKWebView` on macOS, WebView2 on Windows, WebKitGTK on Linux) and provides an Electron-aligned API (`app`, `BrowserWindow`, `ipcMain`, `ipcRenderer`, `protocol`, `Menu`, `dialog`, `shell`, `nativeTheme`, `screen`, `clipboard`, `nativeImage`, `Notification`, `powerSaveBlocker`).
+
+<Warning>This API is experimental and may change in future releases.</Warning>
+
+---
+
+## Quick start: Plain HTML
+
+Create `index.html` and `main.ts`:
+
+```html index.html
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Bun Desktop</title>
+  </head>
+  <body>
+    <h1 id="status">Loading...</h1>
+    <button id="ping">Ping Main Process</button>
+    <script>
+      const { ipcRenderer } = window.require("electron");
+      document.getElementById("ping").addEventListener("click", async () => {
+        const info = await ipcRenderer.invoke("get-info");
+        document.getElementById("status").textContent = JSON.stringify(info);
+      });
+    </script>
+  </body>
+</html>
+```
+
+```ts main.ts
+import { app, BrowserWindow, ipcMain } from "bun:desktop";
+
+await app.whenReady();
+
+ipcMain.handle("get-info", () => ({
+  bun: Bun.version,
+  platform: process.platform,
+}));
+
+const win = new BrowserWindow({
+  width: 800,
+  height: 600,
+  title: "Plain HTML App",
+});
+
+await win.loadURL("app://bundle/index.html");
+```
+
+Run it with:
+
+```sh
+bun --desktop main.ts
+```
+
+<Note>
+  You can also load local HTML files directly with `win.loadFile("./index.html")` or `win.loadURL(\`file://\$
+  {import.meta.dir}/index.html\`)`. Using `app://bundle/index.html` gives you automatic `Bun.build()` bundling for
+  TypeScript, JSX/TSX, CSS, and assets.
+</Note>
+
+---
+
+## Using React (TSX) — zero bundler config
+
+`bun:desktop` registers a default `app://bundle/` protocol handler that bundles `.html`, `.tsx`, `.ts`, `.jsx`, and `.css` in memory using `Bun.build()` — no Vite, Webpack, or local dev server TCP port required.
+
+```sh
+bun add react react-dom
+bun add -d @types/react @types/react-dom
+```
+
+```html index.html
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>React Desktop App</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./App.tsx"></script>
+  </body>
+</html>
+```
+
+```tsx App.tsx
+import { useState } from "react";
+import { createRoot } from "react-dom/client";
+
+function App() {
+  const [count, setCount] = useState(0);
+
+  const increment = async () => {
+    const next = await window.bunDesktopIpc.invoke("increment", count + 1);
+    setCount(next);
+  };
+
+  return (
+    <main>
+      <h1>React + Bun Desktop</h1>
+      <button onClick={increment}>Count: {count}</button>
+    </main>
+  );
+}
+
+createRoot(document.getElementById("root")!).render(<App />);
+```
+
+```ts main.ts
+import { app, BrowserWindow, ipcMain } from "bun:desktop";
+
+await app.whenReady();
+
+ipcMain.handle("increment", (_event, next: number) => next);
+
+const win = new BrowserWindow({
+  id: "main",
+  width: 900,
+  height: 640,
+  title: "React Desktop App",
+});
+
+await win.loadURL("app://bundle/index.html");
+```
+
+---
+
+## Using other frameworks (Vite, React, Tailwind, Vue, Svelte)
+
+Because `app://bundle/` uses `Bun.build()` under the hood, standard CSS imports (`import "./styles.css"`), TypeScript, JSX/TSX (React, Preact, Solid), and assets work out of the box.
+
+For frameworks that use Vite, Tailwind CSS, Vue SFCs, or Svelte:
+
+1. **Prebuilt `dist/` directory (e.g. Vite + React + Tailwind)**: Run `bunx vite build` and serve `./dist` via `protocol.handle("app", ...)` using `Bun.file()`:
+
+```ts main.ts
+import { app, BrowserWindow, protocol } from "bun:desktop";
+import { join } from "node:path";
+
+const distDir = join(import.meta.dir, "dist");
+
+await app.whenReady();
+
+protocol.handle("app", req => {
+  const { pathname } = new URL(req.url);
+  const rel = pathname === "/" ? "/index.html" : pathname;
+  return new Response(Bun.file(join(distDir, rel)));
+});
+
+const win = new BrowserWindow({ width: 1000, height: 700, title: "Vite + React + Tailwind" });
+await win.loadURL("app://localhost/");
+```
+
+2. **Custom `Bun.build()` plugins**: Run `Bun.build({ entrypoints: ["./src/index.html"], plugins: [...], target: "browser" })` and return the built outputs from `protocol.handle("app", ...)`.
+
+---
+
+## Hot reloading (`--hot`)
+
+Pass `--hot` alongside `--desktop` to reload your main-process TypeScript/JavaScript without restarting the native window:
+
+```sh
+bun --desktop --hot main.ts
+```
+
+### How window persistence works
+
+Pass a stable `id` option to `new BrowserWindow({ id: "main", ... })`:
+
+```ts main.ts
+import { app, BrowserWindow } from "bun:desktop";
+
+await app.whenReady();
+
+const win = new BrowserWindow({
+  id: "main", // preserved across --hot reloads
+  width: 900,
+  height: 640,
+  title: "Hot Reloadable Window",
+});
+
+await win.loadURL("app://bundle/index.html");
+```
+
+On reload:
+
+- Bun keeps the underlying native `NSWindow`/WebView alive in an internal `HotMap` keyed by `id`.
+- `new BrowserWindow({ id: "main" })` reattaches to the existing window instead of opening a duplicate window.
+- Calling `win.setTitle(...)`, `win.setSize(...)`, or `win.loadURL(...)` updates the existing window in place.
+
+---
+
+## Compiling standalone executables (`bun build --compile --desktop`)
+
+Package your main process, JavaScript dependencies, and UI assets into a single native executable with `--compile --desktop`:
+
+```ts main.ts
+import ui from "./index.html" with { type: "file" };
+import { app, BrowserWindow } from "bun:desktop";
+
+await app.whenReady();
+
+const win = new BrowserWindow({
+  width: 800,
+  height: 600,
+  title: "Compiled App",
+});
+
+// Keep the file import live so it is embedded in Bun.embeddedFiles,
+// then load via app://bundle/ in compiled binaries or file:// in dev.
+const isCompiled = (await Bun.file(ui).exists()) && ui.startsWith("/$bunfs/");
+await win.loadURL(isCompiled ? "app://bundle/index.html" : `file://${import.meta.dir}/index.html`);
+```
+
+Build and run the standalone binary:
+
+```sh
+bun build --compile --desktop main.ts --outfile my-desktop-app
+./my-desktop-app
+```
+
+<Tip>
+  Always reference your imported asset (e.g. `await Bun.file(ui).exists()`) so `bun build --compile` does not tree-shake
+  the embedded file from `Bun.embeddedFiles`. On Windows, embedded VFS paths start with `B:/~BUN/root/`; on macOS and
+  Linux they start with `/$bunfs/root/`.
+</Tip>
+
+Note that `bun build --desktop` requires `--compile` — bundling without `--compile` is not supported.
+
+---
+
+## Custom protocols & zero-copy `Bun.file()` (large files, video, audio, images)
+
+<Warning>
+  **Do not send large files (video, audio, images, or binary blobs) over `ipcMain` / `ipcRenderer`.** IPC uses
+  `WKScriptMessageHandlerWithReply` with JSON serialization, which is fast for control messages (`~0.12 ms/call`), not
+  multi-megabyte bulk data transfer.
+</Warning>
+
+Instead, expose files via `protocol.handle()` returning `new Response(Bun.file(path))`, and reference them by URL in `<video>`, `<audio>`, `<img>`, or `fetch()`:
+
+```ts main.ts
+import { protocol } from "bun:desktop";
+
+protocol.handle("app", req => {
+  const url = new URL(req.url);
+  if (url.hostname === "media") {
+    // Streams directly with automatic HTTP 206 Partial Content byte-range support
+    return new Response(Bun.file("./movie.mp4"));
+  }
+  return new Response("Not Found", { status: 404 });
+});
+```
+
+```html index.html
+<!-- Stream directly from the native protocol handler with zero IPC copies -->
+<video src="app://media/movie.mp4" controls></video>
+<img src="app://media/cover.png" />
+```
+
+- Returning `new Response(Bun.file(path))` handles `Range` requests (`206 Partial Content`, `Content-Range`, `Accept-Ranges`) automatically for `<video>`/`<audio>` seeking and large files.
+- In a 32 MiB transfer benchmark (release build, `darwin` `arm64`), `app://` + `Bun.file()` transferred 32 MiB in **8–14 ms** (`2286–4000 MB/s`) and 20×1 MiB `Range` seeks in **9–20 ms** (`1000–2222 MB/s`), compared to **118–142 ms** (`225–271 MB/s`) over JSON IPC (**12–16× faster**).
+- If you override `protocol.handle("app", ...)`, your handler takes precedence over the built-in `app://bundle/` handler.
+
+### Compared to Electron's recommended media pattern
+
+Electron's official docs require registering scheme privileges before `app.whenReady()` and manually forwarding `request.headers` into `net.fetch(pathToFileURL(...))` (or a manual `fs` `Range` handler for `206` responses):
+
+```ts
+// Electron: requires registerSchemesAsPrivileged + pathToFileURL + header forwarding
+protocol.registerSchemesAsPrivileged([
+  { scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
+]);
+await app.whenReady();
+protocol.handle("app", req => net.fetch(pathToFileURL(filePath).toString(), { headers: req.headers }));
+
+// Bun Desktop: automatic 206 Range streaming with zero boilerplate
+await app.whenReady();
+protocol.handle("app", () => new Response(Bun.file(filePath)));
+```
+
+---
+
+## IPC & Electron compatibility
+
+### Main process (`ipcMain`)
+
+```ts
+import { ipcMain } from "bun:desktop";
+
+ipcMain.handle("read-config", async event => {
+  // Reply back to the sender window if needed
+  event.sender?.send("config-loaded", { ok: true });
+  return { theme: "dark" };
+});
+
+ipcMain.handleOnce("init-once", () => "initialized");
+
+ipcMain.on("log", (_event, message) => {
+  console.log("From renderer:", message);
+});
+```
+
+### Renderer (`window.bunDesktopIpc` / `window.require("electron")`)
+
+Both `window.bunDesktopIpc` and `window.require("electron").ipcRenderer` are injected into every `BrowserWindow`:
+
+```ts
+const { ipcRenderer } = window.require("electron");
+
+const config = await ipcRenderer.invoke("read-config");
+ipcRenderer.send("log", "Renderer ready");
+ipcRenderer.on("config-loaded", payload => {
+  console.log(payload);
+});
+```
+
+In the main process, `import ... from "electron"` automatically resolves to `bun:desktop` when running with `--desktop` or compiled with `--compile --desktop`.
+
+---
+
+## Backends (`webkit`, `chrome`, and opt-in `cef`)
+
+Like `Bun.WebView`, `BrowserWindow` defaults to the OS WebView (`"webkit"` on macOS) and lets you opt into Chromium/Blink (`"chrome"`) or an external CEF executable (`"cef"`):
+
+```ts
+// Default on macOS: native WKWebView (fastest IPC & app:// streaming, smallest footprint)
+const win = new BrowserWindow({ width: 900, height: 640 });
+
+// Opt-in Blink via installed Chrome/Chromium/Edge (or BUN_CHROME_PATH)
+const chromeWin = new BrowserWindow({ width: 900, height: 640, backend: "chrome" });
+
+// Opt-in external CEF executable (or set BUN_CEF_PATH / CEF_PATH)
+const cefWin = new BrowserWindow({
+  width: 900,
+  height: 640,
+  backend: { type: "cef", path: "/Applications/cefsimple.app/Contents/MacOS/cefsimple" },
+});
+```
+
+| Backend                       | Engine                             | IPC & `app://` Transport                                     | Best For                                                                                        |
+| :---------------------------- | :--------------------------------- | :----------------------------------------------------------- | :---------------------------------------------------------------------------------------------- |
+| `"webkit"` (default on macOS) | System `WKWebView`                 | `WKScriptMessageHandlerWithReply` + native `WKURLSchemeTask` | Lowest memory, fastest `app://` `Bun.file()` streaming (`2.4 GB/s`), single-binary distribution |
+| `"chrome"`                    | Installed Chrome / Chromium / Edge | CDP WebSocket + `Runtime.addBinding` + `Fetch.enable`        | Testing Blink rendering without bundling Chromium                                               |
+| `"cef"`                       | External CEF binary                | CDP WebSocket + `Runtime.addBinding` + `Fetch.enable`        | Apps that ship their own CEF runtime                                                            |
+
+---
+
+## Performance: Build Time vs. App Startup vs. App Runtime
+
+Desktop benchmarks measure three distinct phases that behave very differently:
+
+1. **Build time** — bundling your frontend & packaging the executable (`vite build` + `bun build --compile --desktop` takes **~145–217 ms** for the native binary wrap, vs. multi-second `.asar`/`.app` packaging).
+2. **App startup** — cold/warm process launch + WebView initialization + first render (`248–295 ms` warm on `webkit`, `268–281 ms` for Vite + React 19 + Tailwind v4 vs. `801 ms` warm / `4,057 ms` cold on Electron `45.3.2`).
+3. **App runtime performance** — steady-state IPC and file/media I/O _after_ the window is open:
+
+| Metric (`darwin-arm64`, 10-run median)                 | Bun (`webkit`, In-Process)                                                        | Electron (`45.3.2`, warm)    |
+| :----------------------------------------------------- | :-------------------------------------------------------------------------------- | :--------------------------- |
+| **Isolated `app://` startup (`startupMs` / `ttffMs`)** | 284.5 ms (p95: 292.8 ms)                                                          | **169.5 ms** (p95: 186.4 ms) |
+| **Vite + React 19 + Tailwind v4 startup**              | 301.1 ms                                                                          | **180.5 ms**                 |
+| **100 sequential small IPC calls**                     | 11.5 ms (p95: 13 ms)                                                              | **6.5 ms** (p95: 7.4 ms)     |
+| **200 pipelined small IPC calls**                      | 2 ms (p95: 3 ms)                                                                  | **1.25 ms**                  |
+| **32 × 1 MiB Binary IPC (`invokeBinary`)**             | **14 ms** (**2,285.7 MB/s**, N=5)                                                 | 16.15 ms (1,981.6 MB/s Mojo) |
+| **32 MiB `app://` read (`Bun.file` vs. `net.fetch`)**  | **8 ms** (**4,000 MB/s**)                                                         | 11.2 ms (2,857 MB/s)         |
+| **20 × 1 MiB `app://` `Range` seeks**                  | **17 ms** (**1,177 MB/s**)                                                        | 27.2 ms (735 MB/s)           |
+| **Idle RSS memory (Vite + React + Tailwind)**          | **104.5 MiB** single process (minimal main: **6.41 MiB**, JSC heap **390.8 KiB**) | 109.2–156.8 MiB+             |
+| **Distributable size**                                 | **138.59 MiB** local / **84.55 MiB** v1.4.4 release                               | 252.93 MiB `Electron.app`    |
+
+### Executable size, why binaries differ, and `--trim`
+
+Comparing compiled desktop binaries side-by-side (`darwin-arm64`), including untrimmed vs. `--trim` vs. `--aot --trim` (post-trim estimates calculated from `src/trim/features/trim-features.def` reductions on `trimmable: true` CI builds):
+
+| Runtime / Mode (`darwin-arm64`)   | Untrimmed                  | With `--trim` _(est.)_             | With `--aot --trim` _(est.)_                          | Architecture / What is inside                                                |
+| :-------------------------------- | :------------------------- | :--------------------------------- | :---------------------------------------------------- | :--------------------------------------------------------------------------- |
+| **Tauri**                         | **~3–10 MiB**              | N/A                                | N/A                                                   | Rust backend + OS WebView; no bundled JS engine or CLI                       |
+| **Bun `1.4.4` (shipped release)** | **84.55 MiB**              | **~37.2 MiB** _(`-47.4 MB` `cli`)_ | **~19.3–20.4 MiB** _(`jit` + `interpreter` stripped)_ | JSC + OS WebView + Bun APIs (`~/.bun/bin/bun` baseline)                      |
+| **Bun `1.4.5` (local release)**   | **138.6 MiB**              | **~91.2 MiB** _(`-47.4 MB` `cli`)_ | **~73.3–74.4 MiB** _(`jit` + `interpreter` stripped)_ | Local `build/release/bun` (`__TEXT.__text` = `126.7 MB`, `trimmable: false`) |
+| **Node.js `v24.22.2`**            | **117 MiB**                | N/A                                | N/A                                                   | `node` runtime alone (V8 + libuv + OpenSSL); no WebView or bundler           |
+| **Electron `45.3.2`**             | **253 MiB** `Electron.app` | N/A                                | N/A                                                   | Full Chromium browser + V8 + Node.js (`+ 314 MiB` `node_modules`)            |
+
+#### Opt-in thin executables with `--trim`
+
+Just like `--minify` shrinks your bundled JavaScript, **`--trim`** strips unused Bun and Node.js subsystems from `--compile` executables (on release builds compiled with `trimmable: true`, such as CI releases):
+
+```bash
+bun build --compile --desktop --minify --trim main.ts --outfile MyApp
+# Combine with --aot to also strip the JIT compiler and JS interpreter:
+bun build --compile --desktop --minify --aot --trim main.ts --outfile MyApp
+```
+
+Per `src/trim/features/trim-features.def`, `--trim` can strip unused CLI commands (`cli`: **44.8–47.4 MB** covering `lint`, `fmt`, `check`, `install`, `aot`, `repl`, `create`, `upgrade`, `run`), `bundler` (**2.5–6.0 MB**), `test` (**1.8–2.1 MB**), `inspector` (**0.6–0.7 MB**), and — when paired with `--aot` — the `jit` (**14.1–14.2 MB**) and `interpreter` (**2.7–3.7 MB**). Inspect what a build retains or trims with `--aot --explain=trim`.
+
+### Case studies: LosslessCut & balenaEtcher (Electron vs. Bun Desktop)
+
+Comparing upstream Electron configurations (`electron-vite` + `electron-builder` on Electron 45 for LosslessCut; `electron-forge` + `webpack` on Electron 44.9 for balenaEtcher) against matching `bun:desktop` workload ports on `darwin-arm64`:
+
+| App / Workload                                                | Electron (`45.3.2` runtime baseline)                                                                                                                                                     | Rebuilt with Bun Desktop (`1.4.5`)                                                                                                                                                                                                |
+| :------------------------------------------------------------ | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **LosslessCut** _(media timeline + 40 MiB MP4 `Range` seeks)_ | `701.5 ms` (`268.6 ms` `esbuild` + `432.9 ms` `ditto Electron.app`); `252.93 MiB` `Electron.app` base; **`217.4 ms`** warm startup+run; `28.95 ms` (`690.85 MB/s`) on `20 × 1 MiB` seeks | **`154.6 ms`** (`26.8 ms` `dist` + `127.8 ms` `--compile --desktop --minify`); **`138.59 MiB`** (`145,325,890` B local release, untrimmed); `327.25 ms` startup+run; **`16.5 ms`** (**`1,213.25 MB/s`**) seeks (**1.75× faster**) |
+| **balenaEtcher** _(drive scan IPC + 32 MiB OS image stream)_  | `365.3 ms` (`9.1 ms` `esbuild` + `356.3 ms` `ditto Electron.app`); `252.93 MiB` `Electron.app` base; **`196.3 ms`** warm startup+run; `11.2 ms` (`2,857.4 MB/s`) 32 MiB stream           | **`64.5 ms`** (`22.4 ms` `dist` + `42.2 ms` `--compile --desktop --minify`); **`138.59 MiB`** (`145,325,890` B local release, untrimmed); `318.36 ms` startup+run; **`8.5 ms`** (**`3,777.8 MB/s`**) stream (**1.3× faster**)     |
+
+---
+
+## Differences from Electron
+
+`bun:desktop` aligns with Electron's core APIs so many apps can migrate with minimal changes, but there are important architectural differences:
+
+| Feature                                | Electron                                        | Bun Desktop (`--desktop`)                                                                                                                                           |
+| :------------------------------------- | :---------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Rendering engine**                   | Bundled Chromium                                | System WebView (`WKWebView`, WebView2, WebKitGTK)                                                                                                                   |
+| **Main process runtime**               | Node.js + V8                                    | Bun + JavaScriptCore (`Bun.file`, `Bun.serve`, `bun:sqlite`, etc.)                                                                                                  |
+| **Bundling & dev server**              | External (Vite / Webpack + local HTTP port)     | Built-in in-memory `Bun.build()` via portless `app://bundle/`                                                                                                       |
+| **Packaging**                          | `electron-builder` / `electron-forge` + `.asar` | `bun build --compile --desktop` single executable                                                                                                                   |
+| **Renderer `nodeIntegration`**         | Supported (Node APIs in renderer)               | Not enabled; use `ipcRenderer` / `window.bunDesktopIpc` to call Bun APIs in main                                                                                    |
+| **`ipcRenderer.sendSync`**             | Synchronous IPC supported                       | Use async `ipcRenderer.invoke()` (Bun Desktop IPC is async)                                                                                                         |
+| **Native `session` / `webRequest`**    | Full Chromium network stack hooks               | `session.defaultSession.protocol` supported; `webRequest` hooks are no-ops                                                                                          |
+| **`Menu` / `dialog` / `Notification`** | Full cross-platform feature set                 | Native macOS `NSMenu` / `NSOpenPanel` / `NSSavePanel` / `NSAlert` / `Notification`; `Menu` item `click` callbacks and `popup()` are not yet wired from native menus |
+| **`contextBridge`**                    | Isolates across V8 context worlds               | Attaches directly to `globalThis[apiKey]` in the current JS context                                                                                                 |
+| **`app.getPath(name)`**                | All Chromium/OS paths                           | Supports `home`, `appData`, `userData`, `temp`, `exe`, `desktop`, `documents`, `downloads`, `music`, `pictures`, `videos`, `logs`, `cache`                          |
+
+---
+
+## API reference overview
+
+- **`app`**: `whenReady()`, `isReady()`, `quit()`, `exit(code?)`, `name`, `getName()`, `setName(name)`, `getVersion()`, `getPath(name)`, `getAppPath()`, `isPackaged`, `requestSingleInstanceLock()`, `releaseSingleInstanceLock()`, `commandLine`, `dock`, events (`ready`, `window-all-closed`, `before-quit`, `will-quit`).
+- **`BrowserWindow`**: `new BrowserWindow(options)`, `getAllWindows()`, `getFocusedWindow()`, `fromId(id)`, `loadURL()`, `loadFile()`, `show()`, `hide()`, `isVisible()`, `close()`, `destroy()`, `isDestroyed()`, `setTitle()`, `getTitle()`, `setSize()`, `getSize()`, `setPosition()`, `getPosition()`, `setBounds()`, `getBounds()`, `maximize()`, `unmaximize()`, `isMaximized()`, `minimize()`, `focus()`, `center()`, `setMenu()`, `setProgressBar()`, `webContents.{id, getURL, getTitle, send, openDevTools}`.
+- **`ipcMain`**: `handle()`, `handleOnce()`, `removeHandler()`, `on()`, `once()`, `removeAllListeners()`.
+- **`protocol`**: `handle(scheme, fn)`, `unhandle(scheme)`, `isProtocolHandled(scheme)`.
+- **`dialog`**: `showOpenDialog()`, `showSaveDialog()`, `showMessageBox()`, `showErrorBox()`.
+- **`Menu`**: `buildFromTemplate()`, `setApplicationMenu()`, `getApplicationMenu()`.
+- **`shell`**: `openExternal()`, `showItemInFolder()`, `trashItem()`, `beep()`.
+- **`screen`**: `getPrimaryDisplay()`, `getAllDisplays()`, `getDisplayNearestPoint()`.
+- **`clipboard`**: `readText()`, `writeText()`, `clear()`, `has()`.
+- **`nativeTheme`**: `themeSource` (emits `"updated"`), `shouldUseDarkColors`, `shouldUseHighContrastColors`, `shouldUseInvertedColorScheme`.
+- **`nativeImage`**: `createFromPath()`, `createFromBuffer()`, `createFromDataURL()`, `createEmpty()` (`isEmpty()`, `getSize()`).
+- **`Notification`**: `new Notification({ title, body }).show()`.
+- **`powerSaveBlocker`**: `start(type)`, `stop(id)`, `isStarted(id)`.

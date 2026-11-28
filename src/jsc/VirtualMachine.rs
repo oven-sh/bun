@@ -96,6 +96,7 @@ pub struct InitOptions {
     /// `--install=...`; the resolver needs it before `configure_linker()` caches package.json.
     pub global_cache: bun_options_types::global_cache::GlobalCache,
     pub smol: bool,
+    pub desktop: bool,
     pub eval_mode: bool,
     pub is_main_thread: bool,
     /// The arguments of the program.
@@ -122,6 +123,7 @@ impl Default for InitOptions {
             graph: None,
             global_cache: bun_options_types::global_cache::GlobalCache::disable,
             smol: false,
+            desktop: false,
             eval_mode: false,
             is_main_thread: false,
             argv: &[],
@@ -248,6 +250,7 @@ pub struct VirtualMachine {
     /// pushed after this (a finalizer deferred from the final collection) would only leak.
     pub(crate) has_run_cleanup_hooks: Cell<bool>,
     pub is_main_thread: Cell<bool>,
+    pub desktop: bool,
     pub exit_handler: ExitHandler,
 
     pub(crate) default_tls_reject_unauthorized: Cell<Option<bool>>,
@@ -2986,6 +2989,7 @@ impl VirtualMachine {
                     .is_some_and(|program| !program.entry_points.is_empty())
             }),
             smol: opts.smol,
+            desktop: opts.desktop,
             dns_result_order: Cell::new(0),
             cpu_profiler_config: Cell::new(None),
             heap_profiler_config: Cell::new(None),
@@ -3648,6 +3652,7 @@ pub struct Options {
     // `runtime/jsc_hooks.rs` for the `configureDebugger` call site.
     pub is_main_thread: bool,
     pub argv: &'static [Box<[u8]>],
+    pub desktop: bool,
 }
 
 /// Inherited IPC channel recorded at env load; consumed by `bun_runtime`'s
@@ -4421,6 +4426,7 @@ impl VirtualMachine {
             graph: Some(graph),
             env_loader: opts.env_loader,
             smol: opts.smol,
+            desktop: opts.desktop,
             mini_mode: opts.smol,
             eval_mode: false,
             is_main_thread: opts.is_main_thread,
@@ -4452,6 +4458,7 @@ impl VirtualMachine {
             graph: opts.graph,
             env_loader: opts.env_loader,
             smol: opts.smol,
+            desktop: opts.desktop,
             eval_mode: opts.eval,
             is_main_thread: false,
             // The global is created with the worker's messaging proxy, context id
@@ -4493,6 +4500,7 @@ impl VirtualMachine {
             transform_options: opts.args,
             env_loader: opts.env_loader,
             smol: opts.smol,
+            desktop: opts.desktop,
             mini_mode: opts.smol,
             eval_mode: false,
             is_main_thread: opts.is_main_thread,

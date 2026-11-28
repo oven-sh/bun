@@ -92,6 +92,7 @@ const classesWithConstructor = [
   "%BlockList%",
   "%BuildMessage%",
   "%Crypto%",
+  "%DesktopWindow%",
   "%Dirent%",
   "%ELDHistogram%",
   "%Expect%",
@@ -256,6 +257,8 @@ const moduleNamespaces = [
   "undici",
   "utf-8-validate",
   "ws",
+  "bun:desktop",
+  "electron",
 ];
 
 const nativeFiles = [
@@ -289,6 +292,10 @@ const nativeFiles = [
   "ZigSourceProvider.cpp",
   "bindgen_test.bind.ts",
   "declared_results_testing.bind.ts",
+  "desktop_app.bind.ts",
+  "desktop_ipc.bind.ts",
+  "desktop_protocol.bind.ts",
+  "desktop_window.bind.ts",
   "decodeURIComponentSIMD.cpp",
   "highway_strings_testing.cpp",
   "node_crypto_binding.cpp",

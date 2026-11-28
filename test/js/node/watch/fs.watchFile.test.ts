@@ -208,6 +208,48 @@ describe("fs.watchFile", () => {
     }
   });
 
+  test.each([
+    ["no other watcher", 0],
+    ["a slower watcher", 1],
+  ])("a watcher that starts during a poll sees changes with %s open", async (_, open) => {
+    const fixture = /* js */ `
+      import fs from "node:fs";
+      const firstCall = (file, interval) => new Promise(resolve => fs.watchFile(file, { interval }, resolve));
+
+      // The more closed watchers there are, the longer the poll takes to drop them.
+      const files = Array.from({ length: 1500 }, (_, i) => "missing-" + i);
+      await Promise.all(files.map(file => firstCall(file, 1e6)));
+      await firstCall("missing", 5);
+      for (const file of [...files.splice(${open}), "missing"]) fs.unwatchFile(file);
+      Bun.gc(true);
+
+      setImmediate(() => {
+        fs.watchFile("created", { interval: 5 }, stats => {
+          if (stats.size === 0) return process.nextTick(fs.writeFileSync, "created", "a");
+          for (const file of [...files, "created"]) fs.unwatchFile(file);
+          console.log("changed");
+        });
+        // When this returns the poll is due, and the result of the first stat is waiting.
+        Bun.sleepSync(5);
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      cwd: testDir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "changed\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
   test("StatWatcherScheduler stress test (1000 watchers with random times)", async () => {
     const EventEmitter = require("events");
     let defaultMaxListeners = EventEmitter.defaultMaxListeners;

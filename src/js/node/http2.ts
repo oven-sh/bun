@@ -445,10 +445,15 @@ function emitEventNT(self: any, event: string, ...args: any[]) {
     self.emit(event, ...args);
   }
 }
+// node's emitClose: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1162-L1166
 // The frame is passed in: destroy() clears it off the session before emitting
 // 'error', so a throwing listener on either event cannot leave a retained
 // session pinning the store.
-function emitSessionCloseNT(self: Http2Session, frame) {
+function emitSessionCloseNT(self: Http2Session, frame, error: Error | null | undefined) {
+  // Not node's: if the 'error' listener left since destroy(error), nothing is emitted here and nothing is thrown.
+  if (error && self.listenerCount("error") > 0) {
+    runInFrame(frame, self.emit, self, "error", error);
+  }
   if (self.listenerCount("close") > 0) {
     runInFrame(frame, self.emit, self, "close");
   }
@@ -460,7 +465,8 @@ function emitErrorNT(self: any, error: any, destroy: boolean) {
     } else {
       self.destroy();
     }
-  } else if (self.listenerCount("error") > 0) {
+  } else if (!self.destroyed && self.listenerCount("error") > 0) {
+    // A destroyed session emits 'error' only from emitSessionCloseNT, next to its 'close'.
     self.emit("error", error);
   }
 }
@@ -1971,7 +1977,8 @@ function cancelPendingPings(callbacks): void {
   if (!callbacks) return;
   const err = $ERR_HTTP2_PING_CANCEL();
   for (let i = 0; i < callbacks.length; i++) {
-    process.nextTick(callbacks[i][0], err);
+    // Like node's Http2Session::Close (SetImmediate): behind the 'close' of the streams that this destroy() ends.
+    setImmediate(callbacks[i][0], err);
   }
 }
 
@@ -4958,17 +4965,21 @@ class ServerHttp2Session extends Http2Session {
     // which would skip the clear and leave a retained session pinning the store.
     const asyncFrame = this[bunHTTP2AsyncContextFrame];
     this[bunHTTP2AsyncContextFrame] = undefined;
-    if (error) {
+    if (error && this.listenerCount("error") === 0) {
+      // Not node's: with no 'error' listener this throws to the caller of destroy(). node throws later, in emitClose.
       runInFrame(asyncFrame, this.emit, this, "error", error);
+      // Only an emit() that a program replaced returns. It has the error.
+      error = undefined;
     }
     // node emits the session 'close' event asynchronously (a listener attached right after
     // close()/destroy() returns must still observe it), after the socket's. Only wait for that one
     // if this call also destroys the socket: after close(), it closes when the peer does, if ever.
     // A Duplex from createConnection may never emit it (node wraps that one in a socket of its own).
     if (destroysSocket && socket instanceof net.Socket && !socket.destroyed) {
-      socket.once("close", FunctionPrototypeBind.$call(emitSessionCloseNT, undefined, this, asyncFrame));
+      // `error` is bound even when undefined: the socket passes hadError, which must not take its place.
+      socket.once("close", FunctionPrototypeBind.$call(emitSessionCloseNT, undefined, this, asyncFrame, error));
     } else {
-      process.nextTick(emitSessionCloseNT, this, asyncFrame);
+      process.nextTick(emitSessionCloseNT, this, asyncFrame, error);
     }
   }
 }
@@ -5024,6 +5035,12 @@ function destroySessionSocketDelayedNT(socket, error) {
   }
 }
 function endThenDestroySessionSocket(socket, error) {
+  // Not node's: end() waits for a pending connect, up to the OS timeout, and the session's 'error' would wait with it.
+  if (error && socket.connecting) {
+    // The connect is abandoned. One tick later, so that destroy() still listens for this socket's 'close'.
+    process.nextTick(destroySessionSocketDelayedNT, socket, error);
+    return;
+  }
   socket.end(() => setImmediate(destroySessionSocketDelayedNT, socket, error));
 }
 // node callTimeout (lib/internal/http2/core.js): when the timer expires while writes are still in
@@ -5112,6 +5129,8 @@ class ClientHttp2Session extends Http2Session {
   #closed: boolean = false;
   // One-shot destroy latch (Node: "if (this.destroyed) return;" opens destroy()).
   #destroying: boolean = false;
+  // What the listener of connect() threw. destroy() still emits it in the call: 'connect' can take a listener away.
+  #connectListenerError: unknown = undefined;
   /// closeCalled tracks whether close() specifically was called: `session.closed` only reports a
   /// graceful close() in node — destroy() leaves it false while `session.destroyed` flips to true.
   #closeCalled: boolean = false;
@@ -5863,6 +5882,7 @@ class ClientHttp2Session extends Http2Session {
         this.#onConnect(arguments);
         listener?.$call(this, this);
       } catch (e) {
+        this.#connectListenerError = e;
         this.destroy(e);
       }
     }
@@ -6092,17 +6112,22 @@ class ClientHttp2Session extends Http2Session {
     // which would skip the clear and leave a retained session pinning the store.
     const asyncFrame = this[bunHTTP2AsyncContextFrame];
     this[bunHTTP2AsyncContextFrame] = undefined;
-    if (error) {
+    if (error && (error === this.#connectListenerError || this.listenerCount("error") === 0)) {
+      // Not node's: with no 'error' listener this throws to the caller of destroy(). node throws later, in emitClose.
       runInFrame(asyncFrame, this.emit, this, "error", error);
+      // The emit returned: a listener has the error, or an emit() that a program replaced.
+      error = undefined;
     }
     // node emits the session 'close' event asynchronously (a listener attached right after
     // close()/destroy() returns must still observe it), after the socket's. Only wait for that one
     // if this call also destroys the socket: after close(), it closes when the peer does, if ever.
     // A Duplex from createConnection may never emit it (node wraps that one in a socket of its own).
     if (destroysSocket && socket instanceof net.Socket && !socket.destroyed) {
-      socket.once("close", FunctionPrototypeBind.$call(emitSessionCloseNT, undefined, this, asyncFrame));
+      // `error` is bound even when undefined: the socket passes hadError, which must not take its place.
+      socket.once("close", FunctionPrototypeBind.$call(emitSessionCloseNT, undefined, this, asyncFrame, error));
     } else {
-      process.nextTick(emitSessionCloseNT, this, asyncFrame);
+      // Not like node yet: a client destroys its open streams a tick later, so their 'error' and 'close' follow these.
+      process.nextTick(emitSessionCloseNT, this, asyncFrame, error);
     }
   }
 

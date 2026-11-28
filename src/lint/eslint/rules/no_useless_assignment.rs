@@ -1229,20 +1229,12 @@ impl<'a> Uses<'a> {
                 StmtTag::While | StmtTag::DoWhile | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf
             );
             match (target.kind(), label) {
-                (
-                    StmtKind::Labeled {
-                        label: it,
-                        mut body,
-                    },
-                    Some(label),
-                ) if it == label => {
+                (StmtKind::Labeled { label: it, body }, Some(label)) if it == label => {
                     if is_break {
                         return self.is_read_after(target);
                     }
-                    while let StmtKind::Labeled { body: inner, .. } = body.kind() {
-                        body = inner;
-                    }
-                    return self.is_read_after_body(body);
+                    // ESLint's `getLabel` gives a loop only the label right before it.
+                    return body.is_loop() && self.is_read_after_body(body);
                 }
                 (_, None) if is_loop && !is_break => return self.is_read_after_body(target),
                 (_, None) if is_break && (is_loop || target.tag() == StmtTag::Switch) => {

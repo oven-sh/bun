@@ -64,6 +64,42 @@ export function rename(kind) {
     expect(stdout).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  // ESLint's code path analysis knows a loop by the label right before it and by no other. A `continue` with another
+  // label of that loop leads nowhere there, so the next iteration doesn't read the value. The positions are what
+  // ESLint 10.12.0 and oxlint 1.87.0 report. Serial, because a debug build takes seconds to run eslint.config.js.
+  test.serial("`continue` with a label that isn't the one right before the loop doesn't continue it", async () => {
+    const code = [
+      `let turns = 0; outer: inner: while (turns < 3) { turns++; continue outer; } console.log(turns);`,
+      `function a() { let v = 0; outer: inner: while (v < 3) { v++; continue inner; } return v; }`,
+      `function b() { let v = 0; outer: inner: while (v < 3) { v++; break outer; } return v; }`,
+      `function c() { let v = 0; one: two: three: for (let i = 0; i < 4; i++) { v++; if (i % 2) continue one; continue two; } return v; }`,
+      `function d() { let v = 0; one: two: three: for (let i = 0; i < 4; i++) { v++; if (i % 2) continue one; continue three; } return v; }`,
+      `function e() { let v = 0; outer: inner: do { v++; continue outer; } while (v < 3); return v; }`,
+      `function f(w) { let v = 0; outer: inner: for (const x of w) { v = x; continue outer; } return v; }`,
+      `function h() { let v = 0; outer: inner: for (; v < 3; v++) { v = v * 2; continue outer; } return v; }`,
+      `function i() { let v = 0; outer: middle: while (v < 3) { inner: while (v < 2) { v++; continue outer; } } return v; }`,
+      `function j() { let v = 0; outer: middle: while (v < 3) { inner: while (v < 2) { v++; continue middle; } } return v; }`,
+      `function k() { let v = 0; outer: while (v < 3) { inner: while (v < 2) { v++; continue outer; } } return v; }`,
+    ].join("\n");
+    const run = async (config: Record<string, string>) => {
+      const { stdout, exitCode } = await lint({ ...config, "a.cjs": code + "\n" }, "-f", "unix");
+      const reports = stdout.matchAll(/:(\d+:\d+): .*no-useless-assignment\)?\]$/gm);
+      return { positions: Array.from(reports, it => it[1]), exitCode };
+    };
+    const rules = { "no-useless-assignment": "error" };
+    const eslintConfig = `export default [{ rules: ${JSON.stringify(rules)} }];\n`;
+    const oxlintrc = JSON.stringify({ categories: { correctness: "off" }, rules });
+    const positions = ["1:50", "4:74", "6:46", "7:63", "8:62", "9:81"];
+    // Without a config file the rule is a warning.
+    expect(
+      await Promise.all([run({}), run({ "eslint.config.js": eslintConfig }), run({ ".oxlintrc.json": oxlintrc })]),
+    ).toEqual([
+      { positions, exitCode: 0 },
+      { positions, exitCode: 1 },
+      { positions, exitCode: 1 },
+    ]);
+  });
 });
 
 /** Code and its expected reports. The code uses everything it declares, so nothing else gets reported. */

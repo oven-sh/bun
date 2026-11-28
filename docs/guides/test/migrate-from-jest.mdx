@@ -99,6 +99,16 @@ bun test --timeout 10000
 
 ---
 
+Bun reads the `.snap` files that Jest wrote and keeps them in Jest's format. Bun has no equivalent of `snapshotFormat`. It prints snapshots with the defaults of Jest 29 and later, which are `printBasicPrototype: false` and `escapeString: false`. If your Jest config sets `snapshotFormat` to something else, or if Jest 28 or earlier wrote the snapshots, rewrite them once.
+
+```sh terminal icon="terminal"
+bun test --update-snapshots
+```
+
+If Jest still runs the same tests, set `snapshotFormat` to those defaults in the Jest config and update the snapshots with Jest instead. See [Snapshots from Jest and Vitest](/test/snapshots#snapshots-from-jest-and-vitest).
+
+---
+
 Many other Jest settings are irrelevant in `bun test`.
 
 - `transform` — Bun supports TypeScript & JSX. Configure other file types with [plugins](/runtime/plugins).

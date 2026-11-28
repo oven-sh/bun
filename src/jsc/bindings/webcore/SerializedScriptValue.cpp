@@ -870,6 +870,7 @@ private:
     {
         if (!startObjectInternal(object))
             return false;
+        m_pendingContainerBytes += sizeof(TerminatorTag);
         write(ObjectTag);
         return true;
     }
@@ -880,6 +881,7 @@ private:
             return false;
 
         unsigned length = array->length();
+        m_pendingContainerBytes += sizeof(TerminatorTag);
         write(ArrayTag);
         write(length);
         return true;
@@ -890,6 +892,7 @@ private:
         if (!startObjectInternal(set))
             return false;
 
+        m_pendingContainerBytes += sizeof(uint8_t) + sizeof(TerminatorTag);
         write(SetObjectTag);
         return true;
     }
@@ -899,12 +902,15 @@ private:
         if (!startObjectInternal(map))
             return false;
 
+        m_pendingContainerBytes += sizeof(uint8_t) + sizeof(TerminatorTag);
         write(MapObjectTag);
         return true;
     }
 
     void endObject()
     {
+        ASSERT(m_pendingContainerBytes >= sizeof(TerminatorTag));
+        m_pendingContainerBytes -= sizeof(TerminatorTag);
         write(TerminatorTag);
     }
 
@@ -1314,7 +1320,7 @@ private:
 
                 if (arrayBuffer->isResizableOrGrowableShared()) {
                     uint64_t byteLength = arrayBuffer->byteLength();
-                    if (!m_buffer.tryReserveCapacity(static_cast<uint64_t>(m_buffer.size()) + sizeof(uint8_t) + sizeof(uint64_t) * 2 + byteLength)) [[unlikely]] {
+                    if (!m_buffer.tryReserveCapacity(static_cast<uint64_t>(m_buffer.size()) + sizeof(uint8_t) + sizeof(uint64_t) * 2 + byteLength + m_pendingContainerBytes)) [[unlikely]] {
                         code = SerializationReturnCode::DataCloneError;
                         return true;
                     }
@@ -1327,7 +1333,8 @@ private:
                 }
 
                 uint64_t byteLength = arrayBuffer->byteLength();
-                if (!m_buffer.tryReserveCapacity(static_cast<uint64_t>(m_buffer.size()) + sizeof(uint8_t) + sizeof(uint64_t) + byteLength)) [[unlikely]] {
+                // Reserve mandatory trailers before the payload so closing containers does not copy it again.
+                if (!m_buffer.tryReserveCapacity(static_cast<uint64_t>(m_buffer.size()) + sizeof(uint8_t) + sizeof(uint64_t) + byteLength + m_pendingContainerBytes)) [[unlikely]] {
                     code = SerializationReturnCode::DataCloneError;
                     return true;
                 }
@@ -1976,6 +1983,7 @@ private:
         }
     }
 #endif
+    unsigned m_pendingContainerBytes { 0 };
     ObjectPool m_objectPool;
     ObjectPool m_transferredMessagePorts;
     ObjectPool m_transferredArrayBuffers;
@@ -2166,6 +2174,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 propertyStack.append(PropertyNameArrayBuilder(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
                 object->methodTable()->getOwnPropertyNames(object, m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
                 RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+                m_pendingContainerBytes -= sizeof(uint8_t);
                 write(NonMapPropertiesTag);
                 indexStack.append(0);
                 goto objectStartVisitMember;
@@ -2217,6 +2226,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 propertyStack.append(PropertyNameArrayBuilder(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
                 object->methodTable()->getOwnPropertyNames(object, m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
                 RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+                m_pendingContainerBytes -= sizeof(uint8_t);
                 write(NonSetPropertiesTag);
                 indexStack.append(0);
                 goto objectStartVisitMember;

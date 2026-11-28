@@ -56,8 +56,6 @@ static bool getNonIndexPropertySlotPrototypePollutionMitigation(JSC::VM& vm, JSO
             return false;
         }
     }
-
-    return false;
 }
 
 // Returns empty for exception, returns deleted if not found.

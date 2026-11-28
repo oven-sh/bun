@@ -722,8 +722,9 @@ rules = { "no-console" = "off" }
       expect(await read()).toEqual(["packages/app/a.js"]);
       expect(await lintAt(String(dir), ".", ["--suppress-all"])).toMatchObject({ found: [], exitCode: 0 });
       expect(await read()).toEqual(["packages/app/a.js", "packages/lib/b.js"]);
-      for (const cwd of [".", "packages", "packages/app", "packages/lib"]) {
-        expect(await lintAt(String(dir), cwd, [])).toMatchObject({ found: [], exitCode: 0 });
+      const directories = [".", "packages", "packages/app", "packages/lib"];
+      for (const result of await Promise.all(directories.map(cwd => lintAt(String(dir), cwd, [])))) {
+        expect(result).toMatchObject({ found: [], exitCode: 0 });
       }
       // Another directory's entries don't count as unused.
       expect(await lintAt(String(dir), "packages/app", ["--prune-suppressions"])).toMatchObject({ exitCode: 0 });
@@ -837,13 +838,14 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
     // oxlint matches `allow` against the import specifier as written.
     const expected = ["src/client/c.js:3 import/no-restricted-paths"];
     if (name === ".oxlintrc.json") expected.unshift("src/client/c.js:1 import/no-unassigned-import");
-    for (const [cwd, args] of [
+    const runs = [
       [".", ["src"]],
       ["src", []],
       ["src/client", []],
       ["src/server", ["../client"]],
-    ] as const) {
-      expect(await lintIn(cwd, files, [...args])).toMatchObject({ found: expected, exitCode: 1 });
+    ] as const;
+    for (const result of await Promise.all(runs.map(([cwd, args]) => lintIn(cwd, files, [...args])))) {
+      expect(result).toMatchObject({ found: expected, exitCode: 1 });
     }
   });
 
@@ -994,15 +996,12 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
       "src/b/entry.js": "export const entry = 1;\n",
       "src/b/main.js": `import { used } from "../a/lib.js";\nconsole.log(used);\n`,
     });
-    for (const options of ["", `, src = ["src"]`, `, src = ["src"], ignoreExports = ["**/entry.js"]`]) {
-      for (const [cwd, args] of [
-        [".", ["src/a"]],
-        ["src/a", []],
-      ] as const) {
-        expect(await lintIn(cwd, files(options), [...args])).toMatchObject({
-          found: ["src/a/dead.js:1 import/no-unused-modules"],
-        });
-      }
+    const runs = ["", `, src = ["src"]`, `, src = ["src"], ignoreExports = ["**/entry.js"]`].flatMap(options => [
+      lintIn(".", files(options), ["src/a"]),
+      lintIn("src/a", files(options), []),
+    ]);
+    for (const result of await Promise.all(runs)) {
+      expect(result).toMatchObject({ found: ["src/a/dead.js:1 import/no-unused-modules"], exitCode: 1 });
     }
   });
 
@@ -1805,6 +1804,198 @@ files = "scripts/*"
       expect(exitCode).toBe(2);
     },
   );
+});
+
+// An oxlint config is read together with the rules of bunfig.toml and of `--rule`. An error names the one that has the
+// mistake. `allowLiteralToggle` is an option of Bun's own config, which an oxlint config refuses.
+describe.concurrent("a rule setting that an oxlint config refuses is reported against its source", () => {
+  const project = { "a.ts": "export const a = 1;\n", ".oxlintrc.json": "{}" };
+  const setting = `"no-constant-binary-expression" = ["error", { allowLiteralToggle = false }]`;
+  const inRules = `[lint.rules]\n${setting}\n`;
+  const override = (rules: string) => `[[lint.overrides]]\nfiles = "*.ts"\nrules = { ${rules} }\n`;
+  const flag = (option: string) => ["--rule", `no-constant-binary-expression: ["error", { "${option}": false }]`];
+  const refused = (option: string) =>
+    `Invalid configuration for rule \`no-constant-binary-expression\`:\n  unknown field \`${option}\`,`;
+  const ofFile = "error: Cannot use the configuration file <dir>/.oxlintrc.json:\n";
+  const uses = "\n  This run uses .oxlintrc.json, an oxlint config.";
+  // The file's own overrides come first. What bunfig.toml and the command line add comes after them.
+  const ownOverride = (rules: object) => ({
+    ".oxlintrc.json": JSON.stringify({ overrides: [{ files: ["*.ts"], rules }] }),
+  });
+  const valid = ownOverride({ "no-var": "error" });
+
+  test.each([
+    ["[lint.rules]", {}, inRules, [], "bunfig.toml", "allowLiteralToggle"],
+    ["[[lint.overrides]]", {}, override(setting), [], "bunfig.toml", "allowLiteralToggle"],
+    ["--rule", {}, "", flag("allowLiteralToggle"), "--rule", "allowLiteralToggle"],
+    ["--rule, after [[lint.overrides]]", {}, override(`"no-var" = "error"`), flag("other"), "--rule", "other"],
+    ["--rule that replaces the entry of [lint.rules]", {}, inRules, flag("other"), "--rule", "other"],
+    // Only the first source with a mistake is reported.
+    [
+      "[lint.rules], not --rule",
+      {},
+      inRules,
+      ["--rule", "eqeqeq: [error, sometimes]"],
+      "bunfig.toml",
+      "allowLiteralToggle",
+    ],
+    ["[lint.rules], after the file's overrides", valid, inRules, [], "bunfig.toml", "allowLiteralToggle"],
+    ["--rule, after the file's overrides", valid, "", flag("other"), "--rule", "other"],
+  ])("%s", async (_, file, bunfig, args, source, option) => {
+    const { stdout, exitCode } = await lint({ ...project, ...file, "bunfig.toml": bunfig }, [...args, "a.ts"]);
+    expect(stdout).toBe(
+      `error: Invalid config in ${source}\n${refused(option)} expected \`checkRelationalComparisons\`\n` +
+        `  received config: \`{ "${option}": false }\`${uses}`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  test("the file is named for its own mistake, even if bunfig.toml has one too", async () => {
+    const sometimes = { eqeqeq: ["error", "sometimes"] };
+    const configs = [{ ".oxlintrc.json": JSON.stringify({ rules: sometimes }) }, ownOverride(sometimes)];
+    const cases = configs.flatMap(file => ["", inRules, override(setting)].map(bunfig => ({ file, bunfig })));
+    const runs = cases.map(({ file, bunfig }) => lint({ ...project, ...file, "bunfig.toml": bunfig }, ["a.ts"]));
+    for (const { stdout, exitCode } of await Promise.all(runs)) {
+      expect(stdout).toStartWith(`${ofFile}Invalid configuration for rule \`eqeqeq\`:\n`);
+      expect(stdout).not.toContain("no-constant-binary-expression");
+      expect(stdout).not.toContain("This run uses");
+      expect(exitCode).toBe(1);
+    }
+  });
+
+  // The reader's other errors about a rule. `okp/r` takes no options.
+  describe("with a plugin from the file's jsPlugins", () => {
+    const files = {
+      ...project,
+      ".oxlintrc.json": `{ "jsPlugins": ["./okp.mjs"] }`,
+      "okp.mjs": `export default { meta: { name: "okp" }, rules: { r: { meta: { schema: [] }, create: () => ({}) } } };\n`,
+    };
+    const missing = "Rule 'missing' not found in plugin 'okp'";
+    const options = "Failed to setup JS plugin options:\n";
+    const severity = `Key "rules": Key "no-var": Expected severity of`;
+    const noVar = override(`"no-var" = "error"`);
+
+    test.each([
+      ["a missing rule in [lint.rules]", `[lint.rules]\n"okp/missing" = "error"\n`, [], "bunfig.toml", missing],
+      ["a missing rule in [[lint.overrides]]", override(`"okp/missing" = "error"`), [], "bunfig.toml", missing],
+      ["a missing rule in --rule", "", ["--rule", "okp/missing: error"], "--rule", missing],
+      [
+        "a missing rule in --rule, after [[lint.overrides]]",
+        noVar,
+        ["--rule", "okp/missing: error"],
+        "--rule",
+        missing,
+      ],
+      [
+        "a plugin rule's options in [lint.rules]",
+        `[lint.rules]\n"okp/r" = ["error", { x = 1 }]\n`,
+        [],
+        "bunfig.toml",
+        options,
+      ],
+      ["a plugin rule's options in --rule", "", ["--rule", `okp/r: ["error", { "x": 1 }]`], "--rule", options],
+      ["a severity in --rule", "", ["--rule", "no-var: loud"], "--rule", severity],
+    ])("%s", async (_, bunfig, args, source, message) => {
+      const { stdout, exitCode } = await lint({ ...files, "bunfig.toml": bunfig }, [...args, "a.ts"]);
+      expect(stdout).toStartWith(`error: Invalid config in ${source}\n${message}`);
+      expect(stdout).toEndWith(uses);
+      expect(exitCode).toBe(1);
+    });
+
+    // `-D` changes the file's own rules, and after `[[lint.overrides]]` it's repeated. It isn't `--rule`.
+    test("a mistake in -D stays with the file", async () => {
+      const run = (bunfig: string) => lint({ ...files, "bunfig.toml": bunfig }, ["-D", "okp/missing", "a.ts"]);
+      for (const { stdout, exitCode } of await Promise.all([run(noVar), run(noVar + inRules)])) {
+        expect(stdout).toBe(ofFile + missing);
+        expect(exitCode).toBe(1);
+      }
+    });
+  });
+
+  test("an .oxlintrc.json in another directory isn't named as the file with the mistake", async () => {
+    const below = { "sub/a.ts": project["a.ts"], "sub/.oxlintrc.json": "{}", "bunfig.toml": inRules };
+    const above = { "sub/a.ts": project["a.ts"], ".oxlintrc.json": "{}", "sub/bunfig.toml": inRules };
+    const [nested, parent] = await Promise.all([lint(below, ["sub/a.ts"]), lint(above, ["--cwd=sub", "a.ts"])]);
+    expect(nested.stderr).toStartWith(`error: Invalid config in bunfig.toml\n${refused("allowLiteralToggle")}`);
+    expect(nested.stderr).toEndWith("\n  This run uses sub/.oxlintrc.json, an oxlint config.");
+    expect(nested.exitCode).toBe(2);
+    expect(parent.stdout).toStartWith(`error: Invalid config in bunfig.toml\n${refused("allowLiteralToggle")}`);
+    expect(parent.stdout).toEndWith("\n  This run uses ../.oxlintrc.json, an oxlint config.");
+    expect(parent.exitCode).toBe(1);
+  });
+
+  test("without a config file, --flavor=oxlint doesn't name an .oxlintrc.json that doesn't exist", async () => {
+    const files = { "a.ts": project["a.ts"] };
+    const [ofBunfig, ofFlag] = await Promise.all([
+      lint({ ...files, "bunfig.toml": inRules }, ["--flavor=oxlint", "a.ts"]),
+      lint(files, ["--flavor=oxlint", ...flag("allowLiteralToggle"), "a.ts"]),
+    ]);
+    const lines = (stdout: string) => [stdout.split("\n")[0], stdout.split("\n").at(-1)];
+    expect([ofBunfig, ofFlag].map(it => [...lines(it.stdout), it.exitCode])).toEqual([
+      ["error: Invalid config in bunfig.toml", "  This run uses oxlint's defaults.", 1],
+      ["error: Invalid config in --rule", "  This run uses oxlint's defaults.", 1],
+    ]);
+  });
+});
+
+// A config file is read together with the rules of bunfig.toml and of `--rule`. A setting that turns a rule off isn't
+// the reason for the warning.
+describe.concurrent("a rule that Bun doesn't have is listed under the source that turns it on", () => {
+  /** Returns the warnings, then the exit code. Every rule name starts with `prefix`. */
+  async function unsupported(config: (rules: object) => Record<string, string>, prefix: string, args: string[] = []) {
+    const on = ["in-file", "off-in-rules", "off-in-flag", "allow-in-flag"].map(name => [prefix + name, "error"]);
+    const files = {
+      "a.js": "export const a = 1;\n",
+      ...config(Object.fromEntries(on)),
+      "bunfig.toml": `[lint.rules]\n"${prefix}in-rules" = 2\n"${prefix}off-in-rules" = ["off"]\n
+[[lint.overrides]]\nfiles = "*.js"\nrules = { "${prefix}in-override" = ["warn"] }\n`,
+    };
+    const flags = ["--rule", `${prefix}in-flag: error`, "--rule", `${prefix}off-in-flag: 0`];
+    const { stderr, exitCode } = await lint(files, [...flags, ...args, "a.js"]);
+    return [...stderr.split("\n").filter(line => line.includes("not supported")), exitCode];
+  }
+
+  // `-D` changes the file's own rules.
+  test("with an .oxlintrc.json", async () => {
+    const config = (rules: object) => ({ ".oxlintrc.json": JSON.stringify({ rules }) });
+    const args = ["--rule", "allow-in-flag: allow", "--rule", "deny-in-flag: deny", "-D", "in-filter"];
+    expect(await unsupported(config, "", args)).toEqual([
+      "error: 5 rules in .oxlintrc.json are not supported: in-file, off-in-rules, off-in-flag, allow-in-flag, in-filter",
+      "error: 2 rules in bunfig.toml are not supported: in-rules, in-override",
+      "error: 2 rules in --rule are not supported: in-flag, deny-in-flag",
+      2,
+    ]);
+  });
+
+  // oxlint reads `eslint/a` and `a` as one rule. Both entries stay, and the later one applies.
+  test("with an .oxlintrc.json, the later of two names for one rule is the source", async () => {
+    const files = { "a.js": "export const a = 1;\n", ".oxlintrc.json": "{}" };
+    const bunfig = (severity: string) => ({ "bunfig.toml": `[lint.rules]\n"eslint/two-names" = "${severity}"\n` });
+    const source = async (bunfigSeverity: string, flagSeverity: string) => {
+      const args = ["--rule", `two-names: ${flagSeverity}`, "a.js"];
+      const { stderr, exitCode } = await lint({ ...files, ...bunfig(bunfigSeverity) }, args);
+      return [...stderr.split("\n").filter(line => line.includes("not supported")), exitCode];
+    };
+    expect(await Promise.all([source("error", "warn"), source("error", "off"), source("off", "warn")])).toEqual([
+      ["error: 1 rule in --rule is not supported: two-names", 2],
+      ["error: 1 rule in bunfig.toml is not supported: two-names", 2],
+      ["error: 1 rule in --rule is not supported: two-names", 2],
+    ]);
+  });
+
+  // An ESLint config refuses a rule without a plugin that ESLint doesn't have.
+  test.each([
+    ["eslint.config.mjs", (rules: object) => `export default [{ rules: ${JSON.stringify(rules)} }];\n`],
+    [".eslintrc.json", (rules: object) => JSON.stringify({ root: true, rules })],
+  ])("with an %s", async (name, config) => {
+    const file = name === ".eslintrc.json" ? "your .eslintrc config" : name;
+    expect(await unsupported(rules => ({ [name]: config(rules) }), "bun:test/")).toEqual([
+      `error: 4 rules in ${file} are not supported: bun:test/in-file, bun:test/off-in-rules, bun:test/off-in-flag, bun:test/allow-in-flag`,
+      "error: 2 rules in bunfig.toml are not supported: bun:test/in-rules, bun:test/in-override",
+      "error: 1 rule in --rule is not supported: bun:test/in-flag",
+      2,
+    ]);
+  });
 });
 
 // Which rules are on and whether type information is available are decided separately.

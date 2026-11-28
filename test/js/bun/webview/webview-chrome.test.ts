@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "harness";
+import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, isRoot, tempDir } from "harness";
 
 // Chrome backend works on any platform with Chrome/Chromium installed.
 // Mark tests todo if no Chrome found (CI may not have it). Mirrors
@@ -7,7 +7,7 @@ import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "h
 // paths, then the Playwright cache) so the test detects Chrome whenever the
 // runtime would. On Windows that is usually the preinstalled Edge.
 import { dlopen, FFIType, ptr } from "bun:ffi";
-import { accessSync, constants as fsConstants, readdirSync, rmSync } from "node:fs";
+import { accessSync, constants as fsConstants, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -177,6 +177,119 @@ const it = chromePath && !chromeBroken && !edgeAsLocalSystem ? test : test.todo;
 const chrome = { type: "chrome" as const, url: false as const };
 
 const html = (h: string) => "data:text/html," + encodeURIComponent(h);
+
+it("HMR applies a large update before the following small update", async () => {
+  using dir = tempDir("hmr-script-order", {
+    "index.html": `<div id="app"></div><script type="module" src="./main.ts"></script>`,
+    "main.ts": `
+      import { value, shared } from './graph.ts';
+      import { shared as original } from './shared.ts';
+      globalThis.documentToken ??= crypto.randomUUID();
+      document.querySelector('#app').textContent = value;
+      globalThis.sharedState = { identity: shared === original, initializations: shared.initializations };
+      import.meta.hot.accept();
+    `,
+    "graph.ts": `export { value, shared } from './before.ts';`,
+    "before.ts": `export { shared } from './shared.ts'; export const value = 'BEFORE';`,
+    "after.ts": `
+      export { shared } from './shared.ts';
+      export const value = 'AFTER';
+      export const padding = {${Array.from({ length: 40_000 }, (_, i) => `k${i}:()=>${i}`).join(",")}};
+    `,
+    "shared.ts": `
+      globalThis.sharedInitializations = (globalThis.sharedInitializations ?? 0) + 1;
+      export const shared = { initializations: globalThis.sharedInitializations };
+    `,
+  });
+  const serving = Promise.withResolvers<string>();
+  const secondWrite = Promise.withResolvers<void>();
+  await using server = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import page from ${JSON.stringify(join(String(dir), "index.html"))};
+       const server = Bun.serve({ hostname: '127.0.0.1', port: 0,
+         development: { hmr: true }, routes: { '/*': page } });
+       process.send(server.url.href);`,
+    ],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+    ipc(message) {
+      serving.resolve(message as string);
+    },
+  });
+  const serverExited = server.exited.then(exitCode => {
+    throw new Error(`Server exited: ${exitCode}`);
+  });
+  void serverExited.catch(() => {});
+  void secondWrite.promise.catch(() => {});
+  let wroteSecondUpdate = false;
+  const logs = (async () => {
+    let pending = "";
+    for await (const chunk of server.stderr) {
+      pending += new TextDecoder().decode(chunk);
+      let end: number;
+      while ((end = pending.indexOf("\n")) !== -1) {
+        const line = pending.slice(0, end);
+        pending = pending.slice(end + 1);
+        // Publish the second update before the browser has applied the first.
+        if (!wroteSecondUpdate && line.includes("Reloaded in")) {
+          wroteSecondUpdate = true;
+          writeFileSync(
+            join(String(dir), "graph.ts"),
+            `import { value as label, shared } from './after.ts'; export { shared }; export const value = label + '-TWO';`,
+          );
+          secondWrite.resolve();
+        }
+      }
+    }
+  })();
+  logs.catch(secondWrite.reject);
+  const ready = Promise.withResolvers<void>();
+  const errors: unknown[][] = [];
+  await using view = new Bun.WebView({
+    backend: { ...chrome, argv: isRoot ? ["--no-sandbox"] : [] },
+    console(type, ...args) {
+      if (type === "error") {
+        errors.push(args);
+      }
+      if (String(args[0]).includes("Hot-module-reloading socket connected")) {
+        ready.resolve();
+      }
+    },
+  });
+  await view.navigate(await Promise.race([serving.promise, serverExited]));
+  await Promise.race([ready.promise, serverExited]);
+  expect(await view.evaluate("document.querySelector('#app').textContent")).toBe("BEFORE");
+  const documentToken = await view.evaluate("globalThis.documentToken");
+  await view.evaluate(`(() => { globalThis.updateFinished = new Promise(resolve => {
+    const observer = new MutationObserver(() => {
+      if (document.querySelector('#app').textContent === 'AFTER-TWO') {
+        observer.disconnect();
+        resolve();
+      }
+    });
+    observer.observe(document.querySelector('#app'), { childList: true });
+  }); return true; })()`);
+  const finished = view.evaluate("globalThis.updateFinished");
+  void finished.catch(() => {});
+  writeFileSync(
+    join(String(dir), "graph.ts"),
+    `import { value as label, shared } from './after.ts'; export { shared }; export const value = label + '-ONE';`,
+  );
+  await Promise.race([secondWrite.promise, serverExited]);
+  try {
+    await Promise.race([finished, serverExited]);
+  } catch (error) {
+    throw new Error(`HMR did not preserve the document: ${JSON.stringify(errors)}`, { cause: error });
+  }
+  expect(await view.evaluate("document.querySelector('#app').textContent")).toBe("AFTER-TWO");
+  expect(await view.evaluate("globalThis.documentToken")).toBe(documentToken);
+  expect(await view.evaluate("globalThis.sharedState")).toEqual({ identity: true, initializations: 1 });
+  expect(errors).toEqual([]);
+});
 
 it("backend: chrome constructor returns a WebView", () => {
   const view = new Bun.WebView({ backend: chrome, width: 400, height: 300 });

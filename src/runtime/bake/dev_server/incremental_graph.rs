@@ -682,7 +682,17 @@ impl DevServer {
     ) -> Result<(), crate::Error> {
         self.graph_safety_lock.assert_locked();
         let graph = &mut self.graphs.client;
-        let (file_index, _) = graph.get_or_put_chunk_file(ctx, index, &content)?;
+        let was_stale = graph
+            .get_file_index(
+                ctx.sources[index.get() as usize]
+                    .path
+                    .key_for_incremental_graph(),
+            )
+            .is_none_or(|file_index| {
+                graph.stale_files.bit_length() <= file_index.get() as usize
+                    || graph.stale_files.is_set(file_index.get() as usize)
+            });
+        let (file_index, found_existing) = graph.get_or_put_chunk_file(ctx, index, &content)?;
 
         let File {
             failed,
@@ -738,6 +748,14 @@ impl DevServer {
             }
         };
 
+        let previous = &graph.bundled_files.values()[file_index.get() as usize];
+        let unchanged = found_existing
+            && !was_stale
+            && !failed
+            && previous.content.kind() == new_content.kind()
+            && previous.content.js_code() == new_content.js_code()
+            && previous.source_map == new_source_map;
+
         graph.bundled_files.values_mut()[file_index.get() as usize] = File {
             kind: new_content.kind(),
             failed: false,
@@ -752,7 +770,7 @@ impl DevServer {
             content: new_content,
         };
 
-        if let Some(len) = code_len {
+        if let Some(len) = code_len.filter(|_| !unchanged) {
             graph.current_chunk_parts.push(file_index);
             graph.current_chunk_len += len;
         }

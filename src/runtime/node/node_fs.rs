@@ -2691,6 +2691,7 @@ mod _async_tasks {
     pub(crate) struct AsyncReaddirRecursiveTask {
         pub(crate) tag: ret::ReaddirTag,
         pub(crate) encoding: Encoding,
+        pub(crate) follow_dirent_symlinks: bool,
         pub(crate) subtask_count: AtomicUsize,
 
         /// Set once `pending_err` is. From then on `enqueue` schedules nothing
@@ -2871,6 +2872,7 @@ mod _async_tasks {
                 AsyncReaddirRecursiveTask {
                     tag,
                     encoding,
+                    follow_dirent_symlinks: callback.is_some(),
                     subtask_count: AtomicUsize::new(1),
                     has_error: AtomicBool::new(false),
                     root_path,
@@ -6582,13 +6584,12 @@ impl NodeFS {
     fn readdir_open(atfd: FD, path: &ZStr) -> Maybe<FD> {
         #[cfg(not(windows))]
         return Syscall::openat(atfd, path, sys::O::DIRECTORY | sys::O::RDONLY, 0);
-        // the plain Windows open wrapper does not pass iterable=true
         #[cfg(windows)]
         sys::open_dir_at_windows_a(
             atfd,
             path.as_bytes(),
             sys::WindowsOpenDirOptions {
-                no_follow: true,
+                no_follow: false,
                 iterable: true,
                 ..Default::default()
             },
@@ -6642,6 +6643,8 @@ impl NodeFS {
 
             'enqueue: {
                 match current.kind {
+                    // Node follows Dirent symlinks in callbacks, but not in fs.promises.
+                    sys::FileKind::SymLink if T::IS_DIRENT && !async_task.follow_dirent_symlinks => {},
                     // a symlink might be a directory or might not be
                     // if it's not a directory, the task will fail at that point.
                     sys::FileKind::SymLink |
@@ -6665,7 +6668,10 @@ impl NodeFS {
                             Ok(st) => {
                                 let real_kind = sys::kind_from_mode(st.st_mode as Mode);
                                 effective_kind = real_kind;
-                                if matches!(real_kind, sys::FileKind::Directory | sys::FileKind::SymLink) {
+                                if real_kind == sys::FileKind::Directory
+                                    || (real_kind == sys::FileKind::SymLink
+                                        && (!T::IS_DIRENT || async_task.follow_dirent_symlinks))
+                                {
                                     async_task.enqueue(name_to_copy_z);
                                 }
                             }

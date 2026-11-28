@@ -114,6 +114,8 @@ try {
 // nothing to reap, as when a tracer has yet to let go of the zombie.
 //
 // PIDFD_OPEN_ESRCH=1 fails every pidfd_open with ESRCH, as when something else has reaped the child.
+//
+// PIDFD_OPEN_ENFILE=1 fails every pidfd_open with ENFILE, as when the file table of the whole system is full.
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
 const SHIM_C = /* c */ `
@@ -213,6 +215,7 @@ static void fail_pidfd_open(unsigned error) {
 
 __attribute__((constructor)) static void on_load(void) {
   if (getenv("PIDFD_OPEN_ESRCH")) fail_pidfd_open(ESRCH);
+  if (getenv("PIDFD_OPEN_ENFILE")) fail_pidfd_open(ENFILE);
 }
 
 pid_t wait4(pid_t pid, int *status, int options, struct rusage *usage) {
@@ -590,6 +593,35 @@ test.skipIf(!isLinux || !cc).concurrent.each([
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "3\n", stderr: "", exitCode: 0 });
+});
+
+// No test can fill the file table of the system, so the filter answers for it. pidfd_open takes no file, and the error
+// names the command all the same, as it does when the descriptors of the process run out (spawn-pidfd-emfile.test.ts).
+test.skipIf(!isLinux || !cc)("Bun.spawn names the command when the file table of the system is full", async () => {
+  const fixture = `
+    try {
+      Bun.spawn({ cmd: ["/bin/sh", "-c", ":"], stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+      console.log("spawned");
+    } catch (e) {
+      console.log(JSON.stringify({ message: e.message, code: e.code, syscall: e.syscall, path: e.path }));
+    }`;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, PIDFD_OPEN_ENFILE: "1", LD_PRELOAD: join(String(dir), "shim.so") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ error: stdout.startsWith("{") ? JSON.parse(stdout) : stdout, stderr, exitCode }).toEqual({
+    error: {
+      message: "ENFILE: file table overflow, pidfd_open",
+      code: "ENFILE",
+      syscall: "pidfd_open",
+      path: "/bin/sh",
+    },
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 // Both at once. The exit was reported, which runs onExit, with the writer's error already thrown: onExit's call took the

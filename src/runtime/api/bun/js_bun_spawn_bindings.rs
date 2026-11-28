@@ -968,7 +968,10 @@ fn spawn_maybe_sync(
     // and to avoid interfering with the main event loop.
     let sync_loop = if is_sync {
         let Some(sync_loop) = jsc_vm.rare_data().spawn_sync_event_loop(jsc_vm) else {
-            return Err(throw_spawn_sync_loop_init_failed(cx.global()));
+            return Err(throw_spawn_sync_loop_init_failed(
+                cx.global(),
+                &argv.args[0],
+            ));
         };
         Some(sync_loop.prepare())
     } else {
@@ -1061,30 +1064,6 @@ fn spawn_maybe_sync(
         CStrList::from_unterminated(&mut borrow_c_strings(&argv.args)),
         Some(CStrList::from_unterminated(&mut env_array)),
     ) {
-        Err(err)
-            if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE)
-                || err == bun_spawn::Error::Sys(bun_errno::SystemErrno::ENFILE) =>
-        {
-            let display_path: &ZStr = &argv.args[0];
-            let mut systemerror = sys::Error::from_code(
-                if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE) {
-                    sys::Errno::EMFILE
-                } else {
-                    sys::Errno::ENFILE
-                },
-                sys::Tag::posix_spawn,
-            )
-            .with_path(display_path)
-            .to_system_error();
-            systemerror.errno = if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE) {
-                -UV_E::MFILE
-            } else {
-                -UV_E::NFILE
-            };
-            return Err(cx
-                .global()
-                .throw_value(SystemError::from(systemerror).to_error_instance(cx.global())));
-        }
         Err(err) => {
             return Err(cx
                 .global()
@@ -1120,7 +1099,7 @@ fn spawn_maybe_sync(
                     _ => {}
                 }
 
-                return Err(cx.global().throw_value(err.to_js(cx.global())));
+                return Err(throw_spawn_failed(cx.global(), &err, &argv.args[0]));
             }
             sys::Result::Ok(result) => result,
         },
@@ -1757,7 +1736,17 @@ fn spawn_maybe_sync(
     Ok(sync_value)
 }
 
-fn throw_spawn_sync_loop_init_failed(global_this: &JSGlobalObject) -> JsError {
+/// Out of descriptors, the call that failed (`socketpair`, `fcntl`, `pidfd_open`) names no file: the command is the `path`.
+#[cold]
+fn throw_spawn_failed(global_this: &JSGlobalObject, err: &sys::Error, command: &ZStr) -> JsError {
+    let mut system_error = err.to_system_error();
+    if matches!(err.get_errno(), sys::Errno::EMFILE | sys::Errno::ENFILE) && err.path.is_empty() {
+        system_error.path = BunString::clone_utf8(command.as_bytes());
+    }
+    global_this.throw_value(SystemError::from(system_error).to_error_instance(global_this))
+}
+
+fn throw_spawn_sync_loop_init_failed(global_this: &JSGlobalObject, command: &ZStr) -> JsError {
     // us_create_loop returns NULL without the errno; EMFILE is the common cause.
     let err = SystemError {
         message: BunString::static_(
@@ -1765,7 +1754,7 @@ fn throw_spawn_sync_loop_init_failed(global_this: &JSGlobalObject) -> JsError {
         ),
         code: BunString::static_("EMFILE"),
         errno: -UV_E::MFILE,
-        path: BunString::EMPTY,
+        path: BunString::clone_utf8(command.as_bytes()),
         #[cfg(windows)]
         syscall: BunString::static_("uv_loop_init"),
         #[cfg(any(target_os = "linux", target_os = "android"))]

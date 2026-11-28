@@ -30,13 +30,14 @@ const fixture = /* js */ `
     Bun.spawnSync({ cmd: ["/bin/sh", "-c", ":"], stdio: ["ignore", "ignore", "ignore"] });
     first = { ok: false, msg: "UNEXPECTED: spawnSync succeeded" };
   } catch (e) {
-    first = { ok: true, code: e?.code, msg: String(e?.message ?? e) };
+    first = { ok: true, code: e?.code, path: e?.path, msg: String(e?.message ?? e) };
   }
 
   for (const fd of held) fs.closeSync(fd);
 
   if (!first.ok) { console.error(first.msg); process.exit(1); }
   console.error("spawnSync threw:", first.code, first.msg);
+  console.error("path:", first.path);
 
   // Descriptors are free again: the isolated loop was not cached on failure,
   // so this call creates it successfully and runs the child.
@@ -56,6 +57,8 @@ describe.skipIf(!isPosix)("Bun.spawnSync event-loop creation under EMFILE", () =
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("");
     expect(stderr).toContain("spawnSync threw: EMFILE");
+    // The loop is created before anything takes the command, and the error names it all the same.
+    expect(stderr).toContain("path: /bin/sh\n");
     expect(stderr).toContain("retry exit: 0");
     expect(stderr).toContain("SURVIVED");
     expect(exitCode).toBe(0);

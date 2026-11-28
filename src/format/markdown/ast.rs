@@ -117,7 +117,7 @@ pub struct Node {
     /// For oxfmt: 1 for HTML that ends at a specific text (`-->`, `</script>` ..), 1 for indented code.
     /// A heading's `depth`, an ordered list's `start`, a table's column count (the columns are at
     /// `Tree::aligns[first_align..]`), a sentence's token count (the tokens are at `Tree::tokens[first_align..]`). For
-    /// a list: how many lists of its kind are right before it.
+    /// a list: how many lists of its kind are right before it. For an emphasis: `Node::is_kept_as_written`.
     pub number: u32,
     pub first_align: u32,
     pub start: u32,
@@ -160,6 +160,11 @@ impl Node {
             third: Str::NO,
             identifier: Str::NO,
         }
+    }
+
+    /// `SpanDetail::is_kept_as_written`: the emphasis keeps the marker it is written with.
+    pub(crate) fn is_kept_as_written(&self) -> bool {
+        matches!(self.kind, Kind::Emphasis | Kind::Strong) && self.number == 1
     }
 }
 

@@ -1508,7 +1508,8 @@ impl<'a> Printer<'a, '_> {
 
     /// True if a `*` delimiter of `node`, an emphasis, touches a literal `*`, and the text around `node` has another
     /// `*` run that the literal one could pair with. In `**a*(*)` the first and last `*` are literal because the run of
-    /// two and the run of one add up to three. Printed as `*_a_(*)`, they would pair up.
+    /// two and the run of one add up to three. Printed as `*_a_(*)`, they would pair up. The `*` of an emphasis that
+    /// keeps its marker as written is such a run too (`**a*(*)**b* x`).
     fn is_cut_from_longer_run(&self, node: &Node) -> bool {
         let byte_at = |at: usize| self.original.get(at).copied();
         let is_text = |id: NodeId| matches!(self.kind(id), Some(Kind::Sentence | Kind::Text));
@@ -1527,11 +1528,14 @@ impl<'a> Printer<'a, '_> {
             |byte: Option<u8>| matches!(byte, None | Some(b' ' | b'\t' | b'\n'));
         self.tree
             .children(node.parent)
-            .filter(|&id| is_text(id))
+            .filter(|&id| is_text(id) || self.node(id).is_some_and(Node::is_kept_as_written))
             .any(|sibling| {
                 let Some(sibling) = self.node(sibling) else {
                     return false;
                 };
+                if sibling.is_kept_as_written() {
+                    return byte_at(sibling.start as usize) == Some(b'*');
+                }
                 let mut is_escaped = false;
                 (sibling.start as usize..sibling.end as usize).any(|at| {
                     let is_other_star = byte_at(at) == Some(b'*')
@@ -1574,6 +1578,7 @@ impl<'a> Printer<'a, '_> {
                 let style: &'a [u8] = if self.is_autolink(node.first_child)
                     || self.keeps_marker(node)
                     || self.is_cut_from_longer_run(node)
+                    || node.is_kept_as_written()
                 {
                     self.source(node).get(..1).unwrap_or(b"_")
                 } else {
@@ -1588,7 +1593,7 @@ impl<'a> Printer<'a, '_> {
                 docs![style, self.print_children(id), style]
             }
             Kind::Strong => {
-                let style: &'a [u8] = match self.keeps_marker(node) {
+                let style: &'a [u8] = match self.keeps_marker(node) || node.is_kept_as_written() {
                     true => self.source(node).get(..2).unwrap_or(b"**"),
                     false => b"**",
                 };

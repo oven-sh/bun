@@ -80,6 +80,14 @@ pub struct EmphDelim {
     pub(crate) emph_char: u8, // * or _
     pub(crate) can_open: bool,
     pub(crate) can_close: bool,
+    // The same without `compat::marker_next_to_marker_flanks`.
+    pub(crate) can_open_as_written: bool,
+    pub(crate) can_close_as_written: bool,
+    // `SpanDetail::is_kept_as_written`
+    pub(crate) is_kept_as_written: bool,
+    // The run that CommonMark pairs this one with and micromark does not. Both are kept as written if both pair
+    // with something: a run that stays text is escaped by the printer. `usize::MAX` if none.
+    pub(crate) kept_with: usize,
     pub(crate) remaining: usize,   // chars not yet consumed
     pub(crate) open_count: usize,  // total chars consumed as opener
     pub(crate) close_count: usize, // total chars consumed as closer
@@ -102,6 +110,10 @@ impl Default for EmphDelim {
             emph_char: 0,
             can_open: false,
             can_close: false,
+            can_open_as_written: false,
+            can_close_as_written: false,
+            is_kept_as_written: false,
+            kept_with: usize::MAX,
             remaining: 0,
             open_count: 0,
             close_count: 0,
@@ -547,11 +559,12 @@ impl Parser<'_> {
                             }
                         } else if d.more != 0 {
                             let sizes = all_match_sizes(&resolved, d, true);
-                            self.emit_emph_open_tags(&sizes, &mut marker)?;
+                            self.emit_emph_open_tags(&sizes, &mut marker, d.is_kept_as_written)?;
                         } else {
                             self.emit_emph_open_tags(
                                 &d.open_sizes[0..d.open_num as usize],
                                 &mut marker,
+                                d.is_kept_as_written,
                             )?;
                         }
 
@@ -725,10 +738,18 @@ impl Parser<'_> {
     }
 
     pub(crate) fn enter_span(&mut self, span_type: SpanType) -> crate::types::JsResult<()> {
+        self.enter_span_with(span_type, Default::default())
+    }
+
+    pub(crate) fn enter_span_with(
+        &mut self,
+        span_type: SpanType,
+        detail: crate::types::SpanDetail<'_>,
+    ) -> crate::types::JsResult<()> {
         if self.image_nesting_level > 0 {
             return Ok(());
         }
-        self.renderer.enter_span(span_type, Default::default())
+        self.renderer.enter_span(span_type, detail)
     }
 
     pub(crate) fn leave_span(&mut self, span_type: SpanType) -> crate::types::JsResult<()> {
@@ -891,15 +912,20 @@ impl Parser<'_> {
         &mut self,
         sizes: &[u8],
         marker: &mut usize,
+        is_kept_as_written: bool,
     ) -> crate::types::JsResult<()> {
+        let detail = crate::types::SpanDetail {
+            is_kept_as_written,
+            ..Default::default()
+        };
         // First match = innermost, so emit in reverse (outermost first in HTML)
         for &size in sizes.iter().rev() {
             self.at(*marker, *marker + size as usize);
             *marker += size as usize;
             if size == 2 {
-                self.enter_span(SpanType::Strong)?;
+                self.enter_span_with(SpanType::Strong, detail)?;
             } else {
-                self.enter_span(SpanType::Em)?;
+                self.enter_span_with(SpanType::Em, detail)?;
             }
         }
         Ok(())
@@ -1072,7 +1098,8 @@ impl Parser<'_> {
                     i += 1;
                 }
                 let count = i - run_start;
-                let mut flanking = self.flanking(content, run_start, i, is_label);
+                let as_written = self.flanking(content, run_start, i, is_label);
+                let mut flanking = as_written;
                 if compat::marker_next_to_marker_flanks(&self.flags) {
                     let is_marker = |at: Option<&u8>| matches!(at, Some(b'*' | b'_' | b'~'));
                     flanking.left |= is_marker(content.get(i));
@@ -1084,6 +1111,8 @@ impl Parser<'_> {
                     emph_char: c,
                     can_open: flanking.can_open(c),
                     can_close: flanking.can_close(c),
+                    can_open_as_written: as_written.can_open(c),
+                    can_close_as_written: as_written.can_close(c),
                     remaining: count,
                     ..Default::default()
                 });
@@ -1142,6 +1171,14 @@ impl Parser<'_> {
             return;
         }
 
+        // The length that the rule of three goes by: the run as written, or what is left of it.
+        let counts_what_is_left = compat::rule_of_three_counts_what_is_left(&self.flags);
+        let run_length = |d: &EmphDelim| -> usize {
+            match counts_what_is_left {
+                true => d.remaining,
+                false => d.count,
+            }
+        };
         let opener_bottom_key = |d: &EmphDelim| -> usize {
             let char_idx = match d.emph_char {
                 b'*' => 0,
@@ -1149,12 +1186,50 @@ impl Parser<'_> {
                 b'~' => 2,
                 _ => 0,
             };
-            ((char_idx * 3) + (d.count % 3)) * 2 + (d.can_open as usize)
+            ((char_idx * 3) + (run_length(d) % 3)) * 2 + (d.can_open as usize)
         };
         let mut openers_bottom: [usize; 18] = [0; 18];
         let mut prev_candidate = core::mem::take(&mut self.prev_candidate);
         prev_candidate.clear();
         prev_candidate.extend((0..len).map(|i| i.wrapping_sub(1)));
+        // The runs that share a pair or touch: sets, each known by the index of one of its runs.
+        let mut set_of = core::mem::take(&mut self.emph_sets);
+        set_of.clear();
+        if counts_what_is_left {
+            set_of.extend(0..len);
+        }
+        let find = |set_of: &mut [usize], mut i: usize| -> usize {
+            while let Some(&next) = set_of.get(i).filter(|&&next| next != i) {
+                let after = set_of.get(next).copied().unwrap_or(next);
+                set_of[i] = after;
+                i = next;
+            }
+            i
+        };
+        let unite = |set_of: &mut [usize], a: usize, b: usize| {
+            let (a, b) = (find(set_of, a), find(set_of, b));
+            if let Some(set) = set_of.get_mut(a) {
+                *set = b;
+            }
+        };
+        for i in 1..len {
+            let (before, run) = (&self.emph_delims[i - 1], &self.emph_delims[i]);
+            if counts_what_is_left
+                && before.emph_char != b'~'
+                && run.emph_char != b'~'
+                && before.pos + before.count == run.pos
+            {
+                unite(&mut set_of, i - 1, i);
+            }
+        }
+        let pairs_as_written = |opener: &EmphDelim, closer: &EmphDelim| -> bool {
+            opener.can_open_as_written
+                && closer.can_close_as_written
+                && !((opener.can_close_as_written || closer.can_open_as_written)
+                    && (opener.count + closer.count).is_multiple_of(3)
+                    && !opener.count.is_multiple_of(3)
+                    && !closer.count.is_multiple_of(3))
+        };
 
         // Process potential closers from left to right
         let mut closer_idx: usize = 0;
@@ -1199,13 +1274,23 @@ impl Parser<'_> {
 
                     // Rule of three: if closer can also open OR opener can also close,
                     // and the sum is a multiple of 3, and neither is individually a multiple of 3, skip
+                    let opener_len = run_length(&self.emph_delims[oi]);
+                    let closer_len = run_length(&self.emph_delims[closer_idx]);
                     if self.emph_delims[oi].emph_char != b'~'
                         && (self.emph_delims[oi].can_close || self.emph_delims[closer_idx].can_open)
-                        && (self.emph_delims[oi].count + self.emph_delims[closer_idx].count)
-                            .is_multiple_of(3)
-                        && !self.emph_delims[oi].count.is_multiple_of(3)
-                        && !self.emph_delims[closer_idx].count.is_multiple_of(3)
+                        && (opener_len + closer_len).is_multiple_of(3)
+                        && !opener_len.is_multiple_of(3)
+                        && !closer_len.is_multiple_of(3)
                     {
+                        if counts_what_is_left
+                            && pairs_as_written(
+                                &self.emph_delims[oi],
+                                &self.emph_delims[closer_idx],
+                            )
+                        {
+                            self.emph_delims[oi].kept_with = closer_idx;
+                            self.emph_delims[closer_idx].kept_with = oi;
+                        }
                         from = oi;
                         oi = prev_candidate[oi];
                         continue;
@@ -1223,9 +1308,33 @@ impl Parser<'_> {
                     };
                     let use_ = usize::from(size);
 
+                    if counts_what_is_left {
+                        let (opener, closer) =
+                            (&self.emph_delims[oi], &self.emph_delims[closer_idx]);
+                        // A pair that CommonMark refuses by its flanking alone is not marked.
+                        let is_emphasis = opener.emph_char != b'~';
+                        let is_refused_as_written = is_emphasis
+                            && opener.can_open_as_written
+                            && closer.can_close_as_written
+                            && !pairs_as_written(opener, closer);
+                        if is_refused_as_written {
+                            self.emph_delims[oi].is_kept_as_written = true;
+                            self.emph_delims[closer_idx].is_kept_as_written = true;
+                        }
+                        if is_emphasis {
+                            unite(&mut set_of, oi, closer_idx);
+                        }
+                    }
+
                     let opener = &mut self.emph_delims[oi];
                     opener.remaining -= use_;
                     opener.open_count += use_;
+                    // Closers that failed against this opener did so at its old length.
+                    if counts_what_is_left && opener.remaining > 0 {
+                        for bottom in &mut openers_bottom {
+                            *bottom = (*bottom).min(oi);
+                        }
+                    }
                     match opener.has_room(true) {
                         true => opener.push_match(true, size),
                         false => self.room_for_more_matches(oi, true).push_match(true, size),
@@ -1273,7 +1382,31 @@ impl Parser<'_> {
 
             closer_idx = closer_idx.wrapping_add(1);
         }
+        if counts_what_is_left {
+            for i in 0..len {
+                let with = self.emph_delims[i].kept_with;
+                let has_paired = |d: &EmphDelim| d.remaining < d.count;
+                let both_paired = with < len
+                    && has_paired(&self.emph_delims[i])
+                    && self.emph_delims.get(with).is_some_and(has_paired);
+                if both_paired {
+                    self.emph_delims[i].is_kept_as_written = true;
+                    self.emph_delims[with].is_kept_as_written = true;
+                }
+            }
+            for i in 0..len {
+                let set = find(&mut set_of, i);
+                let is_kept = self.emph_delims[i].is_kept_as_written;
+                self.emph_delims[set].is_kept_as_written |= is_kept;
+            }
+            for i in 0..len {
+                let set = find(&mut set_of, i);
+                let is_kept = self.emph_delims[set].is_kept_as_written;
+                self.emph_delims[i].is_kept_as_written |= is_kept;
+            }
+        }
         self.prev_candidate = prev_candidate;
+        self.emph_sets = set_of;
     }
 
     pub(crate) fn find_entity(&self, content: &[u8], start: usize) -> Option<usize> {

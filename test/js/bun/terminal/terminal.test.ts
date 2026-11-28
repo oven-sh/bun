@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { fstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // Helper to enable echo on a terminal (echo is disabled by default to avoid duplication)
@@ -1124,29 +1124,26 @@ describe("Bun.Terminal", () => {
   });
 
   describe("stress tests", () => {
-    // Helper to count open file descriptors (Linux/macOS)
-    function countOpenFds(): number {
-      const { readdirSync } = require("fs");
-      try {
-        // Linux: /proc/self/fd
-        return readdirSync("/proc/self/fd").length;
-      } catch {
+    // The fds that are open in this process (Linux/macOS). Windows has no list of them.
+    function openFds(): string[] {
+      return readdirSync(isLinux ? "/proc/self/fd" : "/dev/fd").filter(fd => {
         try {
-          // macOS: /dev/fd
-          return readdirSync("/dev/fd").length;
-        } catch {
-          // Fallback: return -1 to skip FD-based assertions
-          return -1;
+          fstatSync(Number(fd));
+          return true;
+        } catch (e) {
+          // Closed since, like the fd that the list was read from. The next fd to open gets its number.
+          if ((e as NodeJS.ErrnoException).code !== "EBADF") throw e;
+          return false;
         }
-      }
+      });
     }
 
     test("can create many terminals with FD cleanup", async () => {
       const terminals: Bun.Terminal[] = [];
       const TERMINAL_COUNT = 50;
 
-      // Get baseline FD count
-      const baselineFds = countOpenFds();
+      // Get the fds that are open before the terminals
+      const baselineFds = new Set(isWindows ? [] : openFds());
 
       // Create many terminals
       for (let i = 0; i < TERMINAL_COUNT; i++) {
@@ -1154,9 +1151,8 @@ describe("Bun.Terminal", () => {
       }
 
       // FD count should have increased (each terminal uses ~4 fds: master, read, write, slave)
-      const openFds = countOpenFds();
-      if (baselineFds >= 0 && openFds >= 0) {
-        expect(openFds).toBeGreaterThan(baselineFds);
+      if (!isWindows) {
+        expect(openFds().length).toBeGreaterThan(baselineFds.size);
       }
 
       // Close all terminals
@@ -1166,19 +1162,18 @@ describe("Bun.Terminal", () => {
         expect(terminal.closed).toBe(true);
       }
 
-      // FD count should return to the baseline. close() closes the master and the slave fd itself. It can
-      // leave the read and the write fd to the work pool, which closes them later. A leaked fd stays open
-      // however long this waits.
-      if (baselineFds >= 0) {
+      // No fd should be open that was not open before the terminals. close() closes the master and the slave
+      // fd itself. It can leave the read and the write fd to the work pool, which closes them later. A leaked
+      // fd stays open however long this waits.
+      if (!isWindows) {
+        const openedSinceBaseline = () => openFds().filter(fd => !baselineFds.has(fd));
         const deadline = performance.now() + 2000;
-        let fdDelta = countOpenFds() - baselineFds;
-        while (fdDelta > 0 && performance.now() < deadline) {
+        let leakedFds = openedSinceBaseline();
+        while (leakedFds.length > 0 && performance.now() < deadline) {
           await Bun.sleep(1);
-          fdDelta = countOpenFds() - baselineFds;
+          leakedFds = openedSinceBaseline();
         }
-        // The baseline can include fds of an earlier test that the work pool had not closed yet, so the
-        // count can end below it.
-        expect(fdDelta).toBeLessThanOrEqual(0);
+        expect(leakedFds).toEqual([]);
       }
     });
 

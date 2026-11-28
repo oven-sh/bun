@@ -1,7 +1,4 @@
 {
-  "src/jsc/VirtualMachine.rs": {
-    "discarded result of a call that enters script": 1
-  },
   "src/jsc/web_worker.rs": {
     "taken exception discarded": 1
   },

@@ -842,9 +842,14 @@ impl ExitHandler {
         }
         let exit_code = vm.exit_handler.exit_code.get();
         let global = vm.global();
-        let _ = jsc::from_js_host_call_generic(global, || {
+        let dispatched = jsc::from_js_host_call_generic(global, || {
             Process__dispatchOnBeforeExit(global, exit_code)
         });
+        if dispatched.is_ok() {
+            // Entered, as at the end of `tick()`: a callback that a listener makes is no checkpoint in the middle of it.
+            let _entered = vm.enter_event_loop_scope_without_checkpoint();
+            let _ = global.handle_rejected_promises();
+        }
     }
 }
 

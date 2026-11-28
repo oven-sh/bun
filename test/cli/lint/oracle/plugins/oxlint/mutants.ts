@@ -2,7 +2,7 @@
 // identifier 'x' with the same name as a label." This script finds values like that hard-coded in the text `bun lint`
 // copies from oxlint: messages, help, labels and notes.
 //
-//   BUN_LINT="bun lint" OXLINT_BIN=<oxlint 1.87> OXLINT_TSGOLINT_PATH=<tsgolint 7.0.2003> bun mutants.ts
+//   BUN_LINT="bun lint" OXLINT_BIN=<oxlint 1.87> OXLINT_TSGOLINT_PATH=<tsgolint 7.0.2004> bun mutants.ts
 //
 // For each input in messages.json, it takes every word or number that's in both oxlint's output and the input (the
 // code, the options, the filename) and replaces it in the input with another one of the same shape. If oxlint reports

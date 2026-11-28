@@ -1,5 +1,6 @@
+use crate::rules::no_unsafe_assignment::TYPE_THIS;
 use bun_lint::prelude::*;
-use bun_lint::types::{Type, TypeFlags};
+use bun_lint::types::{Signature, Type, TypeFlags};
 use bun_lint::types::tsutils::{
     CompilerOption, get_call_signatures_of_type, is_intrinsic_error_type,
     is_strict_compiler_option_enabled,
@@ -25,16 +26,28 @@ const UNSAFE_RETURN_THIS: &Message = &Message::new(
     "Unsafe return of a value of type `{{type}}`. `this` is typed as `any`.\nYou can try to fix this by turning on the `noImplicitThis` compiler option, or adding a `this` parameter to the function.",
 );
 
+/// tsgolint's help: the returned type, the function's return type if it has one to compare with, then what to do.
+#[cold]
+fn help(return_node: Expr, expected: Option<Signature>, advice: &str) -> String {
+    let render = |ty: Type| if is_intrinsic_error_type(ty) { b"error".to_vec() } else { ty.to_text() };
+    let returned = render(get_constrained_type_at_location(return_node));
+    let returned = bstr::BStr::new(&returned);
+    match expected {
+        Some(signature) => {
+            let expected = render(signature.get_return_type());
+            let expected = bstr::BStr::new(&expected);
+            format!("Returned expression has type `{returned}`; the function return type is `{expected}`. {advice}")
+        }
+        None => format!("Returned expression has type `{returned}`. {advice}"),
+    }
+}
+
+const RETURN_A_SAFE_VALUE: &str = "Return a safely typed value or narrow the value before returning it.";
+
 fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoUnsafeReturn>) {
     let Some(function_node) = get_parent_function_node(return_node) else {
         return;
     };
-    let keyword = match function_node.arrow_span() {
-        Some(arrow) if matches!(function_node.body(), FnBody::Expr(body) if body == return_node) => arrow,
-        _ => Span::new(reporting_node.start, reporting_node.start + "return".len() as u32),
-    };
-    // oxlint points at the returned expression.
-    let reporting_node = if cx.language().is_oxlint { return_node.outer_span() } else { reporting_node };
     let return_node_type = return_node.ty();
     let any_type = discriminate_any_type(return_node_type, return_node);
 
@@ -46,24 +59,6 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
     };
     let uses_contextual_type = function_type.is_some();
     let function_type = function_type.unwrap_or_else(|| function_node.type_at_location());
-    // tsgolint labels the returned type and, if it's written in the file, the expected type.
-    let labels = |labels: &mut Details| {
-        let render = |ty: Type| if is_intrinsic_error_type(ty) { b"error".to_vec() } else { ty.to_text() };
-        let returned = render(get_constrained_type_at_location(return_node));
-        labels.first(format!("Returned expression has type `{}`.", bstr::BStr::new(&returned)));
-        let expected = match function_node.return_type() {
-            Some(ty) => Some((ty.outer_span(), ty.ty())),
-            None if uses_contextual_type => get_call_signatures_of_type(function_type).iter().find_map(|signature| {
-                let ty = signature.declaration()?.type_node().filter(|it| it.is_in_linted_file())?;
-                Some((ty.span(), signature.get_return_type()))
-            }),
-            None => None,
-        };
-        if let Some((at, ty)) = expected {
-            labels.push(at, format!("Function expects return type `{}`.", bstr::BStr::new(&render(ty))));
-        }
-        labels.push(keyword, "");
-    };
     let is_oxlint = cx.language().is_oxlint;
     let has_return_type = function_node.return_type().is_some();
     let call_signatures = match has_return_type || any_type != AnyType::Safe || is_oxlint {
@@ -71,6 +66,12 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
         false => Vec::new(),
     };
     let any_or_unknown = TypeFlags::ANY | TypeFlags::UNKNOWN;
+    let report = |message: &'static Message, advice: &'static str| {
+        cx.report(reporting_node, message).oxlint_help_with(|| {
+            let expected = (has_return_type || uses_contextual_type).then(|| call_signatures.first().copied());
+            help(return_node, expected.flatten(), advice)
+        })
+    };
 
     // An explicit annotation is intentional, even if it's unsafe.
     if has_return_type {
@@ -116,14 +117,17 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
         let is_this_any = !is_strict_compiler_option_enabled(options, CompilerOption::NoImplicitThis)
             && get_this_expression(return_node)
                 .is_some_and(|this| is_type_any_type(get_constrained_type_at_location(this)));
-        let message = if is_this_any { UNSAFE_RETURN_THIS } else { UNSAFE_RETURN };
+        let (message, advice) = match is_this_any {
+            true => (UNSAFE_RETURN_THIS, TYPE_THIS),
+            false => (UNSAFE_RETURN, RETURN_A_SAFE_VALUE),
+        };
         let ty = match any_type {
             _ if is_intrinsic_error_type(get_constrained_type_at_location(return_node)) => "error",
             AnyType::Any => "`any`",
             AnyType::PromiseAny => "`Promise<any>`",
             _ => "`any[]`",
         };
-        cx.report(reporting_node, message).comments_apply_at(keyword).data("type", ty).labels_with(labels);
+        report(message, advice).data("type", ty);
         return;
     }
 
@@ -139,11 +143,9 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
     else {
         return;
     };
-    cx.report(reporting_node, UNSAFE_RETURN_ASSIGNMENT)
-        .comments_apply_at(keyword)
+    report(UNSAFE_RETURN_ASSIGNMENT, RETURN_A_SAFE_VALUE)
         .data("receiver", result.receiver.to_text())
-        .data("sender", result.sender.to_text())
-        .labels_with(labels);
+        .data("sender", result.sender.to_text());
 }
 
 impl Rule for NoUnsafeReturn {
@@ -159,7 +161,9 @@ impl Rule for NoUnsafeReturn {
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         if let FnBody::Expr(body) = func.body() {
-            check_return(body, body.span(), cx);
+            // For tsgolint the parentheses around the body are a node.
+            let reporting_node = if cx.language().is_oxlint { body.outer_span() } else { body.span() };
+            check_return(body, reporting_node, cx);
         }
     }
 

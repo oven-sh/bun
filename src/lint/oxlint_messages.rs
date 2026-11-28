@@ -442,7 +442,7 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
     ("typescript", "no-unnecessary-type-conversion", &[m("unnecessaryTypeConversion", "This type conversion does not change the type or value of the expression.")]),
     ("typescript", "no-unsafe-assignment", &[
         m("unsafeAssignment", "Unsafe assignment between incompatible types."),
-        m("anyAssignmentThis", "Unsafe assignment of an any value. `this` is typed as `any`.\n"),
+        m("anyAssignmentThis", "Unsafe assignment of an {{sender}} value. `this` is typed as `any`."),
         m("unsafeObjectPattern", "Unsafe array destructuring of a tuple element with an {{sender}} value."),
     ]),
     ("typescript", "no-unsafe-call", &[
@@ -458,7 +458,7 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
         m("errorMemberExpression", "Unsafe member access {{property}} on an `error` typed value."),
         m("unsafeThisMemberExpression", "Unsafe member access {{property}} on an `any` value. `this` is typed as `any`."),
     ]),
-    ("typescript", "no-unsafe-return", &[m("unsafeReturnThis", "Unsafe return of a value of type `{{type}}`. `this` is typed as {{type}}.")]),
+    ("typescript", "no-unsafe-return", &[m("unsafeReturnThis", "Unsafe return of a value of type {{type}}. `this` is typed as `any`.")]),
     ("typescript", "no-unsafe-type-assertion", &[
         m("unsafeOfAnyTypeAssertion", "Unsafe assertion from {{type}} detected."),
         m("unsafeToAnyTypeAssertion", "Unsafe assertion to {{type}} detected."),

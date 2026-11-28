@@ -1,0 +1,3 @@
+"mhomhooh" | "mhomht": `bun test` runs other.mjs again for each test file, because it called require() for the helper that made the mock. The helper runs again and mocks for the third file. A compiled run keeps the one instance of other.mjs, so the third file gets the real tax.mjs
+"mhomho" | "mhomh": the same in the second file: `bun test` runs other.mjs again, and a compiled run does not
+"mock rate" | "real rate": the third file reads the mock in `bun test` and the real tax.mjs in a compiled run, see the first line

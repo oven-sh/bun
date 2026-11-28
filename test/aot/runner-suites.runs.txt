@@ -7,6 +7,21 @@
 # `const dep = require("dep")`), two instances are wanted at one time, or the test counts the runs. What an importer reads late follows the mock.
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > later files mock a package that a library loaded while the first file mocked it
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > after vi.doUnmock() ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > after vi.doUnmock() ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > after vi.doUnmock() []
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > but not yet one that required a mocked Node.js builtin, or got the mock from createRequire()
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > in a package, for a mocked package
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when a later test file mocks the package that it required, with vi.mock()
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when a later test file mocks what it required, with jest.mock()
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when a later test file mocks what it required, with mock.module()
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when a later test file mocks what it required, with vi.doMock() in a test
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when a later test file mocks what it required, with vi.mock()
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when a module that it required has read the list of what it required
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when it required a module that made the mock
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when the test file that mocked a CommonJS module ends
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when the test file that mocked a JSON file ends
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when the test file that mocked an ES module ends
 # In these the one instance is all that differs: every test of the fixture passes, every file runs, and some files run fewer times.
 test/js/bun/test/mock/mock-module.test.ts: a factory that loads a module which imports another mock > a mock that waits for the factory is a mock for what the factory loads too
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > a factory that fails

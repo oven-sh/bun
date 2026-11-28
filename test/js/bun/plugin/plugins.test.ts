@@ -304,6 +304,53 @@ describe("module", () => {
     }
   });
 
+  it("under bun test, a module that is defined again reaches the ES modules that got it from require()", async () => {
+    const requirer = `
+      const virtual = require("virtual-module");
+      globalThis.loads = (globalThis.loads ?? 0) + 1;
+      export const seen = () => virtual.name;
+    `;
+    // Each of the four requirers is evaluated once for each definition.
+    const file = (names: string[], loads: number) => `
+      import { plugin } from "bun";
+      import { expect, test } from "bun:test";
+      test("every requirer", async () => {
+        for (const name of ${JSON.stringify(names)}) {
+          plugin({ setup: build => void build.module("virtual-module", () => ({ exports: { name }, loader: "object" })) });
+          const seen = [
+            (await import("./first.js")).seen(),
+            (await import("./second.js")).seen(),
+            (await import("./second.js?query")).seen(),
+            (await import("./lazy.js")).seen(),
+          ];
+          expect(seen).toEqual(Array(4).fill(name));
+        }
+        expect(globalThis.loads).toBe(${loads});
+      });
+    `;
+    using dir = tempDir("plugin-module-defined-again", {
+      "first.js": requirer,
+      "second.js": requirer,
+      "lazy.js": `
+        let virtual;
+        globalThis.loads = (globalThis.loads ?? 0) + 1;
+        export const seen = () => (virtual ??= require("virtual-module")).name;
+      `,
+      "1.test.js": file(["one", "two"], 8),
+      "2.test.js": file(["three"], 12),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./1.test.js", "./2.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(" 2 pass\n 0 fail");
+    expect(exitCode).toBe(0);
+  });
+
   it("a bun: module that is not a builtin works with import and require()", async () => {
     Bun.plugin({
       name: "a bun: module that is not a builtin",

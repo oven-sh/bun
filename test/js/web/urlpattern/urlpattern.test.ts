@@ -252,7 +252,9 @@ describe("URLPattern", () => {
       );
     });
 
-    test("a group can have any name, and a regular expression can add groups", () => {
+    // https://urlpattern.spec.whatwg.org/#create-a-component-match-result makes one entry per group name and gives
+    // name N the Nth capture of the regular expression. The captures inside :a's regexp are numbers 2 and 3.
+    test("a group can have any name, and a group inside a regular expression adds no entry", () => {
       const groups = (hash: string, input: string) =>
         Object.entries(new URLPattern({ hash }).exec({ hash: input })!.hash.groups);
       expect(groups(":__proto__-:\u540d\u524d-:\u{20000}", "1-2-3")).toEqual([
@@ -260,9 +262,10 @@ describe("URLPattern", () => {
         ["\u540d\u524d", "2"],
         ["\u{20000}", "3"],
       ]);
-      expect(groups(":a((?<x>1)(?<y>2))", "12")).toEqual([
+      expect(groups(":a((?<x>1)(?<y>2))", "12")).toEqual([["a", "12"]]);
+      expect(groups(":a((?<x>1)(?<y>2)):b(3)", "123")).toEqual([
         ["a", "12"],
-        ["", "2"],
+        ["b", "1"],
       ]);
       expect(groups(":a?-:b", "-1")).toEqual([
         ["a", undefined],

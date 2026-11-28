@@ -436,9 +436,7 @@ fn create_component_result<'a>(
         numbered += 1;
         PropertyKey::Index(numbered - 1)
     });
-    // A named group inside a regular expression makes more groups than there are names.
-    let no_name = String::EMPTY;
-    let keys = keys.chain(core::iter::repeat(PropertyKey::Name(&no_name)));
+    // A group inside a regular expression is a capture with no name, and it has no entry.
     let groups = heap.create_object(keys.zip(captures).map(|(key, &[start, end])| {
         let Ok(first) = usize::try_from(start) else {
             return Ok((key, JsLocal::UNDEFINED));

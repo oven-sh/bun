@@ -721,6 +721,49 @@ describe("bundler", () => {
     });
   });
 
+  // `--jsx-runtime` refuses the names that "jsx" has in tsconfig.json, so this calls Bun.build() and not itBundled,
+  // whose "cli" backend passes `jsx.runtime` as that flag.
+  test.concurrent('jsx.runtime takes the names that "jsx" has in tsconfig.json', async () => {
+    const production = { runtime: "automatic", development: false };
+    const development = { runtime: "automatic", development: true };
+    // [the option, what bun-types says it is shorthand for, what both select]
+    const rows = [
+      [{ runtime: "react" }, { runtime: "classic" }, "React.createElement"],
+      [{ runtime: "react-jsx" }, production, "react/jsx-runtime"],
+      [{ runtime: "react-jsxdev" }, development, "react/jsx-dev-runtime"],
+      // A `development` that is also set wins over the one of the shorthand.
+      [{ runtime: "react-jsx", development: true }, development, "react/jsx-dev-runtime"],
+      [{ development: false, runtime: "react-jsxdev" }, production, "react/jsx-runtime"],
+      // The letter case of the name does not matter.
+      [{ runtime: "React-JSX" }, production, "react/jsx-runtime"],
+    ] as const;
+    using dir = tempDir("jsx-runtime-names", {
+      "m.jsx": `export default <a />;\n`,
+      "build.js": `
+        const build = async jsx =>
+          (await Bun.build({ entrypoints: ["./m.jsx"], external: ["*"], jsx })).outputs[0].text();
+        const results = [];
+        for (const [shorthand, longhand] of ${JSON.stringify(rows)}) {
+          const [brief, full] = [await build(shorthand), await build(longhand)];
+          results.push([brief === full, /React\\.createElement|react\\/jsx-(dev-)?runtime/.exec(brief)?.[0]]);
+        }
+        console.log(JSON.stringify(results));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.js"],
+      // NODE_ENV also selects between jsx-runtime and jsx-dev-runtime.
+      env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(rows.map(([, , selected]) => [true, selected]));
+    expect(exitCode).toBe(0);
+  });
+
   // Test for jsxSideEffects option - equivalent to esbuild's TestJSXSideEffects
   describe("jsxSideEffects", () => {
     itBundled("jsx/sideEffectsDefault", {

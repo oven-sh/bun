@@ -2296,6 +2296,53 @@ describe("package-lock.json migration fixes", () => {
     await frozen(dir);
   });
 
+  test.concurrent.each([
+    ["2.0.0", "no-deps@2.0.0"],
+    ["npm:a-dep@1.0.1", "a-dep@1.0.1"],
+    ["file:./fork", "no-deps@file:fork"],
+  ])(
+    "a $ref override of a dependency that is newer than the lockfile, and longer in a member: %s",
+    async (spec, id) => {
+      using registry = localRegistry();
+      const locked = (name: string) => ({
+        version: "1.0.0",
+        resolved: registry.tarball(name, "1.0.0"),
+        integrity: registry.integrity(name, "1.0.0"),
+      });
+      const root = { name: "root", workspaces: ["a"], dependencies: { "one-fixed-dep": "1.0.0" } };
+      const a = { name: "a", version: "1.0.0" };
+      using dir = synthetic(
+        "npm-migrate-ref-without-row",
+        {
+          "package.json": JSON.stringify({
+            ...root,
+            devDependencies: { "no-deps": spec },
+            overrides: { "no-deps": "$no-deps" },
+          }),
+          "a/package.json": JSON.stringify({ ...a, dependencies: { "no-deps": ">=1.0.0 <2.0.0 || >=3.0.0" } }),
+          "fork/package.json": JSON.stringify({ name: "no-deps", version: "9.0.0" }),
+          "package-lock.json": npmLock("root", {
+            "": root,
+            a,
+            "node_modules/a": { resolved: "a", link: true },
+            "node_modules/no-deps": locked("no-deps"),
+            "node_modules/one-fixed-dep": { ...locked("one-fixed-dep"), dependencies: { "no-deps": "1.0.0" } },
+          }),
+        },
+        registry.url,
+      );
+
+      const { stderr, exitCode } = await run(dir, "install", "--lockfile-only");
+      expect(stderr).toContain("migrated lockfile from package-lock.json");
+      const { lock } = await readLock(dir);
+      expect(lock.overrides).toStrictEqual({ "no-deps": spec });
+      const copies = Object.keys(lock.packages).filter(key => key.endsWith("no-deps"));
+      expect([...new Set(copies.map(key => lock.packages[key][0]))]).toStrictEqual([id]);
+      expect(exitCode).toBe(0);
+      await frozen(dir);
+    },
+  );
+
   test.concurrent("nested and version-scoped overrides migrate into a lockfileVersion 3 bun.lock", async () => {
     using dir = overridesFixture({ overrides: { "arg@4": "4.1.3", ws: { arg: "4.1.3" } } });
     const { text, lock } = await migrate(dir);

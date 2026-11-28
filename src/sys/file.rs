@@ -452,16 +452,28 @@ pub(crate) mod tests {
     #[test]
     fn copy_replaces_a_link_and_keeps_the_mode() {
         use std::os::unix::fs::{PermissionsExt, symlink};
+        struct Folder(std::path::PathBuf);
+        impl Drop for Folder {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0.join("locked"), mode(0o700));
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        fn mode(mode: u32) -> std::fs::Permissions {
+            PermissionsExt::from_mode(mode)
+        }
         let _g = FD_TEST_LOCK.lock();
         let name = format!("bun-sys-copy-{}", std::process::id());
-        let folder = std::env::temp_dir().join(name);
-        let path = |name: &str| folder.join(name);
+        let folder = Folder(std::env::temp_dir().join(name));
+        let path = |name: &str| folder.0.join(name);
         let z = |name: &str| bun_core::ZBox::from_bytes(path(name).as_os_str().as_encoded_bytes());
-        std::fs::create_dir(&folder).unwrap();
+        std::fs::create_dir(&folder.0).unwrap();
+        std::fs::create_dir(path("locked")).unwrap();
         std::fs::write(path("from"), b"executable").unwrap();
-        std::fs::set_permissions(path("from"), PermissionsExt::from_mode(0o700)).unwrap();
+        std::fs::set_permissions(path("from"), mode(0o700)).unwrap();
         std::fs::write(path("victim"), b"untouched").unwrap();
         symlink(path("victim"), path("to")).unwrap();
+        symlink(path("victim"), path("locked/to")).unwrap();
         std::fs::write(path("old"), b"a file that was there before").unwrap();
         let from = File::open(&z("from"), O::RDONLY, 0).unwrap();
         for to in ["to", "old", "new"] {
@@ -471,8 +483,15 @@ pub(crate) mod tests {
             assert!(found.is_file(), "{to}");
             assert_eq!(found.permissions().mode() & 0o777, 0o700, "{to}");
         }
+        // Others can write to the folder, and this user cannot remove the link. Root can.
+        std::fs::set_permissions(path("locked"), mode(0o577)).unwrap();
+        // SAFETY: it takes no arguments and cannot fail.
+        if unsafe { libc::geteuid() } != 0 {
+            let locked = File::open(&z("locked"), O::RDONLY | O::DIRECTORY, 0).unwrap();
+            let to = bun_core::zstr!("to");
+            assert!(crate::copy_file_z_slow_with_handle(from.fd(), locked.fd(), to).is_err());
+        }
         assert_eq!(std::fs::read(path("victim")).unwrap(), b"untouched");
-        std::fs::remove_dir_all(&folder).unwrap();
     }
 
     #[test]

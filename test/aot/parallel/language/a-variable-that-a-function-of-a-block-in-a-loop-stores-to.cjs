@@ -1,5 +1,4 @@
 // A function declared in the block of a loop is stored to the variable of its name around it, which is declared without a value.
-// The output is stored: plain Bun leaves the store out where the block evaluates no text.
 function throughForOf() {
   var found;
   for (const turn of [1, 2]) {
@@ -76,8 +75,3 @@ function neverStored() {
 console.log(throughForOf(), beside("1"), throughFor("turn"), throughWhile());
 console.log(inAnArm(1), inAnArm(2), inAnArm(3), inAClause([1]), inAClause([2]));
 console.log(seenByAClosure(), assigned(), neverStored());
-/* Output:
-function2 2 2 2
-1 2 nothing 1 nothing
-5 8 nothing
-*/

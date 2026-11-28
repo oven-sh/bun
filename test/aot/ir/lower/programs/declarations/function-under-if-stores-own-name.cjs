@@ -6,7 +6,7 @@
 // CHECK-LABEL: function {{*}}name="named"
 
 // FILE: main.cjs
-// A function declared as the body of `if` in sloppy code is in a block of its own (Annex B.3.3). Its name in that block is an ordinary variable: the function can store to it, the store stays for the next call, each evaluation of the `if` has a variable of its own, and the `var` of the same name around it keeps the function. Plain Bun's transpiler declares no such `var`, so there nothing can call the function: the expected output follows ECMAScript.
+// A function declared as the body of `if` in sloppy code is in a block of its own (Annex B.3.3). Its name in that block is an ordinary variable: the function can store to it, the store stays for the next call, each evaluation of the `if` has a variable of its own, and the `var` of the same name around it keeps the function.
 function storesOwnName(a) {
   if (a) function f() { f = 1; return f; }
   return [typeof f, f(), typeof f, f()];

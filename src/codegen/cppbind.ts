@@ -448,7 +448,6 @@ const rustSharedTypes: Record<string, string> = {
   "JSC::JSInternalPromise": "crate::JSInternalPromise",
   "WTF::StringImpl": "core::ffi::c_void",
   "WebCore::DOMURL": "crate::DOMURL",
-  "WebCore::EventLoopTask": "crate::cpp_task::CppTask",
   // HTTPServerAgent / inspector types only show up in `nothrow` exports;
   // emit as opaque so the raw extern still type-checks.
   "Inspector::InspectorHTTPServerAgent": "core::ffi::c_void",

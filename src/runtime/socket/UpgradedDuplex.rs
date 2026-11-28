@@ -65,7 +65,7 @@ pub(crate) struct UpgradedDuplex {
     /// [`Self::drain_pending`] as soon as the engine is up.
     pub pending_data: JsCell<Vec<u8>>,
     /// The transport closed before the TLS engine existed (same window as
-    /// [`Self::pending_data`]). Consumed by the queued `StartTLS` task.
+    /// [`Self::pending_data`]). Consumed by the queued `run_start_tls`.
     pub pending_close: Cell<bool>,
     /// [`Self::shutdown`] arrived before the engine existed. [`Self::drain_pending`] replays it.
     pub pending_shutdown: Cell<bool>,
@@ -365,13 +365,13 @@ impl DuplexUpgradeContext {
     }
 
     /// Replay bytes that arrived before the engine existed. Called by
-    /// `run_event` once the `StartTLS` branch has
+    /// `run_start_tls` once it has
     /// finished its bookkeeping, so the replay is indistinguishable from an
     /// ordinary post-start delivery.
     pub(super) fn drain_pending(&self) {
         let this = &self.upgrade;
         // Nothing to replay, or the engine never came up (the socket died
-        // before `StartTLS`). Bail before taking so the bytes are not
+        // before `run_start_tls`). Bail before taking so the bytes are not
         // destroyed by a drain that could not deliver them.
         if this.wrapper_ref().is_none() {
             return;

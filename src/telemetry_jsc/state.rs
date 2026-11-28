@@ -348,7 +348,7 @@ impl BoxedTask for VmTask {
 impl VmTask {
     /// Dropped if the VM is gone.
     pub(crate) fn post(self, vm: &VmHandle) {
-        let _ = vm.post(LoopKind::Regular, Box::new(self));
+        let _ = vm.post::<Self>(LoopKind::Regular, Box::new(self));
     }
 
     pub fn run(self) -> JsResult<()> {

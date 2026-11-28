@@ -169,14 +169,16 @@ To incrementally write to the file, call `.write()`.
 const file = Bun.file("output.txt");
 const writer = file.writer();
 
-writer.write("it was the best of times\n");
-writer.write("it was the worst of times\n");
+await writer.write("it was the best of times\n");
+await writer.write("it was the worst of times\n");
 ```
 
-The `FileSink` buffers these chunks internally. To flush the buffer to disk, use `.flush()`. This returns the number of flushed bytes.
+`.write()` returns the number of bytes written. While a write is pending, for example under backpressure, it returns a `Promise<number>` instead. `await` the result to handle both cases.
+
+The `FileSink` buffers these chunks internally. To flush the buffer to disk, use `.flush()`. It returns the number of flushed bytes, or a `Promise<number>` while the flush is pending.
 
 ```ts
-writer.flush(); // write buffer to disk
+await writer.flush(); // write buffer to disk
 ```
 
 The buffer also auto-flushes when the `FileSink`'s _high water mark_ is reached; that is, when its internal buffer is full. You can configure this value.
@@ -189,8 +191,10 @@ const writer = file.writer({ highWaterMark: 1024 * 1024 }); // 1MB
 To flush the buffer and close the file:
 
 ```ts
-writer.end();
+await writer.end();
 ```
+
+If the process exits while a write is still pending, the destination can miss those bytes. Pending writes are most common with pipes and other slow destinations. `await` each pending `.write()`, `.flush()`, and `.end()` before you call `process.exit()`.
 
 By default, the `bun` process stays alive until you explicitly close this `FileSink` with `.end()`. To opt out of this behavior, "unref" the instance.
 
@@ -298,7 +302,7 @@ interface BunFile {
 }
 
 export interface FileSink {
-  write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number;
+  write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number | Promise<number>;
   flush(): number | Promise<number>;
   end(error?: Error): number | Promise<number>;
   start(options?: { highWaterMark?: number }): void;

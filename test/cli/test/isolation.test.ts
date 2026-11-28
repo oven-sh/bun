@@ -5123,6 +5123,46 @@ describe.concurrent.skipIf(isWindows)("BUN_TEST_INPUT_REUSE skips test files who
     }).toEqual({ first: 0, marks: ["changed-during-run"], bReused: false, again: 1 });
     expect(again.stderr).toContain("reuse: b.test.ts runs: mark changed-during-run");
   });
+  test("a path read again after a write nearby took its value is stamped again, so a change in between is seen", async () => {
+    // b reads data/gen.txt, and its recursive mkdir of data/ takes that read's value then. a, in the
+    // other worker, changes the file before b reads it again. b's second read must see the change,
+    // although its first one already has a value.
+    using dir = tempDir("input-reuse-read-again", {
+      "package.json": `{ "name": "read-again" }`,
+      "data/gen.txt": "old",
+      "a.test.ts": `
+        import { test } from "bun:test";
+        import { existsSync, writeFileSync } from "node:fs";
+        test("writes data/gen.txt once b has made its directory", async () => {
+          while (!existsSync(import.meta.dir + "/b-ready")) await Bun.sleep(5);
+          writeFileSync(import.meta.dir + "/data/gen.txt", "new");
+        });
+      `,
+      "b.test.ts": `
+        import { expect, test } from "bun:test";
+        import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+        test("reads data/gen.txt, makes sure of its directory, and reads it until it changes", async () => {
+          const data = import.meta.dir + "/data";
+          expect(readFileSync(data + "/gen.txt", "utf8")).toBe("old");
+          mkdirSync(data, { recursive: true });
+          writeFileSync(import.meta.dir + "/b-ready", "");
+          while (readFileSync(data + "/gen.txt", "utf8") === "old") await Bun.sleep(5);
+        });
+      `,
+    });
+    const both = ["./a.test.ts", "./b.test.ts"];
+    const flags = ["--parallel=2"];
+    const scale = { BUN_TEST_PARALLEL_SCALE_MS: "0" };
+    const first = await runTests(String(dir), flags, both, { ...record, ...scale, BUN_TEST_INPUT_RECORD_JSON: "1" });
+    const json = JSON.parse(fs.readFileSync(join(String(dir), "records", "b.test.ts.json"), "utf8"));
+    const again = await runTests(String(dir), flags, both, { ...reuse, ...scale });
+    expect({
+      first: first.exitCode,
+      marks: json.marks,
+      bReused: reusedFiles(again.stderr).includes("b.test.ts"),
+    }).toEqual({ first: 0, marks: ["changed-during-run"], bReused: false });
+    expect(again.stderr).toContain("reuse: b.test.ts runs: mark changed-during-run");
+  });
 });
 
 // The recorder's store relies on flock, so recording and reuse are Unix only: on Windows,

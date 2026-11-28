@@ -120,7 +120,8 @@ pub enum Wrote {
 #[derive(Default)]
 pub struct OwnReads {
     pub reads: Vec<Read>,
-    keys: StringHashMap<()>,
+    /// The index in `reads` of each look, by look, path and `extra`.
+    keys: StringHashMap<usize>,
     /// Absolute paths the file wrote, created or removed, as given and with the symbolic links of
     /// their parent resolved (a module's path is the resolved one, as `/private/tmp` on macOS).
     written: Vec<(Box<[u8]>, Wrote)>,
@@ -283,10 +284,18 @@ impl OwnReads {
         key.extend_from_slice(path);
         key.push(0);
         key.extend_from_slice(extra);
-        if self.keys.contains_key(&*key) {
+        if let Some(&index) = self.keys.get(&*key) {
+            // Observed already, at a write nearby: the file looks again now, and what it sees now
+            // is what the record holds only if the path is as it was then.
+            let read = &self.reads[index];
+            if read.value.is_some()
+                && let Some(then) = read.stamp.as_deref()
+            {
+                self.changed |= *stamp(root, look, path, extra) != *then;
+            }
             return;
         }
-        bun_core::handle_oom(self.keys.put(&key, ()));
+        bun_core::handle_oom(self.keys.put(&key, self.reads.len()));
         self.reads.push(Read {
             look,
             path: Box::from(path),

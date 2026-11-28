@@ -53,6 +53,8 @@ pub struct KnownFunction {
     pub relies_on_facts: bool,
     pub names_locked_globals: bool,
     pub is_named_only_to_be_called: bool,
+    /// The function that the helper binds as the setter of each name, where nothing else can reach it or what it calls.
+    pub unseen_setter: Option<SymbolId>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -82,11 +84,16 @@ pub struct FileHelpers {
     functions: Box<[(FnId, KnownFunction)]>,
     bindings: Box<[(SymbolId, BindingValues)]>,
     head_allows_reads_of_open_globals: bool,
+    defines_helpers_in_silence: bool,
 }
 
 impl FileHelpers {
     pub fn head_allows_reads_of_open_globals(&self) -> bool {
         self.head_allows_reads_of_open_globals
+    }
+
+    pub(super) fn defines_helpers_in_silence(&self) -> bool {
+        self.defines_helpers_in_silence
     }
 
     pub fn function(&self, function: FnId) -> Option<&KnownFunction> {
@@ -198,6 +205,23 @@ pub(super) struct FindInput<'a, 's> {
 
 fn is_call_that_runs_nothing(_: hir::CallId) -> bool {
     false
+}
+
+pub(super) fn exports_function_declaration(hir: &hir::File<'_>, bound: &Bound<'_>) -> bool {
+    hir.ids(hir.body)
+        .any(|statement| match hir[statement].kind {
+            StmtKind::Fn(function) => hir[function]
+                .flags
+                .intersects(Flags::EXPORT | Flags::DEFAULT),
+            StmtKind::ExportNamed(export) if !hir[export].has_module_specifier => hir[export]
+                .items
+                .iter()
+                .any(|item| match bound.exported_binding(item) {
+                    Binding::Symbol(symbol) => bound.binding_kind(symbol) == BindingKind::Function,
+                    Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,
+                }),
+            _ => false,
+        })
 }
 
 pub(super) fn find_global(path: &[&str]) -> Option<BuiltinId> {
@@ -424,12 +448,45 @@ impl<'a, 's> Finder<'a, 's> {
             .file
             .bound
             .binding_stability_ignoring(symbol, &|_| true);
-        let definition = self.find_definition(symbol);
+        let (definition, path) = match self.find_destructured(symbol) {
+            Some((source, name)) => match path.split_last() {
+                Some((last, holders)) if self.file.atoms.bytes(name) == last.as_bytes() => {
+                    (Some(source), holders)
+                }
+                _ => return false,
+            },
+            None => (self.find_definition(symbol), path),
+        };
         definition.is_some_and(|definition| {
             !definition.is_stored_again
                 && recorded == BindingStability::Stable
                 && self.names_global(definition.value, path)
         })
+    }
+
+    /// `var { defineProperty: define } = Object`: what the name is taken from, and the name.
+    fn find_destructured(&self, symbol: SymbolId) -> Option<(Definition, Atom)> {
+        let (hir, bound) = (self.file.hir, self.file.bound);
+        let BindingInitializer::PatternProperty { source, path } =
+            bound.binding_initializer(hir, symbol)
+        else {
+            return None;
+        };
+        let [name] = path[..] else {
+            return None;
+        };
+        let mut stores = bound.stores_to(symbol).iter();
+        let definition = Definition {
+            value: source,
+            statement: bound.statement_of_expr(source),
+            is_stored_again: stores.any(|store| !self.file.decisions.is_dead_expr(store.target)),
+        };
+        Some((definition, name))
+    }
+
+    fn find_initialization(&self, symbol: SymbolId) -> Option<Definition> {
+        self.find_definition(symbol)
+            .or_else(|| Some(self.find_destructured(symbol)?.0))
     }
 
     fn names_global(&self, expression: ExprId, path: &[&str]) -> bool {
@@ -497,7 +554,7 @@ impl<'a, 's> Finder<'a, 's> {
     }
 
     fn is_initialized_before(&self, symbol: SymbolId, function: FnId) -> bool {
-        let Some(definition) = self.find_definition(symbol) else {
+        let Some(definition) = self.find_initialization(symbol) else {
             return false;
         };
         let (hir, bound) = (self.file.hir, self.file.bound);
@@ -622,27 +679,11 @@ impl<'a, 's> Finder<'a, 's> {
     }
 
     fn exports_function_declaration(&self) -> bool {
-        let (hir, bound) = (self.file.hir, self.file.bound);
-        hir.ids(hir.body)
-            .any(|statement| match hir[statement].kind {
-                StmtKind::Fn(function) => hir[function]
-                    .flags
-                    .intersects(Flags::EXPORT | Flags::DEFAULT),
-                StmtKind::ExportNamed(export) if !hir[export].has_module_specifier => hir[export]
-                    .items
-                    .iter()
-                    .any(|item| match bound.exported_binding(item) {
-                        Binding::Symbol(symbol) => {
-                            bound.binding_kind(symbol) == BindingKind::Function
-                        }
-                        Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,
-                    }),
-                _ => false,
-            })
+        exports_function_declaration(self.file.hir, self.file.bound)
     }
 
     fn is_defined_in_head(&self, symbol: SymbolId) -> bool {
-        let definition = self.find_definition(symbol);
+        let definition = self.find_initialization(symbol);
         !self.may_start_early() && definition.is_some_and(|definition| self.is_in_head(definition))
     }
 
@@ -955,8 +996,78 @@ impl<'a, 's> Finder<'a, 's> {
         })
     }
 
+    fn is_named_once(&self, symbol: SymbolId) -> bool {
+        let (hir, bound) = (self.file.hir, self.file.bound);
+        let analysis = self.file.analysis;
+        let mut read_without_expression = analysis.bindings_read_without_expression(hir, bound);
+        let names = (0..hir.exprs.len() as u32).map(ExprId).filter(|&name| {
+            matches!(hir[name].kind, ExprKind::Ident(_))
+                && bound.binding(name) == Binding::Symbol(symbol)
+        });
+        let is_listed_as_export = |statement: StmtId| match hir[statement].kind {
+            StmtKind::ExportNamed(export) if !hir[export].has_module_specifier => {
+                let mut items = hir[export].items.iter();
+                items.any(|item| bound.exported_binding(item) == Binding::Symbol(symbol))
+            }
+            _ => false,
+        };
+        let declared = bound.symbol(symbol);
+        declared.decls.len() == 1
+            && declared.parent.is_none()
+            && declared.export_symbol.is_none()
+            && !hir.ids(hir.body).any(is_listed_as_export)
+            && !bound.is_visible_to_eval(symbol)
+            && !read_without_expression.any(|binding| binding == Binding::Symbol(symbol))
+            && names.count() == 1
+    }
+
+    fn find_unseen_setter(&self, matched: &Matched) -> Option<SymbolId> {
+        let find_helper = |matched: &Matched| {
+            let mut references = matched.references.iter();
+            references.find_map(|reference| match *reference {
+                KnownReference::Helper { symbol, .. } => Some(symbol),
+                _ => None,
+            })
+        };
+        if matched.entry.shape != Shape::ExportDefinesGettersAndBoundSetters {
+            return None;
+        }
+        let setter = find_helper(matched)?;
+        let [held] = self.bindings.get(&setter)?.functions[..] else {
+            return None;
+        };
+        let returns_value = find_helper(self.matched.get(&held.definition)?)?;
+        let is_declaration = self.file.bound.binding_kind(setter) == BindingKind::Function;
+        (is_declaration && self.is_named_once(setter) && self.is_named_once(returns_value))
+            .then_some(setter)
+    }
+
+    /// An open global that the head reads may be an accessor, which may load a file that imports this one.
+    fn defines_helpers_in_silence(&self) -> bool {
+        let held = self.bindings.iter();
+        let held = held.filter(|(_, values)| values.holds_from_the_start);
+        let matched = self.matched.values();
+        let relying = matched.filter(|matched| matched.relies_on_facts == Some(true));
+        let references = relying.flat_map(|matched| &matched.references);
+        let aliases = references.filter_map(|reference| match *reference {
+            KnownReference::Global { symbol, .. } => Some(symbol),
+            _ => None,
+        });
+        let mut symbols = held.map(|(&symbol, _)| symbol).chain(aliases);
+        symbols.all(|symbol| {
+            let definition = self.find_initialization(symbol);
+            definition.is_none_or(|definition| self.is_in_silent_head(definition.value))
+        })
+    }
+
     fn finish(self) -> FileHelpers {
+        let unseen_setters: SmallVec<[(FnId, SymbolId); 1]> = self
+            .matched
+            .iter()
+            .filter_map(|(&function, matched)| Some((function, self.find_unseen_setter(matched)?)))
+            .collect();
         let head_allows_reads_of_open_globals = !self.may_start_early();
+        let defines_helpers_in_silence = self.defines_helpers_in_silence();
         let replace_themselves = self.matched.iter().filter(|(_, matched)| {
             matched.verdict == Verdict::Accepted && matched.entry.shape.replaces_itself()
         });
@@ -979,6 +1090,9 @@ impl<'a, 's> Finder<'a, 's> {
                     relies_on_facts: matched.relies_on_facts.unwrap_or(false),
                     names_locked_globals: names_locked_globals.contains(&function),
                     is_named_only_to_be_called: only_called.contains(&function),
+                    unseen_setter: unseen_setters
+                        .iter()
+                        .find_map(|entry| (entry.0 == function).then_some(entry.1)),
                 };
                 (function, known)
             })
@@ -993,6 +1107,7 @@ impl<'a, 's> Finder<'a, 's> {
             functions: functions.into_boxed_slice(),
             bindings: bindings.into_boxed_slice(),
             head_allows_reads_of_open_globals,
+            defines_helpers_in_silence,
         }
     }
 }

@@ -19,9 +19,8 @@ use crate::ir::generated::{
     Field, FieldFlags, FieldForm, Layout, LayoutFlags, LayoutKind, LimitId, StaticField,
 };
 use crate::ir::{
-    ClassSlot, DeclaredType, FunctionId, FunctionKey, LayoutId, LayoutKey, OpaqueKind,
-    PositionFlags, Primitives, PropertyKey, PropertyKeyId, StringId, Type, TypeId, TypeTable,
-    VariableKey,
+    ClassSlot, DeclaredType, FunctionId, LayoutId, LayoutKey, OpaqueKind, PositionFlags,
+    Primitives, PropertyKey, PropertyKeyId, StringId, Type, TypeId, TypeTable, VariableKey,
 };
 use crate::known_helpers::StateOwner;
 use crate::lower::class::ClassElement;
@@ -654,12 +653,7 @@ impl FileLowering<'_, '_, '_, '_> {
         self.find_layout_of_written_type(ty)
     }
 
-    fn define_constructor_function_layout(
-        &mut self,
-        layout: LayoutId,
-        function: FunctionRef,
-        constructor: Option<FunctionId>,
-    ) {
+    fn define_constructor_function_layout(&mut self, layout: LayoutId, function: FunctionRef) {
         let node = self.hir[function.function];
         let declared_this = self.find_declared_this_layout(function);
         let supertypes: Supertypes = declared_this
@@ -687,7 +681,6 @@ impl FileLowering<'_, '_, '_, '_> {
             module: Some(self.module_id()),
             position: node.start,
             base,
-            constructor,
             fields,
             flags,
             ..Layout::default()
@@ -753,15 +746,25 @@ impl FileLowering<'_, '_, '_, '_> {
     ) -> Option<LayoutId> {
         let layout = self.declare_constructor_function_layout(function)?;
         if function.file == self.file && !self.fragment.is_layout_defined(layout) {
-            let is_never_made = self.decisions().is_dead_function(function.function)
-                || known_call::is_left_out(self, self.file, function.function);
-            let constructor = match is_never_made {
-                true => None,
-                false => Some(self.reference_function(FunctionKey::Source(function))),
-            };
-            self.define_constructor_function_layout(layout, function, constructor);
+            self.define_constructor_function_layout(layout, function);
         }
         Some(layout)
+    }
+
+    /// The layout names its constructor once that is declared: code that the lowering skips may hold a function whose layout a type names.
+    pub(in crate::lower) fn note_declared_constructor_function(
+        &mut self,
+        function: FunctionRef,
+        declared: FunctionId,
+    ) {
+        let Some(layout) = self.constructor_function_layout(function) else {
+            return;
+        };
+        let is_never_made = self.decisions().is_dead_function(function.function)
+            || known_call::is_left_out(self, self.file, function.function);
+        if !is_never_made {
+            self.fragment.note_constructor(layout, declared);
+        }
     }
 
     fn find_field_key(
@@ -1108,7 +1111,7 @@ impl FileLowering<'_, '_, '_, '_> {
             if let Some(layout) = self.declare_constructor_function_layout(reference)
                 && !self.fragment.is_layout_defined(layout)
             {
-                self.define_constructor_function_layout(layout, reference, None);
+                self.define_constructor_function_layout(layout, reference);
             }
         }
     }

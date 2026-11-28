@@ -258,8 +258,8 @@ pub(crate) struct FragmentBuilder {
     layout_keys: KeyTable<LayoutKey>,
     layouts_named_in_file: Vec<LayoutId>,
     layouts_named_in_parts: Vec<LayoutId>,
-    /// What other parts say of a layout that one part defines.
-    declared_by_other_parts: FxHashMap<LayoutId, (LayoutFlags, Option<FunctionId>)>,
+    /// What is said of a layout behind its definition, also by other parts.
+    said_behind_definition: FxHashMap<LayoutId, (LayoutFlags, Option<FunctionId>)>,
     code_layout_count: Option<usize>,
     variable_keys: KeyTable<VariableKey>,
     module_keys: KeyTable<ModuleRef>,
@@ -317,7 +317,7 @@ impl FragmentBuilder {
             layout_keys: finders.layouts.with_keys(tables.layout_keys),
             layouts_named_in_file: Vec::new(),
             layouts_named_in_parts: Vec::new(),
-            declared_by_other_parts: FxHashMap::default(),
+            said_behind_definition: FxHashMap::default(),
             code_layout_count: None,
             variable_keys: finders.variables.with_keys(tables.variable_keys),
             module_keys: finders.modules.with_keys(tables.module_keys),
@@ -488,6 +488,12 @@ impl FragmentBuilder {
         );
         self.layout_keys.mark_defined(id, self.visit);
         self.layouts.push((id, layout));
+    }
+
+    pub(crate) fn note_constructor(&mut self, layout: LayoutId, constructor: FunctionId) {
+        debug_assert!(self.is_layout_defined(layout));
+        let said = self.said_behind_definition.entry(layout).or_default();
+        said.1 = Some(constructor);
     }
 
     pub(crate) fn define_object_type(
@@ -744,7 +750,7 @@ impl FragmentBuilder {
             if !self.is_layout_defined(id) {
                 self.define_layout(id, layout);
             } else {
-                let said = self.declared_by_other_parts.entry(id).or_default();
+                let said = self.said_behind_definition.entry(id).or_default();
                 said.0 |= layout.flags;
                 said.1 = said.1.or(layout.constructor);
             }
@@ -831,10 +837,10 @@ impl FragmentBuilder {
                 .data
                 .is_none_or(|data| self.data.iter().any(|&(id, _)| id == data))
         );
-        let declared_by_other_parts = take(&mut self.declared_by_other_parts);
+        let said_behind_definition = take(&mut self.said_behind_definition);
         for (id, layout) in &mut self.layouts {
-            if !declared_by_other_parts.is_empty()
-                && let Some(&(flags, constructor)) = declared_by_other_parts.get(id)
+            if !said_behind_definition.is_empty()
+                && let Some(&(flags, constructor)) = said_behind_definition.get(id)
             {
                 layout.flags |= flags;
                 layout.constructor = layout.constructor.or(constructor);

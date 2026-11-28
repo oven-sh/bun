@@ -1,6 +1,7 @@
 mod canonical;
 mod find;
 mod held_early;
+mod imported;
 mod private_state;
 mod published;
 mod quiet;
@@ -13,9 +14,11 @@ pub use self::find::{
     BindingValues, Certainty, FileHelpers, HeldFunction, KnownFunction, KnownReference,
 };
 use self::held_early::find_files_held_early;
+use self::imported::{ImportedHelpers, find_imported_helpers};
 pub use self::private_state::{FilePrivateStates, StateOwner};
 pub use self::published::{Helper, Shape};
 pub use self::quiet::Quiet;
+use self::quiet::is_in_statement_of_file;
 pub use self::resolve::{
     KnownCallee, PrivateFieldAccess, PrivateFieldCall, PrivateMemberKind, PrivateStateKind,
     PrivateStateRole, PrivateStateSite, PublicFieldAnswer, ResolveInput, ResolvedReference,
@@ -24,11 +27,12 @@ pub use self::resolve::{
 };
 
 use crate::builtins::id::BuiltinId;
+use crate::ir::generated::{ImportPhase, ModuleRequestKind};
 use crate::ir::{InParallel, for_each_mut};
-use crate::modules::ModuleGraph;
+use crate::modules::{ImportBinding, ModuleGraph, ModuleRef};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Parent, SymbolId};
-use bun_sema::hir::{BinOp, ExprId, ExprKind, File, FnId, NodeData, StmtId, StmtKind};
+use bun_sema::hir::{BinOp, Call, ExprId, ExprKind, File, FnId, NodeData, StmtId, StmtKind};
 use bun_sema::program::{FileId, Files, Sym};
 use bun_sema::util::FxHashSet;
 use std::sync::OnceLock;
@@ -52,6 +56,32 @@ pub struct KnownHelpers {
     files: Vec<FileHelpers>,
     private_states: Vec<OnceLock<FilePrivateStates>>,
     binding_names: FxHashSet<Atom>,
+    imported: Vec<ImportedHelpers>,
+    has_room_for_names: bool,
+}
+
+/// How many names a program's export helpers may define one by one: each takes compile time and a place in the type tables.
+const MAX_NAMES_DEFINED: usize = 16_384;
+
+fn count_names_listed_for_helpers(hir: &File<'_>) -> usize {
+    let count_listed = |call: &Call| {
+        let mut arguments = hir.ids(call.args);
+        let (Some(_), Some(table), None) = (arguments.next(), arguments.next(), arguments.next())
+        else {
+            return 0;
+        };
+        let ExprKind::Object(properties) = hir[hir.skip_type_assertions(table)].kind else {
+            return 0;
+        };
+        let lists_functions = properties.iter().all(|property| {
+            matches!(
+                hir[hir.skip_type_assertions(hir[property].value)].kind,
+                ExprKind::Fn(_)
+            )
+        });
+        if lists_functions { properties.len() } else { 0 }
+    };
+    hir.calls.iter().map(count_listed).sum()
 }
 
 fn find_by_key<K: Ord + Copy, V>(sorted: &[(K, V)], key: K) -> Option<&V> {
@@ -130,6 +160,7 @@ impl KnownHelpers {
         let mut known = KnownHelpers::default();
         known.files.resize_with(file_count, FileHelpers::default);
         let mut has_private_state = false;
+        let mut defines_names = false;
         for (file, helpers) in found {
             let bound = files.bound(file);
             let names = helpers
@@ -139,12 +170,61 @@ impl KnownHelpers {
             has_private_state |= helpers
                 .functions()
                 .any(|(_, function)| reads_private_state(function.shape.helper()));
+            defines_names |= helpers
+                .functions()
+                .any(|(_, function)| function.shape == Shape::ExportDefinesGettersAndBoundSetters);
             known.files[file.idx()] = helpers;
+        }
+        if defines_names {
+            let files_compiled = files.compiled_files().iter();
+            let names = files_compiled.map(|&file| count_names_listed_for_helpers(files.hir(file)));
+            known.has_room_for_names = names.sum::<usize>() <= MAX_NAMES_DEFINED;
         }
         if has_private_state {
             known.private_states.resize_with(file_count, OnceLock::new);
         }
         known
+    }
+
+    /// For a build in which no test runner replaces what a file exports.
+    pub fn follow_imports(&mut self, files: &Files<'_>) {
+        self.imported = find_imported_helpers(self, files);
+    }
+
+    pub fn imports_helpers(&self, file: FileId) -> bool {
+        let imported = self.imported.get(file.idx());
+        imported.is_some_and(|imported| !imported.bindings.is_empty())
+    }
+
+    /// Others may call the function declarations of a file that imports helpers before its body begins.
+    pub fn importer_may_start_early(&self, file: FileId) -> bool {
+        let imported = self.imported.get(file.idx());
+        imported.is_some_and(|imported| imported.may_start_early)
+    }
+
+    /// The only function that an imported `callee` ever holds. It does so once the body of `file` has begun, and a call before that may throw.
+    pub fn imported_callee(
+        &self,
+        files: &Files<'_>,
+        file: FileId,
+        callee: ExprId,
+    ) -> Option<&KnownFunction> {
+        let imported = self.imported.get(file.idx())?;
+        let symbol = KnownHelpers::find_called_symbol(files, file, callee)?;
+        let home = *find_by_key(&imported.bindings, symbol)?;
+        let values = self.binding(home.file, home.id)?;
+        let [held] = values.functions[..] else {
+            return None;
+        };
+        let known = self.function(home.file, held.definition)?;
+        let is_only_value =
+            held.closure == held.definition && !files.bound(home.file).is_visible_to_eval(home.id);
+        (is_only_value && self.holds_for_importers(home.file, values, known)).then_some(known)
+    }
+
+    /// Whether the names that the bundler's own export helper lays are few enough to be defined one by one.
+    pub fn has_room_for_names(&self) -> bool {
+        self.has_room_for_names
     }
 
     pub fn leave_replaceable_variables(&mut self, modules: &ModuleGraph) {
@@ -290,6 +370,54 @@ impl KnownHelpers {
             && hir[defined].start < hir[called].start;
         (is_ahead && values.certainty != Certainty::MayHoldOtherValues && known.relies_on_facts)
             .then_some(known)
+    }
+
+    /// A helper that a statement of `file` calls, imported straight from a file that loads nothing ahead of its body.
+    pub fn callee_imported_ahead(
+        &self,
+        files: &Files<'_>,
+        modules: &ModuleGraph,
+        file: FileId,
+        callee: ExprId,
+    ) -> Option<(FileId, &KnownFunction)> {
+        let symbol = KnownHelpers::find_called_symbol(files, file, callee)?;
+        let ImportBinding::Variable(variable) = modules.import_binding(file, symbol) else {
+            return None;
+        };
+        let values = self.binding(variable.file, variable.id)?;
+        let [held] = values.functions[..] else {
+            return None;
+        };
+        let known = self.function(variable.file, held.definition)?;
+        let is_requested = modules.requests(file).iter().any(|request| {
+            request.target == ModuleRef::File(variable.file)
+                && request.kind == ModuleRequestKind::Import
+                && request.phase == ImportPhase::Evaluation
+        });
+        let is_ahead = is_requested
+            && modules.requests(variable.file).is_empty()
+            && is_in_statement_of_file(files.bound(file), callee);
+        let may_be_replaced = modules.is_replaceable(variable)
+            || modules.reaches_mock(file)
+            || modules.may_be_mocked(ModuleRef::File(variable.file));
+        (is_ahead && !may_be_replaced && self.holds_for_importers(variable.file, values, known))
+            .then_some((variable.file, known))
+    }
+
+    /// No code ran between the start of `home` and the definition, so no importer began ahead of it.
+    fn holds_for_importers(
+        &self,
+        home: FileId,
+        values: &BindingValues,
+        known: &KnownFunction,
+    ) -> bool {
+        let mut references = known.references.iter();
+        values.holds_from_the_start
+            && known.relies_on_facts
+            && !references.any(|reference| matches!(reference, KnownReference::Holder { .. }))
+            && self
+                .file(home)
+                .is_some_and(FileHelpers::defines_helpers_in_silence)
     }
 
     /// A helper that answers a value with a marker before it asks anything else. What it names for other values does not matter there.

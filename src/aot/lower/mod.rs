@@ -245,7 +245,9 @@ impl FileLowering<'_, '_, '_, '_> {
             FunctionKey::CopiedGetter { helper, getter, .. } => {
                 self.lower_copied_getter(function, helper, getter);
             }
-            FunctionKey::PrototypeMaker(_) => self.lower_prototype_maker(function),
+            FunctionKey::PrototypeMaker(_) | FunctionKey::IdleSetter { .. } => {
+                self.lower_empty_function(function);
+            }
         }
     }
 }

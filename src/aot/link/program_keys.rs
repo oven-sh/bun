@@ -317,6 +317,7 @@ impl OrderedKey for ProgramFunctionKey {
                 getter,
             } => return join_rank(self.project, 15, [file.0, helper.0, getter.0]),
             FunctionKey::PrototypeMaker(it) => (16, it.file, it.id.0),
+            FunctionKey::IdleSetter { file, call } => (17, file, call.0),
         };
         join_rank(self.project, variant, [file.0, second, 0])
     }

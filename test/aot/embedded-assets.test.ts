@@ -1597,6 +1597,32 @@ for (const [label, load] of Object.entries(served)) console.log(label, await Pro
     expect(warnings(built)).toEqual([]);
   }, 120_000);
 
+  test("a module that a bundler has wrapped reads a file beside the bundle", async () => {
+    using dir = tempDir("aot-read-in-wrapped-module", {
+      "app/node_modules/bundled/package.json": `{ "name": "bundled", "main": "index.mjs" }`,
+      "app/node_modules/bundled/beside.txt": "beside",
+      "app/node_modules/bundled/unread.txt": "never embedded",
+      "app/node_modules/bundled/index.mjs": `import { readFileSync } from "node:fs";
+import { join } from "node:path";
+var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+var require_reader = __commonJS(function (exports, module) {
+  exports.read = () => readFileSync(join(import.meta.dirname, "beside.txt"), "utf8");
+});
+var require_unused = __commonJS(function (exports, module) {
+  exports.read = () => readFileSync(join(import.meta.dirname, "unread.txt"), "utf8");
+});
+export const text = require_reader().read();
+`,
+      "app/package.json": `{ "name": "server" }`,
+      "app/main.mjs": `import { text } from "bundled";\nconsole.log(text);\n`,
+    });
+    const { plain, built, compiled } = await bothWays(String(dir), "./main.mjs");
+    expect(plain.stdout).toBe("beside\n");
+    expect(compiled).toEqual({ stdout: "beside\n", stderr: "", exitCode: 0 });
+    expect(warnings(built)).toEqual([]);
+    expect(readFileSync(join(String(dir), "built.exe")).includes("never embedded")).toBe(false);
+  }, 120_000);
+
   test("a file object that is handed on, and the real path of a file", async () => {
     using dir = tempDir("aot-file-objects-handed-on", {
       "app/node_modules/served/package.json": `{ "name": "served", "main": "index.cjs" }`,

@@ -5,7 +5,7 @@ use super::find::{
 use super::published::{Helper, PUBLISHED_FUNCTIONS, Shape};
 use super::resolve::{KnownCallee, ResolveInput, resolve_callee, resolve_reference};
 use super::table::{Table, analyze, find_published_function};
-use super::{KnownHelpers, Reference, is_made_behind};
+use super::{KnownHelpers, MAX_NAMES_DEFINED, Reference, is_made_behind};
 use crate::ir::run_serially;
 use crate::modules::testing::{file_named, with_graph};
 use bun_sema::hir::{ExprId, ExprKind, StmtId, StmtKind};
@@ -946,9 +946,7 @@ fn a_helper_of_typescript_around_a_require_that_differs_in_one_place_is_an_ordin
     assert!(!shapes.contains(&star), "{shapes:?}");
 }
 
-#[test]
-fn helpers_of_bun_are_recognized() {
-    let source = r#"var __defProp = Object.defineProperty;
+const BUN_EXPORT: &str = r#"var __defProp = Object.defineProperty;
 var __returnValue = (v) => v;
 function __exportSetter(name, newValue) {
   this[name] = __returnValue.bind(null, newValue);
@@ -963,14 +961,30 @@ var __export = (target, all) => {
     });
 };
 "#;
+
+#[test]
+fn helpers_of_bun_are_recognized() {
     assert_eq!(
-        shapes_in("/a.mjs", source),
+        shapes_in("/a.mjs", BUN_EXPORT),
         [
             Shape::ReturnValueReturnsArgument,
             Shape::ExportSetterStoresBoundReturnValue,
             Shape::ExportDefinesGettersAndBoundSetters,
         ]
     );
+}
+
+#[test]
+fn a_program_with_too_many_exported_names_has_no_room_for_them() {
+    let has_room = |count: usize| {
+        let table: String = (0..count).map(|i| format!("a{i}: () => 0,")).collect();
+        let source = format!("{BUN_EXPORT}var all = {{}};\n__export(all, {{{table}}});\n");
+        with_graph(&[("main.mjs", source.as_str())], |_, bind_input| {
+            KnownHelpers::compute(bind_input.files, &run_serially).has_room_for_names()
+        })
+    };
+    assert!(has_room(MAX_NAMES_DEFINED));
+    assert!(!has_room(MAX_NAMES_DEFINED + 1));
 }
 
 #[test]

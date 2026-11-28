@@ -335,7 +335,7 @@ fn name_data_files_found_by_patterns(
     has_found_data
 }
 
-/// Returns true if `e` is in a function, declarator or statement that the executable leaves out, or nested in one. A parent that the walk doesn't know ends it with false.
+/// Returns true if `e` is in a function, declarator or statement that the executable leaves out, or nested in one, unless the body of an inner module that stays lies between. A parent that the walk doesn't know ends it with false.
 fn is_in_left_out_code(files: &Files<'_>, left_out: &LeftOutCode, file: FileId, e: ExprId) -> bool {
     let bound = files.bound(file);
     let mut node = bound.parent_of_expr(e);
@@ -359,8 +359,12 @@ fn is_in_left_out_code(files: &Files<'_>, left_out: &LeftOutCode, file: FileId, 
             }
             Parent::Case(case) => Parent::Stmt(bound.case_stmt[case.idx()]),
             Parent::FnBody(function) => {
-                if left_out.functions.contains(&FunctionRef { file, function }) {
+                let body = FunctionRef { file, function };
+                if left_out.functions.contains(&body) {
                     return true;
+                }
+                if left_out.bodies_of_kept_inner_modules.contains(&body) {
+                    return false;
                 }
                 match bound.fns[function.idx()].owner {
                     FnOwner::Expr(written) => bound.parent_of_expr(written),
@@ -1580,6 +1584,9 @@ impl Build<'_> {
             &in_parallel,
         );
         known_helpers.keep_private_states_in_collections(&contents.replaced_builtins);
+        if !self.options.load.runs_tests && !contents.mocks_any_module {
+            known_helpers.follow_imports(view.files());
+        }
         steps.end_with(|| format!("{project_name}: known helpers"));
         let run_of_library = crate::test_runs::RunContents::default();
         let plugin_answers_for_names_left_to_host = project == ProjectId::Application

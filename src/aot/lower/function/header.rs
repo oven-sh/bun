@@ -80,7 +80,8 @@ impl FileLowering<'_, '_, '_, '_> {
                     | FunctionKey::PrivateNameTest { .. }
                     | FunctionKey::ModuleRequest { .. }
                     | FunctionKey::CopiedGetter { .. }
-                    | FunctionKey::PrototypeMaker(_)) => return Some(enclosing),
+                    | FunctionKey::PrototypeMaker(_)
+                    | FunctionKey::IdleSetter { .. }) => return Some(enclosing),
                 },
                 CodeUnit::FieldInitializer(member) => bound.member_class(member)?,
             };
@@ -270,7 +271,7 @@ fn declare(
     };
     let id = file.declare_function(FunctionKey::Source(source), create);
     if !file.inputs.library_functions.is_left_out(source) && !file.is_of_other_part(function) {
-        file.constructor_function_layout(source);
+        file.note_declared_constructor_function(source, id);
     }
     id
 }

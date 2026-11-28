@@ -1849,6 +1849,12 @@ pub(in crate::lower) fn is_left_out(
         Parent::VarInit(declarator) => declarations.is_declarator_left_out(home, declarator),
         _ => false,
     };
+    // The body of an inner module stays whatever becomes of the variable that held its wrapper.
+    let modules = file.inputs.modules;
+    let is_kept_module = |function: FnId| {
+        let module = modules.inner_module(home, function);
+        module.is_some_and(|module| !modules.is_left_out(module))
+    };
     let step_outward = |&node: &Parent| match node {
         Parent::Expr(expression) => Some(bound.parent_of_expr(expression)),
         Parent::Prop(property) | Parent::PropKey(property) | Parent::MethodKey(property) => {
@@ -1870,6 +1876,7 @@ pub(in crate::lower) fn is_left_out(
         Parent::Stmt(statement) => Some(bound.parent_of_stmt(statement)),
         Parent::VarInit(declarator) => Some(Parent::Stmt(bound.var_stmt[declarator.idx()])),
         Parent::Case(case) => Some(Parent::Stmt(bound.case_stmt[case.idx()])),
+        Parent::FnBody(function) if is_kept_module(function) => None,
         Parent::FnBody(function) => match bound.fns[function.idx()].owner {
             FnOwner::Expr(written) => Some(bound.parent_of_expr(written)),
             FnOwner::Stmt(statement) => Some(bound.parent_of_stmt(statement)),
@@ -1879,7 +1886,8 @@ pub(in crate::lower) fn is_left_out(
     };
     // A path ends at a parameter, an initializer of a field or a decorator. It goes on at the function that encloses those.
     let mut around = core::iter::successors(Some(function), |&inner| {
-        bound.fns[inner.idx()].enclosing.some()
+        let enclosing = bound.fns[inner.idx()].enclosing.some();
+        enclosing.filter(|_| !is_kept_module(inner))
     });
     around.any(|from| {
         core::iter::successors(Some(Parent::FnBody(from)), step_outward).any(is_node_left_out)
@@ -2112,6 +2120,45 @@ var __export = (target, all) => {
         ] {
             assert_eq!(defines(getters), 2, "{getters}");
         }
+    }
+
+    const EXPORT_OF_BUN: &str = "var { defineProperty: define } = Object;
+var same = v => v;
+function store(name, value) { this[name] = same.bind(null, value); }
+var lay = (target, all) => {
+  for (var name in all)
+    define(target, name, { get: all[name], enumerable: !0, configurable: !0, set: store.bind(all, name) });
+};
+";
+
+    #[test]
+    fn export_helper_of_bun_is_followed_across_an_import() {
+        let objects = |helpers: &str, imports: &str| {
+            let helpers = format!("{EXPORT_OF_BUN}{helpers}");
+            let main = format!(
+                "{imports}\nvar names = {{}};\nlay(names, {{ a: () => 1, b: () => 2 }});\nconsole.log(names);"
+            );
+            let files = [
+                ("main.mjs", main.as_str()),
+                ("helpers.mjs", helpers.as_str()),
+                ("barrel.mjs", "export { lay } from \"./helpers.mjs\";"),
+                ("other.mjs", "console.log(1);"),
+            ];
+            count_in_module_bodies(&files, Opcode::NewObject)
+        };
+        let direct = "import { lay } from \"./helpers.mjs\";";
+        assert_eq!(objects("export { lay };", direct), 2);
+        for helpers in [
+            "export { lay, store };",
+            "export { lay, same };",
+            "export { lay }; console.log(store);",
+            "export { lay }; import \"./other.mjs\";",
+            "export { lay }; define = Reflect.defineProperty;",
+        ] {
+            assert_eq!(objects(helpers, direct), 1, "{helpers}");
+        }
+        let through_barrel = "import { lay } from \"./barrel.mjs\";";
+        assert_eq!(objects("export { lay };", through_barrel), 1);
     }
 
     #[test]

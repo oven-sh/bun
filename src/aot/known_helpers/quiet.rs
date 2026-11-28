@@ -75,18 +75,25 @@ impl Quiet<'_, '_> {
             _ => {
                 let (object, name) = plain_member(hir, expression)?;
                 let holder = self.find_locked_builtin(object)?;
-                let name = table::find_name(self.atoms.bytes(name))?;
-                let MemberLookup::Found(found) = table::member(holder, name) else {
-                    return None;
-                };
-                found
+                self.find_member(holder, name)?
             }
         };
-        let entry = table::entry(found);
-        let is_fixed_value = entry.mutability == Mutability::AlwaysLocked
+        self.is_fixed_value(found).then_some(found)
+    }
+
+    fn find_member(&self, holder: BuiltinId, name: Atom) -> Option<BuiltinId> {
+        let name = table::find_name(self.atoms.bytes(name))?;
+        let MemberLookup::Found(found) = table::member(holder, name) else {
+            return None;
+        };
+        Some(found)
+    }
+
+    fn is_fixed_value(&self, builtin: BuiltinId) -> bool {
+        let entry = table::entry(builtin);
+        entry.mutability == Mutability::AlwaysLocked
             && entry.kind != BuiltinKind::Accessor
-            && !self.builtins.is_unlocked(found);
-        is_fixed_value.then_some(found)
+            && !self.builtins.is_unlocked(builtin)
     }
 
     pub fn names_locked_object(&self, expression: ExprId) -> bool {
@@ -257,12 +264,37 @@ impl Quiet<'_, '_> {
 
     fn is_quiet_declaration(&self, declaration: VarDeclId) -> bool {
         let declaration = self.hir[declaration];
-        matches!(self.hir[declaration.pat].kind, PatKind::Ident(_))
+        let binds_quietly = match self.hir[declaration.pat].kind {
+            PatKind::Ident(_) => true,
+            PatKind::Object(properties) => self.takes_locked_members(properties, declaration.init),
+            PatKind::Array(_) | PatKind::Missing => false,
+        };
+        binds_quietly
             && matches!(
                 declaration.kind,
                 VarKind::Var | VarKind::Let | VarKind::Const
             )
             && self.is_quiet_expression(declaration.init)
+    }
+
+    /// `var { create, defineProperty: define } = Object`
+    fn takes_locked_members(&self, properties: hir::Span<hir::PatPropId>, source: ExprId) -> bool {
+        let hir = self.hir;
+        let Some(holder) = source.some().and_then(|it| self.find_locked_builtin(it)) else {
+            return false;
+        };
+        properties.iter().all(|property| {
+            let PropKey::Name(name) = hir.runtime_binding_key(property) else {
+                return false;
+            };
+            let property = hir[property];
+            !property.is_rest
+                && property.default.is_none()
+                && matches!(hir[property.value].kind, PatKind::Ident(_))
+                && self
+                    .find_member(holder, name)
+                    .is_some_and(|member| self.is_fixed_value(member))
+        })
     }
 
     pub fn is_quiet_statement(&self, statement: StmtId) -> bool {

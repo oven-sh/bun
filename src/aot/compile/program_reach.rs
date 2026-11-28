@@ -4192,6 +4192,8 @@ pub(crate) struct LeftOutCode {
     pub functions: FxHashSet<FunctionRef>,
     pub declarations: LeftOutDeclarations,
     pub files: Vec<FileId>,
+    /// They stay whatever becomes of the code that they are written in.
+    pub bodies_of_kept_inner_modules: FxHashSet<FunctionRef>,
     files_read_by_name: Vec<FileId>,
     names_read_from_objects: SharedSet<(FileId, Atom)>,
     bound_variables: SharedSet<Sym>,
@@ -4426,7 +4428,16 @@ pub(crate) fn find_left_out_code_seeding_last(
         for module in &units.modules {
             if !is_marked(&units.is_region_reached[module.body as usize]) {
                 reached_modules.left_out_inner_modules.push(module.module);
-            } else if is_marked(&module.is_every_export_reached) {
+                continue;
+            }
+            if let ModuleRef::Inner { file, callback } = module.module {
+                let body = FunctionRef {
+                    file,
+                    function: callback,
+                };
+                left_out.bodies_of_kept_inner_modules.insert(body);
+            }
+            if is_marked(&module.is_every_export_reached) {
                 reached_modules.looked_at.push(module.module);
             }
         }

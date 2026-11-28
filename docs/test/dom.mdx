@@ -68,6 +68,17 @@ expect(element.getAttributeNames()).toStrictEqual(["class"]); // passes
 element instanceof HTMLElement; // true
 ```
 
+The same holds for happy-dom, whose `Response` and `Request` replace Bun's. An error that happy-dom throws belongs to that realm. So does a stream that it creates, which differs from Vitest:
+
+```ts
+new Response(new ReadableStream()).body; // the stream of the test file: happy-dom reads it
+new Response("a").body instanceof ReadableStream; // false with --isolate
+error instanceof Error; // false with --isolate for an error that happy-dom throws
+Error.isError(error); // true
+```
+
+With [`bun test --aot`](/compiler/debugging#run-your-tests-compiled) and `--isolate`, happy-dom takes neither a stream nor a `Date` of the test file: a stream body reads as the text `[object ReadableStream]`, and `input.valueAsDate = new Date()` throws.
+
 With [`--isolate=modules`](/test/parallel#--isolate) there is one global object, the package is loaded into it, and these are ordinary arrays.
 
 `require("jsdom")` in a test file loads a second copy of the package. The window's own `JSDOM` object is `globalThis.jsdom`.

@@ -2452,7 +2452,7 @@ type ExecutableFile = bun_sys::File;
 fn create_unfinished_executable(path: &ZStr) -> bun_sys::Maybe<(ExecutableFile, bun_sys::Mode)> {
     let flags = bun_sys::O::CLOEXEC | bun_sys::O::RDWR | bun_sys::O::CREAT | bun_sys::O::EXCL;
     let file = ExecutableFile::openat(Fd::cwd(), path, flags, 0o755)?;
-    let mode = Syscall::fstat(file.fd()).map_or(0o755, |stat| (stat.st_mode & 0o777) as _);
+    let mode = Syscall::fstat(file.fd()).map_or(0o755, |stat| (stat.st_mode & 0o755) as _);
     // Not 0: WSL2 DrvFS re-checks the mode on ftruncate() (#40111).
     let _ = Syscall::fchmod(file.fd(), 0o600);
     Ok((file, mode))
@@ -2566,6 +2566,7 @@ pub(crate) fn inject(
                 let name = UnlinkOnDrop::new(Fd::cwd(), zname);
                 let flags = bun_sys::O::RDWR | bun_sys::O::CLOEXEC;
                 if let Ok(file) = ExecutableFile::openat(Fd::cwd(), &name, flags, 0) {
+                    let _ = Syscall::fchmod(file.fd(), 0o600);
                     break 'brk (file.fd(), UnfinishedCopy { file, mode, name });
                 }
             }

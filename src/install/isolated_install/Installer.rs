@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::collections::VecDeque;
 use std::io::Write as _;
 
@@ -6,7 +6,7 @@ use bun_ast::Log;
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::fmt::EscapeControlChars;
 use bun_core::{Environment, Global, Output};
-use bun_core::{ZStr, strings};
+use bun_core::{ZBox, ZStr, strings};
 use bun_paths::{self as paths, OSPath, Path};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{UnboundedQueue, WaitGroup, thread_pool};
@@ -24,6 +24,7 @@ use crate::bin_real;
 use crate::bun_fs;
 use crate::bun_progress::NodeId;
 use crate::cache_publish::{RenameError, RenameRetry};
+use crate::error::check_memory;
 use crate::lockfile::package;
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_install::{
@@ -72,6 +73,9 @@ pub struct Installer<'a> {
     /// Counts the tasks on the thread pool. `start_task` adds one, and `Task::task` removes itself
     /// when it's done.
     pub(crate) tasks_in_flight: &'a WaitGroup,
+
+    /// The entries that `Step::LinkPackage` has rid of planted links.
+    pub(crate) checked: Box<[AtomicBool]>,
 
     /// An `InstallMethod`.
     pub(crate) supported_backend: AtomicU8,
@@ -468,6 +472,8 @@ impl<'a> Installer<'a> {
                 // installed.
                 self.delete_store_copy(entry_id);
             }
+            // Reported once, when no task runs anymore.
+            TaskError::OutOfMemory => {}
         }
         Output::flush();
 
@@ -488,7 +494,9 @@ impl<'a> Installer<'a> {
         }
 
         // Like the hoisted linker, exit without saving the lockfile when a patch does not apply.
-        if self.manager().options.enable.fail_early() || matches!(err, TaskError::Patching(_)) {
+        if self.manager().options.enable.fail_early()
+            || (matches!(err, TaskError::Patching(_)) && check_memory().is_ok())
+        {
             Global::exit(1);
         }
 
@@ -693,9 +701,11 @@ impl<'a> Installer<'a> {
         let is_store_copy = !self.entry_uses_global_store(entry_id)
             && (tag.can_enqueue_install_task() || tag == ResolutionTag::Folder);
         if is_store_copy
-            && self
+            && (self
                 .remove_planted_links_in(entry_id, Self::store_path_len())
                 .is_ok()
+                || (self.checked[entry_id.get() as usize].load(Ordering::Relaxed)
+                    && check_memory().is_err()))
         {
             if tag == ResolutionTag::Folder {
                 // Nothing cleans up a staging path next to a folder, so delete it in place.
@@ -708,6 +718,16 @@ impl<'a> Installer<'a> {
             }
         }
         is_store_copy
+    }
+
+    /// For an entry that ran out of memory, which the next install would take for complete.
+    fn take_back(&self, task: &Task) {
+        if task.relink == Relink::Off {
+            self.delete_store_copy(task.entry_id);
+        }
+        for link in &task.relinked {
+            let _ = remove_link(link);
+        }
     }
 
     /// Deletes the `installed_marker` file first, because `delete_tree` can stop midway.
@@ -765,17 +785,20 @@ impl<'a> Installer<'a> {
         let store = self.store;
         for (index, step) in store.entries.items_step().iter().enumerate() {
             let entry_id = StoreEntryId::from(index as u32);
+            let step = Step::from_u32(step.load(Ordering::Acquire));
             // Every unfinished trusted entry is discarded, because it is not known yet whether it
             // has scripts: a bun.lock written by an older Bun does not record that.
-            if entry_id == failed
-                || (step.load(Ordering::Acquire) != Step::Done as u32 && self.is_trusted(entry_id))
-            {
+            if entry_id == failed || (step != Step::Done && self.is_trusted(entry_id)) {
                 self.delete_store_copy(entry_id);
                 // Also remove the symlinks to a `link:` dependency, because `start_link_task` takes
                 // them to mean that its scripts already ran.
                 if self.resolution(entry_id).tag == ResolutionTag::Symlink {
                     self.left_out_entries.push(entry_id);
                 }
+            } else if matches!(step, Step::CheckIfBlocked | Step::Blocked)
+                && check_memory().is_err()
+            {
+                self.take_back(&self.tasks[index]);
             }
         }
         self.unlink_left_out_entries();
@@ -937,6 +960,8 @@ pub struct Task {
 
     pub(crate) result: Result,
     pub(crate) relink: Relink,
+    /// The links that the relink task wrote.
+    pub(crate) relinked: Vec<ZBox>,
     /// The relink task continues with the lifecycle script steps. See
     /// `Installer::is_newly_trusted`.
     pub(crate) newly_trusted: bool,
@@ -978,6 +1003,7 @@ pub enum TaskError {
         err: crate::Error,
         url: Box<[u8]>,
     },
+    OutOfMemory,
 }
 
 type TaskResult<T> = core::result::Result<T, TaskError>;
@@ -1083,6 +1109,8 @@ impl Task {
         let mut step = Step::from_u32(entry_step.load(Ordering::Acquire));
         // There was no directory of the entry before `Step::LinkPackage`.
         let mut made_entry = false;
+        let check_memory = || check_memory().map_err(|_| TaskError::OutOfMemory);
+        check_memory()?;
         loop {
             match step {
                 Step::LinkPackage => {
@@ -1105,8 +1133,9 @@ impl Task {
                         symlinker::Strategy::ExpectMissing
                     };
 
+                    let relinked = relinking.then_some(&mut self.relinked);
                     let changed = installer
-                        .symlink_dependencies(entry_id, strategy, made_entry)
+                        .symlink_dependencies(entry_id, strategy, made_entry, relinked)
                         .map_err(TaskError::SymlinkDependencies)?;
 
                     if relinking {
@@ -1208,6 +1237,7 @@ impl Task {
                     return Ok(Result::None);
                 }
             }
+            check_memory()?;
             step = self.next_step(step);
         }
     }
@@ -1347,7 +1377,12 @@ impl Task {
         let installer = installer_ptr.get();
         let entry_step = &installer.store.entries.items_step()[this.entry_id.get() as usize];
 
+        let stops_before_linking = check_memory().is_err()
+            && entry_step.load(Ordering::Acquire) == Step::LinkPackage as u32;
         let result = this.run();
+        if result.is_err() && check_memory().is_err() && !stops_before_linking {
+            installer.take_back(this);
+        }
         if Environment::CI_ASSERT {
             // .monotonic is okay because this should have been set by this thread.
             let step = Step::from_u32(entry_step.load(Ordering::Relaxed));
@@ -1518,6 +1553,7 @@ impl<'a> Installer<'a> {
         let folder_dir = sys::Dir::open(path)?;
 
         self.remove_planted_links_in(entry_id, Self::store_path_len())?;
+        self.checked[entry_id.get() as usize].store(true, Ordering::Relaxed);
 
         // The hardlink and copy walks below only visit what the folder contains now. First remove
         // what it no longer has from the old copy, and any symlink that they would write through.
@@ -1636,6 +1672,7 @@ impl<'a> Installer<'a> {
                     .abs_local_store_entry_path(entry_id)
                     .map_err(TaskError::LinkPackage)?;
                 let is_stale_link = is_link(&local);
+                check_memory().map_err(|_| TaskError::OutOfMemory)?;
                 if is_stale_link == Some(true)
                     && let Err(err) = remove_link(&local)
                     && err.get_errno() != sys::Errno::ENOENT
@@ -1652,6 +1689,7 @@ impl<'a> Installer<'a> {
                         .clear_local_store_package(entry_id, staging, true)
                         .is_err();
                 }
+                self.checked[entry_id.get() as usize].store(true, Ordering::Relaxed);
             }
 
             let mut backend =
@@ -1913,8 +1951,9 @@ impl<'a> Installer<'a> {
         entry_id: StoreEntryId,
         strategy: symlinker::Strategy,
         made_entry: bool,
+        relinked: Option<&mut Vec<ZBox>>,
     ) -> sys::Result<Relink> {
-        match self.symlink_dependencies_behind(None, entry_id, strategy, made_entry) {
+        match self.symlink_dependencies_behind(None, entry_id, strategy, made_entry, relinked) {
             // `ELOOP` means the workspace's `node_modules` is a symlink (see
             // `Symlinker::node_modules_len`). Try again with that symlink resolved.
             Err(err)
@@ -1925,7 +1964,8 @@ impl<'a> Installer<'a> {
                 let Some(linked) = LinkedNodeModules::at(&node_modules) else {
                     return Err(err);
                 };
-                self.symlink_dependencies_behind(Some(&linked), entry_id, strategy, made_entry)
+                let own = Some(&linked);
+                self.symlink_dependencies_behind(own, entry_id, strategy, made_entry, None)
             }
             result => result,
         }
@@ -1938,6 +1978,7 @@ impl<'a> Installer<'a> {
         entry_id: StoreEntryId,
         strategy: symlinker::Strategy,
         made_entry: bool,
+        mut relinked: Option<&mut Vec<ZBox>>,
     ) -> sys::Result<Relink> {
         let lockfile = self.lockfile();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -1994,7 +2035,7 @@ impl<'a> Installer<'a> {
         let mut real_scope: &[u8] = b"";
 
         // Returns whether a link was written, and the `real_len` that the symlinker ended with.
-        let link = |dest: &ZStr, mut to: Path, real_len: usize| -> sys::Result<(bool, usize)> {
+        let mut link = |dest: &ZStr, mut to: Path, real_len: usize| -> sys::Result<(bool, usize)> {
             // True if the target is inside the same symlinked `node_modules` as the link, as when
             // one store entry links to another.
             let stays_behind_link = is_linked && resolve_linked_node_modules(&mut to);
@@ -2014,6 +2055,9 @@ impl<'a> Installer<'a> {
                 fallback_junction_target: &to,
             };
             let written = symlinker.ensure_symlink(strategy)?;
+            if written && let Some(relinked) = &mut relinked {
+                relinked.push(ZBox::from_bytes(dest));
+            }
             Ok((written, symlinker.real_len))
         };
 
@@ -2120,7 +2164,7 @@ impl<'a> Installer<'a> {
                     continue;
                 }
                 if let Ok(dest) = self.abs_dependency_link_path(entry_id, dep.dep_id)
-                    && is_link(&dest) == Some(true)
+                    && is_link(&dest).unwrap_or_else(|| check_memory().is_err())
                 {
                     let _ = remove_link(&dest);
                 }
@@ -2366,6 +2410,7 @@ impl<'a> Installer<'a> {
         if !self.entry_uses_global_store(entry_id) {
             return Ok(());
         }
+        check_memory()?;
         let staging = self.global_store_entry_path(entry_id, Which::Staging)?;
         let staging = sys::DeleteTreeOnDrop::new(Fd::cwd(), staging);
         let final_ = self.global_store_entry_path(entry_id, Which::Final)?;

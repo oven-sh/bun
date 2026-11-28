@@ -440,7 +440,7 @@ impl TarballStream {
                 };
                 (*this).decoder = Some(
                     tar::Decoder::new(tar::Options::for_host(dialect), gzip)
-                        .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?,
+                        .map_err(|_| bun_alloc::AllocError)?,
                 );
             }
             // References to single drain-local fields, never to the whole struct.
@@ -770,6 +770,10 @@ impl TarballStream {
                 );
                 return Err(crate::Error::IntegrityCheckFailed);
             }
+        } else if let Some(http_err) = self.incoming.get_mut().http_err
+            && http_err.is_out_of_memory()
+        {
+            return Err(http_err);
         }
 
         if (self.decoder.as_ref()).is_some_and(tar::Decoder::skipped_header) {

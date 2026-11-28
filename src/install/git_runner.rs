@@ -23,6 +23,7 @@ use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPool;
 
 use crate::cache_publish::UnfinishedEntry;
+use crate::error::OUT_OF_MEMORY_SIGNAL;
 use crate::install::{ExtractData, ExtractDataJson};
 use crate::package_manager::directories::CacheDirectory;
 use crate::package_manager::{INBOX, THREAD_POOL};
@@ -541,6 +542,49 @@ impl CacheStaging {
     }
 }
 
+/// A kernel without memory kills git or one of its helpers, or they say so, partly with `strerror`.
+fn git_ran_out_of_memory(step: &Step, status: &Status, stderr: &[u8]) -> bool {
+    const NO_MEMORY: [&[u8]; 3] = [
+        b"out of memory",
+        b"cannot allocate memory",
+        b": not enough space",
+    ];
+    // ssh passes on what `upload-pack` prints as it is.
+    const FROM_SERVER: [&[u8]; 4] = [
+        b"remote error:",
+        b" pack-objects",
+        b"'pack-objects",
+        b"git-pack-objects",
+    ];
+    const REASON: [&[u8]; 3] = [b"fatal:", b"error:", b"unexpected disconnect"];
+    let has_server = matches!(
+        step,
+        Step::Fetch { url, .. } | Step::Clone { url, .. } if !url.starts_with(b"file://")
+    );
+    let says = |line: &[u8], any_of: &[&[u8]]| {
+        (any_of.iter()).any(|words| strings::contains_case_insensitive_ascii(line, words))
+    };
+    let is_from_server = |line: &[u8]| {
+        strings::index_of(line, b"remote: ").is_some_and(|at| !line[..at].ends_with(b" to "))
+            || says(line, &FROM_SERVER)
+    };
+    let lines = || {
+        strings::split(stderr, b"\n")
+            // The end of a report of progress from the server, which git pads.
+            .flat_map(|line| strings::split(line, b"        \r"))
+            .filter(|line| !(has_server && is_from_server(line)))
+    };
+    let is_killed = || {
+        matches!(status, Status::Signaled(9))
+            || lines().any(|line| says(line, &[b"died of signal 9"]))
+            // All that git has to say if `index-pack` ends without a word.
+            || lines()
+                .find(|line| says(line, &REASON) || line.starts_with(b"BUG:"))
+                .is_some_and(|first| says(first, &[b"invalid index-pack output"]))
+    };
+    lines().any(|line| says(line, &NO_MEMORY)) || (OUT_OF_MEMORY_SIGNAL == Some(9) && is_killed())
+}
+
 /// `.bun-tag` is written last, so a checkout that has it is complete.
 fn is_tagged_checkout(dir: &bun_sys::Dir) -> bool {
     bun_sys::exists_at(dir.fd(), bun_core::zstr!(".bun-tag"))
@@ -761,6 +805,8 @@ pub struct GitSubprocess {
     /// Every URL tried so far, each with git's stderr. Printed only after the last URL has failed.
     clone_output: JsCell<Vec<u8>>,
     read_error: JsCell<Option<bun_sys::Error>>,
+    /// In any attempt. It counts if the last one fails.
+    ran_out_of_memory: Cell<bool>,
 
     process: JsCell<Option<ProcessHandle>>,
     exit_status: JsCell<Option<Status>>,
@@ -804,6 +850,7 @@ impl GitSubprocess {
             clone_output: JsCell::new(Vec::new()),
             staging: JsCell::new(None),
             read_error: JsCell::new(None),
+            ran_out_of_memory: Cell::new(false),
             process: JsCell::new(None),
             exit_status: JsCell::new(None),
             stdout: BufferedReader::init(),
@@ -1133,6 +1180,7 @@ impl GitSubprocess {
         args: &[&[u8]],
         variable: Option<&CStr>,
     ) -> Result<(), Error> {
+        crate::error::check_memory()?;
         let env = self.manager().git_env.get().as_ref();
         let env = env.expect("`start` sets the environment before any command");
         let Some(git) = &env.git else {
@@ -1286,6 +1334,16 @@ impl GitSubprocess {
         let ok = matches!(status, Status::Exited(exit) if exit.code == 0)
             && self.read_error.get().is_none();
         let step = self.step.replace(Step::Config);
+        if !ok && git_ran_out_of_memory(&step, status, stderr) {
+            self.ran_out_of_memory.set(true);
+            if !matches!(step, Step::Fetch { .. } | Step::Clone { .. }) {
+                self.report_failure(status, stderr);
+                return self.fail(bun_errno::SystemErrno::ENOMEM.into());
+            }
+        }
+        if let Err(err) = crate::error::check_memory() {
+            return self.fail(err.into());
+        }
         // "remote: Repository not found." / "fatal: repository '<url>' does not exist"
         let not_found = !ok
             && matches!(step, Step::Clone { .. })
@@ -1443,6 +1501,9 @@ impl GitSubprocess {
 
     /// Fails the task with `err`.
     fn fail(&self, err: Error) {
+        if self.ran_out_of_memory.get() {
+            bun_sys::note_out_of_memory(bun_sys::Tag::waitpid);
+        }
         if matches!(self.task().job, Job::GitCommit { .. }) {
             self.finish_commit(None);
         } else {

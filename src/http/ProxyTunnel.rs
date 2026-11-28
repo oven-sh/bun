@@ -364,7 +364,9 @@ impl HTTPClient<'_> {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onClose");
         // Mirror `HTTPClient::on_close`:
         // treat connection close as end-of-body for identity transfer when no content-length.
-        if !self.state.flags.is_redirect_pending && self.state.is_body_complete_on_close() {
+        if !self.state.flags.is_redirect_pending
+            && (self.state).is_body_complete_on_close(crate::Error::ConnectionClosed)
+        {
             match self.finalize_body_on_close(end) {
                 Ok(()) => return Break(NextStep::ReleaseSocket),
                 // `err` says why.

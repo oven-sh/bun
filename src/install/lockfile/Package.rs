@@ -3530,6 +3530,9 @@ pub mod serializer {
         if begin_at > end || end_at > end || begin_at > end_at {
             return Err(crate::Error::LockfileValidationFailedInvalidPackageListRange);
         }
+        if list_len > ((end_at - begin_at) / mem::size_of::<Meta>()) as u64 {
+            return Err(crate::Error::LockfileValidationFailedListIsImpossiblyLong);
+        }
         stream.pos = begin_at;
         list.ensure_total_capacity(list_len as usize)?;
 

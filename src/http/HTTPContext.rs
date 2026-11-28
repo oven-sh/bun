@@ -1372,18 +1372,24 @@ impl<const SSL: bool> Handler<SSL> {
     }
 
     pub fn on_close(socket: HTTPSocket<SSL>, code: c_int, _: Option<*mut c_void>) {
+        use bun_errno::SystemErrno::{self, ENOBUFS, ENOMEM};
         // Past the `CloseCode`s, it is the error that the socket reported.
         let end = if code > uws::CloseCode::FastShutdown as c_int {
             TransportEnd::Failed
         } else {
             TransportEnd::Clean
         };
-        let tagged = HTTPContext::<SSL>::enter_client(socket, |c| c.on_close::<SSL>(socket, end));
+        let err = match SystemErrno::init(i64::from(code)) {
+            Some(errno @ (ENOMEM | ENOBUFS)) => errno.into(),
+            _ => crate::Error::ConnectionClosed,
+        };
+        let tagged =
+            HTTPContext::<SSL>::enter_client(socket, |c| c.on_close::<SSL>(socket, end, err));
         let Some(tagged) = tagged else { return };
         HTTPContext::<SSL>::mark_socket_as_dead(socket);
 
         if let Some(session) = tagged.session() {
-            return session.on_close(crate::Error::ConnectionClosed);
+            return session.on_close(err);
         }
         // Removes the entry of a request that is closing this socket, and any stale one.
         crate::unregister_abort_tracker_for_socket(socket.socket);
@@ -1522,7 +1528,7 @@ impl<const SSL: bool> Handler<SSL> {
             } else {
                 socket.close(uws::CloseKind::Normal);
             }
-            client.on_close::<SSL>(socket, TransportEnd::Clean)
+            client.on_close::<SSL>(socket, TransportEnd::Clean, crate::Error::ConnectionClosed)
         });
         let Some(tagged) = tagged else { return };
         HTTPContext::<SSL>::mark_tagged_socket_as_dead(socket, tagged);

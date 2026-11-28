@@ -15,11 +15,12 @@ afterEach(() => fault.clear());
 async function runClientFetch(
   url: string,
   rule: import("bun:internal-for-testing").SocketFaultRule | null,
-  opts: { ca?: string; readBytes?: number; abort?: boolean } = {},
+  opts: { ca?: string; readBytes?: number; abort?: boolean; reuse?: boolean } = {},
 ) {
   const fixture = /* js */ `
     const { socketFaultInjection: fault } = require("bun:internal-for-testing");
     const rule = ${JSON.stringify(rule)};
+    ${opts.reuse ? `await (await fetch(${JSON.stringify(url)})).text();` : ""}
     if (rule) fault.set(rule);
     try {
       const res = await fetch(${JSON.stringify(url)}, {
@@ -130,6 +131,40 @@ describe.skipIf(skip)("fetch() under injected syscall faults (http)", () => {
     expect(r.ok).toBe(false);
     // fetch wraps connect failure as a generic open-socket error.
     expect(["ECONNREFUSED", "FailedToOpenSocket", "ConnectionRefused"]).toContain(r.code);
+  });
+
+  test.each([
+    ["recv", "ENOBUFS"],
+    ["recv", "ENOMEM"],
+    ["connect", "ENOBUFS"],
+    ["connect", "ENOMEM"],
+  ] as const)("%s → %s rejects with that code", async (syscall, errno) => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("x") });
+    const r = await runClientFetch(`http://localhost:${server.port}/`, { syscall, action: "errno", errno, repeat: -1 });
+    expect(r).toMatchObject({ ok: false, code: errno, signal: null, exitCode: 0 });
+  });
+
+  test.each([
+    ["Connection: close\r\n\r\nx", { ok: false, code: "ENOMEM" }],
+    ["Transfer-Encoding: chunked\r\n\r\n1\r\nx\r\n0\r\n", { ok: true, length: 1 }],
+  ])("recv → ENOMEM behind %j", async (response, expected) => {
+    using server = Bun.listen({
+      port: 0,
+      hostname: "127.0.0.1",
+      socket: { data: socket => void socket.end("HTTP/1.1 200 OK\r\n" + response) },
+    });
+    const rule = { syscall: "recv", action: "errno", errno: "ENOMEM", after: 1, repeat: -1 } as const;
+    const r = await runClientFetch(`http://127.0.0.1:${server.port}/`, rule);
+    expect(r).toMatchObject({ ...expected, signal: null, exitCode: 0 });
+  });
+
+  test.each([
+    ["ECONNRESET", { ok: true, length: 1 }],
+    ["ENOBUFS", { ok: false, code: "ENOBUFS" }],
+  ] as const)("recv → %s once, on a reused connection", async (errno, expected) => {
+    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("x") });
+    const r = await runClientFetch(server.url.href, { syscall: "recv", action: "errno", errno }, { reuse: true });
+    expect(r).toMatchObject({ ...expected, signal: null, exitCode: 0 });
   });
 
   test("recv → 0 (peer closed) before any byte rejects cleanly (no hang)", async () => {

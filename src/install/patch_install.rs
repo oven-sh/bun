@@ -185,6 +185,7 @@ fn crash_on_missing_patch(
     patch: &CalcPatchHash,
     log_level: LogLevel,
 ) -> Result<(), crate::Error> {
+    manager.exit_if_out_of_memory();
     // A `bun patch --commit` of another package still writes its patch file before the exit.
     // Otherwise that patch could be lost too.
     let committed = package_manager::patch_package::write_pending_patch(manager)?;

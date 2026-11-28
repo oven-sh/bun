@@ -319,7 +319,8 @@ pub(crate) enum HeldAbout {
 // - `LookAhead` goes further. It guesses which versions the waiting rows will resolve to and
 //   requests the manifests that those versions will need. It never changes the lockfile.
 // - A request that fails is kept as a `ManifestFailure` until a row needs it, because a request
-//   made on a wrong guess must not fail the install.
+//   made on a wrong guess must not fail the install. Only a lack of memory does, whatever the
+//   memory was for.
 // - What a git, GitHub or tarball package depends on is only known after its download, so these
 //   packages are added one at a time once the queue is empty. See `RemotePackages`.
 
@@ -474,13 +475,17 @@ impl Inbox {
         self.pending_tasks.fetch_sub(1, Ordering::Release);
     }
 
+    pub(crate) fn is_runtime_auto_install(&self) -> bool {
+        self.runtime_auto_install.load(Ordering::Acquire)
+    }
+
     pub(crate) fn wake(&self) {
         let uws_loop = self.uws_loop.load(Ordering::Acquire);
         if !uws_loop.is_null() {
             // SAFETY: never freed. `Loop` is `!Sync`, but any thread may wake it.
             unsafe { bun_uws::us_wakeup_loop(uws_loop) };
         }
-        if self.runtime_auto_install.load(Ordering::Acquire) {
+        if self.is_runtime_auto_install() {
             crate::auto_installer::Parked::wake_all();
         }
     }
@@ -1027,6 +1032,19 @@ impl PackageManager {
         Global::crash();
     }
 
+    /// [`crate::error::exit_if_out_of_memory`], behind what is in the log.
+    pub(crate) fn exit_if_out_of_memory(&mut self) {
+        if crate::error::check_memory().is_ok() {
+            return;
+        }
+        if self.options.log_level != package_manager_options::LogLevel::Silent {
+            let _ = self.log_mut().print(Output::error_writer());
+        }
+        // Exits if `bunx` can do without a download, so this is not for after its tool was linked.
+        let _ = run_tasks::failed_request_error();
+        crate::error::exit_if_out_of_memory();
+    }
+
     pub fn has_enough_time_passed_between_waiting_messages(&self) -> bool {
         let iter = self.event_loop.iteration_number();
         if TIME_PASSER_LAST_TIME.load(core::sync::atomic::Ordering::Relaxed) < iter {
@@ -1226,6 +1244,9 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         return Ok(());
     }
 
+    if directories::try_get_temporary_directory(manager).is_err() {
+        crate::error::check_memory()?;
+    }
     let tempdir = get_temporary_directory(manager);
     let mut path_buf = bun_paths::path_buffer_pool::get();
     let node_gyp_tempdir_name =
@@ -1249,6 +1270,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
                 "<r><red>error<r>: <b><red>{}<r> creating node-gyp tempdir",
                 bstr::BStr::new(e.name()),
             );
+            crate::error::check_memory()?;
             Global::crash();
         }
     };
@@ -1283,6 +1305,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
                 "<r><red>error<r>: <b><red>{}<r> creating node-gyp tempdir",
                 bstr::BStr::new(e.name()),
             );
+            crate::error::check_memory()?;
             Global::crash();
         }
     };
@@ -1314,6 +1337,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
             bstr::BStr::new(e.name()),
             FILE_NAME,
         );
+        crate::error::check_memory()?;
         Global::crash();
     }
 
@@ -2234,6 +2258,7 @@ pub fn init(
                     }
                 }
             }
+            crate::error::exit_if_out_of_memory();
 
             if cli.dry_run
                 && cli.filters.is_empty()
@@ -2547,6 +2572,7 @@ pub fn init(
         (u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast")) as u32 // @truncate
     };
 
+    manager.exit_if_out_of_memory();
     Ok((manager, original_cwd_clone))
 }
 
@@ -2567,17 +2593,18 @@ pub(crate) fn init_with_runtime(
     // unreadable), and the failure must be sticky: `holder::RAW_PTR` stays
     // null on failure, so later callers have to see the error instead of a
     // null singleton.
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    static INIT_ERROR: bun_core::Mutex<Option<crate::Error>> = bun_core::Mutex::new(None);
-    ONCE.call_once(|| {
-        if let Err(err) = init_with_runtime_once(log, bun_install, cli, env, importer_dir) {
-            *INIT_ERROR.lock() = Some(err);
-        }
+    static INIT: bun_core::Mutex<Option<crate::Result<()>>> = bun_core::Mutex::new(None);
+    let mut init = INIT.lock();
+    let result = init.unwrap_or_else(|| {
+        let _ = bun_sys::check_memory_of_thread();
+        init_with_runtime_once(log, bun_install, cli, env, importer_dir)
+            .and_then(|()| Ok(bun_sys::check_memory_of_thread()?))
     });
-    match *INIT_ERROR.lock() {
-        None => Ok(get()),
-        Some(code) => Err(code),
+    // The next import may find the memory, unless there is a singleton by now.
+    if !result.is_err_and(Error::note_if_out_of_memory) || !get().is_null() {
+        *init = Some(result);
     }
+    result.map(|()| get())
 }
 
 fn init_with_runtime_once(
@@ -2691,6 +2718,7 @@ fn init_with_runtime_once(
     );
     // The file may say where packages come from or what checks them, so nothing is installed
     // without it.
+    bun_sys::check_memory_of_thread()?;
     if let Some(path) = unreadable {
         log.add_warning_fmt(
             None,

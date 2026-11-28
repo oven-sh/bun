@@ -483,6 +483,8 @@ struct us_connecting_socket_t {
     unsigned char kind;
     uint16_t port;
     int error;
+    /* What `error` becomes if no address connects. */
+    int error_if_exhausted;
     struct addrinfo *addrinfo_head;
     // this is used to track pending connecting sockets in the context
     struct us_connecting_socket_t* next_pending;

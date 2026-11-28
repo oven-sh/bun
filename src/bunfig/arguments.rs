@@ -48,7 +48,7 @@ fn unreadable_config(
     err: &bun_sys::Error,
     config_path: &[u8],
 ) -> Result<(), crate::Error> {
-    if auto_loaded {
+    if auto_loaded && err.get_errno() != bun_sys::E::ENOMEM {
         return Ok(());
     }
     bun_core::pretty_errorln!(

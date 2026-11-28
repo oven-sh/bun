@@ -46,6 +46,7 @@ use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{self, Lockfile};
 use crate::network_task::ForTarballError;
 use crate::package_manager::Options::LogLevel;
+use crate::package_manager::directories::try_get_cache_directory;
 use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
 use crate::prune::{LinkedNodeModules, OldModules};
 use crate::{
@@ -1444,6 +1445,7 @@ pub(crate) fn move_node_modules_aside(
     keep_links: bool,
     log_level: LogLevel,
 ) -> Option<OldModules> {
+    crate::error::exit_if_out_of_memory();
     let mut old_modules = Path::from(b"node_modules");
     let rand = fast_random();
     old_modules.push_fmt(format_args!(
@@ -2040,6 +2042,8 @@ pub(crate) fn install_isolated_packages(
                 manager.options.global,
                 manager.options.log_level,
             );
+            // The next install would take what is left for this linker's.
+            crate::error::exit_if_out_of_memory();
         }
 
         if let Err(err) = sys::mkdirat(Fd::cwd(), bun_modules_path, 0o755) {
@@ -2115,6 +2119,7 @@ pub(crate) fn install_isolated_packages(
                 installer: bun_ptr::BackRef::from(core::ptr::NonNull::dangling()),
                 result: installer::Result::None,
                 relink: installer::Relink::Off,
+                relinked: Vec::new(),
                 newly_trusted: false,
                 blocked_scripts: 0,
                 scripts: None,
@@ -2138,6 +2143,7 @@ pub(crate) fn install_isolated_packages(
             store: &store,
             tasks,
             tasks_in_flight: &tasks_in_flight,
+            checked: (0..store.entries.len()).map(|_| false.into()).collect(),
             waiters_head: vec![store::entry::Id::INVALID; store.entries.len()].into_boxed_slice(),
             next_waiter: vec![store::entry::Id::INVALID; store.entries.len()].into_boxed_slice(),
             trusted_dependencies_from_update_requests,
@@ -2430,7 +2436,14 @@ pub(crate) fn install_isolated_packages(
                     // Downloads only produce the unpatched folder; `apply_package_patch` derives the rest.
                     let cache_subpath_z =
                         installer.cached_folder_name(&mut **folder_name_buf, entry_id, None);
-                    let cache_dir = installer.manager_mut().get_cache_directory().handle.fd();
+                    let cache_dir = match try_get_cache_directory(installer.manager_mut()) {
+                        Ok(cache) => cache.handle.fd(),
+                        Err(why) => {
+                            installer.manager_mut().exit_or_log(&why);
+                            installer.on_task_fail(entry_id, &TaskError::OutOfMemory);
+                            continue;
+                        }
+                    };
 
                     let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
                     {
@@ -2452,6 +2465,11 @@ pub(crate) fn install_isolated_packages(
                             !exists
                         }
                     };
+
+                    if crate::error::check_memory().is_err() {
+                        installer.on_task_fail(entry_id, &TaskError::OutOfMemory);
+                        continue;
+                    }
 
                     if !missing_from_cache {
                         match installer.apply_package_patch(entry_id, &patch_info) {

@@ -210,7 +210,7 @@ pub enum Error {
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
-    Alloc(#[from] bun_alloc::AllocError),
+    Alloc(bun_alloc::AllocError),
     #[error(transparent)]
     Core(#[from] bun_core::Error),
     #[error(transparent)]
@@ -232,6 +232,22 @@ pub enum Error {
 }
 
 impl Error {
+    pub(crate) fn is_out_of_memory(self) -> bool {
+        matches!(
+            self.name(),
+            "OutOfMemory" | "ENOMEM" | "ENOBUFS" | "OUT_OF_MEM"
+        )
+    }
+
+    /// For an error that nothing is going to make up for. See [`check_memory`].
+    pub(crate) fn note_if_out_of_memory(self) -> bool {
+        let is_out_of_memory = self.is_out_of_memory();
+        if is_out_of_memory {
+            bun_sys::note_out_of_memory(bun_sys::Tag::recv);
+        }
+        is_out_of_memory
+    }
+
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
@@ -381,6 +397,38 @@ impl bun_core::output::ErrName for Error {
     }
 }
 
+/// Once memory has run out, a command can no longer tell what is missing from what it failed to
+/// look at. So it publishes, places, runs and saves nothing more, and it fails.
+pub(crate) fn check_memory() -> bun_sys::Maybe<()> {
+    match bun_sys::check_memory() {
+        // A script runs into errors of its own, and handles them.
+        Err(_) if crate::package_manager::INBOX.is_runtime_auto_install() => Ok(()),
+        checked => checked,
+    }
+}
+
+/// Not while a linker runs, which has to take back what it could not finish.
+pub(crate) fn exit_if_out_of_memory() {
+    if let Err(err) = check_memory() {
+        bun_core::Output::err(err, "could not finish", ());
+        bun_core::Global::crash();
+    }
+}
+
+/// How a kernel frees memory. macOS does the same to a program with a bad signature.
+pub(crate) const OUT_OF_MEMORY_SIGNAL: Option<u8> = if cfg!(any(target_os = "macos", windows)) {
+    None
+} else {
+    Some(9)
+};
+
+impl From<bun_alloc::AllocError> for Error {
+    fn from(e: bun_alloc::AllocError) -> Self {
+        bun_sys::note_out_of_memory(bun_sys::Tag::mmap);
+        Self::Alloc(e)
+    }
+}
+
 impl From<bun_sys::Error> for Error {
     fn from(e: bun_sys::Error) -> Self {
         Self::Sys(e.into())
@@ -398,7 +446,7 @@ impl From<bun_archive::Error> for Error {
         match e {
             bun_archive::Error::Fail => Self::Fail,
             bun_archive::Error::Sys(s) => Self::Sys(s),
-            bun_archive::Error::Alloc(a) => Self::Alloc(a),
+            bun_archive::Error::Alloc(a) => a.into(),
             bun_archive::Error::MakeLibUvOwned(_) => Self::SystemFdQuotaExceeded,
             bun_archive::Error::LeavesDestination(e) => Self::Sys(e.into()),
         }
@@ -415,7 +463,7 @@ impl From<crate::lockfile_real::tree::SubtreeError> for Error {
     fn from(e: crate::lockfile_real::tree::SubtreeError) -> Self {
         use crate::lockfile_real::tree::SubtreeError as E;
         match e {
-            E::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
+            E::OutOfMemory => bun_alloc::AllocError.into(),
         }
     }
 }
@@ -423,9 +471,7 @@ impl From<crate::lockfile_real::tree::SubtreeError> for Error {
 impl From<crate::lockfile_real::bun_lock::ParseError> for Error {
     fn from(e: crate::lockfile_real::bun_lock::ParseError) -> Self {
         match e {
-            crate::lockfile_real::bun_lock::ParseError::OutOfMemory => {
-                Self::Alloc(bun_alloc::AllocError)
-            }
+            crate::lockfile_real::bun_lock::ParseError::OutOfMemory => bun_alloc::AllocError.into(),
             _ => Self::InvalidLockfile,
         }
     }
@@ -435,7 +481,7 @@ impl From<crate::pnpm::MigratePnpmLockfileError> for Error {
     fn from(e: crate::pnpm::MigratePnpmLockfileError) -> Self {
         use crate::pnpm::MigratePnpmLockfileError as E;
         match e {
-            E::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
+            E::OutOfMemory => bun_alloc::AllocError.into(),
             _ => Self::InvalidLockfile,
         }
     }

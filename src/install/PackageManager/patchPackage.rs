@@ -101,7 +101,10 @@ impl PatchCommitResult {
             });
         let (outcome, why) = if is_shared {
             ("kept", ", used by another package")
-        } else if is_file_of_the_project(&path) && sys::unlink(&path).is_ok() {
+        } else if crate::error::check_memory().is_ok()
+            && is_file_of_the_project(&path)
+            && sys::unlink(&path).is_ok()
+        {
             ("deleted", "")
         } else {
             ("did not delete", "")

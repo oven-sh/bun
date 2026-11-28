@@ -242,7 +242,7 @@ impl<'a> InternalState<'a> {
     /// True when a socket close completes the body rather
     /// than failing it: chunked decoder already in the trailers state, or a
     /// close-delimited response (no Content-Length, no Transfer-Encoding).
-    pub(crate) fn is_body_complete_on_close(&self) -> bool {
+    pub(crate) fn is_body_complete_on_close(&self, reason: Error) -> bool {
         // Every byte arrived; only the decode is outstanding.
         if self.flags.decompress_output_pending && self.is_done() {
             return true;
@@ -250,7 +250,9 @@ impl<'a> InternalState<'a> {
         if self.is_chunked_encoding() {
             return self.chunked_decoder.has_whole_body();
         }
-        self.content_length.is_none() && self.response_stage == HTTPStage::Body
+        self.content_length.is_none()
+            && self.response_stage == HTTPStage::Body
+            && reason == Error::ConnectionClosed
     }
 
     /// The transport has no more bytes for this body.

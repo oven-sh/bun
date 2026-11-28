@@ -1821,13 +1821,274 @@ describe("DatabaseSync.prototype.setAuthorizer()", () => {
       return constants.SQLITE_OK;
     });
     expect(stmt.run().changes).toBe(1);
-    expect(errors).toEqual([
-      expect.objectContaining({ code: "ERR_INVALID_STATE", message: "iterator was invalidated" }),
-      expect.objectContaining({ code: "ERR_INVALID_STATE", message: "statement is currently executing" }),
-    ]);
+    expect(errors).toEqual([refusedInAuthorizer, refusedInAuthorizer]);
     db.setAuthorizer(null);
     expect(db.prepare("SELECT count(*) AS n FROM ft").get()!.n).toBe(2);
     db.close();
+  });
+
+  // https://sqlite.org/c3ref/set_authorizer.html: the callback "must not do anything that will modify the database
+  // connection that invoked the authorizer callback", to prepare and to step included.
+  const refusedInAuthorizer = expect.objectContaining({
+    code: "ERR_INVALID_STATE",
+    message: "database cannot be accessed from an authorizer callback",
+  });
+
+  const uses: Record<string, (db: DatabaseSync) => () => unknown> = {
+    "exec()": db => () => db.exec("SELECT 1"),
+    "prepare()": db => () => db.prepare("SELECT 1"),
+    "function()": db => () => db.function("f", () => 1),
+    "aggregate()": db => () => db.aggregate("f", { start: 0, step: () => 1 }),
+    "serialize()": db => () => db.serialize(),
+    "setAuthorizer()": db => () => db.setAuthorizer(null),
+    "createTagStore()": db => () => db.createTagStore(),
+    "enableLoadExtension()": db => () => db.enableLoadExtension(false),
+    "enableDefensive()": db => () => db.enableDefensive(true),
+    "limits": db => () => (db.limits.column = 10),
+    "backup()": db => () => backup(db, ":memory:"),
+    "StatementSync run()": db => {
+      const stmt = db.prepare("SELECT 1");
+      return () => stmt.run();
+    },
+    "StatementSync get()": db => {
+      const stmt = db.prepare("SELECT 1");
+      return () => stmt.get();
+    },
+    "StatementSync all()": db => {
+      const stmt = db.prepare("SELECT 1");
+      return () => stmt.all();
+    },
+    "StatementSync iterate()": db => {
+      const stmt = db.prepare("SELECT 1");
+      return () => stmt.iterate();
+    },
+    "StatementSync close() of a busy statement": db => {
+      const stmt = db.prepare("SELECT 1 UNION SELECT 2");
+      stmt.iterate().next();
+      return () => (stmt as any).close();
+    },
+    "StatementSync Symbol.dispose of a busy statement": db => {
+      const stmt = db.prepare("SELECT 1 UNION SELECT 2");
+      stmt.iterate().next();
+      return () => (stmt as any)[Symbol.dispose]();
+    },
+    "iterator next()": db => {
+      const iterator = db.prepare("SELECT 1 UNION SELECT 2").iterate();
+      iterator.next();
+      return () => iterator.next();
+    },
+    "iterator return()": db => {
+      const iterator = db.prepare("SELECT 1 UNION SELECT 2").iterate();
+      iterator.next();
+      return () => iterator.return!();
+    },
+    ...Object.fromEntries(
+      (["run", "get", "all", "iterate"] as const).map(method => [
+        `SQLTagStore ${method}()`,
+        (db: DatabaseSync) => {
+          const sql = db.createTagStore();
+          return () => sql[method]`SELECT 1`;
+        },
+      ]),
+    ),
+    ...(sqliteHasLoadExtension && { "loadExtension()": db => () => db.loadExtension("/does/not/exist") }),
+    ...(sqliteHasSession && {
+      "createSession()": db => () => db.createSession(),
+      "applyChangeset()": db => () => db.applyChangeset(new Uint8Array()),
+      "Session changeset()": db => {
+        const session = db.createSession();
+        return () => session.changeset();
+      },
+      "Session patchset()": db => {
+        const session = db.createSession();
+        return () => session.patchset();
+      },
+    }),
+  };
+
+  test.each(Object.entries(uses))("%s throws in the callback", (_name, prepareUse) => {
+    const db = new DatabaseSync(":memory:", { allowExtension: sqliteHasLoadExtension });
+    const use = prepareUse(db);
+    const caught: unknown[] = [];
+    db.setAuthorizer(() => {
+      try {
+        use();
+      } catch (error) {
+        caught.push(error);
+      }
+      return constants.SQLITE_OK;
+    });
+    expect(db.prepare("SELECT 7 AS n").get()).toEqual({ n: 7 });
+    expect(caught).toEqual([refusedInAuthorizer]);
+
+    db.setAuthorizer(() => (use(), constants.SQLITE_OK));
+    expect(() => db.exec("SELECT 1")).toThrow(refusedInAuthorizer);
+
+    db.setAuthorizer(null);
+    expect(db.prepare("SELECT 8 AS n").get()).toEqual({ n: 8 });
+    db.close();
+  });
+
+  test("another connection can be used in the callback, and a refused return() leaves an iterator alone", () => {
+    const db = new DatabaseSync(":memory:");
+    const other = new DatabaseSync(":memory:");
+    other.exec("CREATE TABLE allowed (name TEXT); INSERT INTO allowed VALUES ('t')");
+    const allowed = other.prepare("SELECT 1 FROM allowed WHERE name = ?");
+    db.exec("CREATE TABLE t (a); CREATE TABLE secret (a); INSERT INTO t VALUES (1), (2)");
+    const iterator = db.prepare("SELECT a FROM t").iterate();
+    expect(iterator.next().value).toEqual({ a: 1 });
+    db.setAuthorizer((action, table) => {
+      expect(() => iterator.return!()).toThrow(refusedInAuthorizer);
+      if (action !== constants.SQLITE_READ) return constants.SQLITE_OK;
+      return allowed.get(table) ? constants.SQLITE_OK : constants.SQLITE_DENY;
+    });
+    expect(db.prepare("SELECT a FROM t").all()).toEqual([{ a: 1 }, { a: 2 }]);
+    expect(() => db.prepare("SELECT a FROM secret")).toThrow(/prohibited/);
+    db.setAuthorizer(null);
+    expect(() => db.exec("DROP TABLE t")).toThrow(/locked/);
+    expect(iterator.next().value).toEqual({ a: 2 });
+    expect(iterator.return!()).toEqual({ done: true, value: null });
+    db.exec("DROP TABLE t");
+    db.close();
+    other.close();
+  });
+
+  test("return() in the callback of its own next() leaves the iterator for a later return()", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (a); INSERT INTO t VALUES (1), (2)");
+    const stmt = db.prepare("SELECT a FROM t");
+    stmt.all();
+    db.exec("ALTER TABLE t ADD COLUMN b");
+    const iterator = stmt.iterate();
+    const errors: unknown[] = [];
+    db.setAuthorizer(() => {
+      if (errors.length === 0) {
+        try {
+          iterator.return!();
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      return constants.SQLITE_OK;
+    });
+    expect(iterator.next().value).toEqual({ a: 1 });
+    expect(errors).toEqual([refusedInAuthorizer]);
+    db.setAuthorizer(null);
+    expect(() => db.exec("DROP TABLE t")).toThrow(/locked/);
+    expect(iterator.return!()).toEqual({ done: true, value: null });
+    db.exec("DROP TABLE t");
+    db.close();
+  });
+
+  test.each(["close", Symbol.dispose] as const)(
+    "a statement's %p in the callback works if the statement is idle",
+    key => {
+      const db = new DatabaseSync(":memory:");
+      const idle: any = db.prepare("SELECT 1");
+      const finalized: any = db.prepare("SELECT 1");
+      finalized.close();
+      const errors: unknown[] = [];
+      db.setAuthorizer(() => {
+        for (const stmt of [idle, finalized]) {
+          try {
+            stmt[key]();
+          } catch (error) {
+            errors.push(error);
+          }
+        }
+        return constants.SQLITE_OK;
+      });
+      db.exec("SELECT 1");
+      const isFinalized = expect.objectContaining({
+        code: "ERR_INVALID_STATE",
+        message: "statement has been finalized",
+      });
+      expect(errors).toEqual(key === "close" ? [isFinalized] : []);
+      expect(() => idle.get()).toThrow(isFinalized);
+      db.setAuthorizer(null);
+      expect(db.prepare("SELECT 7 AS n").get()).toEqual({ n: 7 });
+      db.close();
+    },
+  );
+
+  test.each(["close", Symbol.dispose] as const)(
+    "a statement's %p in the callback is refused if the statement runs",
+    key => {
+      const db = new DatabaseSync(":memory:");
+      db.exec("CREATE TABLE t (a); INSERT INTO t VALUES (1), (2)");
+      const paused: any = db.prepare("SELECT a FROM t");
+      const iterator = paused.iterate();
+      iterator.next();
+      const stepped: any = db.prepare("SELECT 7 AS n");
+      stepped.get();
+      db.exec("CREATE TABLE u (a)");
+
+      const errors: unknown[] = [];
+      let target = paused;
+      db.setAuthorizer(action => {
+        if (action !== constants.SQLITE_DROP_TABLE && target === paused) return constants.SQLITE_OK;
+        try {
+          target[key]();
+        } catch (error) {
+          errors.push(error);
+        }
+        return constants.SQLITE_OK;
+      });
+      expect(() => db.exec("DROP TABLE t")).toThrow("database table is locked");
+      target = stepped;
+      expect(stepped.get()).toEqual({ n: 7 });
+      db.setAuthorizer(null);
+      expect(errors).toEqual([
+        refusedInAuthorizer,
+        expect.objectContaining({ code: "ERR_INVALID_STATE", message: "statement is currently executing" }),
+      ]);
+      expect(iterator.next().value).toEqual({ a: 2 });
+      expect(stepped.get()).toEqual({ n: 7 });
+      db.close();
+    },
+  );
+
+  // What the callback changed under SQLite's parser was freed memory for the parser.
+  test.concurrent.each([
+    [
+      "DROP TRIGGER",
+      `db.exec("CREATE TABLE t(a); CREATE TABLE u(x); CREATE TRIGGER tr AFTER INSERT ON t BEGIN DELETE FROM t WHERE a = new.a; END")`,
+      `db.prepare("INSERT INTO t SELECT x FROM u")`,
+    ],
+    ["VACUUM", `db.exec("PRAGMA page_size = 65536; CREATE TABLE t(a)")`, `db.serialize()`],
+  ])("%s in the callback doesn't change the connection", async (_name, setup, run) => {
+    using dir = tempDir("node-sqlite-authorizer", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { DatabaseSync } = require("node:sqlite");
+          const db = new DatabaseSync("db.sqlite");
+          ${setup};
+          db.setAuthorizer((action, table) => {
+            try {
+              if (${JSON.stringify(_name)} === "VACUUM") db.exec("PRAGMA page_size = 512; VACUUM");
+              else if (table === "u") db.exec("DROP TRIGGER tr");
+            } catch (error) {
+              console.log(error.message);
+            }
+            return 0;
+          });
+          const result = ${run};
+          if (result.length) console.log(result.length === require("node:fs").statSync("db.sqlite").size);
+        `,
+      ],
+      env: systemMallocEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ lines: [...new Set(stdout.trim().split("\n"))], stderr, exitCode }).toEqual({
+      lines: ["database cannot be accessed from an authorizer callback", ...(_name === "VACUUM" ? ["true"] : [])],
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
   });
 
   // FTS4 asks for the page size when it connects and goes on if that is denied, so SQLite returns a statement.

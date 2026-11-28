@@ -595,22 +595,53 @@ JSPromise* nativeSourcePull(JSGlobalObject* globalObject, JSReadableStreamDefaul
     });
 }
 
+static void nativeSourceStop(JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSValue reason)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    adapter->clearPendingView(vm);
+    adapter->clearController(vm);
+    if (JSObject* handle = adapter->handle()) {
+        invokeNativeHandleCancel(vm, globalObject, handle, reason);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    RELEASE_AND_RETURN(scope, nativeSourceSever(globalObject, adapter));
+}
+
 JSPromise* nativeSourceCancel(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue reason)
 {
     return promiseFromSteps(globalObject, [&] -> JSPromise* {
-        auto& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        auto* adapter = uncheckedDowncast<JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
-        adapter->clearPendingView(vm);
-        adapter->clearController(vm);
-        if (JSObject* handle = adapter->handle()) {
-            invokeNativeHandleCancel(vm, globalObject, handle, reason);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-        }
-        nativeSourceSever(globalObject, adapter);
+        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+        nativeSourceStop(globalObject, uncheckedDowncast<JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get()), reason);
         RETURN_IF_EXCEPTION(scope, nullptr);
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
     });
+}
+
+void webStreamControllerErrorAndStopSource(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue error)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (stream->m_state != ReadableStreamState::Readable)
+        return;
+    // Nothing can reach the source of an errored stream, so it is stopped here. One that was transferred belongs to somebody else.
+    JSNativeStreamSourceAdapter* adapter = nullptr;
+    JSObject* unstartedHandle = nullptr;
+    if (!stream->nativeHandleDetached()) {
+        if (stream->m_controllerKind == ControllerKind::Default) {
+            auto* controller = uncheckedDowncast<JSReadableStreamDefaultController>(stream->m_controller.get());
+            if (controller->m_algorithms.kind == SourceKind::Native)
+                adapter = uncheckedDowncast<JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
+        } else if (stream->m_bunMode == BunStreamMode::NativePending) {
+            unstartedHandle = stream->m_nativePtr.get().getObject();
+        }
+    }
+    webStreamControllerError(globalObject, stream, error);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (adapter)
+        RELEASE_AND_RETURN(scope, nativeSourceStop(globalObject, adapter, error));
+    if (unstartedHandle)
+        RELEASE_AND_RETURN(scope, invokeNativeHandleCancel(vm, globalObject, unstartedHandle, error));
 }
 
 JSPromise* cancelPendingNativeSource(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue reason)

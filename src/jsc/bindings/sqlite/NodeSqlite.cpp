@@ -228,6 +228,13 @@ static ALWAYS_INLINE void putNodeInstanceGetter(VM& vm, JSObject* target, ASCIIL
         }                                                                         \
     } while (0)
 
+// Before the BusyScope of the call.
+#define REQUIRE_REENTRY_ALLOWED(db)                                                \
+    do {                                                                           \
+        if (auto refusal = (db)->reentryRefusal(); !refusal.isNull()) [[unlikely]] \
+            return throwNodeState(globalObject, scope, refusal);                   \
+    } while (0)
+
 #define REQUIRE_STMT(self)                                                                \
     do {                                                                                  \
         if ((self)->isFinalized()) {                                                      \
@@ -586,6 +593,16 @@ void JSDatabaseSync::closeInternal(bool mayCallScript)
     m_deferredClose = WTF::move(m_db);
     if (!isBusy())
         finishDeferredClose(mayCallScript);
+}
+
+ASCIILiteral JSDatabaseSync::reentryRefusalSlow() const
+{
+    // A closed database reports itself.
+    if (!m_db)
+        return {};
+    if (m_inAuthorizer)
+        return "database cannot be accessed from an authorizer callback"_s;
+    return {};
 }
 
 void JSDatabaseSync::finishDeferredClose(bool mayCallScript)
@@ -960,6 +977,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDispose, (JSGlobalObject * globalObject, 
 JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncExec, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_DATABASE();
+    REQUIRE_REENTRY_ALLOWED(self);
     JSDatabaseSync::BusyScope busy { self };
     REQUIRE_DB_OPEN(self);
     JSValue sqlVal = callFrame->argument(0);
@@ -986,6 +1004,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncExec, (JSGlobalObject * globalObject, Cal
 JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncPrepare, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_DATABASE();
+    REQUIRE_REENTRY_ALLOWED(self);
     JSDatabaseSync::BusyScope busy { self };
     REQUIRE_DB_OPEN(self);
     JSValue sqlVal = callFrame->argument(0);
@@ -1075,6 +1094,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncEnableLoadExtension, (JSGlobalObject * gl
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    REQUIRE_REENTRY_ALLOWED(self);
     JSValue arg0 = callFrame->argument(0);
     if (!arg0.isBoolean()) {
         return throwNodeArgType(globalObject, scope, "allow"_s, "a boolean"_s);
@@ -1101,6 +1121,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncEnableLoadExtension, (JSGlobalObject * gl
 JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncLoadExtension, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_DATABASE();
+    REQUIRE_REENTRY_ALLOWED(self);
     // The extension's entry point can run SQL, which calls the authorizer.
     JSDatabaseSync::BusyScope busy { self };
     REQUIRE_DB_OPEN(self);
@@ -1145,6 +1166,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncFunction, (JSGlobalObject * globalObject,
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    REQUIRE_REENTRY_ALLOWED(self);
     JSDatabaseSync::BusyScope busy { self };
 
     JSValue nameVal = callFrame->argument(0);
@@ -1211,6 +1233,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncAggregate, (JSGlobalObject * globalObject
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    REQUIRE_REENTRY_ALLOWED(self);
     JSDatabaseSync::BusyScope busy { self };
 
     JSValue nameVal = callFrame->argument(0);
@@ -1308,6 +1331,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncCreateSession, (JSGlobalObject * globalOb
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    REQUIRE_REENTRY_ALLOWED(self);
     if (!lazy_sqlite3_has_session) [[unlikely]]
         return throwSessionUnavailable(globalObject, scope);
     JSDatabaseSync::BusyScope busy { self };
@@ -1432,6 +1456,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncApplyChangeset, (JSGlobalObject * globalO
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    REQUIRE_REENTRY_ALLOWED(self);
     if (!lazy_sqlite3_has_session) [[unlikely]]
         return throwSessionUnavailable(globalObject, scope);
     JSDatabaseSync::BusyScope busy { self };
@@ -1523,6 +1548,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncEnableDefensive, (JSGlobalObject * global
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    REQUIRE_REENTRY_ALLOWED(self);
     JSValue arg0 = callFrame->argument(0);
     if (!arg0.isBoolean()) {
         return throwNodeArgType(globalObject, scope, "active"_s, "a boolean"_s);
@@ -1577,7 +1603,11 @@ static int nodeSqliteAuthorizerCallback(void* userData, int actionCode, const ch
     args.append(toJS(p4));
 
     auto callData = JSC::getCallData(fn);
-    JSValue result = JSC::call(globalObject, fn, callData, jsUndefined(), args);
+    JSValue result;
+    {
+        WTF::SetForScope inAuthorizer { db->m_inAuthorizer, true };
+        result = JSC::call(globalObject, fn, callData, jsUndefined(), args);
+    }
     if (scope.exception()) [[unlikely]] {
         return SQLITE_DENY;
     }
@@ -1626,6 +1656,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncSetAuthorizer, (JSGlobalObject * globalOb
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    REQUIRE_REENTRY_ALLOWED(self);
     JSValue arg0 = callFrame->argument(0);
     if (arg0.isNull()) {
         sqlite3_set_authorizer(self->connection(), nullptr, nullptr);
@@ -1647,6 +1678,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncSetAuthorizer, (JSGlobalObject * globalOb
 JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncSerialize, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_DATABASE();
+    REQUIRE_REENTRY_ALLOWED(self);
     JSDatabaseSync::BusyScope busy { self };
     REQUIRE_DB_OPEN(self);
 
@@ -1789,6 +1821,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncCreateTagStore, (JSGlobalObject * globalO
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    REQUIRE_REENTRY_ALLOWED(self);
     // Node: `int capacity = args[0].As<Number>()->Value()` then passed as
     // size_t to LRUCache. No clamp: -1 wraps to SIZE_MAX (unlimited), 0 stays 0.
     // JSC::toInt32 avoids the double→int UB Node has for NaN/±Inf/>2^31.
@@ -2501,6 +2534,7 @@ static EncodedJSValue statementStepAll(JSGlobalObject* globalObject, ThrowScope&
 JSC_DEFINE_HOST_FUNCTION(jsStatementSyncRun, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_STATEMENT();
+    REQUIRE_REENTRY_ALLOWED(self->database());
     BUSY_SCOPE_STMT(self);
     REQUIRE_STMT(self);
     REQUIRE_STMT_IDLE(self);
@@ -2513,6 +2547,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncRun, (JSGlobalObject * globalObject, Cal
 JSC_DEFINE_HOST_FUNCTION(jsStatementSyncGet, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_STATEMENT();
+    REQUIRE_REENTRY_ALLOWED(self->database());
     BUSY_SCOPE_STMT(self);
     REQUIRE_STMT(self);
     REQUIRE_STMT_IDLE(self);
@@ -2525,6 +2560,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncGet, (JSGlobalObject * globalObject, Cal
 JSC_DEFINE_HOST_FUNCTION(jsStatementSyncAll, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_STATEMENT();
+    REQUIRE_REENTRY_ALLOWED(self->database());
     BUSY_SCOPE_STMT(self);
     REQUIRE_STMT(self);
     REQUIRE_STMT_IDLE(self);
@@ -2537,6 +2573,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncAll, (JSGlobalObject * globalObject, Cal
 JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIterate, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_STATEMENT();
+    REQUIRE_REENTRY_ALLOWED(self->database());
     BUSY_SCOPE_STMT(self);
     REQUIRE_STMT(self);
     REQUIRE_STMT_IDLE(self);
@@ -2556,6 +2593,9 @@ static EncodedJSValue closeStatement(JSGlobalObject* globalObject, ThrowScope& s
 {
     if (self->m_busyDepth || self->isStepping()) [[unlikely]]
         return throwNodeState(globalObject, scope, "statement is currently executing"_s);
+    // This would release its locks and change the outcome of the statement that the authorizer runs for.
+    if (sqlite3_stmt_busy(self->statement()))
+        REQUIRE_REENTRY_ALLOWED(self->database());
     JSDatabaseSync::BusyScope busy { self->database() };
     self->database()->finalizeStatement(*self);
     CHECK_UDF_EXCEPTION(scope);
@@ -2763,6 +2803,8 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorNext, (JSGlobalObject * globalOb
         return JSValue::encode(createIterResult(vm, globalObject, true, jsNull()));
     }
     JSStatementSync* stmt = self->statement();
+    if (stmt)
+        REQUIRE_REENTRY_ALLOWED(stmt->database());
     JSDatabaseSync::BusyScope busy { stmt ? stmt->database() : nullptr, stmt };
     if (!stmt || stmt->isFinalized()) {
         return throwNodeState(globalObject, scope, "statement has been finalized"_s);
@@ -2820,6 +2862,9 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorReturn, (JSGlobalObject * global
     // after db.close() doesn't surface a spurious error (matches this
     // module's own [Symbol.dispose]() convention).
     JSStatementSync* stmt = self->statement();
+    // Not marked as done, so that a later return() can reset the statement.
+    if (!self->done() && stmt && !stmt->isFinalized())
+        REQUIRE_REENTRY_ALLOWED(stmt->database());
     // Only reset the statement if this iterator still owns it: when a later
     // iterate()/run()/get()/all() bumped the reset generation, the statement
     // was already reset and may be mid-iteration under a newer iterator —
@@ -2918,6 +2963,8 @@ static EncodedJSValue sessionChangesetCommon(JSGlobalObject* globalObject, CallF
 {
     THIS_SESSION();
     JSDatabaseSync* db = self->database();
+    if (db)
+        REQUIRE_REENTRY_ALLOWED(db);
     // sqlite3session_changeset/patchset internally run SAVEPOINT + prepared
     // SELECTs on the connection, which fires the authorizer. BusyScope
     // defers db.close() (and so deleteTrackedSessions/sweepOrphanedSessions)
@@ -3117,6 +3164,10 @@ bool JSNodeSqliteLimits::put(JSCell* cell, JSGlobalObject* globalObject, Propert
             auto* db = self->database();
             if (!db || !db->isOpen()) {
                 throwNodeState(globalObject, scope, "database is not open"_s);
+                return false;
+            }
+            if (auto refusal = db->reentryRefusal(); !refusal.isNull()) [[unlikely]] {
+                throwNodeState(globalObject, scope, refusal);
                 return false;
             }
             // Node accepts either a non-negative int32 or +Infinity
@@ -3391,6 +3442,7 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
 JSC_DEFINE_HOST_FUNCTION(jsTagStoreRun, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_TAGSTORE();
+    REQUIRE_REENTRY_ALLOWED(self->database());
     JSDatabaseSync::BusyScope busy { self->database() };
     JSStatementSync* stmt = self->prepare(globalObject, scope, callFrame);
     RETURN_IF_EXCEPTION(scope, {});
@@ -3400,6 +3452,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTagStoreRun, (JSGlobalObject * globalObject, CallFram
 JSC_DEFINE_HOST_FUNCTION(jsTagStoreGet, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_TAGSTORE();
+    REQUIRE_REENTRY_ALLOWED(self->database());
     JSDatabaseSync::BusyScope busy { self->database() };
     JSStatementSync* stmt = self->prepare(globalObject, scope, callFrame);
     RETURN_IF_EXCEPTION(scope, {});
@@ -3409,6 +3462,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTagStoreGet, (JSGlobalObject * globalObject, CallFram
 JSC_DEFINE_HOST_FUNCTION(jsTagStoreAll, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_TAGSTORE();
+    REQUIRE_REENTRY_ALLOWED(self->database());
     JSDatabaseSync::BusyScope busy { self->database() };
     JSStatementSync* stmt = self->prepare(globalObject, scope, callFrame);
     RETURN_IF_EXCEPTION(scope, {});
@@ -3418,6 +3472,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTagStoreAll, (JSGlobalObject * globalObject, CallFram
 JSC_DEFINE_HOST_FUNCTION(jsTagStoreIterate, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_TAGSTORE();
+    REQUIRE_REENTRY_ALLOWED(self->database());
     JSDatabaseSync::BusyScope busy { self->database() };
     JSStatementSync* stmt = self->prepare(globalObject, scope, callFrame);
     RETURN_IF_EXCEPTION(scope, {});
@@ -3531,6 +3586,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
     if (!sourceDb->isOpen()) {
         return throwNodeState(globalObject, scope, "database is not open"_s);
     }
+    REQUIRE_REENTRY_ALLOWED(sourceDb);
     JSDatabaseSync::BusyScope busy { sourceDb };
 
     WTF::String destPath;

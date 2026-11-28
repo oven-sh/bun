@@ -726,6 +726,8 @@ test("foo, bar, baz", () => {
 
 Call `mock.restore()` in an `afterEach` block, or in your test preload script, instead of repeating cleanup in every test.
 
+A spy is restored even if its object was frozen or sealed after `spyOn()`. A `Proxy` that doesn't delete the spy, such as the `localStorage` of happy-dom, gets the original back as a property of its own. If the object still keeps the spy, as a frozen array keeps a spy on one of its elements, `mockRestore()` and `mock.restore()` throw a `TypeError` and the spy stays active. This includes spies made with `vi.spyOn()`.
+
 ### Cleanup After Each Test File
 
 When a test file ends, Bun restores any spies that are still active and clears every mock's recorded calls. Return values and implementations set with `mockReturnValue()`, `mockImplementation()` and similar methods stay until you reset the mock. A mock in a module that several test files import keeps them from one file to the next.

@@ -36,3 +36,21 @@ test("using with spyOn auto-restores prototype methods", () => {
 
   expect(new Greeter().greet()).toBe("hello");
 });
+
+test("using with spyOn auto-restores a method of an object that is frozen inside the block", () => {
+  class Greeter {
+    greet() {
+      return "hello";
+    }
+  }
+  const greeter = new Greeter();
+
+  {
+    using spy = spyOn(greeter, "greet").mockReturnValue("hola");
+    Object.freeze(greeter);
+    expect(greeter.greet()).toBe("hola");
+  }
+
+  expect(greeter.greet()).toBe("hello");
+  expect(Object.hasOwn(greeter, "greet")).toBe(false);
+});

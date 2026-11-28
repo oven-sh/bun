@@ -683,7 +683,8 @@ describe("Bun.semver.satisfies()", () => {
     }
     expect(satisfied).toEqual([]);
 
-    // A number after a wildcard has no effect on a range, as in node-semver: "1.x.<big>" is "1.x".
+    // A number after a wildcard has no effect on a range: "1.x.<big>" is "1.x". node-semver up to 7.8.3 agrees.
+    // 7.8.4 and later refuse such a range, except after `^` and `~` and in a hyphen range.
     for (const big of numbersAboveU64Max) {
       testSatisfies(`1.x.${big}`, "1.5.0", true);
       testSatisfies(`1.x.${big}`, "2.0.0", false);
@@ -691,6 +692,12 @@ describe("Bun.semver.satisfies()", () => {
       testSatisfies(`~1.*.${big}`, "1.5.0", true);
       testSatisfies(`>=1.x.${big}`, "2.0.0", true);
       testSatisfies(`>=1.x.${big}`, "0.9.0", false);
+      testSatisfies(`>1.x.${big}`, "2.0.0", true);
+      testSatisfies(`>1.x.${big}`, "1.9.9", false);
+      testSatisfies(`<1.x.${big}`, "0.9.0", true);
+      testSatisfies(`<1.x.${big}`, "1.0.0", false);
+      testSatisfies(`<=1.x.${big}`, "1.9.9", true);
+      testSatisfies(`<=1.x.${big}`, "2.0.0", false);
       testSatisfies(`*.${big}`, "1.0.0", true);
       testSatisfies(`x.${big}.${big}`, "1.0.0", true);
       testSatisfies(`1.0.0 - 1.x.${big}`, "1.5.0", true);
@@ -1688,13 +1695,26 @@ test("a range with a number above u64::MAX gives the same answers as node-semver
   const comparing = [">=", ">", "<", "<=", "^", "~"];
   const operator = ["", "", "=", "v", "~>", ...comparing];
 
+  // A number after a wildcard ("1.x.5") has no effect in Bun, and the text after it stays in the same comparator.
+  // node-semver 7.8.4 and later refuse the range for it, except after `^`, `~` and `~>` and in a hyphen range.
+  // Where node-semver refuses, it gets the comparator without the number ("1.x").
+  type Input = { bun: string; node: string };
+  const same = (text: string): Input => ({ bun: text, node: text });
+  const concat = (...parts: Input[]): Input => ({
+    bun: parts.map(part => part.bun).join(""),
+    node: parts.map(part => part.node).join(""),
+  });
+
   // One to three parts, exactly one of them above u64::MAX. Every shape here gives the same
   // answer in Bun and node-semver when the number is small. That leaves out a wildcard as the
   // first part (">x.1"), where they differ for any number.
-  const partial = () => {
-    // The number after a wildcard has no effect, and the text after it stays in the same comparator.
+  const partial = (nodeIgnoresNumberAfterWildcard: boolean): Input => {
+    const afterWildcard = (start: string, rest: string): Input => ({
+      bun: start + rest,
+      node: nodeIgnoresNumberAfterWildcard ? start + rest : start,
+    });
     if (next() < 0.3) {
-      return `${pick(small)}.${pick(wildcard)}.${pick(numbersAboveU64Max)}${pick(suffix)}`;
+      return afterWildcard(`${pick(small)}.${pick(wildcard)}`, `.${pick(numbersAboveU64Max)}${pick(suffix)}`);
     }
     const length = 1 + Math.floor(next() * 3);
     const bigAt = Math.floor(next() * length);
@@ -1704,25 +1724,33 @@ test("a range with a number above u64::MAX gives the same answers as node-semver
       else if (i > 0 && next() < 0.3) parts.push(pick(wildcard));
       else parts.push(pick(small));
     }
-    return parts.join(".") + (length === 3 ? pick(suffix) : "");
+    const rest = length === 3 ? pick(suffix) : "";
+    if (bigAt === 2 && wildcard.includes(parts[1])) {
+      return afterWildcard(`${parts[0]}.${parts[1]}`, `.${parts[2]}${rest}`);
+    }
+    return same(parts.join(".") + rest);
+  };
+  const comparator = (operators: string[]): Input => {
+    const op = pick(operators);
+    return concat(same(op), partial(op === "^" || op.startsWith("~")));
   };
   const plain = () => `${pick(small)}.${pick(small)}.${pick(small)}`;
-  const range = () => {
+  const range = (): Input => {
     switch (Math.floor(next() * 8)) {
       case 0:
-        return `${pick(operator)}${partial()} || ${pick(operator)}${plain()}`;
+        return concat(comparator(operator), same(` || ${pick(operator)}${plain()}`));
       case 1:
-        return `${pick(operator)}${plain()} || ${pick(operator)}${partial()}`;
+        return concat(same(`${pick(operator)}${plain()} || `), comparator(operator));
       case 2:
-        return `>=${plain()} ${pick(comparing)}${partial()}`;
+        return concat(same(`>=${plain()} `), comparator(comparing));
       case 3:
-        return `${pick(comparing)}${partial()} <${plain()}`;
+        return concat(comparator(comparing), same(` <${plain()}`));
       case 4:
-        return `${plain()} - ${partial()}`;
+        return concat(same(`${plain()} - `), partial(true));
       case 5:
-        return `${partial()} - ${plain()}`;
+        return concat(partial(true), same(` - ${plain()}`));
       default:
-        return pick(operator) + partial();
+        return comparator(operator);
     }
   };
 
@@ -1733,12 +1761,12 @@ test("a range with a number above u64::MAX gives the same answers as node-semver
     // Does what nodeSemver.satisfies() does, with the range parsed once for all versions.
     let parsed: InstanceType<typeof nodeSemver.Range> | undefined;
     try {
-      parsed = new nodeSemver.Range(r);
+      parsed = new nodeSemver.Range(r.node);
     } catch {}
     for (const v of versions) {
-      const bun = satisfies(v, r);
+      const bun = satisfies(v, r.bun);
       const node = parsed !== undefined && parsed.test(v);
-      if (bun !== node) disagreements.push({ satisfies: [v, r], bun, node });
+      if (bun !== node) disagreements.push({ satisfies: [v, r.bun], nodeSemverRange: r.node, bun, node });
     }
   }
   expect({ seed, disagreements }).toEqual({ seed, disagreements: [] });

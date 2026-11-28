@@ -11,9 +11,11 @@ bun_core::declare_scope!(AutoKiller, hidden);
 
 #[derive(Default)]
 pub struct ProcessAutoKiller {
-    processes: JsCell<ArrayHashMap<RefPtr<Process>, (), ByAddress>>,
+    /// Each tracked process maps to its spawn serial (see [`ProcessAutoKiller::mark`]).
+    processes: JsCell<ArrayHashMap<RefPtr<Process>, u64, ByAddress>>,
     pub enabled: Cell<bool>,
     ever_enabled: Cell<bool>,
+    next_serial: Cell<u64>,
 }
 
 #[derive(Default)]
@@ -40,21 +42,40 @@ impl ProcessAutoKiller {
     }
 
     pub fn kill(&self) -> Result {
-        Result {
-            processes: self.kill_processes(),
-        }
+        self.kill_spawned_since(0)
     }
 
-    fn kill_processes(&self) -> u32 {
+    /// The serial the next tracked process gets. Pass it to [`ProcessAutoKiller::kill_spawned_since`] to kill only the processes spawned after this call.
+    pub fn mark(&self) -> u64 {
+        self.next_serial.get()
+    }
+
+    /// Kills the tracked processes spawned since `mark` was taken, and keeps tracking the older ones.
+    pub fn kill_spawned_since(&self, mark: u64) -> Result {
+        let mut to_kill: Vec<RefPtr<Process>> = Vec::new();
+        self.processes.with_mut(|processes| {
+            processes.retain(|process, serial| {
+                if *serial >= mark {
+                    to_kill.push(process.clone());
+                    false
+                } else {
+                    true
+                }
+            })
+        });
         let mut count: u32 = 0;
-        while let Some(entry) = self.processes.with_mut(ArrayHashMap::pop) {
-            let p = entry.key;
-            if !p.has_exited() {
-                bun_core::scoped_log!(AutoKiller, "process.kill {}", p.pid);
-                count += p.kill(SignalCode::DEFAULT.0).is_ok() as u32;
-            }
+        for p in to_kill {
+            count += Self::kill_one(&p) as u32;
         }
-        count
+        Result { processes: count }
+    }
+
+    fn kill_one(p: &RefPtr<Process>) -> bool {
+        if p.has_exited() {
+            return false;
+        }
+        bun_core::scoped_log!(AutoKiller, "process.kill {}", p.pid);
+        p.kill(SignalCode::DEFAULT.0).is_ok()
     }
 
     pub fn clear(&self) {
@@ -69,7 +90,9 @@ impl ProcessAutoKiller {
     /// Registers a freshly spawned subprocess for auto-kill tracking.
     pub(crate) fn on_subprocess_spawn(&self, process: &RefPtr<Process>) {
         if self.enabled.get() {
-            let _ = self.processes.with_mut(|p| p.put(process.clone(), ()));
+            let serial = self.next_serial.get();
+            self.next_serial.set(serial + 1);
+            let _ = self.processes.with_mut(|p| p.put(process.clone(), serial));
         }
     }
 

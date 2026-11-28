@@ -33,3 +33,23 @@ if (isFlaky && isLinux) {
     expect(combined).toContain("(pass) slow test after test timeout");
   });
 }
+
+// A test's timeout kills only what the test spawned, not processes from hooks or the top of the file (#46373).
+test.each([
+  { name: "default", args: [] },
+  { name: "--isolate", args: ["--isolate"] },
+  { name: "--parallel", args: ["--parallel"] },
+])("test timeout keeps processes spawned before the test ($name)", async ({ args }) => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", ...args, path.join(import.meta.dir, "process-kill-only-own-fixture.ts")],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const combined = out + err;
+  expect(combined).toContain("killed 1 dangling process");
+  expect(combined).toContain("(fail) test timeout kills the processes this test spawned");
+  expect(combined).toContain("(pass) processes spawned before the test survive its timeout");
+  expect(exitCode).toBe(1);
+});

@@ -117,7 +117,7 @@ test(
 
 ### 🧟 Zombie Process Killer
 
-When a test times out, Bun kills any still-running processes that the test spawned with `Bun.spawn`, `Bun.spawnSync`, or `node:child_process`, and logs a message to the console. This prevents zombie processes from lingering after timed-out tests.
+When a test or hook runs past its [timeout](#timeouts), Bun kills the processes that started while it was running (with `Bun.spawn`, `Bun.spawnSync`, or `node:child_process`) and logs a message to the console. This prevents zombie processes from lingering after timed-out tests. Processes that started earlier keep running, such as a server from a `beforeAll` or `beforeEach` hook or from the top of the file. If your test file imports from `node:test` instead of `bun:test`, `beforeEach` runs as part of each test, so a test's timeout also kills the processes its `beforeEach` started.
 
 ## Test Modifiers
 

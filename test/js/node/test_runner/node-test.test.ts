@@ -141,6 +141,17 @@ describe("node:test", () => {
     });
   });
 
+  test("should keep the process from a before() hook when a test times out", async () => {
+    const { exitCode, stderr } = await runTests(["30-timeout-keeps-before-process.js"], {}, ["--timeout", "1000"]);
+    expect(stderr).toContain("killed 1 dangling process");
+    expect(stderr).toContain("(pass) process spawned in before survives the timeout");
+    expect(stderr).toContain("1 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("1 fail"),
+    });
+  });
+
   test("should not leak file-level beforeEach hooks across files in one process", async () => {
     const { exitCode, stderr } = await runTests(["14-root-hooks-a.js", "14-root-hooks-b.js"]);
     expect(stderr).toContain("4 pass");

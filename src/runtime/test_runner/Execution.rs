@@ -153,6 +153,8 @@ pub(crate) struct ExecutionSequence {
     pub(crate) result: Cell<Result>,
     executing: Cell<bool>,
     started_at: Cell<Timespec>,
+    /// The auto-killer's mark when the active entry (a hook or the test) started: its timeout kills only the processes spawned since.
+    auto_killer_mark: Cell<u64>,
     /// Number of expect() calls observed in this sequence.
     pub(crate) expect_call_count: Cell<u32>,
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
@@ -190,6 +192,7 @@ impl ExecutionSequence {
             result: Cell::new(Result::Pending),
             executing: Cell::new(false),
             started_at: Cell::new(Timespec::EPOCH),
+            auto_killer_mark: Cell::new(0),
             expect_call_count: Cell::new(0),
             expect_assertions: Cell::new(ExpectAssertions::NotSet),
             maybe_skip: Cell::new(false),
@@ -469,7 +472,7 @@ impl Execution {
     /// The kill-only half of [`BunTest::handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
     pub(crate) fn kill_dangling_processes_on_timeout(buntest: &BunTest, global_this: &JSGlobalObject) {
         // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
-        //   kill any dangling processes
+        //   kill the processes spawned since that entry started (#46373)
         // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
         if let Some(current_group) = buntest.execution.active_group() {
             let sequences = current_group.sequences(&buntest.execution);
@@ -478,18 +481,25 @@ impl Execution {
                 if let Some(entry) = sequence.active_entry.get() {
                     let now = Timespec::now_force_real_time();
                     if buntest.sequence_entry(entry).timespec.get().order(&now) == core::cmp::Ordering::Less {
-                        let kill_count = global_this.bun_vm().auto_killer.kill();
-                        if kill_count.processes > 0 {
-                            bun_core::pretty_errorln!(
-                                "<d>killed {} dangling process{}<r>",
-                                kill_count.processes,
-                                if kill_count.processes != 1 { "es" } else { "" },
-                            );
-                            bun_core::Output::flush();
-                        }
+                        Execution::kill_spawned_since_entry_start(global_this, sequence);
                     }
                 }
             }
+        }
+    }
+
+    fn kill_spawned_since_entry_start(global_this: &JSGlobalObject, sequence: &ExecutionSequence) {
+        let kill_count = global_this
+            .bun_vm()
+            .auto_killer
+            .kill_spawned_since(sequence.auto_killer_mark.get());
+        if kill_count.processes > 0 {
+            bun_core::pretty_errorln!(
+                "<d>killed {} dangling process{}<r>",
+                kill_count.processes,
+                if kill_count.processes != 1 { "es" } else { "" },
+            );
+            bun_core::Output::flush();
         }
     }
 
@@ -843,6 +853,7 @@ impl Execution {
             result,
             executing: _,
             started_at,
+            auto_killer_mark: _,
             expect_call_count,
             expect_assertions,
             maybe_skip,
@@ -1094,6 +1105,10 @@ fn step_sequence_one(
             }));
         };
         if sequence.evaluate_timeout(buntest, active_entry, now) {
+            // The runner can see the timeout before the timer does, and then the timer kills nothing.
+            if group.sequences(&buntest.execution).len() == 1 {
+                Execution::kill_spawned_since_entry_start(global_this, sequence);
+            }
             if let Some(context) = sequence.context.get() {
                 TestContext::abort_signal(context, global_this);
             }
@@ -1132,6 +1147,7 @@ fn step_sequence_one(
     if Some(next_id) == sequence.first_entry && sequence.started_at.get().eql(&Timespec::EPOCH) {
         Execution::on_sequence_started(buntest, global_this, sequence);
     }
+    sequence.auto_killer_mark.set(global_this.bun_vm().auto_killer.mark());
     Execution::on_entry_started(next_entry, next_item);
     if next_item.added_in_phase == AddedInPhase::Preload {
         bun_jsc::compiled_program::will_run_preloads(global_this);
@@ -1245,6 +1261,9 @@ fn step_sequence_one(
         {
             *now = Timespec::now_force_real_time();
             if sequence.evaluate_timeout(buntest, next_id, now) {
+                if group.sequences(&buntest.execution).len() == 1 {
+                    Execution::kill_spawned_since_entry_start(global_this, sequence);
+                }
                 if let Some(context) = context {
                     TestContext::abort_signal(context, global_this);
                 }

@@ -81,6 +81,12 @@ const dir = String(
           }),
         // What the host made stays the host's when a graph's script is what sets it off.
         hostTarget: (seen, env) => { env.hostTarget.dispatchEvent(new Event("go")); env.hostController.abort(); },
+        // A pipe ends its sink in the context of the code that called pipeTo(), whoever ends the source: this script
+        // ends the source of a pipe of the host's, and the host ends the source of this script's pipe.
+        hostPipes: (seen, env) => {
+          env.sourceOfHostPipe.close();
+          return env.hostSource.pipeTo(new WritableStream({ close() { seen("sink close() of its pipe, whose source the host closed"); } }));
+        },
         messageChannel: seen => new Promise(resolve => { const { port1, port2 } = new MessageChannel(); port1.onmessage = () => { seen("message"); port1.close(); resolve(); }; port2.postMessage(1); }),
         broadcastChannel: (seen, env) => new Promise(resolve => { const a = new BroadcastChannel("callbacks-" + env.tag); const b = new BroadcastChannel("callbacks-" + env.tag); a.onmessage = () => { seen("message"); a.close(); b.close(); resolve(); }; b.postMessage(1); }),
         worker: seen => new Promise(resolve => { const worker = new Worker("data:text/javascript,postMessage(1)"); worker.onmessage = () => { seen("message"); }; worker.addEventListener("close", () => { seen("close"); resolve(); }); }),
@@ -289,8 +295,25 @@ const dir = String(
           const transformed = readable.pipeThrough(new TransformStream({ transform(chunk, controller) { seen("transform"); controller.enqueue(chunk); }, flush() { seen("flush"); } })).pipeThrough(new CompressionStream("gzip"));
           await new Response(transformed).arrayBuffer(); seen("after arrayBuffer()");
           await new Promise(resolve => new ReadableStream({ start(controller) { controller.enqueue("x"); controller.close(); } }).pipeTo(new WritableStream({ write() { seen("sink write"); }, close() { seen("sink close"); resolve(); } })));
+          // The stream itself starts the second write(), and close(), when the write before completes.
+          const writer = new WritableStream({ write() { seen("queued sink write"); }, close() { seen("queued sink close"); } }).getWriter();
+          writer.write(1); writer.write(2); await writer.close();
         },
       };
+    `,
+    // Nobody handles the promise of the second write(), or of the next() that waits. The stream rejects each from
+    // a job that it queued.
+    "stream-rejections.mjs": `
+      export function rejectFromQueuedStreamJobs() {
+        let writes = 0;
+        const writer = new WritableStream({ write() { if (++writes === 2) throw new Error("queued sink write()"); } }).getWriter();
+        writer.write(1);
+        writer.write(2);
+        let controller;
+        const stream = new ReadableStream({ start(c) { controller = c; } });
+        stream[Symbol.asyncIterator]().next();
+        controller.error(new Error("waiting next()"));
+      }
     `,
   }),
 );
@@ -354,6 +377,7 @@ test("every callback of several graphs and the host, all running at once, finds 
     graph ? (runners.find(runner => runner.graph === graph)?.tag ?? "an unknown graph") : "host";
   // The host's own listeners, which each runner's script sets off: they run as the host's.
   const hostListenerLabels: string[] = [];
+  const hostPipes: Promise<void>[] = [];
   await Promise.all(
     runners.flatMap(({ tag, graph, app }) =>
       names.map(name => {
@@ -374,13 +398,31 @@ test("every callback of several graphs and the host, all running at once, finds 
           hostController.signal.addEventListener("abort", () => storage.run("host", () => record(labels[1], "host")));
           Object.assign(env, { hostTarget, hostController });
         }
+        let afterStart: (() => void) | undefined;
+        if (name === "hostPipes") {
+          const label = `sink close() of the host's pipe (source closed from ${tag})`;
+          hostListenerLabels.push(label);
+          let sourceOfHostPipe!: ReadableStreamDefaultController;
+          const piped = new ReadableStream({ start: controller => void (sourceOfHostPipe = controller) });
+          hostPipes.push(piped.pipeTo(new WritableStream({ close: () => record(label, "host") })));
+          let hostSourceController!: ReadableStreamDefaultController;
+          const hostSource = new ReadableStream({ start: controller => void (hostSourceController = controller) });
+          Object.assign(env, { sourceOfHostPipe, hostSource });
+          // The host's code, outside every graph and store: it runs once the script's pipe waits in a read.
+          afterStart = () => hostSourceController.close();
+        }
         const start = () => storage.run(tag, () => app.callbacks[name](seen, env));
         return Promise.resolve()
-          .then(() => (graph ? graph.run(start) : start()))
+          .then(() => {
+            const running = graph ? graph.run(start) : start();
+            afterStart?.();
+            return running;
+          })
           .catch(error => void failures.push(`${name} in ${tag}: ${error}`));
       }),
     ),
   );
+  await Promise.all(hostPipes);
   expect(failures).toEqual([]);
 
   const wrongContext: string[] = [];
@@ -413,3 +455,16 @@ test("every callback of several graphs and the host, all running at once, finds 
   ).toEqual([]);
   // (One test on purpose, and slow on a debug build: it is everything running at once.)
 }, 30_000);
+
+test("a rejection from a job that a stream queued reaches the onError of the graph whose code started it", async () => {
+  const reported: string[] = [];
+  using stack = new DisposableStack();
+  const graph = stack.adopt(
+    new ModuleGraph({ onError: (error: any, kind: string) => void reported.push(`${kind}: ${error.message}`) }),
+    graph => graph.dispose(),
+  );
+  const app = await graph.import(join(dir, "stream-rejections.mjs"));
+  graph.run(() => app.rejectFromQueuedStreamJobs());
+  while (reported.length < 2) await new Promise<void>(resolve => setImmediate(resolve));
+  expect(reported.sort()).toEqual(["unhandledRejection: queued sink write()", "unhandledRejection: waiting next()"]);
+});

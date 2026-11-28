@@ -179,10 +179,10 @@ pub(crate) fn get_credentials_with_options(
                 }
             }
 
-            if let Some(queue_size) = opts.get_optional::<i32>(global_object, "queueSize")? {
+            if let Some(queue_size) = opts.get_optional::<i64>(global_object, "queueSize")? {
                 if queue_size < 1 {
                     return Err(global_object.throw_range_error(
-                        queue_size as i64,
+                        queue_size,
                         RangeErrorOptions {
                             min: 1,
                             field_name: b"queueSize",
@@ -190,14 +190,14 @@ pub(crate) fn get_credentials_with_options(
                         },
                     ));
                 } else {
-                    new_credentials.options.queue_size = queue_size.min(i32::from(u8::MAX)) as u8;
+                    new_credentials.options.queue_size = queue_size.min(i64::from(u8::MAX)) as u8;
                 }
             }
 
-            if let Some(retry) = opts.get_optional::<i32>(global_object, "retry")? {
+            if let Some(retry) = opts.get_optional::<i64>(global_object, "retry")? {
                 if !(0..=255).contains(&retry) {
                     return Err(global_object.throw_range_error(
-                        retry as i64,
+                        retry,
                         RangeErrorOptions {
                             min: 0,
                             max: 255,

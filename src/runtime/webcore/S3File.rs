@@ -419,13 +419,15 @@ pub(crate) fn get_presign_url_from(
                     }
                 };
             }
-            if let Some(expires_) = options.get_optional::<i32>(global, "expiresIn")? {
+            if let Some(expires_) = options.get_optional::<i64>(global, "expiresIn")? {
                 if expires_ <= 0 {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "expiresIn must be greather than 0"
                     )));
                 }
-                expires = expires_ as usize;
+                // A larger value, `Infinity` included, signs this many seconds.
+                const MAX_EXPIRES_IN: i64 = i32::MAX as i64;
+                expires = expires_.min(MAX_EXPIRES_IN) as usize;
             }
         }
         credentials_with_options = s3.get_credentials_with_options(Some(options), global)?;

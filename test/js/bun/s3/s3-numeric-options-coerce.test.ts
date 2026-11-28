@@ -99,3 +99,125 @@ describe("S3Client upload options coercion", () => {
     expect(() => make({ partSize: "1024" })).toThrow(RangeError);
   });
 });
+
+// A 32-bit read in front of the range check wraps a string, BigInt or object
+// at or above 2^31 (`retry: "4294967299"` becomes 3) and reports a number as
+// 2147483647. The check has to see the value that was passed.
+describe("queueSize, retry and expiresIn are range-checked before they are narrowed", () => {
+  const options = { ...base, region: "us-east-1" };
+  const stored = (option: "retry" | "queueSize", value: unknown) =>
+    Number(
+      new RegExp(`${option}: (\\d+)`).exec(Bun.inspect(new Bun.S3Client({ ...options, [option]: value } as any)))![1],
+    );
+  const failure = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (e: any) {
+      return { name: e.name, code: e.code, message: e.message };
+    }
+    return "did not throw";
+  };
+  const forms = (n: number) => [n, String(n), BigInt(n), { valueOf: () => n }];
+  const aroundTheWrap = [2 ** 31 - 1, 2 ** 31, 2 ** 32, 2 ** 32 + 3];
+
+  test("retry above 255 throws with the value that was passed", () => {
+    const outOfRange = (received: string) => ({
+      name: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      message: `The value of "retry" is out of range. It must be >= 0 and <= 255. Received ${received}`,
+    });
+    const retry = (value: unknown) => failure(() => new Bun.S3Client({ ...options, retry: value } as any));
+
+    for (const n of aroundTheWrap) {
+      expect(forms(n).map(retry)).toEqual(Array(4).fill(outOfRange(String(n))));
+    }
+    expect(retry("-4294967295")).toEqual(outOfRange("-4294967295"));
+    expect(retry("Infinity")).toMatchObject({ name: "RangeError", code: "ERR_OUT_OF_RANGE" });
+
+    // What was coerced before is still coerced.
+    expect([NaN, "abc", "", " ", false, [], 3n, "7"].map(value => stored("retry", value))).toEqual([
+      0, 0, 0, 0, 0, 0, 3, 7,
+    ]);
+    expect(retry(Symbol())).toMatchObject({ name: "TypeError", message: "Cannot convert a symbol to a number" });
+  });
+
+  test("queueSize above 255 stores 255 in every form", () => {
+    for (const n of aroundTheWrap) {
+      expect(forms(n).map(value => stored("queueSize", value))).toEqual([255, 255, 255, 255]);
+    }
+    expect(stored("queueSize", "Infinity")).toBe(255);
+    expect(failure(() => new Bun.S3Client({ ...options, queueSize: "-4294967295" } as any))).toEqual({
+      name: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      message: 'The value of "queueSize" is out of range. It must be >= 1. Received -4294967295',
+    });
+
+    expect([8n, { valueOf: () => 8 }, 256, Infinity].map(value => stored("queueSize", value))).toEqual([
+      8, 8, 255, 255,
+    ]);
+  });
+
+  test("expiresIn above 2147483647 signs 2147483647 in every form", () => {
+    for (const n of aroundTheWrap) {
+      expect(forms(n).map(presignExpires)).toEqual(Array(4).fill("2147483647"));
+    }
+    expect(presignExpires("Infinity")).toBe("2147483647");
+    expect(failure(() => presignExpires("-4294967295"))).toMatchObject({
+      name: "TypeError",
+      message: expect.stringContaining("expiresIn must be"),
+    });
+
+    expect([3n, { valueOf: () => 3 }].map(presignExpires)).toEqual(["3", "3"]);
+  });
+
+  test("each option is converted to a number once", () => {
+    const calls = { retry: 0, queueSize: 0, expiresIn: 0 };
+    const counted = (option: keyof typeof calls, n: number) => ({ valueOf: () => (calls[option]++, n) });
+
+    expect(() => new Bun.S3Client({ ...options, retry: counted("retry", 2 ** 32 + 3) } as any)).toThrow(RangeError);
+    expect(stored("queueSize", counted("queueSize", 2 ** 32 + 1))).toBe(255);
+    expect(presignExpires(counted("expiresIn", 2 ** 32 + 1))).toBe("2147483647");
+    expect(calls).toEqual({ retry: 1, queueSize: 1, expiresIn: 1 });
+  });
+
+  test("every entry point rejects a wrapped retry before it sends a request", async () => {
+    let requests = 0;
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        requests++;
+        return new Response("", { status: 500 });
+      },
+    });
+    const endpoint = `http://127.0.0.1:${server.port}`;
+    const client = new Bun.S3Client({ ...options, endpoint });
+    const file = client.file("k");
+    // 2^32 wrapped to 0 retries.
+    const wrapped = { ...options, endpoint, retry: "4294967296" } as any;
+
+    const entryPoints: Record<string, () => unknown> = {
+      "new S3Client(options)": () => new Bun.S3Client(wrapped),
+      "client.file(key, options)": () => client.file("k", wrapped),
+      "S3Client.presign(key, options)": () => Bun.S3Client.presign("k", wrapped),
+      "Bun.s3.file(key, options)": () => Bun.s3.file("k", wrapped),
+      "Bun.file(url, options)": () => Bun.file("s3://b/k", wrapped),
+      "s3file.presign(options)": () => file.presign(wrapped),
+      "s3file.write(data, options)": () => file.write("x", wrapped),
+      "fetch(url, { s3 })": () => fetch("s3://b/k", { s3: wrapped }),
+    };
+    const outcomes: Record<string, string> = {};
+    for (const [name, run] of Object.entries(entryPoints)) {
+      try {
+        await run();
+        outcomes[name] = "did not throw";
+      } catch (e: any) {
+        outcomes[name] = `${e.name} ${e.code}`;
+      }
+    }
+
+    expect(outcomes).toEqual(
+      Object.fromEntries(Object.keys(entryPoints).map(name => [name, "RangeError ERR_OUT_OF_RANGE"])),
+    );
+    expect(requests).toBe(0);
+  });
+});

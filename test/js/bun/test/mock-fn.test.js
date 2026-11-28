@@ -3749,9 +3749,38 @@ if (isBun) {
       expect(mocked).toHaveBeenCalledTimes(1);
     });
 
+    // Vitest 5.1 returns a mock that it is given, whichever API made that mock. Jest 30 makes a new mock that calls it.
     test.each(flavors)("%s: fn(mock)", (_, isVitest, fn) => {
       const mocked = fn();
       expect(fn(mocked) === mocked).toBe(isVitest);
+
+      for (const [madeBy, , make, spyOn] of flavors) {
+        for (const given of [make(() => "given"), spyOn({ method: () => "given" }, "method")]) {
+          const mockNameBefore = given.getMockName();
+          const returned = fn(given);
+          const returnedAtFirst = returned();
+          returned.mockReturnValue("set on returned");
+          expect({
+            madeBy,
+            isGiven: returned === given,
+            returnedAtFirst,
+            "given()": given(),
+            "returned()": returned(),
+            "given.mock.calls": given.mock.calls.length,
+            "returned.mock.calls": returned.mock.calls.length,
+            mockName: given.getMockName(),
+          }).toEqual({
+            madeBy,
+            isGiven: isVitest,
+            returnedAtFirst: "given",
+            "given()": isVitest ? "set on returned" : "given",
+            "returned()": "set on returned",
+            "given.mock.calls": isVitest ? 3 : 2,
+            "returned.mock.calls": isVitest ? 3 : 2,
+            mockName: mockNameBefore,
+          });
+        }
+      }
     });
 
     test.each(flavors)("%s: the return value of withImplementation()", (_, isVitest, fn) => {

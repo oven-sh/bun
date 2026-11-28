@@ -1132,6 +1132,65 @@ describe.concurrent("one file under several types", () => {
     );
   });
 
+  test.each([
+    ["require()", `require("./code.txt")`],
+    ["an entry that was read from require.cache", `(await import("./code.txt"), require.cache[key].exports)`],
+  ])("runs as CommonJS under a type of code, behind %s", async (_, load) => {
+    expect(
+      await run({
+        "main.mjs": `
+          const key = require.resolve("./code.txt");
+          const before = ${load};
+          const code = await import("./code.txt", { with: { type: "js" } });
+          console.log(JSON.stringify([before.default, code.default, require.cache[key].exports === before]));
+        `,
+        "code.txt": `exports.a = 1;`,
+      }),
+    ).toEqual(passes(["exports.a = 1;", { a: 1 }, true]));
+  });
+
+  test.each([
+    ["an import", `(await import("./code.toml", { with: { type: "js" } })).default`],
+    ["a require()", `require("./code.toml", { type: "js" })`],
+  ])("is data to an import without a type, behind %s that ran it as CommonJS", async (_, load) => {
+    expect(
+      await run({
+        "main.mjs": `console.log(JSON.stringify([${load}, (await import("./code.toml")).default]));`,
+        "code.toml": `exports.a = 1`,
+      }),
+    ).toEqual(passes([{ a: 1 }, { exports: { a: 1 } }]));
+  });
+
+  test("stays what require() has made of it when it throws as CommonJS", async () => {
+    expect(
+      await run({
+        "main.mjs": `
+          const required = require("./code.toml");
+          const thrown = await import("./code.toml", { with: { type: "js" } }).catch(error => error.name);
+          console.log(JSON.stringify([thrown, require("./code.toml") === required]));
+        `,
+        "code.toml": `exports.a.b = 1`,
+      }),
+    ).toEqual(passes(["TypeError", true]));
+  });
+
+  test.each([
+    ["a module that the program made", `Object.assign(new Module(key), { exports: { a: 1 }, loaded: true })`],
+    ["the entry of another file", `(require("./data.json"), require.cache[require.resolve("./data.json")])`],
+  ])("gives way under a type of code to %s in require.cache", async (_, entry) => {
+    expect(
+      await run({
+        "main.mjs": `
+          import Module from "node:module";
+          const key = require.resolve("./code.txt");
+          require.cache[key] = ${entry};
+          console.log(JSON.stringify((await import("./code.txt", { with: { type: "js" } })).default));
+        `,
+        "code.txt": `exports.a = "from the file";`,
+      }),
+    ).toEqual(passes({ a: 1 }));
+  });
+
   test("has one entry in require.cache until it is deleted, which require() does not answer with", async () => {
     expect(
       await run({

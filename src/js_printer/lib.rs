@@ -7601,7 +7601,10 @@ pub fn print_ast<'a, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
     if !printer.options.bundling
         && tree.uses_require_ref
         && tree.exports_kind == js_ast::ExportsKind::Esm
-        && printer.options.target == bun_ast::Target::Bun
+        && matches!(
+            printer.options.target,
+            bun_ast::Target::Bun | bun_ast::Target::BunMacro
+        )
     {
         // Hoist the `var {require}=import.meta;` declaration. Previously,
         // `import.meta.require` was inlined into transpiled files, which

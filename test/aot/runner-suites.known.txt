@@ -41,6 +41,8 @@ test/cli/test/isolation-one-module-fetched-twice.test.ts: --isolate: two import(
 # These import a macro. A macro stops the build of a compiled run with TS100053, as docs/compiler/compatibility.mdx says.
 test/cli/test/isolation.test.ts: --isolate: a macro runs in every file when a plugin is registered
 test/cli/test/isolation.test.ts: --isolate: collects globals pinned by leaked handles > a macro left loaded
+test/cli/test/isolation.test.ts: --isolate: the SourceProvider cache keeps what any load of a path gets > a load that a file leaves in flight > does not run a macro in the next file
+test/cli/test/isolation.test.ts: --isolate=modules: the SourceProvider cache keeps what any load of a path gets > a load that a file leaves in flight > does not run a macro in the next file
 test/cli/test/isolation.test.ts: bun test --isolate > a test file's macros are loaded again for each file (--isolate)
 test/cli/test/isolation.test.ts: bun test --isolate > a test file's macros are loaded again for each file (--parallel worker)
 test/cli/test/isolation.test.ts: the SourceProvider cache skips files that use import.meta.glob() or macros > --isolate, large files, BUN_RUNTIME_TRANSPILER_CACHE_PATH=0

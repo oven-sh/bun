@@ -60,6 +60,7 @@ pub(super) struct StatementsHost {
     pub(super) loaders: &'static [(&'static str, Option<&'static str>, HostLoader)],
     pub(super) loader_requests: Guarded<Vec<RecordedLoaderRequest>>,
     pub(super) plugin_sources: &'static [&'static str],
+    pub(super) without_loader_by_name: &'static [&'static str],
     pub(super) implied: Vec<(&'static str, Vec<HostResolution>)>,
     pub(super) followed_on_request: Option<&'static [(&'static str, &'static str, &'static str)]>,
     pub(super) max_macro_values: usize,
@@ -89,6 +90,7 @@ impl Default for StatementsHost {
             loaders: &[],
             loader_requests: Guarded::new(Vec::new()),
             plugin_sources: &[],
+            without_loader_by_name: &[],
             implied: Vec::new(),
             followed_on_request: None,
             max_macro_values: 0,
@@ -390,6 +392,10 @@ impl CodeHost for StatementsHost {
 
     fn is_plugin_source(&self, path: &[u8]) -> bool {
         self.lists_path(self.plugin_sources, path)
+    }
+
+    fn has_loader_by_name(&self, path: &[u8]) -> bool {
+        !self.lists_path(self.without_loader_by_name, path)
     }
 
     fn parse_code<'s>(

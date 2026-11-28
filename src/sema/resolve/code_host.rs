@@ -191,6 +191,10 @@ pub trait CodeHost: Host {
         false
     }
 
+    fn has_loader_by_name(&self, _path: &[u8]) -> bool {
+        true
+    }
+
     fn loader_of_code_in_place_of_typed_file(&self, _path: &[u8]) -> Option<HostLoader> {
         None
     }

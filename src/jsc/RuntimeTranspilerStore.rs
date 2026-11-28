@@ -254,6 +254,8 @@ impl RuntimeTranspilerStore {
         input_specifier: String,
         path: &Fs::Path<'_>,
         referrer: String,
+        type_attribute: String,
+        is_code_by_type_alone: bool,
         loader: Loader,
         module_type: ModuleType,
         package_json: Option<&PackageJSON>,
@@ -263,20 +265,6 @@ impl RuntimeTranspilerStore {
     ) -> *mut c_void {
         let path_text = Box::<[u8]>::from(path.text);
         let promise: *mut JSInternalPromise = JSInternalPromise::create(global_object);
-
-        // NOTE: DirInfo should already be cached since module loading happens
-        // after module resolution, so this should be cheap
-        let mut resolved_source = ResolvedSource::default();
-        if let Some(pkg) = package_json {
-            match pkg.module_type {
-                ModuleType::Cjs => {
-                    resolved_source.tag = ResolvedSourceTag::PackageJsonTypeCommonjs;
-                    resolved_source.is_commonjs_module = true;
-                }
-                ModuleType::Esm => resolved_source.tag = ResolvedSourceTag::PackageJsonTypeModule,
-                ModuleType::Unknown => {}
-            }
-        }
 
         // Build the job by value and `get_init` it into the hive — the `Box`
         // alloc, `JSInternalPromise::create`, and `StrongOptional::create`
@@ -291,11 +279,15 @@ impl RuntimeTranspilerStore {
                 path_text,
                 global_this: BackRef::new(global_object),
                 non_threadsafe_referrer: referrer,
+                non_threadsafe_type_attribute: type_attribute,
+                is_code_by_type_alone,
                 vm,
                 ticket: None,
                 log: bun_ast::Log::init(),
                 loader,
                 module_type,
+                tag: ResolvedSourceTag::of_code_in(package_json),
+                test_file_imports_vitest: vm.transpiler.get().options.test_file_imports_vitest,
                 aot_package_config,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
                 module_loader: if module_loader.is_empty() {
@@ -304,9 +296,10 @@ impl RuntimeTranspilerStore {
                     StrongOptional::create(module_loader, global_object)
                 },
                 _keep_alive: JsKeepAlive::active(),
-                resolved_source,
+                resolved_source: ResolvedSource::default(),
                 generation_number: self.generation_number.load(Ordering::SeqCst),
                 has_plugins: global_object.has_plugins(),
+                is_web_assembly: false,
                 parse_error: None,
                 work_task: WorkPoolTask {
                     node: Default::default(),
@@ -345,8 +338,13 @@ pub struct TranspilerJob {
     pub(crate) path_text: Box<[u8]>,
     pub(crate) non_threadsafe_input_specifier: bun_core::String,
     pub(crate) non_threadsafe_referrer: bun_core::String,
+    non_threadsafe_type_attribute: bun_core::String,
+    is_code_by_type_alone: bool,
     pub(crate) loader: Loader,
     module_type: ModuleType,
+    tag: ResolvedSourceTag,
+    /// For the test file that asked. The next one may have started before this job does.
+    test_file_imports_vitest: bool,
     /// `Transpiler::find_aot_package_config`, asked on the JS thread.
     pub(crate) aot_package_config:
         Option<std::sync::Arc<bun_resolver::tsconfig_json::TSConfigJSON>>,
@@ -367,6 +365,7 @@ pub struct TranspilerJob {
     pub(crate) generation_number: u32,
     /// Macros load through `Bun.plugin()` callbacks, which the pool thread's VM lacks, so the JS thread must run them.
     has_plugins: bool,
+    is_web_assembly: bool,
     pub(crate) log: bun_ast::Log,
     pub(crate) parse_error: Option<crate::CrateError>,
     /// Moved out by `run_from_js_thread`; dropped with the slot otherwise.
@@ -444,6 +443,15 @@ unsafe extern "C" {
         specifier: &String,
         referrer: &String,
     );
+    #[allow(improper_ctypes)]
+    safe fn Bun__fetchAsyncModuleOnJSThread(
+        global_object: &JSGlobalObject,
+        promise_value: JSValue,
+        module_loader: JSValue,
+        specifier: &String,
+        referrer: &String,
+        type_attribute: &String,
+    );
 }
 
 impl TranspilerJob {
@@ -468,16 +476,18 @@ impl TranspilerJob {
         let global_this = self.global_this;
 
         let referrer = core::mem::take(&mut self.non_threadsafe_referrer);
+        let type_attribute = core::mem::take(&mut self.non_threadsafe_type_attribute);
         let mut log = core::mem::replace(&mut self.log, bun_ast::Log::init());
-        let loader = self.loader;
+        let options = &vm.transpiler.get().options;
         let calls_macro = self.has_plugins
-            && !vm.transpiler.get().options.no_macros
+            && !options.no_macros
             && log
                 .msgs
                 .iter()
                 .any(|msg| &*msg.data.text == MACROS_ARE_DISABLED);
-        let (specifier, mut result) = match self.parse_error {
-            Some(_) if calls_macro => (
+        let needs_js_thread = calls_macro || self.is_web_assembly;
+        let (specifier, result) = match self.parse_error {
+            Some(_) if needs_js_thread => (
                 core::mem::take(&mut self.non_threadsafe_input_specifier),
                 Err(crate::CrateError::ParseError),
             ),
@@ -487,6 +497,10 @@ impl TranspilerJob {
                 let out = core::mem::take(&mut self.non_threadsafe_input_specifier);
                 debug_assert!(resolved_source.source_url.is_empty());
                 resolved_source.source_url = out.create_if_different(&self.path_text);
+                resolved_source.tag = self.tag;
+                resolved_source.is_code_by_type_alone = self.is_code_by_type_alone;
+                resolved_source.depends_on_more_than_source |= !type_attribute.is_empty()
+                    || self.test_file_imports_vitest != options.test_file_imports_vitest;
                 // A job reads a file: `Bun__transpileFile` gives it no blob and no plugin's text.
                 let in_standalone_executable = vm.standalone_module_graph.is_some();
                 resolved_source.is_static = VirtualMachine::is_file_on_disk_static(
@@ -504,17 +518,24 @@ impl TranspilerJob {
                 .put(std::ptr::from_mut::<TranspilerJob>(self))
         };
 
-        if calls_macro {
-            log = bun_ast::Log::init();
-            result = VirtualMachine::fetch_without_on_load_plugins(
-                vm,
-                &global_this,
-                &specifier,
-                &referrer,
-                Some(loader),
-                &mut log,
-                crate::module_loader::FetchFlags::Transpile,
-            );
+        // Nothing is left to run the module.
+        if !vm.script_allowed()
+            || (vm.test_isolation_enabled.get() && promise.is_from_retired_test_isolation_realm())
+        {
+            return Ok(());
+        }
+
+        if needs_js_thread {
+            return crate::from_js_host_call_generic(&global_this, || {
+                Bun__fetchAsyncModuleOnJSThread(
+                    &global_this,
+                    promise,
+                    module_loader,
+                    &specifier,
+                    &referrer,
+                    &type_attribute,
+                )
+            });
         }
 
         fulfill(
@@ -605,7 +626,6 @@ impl TranspilerJob {
         let path = bun_paths::fs::Path::init(&this.path_text);
         let specifier = path.text;
         let loader = this.loader;
-        let this_tag = this.resolved_source.tag;
 
         let mut cache = RuntimeTranspilerCache::default();
 
@@ -632,6 +652,7 @@ impl TranspilerJob {
         // Transpiler via raw pointer; set_arena/set_log keep them in sync.
         // The JS thread may have been in macro mode when its options were copied, but a job is never part of a macro.
         transpiler.options.target = bun_ast::Target::Bun;
+        transpiler.options.test_file_imports_vitest = this.test_file_imports_vitest;
         if this.has_plugins {
             transpiler.options.no_macros = true;
         }
@@ -724,6 +745,11 @@ impl TranspilerJob {
             this.parse_error = Some(crate::CrateError::ParseError);
             return;
         };
+        if parse_result.loader == Loader::Wasm {
+            this.is_web_assembly = true;
+            this.parse_error = Some(crate::CrateError::ParseError);
+            return;
+        }
 
         // SAFETY: leaf scalar field read; see `vm` note above. Inlined
         // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming
@@ -759,7 +785,6 @@ impl TranspilerJob {
                 source_code: core::mem::take(&mut entry.output_code),
                 is_commonjs_module: entry.metadata.module_type == CacheModuleType::Cjs,
                 module_info,
-                tag: this_tag,
                 ..Default::default()
             };
 
@@ -776,7 +801,6 @@ impl TranspilerJob {
                 already_bundled: true,
                 bytecode_cache,
                 is_commonjs_module,
-                tag: this_tag,
                 ..Default::default()
             };
             this.resolved_source.source_code.ensure_hash();
@@ -907,7 +931,6 @@ impl TranspilerJob {
                 use analyze_transpiled_module::ModuleInfoExt;
                 mi.into_deserialized()
             }),
-            tag: this_tag,
             ..ResolvedSource::printed(printed_ast, source_code)
         };
 

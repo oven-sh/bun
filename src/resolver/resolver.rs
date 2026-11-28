@@ -6637,7 +6637,9 @@ bun_core::comptime_string_map! {
 /// `.mjs`/`.mts` are ESM, `.cjs`/`.cts` are CommonJS, anything else is `None`.
 #[inline]
 pub fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
-    MODULE_TYPE_FROM_EXT.get(ext).copied()
+    MODULE_TYPE_FROM_EXT
+        .get_ascii_case_insensitive(ext)
+        .copied()
 }
 
 fn is_require(kind: ast::ImportKind) -> bool {

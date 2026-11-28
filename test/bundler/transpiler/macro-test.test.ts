@@ -637,6 +637,48 @@ test("a macro in a module transpiled off the main thread sees --define", async (
   expect(exitCode).toBe(0);
 });
 
+test.concurrent("require() works in an ES module that is loaded for a macro", async () => {
+  expect(
+    await run({
+      "index.ts": `import { sep } from "./m.ts" with { type: "macro" };\nconsole.log(sep());\n`,
+      "m.ts": `export const sep = () => require("node:path").posix.sep;\n`,
+    }),
+  ).toEqual({ lines: ["/"], stderr: "", exitCode: 0 });
+});
+
+describe.concurrent("with a plugin registered", () => {
+  const plugin = `Bun.plugin({ name: "idle", setup(build) { build.onLoad({ filter: /never$/ }, () => {}); } });\n`;
+
+  test("the program can call require() in a module that a macro loaded first", async () => {
+    expect(
+      await run({
+        "index.ts": `${plugin}console.log((await import("./calls.ts")).default, (await import("./shared.ts")).sep());\n`,
+        "calls.ts": `import { m } from "./m.ts" with { type: "macro" };\nexport default m();\n`,
+        "m.ts": `import { one } from "./shared.ts";\nexport const m = () => one;\n`,
+        "shared.ts": `export const one = 1;\nexport const sep = () => require("node:path").posix.sep;\n`,
+      }),
+    ).toEqual({ lines: ["1 /"], stderr: "", exitCode: 0 });
+  });
+
+  test.each([
+    ["calls.mjs", "", `{}`],
+    ["calls.js", "", `{ "type": "module" }`],
+    ["calls.txt", `, { with: { type: "js" } }`, `{ "type": "module" }`],
+  ])(
+    "a file that calls a macro is the ES module that its name or its package says: %s",
+    async (file, options, json) => {
+      expect(
+        await run({
+          "index.ts": `${plugin}console.log(JSON.stringify(Object.keys(await import("./${file}"${options}))));\n`,
+          [file]: `import { m } from "./m.ts" with { type: "macro" };\nconsole.log(m(), typeof __dirname);\n`,
+          "m.ts": `export const m = () => 1;\n`,
+          "package.json": json,
+        }),
+      ).toEqual({ lines: ["1 string", "[]"], stderr: "", exitCode: 0 });
+    },
+  );
+});
+
 // `Bun.build()` parses on the process-wide worker pool. The macro VM a worker creates takes the
 // options of the build that creates it and lives on after that build, so this runs in its own
 // process: an earlier build in the same process would otherwise decide what the macro sees.

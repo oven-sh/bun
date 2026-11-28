@@ -28,7 +28,7 @@ bool IsolatedModuleCache::canUse(JSC::VM&, void* bunVM, const BunString* typeAtt
 extern "C" uint64_t Bun__hashPluginContents(const EncodedSlice* contents, BunLoaderType loader);
 extern "C" bool Bun__VM__hasGlobalsOfVitest(void* bunVM);
 
-static uint64_t madeFromHash(JSC::VM& vm, const WTF::String& key, const CodeString* pluginContents)
+uint64_t IsolatedModuleCache::madeFromHash(JSC::VM& vm, const WTF::String& key, const CodeString* pluginContents)
 {
     void* bunVM = WebCore::clientData(vm)->bunVM;
     uint64_t hash = pluginContents ? Bun__hashPluginContents(&pluginContents->string, pluginContents->loader) : 0;

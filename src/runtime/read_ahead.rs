@@ -560,7 +560,7 @@ impl ReadAhead {
         let directory = tools.transpiler.resolver.read_dir_info(path.name().dir);
         let package_json =
             (directory.ok().flatten()).and_then(|it| it.package_json.or(it.enclosing_package_json));
-        let module_type = crate::jsc_hooks::module_type_of(&path, package_json);
+        let module_type = crate::jsc_hooks::module_type_of(&path, Some(loader), package_json);
         let module = self.make(tools, path.text, &path, loader, module_type, by)?;
         if self.compiles(path.text, &module) {
             module.compile(path.text);

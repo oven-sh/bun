@@ -533,8 +533,10 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
         // On error, remove the module from the require map
         // so that it can be re-evaluated on the next require.
         // The entry can already be gone: `delete require.cache[__filename]; throw ...`, or a graph's dispose().
-        JSC__JSMap__remove(requireMapOf(globalObject, moduleGraph()), globalObject, JSValue::encode(this->filename()));
-        RETURN_IF_EXCEPTION(scope, false);
+        if (!isKeptOutOfRequireCache) {
+            JSC__JSMap__remove(requireMapOf(globalObject, moduleGraph()), globalObject, JSValue::encode(this->filename()));
+            RETURN_IF_EXCEPTION(scope, false);
+        }
 
         scope.throwException(globalObject, exception);
         return false;
@@ -1214,6 +1216,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globa
 
     auto* module = JSCommonJSModule::create(uncheckedDowncast<Zig::GlobalObject>(globalObject), id, object, hasEvaluated.isTrue(), parent);
     RETURN_IF_EXCEPTION(scope, {});
+    module->holdsESModuleOrData = hasEvaluated.isTrue();
     // The require cache holds a module that requires another. What stands in for a file of the executable is in no cache, so the module that has it for a parent holds it.
     if (parent != requirer)
         module->m_overriddenParent.set(JSC::getVM(globalObject), module, parent);
@@ -1792,6 +1795,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
             return JSValue::encode(child);
     }
     REQUIRE_CJS_RETURN_IF_EXCEPTION;
+    if (fetchResult.isNumber())
+        child->holdsESModuleOrData = true;
     // See requireCompiledModule().
     if (child->compiledModule != JSCommonJSModule::noCompiledModule && child->compiledModuleLoadedInto == JSCommonJSModule::noCompiledModule) [[unlikely]]
         child->isListedAsChild = true;
@@ -1974,13 +1979,14 @@ class ImportedCommonJSFile final : public JSC::SyntheticSourceProvider::Deferred
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ImportedCommonJSFile);
 
 public:
-    ImportedCommonJSFile(JSModuleGraph* graph, ResolvedSource&& source)
+    ImportedCommonJSFile(Zig::GlobalObject* globalObject, JSModuleGraph* graph, ResolvedSource&& source)
         : m_graph(graph)
         , m_source(WTF::move(source))
         , m_ignoreESModuleAnnotation(m_source.tag == ResolvedSourceTagPackageJSONTypeModule)
     {
         for (auto* mayBeBorrowed : { &m_source.source_code, &m_source.source_url, &m_source.origin_path })
             *mayBeBorrowed = Bun::toStringRef(mayBeBorrowed->transferToWTFString());
+        m_madeFromHash = madeFromHash(globalObject);
     }
 
     ImportedCommonJSFile(JSModuleGraph* graph, Ref<JSC::SourceProvider>&& provider, bool ignoreESModuleAnnotation)
@@ -2009,6 +2015,12 @@ public:
     }
 
 private:
+    uint64_t madeFromHash(Zig::GlobalObject* globalObject) const
+    {
+        auto& vm = JSC::getVM(globalObject);
+        return IsolatedModuleCache::canUse(vm, globalObject->bunVM()) ? IsolatedModuleCache::madeFromHash(vm, sourceURL()) : 0;
+    }
+
     // Made no sooner than it runs: a provider takes the place of the one before it in the source maps.
     Ref<JSC::SourceProvider> provider(Zig::GlobalObject* globalObject)
     {
@@ -2019,12 +2031,13 @@ private:
         }
         if (!m_provider) {
             m_hasOverriddenWrapper = globalObject->hasOverriddenModuleWrapper;
+            m_source.depends_on_more_than_source |= m_madeFromHash != madeFromHash(globalObject);
             m_provider = createCommonJSSourceProvider(globalObject, sourceURL(), m_source, false);
         }
         return *m_provider;
     }
 
-    JSCommonJSModule* createModule(Zig::GlobalObject* globalObject, JSC::SyntheticModuleRecord* record, JSMap* requireMap, JSString* filename)
+    JSCommonJSModule* createModule(Zig::GlobalObject* globalObject, JSC::SyntheticModuleRecord* record, JSMap* requireMap, JSString* filename, bool isKeyTaken)
     {
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2039,9 +2052,11 @@ private:
 
         auto* moduleObject = JSCommonJSModule::create(vm, globalObject->CommonJSModuleObjectStructure(), id, filename, dirname, JSC::SourceCode(provider(globalObject)), graph);
         moduleObject->setExportsObject(JSC::constructEmptyObject(globalObject, globalObject->objectPrototype()));
-        // The key has been given to another module, and this is the load that was in flight then.
-        if (record->supersededAt()) [[unlikely]]
+        moduleObject->isCodeByTypeAlone = m_source.is_code_by_type_alone;
+        if (isKeyTaken) [[unlikely]] {
+            moduleObject->isKeptOutOfRequireCache = true;
             return moduleObject;
+        }
         requireMap->set(globalObject, filename, moduleObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (isMain && globalObject->keysImportedByRunMain.contains(record->moduleKey().string()))
@@ -2064,7 +2079,9 @@ private:
         JSValue entry = requireMap->get(globalObject, key);
         RETURN_IF_EXCEPTION(scope, nullptr);
         auto* moduleObject = entry ? dynamicDowncast<JSCommonJSModule>(entry) : nullptr;
-        if (moduleObject) {
+        bool isEntryOtherFormOfFile = m_source.is_code_by_type_alone && moduleObject && moduleObject->holdsESModuleOrData && JSValue::strictEqual(globalObject, moduleObject->filename(), key);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (moduleObject && !isEntryOtherFormOfFile) {
             for (auto* running = WebCore::clientData(vm)->innermostRunningCommonJSModule; running; running = running->outer) {
                 if (running->module != moduleObject)
                     continue;
@@ -2073,7 +2090,8 @@ private:
                 break;
             }
         } else {
-            moduleObject = createModule(globalObject, record, requireMap, key);
+            // Superseded: the key has been given to another module, and this is the load that was in flight then.
+            moduleObject = createModule(globalObject, record, requireMap, key, isEntryOtherFormOfFile || record->supersededAt());
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
         moduleObject->ignoreESModuleAnnotation = m_ignoreESModuleAnnotation;
@@ -2125,6 +2143,7 @@ private:
 
     JSC::Weak<JSModuleGraph> m_graph;
     ResolvedSource m_source {};
+    uint64_t m_madeFromHash { 0 };
     RefPtr<JSC::SourceProvider> m_provider;
     // While it is on the stack. It may have left the require cache.
     JSCommonJSModule* m_module { nullptr };
@@ -2149,7 +2168,7 @@ static JSC::JSSourceCode* sourceCodeOfImportedFile(Zig::GlobalObject* globalObje
 
 JSC::JSSourceCode* createCommonJSModule(Zig::GlobalObject* globalObject, JSModuleGraph* graph, ResolvedSource& source)
 {
-    return sourceCodeOfImportedFile(globalObject, makeUnique<ImportedCommonJSFile>(graph, WTF::move(source)));
+    return sourceCodeOfImportedFile(globalObject, makeUnique<ImportedCommonJSFile>(globalObject, graph, WTF::move(source)));
 }
 
 JSC::JSSourceCode* createCommonJSModule(Zig::GlobalObject* globalObject, JSModuleGraph* graph, Ref<JSC::SourceProvider>&& sourceProvider, bool ignoreESModuleAnnotation)

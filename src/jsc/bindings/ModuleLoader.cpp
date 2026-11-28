@@ -653,6 +653,35 @@ extern "C" void Bun__onFulfillAsyncModule(
     }
 }
 
+// For a file that the transpiler's thread has handed back undone.
+extern "C" void Bun__fetchAsyncModuleOnJSThread(
+    Zig::GlobalObject* globalObject,
+    JSC::EncodedJSValue encodedPromiseValue,
+    JSC::EncodedJSValue encodedModuleLoader,
+    BunString* specifier,
+    BunString* referrer,
+    BunString* typeAttribute)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSPromise* promise = uncheckedDowncast<JSC::JSPromise>(JSC::JSValue::decode(encodedPromiseValue));
+    JSValue moduleLoader = JSC::JSValue::decode(encodedModuleLoader);
+    Bun::JSModuleGraph* graph = moduleLoader ? Bun::moduleGraphOfLoader(globalObject, uncheckedDowncast<JSC::JSModuleLoader>(moduleLoader)) : nullptr;
+
+    ErrorableResolvedSource res;
+    JSValue source;
+    Bun::throwIfModuleGraphDisposed(globalObject, scope, graph);
+    if (!scope.exception())
+        source = fetchESMSourceCode<false>(globalObject, graph, jsString(vm, specifier->toWTFString()), &res, specifier, referrer, typeAttribute->isEmpty() ? nullptr : typeAttribute, true);
+    if (auto* exception = scope.exception()) {
+        if (scope.tryClearException())
+            RELEASE_AND_RETURN(scope, promise->reject(vm, exception->value()));
+        return;
+    }
+    promise->fulfill(vm, source);
+    scope.assertNoExceptionExceptTermination();
+}
+
 // The original of a mocked builtin has a key of its own, under which no mock is registered.
 static bool fetchBuiltinModuleOrOriginal(Zig::GlobalObject* globalObject, const BunString* specifier, bool isCommonJSRequire, ErrorableResolvedSource* res)
 {
@@ -893,6 +922,7 @@ static JSValue requireWhatImportHasLoaded(Zig::GlobalObject* globalObject, JSC::
     RETURN_IF_EXCEPTION(scope, {});
     target->setExportsObject(value);
     target->hasEvaluated = true;
+    target->holdsESModuleOrData = true;
     return target;
 }
 
@@ -1090,6 +1120,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
         Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType);
     }
     if (res->success && res->result.value.isCommonJSModule) {
+        target->isCodeByTypeAlone = res->result.value.is_code_by_type_alone;
         if constexpr (isExtension) {
             target->evaluateWithPotentiallyOverriddenCompile(globalObject, specifierWtfString, specifierValue, res->result.value);
         } else if (auto provider = commonJSProviderOfPluginContents(globalObject, specifierWtfString, typeAttribute, pluginContents, res->result.value)) {
@@ -1124,6 +1155,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
 
         target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
         target->hasEvaluated = true;
+        target->holdsESModuleOrData = true;
         RELEASE_AND_RETURN(scope, target);
 
     }
@@ -1137,6 +1169,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
 
         target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
         target->hasEvaluated = true;
+        target->holdsESModuleOrData = true;
         RELEASE_AND_RETURN(scope, target);
     } else if (res->result.value.tag == SyntheticModuleType::CommonJSCustomExtension) {
         if constexpr (isExtension) {

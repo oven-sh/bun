@@ -1629,6 +1629,10 @@ impl CodeHost for LoadHost<'_> {
         self.plugin_loader(path).is_some()
     }
 
+    fn has_loader_by_name(&self, path: &[u8]) -> bool {
+        loader_named_by_path(&self.input.options.load.loaders, path).is_some()
+    }
+
     fn object_prototype_takes_names(&self) -> bool {
         self.input.options.load.runs_tests
     }

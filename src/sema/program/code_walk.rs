@@ -7,8 +7,8 @@ use super::code_barrels::{
     BarrelRequests, NOT_LOADED, erase_imports_not_followed, erase_waiting_sites,
 };
 use super::code_file::{
-    LoadInputs, analyze_code_file_again, finish_code_file, import_meta_main, is_finished_later,
-    load_code_file,
+    LoadInputs, analyze_code_file_again, declared_module_type_of, finish_code_file,
+    import_meta_main, is_finished_later, load_code_file,
 };
 use super::code_finish::find_answers_so_far;
 use super::code_imports::files_of;
@@ -183,6 +183,7 @@ struct WalkState<'s, 'r> {
     askers_of_other_files: Vec<u32>,
     askers_of_own_exports: Vec<u32>,
     askers_for_main_module: Vec<u32>,
+    found_again_with_type: Vec<u32>,
     files_read_by_plugins: usize,
     time_loading: Duration,
     longest_load: (Duration, Duration, usize),
@@ -421,6 +422,10 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         if let Some(&index) = state.index_of.get(&lookup_key) {
             let known = &mut state.files[index as usize].target;
             known.host_module = known.host_module.or(target.host_module);
+            if target.has_loader_attribute && !known.has_loader_attribute {
+                known.has_loader_attribute = true;
+                state.found_again_with_type.push(index);
+            }
             return index;
         }
         let index = state.files.len() as u32;
@@ -785,6 +790,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 || scan_importers_of_file_changers_again(context, &mut state)
                 || scan_askers_of_other_files_again(context, &mut state)
                 || scan_files_whose_exports_others_touch_again(&context.atoms, &mut state)
+                || forget_files_whose_loader_a_type_names(context, &mut state)
                 || finish_files(&mut state)
                 || self.follow_chosen_imports(&mut state)
                 || self.begin_at_found_entry_points(&mut state)
@@ -1402,6 +1408,22 @@ fn drop_parsed_file(state: &mut WalkState<'_, '_>, index: u32) {
 fn forget_parsed_file(state: &mut WalkState<'_, '_>, index: u32) {
     drop_parsed_file(state, index);
     state.found.push(index);
+}
+
+fn forget_files_whose_loader_a_type_names(
+    context: &CodeLoadContext<'_, '_, '_>,
+    state: &mut WalkState<'_, '_>,
+) -> bool {
+    let mut files = std::mem::take(&mut state.found_again_with_type);
+    files.retain(|&index| {
+        let file = &state.files[index as usize];
+        let known = (file.parsed.as_ref()).map(|it| it.code.analyzed.declared_module_type);
+        known.is_some_and(|known| known != declared_module_type_of(context, file.target))
+    });
+    for &index in &files {
+        forget_parsed_file(state, index);
+    }
+    !files.is_empty()
 }
 
 fn forget_files_folded_with_main_module(

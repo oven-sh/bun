@@ -4592,7 +4592,6 @@ impl VirtualMachine {
         global_object: &JSGlobalObject,
         specifier: &bun_core::String,
         referrer: &bun_core::String,
-        loader: Option<bun_ast::Loader>,
         log: &mut bun_ast::Log,
         flags: FetchFlags,
     ) -> crate::CrateResult<ResolvedSource> {
@@ -4659,7 +4658,7 @@ impl VirtualMachine {
 
         let extra = ModuleLoader::TranspileExtra {
             path: lr.path,
-            loader: Cell::new(loader.or(lr.loader).unwrap_or(if lr.is_main {
+            loader: Cell::new(lr.loader.unwrap_or(if lr.is_main {
                 bun_ast::Loader::Js
             } else {
                 bun_ast::Loader::File
@@ -6365,7 +6364,6 @@ impl VirtualMachine {
                     global,
                     &frames[top].source_url,
                     &bun_core::String::EMPTY,
-                    None,
                     &mut log,
                     FetchFlags::PrintSource,
                 ) else {

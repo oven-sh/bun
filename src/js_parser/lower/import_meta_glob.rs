@@ -987,6 +987,7 @@ fn then_export(arena: &Arena, import: Expr, parameter: js_ast::Ref, name: &[u8])
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     pub(crate) fn depends_on_more_than_source(&self) -> bool {
         self.macro_call_count != 0
+            || (self.options.features.is_macro_runtime && !self.macro_.refs.is_empty())
             || matches!(
                 self.import_meta_glob_use,
                 ImportMetaGlobUse::Called

@@ -1002,6 +1002,17 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("cjs/__toESM_extension_in_capitals", {
+    files: {
+      "/entry.MJS": logDefaultAndNamed,
+      "/dep.cjs": esModuleDep,
+      "/package.json": `{ "name": "app", "type": "commonjs" }`,
+    },
+    run: {
+      stdout: "object 1",
+    },
+  });
+
   // Test 32: package.json "type": "module" makes a `.ts` importer ESM.
   itBundled("cjs/__toESM_type_module_importer_node_mode", {
     files: {

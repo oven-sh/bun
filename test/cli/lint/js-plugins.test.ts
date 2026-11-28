@@ -6078,6 +6078,17 @@ describe.concurrent("what a package requires is loaded when it's used", () => {
   );
 
   test(
+    "a text that is imported as code behind a require() of it",
+    async () => {
+      const expression = `[require("./code.txt").default, (await import("./code.txt", { with: { type: "js" } })).default]`;
+      expect(await evaluate({ "index.js": noted("p") }, expression, { "code.txt": `exports.a = 1;` })).toEqual(
+        both(["exports.a = 1;", { a: 1 }]),
+      );
+    },
+    timeout,
+  );
+
+  test(
     "a member of a built-in module is the one from before it was replaced",
     async () => {
       const files = { "index.js": `const { existsSync } = require("fs"); exports.f = () => existsSync("nowhere");` };

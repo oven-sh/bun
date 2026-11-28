@@ -88,7 +88,7 @@ static JSC::JSObject* generateDataModule(JSC::JSValue source, JSC::JSGlobalObjec
     if (auto* requireMap = dynamicDowncast<JSC::JSMap>(fields->getInternalField(1))) {
         JSValue entry = requireMap->get(globalObject, jsString(vm, moduleKey.string()));
         RETURN_IF_EXCEPTION(scope, nullptr);
-        if (auto* module = dynamicDowncast<Bun::JSCommonJSModule>(entry); module && module->hasEvaluated) {
+        if (auto* module = dynamicDowncast<Bun::JSCommonJSModule>(entry); module && module->hasEvaluated && !module->isCodeByTypeAlone) {
             required = module->exportsObject();
             RETURN_IF_EXCEPTION(scope, nullptr);
         }

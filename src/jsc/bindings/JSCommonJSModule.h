@@ -103,6 +103,12 @@ public:
     bool isGivenToRunMain { false };
     // False means no parent's m_children holds this module, so addChild need not search. Unlike isListedAsChild, it stays true once set.
     bool hasBeenAddedAsChild { false };
+    // The loader has filled `exports` with an ES module or with data.
+    bool holdsESModuleOrData : 1 { false };
+    // ResolvedSource::is_code_by_type_alone
+    bool isCodeByTypeAlone : 1 { false };
+    // Its key in the require cache belongs to another module.
+    bool isKeptOutOfRequireCache : 1 { false };
     // Of the module object of a file of an ahead-of-time executable: the number of the file in the executable. Its `exports`, `parent` and `children` are the engine's to answer.
     static constexpr uint32_t noCompiledModule = UINT32_MAX;
     uint32_t compiledModule { noCompiledModule };

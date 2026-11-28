@@ -15,7 +15,8 @@ pub(super) mod editions;
 
 use super::{Stage, SyntaxError};
 use crate::ast::{
-    Expr, ExprTag, File, Func, Handle, Node, Param, Pat, PatTag, Stmt, StmtKind, StmtTag, VarKind,
+    Expr, ExprKind, ExprTag, File, Func, Handle, Node, Param, Pat, PatTag, Stmt, StmtKind, StmtTag,
+    VarKind,
 };
 use crate::language::SourceType;
 use crate::semantic::{Declaration, Scope, ScopeKind};
@@ -479,6 +480,8 @@ pub(super) fn first_error<'a>(
     checks.keywords_as_identifiers();
     checks.parameters();
     checks.early_errors();
+    // After the early errors: acorn reports one in `b` before it gets to the comma of `<a {...b, c} />`.
+    checks.jsx_spreads();
     if checks.is_whole {
         checks.redeclarations();
     }
@@ -1155,6 +1158,49 @@ impl<'a, 'c> Checks<'a, 'c> {
         {
             self.fail(first, "Unexpected token <");
         }
+    }
+
+    /// acorn-jsx has no spread child, `<a>{...b}</a>`, and it stops at the comma of `<a {...b, c} />`.
+    fn jsx_spreads(&mut self) {
+        let file = self.file;
+        if file.hir.jsx.is_empty() || !file.language().reads_jsx_spreads_like_acorn() {
+            return;
+        }
+        for spread in file.exprs_of_kind(ExprTag::Spread) {
+            if let Some(braces) = spread.jsx_container_span()
+                && let Some(dots) = self.token_after_if(braces.start + 1, b"...")
+            {
+                self.unexpected(dots);
+            }
+        }
+        for sequence in early::sequences_in_spread_attributes(file) {
+            let mut first = sequence;
+            while let ExprKind::Binary { left, .. } = first.kind()
+                && early::is_sequence(left)
+            {
+                first = left;
+            }
+            // The parser makes a sequence of adjacent elements, which has no comma.
+            if let ExprKind::Binary { left, .. } = first.kind()
+                && let Some(comma) = self.token_after_if(left.outer_span().end, b",")
+            {
+                self.unexpected(comma);
+            }
+        }
+    }
+
+    /// The start of the token after `at`, if it's `token`. `at` is between tokens.
+    fn token_after_if(&self, at: u32, token: &[u8]) -> Option<u32> {
+        let next = skip_trivia(self.file.text(), at);
+        if self.token_at(next) == token {
+            return Some(next);
+        }
+        // In a script, `<!--` starts a comment, which `skip_trivia` doesn't know. The tokens of a whole tree do.
+        if !self.is_whole {
+            return None;
+        }
+        let next = self.file.token_after(Span::new(at, at))?;
+        (next.text() == token).then(|| next.start())
     }
 
     // ───────────────────────────── checks that depend on the source type ─────────────────────────────

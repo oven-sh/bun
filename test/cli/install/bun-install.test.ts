@@ -748,6 +748,34 @@ describe.concurrent("bun-install", () => {
       });
     });
 
+    // The empty name is only in `peerDependenciesMeta`, so the dependency has no position in the file.
+    it("a tarball's peerDependenciesMeta", async () => {
+      await withContext(defaultOpts, async ctx => {
+        const urls: string[] = [];
+        setContextHandler(ctx, heldRegistry(ctx, urls, {}));
+        const manifest = { name: "packed", version: "1.0.0", peerDependenciesMeta: { "": { optional: true } } };
+        await Promise.all([
+          writeProject(
+            ctx,
+            { "package.json": { name: "foo", dependencies: { packed: "file:./packed.tgz" } } },
+            { linker },
+          ),
+          write(
+            join(ctx.package_dir, "packed.tgz"),
+            await new Bun.Archive({ "package/package.json": JSON.stringify(manifest) }, { compress: "gzip" }).bytes(),
+          ),
+        ]);
+
+        const { err, warnings, exitCode } = await install(ctx);
+        expect(err).not.toContain("error:");
+        expect(warnings).toEqual(['warn: skipping unnamed dependency ("*" in "peerDependencies")']);
+        expect(err).toMatch(/\n\s+at [^\n]*package\.json\r?\n/);
+        expect(urls).toEqual([]);
+        expect(await exists(join(ctx.package_dir, "node_modules", "packed", "package.json"))).toBeTrue();
+        expect(exitCode).toBe(0);
+      });
+    });
+
     it("a row of an older bun.lock", async () => {
       await withContext(defaultOpts, async ctx => {
         const urls: string[] = [];

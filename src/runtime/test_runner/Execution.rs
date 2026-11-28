@@ -157,6 +157,8 @@ pub(crate) struct ExecutionSequence {
     pub(crate) expect_call_count: Cell<u32>,
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
     pub(crate) expect_assertions: Cell<ExpectAssertions>,
+    /// The expectation and the number of expect() calls that the check which failed this attempt compared.
+    pub(crate) count_failure: Cell<Option<(ExpectAssertions, u32)>>,
     pub(crate) maybe_skip: Cell<bool>,
     pub(crate) context: StrongCell,
     deferred: Cell<Vec<(Deferred, SequenceEntryId)>>,
@@ -192,6 +194,7 @@ impl ExecutionSequence {
             started_at: Cell::new(Timespec::EPOCH),
             expect_call_count: Cell::new(0),
             expect_assertions: Cell::new(ExpectAssertions::NotSet),
+            count_failure: Cell::new(None),
             maybe_skip: Cell::new(false),
             context: StrongCell::default(),
             deferred: Cell::default(),
@@ -331,6 +334,7 @@ impl ExecutionSequence {
         };
         if self.result.get().is_pass(PendingIs::PendingIsPass) && self.result.get() != Result::Skip {
             self.result.set(failure);
+            self.count_failure.set(Some((self.expect_assertions.get(), self.expect_call_count.get())));
         }
     }
 
@@ -806,10 +810,7 @@ impl Execution {
             .failure
             .take()
             .or_else(|| {
-                test_command::TestFailure::from_result(
-                    sequence.result.get(),
-                    sequence.expect_call_count.get(),
-                )
+                test_command::TestFailure::from_result(sequence.result.get(), sequence.count_failure.get())
             })
             .unwrap_or_default();
         sequence.earlier_failures.with_taken(|failures| failures.push(failure));
@@ -845,6 +846,7 @@ impl Execution {
             started_at,
             expect_call_count,
             expect_assertions,
+            count_failure,
             maybe_skip,
             context: _,
             deferred: _,
@@ -860,6 +862,7 @@ impl Execution {
         started_at.set(Timespec::EPOCH);
         expect_call_count.set(0);
         expect_assertions.set(ExpectAssertions::NotSet);
+        count_failure.set(None);
         maybe_skip.set(false);
         pending_matchers.set(0);
         callback_done.set(false);

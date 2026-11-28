@@ -997,7 +997,7 @@ fn has_access_control_list(path: &bun_core::ZBox) -> bool {
     }
 }
 
-/// A list that only denies, as every home folder has one, gives nobody anything.
+/// A list that only denies, as every home folder has one, and one that lets others read give nobody a right to write.
 #[cfg(target_os = "macos")]
 fn has_access_control_list(path: &bun_core::ZBox) -> bool {
     use core::ffi::{c_char, c_int, c_void};
@@ -1005,12 +1005,16 @@ fn has_access_control_list(path: &bun_core::ZBox) -> bool {
         fn acl_get_link_np(path: *const c_char, kind: c_int) -> *mut c_void;
         fn acl_get_entry(acl: *mut c_void, which: c_int, entry: *mut *mut c_void) -> c_int;
         fn acl_get_tag_type(entry: *mut c_void, tag: *mut c_int) -> c_int;
+        fn acl_get_permset(entry: *mut c_void, rights: *mut *mut c_void) -> c_int;
+        fn acl_get_perm_np(rights: *mut c_void, right: u32) -> c_int;
         fn acl_free(acl: *mut c_void) -> c_int;
     }
     const ACL_TYPE_EXTENDED: c_int = 0x100;
     const ACL_EXTENDED_DENY: c_int = 2;
     const ACL_FIRST_ENTRY: c_int = 0;
     const ACL_NEXT_ENTRY: c_int = -1;
+    // To write or add, to delete, to append, to delete what is in it, to change the list and the owner.
+    const WRITE: u32 = 1 << 2 | 1 << 4 | 1 << 5 | 1 << 6 | 1 << 12 | 1 << 13;
     // SAFETY: `path` is NUL-terminated, the list is freed below, and its entries are only used before that.
     unsafe {
         let list = acl_get_link_np(path.as_ptr(), ACL_TYPE_EXTENDED);
@@ -1019,14 +1023,17 @@ fn has_access_control_list(path: &bun_core::ZBox) -> bool {
         }
         let mut entry = core::ptr::null_mut();
         let mut which = ACL_FIRST_ENTRY;
-        let mut only_denies = true;
+        let mut may_write = false;
         while acl_get_entry(list, which, &mut entry) == 0 {
-            let mut tag = 0;
-            only_denies &= acl_get_tag_type(entry, &mut tag) == 0 && tag == ACL_EXTENDED_DENY;
+            let (mut tag, mut rights) = (0, core::ptr::null_mut());
+            may_write |= acl_get_tag_type(entry, &mut tag) != 0
+                || tag != ACL_EXTENDED_DENY
+                    && (acl_get_permset(entry, &mut rights) != 0
+                        || acl_get_perm_np(rights, WRITE) != 0);
             which = ACL_NEXT_ENTRY;
         }
         acl_free(list);
-        !only_denies
+        may_write
     }
 }
 

@@ -60,11 +60,16 @@ test.concurrent.each(tools)(
   240_000,
 );
 
-test.concurrent(
-  "the executable of a package is named after the last part of its name, whatever the separators",
-  async () => {
+test.concurrent.each([
+  ["the name", { name: "a\\..\\..\\outside", main: "main.js" }],
+  ["a name with a colon", { name: "C:outside", main: "main.js" }],
+  ["a key of bin", { name: "safe", bin: { "x/..\\outside": "./main.js" } }],
+  ["a key of bin with a colon", { name: "safe", bin: { "x/C:outside": "./main.js" } }],
+])(
+  "the executable of a package is named after the last part of its name, whatever the separators: %s",
+  async (_, manifest) => {
     using dir = tempDir("aot-name-with-separators", {
-      "app/package.json": JSON.stringify({ name: "a\\..\\..\\outside", main: "main.js" }),
+      "app/package.json": JSON.stringify(manifest),
       "app/main.js": "",
     });
     const built = await run(join(String(dir), "app"), [bunExe(), "compile"]);

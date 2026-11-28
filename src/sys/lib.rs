@@ -6854,8 +6854,11 @@ pub fn move_file_z_with_handle(
         renamed => renamed,
     };
     match attempt() {
-        // Windows also reports a directory as `EPERM`.
-        Err(e) if e.get_errno() == E::EISDIR || (cfg!(windows) && e.get_errno() == E::EPERM) => {
+        // Windows and macOS also report a directory as `EPERM`.
+        Err(e)
+            if e.get_errno() == E::EISDIR
+                || (cfg!(any(windows, target_os = "macos")) && e.get_errno() == E::EPERM) =>
+        {
             let _ = rmdirat(to_dir, destination);
             attempt()
         }

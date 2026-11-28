@@ -447,6 +447,34 @@ pub(crate) mod tests {
         assert!(fstat(raw).is_ok());
     }
 
+    /// What the rename to another file system falls back on.
+    #[cfg(unix)]
+    #[test]
+    fn copy_replaces_a_link_and_keeps_the_mode() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let _g = FD_TEST_LOCK.lock();
+        let name = format!("bun-sys-copy-{}", std::process::id());
+        let folder = std::env::temp_dir().join(name);
+        let path = |name: &str| folder.join(name);
+        let z = |name: &str| bun_core::ZBox::from_bytes(path(name).as_os_str().as_encoded_bytes());
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(path("from"), b"executable").unwrap();
+        std::fs::set_permissions(path("from"), PermissionsExt::from_mode(0o700)).unwrap();
+        std::fs::write(path("victim"), b"untouched").unwrap();
+        symlink(path("victim"), path("to")).unwrap();
+        std::fs::write(path("old"), b"a file that was there before").unwrap();
+        let from = File::open(&z("from"), O::RDONLY, 0).unwrap();
+        for to in ["to", "old", "new"] {
+            crate::copy_file_z_slow_with_handle(from.fd(), Fd::cwd(), &z(to)).unwrap();
+            assert_eq!(std::fs::read(path(to)).unwrap(), b"executable", "{to}");
+            let found = std::fs::symlink_metadata(path(to)).unwrap();
+            assert!(found.is_file(), "{to}");
+            assert_eq!(found.permissions().mode() & 0o777, 0o700, "{to}");
+        }
+        assert_eq!(std::fs::read(path("victim")).unwrap(), b"untouched");
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
     #[test]
     fn dropping_stdio_is_safe() {
         let _g = FD_TEST_LOCK.lock();

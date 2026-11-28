@@ -11249,12 +11249,33 @@ declare module "bun" {
    * The structure of Bun's lockfile, `bun.lock`
    */
   type BunLockFile = {
-    lockfileVersion: 0 | 1 | 2;
+    /**
+     * The version of the `bun.lock` format.
+     *
+     * - `0`: the first version of the text lockfile.
+     * - `1`: the entry of a workspace package in `packages` no longer lists its dependencies.
+     * - `2`: the same content as `1`, with stricter checks of integrity hashes and git tags when Bun
+     *   reads the lockfile.
+     * - `3`: `overrides` has a nested or version-scoped rule. Bun writes `3` only for such a lockfile.
+     *
+     * Bun v1.4.0 and later can read versions `2` and `3`.
+     *
+     * @see https://bun.com/docs/pm/lockfile
+     */
+    lockfileVersion: 0 | 1 | 2 | 3;
     workspaces: {
       [workspace: string]: BunLockFileWorkspacePackage;
     };
-    /** @see https://bun.com/docs/install/overrides */
-    overrides?: Record<string, string>;
+    /**
+     * A string value is the version to use for that package.
+     *
+     * An object value holds the rules for one selector (`name` or `name@range`). The `"."` key
+     * overrides the selected package itself. Each other key (`name` or `name@range`) overrides that
+     * dependency of the selected package.
+     *
+     * @see https://bun.com/docs/install/overrides
+     */
+    overrides?: Record<string, string | Record<string, string>>;
     /** @see https://bun.com/docs/install/patch */
     patchedDependencies?: Record<string, string>;
     /** @see https://bun.com/docs/install/lifecycle#trusteddependencies */
@@ -11263,6 +11284,25 @@ declare module "bun" {
     catalog?: Record<string, string>;
     /** @see https://bun.com/docs/install/catalogs */
     catalogs?: Record<string, Record<string, string>>;
+    /**
+     * What `packageExtensions` in the root `package.json` changed in each package. A key is
+     * `name@version`.
+     *
+     * - `dependencies`: the names of the added `dependencies` and `optionalDependencies`.
+     * - `peerDependencies`: the names of the added `peerDependencies`.
+     * - `optionalPeers`: the names of the peer dependencies that the package declares itself and
+     *   that the extension made optional.
+     *
+     * @see https://bun.com/docs/pm/package-extensions
+     */
+    packageExtensions?: Record<
+      string,
+      {
+        dependencies?: string[];
+        peerDependencies?: string[];
+        optionalPeers?: string[];
+      }
+    >;
 
     /**
      * `0` / `undefined` for projects created before v1.3.2, `1` for projects created after.
@@ -11276,17 +11316,17 @@ declare module "bun" {
 
     /**
      * ```
-     * INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
+     * INFO = { prod/dev/optional/peer dependencies, os, cpu, libc, bin, binDir }
      *
      * // first index is resolution for each type of package
      * npm         -> [ "name@version", registry (TODO: remove if default), INFO, integrity]
      * symlink     -> [ "name@link:path", INFO ]
      * folder      -> [ "name@file:path", INFO ]
      * workspace   -> [ "name@workspace:path" ] // workspace is only path
-     * tarball     -> [ "name@tarball", INFO ]
+     * tarball     -> [ "name@tarball", INFO, integrity (when Bun has one) ]
      * root        -> [ "name@root:", { bin, binDir } ]
-     * git         -> [ "name@git+repo", INFO, .bun-tag string (TODO: remove this) ]
-     * github      -> [ "name@github:user/repo", INFO, .bun-tag string (TODO: remove this) ]
+     * git         -> [ "name@git+repo", INFO, .bun-tag string, integrity (when Bun has one) ]
+     * github      -> [ "name@github:user/repo", INFO, .bun-tag string, integrity (when Bun has one) ]
      * ```
      */
     packages: {
@@ -11314,6 +11354,8 @@ declare module "bun" {
   type BunLockFilePackageInfo = BunLockFileBasePackageInfo & {
     os?: string | string[];
     cpu?: string | string[];
+    /** Present when the package supports only one libc */
+    libc?: "glibc" | "musl";
     hasInstallScript?: true;
     bundled?: true;
   };
@@ -11324,10 +11366,14 @@ declare module "bun" {
     | [pkg: string, registry: string, info: BunLockFilePackageInfo, integrity: string]
     /** symlink, folder, tarball */
     | [pkg: string, info: BunLockFilePackageInfo]
+    /** tarball with an integrity hash */
+    | [pkg: string, info: BunLockFilePackageInfo, integrity: string]
     /** workspace */
     | [pkg: string]
     /** git, github */
     | [pkg: string, info: BunLockFilePackageInfo, bunTag: string]
+    /** git, github with an integrity hash */
+    | [pkg: string, info: BunLockFilePackageInfo, bunTag: string, integrity: string]
     /** root */
     | [pkg: string, info: Pick<BunLockFileBasePackageInfo, "bin" | "binDir">];
 

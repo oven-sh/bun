@@ -430,7 +430,20 @@ declare module "bun" {
 
   interface ReadableStreamDefaultReadManyResult<T> {
     done: boolean;
-    /** Number of bytes */
+    /**
+     * The total size of the chunks that `readMany()` took from the stream's
+     * queue. The stream's queuing strategy sets the size of a chunk: 1 by
+     * default, the byte length for a `type: "bytes"` stream or a
+     * `ByteLengthQueuingStrategy`.
+     *
+     * A chunk that `readMany()` had to wait for does not go through the queue,
+     * so `size` does not count it. A `type: "direct"` stream has no queue:
+     * `size` is 1 when `value` holds a chunk.
+     *
+     * Do not use `size` as the number of bytes in `value`. To count the bytes
+     * of `Uint8Array` or other binary chunks, add up the `byteLength` of each
+     * chunk.
+     */
     size: number;
     value: T[];
   }

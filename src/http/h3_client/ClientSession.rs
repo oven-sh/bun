@@ -188,8 +188,9 @@ impl ClientSession {
         if let Err(err) = client.send_held_body() {
             return stream.session_mut().fail(stream_ptr.as_ptr(), err);
         }
-        if let Some(qs) = stream.qstream {
-            quic_stream_mut(qs.as_ptr()).hold_window(client.holds_off_receiving());
+        let hold = client.holds_off_receiving();
+        if let Some(qs) = stream.qstream_mut() {
+            qs.hold_window(hold);
         }
     }
 
@@ -357,29 +358,15 @@ impl ClientSession {
 /// Upgrade a non-null `*mut quic::Socket` lsquic FFI handle to `&mut`.
 ///
 /// INVARIANT: every caller passes a non-null `quic::Socket` that lsquic owns
-/// and keeps live for the borrow's duration — either an `extern "C"` callback
+/// and keeps live for the borrow's duration — either the socket of a callback's
 /// argument (live for the callback), or a `ClientSession.qsocket` field (set
 /// by `ClientContext::connect`, valid until `on_conn_close`). The handle is an
 /// FFI-owned allocation distinct from any Rust struct holding it. All access
 /// is HTTP-thread-only, so the returned `&mut` is the sole live borrow.
-/// Centralises the raw `&mut *qs` upgrade shared by `callbacks::qsocket_arg`
-/// and `ClientSession::qsocket_mut`.
 #[inline(always)]
 pub(super) fn quic_socket_mut<'a>(qs: *mut quic::Socket) -> &'a mut quic::Socket {
     // SAFETY: see INVARIANT above.
     unsafe { &mut *qs }
-}
-
-/// Upgrade a non-null `*mut quic::Stream` lsquic FFI handle to `&mut`.
-///
-/// Same INVARIANT as [`quic_socket_mut`] — lsquic-owned, live for the
-/// borrow's duration (callback argument, or `Stream.qstream` set in
-/// `on_stream_open` and nulled in `on_stream_close` / `detach`), FFI
-/// allocation distinct from any Rust holder, HTTP-thread-only.
-#[inline(always)]
-pub(super) fn quic_stream_mut<'a>(s: *mut quic::Stream) -> &'a mut quic::Stream {
-    // SAFETY: see [`quic_socket_mut`] INVARIANT.
-    unsafe { &mut *s }
 }
 
 /// Upgrade a `*mut Stream` (a `self.pending` entry) to `&mut Stream`. Entries live

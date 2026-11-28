@@ -2233,7 +2233,6 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         // we have to clone the request headers here since they will soon belong to a different request
         if !request_object.has_fetch_headers() {
             if !MUX {
-                // `HeadersRef::create_from_uws` adopts the freshly-allocated +1 ref.
                 request_object.set_fetch_headers(Some(response::HeadersRef::create_from_uws(req)));
             }
         }
@@ -3599,11 +3598,6 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
 
             self.do_write_status(status);
             self.do_write_headers(&mut headers_);
-            // `HeadersRef` is RAII — its Drop
-            // already calls `WebCore__FetchHeaders__deref`, so an explicit
-            // `.deref()` here would resolve (via DerefMut) to the inherent
-            // `FetchHeaders::deref` and double-free the C++ object.
-            drop(headers_);
         } else if needs_content_range {
             status = 206;
             self.do_write_status(status);

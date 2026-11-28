@@ -43,7 +43,7 @@ unsafe extern "C" {
     safe fn WebCore__AbortSignal__cleanNativeBindings(arg0: &AbortSignal, arg1: *mut c_void);
     safe fn WebCore__AbortSignal__create(arg0: &JSGlobalObject) -> JSValue;
     safe fn WebCore__AbortSignal__fromJS(value0: JSValue) -> *mut AbortSignal;
-    safe fn WebCore__AbortSignal__ref(arg0: &AbortSignal) -> *mut AbortSignal;
+    safe fn WebCore__AbortSignal__ref(arg0: &AbortSignal) -> AbortSignalRef;
     safe fn WebCore__AbortSignal__toJS(arg0: &AbortSignal, arg1: &JSGlobalObject) -> JSValue;
     safe fn WebCore__AbortSignal__unref(arg0: &AbortSignal);
     // `*mut Timeout` is round-tripped opaquely through C++ (stored from
@@ -64,7 +64,7 @@ unsafe extern "C" {
         arg1: &JSGlobalObject,
         arg2: &mut u8,
     ) -> JSValue;
-    safe fn WebCore__AbortSignal__new(arg0: &JSGlobalObject) -> *mut AbortSignal;
+    safe fn WebCore__AbortSignal__new(arg0: &JSGlobalObject) -> AbortSignalRef;
     safe fn WebCore__AbortSignal__jsReason(arg0: &AbortSignal, arg1: &JSGlobalObject) -> JSValue;
     safe fn Bun__wrapAbortError(global_object: &JSGlobalObject, cause: JSValue) -> JSValue;
 }
@@ -139,9 +139,7 @@ impl AbortSignal {
 
     /// Take a ref on the signal.
     pub fn ref_(&self) -> AbortSignalRef {
-        // SAFETY: `WebCore__AbortSignal__ref` bumps the intrusive refcount and
-        // returns `self` with that +1.
-        unsafe { AbortSignalRef::adopt(WebCore__AbortSignal__ref(self)) }
+        WebCore__AbortSignal__ref(self)
     }
 
     pub fn from_js(value: &JSValue) -> Option<WrapperGuard<'_, AbortSignal>> {
@@ -159,8 +157,7 @@ impl AbortSignal {
 
     pub fn new(global: &JSGlobalObject) -> AbortSignalRef {
         crate::mark_binding!();
-        // SAFETY: a new signal, with the one ref it starts with.
-        unsafe { AbortSignalRef::adopt(WebCore__AbortSignal__new(global)) }
+        WebCore__AbortSignal__new(global)
     }
 
     /// Returns a borrowed handle to the internal Timeout, or null.
@@ -191,7 +188,7 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for AbortSignal {
     unsafe fn ext_ref(this: *mut Self) {
         // `opaque_ref` is the centralised ZST-handle deref proof; caller
         // contract guarantees `this` is a live `WebCore::AbortSignal`.
-        WebCore__AbortSignal__ref(Self::opaque_ref(this));
+        WebCore__AbortSignal__ref(Self::opaque_ref(this)).into_raw();
     }
     #[inline]
     unsafe fn ext_deref(this: *mut Self) {

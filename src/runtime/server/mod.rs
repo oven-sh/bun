@@ -1299,7 +1299,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // `bun_analytics`. No-op until it is.
     }
 
-    pub(crate) fn app(&self) -> Option<*mut uws_sys::NewApp<SSL>> {
+    fn app(&self) -> Option<*mut uws_sys::NewApp<SSL>> {
         self.app.get().as_ref().map(|app| app.as_ptr())
     }
 
@@ -1716,7 +1716,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // SAFETY: `dev` is the live `*mut DevServer` snapshotted from
             // `self.dev_server` above; no other `&mut` to it is live.
             let has_dev_server_for_star_path =
-                bun_core::handle_oom(unsafe { &mut *dev }.set_routes::<SSL, DEBUG>(self));
+                bun_core::handle_oom(unsafe { &mut *dev }.set_routes(self, app));
             if has_dev_server_for_star_path {
                 // Assume dev server "/*" covers all methods if it exists
                 has_any_method_route_for_star_path = true;

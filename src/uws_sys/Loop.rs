@@ -514,8 +514,7 @@ impl core::ops::Deref for ThreadLoop {
 
 impl ThreadLoop {
     pub fn update_date(&self) {
-        // SAFETY: this thread's live loop, with the `LoopData` that holds the date.
-        unsafe { c::uws_loop_date_header_timer_update(self) };
+        c::uws_loop_date_header_timer_update(self);
     }
 
     /// Runs the uWS pre handler, which flushes queued `publish()` batches and leftover corks.
@@ -568,7 +567,7 @@ mod c {
         pub(super) safe fn uws_try_get_loop() -> *mut ThreadLoop;
         #[cfg(windows)]
         pub(super) fn uws_get_loop_with_native(native: *mut c_void) -> *mut ThreadLoop;
-        pub(super) fn uws_loop_date_header_timer_update(loop_: &ThreadLoop);
+        pub(super) safe fn uws_loop_date_header_timer_update(loop_: &ThreadLoop);
         pub(super) fn uws_loop_flush_pending_writes(loop_: &ThreadLoop);
     }
 }

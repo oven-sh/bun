@@ -2102,16 +2102,16 @@ struct SerializedScriptValueExternal {
     handle: *mut c_void,
 }
 
-/// Callback signature for [`JSValue::for_each`] / [`JSValue::for_each_with_context`].
-pub type ForEachCallback =
-    extern "C" fn(vm: *mut crate::VM, global: &JSGlobalObject, ctx: *mut c_void, next: JSValue);
+/// Callback signature for [`JSValue::for_each`].
+pub type ForEachCallback<Ctx> =
+    extern "C" fn(vm: *mut crate::VM, global: &JSGlobalObject, ctx: &mut Ctx, next: JSValue);
 
 /// Callback signature for [`JSValue::for_each_property`] /
 /// [`JSValue::for_each_property_non_indexed`].
 /// C++ passes the address of a stack `EncodedSlice` as `key`.
-pub(crate) type ForEachPropertyCallback = extern "C" fn(
+pub(crate) type ForEachPropertyCallback<Ctx> = extern "C" fn(
     global: &JSGlobalObject,
-    ctx: *mut c_void,
+    ctx: &mut Ctx,
     key: &bun_core::EncodedSlice,
     value: JSValue,
     is_symbol: bool,
@@ -2321,14 +2321,16 @@ impl JSValue {
         host_fn::from_js_host_call_generic(global, || JSC__JSValue__isIterable(self, global))
     }
     /// `JSValue.forEach` — invoke `callback` for each iterable element.
-    pub fn for_each(
+    pub fn for_each<Ctx>(
         self,
         global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachCallback,
+        ctx: &mut Ctx,
+        callback: ForEachCallback<Ctx>,
     ) -> JsResult<()> {
-        host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__forEach(self, global, ctx, callback)
+        let ctx = core::ptr::from_mut(ctx).cast();
+        // SAFETY: C++ calls `callback` by this signature and with `ctx`, one call at a time, and keeps neither.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__forEach(self, global, ctx, callback as *const c_void)
         })
     }
     /// `for (const item of self) each(item)`, up to the first `Err`. Only a pending exception ends the loop itself.
@@ -2344,11 +2346,9 @@ impl JSValue {
         extern "C" fn next<F: FnMut(JSValue) -> JsResult<()>>(
             _: *mut crate::VM,
             _: &JSGlobalObject,
-            iteration: *mut c_void,
+            iteration: &mut Iteration<F>,
             item: JSValue,
         ) {
-            // SAFETY: `iteration` is the `Iteration` below, which outlives the `for_each` call.
-            let iteration = unsafe { &mut *iteration.cast::<Iteration<F>>() };
             if iteration.result.is_ok() {
                 iteration.result = (iteration.each)(item);
             }
@@ -2357,159 +2357,70 @@ impl JSValue {
             each,
             result: Ok(()),
         };
-        self.for_each(global, (&raw mut iteration).cast(), next::<F>)?;
+        self.for_each(global, &mut iteration, next)?;
         iteration.result
     }
-    /// `JSValue.forEachWithContext` — typed-ctx wrapper (callers pass
-    /// `*mut c_void` directly).
-    #[inline]
-    pub(crate) fn for_each_with_context(
-        self,
-        global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachCallback,
-    ) -> JsResult<()> {
-        self.for_each(global, ctx, callback)
-    }
+}
+
+macro_rules! for_each_property_methods {
+    ($($(#[$meta:meta])* $vis:vis fn $name:ident = $import:ident -> $result:ty;)+) => {
+        impl JSValue {$(
+            $(#[$meta])*
+            $vis fn $name<Ctx>(
+                self,
+                global: &JSGlobalObject,
+                ctx: &mut Ctx,
+                callback: ForEachPropertyCallback<Ctx>,
+            ) -> JsResult<$result> {
+                unsafe extern "C" {
+                    fn $import(
+                        this: JSValue,
+                        global: &JSGlobalObject,
+                        ctx: *mut c_void,
+                        callback: *const c_void,
+                    ) -> $result;
+                }
+                let ctx = core::ptr::from_mut(ctx).cast();
+                crate::top_scope!(scope, global);
+                // SAFETY: C++ calls `callback` by this signature and with `ctx`, one call at a time, and keeps neither.
+                let result = unsafe { $import(self, global, ctx, callback as *const c_void) };
+                scope.return_if_exception().map(|()| result)
+            }
+        )+}
+    };
+}
+
+for_each_property_methods! {
     /// `JSValue.forEachProperty` — enumerate own props,
     /// invoking `callback` per (key, value, is_symbol, is_private_symbol).
     ///
     /// Seats the exception scope and calls the FFI directly so the deep
     /// `print_as` recursion does not pay an extra closure frame per object level.
     #[inline(always)]
-    pub(crate) fn for_each_property(
-        self,
-        global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachPropertyCallback,
-    ) -> JsResult<()> {
-        unsafe extern "C" {
-            // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle
-            // (`&` is ABI-identical to non-null `*const`); `ctx` is an opaque
-            // round-trip pointer C++ only forwards to `callback` (same contract
-            // as `JSC__JSValue__forEach` above).
-            safe fn JSC__JSValue__forEachProperty(
-                this: JSValue,
-                global: &JSGlobalObject,
-                ctx: *mut c_void,
-                callback: ForEachPropertyCallback,
-            );
-        }
-        crate::top_scope!(scope, global);
-        JSC__JSValue__forEachProperty(self, global, ctx, callback);
-        scope.return_if_exception()
-    }
+    pub(crate) fn for_each_property = JSC__JSValue__forEachProperty -> ();
     /// Like `for_each_property`, but passes what an own getter returns, or the accessor itself if the getter throws.
     #[inline(always)]
-    pub(crate) fn for_each_property_calling_own_getters(
-        self,
-        global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachPropertyCallback,
-    ) -> JsResult<()> {
-        unsafe extern "C" {
-            // safe: same contract as `JSC__JSValue__forEachProperty` above.
-            safe fn JSC__JSValue__forEachPropertyCallingOwnGetters(
-                this: JSValue,
-                global: &JSGlobalObject,
-                ctx: *mut c_void,
-                callback: ForEachPropertyCallback,
-            );
-        }
-        crate::top_scope!(scope, global);
-        JSC__JSValue__forEachPropertyCallingOwnGetters(self, global, ctx, callback);
-        scope.return_if_exception()
-    }
+    pub(crate) fn for_each_property_calling_own_getters = JSC__JSValue__forEachPropertyCallingOwnGetters -> ();
     /// `JSValue.forEachPropertyNonIndexed` — like
     /// [`for_each_property`](Self::for_each_property) but skips array-index
     /// keys.
-    pub(crate) fn for_each_property_non_indexed(
-        self,
-        global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachPropertyCallback,
-    ) -> JsResult<()> {
-        unsafe extern "C" {
-            // safe: same contract as `JSC__JSValue__forEachProperty` above.
-            safe fn JSC__JSValue__forEachPropertyNonIndexed(
-                this: JSValue,
-                global: &JSGlobalObject,
-                ctx: *mut c_void,
-                callback: ForEachPropertyCallback,
-            );
-        }
-        crate::top_scope!(scope, global);
-        JSC__JSValue__forEachPropertyNonIndexed(self, global, ctx, callback);
-        scope.return_if_exception()
-    }
+    pub(crate) fn for_each_property_non_indexed = JSC__JSValue__forEachPropertyNonIndexed -> ();
     /// `JSValue.forEachPropertyOrdered` — like
     /// [`for_each_property`](Self::for_each_property) but visits keys in
     /// stable enumeration order (used by `console.log` with
     /// `ordered_properties`).
     #[inline(always)]
-    pub(crate) fn for_each_property_ordered(
-        self,
-        global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachPropertyCallback,
-    ) -> JsResult<()> {
-        unsafe extern "C" {
-            // safe: same contract as `JSC__JSValue__forEachProperty` above.
-            safe fn JSC__JSValue__forEachPropertyOrdered(
-                this: JSValue,
-                global: &JSGlobalObject,
-                ctx: *mut c_void,
-                callback: ForEachPropertyCallback,
-            );
-        }
-        crate::top_scope!(scope, global);
-        JSC__JSValue__forEachPropertyOrdered(self, global, ctx, callback);
-        scope.return_if_exception()
-    }
+    pub(crate) fn for_each_property_ordered = JSC__JSValue__forEachPropertyOrdered -> ();
     /// Like `for_each_property_ordered`, but passes what a getter returns, or the accessor itself if the getter throws.
     /// Returns true if `for_each_property_ordered_with_non_enumerable` is sure to visit the same properties.
     #[inline(always)]
-    pub fn for_each_property_ordered_calling_getters(
-        self,
-        global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachPropertyCallback,
-    ) -> JsResult<bool> {
-        unsafe extern "C" {
-            // safe: same contract as `JSC__JSValue__forEachProperty` above.
-            safe fn JSC__JSValue__forEachPropertyOrderedCallingGetters(
-                this: JSValue,
-                global: &JSGlobalObject,
-                ctx: *mut c_void,
-                callback: ForEachPropertyCallback,
-            ) -> bool;
-        }
-        crate::top_scope!(scope, global);
-        let is_same =
-            JSC__JSValue__forEachPropertyOrderedCallingGetters(self, global, ctx, callback);
-        scope.return_if_exception().map(|()| is_same)
-    }
+    pub fn for_each_property_ordered_calling_getters = JSC__JSValue__forEachPropertyOrderedCallingGetters -> bool;
     /// Also visits own non-enumerable properties, to reproduce what older versions of `bun:test` printed.
     #[inline(always)]
-    pub fn for_each_property_ordered_with_non_enumerable(
-        self,
-        global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachPropertyCallback,
-    ) -> JsResult<()> {
-        unsafe extern "C" {
-            // safe: same contract as `JSC__JSValue__forEachProperty` above.
-            safe fn JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(
-                this: JSValue,
-                global: &JSGlobalObject,
-                ctx: *mut c_void,
-                callback: ForEachPropertyCallback,
-            );
-        }
-        crate::top_scope!(scope, global);
-        JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(self, global, ctx, callback);
-        scope.return_if_exception()
-    }
+    pub fn for_each_property_ordered_with_non_enumerable = JSC__JSValue__forEachPropertyOrderedWithNonEnumerable -> ();
+}
+
+impl JSValue {
     /// `JSValue.isBuffer` — `instanceof Buffer` check via
     /// the C++ `JSBuffer__isBuffer` shim. Accepts any JSValue; the C++ side
     /// handles non-cells (returns false), so no precondition is asserted.
@@ -2701,11 +2612,11 @@ unsafe extern "C" {
         name: &bun_core::String,
     ) -> JSValue;
     safe fn JSC__JSValue__isIterable(this: JSValue, global: &JSGlobalObject) -> bool;
-    safe fn JSC__JSValue__forEach(
+    fn JSC__JSValue__forEach(
         this: JSValue,
         global: &JSGlobalObject,
         ctx: *mut c_void,
-        callback: ForEachCallback,
+        callback: *const c_void,
     );
     safe fn Bun__ProxyObject__getInternalField(this: JSValue, field: u32) -> JSValue;
     safe fn Bun__JSValue__getProxyTarget(this: JSValue) -> JSValue;

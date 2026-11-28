@@ -2,7 +2,7 @@
 //! `internalBinding('quic').Endpoint` analog (node/src/quic/endpoint.{h,cc}).
 
 use core::cell::Cell;
-use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::{null, null_mut};
 use std::rc::Rc;
 
@@ -387,11 +387,7 @@ fn destination_cid(payload: &[u8]) -> Option<&[u8]> {
         .filter(|cid| !cid.is_empty() && cid.len() <= MAX_CID_LEN)
 }
 
-extern "C" fn on_data(
-    socket: *mut uws::udp::Socket,
-    buf: *mut uws::udp::PacketBuffer,
-    packets: c_int,
-) {
+fn on_data(socket: *mut uws::udp::Socket, packets: uws::udp::Packets<'_>) {
     let udp = uws::udp::Socket::opaque_mut(socket)
         .user()
         .cast::<uws::quic::Udp>();
@@ -424,9 +420,9 @@ extern "C" fn on_data(
     // `on_new_mini_conn` runs inside `lsquic_engine_packet_in`. The send scope keeps it from re-entering lsquic.
     let _send_scope = this.send_scope();
     bun_boringssl_sys::ERR_clear_error();
-    for i in 0..packets {
-        let payload = uws::udp::PacketBuffer::opaque_mut(buf).get_payload(i);
-        let peer = uws::udp::PacketBuffer::opaque_mut(buf).get_peer(i);
+    for packet in packets {
+        let payload = packet.payload();
+        let peer = packet.peer();
         if payload.is_empty() {
             continue;
         }
@@ -528,11 +524,10 @@ lsquic_callback! {
     fn lookup_cert(
         this: &QuicEndpoint,
         _local: *const c_void,
-        sni: *const c_char,
+        sni: Option<bun_core::CStrRef<'_>>,
     ) -> *mut lsquic::SSL_CTX = null_mut(); {
-        if !sni.is_null() {
-            // SAFETY: lsquic passes a NUL-terminated servername valid for this call.
-            let host = unsafe { core::ffi::CStr::from_ptr(sni) }.to_bytes();
+        if let Some(sni) = sni {
+            let host = sni.to_cstr().to_bytes();
             let entries = this.sni_contexts.get();
             if let Some(ctx) = match_sni(entries, host) {
                 return ctx.raw().cast();

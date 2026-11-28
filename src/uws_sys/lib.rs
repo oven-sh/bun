@@ -221,12 +221,12 @@ pub mod socket_transfer {
         ) -> c_int;
         pub fn bsd_socket_import(info: *mut c_void, err: *mut c_int) -> LIBUS_SOCKET_DESCRIPTOR;
         pub safe fn bsd_close_socket(fd: LIBUS_SOCKET_DESCRIPTOR);
-        pub fn bsd_create_bound_socket(
-            host: *const c_char,
+        pub safe fn bsd_create_bound_socket(
+            host: bun_core::CStrRef<'_>,
             port: c_int,
             options: c_int,
-            out_port: *mut c_int,
-            error: *mut c_int,
+            out_port: &mut c_int,
+            error: &mut c_int,
         ) -> LIBUS_SOCKET_DESCRIPTOR;
         pub fn bsd_create_bound_socket_unix(
             path: *const c_char,

@@ -148,11 +148,7 @@ fn scoped_address(address: &[u8], scope_id: u32) -> BunString {
     BunString::create_format(format_args!("{}%{}", bstr::BStr::new(address), scope_id))
 }
 
-extern "C" fn on_data(
-    socket: *mut uws::udp::Socket,
-    buf: *mut uws::udp::PacketBuffer,
-    packets: c_int,
-) {
+fn on_data(socket: *mut uws::udp::Socket, packets: uws::udp::Packets<'_>) {
     let udp_socket: &UDPSocket = UDPSocket::from_uws(socket);
     let _context = udp_socket.enter_owners_context();
     let Some(this_value) = udp_socket.this_value.get().try_get() else {
@@ -167,8 +163,7 @@ extern "C" fn on_data(
 
     let global_this = udp_socket.global_this.get();
 
-    let mut i: c_int = 0;
-    while i < packets {
+    for packet in packets {
         // A prior iteration's callback (or its error handler) may have closed
         // this socket or left a TerminationException pending; stop dispatching
         // the rest of the recvmmsg batch so no 'data' fires after 'close' and
@@ -178,13 +173,9 @@ extern "C" fn on_data(
             break;
         }
 
-        // SAFETY: `buf` is valid for the duration of this callback per uws
-        // contract; each access reborrows it per-statement so no reference
-        // spans the JS calls below.
-        let peer = Address::from_ref(unsafe { (*buf).get_peer(i) });
+        let peer = Address::from_ref(packet.peer());
 
         let Some(peer) = peer.to_socket_addr().filter(|peer| peer.port() != 0) else {
-            i += 1;
             continue;
         };
         let (ip, port, is_ipv6) = (IpText::new(peer.ip()), peer.port(), peer.is_ipv6());
@@ -193,11 +184,9 @@ extern "C" fn on_data(
             _ => None,
         };
 
-        // SAFETY: see `get_peer` above; per-statement reborrows.
-        let truncated = unsafe { (*buf).get_truncated(i) };
-        // SAFETY: see `get_peer` above; `slice`'s borrow ends at the
-        // `binary_type.to_js` copy below, before user JS runs.
-        let slice = unsafe { (*buf).get_payload(i) };
+        let truncated = packet.is_truncated();
+        // `slice`'s borrow ends at the `binary_type.to_js` copy below, before user JS runs.
+        let slice = packet.payload();
 
         let hostname_string = match scope_id {
             Some(id) => scoped_address(&ip, id),
@@ -248,8 +237,6 @@ extern "C" fn on_data(
         }
 
         this_value.ensure_still_alive();
-
-        i += 1;
     }
 
     this_value.ensure_still_alive();
@@ -488,7 +475,7 @@ impl UDPSocket {
 
     /// Recover `&UDPSocket` from the uws user-data slot. Centralises the
     /// `unsafe { &*(*socket).user().cast() }` back-ref deref shared by every
-    /// `extern "C"` callback below — the user pointer was set to the
+    /// socket callback above — the user pointer was set to the
     /// `UDPSocket` in [`udp_socket`] via
     /// `uws::udp::Socket::create(.., user_data = this_ptr)` and remains live
     /// until `on_close` (uws guarantees no callback after close). All mutated
@@ -524,11 +511,9 @@ impl UDPSocket {
         }
         .into_js_wrapper(cx.global());
         let js_value = this_value.to_js();
-        // Until `open` has dropped on an error: `on_close` reaches the payload.
-        let _alive = bun_jsc::EnsureStillAlive(js_value);
-        let this_ptr: *mut Self = this_value.payload_ptr().as_ptr();
-        // SAFETY: the payload of `this_value`.
-        let this = unsafe { &*this_ptr };
+        // Keeps the wrapper alive until `open` has dropped on an error: `on_close` reaches the payload.
+        let this = this_value.payload_guard();
+        let this_ptr: *mut Self = this.as_ptr();
 
         this.config
             .set(UDPSocketConfig::from_js(cx.global(), options, js_value)?);

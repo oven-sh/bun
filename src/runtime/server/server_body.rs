@@ -17,6 +17,7 @@ use crate::socket::listener::Connections;
 use crate::webcore::BlobExt;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::fetch as Fetch;
+use crate::webcore::fetch::request_init::HeadersInit;
 use crate::webcore::response::HeadersRef;
 use crate::webcore::{AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response, request};
 use ::bstr::BStr;
@@ -865,10 +866,7 @@ fn copy_url_and_headers_of_mux_request(
     req: &uws::AnyRequest,
     is_https: bool,
 ) {
-    // SAFETY: create_from_h3 returns a +1-ref FetchHeaders; adopt into RAII wrapper.
-    request_object.set_fetch_headers(Some(unsafe {
-        crate::webcore::response::HeadersRef::adopt(FetchHeaders::create_from_h3(req.as_ptr()))
-    }));
+    request_object.set_fetch_headers(Some(HeadersRef::create_from_h3(req.as_ptr())));
     let prefix: Option<Vec<u8>> = req
         .header(b"host")
         .filter(|host| Request::is_valid_host_header(host))
@@ -933,7 +931,7 @@ impl<const SSL: bool, const DEBUG: bool> uws_sys::web_socket::WebSocketUpgradeSe
     /// `this` is the user data registered with `app.ws(..)`: a `*mut UserRoute<SSL, DEBUG>` for `id == 1`, a `*mut Self` for `id == 0`.
     unsafe fn on_websocket_upgrade(
         this: *mut Self,
-        res: *mut uws_sys::NewAppResponse<SSL>,
+        res: &mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws_sys::Request,
         upgrade_ctx: &WebSocketUpgradeContext,
         id: usize,
@@ -1419,7 +1417,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 options.data,
                 signal,
                 super::server_web_socket::Flags::default(),
-            );
+            )
+            .payload_guard();
             options.data.ensure_still_alive();
 
             resp.clear_aborted();
@@ -1434,14 +1433,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             drop(detached);
 
             if !resp.upgrade(
-                ws,
+                ws.as_ptr(),
                 sec_websocket_key.slice(),
                 sec_websocket_protocol,
                 sec_websocket_extensions.slice(),
                 &upgrade_ctx,
             ) {
-                // SAFETY: `ws` is stored inline in its JS wrapper, which it keeps alive. uWS never stored it.
-                unsafe { &*ws }.discard_unopened();
+                ws.discard_unopened();
                 return;
             }
             upgraded = Ok(true);
@@ -1740,7 +1738,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
 
                 if let Some(headers_) = init.fast_get(global, jsc::BuiltinName::Headers)? {
-                    headers = HeadersRef::from_init_value(global, headers_)?;
+                    headers = HeadersInit::copy_from_js(global, headers_)?;
                 }
 
                 if let Some(body__) = init.fast_get(global, jsc::BuiltinName::Body)? {

@@ -5,7 +5,6 @@
 
 use crate::ComptimeStringMapExt as _;
 use core::cell::{Cell, RefCell};
-use core::ffi::c_void;
 use core::mem::ManuallyDrop;
 
 use crate as jsc;
@@ -971,57 +970,15 @@ impl<'a> TablePrinter<'a> {
         let mut rows: Vec<CollectedRow> = Vec::new();
         {
             if self.is_iterable {
-                struct Ctx<'c, 'a> {
-                    this: &'c mut TablePrinter<'a>,
-                    cell_text: &'c mut Vec<u8>,
-                    columns: &'c mut Vec<Column>,
-                    rows: &'c mut Vec<CollectedRow>,
-                    idx: u32,
-                    err: Option<jsc::JsError>,
-                }
-                // Capture before constructing `ctx` (which mutably borrows `*self`).
-                let tabular_data = self.tabular_data;
-                let mut ctx = Ctx {
-                    this: self,
-                    cell_text: &mut cell_text,
-                    columns: &mut columns,
-                    rows: &mut rows,
-                    idx: 0,
-                    err: None,
-                };
-                extern "C" fn callback<const C: bool>(
-                    _: *mut jsc::VM,
-                    _: &JSGlobalObject,
-                    ctx: *mut c_void,
-                    value: JSValue,
-                ) {
-                    // SAFETY: ctx points to the stack `Ctx` above.
-                    let ctx = unsafe { bun_ptr::callback_ctx::<Ctx<'_, '_>>(ctx) };
-                    // Once a cell failed, a JS exception may be pending (or
-                    // the VM terminating); don't re-enter user code for the
-                    // remaining elements.
-                    if ctx.err.is_some() {
-                        return;
-                    }
-                    match ctx.this.collect_row::<C>(
-                        ctx.cell_text,
-                        ctx.columns,
-                        RowKey::Num(ctx.idx),
+                self.tabular_data.try_for_each(global_object, |value| {
+                    self.collect_row::<ENABLE_ANSI_COLORS>(
+                        &mut cell_text,
+                        &mut columns,
+                        RowKey::Num(rows.len() as u32),
                         value,
-                    ) {
-                        Ok(row) => ctx.rows.push(row),
-                        Err(err) => ctx.err = Some(err),
-                    }
-                    ctx.idx += 1;
-                }
-                tabular_data.for_each_with_context(
-                    global_object,
-                    (&raw mut ctx).cast::<c_void>(),
-                    callback::<ENABLE_ANSI_COLORS>,
-                )?;
-                if let Some(err) = ctx.err {
-                    return Err(err);
-                }
+                    )
+                    .map(|row| rows.push(row))
+                })?;
             } else {
                 let tabular_obj = self.tabular_data.to_object(global_object)?;
                 let rows_iter = jsc::JSPropertyIterator::init(
@@ -2737,14 +2694,9 @@ pub mod formatter {
         pub(crate) extern "C" fn for_each(
             _: *mut jsc::VM,
             global_object: &JSGlobalObject,
-            ctx: *mut c_void,
+            this: &mut Self,
             next_value: JSValue,
         ) {
-            // SAFETY: ctx points to the stack-allocated `Self` passed by the caller via the C forEach callback.
-            let Some(ctx) = (unsafe { ctx.cast::<Self>().as_mut() }) else {
-                return;
-            };
-            let this = ctx;
             if this.formatter.failed {
                 return;
             }
@@ -2834,13 +2786,9 @@ pub mod formatter {
         pub(crate) extern "C" fn for_each(
             _: *mut jsc::VM,
             global_object: &JSGlobalObject,
-            ctx: *mut c_void,
+            this: &mut Self,
             next_value: JSValue,
         ) {
-            // SAFETY: ctx points to the stack-allocated `Self` passed by the caller via the C forEach callback.
-            let Some(this) = (unsafe { ctx.cast::<Self>().as_mut() }) else {
-                return;
-            };
             if this.formatter.failed {
                 return;
             }
@@ -3095,17 +3043,12 @@ pub mod formatter {
 
         pub(crate) extern "C" fn for_each(
             global_this: &JSGlobalObject,
-            ctx_ptr: *mut c_void,
+            ctx: &mut Self,
             key: &EncodedSlice,
             value: JSValue,
             is_symbol: bool,
             is_private_symbol: bool,
         ) {
-            // SAFETY: ctx_ptr points to the stack-allocated `Self` passed by the caller via the C forEach callback.
-            let Some(ctx) = (unsafe { ctx_ptr.cast::<Self>().as_mut() }) else {
-                return;
-            };
-
             let Some(tag) =
                 Self::for_each_prelude(ctx, global_this, key, value, is_symbol, is_private_symbol)
             else {
@@ -4444,8 +4387,8 @@ pub mod formatter {
                     };
                     value.for_each_property_non_indexed(
                         global_this,
-                        (&raw mut iter).cast::<c_void>(),
-                        PropertyIteratorCtx::<C>::for_each,
+                        &mut iter,
+                        PropertyIteratorCtx::for_each,
                     )?;
                     if self.failed {
                         return Ok(());
@@ -4577,11 +4520,7 @@ pub mod formatter {
                         writer: writer_,
                         count: 0,
                     };
-                    value.for_each(
-                        global_this,
-                        (&raw mut iter).cast::<c_void>(),
-                        MapIteratorCtx::<C, false, true>::for_each,
-                    )?;
+                    value.for_each(global_this, &mut iter, MapIteratorCtx::for_each)?;
                     let count = iter.count;
                     if iter.formatter.failed {
                         return Ok(());
@@ -4595,11 +4534,7 @@ pub mod formatter {
                         writer: writer_,
                         count: 0,
                     };
-                    value.for_each(
-                        global_this,
-                        (&raw mut iter).cast::<c_void>(),
-                        MapIteratorCtx::<C, false, false>::for_each,
-                    )?;
+                    value.for_each(global_this, &mut iter, MapIteratorCtx::for_each)?;
                     if iter.formatter.failed {
                         return Ok(());
                     }
@@ -4639,11 +4574,7 @@ pub mod formatter {
                         writer: writer_,
                         count: 0,
                     };
-                    value.for_each(
-                        global_this,
-                        (&raw mut iter).cast::<c_void>(),
-                        MapIteratorCtx::<C, true, true>::for_each,
-                    )?;
+                    value.for_each(global_this, &mut iter, MapIteratorCtx::for_each)?;
                     let count = iter.count;
                     if iter.formatter.failed {
                         return Ok(());
@@ -4658,11 +4589,7 @@ pub mod formatter {
                         writer: writer_,
                         count: 0,
                     };
-                    value.for_each(
-                        global_this,
-                        (&raw mut iter).cast::<c_void>(),
-                        MapIteratorCtx::<C, true, false>::for_each,
-                    )?;
+                    value.for_each(global_this, &mut iter, MapIteratorCtx::for_each)?;
                     let count = iter.count;
                     if iter.formatter.failed {
                         return Ok(());
@@ -4726,11 +4653,7 @@ pub mod formatter {
                         writer: writer_,
                         is_first: true,
                     };
-                    value.for_each(
-                        global_this,
-                        (&raw mut iter).cast::<c_void>(),
-                        SetIteratorCtx::<C, true>::for_each,
-                    )?;
+                    value.for_each(global_this, &mut iter, SetIteratorCtx::for_each)?;
                     let is_first = iter.is_first;
                     if iter.formatter.failed {
                         return Ok(());
@@ -4744,11 +4667,7 @@ pub mod formatter {
                         writer: writer_,
                         is_first: true,
                     };
-                    value.for_each(
-                        global_this,
-                        (&raw mut iter).cast::<c_void>(),
-                        SetIteratorCtx::<C, false>::for_each,
-                    )?;
+                    value.for_each(global_this, &mut iter, SetIteratorCtx::for_each)?;
                     if iter.formatter.failed {
                         return Ok(());
                     }
@@ -5343,21 +5262,17 @@ pub mod formatter {
             if ordered_properties {
                 value.for_each_property_ordered(
                     global_this,
-                    (&raw mut iter).cast::<c_void>(),
-                    PropertyIteratorCtx::<C>::for_each,
+                    &mut iter,
+                    PropertyIteratorCtx::for_each,
                 )?;
             } else if call_own_getters {
                 value.for_each_property_calling_own_getters(
                     global_this,
-                    (&raw mut iter).cast::<c_void>(),
-                    PropertyIteratorCtx::<C>::for_each,
+                    &mut iter,
+                    PropertyIteratorCtx::for_each,
                 )?;
             } else {
-                value.for_each_property(
-                    global_this,
-                    (&raw mut iter).cast::<c_void>(),
-                    PropertyIteratorCtx::<C>::for_each,
-                )?;
+                value.for_each_property(global_this, &mut iter, PropertyIteratorCtx::for_each)?;
             }
 
             // Extract what we need from `iter` so its `&mut self` / `&mut writer_`

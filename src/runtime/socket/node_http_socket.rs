@@ -191,27 +191,28 @@ impl<const SSL: bool> NewSocket<SSL> {
             self.update_flags(|f| f.remove(SocketFlags::IS_PAUSED));
             self.socket.get().resume_stream();
         }
-        Ok(ws.js_value())
+        Ok(Some(ws))
     }
 }
 
 /// SAFETY: `s` is from `socket_for_web_socket`. Its ext holds only `handle`, which the WebSocket keeps as its socket data. `None` with nothing written.
-unsafe fn adopt_into_web_socket<'a>(
+unsafe fn adopt_into_web_socket(
     ssl: bool,
     s: *mut us_socket_t,
     handle: *mut c_void,
     server: AnyServer,
     upgrade: &WebSocketUpgrade<'_>,
-) -> Option<&'a ServerWebSocket> {
+) -> Option<JSValue> {
     let handler = server.ws_package_handler()?;
     let context = server.ws_package_context(upgrade.behavior)?;
-    let ws = ServerWebSocket::init_for_ws_package(handler.get(), upgrade.websocket);
-    // SAFETY: the caller's contract. `init` stored `ws` inline in its JS wrapper, which `ws` keeps alive.
+    let ws = ServerWebSocket::init_for_ws_package(handler.get(), upgrade.websocket).payload_guard();
+    // SAFETY: the caller's contract. `init` made `ws` keep its wrapper alive until the WebSocket closes.
     unsafe {
         Bun__NodeHTTPSocket__prepareForWebSocket(ssl, s, handle);
-        context.adopt(s, ssl, ws.cast(), upgrade.deflate_params, upgrade.handshake);
-        Some(&*ws)
+        let user_data = ws.as_ptr().cast();
+        context.adopt(s, ssl, user_data, upgrade.deflate_params, upgrade.handshake);
     }
+    Some(ws.to_js())
 }
 
 /// Runs `$body` with `$this: &NewSocket<SSL>` for a handle that `Bun__NodeHTTPSocket__create` returned.

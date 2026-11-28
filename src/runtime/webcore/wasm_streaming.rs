@@ -150,16 +150,13 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
 /// shim: returns `.zero` on thrown exception.
 ///
 /// # Safety
-/// `this` must be a valid, live `JSGlobalObject` pointer for the duration of
-/// the call (guaranteed by the C++ host caller).
+/// `streaming_compiler` must be a live `JSC::Wasm::StreamingCompiler`.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
-    this: *mut JSGlobalObject,
+    this: &JSGlobalObject,
     response_value: JSValue,
     streaming_compiler: *mut c_void,
 ) -> JSValue {
-    // SAFETY: C++ passes a live global object.
-    let this = unsafe { &*this };
     match get_body_stream_or_bytes_for_wasm_streaming(this, response_value, streaming_compiler) {
         Ok(v) => v,
         Err(JsError::OutOfMemory) => {

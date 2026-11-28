@@ -44,7 +44,7 @@ unsafe extern "C" {
         port: c_int,
         flags: c_int,
         err: *mut c_int,
-        on_data: extern "C" fn(*mut udp::Socket, *mut udp::PacketBuffer, c_int),
+        on_data: extern "C" fn(*mut udp::Socket, &udp::PacketBuffer, c_int),
         on_recv_error: extern "C" fn(*mut udp::Socket, c_int, c_int),
     ) -> *mut Udp;
     safe fn us_quic_udp_owner(udp: &Udp) -> *mut c_void;
@@ -117,13 +117,13 @@ impl Driver {
     }
 
     /// Binds a UDP socket to the NUL-terminated `host`. Its user data is the returned `Udp`. Null on failure, with the errno in `err`.
-    pub unsafe fn create_udp(
+    pub unsafe fn create_udp<H: Fn(*mut udp::Socket, udp::Packets<'_>) + Copy + 'static>(
         &self,
         host: *const c_char,
         port: u16,
         flags: c_int,
         err: &mut c_int,
-        on_data: extern "C" fn(*mut udp::Socket, *mut udp::PacketBuffer, c_int),
+        _on_data: H,
         on_recv_error: extern "C" fn(*mut udp::Socket, c_int, c_int),
     ) -> *mut Udp {
         // SAFETY: caller contract. `err` is a valid out-param.
@@ -134,7 +134,7 @@ impl Driver {
                 c_int::from(port),
                 flags,
                 err,
-                on_data,
+                udp::on_data::<H>,
                 on_recv_error,
             )
         }

@@ -110,6 +110,18 @@ impl HeadersInit {
         Ok((!is_empty).then_some(Self::Borrowed(headers)))
     }
 
+    /// A list of its own for a `RequestInit` or `ResponseInit` `headers` member. Returns `None` if it's empty.
+    pub(crate) fn copy_from_js(
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Option<HeadersRef>> {
+        match Self::from_js(global, value)? {
+            Some(Self::Created(headers)) => Ok(Some(headers)),
+            Some(borrowed) => borrowed.get().clone_this(global),
+            None => Ok(None),
+        }
+    }
+
     pub(crate) fn get(&self) -> &mut FetchHeaders {
         bun_opaque::opaque_deref_mut(match self {
             Self::Borrowed(headers) => headers.as_ptr(),

@@ -6,7 +6,7 @@ use core::mem::size_of;
 use std::rc::Rc;
 
 use bun_boringssl_sys as boring_sys;
-use bun_core::EncodedSlice;
+use bun_core::{CStrRef, EncodedSlice};
 use bun_io::JsKeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
@@ -356,10 +356,8 @@ impl Listener {
                     Listener::new(vm, context, &mut socket_config, connection, secure_ctx)
                         .into_js_wrapper(cx.global());
                 let js_value = this_value.to_js();
-                let this: *mut Listener = this_value.payload_ptr().as_ptr();
-                // SAFETY: the payload of `this_value`; every field touched below
-                // is `Cell`/`JsCell` or `&self`, so a shared borrow suffices.
-                let this_ref = unsafe { &*this };
+                let this_ref = this_value.payload_guard();
+                let this: *mut Listener = this_ref.as_ptr();
                 stop_stale(&this_ref.handlers);
                 // TODO: server_name is not supported on named pipes, I belive its , lets wait for
                 // someone to ask for it
@@ -436,10 +434,8 @@ impl Listener {
         let this_value = Listener::new(vm, context, &mut socket_config, placeholder, secure_ctx)
             .into_js_wrapper(cx.global());
         let js_value = this_value.to_js();
-        let this: *mut Listener = this_value.payload_ptr().as_ptr();
-        // SAFETY: the payload of `this_value`; every field touched through this
-        // borrow is `Cell`/`JsCell` or `&self`.
-        let this_ref = unsafe { &*this };
+        let this_ref = this_value.payload_guard();
+        let this: *mut Listener = this_ref.as_ptr();
         this_ref
             .group
             .init(uws::Loop::get(), None, this.cast::<c_void>());
@@ -1364,11 +1360,11 @@ impl ServerNameAnswer {
 /// `us_select_cert_cb` (openssl.cpp) calls this for a ClientHello with a server name, on an `SSL` of either engine that `on_open` gave a resolver.
 ///
 /// # Safety
-/// `bun_socket` is the live `TLSSocket` that owns the `SSL`, and `hostname` is NUL-terminated for the call. JS-thread only.
+/// `bun_socket` is the live `TLSSocket` that owns the `SSL`. JS-thread only.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn us_dispatch_server_name(
     bun_socket: *mut c_void,
-    hostname: *const core::ffi::c_char,
+    hostname: CStrRef<'_>,
     abort_handshake: Option<&mut core::ffi::c_int>,
 ) -> *mut uws_sys::SslCtx {
     jsc::mark_binding!();
@@ -1376,17 +1372,12 @@ pub(crate) unsafe extern "C" fn us_dispatch_server_name(
         return core::ptr::null_mut();
     }
     // SAFETY: fn contract.
-    let (tls, name) = unsafe {
-        (
-            RefPtr::init_ref(bun_socket.cast::<TLSSocket>()),
-            core::ffi::CStr::from_ptr(hostname),
-        )
-    };
-    ask_server_name(&tls, name).into_raw(abort_handshake)
+    let tls = unsafe { RefPtr::init_ref(bun_socket.cast::<TLSSocket>()) };
+    ask_server_name(&tls, hostname).into_raw(abort_handshake)
 }
 
 /// Asks the `serverName` handler of a server-side socket.
-fn ask_server_name(tls: &RefPtr<TLSSocket>, name: &core::ffi::CStr) -> ServerNameAnswer {
+fn ask_server_name(tls: &RefPtr<TLSSocket>, hostname: CStrRef<'_>) -> ServerNameAnswer {
     // An idle socket can drop its Handlers while the us_socket_t lives on;
     // `get_handlers()` would panic. Same guard as `us_dispatch_alpn_select`.
     if !tls.has_handlers() {
@@ -1415,7 +1406,7 @@ fn ask_server_name(tls: &RefPtr<TLSSocket>, name: &core::ffi::CStr) -> ServerNam
     }
     .unwrap_or(JSValue::UNDEFINED);
     // Peer-supplied SNI bytes, decoded as Latin-1 like Node's `OneByteString`.
-    let js_name = EncodedSlice::latin1(name.to_bytes()).to_js(&global);
+    let js_name = EncodedSlice::latin1(hostname.to_cstr().to_bytes()).to_js(&global);
     let result = match callback.call(&global, this_value, &[this_value, js_name, socket_handle]) {
         Ok(v) => v,
         Err(err) => global.take_exception(err),

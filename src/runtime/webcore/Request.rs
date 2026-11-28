@@ -10,7 +10,7 @@ use crate::api::AnyRequestContext;
 use crate::generated_bindgen::response::js_Request as js;
 use crate::webcore::BlobExt as _;
 use crate::webcore::body::{self, BodyHiveHandle, BodyMixin, Value as BodyValue};
-use crate::webcore::fetch::request_init::{self, InitSources};
+use crate::webcore::fetch::request_init::{self, HeadersInit, InitSources};
 use crate::webcore::jsc::{HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult};
 use crate::webcore::{AbortSignal, Blob, CookieMap, ReadableStream, Response};
 use bun_alloc::AllocError;
@@ -196,7 +196,6 @@ impl Request {
     /// Sets the headers of the request. This will take ownership of the headers.
     /// it will deref the previous headers if they exist.
     pub(crate) fn set_fetch_headers(&self, headers: Option<HeadersRef>) {
-        // old_headers.deref() → handled by HeadersRef::Drop on assignment
         self.headers.set(headers);
     }
 
@@ -1008,7 +1007,7 @@ impl Request {
             Pristine::Request(request) => request.clone_headers(global).map(Some),
             Pristine::Response(response) => response.clone_init_headers(global).map(Some),
             Pristine::No => match object.fast_get(global, bun_jsc::BuiltinName::Headers)? {
-                Some(value) => HeadersRef::from_init_value(global, value).map(Some),
+                Some(value) => HeadersInit::copy_from_js(global, value).map(Some),
                 None => Ok(None),
             },
         })?;

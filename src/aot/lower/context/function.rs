@@ -8,7 +8,7 @@ use crate::ir::{
     BlockId, DeclaredType, Edge, FunctionBuilder, FunctionId, FunctionKey, Handler, Type, TypeId,
     ValueId,
 };
-use crate::lower::appended_pieces::AppendedPiece;
+use crate::lower::appended_pieces::{AppendedPiece, SearchForPieces};
 use crate::lower::captures;
 use crate::lower::class::Birth;
 use crate::lower::control::ControlState;
@@ -60,6 +60,7 @@ pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     /// Variables declared by `var type = typeof value` in the statement lists around the current statement, and before it.
     pub(in crate::lower) typeof_variables: smallvec::SmallVec<[bun_sema::bind::SymbolId; 4]>,
     pub(in crate::lower) appended_pieces: smallvec::SmallVec<[AppendedPiece; 1]>,
+    pub(in crate::lower) search_for_pieces: Option<SearchForPieces>,
     handler: Option<Handler>,
     position: u32,
     nesting_depth: u32,
@@ -106,6 +107,7 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
             check_of_class: None,
             typeof_variables: smallvec::SmallVec::new(),
             appended_pieces: smallvec::SmallVec::new(),
+            search_for_pieces: None,
             handler: None,
             position,
             nesting_depth: 0,

@@ -43,6 +43,20 @@ test("build time is linear in the number of object literals held by constants of
   expect(withMany / withFew).toBeLessThan(8);
 }, 240_000);
 
+// For each piece the build read the whole function, the whole loop and every store of the string that the piece goes into.
+test("build time is linear in the number of pieces that are appended to one string", async () => {
+  const few = isSlowBuild ? 1_000 : 4_000;
+  const pieces = (count: number) =>
+    `function f(list) {\n  let whole = "";\n  for (const item of list) {\n${rows(
+      count,
+      index => `let s${index} = ""; s${index} += item; whole += s${index};`,
+    )}\n  }\n  return whole;\n}\nconsole.log(f([1]).length);\n`;
+  const withFew = await processorSecondsOfCheck("main.js", pieces(few));
+  const withMany = await processorSecondsOfCheck("main.js", pieces(4 * few));
+  reads("four times the pieces", withMany / withFew, 6, "times the processor seconds");
+  expect(withMany / withFew).toBeLessThan(6);
+}, 240_000);
+
 // The text of the last member would be 2 ** 59 letters long.
 test("the members of an enum that name one another twice do not double for ever", async () => {
   const members = rows(59, index => `m${index + 1} = \`\${m${index}}\${m${index}}\`,`);

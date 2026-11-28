@@ -4,6 +4,7 @@
  *  `bunx vitest test/js/bun/test/mock-fn.test.js`
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/mock-fn.test.js`
  */
+import stream from "node:stream";
 import util from "node:util";
 import vm from "node:vm";
 import test_interop from "./test-interop.js";
@@ -3594,6 +3595,217 @@ if (isBun) {
       Mock.mockReset();
       expect(Object.getPrototypeOf(Mock.prototype)).toBe(isVitest ? A.prototype : Object.prototype);
       expect(new Mock() instanceof A).toBe(isVitest);
+    });
+
+    // Outside vi a reset, a restore or a stub leaves the mock without a class. The objects that the mock has built keep theirs.
+    describe.each(flavors)("%s: an object made with `new` on a mock", (_, isVitest, fn, spyOn) => {
+      class Dog {
+        built = true;
+        speak() {
+          return "woof";
+        }
+      }
+      class Fake {
+        speak() {
+          return "fake";
+        }
+      }
+      // Like Node's stream constructors: a call without `new` returns an object of its own.
+      function Hound() {
+        if (!(this instanceof Hound)) return new Hound();
+        this.built = true;
+      }
+      Hound.prototype.speak = () => "woof";
+
+      const speaks = object => {
+        try {
+          return object.speak();
+        } catch (error) {
+          return error.name;
+        }
+      };
+      const look = (object, Mock, Class) => ({
+        speaks: speaks(object),
+        isOfClass: object instanceof Class,
+        isOfMock: object instanceof Mock,
+      });
+      const kept = { speaks: "woof", isOfClass: true, isOfMock: true };
+      // What Vitest 5.0 leaves of an object when its mock has no implementation: `mock.prototype` inherits from Object.prototype.
+      const plain = { speaks: "TypeError", isOfClass: false, isOfMock: true };
+
+      const made = (Mock, Class) => ({ Mock, Class, instance: new Mock(), construct: () => new Mock() });
+      const spied = pets => {
+        const Mock = spyOn(pets, "Dog");
+        return { Mock, Class: Dog, instance: new pets.Dog(), construct: () => new Mock() };
+      };
+      const makers = [
+        ["fn(Dog)", () => made(fn(Dog), Dog)],
+        ["fn(function Hound)", () => made(fn(Hound), Hound)],
+        ["spyOn(pets, 'Dog')", () => spied({ Dog })],
+        ["spyOn(pets, 'Dog') on a getter", () => spied({ get Dog() { return Dog; } })], // prettier-ignore
+        ["spyOn(pets, 'Dog') on an inherited property", () => spied(Object.create({ Dog }))],
+        [
+          "class Puppy extends fn(Dog)",
+          () => {
+            const Mock = fn(Dog);
+            class Puppy extends Mock {}
+            return { Mock, Class: Dog, instance: new Puppy(), construct: () => new Puppy() };
+          },
+        ],
+      ];
+      const triggers = [
+        ["mockReset()", Mock => Mock.mockReset()],
+        ["mockRestore()", Mock => Mock.mockRestore()],
+        ["[Symbol.dispose]()", Mock => Mock[Symbol.dispose]()],
+        ["mock.restore()", () => mock.restore()],
+        ["jest.restoreAllMocks()", () => jest.restoreAllMocks()],
+        ["vi.restoreAllMocks()", () => vi.restoreAllMocks()],
+        ["jest.resetAllMocks()", () => jest.resetAllMocks()],
+        ["vi.resetAllMocks()", () => vi.resetAllMocks()],
+      ];
+
+      describe.each(makers)("%s", (_, make) => {
+        test.each(triggers)("after %s", (_, trigger) => {
+          const { Mock, Class, instance, construct } = make();
+          trigger(Mock);
+          expect(look(instance, Mock, Class)).toEqual(kept);
+          expect(Object.getPrototypeOf(Mock.prototype)).toBe(Class.prototype);
+          // Outside vi the mock has no implementation now. `new` on it must leave the first object alone too.
+          construct();
+          expect(look(instance, Mock, Class)).toEqual(kept);
+        });
+      });
+
+      test("of a spied builtin class, after mockRestore()", () => {
+        const globals = { Date };
+        const spy = spyOn(globals, "Date");
+        const date = new globals.Date(5);
+        spy.mockRestore();
+        expect(date).toBeInstanceOf(Date);
+        expect(date.getTime()).toBe(5);
+      });
+
+      test("of a spied Node constructor, after mockRestore()", () => {
+        const spy = spyOn(stream, "PassThrough");
+        const pipe = new stream.PassThrough();
+        spy.mockRestore();
+        expect(pipe).toBeInstanceOf(stream.PassThrough);
+        expect(pipe.write("x")).toBe(true);
+        expect(String(pipe.read())).toBe("x");
+      });
+
+      // A class moves the objects that the mock has built, as in Vitest 5.0. Outside vi nothing else does, and no reset moves them back.
+      const unmoved = isVitest ? "TypeError" : "woof";
+      const stubs = [
+        ["mockImplementation(Fake)", Mock => Mock.mockImplementation(Fake), "fake"],
+        ["mockImplementationOnce(Fake)", Mock => Mock.mockImplementationOnce(Fake), "fake"],
+        ["mockImplementation(() => ({}))", Mock => Mock.mockImplementation(() => ({})), unmoved],
+        ["mockReturnValue(1)", Mock => Mock.mockReturnValue(1), unmoved],
+        ["mockReturnValueOnce(1)", Mock => Mock.mockReturnValueOnce(1), unmoved],
+      ];
+      // Not for vi: there Vitest's spy calls the original again after such a call, and Bun's doesn't.
+      if (!isVitest) {
+        stubs.push(
+          ["mockImplementation()", Mock => Mock.mockImplementation(), "woof"],
+          ["mockImplementationOnce()", Mock => Mock.mockImplementationOnce(), "woof"],
+        );
+      }
+      test.each(stubs)("after %s, and after a reset", (_, stub, stubbed) => {
+        const pets = { Dog };
+        const Mock = fn(Dog);
+        const spy = spyOn(pets, "Dog");
+        const objects = [new Mock(), new pets.Dog()];
+        stub(Mock);
+        stub(spy);
+        expect(objects.map(speaks)).toEqual([stubbed, stubbed]);
+        Mock.mockReset();
+        spy.mockRestore();
+        const afterwards = isVitest ? "woof" : stubbed;
+        expect(objects.map(speaks)).toEqual([afterwards, afterwards]);
+      });
+
+      test("of a mock that has no original implementation", () => {
+        const expected = isVitest ? plain : kept;
+
+        const Reset = fn().mockImplementation(Dog);
+        const beforeReset = new Reset();
+        Reset.mockReset();
+        expect(look(beforeReset, Reset, Dog)).toEqual(expected);
+
+        const Once = fn().mockImplementationOnce(Dog);
+        const first = new Once();
+        new Once();
+        expect(look(first, Once, Dog)).toEqual(expected);
+
+        const Temporary = fn();
+        let during;
+        Temporary.withImplementation(Dog, () => {
+          during = new Temporary();
+        });
+        expect(look(during, Temporary, Dog)).toEqual(expected);
+      });
+
+      test("built by the stub of a spy on a class, after mockRestore()", () => {
+        const pets = { Dog };
+        const spy = spyOn(pets, "Dog").mockImplementation(Fake);
+        const instance = new pets.Dog();
+        spy.mockRestore();
+        // Vitest's restore gives the spy its original back, and the objects that the spy has built follow it.
+        expect(instance.speak()).toBe(isVitest ? "woof" : "fake");
+      });
+
+      // The mock notes that `new` has entered it before the constructor runs.
+      test("whose constructor threw, or reset the mock", () => {
+        let leaked;
+        const Throws = fn(
+          class extends Dog {
+            constructor() {
+              super();
+              leaked = this;
+              throw new Error("after `this` got out");
+            }
+          },
+        );
+        expect(() => new Throws()).toThrow("after `this` got out");
+        Throws.mockReset();
+        expect(speaks(leaked)).toBe("woof");
+
+        let duringConstruction;
+        const Resets = fn(
+          class extends Dog {
+            constructor() {
+              super();
+              Resets.mockReset();
+              duringConstruction = speaks(this);
+            }
+          },
+        );
+        new Resets();
+        expect(duringConstruction).toBe("woof");
+      });
+
+      test("and the object that `new` makes after a reset or a stub", () => {
+        const Mock = fn(Dog);
+        new Mock();
+        Mock.mockReset();
+        const after = new Mock();
+        // Outside vi no constructor runs, and the new object inherits from the class that the first object keeps.
+        expect({ built: after.built, speaks: after.speak() }).toEqual({
+          built: isVitest ? true : undefined,
+          speaks: "woof",
+        });
+
+        // The same under a stub that returns no object.
+        const Stubbed = fn(Dog);
+        new Stubbed();
+        Stubbed.mockReturnValue(1);
+        expect(speaks(new Stubbed())).toBe(isVitest ? "TypeError" : "woof");
+
+        // A mock that has built nothing has no object to keep a class for.
+        const Unused = fn(Dog);
+        Unused.mockReset();
+        expect(new Unused() instanceof Dog).toBe(isVitest);
+      });
     });
 
     test.each(flavors)("%s: spy.mockReset()", (_, isVitest, fn, spyOn) => {

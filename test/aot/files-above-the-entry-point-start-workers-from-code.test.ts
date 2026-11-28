@@ -109,6 +109,35 @@ ${copies === "two" ? `import { start as far } from "${up}../lib/starts.mjs";\n` 
   return files;
 }
 
+/** The line that the program of draw() prints. The Worker of a holder posts its job, then what the job went on to start, then the up.mjs that its code itself starts. */
+function printed(level: number, reach: Reach, copies: string) {
+  const holder = (at: number, behind = "") =>
+    (reach === "hoisted" ? `[job at level ${at}]` : `job at level ${at}`) +
+    (reach === "climbs" ? ` > up at level ${at + 2}` : "") +
+    behind +
+    (reach === "joins" ? ` > up at level ${at + 2}` : "");
+  const said = [
+    ...(reach === "climbs" || reach === "joins" ? ["up at level 1"] : []),
+    holder(level, copies === "behind" ? ` > ${holder(level + 1)}` : ""),
+    ...(copies === "two" ? [holder(level + 1)] : []),
+  ];
+  return `${said.join(" | ")}\n`;
+}
+
+/** One slot for `bun main.mjs` in `app`, the build of it and the executable. Under plain Bun and compiled, the program prints `line` and nothing else, and exits with 0. */
+async function plainAndCompiledPrint(app: string, line: string) {
+  const executable = join(app, isWindows ? "program.exe" : "program");
+  const [plain, compiled] = await slot(async () => {
+    const plain = await spawned([bunExe(), "main.mjs"], app, bunEnv);
+    const flags = [...withoutDebugInformation(), "./main.mjs", "--outfile", executable];
+    built(await spawned([bunExe(), ...compileCommand, ...flags], app, bunEnv));
+    const env = { ...bunEnv, [runtimeEnvironment.forbidsInterpreter]: "1" };
+    return [plain, await spawned([executable], app, env)];
+  });
+  const ended = { stdout: line, stderr: "", exitCode: 0, signal: null };
+  expect({ plain, compiled }).toEqual({ plain: ended, compiled: ended });
+}
+
 describe("compile/aot/files above the entry point start Workers from code", () => {
   // On Windows the path of a file holds backslashes, and the string literal in the code takes them for escapes, under plain Bun too.
   const drawn = isWindows ? test.skip : test.concurrent;
@@ -123,26 +152,12 @@ describe("compile/aot/files above the entry point start Workers from code", () =
         const kind = (Object.keys(kinds) as Kind[])[(turn + Math.floor(turn++ / 3)) % 3];
         drawn(`level ${level}, ${reach}, ${when}, ${copies}, ${kind}`, async () => {
           using project = tempDir("aot-workers-from-code-above", draw(level, reach, when, copies, kind));
-          const app = join(String(project), folder(0));
-          const executable = join(app, isWindows ? "program.exe" : "program");
-          const [plain, compiled] = await slot(async () => {
-            const plain = await spawned([bunExe(), "main.mjs"], app, bunEnv);
-            const flags = [...withoutDebugInformation(), "./main.mjs", "--outfile", executable];
-            built(await spawned([bunExe(), ...compileCommand, ...flags], app, bunEnv));
-            const env = { ...bunEnv, [runtimeEnvironment.forbidsInterpreter]: "1" };
-            return [plain, await spawned([executable], app, env)];
-          });
-          expect(plain.stdout).toInclude(`job at level ${level}`);
-          expect(plain.stdout).not.toMatch(/error|threw/);
-          expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
-            stdout: plain.stdout,
-            exitCode: 0,
-          });
+          await plainAndCompiledPrint(join(String(project), folder(0)), printed(level, reach, copies));
         });
       }
 
   // What the code names by the path of its file is found as any path is: with the extensions that a name may lack, and one file behind a link is one module.
-  test.skipIf(isWindows)(
+  test.concurrent.skipIf(isWindows)(
     "the code imports a name without its extension, and a file through a linked folder",
     async () => {
       const both = `Promise.all([import("' + import.meta.dirname + '/link/count"), import("' + import.meta.dirname + '/user.mjs")])`;
@@ -154,18 +169,13 @@ export const start = () => listen(${kinds["data: URL"][1]});\n`,
         "real/count.mjs": "let count = 0;\nexport const bump = () => ++count;\n",
       });
       symlinkSync("../real", join(String(project), "lib/link"), "dir");
-      const app = join(String(project), "app");
-      const flags = [...withoutDebugInformation(), "./main.mjs", "--outfile", "program"];
-      built(await slot(() => spawned([bunExe(), ...compileCommand, ...flags], app, bunEnv)));
-      const env = { ...bunEnv, [runtimeEnvironment.forbidsInterpreter]: "1" };
-      expect((await spawned([bunExe(), "main.mjs"], app, bunEnv)).stdout).toBe("1 2\n");
-      expect((await spawned([join(app, "program")], app, env)).stdout).toBe("1 2\n");
+      await plainAndCompiledPrint(join(String(project), "app"), "1 2\n");
     },
   );
 
   // The depth counts how high a name climbs, not only where files lie. The path of the Worker goes three folders up and comes back down by the names of two of them, so no file lies as high as it climbs:
   // out of too few folders /$bunfs/apps/cli/lib/job.mjs was left of it, which is the path of the file that the entry point starts.
-  test.skipIf(isWindows)(
+  test.concurrent.skipIf(isWindows)(
     "a file above the entry point joins a path that climbs higher than any file and comes back down",
     async () => {
       using project = tempDir("aot-workers-from-code-above", {
@@ -176,18 +186,13 @@ export ${listen}export const start = () => listen(new Worker(path.join(import.me
         "apps/cli/lib/job.mjs": `postMessage("job");\n`,
         "apps/cli/apps/cli/lib/job.mjs": `postMessage("another job");\n`,
       });
-      const app = join(String(project), "apps/cli/src");
-      const flags = [...withoutDebugInformation(), "./main.mjs", "--outfile", "program"];
-      built(await slot(() => spawned([bunExe(), ...compileCommand, ...flags], app, bunEnv)));
-      const env = { ...bunEnv, [runtimeEnvironment.forbidsInterpreter]: "1" };
-      expect((await spawned([bunExe(), "main.mjs"], app, bunEnv)).stdout).toBe("another job | job\n");
-      expect((await spawned([join(app, "program")], app, env)).stdout).toBe("another job | job\n");
+      await plainAndCompiledPrint(join(String(project), "apps/cli/src"), "another job | job\n");
     },
   );
 
   // A `..` at the root of the disk leads nowhere, so a climb may count more of them than there are folders. Where a name climbs so high the folders of the executable go as deep as those
   // that the build follows the code in. They went one less deep, and two `..` too many left them: the file was found at one depth and not at the other, and the build stopped at an internal error.
-  test.skipIf(isWindows)(
+  test.concurrent.skipIf(isWindows)(
     "the code names a file by a climb past the root of the disk that comes back down",
     async () => {
       using project = tempDir("aot-workers-from-code-above", {
@@ -206,29 +211,25 @@ export ${listen}export const start = () => listen(new Worker(path.join(import.me
 ${listen}const code = 'Promise.all([import("' + ${names[0]} + '"), import("' + ${names[1]} + '")]).then(both => postMessage(both.map(it => it.said).join()), error => postMessage("threw " + error.name))';
 export const start = () => listen(${kinds["data: URL"][1]});\n`,
       );
-      const app = join(root, "app/src");
-      const flags = [...withoutDebugInformation(), "./main.mjs", "--outfile", "program"];
-      built(await slot(() => spawned([bunExe(), ...compileCommand, ...flags], app, bunEnv)));
-      const env = { ...bunEnv, [runtimeEnvironment.forbidsInterpreter]: "1" };
-      expect((await spawned([bunExe(), "main.mjs"], app, bunEnv)).stdout).toBe("job,job\n");
-      expect((await spawned([join(app, "program")], app, env)).stdout).toBe("job,job\n");
+      await plainAndCompiledPrint(join(root, "app/src"), "job,job\n");
     },
   );
 
   // What the build follows reads as deep as the disk goes. None of it is in the executable.
-  test.skipIf(isWindows)("the executable is the same however deep the project lies on disk", async () => {
-    const hashes: (number | bigint)[] = [];
-    for (const above of ["", "x/y/z/"]) {
-      const files = Object.entries(draw(1, "joins", "late", "behind", "data: URL"));
-      using project = tempDir(
-        "aot-workers-from-code-above",
-        Object.fromEntries(files.map(it => [above + it[0], it[1]])),
-      );
-      const app = join(String(project), above, folder(0));
-      const flags = [...withoutDebugInformation(), "./main.mjs", "--outfile", "program"];
-      built(await slot(() => spawned([bunExe(), ...compileCommand, ...flags], app, bunEnv)));
-      hashes.push(Bun.hash(readFileSync(join(app, "program"))));
-    }
+  test.concurrent.skipIf(isWindows)("the executable is the same however deep the project lies on disk", async () => {
+    const files = Object.entries(draw(1, "joins", "late", "behind", "data: URL"));
+    const hashes = await Promise.all(
+      ["", "x/y/z/"].map(async above => {
+        using project = tempDir(
+          "aot-workers-from-code-above",
+          Object.fromEntries(files.map(it => [above + it[0], it[1]])),
+        );
+        const app = join(String(project), above, folder(0));
+        const flags = [...withoutDebugInformation(), "./main.mjs", "--outfile", "program"];
+        built(await slot(() => spawned([bunExe(), ...compileCommand, ...flags], app, bunEnv)));
+        return Bun.hash(readFileSync(join(app, "program")));
+      }),
+    );
     expect(hashes[0]).toBe(hashes[1]);
   });
 });

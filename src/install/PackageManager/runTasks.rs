@@ -165,6 +165,10 @@ impl Drop for ReturnNetworkTask<'_> {
     }
 }
 
+pub(crate) fn return_network_task(manager: &mut PackageManager, task: *mut NetworkTask) {
+    drop(ReturnNetworkTask { manager, task })
+}
+
 /// Resolves the dependencies that waited for `task_id` to `pkg`, and fills in the package's name
 /// where a dependency did not know it. Entries that a linker queued stay in the task's list.
 pub(crate) fn resolve_waiters_of_appended_package(
@@ -227,9 +231,6 @@ pub(crate) fn run_tasks(
         if log_level.show_progress() && !has_updated_this_run.replace(true) {
             manager.set_node_name(manager.downloads_node(), name, emoji.as_bytes());
         }
-    };
-    let return_network_task = |manager: &mut PackageManager, task: *mut NetworkTask| {
-        drop(ReturnNetworkTask { manager, task })
     };
 
     let patch_tasks_batch = INBOX.patch_tasks.pop_batch();
@@ -434,6 +435,7 @@ pub(crate) fn run_tasks(
                         let scope = manager.scope_for_package_name(name);
                         let is_optional = !manager.is_network_task_required(task.task_id);
                         task.retry_with_abbreviated_manifest(scope, is_optional)?;
+                        task.response = Default::default();
                         enqueue::enqueue_network_task(manager, task_ptr);
                         continue;
                     }
@@ -482,7 +484,8 @@ pub(crate) fn run_tasks(
                     // A dist-tag on the name of an unpublished workspace links the workspace, once
                     // `get_or_put_resolved_package` sees that the task has failed.
                     if metadata.status_code() == 404
-                        && !matches!(caller, Caller::ManifestCache)
+                        && (manager.task_queue.contains_key(&task.task_id)
+                            || !matches!(caller, Caller::ManifestCache))
                         && enqueue::has_linkable_workspace(
                             manager,
                             bun_semver::string::Builder::string_hash(name),
@@ -557,12 +560,11 @@ pub(crate) fn run_tasks(
 
                 if metadata.status_code() == 304 {
                     // The HTTP request was cached
-                    if let Some(mut manifest) = loaded_manifest.take() {
-                        // If we requested extended manifest but we somehow got an abbreviated one, this is a bug
-                        debug_assert!(
-                            !is_extended_manifest || manifest.pkg.has_extended_manifest()
-                        );
-
+                    // A copy without publish times was not offered, so the parse reports the 304.
+                    let needs_times = manager.options.minimum_release_age_ms.is_some();
+                    if let Some(mut manifest) = (loaded_manifest.take())
+                        .filter(|manifest| !needs_times || manifest.pkg.has_extended_manifest())
+                    {
                         manifest.pkg.public_max_age = npm::Registry::manifest_expiry(metadata);
 
                         // reshaped for borrowck —
@@ -686,6 +688,7 @@ pub(crate) fn run_tasks(
                         err,
                         &task.url_buf,
                     ) else {
+                        return_network_task(manager, task_ptr);
                         continue;
                     };
 
@@ -711,6 +714,7 @@ pub(crate) fn run_tasks(
 
                     let _ = manager.task_queue.remove(&task.task_id);
 
+                    return_network_task(manager, task_ptr);
                     continue;
                 };
 
@@ -732,6 +736,7 @@ pub(crate) fn run_tasks(
                         },
                         &task.url_buf,
                     ) else {
+                        return_network_task(manager, task_ptr);
                         continue;
                     };
 
@@ -771,6 +776,7 @@ pub(crate) fn run_tasks(
 
                     let _ = manager.task_queue.remove(&task.task_id);
 
+                    return_network_task(manager, task_ptr);
                     continue;
                 }
 
@@ -1681,6 +1687,8 @@ pub fn generate_network_task_for_tarball<'a>(
     if let Err(err) = network_task.for_tarball(extract_tarball, scope, authorization) {
         // No task will ever complete the dedupe entry, so a later enqueue would wait forever.
         this.mark_network_task_failed(task_id);
+        let _ = this.task_queue.remove(&task_id);
+        return_network_task(this, net_ptr);
         return Err(err);
     }
 

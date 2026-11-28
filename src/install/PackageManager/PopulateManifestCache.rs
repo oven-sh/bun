@@ -79,13 +79,18 @@ fn start_manifest_task(
     let task = unsafe { &mut *net_ptr };
     // `scope` points into `manager.options` which is not mutated by
     // `for_manifest` (it only writes the pool slot and `manager.log`).
-    task.for_manifest(
+    if let Err(err) = task.for_manifest(
         pkg_name,
         scope.get(),
         None,
         !is_required,
         needs_extended_manifest,
-    )?;
+    ) {
+        let reported = super::ManifestFailure::already_reported();
+        let _ = manager.manifest_failures.insert(task_id, reported);
+        run_tasks::return_network_task(manager, net_ptr);
+        return Err(err.into());
+    }
 
     enqueue::enqueue_network_task(manager, net_ptr);
     Ok(())

@@ -77,6 +77,10 @@ fn task_callback_list(this: &mut PackageManager, task_id: Task::Id) -> &mut Task
 /// Makes a git, GitHub or tarball dependency wait for the task that fetches its package.
 fn wait_for_remote_task(this: &mut PackageManager, task_id: Task::Id, waiter: TaskCallbackContext) {
     use TaskCallbackContext::Dependency as Row;
+    // A peer that was bound before its turn has nothing left to wait for.
+    if this.appended_task_packages.contains_key(&task_id) {
+        return;
+    }
     let waiting = task_callback_list(this, task_id);
     // `request_remote_package_ahead` may have put the dependency on the list before its turn.
     let is_waiting = (waiting.iter())
@@ -89,15 +93,24 @@ fn wait_for_remote_task(this: &mut PackageManager, task_id: Task::Id, waiter: Ta
     }
 }
 
-/// Returns false if `task_id` already had a list, which means the task was started earlier.
+/// Returns false if the task was started earlier.
 fn push_task_callback(
     this: &mut PackageManager,
     task_id: Task::Id,
     callback: TaskCallbackContext,
 ) -> bool {
     let entry = this.task_queue.get_or_put(task_id).expect("unreachable");
+    // No download runs when the isolated linker starts, so one from before would never answer.
+    let starts_over = entry.value_ptr.is_empty()
+        && matches!(
+            callback,
+            TaskCallbackContext::IsolatedPackageInstallContext(_)
+        );
+    if starts_over {
+        let _ = this.network_dedupe_map.remove(&task_id);
+    }
     entry.value_ptr.push(callback);
-    !entry.found_existing
+    starts_over || !entry.found_existing
 }
 
 /// What `bind_row` did with a dependency.
@@ -877,6 +890,7 @@ fn enqueue_manifest_download(
         // request that was never sent.
         let reported = package_manager_real::ManifestFailure::already_reported();
         let _ = this.manifest_failures.insert(task_id, reported);
+        run_tasks::return_network_task(this, network_task);
         return Err(err.into());
     }
     enqueue_network_task(this, network_task);

@@ -32,7 +32,7 @@ use crate::update_transitive::{
 };
 use crate::{
     Dependency, DependencyID, Features, PackageID, PackageNameHash, PatchTask, Resolution,
-    TaskCallbackContext, invalid_package_id,
+    invalid_package_id,
 };
 use bun_install_types::NodeLinker::NodeLinker;
 
@@ -2310,6 +2310,11 @@ fn clean_lockfile(
         }
     };
     let mut before_clean = core::mem::replace(&mut manager.lockfile, new_lockfile);
+    // A clean has no mapping for rows, and a linker must not join a task that nobody started.
+    manager.task_queue.retain(|task_id, rows| {
+        rows.clear();
+        manager.network_dedupe_map.contains_key(task_id)
+    });
     // `reresolve_rows_outside_overrides` needs these, and the copy only has what's saved in the
     // lockfile.
     manager.lockfile.package_extensions.rules =
@@ -2373,9 +2378,6 @@ fn rebind_to_cleaned_lockfile(manager: &mut PackageManager, before_first_clean: 
     manager.peer_askers = None;
     // A clean has no mapping for rows, so the rows that the first pass left waiting are dropped.
     (manager.peer_dependencies).discard(manager.peer_dependencies.readable_length());
-    for waiters in manager.task_queue.values_mut() {
-        waiters.retain(|waiter| !matches!(waiter, TaskCallbackContext::Dependency(_)));
-    }
 }
 
 /// Returns the rows that resolve to a version that their `overrides` rule does not allow, each

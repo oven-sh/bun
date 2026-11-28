@@ -911,7 +911,7 @@ describe.concurrent("dist-tag on the name of a workspace that the registry does 
       return { errors: messages.filter(line => /^(error|warn):/.test(line)), exitCode, requests: [...requests] };
     }
     const dispose = () => (server.stop(true), dir[Symbol.dispose]());
-    return { dir: String(dir), bun, [Symbol.dispose]: dispose };
+    return { dir: String(dir), bun, unpublish: () => void (published = false), [Symbol.dispose]: dispose };
   }
   const linked = { name: "sib", version: "1.0.0" };
 
@@ -954,6 +954,38 @@ describe.concurrent("dist-tag on the name of a workspace that the registry does 
       requests: ["/sib"],
     });
   });
+
+  test.each([
+    { optionalDependencies: {}, errors: [], exitCode: 0 },
+    { optionalDependencies: { sib: "^9.0.0" }, errors: ["warn: GET /sib - 404"], exitCode: 1 },
+  ])(
+    "bun update of the name and of a peer ends like bun update of the name, %j",
+    async ({ optionalDependencies, ...result }) => {
+      using repo = project({ dependencies: { sib: "latest" } }, undefined, "", true);
+      using peers = Bun.serve({
+        port: 0,
+        fetch(request) {
+          const name = decodeURIComponent(new URL(request.url).pathname.slice(1));
+          const rows = name === "@s/host" ? { peerDependencies: { "@s/peer": "^1.0.0" }, optionalDependencies } : {};
+          const version = { name, version: "1.0.0", ...rows, dist: { tarball: `${peers.url}unused.tgz` } };
+          return Response.json({ name, "dist-tags": { latest: "1.0.0" }, versions: { "1.0.0": version } });
+        },
+      });
+      await write(join(repo.dir, ".npmrc"), `@s:registry=${peers.url}\n`);
+      await write(
+        join(repo.dir, "package.json"),
+        JSON.stringify({ name: "root", workspaces: ["packages/*"], dependencies: { "@s/host": "1.0.0" } }),
+      );
+      expect(await repo.bun("install", "--lockfile-only")).toMatchObject({ exitCode: 0 });
+      repo.unpublish();
+      for (const names of [["sib", "@s/peer"], ["sib"]]) {
+        expect(await repo.bun("update", ...names, "-r", "--lockfile-only", "--no-cache")).toEqual({
+          ...result,
+          requests: ["/sib"],
+        });
+      }
+    },
+  );
 
   test("linkWorkspacePackages = false gets the 404", async () => {
     using repo = project({ dependencies: { sib: "latest" } }, undefined, "linkWorkspacePackages = false\n");

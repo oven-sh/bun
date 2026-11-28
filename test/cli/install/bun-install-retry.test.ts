@@ -1032,6 +1032,156 @@ describe.concurrent("backoff", () => {
     expect(exitCode).toBe(1);
   });
 
+  it.each([
+    { linker: "hoisted", status: 200, installed: true, errors: [] },
+    { linker: "hoisted", status: 404, installed: false, errors: ["error: GET /url.tgz - 404"] },
+    { linker: "isolated", status: 200, installed: true, errors: [] },
+    {
+      linker: "isolated",
+      status: 404,
+      installed: false,
+      errors: ["error: failed to download bar@/url.tgz: 404 Not Found", "  /url.tgz"],
+    },
+  ])(
+    "the $linker linker requests a tarball URL that a skipped peer names too ($status)",
+    async ({ linker, status, ...expected }) => {
+      let isLocked = false;
+      let requests = 0;
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(request) {
+          const { origin, pathname } = new URL(request.url);
+          if (isLocked && pathname === "/url.tgz") {
+            requests++;
+            if (status !== 200) return new Response(null, { status });
+          }
+          if (pathname.endsWith(".tgz")) return new Response(file(join(import.meta.dir, "bar-0.0.2.tgz")));
+          const name = pathname.slice(1);
+          const dependencies = name === "host" ? { bar: `${origin}/url.tgz` } : {};
+          // Reported while `broken` is resolved, which is before the peers' turn.
+          const tarball = `${name === "broken" ? "ftp://127.0.0.1" : origin}/${name}.tgz`;
+          return Response.json({
+            name,
+            versions: { "1.0.0": { name, version: "1.0.0", dependencies, dist: { tarball } } },
+          });
+        },
+      });
+      using dir = tempDir("install-retry-skipped-peer", {
+        "package.json": JSON.stringify({ name: "foo", dependencies: { host: "1.0.0" } }),
+        "bunfig.toml": Bun.TOML.stringify({ install: { cache: false, registry: server.url.href, linker } }),
+      });
+      expect(await install(String(dir), {}, "--lockfile-only")).toMatchObject({ exitCode: 0 });
+      isLocked = true;
+      rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
+      writeFileSync(
+        join(String(dir), "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: { host: "1.0.0", broken: "1.0.0" },
+          peerDependencies: { second: `${server.url}url.tgz` },
+        }),
+      );
+
+      const { lines, exitCode } = await install(String(dir), {}, "--force");
+      expect(lines).toContain("error: InvalidURL");
+      const parent = linker === "hoisted" ? "" : join(".bun", "host@1.0.0", "node_modules");
+      expect({
+        requests,
+        installed: existsSync(join(String(dir), "node_modules", parent, "bar", "package.json")),
+        errors: lines.filter(line => line.includes("/url.tgz")).map(line => line.replace(server.url.origin, "")),
+      }).toEqual({ requests: 1, ...expected });
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  it("a peer that is bound to a tarball URL does not hold the next peers back", async () => {
+    const nextPeer = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 0,
+      async fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        if (pathname === "/next.tgz") nextPeer.resolve();
+        if (pathname === "/first.tgz") await nextPeer.promise;
+        if (pathname.endsWith(".tgz")) return new Response(file(join(import.meta.dir, "bar-0.0.2.tgz")));
+        const name = pathname.slice(1);
+        const peerDependencies = { host: { overridden: "1", first: "1" }, first: { next: "1" } }[name];
+        const dist = { tarball: `${origin}/${name}.tgz` };
+        return Response.json({ name, versions: { "1.0.0": { name, version: "1.0.0", peerDependencies, dist } } });
+      },
+    });
+    const url = `${server.url}url.tgz`;
+    using dir = tempDir("install-retry-bound-peer", {
+      "package.json": JSON.stringify({
+        name: "foo",
+        dependencies: { host: "1.0.0", url },
+        overrides: { overridden: url },
+      }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { cache: false, registry: server.url.href, linker: "hoisted" } }),
+    });
+    const { exitCode } = await install(String(dir), {}, "--force");
+    expect(await readdirSorted(join(String(dir), "node_modules"))).toEqual([
+      ".cache",
+      "first",
+      "host",
+      "next",
+      "overridden",
+      "url",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  it("reports the last attempt when the abbreviated manifest gets no answer", async () => {
+    const accepts: string[] = [];
+    await using server = createServer(client => {
+      client.on("error", () => {});
+      let head = "";
+      client.on("data", chunk => {
+        head += chunk;
+        if (!head.endsWith("\r\n\r\n")) return;
+        const abbreviated = head.includes("install-v1");
+        accepts.push(abbreviated ? "abbreviated" : "full");
+        client.end(abbreviated ? "" : "HTTP/1.1 500 Busy\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+      });
+    }).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const registry = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    using dir = tempDir("install-retry-abbreviated", {
+      "package.json": JSON.stringify({ name: "foo", dependencies: { "bar-musl": "1.0.0" } }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { cache: false, registry } }),
+    });
+    const { lines, exitCode } = await install(String(dir), { BUN_CONFIG_HTTP_RETRY_COUNT: "1" });
+    expect(lines.filter(line => line.startsWith("error:"))).toEqual([
+      "error: ConnectionClosed downloading package manifest bar-musl",
+      "error: bar-musl@1.0.0 failed to resolve",
+    ]);
+    expect(accepts).toEqual(["full", "full", "abbreviated"]);
+    expect(exitCode).toBe(1);
+  });
+
+  it.each(["dependencies", "peerDependencies"])(
+    "a 304 that leaves minimumReleaseAge without publish times is an error (%s)",
+    async group => {
+      using registry = flakyRegistry((kind, hit) =>
+        kind === "manifest" && hit > 1 ? new Response(null, { status: 304 }) : undefined,
+      );
+      using dir = tempDir("install-retry-304", {
+        "package.json": JSON.stringify({ name: "foo", [group]: { bar: "^0.0.2" } }),
+        "bunfig.toml": Bun.TOML.stringify({ install: { cache: "./.bun-cache", registry: registry.url } }),
+      });
+      const cache = { BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
+      expect(await install(String(dir), cache, "--lockfile-only")).toMatchObject({ exitCode: 0 });
+      rmSync(join(String(dir), "bun.lock"));
+
+      const { lines, exitCode } = await install(String(dir), cache, "--lockfile-only", "--minimum-release-age=1");
+      expect(lines.find(line => line.startsWith("error:"))).toContain("UnexpectedNotModified");
+      expect(registry.at.manifest).toHaveLength(2);
+      expect(exitCode).toBe(1);
+    },
+  );
+
   // yarn.lock and pnpm-lock.yaml don't record `bin`, so a migration asks the registry for it and continues without a
   // response.
   describe.each(["yarn.lock", "pnpm-lock.yaml"] as const)("the manifests that complete a migrated %s", name => {
@@ -1063,6 +1213,22 @@ describe.concurrent("backoff", () => {
       expect(err).not.toContain("warn:");
       expect(registry.at.manifest.length).toBe(3);
       expect(exitCode).toBe(0);
+    });
+
+    // A migration from yarn.lock drops an entry whose range has changed.
+    it.if(name === "pnpm-lock.yaml")("are not waited for when the registry URL is invalid", async () => {
+      using dir = project("ftp://127.0.0.1/");
+      await writeFile(join(String(dir), name), lockfile);
+      await writeFile(
+        join(String(dir), "package.json"),
+        JSON.stringify({ name: "foo", dependencies: { bar: "^1.0.0" } }),
+      );
+      const { lines, exitCode } = await install(String(dir), {}, "--lockfile-only");
+      expect(lines.filter(line => /^(warn|error):/.test(line))).toEqual([
+        expect.stringMatching(/^warn: Registry URL must be http/),
+        "error: bar@^1.0.0 failed to resolve",
+      ]);
+      expect(exitCode).toBe(1);
     });
   });
 

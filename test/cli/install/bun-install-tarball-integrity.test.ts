@@ -931,6 +931,94 @@ describe.concurrent.each(
       expect(await box.lockfile("app")).toBe(lockfile);
       expect(exitCode).toBe(1);
     });
+
+    // The hoisted linker leaves pkg out: https://github.com/oven-sh/bun/pull/45623
+    describe.if(linker === "isolated")("bun add under another name reads it again for pkg", () => {
+      async function add(name: string, prepare: (box: ReturnType<typeof sandbox>) => unknown) {
+        const { box, v1, requests } = await changed(`tarball-added-under-another-name-${name}`);
+        using _ = box;
+        await box.put("app", await tarball("v2", {}, "renamed"));
+        await rm(join(box.root, "cache"), { recursive: true });
+        await rm(join(box.root, "app", "node_modules"), { recursive: true });
+        await prepare(box);
+        const { stderr, exitCode } = await box.run("app", "add", `second@${box.spec}`);
+        return {
+          messages: stderr
+            .replaceAll(box.resolution, "pkg.tgz")
+            .split(/\r?\n/)
+            .filter(line => /^(error|warn):/.test(line)),
+          requests: box.requests.length - requests,
+          keepsIntegrity: (Bun.JSONC.parse(await box.lockfile("app")) as any).packages.pkg.at(-1) === v1.integrity,
+          installed: await box.installed("app").catch(() => undefined),
+          exitCode,
+        };
+      }
+      async function edit(path: string, from: string | RegExp, to: string) {
+        await writeFile(path, (await file(path).text()).replace(from, to));
+      }
+      const requests = kind === "URL" ? 2 : 0;
+
+      it("and fails the integrity check", async () => {
+        expect(await add("required", () => {})).toEqual({
+          messages: [
+            "error: Integrity check failed for tarball: pkg",
+            "error: failed to download pkg@pkg.tgz: IntegrityCheckFailed",
+          ],
+          requests,
+          keepsIntegrity: true,
+          installed: undefined,
+          exitCode: 1,
+        });
+      });
+
+      it("and fails the integrity check of an optional pkg, like bun install", async () => {
+        const result = await add("optional", async box => {
+          for (const name of ["package.json", "bun.lock"]) {
+            await edit(join(box.root, "app", name), '"dependencies"', '"optionalDependencies"');
+          }
+        });
+        expect(result).toEqual({
+          messages: [
+            "error: Integrity check failed for tarball: pkg",
+            "warn: IntegrityCheckFailed extracting tarball from pkg",
+          ],
+          requests,
+          keepsIntegrity: true,
+          installed: undefined,
+          exitCode: 1,
+        });
+      });
+
+      it("and installs it if bun.lock records no integrity", async () => {
+        const result = await add("unpinned", box => edit(join(box.root, "app", "bun.lock"), /, "sha512-[^"]+"/, ""));
+        expect(result).toEqual({
+          messages: [],
+          requests,
+          keepsIntegrity: false,
+          installed: 'module.exports = "v2";\n',
+          exitCode: 0,
+        });
+      });
+
+      it.if(kind === "URL")("and reports a 404", async () => {
+        const result = await add("gone", box => {
+          const get = box.served.get.bind(box.served);
+          // Only the first request is served.
+          box.served.get = path => {
+            const body = get(path);
+            box.served.clear();
+            return body;
+          };
+        });
+        expect(result).toEqual({
+          messages: ["error: failed to download pkg@pkg.tgz: 404 Not Found"],
+          requests,
+          keepsIntegrity: true,
+          installed: undefined,
+          exitCode: 1,
+        });
+      });
+    });
   });
 
   it("bun update installs the dependencies of the tarball's new build", async () => {

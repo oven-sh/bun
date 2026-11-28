@@ -1321,6 +1321,73 @@ describe.concurrent("auto-install throws when it can't do something instead of e
     expect(exitCode).toBe(0);
   });
 
+  test("an invalid tarball URL, reported again by an import in every later turn of the event loop", async () => {
+    using registry = Bun.serve({
+      port: 0,
+      fetch() {
+        const version = { name: "ftp", version: "1.0.0", dist: { tarball: "ftp://127.0.0.1/ftp.tgz" } };
+        return Response.json({ name: "ftp", "dist-tags": { latest: "1.0.0" }, versions: { "1.0.0": version } });
+      },
+    });
+    const source = `
+      for (let i = 0; i < 4; i++) {
+        try {
+          require("ftp");
+        } catch (e) {
+          console.log(Bun.inspect(e).split("\\n").filter(line => line.startsWith("note: Expected tarball URL")).length);
+        }
+        await new Promise(resolve => setTimeout(resolve, 1));
+      }
+    `;
+    expect(await runWithRegistry(registry.url.origin, "index.js", source)).toEqual({
+      stdout: "1\n1\n1\n1\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("the response to a failed tarball download is freed", async () => {
+    const body = Buffer.alloc(2 * 1024 * 1024, "x");
+    let tarballs = 0;
+    using registry = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        if (pathname.endsWith(".tgz")) {
+          tarballs++;
+          return new Response(body, { status: 404 });
+        }
+        const name = pathname.slice(1);
+        const version = { name, version: "1.0.0", dist: { tarball: `${origin}/${name}.tgz` } };
+        return Response.json({ name, "dist-tags": { latest: "1.0.0" }, versions: { "1.0.0": version } });
+      },
+    });
+    using dir = tempDir("autoinstall-failed-tarball-leak", {
+      "index.js": `
+        function rssAfter(prefix, count) {
+          for (let i = 0; i < count; i++) {
+            try {
+              require.resolve(prefix + i);
+            } catch {}
+          }
+          Bun.gc(true);
+          return process.memoryUsage.rss();
+        }
+        const before = rssAfter("warm", 10);
+        console.log((rssAfter("gone", 60) - before) / 1024 / 1024);
+      `,
+      "bunfig.toml": `[install]\nregistry = "${registry.url}"\n`,
+    });
+    const env = { ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=16"].filter(Boolean).join(":") };
+    const { stdout, stderr, exitCode } = await runAutoInstallWithEnv(env, String(dir), "index.js");
+
+    expect(stderr).toBe("");
+    expect(tarballs).toBe(70);
+    // The 60 bodies are 120 MB.
+    expect(Number.parseFloat(stdout)).toBeLessThan(isASAN || isDebug ? 70 : 40);
+    expect(exitCode).toBe(0);
+  });
+
   test.each(optionalPackageGuards)("no directory for the cache, %s", async (_, guard) => {
     using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-no-cache-dir", {

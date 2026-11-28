@@ -91,7 +91,7 @@ test.concurrent.skipIf(!isDebug && !isASAN).each(drivers)(
         const q = sql\`select 1\`;
         // Starting the query makes its native handle. run() comes when the pool has dialed.
         const settled = q.catch(err => err?.code ?? String(err));
-        const handleSym = Object.getOwnPropertySymbols(q).find(s => s.description === "handle");
+        const handleSym = Object.getOwnPropertySymbols(Object.getPrototypeOf(q)).find(s => s.description === "handle");
         const handle = q[handleSym];
         const protoRun = Object.getPrototypeOf(handle).run;
         Object.defineProperty(handle, "run", {

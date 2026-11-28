@@ -50,8 +50,15 @@ export function createBunShellTemplateFunction(
         configurable: true,
       });
 
-      this.info.stdout.toJSON = lazyBufferToHumanReadableString;
-      this.info.stderr.toJSON = lazyBufferToHumanReadableString;
+      // Not enumerable: a print of a Buffer lists its own enumerable keys.
+      const toJSON = {
+        value: lazyBufferToHumanReadableString,
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      };
+      Object.defineProperty(output.stdout, "toJSON", toJSON);
+      Object.defineProperty(output.stderr, "toJSON", toJSON);
 
       this.stdout = output.stdout;
       this.stderr = output.stderr;

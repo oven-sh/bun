@@ -41,6 +41,12 @@ pub(crate) fn object_name(names_build: bool) -> Box<[u8]> {
     }
 }
 
+/// Whether a decoder takes a frame with this object for one in compiled code.
+pub(crate) fn is_object_name(name: &[u8]) -> bool {
+    name.strip_prefix(OBJECT_NAME)
+        .is_some_and(|rest| rest.is_empty() || rest.len() == ID_DIGITS_IN_REPORT)
+}
+
 pub(crate) fn offset_in_code(address: usize) -> Option<i32> {
     i32::try_from(Bun__AOT__offsetInCode(address as *const c_void))
         .ok()

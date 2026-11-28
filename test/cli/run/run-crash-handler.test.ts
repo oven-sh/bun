@@ -1,19 +1,23 @@
+import { CString, dlopen, type Pointer } from "bun:ffi";
 import { crash_handler } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
+  compileFixture,
   isArm64,
   isASAN,
   isDebug,
   isGlibc,
   isLinux,
+  isMacOS,
   isPosix,
   isWindows,
+  libcPathForDlopen,
   mergeWindowEnvs,
   tempDir,
 } from "harness";
-import { readFileSync, rmSync } from "node:fs";
+import { copyFileSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
 import { without } from "../../aot/harness/capabilities";
@@ -782,6 +786,245 @@ int eventfd(unsigned int initval, int flags) {
     expect(proc.signalCode).toBeNull();
     expect(exitCode).toBe(1);
   });
+});
+
+// The frames of a trace string `{base}/{version}/{payload}`, decoded the way
+// bun.report's parser decodes them. The payload is the platform, command and
+// format characters, 7 characters of commit, two VLQs of feature bits, then
+// the frames until a VLQ of 0 ends the list. A frame is a VLQ, an offset in
+// bun. A VLQ of 1 comes before the length of a name, the name, and an offset
+// in the image of that name. `_` is an unknown frame and `=` is JS. A frame in
+// bun's own image decodes with the object `<bun>`: the encoder writes names
+// from `[A-Za-z0-9._+-]` only, so no image can decode to that.
+function decodeTraceFrames(payload: string): { object: string; address: number }[] {
+  const digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let i = 3 + 7;
+  function vlq(): number {
+    let value = 0;
+    for (let shift = 0; ; shift += 5) {
+      const digit = digits.indexOf(payload[i++]);
+      if (digit < 0) throw new Error(`bad VLQ digit at ${i - 1} of ${payload}`);
+      value += (digit & 31) * 2 ** shift;
+      if (!(digit & 32)) return value % 2 ? -Math.floor(value / 2) : value / 2;
+    }
+  }
+  vlq();
+  vlq();
+  const frames: { object: string; address: number }[] = [];
+  while (i < payload.length) {
+    if (payload[i] === "_" || payload[i] === "=") {
+      frames.push({ object: payload[i++] === "_" ? "?" : "js", address: 0 });
+      continue;
+    }
+    let address = vlq();
+    if (address === 0) return frames;
+    let object = "<bun>";
+    if (address === 1) {
+      const length = vlq();
+      object = payload.slice(i, i + length);
+      i += length;
+      address = vlq();
+    }
+    frames.push({ object, address });
+  }
+  throw new Error(`unterminated frame list in ${payload}`);
+}
+
+// Runs `cmd`, a bun that crashes, receives the report it uploads, and returns
+// the crash's stderr and exit code together with the decoded frames of the
+// uploaded trace string.
+async function uploadedCrashFrames(cmd: string[], env: Record<string, string> = {}) {
+  const uploaded = Promise.withResolvers<string>();
+  using server = Bun.serve({
+    port: 0,
+    fetch(request) {
+      uploaded.resolve(new URL(request.url).pathname);
+      return new Response("OK");
+    },
+  });
+
+  await using proc = Bun.spawn({
+    cmd,
+    env: {
+      ...bunEnv,
+      ...env,
+      BUN_CRASH_REPORT_URL: server.url.origin,
+      BUN_ENABLE_CRASH_REPORTING: "1",
+      GITHUB_ACTIONS: undefined,
+      CI: undefined,
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  // The curl that uploads holds the crashed process's stderr, so the upload
+  // has arrived by now. A process that died without reporting never uploads:
+  // fail with its stderr instead of waiting for the test timeout.
+  const pathname = await Promise.race([
+    uploaded.promise,
+    Bun.sleep(2000).then(() => {
+      throw new Error(`no crash report was uploaded; exit code ${exitCode}, stderr:\n${stderr}`);
+    }),
+  ]);
+  // `/` is also a VLQ digit, so the payload cannot be split out on it.
+  const payload = pathname.match(/^\/[^/]+\/(.*)\/ack$/)?.[1];
+  expect(payload, pathname).toBeDefined();
+  return { stderr, exitCode, frames: decodeTraceFrames(payload!) };
+}
+
+// A frame outside bun's own executable is encoded with the file name of the
+// image it is in, which bun.report shows beside the frame: that is what says
+// which native addon or system library a crash went through.
+// Not on Windows, where `libcPathForDlopen()` has no answer and there is no
+// `dladdr`. Not on FreeBSD and Android, where a report of a fault does not
+// start at the fault.
+describe.if(isLinux || isMacOS)("the uploaded trace string names the image of a frame outside bun", () => {
+  // A library of this test calls back into bun, which faults. The library
+  // keeps its frame pointer, so its frame is on the walked stack between
+  // bun's. Its file name has bytes that a URL cannot carry as they are, and is
+  // longer than the 64 bytes a name keeps.
+  const loaderInserts = [["no library", undefined]] as [string, string | undefined][];
+  if (isMacOS) loaderInserts.push(["a library", "/usr/lib/libz.1.dylib"]);
+  test.if(!!cc).each(loaderInserts)("between bun's frames, with %s inserted by the loader", async (_, inserted) => {
+    using dir = tempDir("crash-names-image", {
+      "calls back (a library with a long file name that a crash report cuts).c": `
+        /* The call is not the last thing it does, so its frame is there while the callback runs. */
+        int calls_back(int (*callback)(void)) { return callback() + 1; }
+      `,
+      "crash.js": `
+        const { dlopen, JSCallback } = require("bun:ffi");
+        const { crash_handler } = require("bun:internal-for-testing");
+        const [library, inserted] = process.argv.slice(2);
+        if (inserted && process.env.DYLD_INSERT_LIBRARIES !== inserted) throw new Error("the loader did not insert " + inserted);
+        const { calls_back } = dlopen(library, { calls_back: { args: ["function"], returns: "i32" } }).symbols;
+        calls_back(new JSCallback(crash_handler.segfault, { args: [], returns: "i32" }).ptr);
+      `,
+    });
+    const library = compileFixture(
+      path.join(String(dir), "calls back (a library with a long file name that a crash report cuts).c"),
+      { flags: ["-fno-omit-frame-pointer"] },
+    );
+    const { stderr, exitCode, frames } = await uploadedCrashFrames(
+      [bunExe(), path.join(String(dir), "crash.js"), library, ...(inserted ? [inserted] : [])],
+      // dyld lists an inserted library before the executable, which must not make bun's frames another image's.
+      inserted ? { DYLD_INSERT_LIBRARIES: inserted } : {},
+    );
+
+    expect(stderr).toContain("Segmentation fault at address 0xDEADBEEF");
+
+    const name = path.basename(library);
+    expect(name.length).toBeGreaterThan(64);
+    const objects = frames.map(frame => frame.object);
+    const inLibrary = objects.indexOf(name.slice(0, 64).replace(/[^A-Za-z0-9._+-]/g, "_"));
+    // The fault is in bun's own code, and the executable is not taken for another image.
+    expect(objects[0]).toBe("<bun>");
+    expect(inLibrary).toBeGreaterThan(0);
+
+    // The offset is from where the loader put the library, as a symbolizer wants it.
+    const { dladdr } = dlopen(libcPathForDlopen(), { dladdr: { args: ["ptr", "ptr"], returns: "i32" } }).symbols;
+    const { calls_back } = dlopen(library, { calls_back: { args: ["ptr"], returns: "i32" } }).symbols;
+    const info = new BigUint64Array(4);
+    expect(dladdr(calls_back.ptr, info)).not.toBe(0);
+    expect(path.basename(new CString(Number(info[0]) as Pointer).toString())).toBe(name);
+    const inFunction = frames[inLibrary].address - Number(BigInt(calls_back.ptr!) - info[1]);
+    expect(inFunction).toBeGreaterThan(0);
+    expect(inFunction).toBeLessThan(64);
+
+    expect(exitCode).toBe(128 + osConstants.signals.SIGSEGV);
+  });
+
+  // libc's strlen reads from a bad pointer: the fault itself is in another
+  // image. Under ASAN bun has no handler for a real fault.
+  test.if(!isASAN)("where the fault is", async () => {
+    const { stderr, exitCode, frames } = await uploadedCrashFrames(
+      // No test hook turns core dumps off for a fault that bun:ffi reaches.
+      withoutCoreDump([
+        bunExe(),
+        "-e",
+        `require("bun:ffi").dlopen(${JSON.stringify(libcPathForDlopen())}, { strlen: { args: ["usize"], returns: "usize" } }).symbols.strlen(0xdeadbeef)`,
+      ]),
+    );
+
+    // strlen may round the pointer down to its alignment.
+    expect(stderr).toContain("Segmentation fault at address 0xDEADBEE");
+    expect(frames[0].object).toMatch(/\.(so\b|dylib$)/);
+    expect(frames[0].address).toBeGreaterThan(0);
+    // strlen keeps no frame of its own, so the walk goes on to bun's callers.
+    expect(frames.map(frame => frame.object)).toContain("<bun>");
+    expect(exitCode).toBe(128 + osConstants.signals.SIGSEGV);
+  });
+
+  // A library faults more calls deep than a report has frames. Its file name
+  // is of the longest kind that a frame carries, and no frame is left out for
+  // that. Under ASAN bun has no handler for a real fault.
+  test.if(!!cc && !isASAN)("in every frame of a report, each with the longest name", async () => {
+    using dir = tempDir("crash-names-every-frame", {
+      "faults deep (a library with a long file name that a crash report cuts).c": `
+        int faults_deep(int depth);
+        /* The compiler cannot see where this call goes: it stays a call, with a frame. */
+        static int (*volatile next)(int) = faults_deep;
+        int faults_deep(int depth) {
+          if (depth == 0) return *(volatile int *)0xDEADBEEF;
+          return next(depth - 1) + 1;
+        }
+      `,
+    });
+    const library = compileFixture(
+      path.join(String(dir), "faults deep (a library with a long file name that a crash report cuts).c"),
+      { flags: ["-fno-omit-frame-pointer"] },
+    );
+    const { stderr, exitCode, frames } = await uploadedCrashFrames(
+      withoutCoreDump([
+        bunExe(),
+        "-e",
+        `require("bun:ffi").dlopen(${JSON.stringify(library)}, { faults_deep: { args: ["i32"], returns: "i32" } }).symbols.faults_deep(40)`,
+      ]),
+    );
+
+    expect(stderr).toContain("Segmentation fault at address 0xDEADBEEF");
+    const name = path.basename(library);
+    expect(name.length).toBeGreaterThan(64);
+    const object = name.slice(0, 64).replace(/[^A-Za-z0-9._+-]/g, "_");
+    expect(frames.map(frame => frame.object)).toEqual(Array(20).fill(object));
+    expect(exitCode).toBe(128 + osConstants.signals.SIGSEGV);
+  });
+
+  // A standalone executable loads a library that it holds from a file that it
+  // writes, and the name of that file has the user's id. Linux alone builds
+  // this one: the name is made the same way on every platform.
+  test.if(isLinux && !!cc && !isASAN)(
+    "without the user's id, where a standalone executable wrote the library",
+    async () => {
+      using dir = tempDir("crash-names-written-library", {
+        "faults.c": `int faults(void) { return *(volatile int *)0xDEADBEEF; }`,
+        "app.js": `
+          import { dlopen } from "bun:ffi";
+          import library from "./faults.so" with { type: "file" };
+          dlopen(library, { faults: { args: [], returns: "i32" } }).symbols.faults();
+        `,
+      });
+      const cwd = String(dir);
+      copyFileSync(compileFixture(path.join(cwd, "faults.c")), path.join(cwd, "faults.so"));
+      const build = await run([bunExe(), "build", "--compile", "app.js", "--outfile", "app"], cwd);
+      expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
+        stderr: expect.not.stringMatching(/^error\b/m),
+        exitCode: 0,
+      });
+
+      using writtenTo = tempDir("crash-names-written-library-tmp", {});
+      const { stderr, exitCode, frames } = await uploadedCrashFrames(withoutCoreDump([path.join(cwd, "app")]), {
+        BUN_TMPDIR: String(writtenTo),
+        TMPDIR: String(writtenTo),
+      });
+
+      expect(stderr).toContain("Segmentation fault at address 0xDEADBEEF");
+      const userId = process.geteuid!();
+      const written = readdirSync(String(writtenTo)).filter(name => name.endsWith(".so"));
+      expect(written).toEqual([expect.stringMatching(new RegExp(`^\\.bun-${userId}-[0-9a-f]+\\.so$`))]);
+      expect(frames[0].object).toBe(written[0].replace(`-${userId}-`, "-"));
+      expect(exitCode).toBe(128 + osConstants.signals.SIGSEGV);
+    },
+  );
 });
 
 describe("automatic crash reporter", () => {

@@ -4632,6 +4632,8 @@ pub mod c {
         /// index; out-of-range returns null (no precondition).
         #[link_name = "_dyld_get_image_header"]
         safe fn dyld_get_image_header_raw(image_index: u32) -> *const core::ffi::c_void;
+        /// `const char* _dyld_get_image_name(uint32_t)`: the image's path, which dyld keeps while the image is loaded. Null when out of range.
+        pub safe fn _dyld_get_image_name(image_index: u32) -> *const core::ffi::c_char;
     }
     /// `mach_task_self()` — C macro `#define mach_task_self() mach_task_self_`.
     #[cfg(target_os = "macos")]

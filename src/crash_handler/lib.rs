@@ -796,7 +796,7 @@ mod draft {
             Output::disable_scoped_debug_writer();
         }
 
-        let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
+        let mut trace_str_buf = TraceStringBuf::default();
 
         match PANIC_STAGE.with(|s| s.get()) {
             0 => {
@@ -814,7 +814,7 @@ mod draft {
                     end_build_out_of(b"stack", &place);
                 }
                 let _ = PANICKING.fetch_add(1, Ordering::SeqCst);
-                let addresses_in_trace: [usize; 20];
+                let addresses_in_trace: [usize; CRASH_TRACE_FRAMES];
                 let trace_address_count: usize;
 
                 {
@@ -1010,7 +1010,7 @@ mod draft {
                     }
                     crate::stopped_builds::write_where_this_thread_stopped(writer);
 
-                    let mut addr_buf: [usize; 20] = [0; 20];
+                    let mut addr_buf = [0usize; CRASH_TRACE_FRAMES];
 
                     let trace: &[usize] = {
                         let idx: usize = match seed {
@@ -1953,8 +1953,8 @@ mod draft {
         }
         let reason = CrashReason::Panic(msg_buf.const_slice());
 
-        let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
-        let addresses_in_trace: [usize; 20];
+        let mut trace_str_buf = TraceStringBuf::default();
+        let addresses_in_trace: [usize; CRASH_TRACE_FRAMES];
         let trace_address_count: usize;
         {
             let _panic_guard = PANIC_MUTEX.lock();
@@ -1995,7 +1995,7 @@ mod draft {
             }
             crate::stopped_builds::write_where_this_thread_stopped(writer);
 
-            let mut addr_buf: [usize; 20] = [0; 20];
+            let mut addr_buf = [0usize; CRASH_TRACE_FRAMES];
             let idx = debug::capture_stack_trace(debug::return_address(), &mut addr_buf);
             let trace = &addr_buf[..idx.min(addr_buf.len())];
             addresses_in_trace = addr_buf;
@@ -2648,12 +2648,53 @@ mod draft {
         "unknown"
     };
 
+    /// A longer name of an image is cut: its start still identifies the image.
+    const MAX_OBJECT_NAME_LEN: usize = 64;
+    type ObjectName = BoundedArray<u8, MAX_OBJECT_NAME_LEN>;
+
+    fn object_of(parts: &[&[u8]]) -> ObjectName {
+        let mut object = ObjectName::default();
+        for part in parts {
+            let room = MAX_OBJECT_NAME_LEN - object.len();
+            object.append_slice_assume_capacity(&part[..part.len().min(room)]);
+        }
+        object
+    }
+
+    /// `resolve_embedded_file` writes a library that a standalone executable holds to `.bun-<user id>-<hash of the contents>.<extension>`.
+    const WRITTEN_LIBRARY_PREFIX: &[u8] = b".bun-";
+
+    /// `<hash of the contents>.<extension>` of a library that a standalone executable wrote.
+    fn after_user_id(file_name: &[u8]) -> Option<&[u8]> {
+        let user_id_and_hash = file_name.strip_prefix(WRITTEN_LIBRARY_PREFIX)?;
+        let digits = user_id_and_hash
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count();
+        user_id_and_hash[digits..]
+            .strip_prefix(b"-")
+            .filter(|_| digits > 0)
+    }
+
+    /// The object of a frame in an image that is not bun's: the file name of the image, without a user id, and never a name that a decoder takes for bun's own.
+    fn foreign_object(file_name: &[u8]) -> ObjectName {
+        let mut object = match after_user_id(file_name) {
+            Some(hash) => object_of(&[WRITTEN_LIBRARY_PREFIX, hash]),
+            None => object_of(&[file_name]),
+        };
+        // bun.report reads `bun` as bun's own code and `js` as JavaScript.
+        if matches!(object.const_slice(), b"bun" | b"js")
+            || crate::compiled_frames::is_object_name(&object)
+        {
+            object[0] = b'_';
+        }
+        object
+    }
+
     struct StackLine {
         address: i32,
         // None -> from bun.exe
-        object: Option<Box<[u8]>>,
-        // Box<[u8]> rather than a borrowed slice into caller's `name_bytes`,
-        // since the only caller writes into a stack buffer and the value is consumed immediately.
+        object: Option<ObjectName>,
     }
 
     impl StackLine {
@@ -2662,7 +2703,7 @@ mod draft {
             if let Some(address) = crate::compiled_frames::offset_in_code(addr.saturating_sub(1)) {
                 return Some(StackLine {
                     address,
-                    object: Some(crate::compiled_frames::object_name(false)),
+                    object: Some(object_of(&[&crate::compiled_frames::object_name(false)])),
                 });
             }
 
@@ -2687,9 +2728,9 @@ mod draft {
 
                     object: if name != image_path.as_slice() {
                         let basename = bun_paths::basename(name);
-                        Some(Box::<[u8]>::from(
-                            &*strings::convert_utf16_to_utf8_in_buffer(name_bytes, basename),
-                        ))
+                        Some(foreign_object(strings::convert_utf16_to_utf8_in_buffer(
+                            name_bytes, basename,
+                        )))
                     } else {
                         None
                     },
@@ -2697,6 +2738,10 @@ mod draft {
             }
             #[cfg(target_os = "macos")]
             {
+                unsafe extern "C" {
+                    #[link_name = "_mh_execute_header"]
+                    safe static OWN_HEADER: bun_sys::macho::mach_header_64;
+                }
                 let address = if addr == 0 { 0 } else { addr - 1 };
 
                 let image_count = bun_sys::c::_dyld_image_count();
@@ -2736,9 +2781,15 @@ mod draft {
                         commands,
                         stable_address as u64,
                     ) {
-                        if i != 0 {
-                            // these libraries are not interesting, mark as unknown
-                            return None;
+                        // The executable is not always image 0: dyld lists the libraries of DYLD_INSERT_LIBRARIES before it.
+                        if !core::ptr::eq(header, &raw const OWN_HEADER) {
+                            let name = bun_sys::c::_dyld_get_image_name(i);
+                            if name.is_null() {
+                                return None;
+                            }
+                            // SAFETY: dyld owns the NUL-terminated path and keeps it while the image is loaded, and `address` is inside that image.
+                            let name = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
+                            return StackLine::in_foreign_image(name, image_relative_address);
                         }
 
                         // To remap this, you have to add the offset (which is going to be 0x100000000),
@@ -2761,12 +2812,46 @@ mod draft {
                 let _ = name_bytes;
                 let address = addr.saturating_sub(1);
                 let m = bun_sys::elf::find_loaded_module(address)?;
+                let offset = (address - m.base_address) as u64;
+                if !Self::is_own_image(&m) {
+                    return StackLine::in_foreign_image(&m.name, offset);
+                }
                 return Some(StackLine {
-                    address: i32::try_from(address - m.base_address).expect("int cast"),
+                    address: i32::try_from(offset).ok()?,
                     object: None,
                 });
             }
         }
+
+        /// Whether `module` is bun's executable, which is the module that holds this function.
+        #[cfg(not(any(windows, target_os = "macos")))]
+        fn is_own_image(module: &bun_sys::elf::LoadedModule) -> bool {
+            static OWN_HEADERS: AtomicUsize = AtomicUsize::new(0);
+            let mut own = OWN_HEADERS.load(Ordering::SeqCst);
+            if own == 0 {
+                let here = Self::is_own_image as *const () as usize;
+                own = bun_sys::elf::find_loaded_module(here)
+                    .map_or(0, |found| found.program_headers.addr());
+                OWN_HEADERS.store(own, Ordering::SeqCst);
+            }
+            module.program_headers.addr() == own
+        }
+
+        /// A frame in an image that is not bun's. `path` is the image as the loader names it, and only its file name is kept.
+        #[cfg(not(windows))]
+        fn in_foreign_image(path: &[u8], offset: u64) -> Option<StackLine> {
+            let file_name = bun_paths::basename(path);
+            if file_name.is_empty() {
+                return None;
+            }
+            Some(StackLine {
+                address: i32::try_from(offset).ok()?,
+                object: Some(foreign_object(file_name)),
+            })
+        }
+
+        /// The marker, the length of the name, the name, and an offset of up to 7 digits.
+        const MAX_ENCODED_LEN: usize = 1 + 2 + MAX_OBJECT_NAME_LEN + 7;
 
         fn write_encoded(self_: Option<&StackLine>, writer: &mut impl Write) -> crate::Result<()> {
             let Some(known) = self_ else {
@@ -2779,12 +2864,47 @@ mod draft {
                 writer.write_all(
                     VLQ::encode(i32::try_from(object.len()).expect("int cast")).slice(),
                 )?;
-                writer.write_all(object)?;
+                // The name goes into the URL as it is, and bun.report reads it by length: one URL-safe byte for each byte.
+                for &byte in object.const_slice() {
+                    writer.write_byte(match byte {
+                        b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'.' | b'_' | b'+' | b'-' => byte,
+                        _ => b'_',
+                    })?;
+                }
             }
 
             writer.write_all(VLQ::encode(known.address).slice())?;
             Ok(())
         }
+    }
+
+    /// How many frames a crash reports at most.
+    const CRASH_TRACE_FRAMES: usize = 20;
+    /// The capacity of the buffer that a trace string is built in. It is 1 KB on Windows, which reports a stack overflow on the stack that overflowed.
+    const TRACE_STRING_CAPACITY: usize = if cfg!(windows) {
+        1024
+    } else {
+        1024 + CRASH_TRACE_FRAMES * StackLine::MAX_ENCODED_LEN
+    };
+    type TraceStringBuf = BoundedArray<u8, TRACE_STRING_CAPACITY>;
+
+    /// Writes `lines`, the innermost first, up to the first that does not fit in `capacity`: a string decodes without its outermost frames.
+    fn write_frames(
+        lines: impl Iterator<Item = Option<StackLine>>,
+        capacity: usize,
+        writer: &mut impl Write,
+    ) -> crate::Result<()> {
+        let mut written = 0;
+        for line in lines {
+            let mut frame = BoundedArray::<u8, { StackLine::MAX_ENCODED_LEN }>::default();
+            StackLine::write_encoded(line.as_ref(), frame.writer())?;
+            if written + frame.len() > capacity {
+                break;
+            }
+            written += frame.len();
+            writer.write_all(frame.const_slice())?;
+        }
+        Ok(())
     }
 
     struct TraceString<'a> {
@@ -2809,7 +2929,8 @@ mod draft {
         }
     }
 
-    fn encode_trace_string(opts: &TraceString<'_>, writer: &mut impl Write) -> crate::Result<()> {
+    /// What a trace string has before its frames.
+    fn write_header(writer: &mut impl Write) -> crate::Result<()> {
         writer.write_all(report_base_url())?;
         writer.write_all(b"/")?;
         writer.write_all(Environment::VERSION_STRING.as_bytes())?;
@@ -2821,48 +2942,104 @@ mod draft {
         writer.write_all(GIT_SHA.as_bytes())?;
 
         let packed_features: u64 = bun_analytics::packed_features().bits();
-        write_u64_as_two_vlqs(writer, packed_features as usize)?;
+        write_u64_as_two_vlqs(writer, packed_features as usize)
+    }
 
+    /// What a trace string carries for a panic message that does not fit in it: the zlib stream of `message too long`, in base64.
+    const PANIC_MESSAGE_TOO_LONG: &[u8] = b"eAEBEADv/21lc3NhZ2UgdG9vIGxvbmc1GgYo";
+
+    /// The message of a panic as a trace string carries it.
+    fn encode_panic_message<'a>(
+        message: &[u8],
+        b64_bytes: &'a mut [u8; 2048],
+    ) -> crate::Result<&'a [u8]> {
+        use bun_zlib::deflate;
+
+        let mut compressed = Vec::new();
+        let options = deflate::Options {
+            level: deflate::Level::BEST,
+            ..Default::default()
+        };
+        deflate::compress(message, &mut compressed, deflate::Container::Zlib, options).map_err(
+            |error| match error {
+                bun_zlib::Error::Alloc(error) => crate::Error::Alloc(error),
+                _ => crate::Error::Unexpected,
+            },
+        )?;
+
+        if bun_base64::encode_len(&compressed) > b64_bytes.len() {
+            return Ok(PANIC_MESSAGE_TOO_LONG);
+        }
+        let b64_len = bun_base64::encode(b64_bytes, &compressed);
+        Ok(strings::trim_right(&b64_bytes[0..b64_len], b"="))
+    }
+
+    fn encode_trace_string(opts: &TraceString<'_>, writer: &mut impl Write) -> crate::Result<()> {
         let mut name_bytes: [u8; 1024] = [0; 1024];
 
         let mut names_build = true;
-        for &addr in opts.trace {
+        let lines = opts.trace.iter().map(|&addr| {
             let mut line = StackLine::from_address(addr, &mut name_bytes);
             let is_compiled =
                 crate::compiled_frames::offset_in_code(addr.saturating_sub(1)).is_some();
             if let Some(line) = line.as_mut().filter(|_| is_compiled && names_build) {
-                line.object = Some(crate::compiled_frames::object_name(true));
+                line.object = Some(object_of(&[&crate::compiled_frames::object_name(true)]));
                 names_build = false;
             }
-            StackLine::write_encoded(line.as_ref(), writer)?;
+            line
+        });
+        let mut b64_bytes: [u8; 2048] = [0; 2048];
+        let panic_message: &[u8] = match opts.reason {
+            CrashReason::Panic(message) => encode_panic_message(message, &mut b64_bytes)?,
+            _ => b"",
+        };
+        write_trace_string(lines, opts.reason, panic_message, opts.action, writer)
+    }
+
+    /// Writes a trace string of at most `TRACE_STRING_CAPACITY` bytes: the frames take what the header and the reason leave.
+    fn write_trace_string(
+        lines: impl Iterator<Item = Option<StackLine>>,
+        reason: CrashReason<'_>,
+        panic_message: &[u8],
+        action: TraceStringAction,
+        writer: &mut impl Write,
+    ) -> crate::Result<()> {
+        let len_beside_frames = |panic_message: &[u8]| -> crate::Result<usize> {
+            let mut counted = bun_io::DiscardingWriter::new();
+            write_header(&mut counted)?;
+            write_after_frames(reason, panic_message, action, &mut counted)?;
+            Ok(counted.count)
+        };
+        let mut panic_message = panic_message;
+        let mut beside_frames = len_beside_frames(panic_message)?;
+        if beside_frames > TRACE_STRING_CAPACITY {
+            panic_message = PANIC_MESSAGE_TOO_LONG;
+            beside_frames = len_beside_frames(panic_message)?;
         }
 
+        write_header(writer)?;
+        write_frames(
+            lines,
+            TRACE_STRING_CAPACITY.saturating_sub(beside_frames),
+            writer,
+        )?;
+        write_after_frames(reason, panic_message, action, writer)
+    }
+
+    /// What a trace string has after its frames: the end of the frames, the reason, and the action.
+    fn write_after_frames(
+        reason: CrashReason<'_>,
+        panic_message: &[u8],
+        action: TraceStringAction,
+        writer: &mut impl Write,
+    ) -> crate::Result<()> {
         writer.write_all(VLQ::ZERO.slice())?;
 
         // The following switch must be kept in sync with `bun.report`'s decoder implementation.
-        match opts.reason {
-            CrashReason::Panic(message) => {
-                use bun_zlib::deflate;
+        match reason {
+            CrashReason::Panic(_) => {
                 writer.write_byte(b'0')?;
-
-                let mut compressed = Vec::new();
-                let options = deflate::Options {
-                    level: deflate::Level::BEST,
-                    ..Default::default()
-                };
-                deflate::compress(message, &mut compressed, deflate::Container::Zlib, options)
-                    .map_err(|error| match error {
-                        bun_zlib::Error::Alloc(error) => crate::Error::Alloc(error),
-                        _ => crate::Error::Unexpected,
-                    })?;
-
-                let mut b64_bytes: [u8; 2048] = [0; 2048];
-                if bun_base64::encode_len(&compressed) > b64_bytes.len() {
-                    return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
-                }
-                let b64_len = bun_base64::encode(&mut b64_bytes, &compressed);
-
-                writer.write_all(strings::trim_right(&b64_bytes[0..b64_len], b"="))?;
+                writer.write_all(panic_message)?;
             }
 
             CrashReason::Unreachable => writer.write_byte(b'1')?,
@@ -2901,7 +3078,7 @@ mod draft {
             }
         }
 
-        if opts.action == TraceStringAction::ViewTrace {
+        if action == TraceStringAction::ViewTrace {
             writer.write_all(b"/view")?;
         }
         Ok(())
@@ -2964,9 +3141,7 @@ mod draft {
 
     /// Bun automatically reports crashes on Windows and macOS
     ///
-    /// These URLs contain no source code or personally-identifiable
-    /// information (PII). The stackframes point to Bun's open-source native code
-    /// (not user code), and are safe to share publicly and with the Bun team.
+    /// These URLs contain no source code or personally-identifiable information (PII). A stack frame is an offset in Bun's open-source native code, or the file name of a native library that the process loaded and an offset in it. They are safe to share publicly and with the Bun team.
     fn report(url: &[u8]) {
         bun_removable_features::call_removable!(CrashReport, ReturnDefault, send_report, url)
     }
@@ -3785,4 +3960,216 @@ mod draft {
         bun_core::keep_symbols!(CrashHandler__unsupportedUVFunction);
     }
     // Rust links #[no_mangle] symbols unconditionally.
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn line(object: ObjectName, address: i32) -> Option<StackLine> {
+            Some(StackLine {
+                address,
+                object: Some(object),
+            })
+        }
+
+        fn written(lines: impl Iterator<Item = Option<StackLine>>) -> Vec<u8> {
+            let mut frames = TraceStringBuf::default();
+            write_frames(lines, TRACE_STRING_CAPACITY, frames.writer()).unwrap();
+            frames.const_slice().to_vec()
+        }
+
+        fn longest_frame() -> Option<StackLine> {
+            line(object_of(&[&[b'a'; MAX_OBJECT_NAME_LEN]]), i32::MAX)
+        }
+
+        fn header() -> Vec<u8> {
+            let mut header = TraceStringBuf::default();
+            write_header(header.writer()).unwrap();
+            header.const_slice().to_vec()
+        }
+
+        fn after_frames(
+            reason: CrashReason<'_>,
+            panic_message: &[u8],
+            action: TraceStringAction,
+        ) -> Vec<u8> {
+            let mut after_frames = TraceStringBuf::default();
+            write_after_frames(reason, panic_message, action, after_frames.writer()).unwrap();
+            after_frames.const_slice().to_vec()
+        }
+
+        /// A trace string, written to the buffer that a crash writes it to.
+        fn trace_string(
+            lines: impl Iterator<Item = Option<StackLine>>,
+            reason: CrashReason<'_>,
+            panic_message: &[u8],
+            action: TraceStringAction,
+        ) -> Vec<u8> {
+            let mut string = TraceStringBuf::default();
+            write_trace_string(lines, reason, panic_message, action, string.writer()).unwrap();
+            string.const_slice().to_vec()
+        }
+
+        /// A frame with a name as bun.report reads it: 1, the length of the name, the name, the offset.
+        fn frame(name: &[u8], address: i32) -> Vec<u8> {
+            let length = VLQ::encode(i32::try_from(name.len()).unwrap());
+            let marker = VLQ::encode(1);
+            let address = VLQ::encode(address);
+            [marker.slice(), length.slice(), name, address.slice()].concat()
+        }
+
+        #[test]
+        fn a_name_goes_into_the_link_with_url_safe_bytes() {
+            let object = foreign_object("libC++-x_1 (caf\u{e9})'#.so.6".as_bytes());
+            assert_eq!(
+                written([line(object, 1)].into_iter()),
+                frame(b"libC++-x_1__caf_____.so.6", 1)
+            );
+        }
+
+        #[test]
+        fn a_long_name_is_cut() {
+            let object = foreign_object(&[b'a'; MAX_OBJECT_NAME_LEN + 6]);
+            let longest = frame(&[b'a'; MAX_OBJECT_NAME_LEN], i32::MAX);
+            assert_eq!(written([line(object, i32::MAX)].into_iter()), longest);
+            assert_eq!(longest.len(), StackLine::MAX_ENCODED_LEN);
+        }
+
+        #[test]
+        fn the_frames_end_before_the_first_that_does_not_fit() {
+            let fit = TRACE_STRING_CAPACITY / StackLine::MAX_ENCODED_LEN;
+            let unknown_frame_that_would_fit = [None];
+            assert_eq!(
+                written(
+                    core::iter::repeat_with(longest_frame)
+                        .take(fit + 1)
+                        .chain(unknown_frame_that_would_fit)
+                ),
+                frame(&[b'a'; MAX_OBJECT_NAME_LEN], i32::MAX).repeat(fit)
+            );
+        }
+
+        #[test]
+        #[cfg(not(windows))]
+        fn every_frame_of_a_crash_fits_with_the_longest_name() {
+            let reason = CrashReason::SegmentationFault(usize::MAX);
+            let action = TraceStringAction::ViewTrace;
+            let lines = core::iter::repeat_with(longest_frame).take(CRASH_TRACE_FRAMES);
+            let frames = frame(&[b'a'; MAX_OBJECT_NAME_LEN], i32::MAX).repeat(CRASH_TRACE_FRAMES);
+            assert_eq!(
+                trace_string(lines, reason, b"", action),
+                [header(), frames, after_frames(reason, b"", action)].concat()
+            );
+        }
+
+        #[test]
+        fn the_frames_take_what_the_header_and_the_reason_leave() {
+            // A third of the smallest buffer.
+            let panic_message = [b'A'; 340];
+            let reasons = [
+                CrashReason::Panic(b""),
+                CrashReason::SegmentationFault(usize::MAX),
+                CrashReason::StackOverflow,
+                CrashReason::ZigError(b"OutOfMemory"),
+            ];
+            for reason in reasons {
+                for action in [TraceStringAction::OpenIssue, TraceStringAction::ViewTrace] {
+                    // More frames of one byte than the buffer has bytes.
+                    let lines = core::iter::repeat_with(|| None).take(2 * TRACE_STRING_CAPACITY);
+                    let header = header();
+                    let after_frames = after_frames(reason, &panic_message, action);
+                    let left = TRACE_STRING_CAPACITY - header.len() - after_frames.len();
+                    assert_eq!(
+                        trace_string(lines, reason, &panic_message, action),
+                        [header, b"_".repeat(left), after_frames].concat()
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn a_panic_message_that_does_not_fit_is_left_out_and_the_frames_stay() {
+            let reason = CrashReason::Panic(b"");
+            let action = TraceStringAction::OpenIssue;
+            let lines = core::iter::repeat_with(longest_frame).take(2);
+            assert_eq!(
+                trace_string(lines, reason, &[b'A'; TRACE_STRING_CAPACITY], action),
+                [
+                    header(),
+                    frame(&[b'a'; MAX_OBJECT_NAME_LEN], i32::MAX).repeat(2),
+                    after_frames(reason, PANIC_MESSAGE_TOO_LONG, action)
+                ]
+                .concat()
+            );
+        }
+
+        #[test]
+        fn what_stands_for_a_panic_message_is_a_zlib_stream_in_base64() {
+            let message = b"message too long";
+            let length = u16::try_from(message.len()).unwrap();
+            let (mut low, mut high) = (1u32, 0u32);
+            for &byte in message {
+                low = (low + u32::from(byte)) % 65521;
+                high = (high + low) % 65521;
+            }
+            let adler32 = high << 16 | low;
+            // The zlib header, then one stored block, the last: its length, the complement of that, and the bytes.
+            let stream = [
+                &[0x78, 0x01, 0x01][..],
+                &length.to_le_bytes(),
+                &(!length).to_le_bytes(),
+                message,
+                &adler32.to_be_bytes(),
+            ]
+            .concat();
+            let encoder = &bun_base64::zig_base64::STANDARD_NO_PAD.encoder;
+            let mut encoded = vec![0; encoder.calc_size(stream.len())];
+            assert_eq!(
+                encoder.encode(&mut encoded, &stream),
+                PANIC_MESSAGE_TOO_LONG
+            );
+        }
+
+        #[test]
+        fn a_foreign_name_is_not_one_that_a_decoder_takes_for_buns_own() {
+            let objects = [
+                (&b"bun"[..], &b"_un"[..]),
+                (b"js", b"_s"),
+                (b"aot", b"_ot"),
+                (b"aot_native_addon.so", b"_ot_native_addon.so"),
+                (b"bun.node", b"bun.node"),
+                (b"aot.node", b"aot.node"),
+            ];
+            for (file_name, object) in objects {
+                assert_eq!(foreign_object(file_name).const_slice(), object);
+            }
+        }
+
+        #[test]
+        fn a_library_that_a_standalone_executable_wrote_is_named_without_the_user_id() {
+            let objects = [
+                (
+                    &b".bun-501-1a2b3c4d5e6f7a8b.node"[..],
+                    &b".bun-1a2b3c4d5e6f7a8b.node"[..],
+                ),
+                (b".bun-0-ff.dll", b".bun-ff.dll"),
+                (b".bun--1a2b.node", b".bun--1a2b.node"),
+                (b".bun-501.node", b".bun-501.node"),
+                (b"lib.bun-501-1a2b.so", b"lib.bun-501-1a2b.so"),
+            ];
+            for (file_name, object) in objects {
+                assert_eq!(foreign_object(file_name).const_slice(), object);
+            }
+
+            const ROOM_AFTER_PREFIX: usize = MAX_OBJECT_NAME_LEN - WRITTEN_LIBRARY_PREFIX.len();
+            let long = [
+                WRITTEN_LIBRARY_PREFIX,
+                b"501-",
+                &[b'a'; MAX_OBJECT_NAME_LEN],
+            ]
+            .concat();
+            let cut = [WRITTEN_LIBRARY_PREFIX, &[b'a'; ROOM_AFTER_PREFIX]].concat();
+            assert_eq!(foreign_object(&long).const_slice(), cut);
+        }
+    }
 } // end mod draft

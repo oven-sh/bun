@@ -1,32 +1,102 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs, { readdirSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
+import { parsePackageName, Registry } from "registry";
+
+// `bun init` runs `bun install` in the project it writes. The cases that look at the project, and not at what the
+// packages hold, install from this registry. It has every dependency that a template names, as a package of one
+// file: the real ones are 1,500 to 7,700 files for each project.
+const stubs = new Registry();
+// These packages have the names and some of the versions of real ones, so they get a cache that no other install reads.
+let stubCache: ReturnType<typeof tempDir> | undefined;
+let stubEnv: NodeJS.Dict<string>;
 
 // Whether `bun init` emits CLAUDE.md depends on a `claude` binary being on
 // PATH, which varies by CI machine — disable the detection so the directory
 // snapshots are stable everywhere.
-const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
+let initEnv: NodeJS.Dict<string>;
+
+// Only for a case that runs what the packages hold: the real packages, from the npm registry.
+const npmEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
+
+beforeAll(async () => {
+  type Manifest = Partial<Record<"dependencies" | "devDependencies" | "peerDependencies", Record<string, string>>>;
+  // The blank template is not a file: init_command.rs names its two dependencies.
+  const manifests: Manifest[] = [
+    { devDependencies: { "@types/bun": "latest" }, peerDependencies: { typescript: "^7" } },
+  ];
+  const templates = path.join(import.meta.dir, "..", "..", "..", "src", "runtime", "cli", "init");
+  for (const template of ["react-app", "react-tailwind", "react-shadcn"]) {
+    manifests.push(await Bun.file(path.join(templates, template, "package.json")).json());
+  }
+  const ranges = new Map<string, Set<string>>();
+  for (const manifest of manifests) {
+    for (const group of [manifest.dependencies, manifest.devDependencies, manifest.peerDependencies]) {
+      for (const [name, range] of Object.entries(group ?? {})) {
+        ranges.set(name, (ranges.get(name) ?? new Set()).add(range));
+      }
+    }
+  }
+
+  const publisher = stubs.auth.addUser("bun-init", "bun-init");
+  for (const [name, wanted] of ranges) {
+    // One version for each name: "^19" asks for 19.0.0 and "^4.1.11" for 4.1.11, and "latest" takes what there is.
+    // The setup stops at any other range, and at ranges of one name that no one version is in.
+    const carets = [...wanted].filter(range => range !== "latest");
+    const lowest = carets.map(range => {
+      const caret = /^\^(\d+)(?:\.(\d+))?(?:\.(\d+))?$/.exec(range);
+      if (caret) return `${caret[1]}.${caret[2] ?? 0}.${caret[3] ?? 0}`;
+      throw new Error(`${name}: the stubs are for ranges such as "^1.2.3" and for "latest", not for "${range}"`);
+    });
+    const version = lowest.sort(Bun.semver.order).at(-1) ?? "1.0.0";
+    if (!carets.every(range => Bun.semver.satisfies(version, range))) {
+      throw new Error(`${name}: no one version is in each of the ranges ${carets.join(", ")}`);
+    }
+    const tarball = await new Bun.Archive(
+      { "package/package.json": JSON.stringify({ name, version }) },
+      { compress: "gzip" },
+    ).bytes();
+    await stubs.packages.publish(
+      parsePackageName(name)!,
+      {
+        name,
+        // A scoped package is restricted unless the publish says otherwise.
+        access: "public",
+        versions: { [version]: { name, version } },
+        _attachments: { [`${name}-${version}.tgz`]: { data: Buffer.from(tarball).toString("base64") } },
+      },
+      publisher,
+    );
+  }
+
+  stubs.start();
+  stubCache = tempDir("bun-init-stub-cache", {});
+  stubEnv = { ...bunEnv, BUN_CONFIG_REGISTRY: stubs.url, BUN_INSTALL_CACHE_DIR: String(stubCache) };
+  initEnv = { ...stubEnv, BUN_AGENT_RULE_DISABLED: "1" };
+});
+
+afterAll(() => {
+  using _ = stubCache;
+  // Throws the first error that the registry had while it answered a request.
+  stubs.stop();
+});
+
+// `bun init` exits with 0 when its install fails, and then there is no bun.lock. A bun.lock has the URL of each
+// tarball that is not from the default registry.
+function expectInstalledFromStubs(project: string) {
+  const lockfile = path.join(project, "bun.lock");
+  if (!fs.existsSync(lockfile)) {
+    throw new Error(`\`bun init\` did not install: there is no ${lockfile}. Is a stub in each range that it writes?`);
+  }
+  const { packages } = Bun.JSONC.parse(fs.readFileSync(lockfile, "utf8")) as {
+    packages: Record<string, [resolution: string, tarball: string]>;
+  };
+  const origins = Object.values(packages).map(([, tarball]) => tarball.slice(0, stubs.url.length));
+  expect([...new Set(origins)]).toEqual([stubs.url]);
+}
 
 (isWindows ? describe : describe.concurrent)("bun init", () => {
-  // Every test's `bun init` runs a real `bun install`. bun dedupes downloads
-  // within a process but not across them, so on a cold CI cache the concurrent
-  // inits each re-fetch the same tarballs. Prime the shared install cache once,
-  // serially: `--react=shadcn`'s lockfile is a superset of the other react
-  // templates', and `-y` covers the blank template (typescript + @types/bun).
-  beforeAll(async () => {
-    for (const flag of ["-y", "--react=shadcn"]) {
-      const temp = tempDirWithFiles("bun-init-cache-prime", {});
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "init", flag],
-        cwd: temp,
-        stdio: ["ignore", "ignore", "ignore"],
-        env: initEnv,
-      });
-      await proc.exited;
-    }
-  }, 240_000);
-
   test("bun init works", async () => {
     await using temp = tempDir("bun-init-works", {});
 
@@ -38,6 +108,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     });
 
     expect(await exited).toBe(0);
+    expectInstalledFromStubs(temp);
 
     const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
     expect(pkg).toEqual({
@@ -67,7 +138,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
-  }, 30_000);
+  });
 
   test("bun init falls back to --yes when stdin is not a TTY", async () => {
     await using temp = tempDir("bun-init-no-tty", {});
@@ -90,11 +161,12 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(stdout).not.toContain("\x1b[");
     expect(stderr).not.toContain("\x1b[");
     expect(exitCode).toBe(0);
+    expectInstalledFromStubs(temp);
 
     expect(fs.existsSync(path.join(temp, "package.json"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
-  }, 30_000);
+  });
 
   // Ctrl-D is EOF only on a POSIX tty; the Windows console has no equivalent
   // key that ends a cooked-mode read.
@@ -160,6 +232,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       env: initEnv,
     });
     expect(await exited).toBe(0);
+    expectInstalledFromStubs(path.join(temp, "mydir"));
     expect(readdirSync(temp).sort()).toEqual(["mydir"]);
     expect(readdirSync(path.join(temp, "mydir")).sort()).toMatchInlineSnapshot(`
     [
@@ -198,6 +271,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       env: initEnv,
     });
     expect(await exited).toBe(0);
+    expectInstalledFromStubs(path.join(temp, "u t f ∞™/subpath"));
     expect(readdirSync(temp).sort()).toEqual(["u t f ∞™"]);
     expect(readdirSync(path.join(temp, "u t f ∞™")).sort()).toEqual(["subpath"]);
     expect(readdirSync(path.join(temp, "u t f ∞™/subpath")).sort()).toMatchInlineSnapshot(`
@@ -222,6 +296,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       env: initEnv,
     });
     expect(await exited).toBe(0);
+    expectInstalledFromStubs(path.join(temp, "mydir"));
     expect(readdirSync(temp).sort()).toEqual(["mydir"]);
     expect(readdirSync(path.join(temp, "mydir")).sort()).toMatchInlineSnapshot(`
     [
@@ -309,6 +384,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    expectInstalledFromStubs(temp);
 
     expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual({
       name: "x",
@@ -319,7 +395,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       type: "module",
       private: true,
     });
-  }, 30_000);
+  });
 
   test("bun init writes a typecheck script that is the type checker where `bun check` is a script", async () => {
     await using temp = tempDir("bun-init-check-script", {
@@ -334,12 +410,13 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    expectInstalledFromStubs(temp);
 
     expect((await Bun.file(path.join(temp, "package.json")).json()).scripts).toEqual({
       check: "echo mine",
       typecheck: "bun --check",
     });
-  }, 30_000);
+  });
 
   test("bun init --react works", async () => {
     await using temp = tempDir("bun-init--react-works", {});
@@ -352,6 +429,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     });
 
     expect(await exited).toBe(0);
+    expectInstalledFromStubs(temp);
 
     const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
     expect(pkg).toHaveProperty("dependencies.react");
@@ -363,7 +441,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
-  }, 30_000);
+  });
 
   test("bun init --react=tailwind works", async () => {
     await using temp = tempDir("bun-init--react=tailwind-works", {});
@@ -376,6 +454,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     });
 
     expect(await exited).toBe(0);
+    expectInstalledFromStubs(temp);
 
     const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
     expect(pkg).toHaveProperty("dependencies.react");
@@ -387,7 +466,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
 
     expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);
-  }, 30_000);
+  });
 
   test("bun init --react=shadcn works", async () => {
     await using temp = tempDir("bun-init--react=shadcn-works", {});
@@ -400,6 +479,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     });
 
     expect(await exited).toBe(0);
+    expectInstalledFromStubs(temp);
 
     const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
     expect(pkg).toHaveProperty("dependencies.react");
@@ -414,7 +494,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/components"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/components/ui"))).toBe(true);
-  }, 30_000);
+  });
 
   test.each(["--react", "--react=tailwind", "--react=shadcn"])(
     "bun init %s writes the same [lint] section to bunfig.toml as bun lint --init",
@@ -432,6 +512,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       };
       expect((await run(path.join(temp, "alone"), "lint", "--init")).exitCode).toBe(0);
       expect((await run(String(temp), "init", flag, "app")).exitCode).toBe(0);
+      expectInstalledFromStubs(path.join(temp, "app"));
       expect(fs.readFileSync(path.join(temp, "app/bunfig.toml"), "utf8")).toEndWith(
         'env = "BUN_PUBLIC_*"\n\n' + fs.readFileSync(path.join(temp, "alone/bunfig.toml"), "utf8"),
       );
@@ -441,32 +522,41 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       });
       expect(fs.readFileSync(path.join(temp, "app/README.md"), "utf8")).toInclude("`bun lint`");
     },
-    30_000,
   );
 
   // Every template declares `typescript: "^7"`, so the `bun install` that
   // `bun init` runs installs TypeScript 7. Typecheck and build with that
   // exact install. https://github.com/oven-sh/bun/issues/33050
-  test.each(["-y", "--react", "--react=tailwind", "--react=shadcn"])(
+  //
+  // bun dedupes downloads within a process but not across them, so on a cold
+  // cache four concurrent inits would each fetch and extract the same tarballs.
+  // The first of these cases to start installs alone. It is `--react=shadcn`,
+  // whose packages include those of the other three, and the others start
+  // their install when it has ended.
+  let firstInit: Promise<unknown> | undefined;
+  test.each(["--react=shadcn", "-y", "--react", "--react=tailwind"])(
     "bun init %s installs TypeScript 7, typechecks, and builds",
     async flag => {
       await using temp = tempDir(`bun-init-ts7${flag.replace(/[^a-z]+/g, "-")}`, {});
 
-      await using init = Bun.spawn({
-        cmd: [bunExe(), "init", flag],
-        cwd: temp,
-        stdio: ["ignore", "pipe", "pipe"],
-        env: initEnv,
-      });
-      const [initStdout, initStderr, initExited] = await Promise.all([
-        init.stdout.text(),
-        init.stderr.text(),
-        init.exited,
-      ]);
+      const init = async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "init", flag],
+          cwd: temp,
+          stdio: ["ignore", "pipe", "pipe"],
+          env: npmEnv,
+        });
+        return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      };
+      const ran = firstInit === undefined ? init() : firstInit.then(init, init);
+      firstInit ??= ran;
+      const [initStdout, initStderr, initExited] = await ran;
       expect({ initStdout, initStderr, initExited }).toMatchObject({ initExited: 0 });
 
-      const tsPkg = JSON.parse(fs.readFileSync(path.join(temp, "node_modules/typescript/package.json"), "utf8"));
-      expect(tsPkg.version).toStartWith("7.");
+      // `bun init` exits with 0 when its install fails, so the output of the install is in what this compares.
+      const typescript = path.join(temp, "node_modules/typescript/package.json");
+      const version = fs.existsSync(typescript) ? JSON.parse(fs.readFileSync(typescript, "utf8")).version : undefined;
+      expect({ initStdout, initStderr, version }).toMatchObject({ version: expect.stringMatching(/^7\./) });
 
       // TypeScript 7's bin/tsc is a small ESM shim that execs the native
       // compiler from @typescript/typescript-<os>-<arch>, so running it under
@@ -546,31 +636,28 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     180_000,
   );
 
-  test.skipIf(isWindows)(
-    "`bun fmt --check` passes on the generated CLAUDE.md",
-    async () => {
-      await using temp = tempDir("bun-init-claude-md", { "bin/claude": "#!/bin/sh\n" });
-      fs.chmodSync(path.join(temp, "bin/claude"), 0o755);
-      await using init = Bun.spawn({
-        cmd: [bunExe(), "init", "-y", "app"],
-        cwd: temp,
-        stdio: ["ignore", "ignore", "inherit"],
-        env: { ...bunEnv, PATH: `${path.join(temp, "bin")}:${bunEnv.PATH}`, CURSOR_AGENT_RULE_DISABLED: "1" },
-      });
-      expect(await init.exited).toBe(0);
-      expect(fs.readFileSync(path.join(temp, "app/CLAUDE.md"), "utf8")).toStartWith("Default to using Bun");
+  test.skipIf(isWindows)("`bun fmt --check` passes on the generated CLAUDE.md", async () => {
+    await using temp = tempDir("bun-init-claude-md", { "bin/claude": "#!/bin/sh\n" });
+    fs.chmodSync(path.join(temp, "bin/claude"), 0o755);
+    await using init = Bun.spawn({
+      cmd: [bunExe(), "init", "-y", "app"],
+      cwd: temp,
+      stdio: ["ignore", "ignore", "inherit"],
+      env: { ...stubEnv, PATH: `${path.join(temp, "bin")}:${bunEnv.PATH}`, CURSOR_AGENT_RULE_DISABLED: "1" },
+    });
+    expect(await init.exited).toBe(0);
+    expectInstalledFromStubs(path.join(temp, "app"));
+    expect(fs.readFileSync(path.join(temp, "app/CLAUDE.md"), "utf8")).toStartWith("Default to using Bun");
 
-      await using format = Bun.spawn({
-        cmd: [bunExe(), "fmt", "--check", "CLAUDE.md"],
-        cwd: path.join(temp, "app"),
-        stdio: ["ignore", "pipe", "pipe"],
-        env: bunEnv,
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([format.stdout.text(), format.stderr.text(), format.exited]);
-      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
-    },
-    30_000,
-  );
+    await using format = Bun.spawn({
+      cmd: [bunExe(), "fmt", "--check", "CLAUDE.md"],
+      cwd: path.join(temp, "app"),
+      stdio: ["ignore", "pipe", "pipe"],
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([format.stdout.text(), format.stderr.text(), format.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+  });
 
   test("nested `bun install` output is inherited", async () => {
     // `bun init` spawns `bun install` via spawn_sync_inherit. The child must
@@ -596,7 +683,8 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(stdout).toMatch(/\bpackages? installed\b/);
     expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
     expect(exitCode).toBe(0);
-  }, 30_000);
+    expectInstalledFromStubs(temp);
+  });
 
   test("bun init --minimal only creates package.json and tsconfig.json", async () => {
     // Regression test for https://github.com/oven-sh/bun/issues/26050
@@ -608,13 +696,14 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       cwd: temp,
       stdio: ["ignore", "inherit", "inherit"],
       env: {
-        ...bunEnv,
+        ...stubEnv,
         // Simulate Cursor being installed via CURSOR_TRACE_ID env var
         CURSOR_TRACE_ID: "test-trace-id",
       },
     });
 
     expect(await exited).toBe(0);
+    expectInstalledFromStubs(temp);
 
     // Should create package.json and tsconfig.json
     expect(fs.existsSync(path.join(temp, "package.json"))).toBe(true);

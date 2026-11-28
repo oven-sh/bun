@@ -1696,25 +1696,13 @@ pub(crate) mod __gated_printer {
                         }
                     }
                 }
-                // "**" can't contain certain unary expressions
+                // "-a ** b" is a syntax error, "++a ** b" is not. An operand that
+                // prints as a unary expression parenthesizes itself at `Level::Prefix`.
                 Op::Code::BinPow => {
-                    match &e.left.data {
-                        ExprData::EUnary(left) => {
-                            if Op::Code::unary_assign_target(left.op) == js_ast::AssignTarget::None
-                            {
-                                v.left_level = Level::Call;
-                            }
-                        }
-                        ExprData::EAwait(_) | ExprData::EUndefined(_) | ExprData::ENumber(_) => {
-                            v.left_level = Level::Call;
-                        }
-                        ExprData::EBoolean(_) | ExprData::EBranchBoolean(_) => {
-                            // When minifying, booleans are printed as "!0 and "!1"
-                            if self.options.minify_syntax {
-                                v.left_level = Level::Call;
-                            }
-                        }
-                        _ => {}
+                    let is_update = matches!(&e.left.data, ExprData::EUnary(left)
+                        if Op::Code::unary_assign_target(left.op) != js_ast::AssignTarget::None);
+                    if !is_update {
+                        v.left_level = Level::Prefix;
                     }
                 }
                 _ => {}

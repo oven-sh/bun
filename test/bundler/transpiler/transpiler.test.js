@@ -268,6 +268,25 @@ describe("Bun.Transpiler", () => {
       expect(lastLine(ts.parsedMin(pre + 'export let y = Bar?.["a-b"];', false))).toBe('export let y = Bar?.["a-b"];');
     });
 
+    it("parenthesizes an inlined enum value on the left of **", () => {
+      const lastLine = out => out.trimEnd().split("\n").at(-1);
+      const neg = "enum E { X = -5 }\n";
+      const pos = "enum E { X = 5 }\n";
+      const str = "enum E { X = 'a' }\n";
+      // "-5 ** 2" is a SyntaxError.
+      expect(lastLine(ts.parsed(neg + "export let y = E.X ** z;", false))).toBe("export let y = (-5) /* X */ ** z;");
+      expect(lastLine(ts.parsed(neg + "export let y = E['X'] ** z;", false))).toBe("export let y = (-5) /* X */ ** z;");
+      expect(lastLine(ts.parsed(pos + "export let y = E.X ** z;", false))).toBe("export let y = 5 /* X */ ** z;");
+      expect(lastLine(ts.parsed(str + "export let y = E.X ** z;", false))).toBe('export let y = "a" /* X */ ** z;');
+      expect(lastLine(ts.parsed(neg + "export let y = z ** E.X;", false))).toBe("export let y = z ** -5 /* X */;");
+      for (const pre of [neg, pos, str]) {
+        for (const expr of ["E.X ** z", "E['X'] ** z", "z ** E.X"]) {
+          const out = ts.parsed(pre + `var z = 2; export let y = ${expr};`, false).replace(/^export /gm, "");
+          expect(() => new Function(out)).not.toThrow();
+        }
+      }
+    });
+
     // `B = "a" + "b"` is folded into a rope, and every inlined `A.B` pointed at
     // that rope. Folding a template literal around it used to append the
     // template's text onto the rope itself, so the member's declaration and all
@@ -3305,6 +3324,21 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted("(delete x) ** 2", "(delete x) ** 2");
       expectPrinted("(typeof x) ** 2", "(typeof x) ** 2");
       expectPrinted("undefined ** 2", "undefined ** 2");
+
+      // Only an operand that prints as a unary expression gets parentheses.
+      expectPrinted("f() ** 2", "f() ** 2");
+      expectPrinted("new Foo() ** 2", "new Foo ** 2");
+      expectPrinted("a.b ** 2", "a.b ** 2");
+      expectPrinted("a[0] ** 2", "a[0] ** 2");
+      expectPrinted("a ** b ** c", "a ** b ** c");
+      expectPrinted("(a ** b) ** c", "(a ** b) ** c");
+      expectPrinted("(a * b) ** c", "(a * b) ** c");
+      expectPrintedMin_("x = true ** y", "x = (!0) ** y");
+      expectPrintedMin_("x = undefined ** y", "x = (void 0) ** y");
+      expectPrintedMin_("x = (-1) ** y", "x = (-1) ** y");
+      expectPrintedMin_("x = (1 / 0) ** y", "x = (1 / 0) ** y");
+      expectPrintedMin_("x = (!import.meta.main) ** y", "x = (!import.meta.main) ** y");
+      expectPrintedMin_("x = import.meta.main ** y", "x = import.meta.main ** y");
 
       expectParseError("-x ** 2", "Unexpected **");
       expectParseError("+x ** 2", "Unexpected **");

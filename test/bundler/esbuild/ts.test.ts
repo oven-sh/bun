@@ -2278,6 +2278,45 @@ describe("bundler", () => {
       ]);
     },
   });
+  // "-5 ** 2" is a SyntaxError: a negative inlined value on the left of "**" needs parentheses.
+  itBundled("ts/EnumCrossModuleInliningExponentiationLHS", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { E } from './enums'
+        enum Local { Neg = -5 }
+        const two = Number("2")
+        console.log(E.Neg ** two, E['Neg'] ** two, E.Pos ** two, two ** E.Neg, Local.Neg ** two)
+        console.log(-E.Neg, ~E.Neg, two ** E.Pos)
+      `,
+      "/enums.ts": /* ts */ `
+        export enum E { Neg = -5, Pos = 5 }
+      `,
+    },
+    minifySyntax: false,
+    run: { stdout: "25 25 25 0.03125 25\n5 4 32" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("(-5) /* Neg */ ** two, (-5) /* Neg */ ** two, 5 /* Pos */ ** two, two ** -5 /* Neg */");
+      expect(out).toContain("- -5 /* Neg */");
+    },
+  });
+  itBundled("ts/EnumCrossModuleInliningExponentiationLHSMinify", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { E } from './enums'
+        enum Local { Neg = -5 }
+        const two = Number("2")
+        console.log(E.Neg ** two, E['Neg'] ** two, E.Pos ** two, two ** E.Neg, Local.Neg ** two)
+      `,
+      "/enums.ts": /* ts */ `
+        export enum E { Neg = -5, Pos = 5 }
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    run: { stdout: "25 25 25 0.03125 25" },
+  });
   itBundled("ts/EnumExportClause", {
     files: {
       "/entry.ts": /* ts */ `

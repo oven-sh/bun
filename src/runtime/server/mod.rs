@@ -14,6 +14,7 @@ use bun_uws_sys::app::c as uws_app_c;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult};
 use bun_ptr::{AsCtxPtr, OptionCellExt as _};
+use bun_telemetry_jsc::http_server::{AnsweredRequest, HandledRequest};
 
 use crate::webcore::Request;
 
@@ -163,6 +164,19 @@ pub(crate) enum AnyRoute {
 }
 
 impl AnyRoute {
+    fn answers_with(&self, route: *const ()) -> bool {
+        match self {
+            AnyRoute::Static(r) => r.as_ptr().cast_const().cast() == route,
+            AnyRoute::File(r) => r.as_ptr().cast_const().cast() == route,
+            AnyRoute::Directory(r) => r.as_ptr().cast_const().cast() == route,
+            AnyRoute::Html(r) => {
+                r.as_ptr().cast_const().cast() == route
+                    || (r.built_page()).is_some_and(|p| p.as_ptr().cast_const().cast() == route)
+            }
+            AnyRoute::FrameworkRouter => false,
+        }
+    }
+
     pub(crate) fn memory_cost(&self) -> usize {
         match self {
             AnyRoute::Static(r) => r.memory_cost(),
@@ -1004,10 +1018,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         args.extend_from_slice(&extra_args);
 
         let _entered = self.vm().enter_event_loop_scope_without_checkpoint();
-        let response_value = match callback.call(global, server_js, &args) {
-            Ok(v) => v,
-            Err(err) => global.take_exception(err),
-        };
+        let response_value = ctx.call_handler(global, callback, server_js, &args);
 
         let Some(ctx) = ServerRequestContext::respond(ctx, self, request.to_js(), response_value)
         else {
@@ -1078,10 +1089,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         let global = self.global_this();
         let request = DispatchedRequest(request.wrap(global));
-        let response_value = match on_request.call(global, js_value, &[request.to_js(), js_value]) {
-            Ok(v) => v,
-            Err(err) => global.take_exception(err),
-        };
+        let response_value =
+            ctx.call_handler(global, on_request, js_value, &[request.to_js(), js_value]);
 
         self.handle_request(&request, ctx, req, response_value);
     }
@@ -1124,6 +1133,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             Self::js_route_list_get_cached(server_js).expect("routeList cached value missing");
         let (request, response_value) =
             DispatchedRequest::call_route(request, global, |request, js_request| {
+                let _active = (ctx.span).enter_route(global, user_route.route.path.as_bytes());
                 Bun__ServerRouteList__callRoute(
                     global,
                     index,
@@ -1197,7 +1207,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // Computed once in `init()` (stable heap address) — just load it.
         let any_server_packed = self.any_server_packed;
 
-        let mut node_http_response = None;
+        let span = HandledRequest::begin(
+            global,
+            &uws::AnyRequest::H1(std::ptr::from_mut(req)),
+            any_response_from::<SSL>(std::ptr::from_mut(resp)),
+            SSL,
+        );
+        let active = span.enter(global);
+        let callback = active.adopt(callback);
+        let mut creation = node_http_response::Creation {
+            response: None,
+            span,
+        };
 
         let on_request_ffi = if SSL {
             ffi::NodeHTTPServer__onRequest_https
@@ -1213,12 +1234,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 method_string,
                 req,
                 std::ptr::from_mut::<uws_sys::NewAppResponse<SSL>>(resp).cast(),
-                &mut node_http_response,
+                &mut creation,
             )
         })
         .unwrap_or_else(|err| global.take_exception(err));
+        drop(active);
 
-        let Some(nhr) = node_http_response else {
+        let Some(nhr) = creation.response else {
             // The request never reached the handler: an exception (in practice
             // a termination request landing in the header conversion) unwound
             // before the response object existed. Nothing adopted the response;
@@ -1308,6 +1330,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         match &http_result {
             HttpResult::Exception(err) | HttpResult::Rejection(err) => {
+                nhr.span.fail(global, *err);
                 let _ = self.vm().uncaught_exception(
                     global,
                     *err,
@@ -1329,6 +1352,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                     raw.write_status(b"500 Internal Server Error");
                                     raw.end_without_body(true);
                                 } else {
+                                    nhr.span.set_status(200);
                                     raw.end_stream(true);
                                 }
                             }
@@ -1368,6 +1392,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // Raw 'upgrade'/'connect' handoff: the exchange left HTTP, so
                 // release the pending-request accounting now - a half-open
                 // tunnel never closes, which stranded `pending_requests`.
+                nhr.end_span();
                 nhr.mark_request_as_done_if_necessary();
             }
         } else if nhr.is_request_pending() {
@@ -3002,9 +3027,16 @@ mod trampoline {
 
     pub(super) extern "C" fn on_404<const SSL: bool, const DEBUG: bool>(
         res: *mut uws_res,
-        _req: *mut UwsRequest,
-        _user_data: *mut c_void,
+        req: *mut UwsRequest,
+        user_data: *mut c_void,
     ) {
+        let mut span = AnyServer::from(user_data.cast_const().cast::<NewServer<SSL, DEBUG>>())
+            .begin_span(
+                &uws::AnyRequest::H1(req),
+                any_response_from::<SSL>(res.cast()),
+                core::ptr::null(),
+            );
+        span.set_status(404);
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         let resp = bun_opaque::opaque_deref_mut(res.cast::<uws_sys::NewAppResponse<SSL>>());
         resp.write_status(b"404 Not Found");
@@ -3161,7 +3193,7 @@ mod ffi {
             method_string: jsc::JSValue,
             request: *mut uws_sys::Request,
             response: *mut c_void, // *uws.NewApp(false).Response
-            node_response_ptr: &mut Option<bun_ptr::RefPtr<NodeHTTPResponse>>,
+            creation: &mut super::node_http_response::Creation,
         ) -> jsc::JSValue;
 
         pub(super) safe fn NodeHTTPServer__onRequest_https(
@@ -3172,7 +3204,7 @@ mod ffi {
             method_string: jsc::JSValue,
             request: *mut uws_sys::Request,
             response: *mut c_void, // *uws.NewApp(true).Response
-            node_response_ptr: &mut Option<bun_ptr::RefPtr<NodeHTTPResponse>>,
+            creation: &mut super::node_http_response::Creation,
         ) -> jsc::JSValue;
     }
 }
@@ -3476,6 +3508,34 @@ impl AnyServer {
     #[inline]
     pub(crate) fn config(&self) -> &ServerConfig {
         any_server_dispatch!(self, |s| s.config.get())
+    }
+
+    /// For a request that `route`, the address of what an [`AnyRoute`] holds, answers without script.
+    #[inline(always)]
+    pub(crate) fn begin_span(
+        &self,
+        req: &uws::AnyRequest,
+        resp: uws::AnyResponse,
+        route: *const (),
+    ) -> AnsweredRequest {
+        let https = matches!(
+            self.tag,
+            AnyServerTag::HTTPSServer | AnyServerTag::DebugHTTPSServer
+        );
+        AnsweredRequest::begin(self.global_this(), req, resp, https, || {
+            let url = req.url();
+            let path = bun_core::strings::split(url, b"?").next().unwrap_or(url);
+            let mut patterns = (self.config().static_routes.iter())
+                .filter(|entry| entry.route.answers_with(route))
+                .map(|entry| &*entry.path);
+            let first = patterns.next().unwrap_or_default();
+            // One HTML bundle can be the route of several paths.
+            if first != path && patterns.any(|other| other == path) {
+                path
+            } else {
+                first
+            }
+        })
     }
 
     /// Whether a route of the `routes` option, or a static route, has exactly this path.

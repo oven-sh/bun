@@ -1436,6 +1436,7 @@ fn on_unhandled_rejection(
     // termination exception makes dispatchExitInternal skip 'exit' (as terminate() should),
     // and its processIsExiting guard stops shutdown() from running them twice.
     virtual_machine::ExitHandler::dispatch_on_exit(vm);
+    virtual_machine::flush_telemetry(virtual_machine::TelemetryFlush::AtExit);
     let _ = worker.set_requested_terminate();
     // Do NOT call `worker.shutdown()` here —
     // `shutdown()` RETURNS, so calling it here would destroy

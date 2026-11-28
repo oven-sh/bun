@@ -20,6 +20,9 @@ use bun_jsc::{JsCell, SysErrorJsc as _};
 use bun_sys::Fd;
 use bun_sys::UV_E;
 use bun_sys::{self as sys, SignalCode};
+use bun_telemetry_jsc::{
+    Failed, Instrument, NativeSpan, Outcome, PendingException, Record, SpanKind,
+};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
 #[cfg(unix)]
@@ -1056,11 +1059,25 @@ fn spawn_maybe_sync(
     };
 
     crate::node::fs::note_process_start();
-    let mut spawned = match spawn::spawn_process(
+    let mut span = begin_span(cx.global(), argv.argv0.as_bytes());
+    span.describe(|r| {
+        r.attr("process.args_count", argv.args.len() as i64);
+    });
+    let spawned = spawn::spawn_process(
         &spawn_options,
         CStrList::from_unterminated(&mut borrow_c_strings(&argv.args)),
         Some(CStrList::from_unterminated(&mut env_array)),
-    ) {
+    );
+    let command = argv.argv0.as_bytes();
+    match &spawned {
+        Err(err) => {
+            let failure = Failed(err.name().as_bytes(), b"");
+            fail_span(core::mem::take(&mut span), command, failure);
+        }
+        Ok(Err(err)) => fail_span(core::mem::take(&mut span), command, err),
+        Ok(Ok(_)) => {}
+    }
+    let mut spawned = match spawned {
         Err(err)
             if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE)
                 || err == bun_spawn::Error::Sys(bun_errno::SystemErrno::ENFILE) =>
@@ -1134,6 +1151,9 @@ fn spawn_maybe_sync(
     let spawned_stderr = spawned.stderr.take();
     let mut spawned_extra_pipes = core::mem::take(&mut spawned.extra_pipes);
     let process = spawned.to_process_handle(loop_handle);
+    span.describe(|r| {
+        r.attr("process.pid", i64::from(process.pid));
+    });
 
     #[cfg(unix)]
     let posix_ipc_fd = if !is_sync && maybe_ipc_mode.is_some() {
@@ -1193,6 +1213,7 @@ fn spawn_maybe_sync(
             crate::timer::EventLoopTimerTag::SubprocessTimeout,
         ),
         exited_due_to_maxbuf: Cell::new(None),
+        span: span.into(),
     });
     let subprocess_ptr = subprocess_ref.as_ptr();
     let subprocess = &*subprocess_ref;
@@ -1248,6 +1269,7 @@ fn spawn_maybe_sync(
             // pidfd; stdin/stdout/stderr are `.ignore` so their `closeIO` is a
             // no-op.
             drop((spawned_stdout, spawned_stderr));
+            subprocess.span.take().settle(PendingException(cx.global()));
             subprocess.finalize_streams();
             #[cfg(unix)]
             let _ = subprocess
@@ -1779,6 +1801,32 @@ fn throw_spawn_sync_loop_init_failed(global_this: &JSGlobalObject) -> JsError {
     global_this.throw_value(err.to_error_instance(global_this))
 }
 
+/// Without the arguments, which carry secrets.
+#[inline]
+fn begin_span(global: &JSGlobalObject, executable: &[u8]) -> NativeSpan {
+    NativeSpan::start(global, Instrument::ChildProcess, SpanKind::Internal, |r| {
+        name_span(r, executable);
+    })
+}
+
+fn name_span(record: &mut Record, executable: &[u8]) {
+    let name = bun_paths::basename(executable);
+    record.set_name(name);
+    record.prefix_name(b"spawn");
+    record.attr("process.executable.name", name);
+}
+
+/// What did not start may be a whole command line, with variables in front.
+#[inline]
+fn fail_span(span: NativeSpan, command: &[u8], failure: impl Outcome) {
+    span.end_with(|r| {
+        let first = &command[..strings::index_of_any(command, b" \t\r\n").unwrap_or(command.len())];
+        let is_variable = strings::contains_char(first, b'=') && !matches!(first[0], b'/' | b'.');
+        name_span(r, if is_variable { b"_OTHER" } else { first });
+        failure.record(r);
+    });
+}
+
 fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsError {
     let err = SystemError {
         message: BunString::create_format(format_args!(
@@ -1790,6 +1838,11 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
         path: BunString::clone_utf8(command),
         ..Default::default()
     };
+    fail_span(
+        begin_span(global_this, b""),
+        command,
+        Failed(b"ENOENT", b""),
+    );
     global_this.throw_value(err.to_error_instance(global_this))
 }
 

@@ -8,6 +8,7 @@ use bun_http_types::Method::Method;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{JsCell, JsClass as _, WrapperGuard};
 use bun_ptr::{AliasableBox, AnyRefCounted, RefPtr};
+use bun_telemetry_jsc::http_server::HandledRequest;
 use bun_uws::{self as uws, WebSocketUpgradeContext};
 
 use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult};
@@ -179,6 +180,8 @@ pub(crate) struct RequestContext<
     /// field before the value can dangle. `on_abort` reclaims the ref through
     /// it so an aborted request is torn down without waiting for GC.
     promise_cell: Cell<JSValue>,
+
+    pub(crate) span: HandledRequest,
     // TODO: support builtin compression
 }
 
@@ -1079,7 +1082,7 @@ where
                 if !ctx.flags.has_written_status() {
                     resp.write_status(b"204 No Content");
                 }
-                ctx.flags.set_has_written_status(true);
+                ctx.did_write_status(204);
                 ctx.end(b"", ctx.should_close_connection());
                 return;
             }
@@ -1091,7 +1094,7 @@ where
 
             if ctx.flags.is_web_browser_navigation() {
                 resp.write_status(b"200 OK");
-                ctx.flags.set_has_written_status(true);
+                ctx.did_write_status(200);
 
                 resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
                 resp.write_header(b"content-encoding", b"gzip");
@@ -1108,7 +1111,7 @@ where
             resp.write_status(b"200 OK");
             resp.write_header(b"content-type", &bun_http_types::MimeType::TEXT.value);
             resp.write_header_int(b"content-length", MISSING_CONTENT.len() as u64);
-            ctx.flags.set_has_written_status(true);
+            ctx.did_write_status(200);
             if ctx.method == Method::HEAD {
                 ctx.end_without_body(ctx.should_close_connection());
             } else {
@@ -1128,7 +1131,7 @@ where
         // Reporting the error runs script, which can abort the request.
         let Some(resp) = self.resp.get() else { return };
         if !self.flags.has_written_status() {
-            self.flags.set_has_written_status(true);
+            self.did_write_status(500);
             resp.write_status(b"500 Internal Server Error");
             resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
         }
@@ -1260,7 +1263,7 @@ where
     /// nothing more is written to it.
     pub(crate) fn end_with_internal_server_error(&self) {
         if let Some(resp) = self.resp.get() {
-            self.flags.set_has_written_status(true);
+            self.did_write_status(500);
             resp.write_status(b"500 Internal Server Error");
             resp.write_header_int(b"Content-Length", 0);
         }
@@ -1281,7 +1284,7 @@ where
             return;
         }
         if !resp.has_responded() {
-            self.flags.set_has_written_status(true);
+            self.did_write_status(413);
             resp.write_status(b"413 Payload Too Large");
         }
         // The normal end path detaches `self.resp` and releases the base ref. uWS
@@ -1315,6 +1318,7 @@ where
     pub(crate) fn close_incomplete_stream(&self) {
         if let Some(resp) = self.resp.get() {
             if resp.state().is_response_pending() {
+                self.span.set_incomplete();
                 self.force_close();
                 return;
             }
@@ -1356,6 +1360,7 @@ where
         let any_req = Self::any_request(req);
         let range = RangeRequest::raw_from_request(&any_req);
         let if_range = RangeRequest::if_range_from_request(&any_req, range);
+        let span = HandledRequest::begin(server.global_this(), &any_req, resp, SSL_ENABLED);
         let root = slot.addr().as_ptr();
         // SAFETY: the first ref of the value written below. Adopting it does not read the slot.
         let base_ref = unsafe { RefPtr::from_raw(root) };
@@ -1391,6 +1396,7 @@ where
             response_buf_owned: JsCell::new(Vec::new()),
             deferred_request: Cell::new(None),
             promise_cell: Cell::new(JSValue::ZERO),
+            span,
         });
 
         ctx_log!("create<d> ({:p})<r>", this.as_ptr());
@@ -1508,6 +1514,26 @@ where
         this.reclaim_promise_cell();
     }
 
+    /// Calls a handler of the server with the span of the request active.
+    #[inline]
+    pub(crate) fn call_handler(
+        &self,
+        global: &JSGlobalObject,
+        handler: JSValue,
+        this: JSValue,
+        args: &[JSValue],
+    ) -> JSValue {
+        let active = self.span.enter(global);
+        (active.adopt(handler).call(global, this, args))
+            .unwrap_or_else(|err| global.take_exception(err))
+    }
+
+    #[inline]
+    pub(crate) fn did_write_status(&self, status: u16) {
+        self.flags.set_has_written_status(true);
+        self.span.set_status(status);
+    }
+
     // This function may be called multiple times
     // so it's important that we can safely do that
     pub(crate) fn finalize_without_deinit(&self) {
@@ -1517,6 +1543,8 @@ where
         self.blob.with_mut(|b| b.detach());
         debug_assert!(self.server.get().is_some());
         let global_this = self.server().global_this();
+
+        self.span.end(self.flags.aborted());
 
         #[cfg(debug_assertions)]
         {
@@ -2814,6 +2842,7 @@ where
         }
 
         stream_log!("onReject()");
+        self.span.fail(global_this, err);
 
         // `resp` must not be dereferenced once the sink has already ended the
         // response (see `end_already_responded_stream`).
@@ -3377,7 +3406,7 @@ where
                 404 => {
                     if !self.flags.has_written_status() {
                         resp.write_status(b"404 Not Found");
-                        self.flags.set_has_written_status(true);
+                        self.did_write_status(404);
                     }
                     self.end_without_body(self.should_close_connection());
                 }
@@ -3386,7 +3415,7 @@ where
                     if !self.flags.has_written_status() {
                         resp.write_status(b"500 Internal Server Error");
                         resp.write_header(b"content-type", b"text/plain");
-                        self.flags.set_has_written_status(true);
+                        self.did_write_status(500);
                     }
                     if self.method == Method::HEAD {
                         resp.write_header_int(b"content-length", BODY.len() as u64);
@@ -3481,16 +3510,16 @@ where
         jsc::mark_binding!();
         if let Some(server) = self.try_server() {
             let server = &*server;
+            self.span.fail(server.global_this(), value);
             let on_error = server.config().on_error;
             if !on_error.is_empty() && !self.flags.has_called_error_handler() {
                 self.flags.set_has_called_error_handler(true);
-                let result = on_error
-                    .call(
-                        server.global_this(),
-                        server.js_value().try_get().unwrap_or(JSValue::UNDEFINED),
-                        &[value],
-                    )
-                    .unwrap_or_else(|err| server.global_this().take_exception(err));
+                let result = self.call_handler(
+                    server.global_this(),
+                    on_error,
+                    server.js_value().try_get().unwrap_or(JSValue::UNDEFINED),
+                    &[value],
+                );
                 let _keep = jsc::EnsureStillAlive(result);
                 // error() may have ended the request or called server.upgrade(req),
                 // either of which already released this context's ref.
@@ -3730,7 +3759,7 @@ where
 
     fn do_write_status(&self, status: u16) {
         debug_assert!(!self.flags.has_written_status());
-        self.flags.set_has_written_status(true);
+        self.did_write_status(status);
 
         // `AnyResponse` is a `Copy` handle; methods take `self` by value.
         let Some(resp) = self.resp.get() else { return };

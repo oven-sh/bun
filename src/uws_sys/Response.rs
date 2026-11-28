@@ -375,6 +375,17 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
+    /// The number of the connection, which `assign` gives it at the first call.
+    #[inline]
+    pub fn telemetry_tag(&mut self, assign: impl FnOnce() -> u32) -> u32 {
+        // SAFETY: a field of the connection's data, which is alive while `self` is.
+        let tag = unsafe { &mut *c::uws_res_telemetry_tag(Self::ssl_flag(), self.as_raw()) };
+        if *tag == 0 {
+            *tag = assign();
+        }
+        *tag
+    }
+
     pub fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
         let mut ip_ptr: *const u8 = core::ptr::null();
         let mut port: i32 = 0;
@@ -696,6 +707,16 @@ impl AnyResponse {
 
     pub fn get_remote_socket_info(self) -> Option<SocketAddress> {
         any_dispatch!(self, |r| r.get_remote_socket_info())
+    }
+
+    /// `None` for HTTP/2 and HTTP/3, where a response is not a connection.
+    #[inline]
+    pub fn telemetry_tag(self, assign: impl FnOnce() -> u32) -> Option<u32> {
+        match self {
+            AnyResponse::SSL(ptr) => Some(TLSResponse::as_handle(ptr).telemetry_tag(assign)),
+            AnyResponse::TCP(ptr) => Some(TCPResponse::as_handle(ptr).telemetry_tag(assign)),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => None,
+        }
     }
 
     pub fn flush_headers(self, flush_immediately: bool) {
@@ -1131,6 +1152,7 @@ pub mod c {
         pub(crate) safe fn uws_res_get_parser(ssl: i32, res: &mut uws_res) -> *mut c_void;
         // Out-params are `&mut` (non-null, valid for write); the C shim only
         // stores into them and returns a length — no read-through precondition.
+        pub(crate) safe fn uws_res_telemetry_tag(ssl: i32, res: &mut uws_res) -> *mut u32;
         pub(crate) safe fn uws_res_get_remote_address_info(
             res: &mut uws_res,
             dest: &mut *const u8,

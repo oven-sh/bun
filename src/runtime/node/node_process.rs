@@ -83,6 +83,7 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
     if let Some(worker) = vm.worker_ref() {
         // @190n: we may need to use requestTerminate or throwTerminationException
         // instead to terminate the worker sooner
+        bun_telemetry_jsc::flush(bun_jsc::virtual_machine::TelemetryFlush::AtExit);
         worker.exit();
     } else {
         // A watch-reload kill-signal handler may call process.exit; node restarts the child
@@ -94,6 +95,7 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
                     !bun_core::Output::enable_ansi_colors_stdout(),
                 );
                 bun_jsc::node_compile_cache::persist_now();
+                bun_telemetry_jsc::flush(bun_jsc::virtual_machine::TelemetryFlush::WithoutExit);
                 bun_core::Output::flush();
                 bun_core::reload_process(should_clear_terminal, false);
             });

@@ -409,6 +409,7 @@ dependencies = [
  "bun_resolver",
  "bun_standalone_graph",
  "bun_sys",
+ "bun_telemetry_cold",
  "enum-map",
  "thiserror",
 ]
@@ -825,6 +826,7 @@ dependencies = [
  "bun_jsc",
  "bun_opaque",
  "bun_ptr",
+ "bun_telemetry_jsc",
  "bun_uws",
  "bun_uws_sys",
  "bun_websocket",
@@ -1728,6 +1730,7 @@ dependencies = [
  "bun_sys",
  "bun_sys_jsc",
  "bun_tcc_sys",
+ "bun_telemetry_jsc",
  "bun_test_schedule",
  "bun_text_diff",
  "bun_threading",
@@ -2035,6 +2038,7 @@ dependencies = [
  "bun_jsc",
  "bun_ptr",
  "bun_sql",
+ "bun_telemetry_jsc",
  "bun_uws",
  "scopeguard",
 ]
@@ -2130,6 +2134,51 @@ dependencies = [
  "bun_ptr",
  "strum",
  "thiserror",
+]
+
+[[package]]
+name = "bun_telemetry"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_http_types",
+ "bun_threading",
+]
+
+[[package]]
+name = "bun_telemetry_cold"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_base64",
+ "bun_core",
+ "bun_paths",
+ "bun_telemetry",
+ "bun_url",
+]
+
+[[package]]
+name = "bun_telemetry_jsc"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_boringssl_sys",
+ "bun_core",
+ "bun_event_loop",
+ "bun_http",
+ "bun_http_types",
+ "bun_io",
+ "bun_jsc",
+ "bun_paths",
+ "bun_ptr",
+ "bun_removable_features",
+ "bun_sys",
+ "bun_telemetry",
+ "bun_telemetry_cold",
+ "bun_threading",
+ "bun_url",
+ "bun_uws",
+ "bun_uws_sys",
 ]
 
 [[package]]

@@ -461,6 +461,9 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "socket_body.bind.ts": null,
   "sourcemap.bind.ts": null,
   "subprocess.bind.ts": null,
+  "telemetry.bind.ts":
+    "typeof Bun.otel & { Span: Class<Bun.otel.Span>; Tracer: Class<Bun.otel.Tracer>; TraceState: Class<Bun.otel.TraceState>; TelemetryContext: Class<Bun.otel.Context>; TracerProvider: Class<typeof Bun.otel.tracerProvider>; ContextManager: Class<typeof Bun.otel.contextManager>; TextMapPropagator: Class<typeof Bun.otel.propagator> }",
+  "telemetry_internals.bind.ts": null,
   "test_context.bind.ts": null,
   "trim_testing.bind.ts": null,
   "udp_socket.bind.ts": null,
@@ -553,6 +556,10 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
     if (calls.length === 0 && constructs.length === 0 && !isGenerated(schema)) {
       const promisesNothing = published.flags & ts.TypeFlags.Void;
       const absent = parts(schema).filter(part => part.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined));
+      const present = checker.getNonNullableType(schema);
+      if (isGenerated(present) && absent.every(part => checker.isTypeAssignableTo(part, published))) {
+        return compare(path, checker.getNonNullableType(published), present);
+      }
       if (
         !promisesNothing &&
         (!checker.isTypeAssignableTo(published, schema) ||

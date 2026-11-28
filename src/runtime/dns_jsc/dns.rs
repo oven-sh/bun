@@ -34,6 +34,7 @@ use bun_ptr::RefPtr;
 use bun_sys::windows::libuv;
 #[cfg(not(windows))]
 use bun_sys::{self as sys};
+use bun_telemetry_jsc::{Instrument, PromiseSpan, SpanKind};
 use bun_uws::{ConnectingSocket, Loop};
 use bun_wyhash::hash as wyhash;
 
@@ -2156,7 +2157,12 @@ impl Resolver {
 
         let resolver = global_resolver(global_this);
 
-        resolver.do_lookup(name, port, options, global_this, context)
+        let span = PromiseSpan::start(global_this, Instrument::Dns, SpanKind::Client, |r| {
+            r.set_name(b"dns.lookup");
+            r.attr("dns.question.name", name);
+        });
+        let result = resolver.do_lookup(name, port, options, global_this, context);
+        span.end_with(global_this, result)
     }
 
     fn do_lookup(

@@ -135,6 +135,11 @@
             "pages": ["/runtime/workers", "/runtime/module-graph"]
           },
           {
+            "group": "Observability",
+            "icon": "chart-line",
+            "pages": ["/runtime/opentelemetry"]
+          },
+          {
             "group": "Process & System",
             "icon": "computer",
             "pages": [

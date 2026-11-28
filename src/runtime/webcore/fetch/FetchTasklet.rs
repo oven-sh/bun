@@ -38,6 +38,9 @@ use crate::webcore::streams::EncodedChunk;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
 use crate::webcore::{AbortSignal, DrainResult, InternalBlob, Response, SinkHandle};
 use bun_jsc::AbortSignalRef;
+use bun_telemetry_jsc::{
+    Aborted, Failed, Instrument, NativeSpan, Outcome, Thrown, http_client as traced,
+};
 
 // `bun_event_loop::JsResult` (cycle-broken erased error) — used by
 // ConcurrentTask callbacks at the tier-3 layer.
@@ -202,6 +205,8 @@ pub struct FetchTasklet {
     pub(crate) mutex: Mutex,
 
     pub(crate) tracker: AsyncTaskTracker,
+    /// Under `mutex` once the request is on the HTTP thread.
+    span: NativeSpan,
     /// JS thread only.
     trace: Option<Box<FetchTrace>>,
 
@@ -911,7 +916,13 @@ impl FetchTasklet {
             }
         }
 
+        if is_done && self.result.is_success() && !self.abort_reason.has() {
+            self.end_span(false, None);
+        }
         let result = self.deliver_progress(vm);
+        if is_done {
+            self.end_span(false, None);
+        }
         let left_transport = self.result.left_transport;
         drop(lock);
         // The HTTP layer will not drain the request body again.
@@ -1063,8 +1074,10 @@ impl FetchTasklet {
         if success && self.abort_reason.has() {
             let promise = promise_value.as_any_promise().unwrap();
             let tracker = self.tracker;
+            let signal_aborted = self.signal_aborted();
             // get_abort_error consumes abort_reason and clears the signal handler.
             let mut err = self.get_abort_error().unwrap();
+            self.end_span(signal_aborted, Some(&err));
             promise_value.ensure_still_alive();
             let r = promise.reject_with_async_stack(&global_this, err.to_js(&global_this));
             drop(err);
@@ -1242,15 +1255,58 @@ impl FetchTasklet {
         self.abort_handle.unfollow();
     }
 
+    #[inline]
+    fn end_span(&mut self, signal_aborted: bool, rejection: Option<&BodyValueError>) {
+        core::mem::take(&mut self.span).end_with(|r| {
+            let response = self.metadata.as_ref();
+            traced::Exchange {
+                method: self.method.as_str().as_bytes(),
+                url: &self.url_proxy_buffer[..self.url_len],
+                status: response.map_or(0, |r| r.status_code() as u16),
+                protocol_version: response.map_or("", |r| r.http_version()).as_bytes(),
+            }
+            .record(r);
+            let code = self.result.fail.map_or("", |fail| fail.name()).as_bytes();
+            match rejection {
+                None if code.is_empty() => {}
+                // The whole response had arrived.
+                _ if self.is_held_body_reported && self.result.is_abort() => {}
+                Some(BodyValueError::SystemError(e) | BodyValueError::SystemTypeError(e)) => {
+                    e.record(r)
+                }
+                Some(BodyValueError::Message(text) | BodyValueError::TypeError(text)) => {
+                    Failed(code, &text.to_utf8()).record(r)
+                }
+                Some(BodyValueError::JSValue(error)) if let Some(error) = error.get() => {
+                    if signal_aborted {
+                        Aborted(&self.global_this, error).record(r)
+                    } else {
+                        Thrown(&self.global_this, error).record(r)
+                    }
+                }
+                Some(BodyValueError::AbortReason(jsc::CommonAbortReason::Timeout)) => {
+                    Failed(b"TimeoutError", b"The operation timed out.").record(r)
+                }
+                // The caller aborted, or let go of the body.
+                _ if self.result.abort_reason() == Some(jsc::CommonAbortReason::UserAbort) => {}
+                _ => Failed(code, b"").record(r),
+            }
+        });
+    }
+
     fn on_reject(&mut self) -> BodyValueError {
         debug_assert!(self.result.fail.is_some());
         bun_output::scoped_log!(FetchTasklet, "onReject");
 
+        let signal_aborted = self.signal_aborted();
         if let Some(err) = self.get_abort_error() {
+            self.end_span(signal_aborted, Some(&err));
             return err;
         }
 
         let err = self.error_of_result();
+        // `traced` makes a `JSValue` of it.
+        self.end_span(signal_aborted, Some(&err));
         self.traced(err)
     }
 
@@ -1943,6 +1999,7 @@ impl FetchTasklet {
             is_waiting_request_stream_start: false,
             mutex: Mutex::new(),
             tracker: AsyncTaskTracker::init(cx.vm()),
+            span: NativeSpan::NONE,
             trace: None,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
         });
@@ -1950,6 +2007,11 @@ impl FetchTasklet {
         fetch_tasklet.signals = fetch_tasklet.signal_store.to_with_backpressure();
 
         fetch_tasklet.tracker.did_schedule(cx.global());
+        fetch_tasklet.span = traced::begin(
+            cx.global(),
+            Instrument::HttpClient,
+            &mut fetch_tasklet.request_headers,
+        );
 
         let url = fetch_options.url;
         let env = cx.vm().transpiler.get().env_mut();
@@ -2486,6 +2548,15 @@ impl FetchTasklet {
             result.has_more,
             result.body.len()
         );
+
+        // A held body may wait for as long as it takes to be collected. It can still turn out to be damaged.
+        let ends_span = match task_ref.result.left_transport {
+            true => !result.is_success() && !result.is_abort(),
+            false => !result.has_more || result.left_transport,
+        };
+        if ends_span {
+            task_ref.span.stop_clock();
+        }
 
         let prev_metadata = task_ref.result.metadata.take();
         let prev_cert_info = task_ref.result.certificate_info.take();

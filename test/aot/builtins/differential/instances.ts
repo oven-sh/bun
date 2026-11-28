@@ -779,6 +779,21 @@ const otherInstances: Candidate[] = [
   // Without them a key is derived with work that takes a thirtieth of a second.
   customized("options:littleWork", () => ({ N: 2, r: 1, p: 1 })),
   pristine("file:Blob", available(() => Bun.file("differential-scratch.txt"))),
+  pristine("filled:Span", available(() => Bun.otel.tracer("t").startSpan("s"))),
+  pristine("filled:Tracer", available(() => Bun.otel.tracer("t"))),
+  pristine("filled:TracerProvider", available(() => Bun.otel.tracerProvider)),
+  pristine("filled:ContextManager", available(() => Bun.otel.contextManager)),
+  pristine("filled:TextMapPropagator", available(() => Bun.otel.propagator)),
+  pristine("filled:TelemetryContext", available(() => Bun.otel.ROOT_CONTEXT.setValue(Symbol.for("k"), 1))),
+  pristine("filled:ContextToken", available(() => {
+    const token = Bun.otel.contextManager.attach(Bun.otel.ROOT_CONTEXT);
+    token.dispose();
+    return token;
+  })),
+  pristine("filled:Baggage", available(() => Bun.otel.propagator.extract(undefined, { baggage: "a=1" }).getValue(Symbol.for("OpenTelemetry Baggage Key")))),
+  pristine("filled:TraceState", available(() =>
+    Bun.otel.with({ traceId: "1".repeat(32), spanId: "2".repeat(16), traceFlags: 1, traceState: "a=1" }, () => Bun.otel.activeSpan()!.spanContext().traceState),
+  )),
   pristine("filled:Timeout", available(() => {
     const timeout = setTimeout(() => {}, 1);
     clearTimeout(timeout);

@@ -14,6 +14,7 @@ use bun_http::Headers;
 use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
 use bun_ptr::{RefCount, RefPtr};
+use bun_telemetry_jsc::http_server::AnsweredRequest;
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::api::js_bundle_completion_task::{BuildOwner, JSBundleCompletionTask};
@@ -159,6 +160,13 @@ impl Route {
         })
     }
 
+    pub(crate) fn built_page(&self) -> Option<&RefPtr<StaticRoute>> {
+        match self.state.get() {
+            State::Html(page) => Some(page),
+            State::Pending | State::Building | State::Err(_) => None,
+        }
+    }
+
     pub(crate) fn on_request(self: RefPtr<Self>, req: AnyRequest, resp: AnyResponse) {
         self.on_any_request(req, resp, false);
     }
@@ -239,6 +247,7 @@ impl Route {
                         resp,
                         _route: self.clone(),
                         is_response_pending: Cell::new(true),
+                        span: server.begin_span(&req, resp, self.as_ptr().cast_const().cast()),
                     };
                     self.pending_responses.with_mut(|v| v.push(pending));
                     resp.on_aborted_ref(Self::on_pending_response_aborted, &self);
@@ -593,7 +602,7 @@ impl Route {
         // (which writes responses and may run uws callbacks) holds no borrow
         // into `self.pending_responses`.
         let pending = self.pending_responses.replace(Vec::new());
-        for pending_response in pending {
+        for mut pending_response in pending {
             let resp = pending_response.resp;
             let method = pending_response.method;
             if !pending_response.is_response_pending.get() {
@@ -605,6 +614,7 @@ impl Route {
 
             match self.state.get() {
                 State::Html(html) => {
+                    pending_response.span.set_status(html.status_code);
                     if method == Method::HEAD {
                         html.clone().on_head(resp);
                     } else {
@@ -627,6 +637,7 @@ impl Route {
                     // This runs from a JS event-loop task, not a uWS handler,
                     // so `end_without_body(true)` alone cannot close the
                     // socket; write Content-Length so the client has framing.
+                    pending_response.span.set_status(500);
                     resp.write_status(b"500 Build Failed");
                     resp.write_header_int(b"Content-Length", 0);
                     resp.end_without_body(true);
@@ -654,6 +665,7 @@ pub(crate) struct PendingResponse {
     is_response_pending: Cell<bool>,
     /// Keeps the route alive while this response waits on it.
     _route: RefPtr<Route>,
+    span: AnsweredRequest,
 }
 
 impl Drop for PendingResponse {
@@ -677,9 +689,10 @@ impl Route {
                 .position(|p| p.resp == resp)
                 .map(|index| v.remove(index))
         });
-        if let Some(pending_response) = removed {
+        if let Some(mut pending_response) = removed {
             debug_assert!(pending_response.is_response_pending.get());
             pending_response.is_response_pending.set(false);
+            core::mem::take(&mut pending_response.span).abort();
             drop(pending_response);
         }
     }

@@ -4,6 +4,7 @@
 
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
+use std::borrow::Cow;
 
 use crate::SocketAddress;
 use crate::response::{State, WriteResult};
@@ -63,6 +64,27 @@ impl Request {
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
         unsafe { bun_core::ffi::slice(p, n) }
     }
+    pub(crate) fn header_joined(&mut self, name: &[u8]) -> Option<Cow<'_, [u8]>> {
+        unsafe extern "C" fn join(value: *const u8, len: usize, joined: *mut c_void) {
+            // SAFETY: `joined` is the local below, and the request owns `value` like the result of `header()`.
+            let (joined, value) =
+                unsafe { (&mut *joined.cast(), bun_core::ffi::slice(value, len)) };
+            crate::request::join_header_value(joined, value);
+        }
+        let mut joined: Option<Cow<'_, [u8]>> = None;
+        // SAFETY: self is a live FFI handle, and `join` only runs during the call.
+        unsafe {
+            c::uws_h3_req_for_each_header_value(
+                self,
+                name.as_ptr(),
+                name.len(),
+                join,
+                (&raw mut joined).cast(),
+            )
+        };
+        joined
+    }
+
     pub fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
         let mut p: *const u8 = ptr::null();
         // SAFETY: self is a live FFI handle; name ptr/len valid for read; out-ptr is a valid local
@@ -781,5 +803,12 @@ mod c {
             len: usize,
             out: *mut *const u8,
         ) -> usize;
+        pub(super) fn uws_h3_req_for_each_header_value(
+            req: *mut Request,
+            name: *const u8,
+            len: usize,
+            handler: unsafe extern "C" fn(*const u8, usize, *mut core::ffi::c_void),
+            user_data: *mut core::ffi::c_void,
+        );
     }
 }

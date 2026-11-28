@@ -17,6 +17,7 @@ use bun_sql::mysql::protocol::prepared_statement::{Execute, set_statement_id};
 use bun_sql::mysql::session::Command;
 use bun_sql::mysql::{MySQLQueryResult, mysql_request};
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
+use bun_telemetry_jsc::db::{QuerySpan, System};
 
 use super::js_my_sql_connection::JSMySQLConnection as MySQLConnection;
 use super::my_sql_statement::{MySQLStatement, describe};
@@ -37,6 +38,7 @@ pub struct JSMySQLQuery {
     pub(crate) simple: bool,
     pub(crate) result_mode: Cell<SQLQueryResultMode>,
     undescribed: JsCell<Undescribed<Vec<ColumnDefinition41>>>,
+    span: QuerySpan,
 }
 
 /// `rejected`: JS has its answer. The rest of the server's is read and dropped.
@@ -127,6 +129,7 @@ impl JSMySQLQuery {
             simple,
             result_mode: Cell::new(SQLQueryResultMode::Objects),
             undescribed: JsCell::new(Undescribed::default()),
+            span: QuerySpan::begin(global_this, System::MySql),
         });
         let this = js::wrap(this, global_this);
         let this_value = this.to_js();
@@ -165,11 +168,16 @@ impl JSMySQLQuery {
             return Ok(());
         }
         self.state.set(State::Queued);
+        self.span.runs_on(&connection.server);
         js::target_set_cached(this_value.to_js(), global_object, query);
         // Until it ends: the wrapper holds the target, the parameters and the rows.
         self.this_value.with_mut(|v| v.upgrade(global_object));
         connection.enqueue_request(self.clone());
         Ok(())
+    }
+
+    pub fn fail_span(&self, cx: &mut JsScope<'_>, error: JsLocal<'_>) {
+        self.span.fail(cx.global(), &self.query, error.to_js());
     }
 
     pub fn cancel(&self, _: &mut JsScope<'_>) {
@@ -269,6 +277,9 @@ impl JSMySQLQuery {
         if !self.state.with_mut(|state| state.result(is_last_result)) {
             return;
         }
+        if is_last_result {
+            self.span.end(&self.query);
+        }
 
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
@@ -341,6 +352,7 @@ impl JSMySQLQuery {
             return;
         }
         let _downgrade = DowngradeOnDrop(self);
+        self.span.fail(self.global_object(), &self.query, err);
 
         let Some(this_value) = self.this_value.get().try_get() else {
             return;

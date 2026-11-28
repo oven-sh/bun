@@ -52,7 +52,7 @@ const loadsNativeCode = {
     // macOS reads the system's certificates through Security.framework, which it opens by name.
     ...(isMacOS
       ? [
-          ...featuresOf("sql", "redis", "s3", "fetch", "sockets", "http3", "websocket"),
+          ...featuresOf("sql", "redis", "s3", "fetch", "sockets", "http3", "websocket", "otel"),
           featureNamed("Tls"),
           featureNamed("TlsSockets"),
         ]

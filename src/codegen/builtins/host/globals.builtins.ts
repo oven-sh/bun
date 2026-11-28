@@ -1448,6 +1448,7 @@ const plainObjects = [
   "Bun.diff",
   "Bun.dns",
   "Bun.markdown",
+  "Bun.otel",
   "Bun.password",
   "Bun.secrets",
   "Bun.semver",
@@ -1855,6 +1856,17 @@ export default b.declarations(
       implementation: b.generic,
     },
   }),
+  // TelemetryBindings.cpp addValuesOfOtel().
+  b.static("Bun.otel.enabled", {
+    getter: b.bool,
+    capability: "none",
+    uses: { this: b.inspected },
+    reads: externalState,
+    implementation: b.generic,
+  }),
+  ["ROOT_CONTEXT", "SpanKind", "SpanStatusCode", "contextManager", "propagator", "tracerProvider"].flatMap(name =>
+    b.static(`Bun.otel.${name}`, b.property(b.object)),
+  ),
   b.namespace("Bun.secrets", {
     delete: keychainOperation(b.bool, namedSecret),
     get: keychainOperation(b.union(b.string, b.strictNull), namedSecret),

@@ -1189,7 +1189,17 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     stop_active_handles_for_vm_teardown,
     disarm_all_timers_for_vm_teardown,
     close_timer_loop_handles_after_vm_destroyed,
+    start_telemetry: bun_telemetry_jsc::before_entry_point,
+    flush_telemetry: bun_telemetry_jsc::flush,
 };
+
+#[unsafe(no_mangle)]
+fn __bun_os_hostname_and_release() -> (bun_core::String, bun_core::String) {
+    (
+        crate::node::os::hostname_string(),
+        crate::node::os::release(),
+    )
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // WebWorker / Debugger runtime hooks

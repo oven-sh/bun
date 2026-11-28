@@ -17,6 +17,7 @@ use bun_io::{BufferedReader, FileType, IoEvent, Owner, PollTag, ReadResult, Read
 use bun_jsc::JsCell;
 use bun_ptr::RefPtr;
 use bun_sys::{self as sys, Fd, File, MaybeOwnedFile};
+use bun_telemetry_jsc::http_server::AnsweredRequest;
 use bun_uws::{AnyResponse, WriteResult};
 
 use crate::server::jsc::VirtualMachine;
@@ -141,8 +142,8 @@ pub(crate) struct StartOptions {
 /// error is delivered, exactly once.
 pub(crate) enum StreamOwner {
     /// A reload can remove the route from the route table meanwhile.
-    FileRoute(PendingRequest<RefPtr<FileRoute>>),
-    DirectoryRoute(PendingRequest<RefPtr<DirectoryRoute>>),
+    FileRoute(PendingRequest<RefPtr<FileRoute>>, AnsweredRequest),
+    DirectoryRoute(PendingRequest<RefPtr<DirectoryRoute>>, AnsweredRequest),
     Ctx {
         ctx: *mut c_void,
         on_complete: fn(*mut c_void, AnyResponse),
@@ -161,9 +162,13 @@ enum StreamEnd {
 
 impl StreamOwner {
     fn deliver(self, resp: AnyResponse, end: StreamEnd) {
+        let end_span = |span: AnsweredRequest| match &end {
+            StreamEnd::Complete => drop(span),
+            StreamEnd::Abort | StreamEnd::Error(_) => span.abort(),
+        };
         match self {
-            StreamOwner::FileRoute(route) => drop(route),
-            StreamOwner::DirectoryRoute(route) => drop(route),
+            StreamOwner::FileRoute(_route, span) => end_span(span),
+            StreamOwner::DirectoryRoute(_route, span) => end_span(span),
             StreamOwner::Ctx {
                 ctx,
                 on_complete,

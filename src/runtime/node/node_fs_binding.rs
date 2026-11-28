@@ -4,6 +4,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
 use bun_sys::Maybe;
 use bun_sys_jsc::SystemErrorJsc as _;
+use bun_telemetry_jsc::fs as traced_fs;
 
 use crate::generated_bindgen::node_fs_binding::RmOptions;
 use crate::node::ThreadIsolated;
@@ -23,6 +24,7 @@ use crate::node::fs::{
 fn run_sync_with<R: FsReturn, A: FsArgument>(
     cx: &mut JsScope<'_>,
     args: &[JsLocal<'_>],
+    operation: NodeFSFunctionEnum,
     dispatch: impl FnOnce(&A) -> Maybe<R>,
 ) -> JsResult<JSValue> {
     let global = cx.global();
@@ -30,7 +32,10 @@ fn run_sync_with<R: FsReturn, A: FsArgument>(
     let mut slice = ArgumentsSlice::init(vm, JsLocal::to_js_slice(args));
     let args = <A as FsArgument>::from_js(global, &mut slice)?;
     move_waiting_descriptors();
-    match dispatch(&args) {
+    let span = args.begin_span(global, operation.into(), "Sync");
+    let result = dispatch(&args);
+    span.settle(result.as_ref().err());
+    match result {
         Err(err) => Err(global.throw_value(err.to_js(global))),
         Ok(res) => res.fs_to_js(global),
     }
@@ -48,7 +53,7 @@ where
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
     // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned
     // (`sys::Error.path` is `Box<[u8]>`, not a borrow into `sync_error_buf`).
-    run_sync_with::<R, A>(cx, args, |args| {
+    run_sync_with::<R, A>(cx, args, F, |args| {
         this.node_fs
             .with_mut(|nfs| NodeFS::dispatch::<R, A, F>(nfs, args, Flavor::Sync))
     })
@@ -63,7 +68,7 @@ where
     Op<{ F }>: NodeFSDispatch<R, A>,
 {
     let vm = cx.global().bun_vm();
-    run_sync_with::<R, A>(cx, args, |args| {
+    run_sync_with::<R, A>(cx, args, F, |args| {
         crate::jsc_hooks::with_node_fs(vm, |node_fs| {
             node_fs.vm = Some(vm);
             NodeFS::dispatch::<R, A, F>(node_fs, args, Flavor::Sync)
@@ -230,7 +235,8 @@ impl Binding {
             ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, None, error),
         };
         let vm: &VirtualMachine = global.bun_vm();
-        Ok(AsyncCpTask::create(&cx, self, cp_args, vm))
+        let span = traced_fs::begin_promise(global, "cp", || Some(cp_args.src.slice()));
+        span.end_with(global, Ok(AsyncCpTask::create(&cx, self, cp_args, vm)))
     }
 
     /// `callSync(.cp)`.
@@ -243,7 +249,10 @@ impl Binding {
         let cp_args = args::Cp::from_js(global, &mut slice)?;
 
         // R-2: blocking syscall — `&mut NodeFS` scoped to the call, no JS re-entry.
-        match self.node_fs.with_mut(|nfs| nfs.cp(&cp_args, Flavor::Sync)) {
+        let span = cp_args.begin_span(global, "cp", "Sync");
+        let result = self.node_fs.with_mut(|nfs| nfs.cp(&cp_args, Flavor::Sync));
+        span.settle(result.as_ref().err());
+        match result {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(()) => Ok(JSValue::UNDEFINED),
         }

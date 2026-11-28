@@ -758,6 +758,11 @@ extern "C"
     }
   }
 
+  uint32_t *uws_res_telemetry_tag(int ssl, uws_res_r res) {
+    if (ssl) return &((uWS::HttpResponse<true> *)res)->getHttpResponseData()->telemetryTag;
+    return &((uWS::HttpResponse<false> *)res)->getHttpResponseData()->telemetryTag;
+  }
+
   void uws_res_mark_wrote_content_length_header(int ssl, uws_res_r res) {
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;

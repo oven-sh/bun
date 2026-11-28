@@ -678,7 +678,10 @@ impl HttpThread {
         // `has_pending_queued_abort` for any id it couldn't find in the socket
         // tracker. If that's clear, there's nothing to fail-fast and nothing can
         // start, so don't walk the lists.
-        if active >= max && !self.has_pending_queued_abort {
+        if active >= max
+            && !self.has_pending_queued_abort
+            && !HAS_UNLIMITED_REQUEST.swap(false, Ordering::Acquire)
+        {
             return;
         }
 
@@ -721,7 +724,7 @@ impl HttpThread {
 
         while let Some(http) = pop_queued_task() {
             let aborted = http.client.signals.get(crate::signals::Field::Aborted);
-            if !aborted && active >= max {
+            if !aborted && active >= max && !http.client.flags.ignores_request_limit {
                 // Can't start this one yet. Defer it (preserves FIFO relative to
                 // later pops) and keep draining — there may be aborted tasks
                 // behind it that we can fail-fast right now.
@@ -835,11 +838,21 @@ impl HttpThread {
         }
     }
 
+    /// Any thread. Wakes the loop and returns how often it has turned: the number stands still while it is blocked.
+    pub fn poke() -> u32 {
+        Self::wakeup();
+        TURNS.load(Ordering::Relaxed)
+    }
+
     /// Any thread. A request comes back through its last result callback.
     pub fn schedule(requests: impl IntoIterator<Item = Box<AsyncHttp<'static>>>) {
         let mut any = false;
         for http in requests {
+            let is_unlimited = http.client.flags.ignores_request_limit;
             INBOX.tasks.push(bun_core::heap::into_raw_nn(http));
+            if is_unlimited {
+                HAS_UNLIMITED_REQUEST.store(true, Ordering::Release);
+            }
             any = true;
         }
         if any {
@@ -848,6 +861,9 @@ impl HttpThread {
         }
     }
 }
+
+static HAS_UNLIMITED_REQUEST: AtomicBool = AtomicBool::new(false);
+static TURNS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 fn pop_queued_task() -> Option<Box<AsyncHttp<'static>>> {
     let http = NonNull::new(INBOX.tasks.pop())?;
@@ -1061,6 +1077,7 @@ mod _event_loop_draft {
                         std::thread::park();
                     }
                 }
+                super::TURNS.fetch_add(1, Ordering::Relaxed);
                 self.drain_events();
                 self.free_dead_ssl_contexts();
                 assert_abort_tracker_sockets_alive();

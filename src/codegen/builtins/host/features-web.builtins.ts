@@ -179,6 +179,8 @@ export default b.declarations(
   extendAll(["Bodies", ...usesWhen(b.whenOperandStartsWith("path", "s3://"), "HttpClient")], "Bun.file"),
   extendAll(["Bodies", ...usesWhen(b.whenOperandStartsWith("destination", "s3://"), "HttpClient")], "Bun.write"),
   extendAll(["HttpClient", "Bodies", "WebStreams"], "Bun.S3Client", "Bun.s3"),
+  // The environment of the run names the collector, and may ask for TLS and gzip.
+  extendAll(["HttpClient", "Headers", ...secureConnectionFeatures, "LibdeflateCompressor"], "Bun.otel"),
   extendAll(["HttpClient", "WebStreams"], "Bun.Image", "Blob.prototype.image"),
   extendAll(["StructuredClone", "WebStreams"], "%Subprocess%"),
   extendAll(["WebStreams"], "Bun.spawn"),

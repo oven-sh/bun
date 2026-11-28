@@ -20,6 +20,7 @@ use bun_sql::postgres::any_postgres_error::AnyPostgresError;
 use bun_sql::postgres::pipeline::Protocol;
 use bun_sql::postgres::postgres_types::ResultFormats;
 use bun_sql::shared::SQLQueryResultMode as PostgresSQLQueryResultMode;
+use bun_telemetry_jsc::db::{QuerySpan, System};
 
 pub(crate) use crate::generated_bindgen::postgres_sql_query::js_PostgresSQLQuery as js;
 
@@ -42,6 +43,7 @@ pub struct PostgresSQLQuery {
     pub(crate) formats: Cell<ResultFormats>,
     pub(crate) copy: Cell<CopyStream>,
     pub(crate) result_mode: Cell<PostgresSQLQueryResultMode>,
+    span: QuerySpan,
 }
 
 enum Place {
@@ -102,6 +104,7 @@ impl PostgresSQLQuery {
 
     /// Does nothing a second time.
     pub(crate) fn reject(self: RefPtr<Self>, err: JSValue, global_object: &JSGlobalObject) {
+        self.span.fail(global_object, &self.query, err);
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
         };
@@ -149,6 +152,9 @@ impl PostgresSQLQuery {
         statement: Option<&PostgresSQLStatement>,
     ) -> JsResult<()> {
         let is_last = statement.is_none();
+        if is_last {
+            self.span.end(&self.query);
+        }
         let tag = CommandTag::init(command_tag_str);
         let js_tag = tag.to_js_tag(global_object)?;
         js_tag.ensure_still_alive();
@@ -248,6 +254,7 @@ impl PostgresSQLQuery {
             formats: Cell::new(ResultFormats::Text),
             copy: Cell::new(CopyStream::None),
             result_mode: Cell::new(PostgresSQLQueryResultMode::Objects),
+            span: QuerySpan::begin(global_this, System::Postgres),
         });
         let this = js::wrap(this, global_this);
         let this_value = this.to_js();
@@ -345,6 +352,7 @@ impl PostgresSQLQuery {
             )));
         }
 
+        self.span.runs_on(&connection.server);
         let seat = connection.enqueue(self, &declared, protocol);
         self.place.set(Place::Queued(seat));
         // Request is enqueued: keep the event loop alive until the server responds.
@@ -357,6 +365,10 @@ impl PostgresSQLQuery {
         // advance() can reject this request with nothing sent: no reply releases the ref then.
         connection.update_poll_ref();
         Ok(())
+    }
+
+    pub fn fail_span(&self, cx: &mut JsScope<'_>, error: JsLocal<'_>) {
+        self.span.fail(cx.global(), &self.query, error.to_js());
     }
 
     pub fn cancel(&self, _: &mut JsScope<'_>) {

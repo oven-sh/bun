@@ -219,6 +219,12 @@ export default b.declarations(
   extendAll(["Cron", "ChildProcess", "Url"], "Bun.cron"),
   extendAll(["Cron"], "%CronJob%", "%CronTick%"),
 
+  extendAll(["Telemetry"], "Bun.otel"),
+  extendAll(
+    ["Telemetry"],
+    ...["Baggage", "ContextManager", "ContextToken", "Span", "TelemetryContext"].map(name => `%${name}%`),
+    ...["TextMapPropagator", "TraceState", "Tracer", "TracerProvider"].map(name => `%${name}%`),
+  ),
   extendAll(["Secrets"], ...withMembers("Bun.secrets", "delete", "get", "set")),
 
   extendAll(["Shell", "ChildProcess", "Buffer"], "Bun.$", "%ShellInterpreter%"),

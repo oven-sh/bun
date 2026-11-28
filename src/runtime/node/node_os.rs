@@ -629,25 +629,22 @@ mod _impl {
     }
 
     pub(crate) fn hostname(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let global = cx.global();
-        #[cfg(windows)]
-        {
-            if let Some(name) = windows::GetHostNameW(&mut [0; 129]) {
-                return BunString::clone_utf16(name).into_js(global);
-            }
+        hostname_string().into_js(cx.global())
+    }
 
-            return Ok(global.common_strings().unknown());
+    pub(crate) fn hostname_string() -> BunString {
+        #[cfg(windows)]
+        if let Some(name) = windows::GetHostNameW(&mut [0; 129]) {
+            return BunString::clone_utf16(name);
         }
         #[cfg(not(windows))]
         {
             let mut name_buffer = [0u8; HOST_NAME_MAX];
-            let s: &[u8] = if bun_sys::posix::gethostname(&mut name_buffer).is_ok() {
-                bun_core::slice_to_nul(&name_buffer)
-            } else {
-                b"unknown"
-            };
-            return bun_string_jsc::create_utf8_for_js(global, s);
+            if bun_sys::posix::gethostname(&mut name_buffer).is_ok() {
+                return BunString::clone_utf8(bun_core::slice_to_nul(&name_buffer));
+            }
         }
+        BunString::static_("unknown")
     }
 
     pub(crate) fn loadavg() -> [f64; 3] {

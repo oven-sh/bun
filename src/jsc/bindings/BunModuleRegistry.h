@@ -1,11 +1,22 @@
 #pragma once
 
 #include "root.h"
+#include <JavaScriptCore/CyclicModuleRecord.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/ModuleRegistryEntry.h>
 
 namespace Bun {
+
+inline bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
+{
+    if (!record)
+        return false;
+    if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record))
+        return cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluated && !cyclic->evaluationError();
+    // SyntheticModuleRecord is "evaluated" once linked (it has an environment).
+    return record->moduleEnvironmentMayBeNull() != nullptr;
+}
 
 // The registry has one entry per (specifier, import attribute type); `registryEntry` picks the one that stands for a specifier.
 template<typename Each>

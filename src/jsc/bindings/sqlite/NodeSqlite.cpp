@@ -42,6 +42,7 @@ static constexpr bool lazy_sqlite3_has_session = true;
 #endif
 
 #include "NodeSqlite.h"
+#include "SqliteSpan.h"
 #include "SqliteUserFunction.h"
 
 #include "ZigGlobalObject.h"
@@ -974,6 +975,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncExec, (JSGlobalObject * globalObject, Cal
     // m_db (deferred close) but the handle itself stays valid until this
     // frame's BusyScope unwinds, so read the error from it.
     sqlite3* conn = self->connection();
+    SqliteSpan span { globalObject, conn, utf8.legacyCStringPointer() };
     int r = sqlite3_exec(conn, utf8.legacyCStringPointer(), nullptr, nullptr, nullptr);
     CHECK_UDF_EXCEPTION(scope);
     if (r != SQLITE_OK) {
@@ -2405,6 +2407,7 @@ struct StatementResetter {
 
 static EncodedJSValue statementStepRun(VM& vm, JSGlobalObject* globalObject, ThrowScope& scope, JSStatementSync* self)
 {
+    SqliteSpan span { globalObject, self->statement() };
     StatementResetter resetter { self->statement() };
     JSStatementSync::SteppingScope stepping { self };
     int r = sqlite3_step(self->statement());
@@ -2444,6 +2447,7 @@ static EncodedJSValue statementStepRun(VM& vm, JSGlobalObject* globalObject, Thr
 
 static EncodedJSValue statementStepGet(JSGlobalObject* globalObject, ThrowScope& scope, JSStatementSync* self)
 {
+    SqliteSpan span { globalObject, self->statement() };
     StatementResetter resetter { self->statement() };
     JSStatementSync::SteppingScope stepping { self };
     int r = sqlite3_step(self->statement());
@@ -2470,6 +2474,7 @@ static EncodedJSValue statementStepGet(JSGlobalObject* globalObject, ThrowScope&
 
 static EncodedJSValue statementStepAll(JSGlobalObject* globalObject, ThrowScope& scope, JSStatementSync* self)
 {
+    SqliteSpan span { globalObject, self->statement() };
     StatementResetter resetter { self->statement() };
     JSStatementSync::SteppingScope stepping { self };
     JSArray* rows = constructEmptyArray(globalObject, nullptr, 0);
@@ -2774,6 +2779,9 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorNext, (JSGlobalObject * globalOb
         return throwNodeState(globalObject, scope, "statement is currently executing"_s);
     }
     JSStatementSync::SteppingScope stepping { stmt };
+    std::optional<SqliteSpan> spanOfFirstStep;
+    if (!sqlite3_stmt_busy(stmt->statement()))
+        spanOfFirstStep.emplace(globalObject, stmt->statement());
 
     int r = sqlite3_step(stmt->statement());
     if (r != SQLITE_ROW && r != SQLITE_DONE) {

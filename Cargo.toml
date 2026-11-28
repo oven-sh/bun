@@ -59,6 +59,9 @@ members = [
   "src/crash_handler",
   "src/cron",
   "src/csrf",
+  "src/telemetry",
+  "src/telemetry_cold",
+  "src/telemetry_jsc",
   "src/css_jsc",
   "src/dns",
   "src/dns/client",
@@ -444,6 +447,9 @@ bun_clap_macros = { path = "src/clap_macros" }
 bun_crash_handler = { path = "src/crash_handler" }
 bun_cron = { path = "src/cron" }
 bun_csrf = { path = "src/csrf" }
+bun_telemetry = { path = "src/telemetry" }
+bun_telemetry_cold = { path = "src/telemetry_cold" }
+bun_telemetry_jsc = { path = "src/telemetry_jsc" }
 bun_css_jsc = { path = "src/css_jsc" }
 bun_dns = { path = "src/dns" }
 bun_dns_client = { path = "src/dns/client" }
@@ -576,6 +582,16 @@ opt-level = 3
 
 [profile.release.package.bun_react_compiler]
 opt-level = "s"
+
+# What runs for every span is marked `#[optimize(speed)]`.
+[profile.release.package.bun_telemetry]
+opt-level = "s"
+
+[profile.release.package.bun_telemetry_jsc]
+opt-level = "s"
+
+[profile.release.package.bun_telemetry_cold]
+opt-level = "z"
 
 # The runners behind `--run-typescript-tests`, `--run-prettier-tests` and `--run-eslint-tests`. Only canary and debug
 # builds have them, and the time goes into what they test, which keeps its own level.

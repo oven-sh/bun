@@ -28,6 +28,7 @@ bun_http_types.workspace = true
 bun_io.workspace = true
 bun_jsc.workspace = true
 bun_ptr.workspace = true
+bun_telemetry_jsc.workspace = true
 bun_uws.workspace = true
 bun_uws_sys.workspace = true
 bun_websocket.workspace = true

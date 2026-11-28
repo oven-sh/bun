@@ -121,6 +121,7 @@ pub mod task_tag {
         AsyncCpTask,
         ShellAsyncCpTask,
         StreamPending,
+        Telemetry,
         ThreadSafeFunction,
         ThreadSafeFunctionRefRequest,
         UvDnsPollFree,            // a closed uv_poll_t of a DNS socket (windows)

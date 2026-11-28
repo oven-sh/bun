@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_client.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 46f9db3b8cdb8ba82d5d9fc1ce323afec6ffa6472b75a3ec8cff44fe13e98d3a.
+// Written against that file with the SHA-256 72e7868a7a9acf2d6e7b2f694555593c0a120ad889488c9858980add4c882863.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_client"
@@ -63,6 +63,7 @@ function emitErrorEvent(request: $Node.ClientRequest, error: Error) {
   // Every request-error path funnels here (ECONNREFUSED, DNS, parse error,
   // reset): close the trace span; deduped by the per-request flag.
   traceClientResponseEnd(request);
+  if (hasClientSpans) request[kClientSpan]?.end(request.res, error);
   request.emit("error", error);
 }
 
@@ -168,6 +169,9 @@ function rewriteForProxiedHttp(req: $Node.ClientRequest, reqOptions: $Node.Clien
 // 'e' across the response/error/destroy/close paths. Near-zero cost when off.
 const kHttpTraceCat = "node,node.http";
 const kTraceRequestActive = Symbol("kTraceRequestActive");
+const kClientSpan = Symbol("kClientSpan");
+let hasClientSpans = false;
+const isOpenTelemetrySpanWanted = $bindgen("telemetry_internals.bind.ts", "httpClientEnabled");
 let traceEvents: typeof import("internal/trace_event_recorder").default;
 function traceClientResponseEnd(req: $Node.ClientRequest) {
   if (req[kTraceRequestActive]) {
@@ -267,6 +271,7 @@ declare global {
       [kPath]: string;
       [kClientAsyncContext]?: import("./async_hooks").Frame;
       [kTraceRequestActive]?: boolean;
+      [kClientSpan]?: import("internal/http/client_span").ClientSpan;
       [kClientRequestStatistics]?: object;
     }
 
@@ -486,7 +491,7 @@ function ClientRequest(
     }
   }
 
-  const optionsHeaders = options.headers;
+  let optionsHeaders = options.headers;
   const headersArray = ArrayIsArray(optionsHeaders);
   if (!headersArray) {
     if (optionsHeaders) {
@@ -521,6 +526,12 @@ function ClientRequest(
       this.setHeader("Authorization", "Basic " + Buffer.from(auth).toString("base64"));
     }
 
+    if (isOpenTelemetrySpanWanted()) {
+      hasClientSpans = true;
+      const { startClientSpan } = require("internal/http/client_span");
+      this[kClientSpan] = startClientSpan(this, this.method, protocol, host, port, this.path);
+    }
+
     if (this.getHeader("expect")) {
       if (this._header) {
         throw $ERR_HTTP_HEADERS_SENT("render");
@@ -532,6 +543,13 @@ function ClientRequest(
       rewriteForProxiedHttp(this, optsWithoutSignal);
     }
   } else {
+    if (isOpenTelemetrySpanWanted()) {
+      hasClientSpans = true;
+      const { HeaderList, startClientSpan } = require("internal/http/client_span");
+      const headers = new HeaderList(optionsHeaders);
+      this[kClientSpan] = startClientSpan(headers, this.method, protocol, host, port, this.path);
+      optionsHeaders = headers.list as typeof optionsHeaders;
+    }
     rewriteForProxiedHttp(this, optsWithoutSignal);
     this._storeHeader(this.method + " " + this.path + " HTTP/1.1\r\n", optionsHeaders);
   }
@@ -649,6 +667,7 @@ ClientRequest.prototype.destroy = function destroy(this: $Node.ClientRequest, er
   // Close the http.client.request trace span if no response ever arrived
   // (req.destroy()/abort before headers); deduped by the per-request flag.
   traceClientResponseEnd(this);
+  if (hasClientSpans) this[kClientSpan]?.end(this.res, err);
 
   // If we're aborting, we don't care about any more response data.
   const res = this.res;
@@ -699,8 +718,11 @@ function socketCloseListenerInner(this: $Node.HttpClientSocket) {
   if (res) {
     // Socket closed before we emitted 'end' below.
     if (!res.complete) {
-      res.destroy(new ConnResetException("aborted"));
+      const error = new ConnResetException("aborted");
+      if (hasClientSpans) req[kClientSpan]?.end(res, error);
+      res.destroy(error);
     }
+    if (hasClientSpans) req[kClientSpan]?.end(res);
     closeRequest(req);
     if (!res.aborted && res.readable) {
       res.push(null);
@@ -847,6 +869,11 @@ function processClientData(socket: $Node.HttpClientSocket, d: Buffer, parser: $N
 
       const bodyHead = d.slice(bytesParsed, d.length);
 
+      if (hasClientSpans) {
+        req[kClientSpan]?.received(res);
+        req[kClientSpan]?.end(res);
+      }
+
       const eventName = req.method === "CONNECT" ? "connect" : "upgrade";
       if (req.listenerCount(eventName) > 0) {
         req.upgradeOrConnect = true;
@@ -978,6 +1005,7 @@ function parserOnIncomingClient(this: $Node.HTTPParser, res: $Node.IncomingMessa
   // The response arrived: close the 'http.client.request' span (Node ends it
   // here, in parserOnIncomingClient, before handing the response to the user).
   traceClientResponseEnd(req);
+  if (hasClientSpans) req[kClientSpan]?.received(res);
   req.res = res;
   res.req = req;
 
@@ -1042,6 +1070,7 @@ function responseKeepAlive(req: $Node.ClientRequest) {
 
 function responseOnEnd(this: $Node.IncomingMessage) {
   const req = this.req!;
+  if (hasClientSpans) req[kClientSpan]?.end(this);
   const socket = req.socket;
 
   if (socket) {
@@ -1209,6 +1238,7 @@ function destroyRequestOnSocketNT(
   // The request is dead with no parser: close the trace span on the paths
   // that skip emitErrorEvent above (proxy tunnel; error already emitted).
   traceClientResponseEnd(req);
+  if (hasClientSpans) req[kClientSpan]?.end(undefined, err);
   closeRequest(req);
 }
 

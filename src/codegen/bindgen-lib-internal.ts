@@ -4136,19 +4136,23 @@ export class ClassType extends NamedType {
 export interface NamespaceOptions extends EntryColumns {
   /** The object is itself a function, named as the namespace is, that does what this one of its functions does. */
   call?: string;
+  /** A C++ function, `name(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject*)`, that adds the properties that are no functions. */
+  finishedBy?: { name: string; header: string };
 }
 
 /** A plain object whose properties are native functions, as WebIDL's `namespace`. With `call`, a function that has them. */
 export class NamespaceDefinition {
   readonly functions: readonly FunctionDefinition[];
   readonly call: FunctionDefinition | undefined;
+  readonly finishedBy: NamespaceOptions["finishedBy"];
   readonly columns: EntryColumns;
   name = "";
   constructor(
     functions: Record<string, SignatureOptions | readonly SignatureOptions[]>,
     options: NamespaceOptions = {},
   ) {
-    this.columns = columnsOf(options, ["call"]);
+    this.columns = columnsOf(options, ["call", "finishedBy"]);
+    this.finishedBy = options.finishedBy;
     this.functions = Object.entries(functions).map(([name, options]) => {
       assert(/^[A-Za-z_$][\w$]*$/.test(name), `${name}: a function is named by an identifier`);
       assert(!(options instanceof FunctionDefinition), `${name}: write what b.fn takes, without b.fn`);

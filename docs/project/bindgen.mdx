@@ -135,6 +135,10 @@ A namespace that can itself be called, like `Bun.hash`, names the function that 
 `b.namespace({ wyhash: { .. }, crc32: { .. } }, { call: "wyhash" })`. The object is then a
 function named after the namespace.
 
+A namespace with properties that are no functions, like `Bun.otel`, names the C++ function that adds them:
+`b.namespace({ .. }, { finishedBy: { name: "Bun::Telemetry::addValuesOfOtel", header: "TelemetryBindings.h" } })`. It is
+called with the `JSC::VM&`, the `JSC::JSGlobalObject*` and the new object. Declare those properties in `src/codegen/builtins/host`.
+
 A function with [overloads](#overloads) is an array of its signatures. A function of a namespace has no `passThis`, `passCallee`, `export` or `feature`.
 
 ### What a function may do: `capability`

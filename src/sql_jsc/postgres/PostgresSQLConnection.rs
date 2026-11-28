@@ -77,6 +77,7 @@ struct PendingNotification {
 // JS can re-enter any method, so they all take `&self` and the fields are cells.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct PostgresSQLConnection {
+    pub(crate) server: bun_telemetry_jsc::db::Server,
     socket: JsCell<Socket>,
     ref_count: Cell<u32>,
 
@@ -768,6 +769,7 @@ pub(crate) fn create_connection<'a>(
         ConnectParams {
             hostname,
             port,
+            server: bun_telemetry_jsc::db::Server::new(hostname, port, path, database),
             strings: ConnectionStrings::new(
                 username,
                 password,
@@ -805,6 +807,7 @@ struct ConnectParams<'a> {
     /// Dialed when the path of `strings` is empty.
     hostname: &'a [u8],
     port: i32,
+    server: bun_telemetry_jsc::db::Server,
     strings: ConnectionStrings,
     secure: Option<OwnedSslCtx>,
     tls_config: Rc<SSLConfig>,
@@ -852,6 +855,7 @@ fn open(
     let carries_cancel_request = params.cancel.is_some();
 
     let this = RefPtr::new(PostgresSQLConnection {
+        server: params.server,
         socket: JsCell::new(Socket::SocketTcp(uws::SocketTCP {
             socket: uws::InternalSocket::Detached,
         })),
@@ -1160,6 +1164,7 @@ impl PostgresSQLConnection {
             ConnectParams {
                 hostname: &hostname[..hostname_len],
                 port,
+                server: Default::default(),
                 strings: ConnectionStrings::new(b"", b"", b"", b"", b"", handshake.strings.path()),
                 secure: self.secure.clone(),
                 tls_config: Rc::clone(&self.tls_config),

@@ -23,6 +23,7 @@ use super::protocol_jsc::{
 };
 use super::valkey;
 use bun_jsc::url::Parsed;
+use bun_telemetry_jsc::{NativeSpan, db as traced};
 use bun_valkey::client::{
     Acked, Attempt, Awaited, Client, Close, Config, Event, Lost, Reason, Sent,
 };
@@ -191,11 +192,33 @@ impl JSValkeyClient {
 // JSValkeyClient
 // ───────────────────────────────────────────────────────────────────────────
 
+struct PendingCommand {
+    promise: JSPromiseStrong,
+    span: NativeSpan,
+}
+
+impl PendingCommand {
+    fn answered(self) -> JSPromiseStrong {
+        self.span.end();
+        self.promise
+    }
+
+    fn refused(self, message: &[u8]) -> JSPromiseStrong {
+        (self.span).end_with(|r| traced::DbError::of_redis(message, r).record(r));
+        self.promise
+    }
+
+    fn failed(self, global: &JSGlobalObject, error: JSValue) -> JSPromiseStrong {
+        self.span.settle(traced::DriverError(global, error));
+        self.promise
+    }
+}
+
 /// Valkey client wrapper for JavaScript
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct JSValkeyClient {
     /// Borrowed mutably for one method of its own at a time, and none of them can reach script.
-    client: JsCell<Client<JSPromiseStrong>>,
+    client: JsCell<Client<PendingCommand>>,
     socket: Cell<Socket>,
     // TODO(markovejnovic): a connected client that nothing refers to stays alive until it is closed.
     pub(crate) dial: SocketDial,
@@ -853,14 +876,16 @@ impl JSValkeyClient {
         let object = Object::from(this);
         self.ensure_dialing(object);
 
-        let mut promise = JSPromiseStrong::init(global);
+        let promise = JSPromiseStrong::init(global);
         let js_promise = promise.value();
+        let span = self.begin_span(global, name, args);
+        let pending = PendingCommand { promise, span };
         if let Some(error) = self.rejection(global) {
-            let _ = promise.reject(global, Ok(error));
+            let _ = pending.failed(global, error).reject(global, Ok(error));
         } else {
             match self
                 .client
-                .with_mut(|client| client.send(name, args, reply, promise))
+                .with_mut(|client| client.send(name, args, reply, pending))
             {
                 Sent::Buffered => self.flush(),
                 Sent::Batched => {
@@ -871,6 +896,32 @@ impl JSValkeyClient {
         }
         self.update_poll_ref(object);
         js_promise
+    }
+
+    #[inline]
+    fn begin_span<A: AsRef<[u8]>>(
+        &self,
+        global: &JSGlobalObject,
+        name: &[u8],
+        args: &[A],
+    ) -> NativeSpan {
+        let digits = &mut bun_core::fmt::ItoaBuf::new();
+        let connection = move || {
+            let digits = digits;
+            let (host, port) = match &self.address {
+                valkey::Address::Unix(path) => (&**path, 0),
+                valkey::Address::Host { host, port, .. } => (&**host, *port),
+            };
+            traced::ConnectionInfo {
+                host,
+                port,
+                namespace: bun_core::fmt::itoa(digits, self.client.get().database()),
+            }
+        };
+        traced::begin(global, traced::System::Redis, connection, |r| {
+            let first = args.first().map_or(&b""[..], AsRef::as_ref);
+            traced::describe_redis_command(r, name, first, args.len() > 1);
+        })
     }
 
     fn read(self: &RefPtr<Self>, object: Object<'_>, data: &[u8]) {
@@ -893,7 +944,7 @@ impl JSValkeyClient {
     fn dispatch(
         self: &RefPtr<Self>,
         object: Object<'_>,
-        event: Event<JSPromiseStrong>,
+        event: Event<PendingCommand>,
     ) -> JsResult<()> {
         let global = &self.global_object;
         let _exit = match event {
@@ -912,24 +963,31 @@ impl JSValkeyClient {
             }
             Event::Connected(mut hello) => self.on_connected(object, &mut hello),
             Event::Resolved {
-                mut promise,
+                promise,
                 mut value,
                 reply,
             } => {
                 if reply.refuses(&value) {
-                    return promise.reject(global, binary_key_error(&mut value, global, reply));
+                    let error = binary_key_error(&mut value, global, reply);
+                    let mut promise = match error {
+                        Ok(error) => promise.failed(global, error),
+                        Err(_) => promise.answered(),
+                    };
+                    return promise.reject(global, error);
                 }
+                let mut promise = promise.answered();
                 let value = reply_to_js(&mut value, global, reply);
                 promise.settle(global, value)
             }
             Event::Executed {
-                mut promise,
+                promise,
                 mut results,
-            } => promise.settle(global, results_to_js(&mut results, global)),
-            Event::Rejected {
-                mut promise,
-                message,
             } => {
+                let mut promise = promise.answered();
+                promise.settle(global, results_to_js(&mut results, global))
+            }
+            Event::Rejected { promise, message } => {
+                let mut promise = promise.refused(&message);
                 let error = valkey_error_to_js(global, &message, RedisError::ServerError);
                 promise.reject(global, Ok(error))
             }
@@ -947,16 +1005,16 @@ impl JSValkeyClient {
         }
     }
 
-    fn on_acked(&self, acked: Acked<JSPromiseStrong>, for_channel: JSValue) -> JsResult<()> {
+    fn on_acked(&self, acked: Acked<PendingCommand>, for_channel: JSValue) -> JsResult<()> {
         let global = &self.global_object;
         // Ahead of the microtasks that the caller's scope drains.
         self.send_next_command();
         match acked {
             Acked::Nobody => Ok(()),
-            Acked::Channel(mut promise) => promise.resolve(global, for_channel),
-            Acked::Raw(mut promise, mut push) => {
-                promise.settle(global, resp_value_to_js(&mut push, global))
-            }
+            Acked::Channel(promise) => promise.answered().resolve(global, for_channel),
+            Acked::Raw(promise, mut push) => promise
+                .answered()
+                .settle(global, resp_value_to_js(&mut push, global)),
         }
     }
 
@@ -1002,9 +1060,10 @@ impl JSValkeyClient {
     }
 
     /// A rejection fails once the VM's termination is pending; the rest still has to go.
-    fn reject_all(&self, promises: Vec<JSPromiseStrong>, error: JSValue) -> JsResult<()> {
+    fn reject_all(&self, promises: Vec<PendingCommand>, error: JSValue) -> JsResult<()> {
         let mut result = Ok(());
-        for mut promise in promises {
+        for promise in promises {
+            let mut promise = promise.failed(&self.global_object, error);
             let rejected = promise.reject(&self.global_object, Ok(error));
             result = result.and(rejected);
         }

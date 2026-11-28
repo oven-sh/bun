@@ -125,6 +125,7 @@ pub struct Subprocess<'a> {
     pub(crate) stdout_maxbuf: JsCell<Option<MaxBuf::OwnerRef>>,
     pub(crate) stderr_maxbuf: JsCell<Option<MaxBuf::OwnerRef>>,
     pub(crate) exited_due_to_maxbuf: Cell<Option<MaxBuf::Kind>>,
+    pub(crate) span: bun_telemetry_jsc::SpanCell,
 }
 
 bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
@@ -687,6 +688,23 @@ impl Subprocess<'_> {
         self.pid_rusage.set(Some(*rusage));
         let is_sync = self.flags.get().contains(Flags::IS_SYNC);
         self.clear_abort_signal();
+        self.span.take().end_with(|r| {
+            let mut digits = bun_core::fmt::ItoaBuf::new();
+            match (status, status.signal()) {
+                (_, Some(signal)) => match signal.named() {
+                    Some(named) => r.error(named.name().as_bytes(), b""),
+                    None => r.error(bun_core::fmt::itoa(&mut digits, signal.0), b""),
+                },
+                (Status::Exited(exited), None) => {
+                    r.attr("process.exit.code", i64::from(exited.code));
+                    if exited.code != 0 {
+                        r.error(bun_core::fmt::itoa(&mut digits, exited.code), b"");
+                    }
+                }
+                (Status::Err(err), None) => bun_telemetry_jsc::Outcome::record(err, r),
+                (Status::Running | Status::Signaled(_), None) => {}
+            }
+        });
 
         self.event_loop_timer.disarm();
         self.set_event_loop_timer_refd(false);

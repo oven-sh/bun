@@ -60,6 +60,7 @@ macro_rules! ctx_log {
 
 use super::request_context::REQUEST_CONTEXT_POOL_CAPACITY;
 use bun_jsc::bun_string_jsc;
+use bun_telemetry_jsc::http_server::HandledRequest;
 
 // ─── Re-exports ──────────────────────────────────────────────────────────────
 pub(super) use super::html_bundle::{self as html_bundle, HTMLBundle};
@@ -126,6 +127,14 @@ trait RequestCtxOps: RequestCtx {
         request_value: JSValue,
         response_value: JSValue,
     ) -> Option<bun_ptr::BackRef<Self>>;
+    fn span(dispatch: &Self::Dispatch) -> &HandledRequest;
+    fn call_handler(
+        dispatch: &Self::Dispatch,
+        global: &JSGlobalObject,
+        handler: JSValue,
+        this: JSValue,
+        args: &[JSValue],
+    ) -> JSValue;
     fn to_async(&self, req: &mut Self::Req, request_object: &Request);
     fn ctx_method(&self) -> http::Method;
     fn set_request_body(&self, body: Option<crate::webcore::body::BodyHiveHandle>);
@@ -188,6 +197,20 @@ where
         rv: JSValue,
     ) -> Option<bun_ptr::BackRef<Self>> {
         Self::respond(dispatch, server, rq, rv)
+    }
+    #[inline]
+    fn span(dispatch: &Self::Dispatch) -> &HandledRequest {
+        &dispatch.span
+    }
+    #[inline]
+    fn call_handler(
+        dispatch: &Self::Dispatch,
+        global: &JSGlobalObject,
+        handler: JSValue,
+        this: JSValue,
+        args: &[JSValue],
+    ) -> JSValue {
+        Self::call_handler(dispatch, global, handler, this, args)
     }
     #[inline]
     fn to_async(&self, req: &mut Self::Req, ro: &Request) {
@@ -1623,7 +1646,7 @@ where
         if sec_websocket_version.slice() != b"13" {
             resp.write_status(b"426 Upgrade Required");
             resp.write_header(b"Sec-WebSocket-Version", b"13");
-            upgrader.flags.set_has_written_status(true);
+            upgrader.did_write_status(426);
             upgrader.end_without_body(true);
             return Ok(false);
         }
@@ -1700,6 +1723,8 @@ where
             // on_abort nor an end path can reclaim a parked handler promise's
             // claim later. Reclaim it here.
             upgrader.reclaim_promise_cell();
+            upgrader.span.set_status(101);
+            upgrader.span.end(false);
             drop(detached);
 
             if !resp.upgrade(
@@ -2246,7 +2271,13 @@ where
         );
     }
 
-    pub(super) fn on_mux_404<R: RespLike>(_this: &Self, _req: &mut uws::H3::Request, resp: &mut R) {
+    pub(super) fn on_mux_404<R: RespLike>(this: &Self, req: &mut uws::H3::Request, resp: &mut R) {
+        let mut span = super::AnyServer::from(std::ptr::from_ref(this)).begin_span(
+            &uws::AnyRequest::H3(req),
+            resp.to_any_response(),
+            core::ptr::null(),
+        );
+        span.set_status(404);
         resp.write_status(b"404 Not Found");
         resp.end_without_body(false);
     }
@@ -2341,6 +2372,7 @@ where
         let global = bun_opaque::opaque_deref(server.global_this);
         let (request, response_value) =
             DispatchedRequest::call_route(request, global, |request, js_request| {
+                let _active = Ctx::span(&ctx).enter_route(global, user_route.route.path.as_bytes());
                 call_route(
                     global,
                     index,
@@ -2391,11 +2423,8 @@ where
 
         let global = self.global_this();
         let request = DispatchedRequest(request.wrap(global));
-        let response_value =
-            match on_request_fn.call(global, js_value, &[request.to_js(), js_value]) {
-                Ok(v) => v,
-                Err(err) => global.take_exception(err),
-            };
+        let args = [request.to_js(), js_value];
+        let response_value = Ctx::call_handler(&ctx, global, on_request_fn, js_value, &args);
 
         self.handle_request_for::<Ctx>(&request, ctx, req, response_value);
     }
@@ -2624,6 +2653,7 @@ where
         let global = bun_opaque::opaque_deref(server.global_this);
         let (request, response_value) =
             DispatchedRequest::call_route(request, global, |request, js_request| {
+                let _active = ctx.span.enter_route(global, this.route.path.as_bytes());
                 Bun__ServerRouteList__callRoute(
                     global,
                     index,
@@ -2724,10 +2754,8 @@ where
         let request = DispatchedRequest(request.wrap(&global));
         let args = [request.to_js(), server_js];
 
-        let response_value = match this.config.get().on_request.call(&global, server_js, &args) {
-            Ok(v) => v,
-            Err(err) => global.take_exception(err),
-        };
+        let on_request = this.config.get().on_request;
+        let response_value = ctx.call_handler(&global, on_request, server_js, &args);
 
         let Some(ctx) = ServerRequestContext::respond(ctx, this, request.to_js(), response_value)
         else {

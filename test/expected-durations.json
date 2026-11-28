@@ -2812,6 +2812,10 @@
     "default": 2600,
     "asan": 1800
   },
+  "aot/opentelemetry-in-an-executable.test.ts": {
+    "default": 6000,
+    "asan": 24000
+  },
   "aot/options-that-are-no-literal-keep-what-they-name.test.ts": {
     "default": 60000,
     "asan": 137700

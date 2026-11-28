@@ -1,11 +1,14 @@
 {
   "name": "test",
   "devDependencies": {
+    "@opentelemetry/api": "1.9.0",
+    "@opentelemetry/otlp-transformer": "0.208.0",
     "@types/react": "18.0.28",
     "@types/react-dom": "18.0.11",
     "@types/supertest": "2.0.12",
     "@types/utf-8-validate": "5.0.0",
-    "@types/ws": "8.5.10"
+    "@types/ws": "8.5.10",
+    "opentelemetry-api-1.10": "npm:@opentelemetry/api@1.10.0"
   },
   "dependencies": {
     "@astrojs/node": "9.1.3",

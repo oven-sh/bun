@@ -68,6 +68,7 @@ static constexpr int32_t kOwnedByDatabaseFlag = 1 << 3;
 /* ******************************************************************************** */
 
 #include "SqliteCallbackRoots.h"
+#include "SqliteSpan.h"
 #include "SqliteUserFunction.h"
 #include <wtf/SetForScope.h>
 
@@ -1453,6 +1454,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
         return {};
 
     const int32_t internalFlags = internalFlagsValue.isInt32() ? internalFlagsValue.asInt32() : 0;
+    Bun::SqliteSpan span { lexicalGlobalObject, db, sql.begin() };
     auto changes = runStatements(lexicalGlobalObject, scope, versionDB, db, sql, sql.begin(), bindingsValue, internalFlags, false);
     RETURN_IF_EXCEPTION(scope, {});
     if (!changes) {
@@ -1560,6 +1562,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     int rc = sqlite3_prepare_v3(db, sql.begin(), -1, flags, outPtr(statement), nullptr);
 
     if (rc != SQLITE_OK) {
+        Bun::SqliteSpan span { lexicalGlobalObject, db, sql.begin() };
         if (!scope.exception())
             throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
         return {};
@@ -2206,6 +2209,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionIterate, (JSC::JS
     auto* castedThis = resetAndBind(lexicalGlobalObject, scope, callFrame->thisValue(), callFrame->argument(0));
     if (!castedThis)
         return {};
+    Bun::SqliteSpan span { lexicalGlobalObject, castedThis->stmt.get() };
 
     StatementRun run { castedThis->stmt.get() };
     JSC::EncodedJSValue row = stepIterator<true>(lexicalGlobalObject, scope, castedThis);
@@ -2267,6 +2271,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
     auto* castedThis = resetAndBind(lexicalGlobalObject, scope, callFrame->thisValue(), callFrame->argument(0));
     if (!castedThis)
         return {};
+    Bun::SqliteSpan span { lexicalGlobalObject, castedThis->stmt.get() };
 
     StatementRun run { castedThis->stmt.get() };
     int status = step(lexicalGlobalObject, scope, castedThis->stmt.get());
@@ -2292,6 +2297,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
     auto* castedThis = resetAndBind(lexicalGlobalObject, scope, callFrame->thisValue(), callFrame->argument(0));
     if (!castedThis)
         return {};
+    Bun::SqliteSpan span { lexicalGlobalObject, castedThis->stmt.get() };
 
     auto* stmt = castedThis->stmt.get();
     StatementRun run { stmt };
@@ -2320,6 +2326,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
     auto* castedThis = resetAndBind(lexicalGlobalObject, scope, callFrame->thisValue(), callFrame->argument(0));
     if (!castedThis)
         return {};
+    Bun::SqliteSpan span { lexicalGlobalObject, castedThis->stmt.get() };
 
     StatementRun run { castedThis->stmt.get() };
     JSC::EncodedJSValue rows = castedThis->useBigInt64
@@ -2337,6 +2344,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JS
     auto* castedThis = resetAndBind(lexicalGlobalObject, scope, callFrame->thisValue(), callFrame->argument(0));
     if (!castedThis)
         return {};
+    Bun::SqliteSpan span { lexicalGlobalObject, castedThis->stmt.get() };
 
     StatementRun run { castedThis->stmt.get() };
     JSC::EncodedJSValue rows = collectArrays<toJSAsBuffer>(lexicalGlobalObject, scope, castedThis);
@@ -2352,6 +2360,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
     auto* castedThis = resetAndBind(lexicalGlobalObject, scope, callFrame->thisValue(), callFrame->argument(1));
     if (!castedThis)
         return {};
+    Bun::SqliteSpan span { lexicalGlobalObject, castedThis->stmt.get() };
 
     auto* stmt = castedThis->stmt.get();
     auto* db = sqlite3_db_handle(stmt);

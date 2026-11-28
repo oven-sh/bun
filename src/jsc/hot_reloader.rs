@@ -17,7 +17,7 @@ use bun_sys::Fd;
 use bun_watcher::WatchItemColumns as _;
 use bun_watcher::{Op as WatchOp, OwnedWatcher, Watcher};
 
-use crate::virtual_machine::{HotReload, VirtualMachine};
+use crate::virtual_machine::{HotReload, TelemetryFlush, VirtualMachine, flush_telemetry};
 use bun_event_loop::task_tag;
 
 bun_core::declare_scope!(hot_reloader, visible);
@@ -204,6 +204,7 @@ impl HotReloader {
         if self.reload_immediately && !crate::posix_signal_handle::watch_kill_signal_has_listeners()
         {
             crate::node_compile_cache::persist_now();
+            flush_telemetry(TelemetryFlush::WithoutExit);
             Output::flush();
             self.changed_paths.write_trigger_file();
             bun_removable_features::removable_body!(HotReload, Abort, {
@@ -241,6 +242,7 @@ fn arm_watch_reload_grace_timer(clear_screen: bool) {
         // flush the compile cache first (safe off the JS thread; generation
         // runs on its own worker VM).
         crate::node_compile_cache::persist_now();
+        flush_telemetry(TelemetryFlush::WithoutExit);
         Output::flush();
         bun_removable_features::removable_body!(HotReload, Abort, {
             bun_core::reload_process(clear_screen, false);

@@ -17,6 +17,7 @@ use crate::server::file_response_stream::{
 };
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_jsc::bun_string_jsc;
+use bun_telemetry_jsc::http_server::AnsweredRequest;
 
 use crate::server::{
     AnyServer, FileResponseStream, HTTPStatusText, PendingRequest, RangeRequest, Served,
@@ -249,8 +250,10 @@ impl FileRoute {
     pub(crate) fn on(self: RefPtr<Self>, mut req: AnyRequest, resp: AnyResponse, method: Method) {
         debug_assert!(self.server.get().is_some());
         let route = PendingRequest::new(self);
+        let mut span = AnsweredRequest::default();
         if let Some(server) = route.server.get() {
             resp.timeout(server.config().idle_timeout);
+            span = server.begin_span(&req, resp, route.as_ptr().cast_const().cast());
         }
         let store = route.blob.store().unwrap().clone();
         let Some(path) = store.get_path() else {
@@ -268,7 +271,7 @@ impl FileRoute {
         };
         let fd = StreamFd::from(bun_sys::File::from_fd(fd));
 
-        match route.serve(fd.get(), path, &mut req, resp, method) {
+        match route.serve(fd.get(), path, &mut req, resp, method, &mut span) {
             Serve::Done => {}
             Serve::Stream {
                 file_type,
@@ -286,7 +289,7 @@ impl FileRoute {
                     offset,
                     length,
                     idle_timeout: server.config().idle_timeout,
-                    owner: StreamOwner::FileRoute(route),
+                    owner: StreamOwner::FileRoute(route, span),
                 });
             }
         }
@@ -299,6 +302,7 @@ impl FileRoute {
         req: &mut AnyRequest,
         resp: AnyResponse,
         method: Method,
+        span: &mut AnsweredRequest,
     ) -> Serve {
         let (can_serve_file, offset, size, file_type, pollable) = 'brk: {
             let stat = match bun_sys::fstat(fd) {
@@ -371,6 +375,7 @@ impl FileRoute {
 
         req.set_yield(false);
 
+        span.set_status(status_code);
         write_any_status(resp, status_code);
         if self.has_date_header {
             resp.mark_wrote_date_header();

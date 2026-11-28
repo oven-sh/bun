@@ -142,15 +142,16 @@ impl Publisher {
         global: &JSGlobalObject,
         request: &AsyncHTTP<'_>,
     ) -> JsResult<Option<Headers>> {
-        let arguments = arguments_of_hop(global, &request.first_hop())?;
+        let hop = request.first_hop();
+        let arguments = arguments_of_hop(global, &hop)?;
         let fields =
             (self.publish).call_for_running_script(global, JSValue::UNDEFINED, &arguments)?;
-        headers_from_js(global, fields)
+        headers_from_js(global, fields, &hop)
     }
 
     pub(crate) fn next_hop(self, global: &JSGlobalObject, hop: &Hop) -> JsResult<Option<Headers>> {
         let fields = self.call(global, &arguments_of_hop(global, hop)?)?;
-        headers_from_js(global, fields)
+        headers_from_js(global, fields, hop)
     }
 
     pub(crate) fn error(
@@ -283,7 +284,11 @@ fn headers_to_js(
 }
 
 /// `writeFields()` has validated them.
-fn headers_from_js(global: &JSGlobalObject, fields: JSValue) -> JsResult<Option<Headers>> {
+fn headers_from_js(
+    global: &JSGlobalObject,
+    fields: JSValue,
+    hop: &Hop,
+) -> JsResult<Option<Headers>> {
     if !fields.is_array() {
         return Ok(None);
     }
@@ -294,6 +299,7 @@ fn headers_from_js(global: &JSGlobalObject, fields: JSValue) -> JsResult<Option<
         let (name, value) = (name.to_bun_string(global)?, value.to_bun_string(global)?);
         headers.append(&bytes_of(&name), &bytes_of(&value));
     }
+    bun_telemetry_jsc::http_client::drop_second_context(&hop.headers, &mut headers);
     Ok(Some(headers))
 }
 

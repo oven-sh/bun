@@ -517,7 +517,7 @@ ${namespace.functions
       `    object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, ${asciiLiteral(fn.name)}), ${fn.length}, ${hostFunctionName(fn)}, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, 0);`,
   )
   .join("\n")}
-    return object;
+${namespace.finishedBy ? `    ${namespace.finishedBy.name}(vm, globalObject, object);\n` : ""}    return object;
 }
 }
 extern "C" SYSV_ABI JSC::EncodedJSValue js2native_bindgen_${origin.stem}_${namespace.name}(Zig::GlobalObject* globalObject)
@@ -1912,6 +1912,7 @@ export function cppSource(file: SchemaFile, guards: Guards): string {
     if (type.webIDL) for (const header of webIDLHeaders) headers.add(header);
     for (const cell of type.internalFieldClasses.values()) headers.add(cell.header);
   }
+  for (const { finishedBy } of file.namespaces) if (finishedBy) headers.add(finishedBy.header);
   headers.delete(`Generated${file.origin.namespace}.h`);
   const accepted = file.types.filter(type => type instanceof DictionaryType && type.accepted) as DictionaryType[];
   if (accepted.length > 0) headers.add("Bindgen/DictionaryMemberReader.h");

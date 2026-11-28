@@ -3081,6 +3081,14 @@ pub mod rand {
             }
             Self { s }
         }
+        /// An all-zero state never leaves zero, so it is seeded like `init(0)`.
+        pub fn from_state(s: [u64; 4]) -> Self {
+            if s == [0; 4] {
+                Self::init(0)
+            } else {
+                Self { s }
+            }
+        }
         #[inline]
         pub fn next_u64(&mut self) -> u64 {
             let r = self.s[0]

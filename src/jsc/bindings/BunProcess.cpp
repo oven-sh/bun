@@ -169,6 +169,7 @@ extern "C" bool Bun__getEnvValue(JSC::JSGlobalObject* globalObject, const Encode
 extern "C" bool Bun__Node__ProcessThrowDeprecation;
 extern "C" bool Bun__Node__ProcessPendingDeprecation;
 extern "C" void Bun__writeProfilesBeforeSelfKill(bool signalEndsProcess);
+extern "C" void Bun__flushTelemetryBeforeExecve();
 #if !OS(WINDOWS)
 extern "C" void onExitSignal(int);
 #endif
@@ -2378,6 +2379,12 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
     for (auto& s : envStorage)
         envp.append(const_cast<char*>(s.legacyCStringPointer()));
     envp.append(nullptr);
+
+    // The flush is the last try for what a collector refused, and a program that searches PATH goes on after a miss.
+    if (access(execPathUtf8.legacyCStringPointer(), F_OK) == 0 || (errno != ENOENT && errno != ENOTDIR)) {
+        Bun__flushTelemetryBeforeExecve();
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     // Set stdin, stdout and stderr to be non-close-on-exec so that the new
     // process will inherit them. Record the previous flags so a failed

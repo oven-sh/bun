@@ -143,6 +143,7 @@ pub struct HTTPResponseMetadata {
     response: Response,
     /// In `response.headers.buf`.
     url: StringPointer,
+    protocol: Protocol,
 }
 
 impl HTTPResponseMetadata {
@@ -153,6 +154,14 @@ impl HTTPResponseMetadata {
     #[inline]
     pub fn status_text(&self) -> &[u8] {
         self.response.status_text()
+    }
+    pub fn http_version(&self) -> &'static str {
+        match self.protocol {
+            Protocol::Http1_1 if self.response.minor_version == 0 => "1.0",
+            Protocol::Http1_1 => "1.1",
+            Protocol::Http2 => "2",
+            Protocol::Http3 => "3",
+        }
     }
     pub fn url(&self) -> &[u8] {
         self.headers().as_str(self.url)
@@ -223,6 +232,8 @@ pub struct Flags {
     pub redirect_credentials: RedirectCredentialsPolicy,
     /// While all connections are taken, this request lets the ones without the flag go first.
     pub yields_to_other_requests: bool,
+    /// It starts while all connections are taken, and takes none. For a caller that bounds its requests itself.
+    pub ignores_request_limit: bool,
 }
 
 impl Default for Flags {
@@ -248,6 +259,7 @@ impl Default for Flags {
             is_node_http_client: false,
             redirect_credentials: RedirectCredentialsPolicy::SameOrigin,
             yields_to_other_requests: false,
+            ignores_request_limit: false,
         }
     }
 }
@@ -650,6 +662,7 @@ use core::ptr::NonNull;
 /// HTTP thread can re-resolve `HTTPClient::http_proxy` per redirect hop.
 /// curl / Node's undici `EnvHttpProxyAgent` both re-run the no_proxy match
 /// and the http/https proxy choice against each redirected URL.
+#[derive(Clone)]
 pub struct ProxySettings {
     http_proxy: Box<[u8]>,
     https_proxy: Box<[u8]>,
@@ -3618,7 +3631,11 @@ impl<'a> HTTPClient<'a> {
         };
         buf.reserve_exact(self.url.href.len());
         buf.extend_from_slice(self.url.href);
-        self.state.metadata = Some(HTTPResponseMetadata { response, url });
+        self.state.metadata = Some(HTTPResponseMetadata {
+            response,
+            url,
+            protocol: self.flags.protocol,
+        });
     }
 
     /// The idle timeout to arm for this request, in seconds (0 = disabled):

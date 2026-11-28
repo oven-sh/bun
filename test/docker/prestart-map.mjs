@@ -17,6 +17,7 @@ export const prestartMap = {
   "js/sql/sql-empty-column-name": ["mysql_plain", "mariadb_plain"],
   "js/sql/sql-errors": ["postgres_plain", "mysql_plain"],
   "js/sql/sql-handles-servers": ["postgres_plain", "mysql_plain", "mariadb_plain"],
+  "js/sql/sql-otel": ["postgres_plain", "mysql_plain"],
   "js/sql/sql-hot-reload": ["postgres_plain", "mysql_plain"],
   "js/sql/sql-onconnect-onclose-throw": ["postgres_plain", "mysql_plain", "mariadb_plain"],
   "js/sql/sql-pool.test": ["postgres_plain", "mysql_plain", "mariadb_plain"],

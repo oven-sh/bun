@@ -3989,6 +3989,7 @@ test("ModuleGraph isolation: every property of Bun is classified", () => {
     // Process-wide by design.
     cron: "host", // registers with the operating system's scheduler
     plugin: "host",
+    otel: "host",
     registerMacro: "host",
     stdin: "host",
     stdout: "host",

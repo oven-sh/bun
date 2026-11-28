@@ -803,6 +803,12 @@ const nativeCalls = [
         onBehalfOf: startedWorkers,
         calls: environmentObjectMade(listedWithValues),
       },
+      {
+        file: inBindings("TelemetryBindings.cpp"),
+        caller: "Bun__Telemetry__processEnv",
+        onBehalfOf: ["Bun.otel.start"],
+        calls: environmentObjectMade(listedWithValues),
+      },
       // vi.stubEnv stores into the object. Whoever sees it has read one of the names above.
       { file: inBindings("ViUtils.cpp"), caller: "processEnv", onBehalfOf: ["process.env"] },
     ],

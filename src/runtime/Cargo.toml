@@ -116,6 +116,7 @@ bun_text_diff.workspace = true
 bun_threading.workspace = true
 bun_trim.workspace = true
 bun_url.workspace = true
+bun_telemetry_jsc.workspace = true
 bun_uws.workspace = true
 bun_uws_sys.workspace = true
 bun_valkey.workspace = true

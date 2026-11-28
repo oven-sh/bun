@@ -974,16 +974,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     return globalObject;
 }
 
-static bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
-{
-    if (!record)
-        return false;
-    if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record))
-        return cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluated && !cyclic->evaluationError();
-    // SyntheticModuleRecord is "evaluated" once linked (it has an environment).
-    return record->moduleEnvironmentMayBeNull() != nullptr;
-}
-
 // A non-TLA record that is mid-evaluation: require() re-entered it from
 // inside its own evaluation (a require cycle). Its namespace is live —
 // hoisted functions callable, bindings not yet initialized in TDZ — the same
@@ -1128,7 +1118,7 @@ static JSC::AbstractModuleRecord* evaluatedModuleRecord(JSC::JSGlobalObject* glo
     if (!loader)
         return nullptr;
     auto* entry = loader->registryEntry(JSC::Identifier::fromUid(globalObject->vm(), atom.data));
-    return entry && isModuleEvaluated(entry->record()) ? entry->record() : nullptr;
+    return entry && Bun::isModuleEvaluated(entry->record()) ? entry->record() : nullptr;
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1258,7 +1248,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject 
     };
     if (auto* loader = moduleLoaderOfRequirer(globalObject, callFrame->argument(0))) {
         Bun::forEachModuleRegistrySpecifier(loader, [&](UniquedStringImpl* specifier, JSC::ModuleRegistryEntry* entry) {
-            if (isModuleEvaluated(entry->record()) && !Bun::isRecordOfCompiledFile(entry->record()))
+            if (Bun::isModuleEvaluated(entry->record()) && !Bun::isRecordOfCompiledFile(entry->record()))
                 add(String { specifier });
         });
     }
@@ -1298,7 +1288,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     }
     auto* entryBefore = loader->registryEntry(key);
     if (auto* entry = entryBefore) {
-        if (isModuleEvaluated(entry->record()) || isModuleEvaluatingSync(entry->record())) {
+        if (Bun::isModuleEvaluated(entry->record()) || isModuleEvaluatingSync(entry->record())) {
             // A mock answers for a module of native code that compiled code has imported: the entry is the image's, and so is its namespace object.
             if (Bun::isRecordOfCompiledModule(entry->record())) [[unlikely]]
                 RELEASE_AND_RETURN(scope, JSValue::encode(entry->record()->moduleNamespaceObject(globalObject)));

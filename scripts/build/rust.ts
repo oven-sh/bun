@@ -271,6 +271,7 @@ const generatedFilesReadBy: Record<string, string[] | "all"> = {
   bun_sourcemap_jsc: ["generated_bindgen_bun_sourcemap_jsc.rs"],
   bun_sql_jsc: ["generated_bindgen_bun_sql_jsc.rs"],
   bun_sys_jsc: ["generated_bindgen_bun_sys_jsc.rs"],
+  bun_telemetry_jsc: ["generated_bindgen_bun_telemetry_jsc.rs"],
 };
 
 function generatedFilesOf(packageName: string): string[] | "all" {

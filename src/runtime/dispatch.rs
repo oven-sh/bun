@@ -487,6 +487,12 @@ pub(crate) fn run_task(
             }
         )?,
 
+        task_tag::Telemetry => task_arm!(
+            task,
+            [Telemetry],
+            |task: bun_telemetry_jsc::VmTask| -> JsResult<()> { task.run() }
+        )?,
+
         // ── napi ─────────────────────────────────────────────────────────
         task_tag::NapiAsyncWork => in_features!(
             [NativeAddons],
@@ -715,7 +721,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 82,
+    task_tag::COUNT == 83,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1147,6 +1153,14 @@ pub(crate) unsafe fn fire_timer(
                 |c, _now, vm| (*c).on_gc_repeating_timer(vm)
             )
         }
+        EventLoopTimerTag::TelemetryFlush => in_features!(
+            [Telemetry],
+            (t: *mut EventLoopTimer = t) -> JsResult<()> {
+                // SAFETY: §Dispatch — `t` is the `timer` field of the VM's state.
+                unsafe { (*bun_telemetry_jsc::VmState::from_timer_ptr(t)).on_timer() };
+                Ok(())
+            }
+        ),
         EventLoopTimerTag::FakeTimersTick => crate::timer::FakeTimers::on_tick_timer(vm.global()),
         EventLoopTimerTag::DateHeaderTimer => {
             timer_arm!(DateHeaderTimer, event_loop_timer, |c, _now, vm| (*c)
@@ -1523,6 +1537,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::S3HttpSimpleTask => release_in!([S3Client], S3HttpSimpleTask),
         task_tag::S3RefusedRequest => release_in!([S3Client], S3RefusedRequest),
         task_tag::S3UploadWriterCollected => release_in!([S3Client], S3UploadWriterCollected),
+        task_tag::Telemetry => release_in!([Telemetry], bun_telemetry_jsc::VmTask),
         task_tag::SendQueueDeferred => release_in!([Ipc], crate::ipc::SendQueue),
         task_tag::ServerAllConnectionsClosedTask => {
             release_in!([Serve], ServerAllConnectionsClosedTask)

@@ -77,6 +77,7 @@
 #include "GeneratedValkey.h"
 #include "GeneratedXMLObject.h"
 #include "GeneratedYAMLObject.h"
+#include "GeneratedTelemetry.h"
 #include "JavaScriptCore/BunV8HeapSnapshotBuilder.h"
 #include "BunObjectModule.h"
 #include "_NativeModule.h"
@@ -1090,6 +1091,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     nanoseconds                                    functionBunNanoseconds                                              DontDelete|Function 0
     openInEditor                                   Bun::Bindgen::Generated::BunObject::jsOpenInEditor                  DontDelete|Function 1
     origin                                         BunObject_lazyPropCb_wrap_origin                                    DontEnum|ReadOnly|DontDelete|PropertyCallback
+    otel                                           Bun::Bindgen::Generated::Telemetry::createOtel                      ReadOnly|DontDelete|PropertyCallback
     version_with_sha                               constructBunVersionWithSha                                          DontEnum|ReadOnly|DontDelete|PropertyCallback
     password                                       Bun::Bindgen::Generated::PasswordObject::createPassword             DontDelete|PropertyCallback
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1

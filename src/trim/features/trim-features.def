@@ -235,6 +235,10 @@ trim-feature cron : Cron
   about "`Bun.cron()`. Included in `\"spawn\"`."
   saves 0.0 0.0
 
+trim-feature otel : Telemetry
+  about "`Bun.otel`, `BUN_OTEL=1` and `[otel]` in `bunfig.toml`: OpenTelemetry tracing."
+  saves 0.3 0.3
+
 trim-feature secrets : Secrets
   about "`Bun.secrets`."
   saves 0.0 0.0

@@ -1,0 +1,15 @@
+[package]
+name = "bun_telemetry"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_core.workspace = true
+bun_http_types.workspace = true
+bun_threading.workspace = true

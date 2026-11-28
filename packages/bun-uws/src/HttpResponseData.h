@@ -245,6 +245,9 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * flood). */
     uint32_t nodeHttpQueuedPipelinedCount = 0;
 
+    /* What OpenTelemetry knows the connection by, 0 until it asks. */
+    uint32_t telemetryTag = 0;
+
     /* Whether the connection should be torn down once the in-flight response (if
      * any) has completed and all buffered outgoing data has been flushed. */
     bool shouldCloseConnection() const {

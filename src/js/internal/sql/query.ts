@@ -18,6 +18,7 @@ const PublicPromise = Promise;
 
 export interface BaseQueryHandle<Connection> {
   cancel?(): void;
+  failSpan?(error: unknown): void;
   setMode(mode: SQLQueryResultMode): void;
   run(connection: Connection, query: Query<any, any>): void | Promise<void>;
 }
@@ -197,6 +198,8 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
   reject(x: Error) {
     this[_queryStatus] |= SQLQueryStatus.error;
+    // The native query hears nothing of a failure before it has a connection.
+    this[_handle]?.failSpan?.(x);
     this.#settling();
 
     return this[_reject](x);

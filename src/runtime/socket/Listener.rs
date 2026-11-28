@@ -610,6 +610,7 @@ impl Listener {
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: Cell::new(None),
             verify_error: JsCell::new(None),
+            connect_span: Default::default(),
             latest_session: JsCell::new(None),
         });
         // See `on_create`: each accepted named-pipe connection holds the loop
@@ -656,6 +657,7 @@ impl Listener {
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: Cell::new(None),
             verify_error: JsCell::new(None),
+            connect_span: Default::default(),
             latest_session: JsCell::new(None),
         });
         // Each accepted socket holds the event loop on its own (same as a
@@ -1045,6 +1047,7 @@ impl Listener {
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
                             twin: Cell::new(None),
                             verify_error: JsCell::new(None),
+                            connect_span: Default::default(),
                             latest_session: JsCell::new(None),
                         })
                     };
@@ -1130,6 +1133,7 @@ impl Listener {
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
                             twin: Cell::new(None),
                             verify_error: JsCell::new(None),
+                            connect_span: Default::default(),
                             latest_session: JsCell::new(None),
                         })
                     };
@@ -1384,6 +1388,7 @@ fn connect_finish<const IS_SSL: bool>(
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: Cell::new(None),
             verify_error: JsCell::new(None),
+            connect_span: Default::default(),
             latest_session: JsCell::new(None),
         })
     };

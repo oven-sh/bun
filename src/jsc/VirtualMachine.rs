@@ -747,6 +747,9 @@ impl VMHolder {
         crate::node_compile_cache::persist_now();
         // Written once, and writing it ends the recording: only before a signal that is sure to end the process, not
         // one a program sends itself along the way (SIGTSTP on Ctrl-Z, SIGWINCH, one that is being ignored, ...).
+        if signal_ends_process {
+            flush_telemetry(TelemetryFlush::WithoutExit);
+        }
         if signal_ends_process && vm.is_main_thread() {
             crate::bytecode_order_recorder::write_at_exit(vm, standalone_module_graph());
         }
@@ -962,6 +965,13 @@ impl VirtualMachine {
     pub fn get_main_thread_vm() -> Option<*mut VirtualMachine> {
         let p = MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire);
         if p.is_null() { None } else { Some(p) }
+    }
+
+    /// Callable from any thread.
+    pub fn main_thread_handle() -> Option<crate::VmHandle> {
+        let vm = MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire);
+        // SAFETY: it outlives every other VM, and `handle` is never written after `init`.
+        (!vm.is_null()).then(|| unsafe { (*vm).handle.clone() })
     }
 
     #[inline]
@@ -2100,6 +2110,8 @@ impl VirtualMachine {
 
         ExitHandler::dispatch_on_exit(self);
 
+        flush_telemetry(TelemetryFlush::AtExit);
+
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
         if !self.is_inside_deferred_task_queue.get() {
             let _inside = self.is_inside_deferred_task_queue.raise_for_scope();
@@ -2165,6 +2177,9 @@ impl VirtualMachine {
 
     pub fn global_exit(&self) -> ! {
         debug_assert!(self.is_shutting_down());
+        if !self.has_run_cleanup_hooks() {
+            flush_telemetry(TelemetryFlush::AtExit);
+        }
         // FIXME: we should be doing this, but we're not, but unfortunately
         // doing it causes like 50+ tests to break
         // self.event_loop().tick();
@@ -2265,6 +2280,10 @@ impl VirtualMachine {
         // 'close'/'error' handler runs after 'exit', and nothing can reopen what
         // a sweep just closed.
         self.forbid_script();
+        if matches!(kind, Teardown::Worker) {
+            // What `on_exit` ran after its flush may have turned tracing on.
+            flush_telemetry(TelemetryFlush::AtExit);
+        }
         Zig__GlobalObject__prepareForDestruction(self.global());
         // SAFETY: fn contract.
         let sweep = || unsafe {
@@ -2604,6 +2623,28 @@ pub struct TimersLeft {
     pub holds_loop_ref: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum TelemetryFlush {
+    /// The VM of this thread runs no more script.
+    AtExit,
+    /// The process is replaced or kills itself, from any thread. A collector that is down must not hold it up.
+    WithoutExit,
+    /// `bun test --isolate`, while the file's functions can still be called.
+    AtEndOfTestFile,
+}
+
+/// Exports the OpenTelemetry spans that have ended.
+pub fn flush_telemetry(when: TelemetryFlush) {
+    if let Some(hooks) = runtime_hooks() {
+        (hooks.flush_telemetry)(when);
+    }
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__flushTelemetryBeforeExecve() {
+    flush_telemetry(TelemetryFlush::WithoutExit);
+}
+
 /// Which of its timers a `--hot` run takes with it.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum CancelHotRunTimers {
@@ -2776,6 +2817,9 @@ pub struct RuntimeHooks {
     /// # Safety
     /// JS thread; `runtime_state` installed.
     pub close_timer_loop_handles_after_vm_destroyed: unsafe fn(),
+    /// Turns OpenTelemetry tracing on for the calling thread's VM if the environment asks for it.
+    pub start_telemetry: fn(),
+    pub flush_telemetry: fn(TelemetryFlush),
 }
 
 bun_io::link_impl_EventLoopCtx! {
@@ -3238,6 +3282,9 @@ impl VirtualMachine {
 
         let hooks = runtime_hooks();
         let _ = self.ensure_debugger(true);
+        if let Some(hooks) = hooks {
+            (hooks.start_telemetry)();
+        }
 
         // Node.js `--trace-*` and `--stack-trace-limit` flags need
         // `internal/process/pre_execution` to run before any user code.
@@ -4266,6 +4313,7 @@ impl VirtualMachine {
         // execve will not reach on_exit; flush the compile cache here like
         // node's child does via AtExit(FlushCompileCache) on every restart.
         crate::node_compile_cache::persist_now();
+        flush_telemetry(TelemetryFlush::WithoutExit);
         bun_core::Output::flush();
         bun_removable_features::removable_body!(HotReload, Abort, {
             bun_core::reload_process(should_clear_terminal, may_return);
@@ -5301,6 +5349,9 @@ impl VirtualMachine {
         self.event_loop().ensure_waker();
 
         let _ = self.ensure_debugger(true);
+        if let Some(hooks) = runtime_hooks() {
+            (hooks.start_telemetry)();
+        }
 
         if !self.transpiler.get().options.disable_transpilation {
             if let Some(hooks) = runtime_hooks() {
@@ -5514,6 +5565,7 @@ impl VirtualMachine {
     /// outgoing global) before the blind socket-group close below.
     pub fn swap_global_for_test_isolation(&self) {
         debug_assert!(self.test_isolation_enabled.get());
+        flush_telemetry(TelemetryFlush::AtEndOfTestFile);
         // Only the file's graph and its context are torn down. The global object is kept.
         let shares_global = self.test_isolation_state.shares_global.get();
 

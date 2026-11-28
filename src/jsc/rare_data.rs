@@ -211,6 +211,9 @@ pub struct RareData {
     /// Held until `tls.DEFAULT_CIPHERS` is assigned so the weak-cache entry never tombstones.
     pub default_client_ssl_ctx: JsCell<Option<boring::OwnedSslCtx>>,
 
+    /// `bun_telemetry_jsc::VmState`, whose crate depends on this one.
+    pub telemetry: OnceCell<Box<dyn core::any::Any>>,
+
     /// Watch-mode restart needs to RST every listen socket so the new process
     /// can rebind without `EADDRINUSE`. Written on the JS thread; drained on
     /// the watcher thread — hence the mutex (PORTING.md §Concurrency: lock
@@ -264,6 +267,7 @@ impl Default for RareData {
             test_parallel_ipc_group: SocketGroup::default(),
             socket_groups: SocketGroups::default(),
             default_client_ssl_ctx: JsCell::new(None),
+            telemetry: OnceCell::new(),
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
             pipe_read_scratch: Box::new(bun_event_loop::PipeReadScratch::new()),
             h2_padded_frame_buffer: JsCell::new(None),

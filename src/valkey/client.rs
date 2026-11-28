@@ -315,6 +315,10 @@ impl<P> Client<P> {
         &self.config
     }
 
+    pub fn database(&self) -> u32 {
+        self.database
+    }
+
     pub fn is_dialing(&self) -> bool {
         matches!(self.state, Opening(Step::Dial, _))
     }

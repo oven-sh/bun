@@ -37,6 +37,7 @@ const namedIsUsedToday = [
   /^Bun\.diff\./,
   /^Bun\.dns\./,
   /^Bun\.markdown\./,
+  /^Bun\.otel\./,
   /^Bun\.password\./,
   /^Bun\.secrets\./,
   /^Bun\.semver\./,

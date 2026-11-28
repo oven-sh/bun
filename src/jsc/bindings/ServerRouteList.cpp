@@ -6,6 +6,7 @@
 #include <bun-uws/src/App.h>
 #include <bun-uws/src/Http3Request.h>
 #include "AsyncContextFrame.h"
+#include "TelemetryBindings.h"
 #include "ServerRouteList.h"
 #include "decodeURIComponentSIMD.h"
 #include "JSBunRequest.h"
@@ -249,6 +250,8 @@ JSValue ServerRouteList::callRoute(Zig::GlobalObject* globalObject, uint32_t ind
 
     JSValue callback = m_routes.at(index).get();
     ASSERT(callback);
+    if (!callback.isCallable() && Telemetry::isEnabled(Bun__Telemetry__httpServerBit)) [[unlikely]]
+        callback = Telemetry::callbackUnderActiveSpan(globalObject, callback);
     JSValue serverValue = JSValue::decode(serverObject);
     MarkedArgumentBuffer args;
     args.append(request);

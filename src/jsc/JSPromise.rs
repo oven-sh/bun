@@ -47,7 +47,7 @@ unsafe extern "C" {
     ) -> JSValue;
 
     safe fn JSC__JSPromise__status(this: &JSPromise) -> u32;
-    safe fn JSC__JSPromise__result(this: &mut JSPromise, vm: &VM) -> JSValue;
+    safe fn JSC__JSPromise__result(this: &JSPromise, vm: &VM) -> JSValue;
     safe fn JSC__JSPromise__setHandled(this: &mut JSPromise);
     // The resolve/reject/rejectAsHandled shims are `void` on the C side
     // (bindings.cpp) — there is no bool sentinel on the wire; a pending
@@ -241,7 +241,9 @@ impl JSPromise {
         JSPromise::opaque_ref(p).status()
     }
 
-    pub fn result(&mut self, vm: &VM) -> JSValue {
+    /// The settled value, or an empty `JSValue` while pending. A read only: code that consumes a
+    /// rejection marks it with [`set_handled`](Self::set_handled) or `unwrap(UnwrapMode::MarkHandled)`.
+    pub fn result(&self, vm: &VM) -> JSValue {
         JSC__JSPromise__result(self, vm)
     }
 

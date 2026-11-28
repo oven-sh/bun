@@ -2369,6 +2369,230 @@ console.log(load());
     expect(exitCode).toBe(0);
   });
 
+  // The child script prints the same under Node.js.
+  it("emits rejectionHandled for a first handler that comes after unhandledRejection, however the promise was rejected", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import vm from "node:vm";
+          import { Worker } from "node:worker_threads";
+          const noop = () => {};
+          const drain = async () => { for (let i = 0; i < 3; i++) await new Promise(resolve => setImmediate(resolve)); };
+          const names = new Map();
+          const result = {};
+          let onUnhandled = noop;
+          process.on("unhandledRejection", (reason, promise) => {
+            (result[names.get(promise)] ??= []).push("unhandledRejection");
+            onUnhandled(promise);
+          });
+          process.on("rejectionHandled", promise => (result[names.get(promise)] ??= []).push("rejectionHandled"));
+          const track = (name, promise) => (names.set(promise, name), promise);
+          const thenThrows = () => Promise.resolve().then(() => { throw new Error("x"); });
+
+          // Each is reported, and then gets its first handler.
+          const rejectedBy = {
+            // A resolving function rejects these.
+            "Promise.reject": () => Promise.reject(new Error("x")),
+            "executor reject": () => new Promise((_, reject) => reject(new Error("x"))),
+            "executor throw": () => new Promise(() => { throw new Error("x"); }),
+            "async throw": async () => { throw new Error("x"); },
+            "async throw after await": async () => { await null; throw new Error("x"); },
+            // A reaction job rejects these.
+            "then throws": thenThrows,
+            "then returns a rejected promise": () => Promise.resolve().then(() => Promise.reject(new Error("x"))),
+            "then returns a rejecting thenable": () => Promise.resolve().then(() => ({ then(_, reject) { reject(new Error("x")); } })),
+            "catch rethrows": () => Promise.reject(new Error("y")).catch(() => { throw new Error("x"); }),
+            "then passes a rejection on": () => Promise.reject(new Error("x")).then(noop),
+            "finally passes a rejection on": () => Promise.reject(new Error("x")).finally(noop),
+            "finally throws": () => Promise.resolve().finally(() => { throw new Error("x"); }),
+            "then(throws, onRejected)": () => Promise.resolve().then(() => { throw new Error("x"); }, noop),
+            "then throws in a node:vm context": () => vm.runInContext("Promise.resolve().then(() => { throw new Error('x'); })", vm.createContext({})),
+          };
+          for (const [name, make] of Object.entries(rejectedBy)) {
+            const promise = track(name, make());
+            await drain();
+            promise.catch(noop);
+            await drain();
+          }
+
+          // Each form of a first handler on a reported promise that a reaction job rejected. A second handler adds no event.
+          const handledBy = {
+            ".then(undefined, fn)": promise => void promise.then(undefined, noop),
+            ".then(fn)": promise => void promise.then(noop).catch(noop),
+            ".finally(fn)": promise => void promise.finally(noop).catch(noop),
+            "await in try/catch": async promise => { try { await promise; } catch {} },
+            "Promise.all([promise])": promise => void Promise.all([promise]).catch(noop),
+            "two handlers at once": promise => { promise.catch(noop); promise.catch(noop); },
+          };
+          for (const [name, attach] of Object.entries(handledBy)) {
+            const promise = track(name, thenThrows());
+            await drain();
+            await attach(promise);
+            await drain();
+            promise.catch(noop);
+            await drain();
+          }
+          {
+            const promise = track("its own unhandledRejection listener", thenThrows());
+            onUnhandled = reported => { if (reported === promise) promise.catch(noop); };
+            await drain();
+            onUnhandled = noop;
+          }
+
+          // Handled before the report: neither event.
+          track("the same turn", thenThrows()).catch(noop);
+          const beforeTick = track("process.nextTick", thenThrows());
+          process.nextTick(() => beforeTick.catch(noop));
+          const beforeMicrotask = track("a microtask", thenThrows());
+          queueMicrotask(() => queueMicrotask(() => beforeMicrotask.catch(noop)));
+          await drain();
+
+          track("never handled", thenThrows());
+          await drain();
+
+          const worker = new Worker(
+            \`
+              const events = [];
+              process.on("unhandledRejection", () => events.push("unhandledRejection"));
+              process.on("rejectionHandled", () => events.push("rejectionHandled"));
+              const drain = async () => { for (let i = 0; i < 3; i++) await new Promise(resolve => setImmediate(resolve)); };
+              (async () => {
+                const promise = Promise.resolve().then(() => { throw new Error("x"); });
+                await drain();
+                promise.catch(() => {});
+                await drain();
+                require("node:worker_threads").parentPort.postMessage(events);
+              })();
+            \`,
+            { eval: true },
+          );
+          result["then throws in a Worker"] = await new Promise((resolve, reject) => {
+            worker.once("message", resolve);
+            worker.once("error", reject);
+            worker.once("exit", code => reject(new Error("the worker exited with code " + code + " before its message")));
+          });
+          await worker.terminate();
+
+          console.log(JSON.stringify(result));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const late = ["unhandledRejection", "rejectionHandled"];
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "Promise.reject": late,
+      "executor reject": late,
+      "executor throw": late,
+      "async throw": late,
+      "async throw after await": late,
+      "then throws": late,
+      "then returns a rejected promise": late,
+      "then returns a rejecting thenable": late,
+      "catch rethrows": late,
+      "then passes a rejection on": late,
+      "finally passes a rejection on": late,
+      "finally throws": late,
+      "then(throws, onRejected)": late,
+      "then throws in a node:vm context": late,
+      ".then(undefined, fn)": late,
+      ".then(fn)": late,
+      ".finally(fn)": late,
+      "await in try/catch": late,
+      "Promise.all([promise])": late,
+      "two handlers at once": late,
+      "its own unhandledRejection listener": late,
+      "never handled": ["unhandledRejection"],
+      "then throws in a Worker": late,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Node.js prints PromiseRejectionHandledWarning only when no 'rejectionHandled' listener takes the event.
+  // Bun prints it in both cases, whatever rejected the promise.
+  it.each([
+    ["no rejectionHandled listener", "", ["PromiseRejectionHandledWarning"]],
+    [
+      "a rejectionHandled listener",
+      `process.on("rejectionHandled", () => seen.push("rejectionHandled"));`,
+      ["rejectionHandled", "PromiseRejectionHandledWarning"],
+    ],
+  ])(
+    "--unhandled-rejections=warn, %s: a late first handler on a promise that a reaction job rejected",
+    async (_, listener, afterTheHandler) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--unhandled-rejections=warn",
+          "-e",
+          `
+            const seen = [];
+            process.on("warning", warning => seen.push(warning.name));
+            ${listener}
+            const drain = async () => { for (let i = 0; i < 3; i++) await new Promise(resolve => setImmediate(resolve)); };
+            const promise = Promise.resolve().then(() => { throw new Error("x"); });
+            await drain();
+            promise.catch(() => {});
+            await drain();
+            console.log(JSON.stringify(seen));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(JSON.parse(stdout)).toEqual([
+        "UnhandledPromiseRejectionWarning",
+        "UnhandledPromiseRejectionWarning",
+        ...afterTheHandler,
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // Node.js emits 'beforeExit' one time here. In Bun a task of the event loop delivers 'rejectionHandled',
+  // so 'beforeExit' comes again after it, whatever rejected the promise.
+  it.each([
+    ["a reaction job", `Promise.resolve().then(() => { throw new Error("x"); })`],
+    ["Promise.reject()", `Promise.reject(new Error("x"))`],
+  ])(
+    "emits rejectionHandled for a first handler from a beforeExit listener, on a promise rejected by %s",
+    async (_, rejected) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const seen = [];
+            process.on("unhandledRejection", () => seen.push("unhandledRejection"));
+            process.on("rejectionHandled", () => seen.push("rejectionHandled"));
+            const promise = ${rejected};
+            let handled = false;
+            process.on("beforeExit", () => {
+              seen.push("beforeExit");
+              if (!handled) promise.catch(() => {});
+              handled = true;
+            });
+            process.on("exit", () => console.log(JSON.stringify(seen)));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["unhandledRejection", "beforeExit", "rejectionHandled", "beforeExit"]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
   it("aborts when the uncaughtException handler throws", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
       stderr: "pipe",

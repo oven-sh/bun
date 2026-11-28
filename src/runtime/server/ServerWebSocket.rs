@@ -661,37 +661,20 @@ impl ServerWebSocket {
         };
         let arguments = [self.js_value().unwrap_or(JSValue::UNDEFINED), data];
 
-        let result = match call_corked(
+        if let Err(e) = call_corked(
             ws,
             global_object,
             on_message_handler,
             JSValue::UNDEFINED,
             &arguments,
         ) {
-            Ok(result) => result,
-            Err(e) => {
-                let err_value = global_object.take_error(e);
-                return self.handler().run_error_callback(
-                    on_error,
-                    global_object,
-                    arguments[0],
-                    err_value,
-                );
-            }
-        };
-
-        if let Some(promise) = result.as_any_promise() {
-            match promise.status() {
-                jsc::js_promise::Status::Rejected => {
-                    // Value discarded; the side
-                    // effect (JSC__JSPromise__result) conditionally sets
-                    // `isHandledFlag` so this doesn't surface as an
-                    // unhandledRejection.
-                    let _ = promise.result(global_object.vm());
-                    return Ok(());
-                }
-                _ => {}
-            }
+            let err_value = global_object.take_error(e);
+            return self.handler().run_error_callback(
+                on_error,
+                global_object,
+                arguments[0],
+                err_value,
+            );
         }
         Ok(())
     }

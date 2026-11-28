@@ -1530,8 +1530,6 @@ impl Run<'_> {
                     }
                 }
 
-                let _ = promise.result(vm.jsc_vm());
-
                 if log_has_msgs(vm) {
                     dump_build_error(vm);
                     log_clear_msgs(vm);

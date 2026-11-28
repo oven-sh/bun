@@ -3479,6 +3479,37 @@ describe.concurrent("an error that arrives while a test file loads", () => {
   });
 });
 
+// The runner takes the report of an unhandled rejection, so the process gets no 'unhandledRejection' event.
+// A first handler that comes later still emits 'rejectionHandled', whatever rejected the promise.
+test.concurrent("a late first handler on a rejection that the runner reported emits rejectionHandled", async () => {
+  const { stdout, errors, counts, exitCode } = await runFiles({
+    "late.test.ts": `
+      import { afterAll, test } from "bun:test";
+      const seen = [];
+      const names = new Map();
+      process.on("unhandledRejection", (reason, promise) => seen.push("unhandledRejection: " + names.get(promise)));
+      process.on("rejectionHandled", promise => seen.push("rejectionHandled: " + names.get(promise)));
+      const drain = async () => { for (let i = 0; i < 3; i++) await new Promise(resolve => setImmediate(resolve)); };
+      test("leaves two rejections unhandled", async () => {
+        names.set(Promise.resolve().then(() => { throw new Error("by a reaction job"); }), "a reaction job");
+        names.set(Promise.reject(new Error("by Promise.reject()")), "Promise.reject()");
+        await drain();
+      });
+      test("handles them", async () => {
+        for (const promise of names.keys()) promise.catch(() => {});
+        await drain();
+      });
+      afterAll(() => console.log("seen " + JSON.stringify(seen)));
+    `,
+  });
+  expect({ seen: stdout.match(/^seen (.*)$/m)?.[1], errors, counts, exitCode }).toEqual({
+    seen: JSON.stringify(["rejectionHandled: a reaction job", "rejectionHandled: Promise.reject()"]),
+    errors: ["error: by Promise.reject()", "error: by a reaction job"],
+    counts: [" 1 pass", " 1 fail"],
+    exitCode: 1,
+  });
+});
+
 describe.concurrent("a test file that fails to load", () => {
   const turn = `await new Promise(resolve => setTimeout(resolve));`;
   const files = {

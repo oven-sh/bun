@@ -711,6 +711,11 @@ impl<'a> Run<'a> {
                     || promise_result
                         .is_exception(std::ptr::from_ref::<jsc::VM>(self.global.vm()).cast_mut())
                 {
+                    if rejected {
+                        // If the macro returned it already rejected, this report is its only one:
+                        // the event loop must not report it too.
+                        promise.set_handled(vm.jsc_vm());
+                    }
                     vm.unhandled_rejection(self.global, promise_result, promise.as_value());
                     return Err(MacroError::MacroFailed);
                 }

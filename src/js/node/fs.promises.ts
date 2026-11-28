@@ -297,7 +297,6 @@ const private_symbols: {
   FileHandle: null!,
 };
 
-const _readFile = fs.readFile.bind(fs);
 const _writeFile = fs.writeFile.bind(fs);
 const _appendFile = fs.appendFile.bind(fs);
 
@@ -309,14 +308,19 @@ async function* glob(pattern, options) {
   yield* new (require("internal/fs/glob").Glob)(pattern, options).glob();
 }
 
+// Node's parameters (lib/internal/fs/promises.js, v26.12.1). Where Node has a default, `= undefined` ends the count.
 const exports = {
-  access: asyncWrap(fs.access, "access"),
+  access: async function (path, mode = undefined) {
+    return fs.access(path, mode);
+  } as typeof fs.access,
   appendFile: async function (fileHandleOrFdOrPath, ...args: TailParameters<typeof _appendFile>) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     return _appendFile(fileHandleOrFdOrPath, ...args);
   },
-  close: asyncWrap(fs.close, "close"),
-  copyFile: asyncWrap(fs.copyFile, "copyFile"),
+  close: asyncWrap(fs.close, "close", 1),
+  copyFile: async function (src, dest, mode) {
+    return fs.copyFile(src, dest, mode);
+  } as typeof fs.copyFile,
   cp,
   exists: async function exists() {
     try {
@@ -325,27 +329,39 @@ const exports = {
       return false;
     }
   },
-  chown: asyncWrap(fs.chown, "chown"),
-  chmod: asyncWrap(fs.chmod, "chmod"),
-  fchmod: asyncWrap(fs.fchmod, "fchmod"),
-  fchown: asyncWrap(fs.fchown, "fchown"),
-  fstat: asyncWrap(fs.fstat, "fstat"),
-  fsync: asyncWrap(fs.fsync, "fsync"),
-  fdatasync: asyncWrap(fs.fdatasync, "fdatasync"),
-  ftruncate: asyncWrap(fs.ftruncate, "ftruncate"),
-  futimes: asyncWrap(fs.futimes, "futimes"),
+  chown: asyncWrap(fs.chown, "chown", 3),
+  chmod: async function (path, mode) {
+    return fs.chmod(path, mode);
+  } as typeof fs.chmod,
+  fchmod: asyncWrap(fs.fchmod, "fchmod", 3),
+  fchown: asyncWrap(fs.fchown, "fchown", 4),
+  fstat: asyncWrap(fs.fstat, "fstat", 1),
+  fsync: asyncWrap(fs.fsync, "fsync", 2),
+  fdatasync: asyncWrap(fs.fdatasync, "fdatasync", 2),
+  ftruncate: asyncWrap(fs.ftruncate, "ftruncate", 1),
+  futimes: asyncWrap(fs.futimes, "futimes", 4),
   glob,
   lchmod:
     constants.O_SYMLINK !== undefined
-      ? asyncWrap(fs.lchmod, "lchmod")
+      ? (async function lchmod(path, mode) {
+          return fs.lchmod(path, mode);
+        } as typeof fs.lchmod)
       : async function lchmod(_path, _mode) {
           throw $ERR_METHOD_NOT_IMPLEMENTED("lchmod()");
         },
-  lchown: asyncWrap(fs.lchown, "lchown"),
-  link: asyncWrap(fs.link, "link"),
-  lstat: asyncWrap(fs.lstat, "lstat"),
-  mkdir: asyncWrap(fs.mkdir, "mkdir"),
-  mkdtemp: asyncWrap(fs.mkdtemp, "mkdtemp"),
+  lchown: asyncWrap(fs.lchown, "lchown", 3),
+  link: async function (existingPath, newPath) {
+    return fs.link(existingPath, newPath);
+  } as typeof fs.link,
+  lstat: async function (path, options = undefined) {
+    return fs.lstat(path, options);
+  } as typeof fs.lstat,
+  mkdir: async function (path, options) {
+    return fs.mkdir(path, options);
+  } as typeof fs.mkdir,
+  mkdtemp: async function (prefix, options) {
+    return fs.mkdtemp(prefix, options);
+  } as typeof fs.mkdtemp,
   mkdtempDisposable: async function mkdtempDisposable(prefix, options) {
     const path = await fs.mkdtemp(prefix, options);
     // Stash the full path in case of process.chdir()
@@ -356,7 +372,9 @@ const exports = {
     }
     return { path, remove, [Symbol.asyncDispose]: remove };
   },
-  statfs: asyncWrap(fs.statfs, "statfs"),
+  statfs: async function (path, options = undefined) {
+    return fs.statfs(path, options);
+  } as typeof fs.statfs,
   open: async (path, flags = "r", mode = 0o666) => {
     // Snapshot the path as a string before the fd is opened so a throwing
     // Buffer/URL toString cannot leak the fd, and the registry never retains
@@ -364,12 +382,14 @@ const exports = {
     const pathForDiag = typeof path === "string" ? path : path == null ? undefined : String(path);
     return new private_symbols.FileHandle(await fs.open(path, flags, mode), flags, pathForDiag);
   },
-  read: asyncWrap(fs.read, "read"),
-  write: asyncWrap(fs.write, "write"),
-  readdir: asyncWrap(fs.readdir, "readdir"),
-  readFile: async function (fileHandleOrFdOrPath, ...args: TailParameters<typeof _readFile>) {
+  read: asyncWrap(fs.read, "read", 6),
+  write: asyncWrap(fs.write, "write", 6),
+  readdir: async function (path, options) {
+    return fs.readdir(path, options);
+  } as typeof fs.readdir,
+  readFile: async function (fileHandleOrFdOrPath, options?: $Node.ReadFileOptions) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
-    return _readFile(fileHandleOrFdOrPath, ...args);
+    return fs.readFile(fileHandleOrFdOrPath, options);
   },
   writeFile: async function (fileHandleOrFdOrPath, ...args: TailParameters<typeof _writeFile>) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
@@ -385,15 +405,29 @@ const exports = {
     }
     return _writeFile(fileHandleOrFdOrPath, ...args);
   },
-  readlink: asyncWrap(fs.readlink, "readlink"),
-  realpath: asyncWrap(fs.realpathNative, "realpath"),
-  rename: asyncWrap(fs.rename, "rename"),
-  stat: asyncWrap(fs.stat, "stat"),
-  symlink: asyncWrap(fs.symlink, "symlink"),
-  truncate: asyncWrap(fs.truncate, "truncate"),
-  unlink: asyncWrap(fs.unlink, "unlink"),
-  utimes: asyncWrap(fs.utimes, "utimes"),
-  lutimes: asyncWrap(fs.lutimes, "lutimes"),
+  readlink: async function (path, options) {
+    return fs.readlink(path, options);
+  } as typeof fs.readlink,
+  realpath: async function (path, options) {
+    return fs.realpathNative(path, options);
+  } as typeof fs.realpathNative,
+  rename: async function (oldPath, newPath) {
+    return fs.rename(oldPath, newPath);
+  } as typeof fs.rename,
+  stat: async function (path, options = undefined) {
+    return fs.stat(path, options);
+  } as typeof fs.stat,
+  symlink: async function (target, path, type) {
+    return fs.symlink(target, path, type);
+  } as typeof fs.symlink,
+  truncate: async function (path, len = undefined) {
+    return fs.truncate(path, len);
+  } as typeof fs.truncate,
+  unlink: async function (path) {
+    return fs.unlink(path);
+  } as typeof fs.unlink,
+  utimes: asyncWrap(fs.utimes, "utimes", 3),
+  lutimes: asyncWrap(fs.lutimes, "lutimes", 3),
   rm: async function rm(path, options) {
     if (typeof options === "object" && options !== null) {
       // Node merges the caller's options over the defaults with a spread, which
@@ -450,16 +484,22 @@ const exports = {
   // this is used to export the private symbols to internal/fs/streams and node:http2 without making them public.
   $data: private_symbols,
 };
+// Node's lengths for the four that keep their own lists. Its opendir is util.promisify's copy of the callback form.
+$Object.$defineProperty(exports.appendFile, "length", { value: 3 });
+$Object.$defineProperty(exports.open, "length", { value: 3 });
+$Object.$defineProperty(exports.writeFile, "length", { value: 3 });
+$Object.$defineProperty(opendir, "length", { value: 3 });
 export default exports;
 
+// Passes on the caller's exact arguments: some of these parsers tell a missing one from `undefined` (#46789 ends that).
 // TODO: remove this in favor of just returning js functions that don't check `this`
-function asyncWrap<F extends (...args: any[]) => Promise<unknown>>(fn: F, name: string): F;
-function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
+function asyncWrap<F extends (...args: any[]) => Promise<unknown>>(fn: F, name: string, length: number): F;
+function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string, length: number) {
   const wrapped = async function (...args: unknown[]) {
     return fn.$apply(fs, args);
   };
-  Object.defineProperty(wrapped, "name", { value: name });
-  Object.defineProperty(wrapped, "length", { value: fn.length });
+  $Object.$defineProperty(wrapped, "name", { value: name });
+  $Object.$defineProperty(wrapped, "length", { value: length });
   return wrapped;
 }
 
@@ -751,7 +791,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
 
     async writeFile(
       data: string,
-      options: BufferEncoding | { encoding?: BufferEncoding | null; signal?: AbortSignal } | null = "utf8",
+      options?: BufferEncoding | { encoding?: BufferEncoding | null; signal?: AbortSignal } | null,
     ) {
       const fd = this[kFd];
       throwEBADFIfNecessary("writeFile", fd);

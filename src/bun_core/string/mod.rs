@@ -2113,13 +2113,14 @@ pub mod printer {
 
     /// [`write_pre_quoted_string`] for JSON in a lockfile: bytes that are in no UTF-8 sequence stay, so `out` is UTF-8 only if `text` is.
     pub fn write_json_string_body_keeping_bytes(text: &[u8], out: &mut Vec<u8>) {
+        let (ascii_only, json) = (false, true);
         // A `Vec` does not fail to write.
         let _ = write_pre_quoted_string_as::<_, { IllFormedBytes::Keep }>(
             text,
             out,
             b'"',
-            false,
-            true,
+            ascii_only,
+            json,
             StrEncoding::Utf8,
         );
     }

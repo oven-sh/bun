@@ -149,6 +149,24 @@ describe("Bun.build compile", () => {
     expect(readdirSync(join(String(dir), "cache"))).toHaveLength(1);
   });
 
+  test.concurrent.skipIf(!isPosix).each(["000", "002", "022", "027", "077"])(
+    "the executable has the permissions that umask %s leaves",
+    async umask => {
+      using dir = tempDir("build-compile-umask", { "app.js": "" });
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", `umask ${umask} && exec "$0" build --compile app.js --outfile app`, bunExe()],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const mode = statSync(join(String(dir), "app")).mode & 0o777;
+      expect(mode.toString(8)).toBe((0o755 & ~parseInt(umask, 8)).toString(8));
+    },
+  );
+
   test.skipIf(!isLinux)("the executable can be started when it was written as descriptor 0, 1 or 2", async () => {
     using dir = tempDir("build-compile-closed-stdio", {
       "build.js": `

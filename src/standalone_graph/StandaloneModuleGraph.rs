@@ -2337,12 +2337,17 @@ impl CompileResult {
 /// filesystem).
 pub(crate) struct Injected {
     pub file: ExecutableFile,
+    /// What the file is to have once it is whole.
+    #[cfg(unix)]
+    pub mode: bun_sys::Mode,
     pub temp_path: UnlinkOnDrop<path::Path>,
 }
 
 /// The temp copy while `inject` writes it.
 struct UnfinishedCopy<'a> {
     file: ExecutableFile,
+    #[cfg(unix)]
+    mode: bun_sys::Mode,
     name: UnlinkOnDrop<&'a ZStr>,
 }
 
@@ -2354,6 +2359,8 @@ impl Injected {
         copy.name.keep();
         Some(Injected {
             file: copy.file,
+            #[cfg(unix)]
+            mode: copy.mode,
             temp_path: UnlinkOnDrop::new(Fd::cwd(), temp_path),
         })
     }
@@ -2363,6 +2370,17 @@ impl Injected {
 type ExecutableFile = bun_sys::close_on_fork::File;
 #[cfg(windows)]
 type ExecutableFile = bun_sys::File;
+
+/// Returns the mode that the umask leaves to a new executable, which is never for others to write. The file itself is the owner's alone while it is written.
+#[cfg(unix)]
+fn create_unfinished_executable(path: &ZStr) -> bun_sys::Maybe<(ExecutableFile, bun_sys::Mode)> {
+    let flags = bun_sys::O::CLOEXEC | bun_sys::O::RDWR | bun_sys::O::CREAT | bun_sys::O::EXCL;
+    let file = ExecutableFile::openat(Fd::cwd(), path, flags, 0o755)?;
+    let mode = Syscall::fstat(file.fd()).map_or(0o755, |stat| (stat.st_mode & 0o777) as _);
+    // Not 0: WSL2 DrvFS re-checks the mode on ftruncate() (#40111).
+    let _ = Syscall::fchmod(file.fd(), 0o600);
+    Ok((file, mode))
+}
 
 pub(crate) fn inject(
     payload: &mut PayloadParts<'_>,
@@ -2462,11 +2480,17 @@ pub(crate) fn inject(
         {
             // if we're on a mac, use clonefile() if we can
             // failure is okay, clonefile is just a fast path.
-            if let bun_sys::Result::Ok(()) = Syscall::clonefile(self_exe, zname) {
+            let probed = create_unfinished_executable(zname).map(|(_, mode)| {
+                let _ = Syscall::unlink(zname);
+                mode
+            });
+            if let Ok(mode) = probed
+                && let bun_sys::Result::Ok(()) = Syscall::clonefile(self_exe, zname)
+            {
                 let name = UnlinkOnDrop::new(Fd::cwd(), zname);
                 let flags = bun_sys::O::RDWR | bun_sys::O::CLOEXEC;
                 if let Ok(file) = ExecutableFile::openat(Fd::cwd(), &name, flags, 0) {
-                    break 'brk (file.fd(), UnfinishedCopy { file, name });
+                    break 'brk (file.fd(), UnfinishedCopy { file, mode, name });
                 }
             }
         }
@@ -2474,16 +2498,10 @@ pub(crate) fn inject(
         // otherwise, just copy the file
 
         #[cfg(not(windows))]
-        let file = 'brk2: {
+        let (file, mode) = 'brk2: {
             let mut tried_changing_abs_dir = false;
             for retry in 0..3 {
-                match ExecutableFile::openat(
-                    Fd::cwd(),
-                    zname,
-                    bun_sys::O::CLOEXEC | bun_sys::O::RDWR | bun_sys::O::CREAT | bun_sys::O::EXCL,
-                    // Not 0: WSL2 DrvFS re-checks the mode on ftruncate() (#40111).
-                    0o600,
-                ) {
+                match create_unfinished_executable(zname) {
                     Ok(res) => break 'brk2 res,
                     Err(err) => {
                         if retry < 2 {
@@ -2532,7 +2550,7 @@ pub(crate) fn inject(
         #[cfg(not(windows))]
         let name = UnlinkOnDrop::new(Fd::cwd(), zname);
         #[cfg(not(windows))]
-        let (fd, copy) = (file.fd(), UnfinishedCopy { file, name });
+        let (fd, copy) = (file.fd(), UnfinishedCopy { file, mode, name });
         #[cfg(not(windows))]
         let template = 'brk2: {
             for retry in 0..3 {
@@ -2637,10 +2655,6 @@ pub(crate) fn inject(
                 bun_core::pretty_errorln!("Error truncating temporary file: {}", err);
                 return None;
             }
-            #[cfg(not(windows))]
-            {
-                bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
-            }
             return Injected::new(copy, cwd);
         }
         CompileTargetOs::Windows => {
@@ -2692,11 +2706,6 @@ pub(crate) fn inject(
             ) {
                 bun_core::pretty_errorln!("Error truncating PE file: {}", err);
                 return None;
-            }
-            // Set executable permissions when running on POSIX hosts, even for Windows targets
-            #[cfg(not(windows))]
-            {
-                bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
             return Injected::new(copy, cwd);
         }
@@ -2791,10 +2800,6 @@ pub(crate) fn inject(
                 }
             };
 
-            #[cfg(not(windows))]
-            {
-                bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
-            }
             return Injected::new(copy, cwd);
         }
         _ => {
@@ -2871,11 +2876,6 @@ pub(crate) fn inject(
 
             // the final 8 bytes in the file are the length of the module graph with padding, excluding the trailer and offsets
             let _ = Syscall::write(cloned_executable_fd, &total_byte_count.to_ne_bytes());
-            #[cfg(not(windows))]
-            {
-                bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
-            }
-
             return Injected::new(copy, cwd);
         }
     }
@@ -3254,8 +3254,8 @@ pub fn to_executable(
 
     #[cfg(unix)]
     {
-        // Set executable permissions (0o755 = rwxr-xr-x) - makes it executable for owner, readable/executable for group and others
-        let _ = Syscall::fchmod(fd, 0o755);
+        // As a linker leaves it: what the umask takes is not given back. The owner can always run it.
+        let _ = Syscall::fchmod(fd, injected.mode | 0o500);
     }
 
     #[cfg(windows)]
